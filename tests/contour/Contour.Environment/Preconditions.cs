@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace Contour.Environment;
@@ -12,7 +13,12 @@ public static class Preconditions
 {
     private static readonly TimeSpan ToolTimeout = TimeSpan.FromSeconds(30);
 
-    private sealed record Tool(string Name, string Executable, string Arguments, string Why);
+    /// <param name="Script">
+    /// Инструмент — скрипт оболочки (<c>sbt.bat</c>, <c>just.cmd</c>), а не
+    /// <c>.exe</c>: на Windows <c>CreateProcess</c> ищет по PATH только точное
+    /// имя и <c>.exe</c>, поэтому такой инструмент зовётся через <c>cmd.exe</c>.
+    /// </param>
+    private sealed record Tool(string Name, string Executable, string Arguments, string Why, bool Script = false);
 
     private static readonly Tool[] Required =
     [
@@ -24,16 +30,32 @@ public static class Preconditions
             "узел identity-proto генерирует Go-код из contracts/proto"),
     ];
 
+    // Только с Auction в составе: его узел сборки зовёт `just auction-classpath`,
+    // то есть sbt, а сервис стартует голой JVM. `java --version`, а не `-version`:
+    // та пишет в stderr, и в баннер ушла бы пустая строка.
+    private static readonly Tool[] RequiredForAuction =
+    [
+        new("java", "java", "--version",
+            "узел auction запускает сервис голой JVM версии из apps/auction/.java-version"),
+        new("sbt", "sbt", "--script-version",
+            "узел auction-build собирает classpath Auction через sbt", Script: true),
+        new("just", "just", "--version",
+            "узел auction-build зовёт рецепт `just auction-classpath`", Script: true),
+    ];
+
     /// <summary>Версии инструментов для баннера, либо отказ с именем и причиной.</summary>
     public static async Task<IReadOnlyDictionary<string, string>> VerifyAsync(
+        ContourOptions options,
         CancellationToken cancellationToken)
     {
         var versions = new Dictionary<string, string>(StringComparer.Ordinal);
         var missing = new List<string>();
 
-        foreach (var tool in Required)
+        var tools = options.WithAuction ? Required.Concat(RequiredForAuction) : Required;
+
+        foreach (var tool in tools)
         {
-            var (ok, output) = await RunAsync(tool.Executable, tool.Arguments, cancellationToken);
+            var (ok, output) = await RunAsync(tool, cancellationToken);
             if (ok)
             {
                 versions[tool.Name] = output.Trim();
@@ -58,26 +80,26 @@ public static class Preconditions
     }
 
     private static async Task<(bool Ok, string Output)> RunAsync(
-        string executable,
-        string arguments,
+        Tool tool,
         CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(ToolTimeout);
 
-        var info = new ProcessStartInfo(executable, arguments)
-        {
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-        };
+        var viaShell = tool.Script && RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
+        var info = viaShell
+            ? new ProcessStartInfo("cmd.exe", $"/c {tool.Executable} {tool.Arguments}")
+            : new ProcessStartInfo(tool.Executable, tool.Arguments);
+        info.RedirectStandardOutput = true;
+        info.RedirectStandardError = true;
+        info.UseShellExecute = false;
 
         Process? process = null;
 
         try
         {
             process = Process.Start(info)
-                ?? throw new InvalidOperationException($"{executable}: процесс не запустился");
+                ?? throw new InvalidOperationException($"{tool.Executable}: процесс не запустился");
 
             // Оба потока читаются одновременно. Последовательное чтение вешает
             // дочерний процесс на заполненном буфере stderr: он блокируется на

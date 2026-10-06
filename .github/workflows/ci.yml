@@ -30,6 +30,7 @@ jobs:
       screen-lint: ${{ steps.filter.outputs.screen-lint }}
       auction-bot-ui: ${{ steps.filter.outputs.auction-bot-ui }}
       auction-bot: ${{ steps.filter.outputs.auction-bot }}
+      bot-console: ${{ steps.filter.outputs.bot-console }}
       auction: ${{ steps.filter.outputs.auction }}
       contour: ${{ steps.filter.outputs.contour }}
       nats-tester: ${{ steps.filter.outputs.nats-tester }}
@@ -120,6 +121,18 @@ jobs:
               - 'shared/typescript/auction-bot-ui/**'
               - 'shared/typescript/telegram-delivery/**'
               - 'shared/typescript/screen-lint/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            # Пульт провода двух ботов — своя единица, но код ботов берёт из их
+            # деревьев: правка test kit любого бота проверяет и пульт.
+            bot-console:
+              - 'tests/contour/bot-wire/console/**'
+              - 'apps/hub-bot/**'
+              - 'apps/auction-bot/**'
+              - 'shared/typescript/auction-bot-ui/**'
+              - 'shared/typescript/telegram-delivery/**'
+              - 'shared/typescript/screen-lint/**'
+              - 'contracts/proto/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             apphost:
@@ -629,6 +642,57 @@ jobs:
       - name: Helm из justfile
         run: sh tools/apphost/install-helm.sh >> "$GITHUB_PATH"
       - run: just apphost-chart
+
+  # Пульт провода двух ботов: своя установка, typecheck по kit обоих ботов и L0
+  # языка команд с прокси. Сам пульт — не гейт и здесь не запускается.
+  bot-console:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.bot-console == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            shared/typescript/telegram-delivery/package-lock.json
+            shared/typescript/auction-bot-ui/package-lock.json
+            apps/hub-bot/package-lock.json
+            apps/auction-bot/package-lock.json
+            tests/contour/bot-wire/console/package-lock.json
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      # Typecheck пульта читает исходники обоих ботов, а те — собранные общие
+      # пакеты и сгенерированный код.
+      - run: npm ci && npm run build
+        working-directory: shared/typescript/telegram-delivery
+      - run: npm ci && npm run build
+        working-directory: shared/typescript/auction-bot-ui
+      - run: npm ci
+        working-directory: apps/hub-bot
+      - run: npm ci
+        working-directory: apps/auction-bot
+      - run: buf generate --template apps/hub-bot/buf.gen.yaml
+      - run: buf generate --template apps/auction-bot/buf.gen.yaml
+      - run: npm ci
+        working-directory: tests/contour/bot-wire/console
+      - run: npm run typecheck
+        working-directory: tests/contour/bot-wire/console
+      - run: npm run lint
+        working-directory: tests/contour/bot-wire/console
+      - run: npm test
+        working-directory: tests/contour/bot-wire/console
 
   auction:
     needs: changes

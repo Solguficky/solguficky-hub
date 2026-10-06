@@ -13,11 +13,16 @@ namespace Contour.Environment;
 ///
 /// Токен бота — потому что потребитель играет бота: им он доказывает себя
 /// Identity и Meetups (ADR-056). Имя переменной то же, что читает сам бот.
+///
+/// С Auction в составе потребитель играет и второго бота — бота аукциона — и
+/// получает его токен под именем, которое читает тот бот. Без Auction ни
+/// адреса, ни токена нет: пульт, которому они нужны, отказывает по имени.
 /// </summary>
 public static class ConsumerEnvironment
 {
     public const string MaintainerTokenVariable = "IDENTITY_MAINTAINER_TOKEN";
     public const string BotServiceTokenVariable = "HUB_BOT_SERVICE_TOKEN";
+    public const string AuctionBotServiceTokenVariable = "AUCTION_BOT_SERVICE_TOKEN";
 
     // Префикс, а не одно имя: Aspire выставляет вместе с адресом экспортёра
     // протокол, заголовки и имя сервиса, и без адреса они бессмысленны.
@@ -30,6 +35,11 @@ public static class ConsumerEnvironment
             [MaintainerTokenVariable] = contour.MaintainerToken,
             [BotServiceTokenVariable] = contour.BotServiceToken,
         };
+
+        if (contour.AuctionBotServiceToken is not null)
+        {
+            variables[AuctionBotServiceTokenVariable] = contour.AuctionBotServiceToken;
+        }
 
         return variables;
     }

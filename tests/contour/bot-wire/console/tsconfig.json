@@ -15,17 +15,8 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "types": ["node"],
-    "rootDir": "../..",
-    "outDir": "dist",
+    "rootDir": "../../../..",
     "noEmit": true
   },
-  "include": [
-    "src/**/*.ts",
-    "gen/**/*.ts",
-    "testkit/**/*.ts",
-    "vitest.fail-on-skip.ts",
-    "../../tests/contour/bot-wire/**/*.ts",
-    "../../tests/telegram-live/**/*.ts"
-  ],
-  "exclude": ["../../tests/contour/bot-wire/console/**"]
+  "include": ["*.ts"]
 }

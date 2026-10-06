@@ -19,7 +19,6 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:contour": "vitest run --config vitest.contour.config.ts",
     "explore:contour": "vitest run --config vitest.explore.config.ts",
-    "console:contour": "vitest run --config vitest.console.config.ts",
     "test:live": "vitest run --config vitest.live.config.ts",
     "console:live": "vitest run --config vitest.live-console.config.ts",
     "coverage": "vitest run --coverage",

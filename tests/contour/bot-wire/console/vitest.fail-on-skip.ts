@@ -26,9 +26,10 @@ import type {
 // - флаг `--reporter` в командной строке заменяет reporters конфига и
 //   снимает правило вместе со штатным выводом.
 //
-// Копии лежат в apps/auction-bot, apps/community-site-api,
-// shared/typescript/screen-lint и tests/contour/bot-wire/console: общего
-// TypeScript-модуля в shared/ нет.
+// Копия файла apps/hub-bot/vitest.fail-on-skip.ts (другие копии — в
+// apps/auction-bot, apps/community-site-api и shared/typescript/screen-lint):
+// общего TypeScript-модуля в shared/ нет, а kit хаба отдаёт наружу только
+// testkit/index.ts.
 export class FailOnSkip implements Reporter {
   private vitest: Vitest | undefined;
   private narrowed = false;

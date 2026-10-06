@@ -1,0 +1,3 @@
+# biome читает ignore-файл из каталога единицы (vcs.useIgnoreFile); правило
+# node_modules/ действует и из корневого .gitignore.
+node_modules/

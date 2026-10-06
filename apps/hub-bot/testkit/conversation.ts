@@ -31,6 +31,20 @@ type KeyboardButton = {
 /** Чем нарисован экран: богатым сообщением, HTML-разметкой или текстом как есть. */
 export type ScreenFormat = "rich" | "html" | "plain";
 
+/** Виды фото, которые провод умеет отдать на скачивание (`sendsPhoto`). */
+export const photoVariants = ["jpeg", "big", "broken", "lost"] as const;
+export type PhotoVariant = (typeof photoVariants)[number];
+
+/** Вид фото из `file_id` присланной фотографии; чужой id — `undefined`. */
+export function photoVariantOf(fileId: string): PhotoVariant | undefined {
+  const match = /^contour-photo-([a-z]+)-/.exec(fileId);
+  const variant = match?.[1];
+  return variant !== undefined &&
+    (photoVariants as readonly string[]).includes(variant)
+    ? (variant as PhotoVariant)
+    : undefined;
+}
+
 type ScreenMedia = { kind: "document" | "photo"; fileId: string };
 
 type Screen = {
@@ -63,8 +77,11 @@ export type Person = {
    * последний: так в клиенте выбирают «Ответить» на старом сообщении.
    */
   answers(number: number, text: string): Promise<void>;
-  /** Нажимает кнопку с этой подписью на последнем изменённом экране, где она сейчас есть. */
-  presses(label: string): Promise<void>;
+  /**
+   * Нажимает кнопку с этой подписью на последнем изменённом экране, где она
+   * сейчас есть; `occurrence` — какую по счёту из одинаковых подписей экрана.
+   */
+  presses(label: string, occurrence?: number): Promise<void>;
   /**
    * Пересылает боту пост публичного канала. Висит вопрос — это ответ на него,
    * как `says`.
@@ -72,12 +89,23 @@ export type Person = {
   forwardsChannelPost(channel: string, postId: number): Promise<void>;
   /** Отправляет боту документ. Висит вопрос — это ответ на него, как `says`. */
   sendsDocument(fileName: string): Promise<void>;
-  /** Отправляет боту фотографию. Висит вопрос — это ответ на него, как `says`. */
-  sendsPhoto(): Promise<void>;
+  /**
+   * Отправляет боту фотографию. Висит вопрос — это ответ на него, как `says`.
+   * Вид фото едет в `file_id`: провод по нему решает, какие байты отдать на
+   * скачивание — настоящий JPEG, файл сверх предела Auction, не картинку или
+   * отказ Telegram. Для бота это одинаковые фотографии.
+   */
+  sendsPhoto(variant?: PhotoVariant): Promise<void>;
   /** Два нажатия одной кнопки, быстрее, чем бот успевает ответить на первое. */
   pressesTwice(label: string): Promise<void>;
   /** Нажимает кнопку экрана, отрисованного прошлым релизом бота. */
   pressesFromOlderRelease(label: string): Promise<void>;
+  /**
+   * Нажатие с произвольным `callback_data` на последнем экране: чужая или
+   * подделанная кнопка, которой бот не рисовал. Так проверяется, что бот не
+   * верит данным нажатия.
+   */
+  pressesRaw(data: string): Promise<void>;
   /** Открывает ссылку на сходку из чата сообщества. */
   opensLink(meetupId: string): Promise<void>;
   /** Текст последнего экрана: нового сообщения или правки. */
@@ -120,6 +148,8 @@ export type ScreenView = {
   format: ScreenFormat;
   /** Сообщение несёт файл, и `text` — его подпись. */
   media?: ScreenMedia["kind"];
+  /** Сколько фото несёт богатое сообщение; без фото поля нет. */
+  posters?: number;
   /** Бот ждёт ответа на это сообщение (ForceReply). */
   awaitsReply: boolean;
 };
@@ -154,7 +184,11 @@ export function startConversation(
 
   const write = async (
     content:
-      | { text: string; forward_origin?: MessageOrigin }
+      | {
+          text: string;
+          entities?: MessageEntity[];
+          forward_origin?: MessageOrigin;
+        }
       | Pick<Message.DocumentMessage, "document">
       | Pick<Message.PhotoMessage, "photo">,
     replyTo?: Screen,
@@ -192,18 +226,26 @@ export function startConversation(
     await bot.handleUpdate({ update_id: updateId, message } as Update);
   };
 
-  const findButton = (label: string): { screen: Screen; button: Button } => {
+  // `occurrence` — какая по счёту кнопка с этой подписью на экране: списки
+  // сходок и аукционов одного дня дают одинаковые подписи, и без номера
+  // нажималась бы всегда первая.
+  const findButton = (
+    label: string,
+    occurrence = 1,
+  ): { screen: Screen; button: Button } => {
     const screen = screens()
       .reverse()
-      .find((candidate) =>
-        candidate.buttons.some((button) => button.text === label),
+      .find(
+        (candidate) =>
+          candidate.buttons.filter((button) => button.text === label).length >=
+          occurrence,
       );
-    const button = screen?.buttons.find(
+    const button = screen?.buttons.filter(
       (candidate) => candidate.text === label,
-    );
+    )[occurrence - 1];
     if (screen === undefined || button === undefined) {
       throw new Error(
-        `кнопки «${label}» нет; последний экран: ${JSON.stringify(lastScreen())}`,
+        `кнопки «${label}»${occurrence === 1 ? "" : ` №${occurrence}`} нет; последний экран: ${JSON.stringify(lastScreen())}`,
       );
     }
     return { screen, button };
@@ -268,7 +310,21 @@ export function startConversation(
 
   return {
     async says(text) {
-      await write({ text }, answerable());
+      // Команду Telegram размечает сущностью `bot_command`, и grammY узнаёт
+      // её по сущности, а не по косой черте: без неё `bot.command("start")`
+      // молчит. Бот хаба разбирает текст сам, ему сущность не мешает.
+      const command = /^\/\S+/.exec(text)?.[0];
+      await write(
+        command === undefined
+          ? { text }
+          : {
+              text,
+              entities: [
+                { type: "bot_command", offset: 0, length: command.length },
+              ],
+            },
+        answerable(),
+      );
     },
     async sendsDocument(fileName) {
       // Идентификатор файла выдаёт Telegram; боту он нужен только как ключ,
@@ -285,8 +341,8 @@ export function startConversation(
         answerable(),
       );
     },
-    async sendsPhoto() {
-      const fileId = `contour-photo-${userId}-${messageId + 1}`;
+    async sendsPhoto(variant = "jpeg") {
+      const fileId = `contour-photo-${variant}-${userId}-${messageId + 1}`;
       await write(
         {
           photo: [
@@ -331,8 +387,8 @@ export function startConversation(
       }
       await write({ text }, question);
     },
-    async presses(label) {
-      const { screen, button } = findButton(label);
+    async presses(label, occurrence) {
+      const { screen, button } = findButton(label, occurrence);
       await press(screen, button.data);
     },
     async pressesTwice(label) {
@@ -349,8 +405,16 @@ export function startConversation(
       const [, ...rest] = button.data.split(":");
       await press(screen, ["v0", ...rest].join(":"));
     },
+    async pressesRaw(data) {
+      await press(lastScreen(), data);
+    },
     async opensLink(meetupId) {
-      await write({ text: `/start m_${uuidToToken(meetupId)}` });
+      // Та же сущность `bot_command`, что у `says`: без неё бот аукциона
+      // команду не узнаёт.
+      await write({
+        text: `/start m_${uuidToToken(meetupId)}`,
+        entities: [{ type: "bot_command", offset: 0, length: "/start".length }],
+      });
     },
     sees() {
       return lastScreen().text;
@@ -402,6 +466,7 @@ function viewOf(screen: Screen): ScreenView {
     ),
     format: screen.format,
     ...(screen.media === undefined ? {} : { media: screen.media.kind }),
+    ...(screen.posters === 0 ? {} : { posters: screen.posters }),
     awaitsReply: screen.asksForReply,
   };
 }

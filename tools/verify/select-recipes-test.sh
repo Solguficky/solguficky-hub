@@ -57,20 +57,22 @@ assert_selects "identity selects identity" \
     "$always identity-build identity-test identity-test-log-check identity-lint" apps/identity/cmd/identity/main.go
 assert_selects "identity test tooling selects identity" \
     "$always identity-build identity-test identity-test-log-check identity-lint" tools/identity/check-test-log.py
-assert_selects "hub bot selects its own recipes" \
-    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build" apps/hub-bot/src/main.ts
+assert_selects "hub bot selects its own recipes and the console that reads its kit" \
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" apps/hub-bot/src/main.ts
 assert_selects "published page selects the site api" \
     "$always community-site-api-typecheck community-site-api-lint community-site-api-test" docs/published/index.html
 assert_selects "aspire.config.json selects apphost" \
     "$always apphost-config-check apphost-build apphost-test apphost-chart-test" aspire.config.json
 assert_selects "shared package selects its own recipes and both bots" \
-    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" shared/typescript/auction-bot-ui/src/index.ts
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build bot-console-typecheck bot-console-lint bot-console-test" shared/typescript/auction-bot-ui/src/index.ts
 assert_selects "screen lint selects its own recipes and every consumer" \
-    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build screen-lint-typecheck screen-lint-lint screen-lint-test auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" shared/typescript/screen-lint/src/inspect.ts
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build screen-lint-typecheck screen-lint-lint screen-lint-test auction-bot-ui-typecheck auction-bot-ui-lint auction-bot-ui-test auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build bot-console-typecheck bot-console-lint bot-console-test" shared/typescript/screen-lint/src/inspect.ts
 assert_selects "delivery package selects its own recipes and both bots" \
-    "$always telegram-delivery-typecheck telegram-delivery-lint telegram-delivery-test hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" shared/typescript/telegram-delivery/src/deliver.ts
-assert_selects "auction bot selects only its own recipes" \
-    "$always auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build" apps/auction-bot/src/main.ts
+    "$always telegram-delivery-typecheck telegram-delivery-lint telegram-delivery-test hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build bot-console-typecheck bot-console-lint bot-console-test" shared/typescript/telegram-delivery/src/deliver.ts
+assert_selects "auction bot selects its own recipes and the console that reads its kit" \
+    "$always auction-bot-typecheck auction-bot-lint auction-bot-test auction-bot-build bot-console-typecheck bot-console-lint bot-console-test" apps/auction-bot/src/main.ts
+assert_selects "console selects itself and the hub whose lint covers it" \
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" tests/contour/bot-wire/console/commands.ts
 assert_selects "prefix match stops at the directory" "$always" apps/identity-old/readme.md
 assert_selects "shared prefix match stops at the directory" "$always" shared/typescript/auction-bot-ui-old/readme.md
 

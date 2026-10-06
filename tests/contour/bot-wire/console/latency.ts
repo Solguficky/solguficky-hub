@@ -1,17 +1,24 @@
 import { connect, createServer, type Socket } from "node:net";
 import type { SlowService } from "./commands.js";
 
-// Задержка сервиса для пульта: TCP-прокси между ботом и настоящим Identity или
-// Meetups. Бот говорит с прокси тем же клиентом и тем же дедлайном, что в
-// продакшне, поэтому медленный сервис выглядит для него настоящим: запрос
-// доходит позже, а дедлайн транспорта срабатывает сам. Подмена клиента этого
-// не дала бы — ожидание шло бы мимо дедлайна.
+// Задержка и обрыв сервиса для пульта: TCP-прокси между ботами и настоящими
+// Identity, Meetups и Auction. Бот говорит с прокси тем же клиентом и тем же
+// дедлайном, что в продакшне, поэтому медленный сервис выглядит для него
+// настоящим: запрос доходит позже, а дедлайн транспорта срабатывает сам.
+// Подмена клиента этого не дала бы — ожидание шло бы мимо дедлайна. Обрыв
+// («сервис недоступен») — тоже настоящий: прокси рвёт соединения, и клиент
+// получает отказ соединения, а не истёкший дедлайн, — это разные кадры.
 
 export type DelayProxy = {
   /** Адрес, который получает бот вместо адреса сервиса. */
   url: string;
   /** Задержка байтов от бота к сервису; 0 — без задержки. */
   setDelay(delayMs: number): void;
+  /**
+   * Сервис недоступен: открытые соединения рвутся, новые отвергаются сразу.
+   * `false` возвращает сервис — следующий вызов бота соединится заново.
+   */
+  setDown(down: boolean): void;
   close(): Promise<void>;
 };
 
@@ -28,11 +35,18 @@ export async function openDelayProxy(target: string): Promise<DelayProxy> {
   }
   const upstreamPort = upstream.port === "" ? 80 : Number(upstream.port);
   let delayMs = 0;
+  let down = false;
   const sockets = new Set<Socket>();
 
   // Полузакрытие разрешено с обеих сторон: клиент, закрывший запись, ещё ждёт
   // ответа, и прокси не вправе рвать соединение раньше сервиса.
   const server = createServer({ allowHalfOpen: true }, (client) => {
+    if (down) {
+      // Отказ соединения, а не тишина: иначе бот ждал бы дедлайн и показывал
+      // бы «не ответил» вместо «недоступен».
+      client.destroy();
+      return;
+    }
     const service = connect({
       port: upstreamPort,
       host: upstream.hostname,
@@ -121,6 +135,12 @@ export async function openDelayProxy(target: string): Promise<DelayProxy> {
     setDelay(next) {
       delayMs = next;
     },
+    setDown(next) {
+      down = next;
+      // Живая HTTP/2-сессия бота пережила бы флаг: рвём её, чтобы следующий
+      // вызов соединялся заново и получал отказ.
+      if (down) for (const socket of sockets) socket.destroy();
+    },
     close() {
       for (const socket of sockets) socket.destroy();
       return new Promise((resolveClosed) => {
@@ -131,35 +151,43 @@ export async function openDelayProxy(target: string): Promise<DelayProxy> {
 }
 
 export type Latency = {
-  /** Адреса сервисов для бота: те же сервисы, но через прокси. */
-  identityUrl: string;
-  meetupsUrl: string;
+  /** Адреса сервисов для ботов: те же сервисы, но через прокси. */
+  urls: Record<SlowService, string>;
   slow(service: SlowService, delayMs: number): void;
+  down(service: SlowService): void;
+  up(service: SlowService): void;
   close(): Promise<void>;
 };
 
-export async function openLatency(endpoints: {
-  identityUrl: string;
-  meetupsUrl: string;
-}): Promise<Latency> {
-  const identity = await openDelayProxy(endpoints.identityUrl);
-  // Второй прокси может отказать — тогда первый уже слушает порт и без
-  // закрытия остался бы висеть до конца процесса.
-  const meetups = await openDelayProxy(endpoints.meetupsUrl).catch(
-    async (cause: unknown) => {
-      await identity.close();
+/** По прокси на сервис; отказ одного закрывает уже открытые. */
+export async function openLatency(
+  endpoints: Record<SlowService, string>,
+): Promise<Latency> {
+  const opened: Partial<Record<SlowService, DelayProxy>> = {};
+  for (const service of Object.keys(endpoints) as SlowService[]) {
+    try {
+      opened[service] = await openDelayProxy(endpoints[service]);
+    } catch (cause) {
+      await Promise.all(Object.values(opened).map((proxy) => proxy.close()));
       throw cause;
-    },
-  );
-  const proxies: Record<SlowService, DelayProxy> = { identity, meetups };
+    }
+  }
+  const proxies = opened as Record<SlowService, DelayProxy>;
   return {
-    identityUrl: identity.url,
-    meetupsUrl: meetups.url,
+    urls: Object.fromEntries(
+      Object.entries(proxies).map(([service, proxy]) => [service, proxy.url]),
+    ) as Record<SlowService, string>,
     slow(service, delayMs) {
       proxies[service].setDelay(delayMs);
     },
+    down(service) {
+      proxies[service].setDown(true);
+    },
+    up(service) {
+      proxies[service].setDown(false);
+    },
     async close() {
-      await Promise.all([identity.close(), meetups.close()]);
+      await Promise.all(Object.values(proxies).map((proxy) => proxy.close()));
     },
   };
 }

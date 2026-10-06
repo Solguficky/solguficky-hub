@@ -12,7 +12,8 @@ namespace Contour.Environment;
 /// Подъём сквозного контура: Identity и Meetups на настоящем PostgreSQL,
 /// поднятые тем же AppHost, что и локальная разработка. Владеет средой именно
 /// он, а не тест: то же устройство переиспользует <c>Contour.Host</c> для
-/// потребителя на TypeScript.
+/// потребителя на TypeScript. Auction добавляется по запросу
+/// (<see cref="ContourOptions"/>): он расширение хаба, а не часть контура.
 ///
 /// Профиль не заводится в appsettings.json намеренно: состав контура передаётся
 /// аргументами и потому виден в исходнике и в отчёте об отказе, а профиль,
@@ -39,13 +40,20 @@ public sealed class ContourHost : IAsyncDisposable
     private static readonly TimeSpan IdentityBuildDone = TimeSpan.FromSeconds(240);
     private static readonly TimeSpan IdentityReady = TimeSpan.FromSeconds(90);
     private static readonly TimeSpan MeetupsReady = TimeSpan.FromSeconds(180);
+    // Холодный sbt компилирует Scala и ScalaPB минутами; прогон PER-290 дал
+    // 58 секунд до Healthy уже на прогретом кэше. Предел сборки — с запасом на
+    // холодную машину, предел готовности — на Flyway, кластер и прогрев JIT.
+    private static readonly TimeSpan AuctionBuildDone = TimeSpan.FromSeconds(900);
+    private static readonly TimeSpan AuctionReady = TimeSpan.FromSeconds(240);
     private static readonly TimeSpan Shutdown = TimeSpan.FromSeconds(60);
 
     private const string Postgres = "postgres";
     private const string Identity = "identity";
     private const string Meetups = "meetups";
+    private const string Auction = "auction";
     private const string IdentityProto = "identity-proto";
     private const string IdentityBuild = "identity-build";
+    private const string AuctionBuild = "auction-build";
     private const string GrpcEndpoint = "grpc";
 
     // Узел сборки заканчивается одним из трёх состояний. Ждать только Finished
@@ -61,12 +69,14 @@ public sealed class ContourHost : IAsyncDisposable
         ContourEndpoints endpoints,
         string maintainerToken,
         string botServiceToken,
+        string? auctionBotServiceToken,
         int seed)
     {
         this.application = application;
         Endpoints = endpoints;
         MaintainerToken = maintainerToken;
         BotServiceToken = botServiceToken;
+        AuctionBotServiceToken = auctionBotServiceToken;
         Seed = seed;
     }
 
@@ -87,24 +97,46 @@ public sealed class ContourHost : IAsyncDisposable
     /// </summary>
     public string BotServiceToken { get; }
 
+    /// <summary>
+    /// Токен вызывающего Auction Bot (ADR-056), только с Auction в составе
+    /// (<see cref="ContourOptions.WithAuction"/>). Auction без полной таблицы
+    /// вызывающих не стартует, а бота в контуре нет — им играет пульт, поэтому
+    /// значение задаётся здесь так же, как токен бота хаба.
+    /// </summary>
+    public string? AuctionBotServiceToken { get; }
+
     /// <summary>Печатается в баннер и переопределяется CONTOUR_SEED: красный воспроизводим.</summary>
     public int Seed { get; }
 
-    public static async Task<ContourHost> StartAsync(CancellationToken cancellationToken = default)
+    public static Task<ContourHost> StartAsync(CancellationToken cancellationToken = default) =>
+        StartAsync(ContourOptions.Default, cancellationToken);
+
+    public static async Task<ContourHost> StartAsync(
+        ContourOptions options,
+        CancellationToken cancellationToken = default)
     {
-        var versions = await Preconditions.VerifyAsync(cancellationToken);
+        var versions = await Preconditions.VerifyAsync(options, cancellationToken);
 
         var seed = ResolveSeed();
         var maintainerToken = $"contour-maintainer-{seed:x8}";
         var botServiceToken = $"contour-bot-{seed:x8}";
+        var auctionBotServiceToken = options.WithAuction ? $"contour-auction-bot-{seed:x8}" : null;
         var started = Stopwatch.StartNew();
 
+        // Auction — по запросу: `--run-services` заменяет список сервисов профиля
+        // целиком, а инфраструктуру — PostgreSQL и NATS — профиль `hub` даёт и так.
+        var services = options.WithAuction ? $"{Identity},{Meetups},{Auction}" : $"{Identity},{Meetups}";
+
         var builder = await DistributedApplicationTestingBuilder.CreateAsync<Projects.AppHost>(
-            ["--profile", "hub", "--run-services", $"{Identity},{Meetups}"],
+            ["--profile", "hub", "--run-services", services],
             cancellationToken);
 
         builder.Configuration["Parameters:identity-maintainer-token"] = maintainerToken;
         builder.Configuration["Parameters:hub-bot-service-token"] = botServiceToken;
+        if (auctionBotServiceToken is not null)
+        {
+            builder.Configuration["Parameters:auction-bot-service-token"] = auctionBotServiceToken;
+        }
 
         DetachDataVolume(builder);
 
@@ -125,13 +157,30 @@ public sealed class ContourHost : IAsyncDisposable
             await WaitForHealthyAsync(notifications, Identity, IdentityReady, cancellationToken);
             await WaitForHealthyAsync(notifications, Meetups, MeetupsReady, cancellationToken);
 
+            Uri? auctionGrpcUrl = null;
+            if (options.WithAuction)
+            {
+                // Сборка sbt ждётся отдельно по той же причине, что узлы Identity:
+                // иначе упавший `auction-classpath` виден как таймаут готовности Auction.
+                await WaitForBuildNodeAsync(notifications, AuctionBuild, AuctionBuildDone, cancellationToken);
+                await WaitForHealthyAsync(notifications, Auction, AuctionReady, cancellationToken);
+                auctionGrpcUrl = application.GetEndpoint(Auction, GrpcEndpoint);
+            }
+
             var endpoints = new ContourEndpoints(
                 application.GetEndpoint(Identity, GrpcEndpoint),
-                application.GetEndpoint(Meetups, GrpcEndpoint));
+                application.GetEndpoint(Meetups, GrpcEndpoint),
+                auctionGrpcUrl);
 
             PrintBanner(versions, seed, endpoints, started.Elapsed);
 
-            return new ContourHost(application, endpoints, maintainerToken, botServiceToken, seed);
+            return new ContourHost(
+                application,
+                endpoints,
+                maintainerToken,
+                botServiceToken,
+                auctionBotServiceToken,
+                seed);
         }
         catch
         {
@@ -261,7 +310,7 @@ public sealed class ContourHost : IAsyncDisposable
             throw new ContourNotReady(
                 $"{what}: не уложилось в {limit.TotalSeconds:0} с. " +
                 "Вывод ресурсов — выше в этом же логе, категория AppHost.Resources.*; " +
-                "первым делом смотри узлы сборки Identity.");
+                "первым делом смотри узлы сборки: identity-proto, identity-build, auction-build.");
         }
         catch (ContourFailure)
         {
@@ -288,6 +337,11 @@ public sealed class ContourHost : IAsyncDisposable
             .AppendLine($"  seed      {seed} (CONTOUR_SEED to reproduce)")
             .AppendLine($"  {ContourEndpoints.IdentityVariable}  {endpoints.IdentityGrpcUrl}")
             .AppendLine($"  {ContourEndpoints.MeetupsVariable}   {endpoints.MeetupsGrpcUrl}");
+
+        if (endpoints.AuctionGrpcUrl is not null)
+        {
+            text.AppendLine($"  {ContourEndpoints.AuctionVariable}   {endpoints.AuctionGrpcUrl}");
+        }
 
         foreach (var (tool, version) in versions.OrderBy(pair => pair.Key, StringComparer.Ordinal))
         {

@@ -13,6 +13,11 @@ using Contour.Environment;
 //   contour-host -- npm test
 //   contour-host --env-file .contour.env -- npm test
 //   contour-host --env-file .contour.env          (держит среду до Ctrl+C)
+//   contour-host --with-auction -- npm --prefix tests/contour/bot-wire/console run console
+//
+// `--with-auction` добавляет в состав Auction со своей базой (ContourOptions):
+// его просит пульт провода с ботом аукциона, а дымовой набор и провод бота
+// хаба идут без него.
 
 // 130 — конвенция оболочки для «прервано по SIGINT»; отличает Ctrl+C от
 // настоящего отказа дочерней команды.
@@ -20,7 +25,7 @@ const int Interrupted = 130;
 
 try
 {
-    var (envFile, command) = ParseArguments(args);
+    var (envFile, options, command) = ParseArguments(args);
 
     using var stopping = new CancellationTokenSource();
     Console.CancelKeyPress += (_, eventArgs) =>
@@ -29,7 +34,7 @@ try
         stopping.Cancel();
     };
 
-    await using var contour = await ContourHost.StartAsync(cancellationToken: stopping.Token);
+    await using var contour = await ContourHost.StartAsync(options, stopping.Token);
     var variables = ConsumerEnvironment.Of(contour);
 
     if (envFile is not null)
@@ -133,9 +138,10 @@ static ProcessStartInfo Launch(IReadOnlyList<string> command)
     return info;
 }
 
-static (string? EnvFile, IReadOnlyList<string> Command) ParseArguments(string[] args)
+static (string? EnvFile, ContourOptions Options, IReadOnlyList<string> Command) ParseArguments(string[] args)
 {
     string? envFile = System.Environment.GetEnvironmentVariable("CONTOUR_ENV_FILE");
+    var options = ContourOptions.Default;
     var command = new List<string>();
 
     for (var index = 0; index < args.Length; index++)
@@ -151,16 +157,20 @@ static (string? EnvFile, IReadOnlyList<string> Command) ParseArguments(string[] 
             case "--env-file":
                 throw new ArgumentException("после --env-file требуется путь к файлу");
 
+            case "--with-auction":
+                options = options with { WithAuction = true };
+                break;
+
             case "--":
                 command.AddRange(args.Skip(index + 1));
-                return (envFile, command);
+                return (envFile, options, command);
 
             default:
                 throw new ArgumentException(
                     $"неизвестный аргумент '{args[index]}'. " +
-                    "Использование: contour-host [--env-file <path>] [-- <команда>]");
+                    "Использование: contour-host [--env-file <path>] [--with-auction] [-- <команда>]");
         }
     }
 
-    return (envFile, command);
+    return (envFile, options, command);
 }

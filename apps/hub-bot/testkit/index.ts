@@ -22,6 +22,8 @@ export {
   type ButtonView,
   meetupIdFromStartLink,
   type Person,
+  type PhotoVariant,
+  photoVariants,
   type ScreenView,
   startConversation,
 } from "./conversation.js";
