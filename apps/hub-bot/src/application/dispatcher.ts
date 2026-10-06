@@ -1,7 +1,12 @@
-import type { LotAdministration, MeetupAuctions } from "../auction/port.js";
+import type {
+  AuctionConsoles,
+  LotAdministration,
+  MeetupAuctions,
+} from "../auction/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { rpcMeta } from "../rpc-metadata.js";
+import { createAuctionConsole } from "./auction-console.js";
 import { createBroadcasts } from "./broadcasts.js";
 import { createLotForm } from "./lot-form.js";
 import { createMeetupAuction } from "./meetup-auction.js";
@@ -21,8 +26,24 @@ export function createDispatcher(
   today?: CommunityToday,
   auctions?: MeetupAuctions,
   lots?: LotAdministration,
+  // Пульт аукциона (PER-320): сроки недели вводятся по времени сообщества, а
+  // Auction принимает мгновения, поэтому пульту нужен пояс.
+  consoles?: {
+    auctions: AuctionConsoles;
+    timeZone: string;
+    // Часы бота; тест их подменяет.
+    now?: () => Date;
+  },
 ): Dispatcher {
   const lotForm = lots === undefined ? undefined : createLotForm(lots);
+  const auctionConsole =
+    consoles === undefined
+      ? undefined
+      : createAuctionConsole(
+          consoles.auctions,
+          consoles.timeZone,
+          consoles.now,
+        );
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -185,6 +206,16 @@ export function createDispatcher(
           return lotForm === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotForm(request);
+        case "view-auction-console":
+        case "ask-auction-week":
+        case "prepare-auction-week-start":
+        case "schedule-auction-week":
+        case "set-auction-final":
+        case "start-auction-week":
+        case "mark-auction-finalist":
+          return auctionConsole === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : auctionConsole(request);
         case "send-broadcast":
           return broadcasts === undefined
             ? { kind: "rejected", reason: "notifications-not-configured" }

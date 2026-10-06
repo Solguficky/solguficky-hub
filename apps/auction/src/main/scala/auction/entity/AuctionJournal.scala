@@ -24,12 +24,16 @@ final case class StoredMixedClosing(onlineByDeadline: Boolean)
 /** `kind` — `ByAuctioneer`, `ByDeadline` или `Mixed`; секция `mixed` заполнена ровно у последнего. */
 final case class StoredClosingPolicy(kind: String, mixed: Option[StoredMixedClosing])
 
-/** Payload `AuctionScheduled` и конфигурация в snapshot. `lotDefaults` — та же форма, что конфигурация лота. */
+/**
+ * Payload `AuctionScheduled` и конфигурация в snapshot. `lotDefaults` — та же форма, что конфигурация лота; пусто,
+ * когда администратор их не задал (дополнение ADR-047 от 2026-10-06). Строка, записанная до этого, несёт их всегда и
+ * читается так же.
+ */
 final case class StoredAuctionConfig(
     onlinePhase: Option[StoredOnlinePhase],
     finalBlocks: Int,
     closingPolicy: StoredClosingPolicy,
-    lotDefaults: StoredConfig
+    lotDefaults: Option[StoredConfig]
 )
 
 /**
@@ -192,7 +196,7 @@ object AuctionJournal {
         case ClosingPolicy.Mixed(onlineByDeadline) =>
           StoredClosingPolicy("Mixed", Some(StoredMixedClosing(onlineByDeadline)))
       },
-      lotDefaults = LotJournal.storeConfig(config.lotDefaults)
+      lotDefaults = config.lotDefaults.map(LotJournal.storeConfig)
     )
 
   /** Конфигурация восстанавливается через ту же проверку, что и при планировании: журнал `ConfigInvalid` не обходит. */
@@ -208,7 +212,7 @@ object AuctionJournal {
         stored.onlinePhase.map(phase => OnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots)),
         stored.finalBlocks,
         policy,
-        LotJournal.restoreConfig(stored.lotDefaults)
+        stored.lotDefaults.map(LotJournal.restoreConfig)
       )
       .fold(invalid => corrupted(s"auction config violates $invalid"), config => config)
   }

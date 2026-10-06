@@ -1,0 +1,23 @@
+{
+  "eventId": "0190f2a0-0000-7000-8000-000000000001",
+  "transactionId": "0190f2a0-0000-7000-8000-000000000002",
+  "opId": "00000000-0000-0003-0000-000000000004",
+  "auctionId": "00000000-0000-0004-0000-000000000001",
+  "occurredAt": "2026-10-01T09:00:00Z",
+  "actor": {
+    "kind": "Scheduler",
+    "id": null
+  },
+  "event": {
+    "kind": "LotUnmarkedForFinal",
+    "lotOpened": null,
+    "bidPlaced": null,
+    "lotScheduled": null,
+    "proxyLimitSet": null,
+    "proxyLimitWithdrawn": null,
+    "lotSold": null,
+    "lotUnsold": null,
+    "deadlineExtended": null,
+    "lotHeldForFinal": null
+  }
+}

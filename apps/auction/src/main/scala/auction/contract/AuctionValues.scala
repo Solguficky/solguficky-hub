@@ -18,7 +18,7 @@ object AuctionValues {
       },
       finalBlocks = config.finalBlocks,
       closingPolicy = Some(closingPolicy(config.closingPolicy)),
-      lotDefaults = Some(LotValues.defaults(config.lotDefaults))
+      lotDefaults = config.lotDefaults.map(LotValues.defaults)
     )
 
   private def closingPolicy(policy: ClosingPolicy): model.ClosingPolicy =

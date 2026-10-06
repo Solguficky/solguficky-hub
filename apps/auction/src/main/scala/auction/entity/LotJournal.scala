@@ -327,11 +327,12 @@ object LotJournal {
       case LotEvent.LotHeldForFinal(at) =>
         StoredEvent.of("LotHeldForFinal").copy(lotHeldForFinal = Some(StoredLotHeldForFinal(at)))
       case LotEvent.LotResumed => StoredEvent.of("LotResumed")
+      case LotEvent.LotUnmarkedForFinal => StoredEvent.of("LotUnmarkedForFinal")
     }
 
   /**
-   * Ровно одна секция, и та, что названа `kind`; у `LotDrafted`, `LotMarkedForFinal` и `LotResumed` — ни одной. Иначе
-   * строка испорчена.
+   * Ровно одна секция, и та, что названа `kind`; у `LotDrafted`, `LotMarkedForFinal`, `LotUnmarkedForFinal` и
+   * `LotResumed` — ни одной. Иначе строка испорчена.
    */
   private def restoreEvent(stored: StoredEvent, auction: Option[UUID]): LotEvent = {
     val sections = List(
@@ -391,6 +392,7 @@ object LotJournal {
       case ("LotMarkedForFinal", 0) => LotEvent.LotMarkedForFinal
       case ("LotHeldForFinal", 1) => stored.lotHeldForFinal.fold(mismatch)(held => LotEvent.LotHeldForFinal(held.at))
       case ("LotResumed", 0) => LotEvent.LotResumed
+      case ("LotUnmarkedForFinal", 0) => LotEvent.LotUnmarkedForFinal
       case _ => mismatch
     }
   }

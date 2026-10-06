@@ -19,13 +19,13 @@ import "auction/v1/auction.proto";
 //
 // Only public facts are published. Proxy limits are private to their owner, and
 // the selection of a lot for the final stays a working choice of the organizer
-// until the lineup is frozen, so ProxyLimitSet, ProxyLimitWithdrawn and
-// LotMarkedForFinal have no occasion here, and the lot state carries neither
-// limits nor the final mark. The auction records that choice too - a finalist
-// confirmed or dropped - so FinalistConfirmed and FinalistDropped have no
-// occasion here either, and the auction state names no finalist before the
-// lineup is frozen. The fulfillment method the winner chooses for an invoice
-// has no subscriber on the bus, so FulfillmentChosen has no occasion here and
+// until the lineup is frozen, so ProxyLimitSet, ProxyLimitWithdrawn,
+// LotMarkedForFinal and LotUnmarkedForFinal have no occasion here, and the lot
+// state carries neither limits nor the final mark. FinalistConfirmed and
+// FinalistDropped, the side of the auction in that choice, have no occasion here
+// either, and the auction state names no finalist before the lineup is frozen.
+// The fulfillment method the winner chooses for an invoice has no subscriber on
+// the bus, so FulfillmentChosen has no occasion here and
 // the invoice state does not carry the method: the reads of the service do.
 
 // A recorded public fact about one lot: why it changed and what is true about it now.
@@ -80,8 +80,10 @@ message LotState {
   // The version is a value of the envelope and is not repeated here: two copies
   // of one number can disagree. Numbers 5 and 6 carry values LotSnapshot computes
   // for one viewer or by a rule, which a fact on the bus does not carry. Number 7
-  // is the catalog card, which is state outside the journal, not a fact.
-  reserved 4, 5, 6, 7;
+  // is the catalog card, which is state outside the journal, not a fact. Number
+  // 15 is the bid count of the read model: a consumer of the bus counts the
+  // bid_placed facts it receives.
+  reserved 4, 5, 6, 7, 15;
 
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 1;

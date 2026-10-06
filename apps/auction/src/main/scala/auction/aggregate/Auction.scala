@@ -6,11 +6,13 @@ import auction.lot.AuctionId
 import auction.lot.CurrencyCode
 import auction.lot.LotConfig
 import auction.lot.LotConfigInput
+import auction.lot.MarkForFinal
 import auction.lot.Money
 import auction.lot.OpId
 import auction.lot.ScheduleLot
 import auction.lot.ScheduleLotRejected
 import auction.lot.StepPolicyInput
+import auction.lot.UnmarkForFinal
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -52,6 +54,15 @@ final case class StartPrebidding(opId: OpId)
  * же `op_id`. События аукцион на неё не пишет: условия торгов живут только в журнале лота.
  */
 final case class ScheduleAuctionLot(lot: LotId, startingPrice: Money, stepPolicy: StepPolicyInput, opId: OpId)
+
+/**
+ * Выбор организатора о финалисте (ADR-047, дополнение 2026-10-06): отметить лот реестра для финала или снять отметку.
+ * Как и у [[ScheduleAuctionLot]], решение аукциона — команда лоту с тем же `op_id`, а событие пишет только лот: отметка
+ * живёт в его журнале, и второго источника о финалисте у аукциона нет.
+ */
+final case class SelectForFinal(lot: LotId, opId: OpId)
+
+final case class DeselectForFinal(lot: LotId, opId: OpId)
 
 /**
  * Условия торгов, которые лоту задаёт не администратор, а аукцион: валюта, анти-снайп и признак прокси (ADR-047,
@@ -122,6 +133,21 @@ enum ScheduleAuctionLotRejected {
   case LotsFrozen
   case LotNotInAuction
   case ByLot(rejected: ScheduleLotRejected)
+}
+
+/**
+ * Отказы выбора финалиста: аукциона нет, онлайн-торги не идут, лота нет в реестре, отбирать некуда — это решает
+ * аукцион, — либо отказал сам лот (`R` — отказы его команды). `SelectionNotApplicable` — у конфигурации нет финала или
+ * лоты не получают дедлайна: отмеченный лот удержался бы навсегда или не удержался бы вовсе (RFC-011, Т-45). Снятию
+ * отметки он не отвечает: снять её можно всегда, пока не наступил дедлайн. Наступил ли дедлайн, судит лот: аукцион
+ * остаётся в `Prebidding` и после общего дедлайна, пока перерыва нет (PER-334).
+ */
+enum FinalChoiceRejected[+R] {
+  case AuctionNotFound extends FinalChoiceRejected[Nothing]
+  case NotInPrebidding extends FinalChoiceRejected[Nothing]
+  case LotNotInAuction extends FinalChoiceRejected[Nothing]
+  case SelectionNotApplicable extends FinalChoiceRejected[Nothing]
+  case ByLot(rejected: R)
 }
 
 /**
@@ -284,14 +310,41 @@ object Auction {
    * Условия торгов лоту реестра. Решение — команда лоту, а не событие аукциона, поэтому окна `seen` здесь нет: повтор
    * `op_id` узнаёт лот. Состояние проверяется раньше реестра, как у `RemoveLot`: после старта торгов ответ —
    * `LotsFrozen` на любой лот, и условия лота, которому аукцион уже шлёт `OpenLot`, не меняются. Незаданные условия —
-   * из `lotDefaults` запланированного аукциона, а в `Draft` — умолчания платформы.
+   * из `lotDefaults` запланированного аукциона, а в `Draft` и без `lotDefaults` — умолчания платформы.
    */
   def decide(auction: Auction, command: ScheduleAuctionLot): Either[ScheduleAuctionLotRejected, ScheduleLot] =
     auction.state match {
       case AuctionState.Initial => Left(ScheduleAuctionLotRejected.AuctionNotFound)
       case AuctionState.Prebidding(_, _) => Left(ScheduleAuctionLotRejected.LotsFrozen)
       case AuctionState.Draft => planned(auction, command, LotTerms.platform)
-      case AuctionState.Scheduled(config) => planned(auction, command, LotTerms.of(config.lotDefaults))
+      case AuctionState.Scheduled(config) =>
+        planned(auction, command, config.lotDefaults.fold(LotTerms.platform)(LotTerms.of))
+    }
+
+  /**
+   * Отметка лота реестра для финала. Окна `seen` нет, как у `ScheduleAuctionLot`: повтор `op_id` узнаёт лот. Состояние
+   * проверяется раньше реестра: до старта торгов отмечать нечего, и ответ — `NotInPrebidding` на любой лот. Лот реестра
+   * аукциона без финала или без дедлайна лотов — `SelectionNotApplicable`.
+   */
+  def decide(auction: Auction, command: SelectForFinal): Either[FinalChoiceRejected[Nothing], MarkForFinal] =
+    choice(auction, command.lot)(MarkForFinal(command.opId)).flatMap { mark =>
+      auction.state match {
+        case AuctionState.Prebidding(config, _) if config.finalBlocks == 0 || config.lotDeadline.isEmpty =>
+          Left(FinalChoiceRejected.SelectionNotApplicable)
+        case _ => Right(mark)
+      }
+    }
+
+  /** Снятие отметки — по тем же правилам аукциона, что и отметка; остальное решает лот. */
+  def decide(auction: Auction, command: DeselectForFinal): Either[FinalChoiceRejected[Nothing], UnmarkForFinal] =
+    choice(auction, command.lot)(UnmarkForFinal(command.opId))
+
+  private def choice[C](auction: Auction, lot: LotId)(command: C): Either[FinalChoiceRejected[Nothing], C] =
+    auction.state match {
+      case AuctionState.Initial => Left(FinalChoiceRejected.AuctionNotFound)
+      case AuctionState.Draft | AuctionState.Scheduled(_) => Left(FinalChoiceRejected.NotInPrebidding)
+      case AuctionState.Prebidding(_, _) =>
+        if (auction.lots.contains(lot)) Right(command) else Left(FinalChoiceRejected.LotNotInAuction)
     }
 
   private def planned(

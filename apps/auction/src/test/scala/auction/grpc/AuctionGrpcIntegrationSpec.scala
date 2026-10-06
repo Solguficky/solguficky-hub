@@ -22,6 +22,7 @@ import auction.catalog.TestImages
 import auction.v1.auction.AntiSnipe as AntiSnipeMessage
 import auction.v1.auction.AuctionConfig as AuctionConfigMessage
 import auction.v1.auction.ClosingByDeadline
+import auction.v1.auction.MixedClosing
 import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
 import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.Money as MoneyMessage
@@ -266,11 +267,15 @@ final class AuctionGrpcIntegrationSpec
     )
 
   /** Онлайн-неделя, которая закрывает лоты общим дедлайном: умолчания лота — рубли, анти-снайп по две минуты. */
-  private def auctionConfig(opensAt: String, closesAt: String): AuctionConfigMessage =
+  /** Без финала лоты закрываются по дедлайну; с финалом онлайн-сторона — тоже по дедлайну, а финал ведёт ведущий. */
+  private def auctionConfig(opensAt: String, closesAt: String, withFinal: Boolean = false): AuctionConfigMessage =
     AuctionConfigMessage(
       Some(OnlinePhaseMessage(opensAt, Some(closesAt), closesLots = true)),
-      0,
-      Some(ClosingPolicyMessage().withByDeadline(ClosingByDeadline())),
+      if (withFinal) 1 else 0,
+      Some(
+        if (withFinal) ClosingPolicyMessage().withMixed(MixedClosing(onlineByDeadline = true))
+        else ClosingPolicyMessage().withByDeadline(ClosingByDeadline())
+      ),
       Some(
         LotDefaultsMessage(
           "RUB",
@@ -373,7 +378,7 @@ final class AuctionGrpcIntegrationSpec
           Some(administrator),
           auction,
           newId(),
-          Some(auctionConfig(closesAt.minus(31, ChronoUnit.DAYS).toString, closesAt.toString))
+          Some(auctionConfig(closesAt.minus(31, ChronoUnit.DAYS).toString, closesAt.toString, withFinal = true))
         )
         asHubBot(node.client.scheduleAuction()).invoke(scheduled).futureValue.outcome.isAccepted shouldBe true
         asHubBot(node.client.scheduleLot()).invoke(schedule(auction, lot)).futureValue.outcome.isAccepted shouldBe true
@@ -393,6 +398,26 @@ final class AuctionGrpcIntegrationSpec
           snapshot.getTrading.deadline shouldBe Some(closesAt.toString)
           snapshot.getTrading.currentPrice shouldBe Some(MoneyMessage(500000, "RUB"))
         }
+        // Отметка финала доходит до лота через аукцион, и видит её только пульт администратора (PER-320).
+        def console() =
+          asHubBot(node.client.getAuctionConsole())
+            .invoke(wire.GetAuctionConsoleRequest(Some(administrator), auction))
+            .futureValue
+            .getConsole
+            .lots
+            .map(entry => (entry.getLot.id, entry.markedForFinal, entry.overdue))
+        asHubBot(node.client.selectForFinal())
+          .invoke(wire.SelectForFinalRequest(Some(administrator), auction, lot, newId()))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        eventually(console() shouldBe Seq((lot, true, false)))
+        asHubBot(node.client.deselectForFinal())
+          .invoke(wire.DeselectForFinalRequest(Some(administrator), auction, lot, newId()))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        eventually(console() shouldBe Seq((lot, false, false)))
     }
 
     "refuses scheduling and opening from the auction bot at the boundary, before meetups and the auction" in withNode {
@@ -407,6 +432,18 @@ final class AuctionGrpcIntegrationSpec
             .startPrebidding()
             .addHeader("authorization", "Bearer auction")
             .invoke(wire.StartPrebiddingRequest(Some(administrator), auction, newId()))
+        ) shouldBe Status.Code.UNAUTHENTICATED
+        statusOf(
+          node.client
+            .getAuctionConsole()
+            .addHeader("authorization", "Bearer auction")
+            .invoke(wire.GetAuctionConsoleRequest(Some(administrator), auction))
+        ) shouldBe Status.Code.UNAUTHENTICATED
+        statusOf(
+          node.client
+            .selectForFinal()
+            .addHeader("authorization", "Bearer auction")
+            .invoke(wire.SelectForFinalRequest(Some(administrator), auction, newId(), newId()))
         ) shouldBe Status.Code.UNAUTHENTICATED
         node.authority.asked shouldBe asked
         auctionState(node, auction).state shouldBe AuctionState.Draft
@@ -631,11 +668,12 @@ final class AuctionGrpcIntegrationSpec
         snapshot.getTrading.currentPrice shouldBe Some(MoneyMessage(150, "RUB"))
         snapshot.getTrading.leaderId shouldBe Some(bidder.identityId)
         snapshot.nextPrice shouldBe Some(MoneyMessage(160, "RUB"))
+        snapshot.bidCount shouldBe 1
       }
       val listed = asHubBot(node.client.listAuctionLots())
         .invoke(wire.ListAuctionLotsRequest(Some(bidder), auction.value.toString))
         .futureValue
-      listed.lots.map(_.id) shouldBe Seq(lotId.toString)
+      listed.lots.map(lot => (lot.id, lot.bidCount)) shouldBe Seq((lotId.toString, 1L))
       listed.nextPageToken shouldBe ""
     }
 

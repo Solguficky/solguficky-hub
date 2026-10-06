@@ -82,11 +82,18 @@ object LotEntity {
   final case class Close(command: CloseLot, initiator: Initiator, replyTo: ActorRef[Either[CloseLotRejected, Envelope]])
       extends Command
 
-  /** Отметка для финала; шлёт аукцион по выбору организатора (PER-334). */
+  /** Отметка для финала; шлёт аукцион по выбору организатора (PER-320). */
   final case class MarkFinal(
       command: MarkForFinal,
       initiator: Initiator,
       replyTo: ActorRef[Either[MarkForFinalRejected, Envelope]]
+  ) extends Command
+
+  /** Снятие отметки для финала; шлёт аукцион по выбору организатора (PER-320). */
+  final case class UnmarkFinal(
+      command: UnmarkForFinal,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[UnmarkForFinalRejected, Envelope]]
   ) extends Command
 
   /** Возврат удержанного лота в торги живого финала; шлёт аукцион (PER-334). */
@@ -152,6 +159,8 @@ object LotEntity {
         record(lot, Lot.decide(lot, close, now), close.opId, initiator, replyTo, now, newId)
       case MarkFinal(mark, initiator, replyTo) =>
         record(lot, Lot.decide(lot, mark, now), mark.opId, initiator, replyTo, now, newId)
+      case UnmarkFinal(unmark, initiator, replyTo) =>
+        record(lot, Lot.decide(lot, unmark, now), unmark.opId, initiator, replyTo, now, newId)
       case Resume(resume, initiator, replyTo) =>
         record(lot, Lot.decide(lot, resume), resume.opId, initiator, replyTo, now, newId)
       case Get(replyTo) =>

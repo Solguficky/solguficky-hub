@@ -69,7 +69,9 @@ object LotFacts {
         Some("lot_held_for_final" -> bus.LotEvent.Occasion.LotHeldForFinal(bus.LotHeldForFinal()))
       case LotEvent.LotResumed => Some("lot_resumed" -> bus.LotEvent.Occasion.LotResumed(bus.LotResumed()))
       // Отметка — рабочий выбор организатора до заморозки состава: публичным факт становится только удержание.
-      case LotEvent.ProxyLimitSet(_, _) | LotEvent.ProxyLimitWithdrawn(_) | LotEvent.LotMarkedForFinal => None
+      case LotEvent.ProxyLimitSet(_, _) | LotEvent.ProxyLimitWithdrawn(_) | LotEvent.LotMarkedForFinal |
+          LotEvent.LotUnmarkedForFinal =>
+        None
     }
 
   /** Публичное состояние лота: без прокси-лимитов и без того, что снимок ответа считает для одного смотрящего. */

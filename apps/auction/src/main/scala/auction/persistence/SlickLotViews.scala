@@ -22,8 +22,8 @@ import scala.concurrent.Future
 
 /**
  * Read model лота через пул плагина журнала и plain SQL, как каталог. Карточка присоединяется из `lot_catalog` тем же
- * запросом: снимок торгов и карточка приходят из одного чтения. Байты изображения снимок не выбирает — только версию;
- * их читает отдельный `image`.
+ * запросом, а число ставок считается по `lot_bid`: снимок торгов, карточка и счёт приходят из одного чтения. Байты
+ * изображения снимок не выбирает — только версию; их читает отдельный `image`.
  */
 final class SlickLotViews(database: Database, json: LotViewJson)(using ExecutionContext) extends LotViews {
 
@@ -37,7 +37,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
         Some(LotCard(LotId(lotId), restored(lotId, title), description, image.map(ImageVersion(_))))
       case _ => None
     }
-    LotSnapshotView(lotId, auctionId, version, lot, card)
+    LotSnapshotView(lotId, auctionId, version, lot, card, row.nextLong())
   }
 
   private given GetResult[LotImageView] = GetResult { row =>
@@ -47,7 +47,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
   def find(lotId: UUID): Future[Option[LotSnapshotView]] =
     database.run(
       sql"""SELECT v.lot_id::text, v.auction_id::text, v.version, v.state::text, c.title, c.description,
-                   c.image_version
+                   c.image_version, (SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id)
             FROM lot_view v LEFT JOIN lot_catalog c ON c.lot_id = v.lot_id
             WHERE v.lot_id = ${lotId.toString}::uuid""".as[LotSnapshotView].headOption
     )
@@ -57,7 +57,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
     val from = after.getOrElse(new UUID(0L, 0L)).toString
     database.run(
       sql"""SELECT v.lot_id::text, v.auction_id::text, v.version, v.state::text, c.title, c.description,
-                   c.image_version
+                   c.image_version, (SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id)
             FROM lot_view v LEFT JOIN lot_catalog c ON c.lot_id = v.lot_id
             WHERE v.auction_id = ${auctionId.toString}::uuid AND v.lot_id > $from::uuid
             ORDER BY v.lot_id LIMIT $limit""".as[LotSnapshotView].map(_.toList)
@@ -68,7 +68,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
     val from = after.getOrElse(new UUID(0L, 0L)).toString
     database.run(
       sql"""SELECT v.lot_id::text, v.auction_id::text, v.version, v.state::text, c.title, c.description,
-                   c.image_version
+                   c.image_version, (SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id)
             FROM auction_lot r JOIN lot_view v ON v.lot_id = r.lot_id
             LEFT JOIN lot_catalog c ON c.lot_id = v.lot_id
             WHERE r.auction_id = ${auctionId.toString}::uuid AND r.lot_id > $from::uuid

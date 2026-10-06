@@ -136,8 +136,9 @@ final class LotJournalSpec
       )
     }
 
-    "keep the stored form of a mark, a hold and a resume equal to their golden files and read them back" in {
+    "keep the stored form of a mark, an unmark, a hold and a resume equal to their golden files and read them back" in {
       keepsGolden("lot-marked-for-final", storedEvent(LotEvent.LotMarkedForFinal, opN = 4))
+      keepsGolden("lot-unmarked-for-final", storedEvent(LotEvent.LotUnmarkedForFinal, opN = 4))
       keepsGolden("lot-held-for-final", storedEvent(heldForFinal, opN = 4))
       keepsGolden("lot-resumed", storedEvent(LotEvent.LotResumed, opN = 4))
     }

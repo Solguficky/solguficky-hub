@@ -115,6 +115,64 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
     }
   }
 
+  "unmarking for the final" should {
+
+    "clear the mark before the deadline, so that the closing by the deadline sells the lot again" in {
+      val (result, journal) = marked.unmark(unmarkForFinal(opN = 2))
+
+      result shouldBe Right(Decision.Accepted(LotEvent.LotUnmarkedForFinal))
+      tradingOf(journal.lot).markedForFinal shouldBe false
+      journal.close(closeLot(opN = 3), deadline)._1 shouldBe
+        Right(Decision.Accepted(LotEvent.LotSold(participant(2), money(500), bid(0), deadline)))
+    }
+
+    "let the organizer mark a lot again under a new op_id after the mark was cleared" in {
+      val (_, unmarked) = marked.unmark(unmarkForFinal(opN = 2))
+
+      val (result, again) = unmarked.mark(markForFinal(opN = 3))
+
+      result shouldBe Right(Decision.Accepted(LotEvent.LotMarkedForFinal))
+      again.close(closeLot(opN = 4), deadline)._1 shouldBe Right(Decision.Accepted(LotEvent.LotHeldForFinal(deadline)))
+    }
+
+    "judge the race of an unmark and the deadline by the same server time as the mark" in {
+      forAll(Gen.choose(-86400L, 86400L)) { offset =>
+        val result = Lot.decide(marked.lot, unmarkForFinal(opN = 2), deadline.plusSeconds(offset))
+        if (offset < 0) result shouldBe Right(Decision.Accepted(LotEvent.LotUnmarkedForFinal))
+        else result shouldBe Left(UnmarkForFinalRejected.DeadlinePassed)
+      }
+    }
+
+    "refuse to take a held lot out of the final: its deadline has passed" in {
+      val (result, after) = holding.unmark(unmarkForFinal(opN = 3), deadline.plusSeconds(60))
+
+      result shouldBe Left(UnmarkForFinalRejected.DeadlinePassed)
+      after shouldBe holding
+    }
+
+    "refuse to unmark a lot that is not marked" in {
+      Lot.decide(trading(price = 100), unmarkForFinal(opN = 1), calm) shouldBe
+        Left(UnmarkForFinalRejected.NotMarkedForFinal)
+    }
+
+    "refuse to unmark a lot that is not trading" in {
+      Lot.decide(Lot.initial, unmarkForFinal(opN = 1), calm) shouldBe Left(UnmarkForFinalRejected.LotNotFound)
+      List(drafted, scheduled(), sold(price = 100, winner = participant(1))).foreach { lot =>
+        Lot.decide(lot, unmarkForFinal(opN = 1), calm) shouldBe Left(UnmarkForFinalRejected.LotNotOpen)
+      }
+      Lot.decide(trading(price = 100, phase = Phase.Live, closesAt = None), unmarkForFinal(opN = 1), calm) shouldBe
+        Left(UnmarkForFinalRejected.NotInOnlinePhase)
+    }
+
+    "answer a repeated unmark with the original response and refuse the op_id of another command" in {
+      val (_, unmarked) = marked.unmark(unmarkForFinal(opN = 2))
+
+      Lot.decide(unmarked.lot, unmarkForFinal(opN = 2), deadline.plusSeconds(60)) shouldBe
+        Right(Decision.Repeated(unmarked.entries.last))
+      Lot.decide(unmarked.lot, unmarkForFinal(opN = 1), calm) shouldBe Left(UnmarkForFinalRejected.OpIdTaken)
+    }
+  }
+
   "holding for the final" should {
 
     "hold a marked lot at its deadline with the price, leader, limits and extensions it had, without a sale (Т-35)" in {

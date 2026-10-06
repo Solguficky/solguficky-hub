@@ -19,7 +19,7 @@ object AuctionFixtures {
       onlinePhase: Option[OnlinePhase] = Some(week),
       finalBlocks: Int = 1,
       closingPolicy: ClosingPolicy = ClosingPolicy.Mixed(onlineByDeadline = true),
-      lotDefaults: LotConfigInput = auction.lot.LotFixtures.configInput()
+      lotDefaults: Option[LotConfigInput] = Some(auction.lot.LotFixtures.configInput())
   ): AuctionConfigInput =
     AuctionConfigInput(onlinePhase, finalBlocks, closingPolicy, lotDefaults)
 

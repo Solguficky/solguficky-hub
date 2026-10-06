@@ -1,0 +1,31 @@
+{
+  "eventId": "0190f2a0-0000-7000-8000-000000000001",
+  "transactionId": "0190f2a0-0000-7000-8000-000000000002",
+  "opId": "00000000-0000-0003-0000-000000000003",
+  "occurredAt": "2026-10-01T09:00:00Z",
+  "actor": {
+    "kind": "Operator",
+    "id": "00000000-0000-0001-0000-000000000001"
+  },
+  "event": {
+    "kind": "AuctionScheduled",
+    "auctionDrafted": null,
+    "lotAdded": null,
+    "lotRemoved": null,
+    "auctionScheduled": {
+      "onlinePhase": {
+        "opensAt": "2026-10-01T18:00:00Z",
+        "closesAt": "2026-10-08T21:00:00Z",
+        "closesLots": true
+      },
+      "finalBlocks": 1,
+      "closingPolicy": {
+        "kind": "Mixed",
+        "mixed": {
+          "onlineByDeadline": true
+        }
+      },
+      "lotDefaults": null
+    }
+  }
+}

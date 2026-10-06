@@ -42,6 +42,51 @@ export function isBeforeDay(value: CommunityDay, today: CommunityDay): boolean {
   return value.day < today.day;
 }
 
+/// Местные дата и время сообщества в мгновение RFC 3339 в UTC — обратный ход
+/// `communityLocalTime` для сервиса, который принимает мгновения, а не местное
+/// время (Auction, PER-320). Смещение пояса берётся дважды: от наивной догадки
+/// и от первого приближения, — так переход часов между ними не сдвигает ответ.
+/// Времени, которого в поясе нет, — часы перевели вперёд — ответа нет:
+/// обратный перевод его не воспроизводит, и подменять его соседним бот не
+/// вправе.
+export function communityInstant(
+  local: MeetupSchedule,
+  timeZone: string,
+): string | undefined {
+  const naive = Date.UTC(
+    local.year,
+    local.month - 1,
+    local.day,
+    local.hours,
+    local.minutes,
+  );
+  const offset = (at: number) => {
+    const shown = communityLocalTime(new Date(at).toISOString(), timeZone);
+    return (
+      Date.UTC(
+        shown.year,
+        shown.month - 1,
+        shown.day,
+        shown.hours,
+        shown.minutes,
+      ) - at
+    );
+  };
+  const first = naive - offset(naive);
+  const instant = naive - offset(first);
+  const back = communityLocalTime(new Date(instant).toISOString(), timeZone);
+  if (
+    back.year !== local.year ||
+    back.month !== local.month ||
+    back.day !== local.day ||
+    back.hours !== local.hours ||
+    back.minutes !== local.minutes
+  ) {
+    return undefined;
+  }
+  return new Date(instant).toISOString().replace(".000Z", "Z");
+}
+
 /// Мгновение RFC 3339 из Meetups в местную дату и время сообщества с точностью
 /// до минуты — тот же вид, в котором момент вводится. Непонятная строка —
 /// нарушение контракта, а не «публикация не назначена»: молча потерянный

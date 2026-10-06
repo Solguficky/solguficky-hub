@@ -75,6 +75,8 @@ object LotFixtures {
 
   def markForFinal(opN: Int): MarkForFinal = MarkForFinal(op(opN))
 
+  def unmarkForFinal(opN: Int): UnmarkForFinal = UnmarkForFinal(op(opN))
+
   def resumeLot(opN: Int): ResumeLot = ResumeLot(op(opN))
 
   /** Лот аукциона `auctionId(1)` в данном состоянии с пустым окном дедупликации. */
@@ -198,6 +200,9 @@ object LotFixtures {
       record(command.opId, Lot.decide(lot, command, now))
 
     def mark(command: MarkForFinal, now: Instant = calm): (Either[MarkForFinalRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command, now))
+
+    def unmark(command: UnmarkForFinal, now: Instant = calm): (Either[UnmarkForFinalRejected, Decision], Journal) =
       record(command.opId, Lot.decide(lot, command, now))
 
     def resume(command: ResumeLot): (Either[ResumeLotRejected, Decision], Journal) =

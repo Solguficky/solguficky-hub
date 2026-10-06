@@ -7,10 +7,14 @@ import auction.lot.Envelope
 import auction.lot.Lot
 import auction.lot.LotEvent
 import auction.lot.LotState
+import auction.lot.MarkForFinal
+import auction.lot.MarkForFinalRejected
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.ScheduleLot
 import auction.lot.ScheduleLotRejected
+import auction.lot.UnmarkForFinal
+import auction.lot.UnmarkForFinalRejected
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.util.Timeout
 
@@ -25,8 +29,8 @@ import scala.util.Try
 /**
  * Лоты, какими их видит entity аукциона: вопрос о состоянии, команда открытия, закрытие по дедлайну и условия торгов.
  * Это не [[LotGateway]]: тот — порт транспорта, а `OpenLot` и `CloseLot` шлёт лоту сам аукцион, и межсервисной
- * поверхности у них нет (integration.md, «Auction gRPC»). `ScheduleLot` приходит снаружи, но тоже через аукцион:
- * заморозку условий решает он.
+ * поверхности у них нет (integration.md, «Auction gRPC»). `ScheduleLot`, отметка для финала и её снятие приходят
+ * снаружи, но тоже через аукцион: заморозку условий, фазу торгов и реестр решает он.
  *
  * Неудачное `Future` — ответа нет: ask истёк или шардинг не доставил сообщение. Команда при этом могла быть принята,
  * поэтому аукцион после такого ответа снова спрашивает состояние, а не считает лот закрытым.
@@ -44,6 +48,11 @@ trait AuctionLots {
    * отдавший команду: в отличие от открытия и закрытия, без человека она не повторяется.
    */
   def schedule(lot: LotId, command: ScheduleLot, initiator: Initiator): Future[Either[ScheduleLotRejected, Unit]]
+
+  /** Отметка для финала по выбору администратора (ADR-047, дополнение 2026-10-06); инициатор — он, как у `schedule`. */
+  def mark(lot: LotId, command: MarkForFinal, initiator: Initiator): Future[Either[MarkForFinalRejected, Unit]]
+
+  def unmark(lot: LotId, command: UnmarkForFinal, initiator: Initiator): Future[Either[UnmarkForFinalRejected, Unit]]
 }
 
 object AuctionLots {
@@ -76,6 +85,21 @@ object AuctionLots {
       def schedule(lot: LotId, command: ScheduleLot, initiator: Initiator): Future[Either[ScheduleLotRejected, Unit]] =
         entity(lot)
           .ask[Either[ScheduleLotRejected, Envelope]](LotEntity.Plan(command, initiator, _))
+          .map(_.map(_ => ()))(using ExecutionContext.parasitic)
+
+      // Как у `schedule`: принятый ответ — всегда конверт своей команды, чужой `op_id` лот отклоняет `OpIdTaken`.
+      def mark(lot: LotId, command: MarkForFinal, initiator: Initiator): Future[Either[MarkForFinalRejected, Unit]] =
+        entity(lot)
+          .ask[Either[MarkForFinalRejected, Envelope]](LotEntity.MarkFinal(command, initiator, _))
+          .map(_.map(_ => ()))(using ExecutionContext.parasitic)
+
+      def unmark(
+          lot: LotId,
+          command: UnmarkForFinal,
+          initiator: Initiator
+      ): Future[Either[UnmarkForFinalRejected, Unit]] =
+        entity(lot)
+          .ask[Either[UnmarkForFinalRejected, Envelope]](LotEntity.UnmarkFinal(command, initiator, _))
           .map(_.map(_ => ()))(using ExecutionContext.parasitic)
     }
 

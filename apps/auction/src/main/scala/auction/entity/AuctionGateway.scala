@@ -2,7 +2,9 @@ package auction.entity
 
 import auction.aggregate.*
 import auction.lot.AuctionId
+import auction.lot.MarkForFinalRejected
 import auction.lot.OpId
+import auction.lot.UnmarkForFinalRejected
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.util.Timeout
 
@@ -15,6 +17,9 @@ import scala.concurrent.duration.FiniteDuration
  */
 trait AuctionGateway {
   def inspect(auctionId: AuctionId, opId: OpId): Future[Inspection]
+
+  /** Аукцион целиком, как его знает entity; ничего не пишет. */
+  def get(auctionId: AuctionId): Future[Auction]
 
   def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator): Future[AuctionAnswer]
 
@@ -45,6 +50,19 @@ trait AuctionGateway {
       command: ScheduleAuctionLot,
       initiator: Initiator
   ): Future[Either[ScheduleAuctionLotRejected, Unit]]
+
+  /** Отметка лота реестра для финала. Ответ приходит после ответа лота, как у `scheduleLot`. */
+  def selectForFinal(
+      auctionId: AuctionId,
+      command: SelectForFinal,
+      initiator: Initiator
+  ): Future[Either[FinalChoiceRejected[MarkForFinalRejected], Unit]]
+
+  def deselectForFinal(
+      auctionId: AuctionId,
+      command: DeselectForFinal,
+      initiator: Initiator
+  ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
 }
 
 object AuctionGateway {
@@ -61,6 +79,9 @@ object AuctionGateway {
 
       def inspect(auctionId: AuctionId, opId: OpId): Future[Inspection] =
         entity(auctionId).ask(AuctionEntity.Inspect(opId, _))
+
+      def get(auctionId: AuctionId): Future[Auction] =
+        entity(auctionId).ask(AuctionEntity.Get(_))
 
       def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator): Future[AuctionAnswer] =
         entity(auctionId).ask(AuctionEntity.Draft(command, initiator, _))
@@ -99,5 +120,19 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[ScheduleAuctionLotRejected, Unit]] =
         entity(auctionId).ask(AuctionEntity.PlanLot(command, initiator, _))
+
+      def selectForFinal(
+          auctionId: AuctionId,
+          command: SelectForFinal,
+          initiator: Initiator
+      ): Future[Either[FinalChoiceRejected[MarkForFinalRejected], Unit]] =
+        entity(auctionId).ask(AuctionEntity.Select(command, initiator, _))
+
+      def deselectForFinal(
+          auctionId: AuctionId,
+          command: DeselectForFinal,
+          initiator: Initiator
+      ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]] =
+        entity(auctionId).ask(AuctionEntity.Deselect(command, initiator, _))
     }
 }

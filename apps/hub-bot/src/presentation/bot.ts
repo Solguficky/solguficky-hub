@@ -30,6 +30,7 @@ import {
   utcToday,
 } from "../application/meetup-form.js";
 import type {
+  AuctionWeek,
   BroadcastAudience,
   ExecuteRequest,
   ExecuteResult,
@@ -41,6 +42,7 @@ import type {
   MeetupStateAction,
   Person,
   PublishMomentRetry,
+  WeekAskError,
 } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
 import { type AuctionScreens, viewerOf } from "../auction/port.js";
@@ -133,6 +135,13 @@ import {
   auctionScreen,
   lotPhotoId,
 } from "./screens/auction.js";
+import {
+  consoleMissingText,
+  consoleScreen,
+  finalToast,
+  weekConfirmScreen,
+  weekQuestionText,
+} from "./screens/auction-console.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
   type CommunityView,
@@ -345,7 +354,8 @@ type ProductUseCase =
   | "send_broadcast"
   | "view_auction"
   | "enable_auction"
-  | "manage_lot";
+  | "manage_lot"
+  | "manage_auction";
 // Сбой Auction на ответе формы лота: вопрос остаётся открытым, и тот же ответ
 // можно прислать ещё раз.
 const lotSaveRetryText =
@@ -468,6 +478,14 @@ type PendingAuction = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о сроках недели на пульте аукциона (PER-320). Шаг — аукцион — лежит
+// в кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsoleWeek = {
+  kind: "console-week";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 type PendingInput = HubPendingInput | PendingAuction;
 type HubPendingInput =
   | PendingQuestion
@@ -478,7 +496,8 @@ type HubPendingInput =
   | PendingMaterialInput
   | PendingMaterialTitle
   | PendingBroadcastBody
-  | PendingLot;
+  | PendingLot
+  | PendingConsoleWeek;
 
 type UpdateContext = TracedContext & {
   requestId?: string;
@@ -1023,6 +1042,62 @@ async function handleMessage(
     }
     if (
       replyId !== undefined &&
+      pending?.kind === "console-week" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "manage_auction";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign auction week answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      // Вопрос задаётся только администратору, но старый вопрос остаётся в
+      // чате: отказ приходит до Auction, как у формы лота.
+      if (!isAdministrator(identity.person)) {
+        await answered();
+        outcome = await refuseConsole(ctx, identity.person);
+        return;
+      }
+      // Ключ команды рождается на каждый ответ: в кнопку вопроса он не
+      // помещается, а сроки Auction заменяет целиком, и повтор даёт тот же итог.
+      const result = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "schedule-auction-week",
+        auctionId: pending.auctionId,
+        value: ctx.message.text,
+        opId: createUuidV7(),
+        ...rpcCall(ctx, useCase),
+      });
+      outcome = await renderConsoleResult(ctx, runtime, result, {
+        person: identity.person,
+        questions,
+        replyId,
+      });
+      if (result.kind !== "auction-week-ask") await answered(result);
+      return;
+    }
+    if (
+      replyId !== undefined &&
       pending?.kind === "lot" &&
       pending.question.kind === "image"
     ) {
@@ -1253,7 +1328,8 @@ async function handleMessage(
         pending.kind === "channel-code" ||
         pending.kind === "channel-label" ||
         pending.kind === "publish-moment" ||
-        pending.kind === "lot") &&
+        pending.kind === "lot" ||
+        pending.kind === "console-week") &&
       ctx.message?.text === undefined
     ) {
       useCase =
@@ -1263,9 +1339,11 @@ async function handleMessage(
           ? "manage_community"
           : pending.kind === "lot"
             ? "manage_lot"
-            : pending.kind === "meetup" && pending.mode === "create"
-              ? "create_meetup"
-              : "update_meetup";
+            : pending.kind === "console-week"
+              ? "manage_auction"
+              : pending.kind === "meetup" && pending.mode === "create"
+                ? "create_meetup"
+                : "update_meetup";
       if (ctx.from?.id === pending.telegramUserId) {
         const asked =
           repliedMessage !== undefined && "text" in repliedMessage
@@ -1486,6 +1564,10 @@ async function handleMessage(
       case "lot-form":
       case "lot-ask":
       case "lot-refused":
+      case "auction-console":
+      case "auction-week-ask":
+      case "auction-week-confirm":
+      case "auction-console-refused":
         outcome = {
           level: "error",
           message: "unexpected form result",
@@ -1684,6 +1766,22 @@ async function handleCallback(
       outcome = isAdministrator(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
         : await refuseLotForm(ctx, person);
+      return;
+    }
+    // Пульт аукциона (PER-320): вход видит только администратор, старая
+    // кнопка получает отказ до Auction. Право на чтение и команды решает
+    // Auction у Meetups и отвечает своим отказом.
+    if (
+      action.kind === "console-view" ||
+      action.kind === "console-week" ||
+      action.kind === "console-final" ||
+      action.kind === "console-open" ||
+      action.kind === "console-confirm" ||
+      action.kind === "console-mark"
+    ) {
+      outcome = isAdministrator(person)
+        ? await handleConsoleCallback(ctx, runtime, questions, person, action)
+        : await refuseConsole(ctx, person);
       return;
     }
     if (action.kind === "open-material-file") {
@@ -4624,6 +4722,267 @@ async function refuseLotForm(
   };
 }
 
+// Пульт аукциона администратора (PER-320). Сюда доходит только
+// администратор. Своего состояния у пульта нет: каждое нажатие читает пульт
+// у Auction заново, а ключ открытия недели рождается на подтверждении и едет
+// в его «Да».
+async function handleConsoleCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-view"
+        | "console-week"
+        | "console-final"
+        | "console-open"
+        | "console-confirm"
+        | "console-mark";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const auctionId = tokenToUuid(action.auction);
+  const call = {
+    identity: person,
+    auctionId,
+    ...rpcCall(ctx, useCase),
+  };
+  const render = (result: ExecuteResult, page = 0) =>
+    renderConsoleResult(ctx, runtime, result, {
+      person,
+      questions,
+      page,
+      retry: ctx.callbackQuery?.data,
+    });
+  switch (action.kind) {
+    case "console-view":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-auction-console",
+        }),
+        action.page,
+      );
+    case "console-week":
+      // Можно ли ещё менять сроки, решает юзкейс: вопрос либо пульт с причиной.
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-auction-week",
+        }),
+      );
+    case "console-final":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "set-auction-final",
+          final: action.final,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-open":
+      // Подтверждение либо пульт с причиной решает юзкейс; ключ открытия
+      // рождается здесь и уедет в «Да».
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-auction-week-start",
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-confirm":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "start-auction-week",
+          opId: tokenToUuid(action.op),
+        }),
+      );
+    case "console-mark":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "mark-auction-finalist",
+          lotId: tokenToUuid(action.lot),
+          selected: action.selected,
+          opId: createUuidV7(),
+        }),
+        action.page,
+      );
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Исход пульта: экран пульта с исходом первой строкой, вопрос о сроках либо
+// кадр отказа. `replyId` — ответ на вопрос о сроках: новый вопрос закрывает
+// прежний, а сбой Auction оставляет его открытым.
+async function renderConsoleResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    page?: number;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const identity = { identity_id: context.person.identityId };
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    ...identity,
+  });
+  const timeZone = runtime.communityTimeZone ?? "UTC";
+  switch (result.kind) {
+    case "auction-console": {
+      // Переключатель финала подтверждает себя всплывающим текстом (P-08).
+      if (result.toggled === true) {
+        await ctx.waiting?.answer(
+          finalToast(result.console.week?.final === true),
+        );
+      }
+      await showScreen(
+        ctx,
+        consoleScreen({
+          console: result.console,
+          ...(result.note === undefined ? {} : { note: result.note }),
+          page: context.page ?? 0,
+          timeZone,
+          today: communityToday(ctx),
+        }),
+      );
+      return handled(
+        result.note === undefined
+          ? "auction console sent"
+          : `auction console sent: ${result.note}`,
+      );
+    }
+    case "auction-week-confirm":
+      await showScreen(
+        ctx,
+        weekConfirmScreen({
+          console: result.console,
+          opId: result.opId,
+          opening: result.opening,
+          idle: result.idle,
+          timeZone,
+          today: communityToday(ctx),
+        }),
+      );
+      return handled("auction week confirmation sent");
+    case "auction-week-ask":
+      await askConsoleWeek(ctx, context.questions, {
+        auctionId: result.auctionId,
+        timeZone,
+        week: result.week,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "auction week requested"
+          : "auction week asked again",
+      );
+    case "auction-console-refused":
+      await showRefusal(
+        ctx,
+        result.reason === "not-administrator"
+          ? forbiddenText
+          : consoleMissingText,
+        menuOnly(),
+      );
+      return {
+        level: "warn",
+        message: "auction console rejected",
+        result: "error",
+        use_case: useCase,
+        ...identity,
+        error_category:
+          result.reason === "not-administrator"
+            ? "authorization"
+            : "visibility",
+        error: result.reason.replaceAll("-", "_"),
+      };
+    default: {
+      const forbidden =
+        result.kind === "dependency-rejected" && result.reason === "forbidden";
+      await showRefusal(
+        ctx,
+        forbidden
+          ? forbiddenText
+          : context.replyId !== undefined && retryable(result)
+            ? lotSaveRetryText
+            : unavailableText,
+        forbidden || context.retry === undefined
+          ? menuOnly()
+          : exitRetry(context.retry),
+      );
+      return {
+        ...screenBoundary(result, {
+          ok: [],
+          okMessage: "auction console handled",
+          rejectedMessage: "auction console rejected",
+          useCase,
+        }),
+        ...identity,
+      };
+    }
+  }
+}
+
+function askConsoleWeek(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    timeZone: string;
+    week?: AuctionWeek | undefined;
+    error?: WeekAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  return askQuestion(
+    ctx,
+    questions,
+    {
+      kind: "console-week",
+      auctionId: ask.auctionId,
+      telegramUserId: ctx.from?.id ?? 0,
+    },
+    weekQuestionText(ask.timeZone, ask.week, ask.error),
+    ask.replaces,
+  );
+}
+
+// Кнопка или ответ пульта от человека без роли администратора.
+async function refuseConsole(
+  ctx: UpdateContext,
+  person: Person,
+): Promise<BoundaryOutcome> {
+  await showRefusal(ctx, forbiddenText, menuOnly());
+  return {
+    level: "warn",
+    message: "auction console rejected",
+    result: "error",
+    use_case: "manage_auction",
+    identity_id: person.identityId,
+    error_category: "authorization",
+    error: "auction_console_forbidden",
+  };
+}
+
 // Кнопка аукциона сходки (PER-307). Политика хаба идёт первой — кадры P-14 и
 // P-17, как у любой кнопки, — затем шлюз пакета с поверхностью `hub`. Отказ
 // Auction — кадр недоступности с повтором: экран не показывается без чтения.
@@ -5659,6 +6018,8 @@ function stepOf(pending: PendingBody): QuestionStep {
       return { kind: "channel-label" };
     case "lot":
       return lotStepOf(pending.question);
+    case "console-week":
+      return { kind: "console-week", auction: uuidToToken(pending.auctionId) };
     default: {
       const _exhaustive: never = pending;
       return _exhaustive;
@@ -5783,6 +6144,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-week":
+      return {
+        kind: "console-week",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -5831,6 +6199,9 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "lot-step":
     case "lot-image":
       return { kind: "lot-form", lot: step.lot };
+    case "console-week":
+      // Вопрос о сроках задан с пульта аукциона.
+      return { kind: "console-view", auction: step.auction, page: 0 };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -6102,6 +6473,12 @@ function callbackUseCase(
     | "lot-new"
     | "lot-form"
     | "lot-ask"
+    | "console-view"
+    | "console-week"
+    | "console-final"
+    | "console-open"
+    | "console-confirm"
+    | "console-mark"
     | "manage-publish"
     | "manage-unpublish"
     | "manage-confirm-unpublish"
@@ -6213,6 +6590,13 @@ function callbackUseCase(
     case "lot-form":
     case "lot-ask":
       return "manage_lot";
+    case "console-view":
+    case "console-week":
+    case "console-final":
+    case "console-open":
+    case "console-confirm":
+    case "console-mark":
+      return "manage_auction";
     case "home":
     case "hub":
     case "archive":

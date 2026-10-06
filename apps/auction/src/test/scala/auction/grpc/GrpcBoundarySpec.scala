@@ -73,6 +73,9 @@ final class GrpcBoundarySpec
     def getLot(in: wire.GetLotRequest) = Future.failed(new IllegalStateException("secret title in the message"))
     def setProxyLimit(in: wire.SetProxyLimitRequest) = unused
     def withdrawProxyLimit(in: wire.WithdrawProxyLimitRequest) = unused
+    def selectForFinal(in: wire.SelectForFinalRequest) = unused
+    def deselectForFinal(in: wire.DeselectForFinalRequest) = unused
+    def getAuctionConsole(in: wire.GetAuctionConsoleRequest) = unused
     def createLotCard(in: wire.CreateLotCardRequest) = unused
     def editLotCard(in: wire.EditLotCardRequest) = unused
     def listAuctionLots(in: wire.ListAuctionLotsRequest) = unused

@@ -164,6 +164,22 @@ type PlainAction =
   | { kind: "lot-new"; auction: string }
   | { kind: "lot-form"; lot: string }
   | { kind: "lot-ask"; lot: string; field: LotFormField }
+  // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
+  // финала — ещё лот и страницу пульта, на которую вернуться.
+  | { kind: "console-view"; auction: string; page: number }
+  | { kind: "console-week"; auction: string }
+  | { kind: "console-final"; auction: string; final: boolean }
+  | { kind: "console-open"; auction: string }
+  // «Да» подтверждения: ключ открытия рождён, когда подтверждение показано,
+  // и повторное нажатие несёт тот же.
+  | { kind: "console-confirm"; auction: string; op: string }
+  | {
+      kind: "console-mark";
+      auction: string;
+      lot: string;
+      selected: boolean;
+      page: number;
+    }
   | { kind: "manage-publish"; token: string }
   | { kind: "manage-unpublish"; token: string }
   | { kind: "manage-confirm-unpublish"; token: string }
@@ -292,7 +308,10 @@ export type QuestionStep =
   | { kind: "lot-text"; lot: string; field: LotTextField }
   | { kind: "lot-price"; lot: string }
   | { kind: "lot-step"; lot: string; price: number }
-  | { kind: "lot-image"; lot: string };
+  | { kind: "lot-image"; lot: string }
+  // Сроки онлайн-недели на пульте (PER-320): аукцион, а финал и текущие сроки
+  // ответ читает у Auction заново.
+  | { kind: "console-week"; auction: string };
 
 /** Ряд экрана правки лота: текст карточки, фото либо цена с шагом, парой. */
 export type LotFormField = LotTextField | "image" | "price";
@@ -322,6 +341,44 @@ export function lotAskData(lot: string, field: LotFormField): string {
   return `v1:lot:ask:${lot}:${field}`;
 }
 
+// Кнопки пульта аукциона: `v1:ac:<действие>:<аукцион>[:…]`. Самая длинная —
+// отметка финала с лотом и страницей, до 59 байт.
+
+/** Пульт аукциона на странице `page`; первая страница — без номера. */
+export function consoleViewData(auction: string, page = 0): string {
+  return page === 0 ? `v1:ac:v:${auction}` : `v1:ac:v:${auction}:${page}`;
+}
+
+/** «Сроки недели»: вопрос о начале и конце онлайн-недели. */
+export function consoleWeekData(auction: string): string {
+  return `v1:ac:w:${auction}`;
+}
+
+/** Переключатель финала с целевым состоянием. */
+export function consoleFinalData(auction: string, final: boolean): string {
+  return `v1:ac:f:${auction}:${final ? "1" : "0"}`;
+}
+
+/** «Открыть онлайн-неделю»: подтверждение, а не команда. */
+export function consoleOpenData(auction: string): string {
+  return `v1:ac:o:${auction}`;
+}
+
+/** «Да» подтверждения открытия: аукцион и ключ команды. */
+export function consoleConfirmData(auction: string, op: string): string {
+  return `v1:ac:y:${auction}:${op}`;
+}
+
+/** Отметка лота для финала (`s`) или её снятие (`d`). */
+export function consoleMarkData(mark: {
+  auction: string;
+  lot: string;
+  selected: boolean;
+  page: number;
+}): string {
+  return `v1:ac:${mark.selected ? "s" : "d"}:${mark.auction}:${mark.lot}:${mark.page}`;
+}
+
 /**
  * Данные кнопки «Отмена» для вопроса с этим шагом, заданного человеку
  * `askedBy`. Id идёт последней частью: самый длинный шаг — `ln` с токеном
@@ -343,6 +400,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ls:${step.lot}:${step.price}`;
     case "lot-image":
       return `v1:q:li:${step.lot}`;
+    case "console-week":
+      return `v1:q:aw:${step.auction}`;
     case "field":
       return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.field}`;
     case "publish-moment":
@@ -520,6 +579,9 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts[1] === "lot") {
     return parseLot(parts);
   }
+  if (parts[1] === "ac") {
+    return parseConsole(parts);
+  }
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success || parts[1] !== "manage") {
     return { kind: "malformed" };
@@ -659,6 +721,63 @@ function parseLot(parts: readonly string[]): CallbackAction {
   return { kind: "malformed" };
 }
 
+// Кнопки пульта аукциона (PER-320): `v1:ac:v:<аукцион>[:<страница>]`,
+// `v1:ac:w:<аукцион>`, `v1:ac:f:<аукцион>:<0|1>`, `v1:ac:o:<аукцион>`,
+// `v1:ac:y:<аукцион>:<ключ>` и `v1:ac:<s|d>:<аукцион>:<лот>:<страница>`.
+function parseConsole(parts: readonly string[]): CallbackAction {
+  const auction = TokenSchema.safeParse(parts[3]);
+  if (!auction.success) return { kind: "malformed" };
+  switch (parts[2]) {
+    case "v": {
+      if (parts.length > 5) return { kind: "malformed" };
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return page.success
+        ? { kind: "console-view", auction: auction.data, page: page.data }
+        : { kind: "malformed" };
+    }
+    case "w":
+      return parts.length === 4
+        ? { kind: "console-week", auction: auction.data }
+        : { kind: "malformed" };
+    case "f": {
+      const final = TargetStateSchema.safeParse(parts[4]);
+      return parts.length === 5 && final.success
+        ? {
+            kind: "console-final",
+            auction: auction.data,
+            final: final.data === "1",
+          }
+        : { kind: "malformed" };
+    }
+    case "o":
+      return parts.length === 4
+        ? { kind: "console-open", auction: auction.data }
+        : { kind: "malformed" };
+    case "y": {
+      const op = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && op.success
+        ? { kind: "console-confirm", auction: auction.data, op: op.data }
+        : { kind: "malformed" };
+    }
+    case "s":
+    case "d": {
+      const lot = TokenSchema.safeParse(parts[4]);
+      const page = PageSchema.safeParse(parts[5]);
+      return parts.length === 6 && lot.success && page.success
+        ? {
+            kind: "console-mark",
+            auction: auction.data,
+            lot: lot.data,
+            selected: parts[2] === "s",
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    default:
+      return { kind: "malformed" };
+  }
+}
+
 // Telegram id пользователя: целое до 52 бит, не больше 16 цифр. Ноль — запасное
 // значение бота для update без `from`: «Отмена» под таким вопросом работает, а
 // ответ ни от кого не совпадёт с ним и будет отброшен.
@@ -696,6 +815,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "lot-price", lot: token.data };
       case "li":
         return { kind: "lot-image", lot: token.data };
+      case "aw":
+        return { kind: "console-week", auction: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":

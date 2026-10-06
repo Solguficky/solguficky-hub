@@ -10,6 +10,7 @@ import auction.lot.ParticipantId
 import auction.naming.DisplayNameCommands
 import auction.naming.NameNotChosen
 import auction.onboarding.FaqAcknowledgements
+import auction.projection.AuctionSnapshotView
 import auction.projection.AuctionViews
 import auction.projection.LotViews
 import auction.v1.auction_service as wire
@@ -18,6 +19,8 @@ import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.grpc.GrpcServiceException
 import org.slf4j.LoggerFactory
 
+import java.time.Clock
+import java.time.Duration
 import java.util.concurrent.TimeoutException
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -39,7 +42,9 @@ final class AuctionGrpcService(
     auctions: AuctionCommands,
     auctionViews: AuctionViews,
     names: DisplayNameCommands,
-    correlation: Correlation = Correlation.none
+    correlation: Correlation = Correlation.none,
+    clock: Clock = Clock.systemUTC(),
+    overdueGrace: Duration = AuctionGrpcService.DefaultOverdueGrace
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -48,7 +53,18 @@ final class AuctionGrpcService(
    * заморозки несёт их, чтобы его можно было связать с записью операции.
    */
   def within(correlation: Correlation): AuctionGrpcService =
-    AuctionGrpcService(lots, catalog, faq, views, auctions.within(correlation), auctionViews, names, correlation)
+    AuctionGrpcService(
+      lots,
+      catalog,
+      faq,
+      views,
+      auctions.within(correlation),
+      auctionViews,
+      names,
+      correlation,
+      clock,
+      overdueGrace
+    )
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
     RequestMapping.placeBid(in) match {
@@ -347,6 +363,64 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Отметка лота для финала и её снятие (ADR-047, дополнение 2026-10-06): право у Meetups, фазу и реестр решает
+   * аукцион, дедлайн и сам признак — лот. Один срок ожидания накрывает оба перехода, как у `scheduleLot`.
+   */
+  def selectForFinal(in: wire.SelectForFinalRequest): Future[wire.SelectForFinalResponse] =
+    RequestMapping.selectForFinal(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .selectForFinal(command.auctionId, command.lotId, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.selectForFinal(outcome).fold(refuse, Future.successful))
+    }
+
+  def deselectForFinal(in: wire.DeselectForFinalRequest): Future[wire.DeselectForFinalResponse] =
+    RequestMapping.deselectForFinal(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .deselectForFinal(command.auctionId, command.lotId, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.deselectForFinal(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
+   * Пульт администратора сходки (PER-320). Аукцион — из entity, а не из read model: из его сроков и финала пульт
+   * собирает следующую команду планирования, а она заменяет конфигурацию целиком, и отставшая проекция затёрла бы
+   * только что принятое. Лоты — из read model, как у остальных чтений. Право спрашивается у Meetups: пульт называет
+   * отмеченные для финала лоты, а это рабочий выбор организатора. Аукциона без журнала — `NOT_FOUND` до вопроса
+   * Meetups, как у команд. Реестр не страничный: лоты в него заводит администратор по одному.
+   */
+  def getAuctionConsole(in: wire.GetAuctionConsoleRequest): Future[wire.GetAuctionConsoleResponse] =
+    RequestMapping.getAuctionConsole(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) =>
+        val auctionId = query.auctionId.value
+        auctions.current(query.auctionId).recoverWith(awaited).flatMap {
+          case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          case Some(auction) =>
+            auction.meetup match {
+              case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+              case Some(meetup) =>
+                auctions.authorize(meetup, query.acting.participant).flatMap {
+                  case Left(denial) => ResponseMapping.consoleDenied(denial).fold(refuse, Future.successful)
+                  case Right(()) =>
+                    // Страница — весь реестр: пустой реестр всё равно читается страницей в одну строку.
+                    val wholeRegistry = auction.lots.size.max(1)
+                    views.registryPage(auctionId, None, wholeRegistry).map { lots =>
+                      val view = AuctionSnapshotView(auctionId, auction)
+                      val console =
+                        ConsoleMapping.console(view, lots, query.acting.participant, clock.instant(), overdueGrace)
+                      wire.GetAuctionConsoleResponse().withConsole(console)
+                    }
+                }
+            }
+        }
+    }
+
+  /**
    * Чтения аукционов идут из read model и видимость сходки не проверяют (ADR-047): путь «сходка → аукцион» есть только
    * у бота хаба после ответа Meetups, а списки сходку не называют. Аукциона у сходки нет — пустой ответ, а не ошибка.
    */
@@ -401,6 +475,9 @@ final class AuctionGrpcService(
 }
 
 object AuctionGrpcService {
+
+  /** Допуск просрочки по умолчанию; узел передаёт `auction.deadlines.overdue-grace` — тот же, что у метрики. */
+  val DefaultOverdueGrace: Duration = Duration.ofMinutes(1)
 
   /** Попыток заморозки имени после принятой ставки; подряд, без паузы: у сервиса нет планировщика. */
   val FreezeAttempts: Int = 3

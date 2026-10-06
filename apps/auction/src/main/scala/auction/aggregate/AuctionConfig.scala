@@ -19,12 +19,15 @@ enum ClosingPolicy {
   case Mixed(onlineByDeadline: Boolean)
 }
 
-/** Конфигурация во входе `ScheduleAuction` до проверки: [[AuctionConfig.parse]] превращает её в [[AuctionConfig]]. */
+/**
+ * Конфигурация во входе `ScheduleAuction` до проверки: [[AuctionConfig.parse]] превращает её в [[AuctionConfig]].
+ * `lotDefaults` необязательны (ADR-047, дополнение 2026-10-06): без них лоты получают умолчания платформы.
+ */
 final case class AuctionConfigInput(
     onlinePhase: Option[OnlinePhase],
     finalBlocks: Int,
     closingPolicy: ClosingPolicy,
-    lotDefaults: LotConfigInput
+    lotDefaults: Option[LotConfigInput]
 )
 
 /**
@@ -44,13 +47,15 @@ enum ConfigInvalid {
  * непредставима, и проверка живёт только в [[AuctionConfig.of]]. Выводится она из самого значения, без часов и без
  * обращения к лотам (ADR-047).
  *
- * `lotDefaults` — тот же [[LotConfig]], что у лота: поля совпадают, а И-15 и валюту держат его конструкторы.
+ * `lotDefaults` — тот же [[LotConfig]], что у лота: поля совпадают, а И-15 и валюту держат его конструкторы. Пусто —
+ * администратор их не задавал, и лоты получают умолчания платформы, как в `Draft`: шага по умолчанию нет ни там, ни
+ * здесь, его всегда называет `ScheduleLot`.
  */
 final case class AuctionConfig private (
     onlinePhase: Option[OnlinePhase],
     finalBlocks: Int,
     closingPolicy: ClosingPolicy,
-    lotDefaults: LotConfig
+    lotDefaults: Option[LotConfig]
 ) {
 
   /** Дедлайн, который лот получает во входе `OpenLot`: `closesAt`, если конец онлайн-этапа закрывает лоты. */
@@ -66,7 +71,7 @@ object AuctionConfig {
       onlinePhase: Option[OnlinePhase],
       finalBlocks: Int,
       closingPolicy: ClosingPolicy,
-      lotDefaults: LotConfig
+      lotDefaults: Option[LotConfig]
   ): Either[ConfigInvalid, AuctionConfig] = {
     val closesAt = onlinePhase.flatMap(_.closesAt)
     val needsDeadline = onlinePhase.exists(_.closesLots) || (closingPolicy match {
@@ -83,9 +88,7 @@ object AuctionConfig {
 
   /** Проверка на входе `ScheduleAuction`: шаг — теми же конструкторами, что у `ScheduleLot` (И-15). */
   def parse(input: AuctionConfigInput): Either[ConfigInvalid, AuctionConfig] =
-    LotConfig
-      .parse(input.lotDefaults)
-      .left
-      .map(ConfigInvalid.LotDefaults(_))
+    input.lotDefaults
+      .fold(Right(None))(LotConfig.parse(_).left.map(ConfigInvalid.LotDefaults(_)).map(Some(_)))
       .flatMap(of(input.onlinePhase, input.finalBlocks, input.closingPolicy, _))
 }

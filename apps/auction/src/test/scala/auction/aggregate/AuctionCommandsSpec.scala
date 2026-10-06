@@ -38,6 +38,8 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
 
     def inspect(auctionId: AuctionId, opId: OpId): Future[Inspection] = Future.successful(inspection)
 
+    def get(auctionId: AuctionId): Future[Auction] = fail("the auction was read")
+
     def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator): Future[AuctionAnswer] = {
       commands :+= command
       Future.successful(AuctionAnswer.Written(AuctionEnvelope(1, command.opId, AuctionEvent.AuctionDrafted(meetup))))
@@ -71,6 +73,19 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     def scheduleLot(auctionId: AuctionId, command: ScheduleAuctionLot, initiator: Initiator) = {
       commands :+= command
       Future.successful(planAnswer)
+    }
+
+    var selectAnswer: Either[FinalChoiceRejected[MarkForFinalRejected], Unit] = Right(())
+    var deselectAnswer: Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit] = Right(())
+
+    def selectForFinal(auctionId: AuctionId, command: SelectForFinal, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(selectAnswer)
+    }
+
+    def deselectForFinal(auctionId: AuctionId, command: DeselectForFinal, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(deselectAnswer)
     }
   }
 
@@ -367,6 +382,83 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         .futureValue shouldBe Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.OpIdTaken))
       meetups.asked shouldBe 0
       auctions.commands shouldBe empty
+    }
+
+    "sends a mark and an unmark to the auction once meetups confirms the administrator" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      commands.selectForFinal(auctionOfMeetup, lot, op(4), person).futureValue shouldBe Right(())
+      commands.deselectForFinal(auctionOfMeetup, lot, op(5), person).futureValue shouldBe Right(())
+      auctions.commands shouldBe List(SelectForFinal(lot, op(4)), DeselectForFinal(lot, op(5)))
+    }
+
+    "refuses a choice of a finalist that meetups does not confirm and does not reach the auction" in {
+      for (
+        (answer, denial) <- List(
+          Authority.NotAdministrator -> Denial.NotAdministrator,
+          Authority.MeetupNotFound -> Denial.MeetupNotFound,
+          Authority.Unavailable -> Denial.Unavailable
+        )
+      ) {
+        val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+        val commands = AuctionCommands(auctions, noLots, Meetups(answer))
+        commands.selectForFinal(auctionOfMeetup, lot, op(4), person).futureValue shouldBe
+          Left(FinalChoiceRefusal.Denied(denial))
+        commands.deselectForFinal(auctionOfMeetup, lot, op(4), person).futureValue shouldBe
+          Left(FinalChoiceRefusal.Denied(denial))
+        auctions.commands shouldBe empty
+      }
+    }
+
+    "passes the refusals of the auction and of the lot through as refusals of the choice" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      for (
+        (answer, refusal) <- List(
+          FinalChoiceRejected.NotInPrebidding -> FinalChoiceRefusal.NotInPrebidding,
+          FinalChoiceRejected.LotNotInAuction -> FinalChoiceRefusal.LotNotInAuction,
+          FinalChoiceRejected.SelectionNotApplicable -> FinalChoiceRefusal.SelectionNotApplicable,
+          FinalChoiceRejected.AuctionNotFound -> FinalChoiceRefusal.Denied(Denial.AuctionNotFound),
+          FinalChoiceRejected.ByLot(MarkForFinalRejected.DeadlinePassed) ->
+            FinalChoiceRefusal.ByLot(MarkForFinalRejected.DeadlinePassed)
+        )
+      ) {
+        auctions.selectAnswer = Left(answer)
+        commands.selectForFinal(auctionOfMeetup, lot, op(4), person).futureValue shouldBe Left(refusal)
+      }
+      auctions.deselectAnswer = Left(FinalChoiceRejected.ByLot(UnmarkForFinalRejected.DeadlinePassed))
+      commands.deselectForFinal(auctionOfMeetup, lot, op(5), person).futureValue shouldBe
+        Left(FinalChoiceRefusal.ByLot(UnmarkForFinalRejected.DeadlinePassed))
+    }
+
+    "answers a choice of a finalist on an auction without a journal with AuctionNotFound before meetups" in {
+      val meetups = Meetups(Authority.Granted)
+      AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
+        .selectForFinal(auctionOfMeetup, lot, op(4), person)
+        .futureValue shouldBe Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound))
+      meetups.asked shouldBe 0
+    }
+
+    // Как у `ScheduleLot`: аукцион выбор не записывает, и его окно знает такой `op_id` только под другой командой.
+    "refuses a choice under the op_id of another auction command without asking meetups or the auction" in {
+      val started = AuctionEnvelope(3, op(3), AuctionEvent.PrebiddingStarted)
+      val auctions = Auctions(Inspection.Repeated(started))
+      val meetups = Meetups(Authority.Granted)
+      val commands = AuctionCommands(auctions, noLots, meetups)
+      commands.selectForFinal(auctionOfMeetup, lot, op(3), person).futureValue shouldBe
+        Left(FinalChoiceRefusal.ByLot(MarkForFinalRejected.OpIdTaken))
+      commands.deselectForFinal(auctionOfMeetup, lot, op(3), person).futureValue shouldBe
+        Left(FinalChoiceRefusal.ByLot(UnmarkForFinalRejected.OpIdTaken))
+      meetups.asked shouldBe 0
+      auctions.commands shouldBe empty
+    }
+
+    "grants the console only once meetups confirms the administrator" in {
+      AuctionCommands(Auctions(Inspection.Absent), noLots, granted).authorize(meetup, person).futureValue shouldBe
+        Right(())
+      AuctionCommands(Auctions(Inspection.Absent), noLots, Meetups(Authority.NotAdministrator))
+        .authorize(meetup, person)
+        .futureValue shouldBe Left(Denial.NotAdministrator)
     }
   }
 }

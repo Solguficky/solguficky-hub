@@ -4,9 +4,11 @@ import auction.aggregate.*
 import auction.catalog.LotId
 import auction.lot.CloseLotRejected
 import auction.lot.LotState
+import auction.lot.MarkForFinalRejected
 import auction.lot.OpId
 import auction.lot.OpenLotRejected
 import auction.lot.ScheduleLotRejected
+import auction.lot.UnmarkForFinalRejected
 import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.Behavior
@@ -62,8 +64,9 @@ enum AuctionAnswer {
  * с таймерами. Из `Initial` до торгов — рождение, реестр, планирование и старт, каждое с ответом, в одно такое окно они
  * не помещаются, а `Draft` и `Scheduled` — настоящие аукционы сходок, и их число ограничено сходками.
  *
- * `ScheduleLot` — единственная команда, которую entity передаёт лоту, ничего не записав: условия торгов живут в журнале
- * лота, а аукцион только решает, не заморожены ли они ([[Auction.decide]]), и подставляет незаданное.
+ * `ScheduleLot`, отметку для финала и её снятие entity передаёт лоту, ничего не записав: условия торгов и отметка живут
+ * в журнале лота, а аукцион только решает, можно ли сейчас их менять ([[Auction.decide]]), и для условий подставляет
+ * незаданное.
  */
 object AuctionEntity {
 
@@ -118,6 +121,23 @@ object AuctionEntity {
       replyTo: ActorRef[Either[ScheduleAuctionLotRejected, Unit]]
   ) extends Command
 
+  /**
+   * Отметка лота реестра для финала и её снятие (ADR-047, дополнение 2026-10-06). Та же форма, что `PlanLot`: аукцион
+   * решает по фазе и реестру и шлёт команду лоту в обработке этого же сообщения, событие пишет только лот, а ответ
+   * приходит после ответа лота.
+   */
+  final case class Select(
+      command: SelectForFinal,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[FinalChoiceRejected[MarkForFinalRejected], Unit]]
+  ) extends Command
+
+  final case class Deselect(
+      command: DeselectForFinal,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Auction]) extends Command
 
   /** Что аукцион сейчас знает о лотах реестра. Ничего не пишет и лотов не спрашивает. */
@@ -148,6 +168,13 @@ object AuctionEntity {
       lot: LotId,
       replyTo: ActorRef[Either[ScheduleAuctionLotRejected, Unit]],
       answer: Try[Either[ScheduleLotRejected, Unit]]
+  ) extends Command
+
+  /** Ответ лота на отметку или снятие вместе с тем, кому его отдать; неудача — ответа нет. */
+  private[entity] final case class LotChosen[R](
+      lot: LotId,
+      replyTo: ActorRef[Either[FinalChoiceRejected[R], Unit]],
+      answer: Try[Either[R, Unit]]
   ) extends Command
 
   /**
@@ -252,6 +279,29 @@ object AuctionEntity {
               Effect.reply(replyTo)(answer.left.map(ScheduleAuctionLotRejected.ByLot(_)))
             // Знание об открытии это не меняет: молчащий лот остаётся с прежними условиями либо с принятыми.
             case LotPlanned(lot, _, Failure(failure)) => Effect.none.thenRun(_ => logUnanswered(lot, failure))
+            case Select(select, initiator, replyTo) =>
+              Auction.decide(state.auction, select) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(mark) =>
+                  Effect.none.thenRun { _ =>
+                    context.pipeToSelf(lots.mark(select.lot, mark, initiator))(LotChosen(select.lot, replyTo, _))
+                  }
+              }
+            case Deselect(deselect, initiator, replyTo) =>
+              Auction.decide(state.auction, deselect) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(unmark) =>
+                  Effect.none.thenRun { _ =>
+                    context.pipeToSelf(lots.unmark(deselect.lot, unmark, initiator))(
+                      LotChosen(deselect.lot, replyTo, _)
+                    )
+                  }
+              }
+            case chosen: LotChosen[r] =>
+              chosen.answer match {
+                case Success(answer) => Effect.reply(chosen.replyTo)(answer.left.map(FinalChoiceRejected.ByLot(_)))
+                case Failure(failure) => Effect.none.thenRun(_ => logUnanswered(chosen.lot, failure))
+              }
             case Inspect(opId, replyTo) => Effect.reply(replyTo)(Auction.inspect(state.auction, opId))
             case Draft(draft, initiator, replyTo) =>
               val decision = Auction.decide(state.auction, draft)

@@ -7,9 +7,13 @@ import {
   CreateLotCardResponseSchema,
   DraftAuctionResponseSchema,
   EditLotCardResponseSchema,
+  GetAuctionConsoleResponseSchema,
   GetMeetupAuctionResponseSchema,
   LotSnapshotSchema,
+  ScheduleAuctionResponseSchema,
   ScheduleLotResponseSchema,
+  SelectForFinalResponseSchema,
+  StartPrebiddingResponseSchema,
 } from "../../gen/auction/v1/auction_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import { createAuctionAdapter } from "./client.js";
@@ -37,6 +41,11 @@ function adapter(rpc: {
   addLot?: Call;
   scheduleLot?: Call;
   getLot?: Call;
+  getAuctionConsole?: Call;
+  scheduleAuction?: Call;
+  startPrebidding?: Call;
+  selectForFinal?: Call;
+  deselectForFinal?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -53,6 +62,11 @@ function adapter(rpc: {
     setProxyLimit: notUsed,
     chooseDisplayName: notUsed,
     getLotImage: notUsed,
+    getAuctionConsole: (rpc.getAuctionConsole ?? notUsed) as never,
+    scheduleAuction: (rpc.scheduleAuction ?? notUsed) as never,
+    startPrebidding: (rpc.startPrebidding ?? notUsed) as never,
+    selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
+    deselectForFinal: (rpc.deselectForFinal ?? notUsed) as never,
   });
 }
 
@@ -402,5 +416,207 @@ describe("auction adapter of the lot form", () => {
     await expect(hidden.getLot(admin, lotId)).resolves.toEqual({
       kind: "not-found",
     });
+  });
+});
+
+// Пульт аукциона (PER-320): что уходит в Auction и как читается ответ.
+describe("auction console adapter", () => {
+  const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
+  const week = {
+    auctionId,
+    opId,
+    opensAt: "2026-10-20T15:00:00Z",
+    closesAt: "2026-10-26T21:00:00Z",
+  };
+
+  it.each([
+    [
+      true,
+      1,
+      {
+        case: "mixed",
+        value: expect.objectContaining({ onlineByDeadline: true }),
+      },
+    ],
+    [false, 0, { case: "byDeadline", value: expect.anything() }],
+  ] as const)(
+    "schedules the week with the final %s, closing the lots by the deadline and without lot defaults",
+    async (final, finalBlocks, policy) => {
+      const scheduleAuction = vi.fn(async (_request: unknown) =>
+        create(ScheduleAuctionResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        }),
+      );
+
+      await expect(
+        adapter({ scheduleAuction }).scheduleAuction(admin, {
+          ...week,
+          final,
+        }),
+      ).resolves.toEqual({ kind: "ok" });
+      const sent = scheduleAuction.mock.calls[0]?.[0] as {
+        config: Record<string, unknown>;
+      };
+      expect(sent).toMatchObject({ auctionId, opId });
+      expect(sent.config).toEqual({
+        onlinePhase: {
+          opensAt: week.opensAt,
+          closesAt: week.closesAt,
+          closesLots: true,
+        },
+        finalBlocks,
+        closingPolicy: { policy },
+      });
+      expect(sent.config).not.toHaveProperty("lotDefaults");
+    },
+  );
+
+  it("reads only the order of the week as a refusal of the person and the rest as a defect", async () => {
+    const refusing = (reason: string) =>
+      adapter({
+        scheduleAuction: async () =>
+          create(ScheduleAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: {
+                reason: {
+                  case: "configInvalid",
+                  value: { reason: { case: reason as never, value: {} } },
+                },
+              },
+            },
+          }),
+      });
+
+    await expect(
+      refusing("closesAtNotAfterOpensAt").scheduleAuction(admin, {
+        ...week,
+        final: true,
+      }),
+    ).resolves.toEqual({ kind: "closes-not-after-opens" });
+    await expect(
+      refusing("finalBlocksOutOfRange").scheduleAuction(admin, {
+        ...week,
+        final: true,
+      }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  it("reads the console: state, week, lots with their bids, the final mark and the overdue flag", async () => {
+    const read = adapter({
+      getAuctionConsole: async () =>
+        create(GetAuctionConsoleResponseSchema, {
+          outcome: {
+            case: "console",
+            value: {
+              auction: {
+                id: auctionId,
+                config: {
+                  onlinePhase: {
+                    opensAt: week.opensAt,
+                    closesAt: week.closesAt,
+                    closesLots: true,
+                  },
+                  finalBlocks: 1,
+                },
+                status: { case: "prebidding", value: {} },
+              },
+              lots: [
+                {
+                  lot: {
+                    id: lotId,
+                    auctionId,
+                    version: 4n,
+                    card: { title: "Ваза", description: "" },
+                    status: {
+                      case: "trading",
+                      value: {
+                        currentPrice: { minorUnits: 120_000n, currency: "RUB" },
+                        phase: 1,
+                      },
+                    },
+                    bidCount: 3n,
+                  },
+                  markedForFinal: true,
+                  overdue: true,
+                },
+              ],
+            },
+          },
+        }),
+    });
+
+    await expect(read.getAuctionConsole(admin, auctionId)).resolves.toEqual({
+      kind: "ok",
+      console: {
+        auctionId,
+        status: "prebidding",
+        week: { opensAt: week.opensAt, closesAt: week.closesAt, final: true },
+        lots: [
+          {
+            lot: expect.objectContaining({
+              lotId,
+              status: {
+                kind: "trading",
+                currentPrice: { minorUnits: 120_000, currency: "RUB" },
+                phase: "online",
+              },
+            }),
+            bidCount: 3,
+            markedForFinal: true,
+            overdue: true,
+          },
+        ],
+      },
+    });
+  });
+
+  it("reads the refusal of a non-administrator and a missing auction", async () => {
+    const refused = adapter({
+      getAuctionConsole: async () =>
+        create(GetAuctionConsoleResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "notMeetupAdministrator", value: {} } },
+          },
+        }),
+    });
+    const missing = adapter({
+      getAuctionConsole: () =>
+        Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+
+    await expect(refused.getAuctionConsole(admin, auctionId)).resolves.toEqual({
+      kind: "not-administrator",
+    });
+    await expect(missing.getAuctionConsole(admin, auctionId)).resolves.toEqual({
+      kind: "auction-not-found",
+    });
+  });
+
+  it("reads a refused start of the week and a passed deadline of a lot as answers", async () => {
+    const started = adapter({
+      startPrebidding: async () =>
+        create(StartPrebiddingResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "auctionNotScheduled", value: {} } },
+          },
+        }),
+      selectForFinal: async () =>
+        create(SelectForFinalResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "deadlinePassed", value: {} } },
+          },
+        }),
+    });
+
+    await expect(
+      started.startPrebidding(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "not-scheduled" });
+    await expect(
+      started.selectForFinal(admin, { auctionId, lotId, opId }),
+    ).resolves.toEqual({ kind: "refused", reason: "deadline-passed" });
   });
 });
