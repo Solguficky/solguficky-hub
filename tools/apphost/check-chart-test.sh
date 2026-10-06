@@ -16,6 +16,7 @@ scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 
 digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
+checksum=1111111111111111111111111111111111111111111111111111111111111111
 
 # probes NAME - probes of the service's form: gRPC, or HTTP readiness with TCP
 # startup and liveness for Auction
@@ -58,6 +59,10 @@ metadata:
   name: "$1-deployment"
 spec:
   template:
+    metadata:
+      annotations:
+        checksum/config: "$checksum"
+        checksum/secrets: "$checksum"
     spec:
       containers:
         - image: "ghcr.io/solguficky/$1@$digest"
@@ -76,13 +81,57 @@ EOF
 EOF
 }
 
-# tree CASE - a rendered tree with the five chart workloads
+# topology - the JetStream topology hook Job and the ConfigMap it reads, both
+# pre-hooks in the shape the AppHost publish emits
+topology() {
+    cat <<EOF
+---
+apiVersion: "batch/v1"
+kind: "Job"
+metadata:
+  name: "jetstream-topology"
+  annotations:
+    helm.sh/hook: "pre-install,pre-upgrade"
+    helm.sh/hook-weight: "0"
+  labels:
+    app.kubernetes.io/component: "jetstream-topology"
+spec:
+  template:
+    spec:
+      containers:
+        - image: "docker.io/natsio/nats-box@$digest"
+          resources:
+            limits:
+              memory: "64Mi"
+      securityContext:
+        runAsNonRoot: true
+      restartPolicy: "Never"
+      volumes:
+        - name: "topology"
+          configMap:
+            name: "jetstream-topology-files"
+---
+apiVersion: "v1"
+kind: "ConfigMap"
+metadata:
+  name: "jetstream-topology-files"
+  annotations:
+    helm.sh/hook: "pre-install,pre-upgrade"
+    helm.sh/hook-weight: "-10"
+  labels:
+    app.kubernetes.io/component: "jetstream-topology"
+EOF
+}
+
+# tree CASE - a rendered tree with the five chart workloads and the topology Job
 tree() {
     work="$scratch/$1"
     for name in identity meetups notifications hub-bot auction; do
         mkdir -p "$work/solguficky-hub/templates/$name"
         deployment "$name" > "$work/solguficky-hub/templates/$name/deployment.yaml"
     done
+    mkdir -p "$work/solguficky-hub/templates/jetstream-topology"
+    topology > "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
     echo "$work"
 }
 
@@ -110,7 +159,7 @@ assert_fails() {
 }
 
 work=$(tree good)
-assert_passes "five workloads by the rules pass" "$work"
+assert_passes "five workloads and the topology Job by the rules pass" "$work"
 
 work=$(tree bot-without-probes)
 sed -i '/Probe:/,/port:/d' "$work/solguficky-hub/templates/hub-bot/deployment.yaml"
@@ -139,6 +188,10 @@ assert_fails "a pod that may run as root" "identity: pod must set runAsNonRoot" 
 work=$(tree no-limits)
 sed -i '/limits:/,/memory:/d' "$work/solguficky-hub/templates/meetups/deployment.yaml"
 assert_fails "a container without limits" "meetups: container has no resource limits" "$work"
+
+work=$(tree no-config-checksum)
+sed -i '/checksum\/config:/d' "$work/solguficky-hub/templates/notifications/deployment.yaml"
+assert_fails "a pod that a values change would not roll" "notifications: pod template has no checksum/config annotation" "$work"
 
 work=$(tree no-readiness)
 sed -i '/readinessProbe:/,/port:/d' "$work/solguficky-hub/templates/notifications/deployment.yaml"
@@ -173,6 +226,32 @@ assert_fails "PostgreSQL inside the chart" "postgres: workload kind StatefulSet"
 work=$(tree missing-service)
 rm -r "$work/solguficky-hub/templates/notifications"
 assert_fails "a service missing from the chart" "notifications: chart service has no workload" "$work"
+
+work=$(tree topology-post-hook)
+sed -i '0,/pre-install,pre-upgrade/s//post-install,post-upgrade/' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+assert_fails "the topology Job as a post-hook" "jetstream-topology: Job must be a pre-install,pre-upgrade hook, got post-install,post-upgrade" "$work"
+
+work=$(tree topology-input-not-hook)
+sed -i '/^  name: "jetstream-topology-files"/{n;d}' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+sed -i '/^  name: "jetstream-topology-files"/{n;d}' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+assert_fails "a topology input outside the hook" "jetstream-topology: ConfigMap" "$work"
+
+work=$(tree topology-input-same-weight)
+sed -i 's/hook-weight: "-10"/hook-weight: "0"/' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+assert_fails "a topology input created no earlier than the Job" "jetstream-topology: ConfigMap jetstream-topology-files" "$work"
+
+work=$(tree topology-input-missing)
+sed -i '/^kind: "ConfigMap"/,$d' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+sed -i '$d' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+assert_fails "a topology Job reading an input the chart does not render" "jetstream-topology: Job reads jetstream-topology-files" "$work"
+
+work=$(tree topology-restarts)
+sed -i 's/restartPolicy: "Never"/restartPolicy: "OnFailure"/' "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
+assert_fails "a topology Job restarting in place" "jetstream-topology: Job pod must set restartPolicy: Never" "$work"
+
+work=$(tree topology-missing)
+rm -r "$work/solguficky-hub/templates/jetstream-topology"
+assert_fails "the topology Job missing from the chart" "jetstream-topology: chart has no hook Job" "$work"
 
 values() {
     printf 'parameters:\n  identity:\n    identity_image: "identity:latest"\n'

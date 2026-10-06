@@ -8,7 +8,7 @@
 
 ## Как устроено
 
-Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `postgresql/`, `orleans/`, `typescript/`, `biome/`, `grammy/`, `self-hosting/`, `scala/`, `nats/`, `mtcute/`, `opentelemetry/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
+Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `postgresql/`, `orleans/`, `typescript/`, `biome/`, `grammy/`, `self-hosting/`, `helm/`, `scala/`, `nats/`, `mtcute/`, `opentelemetry/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
 
 Тема пополняется, когда её трогает новый код, и не заводится заново на каждую задачу. Разборы не привязаны к номерам Linear: одна тема набирается из многих срезов, один срез задевает несколько тем.
 
@@ -52,6 +52,7 @@
 | [self-hosting/memory-accounting.md](self-hosting/memory-accounting.md) | страницы и общая память, RSS против PSS, working set пода, `anon` и `file` в cgroup, `used` против `available`, сверка методов на одном кластере | вернуться |
 | [self-hosting/recovery-keys.md](self-hosting/recovery-keys.md) | age: identity и recipient, `age-keygen -y`, заголовок с ключом файла на каждого recipient и подбор identity, bech32 и отказ перенабора с опечаткой; restic: master key под key-файлами, `key passwd` и возврат старого key-файла из версий bucket; проверка копии против эталона не из неё | вернуться |
 | [self-hosting/host-benchmarks.md](self-hosting/host-benchmarks.md) | CPU steal под нагрузкой, `fio`: `bs`, `iodepth`, `direct`, `fdatasync` как цена коммита, p99 и шумные соседи, серии в одном окне, время reboot | вернуться |
+| [helm/hooks-and-rollout.md](helm/hooks-and-rollout.md) | чарт, релиз и ревизия в Secret, `--wait`, hook вне релиза, `pre-install,pre-upgrade` против post-hook, вес и порядок видов при равном весе, ссылка Job на отсутствующий вход, `before-hook-creation` и лог упавшего Job, откат не запускает `pre-upgrade`, перекат пода по `checksum/*` из `include … \| sha256sum`, `dig` по `.Values.AsMap` против nil pointer, строки Go-шаблона в обратных кавычках, что `helm lint` и `helm template` не видят схему и `--dry-run=server` | вернуться |
 
 Статус ставится по факту, а не по ощущению:
 

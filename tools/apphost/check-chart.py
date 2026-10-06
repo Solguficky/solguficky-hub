@@ -12,13 +12,26 @@ workload is checked against the rules of the production chart:
   block, which the Kubernetes API rejects next to Recreate;
 - every image comes from values as `@sha256:<64 hex>`, not a tag;
 - the pod runs as non-root and the container has resource limits;
+- the pod template carries checksums of the service's ConfigMap and Secret:
+  the service reads them through envFrom, and without the checksums a values
+  change or a rollback would not roll the pod;
 - every service has liveness and readiness probes of its form: gRPC ones for
   the gRPC services; for Auction an HTTP readiness path and TCP startup and
   liveness, because its readiness path answers 503 while the database is down
   and a liveness on it would restart the pod in a loop. The bot has no health
   endpoint and is the one named exception;
 - every secret in the chart's own values.yaml is empty: secrets are parameters
-  without values, and the ops repository supplies them per environment.
+  without values, and the ops repository supplies them per environment;
+- the one non-service workload is the JetStream topology Job: a pre-install and
+  pre-upgrade Helm hook, because the services bind to their durables at start
+  and a post-hook would wait for pods that never get ready without it. Its
+  image is pinned by digest, it runs as non-root with limits and never
+  restarts in place, and every object it reads is rendered as a hook of the
+  same events with a lower weight: a pre-hook runs before the release's own
+  objects exist, and Helm creates the hooks of one event in weight order.
+  Equal weights fall back to Helm's kind order, which happens to put
+  ConfigMap and Secret before Job; the rule states the order instead of
+  leaning on that.
 
 The fixture proves that the chart carries a digest through, not that a digest
 is real: real digests live in the ops repository (ADR-055).
@@ -36,6 +49,8 @@ import tempfile
 from pathlib import Path
 
 WORKLOADS = {"identity", "meetups", "notifications", "hub-bot", "auction"}
+HOOK_JOBS = {"jetstream-topology"}
+HOOK_EVENTS = "pre-install,pre-upgrade"
 WITHOUT_PROBES = {"hub-bot"}
 GRPC_PROBES = {"livenessProbe": "grpc", "readinessProbe": "grpc"}
 PROBES = {"auction": {"startupProbe": "tcpSocket", "livenessProbe": "tcpSocket", "readinessProbe": "httpGet"}}
@@ -48,6 +63,10 @@ REPLICAS = re.compile(r"^  replicas:\s*(\d+)\s*$", re.M)
 STRATEGY = re.compile(r'^  strategy:\s*\n((?:    .*\n?)*)', re.M)
 IMAGE = re.compile(r'^\s*(?:- )?image:\s*"?([^"\s]+)"?\s*$', re.M)
 DIGEST = re.compile(r"@sha256:[0-9a-f]{64}$")
+HOOK = re.compile(r'^    helm\.sh/hook:\s*"?([\w,-]+)"?\s*$', re.M)
+WEIGHT = re.compile(r'^    helm\.sh/hook-weight:\s*"?(-?\d+)"?\s*$', re.M)
+REFERENCE = re.compile(r'^\s*(?:- )?(?:configMap|secretRef|configMapRef|secret):\s*\n\s+(?:name|secretName):\s*"?([\w.-]+)"?\s*$', re.M)
+COMPONENT = re.compile(r'^    app\.kubernetes\.io/component:\s*"?([\w.-]+)"?\s*$', re.M)
 
 
 def documents(rendered: Path):
@@ -70,6 +89,23 @@ def check_workload(name: str, text: str) -> list[str]:
     if re.search(r"^    rollingUpdate:", block, re.M):
         errors.append(f"{name}: rollingUpdate next to Recreate is rejected by the Kubernetes API")
 
+    errors.extend(check_pod(name, text))
+    for checksum in ("checksum/config", "checksum/secrets"):
+        if not re.search(rf'^\s+{re.escape(checksum)}:\s*"?[0-9a-f]{{64}}"?\s*$', text, re.M):
+            errors.append(f"{name}: pod template has no {checksum} annotation, a values change would not roll the pod")
+
+    if name not in WITHOUT_PROBES:
+        for probe, expected in PROBES.get(name, GRPC_PROBES).items():
+            action = probe_action(text, probe)
+            if action is None:
+                errors.append(f"{name}: no {probe}")
+            elif action != expected:
+                errors.append(f"{name}: {probe} must be {expected}, got {action}")
+    return errors
+
+
+def check_pod(name: str, text: str) -> list[str]:
+    errors = []
     images = IMAGE.findall(text)
     if not images:
         errors.append(f"{name}: no image")
@@ -81,14 +117,16 @@ def check_workload(name: str, text: str) -> list[str]:
         errors.append(f"{name}: pod must set runAsNonRoot: true")
     if not re.search(r"^\s*limits:\s*$", text, re.M):
         errors.append(f"{name}: container has no resource limits")
+    return errors
 
-    if name not in WITHOUT_PROBES:
-        for probe, expected in PROBES.get(name, GRPC_PROBES).items():
-            action = probe_action(text, probe)
-            if action is None:
-                errors.append(f"{name}: no {probe}")
-            elif action != expected:
-                errors.append(f"{name}: {probe} must be {expected}, got {action}")
+
+def check_hook_job(name: str, text: str) -> list[str]:
+    errors = check_pod(name, text)
+    hook = HOOK.search(text)
+    if not hook or hook.group(1) != HOOK_EVENTS:
+        errors.append(f"{name}: Job must be a {HOOK_EVENTS} hook, got {hook.group(1) if hook else 'no hook'}")
+    if not re.search(r'^\s*restartPolicy:\s*"?Never"?\s*$', text, re.M):
+        errors.append(f"{name}: Job pod must set restartPolicy: Never")
     return errors
 
 
@@ -101,16 +139,44 @@ def probe_action(text: str, probe: str) -> str | None:
     return actions[0] if actions else "none"
 
 
+def hook_weight(text: str) -> int:
+    """Helm reads a missing weight as 0."""
+    weight = WEIGHT.search(text)
+    return int(weight.group(1)) if weight else 0
+
+
 def check_rendered(rendered: Path) -> list[str]:
     errors = []
     found = {}
+    inputs = {}
+    jobs = {}
     for path, text in documents(rendered):
         kind = KIND.search(text)
+        component = COMPONENT.search(text)
+        if component and component.group(1) in HOOK_JOBS and (not kind or kind.group(1) not in WORKLOAD_KINDS):
+            hook = HOOK.search(text)
+            if not hook or hook.group(1) != HOOK_EVENTS:
+                errors.append(
+                    f"{component.group(1)}: {kind.group(1) if kind else 'object'} in {path} must be a {HOOK_EVENTS} hook "
+                    f"like its Job, got {hook.group(1) if hook else 'no hook'}")
+            input_name = NAME.search(text)
+            if input_name:
+                inputs[input_name.group(1)] = (component.group(1), kind.group(1) if kind else "object", path, hook_weight(text))
+            continue
         if not kind or kind.group(1) not in WORKLOAD_KINDS:
             continue
         name_match = NAME.search(text)
         raw = name_match.group(1) if name_match else f"<unnamed in {path}>"
         name = raw.removesuffix("-deployment")
+        if name in HOOK_JOBS:
+            if kind.group(1) != "Job":
+                errors.append(f"{name}: workload kind {kind.group(1)}, expected a hook Job")
+            if name in found:
+                errors.append(f"{name}: rendered twice ({found[name]} and {path})")
+            found[name] = path
+            jobs[name] = (hook_weight(text), REFERENCE.findall(text))
+            errors.extend(check_hook_job(name, text))
+            continue
         if kind.group(1) != "Deployment":
             errors.append(f"{name}: workload kind {kind.group(1)}, expected Deployment")
         if name in found:
@@ -119,10 +185,23 @@ def check_rendered(rendered: Path) -> list[str]:
         if name in WORKLOADS:
             errors.extend(check_workload(name, text))
 
-    for name in sorted(set(found) - WORKLOADS):
+    for name in sorted(set(found) - WORKLOADS - HOOK_JOBS):
         errors.append(f"{name}: workload is not one of the chart services {sorted(WORKLOADS)}")
     for name in sorted(WORKLOADS - set(found)):
         errors.append(f"{name}: chart service has no workload")
+    for name in sorted(HOOK_JOBS - set(found)):
+        errors.append(f"{name}: chart has no hook Job")
+    for name, (weight, references) in sorted(jobs.items()):
+        # A reference to an object the chart does not render passes helm and
+        # leaves the pod in ContainerCreating until the Job's deadline.
+        for reference in references:
+            if reference not in inputs or inputs[reference][0] != name:
+                errors.append(f"{name}: Job reads {reference}, which the chart does not render as its hook input")
+    for input_name, (name, kind, path, weight) in sorted(inputs.items()):
+        if name in jobs and weight >= jobs[name][0]:
+            errors.append(
+                f"{name}: {kind} {input_name} in {path} has hook weight {weight}, not below its Job's {jobs[name][0]}: "
+                f"the order would rest on Helm's kind order alone")
     return errors
 
 
@@ -181,7 +260,7 @@ def main(argv: list[str]) -> int:
     if errors:
         return 1
     checked = "chart values have no secret values" if argv[0] == "--values" else \
-        f"{len(WORKLOADS)} workloads match the production chart rules"
+        f"{len(WORKLOADS)} workloads and {len(HOOK_JOBS)} hook Job match the production chart rules"
     print(f"check-chart: {checked}")
     return 0
 

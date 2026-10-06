@@ -12,6 +12,7 @@ internal sealed class ServiceGraphContext(
 {
     private readonly Dictionary<string, object> _resolved = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, IResourceBuilder<ParameterResource>> _serviceTokens = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<IResource> _publishHooks = [];
 
     public IDistributedApplicationBuilder Builder { get; } = builder;
 
@@ -24,6 +25,16 @@ internal sealed class ServiceGraphContext(
     /// </summary>
     public void Publish<T>(string name, IResourceBuilder<T> resource) where T : IResource =>
         _resolved[name] = resource;
+
+    /// <summary>
+    /// Compute-ресурс публикации, который не сервис, а шаг выкладки инфраструктуры
+    /// внутри чарта: Job топологии JetStream у NATS. Без регистрации граф принял бы
+    /// его за утёкший узел сборки и отверг чарт.
+    /// </summary>
+    public void PublishHook<T>(IResourceBuilder<T> hook) where T : IComputeResource =>
+        _publishHooks.Add(hook.Resource);
+
+    internal IReadOnlyCollection<IResource> PublishHooks => _publishHooks;
 
     public bool Has(string name) => _resolved.ContainsKey(name);
 

@@ -100,6 +100,12 @@ identity-db: ConnectionStringParameterResource
   secret: True
 identity-maintainer-token: ParameterResource
   secret: True
+jetstream-topology: ContainerResource
+  image: docker.io/natsio/nats-box:
+  arg: /topology/apply.sh
+  arg: /topology
+  env: NATS_URL={nats.connectionString}
+  relationship: Reference nats
 k8s: KubernetesEnvironmentResource
 meetups: ProjectResource
   endpoint: grpc http port= target=8080 proxied=True external=False
@@ -138,12 +144,15 @@ notifications: ProjectResource
   env: ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
   env: HTTP_PORTS={notifications.bindings.grpc.targetPort}
   env: NOTIFICATIONS_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
+  env: NOTIFICATIONS_CLUSTER_ID={notifications-cluster-id.value}
   env: NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: NOTIFICATIONS_DATABASE_URL={notifications-db.connectionString}
   env: NOTIFICATIONS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: NOTIFICATIONS_MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: NOTIFICATIONS_NATS_URL={nats.connectionString}
+  env: NOTIFICATIONS_SERVICE_ID={notifications-service-id.value}
   env: NOTIFICATIONS_SERVICE_TOKEN={notifications-service-token.value}
+  env: NOTIFICATIONS_SILO_ADVERTISED_HOST={notifications.bindings.grpc.host}
   waits: identity WaitUntilHealthy
   waits: meetups WaitUntilHealthy
   waits: nats WaitUntilHealthy
@@ -152,14 +161,21 @@ notifications: ProjectResource
   relationship: Reference identity
   relationship: Reference meetups
   relationship: Reference nats
+  relationship: Reference notifications
+  relationship: Reference notifications-cluster-id
   relationship: Reference notifications-db
+  relationship: Reference notifications-service-id
   relationship: Reference notifications-service-token
   relationship: WaitFor identity
   relationship: WaitFor meetups
   relationship: WaitFor nats
   relationship: WaitFor notifications-db
   health: notifications-grpc
+notifications-cluster-id: ParameterResource
+  secret: False
 notifications-db: ConnectionStringParameterResource
   secret: True
+notifications-service-id: ParameterResource
+  secret: False
 notifications-service-token: ParameterResource
   secret: True

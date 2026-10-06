@@ -108,6 +108,7 @@ internal sealed class ServiceGraph(IDistributedApplicationBuilder builder, Profi
 
         if (publishing)
         {
+            workloads.UnionWith(context.PublishHooks);
             VerifyNoLeakedCompute(workloads);
         }
 

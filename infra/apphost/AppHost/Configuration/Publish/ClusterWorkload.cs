@@ -47,6 +47,17 @@ internal static class ClusterWorkloadExtensions
             // API Kubernetes отвергает — helm template этого не видит.
             deployment.Spec.Strategy = new DeploymentStrategyV1 { Type = "Recreate", RollingUpdate = null! };
 
+            // Переменные сервис берёт из своих ConfigMap и Secret через envFrom, а
+            // их правка шаблон пода не меняет: Kubernetes под не перекатывает, и
+            // новые values или helm rollback доходили бы до сервиса только со
+            // случайным рестартом. Контрольная сумма отрендеренных файлов в
+            // аннотации делает правку конфигурации правкой шаблона (PER-311).
+            foreach (var file in new[] { "config", "secrets" })
+            {
+                deployment.Spec.Template.Metadata.Annotations[$"checksum/{file}"] =
+                    $"{{{{ include (print $.Template.BasePath `/{resource.Resource.Name}/{file}.yaml`) . | sha256sum }}}}";
+            }
+
             var pod = deployment.Spec.Template.Spec;
             pod.SecurityContext = new PodSecurityContextV1
             {
@@ -64,10 +75,19 @@ internal static class ClusterWorkloadExtensions
                     Capabilities = new CapabilitiesV1 { Drop = { "ALL" } },
                 };
 
+                var values = ValuesKey(resource.Resource.Name);
                 container.Resources = new ResourceRequirementsV1
                 {
-                    Requests = { ["cpu"] = shape.CpuRequest, ["memory"] = shape.MemoryRequest },
-                    Limits = { ["cpu"] = shape.CpuLimit, ["memory"] = shape.MemoryLimit },
+                    Requests =
+                    {
+                        ["cpu"] = Overridable(values, "cpuRequest", shape.CpuRequest),
+                        ["memory"] = Overridable(values, "memoryRequest", shape.MemoryRequest),
+                    },
+                    Limits =
+                    {
+                        ["cpu"] = Overridable(values, "cpuLimit", shape.CpuLimit),
+                        ["memory"] = Overridable(values, "memoryLimit", shape.MemoryLimit),
+                    },
                 };
 
                 // Сервисы применяют миграции при старте, Notifications — ещё и до
@@ -90,6 +110,23 @@ internal static class ClusterWorkloadExtensions
                 }
             }
         });
+
+    /// <summary>
+    /// Ключ сервиса в values — как у параметров генератора: <c>hub-bot</c> даёт <c>hub_bot</c>.
+    /// </summary>
+    public static string ValuesKey(string resourceName) => resourceName.Replace('-', '_');
+
+    /// <summary>
+    /// Значение ресурса пода, которое среда переопределяет в values ключом
+    /// <c>resources.&lt;сервис&gt;.&lt;поле&gt;</c>, а без ключа берёт форму сервиса.
+    /// Генератор не умеет класть в values.yaml свои ключи, поэтому умолчание живёт
+    /// в самом шаблоне, а <c>dig</c> по <c>.Values.AsMap</c> не падает на
+    /// отсутствующем <c>resources</c>. Строки Go-шаблона — в обратных кавычках:
+    /// двойные сериализатор YAML экранировал бы, и Helm не разобрал бы шаблон.
+    /// Stage урезает память так, чтобы среда влезла в квоту namespace (PER-311).
+    /// </summary>
+    public static string Overridable(string values, string field, string fallback) =>
+        $"{{{{ dig `resources` `{values}` `{field}` `{fallback}` .Values.AsMap }}}}";
 
     // Сервис считает готовность не дольше 2 секунд (ADR-054), поэтому таймаут
     // пробы в 3 секунды оставляет запас на сам вызов — как deadline локальной
