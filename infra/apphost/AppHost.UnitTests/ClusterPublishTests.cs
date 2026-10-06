@@ -1,4 +1,5 @@
 using AppHost.Configuration;
+using AppHost.Configuration.Infrastructure;
 using Aspire.Hosting;
 using Aspire.Hosting.ApplicationModel;
 using Aspire.Hosting.Kubernetes;
@@ -29,8 +30,12 @@ public class ClusterPublishTests
             TestContext.Current.CancellationToken);
     }
 
+    /// <summary>
+    /// Кроме сервисов в модели один compute-ресурс — Job топологии JetStream,
+    /// которым владеет публикация NATS (PER-311).
+    /// </summary>
     [Fact]
-    public async Task Publish_Workloads_AreTheFourMvpServicesAndAuction()
+    public async Task Publish_Workloads_AreTheFourMvpServicesAuctionAndTopologyJob()
     {
         var builder = await PublishModelAsync();
 
@@ -38,7 +43,7 @@ public class ClusterPublishTests
         builder.Resources.OfType<IComputeResource>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.Auction, R.HubBot, R.Identity, R.Meetups, R.Notifications]);
+            .ShouldBe([R.Auction, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications]);
     }
 
     /// <summary>
