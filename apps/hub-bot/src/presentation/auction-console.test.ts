@@ -36,6 +36,8 @@ const vaseId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
 const mugId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d";
 const timeZone = "Europe/Moscow";
 const today = () => ({ year: 2026, month: 10, day: 6 });
+// Часы бота в тестах: 6 октября 2026 года, 12:00 по Москве.
+const now = new Date("2026-10-06T09:00:00Z");
 
 const consoleData = `v1:ac:v:${auctionToken}`;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
@@ -83,6 +85,8 @@ function fakeAuction(
     refuse?: true;
     // Лоты, у которых дедлайн прошёл: отметка финала им отказана.
     deadlinePassed?: readonly string[];
+    // Отбирать некуда: у аукциона в сервисе нет финала.
+    notApplicable?: true;
   } = {},
 ) {
   const state: {
@@ -109,6 +113,9 @@ function fakeAuction(
         method: selected ? "selectForFinal" : "deselectForFinal",
         args: marked,
       });
+      if (selected && options.notApplicable === true) {
+        return { kind: "refused", reason: "selection-not-applicable" };
+      }
       if (options.deadlinePassed?.includes(marked.lotId)) {
         return { kind: "refused", reason: "deadline-passed" };
       }
@@ -208,6 +215,7 @@ function harness(
     createDispatcher(undefined, undefined, today, auction.port, auction.port, {
       auctions: auction.port,
       timeZone,
+      now: () => now,
     }),
     calls,
     undefined,
@@ -341,6 +349,22 @@ const mug: ConsoleLot = {
   bidCount: 1,
   markedForFinal: true,
   overdue: true,
+};
+// Лот с ценой и шагом откроется вместе с неделей; лот без них — нет.
+const priced: ConsoleLot = {
+  lot: {
+    ...trading(vaseId, "Ваза", 0),
+    status: { kind: "scheduled", startingPrice: rub(50_000) },
+  },
+  bidCount: 0,
+  markedForFinal: false,
+  overdue: false,
+};
+const unpriced: ConsoleLot = {
+  lot: { ...trading(mugId, "Кружка", 0), status: { kind: "draft" } },
+  bidCount: 0,
+  markedForFinal: false,
+  overdue: false,
 };
 
 describe("entry into the auction console", () => {
@@ -615,6 +639,45 @@ describe("week of the auction", () => {
     await bot.handleUpdate(press(toggle));
     expect(auction.sent("scheduleAuction")).toHaveLength(1);
   });
+
+  it("switches the final back on right after it was switched off", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+    });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Вкл · Финал")));
+    // Новое чтение видит выключенный финал, и «Вкл» шлёт команду.
+    await bot.handleUpdate(press(dataOf(last(calls), "Выкл · Финал")));
+
+    expect(
+      auction.sent("scheduleAuction").map((command) => command.args),
+    ).toEqual([
+      expect.objectContaining({ final: false }),
+      expect.objectContaining({ final: true }),
+    ]);
+    expect(toasts(calls)).toContain("Включено: финал.");
+    expect(labels(last(calls))).toContainEqual(["Вкл · Финал"]);
+  });
+
+  it("asks again when the end of the week has already come", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:w:${auctionToken}`));
+
+    await bot.handleUpdate(
+      answer(calls, { text: "01.10.2026 18:00 — 06.10.2026 12:00" }),
+    );
+
+    expect(question(calls).payload.text?.split("\n")[0]).toBe(
+      "Конец недели уже прошёл.",
+    );
+    expect(auction.sent("scheduleAuction")).toEqual([]);
+  });
 });
 
 describe("opening the online week", () => {
@@ -622,7 +685,7 @@ describe("opening the online week", () => {
     const auction = fakeAuction({
       status: "scheduled",
       week: { ...week, final: true },
-      lots: [vase],
+      lots: [priced, unpriced],
     });
     const { bot, calls } = harness(["admin", "public"], auction);
     await bot.init();
@@ -631,7 +694,14 @@ describe("opening the online week", () => {
     await bot.handleUpdate(press(dataOf(last(calls), "Открыть онлайн-неделю")));
     const confirm = last(calls);
     expect(plain(confirm)).toContain("Онлайн-неделя");
-    expect(plain(confirm)).toContain("закроются 27 октября, вт, 00:00");
+    // Подтверждение называет, сколько лотов откроется и сколько останется
+    // без торгов.
+    expect(plain(confirm)).toContain(
+      "К ставкам сразу откроются: 1 лот. Торги закроются 27 октября, вт, 00:00.",
+    );
+    expect(plain(confirm)).toContain(
+      "Без цены и шага останутся без торгов: 1 лот.",
+    );
     expect(labels(confirm)).toEqual([["Да, открыть неделю"], ["Нет"]]);
     expect(dataOf(confirm, "Нет")).toBe(consoleData);
     expect(auction.sent("startPrebidding")).toEqual([]);
@@ -657,6 +727,7 @@ describe("opening the online week", () => {
     const auction = fakeAuction({
       status: "scheduled",
       week: { ...week, final: true },
+      lots: [priced],
     });
     const { bot, calls } = harness(["admin", "public"], auction);
     await bot.init();
@@ -678,5 +749,108 @@ describe("opening the online week", () => {
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
     expect(plain(last(calls))).toContain("Неделя уже открыта.");
     expect(labels(last(calls))).not.toContainEqual(["Да, открыть неделю"]);
+  });
+
+  it("names an ended week instead of a confirmation", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: {
+        opensAt: "2026-09-28T15:00:00Z",
+        closesAt: "2026-10-05T21:00:00Z",
+        final: true,
+      },
+      lots: [priced],
+    });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
+
+    expect(plain(last(calls))).toContain(
+      "Конец недели уже прошёл: задай новые сроки.",
+    );
+    expect(labels(last(calls))).not.toContainEqual(["Да, открыть неделю"]);
+  });
+
+  it("names a registry without priced lots instead of a confirmation", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [unpriced],
+    });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
+
+    expect(plain(last(calls))).toContain(
+      "Нет лотов с ценой и шагом: открывать нечего.",
+    );
+    expect(labels(last(calls))).not.toContainEqual(["Да, открыть неделю"]);
+    expect(auction.sent("startPrebidding")).toEqual([]);
+  });
+});
+
+describe("final selection", () => {
+  it("offers no selection for a week without a final but lets the old mark go", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: false },
+      lots: [vase, mug],
+    });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+
+    expect(labels(last(calls))).toEqual([
+      ["Снять из финала · Кружка"],
+      ["‹ Лоты", "Меню"],
+    ]);
+  });
+
+  it("shows the refusal of a selection without a final as the line of the console", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+      notApplicable: true,
+    });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+
+    await bot.handleUpdate(
+      press(`v1:ac:s:${auctionToken}:${uuidToToken(vaseId)}:0`),
+    );
+
+    const screen = plain(last(calls));
+    expect(screen).toContain("У недели нет финала: отбирать лоты некуда.");
+    expect(screen).not.toContain("Лот отмечен для финала.");
+  });
+
+  it("marks a held lot as a finalist without buttons", async () => {
+    const held: ConsoleLot = {
+      lot: {
+        ...trading(vaseId, "Ваза", 120_000),
+        status: { kind: "held", currentPrice: rub(120_000) },
+      },
+      bidCount: 4,
+      markedForFinal: true,
+      overdue: false,
+    };
+    const auction = fakeAuction({
+      status: "settling",
+      week: { ...week, final: true },
+      lots: [held],
+    });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+
+    expect(plain(last(calls))).toContain(
+      "• Ваза — 1 200 ₽ · 4 ставки · в финал",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Лоты", "Меню"]]);
   });
 });

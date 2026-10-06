@@ -727,6 +727,8 @@ function finalistResult(
           return refused("not-marked");
         case "deadlinePassed":
           return refused("deadline-passed");
+        case "selectionNotApplicable":
+          return refused("selection-not-applicable");
         case undefined:
           return defect(`${command} for final refusal without a reason`);
         default: {

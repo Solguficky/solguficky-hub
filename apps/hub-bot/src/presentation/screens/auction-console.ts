@@ -70,6 +70,9 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "lot-not-open": "Торги по лоту не идут: отметить его для финала нельзя.",
   "not-in-online-phase": "Лот уже в живом финале.",
   "lot-not-in-auction": "Лота нет в этом аукционе.",
+  "selection-not-applicable": "У недели нет финала: отбирать лоты некуда.",
+  "week-ended": "Конец недели уже прошёл: задай новые сроки.",
+  "no-lots-to-open": "Нет лотов с ценой и шагом: открывать нечего.",
 };
 
 /** Всплывающий текст принятого переключателя финала (кадр P-08). */
@@ -149,17 +152,30 @@ function priceLabel(status: LotStatusView): string {
 
 /** «нет ставок», «1 ставка», «3 ставки», «12 ставок». */
 export function bidsLabel(count: number): string {
-  if (count === 0) return "нет ставок";
+  return count === 0
+    ? "нет ставок"
+    : counted(count, ["ставка", "ставки", "ставок"]);
+}
+
+/** «1 лот», «3 лота», «12 лотов». */
+function lotsLabel(count: number): string {
+  return counted(count, ["лот", "лота", "лотов"]);
+}
+
+function counted(
+  count: number,
+  [one, few, many]: readonly [string, string, string],
+): string {
   const tens = count % 100;
   const ones = count % 10;
   const word =
     tens >= 11 && tens <= 14
-      ? "ставок"
+      ? many
       : ones === 1
-        ? "ставка"
+        ? one
         : ones >= 2 && ones <= 4
-          ? "ставки"
-          : "ставок";
+          ? few
+          : many;
   return `${count} ${word}`;
 }
 
@@ -210,8 +226,12 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     nextRow(keyboard).text("Открыть онлайн-неделю", consoleOpenData(auction));
   }
   if (console.status === "prebidding") {
+    // Без финала отбирать некуда: «В финал» не ставится, а снять прежнюю
+    // отметку можно и после того, как финал выключили.
+    const final = week?.final !== false;
     for (const entry of page.items.filter(markable)) {
       const selected = !entry.markedForFinal;
+      if (selected && !final) continue;
       nextRow(keyboard).text(
         buttonText(
           `${selected ? "В финал" : "Снять из финала"} · ${titleOf(entry)}`,
@@ -257,6 +277,8 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
 export function weekConfirmScreen(confirm: {
   console: AuctionConsoleView;
   opId: string;
+  opening: number;
+  idle: number;
   timeZone: string;
   today: CommunityDay;
 }): ShownScreen {
@@ -269,9 +291,14 @@ export function weekConfirmScreen(confirm: {
       "Онлайн-неделя",
       escapeHtml(
         closesAt === undefined
-          ? "Лоты аукциона откроются к ставкам сразу."
-          : `Лоты аукциона откроются к ставкам сразу и закроются ${moment(closesAt, view)}.`,
+          ? `К ставкам сразу откроются: ${lotsLabel(confirm.opening)}.`
+          : `К ставкам сразу откроются: ${lotsLabel(confirm.opening)}. Торги закроются ${moment(closesAt, view)}.`,
       ),
+      confirm.idle === 0
+        ? undefined
+        : escapeHtml(
+            `Без цены и шага останутся без торгов: ${lotsLabel(confirm.idle)}.`,
+          ),
       escapeHtml(
         "Отменить открытие нельзя: сроки, финал и состав лотов после него не меняются.",
       ),
@@ -292,6 +319,7 @@ const weekAskErrorText: Record<WeekAskError, string> = {
   "week-moment":
     "Такого времени нет по времени сообщества: в этот час переводили часы.",
   "week-order": "Конец недели должен быть позже начала.",
+  "week-ended": "Конец недели уже прошёл.",
 };
 
 export const weekPrompt =

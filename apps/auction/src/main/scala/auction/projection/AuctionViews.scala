@@ -22,9 +22,6 @@ enum AuctionListing {
 trait AuctionViews {
   def byMeetup(meetup: MeetupId): Future[Option[AuctionSnapshotView]]
 
-  /** Аукцион по идентификатору; черновик тоже. Аукциона нет в read model — `None`. */
-  def find(auctionId: UUID): Future[Option[AuctionSnapshotView]]
-
   /** Аукционы выборки по возрастанию `auction_id`, строго после `after`, не больше `limit`. */
   def page(listing: AuctionListing, after: Option[UUID], limit: Int): Future[List[AuctionSnapshotView]]
 }

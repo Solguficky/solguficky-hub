@@ -22,6 +22,7 @@ import auction.catalog.TestImages
 import auction.v1.auction.AntiSnipe as AntiSnipeMessage
 import auction.v1.auction.AuctionConfig as AuctionConfigMessage
 import auction.v1.auction.ClosingByDeadline
+import auction.v1.auction.MixedClosing
 import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
 import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.Money as MoneyMessage
@@ -266,11 +267,15 @@ final class AuctionGrpcIntegrationSpec
     )
 
   /** Онлайн-неделя, которая закрывает лоты общим дедлайном: умолчания лота — рубли, анти-снайп по две минуты. */
-  private def auctionConfig(opensAt: String, closesAt: String): AuctionConfigMessage =
+  /** Без финала лоты закрываются по дедлайну; с финалом онлайн-сторона — тоже по дедлайну, а финал ведёт ведущий. */
+  private def auctionConfig(opensAt: String, closesAt: String, withFinal: Boolean = false): AuctionConfigMessage =
     AuctionConfigMessage(
       Some(OnlinePhaseMessage(opensAt, Some(closesAt), closesLots = true)),
-      0,
-      Some(ClosingPolicyMessage().withByDeadline(ClosingByDeadline())),
+      if (withFinal) 1 else 0,
+      Some(
+        if (withFinal) ClosingPolicyMessage().withMixed(MixedClosing(onlineByDeadline = true))
+        else ClosingPolicyMessage().withByDeadline(ClosingByDeadline())
+      ),
       Some(
         LotDefaultsMessage(
           "RUB",
@@ -373,7 +378,7 @@ final class AuctionGrpcIntegrationSpec
           Some(administrator),
           auction,
           newId(),
-          Some(auctionConfig(closesAt.minus(31, ChronoUnit.DAYS).toString, closesAt.toString))
+          Some(auctionConfig(closesAt.minus(31, ChronoUnit.DAYS).toString, closesAt.toString, withFinal = true))
         )
         asHubBot(node.client.scheduleAuction()).invoke(scheduled).futureValue.outcome.isAccepted shouldBe true
         asHubBot(node.client.scheduleLot()).invoke(schedule(auction, lot)).futureValue.outcome.isAccepted shouldBe true

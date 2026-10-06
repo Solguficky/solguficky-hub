@@ -415,6 +415,8 @@ object ResponseMapping {
         throw new IllegalStateException("a lot of the registry has no journal")
       case Left(FinalChoiceRefusal.NotInPrebidding) => refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
       case Left(FinalChoiceRefusal.LotNotInAuction) => refused(Reason.LotNotInAuction(wire.LotNotInAuction()))
+      case Left(FinalChoiceRefusal.SelectionNotApplicable) =>
+        refused(Reason.SelectionNotApplicable(wire.SelectionNotApplicable()))
       case Left(FinalChoiceRefusal.Denied(Denial.NotAdministrator)) =>
         refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
       case Left(FinalChoiceRefusal.Denied(Denial.MeetupNotFound)) =>
@@ -448,6 +450,8 @@ object ResponseMapping {
         throw new IllegalStateException("a lot of the registry has no journal")
       case Left(FinalChoiceRefusal.NotInPrebidding) => refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
       case Left(FinalChoiceRefusal.LotNotInAuction) => refused(Reason.LotNotInAuction(wire.LotNotInAuction()))
+      case Left(FinalChoiceRefusal.SelectionNotApplicable) =>
+        throw new IllegalStateException("final deselection answered SelectionNotApplicable")
       case Left(FinalChoiceRefusal.Denied(Denial.NotAdministrator)) =>
         refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
       case Left(FinalChoiceRefusal.Denied(Denial.MeetupNotFound)) =>

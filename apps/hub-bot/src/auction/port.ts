@@ -177,7 +177,9 @@ export type FinalistRefusal =
   | "not-in-online-phase"
   | "already-marked"
   | "not-marked"
-  | "deadline-passed";
+  | "deadline-passed"
+  // Отбирать некуда: у аукциона нет финала или лоты не получают дедлайна.
+  | "selection-not-applicable";
 
 export type FinalistResult =
   | { kind: "ok" }

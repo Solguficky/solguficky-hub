@@ -28,13 +28,22 @@ export function createDispatcher(
   lots?: LotAdministration,
   // Пульт аукциона (PER-320): сроки недели вводятся по времени сообщества, а
   // Auction принимает мгновения, поэтому пульту нужен пояс.
-  consoles?: { auctions: AuctionConsoles; timeZone: string },
+  consoles?: {
+    auctions: AuctionConsoles;
+    timeZone: string;
+    // Часы бота; тест их подменяет.
+    now?: () => Date;
+  },
 ): Dispatcher {
   const lotForm = lots === undefined ? undefined : createLotForm(lots);
   const auctionConsole =
     consoles === undefined
       ? undefined
-      : createAuctionConsole(consoles.auctions, consoles.timeZone);
+      : createAuctionConsole(
+          consoles.auctions,
+          consoles.timeZone,
+          consoles.now,
+        );
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -198,6 +207,8 @@ export function createDispatcher(
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotForm(request);
         case "view-auction-console":
+        case "ask-auction-week":
+        case "prepare-auction-week-start":
         case "schedule-auction-week":
         case "set-auction-final":
         case "start-auction-week":

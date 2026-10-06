@@ -38,6 +38,8 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
 
     def inspect(auctionId: AuctionId, opId: OpId): Future[Inspection] = Future.successful(inspection)
 
+    def get(auctionId: AuctionId): Future[Auction] = fail("the auction was read")
+
     def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator): Future[AuctionAnswer] = {
       commands :+= command
       Future.successful(AuctionAnswer.Written(AuctionEnvelope(1, command.opId, AuctionEvent.AuctionDrafted(meetup))))
@@ -415,6 +417,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         (answer, refusal) <- List(
           FinalChoiceRejected.NotInPrebidding -> FinalChoiceRefusal.NotInPrebidding,
           FinalChoiceRejected.LotNotInAuction -> FinalChoiceRefusal.LotNotInAuction,
+          FinalChoiceRejected.SelectionNotApplicable -> FinalChoiceRefusal.SelectionNotApplicable,
           FinalChoiceRejected.AuctionNotFound -> FinalChoiceRefusal.Denied(Denial.AuctionNotFound),
           FinalChoiceRejected.ByLot(MarkForFinalRejected.DeadlinePassed) ->
             FinalChoiceRefusal.ByLot(MarkForFinalRejected.DeadlinePassed)

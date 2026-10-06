@@ -1566,6 +1566,7 @@ async function handleMessage(
       case "lot-refused":
       case "auction-console":
       case "auction-week-ask":
+      case "auction-week-confirm":
       case "auction-console-refused":
         outcome = {
           level: "error",
@@ -4766,32 +4767,14 @@ async function handleConsoleCallback(
         }),
         action.page,
       );
-    case "console-week": {
-      // Вопрос называет текущие сроки, поэтому пульт читается до него. Сроки
-      // открытой недели не меняются: вместо вопроса — пульт с причиной.
-      const result = await runtime.dispatcher.execute({
-        ...call,
-        intent: "view-auction-console",
-      });
-      if (
-        result.kind === "auction-console" &&
-        (result.console.status === "draft" ||
-          result.console.status === "scheduled")
-      ) {
-        return render({
-          kind: "auction-week-ask",
-          auctionId,
-          ...(result.console.week === undefined
-            ? {}
-            : { week: result.console.week }),
-        });
-      }
+    case "console-week":
+      // Можно ли ещё менять сроки, решает юзкейс: вопрос либо пульт с причиной.
       return render(
-        result.kind === "auction-console"
-          ? { ...result, note: "week-frozen" }
-          : result,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-auction-week",
+        }),
       );
-    }
     case "console-final":
       return render(
         await runtime.dispatcher.execute({
@@ -4801,46 +4784,16 @@ async function handleConsoleCallback(
           opId: createUuidV7(),
         }),
       );
-    case "console-open": {
-      // Подтверждение — только у запланированного аукциона. Остальным пульт
-      // называет причину словами состояния, а не кадром отказа.
-      const result = await runtime.dispatcher.execute({
-        ...call,
-        intent: "view-auction-console",
-      });
-      if (
-        result.kind === "auction-console" &&
-        result.console.status === "scheduled"
-      ) {
-        await showScreen(
-          ctx,
-          weekConfirmScreen({
-            console: result.console,
-            opId: createUuidV7(),
-            timeZone: runtime.communityTimeZone ?? "UTC",
-            today: communityToday(ctx),
-          }),
-        );
-        return {
-          level: "info",
-          message: "auction week confirmation sent",
-          result: "ok",
-          use_case: useCase,
-          identity_id: person.identityId,
-        };
-      }
+    case "console-open":
+      // Подтверждение либо пульт с причиной решает юзкейс; ключ открытия
+      // рождается здесь и уедет в «Да».
       return render(
-        result.kind === "auction-console"
-          ? {
-              ...result,
-              note:
-                result.console.status === "draft"
-                  ? "week-not-scheduled"
-                  : "week-already-open",
-            }
-          : result,
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-auction-week-start",
+          opId: createUuidV7(),
+        }),
       );
-    }
     case "console-confirm":
       return render(
         await runtime.dispatcher.execute({
@@ -4916,6 +4869,19 @@ async function renderConsoleResult(
           : `auction console sent: ${result.note}`,
       );
     }
+    case "auction-week-confirm":
+      await showScreen(
+        ctx,
+        weekConfirmScreen({
+          console: result.console,
+          opId: result.opId,
+          opening: result.opening,
+          idle: result.idle,
+          timeZone,
+          today: communityToday(ctx),
+        }),
+      );
+      return handled("auction week confirmation sent");
     case "auction-week-ask":
       await askConsoleWeek(ctx, context.questions, {
         auctionId: result.auctionId,

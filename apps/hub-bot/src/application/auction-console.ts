@@ -29,18 +29,24 @@ export type WeekResult =
 
 const momentPattern = String.raw`(\d{2})\.(\d{2})\.(\d{4})\s+(\d{2}):(\d{2})`;
 // Начало и конец через тире любого вида или через пробел: так их пишут с
-// клавиатуры и так их показывает сам пульт в строке «Сейчас».
+// клавиатуры и так их показывает сам пульт в строке «Сейчас». Разделитель
+// обязателен: слитые моменты — не сроки, а опечатка.
 const weekPattern = new RegExp(
-  `^${momentPattern}\\s*(?:[-‒–—]\\s*)?${momentPattern}$`,
+  `^${momentPattern}(?:\\s*[-‒–—]\\s*|\\s+)${momentPattern}$`,
 );
 
 /**
  * Сроки недели в виде `ДД.ММ.ГГГГ ЧЧ:ММ — ДД.ММ.ГГГГ ЧЧ:ММ` по времени
  * сообщества — формат ввода хаба (дизайн-код, «Формат»). Даты, которой нет в
  * календаре, и времени, которого нет в поясе, нет и в ответе: подменять их
- * соседними бот не вправе.
+ * соседними бот не вправе. Конец, который уже наступил по часам бота, — не
+ * сроки: лоты получили бы прошедший дедлайн.
  */
-export function parseWeek(raw: string, timeZone: string): WeekResult {
+export function parseWeek(
+  raw: string,
+  timeZone: string,
+  now: Date,
+): WeekResult {
   const match = weekPattern.exec(raw.trim());
   if (match === null) return { kind: "rejected", error: "week-format" };
   const numbers = match.slice(1).map(Number);
@@ -70,7 +76,16 @@ export function parseWeek(raw: string, timeZone: string): WeekResult {
   if (Date.parse(closesAt) <= Date.parse(opensAt)) {
     return { kind: "rejected", error: "week-order" };
   }
+  if (Date.parse(closesAt) <= now.getTime()) {
+    return { kind: "rejected", error: "week-ended" };
+  }
   return { kind: "ok", opensAt, closesAt };
+}
+
+/** Конец недели наступил по часам бота: открывать такую неделю нельзя. */
+function weekEnded(console: AuctionConsoleView, now: Date): boolean {
+  const closesAt = console.week?.closesAt;
+  return closesAt !== undefined && Date.parse(closesAt) <= now.getTime();
 }
 
 function failed(failure: AuctionFailure): ExecuteResult {
@@ -96,6 +111,8 @@ function editable(console: AuctionConsoleView): boolean {
 export function createAuctionConsole(
   consoles: AuctionConsoles,
   timeZone: string,
+  // Часы бота: по ним решается, прошёл ли конец недели. Тест их подменяет.
+  now: () => Date = () => new Date(),
 ) {
   type Read =
     | { kind: "ok"; console: AuctionConsoleView }
@@ -120,9 +137,10 @@ export function createAuctionConsole(
     }
   }
 
-  // Пульт после команды: чтение Auction с исходом первой строкой. Чтения идут
-  // из read model и отстают от команды, поэтому принятая команда накладывается
-  // на прочитанное — как форма лота собирает экран из ответа команды.
+  // Пульт после команды: чтение Auction с исходом первой строкой. Статус и
+  // сроки Auction читает у самого аукциона, а лоты — из read model, и они
+  // отстают от команды. Поэтому принятая команда накладывается на прочитанное,
+  // как форма лота собирает экран из ответа команды.
   async function after(
     request: AuctionConsoleRequest,
     note: ConsoleNote | undefined,
@@ -155,7 +173,7 @@ export function createAuctionConsole(
       auctionId: request.auctionId,
       ...(console.week === undefined ? {} : { week: console.week }),
     };
-    const week = parseWeek(request.value, timeZone);
+    const week = parseWeek(request.value, timeZone, now());
     if (week.kind === "rejected") return { ...asked, error: week.error };
     const final = console.week?.final ?? defaultFinal;
     const scheduled = await consoles.scheduleAuction(
@@ -331,12 +349,73 @@ export function createAuctionConsole(
     }
   }
 
+  // «Сроки недели»: вопрос называет текущие сроки, поэтому пульт читается до
+  // него. Сроки открытой недели не меняются — вместо вопроса пульт с причиной.
+  async function askWeek(
+    request: Extract<AuctionConsoleRequest, { intent: "ask-auction-week" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    if (!editable(console)) {
+      return { kind: "auction-console", console, note: "week-frozen" };
+    }
+    return {
+      kind: "auction-week-ask",
+      auctionId: request.auctionId,
+      ...(console.week === undefined ? {} : { week: console.week }),
+    };
+  }
+
+  // «Открыть онлайн-неделю»: подтверждение — только у запланированного
+  // аукциона, чей конец недели не прошёл и у которого есть что открыть. В
+  // остальных случаях пульт называет причину словами состояния. Ключ
+  // открытия рождён краем и уедет в «Да».
+  async function prepareStart(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "prepare-auction-week-start" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const noted = (note: ConsoleNote): ExecuteResult => ({
+      kind: "auction-console",
+      console,
+      note,
+    });
+    if (console.status === "draft") return noted("week-not-scheduled");
+    if (console.status !== "scheduled") return noted("week-already-open");
+    if (weekEnded(console, now())) return noted("week-ended");
+    // Откроются лоты с условиями торгов; лоты без цены и шага останутся без
+    // торгов: Auction открывает только запланированные.
+    const opening = console.lots.filter(
+      (each) => each.lot.status.kind === "scheduled",
+    ).length;
+    const idle = console.lots.filter(
+      (each) => each.lot.status.kind === "draft",
+    ).length;
+    if (opening === 0) return noted("no-lots-to-open");
+    return {
+      kind: "auction-week-confirm",
+      console,
+      opId: request.opId,
+      opening,
+      idle,
+    };
+  }
+
   return async function auctionConsole(
     request: AuctionConsoleRequest,
   ): Promise<ExecuteResult> {
     switch (request.intent) {
       case "view-auction-console":
         return after(request, undefined);
+      case "ask-auction-week":
+        return askWeek(request);
+      case "prepare-auction-week-start":
+        return prepareStart(request);
       case "schedule-auction-week":
         return scheduleWeek(request);
       case "set-auction-final":

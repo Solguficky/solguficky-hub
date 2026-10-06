@@ -18,6 +18,9 @@ import scala.concurrent.duration.FiniteDuration
 trait AuctionGateway {
   def inspect(auctionId: AuctionId, opId: OpId): Future[Inspection]
 
+  /** Аукцион целиком, как его знает entity; ничего не пишет. */
+  def get(auctionId: AuctionId): Future[Auction]
+
   def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator): Future[AuctionAnswer]
 
   def addLot(auctionId: AuctionId, command: AddLot, initiator: Initiator): Future[Either[AddLotRejected, AuctionAnswer]]
@@ -76,6 +79,9 @@ object AuctionGateway {
 
       def inspect(auctionId: AuctionId, opId: OpId): Future[Inspection] =
         entity(auctionId).ask(AuctionEntity.Inspect(opId, _))
+
+      def get(auctionId: AuctionId): Future[Auction] =
+        entity(auctionId).ask(AuctionEntity.Get(_))
 
       def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator): Future[AuctionAnswer] =
         entity(auctionId).ask(AuctionEntity.Draft(command, initiator, _))

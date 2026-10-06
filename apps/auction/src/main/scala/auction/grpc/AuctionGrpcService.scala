@@ -10,6 +10,7 @@ import auction.lot.ParticipantId
 import auction.naming.DisplayNameCommands
 import auction.naming.NameNotChosen
 import auction.onboarding.FaqAcknowledgements
+import auction.projection.AuctionSnapshotView
 import auction.projection.AuctionViews
 import auction.projection.LotViews
 import auction.v1.auction_service as wire
@@ -386,26 +387,30 @@ final class AuctionGrpcService(
     }
 
   /**
-   * Пульт администратора сходки (PER-320). Аукцион и лоты — из read model, как у остальных чтений, но право
-   * спрашивается у Meetups: пульт называет отмеченные для финала лоты, а это рабочий выбор организатора. Аукциона нет в
-   * read model — `NOT_FOUND` до вопроса Meetups, как у команд. Реестр не страничный: лоты в него заводит администратор
-   * по одному.
+   * Пульт администратора сходки (PER-320). Аукцион — из entity, а не из read model: из его сроков и финала пульт
+   * собирает следующую команду планирования, а она заменяет конфигурацию целиком, и отставшая проекция затёрла бы
+   * только что принятое. Лоты — из read model, как у остальных чтений. Право спрашивается у Meetups: пульт называет
+   * отмеченные для финала лоты, а это рабочий выбор организатора. Аукциона без журнала — `NOT_FOUND` до вопроса
+   * Meetups, как у команд. Реестр не страничный: лоты в него заводит администратор по одному.
    */
   def getAuctionConsole(in: wire.GetAuctionConsoleRequest): Future[wire.GetAuctionConsoleResponse] =
     RequestMapping.getAuctionConsole(in) match {
       case Left(error) => invalid(error)
       case Right(query) =>
         val auctionId = query.auctionId.value
-        auctionViews.find(auctionId).flatMap {
+        auctions.current(query.auctionId).recoverWith(awaited).flatMap {
           case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
-          case Some(view) =>
-            view.auction.meetup match {
+          case Some(auction) =>
+            auction.meetup match {
               case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
               case Some(meetup) =>
                 auctions.authorize(meetup, query.acting.participant).flatMap {
                   case Left(denial) => ResponseMapping.consoleDenied(denial).fold(refuse, Future.successful)
                   case Right(()) =>
-                    views.registryPage(auctionId, None, view.auction.lots.size.max(1)).map { lots =>
+                    // Страница — весь реестр: пустой реестр всё равно читается страницей в одну строку.
+                    val wholeRegistry = auction.lots.size.max(1)
+                    views.registryPage(auctionId, None, wholeRegistry).map { lots =>
+                      val view = AuctionSnapshotView(auctionId, auction)
                       val console =
                         ConsoleMapping.console(view, lots, query.acting.participant, clock.instant(), overdueGrace)
                       wire.GetAuctionConsoleResponse().withConsole(console)

@@ -227,6 +227,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   /** Шлюз аукциона: команда, которую тест не переопределил, роняет тест. */
   private class Auctions extends AuctionGateway {
     def inspect(auctionId: AuctionId, opId: OpId): Future[Inspection] = fail("the auction was reached")
+    def get(auctionId: AuctionId): Future[Auction] = fail("the auction was reached")
     def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator): Future[AuctionAnswer] =
       fail("the auction was reached")
     def addLot(auctionId: AuctionId, command: AddLot, initiator: Initiator) = fail("the auction was reached")
@@ -256,7 +257,6 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   private object UntouchableAuctionViews extends AuctionViews {
     def byMeetup(meetup: MeetupId): Future[Option[AuctionSnapshotView]] = fail("the auction read model was touched")
-    def find(auctionId: UUID): Future[Option[AuctionSnapshotView]] = fail("the auction read model was touched")
     def page(listing: AuctionListing, after: Option[UUID], limit: Int): Future[List[AuctionSnapshotView]] =
       fail("the auction read model was touched")
   }
@@ -282,23 +282,22 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       overdueGrace = Duration.ofMinutes(2)
     )
 
-  /** Аукцион сходки в онлайн-торгах с двумя лотами в реестре — то, что пульт читает из read model. */
-  private def consoleOf(first: UUID, second: UUID): AuctionViews = {
+  /** Аукцион сходки в онлайн-торгах с лотами в реестре — то, что пульт читает у entity. */
+  private def consoleOf(registry: UUID*): Auctions = {
     val meetup = MeetupId(UUID.fromString(meetupId))
+    val added = registry.toList.zipWithIndex.map { (lot, index) =>
+      AuctionEnvelope(index + 2L, LotFixtures.op(index + 2), AuctionEvent.LotAdded(LotId(lot)))
+    }
+    val next = registry.size + 2
     val running = Auction.replay(
       Auction.initial,
-      List(
-        AuctionEnvelope(1, LotFixtures.op(1), AuctionEvent.AuctionDrafted(meetup)),
-        AuctionEnvelope(2, LotFixtures.op(2), AuctionEvent.LotAdded(LotId(first))),
-        AuctionEnvelope(3, LotFixtures.op(3), AuctionEvent.LotAdded(LotId(second))),
-        AuctionEnvelope(4, LotFixtures.op(4), AuctionEvent.AuctionScheduled(AuctionFixtures.config())),
-        AuctionEnvelope(5, LotFixtures.op(5), AuctionEvent.PrebiddingStarted)
+      AuctionEnvelope(1, LotFixtures.op(1), AuctionEvent.AuctionDrafted(meetup)) :: added ++ List(
+        AuctionEnvelope(next, LotFixtures.op(next), AuctionEvent.AuctionScheduled(AuctionFixtures.config())),
+        AuctionEnvelope(next + 1, LotFixtures.op(next + 1), AuctionEvent.PrebiddingStarted)
       )
     )
-    new AuctionViews {
-      def byMeetup(meetup: MeetupId) = fail("the auction was read by meetup")
-      def find(auctionId: UUID) = Future.successful(Some(AuctionSnapshotView(auctionId, running)))
-      def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("the auctions were listed")
+    new Auctions {
+      override def get(auctionId: AuctionId) = Future.successful(running)
     }
   }
 
@@ -648,9 +647,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         Status.Code.NOT_FOUND
     }
 
-    "shows the administrator the lots of the console with their bids, the mark and the overdue lot" in {
+    "shows the administrator the lots of the console with their bids, the mark, the held finalist and the overdue lot" in {
       val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
-      val (marked, late) = (new UUID(7L, 1L), new UUID(7L, 2L))
+      val (marked, late, finalist) = (new UUID(7L, 1L), new UUID(7L, 2L), new UUID(7L, 3L))
       val registry = new Views {
         override def registryPage(auctionId: UUID, after: Option[UUID], limit: Int) =
           Future.successful(
@@ -663,7 +662,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
                 None,
                 bidCount = 3
               ),
-              LotSnapshotView(late, auctionId, 2, trading(price = 100, closesAt = Some(deadline)), None)
+              LotSnapshotView(late, auctionId, 2, trading(price = 100, closesAt = Some(deadline)), None),
+              LotSnapshotView(finalist, auctionId, 6, held(price = 500, leader = participant(2)), None, bidCount = 4)
             )
           )
       }
@@ -671,14 +671,13 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val console = service(
         Unreachable,
         views = registry,
-        auctions = AuctionCommands(new Auctions, Unreachable, meetups),
-        auctionViews = consoleOf(marked, late),
+        auctions = AuctionCommands(consoleOf(marked, late, finalist), Unreachable, meetups),
         clock = Clock.fixed(deadline.plusSeconds(600), java.time.ZoneOffset.UTC)
       ).getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString)).futureValue.getConsole
 
       console.getAuction.status.isPrebidding shouldBe true
       console.lots.map(entry => (entry.getLot.id, entry.getLot.bidCount, entry.markedForFinal, entry.overdue)) shouldBe
-        Seq((marked.toString, 3L, true, false), (late.toString, 0L, false, true))
+        Seq((marked.toString, 3L, true, false), (late.toString, 0L, false, true), (finalist.toString, 4L, true, false))
     }
 
     "refuses the console to a viewer whom the meetup does not confirm and reads no lot" in {
@@ -686,8 +685,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
       service(
         Unreachable,
-        auctions = AuctionCommands(new Auctions, Unreachable, stranger),
-        auctionViews = consoleOf(new UUID(7L, 1L), new UUID(7L, 2L))
+        auctions = AuctionCommands(consoleOf(new UUID(7L, 1L), new UUID(7L, 2L)), Unreachable, stranger)
       ).getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString))
         .futureValue
         .getRefused
@@ -695,15 +693,13 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .isNotMeetupAdministrator shouldBe true
     }
 
-    "answers NOT_FOUND for the console of an auction the read model does not know, before asking meetups" in {
+    "answers NOT_FOUND for the console of an auction without a journal, before asking meetups" in {
       val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
-      val absent = new AuctionViews {
-        def byMeetup(meetup: MeetupId) = fail("the auction was read by meetup")
-        def find(auctionId: UUID) = Future.successful(None)
-        def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("the auctions were listed")
+      val absent = new Auctions {
+        override def get(auctionId: AuctionId) = Future.successful(Auction.initial)
       }
       statusOf(
-        service(Unreachable, auctionViews = absent)
+        service(Unreachable, auctions = AuctionCommands(absent, Unreachable, NoMeetups))
           .getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString))
       ) shouldBe Status.Code.NOT_FOUND
     }
@@ -896,7 +892,6 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
     "answers a meetup without an auction with an empty response, not an error" in {
       val none = new AuctionViews {
-        def find(auctionId: UUID) = fail("the auction was read by id")
         def byMeetup(meetup: MeetupId) = Future.successful(None)
         def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("a list was read")
       }
@@ -916,7 +911,6 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         Map.empty
       )
       val views = new AuctionViews {
-        def find(auctionId: UUID) = fail("the auction was read by id")
         def byMeetup(meetup: MeetupId) = Future.successful(Some(AuctionSnapshotView(sorted.head, draft)))
         def page(listing: AuctionListing, after: Option[UUID], limit: Int) =
           Future.successful(
@@ -1049,7 +1043,6 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val id = Auction.idOf(meetup).value
       def read(state: AuctionState): wire.AuctionSnapshot = {
         val views = new AuctionViews {
-          def find(auctionId: UUID) = fail("the auction was read by id")
           def byMeetup(meetup: MeetupId) =
             Future.successful(Some(AuctionSnapshotView(id, Auction(state, Some(meetup), Set.empty, Map.empty))))
           def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("a list was read")

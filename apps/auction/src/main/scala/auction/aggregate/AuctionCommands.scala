@@ -97,6 +97,7 @@ enum FinalChoiceRefusal[+R] {
   case Denied(denial: Denial) extends FinalChoiceRefusal[Nothing]
   case NotInPrebidding extends FinalChoiceRefusal[Nothing]
   case LotNotInAuction extends FinalChoiceRefusal[Nothing]
+  case SelectionNotApplicable extends FinalChoiceRefusal[Nothing]
   case ByLot(rejected: R)
 }
 
@@ -286,6 +287,13 @@ final class AuctionCommands(
   def authorize(meetup: MeetupId, person: ParticipantId): Future[Either[Denial, Unit]] =
     authorized(meetup, person, (denial: Denial) => denial)(Future.successful(Right(())))
 
+  /**
+   * Аукцион, каким его знает entity, а не read model: пульт собирает из него следующую команду — сроки и финал целиком,
+   * — и отставшая проекция затёрла бы только что принятое (PER-320). Аукцион без журнала — `None`.
+   */
+  def current(auctionId: AuctionId): Future[Option[Auction]] =
+    auctions.get(auctionId).map(auction => Option.when(auction.state != AuctionState.Initial)(auction))
+
   /** Общий путь выбора финалиста: повтор из окна аукциона — чужая команда, затем право, затем entity. */
   private def chosen[R](auctionId: AuctionId, opId: OpId, person: ParticipantId, opIdTaken: R)(
       run: => Future[Either[FinalChoiceRejected[R], Unit]]
@@ -300,6 +308,7 @@ final class AuctionCommands(
             case Left(FinalChoiceRejected.AuctionNotFound) => Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound))
             case Left(FinalChoiceRejected.NotInPrebidding) => Left(FinalChoiceRefusal.NotInPrebidding)
             case Left(FinalChoiceRejected.LotNotInAuction) => Left(FinalChoiceRefusal.LotNotInAuction)
+            case Left(FinalChoiceRejected.SelectionNotApplicable) => Left(FinalChoiceRefusal.SelectionNotApplicable)
             case Left(FinalChoiceRejected.ByLot(rejected)) => Left(FinalChoiceRefusal.ByLot(rejected))
           }
         }

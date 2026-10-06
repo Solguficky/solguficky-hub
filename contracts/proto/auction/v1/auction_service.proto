@@ -888,6 +888,7 @@ message SelectForFinalRefusal {
     NotInOnlinePhase not_in_online_phase = 6;
     AlreadyMarkedForFinal already_marked_for_final = 7;
     DeadlinePassed deadline_passed = 8;
+    SelectionNotApplicable selection_not_applicable = 9;
   }
 }
 
@@ -939,9 +940,11 @@ message AlreadyMarkedForFinal {}
 
 message NotMarkedForFinal {}
 
-// The deadline of the lot has come, even if the lot is not closed yet. A held lot
-// answers the same: its deadline has passed.
+// The deadline of the lot has come, even if the lot is not closed yet.
 message DeadlinePassed {}
+
+// The auction has no final, or its lots get no deadline to be held at.
+message SelectionNotApplicable {}
 
 message GetAuctionConsoleRequest {
   // The administrator of the meetup of the auction, checked with the meetup.
@@ -981,7 +984,8 @@ message ConsoleLot {
   // The lot as the administrator sees it as a viewer.
   LotSnapshot lot = 1;
 
-  // The lot is trading online and marked for the final. false is a real value.
+  // The lot is marked for the final: trading online with the mark, or already
+  // held for the final. false is a real value.
   bool marked_for_final = 2;
 
   // The lot is trading past its deadline by more than the grace of the service:

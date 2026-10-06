@@ -338,10 +338,18 @@ export type ConsoleNote =
   | "not-in-prebidding"
   | "lot-not-open"
   | "not-in-online-phase"
-  | "lot-not-in-auction";
+  | "lot-not-in-auction"
+  | "selection-not-applicable"
+  // Открывать неделю нельзя: конец прошёл либо лотов с ценой и шагом нет.
+  | "week-ended"
+  | "no-lots-to-open";
 
 // Почему вопрос о сроках недели задан заново.
-export type WeekAskError = "week-format" | "week-moment" | "week-order";
+export type WeekAskError =
+  | "week-format"
+  | "week-moment"
+  | "week-order"
+  | "week-ended";
 
 type AuctionConsoleCall = LotFormCall & { auctionId: string };
 
@@ -349,6 +357,13 @@ type AuctionConsoleCall = LotFormCall & { auctionId: string };
 // остальных команд — на каждое нажатие и каждый ответ.
 export type AuctionConsoleRequest =
   | (AuctionConsoleCall & { intent: "view-auction-console" })
+  // Вопрос о сроках, если их ещё можно менять.
+  | (AuctionConsoleCall & { intent: "ask-auction-week" })
+  // Подтверждение открытия недели, если открывать можно и есть что.
+  | (AuctionConsoleCall & {
+      intent: "prepare-auction-week-start";
+      opId: string;
+    })
   // Сроки приходят строкой, как их написал человек: разбор — дело юзкейса.
   | (AuctionConsoleCall & {
       intent: "schedule-auction-week";
@@ -528,6 +543,15 @@ export type ExecuteResult =
       auctionId: string;
       week?: AuctionWeek;
       error?: WeekAskError;
+    }
+  // Подтверждение открытия недели: сколько лотов откроется и сколько
+  // останется без торгов — без цены и шага. `opId` уедет в «Да».
+  | {
+      kind: "auction-week-confirm";
+      console: AuctionConsoleView;
+      opId: string;
+      opening: number;
+      idle: number;
     }
   // Отказ пульту целиком: не администратор сходки либо аукциона нет.
   | {

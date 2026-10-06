@@ -223,19 +223,36 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
     /** Аукцион в онлайн-торгах с `lot` в реестре: реестр заполняется до старта, после него он заморожен. */
     def trading: Auction = Auction.apply(holding(scheduled), AuctionEnvelope(9, op(9), AuctionEvent.PrebiddingStarted))
 
-    "send the lot its mark and its unmark with the op_id of the command, writing nothing of its own" in {
+    "sends the lot its mark and its unmark with the op_id of the command, writing nothing of its own" in {
       Auction.decide(trading, SelectForFinal(lot, op(10))) shouldBe Right(MarkForFinal(op(10)))
       Auction.decide(trading, DeselectForFinal(lot, op(11))) shouldBe Right(UnmarkForFinal(op(11)))
     }
 
-    "refuse a choice before prebidding, whatever the lot" in {
+    "refuses a choice before prebidding, whatever the lot" in {
       List(holding(born), holding(scheduled)).foreach { auction =>
         Auction.decide(auction, SelectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.NotInPrebidding)
         Auction.decide(auction, DeselectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.NotInPrebidding)
       }
     }
 
-    "refuse a lot outside the registry and an auction that was never born" in {
+    "refuses a mark when the auction has no final or its lots get no deadline, but lets a mark be cleared" in {
+      def tradingWith(input: AuctionConfigInput): Auction =
+        Auction.replay(
+          Auction.initial,
+          List(
+            AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup)),
+            AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(lot)),
+            AuctionEnvelope(3, op(3), AuctionEvent.AuctionScheduled(config(input))),
+            AuctionEnvelope(4, op(4), AuctionEvent.PrebiddingStarted)
+          )
+        )
+      val withoutFinal = tradingWith(configInput(finalBlocks = 0, closingPolicy = ClosingPolicy.ByDeadline))
+      Auction.decide(withoutFinal, SelectForFinal(lot, op(10))) shouldBe
+        Left(FinalChoiceRejected.SelectionNotApplicable)
+      Auction.decide(withoutFinal, DeselectForFinal(lot, op(11))) shouldBe Right(UnmarkForFinal(op(11)))
+    }
+
+    "refuses a lot outside the registry and an auction that was never born" in {
       Auction.decide(started, SelectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.LotNotInAuction)
       Auction.decide(started, DeselectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.LotNotInAuction)
       Auction.decide(Auction.initial, SelectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.AuctionNotFound)

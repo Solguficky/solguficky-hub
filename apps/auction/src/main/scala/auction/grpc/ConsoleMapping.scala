@@ -37,9 +37,11 @@ object ConsoleMapping {
       }
     )
 
+  /** Отмечен для финала: в торгах с отметкой либо уже удержан — удерживается только отмеченный лот. */
   def marked(lot: Lot): Boolean =
     lot.state match {
       case LotState.Trading(trading) => trading.markedForFinal
+      case LotState.Held(_) => true
       case _ => false
     }
 

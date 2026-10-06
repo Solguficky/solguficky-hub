@@ -21,11 +21,11 @@ import "auction/v1/auction.proto";
 // the selection of a lot for the final stays a working choice of the organizer
 // until the lineup is frozen, so ProxyLimitSet, ProxyLimitWithdrawn,
 // LotMarkedForFinal and LotUnmarkedForFinal have no occasion here, and the lot
-// state carries neither limits nor the final mark. The auction records that
-// choice too - a finalist confirmed or dropped - so FinalistConfirmed and
-// FinalistDropped have no occasion here either, and the auction state names no
-// finalist before the lineup is frozen. The fulfillment method the winner chooses for an invoice
-// has no subscriber on the bus, so FulfillmentChosen has no occasion here and
+// state carries neither limits nor the final mark. FinalistConfirmed and
+// FinalistDropped, the side of the auction in that choice, have no occasion here
+// either, and the auction state names no finalist before the lineup is frozen.
+// The fulfillment method the winner chooses for an invoice has no subscriber on
+// the bus, so FulfillmentChosen has no occasion here and
 // the invoice state does not carry the method: the reads of the service do.
 
 // A recorded public fact about one lot: why it changed and what is true about it now.
