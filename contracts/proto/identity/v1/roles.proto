@@ -8,7 +8,7 @@ enum GlobalRole {
 
   GLOBAL_ROLE_ADMIN = 1;
 
-  // Operates the platform. The grant path stays a separate contract decision.
+  // Operates the platform.
   GLOBAL_ROLE_MAINTAINER = 2;
 
   // Inner community circle.

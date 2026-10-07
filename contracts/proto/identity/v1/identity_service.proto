@@ -26,6 +26,16 @@ service IdentityService {
   rpc GrantAdminRole(GrantAdminRoleRequest) returns (GrantAdminRoleResponse);
   // Revokes the active global admin role. Requires maintainer authentication.
   rpc RevokeAdminRole(RevokeAdminRoleRequest) returns (RevokeAdminRoleResponse);
+  // Grants the global maintainer role to an existing identity. Requires maintainer authentication.
+  rpc GrantMaintainerRole(GrantMaintainerRoleRequest) returns (GrantMaintainerRoleResponse);
+  // Revokes the active global maintainer role. Requires maintainer authentication.
+  rpc RevokeMaintainerRole(RevokeMaintainerRoleRequest) returns (RevokeMaintainerRoleResponse);
+  // Lists the people holding admin or maintainer, on behalf of a maintainer.
+  rpc ListAdministrators(ListAdministratorsRequest) returns (ListAdministratorsResponse);
+  // Grants admin, on behalf of a maintainer, to the profile with this username.
+  rpc AppointAdministrator(AppointAdministratorRequest) returns (AppointAdministratorResponse);
+  // Revokes admin, on behalf of a maintainer.
+  rpc DismissAdministrator(DismissAdministratorRequest) returns (DismissAdministratorResponse);
   rpc ListCommunityMembers(ListCommunityMembersRequest) returns (ListCommunityMembersResponse);
   rpc AdmitCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   rpc BlockCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
@@ -404,6 +414,66 @@ message RevokeAdminRoleRequest {
 }
 
 message RevokeAdminRoleResponse {
+  // False when there was no active role.
+  bool changed = 1;
+}
+
+message GrantMaintainerRoleRequest {
+  // Canonical lowercase UUID string of an existing profile.
+  string identity_id = 1;
+}
+
+message GrantMaintainerRoleResponse {
+  // False when the role was already active.
+  bool changed = 1;
+}
+
+message RevokeMaintainerRoleRequest {
+  // Canonical lowercase UUID string of an existing profile.
+  string identity_id = 1;
+}
+
+message RevokeMaintainerRoleResponse {
+  // False when there was no active role.
+  bool changed = 1;
+}
+
+// In the administrator methods below actor.global_roles is ignored: only
+// actor.identity_id is read.
+message ListAdministratorsRequest { IdentityActor actor = 1; }
+
+message ListAdministratorsResponse { repeated Administrator administrators = 1; }
+
+// A person holding admin, maintainer or both.
+message Administrator {
+  string identity_id = 1;
+  optional string telegram_username = 2;
+  // Always positive.
+  int64 telegram_user_id = 3;
+  // True when the person holds maintainer, with or without admin.
+  bool maintainer = 4;
+}
+
+message AppointAdministratorRequest {
+  IdentityActor actor = 1;
+  // Telegram username, with or without the leading '@'; case is ignored.
+  string telegram_username = 2;
+}
+
+message AppointAdministratorResponse {
+  // False when the role was already active.
+  bool changed = 1;
+  // The person the username resolved to.
+  string identity_id = 2;
+}
+
+message DismissAdministratorRequest {
+  IdentityActor actor = 1;
+  // Canonical lowercase UUID string of the person losing admin.
+  string identity_id = 2;
+}
+
+message DismissAdministratorResponse {
   // False when there was no active role.
   bool changed = 1;
 }

@@ -14,35 +14,67 @@ import (
 )
 
 func (s identityService) GrantAdminRole(ctx context.Context, req *identityv1.GrantAdminRoleRequest) (*identityv1.GrantAdminRoleResponse, error) {
-	if err := s.authenticateMaintainer(ctx); err != nil {
-		return nil, err
-	}
-	identityID, err := canonicalIdentityID(req.GetIdentityId())
+	changed, err := s.maintainerGrant(ctx, req.GetIdentityId(), roleAdmin)
 	if err != nil {
 		return nil, err
 	}
-	changed, err := s.grantRole(ctx, identityID, roleAdmin, maintainerActor())
-	if err != nil {
-		return nil, roleStatus(err)
-	}
-	s.log.Info("admin role granted", "service", ServiceName, "identity_id", identityID, "changed", changed)
 	return &identityv1.GrantAdminRoleResponse{Changed: changed}, nil
 }
 
 func (s identityService) RevokeAdminRole(ctx context.Context, req *identityv1.RevokeAdminRoleRequest) (*identityv1.RevokeAdminRoleResponse, error) {
-	if err := s.authenticateMaintainer(ctx); err != nil {
-		return nil, err
-	}
-	identityID, err := canonicalIdentityID(req.GetIdentityId())
+	changed, err := s.maintainerRevoke(ctx, req.GetIdentityId(), roleAdmin)
 	if err != nil {
 		return nil, err
 	}
-	changed, err := s.revokeRole(ctx, identityID, roleAdmin, maintainerActor())
-	if err != nil {
-		return nil, roleStatus(err)
-	}
-	s.log.Info("admin role revoked", "service", ServiceName, "identity_id", identityID, "changed", changed)
 	return &identityv1.RevokeAdminRoleResponse{Changed: changed}, nil
+}
+
+func (s identityService) GrantMaintainerRole(ctx context.Context, req *identityv1.GrantMaintainerRoleRequest) (*identityv1.GrantMaintainerRoleResponse, error) {
+	changed, err := s.maintainerGrant(ctx, req.GetIdentityId(), roleMaintainer)
+	if err != nil {
+		return nil, err
+	}
+	return &identityv1.GrantMaintainerRoleResponse{Changed: changed}, nil
+}
+
+func (s identityService) RevokeMaintainerRole(ctx context.Context, req *identityv1.RevokeMaintainerRoleRequest) (*identityv1.RevokeMaintainerRoleResponse, error) {
+	changed, err := s.maintainerRevoke(ctx, req.GetIdentityId(), roleMaintainer)
+	if err != nil {
+		return nil, err
+	}
+	return &identityv1.RevokeMaintainerRoleResponse{Changed: changed}, nil
+}
+
+func (s identityService) maintainerGrant(ctx context.Context, rawIdentityID, role string) (bool, error) {
+	if err := s.authenticateMaintainer(ctx); err != nil {
+		return false, err
+	}
+	identityID, err := canonicalIdentityID(rawIdentityID)
+	if err != nil {
+		return false, err
+	}
+	changed, err := s.grantRole(ctx, identityID, role, maintainerActor())
+	if err != nil {
+		return false, roleStatus(err)
+	}
+	s.log.Info("role granted", "service", ServiceName, "identity_id", identityID, "role", role, "changed", changed)
+	return changed, nil
+}
+
+func (s identityService) maintainerRevoke(ctx context.Context, rawIdentityID, role string) (bool, error) {
+	if err := s.authenticateMaintainer(ctx); err != nil {
+		return false, err
+	}
+	identityID, err := canonicalIdentityID(rawIdentityID)
+	if err != nil {
+		return false, err
+	}
+	changed, err := s.revokeRole(ctx, identityID, role, maintainerActor())
+	if err != nil {
+		return false, roleStatus(err)
+	}
+	s.log.Info("role revoked", "service", ServiceName, "identity_id", identityID, "role", role, "changed", changed)
+	return changed, nil
 }
 
 // maintainerActor: профиля maintainer'а нет, поэтому и granted_by, и актор

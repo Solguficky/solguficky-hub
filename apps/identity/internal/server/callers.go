@@ -57,6 +57,9 @@ var methodAccess = map[string][]Caller{
 	identityv1.IdentityService_ListSourceChannels_FullMethodName:       {CallerHubBot},
 	identityv1.IdentityService_CreateSourceChannel_FullMethodName:      {CallerHubBot},
 	identityv1.IdentityService_RenameSourceChannel_FullMethodName:      {CallerHubBot},
+	identityv1.IdentityService_ListAdministrators_FullMethodName:       {CallerHubBot},
+	identityv1.IdentityService_AppointAdministrator_FullMethodName:     {CallerHubBot},
+	identityv1.IdentityService_DismissAdministrator_FullMethodName:     {CallerHubBot},
 }
 
 // maintainerMethods защищает секрет ADR-037, а не таблица вызывающих: гейт их
@@ -64,6 +67,8 @@ var methodAccess = map[string][]Caller{
 var maintainerMethods = []string{
 	identityv1.IdentityService_GrantAdminRole_FullMethodName,
 	identityv1.IdentityService_RevokeAdminRole_FullMethodName,
+	identityv1.IdentityService_GrantMaintainerRole_FullMethodName,
+	identityv1.IdentityService_RevokeMaintainerRole_FullMethodName,
 }
 
 // exemptPrefixes читают пробы AppHost и оркестратора без токена. Не «всё вне
