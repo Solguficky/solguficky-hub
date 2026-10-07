@@ -152,6 +152,8 @@ function checkRules(
   if (entry.class === "screen" && method !== "editMessageReplyMarkup") {
     const title = titleProblem(call, entry.title);
     if (title !== undefined) found.push(["title", title]);
+    const body = bodyProblem(call);
+    if (body !== undefined) found.push(["body", body]);
   }
 
   switch (entry.nav) {
@@ -361,15 +363,7 @@ function titleProblem(
       ? undefined
       : "rich-экран без заголовка <h1>";
   }
-  // Правка фото несёт подпись внутри `media`, а не рядом с ним.
-  const text =
-    typeof call.text === "string"
-      ? call.text
-      : typeof call.caption === "string"
-        ? call.caption
-        : typeof call.media?.caption === "string"
-          ? call.media.caption
-          : undefined;
+  const text = textOf(call);
   if (text === undefined) return "экран без текста";
   const mode = call.parse_mode ?? call.media?.parse_mode;
   if (mode !== "HTML") return "экран без разметки: заголовок не выделен";
@@ -378,6 +372,68 @@ function titleProblem(
   return title === undefined || heading.startsWith(`<b>${title}`)
     ? undefined
     : `заголовок «${heading}», а в каталоге «${title}»`;
+}
+
+// Текст вызова: правка фото несёт подпись внутри `media`, а не рядом с ним.
+function textOf(call: Carried): string | undefined {
+  return typeof call.text === "string"
+    ? call.text
+    : typeof call.caption === "string"
+      ? call.caption
+      : typeof call.media?.caption === "string"
+        ? call.media.caption
+        : undefined;
+}
+
+// Тело экрана (дизайн-код, «Формат»): после заголовка пустая строка, а над
+// ним — только заметка об исходе одним абзацем, отделённая пустой строкой.
+// Кадр отказа держит жирное предложение и остальной текст в одной строке, и
+// правило его не задевает. Чем заполнено тело, линтер не читает: это
+// держат тесты каталога бота.
+function bodyProblem(call: Carried): string | undefined {
+  if (typeof call.rich_message?.html === "string") {
+    const html = call.rich_message.html;
+    const at = html.indexOf("<h1>");
+    if (at < 0) return undefined;
+    // После заголовка — блок, а не голый текст: он слился бы с заголовком.
+    const after = html.slice(html.indexOf("</h1>", at) + "</h1>".length);
+    if (after !== "" && !after.startsWith("<")) {
+      return `после заголовка rich-экрана текст вне блока: «${after.slice(0, 20)}»`;
+    }
+    if (at === 0) return undefined;
+    const note = html.slice(0, at);
+    return note.startsWith("<p>") &&
+      note.endsWith("</p>") &&
+      note.indexOf("</p>") === note.length - "</p>".length
+      ? undefined
+      : "над заголовком rich-экрана стоит не один абзац заметки";
+  }
+  const lines = textOf(call)?.split("\n");
+  if (lines === undefined) return undefined;
+  const at = lines.findIndex((line) => line.startsWith("<b>"));
+  if (at < 0) return undefined;
+  if (at > 0) {
+    const note = lines.slice(0, at);
+    const paragraph = note.slice(0, -1);
+    if (
+      note.at(-1) !== "" ||
+      paragraph.length === 0 ||
+      paragraph.includes("")
+    ) {
+      return "над заголовком стоит не одна заметка с пустой строкой после неё";
+    }
+  }
+  // Текст в строке заголовка — только у кадра отказа: там жирное первое
+  // предложение, и оно кончается знаком конца предложения.
+  const heading = lines[at] ?? "";
+  const tail = heading.slice(heading.indexOf("</b>") + "</b>".length);
+  if (tail !== "" && !/[.?!]<\/b>/.test(heading)) {
+    return `текст в строке заголовка: «${heading}»`;
+  }
+  const next = lines[at + 1];
+  return next === undefined || next === ""
+    ? undefined
+    : `после заголовка нет пустой строки: «${next}»`;
 }
 
 function backNamesOf(

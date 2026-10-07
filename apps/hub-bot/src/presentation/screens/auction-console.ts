@@ -30,6 +30,7 @@ import {
   screenText,
   toggleLabel,
   withNav,
+  withNote,
   withPager,
 } from "./kit.js";
 import { toLots } from "./lot-form.js";
@@ -249,20 +250,21 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   const overdue = lots.filter((entry) => entry.overdue);
   return {
     id: "auction-console",
-    text: screenText(
-      pagedTitle("Пульт", page),
-      view.note === undefined
-        ? undefined
-        : escapeHtml(consoleNoteText[view.note]),
-      statusLines(view).map(escapeHtml).join("\n"),
-      lots.length === 0
-        ? "Лотов пока нет."
-        : page.items.map((entry) => escapeHtml(lotLine(entry))).join("\n"),
-      overdue.length === 0
-        ? undefined
-        : escapeHtml(
-            `Просрочены, не закрыты: ${overdue.map(titleOf).join(", ")}.`,
-          ),
+    // Исход — заметка над заголовком (дизайн-код, «Формат»).
+    text: withNote(
+      view.note === undefined ? undefined : consoleNoteText[view.note],
+      screenText(
+        pagedTitle("Пульт", page),
+        statusLines(view).map(escapeHtml).join("\n"),
+        lots.length === 0
+          ? "Лотов пока нет."
+          : page.items.map((entry) => escapeHtml(lotLine(entry))).join("\n"),
+        overdue.length === 0
+          ? undefined
+          : escapeHtml(
+              `Просрочены, не закрыты: ${overdue.map(titleOf).join(", ")}.`,
+            ),
+      ),
     ),
     keyboard: withNav(keyboard, toLots(console.auctionId)),
     format: "HTML",

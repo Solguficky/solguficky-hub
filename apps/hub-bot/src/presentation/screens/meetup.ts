@@ -469,7 +469,7 @@ function cardText(parts: {
   const card =
     presentation === "rich"
       ? `<h1>${title}</h1><p>${body.join("<br>")}</p>${parts.posters ?? ""}`
-      : `<b>${title}</b>\n${body.join("\n")}`;
+      : `<b>${title}</b>\n\n${body.join("\n")}`;
   return [paragraph(parts.note), card, paragraph(parts.hint)]
     .filter((part) => part !== undefined)
     .join(presentation === "rich" ? "" : "\n\n");

@@ -11,7 +11,13 @@ import type {
 import { uuidToToken } from "../meetup-deep-link.js";
 import { lotAskData } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
-import { escapeHtml, type Parent, screenText, withNav } from "./kit.js";
+import {
+  escapeHtml,
+  type Parent,
+  screenText,
+  withNav,
+  withNote,
+} from "./kit.js";
 import type { ShownScreen } from "./show.js";
 
 // Форма лота администратора в боте хаба (PER-319; ADR-057, дополнение
@@ -88,17 +94,20 @@ export function lotFormScreen(lot: LotFormView, note?: string): ShownScreen {
   }
   return {
     id: "lot-form",
-    text: screenText(
-      "Изменить лот",
-      note === undefined ? undefined : escapeHtml(note),
-      [
-        `Название: ${truncate(lot.title ?? untitled, titleLimit)}`,
-        `Описание: ${lot.description === "" ? "нет" : truncate(lot.description, descriptionLimit)}`,
-        `Фото: ${lot.hasImage ? "есть" : "нет"}`,
-        ...termsLines(lot.terms),
-      ]
-        .map(escapeHtml)
-        .join("\n"),
+    // Заметка об исходе — над заголовком (дизайн-код, «Формат»).
+    text: withNote(
+      note,
+      screenText(
+        "Изменить лот",
+        [
+          `Название: ${truncate(lot.title ?? untitled, titleLimit)}`,
+          `Описание: ${lot.description === "" ? "нет" : truncate(lot.description, descriptionLimit)}`,
+          `Фото: ${lot.hasImage ? "есть" : "нет"}`,
+          ...termsLines(lot.terms),
+        ]
+          .map(escapeHtml)
+          .join("\n"),
+      ),
     ),
     keyboard: withNav(keyboard, toLot(lot.lotId)),
     format: "HTML",

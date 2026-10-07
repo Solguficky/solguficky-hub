@@ -867,7 +867,7 @@ describe("bid leaf in the hub", () => {
     await bot.handleUpdate(answer({ text: "1 300" }));
     const confirm = calls.find((call) => call.method === "sendMessage");
     expect(confirm?.payload).toMatchObject({
-      text: expect.stringMatching(/Сумма: 1\s300\s₽/),
+      text: expect.stringMatching(/^<b>Поставить 1\s300\s₽\?<\/b>/),
       reply_markup: {
         inline_keyboard: [
           [

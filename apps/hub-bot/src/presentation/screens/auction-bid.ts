@@ -15,6 +15,7 @@ import {
   screenText,
   toMenu,
   withNav,
+  withNote,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
 
@@ -39,9 +40,18 @@ function dataOf(
   return button.callbackData;
 }
 
-const lotLine = (title: string | undefined) =>
-  title === undefined ? undefined : `Лот: ${escapeHtml(title)}`;
+// Название лота на экранах листа ставки — абзац в кавычках (дизайн-код,
+// «Лист ставки»).
+export const quoted = (title: string | undefined) =>
+  title === undefined ? undefined : `«${escapeHtml(oneLine(title))}»`;
 
+// Название лота в одну строку: Auction переносы строк в названии не режет, а
+// в строке списка и в кавычках второй строкой оно читалось бы как чужая
+// запись.
+export const oneLine = (title: string) => title.replace(/\s+/g, " ").trim();
+
+// Подтверждение (дизайн-код, «Подтверждение»): заголовок-вопрос с суммой,
+// название лота, затем что нельзя отменить.
 export function confirmScreen(
   block: ConfirmBlock,
   keyboard: readonly (readonly AuctionButton[])[],
@@ -52,17 +62,14 @@ export function confirmScreen(
     id: bid ? "bid-confirm" : "proxy-confirm",
     text: bid
       ? screenText(
-          "Ставка",
-          lotLine(block.title),
-          `Сумма: ${money(block.amount)}`,
+          `Поставить ${money(block.amount)}?`,
+          quoted(block.title),
           "Отменить ставку нельзя.",
         )
       : screenText(
-          "Автоставка",
-          lotLine(block.title),
-          `Лимит: ${money(block.amount)}`,
-          proxyGap(block.currentPrice, block.amount, money),
-          "Лимит видишь только ты.",
+          `Включить автоставку до ${money(block.amount)}?`,
+          quoted(block.title),
+          `${proxyGap(block.currentPrice, block.amount, money)}\nЛимит видишь только ты.`,
         ),
     keyboard: confirmKeyboard({
       yes: bid
@@ -87,13 +94,10 @@ export function acceptedScreen(
   return {
     id: bid ? "bid-accepted" : "proxy-accepted",
     text: bid
-      ? screenText(
-          `Ставка ${money(block.amount)} принята`,
-          lotLine(block.title),
-        )
+      ? screenText(`Ставка ${money(block.amount)} принята`, quoted(block.title))
       : screenText(
           `Автоставка до ${money(block.amount)} включена`,
-          lotLine(block.title),
+          quoted(block.title),
           "Лимит видишь только ты.",
         ),
     keyboard: new InlineKeyboard()
@@ -117,7 +121,9 @@ function proxyGap(
 }
 
 // Вопрос уходит новым сообщением с `force_reply`: режим ответа ставит
-// отправка, экран несёт только текст и «Отмену».
+// отправка, экран несёт только текст и «Отмену». Текст — по правилу вопросов
+// дизайн-кода: причина отказа над заголовком, под ним одним абзацем — что
+// прислать, «Сейчас: …» и образец.
 export function questionScreen(
   block: QuestionBlock,
   keyboard: readonly (readonly AuctionButton[])[],
@@ -125,29 +131,35 @@ export function questionScreen(
 ): ShownScreen {
   const current = (prefix: string) =>
     block.current === undefined
-      ? undefined
-      : `Сейчас: ${prefix}${money(block.current)}`;
+      ? []
+      : [`Сейчас: ${prefix}${money(block.current)}`];
   const text = (() => {
     switch (block.question) {
       case "bid":
         return screenText(
           "Своя сумма",
-          "Пришли сумму ставки в рублях.",
-          current("от "),
-          "Например: 1 500",
+          [
+            "Пришли сумму ставки в рублях.",
+            ...current("от "),
+            "Например: 1 500",
+          ].join("\n"),
         );
       case "proxy":
         return screenText(
           "Автоставка",
-          "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
-          current(""),
-          "Например: 3 000",
+          [
+            "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
+            ...current(""),
+            "Например: 3 000",
+          ].join("\n"),
         );
       case "alias":
         return screenText(
           "Псевдоним",
-          "Пришли псевдоним до 32 символов. Участники увидят его со звёздочкой.",
-          "Например: Сова",
+          [
+            "Пришли псевдоним до 32 символов. Участники увидят его со звёздочкой.",
+            "Например: Сова",
+          ].join("\n"),
         );
       default: {
         const _exhaustive: never = block.question;
@@ -157,10 +169,12 @@ export function questionScreen(
   })();
   return {
     id: "question",
-    text:
+    text: withNote(
       block.refusal === undefined
-        ? text
-        : `${answerRefusalText(block.refusal, money)}\n${text}`,
+        ? undefined
+        : answerRefusalText(block.refusal, money),
+      text,
+    ),
     keyboard: new InlineKeyboard().text(
       cancelLabel,
       dataOf(keyboard, "question.cancel"),
@@ -185,17 +199,21 @@ export function nameChoiceScreen(
   }
   const text = screenText(
     "Имя в аукционе",
-    "Имя видно всем участникам аукциона рядом с твоими ставками. После первой ставки его не поменять.",
-    block.username === undefined
-      ? "Ника в Telegram у тебя нет: возьми псевдоним."
-      : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
+    [
+      "Имя видно всем участникам аукциона рядом с твоими ставками. После первой ставки его не поменять.",
+      block.username === undefined
+        ? "Ника в Telegram у тебя нет: возьми псевдоним."
+        : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
+    ].join("\n"),
   );
   return {
     id: "name-choice",
-    text:
+    text: withNote(
       block.refusal === undefined
-        ? text
-        : `${answerRefusalText(block.refusal, money)}\n${text}`,
+        ? undefined
+        : answerRefusalText(block.refusal, money),
+      text,
+    ),
     keyboard: withNav(rows, {
       name: "Лот",
       data: dataOf(keyboard, "name.back"),

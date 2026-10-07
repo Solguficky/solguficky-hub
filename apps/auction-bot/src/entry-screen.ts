@@ -95,6 +95,9 @@ export type RenderOptions = {
   timeZone: string;
   // Форма карточки лота; по умолчанию `rich`.
   presentation?: Presentation;
+  // Момент показа: год в дате называется, когда он не текущий (дизайн-код,
+  // «Формат»). По умолчанию часы процесса; тесты передают свой.
+  now?: Date;
 };
 
 // Лимит обычного сообщения Bot API — 4096 символов UTF-16 после разбора
@@ -113,7 +116,7 @@ const BUTTON_TITLE_LIMIT = 40;
 // а не полотном над ценой и исходом.
 const TITLE_LIMIT = 256;
 
-const context = "Аукцион сообщества.";
+const context = "Аукцион сообщества: лоты, ставки и итоги торгов.";
 const untitled = "Лот без названия";
 
 // Тексты отказов принадлежат этой оболочке (ADR-044). Отказ в `public` —
@@ -134,6 +137,39 @@ const menuButton = { text: "Меню", callback_data: entryCallback("menu") };
 const linkSign = " ↗";
 
 const heading = (text: string) => `<b>${escapeHtml(text)}</b>`;
+
+// Текст экрана (дизайн-код, «Формат»): заголовок, пустая строка, абзацы через
+// пустую строку; пустые абзацы выпадают. Заметка об исходе — абзац над
+// заголовком. Абзацы приходят уже экранированными.
+function screenText(
+  title: string,
+  ...paragraphs: (string | undefined)[]
+): string {
+  return [
+    heading(title),
+    ...paragraphs.filter(
+      (paragraph): paragraph is string =>
+        paragraph !== undefined && paragraph !== "",
+    ),
+  ].join("\n\n");
+}
+
+function withNote(note: string | undefined, text: string): string {
+  return note === undefined ? text : `${escapeHtml(note)}\n\n${text}`;
+}
+
+// Название лота в одну строку: Auction переносы строк в названии не режет, а
+// в строке списка и в кавычках второй строкой оно читалось бы как чужая
+// запись.
+const oneLine = (title: string) =>
+  truncate(title.replace(/\s+/g, " ").trim(), TITLE_LIMIT);
+
+// Название лота на экранах листа ставки и хронологии — абзац в кавычках.
+const quoted = (title: string | undefined) =>
+  title === undefined ? undefined : `«${escapeHtml(oneLine(title))}»`;
+
+// Строка списка в теле (дизайн-код, «Списки»): маркер, затем поля через «—».
+const bullet = (line: string) => `• ${line}`;
 
 export function renderEntryScreen(
   screen: AuctionEntryScreen,
@@ -187,10 +223,13 @@ export function renderEntryScreen(
       return {
         id: "menu",
         format: "html",
-        text: `${heading("Меню")}\n\n${context} Выбери раздел.`,
+        text: screenText("Меню", context),
+        // Два списка — пара одним рядом, как разделы меню хаба.
         keyboard: [
-          [{ text: "Аукционы", callback_data: entryCallback("auctions") }],
-          [{ text: "Прошедшие", callback_data: entryCallback("past") }],
+          [
+            { text: "Аукционы", callback_data: entryCallback("auctions") },
+            { text: "Прошедшие", callback_data: entryCallback("past") },
+          ],
           [{ text: faqTitle, callback_data: entryCallback("faq") }],
         ],
       };
@@ -287,7 +326,7 @@ function faqState(id: "details" | "question", text: string): RenderedScreen {
   return {
     id,
     format: "html",
-    text: `${heading(faqTitle)}\n\n${text}`,
+    text: screenText(faqTitle, text),
     keyboard: [
       [{ text: "‹ FAQ", callback_data: entryCallback("faq") }, menuButton],
     ],
@@ -310,9 +349,10 @@ const listTexts: Record<
   },
 };
 
-// Список аукционов по дизайн-коду: жирный заголовок с номером страницы, ряд на
-// аукцион, листание стрелками и возврат в меню. Пустой список говорит об этом
-// текстом, а не пустой клавиатурой.
+// Список аукционов по дизайн-коду: жирный заголовок с номером страницы, строка
+// на аукцион в теле и ряд на аукцион в клавиатуре, листание стрелками и
+// возврат в меню. Пустой список говорит об этом текстом, а не пустой
+// клавиатурой.
 function renderList(
   kind: ListAction,
   list: AuctionListPage,
@@ -330,14 +370,20 @@ function renderList(
   return {
     id: kind,
     format: "html",
-    text: [
-      heading(paged(title, list)),
-      list.auctions.length === 0 ? empty : "Выбери аукцион.",
-    ].join("\n\n"),
+    text: screenText(
+      paged(title, list),
+      list.auctions.length === 0
+        ? empty
+        : list.auctions
+            .map((auction) =>
+              bullet(auctionLine(auction, options.timeZone, options.now)),
+            )
+            .join("\n"),
+    ),
     keyboard: [
       ...list.auctions.map((auction) => [
         {
-          text: auctionLabel(auction, options.timeZone),
+          text: auctionLabel(auction, options.timeZone, options.now),
           callback_data: encodeAuctionCallback({
             kind: "feed",
             auctionId: auction.auctionId,
@@ -359,18 +405,36 @@ function paged(title: string, at: { page: number; pageCount: number }): string {
     : `${title} · ${at.page + 1} из ${at.pageCount}`;
 }
 
-// Строка аукциона: день начала онлайн-фазы, этап и число лотов.
+// Подпись кнопки аукциона: день начала онлайн-фазы, этап и число лотов.
 export function auctionLabel(
   auction: AuctionSummary,
   timeZone: string,
+  now?: Date,
 ): string {
   return [
-    auction.opensAt === undefined
-      ? "Без онлайн-торгов"
-      : readableDay(auction.opensAt, timeZone),
+    auctionDay(auction, timeZone, now),
     stageLabels[auction.stage],
     lotCount(auction.lotCount),
   ].join(" · ");
+}
+
+// Строка аукциона в теле списка: те же поля, день отделён от остального «—».
+export function auctionLine(
+  auction: AuctionSummary,
+  timeZone: string,
+  now?: Date,
+): string {
+  return `${auctionDay(auction, timeZone, now)} — ${stageLabels[auction.stage]}, ${lotCount(auction.lotCount)}`;
+}
+
+function auctionDay(
+  auction: AuctionSummary,
+  timeZone: string,
+  now?: Date,
+): string {
+  return auction.opensAt === undefined
+    ? "Без онлайн-торгов"
+    : readableDay(auction.opensAt, timeZone, now);
 }
 
 const stageLabels: Record<AuctionStage, string> = {
@@ -397,17 +461,36 @@ function lotCount(count: number): string {
   return `${count} ${word}`;
 }
 
-// День для чтения по дизайн-коду, без времени: «12 октября, сб».
-function readableDay(instant: string, timeZone: string): string {
+// День для чтения по дизайн-коду, без времени: «12 октября, сб»; чужой год
+// называется — «12 октября 2027, сб».
+function readableDay(instant: string, timeZone: string, now?: Date): string {
+  const parts = dateParts(instant, timeZone);
+  return `${parts("day")} ${parts("month")}${yearOf(instant, timeZone, now)}, ${parts("weekday")}`;
+}
+
+function dateParts(
+  instant: string,
+  timeZone: string,
+): (type: Intl.DateTimeFormatPartTypes) => string {
   const parts = new Intl.DateTimeFormat("ru-RU", {
     timeZone,
     day: "numeric",
     month: "long",
     weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
   }).formatToParts(new Date(instant));
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((each) => each.type === type)?.value ?? "";
-  return `${part("day")} ${part("month")}, ${part("weekday")}`;
+  return (type) => parts.find((each) => each.type === type)?.value ?? "";
+}
+
+// Год стоит в дате, только когда он не совпадает с годом момента показа в
+// поясе сообщества: в текущем году он шум, в чужом — без него дата врёт.
+function yearOf(instant: string, timeZone: string, now?: Date): string {
+  const year = (at: Date) =>
+    new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric" }).format(at);
+  const shown = year(new Date(instant));
+  return shown === year(now ?? new Date()) ? "" : ` ${shown}`;
 }
 
 function renderBody(
@@ -447,15 +530,24 @@ function renderBody(
   if (feed === undefined) {
     throw new Error("auction body without a feed, a lot or a history block");
   }
-  // Пустая лента несёт заголовок так же, как заполненная.
+  // Пустая лента несёт заголовок так же, как заполненная; строки лотов в теле
+  // идут в порядке ленты — по возрастанию цены.
   return {
     id,
     keyboard,
     format: "html",
-    text: [
-      heading(paged("Лоты", feed)),
-      feed.lots.length === 0 ? "Лотов пока нет." : "По возрастанию цены.",
-    ].join("\n\n"),
+    text: screenText(
+      paged("Лоты", feed),
+      feed.lots.length === 0
+        ? "Лотов пока нет."
+        : feed.lots
+            .map((item) =>
+              bullet(
+                `${escapeHtml(oneLine(item.title ?? untitled))} — ${priceLabel(item.status)}`,
+              ),
+            )
+            .join("\n"),
+    ),
   };
 }
 
@@ -522,28 +614,22 @@ function renderLeaf(
   return undefined;
 }
 
-const lotLine = (title: string | undefined) =>
-  title === undefined
-    ? []
-    : [`Лот: ${escapeHtml(truncate(title, TITLE_LIMIT))}`];
-
+// Подтверждение (дизайн-код, «Подтверждение»): заголовок-вопрос с суммой,
+// название лота в кавычках, затем что нельзя отменить.
 function confirmText(
   block: Extract<AuctionBlock, { kind: "confirm" }>,
 ): string {
   return block.command === "bid"
-    ? [
-        "<b>Ставка</b>",
-        ...lotLine(block.title),
-        `Сумма: ${money(block.amount)}`,
+    ? screenText(
+        `Поставить ${money(block.amount)}?`,
+        quoted(block.title),
         "Отменить ставку нельзя.",
-      ].join("\n")
-    : [
-        "<b>Автоставка</b>",
-        ...lotLine(block.title),
-        `Лимит: ${money(block.amount)}`,
-        proxyGap(block.currentPrice, block.amount),
-        "Лимит видишь только ты.",
-      ].join("\n");
+      )
+    : screenText(
+        `Включить автоставку до ${money(block.amount)}?`,
+        quoted(block.title),
+        `${proxyGap(block.currentPrice, block.amount)}\nЛимит видишь только ты.`,
+      );
 }
 
 // Принятая команда — свой экран (PER-473): сумма в заголовке, карточку с
@@ -552,50 +638,61 @@ function acceptedText(
   block: Extract<AuctionBlock, { kind: "accepted" }>,
 ): string {
   return block.command === "bid"
-    ? [
-        `<b>Ставка ${money(block.amount)} принята</b>`,
-        ...lotLine(block.title),
-      ].join("\n")
-    : [
-        `<b>Автоставка до ${money(block.amount)} включена</b>`,
-        ...lotLine(block.title),
+    ? screenText(`Ставка ${money(block.amount)} принята`, quoted(block.title))
+    : screenText(
+        `Автоставка до ${money(block.amount)} включена`,
+        quoted(block.title),
         "Лимит видишь только ты.",
-      ].join("\n");
+      );
 }
 
 function questionText(
   block: Extract<AuctionBlock, { kind: "question" }>,
 ): string {
+  // Вопрос (дизайн-код, «Вопросы»): причина отказа — заметка над заголовком,
+  // под заголовком одним абзацем — что прислать, «Сейчас: …» и образец.
   const reason =
-    block.refusal === undefined ? [] : [answerRefusalText(block.refusal)];
+    block.refusal === undefined ? undefined : answerRefusalText(block.refusal);
   const current = (prefix: string) =>
     block.current === undefined
       ? []
       : [`Сейчас: ${prefix}${money(block.current)}`];
   switch (block.question) {
     case "bid":
-      return [
-        ...reason,
-        "<b>Своя сумма</b>",
-        "Пришли сумму ставки в рублях.",
-        ...current("от "),
-        "Например: 1 500",
-      ].join("\n");
+      return withNote(
+        reason,
+        screenText(
+          "Своя сумма",
+          [
+            "Пришли сумму ставки в рублях.",
+            ...current("от "),
+            "Например: 1 500",
+          ].join("\n"),
+        ),
+      );
     case "proxy":
-      return [
-        ...reason,
-        "<b>Автоставка</b>",
-        "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
-        ...current(""),
-        "Например: 3 000",
-      ].join("\n");
+      return withNote(
+        reason,
+        screenText(
+          "Автоставка",
+          [
+            "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
+            ...current(""),
+            "Например: 3 000",
+          ].join("\n"),
+        ),
+      );
     case "alias":
-      return [
-        ...reason,
-        "<b>Псевдоним</b>",
-        "Пришли псевдоним до 32 символов. Участники увидят его со звёздочкой.",
-        "Например: Сова",
-      ].join("\n");
+      return withNote(
+        reason,
+        screenText(
+          "Псевдоним",
+          [
+            "Пришли псевдоним до 32 символов. Участники увидят его со звёздочкой.",
+            "Например: Сова",
+          ].join("\n"),
+        ),
+      );
     default: {
       const _exhaustive: never = block.question;
       return _exhaustive;
@@ -606,14 +703,18 @@ function questionText(
 function nameChoiceText(
   block: Extract<AuctionBlock, { kind: "name-choice" }>,
 ): string {
-  return [
-    ...(block.refusal === undefined ? [] : [answerRefusalText(block.refusal)]),
-    "<b>Имя в аукционе</b>",
-    "Имя видно всем участникам аукциона рядом с твоими ставками. После первой ставки его не поменять.",
-    block.username === undefined
-      ? "Ника в Telegram у тебя нет: возьми псевдоним."
-      : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
-  ].join("\n");
+  return withNote(
+    block.refusal === undefined ? undefined : answerRefusalText(block.refusal),
+    screenText(
+      "Имя в аукционе",
+      [
+        "Имя видно всем участникам аукциона рядом с твоими ставками. После первой ставки его не поменять.",
+        block.username === undefined
+          ? "Ника в Telegram у тебя нет: возьми псевдоним."
+          : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
+      ].join("\n"),
+    ),
+  );
 }
 
 // Автоставка объясняется разницей цены и лимита (RFC-007): на столько бот
@@ -678,23 +779,23 @@ export function resultText(result: CommandResult): string {
 }
 
 // Хронология ставок лота (PER-309): жирный заголовок с номером страницы,
-// название лота и строки ставок по порядку журнала. Восемь строк на странице
-// держат текст далеко под лимитом сообщения при любом названии.
+// название лота в кавычках и строки ставок по порядку журнала. Восемь строк
+// на странице держат текст далеко под лимитом сообщения при любом названии.
 function renderHistory(
   block: HistoryBlock,
   options: RenderOptions,
 ): Pick<RenderedScreen, "text" | "format"> {
   return {
     format: "html",
-    text: [
-      heading(paged("Ставки", block)),
-      escapeHtml(truncate(block.title ?? untitled, TITLE_LIMIT)),
+    text: screenText(
+      paged("Ставки", block),
+      quoted(block.title ?? untitled),
       block.entries.length === 0
         ? "Ставок пока нет."
         : block.entries
-            .map((entry) => escapeHtml(historyLine(entry, options)))
+            .map((entry) => bullet(escapeHtml(historyLine(entry, options))))
             .join("\n"),
-    ].join("\n\n"),
+    ),
   };
 }
 
@@ -703,7 +804,7 @@ function renderHistory(
 // прокси в строке нет — его нет и в теле.
 function historyLine(entry: HistoryItem, options: RenderOptions): string {
   return [
-    readableMoment(entry.occurredAt, options.timeZone),
+    readableMoment(entry.occurredAt, options.timeZone, options.now),
     ...(entry.participantName === undefined ? [] : [entry.participantName]),
     money(entry.amount),
     originLabel(entry.origin),
@@ -723,37 +824,39 @@ function originLabel(origin: BidOriginView): string {
   }
 }
 
-// Карточка лота начинается с названия (дизайн-код, «Формат»). Rich-карточка
-// размечается блоками: перенос строки в её `html` не рисуется, поэтому абзац
-// описания — свой `<p>`, строки внутри абзаца и строки статуса разделяет
-// `<br>`, а фото адаптер ставит последним блоком. Предела подписи у неё нет.
-// В `plain` та же карточка уходит обычным сообщением с HTML и без фото.
+// Карточка лота (дизайн-код, «Карточка лота»): название, группа статуса,
+// группа цены и лидера, описание — группы через пустую строку, строки «ключ:
+// значение» без точки. Rich-карточка размечается блоками: перенос строки в её
+// `html` не рисуется, поэтому группа и абзац описания — свой `<p>`, строки
+// внутри — `<br>`, а фото адаптер ставит последним блоком. Предела подписи у
+// неё нет. В `plain` та же карточка уходит обычным сообщением с HTML и без
+// фото. Заметка об исходе — абзац над названием.
 function renderCard(
   block: LotBlock,
   options: RenderOptions,
   result?: CommandResult,
 ): Pick<RenderedScreen, "text" | "format" | "photo"> {
   const title = truncate(block.card?.title ?? untitled, TITLE_LIMIT);
-  const status = statusLines(block, options);
-  const note = result === undefined ? [] : [escapeHtml(resultText(result))];
+  const groups = statusGroups(block, options);
+  const note = result === undefined ? undefined : resultText(result);
   const rich = (options.presentation ?? "rich") === "rich";
   const description = fitDescription(
     title,
     block.card?.description ?? "",
-    status,
+    groups.flat(),
     rich ? RICH_TEXT_LIMIT : TEXT_LIMIT,
   );
   if (!rich) {
     return {
       format: "html",
-      text: [
-        ...note,
-        `<b>${escapeHtml(title)}</b>`,
-        escapeHtml(description),
-        escapeHtml(status.join("\n")),
-      ]
-        .filter((part) => part !== "")
-        .join("\n\n"),
+      text: withNote(
+        note,
+        screenText(
+          title,
+          ...groups.map((lines) => escapeHtml(lines.join("\n"))),
+          escapeHtml(description),
+        ),
+      ),
     };
   }
   const paragraphs = description
@@ -764,11 +867,11 @@ function renderCard(
   // в последний, текст при этом не теряется.
   const kept = paragraphs.slice(0, PARAGRAPH_LIMIT - 1);
   const rest = paragraphs.slice(PARAGRAPH_LIMIT - 1).flat();
-  const blocks = [...kept, ...(rest.length === 0 ? [] : [rest]), status];
+  const blocks = [...groups, ...kept, ...(rest.length === 0 ? [] : [rest])];
   const image = block.card?.image;
   return {
     format: "rich",
-    text: `${note.map((line) => `<p>${line}</p>`).join("")}<h1>${escapeHtml(title)}</h1>${blocks
+    text: `${note === undefined ? "" : `<p>${escapeHtml(note)}</p>`}<h1>${escapeHtml(title)}</h1>${blocks
       .map((lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`)
       .join("")}`,
     ...(image === undefined
@@ -777,48 +880,60 @@ function renderCard(
   };
 }
 
-function statusLines(block: LotBlock, options: RenderOptions): string[] {
+// Группы карточки: статус словом, затем факты о цене и лидере, если они есть.
+// Слова статусов — дизайн-код, «Карточка лота».
+function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
   const { status, participantName } = block;
   switch (status.kind) {
     case "draft":
-      return ["Лот готовится к торгам."];
+      return [["Статус: готовится к торгам"]];
     case "scheduled":
       return [
-        "Торги ещё не начались.",
-        `Стартовая цена: ${money(status.startingPrice)}.`,
+        ["Статус: торги ещё не начались"],
+        [`Стартовая цена: ${money(status.startingPrice)}`],
       ];
     case "trading":
       return [
-        `Текущая цена: ${money(status.currentPrice)}.`,
-        leaderLine(status.leaderId, participantName),
-        ...(block.nextPrice === undefined
-          ? []
-          : [`Следующая ставка — от ${money(block.nextPrice)}.`]),
-        ...(block.fixedStep === undefined
-          ? []
-          : [`Шаг: ${money(block.fixedStep)}.`]),
-        ...(status.deadline === undefined
-          ? []
-          : [`Торги до ${readableMoment(status.deadline, options.timeZone)}.`]),
-        ...proxyLine(block),
+        ["Статус: идут торги"],
+        [
+          `Цена: ${money(status.currentPrice)}`,
+          leaderLine(status.leaderId, participantName),
+          ...(block.nextPrice === undefined
+            ? []
+            : [`Следующая ставка: от ${money(block.nextPrice)}`]),
+          ...(block.fixedStep === undefined
+            ? []
+            : [`Шаг: ${money(block.fixedStep)}`]),
+          ...(status.deadline === undefined
+            ? []
+            : [
+                `Торги до: ${readableMoment(status.deadline, options.timeZone, options.now)}`,
+              ]),
+          ...proxyLine(block),
+        ],
       ];
     case "held":
       return [
-        "Лот ждёт финала.",
-        `Цена: ${money(status.currentPrice)}.`,
-        leaderLine(status.leaderId, participantName),
+        ["Статус: ждёт финала"],
+        [
+          `Цена: ${money(status.currentPrice)}`,
+          leaderLine(status.leaderId, participantName),
+        ],
       ];
     case "sold":
       return [
-        `Продан за ${money(status.price)}.`,
-        participantName === undefined
-          ? "Победитель определён."
-          : `Победитель: ${participantName}.`,
+        ["Статус: продан"],
+        [
+          `Цена продажи: ${money(status.price)}`,
+          participantName === undefined
+            ? "Победитель: определён"
+            : `Победитель: ${participantName}`,
+        ],
       ];
     case "unsold":
-      return ["Торги закончились, лот не продан."];
+      return [["Статус: не продан"]];
     case "withdrawn":
-      return ["Лот снят с торгов."];
+      return [["Статус: снят с торгов"]];
     default: {
       const _exhaustive: never = status;
       return _exhaustive;
@@ -832,7 +947,7 @@ function proxyLine(block: LotBlock): string[] {
   return block.viewerProxyLimit === undefined
     ? []
     : [
-        `Твоя автоставка: до ${money(block.viewerProxyLimit)}. Её видишь только ты.`,
+        `Твоя автоставка: до ${money(block.viewerProxyLimit)} (видишь только ты)`,
       ];
 }
 
@@ -842,10 +957,10 @@ function leaderLine(
   leaderId: string | undefined,
   participantName: string | undefined,
 ): string {
-  if (leaderId === undefined) return "Ставок пока нет.";
+  if (leaderId === undefined) return "Лидер: пока нет";
   return participantName === undefined
-    ? "Лидер есть."
-    : `Лидер: ${participantName}.`;
+    ? "Лидер: есть"
+    : `Лидер: ${participantName}`;
 }
 
 // Описание — единственная часть карточки произвольной длины, поэтому под лимит
@@ -1000,18 +1115,12 @@ export function money(amount: Money): string {
   }).format(amount.minorUnits / 100);
 }
 
-// Дата для чтения по дизайн-коду: «12 июня, сб, 19:04».
-export function readableMoment(instant: string, timeZone: string): string {
-  const parts = new Intl.DateTimeFormat("ru-RU", {
-    timeZone,
-    day: "numeric",
-    month: "long",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(instant));
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    parts.find((each) => each.type === type)?.value ?? "";
-  return `${part("day")} ${part("month")}, ${part("weekday")}, ${part("hour")}:${part("minute")}`;
+// Дата для чтения по дизайн-коду: «12 июня, сб, 19:04»; чужой год называется.
+export function readableMoment(
+  instant: string,
+  timeZone: string,
+  now?: Date,
+): string {
+  const parts = dateParts(instant, timeZone);
+  return `${readableDay(instant, timeZone, now)}, ${parts("hour")}:${parts("minute")}`;
 }

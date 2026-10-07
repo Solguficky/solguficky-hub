@@ -38,6 +38,19 @@ export function screenText(
   ].join("\n\n");
 }
 
+/** Строка списка в теле: маркер, затем поля (дизайн-код, «Формат»). */
+export function bullet(line: string): string {
+  return `• ${line}`;
+}
+
+/**
+ * Заметка об исходе — абзац над заголовком экрана: после ответа на вопрос в
+ * чате остаётся одно сообщение, и исход читается раньше содержимого.
+ */
+export function withNote(note: string | undefined, text: string): string {
+  return note === undefined ? text : `${escapeHtml(note)}\n\n${text}`;
+}
+
 /**
  * Кадр отказа: первое предложение жирным вместо заголовка. Тексты кадров
  * ошибок по смыслу не меняются, поэтому свой заголовок им не придумывается.

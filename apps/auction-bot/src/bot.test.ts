@@ -296,7 +296,7 @@ describe("auction bot", () => {
     const restarted = makeBot(ports);
     await restarted.bot.handleUpdate(start);
     expect(restarted.calls[0]?.payload).toMatchObject({
-      text: expect.stringContaining("Выбери раздел"),
+      text: expect.stringContaining("<b>Меню</b>"),
     });
     await restarted.bot.handleUpdate(press("faq"));
     expect(restarted.calls.at(-1)?.payload).toMatchObject({
@@ -326,8 +326,10 @@ describe("auction bot", () => {
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
-          [{ text: "Аукционы", callback_data: expect.any(String) }],
-          [{ text: "Прошедшие", callback_data: expect.any(String) }],
+          [
+            { text: "Аукционы", callback_data: expect.any(String) },
+            { text: "Прошедшие", callback_data: expect.any(String) },
+          ],
           [{ text: "Правила и FAQ", callback_data: expect.any(String) }],
         ],
       },
@@ -1159,11 +1161,11 @@ describe("auction bot", () => {
     const lines = text.split("\n").filter((line) => line.includes("₽"));
     expect(lines).toEqual([
       expect.stringMatching(
-        /^3 октября, сб, 19:04 · @jay · 1\s500\s₽ · вручную$/,
+        /^• 3 октября, сб, 19:04 · @jay · 1\s500\s₽ · вручную$/,
       ),
-      expect.stringMatching(/^3 октября, сб, 19:04 · 1\s600\s₽ · авто$/),
+      expect.stringMatching(/^• 3 октября, сб, 19:04 · 1\s600\s₽ · авто$/),
       expect.stringMatching(
-        /^3 октября, сб, 19:04 · @jay · 1\s700\s₽ · в зале$/,
+        /^• 3 октября, сб, 19:04 · @jay · 1\s700\s₽ · в зале$/,
       ),
     ]);
     expect(edit.payload).toMatchObject({
@@ -1568,7 +1570,7 @@ describe("bid leaf delivery", () => {
     await bot.handleUpdate(answer({ text: "1 300" }));
     const sent = calls.find((call) => call.method === "sendMessage");
     expect(sent?.payload).toMatchObject({
-      text: expect.stringMatching(/Сумма: 1\s300\s₽/),
+      text: expect.stringMatching(/^<b>Поставить 1\s300\s₽\?<\/b>/),
       reply_markup: {
         inline_keyboard: [
           [
