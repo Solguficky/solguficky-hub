@@ -375,26 +375,30 @@ describe("renderEntryScreen", () => {
     expect(screen.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 
-  // Заметка об исходе — абзац над названием; свой лимит — строкой фактов.
-  it("puts the outcome note above the title and the own limit among the facts", () => {
+  // Свой лимит — строка фактов; над названием ничего нет (PER-472).
+  it("shows the own limit among the facts and nothing above the title", () => {
+    const screen = lotScreen(
+      {
+        card: { title: "Кружка", description: "" },
+        status: { kind: "trading", currentPrice: rub(1200), phase: "online" },
+        viewerProxyLimit: rub(2000),
+      },
+      plainCard,
+    );
+    expect(plain(screen.text)).toBe(
+      "<b>Кружка</b>\n\n" +
+        "Статус: идут торги\n\nЦена: 1 200 ₽\nЛидер: пока нет\nТвоя автоставка: до 2 000 ₽ (видишь только ты)",
+    );
+  });
+
+  // Отказ команды — свой экран исхода (PER-472): исход в заголовке, лот в
+  // кавычках, цена из отказа абзацем, «К лоту» и «Меню» одним рядом.
+  it("shows a refused command as its own outcome screen", () => {
     const screen = renderEntryScreen(
       {
         kind: "auction",
         body: {
           blocks: [
-            {
-              kind: "lot",
-              lotId: "lot-1",
-              auctionId: "auc-1",
-              version: 1,
-              card: { title: "Кружка", description: "" },
-              status: {
-                kind: "trading",
-                currentPrice: rub(1200),
-                phase: "online",
-              },
-              viewerProxyLimit: rub(2000),
-            },
             {
               kind: "result",
               result: {
@@ -402,17 +406,25 @@ describe("renderEntryScreen", () => {
                 kind: "refused",
                 refusal: { kind: "bid-below-minimum", minRequired: rub(1300) },
               },
+              lotId: "lot-1",
+              auctionId: "auc-1",
+              title: "Кружка",
             },
           ],
-          keyboard: [[{ action: "lot.back", callbackData: "v1:auc:feed:x:0" }]],
+          keyboard: [
+            [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+          ],
         },
       },
       plainCard,
     );
+    expect(screen.id).toBe("command-result");
     expect(plain(screen.text)).toBe(
-      "Ставка ниже порога. Сейчас можно от 1 300 ₽.\n\n<b>Кружка</b>\n\n" +
-        "Статус: идут торги\n\nЦена: 1 200 ₽\nЛидер: пока нет\nТвоя автоставка: до 2 000 ₽ (видишь только ты)",
+      "<b>Ставка ниже порога</b>\n\n«Кружка»\n\nСейчас можно от 1 300 ₽.",
     );
+    expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
+      ["К лоту", "Меню"],
+    ]);
   });
 
   // Чужой год называется в дате (дизайн-код, «Формат»).
@@ -521,19 +533,53 @@ describe("bid sheet screens", () => {
     );
   });
 
-  it("puts the refusal above the question title and the prompt under it", () => {
+  it("asks the question with the prompt under the title", () => {
     const screen = body({
       kind: "question",
       question: "bid",
       lotId: "lot-1",
       auctionId: "auc-1",
       current: rub(1600),
-      refusal: "not-a-number",
     });
     expect(plain(screen.text)).toBe(
-      "Это не сумма.\n\n<b>Своя сумма</b>\n\nПришли сумму ставки в рублях.\nСейчас: от 1 600 ₽\nНапример: 1 500",
+      "<b>Своя сумма</b>\n\nПришли сумму ставки в рублях.\nСейчас: от 1 600 ₽\nНапример: 1 500",
     );
     expect(screen.asks).toBe(true);
+  });
+
+  // Непринятый ответ — свой экран (PER-472): причина в заголовке, над
+  // «К лоту» — «Ввести заново».
+  it("shows a refused answer as its own screen with a retry", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "answer-refused",
+              refusal: "too-large",
+              lotId: "lot-1",
+              auctionId: "auc-1",
+              title: "Кружка",
+            },
+          ],
+          keyboard: [
+            [{ action: "answer.retry", callbackData: "v1:auc:ask:b:lot-1:0" }],
+            [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+          ],
+        },
+      },
+      options,
+    );
+    expect(screen.id).toBe("answer-refused");
+    expect(screen.asks).toBeUndefined();
+    expect(plain(screen.text)).toBe(
+      "<b>Сумма слишком большая</b>\n\n«Кружка»\n\nБот принимает суммы до 604 661,75 ₽.",
+    );
+    expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
+      ["Ввести заново"],
+      ["К лоту", "Меню"],
+    ]);
   });
 
   it("lists the bids as lines under the lot in quotes with the foreign year", () => {

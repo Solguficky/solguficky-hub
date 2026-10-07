@@ -993,7 +993,10 @@ describe("auction bot", () => {
     }));
     const { bot, calls } = makeBot(
       portsWith({ lot: withImage, image: getLotImage }),
-      { photos, dropOnce: "editMessageText" },
+      {
+        photos,
+        dropOnce: "editMessageText",
+      },
     );
     await bot.handleUpdate(lotPress());
     expect(calls.map((call) => call.method)).toEqual([
@@ -1049,7 +1052,9 @@ describe("auction bot", () => {
     }));
     const { bot, calls } = makeBot(
       portsWith({ lot: withImage, image: getLotImage }),
-      { refuse: { editMessageText: "Bad Request: message can't be edited" } },
+      {
+        refuse: { editMessageText: "Bad Request: message can't be edited" },
+      },
     );
     await bot.handleUpdate(lotPress());
     expect(calls.map((call) => call.method)).toEqual([
@@ -1557,7 +1562,9 @@ describe("bid leaf delivery", () => {
       "editMessageReplyMarkup",
     );
     expect(calls.find((call) => call.method === "deleteMessage")).toMatchObject(
-      { payload: { chat_id: 42, message_id: 7 } },
+      {
+        payload: { chat_id: 42, message_id: 7 },
+      },
     );
     expect(calls.at(-1)).toMatchObject({
       method: "sendMessage",
@@ -1596,7 +1603,9 @@ describe("bid leaf delivery", () => {
     await bot.handleUpdate(answer({ text: "10" }));
     const sent = JSON.stringify(calls.map((call) => call.payload));
     expect(sent).not.toContain("Да, поставить");
-    expect(sent).toMatch(/Ставка ниже порога\. Сейчас можно от 1\s250\s₽\./);
+    // Отказ — свой экран исхода (PER-472), а не строка над карточкой.
+    expect(sent).toMatch(/<b>Ставка ниже порога<\/b>/);
+    expect(sent).toMatch(/Сейчас можно от 1\s250\s₽\./);
   });
 
   // PER-473: после «Да» — экран «принята» с «К лоту» и «Меню» одним рядом.
@@ -1640,21 +1649,51 @@ describe("bid leaf delivery", () => {
     });
   });
 
+  // Непринятый ответ — свой экран новым сообщением (PER-472): причина в
+  // заголовке, «Ввести заново» задаёт вопрос снова, «Отмена» снята с вопроса.
   it.each([
-    [{ text: "много" }, "Это не сумма."],
-    [{ text: "$20" }, "Ставки принимаются только в рублях."],
-    [{ sticker: { file_id: "s" } }, "Нужен ответ текстом."],
-  ])("asks again with the reason for %j", async (extra, reason) => {
-    const { bot, calls } = makeBot(trading);
-    await bot.handleUpdate(answer(extra));
-    const sent = calls.find((call) => call.method === "sendMessage");
-    const text = (sent?.payload as { text?: string } | undefined)?.text ?? "";
-    expect(text.startsWith(reason)).toBe(true);
-    expect(sent?.payload).toMatchObject({
-      reply_markup: { force_reply: true },
-    });
-    expect(calls.at(-1)).toMatchObject({ method: "editMessageReplyMarkup" });
-  });
+    [{ text: "много" }, "Это не сумма"],
+    [{ text: "$20" }, "Ставки принимаются только в рублях"],
+    [{ sticker: { file_id: "s" } }, "Нужен ответ текстом"],
+  ])(
+    "answers a refused %j with its own screen and a retry",
+    async (extra, reason) => {
+      const { bot, calls } = makeBot(trading);
+      await bot.handleUpdate(answer(extra));
+      const sent = calls.find((call) => call.method === "sendMessage");
+      const text = (sent?.payload as { text?: string } | undefined)?.text ?? "";
+      expect(text.startsWith(`<b>${reason}</b>`)).toBe(true);
+      expect(sent?.payload).toMatchObject({
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Ввести заново",
+                callback_data: encodeAuctionCallback({
+                  kind: "ask",
+                  question: "bid",
+                  lotId,
+                  page: 0,
+                }),
+              },
+            ],
+            [
+              {
+                text: "К лоту",
+                callback_data: encodeAuctionCallback({
+                  kind: "lot",
+                  lotId,
+                  page: 0,
+                }),
+              },
+              { text: "Меню", callback_data: entryCallback("menu") },
+            ],
+          ],
+        },
+      });
+      expect(calls.at(-1)).toMatchObject({ method: "editMessageReplyMarkup" });
+    },
+  );
 
   it("deletes the question on cancel and sends the card as a new message", async () => {
     const { bot, calls } = makeBot(trading, { presentation: "plain" });

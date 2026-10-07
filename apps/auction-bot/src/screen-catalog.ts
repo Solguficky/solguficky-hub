@@ -113,6 +113,12 @@ export const screenCatalog = {
   },
   "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
   "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
+  // Отказ команды и непринятый ответ — тоже кадры исхода (PER-472): исход в
+  // заголовке, название лота в кавычках, «К лоту» и «Меню», у непринятого
+  // ответа над ними «Ввести заново». Заголовок — сам исход, поэтому в записи
+  // его нет.
+  "command-result": { class: "screen", nav: "exit" },
+  "answer-refused": { class: "screen", nav: "exit" },
   "bid-question": { class: "question", nav: "question" },
   "proxy-question": { class: "question", nav: "question" },
   "alias-question": { class: "question", nav: "question" },

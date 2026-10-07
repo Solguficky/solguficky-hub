@@ -352,8 +352,7 @@ function checkRules(
   return found;
 }
 
-// Заголовок — первая жирная строка. Перед ним может стоять только заметка:
-// ответ на вопрос приносит экран с заметкой в первой строке.
+// Заголовок — первая жирная строка. Что над ним, проверяет правило тела.
 function titleProblem(
   call: Carried,
   title: string | undefined,
@@ -385,10 +384,10 @@ function textOf(call: Carried): string | undefined {
         : undefined;
 }
 
-// Тело экрана (дизайн-код, «Формат»): после заголовка пустая строка, а над
-// ним — только заметка об исходе одним абзацем, отделённая пустой строкой.
-// Кадр отказа держит жирное предложение и остальной текст в одной строке, и
-// правило его не задевает. Чем заполнено тело, линтер не читает: это
+// Тело экрана (дизайн-код, «Формат»): заголовок первой строкой, после него
+// пустая строка. Над заголовком ничего нет: исход действия — свой экран, а не
+// заметка над карточкой (PER-472). Кадр отказа держит жирное предложение и
+// остальной текст в одной строке, и правило его не задевает. Чем заполнено тело, линтер не читает: это
 // держат тесты каталога бота.
 function bodyProblem(call: Carried): string | undefined {
   if (typeof call.rich_message?.html === "string") {
@@ -400,28 +399,16 @@ function bodyProblem(call: Carried): string | undefined {
     if (after !== "" && !after.startsWith("<")) {
       return `после заголовка rich-экрана текст вне блока: «${after.slice(0, 20)}»`;
     }
-    if (at === 0) return undefined;
-    const note = html.slice(0, at);
-    return note.startsWith("<p>") &&
-      note.endsWith("</p>") &&
-      note.indexOf("</p>") === note.length - "</p>".length
+    return at === 0
       ? undefined
-      : "над заголовком rich-экрана стоит не один абзац заметки";
+      : `над заголовком rich-экрана текст: «${html.slice(0, Math.min(at, 40))}»`;
   }
   const lines = textOf(call)?.split("\n");
   if (lines === undefined) return undefined;
   const at = lines.findIndex((line) => line.startsWith("<b>"));
   if (at < 0) return undefined;
   if (at > 0) {
-    const note = lines.slice(0, at);
-    const paragraph = note.slice(0, -1);
-    if (
-      note.at(-1) !== "" ||
-      paragraph.length === 0 ||
-      paragraph.includes("")
-    ) {
-      return "над заголовком стоит не одна заметка с пустой строкой после неё";
-    }
+    return `над заголовком текст: «${lines.slice(0, at).join(" ").slice(0, 40)}»`;
   }
   // Текст в строке заголовка — только у кадра отказа: там жирное первое
   // предложение, и оно кончается знаком конца предложения.

@@ -9,14 +9,14 @@ import type {
   LotTermsView,
 } from "../../application/types.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { lotAskData } from "../parse-callback.js";
+import { lotAskData, lotFormData } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
 import {
   escapeHtml,
+  outcomeText,
   type Parent,
   screenText,
   withNav,
-  withNote,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
 
@@ -81,7 +81,27 @@ function termsLines(terms: LotTermsView): string[] {
   }
 }
 
-export function lotFormScreen(lot: LotFormView, note?: string): ShownScreen {
+/**
+ * Исход правки лота — свой экран (PER-472): исход в заголовке, название лота в
+ * кавычках. «Изменить лот» возвращает к правке одним нажатием, «‹ Лот» — к
+ * карточке.
+ */
+export function lotSavedScreen(lot: LotFormView, outcome: string): ShownScreen {
+  return {
+    id: "outcome",
+    text: outcomeText(outcome, lot.title),
+    keyboard: withNav(
+      new InlineKeyboard().text(
+        "Изменить лот",
+        lotFormData(uuidToToken(lot.lotId)),
+      ),
+      toLot(lot.lotId),
+    ),
+    format: "HTML",
+  };
+}
+
+export function lotFormScreen(lot: LotFormView): ShownScreen {
   const token = uuidToToken(lot.lotId);
   const keyboard = new InlineKeyboard()
     .text("Название", lotAskData(token, "title"))
@@ -94,30 +114,26 @@ export function lotFormScreen(lot: LotFormView, note?: string): ShownScreen {
   }
   return {
     id: "lot-form",
-    // Заметка об исходе — над заголовком (дизайн-код, «Формат»).
-    text: withNote(
-      note,
-      screenText(
-        "Изменить лот",
-        [
-          `Название: ${truncate(lot.title ?? untitled, titleLimit)}`,
-          `Описание: ${lot.description === "" ? "нет" : truncate(lot.description, descriptionLimit)}`,
-          `Фото: ${lot.hasImage ? "есть" : "нет"}`,
-          ...termsLines(lot.terms),
-        ]
-          .map(escapeHtml)
-          .join("\n"),
-      ),
+    text: screenText(
+      "Изменить лот",
+      [
+        `Название: ${truncate(lot.title ?? untitled, titleLimit)}`,
+        `Описание: ${lot.description === "" ? "нет" : truncate(lot.description, descriptionLimit)}`,
+        `Фото: ${lot.hasImage ? "есть" : "нет"}`,
+        ...termsLines(lot.terms),
+      ]
+        .map(escapeHtml)
+        .join("\n"),
     ),
     keyboard: withNav(keyboard, toLot(lot.lotId)),
     format: "HTML",
   };
 }
 
-const lotAskErrorText: Record<LotAskError, string> = {
+const lotAskErrors: Record<LotAskError, string> = {
   "empty-title": "Название не может быть пустым.",
   "empty-description": "Описание не может быть пустым.",
-  "amount-format": "Нужно целое число рублей: только цифры, без копеек.",
+  "amount-format": "Нужно целое число рублей. Только цифры, без копеек.",
   "amount-range": "Сумма — от 1 до 9 999 999 рублей.",
   "step-refused": "Такой шаг аукцион не принимает. Пришли другой.",
   "image-too-large": "Фото слишком большое, аукцион его не принял.",
@@ -140,10 +156,14 @@ export function imageLimitText(maxBytes: number): string {
   return `${Math.max(1, Math.round(maxBytes / 1024))} КБ`;
 }
 
-function errorLine(error: LotAskError, maxImageBytes?: number): string {
+/** Причина отказа ответу на вопрос формы лота: заголовок экрана исхода. */
+export function lotAskErrorText(
+  error: LotAskError,
+  maxImageBytes?: number,
+): string {
   return error === "image-too-large" && maxImageBytes !== undefined
     ? `Фото больше ${imageLimitText(maxImageBytes)}, аукцион его не принял.`
-    : lotAskErrorText[error];
+    : lotAskErrors[error];
 }
 
 const rublesOf = (amount: number) =>
@@ -213,12 +233,9 @@ function current(
 export function lotQuestionText(
   question: LotQuestion,
   lot?: LotFormView,
-  error?: LotAskError,
-  maxImageBytes?: number,
 ): string {
   const now = current(question, lot);
   return [
-    ...(error === undefined ? [] : [errorLine(error, maxImageBytes)]),
     ...(question.kind === "step"
       ? [`Стартовая цена: ${rublesOf(question.priceRubles)}.`]
       : []),

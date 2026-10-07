@@ -180,7 +180,7 @@ const confirm = (command: "bid" | "proxy"): AuctionScreenBody => ({
 
 const question = (
   kind: "bid" | "proxy" | "alias",
-  refused: boolean,
+  titled: boolean,
 ): AuctionScreenBody => ({
   blocks: [
     {
@@ -189,7 +189,7 @@ const question = (
       lotId: "lot-1",
       auctionId: "auc-1",
       ...(kind === "alias" ? {} : { current: rub(550) }),
-      ...(refused ? { refusal: "not-a-number" as const } : {}),
+      ...(titled ? { title: "Кружка <с совой>" } : {}),
     },
   ],
   keyboard: [
@@ -221,6 +221,50 @@ const nameChoice = (username: boolean): AuctionScreenBody => ({
     [{ action: "name.back", callbackData: "v1:auc:lot:lot-1:1" }],
   ],
 });
+// Отказ команды и непринятый ответ (PER-472): кадры исхода с «К лоту», у
+// непринятого ответа над ней — «Ввести заново».
+const commandResult = (title: boolean): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "result",
+      result: {
+        command: "bid",
+        kind: "refused",
+        refusal: { kind: "bid-below-minimum", minRequired: rub(650) },
+      },
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      ...(title ? { title: "Кружка <с совой>" } : {}),
+    },
+  ],
+  keyboard: [[{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:1" }]],
+});
+
+const answerRefused = (retry: boolean): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "answer-refused",
+      refusal: retry ? "not-a-number" : "name-frozen",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      title: "Кружка <с совой>",
+    },
+  ],
+  keyboard: [
+    ...(retry
+      ? [
+          [
+            {
+              action: "answer.retry" as const,
+              callbackData: "v1:auc:ab:lot-1:1",
+            },
+          ],
+        ]
+      : []),
+    [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:1" }],
+  ],
+});
+
 // Принятая команда (PER-473): кадр исхода с «К лоту», «Меню» ставит оболочка.
 const accepted = (
   command: "bid" | "proxy",
@@ -300,6 +344,10 @@ const shown: readonly {
   { screen: { kind: "auction", body: confirm("proxy") } },
   { screen: { kind: "auction", body: accepted("bid", true) } },
   { screen: { kind: "auction", body: accepted("proxy", false) } },
+  { screen: { kind: "auction", body: commandResult(true) } },
+  { screen: { kind: "auction", body: commandResult(false) } },
+  { screen: { kind: "auction", body: answerRefused(true) } },
+  { screen: { kind: "auction", body: answerRefused(false) } },
   { screen: { kind: "auction", body: question("bid", false) } },
   { screen: { kind: "auction", body: question("bid", true) } },
   { screen: { kind: "auction", body: question("proxy", false) } },

@@ -70,7 +70,8 @@ describe("lot card in the hub shell", () => {
     );
   });
 
-  it("puts the outcome note above the title and the own limit among the facts", () => {
+  // Свой лимит — строка фактов; над названием ничего нет (PER-472).
+  it("shows the own limit among the facts and nothing above the title", () => {
     const { screen } = auctionScreen(
       view(
         [
@@ -83,20 +84,12 @@ describe("lot card in the hub shell", () => {
             },
             viewerProxyLimit: rub(2000),
           }),
-          {
-            kind: "result",
-            result: {
-              command: "bid",
-              kind: "refused",
-              refusal: { kind: "bid-below-minimum", minRequired: rub(1300) },
-            },
-          },
         ],
         "plain",
       ),
     );
     expect(plain(screen.text)).toBe(
-      "Ставка ниже порога. Сейчас можно от 1 300 ₽.\n\n<b>Кружка</b>\n\n" +
+      "<b>Кружка</b>\n\n" +
         "Статус: идут торги\n\nЦена: 1 200 ₽\nЛидер: пока нет\nТвоя автоставка: до 2 000 ₽ (видишь только ты)",
     );
   });
@@ -309,18 +302,78 @@ describe("bid sheet in the hub shell", () => {
     expect(screen.text).toContain("Лимит видишь только ты.");
   });
 
-  it("puts the refusal above the question title and the prompt under it", () => {
+  it("asks the question with the prompt under the title", () => {
     const { screen, asks } = sheet({
       kind: "question",
       question: "bid",
       lotId: "lot-1",
       auctionId: "auc-1",
       current: rub(1600),
-      refusal: "not-a-number",
     });
     expect(plain(screen.text)).toBe(
-      "Это не сумма.\n\n<b>Своя сумма</b>\n\nПришли сумму ставки в рублях.\nСейчас: от 1 600 ₽\nНапример: 1 500",
+      "<b>Своя сумма</b>\n\nПришли сумму ставки в рублях.\nСейчас: от 1 600 ₽\nНапример: 1 500",
     );
     expect(asks).toBe(true);
+  });
+
+  // Отказ команды — свой экран исхода (PER-472), тексты — как у бота
+  // аукциона.
+  it("shows a refused command as its own outcome screen", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "result",
+            result: {
+              command: "bid",
+              kind: "refused",
+              refusal: { kind: "bid-below-minimum", minRequired: rub(1300) },
+            },
+            lotId: "lot-1",
+            auctionId: "auc-1",
+            title: "Кружка",
+          },
+        ],
+        keyboard: [
+          [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+    expect(screen.id).toBe("command-result");
+    expect(plain(screen.text)).toBe(
+      "<b>Ставка ниже порога</b>\n\n«Кружка»\n\nСейчас можно от 1 300 ₽.",
+    );
+    expect(
+      screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
+    ).toEqual([["К лоту", "Меню"]]);
+  });
+
+  // Непринятый ответ — свой экран с «Ввести заново» над «К лоту» (PER-472).
+  it("shows a refused answer as its own screen with a retry", () => {
+    const { screen, asks } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "answer-refused",
+            refusal: "not-a-number",
+            lotId: "lot-1",
+            auctionId: "auc-1",
+            title: "Кружка",
+          },
+        ],
+        keyboard: [
+          [{ action: "answer.retry", callbackData: "v1:auc:ab:lot-1:0" }],
+          [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+        ],
+      },
+    });
+    expect(screen.id).toBe("answer-refused");
+    expect(asks).toBeUndefined();
+    expect(plain(screen.text)).toBe("<b>Это не сумма</b>\n\n«Кружка»");
+    expect(
+      screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
+    ).toEqual([["Ввести заново"], ["К лоту", "Меню"]]);
   });
 });

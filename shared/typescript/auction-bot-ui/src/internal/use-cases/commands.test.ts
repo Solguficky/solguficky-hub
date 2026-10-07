@@ -102,7 +102,7 @@ describe("bid leaf commands", () => {
   });
 
   // Устаревшее «Да»: лот ушёл в живой финал, и ставка финала — не этот лист.
-  // Команда не уходит, карточка называет отказ.
+  // Команда не уходит, экран исхода называет отказ.
   it("does not send a stale confirmation once the lot left online trading", async () => {
     const calls: PortCall[] = [];
     const live = {
@@ -133,12 +133,16 @@ describe("bid leaf commands", () => {
         kind: "refused",
         refusal: { kind: "lot-not-open" },
       },
+      lotId: CONTRACT_LOT.lotId,
+      auctionId: CONTRACT_LOT.auctionId,
+      title: "Кружка с совой",
     });
   });
 
-  // Ответа не было, и бюджет ушёл весь: перечитать лот нечем, а исход
-  // «неизвестен» всё равно доходит — по снимку до команды.
-  it("shows the unknown outcome when the lot cannot be read again", async () => {
+  // Ответа не было: исход «неизвестен» — свой экран по снимку до команды, а
+  // лот перечитывает кнопка «К лоту», поэтому бюджет на второе чтение не
+  // тратится.
+  it("shows the unknown outcome without reading the lot again", async () => {
     const calls: PortCall[] = [];
     const ports = spyPorts(calls, {
       ...AUCTION,
@@ -166,7 +170,11 @@ describe("bid leaf commands", () => {
     expect(result.body.blocks[0]).toEqual({
       kind: "result",
       result: { command: "bid", kind: "unknown" },
+      lotId: CONTRACT_LOT.lotId,
+      auctionId: CONTRACT_LOT.auctionId,
+      title: "Кружка с совой",
     });
+    expect(reads).toBe(1);
   });
 
   // Ответ на вопрос принимается только от того, кому вопрос задан.

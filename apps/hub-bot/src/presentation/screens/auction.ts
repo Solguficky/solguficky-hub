@@ -15,12 +15,13 @@ import { uuidToToken } from "../meetup-deep-link.js";
 import { consoleViewData, lotFormData, lotNewData } from "../parse-callback.js";
 import {
   acceptedScreen,
+  answerRefusedScreen,
+  commandResultScreen,
   confirmScreen,
   nameChoiceScreen,
   oneLine,
   questionScreen,
   quoted,
-  resultText,
 } from "./auction-bid.js";
 import {
   bullet,
@@ -32,7 +33,6 @@ import {
   readableMoment,
   screenText,
   withNav,
-  withNote,
 } from "./kit.js";
 import type { ScreenPhoto, ShownScreen } from "./show.js";
 
@@ -98,7 +98,7 @@ const plainTextLimit = 4096;
 
 export function auctionScreen(view: AuctionView): AuctionShown {
   // Лист ставки (PER-317): подтверждение, исход, вопрос и выбор имени — свои
-  // экраны.
+  // экраны; отказ и непринятый ответ — тоже (PER-472).
   for (const block of view.body.blocks) {
     switch (block.kind) {
       case "confirm":
@@ -111,7 +111,15 @@ export function auctionScreen(view: AuctionView): AuctionShown {
           asks: true,
         };
       case "name-choice":
-        return { screen: nameChoiceScreen(block, view.body.keyboard, money) };
+        return { screen: nameChoiceScreen(block, view.body.keyboard) };
+      case "result":
+        return {
+          screen: commandResultScreen(block, view.body.keyboard, money),
+        };
+      case "answer-refused":
+        return {
+          screen: answerRefusedScreen(block, view.body.keyboard, money),
+        };
       default:
         break;
     }
@@ -213,6 +221,8 @@ function feedLabel(
     case "name.alias":
     case "name.back":
     case "accepted.lot":
+    case "result.lot":
+    case "answer.retry":
       throw new Error(`action ${button.action} in a feed body`);
     default: {
       const _exhaustive: never = button;
@@ -254,13 +264,6 @@ function lotScreen(
   // Карточка лота (дизайн-код, «Карточка лота»): группа статуса, группа цены
   // и лидера, описание — группы через пустую строку, в rich — блоками.
   const groups = statusGroups(lot, view);
-  // Исход команды участника — заметка над названием после «Да».
-  const result = view.body.blocks.find(
-    (block): block is Extract<AuctionBlock, { kind: "result" }> =>
-      block.kind === "result",
-  );
-  const note =
-    result === undefined ? undefined : resultText(result.result, money);
   const rich = view.presentation === "rich";
   const photo = rich ? view.photo : undefined;
   const image =
@@ -269,7 +272,6 @@ function lotScreen(
       : { lotId: lot.lotId, version: lot.card.image.version };
   const text = rich
     ? [
-        note === undefined ? "" : `<p>${escapeHtml(note)}</p>`,
         `<h1>${escapeHtml(title)}</h1>`,
         ...groups.map(
           (lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`,
@@ -277,7 +279,7 @@ function lotScreen(
         ...richParagraphs(description),
         photo === undefined ? "" : `<img src="tg://photo?id=${photo.id}"/>`,
       ].join("")
-    : withNote(note, plainLot(title, description, groups));
+    : plainLot(title, description, groups);
   return {
     screen: {
       id: "lot",
@@ -347,6 +349,8 @@ function lotLabel(button: AuctionButton): string {
     case "name.alias":
     case "name.back":
     case "accepted.lot":
+    case "result.lot":
+    case "answer.retry":
       throw new Error(`action ${button.action} in a lot body`);
     default: {
       const _exhaustive: never = button;
@@ -422,6 +426,8 @@ function historyLabel(button: AuctionButton): string {
     case "name.alias":
     case "name.back":
     case "accepted.lot":
+    case "result.lot":
+    case "answer.retry":
       throw new Error(`action ${button.action} in a history body`);
     default: {
       const _exhaustive: never = button;

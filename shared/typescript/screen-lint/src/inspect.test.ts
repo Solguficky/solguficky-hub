@@ -190,15 +190,15 @@ describe("inspectCall configuration", () => {
     expect(confirm("open", "Неделя", key("Да, открыть неделю"))).toEqual([]);
   });
 
-  // PER-472: тело экрана — пустая строка после заголовка, над ним только
-  // заметка об исходе одним абзацем.
-  it("requires a blank line after the title and lets one note stand above it", () => {
+  // PER-472: тело экрана — пустая строка после заголовка, а над ним ничего:
+  // исход действия — свой экран, а не заметка над карточкой.
+  it("requires a blank line after the title and nothing above it", () => {
     const titled = (text: string) =>
       rulesOf("sendMessage", call("edit", text, [[key("‹ Меню")]]));
     expect(titled("<b>Изменить</b>")).toEqual([]);
     expect(titled("<b>Изменить</b>\n\nНазвание: Сходка")).toEqual([]);
     expect(titled("Сохранено.\n\n<b>Изменить</b>\n\nНазвание: Сходка")).toEqual(
-      [],
+      ["body"],
     );
     expect(titled("<b>Изменить</b>\nНазвание: Сходка")).toEqual(["body"]);
     expect(titled("Сохранено.\n<b>Изменить</b>")).toEqual(["body"]);
@@ -212,7 +212,7 @@ describe("inspectCall configuration", () => {
     expect(titled("<b>Изменить</b> Название: Сходка")).toEqual(["body"]);
   });
 
-  it("lets only one note paragraph stand before the rich title", () => {
+  it("lets nothing stand before the rich title", () => {
     const rich = (html: string) =>
       rulesOf("sendRichMessage", {
         chat_id: 42,
@@ -221,7 +221,9 @@ describe("inspectCall configuration", () => {
         [tag]: "edit",
       });
     expect(rich("<h1>Изменить</h1><p>Тело</p>")).toEqual([]);
-    expect(rich("<p>Сохранено.</p><h1>Изменить</h1><p>Тело</p>")).toEqual([]);
+    expect(rich("<p>Сохранено.</p><h1>Изменить</h1><p>Тело</p>")).toEqual([
+      "body",
+    ]);
     expect(rich("<p>Раз.</p><p>Два.</p><h1>Изменить</h1>")).toEqual(["body"]);
     expect(rich("Сохранено.<h1>Изменить</h1>")).toEqual(["body"]);
     expect(rich("<h1>Изменить</h1>Название: Сходка")).toEqual(["body"]);

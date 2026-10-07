@@ -19,6 +19,7 @@ import type {
 } from "../../ports.js";
 import type {
   AnswerRefusal,
+  AuctionButton,
   AuctionScreenBody,
   CommandResult,
 } from "../../screen.js";
@@ -96,24 +97,18 @@ function confirmOrRefuse(
 ): Promise<AuctionScreenBody> {
   const { status } = lot;
   if (status.kind !== "trading" || status.phase !== "online") {
-    return showLot({
-      ...context,
-      lot,
-      page,
-      result: notOffered(pending.command, lot),
-    });
+    return Promise.resolve(
+      resultBody(lot, page, notOffered(pending.command, lot)),
+    );
   }
   const refusal =
     pending.command === "bid"
       ? refusedBeforeConfirm(context.viewer, lot, status, pending.amount)
       : undefined;
   if (refusal !== undefined) {
-    return showLot({
-      ...context,
-      lot,
-      page,
-      result: { command: "bid", kind: "refused", refusal },
-    });
+    return Promise.resolve(
+      resultBody(lot, page, { command: "bid", kind: "refused", refusal }),
+    );
   }
   return Promise.resolve(
     confirmBody(context, lot, pending, status.currentPrice, page),
@@ -190,12 +185,7 @@ export async function commitCommand(
   // команда не уходит, а карточка называет отказ по снимку.
   const { status } = lot;
   if (status.kind !== "trading" || status.phase !== "online") {
-    return showLot({
-      ...context,
-      lot,
-      page: intent.page,
-      result: notOffered(intent.command, lot),
-    });
+    return resultBody(lot, intent.page, notOffered(intent.command, lot));
   }
   const amount: Money = {
     minorUnits: intent.amount,
@@ -224,11 +214,9 @@ export async function commitCommand(
       );
 }
 
-// Ответ Auction на команду — экран. Принятая — экран «принята» с «К лоту»:
-// лот он не перечитывает, карточку перечитывает кнопка. Неизвестная команда
-// могла изменить лот, и карточка перечитывается; отказ состояния не меняет, и
-// карточка идёт по снимку до команды. Имя не выбрано — экран выбора имени, а
-// не отказ.
+// Ответ Auction на команду — экран. Принятая, отказ и неизвестный исход — свои
+// экраны с «К лоту»: лот они не перечитывают, карточку перечитывает кнопка.
+// Имя не выбрано — экран выбора имени, а не отказ.
 async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   settled: {
     context: CommandContext;
@@ -249,14 +237,11 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
     case "accepted":
       return acceptedBody(lot, intent, amount);
     case "unanswered":
-      // Бюджет действия мог уйти весь на команду: тогда перечитать лот нечем,
-      // и карточка идёт по снимку до команды — исход «неизвестен» важнее
-      // свежей цены.
-      return showLot({
-        ...context,
-        lot: await readLot(context, intent.lotId).catch(() => lot),
-        page: intent.page,
-        result: { command: intent.command, kind: "unknown" },
+      // Команда могла пройти: что вышло, покажет карточка за «К лоту» — она
+      // читает лот заново.
+      return resultBody(lot, intent.page, {
+        command: intent.command,
+        kind: "unknown",
       });
     case "refused":
       if (outcome.refusal.kind === "display-name-not-chosen") {
@@ -267,12 +252,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
           intent.page,
         );
       }
-      return showLot({
-        ...context,
-        lot,
-        page: intent.page,
-        result: refused(outcome.refusal),
-      });
+      return resultBody(lot, intent.page, refused(outcome.refusal));
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -307,6 +287,66 @@ function acceptedBody(
   };
 }
 
+// Отказ команды или неизвестный исход — свой экран с «К лоту» (PER-472).
+function resultBody(
+  lot: LotView,
+  page: number,
+  result: CommandResult,
+): AuctionScreenBody {
+  return {
+    blocks: [
+      {
+        kind: "result",
+        result,
+        lotId: lot.lotId,
+        auctionId: lot.auctionId,
+        ...titled(lot),
+      },
+    ],
+    keyboard: [
+      [{ action: "result.lot", callbackData: lotCallback(lot.lotId, page) }],
+    ],
+  };
+}
+
+// Непринятый ответ или отказ имени — свой экран (PER-472). `retry` задаёт
+// вопрос заново; его нет, когда повтор ничего не изменит.
+function answerRefusedBody(
+  lot: LotView,
+  page: number,
+  refusal: AnswerRefusal,
+  retry: AuctionButton | undefined,
+): AuctionScreenBody {
+  return {
+    blocks: [
+      {
+        kind: "answer-refused",
+        refusal,
+        lotId: lot.lotId,
+        auctionId: lot.auctionId,
+        ...titled(lot),
+      },
+    ],
+    keyboard: [
+      ...(retry === undefined ? [] : [[retry]]),
+      [{ action: "result.lot", callbackData: lotCallback(lot.lotId, page) }],
+    ],
+  };
+}
+
+function askAgain(intent: QuestionIntent): AuctionButton {
+  return {
+    action: "answer.retry",
+    callbackData: encodeAuctionCallback({
+      kind: "ask",
+      question: intent.question,
+      lotId: intent.lotId,
+      page: intent.page,
+      ...(intent.pending === undefined ? {} : { pending: intent.pending }),
+    }),
+  };
+}
+
 // Первая ставка в аукционе: имя видно всем, и выбрать его нужно до команды
 // (ADR-059). Ник предлагается, только если он есть в update.
 function nameChoiceBody(
@@ -314,7 +354,6 @@ function nameChoiceBody(
   lot: LotView,
   pending: PendingCommand,
   page: number,
-  refusal?: DisplayNameRefusal,
 ): AuctionScreenBody {
   const username = context.user.telegramUsername;
   return {
@@ -325,7 +364,6 @@ function nameChoiceBody(
         auctionId: lot.auctionId,
         ...titled(lot),
         ...(username === undefined || username === "" ? {} : { username }),
-        ...(refusal === undefined ? {} : { refusal }),
       },
     ],
     keyboard: [
@@ -374,7 +412,6 @@ function questionBody(
   context: CommandContext,
   lot: LotView,
   intent: QuestionIntent,
-  refusal?: AnswerRefusal,
 ): AuctionScreenBody {
   const current =
     intent.question === "bid"
@@ -391,7 +428,6 @@ function questionBody(
         auctionId: lot.auctionId,
         ...titled(lot),
         ...(current === undefined ? {} : { current }),
-        ...(refusal === undefined ? {} : { refusal }),
       },
     ],
     keyboard: [
@@ -433,7 +469,7 @@ export async function cancelQuestion(
     : showLot({ ...context, lot, page: intent.page });
 }
 
-// Ответ на вопрос. Непринятый ответ — тот же вопрос с причиной, а не
+// Ответ на вопрос. Непринятый ответ — экран отказа с «Ввести заново», а не
 // исключение: ввод человека — недоверенная строка.
 export async function answerQuestion(
   context: CommandContext,
@@ -442,7 +478,7 @@ export async function answerQuestion(
 ): Promise<AuctionScreenBody> {
   const lot = await readLot(context, intent.lotId);
   if (text === undefined) {
-    return questionBody(context, lot, intent, "not-text");
+    return answerRefusedBody(lot, intent.page, "not-text", askAgain(intent));
   }
   if (intent.question === "alias") {
     if (intent.pending === undefined) {
@@ -454,21 +490,29 @@ export async function answerQuestion(
       { kind: "alias", alias: text },
       intent.pending,
       intent.page,
-      (refusal) => questionBody(context, lot, intent, refusal),
+      (refusal) =>
+        answerRefusedBody(
+          lot,
+          intent.page,
+          refusal,
+          refusal === "name-frozen" ? undefined : askAgain(intent),
+        ),
     );
   }
   const command = intent.question;
   const { status } = lot;
   if (status.kind !== "trading" || status.phase !== "online") {
-    return showLot({
-      ...context,
-      lot,
-      page: intent.page,
-      result: notOffered(command, lot),
-    });
+    return resultBody(lot, intent.page, notOffered(command, lot));
   }
   const amount = parseAmount(text, status.currentPrice.currency);
-  if (!amount.ok) return questionBody(context, lot, intent, amount.refusal);
+  if (!amount.ok) {
+    return answerRefusedBody(
+      lot,
+      intent.page,
+      amount.refusal,
+      askAgain(intent),
+    );
+  }
   return confirmOrRefuse(
     context,
     lot,
@@ -488,8 +532,26 @@ export async function chooseUsername(
     { kind: "username", username: context.user.telegramUsername ?? "" },
     intent.pending,
     intent.page,
+    // Без ника остаётся псевдоним; имя, которое уже не поменять, повтор не
+    // спасёт.
     (refusal) =>
-      nameChoiceBody(context, lot, intent.pending, intent.page, refusal),
+      answerRefusedBody(
+        lot,
+        intent.page,
+        refusal,
+        refusal === "name-frozen"
+          ? undefined
+          : {
+              action: "name.alias",
+              callbackData: encodeAuctionCallback({
+                kind: "ask",
+                question: "alias",
+                lotId: lot.lotId,
+                page: intent.page,
+                pending: intent.pending,
+              }),
+            },
+      ),
   );
 }
 

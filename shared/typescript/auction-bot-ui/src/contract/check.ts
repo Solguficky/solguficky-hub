@@ -606,7 +606,6 @@ const questionBody = (
   question: "bid" | "proxy" | "alias",
   extra: {
     current?: Money;
-    refusal?: AnswerRefusalOf;
     pending?: { command: "bid" | "proxy"; amount: number };
   } = {},
 ): AuctionScreenBody => ({
@@ -618,7 +617,6 @@ const questionBody = (
       auctionId: CONTRACT_AUCTION_ID,
       title: "Кружка с совой",
       ...(extra.current === undefined ? {} : { current: extra.current }),
-      ...(extra.refusal === undefined ? {} : { refusal: extra.refusal }),
     },
   ],
   keyboard: [
@@ -633,52 +631,66 @@ const questionBody = (
 
 type AnswerRefusalOf = Extract<
   AuctionScreenBody["blocks"][number],
-  { kind: "question" }
+  { kind: "answer-refused" }
 >["refusal"];
 
-// Карточка лота в торгах с исходом команды первой строкой.
-const lotWithResult = (
-  lot: LotView,
-  result: CommandResult,
-  participantName?: string,
-): AuctionScreenBody => ({
+// Отказ команды и неизвестный исход — свой экран с «К лоту» (PER-472): лот
+// после ответа Auction не читается, его перечитывает кнопка.
+const resultBody = (result: CommandResult): AuctionScreenBody => ({
   blocks: [
-    { kind: "result", result },
     {
-      kind: "lot",
-      lotId: lot.lotId,
+      kind: "result",
+      result,
+      lotId: CONTRACT_LOT.lotId,
       auctionId: CONTRACT_AUCTION_ID,
-      version: lot.version,
-      card: {
-        title: "Кружка с совой",
-        description: "Ручная роспись.",
-        image: { version: "img-1" },
-      },
-      ...(lot.nextPrice === undefined ? {} : { nextPrice: lot.nextPrice }),
-      fixedStep: rub(50),
-      status: lot.status,
-      ...(participantName === undefined ? {} : { participantName }),
-      ...(lot.viewerProxyLimit === undefined
-        ? {}
-        : { viewerProxyLimit: lot.viewerProxyLimit }),
+      title: "Кружка с совой",
     },
   ],
   keyboard: [
     [
       {
-        action: "lot.bid-step",
-        amount: lot.nextPrice ?? rub(0),
+        action: "result.lot",
+        callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
+      },
+    ],
+  ],
+});
+
+// Непринятый ответ — свой экран (PER-472): «Ввести заново» задаёт тот же
+// вопрос, «К лоту» открывает карточку.
+const answerRefusedBody = (
+  question: "bid" | "proxy" | "alias",
+  refusal: AnswerRefusalOf,
+  pendingCommand?: { command: "bid" | "proxy"; amount: number },
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "answer-refused",
+      refusal,
+      lotId: CONTRACT_LOT.lotId,
+      auctionId: CONTRACT_AUCTION_ID,
+      title: "Кружка с совой",
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "answer.retry",
         callbackData: callback({
-          kind: "confirm",
-          command: "bid",
-          lotId: lot.lotId,
-          amount: (lot.nextPrice ?? rub(0)).minorUnits,
+          kind: "ask",
+          question,
+          lotId: CONTRACT_LOT.lotId,
           page: 2,
+          ...(pendingCommand === undefined ? {} : { pending: pendingCommand }),
         }),
       },
     ],
-    ...bidRows(lot, 2).slice(1),
-    ...lotKeyboard(lot.lotId, 2),
+    [
+      {
+        action: "result.lot",
+        callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
+      },
+    ],
   ],
 });
 
@@ -733,7 +745,7 @@ const pending = (command: "bid" | "proxy", amount: number) => ({
 
 const nameChoiceBody = (
   amount: number,
-  extra: { username?: string; refusal?: "name-frozen" } = {},
+  extra: { username?: string } = {},
 ): AuctionScreenBody => ({
   blocks: [
     {
@@ -742,7 +754,6 @@ const nameChoiceBody = (
       auctionId: CONTRACT_AUCTION_ID,
       title: "Кружка с совой",
       ...(extra.username === undefined ? {} : { username: extra.username }),
-      ...(extra.refusal === undefined ? {} : { refusal: extra.refusal }),
     },
   ],
   keyboard: [
@@ -852,18 +863,15 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
       page: 2,
     }),
     auction: LED_BY_VIEWER,
-    auctionCalls: [LOT_CALL, namesCall(CONTRACT_IDENTITY.identityId)],
-    body: lotWithResult(
-      LOT_LED_BY_VIEWER,
-      {
-        command: "bid",
-        kind: "refused",
-        refusal: { kind: "bidder-is-leader", currentPrice: rub(1200) },
-      },
-      "@me",
-    ),
+    auctionCalls: [LOT_CALL],
+    body: resultBody({
+      command: "bid",
+      kind: "refused",
+      refusal: { kind: "bidder-is-leader", currentPrice: rub(1200) },
+    }),
   },
-  // Именованный отказ окончателен: один вызов, цена из отказа на экране.
+  // Именованный отказ окончателен: один вызов, цена из отказа на экране
+  // исхода.
   {
     intent: "bid: refused below the minimum",
     callbackData: commitCallback("bid", 125000),
@@ -876,16 +884,12 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
         },
       ],
     },
-    auctionCalls: [LOT_CALL, bidCall(125000), namesCall(LEADER_ID)],
-    body: lotWithResult(
-      CONTRACT_LOT,
-      {
-        command: "bid",
-        kind: "refused",
-        refusal: { kind: "bid-below-minimum", minRequired: rub(1300) },
-      },
-      "@owl",
-    ),
+    auctionCalls: [LOT_CALL, bidCall(125000)],
+    body: resultBody({
+      command: "bid",
+      kind: "refused",
+      refusal: { kind: "bid-below-minimum", minRequired: rub(1300) },
+    }),
   },
   {
     intent: "bid: refused to the leader",
@@ -899,16 +903,12 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
         },
       ],
     },
-    auctionCalls: [LOT_CALL, bidCall(130000), namesCall(LEADER_ID)],
-    body: lotWithResult(
-      CONTRACT_LOT,
-      {
-        command: "bid",
-        kind: "refused",
-        refusal: { kind: "bidder-is-leader", currentPrice: rub(1200) },
-      },
-      "@owl",
-    ),
+    auctionCalls: [LOT_CALL, bidCall(130000)],
+    body: resultBody({
+      command: "bid",
+      kind: "refused",
+      refusal: { kind: "bidder-is-leader", currentPrice: rub(1200) },
+    }),
   },
   // Ответа не было — повтор тем же `op_id`, и только один.
   {
@@ -929,18 +929,8 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
       ...AUCTION,
       bids: [{ kind: "unanswered" }, { kind: "unanswered" }],
     },
-    auctionCalls: [
-      LOT_CALL,
-      bidCall(130000),
-      bidCall(130000),
-      LOT_CALL,
-      namesCall(LEADER_ID),
-    ],
-    body: lotWithResult(
-      CONTRACT_LOT,
-      { command: "bid", kind: "unknown" },
-      "@owl",
-    ),
+    auctionCalls: [LOT_CALL, bidCall(130000), bidCall(130000)],
+    body: resultBody({ command: "bid", kind: "unknown" }),
   },
   // Первая ставка без выбранного имени: предупреждение и выбор.
   {
@@ -982,10 +972,7 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
       displayNames: [{ kind: "refused", refusal: "alias-taken" }],
     },
     auctionCalls: [LOT_CALL, chooseCall({ kind: "alias", alias: "Сыч" })],
-    body: questionBody("alias", {
-      refusal: "alias-taken",
-      pending: pending("bid", 130000),
-    }),
+    body: answerRefusedBody("alias", "alias-taken", pending("bid", 130000)),
   },
   {
     intent: "bid: ask the amount",
@@ -1007,47 +994,40 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [LOT_CALL],
     body: confirmBody("bid", 130000),
   },
-  // Сумма ниже порога и ответ лидера — карточка с отказом, без «Да».
+  // Сумма ниже порога и ответ лидера — экран отказа, без «Да».
   {
     intent: "bid: answer below the minimum",
     callbackData: questionCallback("bid"),
     reply: { text: "10" },
     auction: AUCTION,
-    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
-    body: lotWithResult(
-      CONTRACT_LOT,
-      {
-        command: "bid",
-        kind: "refused",
-        refusal: { kind: "bid-below-minimum", minRequired: rub(1250) },
-      },
-      "@owl",
-    ),
+    auctionCalls: [LOT_CALL],
+    body: resultBody({
+      command: "bid",
+      kind: "refused",
+      refusal: { kind: "bid-below-minimum", minRequired: rub(1250) },
+    }),
   },
   {
     intent: "bid: answer from the leader",
     callbackData: questionCallback("bid"),
     reply: { text: "1 400" },
     auction: LED_BY_VIEWER,
-    auctionCalls: [LOT_CALL, namesCall(CONTRACT_IDENTITY.identityId)],
-    body: lotWithResult(
-      LOT_LED_BY_VIEWER,
-      {
-        command: "bid",
-        kind: "refused",
-        refusal: { kind: "bidder-is-leader", currentPrice: rub(1200) },
-      },
-      "@me",
-    ),
+    auctionCalls: [LOT_CALL],
+    body: resultBody({
+      command: "bid",
+      kind: "refused",
+      refusal: { kind: "bidder-is-leader", currentPrice: rub(1200) },
+    }),
   },
-  // Не число и чужая валюта — тот же вопрос с причиной, Auction не зовут.
+  // Не число и чужая валюта — экран отказа с «Ввести заново», Auction не
+  // зовут.
   {
     intent: "bid: answer not a number",
     callbackData: questionCallback("bid"),
     reply: { text: "много" },
     auction: AUCTION,
     auctionCalls: [LOT_CALL],
-    body: questionBody("bid", { current: rub(1250), refusal: "not-a-number" }),
+    body: answerRefusedBody("bid", "not-a-number"),
   },
   {
     intent: "bid: answer in another currency",
@@ -1055,10 +1035,7 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     reply: { text: "$20" },
     auction: AUCTION,
     auctionCalls: [LOT_CALL],
-    body: questionBody("bid", {
-      current: rub(1250),
-      refusal: "other-currency",
-    }),
+    body: answerRefusedBody("bid", "other-currency"),
   },
   {
     intent: "bid: answer not in text",
@@ -1066,7 +1043,7 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     reply: {},
     auction: AUCTION,
     auctionCalls: [LOT_CALL],
-    body: questionBody("bid", { current: rub(1250), refusal: "not-text" }),
+    body: answerRefusedBody("bid", "not-text"),
   },
   {
     intent: "bid: cancel the question",
@@ -1136,16 +1113,12 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
         },
       ],
     },
-    auctionCalls: [LOT_CALL, limitCall(110000), namesCall(LEADER_ID)],
-    body: lotWithResult(
-      CONTRACT_LOT,
-      {
-        command: "proxy",
-        kind: "refused",
-        refusal: { kind: "proxy-below-current-price", minLimit: rub(1200) },
-      },
-      "@owl",
-    ),
+    auctionCalls: [LOT_CALL, limitCall(110000)],
+    body: resultBody({
+      command: "proxy",
+      kind: "refused",
+      refusal: { kind: "proxy-below-current-price", minLimit: rub(1200) },
+    }),
   },
 ];
 

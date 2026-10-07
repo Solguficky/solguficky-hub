@@ -199,6 +199,10 @@ export const screenCatalog = {
   },
   "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
   "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
+  // Отказ команды и непринятый ответ — кадры исхода (PER-472): исход в
+  // заголовке, поэтому в записи его нет.
+  "command-result": { class: "screen", nav: "exit" },
+  "answer-refused": { class: "screen", nav: "exit" },
   "name-choice": {
     class: "screen",
     nav: "tree",
@@ -231,6 +235,10 @@ export const screenCatalog = {
   // выбор кнопкой ничего за собой не оставляет, а сам экран правится на месте.
   "date-presets": { class: "screen", nav: "choice" },
   refusal: { class: "screen", nav: "exit" },
+  // Исход действия — свой экран (PER-472): исход в заголовке, предмет в
+  // кавычках, выход — возврат туда, где действие сделано, и «Меню»; у
+  // непринятого ответа над ними — «Ввести заново».
+  outcome: { class: "screen", nav: "exit" },
   "no-access": { class: "screen", nav: "none" },
   // Тот же кадр ожидания или отказа в `member` у человека с `public`: ссылка в
   // бот аукциона — единственная кнопка, навигации у кадра нет (PER-455).

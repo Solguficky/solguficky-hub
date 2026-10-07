@@ -326,19 +326,13 @@ describe("cardScreen", () => {
     ]);
   });
 
-  it("puts the note above the title and the subscription hint below the card", () => {
-    const noted = cardScreen({
-      ...view,
-      meetup: meetup(),
-      subscribed: false,
-      note: "Изменение сохранено.",
-    });
+  // Исход действия на карточку не ложится: он свой экран, а карточка
+  // всегда несёт подсказку о подписке под собой.
+  it("keeps the card free of an outcome and puts the subscription hint below it", () => {
     const hinted = cardScreen({ ...view, meetup: meetup(), subscribed: false });
 
-    expect(
-      noted.text.startsWith("Изменение сохранено.\n\n<b>Настолки</b>"),
-    ).toBe(true);
-    expect(noted.text).not.toContain("Подпишись");
+    expect(hinted.text.startsWith("<b>Настолки</b>")).toBe(true);
+    expect(hinted.text).not.toContain("Изменение сохранено");
     expect(hinted.text.endsWith("сообщения организатора этой сходки.")).toBe(
       true,
     );

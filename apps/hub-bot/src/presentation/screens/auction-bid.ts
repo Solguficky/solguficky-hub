@@ -15,12 +15,11 @@ import {
   screenText,
   toMenu,
   withNav,
-  withNote,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
 
 // Лист ставки в оболочке хаба (PER-317): подтверждение, вопрос, выбор имени и
-// строка исхода команды на карточке лота. Тексты — те же, что у бота
+// экраны исхода команды (PER-472). Тексты — те же, что у бота
 // аукциона: словарь у двух ботов один, а код оболочек не делится (ADR-044).
 // `money` приходит параметром: формат цены держит оболочка аукциона хаба.
 
@@ -28,6 +27,8 @@ type ConfirmBlock = Extract<AuctionBlock, { kind: "confirm" }>;
 type AcceptedBlock = Extract<AuctionBlock, { kind: "accepted" }>;
 type QuestionBlock = Extract<AuctionBlock, { kind: "question" }>;
 type NameChoiceBlock = Extract<AuctionBlock, { kind: "name-choice" }>;
+type ResultBlock = Extract<AuctionBlock, { kind: "result" }>;
+type AnswerRefusedBlock = Extract<AuctionBlock, { kind: "answer-refused" }>;
 
 const cancelLabel = "Отмена";
 
@@ -122,8 +123,8 @@ function proxyGap(
 
 // Вопрос уходит новым сообщением с `force_reply`: режим ответа ставит
 // отправка, экран несёт только текст и «Отмену». Текст — по правилу вопросов
-// дизайн-кода: причина отказа над заголовком, под ним одним абзацем — что
-// прислать, «Сейчас: …» и образец.
+// дизайн-кода: под заголовком одним абзацем — что прислать, «Сейчас: …» и
+// образец. Непринятый ответ — свой экран.
 export function questionScreen(
   block: QuestionBlock,
   keyboard: readonly (readonly AuctionButton[])[],
@@ -169,12 +170,7 @@ export function questionScreen(
   })();
   return {
     id: "question",
-    text: withNote(
-      block.refusal === undefined
-        ? undefined
-        : answerRefusalText(block.refusal, money),
-      text,
-    ),
+    text,
     keyboard: new InlineKeyboard().text(
       cancelLabel,
       dataOf(keyboard, "question.cancel"),
@@ -186,7 +182,6 @@ export function questionScreen(
 export function nameChoiceScreen(
   block: NameChoiceBlock,
   keyboard: readonly (readonly AuctionButton[])[],
-  money: (amount: Money) => string,
 ): ShownScreen {
   const rows = new InlineKeyboard();
   for (const button of keyboard.flat()) {
@@ -208,12 +203,7 @@ export function nameChoiceScreen(
   );
   return {
     id: "name-choice",
-    text: withNote(
-      block.refusal === undefined
-        ? undefined
-        : answerRefusalText(block.refusal, money),
-      text,
-    ),
+    text,
     keyboard: withNav(rows, {
       name: "Лот",
       data: dataOf(keyboard, "name.back"),
@@ -222,31 +212,97 @@ export function nameChoiceScreen(
   };
 }
 
-function answerRefusalText(
+// Исход — свой экран (дизайн-код, «Экран исхода», PER-472): исход в заголовке
+// без точки, название лота в кавычках, затем пояснение; «К лоту» и «Меню»
+// одним рядом, у непринятого ответа над ними — «Ввести заново».
+type Outcome = { title: string; detail?: string };
+
+function outcomeText(outcome: Outcome, lotTitle: string | undefined): string {
+  return screenText(
+    outcome.title,
+    quoted(lotTitle),
+    outcome.detail === undefined ? undefined : escapeHtml(outcome.detail),
+  );
+}
+
+function toLotRow(
+  rows: InlineKeyboard,
+  keyboard: readonly (readonly AuctionButton[])[],
+): InlineKeyboard {
+  return nextRow(rows)
+    .text("К лоту", dataOf(keyboard, "result.lot"))
+    .text(menuLabel, toMenu.data);
+}
+
+export function commandResultScreen(
+  block: ResultBlock,
+  keyboard: readonly (readonly AuctionButton[])[],
+  money: (amount: Money) => string,
+): ShownScreen {
+  return {
+    id: "command-result",
+    text: outcomeText(resultOutcome(block.result, money), block.title),
+    keyboard: toLotRow(new InlineKeyboard(), keyboard),
+    format: "HTML",
+  };
+}
+
+export function answerRefusedScreen(
+  block: AnswerRefusedBlock,
+  keyboard: readonly (readonly AuctionButton[])[],
+  money: (amount: Money) => string,
+): ShownScreen {
+  const rows = new InlineKeyboard();
+  for (const button of keyboard.flat()) {
+    if (button.action === "answer.retry") {
+      rows.text("Ввести заново", button.callbackData);
+    }
+    if (button.action === "name.alias") {
+      rows.text("Взять псевдоним", button.callbackData);
+    }
+  }
+  return {
+    id: "answer-refused",
+    text: outcomeText(answerRefusalOutcome(block.refusal, money), block.title),
+    keyboard: toLotRow(rows, keyboard),
+    format: "HTML",
+  };
+}
+
+function answerRefusalOutcome(
   refusal: AnswerRefusal,
   money: (amount: Money) => string,
-): string {
+): Outcome {
   switch (refusal) {
     case "not-text":
-      return "Нужен ответ текстом.";
+      return { title: "Нужен ответ текстом" };
     case "not-a-number":
-      return "Это не сумма.";
+      return { title: "Это не сумма" };
     case "other-currency":
-      return "Ставки принимаются только в рублях.";
+      return { title: "Ставки принимаются только в рублях" };
     case "not-positive":
-      return "Сумма должна быть больше нуля.";
+      return { title: "Сумма должна быть больше нуля" };
     case "too-precise":
-      return "Копеек — не больше двух знаков.";
+      return { title: "Копеек — не больше двух знаков" };
     case "too-large":
-      return `Бот принимает суммы до ${money({ minorUnits: MAX_COMMAND_AMOUNT, currency: "RUB" })}.`;
+      return {
+        title: "Сумма слишком большая",
+        detail: `Бот принимает суммы до ${money({ minorUnits: MAX_COMMAND_AMOUNT, currency: "RUB" })}.`,
+      };
     case "alias-invalid":
-      return "Такой псевдоним не подходит.";
+      return { title: "Такой псевдоним не подходит" };
     case "alias-taken":
-      return "Этот псевдоним уже занят.";
+      return { title: "Этот псевдоним уже занят" };
     case "name-frozen":
-      return "Имя уже не поменять: ты ставил в этом аукционе.";
+      return {
+        title: "Имя уже не поменять",
+        detail: "Ты ставил в этом аукционе.",
+      };
     case "username-missing":
-      return "Ника в Telegram у тебя нет: возьми псевдоним.";
+      return {
+        title: "Ника в Telegram у тебя нет",
+        detail: "Возьми псевдоним.",
+      };
     default: {
       const _exhaustive: never = refusal;
       return _exhaustive;
@@ -254,36 +310,54 @@ function answerRefusalText(
   }
 }
 
-// Исход команды — первая строка карточки после «Да» или после ответа,
-// отвергнутого до «Да». Отказ называет цену сам; принятая команда — свой экран.
-export function resultText(
+// Исход команды после «Да» или после ответа, отвергнутого до «Да». Отказ
+// называет цену сам; принятая команда — экран `accepted`.
+function resultOutcome(
   result: CommandResult,
   money: (amount: Money) => string,
-): string {
+): Outcome {
   if (result.kind === "unknown") {
-    return "Аукцион не ответил. Проверь цену на карточке: команда могла пройти.";
+    return {
+      title: "Аукцион не ответил",
+      detail: "Проверь цену на карточке: команда могла пройти.",
+    };
   }
   const { refusal } = result;
   switch (refusal.kind) {
     case "lot-not-open":
-      return "Торги по лоту не идут.";
+      return { title: "Торги по лоту не идут" };
     case "lot-on-hold":
-      return `Лот ждёт финала, ставки сейчас не принимаются. Цена: ${money(refusal.currentPrice)}.`;
+      return {
+        title: "Лот ждёт финала",
+        detail: `Ставки сейчас не принимаются. Цена: ${money(refusal.currentPrice)}.`,
+      };
     case "bid-below-minimum":
-      return `Ставка ниже порога. Сейчас можно от ${money(refusal.minRequired)}.`;
+      return {
+        title: "Ставка ниже порога",
+        detail: `Сейчас можно от ${money(refusal.minRequired)}.`,
+      };
     case "bid-not-at-next-price":
-      return `В финале ставят ровно ${money(refusal.expected)}.`;
+      return {
+        title: "Ставка не по цене финала",
+        detail: `В финале ставят ровно ${money(refusal.expected)}.`,
+      };
     case "bidder-is-leader":
-      return `Ты уже лидируешь: цена ${money(refusal.currentPrice)} — твоя.`;
+      return {
+        title: "Ты уже лидируешь",
+        detail: `Цена ${money(refusal.currentPrice)} — твоя.`,
+      };
     case "currency-mismatch":
-      return "Лот торгуется в другой валюте.";
+      return { title: "Лот торгуется в другой валюте" };
     case "proxy-below-current-price":
-      return `Лимит ниже текущей цены. Нужно от ${money(refusal.minLimit)}.`;
+      return {
+        title: "Лимит ниже текущей цены",
+        detail: `Нужно от ${money(refusal.minLimit)}.`,
+      };
     case "proxy-disabled":
-      return "Автоставка на этом лоте выключена.";
-    // Выбор имени — свой экран, а не строка карточки: сюда отказ не доходит.
+      return { title: "Автоставка на этом лоте выключена" };
+    // Выбор имени — свой экран, а не отказ: сюда отказ не доходит.
     case "display-name-not-chosen":
-      return "Выбери имя в аукционе.";
+      return { title: "Выбери имя в аукционе" };
     default: {
       const _exhaustive: never = refusal;
       return _exhaustive;

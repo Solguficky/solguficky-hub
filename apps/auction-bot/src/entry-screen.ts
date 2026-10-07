@@ -139,8 +139,8 @@ const linkSign = " ↗";
 const heading = (text: string) => `<b>${escapeHtml(text)}</b>`;
 
 // Текст экрана (дизайн-код, «Формат»): заголовок, пустая строка, абзацы через
-// пустую строку; пустые абзацы выпадают. Заметка об исходе — абзац над
-// заголовком. Абзацы приходят уже экранированными.
+// пустую строку; пустые абзацы выпадают. Над заголовком ничего нет: исход —
+// свой экран (PER-472). Абзацы приходят уже экранированными.
 function screenText(
   title: string,
   ...paragraphs: (string | undefined)[]
@@ -152,10 +152,6 @@ function screenText(
         paragraph !== undefined && paragraph !== "",
     ),
   ].join("\n\n");
-}
-
-function withNote(note: string | undefined, text: string): string {
-  return note === undefined ? text : `${escapeHtml(note)}\n\n${text}`;
 }
 
 // Название лота в одну строку: Auction переносы строк в названии не режет, а
@@ -513,10 +509,7 @@ function renderBody(
     (block): block is LotBlock => block.kind === "lot",
   );
   if (id === "lot" && lot !== undefined) {
-    const result = body.blocks.find(
-      (block): block is ResultBlock => block.kind === "result",
-    );
-    return { id, keyboard, ...renderCard(lot, options, result?.result) };
+    return { id, keyboard, ...renderCard(lot, options) };
   }
   const history = body.blocks.find(
     (block): block is HistoryBlock => block.kind === "history",
@@ -571,8 +564,11 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         return `${block.question}-question`;
       case "name-choice":
         return "name-choice";
-      case "feed":
       case "result":
+        return "command-result";
+      case "answer-refused":
+        return "answer-refused";
+      case "feed":
         break;
       default: {
         const _exhaustive: never = block;
@@ -584,7 +580,6 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
 }
 
 type LotBlock = Extract<AuctionBlock, { kind: "lot" }>;
-type ResultBlock = Extract<AuctionBlock, { kind: "result" }>;
 
 function isConfirm(id: ScreenId): boolean {
   return id === "bid-confirm" || id === "proxy-confirm";
@@ -603,6 +598,16 @@ function renderLeaf(
         return { format: "html", text: confirmText(block) };
       case "accepted":
         return { format: "html", text: acceptedText(block) };
+      case "result":
+        return {
+          format: "html",
+          text: outcomeText(resultOutcome(block.result), block.title),
+        };
+      case "answer-refused":
+        return {
+          format: "html",
+          text: outcomeText(answerRefusals[block.refusal], block.title),
+        };
       case "question":
         return { format: "html", text: questionText(block), asks: true };
       case "name-choice":
@@ -649,49 +654,38 @@ function acceptedText(
 function questionText(
   block: Extract<AuctionBlock, { kind: "question" }>,
 ): string {
-  // Вопрос (дизайн-код, «Вопросы»): причина отказа — заметка над заголовком,
-  // под заголовком одним абзацем — что прислать, «Сейчас: …» и образец.
-  const reason =
-    block.refusal === undefined ? undefined : answerRefusalText(block.refusal);
+  // Вопрос (дизайн-код, «Вопросы»): под заголовком одним абзацем — что
+  // прислать, «Сейчас: …» и образец. Непринятый ответ — свой экран.
   const current = (prefix: string) =>
     block.current === undefined
       ? []
       : [`Сейчас: ${prefix}${money(block.current)}`];
   switch (block.question) {
     case "bid":
-      return withNote(
-        reason,
-        screenText(
-          "Своя сумма",
-          [
-            "Пришли сумму ставки в рублях.",
-            ...current("от "),
-            "Например: 1 500",
-          ].join("\n"),
-        ),
+      return screenText(
+        "Своя сумма",
+        [
+          "Пришли сумму ставки в рублях.",
+          ...current("от "),
+          "Например: 1 500",
+        ].join("\n"),
       );
     case "proxy":
-      return withNote(
-        reason,
-        screenText(
-          "Автоставка",
-          [
-            "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
-            ...current(""),
-            "Например: 3 000",
-          ].join("\n"),
-        ),
+      return screenText(
+        "Автоставка",
+        [
+          "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
+          ...current(""),
+          "Например: 3 000",
+        ].join("\n"),
       );
     case "alias":
-      return withNote(
-        reason,
-        screenText(
-          "Псевдоним",
-          [
-            "Пришли псевдоним до 32 символов. Участники увидят его со звёздочкой.",
-            "Например: Сова",
-          ].join("\n"),
-        ),
+      return screenText(
+        "Псевдоним",
+        [
+          "Пришли псевдоним до 32 символов. Участники увидят его со звёздочкой.",
+          "Например: Сова",
+        ].join("\n"),
       );
     default: {
       const _exhaustive: never = block.question;
@@ -703,17 +697,14 @@ function questionText(
 function nameChoiceText(
   block: Extract<AuctionBlock, { kind: "name-choice" }>,
 ): string {
-  return withNote(
-    block.refusal === undefined ? undefined : answerRefusalText(block.refusal),
-    screenText(
-      "Имя в аукционе",
-      [
-        "Имя видно всем участникам аукциона рядом с твоими ставками. После первой ставки его не поменять.",
-        block.username === undefined
-          ? "Ника в Telegram у тебя нет: возьми псевдоним."
-          : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
-      ].join("\n"),
-    ),
+  return screenText(
+    "Имя в аукционе",
+    [
+      "Имя видно всем участникам аукциона рядом с твоими ставками. После первой ставки его не поменять.",
+      block.username === undefined
+        ? "Ника в Telegram у тебя нет: возьми псевдоним."
+        : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
+    ].join("\n"),
   );
 }
 
@@ -726,51 +717,84 @@ function proxyGap(currentPrice: Money, limit: Money): string {
     : `Цена сейчас ${money(currentPrice)}: лимит не выше неё, и перебивать бот не будет.`;
 }
 
-const answerRefusals: Record<AnswerRefusal, string> = {
-  "not-text": "Нужен ответ текстом.",
-  "not-a-number": "Это не сумма.",
-  "other-currency": "Ставки принимаются только в рублях.",
-  "not-positive": "Сумма должна быть больше нуля.",
-  "too-precise": "Копеек — не больше двух знаков.",
-  "too-large": `Бот принимает суммы до ${money({ minorUnits: MAX_COMMAND_AMOUNT, currency: "RUB" })}.`,
-  "alias-invalid": "Такой псевдоним не подходит.",
-  "alias-taken": "Этот псевдоним уже занят.",
-  "name-frozen": "Имя уже не поменять: ты ставил в этом аукционе.",
-  "username-missing": "Ника в Telegram у тебя нет: возьми псевдоним.",
-};
+// Исход — свой экран (дизайн-код, «Экран исхода», PER-472): исход в
+// заголовке без точки, название лота в кавычках, затем пояснение. Отказ
+// называет цену сам; принятая команда — экран `accepted`.
+type Outcome = { title: string; detail?: string };
 
-function answerRefusalText(refusal: AnswerRefusal): string {
-  return answerRefusals[refusal];
+function outcomeText(outcome: Outcome, lotTitle: string | undefined): string {
+  return screenText(
+    outcome.title,
+    quoted(lotTitle),
+    outcome.detail === undefined ? undefined : escapeHtml(outcome.detail),
+  );
 }
 
-// Исход команды — первая строка карточки (дизайн-код, «Доставка»): после «Да»
-// человек видит и ответ Auction, и лот. Отказ называет цену сам; принятая
-// команда — свой экран.
-export function resultText(result: CommandResult): string {
+const answerRefusals: Record<AnswerRefusal, Outcome> = {
+  "not-text": { title: "Нужен ответ текстом" },
+  "not-a-number": { title: "Это не сумма" },
+  "other-currency": { title: "Ставки принимаются только в рублях" },
+  "not-positive": { title: "Сумма должна быть больше нуля" },
+  "too-precise": { title: "Копеек — не больше двух знаков" },
+  "too-large": {
+    title: "Сумма слишком большая",
+    detail: `Бот принимает суммы до ${money({ minorUnits: MAX_COMMAND_AMOUNT, currency: "RUB" })}.`,
+  },
+  "alias-invalid": { title: "Такой псевдоним не подходит" },
+  "alias-taken": { title: "Этот псевдоним уже занят" },
+  "name-frozen": {
+    title: "Имя уже не поменять",
+    detail: "Ты ставил в этом аукционе.",
+  },
+  "username-missing": {
+    title: "Ника в Telegram у тебя нет",
+    detail: "Возьми псевдоним.",
+  },
+};
+
+export function resultOutcome(result: CommandResult): Outcome {
   if (result.kind === "unknown") {
-    return "Аукцион не ответил. Проверь цену на карточке: команда могла пройти.";
+    return {
+      title: "Аукцион не ответил",
+      detail: "Проверь цену на карточке: команда могла пройти.",
+    };
   }
   const { refusal } = result;
   switch (refusal.kind) {
     case "lot-not-open":
-      return "Торги по лоту не идут.";
+      return { title: "Торги по лоту не идут" };
     case "lot-on-hold":
-      return `Лот ждёт финала, ставки сейчас не принимаются. Цена: ${money(refusal.currentPrice)}.`;
+      return {
+        title: "Лот ждёт финала",
+        detail: `Ставки сейчас не принимаются. Цена: ${money(refusal.currentPrice)}.`,
+      };
     case "bid-below-minimum":
-      return `Ставка ниже порога. Сейчас можно от ${money(refusal.minRequired)}.`;
+      return {
+        title: "Ставка ниже порога",
+        detail: `Сейчас можно от ${money(refusal.minRequired)}.`,
+      };
     case "bid-not-at-next-price":
-      return `В финале ставят ровно ${money(refusal.expected)}.`;
+      return {
+        title: "Ставка не по цене финала",
+        detail: `В финале ставят ровно ${money(refusal.expected)}.`,
+      };
     case "bidder-is-leader":
-      return `Ты уже лидируешь: цена ${money(refusal.currentPrice)} — твоя.`;
+      return {
+        title: "Ты уже лидируешь",
+        detail: `Цена ${money(refusal.currentPrice)} — твоя.`,
+      };
     case "currency-mismatch":
-      return "Лот торгуется в другой валюте.";
+      return { title: "Лот торгуется в другой валюте" };
     case "proxy-below-current-price":
-      return `Лимит ниже текущей цены. Нужно от ${money(refusal.minLimit)}.`;
+      return {
+        title: "Лимит ниже текущей цены",
+        detail: `Нужно от ${money(refusal.minLimit)}.`,
+      };
     case "proxy-disabled":
-      return "Автоставка на этом лоте выключена.";
-    // Выбор имени — свой экран, а не строка карточки: сюда отказ не доходит.
+      return { title: "Автоставка на этом лоте выключена" };
+    // Выбор имени — свой экран, а не отказ: сюда отказ не доходит.
     case "display-name-not-chosen":
-      return "Выбери имя в аукционе.";
+      return { title: "Выбери имя в аукционе" };
     default: {
       const _exhaustive: never = refusal;
       return _exhaustive;
@@ -830,15 +854,13 @@ function originLabel(origin: BidOriginView): string {
 // `html` не рисуется, поэтому группа и абзац описания — свой `<p>`, строки
 // внутри — `<br>`, а фото адаптер ставит последним блоком. Предела подписи у
 // неё нет. В `plain` та же карточка уходит обычным сообщением с HTML и без
-// фото. Заметка об исходе — абзац над названием.
+// фото. Исход команды карточка не несёт: он — свой экран (PER-472).
 function renderCard(
   block: LotBlock,
   options: RenderOptions,
-  result?: CommandResult,
 ): Pick<RenderedScreen, "text" | "format" | "photo"> {
   const title = truncate(block.card?.title ?? untitled, TITLE_LIMIT);
   const groups = statusGroups(block, options);
-  const note = result === undefined ? undefined : resultText(result);
   const rich = (options.presentation ?? "rich") === "rich";
   const description = fitDescription(
     title,
@@ -849,13 +871,10 @@ function renderCard(
   if (!rich) {
     return {
       format: "html",
-      text: withNote(
-        note,
-        screenText(
-          title,
-          ...groups.map((lines) => escapeHtml(lines.join("\n"))),
-          escapeHtml(description),
-        ),
+      text: screenText(
+        title,
+        ...groups.map((lines) => escapeHtml(lines.join("\n"))),
+        escapeHtml(description),
       ),
     };
   }
@@ -871,7 +890,7 @@ function renderCard(
   const image = block.card?.image;
   return {
     format: "rich",
-    text: `${note === undefined ? "" : `<p>${escapeHtml(note)}</p>`}<h1>${escapeHtml(title)}</h1>${blocks
+    text: `<h1>${escapeHtml(title)}</h1>${blocks
       .map((lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`)
       .join("")}`,
     ...(image === undefined
@@ -1060,7 +1079,10 @@ function renderButton(
     case "name.back":
       return text("‹ Лот");
     case "accepted.lot":
+    case "result.lot":
       return text("К лоту");
+    case "answer.retry":
+      return text("Ввести заново");
     default: {
       const _exhaustive: never = button;
       return _exhaustive;

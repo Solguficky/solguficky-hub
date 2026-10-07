@@ -9,11 +9,7 @@ import type {
   LotView,
   Viewer,
 } from "../../ports.js";
-import type {
-  AuctionButton,
-  AuctionScreenBody,
-  CommandResult,
-} from "../../screen.js";
+import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
 import { namesOf } from "./names.js";
 
 // Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
@@ -33,15 +29,13 @@ export async function openLot(input: {
   return showLot({ ...input, lot });
 }
 
-// Карточка по уже прочитанному снимку. `result` — исход команды участника,
-// который карточка показывает первой строкой: после «Да» человек видит и
-// ответ Auction, и лот, на который он ставил.
+// Карточка по уже прочитанному снимку. Исход команды участника карточка не
+// несёт: он — свой экран (PER-472).
 export async function showLot(input: {
   auction: AuctionPort;
   viewer: Viewer;
   lot: LotView;
   page: number;
-  result?: CommandResult;
 }): Promise<AuctionScreenBody> {
   const { lot } = input;
   const participantId = participantOf(lot.status);
@@ -86,9 +80,6 @@ export async function showLot(input: {
     : [];
   return {
     blocks: [
-      ...(input.result === undefined
-        ? []
-        : [{ kind: "result" as const, result: input.result }]),
       {
         kind: "lot",
         lotId: lot.lotId,

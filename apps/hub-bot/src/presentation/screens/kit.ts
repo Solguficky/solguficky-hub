@@ -44,11 +44,23 @@ export function bullet(line: string): string {
 }
 
 /**
- * Заметка об исходе — абзац над заголовком экрана: после ответа на вопрос в
- * чате остаётся одно сообщение, и исход читается раньше содержимого.
+ * Экран исхода (дизайн-код, «Экран исхода», PER-472): исход действия — свой
+ * экран, а не строка над карточкой. Первое предложение исхода — заголовок без
+ * точки, под ним предмет в кавычках, затем остаток исхода абзацем. Карточку
+ * открывает возврат: исход и содержимое не смешиваются.
  */
-export function withNote(note: string | undefined, text: string): string {
-  return note === undefined ? text : `${escapeHtml(note)}\n\n${text}`;
+export function outcomeText(outcome: string, subject?: string): string {
+  const end = outcome.search(/[.?!](\s|$)/);
+  const sentence = end === -1 ? outcome : outcome.slice(0, end + 1);
+  const title = sentence.endsWith(".") ? sentence.slice(0, -1) : sentence;
+  const rest = end === -1 ? "" : outcome.slice(end + 1).trim();
+  return screenText(
+    title,
+    subject === undefined || subject.trim() === ""
+      ? undefined
+      : `«${escapeHtml(subject.replace(/\s+/g, " ").trim())}»`,
+    rest === "" ? undefined : escapeHtml(rest),
+  );
 }
 
 /**
