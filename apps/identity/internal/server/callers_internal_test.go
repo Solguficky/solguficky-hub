@@ -90,6 +90,9 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 	resolve := identityv1.IdentityService_ResolveIdentity_FullMethodName
 	checkRole := identityv1.IdentityService_CheckGlobalRole_FullMethodName
 	requestRole := identityv1.IdentityService_RequestRole_FullMethodName
+	appoint := identityv1.IdentityService_AppointAdministrator_FullMethodName
+	dismiss := identityv1.IdentityService_DismissAdministrator_FullMethodName
+	listAdmins := identityv1.IdentityService_ListAdministrators_FullMethodName
 	tests := []struct {
 		name          string
 		method        string
@@ -107,6 +110,10 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 		{name: "bot on check role", method: checkRole, authorization: []string{bearer(CallerHubBot)}, refusal: refusalNotDeclared, caller: CallerHubBot},
 		{name: "maintainer secret on request role", method: requestRole, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
 		{name: "meetups on request role", method: requestRole, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
+		{name: "no header on appoint", method: appoint, refusal: refusalMissingToken},
+		{name: "auction bot on appoint", method: appoint, authorization: []string{bearer(CallerAuctionBot)}, refusal: refusalNotDeclared, caller: CallerAuctionBot},
+		{name: "maintainer secret on dismiss", method: dismiss, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
+		{name: "no header on list administrators", method: listAdmins, refusal: refusalMissingToken},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -196,15 +203,34 @@ func TestCallerGateAdmitsDeclaredCaller(t *testing.T) {
 func TestCallerTokenDoesNotOpenMaintainerMethods(t *testing.T) {
 	t.Parallel()
 
-	client, _, logs := dialGate(t)
-	ctx := metadata.AppendToOutgoingContext(t.Context(), "authorization", bearer(CallerHubBot))
-
-	_, err := client.GrantAdminRole(ctx, &identityv1.GrantAdminRoleRequest{IdentityId: "0192f8a0-0000-7000-8000-000000000001"})
-	if status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("code: got %v want %s", err, codes.Unauthenticated)
+	const id = "0192f8a0-0000-7000-8000-000000000001"
+	calls := map[string]func(identityv1.IdentityServiceClient, context.Context) error{
+		"GrantAdminRole": func(c identityv1.IdentityServiceClient, ctx context.Context) error {
+			_, err := c.GrantAdminRole(ctx, &identityv1.GrantAdminRoleRequest{IdentityId: id})
+			return err
+		},
+		"GrantMaintainerRole": func(c identityv1.IdentityServiceClient, ctx context.Context) error {
+			_, err := c.GrantMaintainerRole(ctx, &identityv1.GrantMaintainerRoleRequest{IdentityId: id})
+			return err
+		},
+		"RevokeMaintainerRole": func(c identityv1.IdentityServiceClient, ctx context.Context) error {
+			_, err := c.RevokeMaintainerRole(ctx, &identityv1.RevokeMaintainerRoleRequest{IdentityId: id})
+			return err
+		},
 	}
-	if rec := logs.sole(t); hasAttr(rec, "caller") || hasAttr(rec, "caller_refusal") {
-		t.Fatal("maintainer method passed through the caller gate")
+	for name, call := range calls {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			client, _, logs := dialGate(t)
+			ctx := metadata.AppendToOutgoingContext(t.Context(), "authorization", bearer(CallerHubBot))
+			if err := call(client, ctx); status.Code(err) != codes.Unauthenticated {
+				t.Fatalf("code: got %v want %s", err, codes.Unauthenticated)
+			}
+			if rec := logs.sole(t); hasAttr(rec, "caller") || hasAttr(rec, "caller_refusal") {
+				t.Fatal("maintainer method passed through the caller gate")
+			}
+		})
 	}
 }
 

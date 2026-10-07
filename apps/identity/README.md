@@ -65,7 +65,7 @@ grpcurl -plaintext -H "authorization: Bearer ${IDENTITY_CALLER_TOKEN_HUB_BOT}" \
   localhost:50051 identity.v1.IdentityService/ResolveIdentity
 ```
 
-Доменный метод принимает только вызывающих из колонки Caller [каталога](../../docs/architecture/integration.md#identity-grpc) и узнаёт их по токену в `authorization: Bearer <token>`. Нет заголовка, токен неизвестен или вызывающий не объявлен у метода — `UNAUTHENTICATED`, а причину называет поле `caller_refusal` записи границы; у допущенного вызова поле `caller` называет узел вызывающего, значение токена в запись не попадает. Health и reflection токена не требуют, `GrantAdminRole` и `RevokeAdminRole` открывает только maintainer-секрет. Таблица проверяется до миграций и листенера: пустое или отсутствующее значение, два вызывающих с одним значением или значение, равное `IDENTITY_MAINTAINER_TOKEN`, останавливают процесс, и ошибка называет переменные, а не значения.
+Доменный метод принимает только вызывающих из колонки Caller [каталога](../../docs/architecture/integration.md#identity-grpc) и узнаёт их по токену в `authorization: Bearer <token>`. Нет заголовка, токен неизвестен или вызывающий не объявлен у метода — `UNAUTHENTICATED`, а причину называет поле `caller_refusal` записи границы; у допущенного вызова поле `caller` называет узел вызывающего, значение токена в запись не попадает. Health и reflection токена не требуют, `GrantAdminRole`, `RevokeAdminRole`, `GrantMaintainerRole` и `RevokeMaintainerRole` открывает только maintainer-секрет. Таблица проверяется до миграций и листенера: пустое или отсутствующее значение, два вызывающих с одним значением или значение, равное `IDENTITY_MAINTAINER_TOKEN`, останавливают процесс, и ошибка называет переменные, а не значения.
 
 Пустое имя в пробе отвечает liveness и базу не спрашивает; имя `identity.v1.IdentityService` отвечает готовностью и при недоступной базе даёт `NOT_SERVING`. Недоступная база отвечает доменному вызову `UNAVAILABLE` за одну-две секунды: предел подключения сервис ставит сам, если `IDENTITY_DATABASE_URL` не задал `connect_timeout` ([ADR-054](../../docs/decisions/ADR-054-storage-unavailability-visible-outside.md)).
 
@@ -82,6 +82,8 @@ grpcurl -plaintext -H "authorization: Bearer ${IDENTITY_MAINTAINER_TOKEN}" \
   -d '{"identity_id":"<identity-id>"}' \
   localhost:50051 identity.v1.IdentityService/RevokeAdminRole
 ```
+
+Роль `maintainer` выдаётся и снимается так же, методами `GrantMaintainerRole` и `RevokeMaintainerRole` с тем же телом. Человек с активной `maintainer` дальше назначает и снимает `admin` из бота хаба методами `AppointAdministrator` и `DismissAdministrator` без секрета ([дополнение ADR-037](../../docs/decisions/ADR-037-identity-maintainer-shared-secret.md#дополнение-2026-10-08-секрет-выдаёт-maintainer-admin-выдаёт-мейнтейнер-человек)).
 
 Повтор операции успешен с `changed: false`. Выдача заблокированному профилю отвечает `FAILED_PRECONDITION`, отличимо от `NOT_FOUND` для отсутствующего профиля; каждое изменение ложится в журнал доступа в той же транзакции. Не передавайте секрет параметром `-vv` и не печатайте его в журнал.
 

@@ -131,7 +131,7 @@ bin/stage db <база>                                      # туннель н
 
 ## Администратор
 
-Роль `admin` выдаёт только служебный `GrantAdminRole` Identity с токеном `IDENTITY_MAINTAINER_TOKEN` из файла секретов хоста. Снимает — `RevokeAdminRole`. Поверхности выдачи в ботах нет. Последовательность:
+Роль `admin` на stage выдаёт служебный `GrantAdminRole` Identity с токеном `IDENTITY_MAINTAINER_TOKEN` из файла секретов хоста. Снимает — `RevokeAdminRole`. Роль `maintainer` выдаётся тем же путём методом `GrantMaintainerRole`: Identity уже даёт мейнтейнеру назначать `admin` от своего имени, но экрана для этого в боте хаба ещё нет ([PER-521](https://linear.app/anticnvm/issue/per-521)). Последовательность:
 
 1. Человек шлёт `/start` боту хаба на stage: так появляется его профиль.
 2. `identity_id` профиля берётся из таблицы `profiles` базы `identity` по нику.

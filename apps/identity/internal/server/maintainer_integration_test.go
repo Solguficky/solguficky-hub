@@ -47,6 +47,43 @@ func TestMaintainerAdminRoleLifecycle(t *testing.T) {
 	assertActiveRoleCount(t, db, profile.GetIdentityId(), 0)
 }
 
+func TestMaintainerRoleLifecycleNeedsTheSecret(t *testing.T) {
+	t.Parallel()
+	db := migratedDB(t)
+	client := identityv1.NewIdentityServiceClient(newConnWithToken(t, db, maintainerToken))
+	profile := resolve(t, client, 8101, nil).GetIdentityId()
+
+	_, err := client.GrantMaintainerRole(t.Context(), &identityv1.GrantMaintainerRoleRequest{IdentityId: profile})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("grant without secret: got %v want %s", err, codes.Unauthenticated)
+	}
+	assertRoleCount(t, db, profile, 0)
+
+	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
+	first, err := client.GrantMaintainerRole(authorized, &identityv1.GrantMaintainerRoleRequest{IdentityId: profile})
+	if err != nil || !first.GetChanged() {
+		t.Fatalf("grant: response=%v error=%v", first, err)
+	}
+	again, err := client.GrantMaintainerRole(authorized, &identityv1.GrantMaintainerRoleRequest{IdentityId: profile})
+	if err != nil || again.GetChanged() {
+		t.Fatalf("second grant: response=%v error=%v", again, err)
+	}
+	assertRoles(t, resolve(t, client, 8101, nil).GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER)
+	assertJournalCount(t, db, profile, 1)
+	assertSystemJournalActor(t, db, profile)
+
+	_, err = client.RevokeMaintainerRole(t.Context(), &identityv1.RevokeMaintainerRoleRequest{IdentityId: profile})
+	if status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("revoke without secret: got %v want %s", err, codes.Unauthenticated)
+	}
+	revoked, err := client.RevokeMaintainerRole(authorized, &identityv1.RevokeMaintainerRoleRequest{IdentityId: profile})
+	if err != nil || !revoked.GetChanged() {
+		t.Fatalf("revoke: response=%v error=%v", revoked, err)
+	}
+	assertActiveRoleCount(t, db, profile, 0)
+	assertJournalCount(t, db, profile, 2)
+}
+
 func TestMaintainerMethodsRejectMissingEmptyAndWrongCredentials(t *testing.T) {
 	t.Parallel()
 	for name, tc := range map[string]struct {
