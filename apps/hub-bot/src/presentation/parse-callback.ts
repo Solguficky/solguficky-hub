@@ -182,14 +182,14 @@ type PlainAction =
     }
   | { kind: "manage-publish"; token: string }
   | { kind: "manage-unpublish"; token: string }
-  | { kind: "manage-confirm-unpublish"; token: string }
+  | { kind: "manage-confirm-unpublish"; token: string; version?: number }
   | { kind: "manage-cancel"; token: string }
-  | { kind: "manage-confirm-cancel"; token: string }
+  | { kind: "manage-confirm-cancel"; token: string; version?: number }
   | { kind: "manage-hold"; token: string }
-  | { kind: "manage-confirm-hold"; token: string }
+  | { kind: "manage-confirm-hold"; token: string; version?: number }
   | { kind: "manage-publish-later"; token: string; origin: PublishOrigin }
   | { kind: "manage-unschedule"; token: string }
-  | { kind: "manage-confirm-unschedule"; token: string }
+  | { kind: "manage-confirm-unschedule"; token: string; version?: number }
   | {
       kind: "manage-confirm-past-schedule";
       token: string;
@@ -438,6 +438,30 @@ export function traceCallback(data: `v1:${string}`): string {
   return `${tracePrefix}${data.slice("v1:".length)}`;
 }
 
+// «Да» подтверждения смены состояния несёт версию сходки, которую человек
+// видел, пятым сегментом: команда уходит с ней в `expected_version`, и правка
+// другого администратора между экраном и нажатием даёт конфликт (PER-472).
+// Кнопка прошлого релиза версии не несёт и разбирается без неё: юзкейс тогда
+// берёт версию из снимка в момент нажатия, как раньше.
+function stateConfirm<
+  Kind extends
+    | "manage-confirm-unpublish"
+    | "manage-confirm-cancel"
+    | "manage-confirm-hold"
+    | "manage-confirm-unschedule",
+>(
+  kind: Kind,
+  token: string,
+  parts: readonly string[],
+): { kind: Kind; token: string; version?: number } | { kind: "malformed" } {
+  if (parts.length === 4) return { kind, token };
+  if (parts.length !== 5) return { kind: "malformed" };
+  const version = VersionSchema.safeParse(parts[4]);
+  return version.success
+    ? { kind, token, version: version.data }
+    : { kind: "malformed" };
+}
+
 export function parseCallback(raw: unknown): CallbackAction {
   const parsed = CallbackSchema.safeParse(raw);
   if (!parsed.success) return { kind: "malformed" };
@@ -675,16 +699,16 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "manage-publish", token: token.data };
   if (parts.length === 4 && parts[2] === "unpublish")
     return { kind: "manage-unpublish", token: token.data };
-  if (parts.length === 4 && parts[2] === "confirm-unpublish")
-    return { kind: "manage-confirm-unpublish", token: token.data };
+  if (parts[2] === "confirm-unpublish")
+    return stateConfirm("manage-confirm-unpublish", token.data, parts);
   if (parts.length === 4 && parts[2] === "cancel")
     return { kind: "manage-cancel", token: token.data };
-  if (parts.length === 4 && parts[2] === "confirm-cancel")
-    return { kind: "manage-confirm-cancel", token: token.data };
+  if (parts[2] === "confirm-cancel")
+    return stateConfirm("manage-confirm-cancel", token.data, parts);
   if (parts.length === 4 && parts[2] === "hold")
     return { kind: "manage-hold", token: token.data };
-  if (parts.length === 4 && parts[2] === "confirm-hold")
-    return { kind: "manage-confirm-hold", token: token.data };
+  if (parts[2] === "confirm-hold")
+    return stateConfirm("manage-confirm-hold", token.data, parts);
   if (parts.length === 4 && parts[2] === "publish-later")
     return {
       kind: "manage-publish-later",
@@ -696,8 +720,8 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "manage-publish-later", token: token.data, origin: "draft" };
   if (parts.length === 4 && parts[2] === "unschedule")
     return { kind: "manage-unschedule", token: token.data };
-  if (parts.length === 4 && parts[2] === "confirm-unschedule")
-    return { kind: "manage-confirm-unschedule", token: token.data };
+  if (parts[2] === "confirm-unschedule")
+    return stateConfirm("manage-confirm-unschedule", token.data, parts);
   return { kind: "malformed" };
 }
 

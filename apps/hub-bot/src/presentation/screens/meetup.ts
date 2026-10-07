@@ -574,11 +574,18 @@ export const stateActionCopy: Record<
   },
 };
 
+/**
+ * «Да» подтверждения смены состояния. Версия — та, которую человек видел:
+ * правка между экраном и нажатием даёт конфликт, а не команду поверх неё
+ * (PER-472). Самая длинная строка — `confirm-unschedule` с токеном и девятью
+ * цифрами версии, 61 байт из 64.
+ */
 export function confirmStateCallback(
   action: MeetupStateAction,
   token: string,
+  version: number,
 ): string {
-  return `v1:manage:${stateActionCopy[action].confirmAction}:${token}`;
+  return `v1:manage:${stateActionCopy[action].confirmAction}:${token}:${version}`;
 }
 
 export function statusScreen(
@@ -631,13 +638,10 @@ export function statusScreen(
   };
 }
 
-/**
- * Подтверждение смены состояния. `note` — почему вопрос задан снова: сходка
- * изменилась, пока человек решал.
- */
+/** Подтверждение смены состояния по снимку, который человек видит. */
 export function stateConfirmScreen(confirm: {
   action: MeetupStateAction;
-  meetup: Pick<MeetupSnapshot, "id" | "title">;
+  meetup: Pick<MeetupSnapshot, "id" | "title" | "version">;
   /** Куда возвращает «Нет»: экран, с которого подтверждение открыто. */
   back: string;
 }): ShownScreen {
@@ -653,7 +657,11 @@ export function stateConfirmScreen(confirm: {
     ].join("\n"),
     keyboard: confirmKeyboard({
       yes: copy.yes,
-      yesData: confirmStateCallback(confirm.action, token),
+      yesData: confirmStateCallback(
+        confirm.action,
+        token,
+        confirm.meetup.version,
+      ),
       noData: confirm.back,
     }),
     format: "HTML",

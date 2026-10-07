@@ -2681,6 +2681,9 @@ async function handleCallback(
         intent: "change-meetup-state",
         action: stateActionByCallback[action.kind],
         meetupId,
+        ...(action.version === undefined
+          ? {}
+          : { expectedVersion: action.version }),
         ...rpcCall(ctx, useCase),
       });
       await renderStateResult(ctx, result, runtime.presentation ?? "rich");

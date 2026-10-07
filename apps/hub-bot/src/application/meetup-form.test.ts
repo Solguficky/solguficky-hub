@@ -451,6 +451,77 @@ describe("meetup creation form", () => {
       }),
     ).resolves.toEqual({ kind: "conflict", meetup: changed, action: "cancel" });
   });
+
+  // Команда идёт с версией, которую человек видел на подтверждении, а не со
+  // свежей: правка другого администратора между экраном и «Да» доходит до
+  // Meetups конфликтом (PER-472).
+  it("sends the version seen on the confirmation, not the fresh one", async () => {
+    const { meetups, dispatcher } = harness();
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: { ...empty, version: 5 },
+    }));
+
+    await dispatcher.execute({
+      identity,
+      intent: "change-meetup-state",
+      action: "cancel",
+      meetupId: empty.id,
+      expectedVersion: 4,
+    });
+
+    expect(meetups.cancel).toHaveBeenCalledWith(
+      identity,
+      expect.objectContaining({ version: 4 }),
+      undefined,
+    );
+  });
+
+  // Кнопка прошлого релиза версии не несёт: команда берёт версию снимка.
+  it("takes the fresh version when the confirmation carries none", async () => {
+    const { meetups, dispatcher } = harness();
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: { ...empty, version: 5 },
+    }));
+
+    await dispatcher.execute({
+      identity,
+      intent: "change-meetup-state",
+      action: "cancel",
+      meetupId: empty.id,
+    });
+
+    expect(meetups.cancel).toHaveBeenCalledWith(
+      identity,
+      expect.objectContaining({ version: 5 }),
+      undefined,
+    );
+  });
+
+  // «Уже в этом состоянии» решает свежий снимок раньше версии: повтор того же
+  // действия по устаревшему подтверждению отвечает «уже», а не конфликтом.
+  it("answers an already cancelled meetup before checking the version", async () => {
+    const { meetups, dispatcher } = harness();
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: { ...empty, lifecycle: "cancelled" as const, version: 5 },
+    }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "change-meetup-state",
+        action: "cancel",
+        meetupId: empty.id,
+        expectedVersion: 4,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-state-unchanged",
+      reason: "already-cancelled",
+    });
+    expect(meetups.cancel).not.toHaveBeenCalled();
+  });
 });
 
 describe("deferred publication", () => {

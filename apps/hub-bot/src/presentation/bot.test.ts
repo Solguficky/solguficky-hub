@@ -2646,7 +2646,8 @@ describe("presentation adapter", () => {
             [
               {
                 text: "Да, отметить состоявшейся",
-                callback_data: "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA",
+                callback_data:
+                  "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA:1",
               },
             ],
             [
@@ -2960,8 +2961,9 @@ describe("presentation adapter", () => {
               {
                 // Скрытие обратимо, поэтому кнопка не красится.
                 text: "Да, скрыть из списка",
+                // Версия сходки на экране едет в «Да» (PER-472).
                 callback_data:
-                  "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA",
+                  "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA:1",
               },
             ],
             [
@@ -2982,6 +2984,37 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenLastCalledWith(
       expect.objectContaining({ intent: "view-meetup" }),
     );
+  });
+
+  // «Да» несёт версию, которую человек видел, и она уходит в команду;
+  // кнопка прошлого релиза без версии работает по-прежнему (PER-472).
+  it.each([
+    [
+      "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA:7",
+      { expectedVersion: 7 },
+    ],
+    ["v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA", {}],
+  ])("passes the version of %s to the state command", async (data, version) => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-state-changed",
+      action: "unpublish",
+      meetup: { ...meetup, visibility: "hidden" },
+    });
+    const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(data));
+
+    const request = execute.mock.calls.at(-1)?.[0];
+    expect(request).toMatchObject({
+      intent: "change-meetup-state",
+      action: "unpublish",
+      ...version,
+    });
+    if (!("expectedVersion" in version)) {
+      expect(request).not.toHaveProperty("expectedVersion");
+    }
   });
 
   it("executes cancellation only from the confirmation callback", async () => {
@@ -6707,7 +6740,7 @@ describe("deferred publication frames", () => {
             [
               {
                 text: "Да, отменить публикацию",
-                callback_data: `v1:manage:confirm-unschedule:${token}`,
+                callback_data: `v1:manage:confirm-unschedule:${token}:1`,
               },
             ],
             [{ text: "Нет", callback_data: `v1:manage:status:${token}` }],

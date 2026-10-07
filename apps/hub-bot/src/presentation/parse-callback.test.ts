@@ -155,6 +155,34 @@ describe("callback parser", () => {
     });
   });
 
+  // «Да» несёт версию сходки, которую человек видел (PER-472): самая длинная
+  // строка — `confirm-unschedule` с девятью цифрами, она в пределе 64 байт.
+  it("parses the version of a state confirmation within the byte budget", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    for (const action of [
+      "unpublish",
+      "cancel",
+      "hold",
+      "unschedule",
+    ] as const) {
+      const callback = `v1:manage:confirm-${action}:${token}:999999999`;
+      expect(Buffer.byteLength(callback, "utf8")).toBeLessThanOrEqual(64);
+      expect(parseCallback(callback)).toEqual({
+        kind: `manage-confirm-${action}`,
+        token,
+        version: 999999999,
+      });
+    }
+    for (const version of ["0", "01", "x", "1234567890"]) {
+      expect(
+        parseCallback(`v1:manage:confirm-cancel:${token}:${version}`),
+      ).toEqual({ kind: "malformed" });
+    }
+    expect(parseCallback(`v1:manage:confirm-cancel:${token}:1:2`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
   it("parses deferred publication actions within the byte budget", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     // Кнопка черновика несёт источник: «Отмена» под вопросом вернёт на него.
