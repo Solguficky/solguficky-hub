@@ -1,0 +1,72 @@
+# Production-образ бота аукциона — по правилам образа бота хаба
+# (apps/hub-bot/Containerfile), и объяснения там же. Контекст сборки — корень
+# репозитория: `buf generate` нужен contracts/proto, экраны аукциона — общий
+# пакет shared/typescript/auction-bot-ui, а доставка уведомлений — пакет
+# shared/typescript/telegram-delivery (ADR-044). Что попадает в контекст, решает
+# соседний Containerfile.dockerignore — список разрешённого.
+#
+# Каждая внешняя база закреплена по digest, версия buf совпадает с BUF_VERSION
+# в justfile: обе проверяет tools/image/check-containerfile.sh. Базы и buf у
+# двух ботов одни и те же, и обновляются они вместе.
+
+FROM docker.io/bufbuild/buf:1.54.0@sha256:0ba85232090eb7c83e718b791fc5cb9e0c6756b37f121ec858fb0407a168c269 AS buf
+
+FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS build
+WORKDIR /src
+COPY --from=buf /usr/local/bin/buf /usr/local/bin/buf
+COPY shared/typescript/auction-bot-ui/package.json shared/typescript/auction-bot-ui/package-lock.json shared/typescript/auction-bot-ui/
+RUN cd shared/typescript/auction-bot-ui && npm ci --ignore-scripts
+COPY shared/typescript/auction-bot-ui/tsconfig.json shared/typescript/auction-bot-ui/tsconfig.build.json shared/typescript/auction-bot-ui/
+COPY shared/typescript/auction-bot-ui/src shared/typescript/auction-bot-ui/src
+RUN cd shared/typescript/auction-bot-ui && npm run build
+COPY shared/typescript/telegram-delivery/package.json shared/typescript/telegram-delivery/package-lock.json shared/typescript/telegram-delivery/
+RUN cd shared/typescript/telegram-delivery && npm ci --ignore-scripts
+COPY shared/typescript/telegram-delivery/tsconfig.json shared/typescript/telegram-delivery/tsconfig.build.json shared/typescript/telegram-delivery/
+COPY shared/typescript/telegram-delivery/src shared/typescript/telegram-delivery/src
+RUN cd shared/typescript/telegram-delivery && npm run build
+COPY apps/auction-bot/package.json apps/auction-bot/package-lock.json apps/auction-bot/
+RUN cd apps/auction-bot && npm ci --ignore-scripts
+COPY contracts/proto contracts/proto
+COPY apps/auction-bot/buf.gen.yaml apps/auction-bot/tsconfig.json apps/auction-bot/tsconfig.build.json apps/auction-bot/
+COPY apps/auction-bot/src apps/auction-bot/src
+RUN buf generate --template apps/auction-bot/buf.gen.yaml && cd apps/auction-bot && npm run build
+
+# Production-зависимости — отдельной стадией, а `file:`-пакеты заменяются
+# копиями, как у бота хаба: стадия повторяет глубину репозитория, чтобы пути
+# `../../shared/...` из lockfile нашлись, и образ несёт только `dist` пакетов.
+#
+# Отличие от бота хаба: оба общих пакета ставятся со своими production-
+# зависимостями. Бот хаба держит зависимость пакета аукциона (zod) сам, а этот
+# бот её не объявляет — локально она находится в node_modules пакета через
+# симлинк, а копия без них в образе падает на старте с ERR_MODULE_NOT_FOUND.
+# Peer-зависимость пакета vitest необязательна, и --omit=dev её не ставит.
+FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS deps
+WORKDIR /src
+COPY shared/typescript/telegram-delivery/package.json shared/typescript/telegram-delivery/package-lock.json shared/typescript/telegram-delivery/
+RUN cd shared/typescript/telegram-delivery && npm ci --omit=dev --ignore-scripts
+COPY --from=build /src/shared/typescript/telegram-delivery/dist shared/typescript/telegram-delivery/dist
+COPY shared/typescript/auction-bot-ui/package.json shared/typescript/auction-bot-ui/package-lock.json shared/typescript/auction-bot-ui/
+RUN cd shared/typescript/auction-bot-ui && npm ci --omit=dev --ignore-scripts
+COPY --from=build /src/shared/typescript/auction-bot-ui/dist shared/typescript/auction-bot-ui/dist
+COPY apps/auction-bot/package.json apps/auction-bot/package-lock.json apps/auction-bot/
+RUN cd apps/auction-bot && npm ci --omit=dev --ignore-scripts && npm cache clean --force \
+    && rm node_modules/@solguficky/telegram-delivery \
+    && mkdir node_modules/@solguficky/telegram-delivery \
+    && cp -R ../../shared/typescript/telegram-delivery/package.json \
+        ../../shared/typescript/telegram-delivery/dist \
+        ../../shared/typescript/telegram-delivery/node_modules \
+        node_modules/@solguficky/telegram-delivery/ \
+    && rm node_modules/@solguficky/auction-bot-ui \
+    && cp -R ../../shared/typescript/auction-bot-ui node_modules/@solguficky/auction-bot-ui
+
+# База со shell, файлы принадлежат root, процесс — uid 1000: образ работает с
+# --read-only. Точка входа базы сброшена, команда — прямой node, а не npm start.
+FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c
+ENV NODE_ENV=production
+WORKDIR /app
+COPY apps/auction-bot/package.json ./
+COPY --from=deps /src/apps/auction-bot/node_modules node_modules
+COPY --from=build /src/apps/auction-bot/dist dist
+USER 1000:1000
+ENTRYPOINT []
+CMD ["node", "dist/src/main.js"]

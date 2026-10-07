@@ -1,5 +1,6 @@
 using Aspire.Hosting.JavaScript;
 using AppHost.Configuration.Extensions;
+using AppHost.Configuration.Publish;
 using AppHost.Configuration.Topology;
 using Microsoft.Extensions.Configuration;
 
@@ -12,19 +13,56 @@ namespace AppHost.Configuration.Services;
 /// </summary>
 internal static class AuctionBotSetup
 {
+    // Форма бота хаба: ни порта, ни health, поэтому проб нет и остаётся рестарт
+    // по выходу (HubBotSetup).
+    private static readonly ClusterWorkload Cluster = new(
+        RunAsUser: 1000,
+        CpuRequest: "50m",
+        MemoryRequest: "128Mi",
+        CpuLimit: "500m",
+        MemoryLimit: "256Mi",
+        Probe: null);
+
     public static IResourceBuilder<IResourceWithEnvironment> Configure(ServiceGraphContext context)
     {
         var configuration = context.Builder.Configuration;
         var environment = TelegramEnvironment.Resolve(configuration);
         RequireOwnToken(configuration, environment);
 
-        var token = context.Builder.AddParameter(environment.AuctionBotTokenParameter, secret: true);
-
-        return context.Builder
-            .AddJavaScriptApp(
+        return Wire(
+            context,
+            environment,
+            context.Builder.AddJavaScriptApp(
                 AppHostNames.Resources.AuctionBot,
                 RepositoryPaths.App(context.Builder, "auction-bot"),
-                "start")
+                "start"));
+    }
+
+    /// <summary>
+    /// В чарте бот — образ по его Containerfile из корня репозитория, как бот
+    /// хаба (ADR-055). Значения токенов при публикации неизвестны, поэтому
+    /// <see cref="RequireOwnToken"/> здесь не зовётся: в среде повтор токена
+    /// бота хаба ловит её выкладка до старта подов.
+    /// </summary>
+    public static IResourceBuilder<ContainerResource> Publish(ServiceGraphContext context) =>
+        Wire(
+                context,
+                TelegramEnvironment.Production,
+                context.Builder.AddDockerfile(
+                    AppHostNames.Resources.AuctionBot,
+                    RepositoryPaths.Root(context.Builder),
+                    "apps/auction-bot/Containerfile"))
+            .AsClusterWorkload(Cluster);
+
+    private static IResourceBuilder<T> Wire<T>(
+        ServiceGraphContext context,
+        TelegramEnvironment environment,
+        IResourceBuilder<T> bot)
+        where T : IResourceWithEnvironment, IResourceWithWaitSupport
+    {
+        var token = context.Builder.AddParameter(environment.AuctionBotTokenParameter, secret: true);
+
+        return bot
             .WithEnvironment("AUCTION_BOT_TOKEN", token)
             // Не путать с токеном Bot API выше: этим бот доказывает себя
             // Identity и Auction (ADR-056).
@@ -36,7 +74,7 @@ internal static class AuctionBotSetup
             // Второй вход бота — адресные факты аукциона из шины (PER-328).
             // WaitFor(nats) внутри BindConnection ждёт и применения топологии:
             // durable и bucket журнала заводит AppHost, а бот без них не стартует.
-            .BindConnection<JavaScriptAppResource, IResourceWithConnectionString>(
+            .BindConnection<T, IResourceWithConnectionString>(
                 context,
                 AppHostNames.Resources.Nats,
                 "AUCTION_BOT_NATS_URL",

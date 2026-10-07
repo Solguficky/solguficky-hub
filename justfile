@@ -15,10 +15,11 @@
 # identity и hub-bot в CI читают BUF_VERSION отсюда, а `just identity-tools`
 # ставит buf локально, чтобы локальная и CI-проверка шли одними бинарниками;
 # identity-lint отказывается работать на другой версии. Образ bufbuild/buf в
-# apps/hub-bot/Containerfile и apps/identity/Containerfile закреплён по
-# digest и потому несёт версию литералом; tools/image/check-containerfile.sh
-# роняет сборку, если она разошлась с BUF_VERSION. Меняется BUF_VERSION —
-# тег и digest меняются в обоих Containerfile тем же изменением. Версии
+# apps/hub-bot/Containerfile, apps/auction-bot/Containerfile и
+# apps/identity/Containerfile закреплён по digest и потому несёт версию
+# литералом; tools/image/check-containerfile.sh роняет сборку, если она
+# разошлась с BUF_VERSION. Меняется BUF_VERSION — тег и digest меняются во всех
+# трёх Containerfile тем же изменением. Версии
 # protoc-gen-go и protoc-gen-go-grpc закреплены в apps/identity/go.mod.
 
 BUF_VERSION := "1.54.0"
@@ -236,7 +237,7 @@ apphost-build:
 
 # Порог поднимается руками вместе с набором: выведенный из текущего прогона
 # сравнивал бы набор сам с собой. Добавил тест — обнови число тем же изменением.
-APPHOST_TEST_THRESHOLD := "100"
+APPHOST_TEST_THRESHOLD := "103"
 
 # Тесты графа и профилей. Уровень L0 и Docker не требуется: валидация и
 # материализация модели отрабатывают до старта ресурсов, поэтому единственная
@@ -442,9 +443,11 @@ hub-bot-image:
     sh tools/image/check-node-runtime.sh hub-bot:local apps/hub-bot/package-lock.json /app
 
 # Негативный путь проверок образа: база по тегу, токен в слое и токен в
-# аргументе сборки роняют проверки их кодами. Нужен движок, как у hub-bot-image
+# аргументе сборки роняют проверки их кодами — на финальной базе каждого
+# Node-образа. Нужен движок, как у hub-bot-image
 image-checks-test:
     sh tools/image/check-test.sh apps/hub-bot/Containerfile
+    sh tools/image/check-test.sh apps/auction-bot/Containerfile
 
 # Живой контур (L3, ADR-046): `/start` от синтетического аккаунта тестового DC
 # до ответа бота через настоящий Telegram. Бота поднимает владелец —
@@ -563,6 +566,20 @@ auction-bot-proto:
 
 auction-bot-build: auction-bot-ui-build telegram-delivery-build auction-bot-proto
     cd apps/auction-bot && npm run build
+
+# Production-образ бота аукциона как auction-bot:local и те же проверки, что в
+# CI, — по правилам hub-bot-image. Публикацию в GHCR делает только CI
+# (.github/workflows/image-auction-bot.yml)
+auction-bot-image:
+    #!/usr/bin/env sh
+    set -eu
+    engine=${IMAGE_ENGINE:-podman}
+    ignore=
+    case "$engine" in *podman*) ignore="--ignorefile apps/auction-bot/Containerfile.dockerignore" ;; esac
+    sh tools/image/check-containerfile.sh apps/auction-bot/Containerfile
+    "$engine" build -f apps/auction-bot/Containerfile $ignore -t auction-bot:local .
+    sh tools/image/check-no-token.sh auction-bot:local
+    sh tools/image/check-node-runtime.sh auction-bot:local apps/auction-bot/package-lock.json /app
 
 auction-bot-typecheck: auction-bot-ui-build telegram-delivery-build auction-bot-proto
     cd apps/auction-bot && npm run typecheck

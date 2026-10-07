@@ -60,3 +60,17 @@ jobs:
       builder: containerfile
       containerfile: apps/auction/Containerfile
       publish: true
+
+  # Кандидат stage: digest уходит в ops-репозиторий, откуда stage выкатывает
+  # его сам (stage-bump.yml, дополнение ADR-055 от 2026-10-07).
+  stage:
+    needs: publish
+    permissions: {}
+    uses: ./.github/workflows/stage-bump.yml
+    with:
+      file: stage/test/values.yaml
+      key: .parameters.auction.auction_image
+      value: ${{ needs.publish.outputs.ref }}
+      what: auction image
+    secrets:
+      OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}

@@ -8,7 +8,7 @@
 
 ## Как устроено
 
-Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `postgresql/`, `orleans/`, `typescript/`, `biome/`, `grammy/`, `self-hosting/`, `helm/`, `scala/`, `nats/`, `mtcute/`, `opentelemetry/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
+Файл на тему, каталог на технологию: `go/`, `grpc/`, `protobuf/`, `postgresql/`, `orleans/`, `typescript/`, `biome/`, `grammy/`, `self-hosting/`, `helm/`, `github-actions/`, `scala/`, `nats/`, `mtcute/`, `opentelemetry/`. Каталог заводится вместе с первым разбором в нём, а не заранее.
 
 Тема пополняется, когда её трогает новый код, и не заводится заново на каждую задачу. Разборы не привязаны к номерам Linear: одна тема набирается из многих срезов, один срез задевает несколько тем.
 
@@ -53,7 +53,9 @@
 | [self-hosting/remote-workstation.md](self-hosting/remote-workstation.md) | учётка как граница доверия и имя с ролью впереди, проверка «не читает» через `runuser` с контролем, вход по ключу и строки журнала `Failed`/`Postponed`/`Accepted`/`preauth` при `LogLevel VERBOSE`, `IdentitiesOnly` и `ForwardAgent`, клиент Windows: права `config`, BOM, сверка сменившегося ключа хоста, remote server Zed, клиент и сервер tmux, `KillUserProcesses`, linger, восстановление через консоль и уборка `exclusive` | вернуться |
 | [self-hosting/recovery-keys.md](self-hosting/recovery-keys.md) | age: identity и recipient, `age-keygen -y`, заголовок с ключом файла на каждого recipient и подбор identity, bech32 и отказ перенабора с опечаткой; restic: master key под key-файлами, `key passwd` и возврат старого key-файла из версий bucket; проверка копии против эталона не из неё | вернуться |
 | [self-hosting/host-benchmarks.md](self-hosting/host-benchmarks.md) | CPU steal под нагрузкой, `fio`: `bs`, `iodepth`, `direct`, `fdatasync` как цена коммита, p99 и шумные соседи, серии в одном окне, время reboot | вернуться |
+| [self-hosting/autodeploy.md](self-hosting/autodeploy.md) | push против pull и pull-модель без контроллера, deploy key: один репозиторий, чтение по умолчанию, запись по выбору, ключ создаётся на хосте, закреплённый ключ хоста против `ssh-keyscan`, service и timer, `Type=oneshot`, системный юнит с `User=` против linger, `OnBootSec` в прошлом срабатывает при включении, `OnUnitInactiveSec` без стартовой строки молчит, `Persistent=` только для `OnCalendar`, отметка попытки до действия, код 75 `EX_TEMPFAIL` как безопасный повтор, общий `flock -w` | вернуться |
 | [helm/hooks-and-rollout.md](helm/hooks-and-rollout.md) | чарт, релиз и ревизия в Secret, `--wait`, hook вне релиза, `pre-install,pre-upgrade` против post-hook, вес и порядок видов при равном весе, ссылка Job на отсутствующий вход, `before-hook-creation` и лог упавшего Job, откат не запускает `pre-upgrade`, перекат пода по `checksum/*` из `include … \| sha256sum`, `dig` по `.Values.AsMap` против nil pointer, строки Go-шаблона в обратных кавычках, что `helm lint` и `helm template` не видят схему и `--dry-run=server` | вернуться |
+| [github-actions/reusable-workflows.md](github-actions/reusable-workflows.md) | workflow, джоба и шаг, `needs`, выход шаг → джоба → `needs` через `id` и `$GITHUB_OUTPUT`, несуществующее свойство как пустая строка, `workflow_call` и вызов джобой, секрет environment в reusable workflow: `environment` у вызванного и передача по имени у вызывающего, `permissions: {}`, `concurrency` как очередь из одного места, `workflow_run` и ветка по умолчанию | вернуться |
 
 Статус ставится по факту, а не по ощущению:
 

@@ -62,3 +62,17 @@ jobs:
       builder: dotnet-sdk
       project: apps/notifications/Notifications
       publish: true
+
+  # Кандидат stage: digest уходит в ops-репозиторий, откуда stage выкатывает
+  # его сам (stage-bump.yml, дополнение ADR-055 от 2026-10-07).
+  stage:
+    needs: publish
+    permissions: {}
+    uses: ./.github/workflows/stage-bump.yml
+    with:
+      file: stage/test/values.yaml
+      key: .parameters.notifications.notifications_image
+      value: ${{ needs.publish.outputs.ref }}
+      what: notifications image
+    secrets:
+      OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}
