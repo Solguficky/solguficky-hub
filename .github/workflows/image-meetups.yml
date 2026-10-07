@@ -74,3 +74,5 @@ jobs:
       key: .parameters.meetups.meetups_image
       value: ${{ needs.publish.outputs.ref }}
       what: meetups image
+    secrets:
+      OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}

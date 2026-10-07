@@ -78,3 +78,5 @@ jobs:
       key: .parameters.hub_bot.hub_bot_image
       value: ${{ needs.publish.outputs.ref }}
       what: hub-bot image
+    secrets:
+      OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}

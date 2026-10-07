@@ -74,3 +74,5 @@ jobs:
       key: .parameters.notifications.notifications_image
       value: ${{ needs.publish.outputs.ref }}
       what: notifications image
+    secrets:
+      OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}

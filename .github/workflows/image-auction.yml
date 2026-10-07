@@ -72,3 +72,5 @@ jobs:
       key: .parameters.auction.auction_image
       value: ${{ needs.publish.outputs.ref }}
       what: auction image
+    secrets:
+      OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}

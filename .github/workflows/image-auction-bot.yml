@@ -70,3 +70,5 @@ jobs:
       key: .parameters.auction_bot.auction_bot_image
       value: ${{ needs.publish.outputs.ref }}
       what: auction-bot image
+    secrets:
+      OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}

@@ -21,7 +21,9 @@ name: Stage bump
 # Ключ записи — deploy key ops-репозитория с правом записи, секрет
 # OPS_DEPLOY_KEY в environment `stage`. Environment допускает только develop,
 # поэтому код из PR ключа не получает, а сам ключ не пишет никуда, кроме
-# ops-репозитория.
+# ops-репозитория. Секрет environment reusable workflow сам не видит, даже с
+# `environment` на джобе: вызывающий обязан передать его по имени, иначе он
+# приходит пустой строкой. Передаётся только он, а не `secrets: inherit`.
 #
 # Публикации одного мержа приходят параллельно, по джобе на образ и на чарт, и
 # правят разные строки. Сериализация — повтором, а не concurrency: группа
@@ -48,6 +50,9 @@ on:
         type: boolean
         required: false
         default: false
+    secrets:
+      OPS_DEPLOY_KEY:
+        required: true
 
 permissions: {}
 

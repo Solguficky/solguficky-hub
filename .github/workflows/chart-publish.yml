@@ -81,3 +81,5 @@ jobs:
       what: chart
       # Номер прогона монотонен: перезапуск старого прогона не понизит версию на stage.
       monotonic: true
+    secrets:
+      OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}
