@@ -1045,3 +1045,62 @@ describe("применение состояния", () => {
     expect(note.querySelector(".answer-print")?.textContent).toBe("мой ответ");
   });
 });
+
+describe("готовность фич", () => {
+  it("пометка готовности живёт в разметке и не меняет форму состояния", async () => {
+    // Состояние прежнего формата, как оно лежит в блобе: оценка у сделанной
+    // фичи обязана примениться и уехать обратно ровно тремя полями.
+    const page = loadAuctionPage({
+      seedLocalStorage: {
+        "rfc007-state": JSON.stringify(
+          makeState({ slots: { [FEATURE_ID]: { value: "Обязательно" } } }),
+        ),
+      },
+    });
+    await page.flush();
+
+    expect(text(page.document, `#${FEATURE_ID} .shipped-mark`)).toBe("Сделано");
+    const select = $<HTMLSelectElement>(
+      page.document,
+      `#${FEATURE_ID} select[data-slot="cost"]`,
+    );
+    expect(
+      $<HTMLSelectElement>(
+        page.document,
+        `#${FEATURE_ID} select[data-slot="value"]`,
+      ).value,
+    ).toBe("Обязательно");
+    changeSelect(page.window, select, "Средняя");
+
+    const stored = storedJSON(page.window, "rfc007-state") as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(stored).sort()).toEqual([
+      "answers",
+      "priorities",
+      "slots",
+    ]);
+    expect(stored["slots"]).toEqual({
+      [FEATURE_ID]: { value: "Обязательно", cost: "Средняя" },
+    });
+  });
+
+  it("фильтр готовности показывает только сделанные фичи", async () => {
+    const page = loadAuctionPage();
+    await page.flush();
+
+    $<HTMLButtonElement>(page.document, '[data-ready-set="done"]').click();
+
+    const shown = [
+      ...page.document.querySelectorAll<HTMLElement>(".feature"),
+    ].filter((feature) => !feature.hidden);
+    expect(shown.length).toBeGreaterThan(0);
+    expect(shown.every((feature) => feature.dataset["ready"] === "done")).toBe(
+      true,
+    );
+    expect(text(page.document, "#filter-total")).toBe(
+      `Показано ${shown.length} из 50`,
+    );
+  });
+});
