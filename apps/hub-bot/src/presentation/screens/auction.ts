@@ -15,12 +15,16 @@ import { uuidToToken } from "../meetup-deep-link.js";
 import { consoleViewData, lotFormData, lotNewData } from "../parse-callback.js";
 import {
   acceptedScreen,
+  answerRefusedScreen,
+  commandResultScreen,
   confirmScreen,
   nameChoiceScreen,
+  oneLine,
   questionScreen,
-  resultText,
+  quoted,
 } from "./auction-bid.js";
 import {
+  bullet,
   buttonText,
   escapeHtml,
   nextRow,
@@ -94,7 +98,7 @@ const plainTextLimit = 4096;
 
 export function auctionScreen(view: AuctionView): AuctionShown {
   // Лист ставки (PER-317): подтверждение, исход, вопрос и выбор имени — свои
-  // экраны.
+  // экраны; отказ и непринятый ответ — тоже (PER-472).
   for (const block of view.body.blocks) {
     switch (block.kind) {
       case "confirm":
@@ -107,7 +111,15 @@ export function auctionScreen(view: AuctionView): AuctionShown {
           asks: true,
         };
       case "name-choice":
-        return { screen: nameChoiceScreen(block, view.body.keyboard, money) };
+        return { screen: nameChoiceScreen(block, view.body.keyboard) };
+      case "result":
+        return {
+          screen: commandResultScreen(block, view.body.keyboard, money),
+        };
+      case "answer-refused":
+        return {
+          screen: answerRefusedScreen(block, view.body.keyboard, money),
+        };
       default:
         break;
     }
@@ -157,11 +169,21 @@ function feedScreen(
       keyboard.text(feedLabel(button, items), button.callbackData);
     }
   }
+  // Строки лотов в теле повторяют кнопки в порядке ленты — по возрастанию
+  // цены (дизайн-код, «Списки»).
   return {
     id: "lots",
     text: screenText(
       pagedTitle("Лоты", { items: feed.lots, ...feed }),
-      feed.lots.length === 0 ? "Лотов пока нет." : "По возрастанию цены.",
+      feed.lots.length === 0
+        ? "Лотов пока нет."
+        : feed.lots
+            .map((item) =>
+              bullet(
+                `${escapeHtml(truncate(oneLine(item.title ?? untitled), titleLimit))} — ${priceLabel(item.status)}`,
+              ),
+            )
+            .join("\n"),
     ),
     keyboard: withNav(keyboard, view.feedParent),
     format: "HTML",
@@ -199,6 +221,8 @@ function feedLabel(
     case "name.alias":
     case "name.back":
     case "accepted.lot":
+    case "result.lot":
+    case "answer.retry":
       throw new Error(`action ${button.action} in a feed body`);
     default: {
       const _exhaustive: never = button;
@@ -237,14 +261,9 @@ function lotScreen(
     lot.card?.description === undefined || lot.card.description === ""
       ? undefined
       : lot.card.description;
-  const status = statusLines(lot, view);
-  // Исход команды участника — первая строка экрана после «Да».
-  const result = view.body.blocks.find(
-    (block): block is Extract<AuctionBlock, { kind: "result" }> =>
-      block.kind === "result",
-  );
-  const note =
-    result === undefined ? undefined : resultText(result.result, money);
+  // Карточка лота (дизайн-код, «Карточка лота»): группа статуса, группа цены
+  // и лидера, описание — группы через пустую строку, в rich — блоками.
+  const groups = statusGroups(lot, view);
   const rich = view.presentation === "rich";
   const photo = rich ? view.photo : undefined;
   const image =
@@ -253,13 +272,14 @@ function lotScreen(
       : { lotId: lot.lotId, version: lot.card.image.version };
   const text = rich
     ? [
-        note === undefined ? "" : `<p>${escapeHtml(note)}</p>`,
         `<h1>${escapeHtml(title)}</h1>`,
-        description === undefined ? "" : `<p>${escapeHtml(description)}</p>`,
-        `<p>${status.map(escapeHtml).join("<br>")}</p>`,
+        ...groups.map(
+          (lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`,
+        ),
+        ...richParagraphs(description),
         photo === undefined ? "" : `<img src="tg://photo?id=${photo.id}"/>`,
       ].join("")
-    : `${note === undefined ? "" : `${escapeHtml(note)}\n`}${plainLot(title, description, status)}`;
+    : plainLot(title, description, groups);
   return {
     screen: {
       id: "lot",
@@ -272,16 +292,29 @@ function lotScreen(
   };
 }
 
+// Абзацы описания в rich-карточке: перенос строки в её `html` не рисуется,
+// поэтому абзац — свой блок, строки внутри — `<br>`.
+function richParagraphs(description: string | undefined): string[] {
+  if (description === undefined) return [];
+  return description
+    .split(/\n\s*\n/)
+    .map((paragraph) =>
+      paragraph.split("\n").filter((line) => line.trim() !== ""),
+    )
+    .filter((lines) => lines.length > 0)
+    .map((lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`);
+}
+
 function plainLot(
   title: string,
   description: string | undefined,
-  status: readonly string[],
+  groups: readonly (readonly string[])[],
 ): string {
   const join = (shown: string | undefined) =>
     screenText(
       title,
+      ...groups.map((lines) => lines.map(escapeHtml).join("\n")),
       shown === undefined ? undefined : escapeHtml(shown),
-      status.map(escapeHtml).join("\n"),
     );
   const full = join(description);
   if (full.length <= plainTextLimit || description === undefined) return full;
@@ -316,6 +349,8 @@ function lotLabel(button: AuctionButton): string {
     case "name.alias":
     case "name.back":
     case "accepted.lot":
+    case "result.lot":
+    case "answer.retry":
       throw new Error(`action ${button.action} in a lot body`);
     default: {
       const _exhaustive: never = button;
@@ -324,8 +359,9 @@ function lotLabel(button: AuctionButton): string {
   }
 }
 
-// Хронология ставок лота (PER-309): строки по порядку журнала, листание
-// «←» и «→», а возврат тела на карточку оболочка ставит в один ряд с «Меню».
+// Хронология ставок лота (PER-309): название лота в кавычках, строки «• …» по
+// порядку журнала, листание «←» и «→», а возврат тела на карточку оболочка
+// ставит в один ряд с «Меню».
 function historyScreen(
   view: AuctionView,
   history: Extract<AuctionBlock, { kind: "history" }>,
@@ -355,11 +391,11 @@ function historyScreen(
         page: history.page,
         pageCount: history.pageCount,
       }),
-      escapeHtml(truncate(history.title ?? untitled, titleLimit)),
+      quoted(truncate(history.title ?? untitled, titleLimit)),
       history.entries.length === 0
         ? "Ставок пока нет."
         : history.entries
-            .map((entry) => escapeHtml(historyLine(entry, view)))
+            .map((entry) => bullet(escapeHtml(historyLine(entry, view))))
             .join("\n"),
     ),
     keyboard: withNav(keyboard, back),
@@ -390,6 +426,8 @@ function historyLabel(button: AuctionButton): string {
     case "name.alias":
     case "name.back":
     case "accepted.lot":
+    case "result.lot":
+    case "answer.retry":
       throw new Error(`action ${button.action} in a history body`);
     default: {
       const _exhaustive: never = button;
@@ -425,61 +463,72 @@ function originLabel(origin: BidOriginView): string {
   }
 }
 
-function statusLines(
+// Группы карточки: статус словом, затем факты о цене и лидере. Строки «ключ:
+// значение» без точки; слова статусов — дизайн-код, «Карточка лота». Слова —
+// те же, что у бота аукциона, словарь один.
+function statusGroups(
   block: Extract<AuctionBlock, { kind: "lot" }>,
   view: AuctionView,
-): string[] {
+): string[][] {
   const { status, participantName } = block;
   switch (status.kind) {
     case "draft":
-      return ["Лот готовится к торгам."];
+      return [["Статус: готовится к торгам"]];
     case "scheduled":
       return [
-        "Торги ещё не начались.",
-        `Стартовая цена: ${money(status.startingPrice)}.`,
+        ["Статус: торги ещё не начались"],
+        [`Стартовая цена: ${money(status.startingPrice)}`],
       ];
     case "trading":
       return [
-        `Текущая цена: ${money(status.currentPrice)}.`,
-        leaderLine(status.leaderId, participantName),
-        ...(block.nextPrice === undefined
-          ? []
-          : [`Следующая ставка — от ${money(block.nextPrice)}.`]),
-        ...(block.fixedStep === undefined
-          ? []
-          : [`Шаг: ${money(block.fixedStep)}.`]),
-        ...(status.deadline === undefined
-          ? []
-          : [
-              `Торги до ${readableMoment(
-                communityLocalTime(status.deadline, view.timeZone),
-                view.today,
-              )}.`,
-            ]),
-        // Свой лимит смотрящего: чужих Auction не отдаёт.
-        ...(block.viewerProxyLimit === undefined
-          ? []
-          : [
-              `Твоя автоставка: до ${money(block.viewerProxyLimit)}. Её видишь только ты.`,
-            ]),
+        ["Статус: идут торги"],
+        [
+          `Цена: ${money(status.currentPrice)}`,
+          leaderLine(status.leaderId, participantName),
+          ...(block.nextPrice === undefined
+            ? []
+            : [`Следующая ставка: от ${money(block.nextPrice)}`]),
+          ...(block.fixedStep === undefined
+            ? []
+            : [`Шаг: ${money(block.fixedStep)}`]),
+          ...(status.deadline === undefined
+            ? []
+            : [
+                `Торги до: ${readableMoment(
+                  communityLocalTime(status.deadline, view.timeZone),
+                  view.today,
+                )}`,
+              ]),
+          // Свой лимит смотрящего: чужих Auction не отдаёт.
+          ...(block.viewerProxyLimit === undefined
+            ? []
+            : [
+                `Твоя автоставка: до ${money(block.viewerProxyLimit)} (видишь только ты)`,
+              ]),
+        ],
       ];
     case "held":
       return [
-        "Лот ждёт финала.",
-        `Цена: ${money(status.currentPrice)}.`,
-        leaderLine(status.leaderId, participantName),
+        ["Статус: ждёт финала"],
+        [
+          `Цена: ${money(status.currentPrice)}`,
+          leaderLine(status.leaderId, participantName),
+        ],
       ];
     case "sold":
       return [
-        `Продан за ${money(status.price)}.`,
-        participantName === undefined
-          ? "Победитель определён."
-          : `Победитель: ${participantName}.`,
+        ["Статус: продан"],
+        [
+          `Цена продажи: ${money(status.price)}`,
+          participantName === undefined
+            ? "Победитель: определён"
+            : `Победитель: ${participantName}`,
+        ],
       ];
     case "unsold":
-      return ["Торги закончились, лот не продан."];
+      return [["Статус: не продан"]];
     case "withdrawn":
-      return ["Лот снят с торгов."];
+      return [["Статус: снят с торгов"]];
     default: {
       const _exhaustive: never = status;
       return _exhaustive;
@@ -493,10 +542,10 @@ function leaderLine(
   leaderId: string | undefined,
   participantName: string | undefined,
 ): string {
-  if (leaderId === undefined) return "Ставок пока нет.";
+  if (leaderId === undefined) return "Лидер: пока нет";
   return participantName === undefined
-    ? "Лидер есть."
-    : `Лидер: ${participantName}.`;
+    ? "Лидер: есть"
+    : `Лидер: ${participantName}`;
 }
 
 function priceLabel(status: LotStatusView): string {

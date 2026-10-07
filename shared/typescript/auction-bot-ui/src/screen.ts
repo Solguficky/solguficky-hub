@@ -60,7 +60,25 @@ export type AuctionBlock =
       // Свой прокси-лимит смотрящего; других лимитов экран не знает.
       viewerProxyLimit?: Money;
     }
-  | { kind: "result"; result: CommandResult }
+  | {
+      // Отказ команды или неизвестный исход — свой экран, а не строка над
+      // карточкой: исход и содержимое не смешиваются (решение владельца
+      // 7 октября 2026 года, PER-472). Карточку открывает кнопка «К лоту».
+      kind: "result";
+      result: CommandResult;
+      lotId: string;
+      auctionId: string;
+      title?: string;
+    }
+  | {
+      // Непринятый ответ на вопрос или отказ имени — тоже свой экран (PER-472):
+      // кнопка задаёт вопрос заново, если повтор имеет смысл, и «К лоту».
+      kind: "answer-refused";
+      refusal: AnswerRefusal;
+      lotId: string;
+      auctionId: string;
+      title?: string;
+    }
   | {
       // Принятая ставка или лимит — свой экран, а не строка над карточкой
       // (PER-473): цена на карточке сразу после «Да» ещё прежняя, потому что
@@ -87,15 +105,13 @@ export type AuctionBlock =
     }
   | {
       // Вопрос с `force_reply`: сумма ставки, лимит или псевдоним. `current` —
-      // строка «Сейчас: …»: порог ставки или свой лимит. `refusal` — почему
-      // прошлый ответ не принят, первой строкой.
+      // строка «Сейчас: …»: порог ставки или свой лимит.
       kind: "question";
       question: AuctionQuestion;
       lotId: string;
       auctionId: string;
       title?: string;
       current?: Money;
-      refusal?: AnswerRefusal;
     }
   | {
       // Первая ставка в аукционе: имя видно всем участникам, и без ника его
@@ -105,7 +121,6 @@ export type AuctionBlock =
       auctionId: string;
       title?: string;
       username?: string;
-      refusal?: DisplayNameRefusal;
     }
   | {
       kind: "history";
@@ -120,9 +135,9 @@ export type AuctionBlock =
       entries: readonly HistoryItem[];
     };
 
-// Исход команды участника, которым открывается карточка после «Да» или после
-// ответа, отвергнутого до «Да». Отказ называет цену сам: оболочка пишет его
-// первой строкой экрана. Принятая команда — не строка, а экран `accepted`.
+// Исход команды участника после «Да» или после ответа, отвергнутого до «Да».
+// Отказ называет цену сам: оболочка пишет его заголовком экрана исхода.
+// Принятая команда — экран `accepted`.
 export type CommandResult =
   | { command: "bid"; kind: "refused"; refusal: BidRefusal }
   | { command: "proxy"; kind: "refused"; refusal: ProxyLimitRefusal }
@@ -163,6 +178,8 @@ export type AuctionButton =
         | "name.alias"
         | "name.back"
         | "accepted.lot"
+        | "result.lot"
+        | "answer.retry"
         | "history.prev"
         | "history.next"
         | "history.back";

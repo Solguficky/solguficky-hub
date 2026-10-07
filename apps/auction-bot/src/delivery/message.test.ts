@@ -1,6 +1,8 @@
 import { parseAuctionCallback } from "@solguficky/auction-bot-ui";
 import { GrammyError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
+import { inspectCall } from "../../testkit/screen-lint.js";
+import { screenMark } from "../screen-catalog.js";
 import {
   createNotificationSender,
   createRenderMessage,
@@ -240,9 +242,33 @@ describe("notification sender", () => {
       sender.send({ telegramUserId: 42n, message }),
     ).resolves.toEqual({ kind: "sent" });
     expect(sendMessage).toHaveBeenCalledWith(42, message.text, {
+      ...screenMark("notification"),
       reply_markup: { inline_keyboard: [[message.button]] },
       link_preview_options: { is_disabled: true },
     });
+  });
+
+  // Отправка идёт мимо адаптера экранов, но метку каталога несёт: след с
+  // кнопкой проходит линтер дизайн-кода, как любой экран (PER-472).
+  it("marks every notification for the screen linter", async () => {
+    const sent: unknown[] = [];
+    const sendMessage = vi.fn(async (chat: number, text: string, extra) => {
+      sent.push({ chat_id: chat, text, ...extra });
+      return {};
+    });
+    const sender = createNotificationSender({ sendMessage } as never);
+    for (const message of [
+      renderNotification(outbid, "Кружка"),
+      renderNotification(raised),
+      renderNotification(purchased, "Кружка"),
+      renderNotification({ kind: "access-granted" }),
+    ]) {
+      await sender.send({ telegramUserId: 42n, message });
+    }
+    expect(sent).toHaveLength(4);
+    expect(sent.flatMap((call) => inspectCall("sendMessage", call))).toEqual(
+      [],
+    );
   });
 
   // Критерий приёмки: заблокировавший бота человек — окончательный отказ.

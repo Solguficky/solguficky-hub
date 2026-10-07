@@ -151,6 +151,7 @@
   .t-a .fid { background: var(--a700); }
   .t-e .fid { background: #8f3a2f; }
   .t-v .fid { background: var(--n700); }
+  .t-l .fid { background: #5a4a8a; }
   .frame-head h3 { flex: 1 1 220px; font-size: 19px; }
 
   .frame-body > .stage { padding: 18px; background: var(--n100); }
@@ -232,6 +233,7 @@
   .key.url::after { content: " \2197"; color: var(--tg-link); font-size: 10px; }
   .key.press { outline: 2px solid var(--tg-link); outline-offset: -2px; }
   .key.muted { color: var(--tg-ink-2); }
+  .key.danger { color: #e05b4b; }
 
   .tg-input { display: flex; align-items: center; gap: 8px; padding: 8px 11px; background: var(--tg-head); color: var(--tg-ink-2); font-size: 12px; }
   .tg-input.reply { flex-direction: column; align-items: stretch; gap: 5px; }
@@ -332,6 +334,7 @@
     <li><a href="#track-p">Трек 1: путь солегуфика</a></li>
     <li><a href="#track-a">Трек 2: путь администратора и организатора</a></li>
     <li><a href="#track-e">Трек 3: ошибки и служебные состояния</a></li>
+    <li><a href="#track-l">Трек 4: бот аукциона</a></li>
     <li><a href="#map">Карта переходов</a></li>
     <li><a href="#open">Сводка открытых вопросов</a></li>
     <li><a href="#next">Что дальше</a></li>
@@ -1880,22 +1883,13 @@
         <div class="phone">
           <div class="tg-head"><div class="ava">SH</div><div class="who"><b>Solguficky Hub</b></div></div>
           <div class="tg-chat">
-            <div class="row bot"><div class="bubble">Сходка опубликована. Теперь она видна в списке. Ссылка для чата: <span class="link">t.me/solguficky_hub_bot?start=m_01J8Z4</span>
+            <div class="row bot"><div class="bubble"><b>Сходка опубликована</b>
 
-<b>Настолки у Лёши</b>
-Статус: запланирована, видна
-Ты автор этой сходки
+«Настолки у Лёши»
 
-Когда: 15 августа, сб, 19:00
-Где: Циферблат, Ленина 5
-
-Берём свои игры, места хватит на 12 человек.</div>
+Теперь она видна в списке. Ссылка для чата: <span class="link">t.me/solguficky_hub_bot?start=m_01J8Z4</span></div>
               <div class="kb">
-                <div class="kb-row"><div class="key">Изменить</div><div class="key">Статус</div></div>
-                <div class="kb-row"><div class="key">Материалы (0)</div></div>
-                <div class="kb-row"><div class="key">Написать подписчикам</div></div>
-                <div class="kb-row"><div class="key">Уведомления сходки</div></div>
-                <div class="kb-row"><div class="key muted">‹ Ближайшие</div><div class="key muted">Меню</div></div>
+                <div class="kb-row"><div class="key muted">‹ Сходка</div><div class="key muted">Меню</div></div>
               </div>
             </div>
           </div>
@@ -1913,8 +1907,8 @@
         <div class="decided">
           <h4>Что зафиксировано</h4>
           <ul>
-            <li>Результат публикации — сама карточка с заметкой над ней. Отдельного кадра с кнопками «Открыть сходку» и «К управлению» нет.</li>
-            <li>Если дата сходки уже прошла, заметка говорит, что сходка сразу в архиве, а возврат ведёт в «Архив».</li>
+            <li>Результат публикации — экран исхода: заголовок «Сходка опубликована», название в кавычках, ссылка для чата абзацем и <code>[‹ Сходка] [Меню]</code>. Карточку с её рядами открывает «‹ Сходка» (решение владельца 7 октября 2026 года, PER-472: исход над карточкой не пишется).</li>
+            <li>Если дата сходки уже прошла, пояснение говорит, что сходка сразу в архиве.</li>
             <li>Сходку заводит администратор, он записывается автором. Отдельного шага назначения организатора в форме нет: этой роли в MVP нет.</li>
             <li>По умолчанию бот сам ничего в общий чат не пишет.</li>
             <li>Внешний deep link использует UUIDv7 (<a href="../../decisions/ADR-023-meetup-public-number.md">ADR-023</a>). Публичный номер сходки снят совсем (<a href="../../decisions/ADR-032-drop-meetup-public-number.md">ADR-032</a>). Человеку сходка предъявляется заголовком; у черновика заголовка может не быть, и это принято.</li>
@@ -2660,11 +2654,595 @@
 </section>
 
 
+<section id="track-l">
+  <div class="sec-head">
+    <h2>Трек 4: бот аукциона</h2>
+    <p>
+      Экраны аукциона после перевёрстки по дизайн-коду (PER-472): меню и списки бота аукциона, лента, карточка лота,
+      лист ставки, хронология, отказы и уведомления. Тело каждого аукционного экрана одно на два бота
+      (<a href="../../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md">ADR-044</a>): в боте хаба те же
+      кадры отличаются только оболочкой — рядами администратора и возвратом «‹ Сходка» у ленты, — и это названо в кадре.
+      Тексты сняты с пульта провода <code>just contour-bot-console</code> 7 октября 2026 года, не из чтения функций;
+      rich-карточка показана строками, как её отдаёт пульт: группы — блоки <code>&lt;p&gt;</code>, фото — последним блоком.
+      Уведомления на пульте не приходят — Notifications в контуре нет, — их кадр держат тесты бота аукциона.
+      Правила кадров — <a href="design-code.md#правила-отдельных-экранов">design-code.md</a>; дерево — там же, в
+      «Дереве бота аукциона».
+    </p>
+  </div>
+
+  <div class="frames">
+
+  <article class="frame t-l" id="L-01">
+    <div class="frame-head"><span class="fid">L-01</span><h3>Меню бота аукциона</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">после отметки ознакомления с FAQ: /start и «‹ Меню»</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Меню</b>
+
+Аукцион сообщества: лоты, ставки и итоги торгов.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Аукционы</div><div class="key">Прошедшие</div></div>
+                <div class="kb-row"><div class="key">Правила и FAQ</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона (<code>public</code>)</dd>
+          <dt>Контекст</dt><dd>Корень дерева бота аукциона; первый допущенный <code>/start</code> открывает FAQ раньше меню</dd>
+          <dt>Действие</dt><dd>Открывает список активных или прошедших аукционов либо FAQ</dd>
+          <dt>Переход</dt><dd>-> L-02, список прошедших, FAQ</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code> того же сообщения; команда <code>/faq</code> открывает FAQ новым сообщением с любого места</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Заголовок, пустая строка, одна фраза о боте — как меню хаба; обещаний про хаб и сходки нет.</li>
+            <li>Два списка — пара одним рядом, как <code>[Ближайшие сходки] [Архив]</code> хаба; «Правила и FAQ» — только здесь, под другими экранами этой кнопки нет (решение владельца 7 октября 2026 года, PER-472).</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-02">
+    <div class="frame-head"><span class="fid">L-02</span><h3>Список аукционов</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">«Аукционы»: активные, от запланированного до финала</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Аукционы</b>
+
+• 7 октября, ср — идут ставки, 2 лота</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">7 октября, ср · идут ставки · 2 лота</div></div>
+                <div class="kb-row"><div class="key">‹ Меню</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Пустой список: «Активных аукционов сейчас нет.» и «‹ Меню». «Прошедшие» устроены так же.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона</dd>
+          <dt>Контекст</dt><dd>Аукционы сходок; имени у аукциона нет, сходку список не называет (ADR-047)</dd>
+          <dt>Действие</dt><dd>Открывает ленту аукциона</dd>
+          <dt>Переход</dt><dd>-> L-03; листание «←» и «→» по восемь строк, номер страницы в заголовке</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code>; строка в теле и кнопка повторяют друг друга</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Содержимое стоит и строками «• день — этап, число лотов», и кнопками «день · этап · число лотов», как списки сходок хаба: экран над вопросом теряет клавиатуру, и список только из кнопок стал бы пустым.</li>
+            <li>Строка полная, с «—»; кнопка короткая, с «·». Подсказок под списком нет.</li>
+            <li>Год в дате называется, только когда он не текущий.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-03">
+    <div class="frame-head"><span class="fid">L-03</span><h3>Лента лотов</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">тело общего пакета; родителя ленты даёт оболочка</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Лоты</b>
+
+• Банка солёных грибов — 500 ₽
+• Кружка солегуфика — 1 000 ₽</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Банка солёных грибов · 500 ₽</div></div>
+                <div class="kb-row"><div class="key">Кружка солегуфика · 1 000 ₽</div></div>
+                <div class="kb-row"><div class="key">‹ Аукционы</div><div class="key">Меню</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">В боте хаба: у администратора сверху ряды «Добавить лот» и «Пульт», последний ряд — «‹ Сходка» и «Меню».</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона; в хабе — участник сходки или администратор</dd>
+          <dt>Контекст</dt><dd>Лоты аукциона по возрастанию цены: текущей в торгах, стартовой до них, цены продажи у проданного; лоты без цены — в конце</dd>
+          <dt>Действие</dt><dd>Открывает карточку лота</dd>
+          <dt>Переход</dt><dd>-> L-04; «‹ Аукционы» или «‹ Прошедшие» — в список, где аукцион стоит сейчас</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code>; лента и карточка делят одно сообщение; восемь лотов на странице, номер страницы в заголовке и в кнопке возврата с лота</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Строки «• Название — цена» в теле в порядке ленты; у лота без торгов — «старт 500 ₽», у проданного — «продан за 3 000 ₽», дальше «не продан», «снят», «готовится».</li>
+            <li>Пустая лента: «Лотов пока нет.» с тем же заголовком; недоступный Auction — кадр L-13, а не пустая лента.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-04">
+    <div class="frame-head"><span class="fid">L-04</span><h3>Карточка лота в торгах</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">rich-сообщение: группы блоками, фото последним блоком</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Кружка солегуфика</b>
+
+Статус: идут торги
+
+Цена: 1 100 ₽
+Лидер: Сова*
+Следующая ставка: от 1 200 ₽
+Шаг: 100 ₽
+Торги до: 9 октября, пт, 00:00
+Твоя автоставка: до 3 000 ₽ (видишь только ты)
+
+Керамика ручной росписи. Объём 300 мл.
+
+<em>[фото лота]</em></div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">По шагу (1 200 ₽)</div></div>
+                <div class="kb-row"><div class="key">Своя сумма</div></div>
+                <div class="kb-row"><div class="key">Автоставка</div></div>
+                <div class="kb-row"><div class="key">Обновить</div></div>
+                <div class="kb-row"><div class="key">Ставки</div></div>
+                <div class="kb-row"><div class="key">‹ Лоты</div><div class="key">Меню</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">В боте хаба у администратора ещё ряд «Изменить лот». Запланированный лот: «Статус: торги ещё не начались» и «Стартовая цена: 1 000 ₽»; проданный: «Статус: продан», «Цена продажи: 3 000 ₽», «Победитель: Сова*».</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона</dd>
+          <dt>Контекст</dt><dd>Лот в онлайн-торгах; строка автоставки — только у того, чей лимит</dd>
+          <dt>Действие</dt><dd>Ставит по шагу, свою сумму или автоставку; смотрит хронологию; перечитывает карточку</dd>
+          <dt>Переход</dt><dd>-> L-05 (По шагу), L-07 (Своя сумма), L-10 (Автоставка), L-11 (Ставки); «Обновить» — тот же кадр по свежим данным</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code> с <code>rich_message</code>: <code>&lt;h1&gt;</code> название, по <code>&lt;p&gt;</code> на группу и абзац описания, фото через <code>media</code>; в режиме <code>plain</code> — HTML без фото, группы через пустую строку</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Порядок как у карточки сходки: название, группа статуса, группа цены и лидера, описание (решение владельца 7 октября 2026 года, PER-472). Длинное описание больше не отодвигает цену.</li>
+            <li>Строки «Ключ: значение» без точки; словарь статусов — <a href="design-code.md#карточка-лота">design-code.md, «Карточка лота»</a>; оба бота держат один и тот же текст.</li>
+            <li>«Лидер: пока нет», пока ставок нет; «Лидер: есть», когда Auction не отдал имя — идентификатор на экран не выходит.</li>
+            <li>Описание не обязательно: пустое — группы нет, заглушки у лота нет.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-05">
+    <div class="frame-head"><span class="fid">L-05</span><h3>Подтверждение ставки</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">после «По шагу (1 100 ₽)» или ответа на «Свою сумму»</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Поставить 1 100 ₽?</b>
+
+«Кружка солегуфика»
+
+Отменить ставку нельзя.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key danger">Да, поставить 1 100 ₽</div></div>
+                <div class="kb-row"><div class="key">Нет</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона</dd>
+          <dt>Контекст</dt><dd>Ставка необратима: отменить её с того же экрана нельзя</dd>
+          <dt>Действие</dt><dd>Подтверждает или возвращается на карточку</dd>
+          <dt>Переход</dt><dd>«Да» -> L-08 либо L-06 при первой ставке, либо L-09 при отказе; «Нет» -> L-04</dd>
+          <dt>Механика</dt><dd><code>op_id</code> рождается при показе подтверждения и едет в «Да»: повторное нажатие второй ставки не создаёт</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Заголовок — вопрос с глаголом и суммой, как «Отменить сходку?» в хабе; название лота — абзац в кавычках; затем что нельзя отменить (решение владельца 7 октября 2026 года, PER-472).</li>
+            <li>«Да, …» красное: человек расстаётся с деньгами; остальные подтверждения цвета не несут (PER-473).</li>
+            <li>Устаревшее подтверждение после чужой ставки получает отказ после «Да» — кадр L-09.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-06">
+    <div class="frame-head"><span class="fid">L-06</span><h3>Имя в аукционе</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">первая ставка: Auction ответил «имя не выбрано»</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Имя в аукционе</b>
+
+Имя видно всем участникам аукциона рядом с твоими ставками. После первой ставки его не поменять.
+Ставь под ником @owl_fan или возьми псевдоним.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Ник @owl_fan</div></div>
+                <div class="kb-row"><div class="key">Взять псевдоним</div></div>
+                <div class="kb-row"><div class="key">‹ Лот</div><div class="key">Меню</div></div>
+              </div>
+            </div>
+            <div class="row bot"><div class="bubble"><b>Псевдоним</b>
+
+Пришли псевдоним до 32 символов. Участники увидят его со звёздочкой.
+Например: Сова</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Отмена</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Второе сообщение — вопрос после «Взять псевдоним»; экран над ним теряет клавиатуру.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона без имени</dd>
+          <dt>Контекст</dt><dd>Имя видно всем рядом со ставками и после первой ставки не меняется (ADR-059)</dd>
+          <dt>Действие</dt><dd>Берёт ник или отвечает псевдонимом</dd>
+          <dt>Переход</dt><dd>-> L-05 заново с новым <code>op_id</code>: «Да» человек жмёт сам</dd>
+          <dt>Механика</dt><dd>вопрос — новое сообщение с <code>force_reply</code> и «Отменой»; без ника в Telegram — только «Взять псевдоним»</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Заголовок, пустая строка, пояснение одним абзацем — как у всех экранов листа ставки.</li>
+            <li>Псевдоним участники видят со звёздочкой: «Сова*» в хронологии и в строке лидера.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-07">
+    <div class="frame-head"><span class="fid">L-07</span><h3>Своя сумма</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">вопрос и вопрос заново после отвергнутого ответа</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Своя сумма</b>
+
+Пришли сумму ставки в рублях.
+Сейчас: от 1 100 ₽
+Например: 1 500</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Отмена</div></div>
+              </div>
+            </div>
+            <div class="row user"><div class="bubble">abc</div></div>
+            <div class="row bot"><div class="bubble"><b>Это не сумма</b>
+
+«Кружка солегуфика»</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Ввести заново</div></div>
+                <div class="kb-row"><div class="key">К лоту</div><div class="key">Меню</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона</dd>
+          <dt>Контекст</dt><dd>Сумма разбирается ботом до Auction: не число, другая валюта, ноль, лишние копейки, сумма выше потолка кнопки</dd>
+          <dt>Действие</dt><dd>Отвечает суммой или нажимает «Отмена»</dd>
+          <dt>Переход</dt><dd>Принятый ответ -> L-05; сумма ниже порога или от лидера -> карточка с отказом L-09 без подтверждения; «Отмена» -> L-04 новым сообщением</dd>
+          <dt>Механика</dt><dd>шаг вопроса едет в <code>callback_data</code> «Отмены» и возвращается в <code>reply_to_message</code>; непринятый ответ — экран исхода новым сообщением без режима ответа, «Ввести заново» задаёт вопрос снова, прежний вопрос закрывается после того, как экран ушёл</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Жирный заголовок — имя шага, после него пустая строка; что прислать, «Сейчас: от …» и образец — одним абзацем.</li>
+            <li>Причина отказа — экран исхода: причина в заголовке, название лота в кавычках, <code>[Ввести заново]</code> и <code>[К лоту] [Меню]</code> (PER-472). Так же устроены вопросы «Автоставка» и «Псевдоним».</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-08">
+    <div class="frame-head"><span class="fid">L-08</span><h3>Ставка принята</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">кадр исхода после «Да»</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Ставка 1 100 ₽ принята</b>
+
+«Кружка солегуфика»</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">К лоту</div><div class="key">Меню</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Автоставка: «Автоставка до 3 000 ₽ включена», «Кружка солегуфика», «Лимит видишь только ты.».</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона</dd>
+          <dt>Контекст</dt><dd>Auction принял команду; чтение карточки отстаёт от команды, поэтому исход — свой экран, а не строка над карточкой (PER-470, PER-473)</dd>
+          <dt>Действие</dt><dd>Открывает карточку</dd>
+          <dt>Переход</dt><dd>«К лоту» -> L-04 по свежим данным</dd>
+          <dt>Механика</dt><dd><code>editMessageText</code> того же сообщения; «К лоту» перечитывает карточку</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Сумма в заголовке, название лота абзацем в кавычках; ряд выхода — «К лоту» и «Меню».</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-09">
+    <div class="frame-head"><span class="fid">L-09</span><h3>Отказ Auction</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">«Да» на подтверждении 1 150 ₽, когда цена уже твоя</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Ты уже лидируешь</b>
+
+«Кружка солегуфика»
+
+Цена 1 100 ₽ — твоя.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">К лоту</div><div class="key">Меню</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона</dd>
+          <dt>Контекст</dt><dd>Именованный отказ Auction: торги не идут, лот ждёт финала, ниже порога, ставит лидер, другая валюта, лимит ниже цены, автоставка выключена; «ответа не было» после повтора</dd>
+          <dt>Действие</dt><dd>Читает отказ и цену, открывает лот и решает заново</dd>
+          <dt>Переход</dt><dd>«К лоту» -> L-04, карточка читается заново</dd>
+          <dt>Механика</dt><dd>отказ — экран исхода правкой подтверждения; отказ, видный по карточке — порог и собственное лидерство, — приходит так же, но до «Да» (PER-473)</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Отказ называет цену сам, из ответа Auction; тексты отказов — таблица в <a href="design-code.md#лист-ставки">«Листе ставки»</a>.</li>
+            <li>Исход — свой экран, а не строка над карточкой (решение владельца 7 октября 2026 года, PER-472); над заголовком ничего нет, и линтер держит это правилом <code>body</code>.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-10">
+    <div class="frame-head"><span class="fid">L-10</span><h3>Автоставка</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">вопрос о лимите и подтверждение</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Автоставка</b>
+
+Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.
+Сейчас: 1 200 ₽
+Например: 3 000</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">Отмена</div></div>
+              </div>
+            </div>
+            <div class="row user"><div class="bubble">3 000</div></div>
+            <div class="row bot"><div class="bubble"><b>Включить автоставку до 3 000 ₽?</b>
+
+«Кружка солегуфика»
+
+Цена сейчас 1 100 ₽: бот будет перебивать чужие ставки по шагу и поднимет её не больше чем на 1 900 ₽.
+Лимит видишь только ты.</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key danger">Да, включить автоставку</div></div>
+                <div class="kb-row"><div class="key">Нет</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона; лот принимает лимиты</dd>
+          <dt>Контекст</dt><dd>«Сейчас: …» — текущий лимит либо порог ставки</dd>
+          <dt>Действие</dt><dd>Отвечает лимитом, подтверждает</dd>
+          <dt>Переход</dt><dd>«Да» -> «Автоставка до 3 000 ₽ включена» (как L-08) -> L-04 со строкой «Твоя автоставка: до 3 000 ₽ (видишь только ты)»</dd>
+          <dt>Механика</dt><dd><code>SetProxyLimit</code> с <code>op_id</code> из подтверждения; чужих лимитов Auction не отдаёт</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Подтверждение объясняет автоставку разницей цены и лимита и напоминает, что лимит видит только сам человек.</li>
+            <li>Ответ автоставки чужой ставке лидер узнаёт уведомлением L-12, а не экраном.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-11">
+    <div class="frame-head"><span class="fid">L-11</span><h3>Хронология ставок</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">«Ставки» под карточкой; последняя страница — свежие ставки</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Ставки</b>
+
+«Кружка солегуфика»
+
+• 7 октября, ср, 10:29 · Сова* · 1 100 ₽ · вручную</div>
+              <div class="kb">
+                <div class="kb-row"><div class="key">‹ Лот</div><div class="key">Меню</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Снято после первой ставки; после ставки второго участника и ответа автоставки пульт показал у лота «3 ставки» — по строке на каждую: «· @ник · 1 200 ₽ · вручную», «· Сова* · 1 300 ₽ · авто». Пустая: «Ставок пока нет.». Больше восьми строк — листание «←» и «→», номер страницы в заголовке.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона</dd>
+          <dt>Контекст</dt><dd>Журнал лота, внутри страницы от ранних к поздним; серия автоставок — одна строка с итоговой ценой</dd>
+          <dt>Действие</dt><dd>Листает, возвращается на карточку</dd>
+          <dt>Переход</dt><dd>«‹ Лот» -> L-04 с той же страницей ленты</dd>
+          <dt>Механика</dt><dd><code>ListLotHistory</code> целиком, нарезка по восемь от свежего конца; имена одним <code>GetDisplayNames</code>, без имени строка остаётся без него</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Название лота — абзац в кавычках; строка «• момент · имя · сумма · способ» — поля через «·», способ: «вручную», «в зале», «авто».</li>
+            <li>Год в моменте называется, только когда он не текущий.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-12">
+    <div class="frame-head"><span class="fid">L-12</span><h3>Уведомления аукциона</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">следы из шины: перебитие, ответ автоставки, покупка, допуск</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble">Твою ставку на «Кружка солегуфика» перебили. Текущая цена — 1 300 ₽.</div>
+              <div class="kb"><div class="kb-row"><div class="key">К лоту</div></div></div>
+            </div>
+            <div class="row bot"><div class="bubble">Твоя автоставка на «Кружка солегуфика» подняла цену до 1 300 ₽: лидируешь ты.</div>
+              <div class="kb"><div class="kb-row"><div class="key">К лоту</div></div></div>
+            </div>
+            <div class="row bot"><div class="bubble">Лот «Кружка солегуфика» твой за 1 300 ₽.</div>
+              <div class="kb"><div class="kb-row"><div class="key">К лоту</div></div></div>
+            </div>
+            <div class="row bot"><div class="bubble">Тебя допустили к аукциону.</div>
+              <div class="kb"><div class="kb-row"><div class="key">Открыть аукцион</div></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">На пульте провода не приходят: Notifications в контуре нет. Тексты — из тестов <code>delivery/message.test.ts</code>; живой прогон — PER-468.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Участник аукциона с ролью <code>public</code></dd>
+          <dt>Контекст</dt><dd>Факты Notifications <code>lot_outbid</code>, <code>lot_proxy_raised</code>, <code>lot_purchased</code>, <code>access_granted</code>; название лота бот читает у Auction от имени получателя, без него — «на лот»</dd>
+          <dt>Действие</dt><dd>Открывает карточку лота или вход в аукцион</dd>
+          <dt>Переход</dt><dd>«К лоту» -> L-04 новым сообщением; «Открыть аукцион» -> FAQ или L-02 новым сообщением</dd>
+          <dt>Механика</dt><dd><code>sendMessage</code> без <code>parse_mode</code>; кнопка следа <code>v1:t:</code> с обычной кнопкой внутри: уведомление не правится и не удаляется</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Одна фраза на «ты», без заголовка, шапки и разметки (решение владельца 7 октября 2026 года, PER-472). Шапка «Лид: Название» хаба отвергнута: у хаба она отделяет слова организатора, которых здесь нет.</li>
+            <li>Бриф ботов говорит об уведомлениях тем же лицом, что дизайн-код: «ты».</li>
+            <li>Отправка несёт метку каталога <code>notification</code>: линтер видит и её.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  <article class="frame t-l" id="L-13">
+    <div class="frame-head"><span class="fid">L-13</span><h3>Недоступно и устарело</h3><span class="chip ok">решено</span></div>
+    <div class="frame-body">
+      <div class="stage">
+        <div class="stage-label">кадры отказа с выходом</div>
+        <div class="phone">
+          <div class="tg-head"><div class="ava">SA</div><div class="who"><b>Бот аукциона</b></div></div>
+          <div class="tg-chat">
+            <div class="row bot"><div class="bubble"><b>Аукцион сейчас недоступен.</b> Попробуй ещё раз через минуту.</div>
+              <div class="kb"><div class="kb-row"><div class="key">Повторить</div><div class="key">Меню</div></div></div>
+            </div>
+            <div class="row bot"><div class="bubble"><b>Этот экран устарел.</b> Открой меню и повтори действие.</div>
+              <div class="kb"><div class="kb-row"><div class="key">Меню</div></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="stage-note">Ожидание допуска: «Заявка на рассмотрении. Участие в аукционе пока не открыто.»; блокировка: «Доступ к аукциону закрыт.» — без клавиатуры.</div>
+      </div>
+      <div class="meta">
+        <dl class="meta-list">
+          <dt>Роль</dt><dd>Любая</dd>
+          <dt>Контекст</dt><dd>Auction или Identity не ответили в бюджет действия; кнопка от прошлого релиза бота или чужого домена</dd>
+          <dt>Действие</dt><dd>Повторяет то же действие или идёт в меню</dd>
+          <dt>Переход</dt><dd>«Повторить» -> экран, с которого пришёл отказ; после сбоя <code>/start</code> — только «Повторить», после сбоя ответа на вопрос — только «Меню»</dd>
+          <dt>Механика</dt><dd>«Повторить» несёт <code>callback_data</code> исходного действия: хранилища у экранов нет (ADR-030)</dd>
+        </dl>
+        <div class="decided">
+          <h4>Что зафиксировано</h4>
+          <ul>
+            <li>Жирное первое предложение в одной строке с остальным текстом — исключение из правила пустой строки после заголовка, записанное в «Формате».</li>
+            <li>Экрана без кнопки не остаётся; исключение — кадры без доступа, которые в дерево не входят.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </article>
+
+  </div>
+</section>
+
 <section id="map">
   <div class="sec-head">
     <h2>Карта переходов</h2>
     <p>
-      Схема показывает основные пути. Полный список переходов, включая возвраты и ошибочные ветки, приведён в таблице ниже.
+      Схема показывает основные пути бота хаба. Полный список переходов, включая возвраты и ошибочные ветки, приведён в таблице ниже.
+      Кадры трека «Бот аукциона» (L-01…L-13) в схему не входят: их дерево и переходы задаёт
+      <a href="design-code.md#дерево-бота-аукциона">design-code.md, «Дерево бота аукциона»</a>, а переходы названы в каждом кадре.
     </p>
   </div>
 

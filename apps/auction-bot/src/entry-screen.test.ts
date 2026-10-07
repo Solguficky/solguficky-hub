@@ -14,7 +14,9 @@ import {
 } from "./entry-screen.js";
 import { entryCallback, listCallback } from "./faq.js";
 
-const options = { timeZone: "Europe/Moscow" };
+// Момент показа в 2026 году: года в датах экранов нет, пока он текущий.
+const now = new Date("2026-10-07T12:00:00Z");
+const options = { timeZone: "Europe/Moscow", now };
 const plainCard = { ...options, presentation: "plain" as const };
 const rub = (rubles: number): Money => ({
   minorUnits: rubles * 100,
@@ -61,11 +63,11 @@ describe("renderEntryScreen", () => {
   it("keeps the menu free of trading buttons and hub promises", () => {
     const screen = renderEntryScreen({ kind: "menu" }, options);
     expect(screen.text).toBe(
-      "<b>Меню</b>\n\nАукцион сообщества. Выбери раздел.",
+      "<b>Меню</b>\n\nАукцион сообщества: лоты, ставки и итоги торгов.",
     );
+    // Два списка — пара одним рядом, как разделы меню хаба.
     expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
-      ["Аукционы"],
-      ["Прошедшие"],
+      ["Аукционы", "Прошедшие"],
       ["Правила и FAQ"],
     ]);
     expect(screen.text).not.toMatch(/хаб|сходк/i);
@@ -149,7 +151,10 @@ describe("renderEntryScreen", () => {
       options,
     );
     expect(screen.format).toBe("html");
-    expect(screen.text).toBe("<b>Лоты · 1 из 2</b>\n\nПо возрастанию цены.");
+    // Строки лотов в теле повторяют кнопки: день с «—» вместо «·» (PER-472).
+    expect(plain(screen.text)).toBe(
+      "<b>Лоты · 1 из 2</b>\n\n• Носки — старт 500 ₽\n• Лот без названия — не продан",
+    );
     expect(screen.keyboard.map((row) => row.map((b) => plain(b.text)))).toEqual(
       [
         ["Носки · старт 500 ₽"],
@@ -159,6 +164,38 @@ describe("renderEntryScreen", () => {
         ["‹ Аукционы", "Меню"],
       ],
     );
+  });
+
+  // Перенос строки в названии не плодит строк списка: вторая выглядела бы
+  // чужим лотом с чужой ценой.
+  it("keeps a lot title with line breaks on one line of the feed", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "feed",
+              auctionId: "auc-1",
+              page: 0,
+              pageCount: 1,
+              lots: [
+                {
+                  lotId: "a",
+                  title: "Ваза\n• Другой лот",
+                  status: { kind: "unsold" },
+                },
+              ],
+            },
+          ],
+          keyboard: [
+            [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
+          ],
+        },
+      },
+      options,
+    );
+    expect(screen.text).toBe("<b>Лоты</b>\n\n• Ваза • Другой лот — не продан");
   });
 
   it("names an empty feed instead of showing nothing", () => {
@@ -199,14 +236,13 @@ describe("renderEntryScreen", () => {
       participantName: "@owl",
     });
     expect(screen.format).toBe("rich");
-    expect(screen.text).toMatch(/^<h1>Кружка<\/h1><p>Роспись\.<\/p>/);
-    const text = plain(visible(screen.text));
-    expect(text).toContain("Текущая цена: 1 200 ₽.");
-    expect(text).toContain("Лидер: @owl.");
-    expect(text).toContain("Следующая ставка — от 1 250 ₽.");
-    expect(text).toContain("Шаг: 50 ₽.");
-    // 18:00 UTC — 21:00 по Москве.
-    expect(text).toContain("Торги до 10 октября, сб, 21:00.");
+    // Порядок групп: статус, цена и лидер, описание; строки без точек
+    // (дизайн-код, «Карточка лота»). 18:00 UTC — 21:00 по Москве.
+    expect(plain(screen.text)).toBe(
+      "<h1>Кружка</h1><p>Статус: идут торги</p>" +
+        "<p>Цена: 1 200 ₽<br>Лидер: @owl<br>Следующая ставка: от 1 250 ₽<br>Шаг: 50 ₽<br>Торги до: 10 октября, сб, 21:00</p>" +
+        "<p>Роспись.</p>",
+    );
     expect(screen.photo).toBeUndefined();
   });
 
@@ -219,7 +255,7 @@ describe("renderEntryScreen", () => {
         phase: "online",
       },
     }).text;
-    expect(text).toContain("Лидер есть.");
+    expect(text).toContain("Лидер: есть");
     expect(text).not.toContain("p-1");
   });
 
@@ -230,8 +266,9 @@ describe("renderEntryScreen", () => {
         participantName: "Сыч*",
       }).text,
     );
-    expect(text).toContain("Продан за 3 000 ₽.");
-    expect(text).toContain("Победитель: Сыч*.");
+    expect(text).toContain("Статус: продан");
+    expect(text).toContain("Цена продажи: 3 000 ₽");
+    expect(text).toContain("Победитель: Сыч*");
   });
 
   // Критерий PER-463: последний ряд под лотом — возврат и «Меню».
@@ -246,7 +283,7 @@ describe("renderEntryScreen", () => {
 
   it("shows an unsold lot as an outcome without a winner", () => {
     const text = lotScreen({ status: { kind: "unsold" } }).text;
-    expect(text).toContain("лот не продан");
+    expect(text).toContain("Статус: не продан");
     expect(text).not.toContain("Победитель");
   });
 
@@ -273,8 +310,8 @@ describe("renderEntryScreen", () => {
     });
     expect(plain(screen.text)).toBe(
       "<h1>Кружка &lt;XL&gt; &amp; блюдце</h1>" +
-        "<p>Роспись.<br>Ручная.</p><p>Объём 300 мл.</p>" +
-        "<p>Продан за 3 000 ₽.<br>Победитель: Сыч.</p>",
+        "<p>Статус: продан</p><p>Цена продажи: 3 000 ₽<br>Победитель: Сыч</p>" +
+        "<p>Роспись.<br>Ручная.</p><p>Объём 300 мл.</p>",
     );
   });
 
@@ -304,7 +341,7 @@ describe("renderEntryScreen", () => {
     expect(screen.format).toBe("html");
     expect(screen.photo).toBeUndefined();
     expect(screen.text).toBe(
-      "<b>Кружка &lt;XL&gt;</b>\n\nРоспись &amp; глазурь.\n\nТорги закончились, лот не продан.",
+      "<b>Кружка &lt;XL&gt;</b>\n\nСтатус: не продан\n\nРоспись &amp; глазурь.",
     );
   });
 
@@ -315,7 +352,7 @@ describe("renderEntryScreen", () => {
     );
     expect(visible(screen.text).length).toBeLessThanOrEqual(TEXT_LIMIT);
     expect(screen.text).toContain("…");
-    expect(screen.text).toContain("лот не продан");
+    expect(screen.text).toContain("Статус: не продан");
   });
 
   // Длину названия Auction не ограничивает: цена и исход остаются на карточке.
@@ -324,7 +361,7 @@ describe("renderEntryScreen", () => {
       card: { title: "К".repeat(5_000), description: "" },
       status: { kind: "sold", winnerId: "p-3", price: rub(3000) },
     });
-    expect(plain(visible(screen.text))).toContain("Продан за 3 000 ₽.");
+    expect(plain(visible(screen.text))).toContain("Цена продажи: 3 000 ₽");
     expect(screen.text.length).toBeLessThan(1_000);
   });
 
@@ -336,6 +373,75 @@ describe("renderEntryScreen", () => {
     );
     expect(visible(screen.text).length).toBeLessThanOrEqual(TEXT_LIMIT);
     expect(screen.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
+  });
+
+  // Свой лимит — строка фактов; над названием ничего нет (PER-472).
+  it("shows the own limit among the facts and nothing above the title", () => {
+    const screen = lotScreen(
+      {
+        card: { title: "Кружка", description: "" },
+        status: { kind: "trading", currentPrice: rub(1200), phase: "online" },
+        viewerProxyLimit: rub(2000),
+      },
+      plainCard,
+    );
+    expect(plain(screen.text)).toBe(
+      "<b>Кружка</b>\n\n" +
+        "Статус: идут торги\n\nЦена: 1 200 ₽\nЛидер: пока нет\nТвоя автоставка: до 2 000 ₽ (видишь только ты)",
+    );
+  });
+
+  // Отказ команды — свой экран исхода (PER-472): исход в заголовке, лот в
+  // кавычках, цена из отказа абзацем, «К лоту» и «Меню» одним рядом.
+  it("shows a refused command as its own outcome screen", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "result",
+              result: {
+                command: "bid",
+                kind: "refused",
+                refusal: { kind: "bid-below-minimum", minRequired: rub(1300) },
+              },
+              lotId: "lot-1",
+              auctionId: "auc-1",
+              title: "Кружка",
+            },
+          ],
+          keyboard: [
+            [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+          ],
+        },
+      },
+      plainCard,
+    );
+    expect(screen.id).toBe("command-result");
+    expect(plain(screen.text)).toBe(
+      "<b>Ставка ниже порога</b>\n\n«Кружка»\n\nСейчас можно от 1 300 ₽.",
+    );
+    expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
+      ["К лоту", "Меню"],
+    ]);
+  });
+
+  // Чужой год называется в дате (дизайн-код, «Формат»).
+  it("names the year of a deadline outside the current year", () => {
+    const text = plain(
+      visible(
+        lotScreen({
+          status: {
+            kind: "trading",
+            currentPrice: rub(1),
+            deadline: "2027-01-09T18:00:00Z",
+            phase: "online",
+          },
+        }).text,
+      ),
+    );
+    expect(text).toContain("Торги до: 9 января 2027, сб, 21:00");
   });
 
   it("formats kopecks only when there are some", () => {
@@ -369,11 +475,14 @@ describe("proxy limit confirmation", () => {
           ],
         },
       },
-      { timeZone: "Europe/Moscow" },
+      options,
     );
 
   it("names how far the bot may raise the price", () => {
     const screen = confirm(2000);
+    expect(plain(screen.text)).toMatch(
+      /^<b>Включить автоставку до 2 000 ₽\?<\/b>\n\n/,
+    );
     expect(screen.text).toMatch(/поднимет её не больше чем на 800\s₽/);
     expect(screen.text).toContain("Лимит видишь только ты.");
     expect(screen.keyboard[0]?.[0]).toMatchObject({
@@ -384,6 +493,117 @@ describe("proxy limit confirmation", () => {
 
   it("says the bot will not outbid when the limit is not above the price", () => {
     expect(confirm(1200).text).toContain("перебивать бот не будет");
+  });
+});
+
+// Лист ставки (PER-472): заголовок-вопрос с суммой и название в кавычках у
+// подтверждения, пустая строка после заголовка, причина отказа над ним.
+describe("bid sheet screens", () => {
+  const body = (block: AuctionBlock) =>
+    renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [block],
+          keyboard: [
+            [
+              {
+                action: "question.cancel",
+                callbackData: "v1:auc:qb:lot-1:1:42",
+              },
+            ],
+          ],
+        },
+      },
+      options,
+    );
+
+  it("asks the bid as a question with the lot in quotes", () => {
+    const screen = body({
+      kind: "confirm",
+      command: "bid",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      title: "Кружка <с совой>",
+      amount: rub(1300),
+      currentPrice: rub(1200),
+    });
+    expect(plain(screen.text)).toBe(
+      "<b>Поставить 1 300 ₽?</b>\n\n«Кружка &lt;с совой&gt;»\n\nОтменить ставку нельзя.",
+    );
+  });
+
+  it("asks the question with the prompt under the title", () => {
+    const screen = body({
+      kind: "question",
+      question: "bid",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      current: rub(1600),
+    });
+    expect(plain(screen.text)).toBe(
+      "<b>Своя сумма</b>\n\nПришли сумму ставки в рублях.\nСейчас: от 1 600 ₽\nНапример: 1 500",
+    );
+    expect(screen.asks).toBe(true);
+  });
+
+  // Непринятый ответ — свой экран (PER-472): причина в заголовке, над
+  // «К лоту» — «Ввести заново».
+  it("shows a refused answer as its own screen with a retry", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "answer-refused",
+              refusal: "too-large",
+              lotId: "lot-1",
+              auctionId: "auc-1",
+              title: "Кружка",
+            },
+          ],
+          keyboard: [
+            [{ action: "answer.retry", callbackData: "v1:auc:ask:b:lot-1:0" }],
+            [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:0" }],
+          ],
+        },
+      },
+      options,
+    );
+    expect(screen.id).toBe("answer-refused");
+    expect(screen.asks).toBeUndefined();
+    expect(plain(screen.text)).toBe(
+      "<b>Сумма слишком большая</b>\n\n«Кружка»\n\nБот принимает суммы до 604 661,75 ₽.",
+    );
+    expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
+      ["Ввести заново"],
+      ["К лоту", "Меню"],
+    ]);
+  });
+
+  it("lists the bids as lines under the lot in quotes with the foreign year", () => {
+    const screen = body({
+      kind: "history",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      title: "Кружка",
+      page: 0,
+      pageCount: 1,
+      entries: [
+        {
+          kind: "bid",
+          sequence: 1,
+          occurredAt: "2025-10-03T16:04:00Z",
+          amount: rub(500),
+          origin: { kind: "manual", source: "bot" },
+          participantName: "@jay",
+        },
+      ],
+    });
+    expect(plain(screen.text)).toBe(
+      "<b>Ставки</b>\n\n«Кружка»\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
+    );
   });
 });
 
@@ -404,7 +624,7 @@ describe("auction lists", () => {
     [21, "21 лот"],
     [0, "0 лотов"],
   ])("counts %i lots as %s", (lotCount, label) => {
-    expect(auctionLabel(auction({ lotCount }), "Europe/Moscow")).toBe(
+    expect(auctionLabel(auction({ lotCount }), "Europe/Moscow", now)).toBe(
       `10 октября, сб · идут ставки · ${label}`,
     );
   });
@@ -414,18 +634,27 @@ describe("auction lists", () => {
       auctionLabel(
         auction({ opensAt: "2026-10-10T22:30:00Z", stage: "scheduled" }),
         "Europe/Moscow",
+        now,
       ),
     ).toBe("11 октября, вс · скоро старт · 5 лотов");
     const { opensAt: _opensAt, ...without } = auction({});
-    expect(auctionLabel(without, "Europe/Moscow")).toBe(
+    expect(auctionLabel(without, "Europe/Moscow", now)).toBe(
       "Без онлайн-торгов · идут ставки · 5 лотов",
     );
+    // Чужой год называется (дизайн-код, «Формат»).
+    expect(
+      auctionLabel(
+        auction({ opensAt: "2027-01-09T16:00:00Z" }),
+        "Europe/Moscow",
+        now,
+      ),
+    ).toBe("9 января 2027, сб · идут ставки · 5 лотов");
   });
 
   it("names the finished stage in a past row", () => {
-    expect(auctionLabel(auction({ stage: "finished" }), "Europe/Moscow")).toBe(
-      "10 октября, сб · завершён · 5 лотов",
-    );
+    expect(
+      auctionLabel(auction({ stage: "finished" }), "Europe/Moscow", now),
+    ).toBe("10 октября, сб · завершён · 5 лотов");
   });
 
   it("opens the feed from the row and pages the list with arrows", () => {
@@ -436,8 +665,10 @@ describe("auction lists", () => {
       },
       options,
     );
+    // Строка аукциона в теле повторяет кнопку: день отделён «—», этап и число
+    // лотов через запятую.
     expect(screen.text).toBe(
-      "<b>Прошедшие аукционы · 2 из 3</b>\n\nВыбери аукцион.",
+      "<b>Прошедшие аукционы · 2 из 3</b>\n\n• 10 октября, сб — идут ставки, 5 лотов",
     );
     expect(screen.keyboard).toEqual([
       [

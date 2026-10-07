@@ -152,6 +152,8 @@ function checkRules(
   if (entry.class === "screen" && method !== "editMessageReplyMarkup") {
     const title = titleProblem(call, entry.title);
     if (title !== undefined) found.push(["title", title]);
+    const body = bodyProblem(call);
+    if (body !== undefined) found.push(["body", body]);
   }
 
   switch (entry.nav) {
@@ -350,8 +352,7 @@ function checkRules(
   return found;
 }
 
-// Заголовок — первая жирная строка. Перед ним может стоять только заметка:
-// ответ на вопрос приносит экран с заметкой в первой строке.
+// Заголовок — первая жирная строка. Что над ним, проверяет правило тела.
 function titleProblem(
   call: Carried,
   title: string | undefined,
@@ -361,15 +362,7 @@ function titleProblem(
       ? undefined
       : "rich-экран без заголовка <h1>";
   }
-  // Правка фото несёт подпись внутри `media`, а не рядом с ним.
-  const text =
-    typeof call.text === "string"
-      ? call.text
-      : typeof call.caption === "string"
-        ? call.caption
-        : typeof call.media?.caption === "string"
-          ? call.media.caption
-          : undefined;
+  const text = textOf(call);
   if (text === undefined) return "экран без текста";
   const mode = call.parse_mode ?? call.media?.parse_mode;
   if (mode !== "HTML") return "экран без разметки: заголовок не выделен";
@@ -378,6 +371,56 @@ function titleProblem(
   return title === undefined || heading.startsWith(`<b>${title}`)
     ? undefined
     : `заголовок «${heading}», а в каталоге «${title}»`;
+}
+
+// Текст вызова: правка фото несёт подпись внутри `media`, а не рядом с ним.
+function textOf(call: Carried): string | undefined {
+  return typeof call.text === "string"
+    ? call.text
+    : typeof call.caption === "string"
+      ? call.caption
+      : typeof call.media?.caption === "string"
+        ? call.media.caption
+        : undefined;
+}
+
+// Тело экрана (дизайн-код, «Формат»): заголовок первой строкой, после него
+// пустая строка. Над заголовком ничего нет: исход действия — свой экран, а не
+// заметка над карточкой (PER-472). Кадр отказа держит жирное предложение и
+// остальной текст в одной строке, и правило его не задевает. Чем заполнено тело, линтер не читает: это
+// держат тесты каталога бота.
+function bodyProblem(call: Carried): string | undefined {
+  if (typeof call.rich_message?.html === "string") {
+    const html = call.rich_message.html;
+    const at = html.indexOf("<h1>");
+    if (at < 0) return undefined;
+    // После заголовка — блок, а не голый текст: он слился бы с заголовком.
+    const after = html.slice(html.indexOf("</h1>", at) + "</h1>".length);
+    if (after !== "" && !after.startsWith("<")) {
+      return `после заголовка rich-экрана текст вне блока: «${after.slice(0, 20)}»`;
+    }
+    return at === 0
+      ? undefined
+      : `над заголовком rich-экрана текст: «${html.slice(0, Math.min(at, 40))}»`;
+  }
+  const lines = textOf(call)?.split("\n");
+  if (lines === undefined) return undefined;
+  const at = lines.findIndex((line) => line.startsWith("<b>"));
+  if (at < 0) return undefined;
+  if (at > 0) {
+    return `над заголовком текст: «${lines.slice(0, at).join(" ").slice(0, 40)}»`;
+  }
+  // Текст в строке заголовка — только у кадра отказа: там жирное первое
+  // предложение, и оно кончается знаком конца предложения.
+  const heading = lines[at] ?? "";
+  const tail = heading.slice(heading.indexOf("</b>") + "</b>".length);
+  if (tail !== "" && !/[.?!]<\/b>/.test(heading)) {
+    return `текст в строке заголовка: «${heading}»`;
+  }
+  const next = lines[at + 1];
+  return next === undefined || next === ""
+    ? undefined
+    : `после заголовка нет пустой строки: «${next}»`;
 }
 
 function backNamesOf(

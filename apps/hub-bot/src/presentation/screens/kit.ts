@@ -38,6 +38,31 @@ export function screenText(
   ].join("\n\n");
 }
 
+/** Строка списка в теле: маркер, затем поля (дизайн-код, «Формат»). */
+export function bullet(line: string): string {
+  return `• ${line}`;
+}
+
+/**
+ * Экран исхода (дизайн-код, «Экран исхода», PER-472): исход действия — свой
+ * экран, а не строка над карточкой. Первое предложение исхода — заголовок без
+ * точки, под ним предмет в кавычках, затем остаток исхода абзацем. Карточку
+ * открывает возврат: исход и содержимое не смешиваются.
+ */
+export function outcomeText(outcome: string, subject?: string): string {
+  const end = outcome.search(/[.?!](\s|$)/);
+  const sentence = end === -1 ? outcome : outcome.slice(0, end + 1);
+  const title = sentence.endsWith(".") ? sentence.slice(0, -1) : sentence;
+  const rest = end === -1 ? "" : outcome.slice(end + 1).trim();
+  return screenText(
+    title,
+    subject === undefined || subject.trim() === ""
+      ? undefined
+      : `«${escapeHtml(subject.replace(/\s+/g, " ").trim())}»`,
+    rest === "" ? undefined : escapeHtml(rest),
+  );
+}
+
 /**
  * Кадр отказа: первое предложение жирным вместо заголовка. Тексты кадров
  * ошибок по смыслу не меняются, поэтому свой заголовок им не придумывается.

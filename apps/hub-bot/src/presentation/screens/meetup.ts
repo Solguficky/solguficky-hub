@@ -352,8 +352,6 @@ export type CardView = {
   manageable: boolean;
   /** Нет — Auction не ответил, и ряда аукциона на карточке нет. */
   auction?: MeetupAuctionView | undefined;
-  /** Ответ на действие человека: стоит первой строкой, над заголовком. */
-  note?: string | undefined;
   presentation: "rich" | "plain";
   today: CommunityDay;
   /**
@@ -374,7 +372,7 @@ const unsubscribedHint =
  * «Материалов», а «Отметить состоявшейся» живёт в «Статусе».
  */
 export function cardScreen(view: CardView): ShownScreen {
-  const { meetup, manageable, note, presentation, today } = view;
+  const { meetup, manageable, presentation, today } = view;
   const token = uuidToToken(meetup.id);
   const keyboard = new InlineKeyboard();
   const editable = manageable && meetup.lifecycle !== "cancelled";
@@ -422,12 +420,8 @@ export function cardScreen(view: CardView): ShownScreen {
     ...cardLines(meetup, view.author, today),
     ...materialLines(meetup),
   ];
-  // Подсказка о подписке стоит под карточкой и уступает место заметке: вместе
-  // они читались бы как два ответа на одно нажатие.
-  const hint =
-    note === undefined && view.subscribed === false
-      ? unsubscribedHint
-      : undefined;
+  // Подсказка о подписке стоит под карточкой.
+  const hint = view.subscribed === false ? unsubscribedHint : undefined;
   // Постеры — только в богатой карточке: обычное сообщение несёт либо текст,
   // либо файл, и с файлом оно перестало бы правиться на месте.
   const photos =
@@ -437,7 +431,6 @@ export function cardScreen(view: CardView): ShownScreen {
     text: cardText({
       title,
       body,
-      note,
       hint,
       presentation,
       posters: posterBlock(photos),
@@ -448,12 +441,12 @@ export function cardScreen(view: CardView): ShownScreen {
   };
 }
 
-// Текст карточки и черновика: заметка, заголовок с телом, подсказка. Заголовок
-// и тело уже экранированы, заметка и подсказка — нет.
+// Текст карточки и черновика: заголовок с телом, подсказка. Заголовок и тело
+// уже экранированы, подсказка — нет. Исход действия карточка не несёт: он —
+// свой экран (PER-472).
 function cardText(parts: {
   title: string;
   body: readonly string[];
-  note?: string | undefined;
   hint?: string | undefined;
   presentation: "rich" | "plain";
   /** Готовый блок постеров богатой карточки: стоит сразу под её телом. */
@@ -469,8 +462,8 @@ function cardText(parts: {
   const card =
     presentation === "rich"
       ? `<h1>${title}</h1><p>${body.join("<br>")}</p>${parts.posters ?? ""}`
-      : `<b>${title}</b>\n${body.join("\n")}`;
-  return [paragraph(parts.note), card, paragraph(parts.hint)]
+      : `<b>${title}</b>\n\n${body.join("\n")}`;
+  return [card, paragraph(parts.hint)]
     .filter((part) => part !== undefined)
     .join(presentation === "rich" ? "" : "\n\n");
 }
@@ -581,11 +574,18 @@ export const stateActionCopy: Record<
   },
 };
 
+/**
+ * «Да» подтверждения смены состояния. Версия — та, которую человек видел:
+ * правка между экраном и нажатием даёт конфликт, а не команду поверх неё
+ * (PER-472). Самая длинная строка — `confirm-unschedule` с токеном и девятью
+ * цифрами версии, 61 байт из 64.
+ */
 export function confirmStateCallback(
   action: MeetupStateAction,
   token: string,
+  version: number,
 ): string {
-  return `v1:manage:${stateActionCopy[action].confirmAction}:${token}`;
+  return `v1:manage:${stateActionCopy[action].confirmAction}:${token}:${version}`;
 }
 
 export function statusScreen(
@@ -638,23 +638,18 @@ export function statusScreen(
   };
 }
 
-/**
- * Подтверждение смены состояния. `note` — почему вопрос задан снова: сходка
- * изменилась, пока человек решал.
- */
+/** Подтверждение смены состояния по снимку, который человек видит. */
 export function stateConfirmScreen(confirm: {
   action: MeetupStateAction;
-  meetup: Pick<MeetupSnapshot, "id" | "title">;
+  meetup: Pick<MeetupSnapshot, "id" | "title" | "version">;
   /** Куда возвращает «Нет»: экран, с которого подтверждение открыто. */
   back: string;
-  note?: string;
 }): ShownScreen {
   const copy = stateActionCopy[confirm.action];
   const token = uuidToToken(confirm.meetup.id);
   return {
     id: "state-confirm",
     text: [
-      ...(confirm.note === undefined ? [] : [escapeHtml(confirm.note), ""]),
       heading(copy.question),
       "",
       `«${escapeHtml(meetupTitleLabel(confirm.meetup.title))}»`,
@@ -662,7 +657,11 @@ export function stateConfirmScreen(confirm: {
     ].join("\n"),
     keyboard: confirmKeyboard({
       yes: copy.yes,
-      yesData: confirmStateCallback(confirm.action, token),
+      yesData: confirmStateCallback(
+        confirm.action,
+        token,
+        confirm.meetup.version,
+      ),
       noData: confirm.back,
     }),
     format: "HTML",

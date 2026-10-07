@@ -296,7 +296,7 @@ describe("auction bot", () => {
     const restarted = makeBot(ports);
     await restarted.bot.handleUpdate(start);
     expect(restarted.calls[0]?.payload).toMatchObject({
-      text: expect.stringContaining("Выбери раздел"),
+      text: expect.stringContaining("<b>Меню</b>"),
     });
     await restarted.bot.handleUpdate(press("faq"));
     expect(restarted.calls.at(-1)?.payload).toMatchObject({
@@ -326,8 +326,10 @@ describe("auction bot", () => {
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
-          [{ text: "Аукционы", callback_data: expect.any(String) }],
-          [{ text: "Прошедшие", callback_data: expect.any(String) }],
+          [
+            { text: "Аукционы", callback_data: expect.any(String) },
+            { text: "Прошедшие", callback_data: expect.any(String) },
+          ],
           [{ text: "Правила и FAQ", callback_data: expect.any(String) }],
         ],
       },
@@ -344,7 +346,13 @@ describe("auction bot", () => {
           chat: privateChat,
           from,
           text,
-          entities: [{ type: "bot_command", offset: 0, length: 6 }],
+          entities: [
+            {
+              type: "bot_command",
+              offset: 0,
+              length: (text.split(" ")[0] ?? text).length,
+            },
+          ],
         }),
       );
       return calls.map((call) => call.payload);
@@ -355,6 +363,8 @@ describe("auction bot", () => {
       "/start s_",
       "/start m_AZLzpLXGfY6fChssPU5fYA",
       "/start not a payload",
+      // `/menu` из кнопки меню клиента — тот же вход (PER-472).
+      "/menu",
     ]) {
       expect(await answer(text)).toEqual(plain);
     }
@@ -367,6 +377,9 @@ describe("auction bot", () => {
     ["/start s_", { sourceCode: "" }],
     ["/start m_AZLzpLXGfY6fChssPU5fYA", {}],
     ["/start", {}],
+    // `/menu` — вход без кода канала, даже с хвостом.
+    ["/menu", {}],
+    ["/menu s_tg_ads", {}],
   ])(
     "enters on %s with the public circle and the first name",
     async (text, code) => {
@@ -383,7 +396,13 @@ describe("auction bot", () => {
           chat: privateChat,
           from,
           text,
-          entities: [{ type: "bot_command", offset: 0, length: 6 }],
+          entities: [
+            {
+              type: "bot_command",
+              offset: 0,
+              length: (text.split(" ")[0] ?? text).length,
+            },
+          ],
         }),
       );
       expect(requestRole).toHaveBeenCalledExactlyOnceWith({
@@ -991,7 +1010,10 @@ describe("auction bot", () => {
     }));
     const { bot, calls } = makeBot(
       portsWith({ lot: withImage, image: getLotImage }),
-      { photos, dropOnce: "editMessageText" },
+      {
+        photos,
+        dropOnce: "editMessageText",
+      },
     );
     await bot.handleUpdate(lotPress());
     expect(calls.map((call) => call.method)).toEqual([
@@ -1047,7 +1069,9 @@ describe("auction bot", () => {
     }));
     const { bot, calls } = makeBot(
       portsWith({ lot: withImage, image: getLotImage }),
-      { refuse: { editMessageText: "Bad Request: message can't be edited" } },
+      {
+        refuse: { editMessageText: "Bad Request: message can't be edited" },
+      },
     );
     await bot.handleUpdate(lotPress());
     expect(calls.map((call) => call.method)).toEqual([
@@ -1159,11 +1183,11 @@ describe("auction bot", () => {
     const lines = text.split("\n").filter((line) => line.includes("₽"));
     expect(lines).toEqual([
       expect.stringMatching(
-        /^3 октября, сб, 19:04 · @jay · 1\s500\s₽ · вручную$/,
+        /^• 3 октября, сб, 19:04 · @jay · 1\s500\s₽ · вручную$/,
       ),
-      expect.stringMatching(/^3 октября, сб, 19:04 · 1\s600\s₽ · авто$/),
+      expect.stringMatching(/^• 3 октября, сб, 19:04 · 1\s600\s₽ · авто$/),
       expect.stringMatching(
-        /^3 октября, сб, 19:04 · @jay · 1\s700\s₽ · в зале$/,
+        /^• 3 октября, сб, 19:04 · @jay · 1\s700\s₽ · в зале$/,
       ),
     ]);
     expect(edit.payload).toMatchObject({
@@ -1555,7 +1579,9 @@ describe("bid leaf delivery", () => {
       "editMessageReplyMarkup",
     );
     expect(calls.find((call) => call.method === "deleteMessage")).toMatchObject(
-      { payload: { chat_id: 42, message_id: 7 } },
+      {
+        payload: { chat_id: 42, message_id: 7 },
+      },
     );
     expect(calls.at(-1)).toMatchObject({
       method: "sendMessage",
@@ -1568,7 +1594,7 @@ describe("bid leaf delivery", () => {
     await bot.handleUpdate(answer({ text: "1 300" }));
     const sent = calls.find((call) => call.method === "sendMessage");
     expect(sent?.payload).toMatchObject({
-      text: expect.stringMatching(/Сумма: 1\s300\s₽/),
+      text: expect.stringMatching(/^<b>Поставить 1\s300\s₽\?<\/b>/),
       reply_markup: {
         inline_keyboard: [
           [
@@ -1594,7 +1620,9 @@ describe("bid leaf delivery", () => {
     await bot.handleUpdate(answer({ text: "10" }));
     const sent = JSON.stringify(calls.map((call) => call.payload));
     expect(sent).not.toContain("Да, поставить");
-    expect(sent).toMatch(/Ставка ниже порога\. Сейчас можно от 1\s250\s₽\./);
+    // Отказ — свой экран исхода (PER-472), а не строка над карточкой.
+    expect(sent).toMatch(/<b>Ставка ниже порога<\/b>/);
+    expect(sent).toMatch(/Сейчас можно от 1\s250\s₽\./);
   });
 
   // PER-473: после «Да» — экран «принята» с «К лоту» и «Меню» одним рядом.
@@ -1638,21 +1666,51 @@ describe("bid leaf delivery", () => {
     });
   });
 
+  // Непринятый ответ — свой экран новым сообщением (PER-472): причина в
+  // заголовке, «Ввести заново» задаёт вопрос снова, «Отмена» снята с вопроса.
   it.each([
-    [{ text: "много" }, "Это не сумма."],
-    [{ text: "$20" }, "Ставки принимаются только в рублях."],
-    [{ sticker: { file_id: "s" } }, "Нужен ответ текстом."],
-  ])("asks again with the reason for %j", async (extra, reason) => {
-    const { bot, calls } = makeBot(trading);
-    await bot.handleUpdate(answer(extra));
-    const sent = calls.find((call) => call.method === "sendMessage");
-    const text = (sent?.payload as { text?: string } | undefined)?.text ?? "";
-    expect(text.startsWith(reason)).toBe(true);
-    expect(sent?.payload).toMatchObject({
-      reply_markup: { force_reply: true },
-    });
-    expect(calls.at(-1)).toMatchObject({ method: "editMessageReplyMarkup" });
-  });
+    [{ text: "много" }, "Это не сумма"],
+    [{ text: "$20" }, "Ставки принимаются только в рублях"],
+    [{ sticker: { file_id: "s" } }, "Нужен ответ текстом"],
+  ])(
+    "answers a refused %j with its own screen and a retry",
+    async (extra, reason) => {
+      const { bot, calls } = makeBot(trading);
+      await bot.handleUpdate(answer(extra));
+      const sent = calls.find((call) => call.method === "sendMessage");
+      const text = (sent?.payload as { text?: string } | undefined)?.text ?? "";
+      expect(text.startsWith(`<b>${reason}</b>`)).toBe(true);
+      expect(sent?.payload).toMatchObject({
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Ввести заново",
+                callback_data: encodeAuctionCallback({
+                  kind: "ask",
+                  question: "bid",
+                  lotId,
+                  page: 0,
+                }),
+              },
+            ],
+            [
+              {
+                text: "К лоту",
+                callback_data: encodeAuctionCallback({
+                  kind: "lot",
+                  lotId,
+                  page: 0,
+                }),
+              },
+              { text: "Меню", callback_data: entryCallback("menu") },
+            ],
+          ],
+        },
+      });
+      expect(calls.at(-1)).toMatchObject({ method: "editMessageReplyMarkup" });
+    },
+  );
 
   it("deletes the question on cancel and sends the card as a new message", async () => {
     const { bot, calls } = makeBot(trading, { presentation: "plain" });

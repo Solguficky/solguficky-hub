@@ -116,6 +116,10 @@ import {
 import {
   type CallbackAction,
   type CardCursor,
+  consoleViewData,
+  consoleWeekData,
+  lotAskData,
+  lotNewData,
   type NotifiedMeetupCategory,
   type PublishOrigin,
   parseCallback,
@@ -141,6 +145,7 @@ import {
   consoleMissingText,
   consoleScreen,
   finalToast,
+  weekAskErrorText,
   weekConfirmScreen,
   weekQuestionText,
 } from "./screens/auction-console.js";
@@ -157,6 +162,7 @@ import {
   escapeHtml,
   heading,
   menuOnly,
+  outcomeText,
   type Parent,
   refusalText,
   retryLabel,
@@ -169,10 +175,12 @@ import {
   withNav,
 } from "./screens/kit.js";
 import {
+  lotAskErrorText,
   lotFormScreen,
   lotQuestionText,
   lotRefusalText,
   lotSavedNote,
+  lotSavedScreen,
   toLot,
   toLots,
 } from "./screens/lot-form.js";
@@ -368,13 +376,8 @@ const publishMomentPrompt =
   "Когда опубликовать сходку? Напиши дату и время по времени сообщества: ДД.ММ.ГГГГ ЧЧ:ММ";
 // Прошедший момент — отдельный отказ со своим текстом, а не «не разобрал
 // дату»: ввод понят, но время уже наступило (E-02, открытый вопрос раскадровки).
-const publishMomentRetryText: Record<PublishMomentRetry, string> = {
-  unparsed: "Не получилось разобрать дату. Напиши, например: 21.09.2026 19:30",
-  past: "Это время уже прошло или его нельзя назначить по времени сообщества. Назначь публикацию на момент в будущем: ДД.ММ.ГГГГ ЧЧ:ММ",
-  conflict: `${conflictText}\n\n${publishMomentPrompt}`,
-};
-
-// То же над экраном выбора даты: там формат ввода не нужен, дату жмут кнопкой.
+// Причина отказа моменту публикации: заголовок экрана исхода у ответа текстом
+// и строка над экраном выбора даты, где дату жмут кнопкой.
 const publishMomentRetryLead: Record<PublishMomentRetry, string> = {
   unparsed: "Не получилось разобрать дату.",
   past: "Это время уже прошло или его нельзя назначить по времени сообщества.",
@@ -782,11 +785,11 @@ async function handleMessage(
       if (pending.kind === "material-source") {
         const source = parseMaterialInput(ctx.message);
         if (source === undefined) {
-          await askQuestion(
+          await refuseAnswer(
             ctx,
             questions,
             pending,
-            "На это сообщение нельзя дать ссылку: источник скрыт или пересылка из него запрещена. Пришли ответом на это сообщение пересланное сообщение с доступным источником, фотографию или документ.",
+            "На это сообщение нельзя дать ссылку. Источник скрыт или пересылка из него запрещена: нужно пересланное сообщение с доступным источником, фотография или документ.",
             replyId,
           );
           outcome = {
@@ -824,11 +827,11 @@ async function handleMessage(
       }
       const title = ctx.message?.text?.trim();
       if (title === undefined || title === "" || title.length > 200) {
-        await askQuestion(
+        await refuseAnswer(
           ctx,
           questions,
           pending,
-          "Название должно быть текстом от 1 до 200 символов. Напиши короткое название.",
+          "Название должно быть текстом от 1 до 200 символов.",
           replyId,
         );
         outcome = {
@@ -903,7 +906,7 @@ async function handleMessage(
       // только текст автора, а вопрос остаётся ждать настоящего ответа.
       const checked = checkBroadcastBody(ctx.message?.text ?? "");
       if (checked.kind !== "ok") {
-        await askQuestion(
+        await refuseAnswer(
           ctx,
           questions,
           pending,
@@ -973,19 +976,27 @@ async function handleMessage(
         // Код проверяется до вопроса о подписи: иначе отказ Identity пришёл бы
         // только после второго ответа, и подпись пришлось бы набирать заново.
         const valid = isSourceChannelCode(answer);
-        await askQuestion(
-          ctx,
-          questions,
-          valid
-            ? {
-                kind: "channel-label",
-                code: answer,
-                telegramUserId: pending.telegramUserId,
-              }
-            : bodyOf(pending),
-          valid ? channelLabelPrompt : channelCodeRetryPrompt,
-          replyId,
-        );
+        if (valid) {
+          await askQuestion(
+            ctx,
+            questions,
+            {
+              kind: "channel-label",
+              code: answer,
+              telegramUserId: pending.telegramUserId,
+            },
+            channelLabelPrompt,
+            replyId,
+          );
+        } else {
+          await refuseAnswer(
+            ctx,
+            questions,
+            bodyOf(pending),
+            channelCodeRetryPrompt,
+            replyId,
+          );
+        }
         outcome = {
           level: "info",
           message: valid
@@ -1012,7 +1023,7 @@ async function handleMessage(
         // Код проверен на первом шаге, поэтому отказ — о подписи. Сбой
         // Identity тоже переспрашивает подпись: канал не сохранён, и тот же
         // ответ можно прислать ещё раз, а не набирать код заново.
-        await askQuestion(
+        await refuseAnswer(
           ctx,
           questions,
           bodyOf(pending),
@@ -1243,11 +1254,11 @@ async function handleMessage(
         if (result.kind === "invalid") {
           // Отказ задаёт вопрос заново: обычное сообщение после него ушло бы
           // мимо формы, и следующий текст остался бы без ответа.
-          await askQuestion(
+          await refuseAnswer(
             ctx,
             questions,
             pending,
-            "Это не похоже на ник Telegram. Пришли его ещё раз, с @ или без.",
+            "Это не похоже на ник Telegram. Ник присылают с @ или без.",
             replyId,
           );
           outcome = adminOutcome(result, identity.person.identityId);
@@ -1347,17 +1358,11 @@ async function handleMessage(
                 ? "create_meetup"
                 : "update_meetup";
       if (ctx.from?.id === pending.telegramUserId) {
-        const asked =
-          repliedMessage !== undefined && "text" in repliedMessage
-            ? repliedMessage.text
-            : undefined;
-        await askQuestion(
+        await refuseAnswer(
           ctx,
           questions,
           bodyOf(pending),
-          asked === undefined || asked.startsWith(textNeededHint)
-            ? (asked ?? textNeededHint)
-            : `${textNeededHint}\n${asked}`,
+          textNeededHint,
           replyId,
         );
       }
@@ -1939,21 +1944,21 @@ async function handleCallback(
             });
       if (result.kind === "conflict") {
         // Уже убранный материал Meetups отдаёт успехом по любой версии, а кнопка
-        // без версии проверяет это сама, так что здесь он ещё на месте:
-        // подтверждение повторяется со свежей версией.
+        // без версии проверяет это сама, так что здесь он ещё на месте. Исход —
+        // свой экран (PER-472): «‹ Материалы» открывает список по свежей
+        // версии, и убрать материал можно оттуда.
         const material = result.meetup.materials.find(
           (candidate) => candidate.id === materialId,
         );
-        await showScreen(
-          ctx,
-          removeConfirmScreen({
-            token: action.token,
-            materialToken: action.materialToken,
-            version: result.meetup.version,
-            title: material === undefined ? "" : materialTitle(material, 1),
-            note: `${conflictText} Проверь данные и подтверди действие ещё раз.`,
-          }),
-        );
+        await showScreen(ctx, {
+          id: "outcome",
+          text: outcomeText(
+            conflictText,
+            material === undefined ? undefined : materialTitle(material, 1),
+          ),
+          keyboard: withNav(new InlineKeyboard(), toMaterials(action.token)),
+          format: "HTML",
+        });
       } else {
         await renderMaterialResult(ctx, result, action.token);
       }
@@ -2676,6 +2681,9 @@ async function handleCallback(
         intent: "change-meetup-state",
         action: stateActionByCallback[action.kind],
         meetupId,
+        ...(action.version === undefined
+          ? {}
+          : { expectedVersion: action.version }),
         ...rpcCall(ctx, useCase),
       });
       await renderStateResult(ctx, result, runtime.presentation ?? "rich");
@@ -3418,19 +3426,16 @@ async function sendMaterialConfirmation(
   }
 }
 
-// Подтверждение удаления: исчезнет только привязка, оригинал остаётся. `note`
-// — почему вопрос задан снова.
+// Подтверждение удаления: исчезнет только привязка, оригинал остаётся.
 function removeConfirmScreen(confirm: {
   token: string;
   materialToken: string;
   version: number;
   title: string;
-  note?: string;
 }): ShownScreen {
   return {
     id: "material-remove-confirm",
     text: [
-      ...(confirm.note === undefined ? [] : [escapeHtml(confirm.note), ""]),
       heading("Убрать материал?"),
       "",
       `${confirm.title === "" ? "Привязка" : `«${escapeHtml(confirm.title)}»`} исчезнет из сходки. Оригинал в Telegram останется на месте.`,
@@ -4180,7 +4185,7 @@ function subscriptionNote(
     .filter((state) => state.enabled)
     .map((state) => categoryLabels[state.category].toLowerCase());
   if (enabled.length === 0) {
-    return "Подписка включена, но по этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомлениях сходки».";
+    return "Подписка включена. По этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомлениях сходки».";
   }
   const lines = [
     `Подписка включена. По этой сходке будут приходить: ${enabled.join(", ")}.`,
@@ -4417,11 +4422,26 @@ function askLotQuestion(
     replaces?: number | undefined;
   },
 ): Promise<void> {
+  const pending: PendingBody = {
+    kind: "lot",
+    question: ask.question,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      lotAskErrorText(ask.error, ask.maxImageBytes),
+      ask.replaces,
+    );
+  }
   return askQuestion(
     ctx,
     questions,
-    { kind: "lot", question: ask.question, telegramUserId: ctx.from?.id ?? 0 },
-    lotQuestionText(ask.question, ask.lot, ask.error, ask.maxImageBytes),
+    pending,
+    lotQuestionText(ask.question, ask.lot),
     ask.replaces,
   );
 }
@@ -4496,10 +4516,9 @@ async function renderLotAnswer(
   if (result.kind === "lot-form") {
     await showScreen(
       ctx,
-      lotFormScreen(
-        result.lot,
-        result.saved === undefined ? undefined : lotSavedNote[result.saved],
-      ),
+      result.saved === undefined
+        ? lotFormScreen(result.lot)
+        : lotSavedScreen(result.lot, lotSavedNote[result.saved]),
     );
     return handled("lot form answer saved");
   }
@@ -4950,15 +4969,26 @@ function askConsoleWeek(
     replaces?: number | undefined;
   },
 ): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-week",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      weekAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
   return askQuestion(
     ctx,
     questions,
-    {
-      kind: "console-week",
-      auctionId: ask.auctionId,
-      telegramUserId: ctx.from?.id ?? 0,
-    },
-    weekQuestionText(ask.timeZone, ask.week, ask.error),
+    pending,
+    weekQuestionText(ask.timeZone, ask.week),
     ask.replaces,
   );
 }
@@ -5328,13 +5358,23 @@ async function renderMeetupCard(
     if (result.auction?.kind === "open") {
       ctx.auctionParents?.remember(result.auction.auctionId, result.meetup.id);
     }
+    // Исход действия — свой экран (PER-472): карточку открывает «‹ Сходка».
+    if (note !== undefined) {
+      await showScreen(ctx, {
+        id: "outcome",
+        text: outcomeText(note, result.meetup.title),
+        keyboard: exitToCard(uuidToToken(result.meetup.id)),
+        format: "HTML",
+        delivery: edit ? "auto" : "new",
+      });
+      return;
+    }
     const view = {
       meetup: result.meetup,
       author: result.author,
       subscribed: result.subscribed,
       auction: result.auction,
       manageable,
-      note,
       presentation,
       today: communityToday(ctx),
     };
@@ -5531,15 +5571,14 @@ async function renderStateResult(
     return;
   }
   if (result.kind === "conflict" && result.action !== undefined) {
-    await showScreen(
-      ctx,
-      stateConfirmScreen({
-        action: result.action,
-        meetup: result.meetup,
-        back: `v1:manage:status:${uuidToToken(result.meetup.id)}`,
-        note: `${conflictText} Проверь данные и подтверди действие ещё раз.`,
-      }),
-    );
+    // Исход — свой экран (PER-472): сходку перечитывает «‹ Сходка», и
+    // действие человек повторяет по свежим данным.
+    await showScreen(ctx, {
+      id: "outcome",
+      text: outcomeText(conflictText, meetupTitleLabel(result.meetup.title)),
+      keyboard: exitToCard(uuidToToken(result.meetup.id)),
+      format: "HTML",
+    });
     return;
   }
   const text =
@@ -5715,25 +5754,25 @@ async function renderFormResult(
       );
       return;
     }
-    // Отказ Meetups причины не называет, поэтому рядом с ним стоит сам вопрос
-    // поля: без него человек теряет формат даты и не знает, что вводить.
-    const ask =
-      "rejected" in result && result.error !== undefined
-        ? `${result.error}\n${formPrompts[result.field]}`
-        : (result.error ?? formPrompts[result.field]);
-    const prompt =
-      result.kind === "edit-ask" ? `Сейчас: ${currentValue}\n${ask}` : ask;
+    const pending: PendingBody = {
+      kind: "meetup",
+      mode: result.kind === "edit-ask" ? "edit" : "create",
+      field: result.field,
+      meetupId: result.meetup.id,
+      telegramUserId: ctx.from?.id ?? 0,
+    };
+    // Непринятый ответ — свой экран (PER-472): формат поля покажет вопрос за
+    // «Ввести заново».
+    if (result.error !== undefined) {
+      await refuseAnswer(ctx, questions, pending, result.error);
+      return;
+    }
+    const ask = formPrompts[result.field];
     await askQuestion(
       ctx,
       questions,
-      {
-        kind: "meetup",
-        mode: result.kind === "edit-ask" ? "edit" : "create",
-        field: result.field,
-        meetupId: result.meetup.id,
-        telegramUserId: ctx.from?.id ?? 0,
-      },
-      prompt,
+      pending,
+      result.kind === "edit-ask" ? `Сейчас: ${currentValue}\n${ask}` : ask,
     );
     return;
   }
@@ -5781,9 +5820,9 @@ async function renderFormResult(
       return;
     }
     // Правка поля: сохранённый ввод показан, но повторно не отправляется — его
-    // вводят заново, уже по актуальным данным. Режим вопроса сохраняет ту же
-    // форму (создание или редактирование), в которой конфликт случился.
-    await askQuestion(
+    // вводят заново, уже по актуальным данным, за «Ввести заново» (PER-472).
+    // Режим вопроса сохраняет ту же форму, в которой конфликт случился.
+    await refuseAnswer(
       ctx,
       questions,
       {
@@ -5793,7 +5832,7 @@ async function renderFormResult(
         meetupId: stored.id,
         telegramUserId: ctx.from?.id ?? 0,
       },
-      `${result.editing === true ? "Сейчас: " : ""}${lines.join("\n")}\n\n${formPrompts[result.field]}`,
+      lines.join("\n"),
     );
     return;
   }
@@ -5882,20 +5921,27 @@ async function renderFormResult(
       );
       return;
     }
-    const prompt =
-      result.retry === undefined
-        ? publishMomentPrompt
-        : publishMomentRetryText[result.retry];
+    const pending: PendingBody = {
+      kind: "publish-moment",
+      meetupId: result.meetup.id,
+      origin,
+      telegramUserId: ctx.from?.id ?? 0,
+    };
+    // Непринятый момент — свой экран с «Ввести заново» (PER-472).
+    if (result.retry !== undefined) {
+      await refuseAnswer(
+        ctx,
+        questions,
+        pending,
+        publishMomentRetryLead[result.retry],
+      );
+      return;
+    }
     await askQuestion(
       ctx,
       questions,
-      {
-        kind: "publish-moment",
-        meetupId: result.meetup.id,
-        origin,
-        telegramUserId: ctx.from?.id ?? 0,
-      },
-      `${current}${prompt}`,
+      pending,
+      `${current}${publishMomentPrompt}`,
     );
     return;
   }
@@ -6277,6 +6323,116 @@ async function askQuestion(
     // `Omit` обратно в union не сводит.
   } as PendingInput);
   evictOldestQuestions(questions);
+}
+
+const retryAnswerLabel = "Ввести заново";
+
+/**
+ * Непринятый ответ на вопрос — свой экран (дизайн-код, «Экран исхода»,
+ * PER-472): причина в заголовке, «Ввести заново» задаёт вопрос снова, возврат
+ * ведёт туда, куда вела «Отмена». Прежний вопрос закрывается после отправки,
+ * как у `askQuestion`.
+ */
+async function refuseAnswer(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  pending: PendingBody,
+  reason: string,
+  replaces?: number,
+): Promise<void> {
+  const step = stepOf(pending);
+  await showScreen(ctx, {
+    id: "outcome",
+    text: outcomeText(reason),
+    keyboard: withNav(
+      new InlineKeyboard().text(retryAnswerLabel, reopenData(step)),
+      answerParent(step),
+    ),
+    format: "HTML",
+    delivery: "new",
+  });
+  if (replaces !== undefined) {
+    questions.delete(questionKey(ctx.chat?.id, replaces));
+    await closeQuestion(ctx, replaces);
+  }
+}
+
+// Кнопка «Ввести заново» — то же действие, что открыло вопрос. Цепочка из двух
+// вопросов начинается сначала: первый ответ жил в памяти процесса или уже
+// принят командой.
+function reopenData(step: QuestionStep): string {
+  switch (step.kind) {
+    case "field":
+      return step.mode === "create"
+        ? `v1:manage:draft:${step.token}:${step.field}`
+        : `v1:manage:field:${step.token}:${step.field}`;
+    case "publish-moment":
+      return step.origin === "draft"
+        ? `v1:manage:publish-later:${step.token}:d`
+        : `v1:manage:publish-later:${step.token}`;
+    case "material-source":
+    case "material-title":
+      return `v1:mm:add:${step.token}`;
+    case "broadcast":
+      return step.token === undefined ? "v1:bc:c" : `v1:bc:m:${step.token}`;
+    case "username":
+      return "v1:community:allow";
+    case "channel-code":
+    case "channel-label":
+      return "v1:sc:a";
+    case "lot-new":
+      return lotNewData(step.auction);
+    case "lot-text":
+      return lotAskData(step.lot, step.field);
+    case "lot-price":
+    case "lot-step":
+      return lotAskData(step.lot, "price");
+    case "lot-image":
+      return lotAskData(step.lot, "image");
+    case "console-week":
+      return consoleWeekData(step.auction);
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
+}
+
+// Возврат с экрана отказа — туда же, куда «Отмена» под вопросом.
+function answerParent(step: QuestionStep): Parent {
+  switch (step.kind) {
+    case "field":
+      return step.mode === "create"
+        ? { name: "Сходка", data: `v1:manage:draft:${step.token}` }
+        : toCard(step.token);
+    case "publish-moment":
+      return step.origin === "draft"
+        ? { name: "Сходка", data: `v1:manage:draft:${step.token}` }
+        : { name: "Статус", data: `v1:manage:status:${step.token}` };
+    case "material-source":
+    case "material-title":
+      return toMaterials(step.token);
+    case "broadcast":
+      return step.token === undefined ? toManage : toCard(step.token);
+    case "username":
+      return { name: "Ники", data: "v1:cm:u" };
+    case "channel-code":
+    case "channel-label":
+      return toSourceChannels;
+    case "lot-new":
+      return toLots(tokenToUuid(step.auction));
+    case "lot-text":
+    case "lot-price":
+    case "lot-step":
+    case "lot-image":
+      return toLot(tokenToUuid(step.lot));
+    case "console-week":
+      return { name: "Пульт", data: consoleViewData(step.auction) };
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
 }
 
 /**

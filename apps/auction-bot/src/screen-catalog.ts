@@ -97,21 +97,28 @@ export const screenCatalog = {
   // Лист ставки (PER-317): подтверждение без ряда навигации, вопросы с
   // `force_reply` и «Отменой», выбор имени под лотом. Ставка и автоставка —
   // траты денег: их «Да» красное (PER-473). Принятая команда — кадр исхода с
-  // «К лоту» и «Меню».
+  // «К лоту» и «Меню». Заголовок подтверждения — вопрос с суммой (PER-472), и
+  // линтер сверяет его по началу: «Поставить 1 300 ₽?».
   "bid-confirm": {
     class: "screen",
     nav: "confirm",
-    title: "Ставка",
+    title: "Поставить",
     money: true,
   },
   "proxy-confirm": {
     class: "screen",
     nav: "confirm",
-    title: "Автоставка",
+    title: "Включить автоставку",
     money: true,
   },
   "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
   "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
+  // Отказ команды и непринятый ответ — тоже кадры исхода (PER-472): исход в
+  // заголовке, название лота в кавычках, «К лоту» и «Меню», у непринятого
+  // ответа над ними «Ввести заново». Заголовок — сам исход, поэтому в записи
+  // его нет.
+  "command-result": { class: "screen", nav: "exit" },
+  "answer-refused": { class: "screen", nav: "exit" },
   "bid-question": { class: "question", nav: "question" },
   "proxy-question": { class: "question", nav: "question" },
   "alias-question": { class: "question", nav: "question" },
@@ -127,6 +134,9 @@ export const screenCatalog = {
   // «Меню» у недоступного сервиса.
   outdated: { class: "screen", nav: "exit" },
   unavailable: { class: "screen", nav: "exit" },
+  // Уведомление из шины — след: клавиатура принадлежит самому сообщению, а
+  // метку несёт отправитель доставки (`delivery/message.ts`), не адаптер.
+  notification: { class: "trace", nav: "free" },
 } as const;
 
 export type ScreenId = keyof typeof screenCatalog;

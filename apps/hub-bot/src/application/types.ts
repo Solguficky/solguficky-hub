@@ -206,6 +206,11 @@ export type ExecuteRequest =
       intent: "change-meetup-state";
       action: MeetupStateAction;
       meetupId: string;
+      /**
+       * Версия, которую человек видел на подтверждении. Нет — кнопка прошлого
+       * релиза: команда идёт с версией снимка в момент нажатия.
+       */
+      expectedVersion?: number;
       requestId?: string;
       useCase?: string;
       deadlineAt?: number;

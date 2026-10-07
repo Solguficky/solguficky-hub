@@ -24,6 +24,7 @@ import {
   confirmKeyboard,
   escapeHtml,
   nextRow,
+  outcomeText,
   pagedTitle,
   paginate,
   readableMoment,
@@ -54,25 +55,25 @@ export type ConsoleScreenView = {
 
 export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-saved": "Сроки недели сохранены.",
-  "week-opened": "Онлайн-неделя открыта: лоты принимают ставки.",
+  "week-opened": "Онлайн-неделя открыта. Лоты принимают ставки.",
   "week-already-open": "Неделя уже открыта.",
   "week-not-scheduled":
-    "Сначала задай сроки недели: без них неделю не открыть.",
-  "week-frozen": "Онлайн-неделя уже открыта: сроки и финал больше не меняются.",
+    "Сначала задай сроки недели. Без них неделю не открыть.",
+  "week-frozen": "Онлайн-неделя уже открыта. Сроки и финал больше не меняются.",
   "week-needed": "Сначала задай сроки недели.",
   marked: "Лот отмечен для финала.",
   unmarked: "Отметка финала снята.",
   "already-marked": "Лот уже отмечен для финала.",
   "not-marked": "Отметки финала у лота уже нет.",
-  "deadline-passed": "Дедлайн лота прошёл: отметку финала уже не изменить.",
+  "deadline-passed": "Дедлайн лота прошёл. Отметку финала уже не изменить.",
   "not-in-prebidding":
-    "Онлайн-торги не идут: отмечать лоты для финала можно только во время недели.",
-  "lot-not-open": "Торги по лоту не идут: отметить его для финала нельзя.",
+    "Онлайн-торги не идут. Отмечать лоты для финала можно только во время недели.",
+  "lot-not-open": "Торги по лоту не идут. Отметить его для финала нельзя.",
   "not-in-online-phase": "Лот уже в живом финале.",
   "lot-not-in-auction": "Лота нет в этом аукционе.",
-  "selection-not-applicable": "У недели нет финала: отбирать лоты некуда.",
-  "week-ended": "Конец недели уже прошёл: задай новые сроки.",
-  "no-lots-to-open": "Нет лотов с ценой и шагом: открывать нечего.",
+  "selection-not-applicable": "У недели нет финала. Отбирать лоты некуда.",
+  "week-ended": "Конец недели уже прошёл. Задай новые сроки.",
+  "no-lots-to-open": "Нет лотов с ценой и шагом. Открывать нечего.",
 };
 
 /** Всплывающий текст принятого переключателя финала (кадр P-08). */
@@ -202,6 +203,18 @@ function markable(entry: ConsoleLot): boolean {
 export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   const { console } = view;
   const auction = uuidToToken(console.auctionId);
+  // Исход команды — свой экран (PER-472): пульт открывает «‹ Пульт».
+  if (view.note !== undefined) {
+    return {
+      id: "outcome",
+      text: outcomeText(consoleNoteText[view.note]),
+      keyboard: withNav(new InlineKeyboard(), {
+        name: "Пульт",
+        data: consoleViewData(auction, view.page),
+      }),
+      format: "HTML",
+    };
+  }
   // Реестр Auction отдаёт без порядка; пульт держит порядок заведения —
   // идентификатор лота UUIDv7.
   const lots = [...console.lots].sort((a, b) =>
@@ -251,9 +264,6 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     id: "auction-console",
     text: screenText(
       pagedTitle("Пульт", page),
-      view.note === undefined
-        ? undefined
-        : escapeHtml(consoleNoteText[view.note]),
       statusLines(view).map(escapeHtml).join("\n"),
       lots.length === 0
         ? "Лотов пока нет."
@@ -312,7 +322,8 @@ export function weekConfirmScreen(confirm: {
   };
 }
 
-const weekAskErrorText: Record<WeekAskError, string> = {
+/** Причина отказа ответу о сроках недели: заголовок экрана исхода. */
+export const weekAskErrorText: Record<WeekAskError, string> = {
   "week-format":
     "Не получилось разобрать сроки. Нужны начало и конец: ДД.ММ.ГГГГ ЧЧ:ММ — ДД.ММ.ГГГГ ЧЧ:ММ.",
   "week-moment":
@@ -328,15 +339,10 @@ export const weekPrompt =
  * Вопрос о сроках недели (дизайн-код, «Вопросы»): причина отказа первой
  * строкой, затем текущие сроки в том же виде, в каком их вводят, и образец.
  */
-export function weekQuestionText(
-  timeZone: string,
-  week?: AuctionWeek,
-  error?: WeekAskError,
-): string {
+export function weekQuestionText(timeZone: string, week?: AuctionWeek): string {
   const local = (instant: string) =>
     formatLocalMoment(communityLocalTime(instant, timeZone));
   return [
-    ...(error === undefined ? [] : [weekAskErrorText[error]]),
     ...(week?.opensAt === undefined || week.closesAt === undefined
       ? []
       : [`Сейчас: ${local(week.opensAt)} — ${local(week.closesAt)}`]),

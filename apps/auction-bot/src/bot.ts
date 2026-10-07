@@ -113,6 +113,20 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     }
   };
 
+  // `/menu` из кнопки меню клиента — тот же вход, что `/start` без кода канала
+  // (PER-472): допущенному — меню или FAQ, остальным — их кадр входа.
+  direct.command("menu", (ctx) =>
+    answerCommand(ctx, {
+      operation: "start",
+      route: (ports) =>
+        routeAuctionStart({
+          ports,
+          user: userOf(ctx.from),
+          firstName: ctx.from.first_name,
+        }),
+    }),
+  );
+
   direct.command("start", (ctx) => {
     const sourceCode = sourceCodeOf(ctx.match);
     return answerCommand(ctx, {

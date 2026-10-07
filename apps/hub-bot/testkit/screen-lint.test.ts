@@ -185,16 +185,17 @@ describe("inspectCall", () => {
     expect(card("‹ Меню")).toEqual(["nav"]);
   });
 
-  it("requires a bold title and lets a note stand above it", () => {
+  // Над заголовком ничего: исход действия — свой экран (PER-472).
+  it("requires a bold title first, with nothing above it", () => {
     const titled = (text: string, extra?: Record<string, unknown>) =>
       rulesOf(
         "sendMessage",
         screen("upcoming", text, [[key("‹ Меню")]], extra),
       );
 
-    expect(titled("Изменение сохранено.\n\n<b>Ближайшие сходки</b>")).toEqual(
-      [],
-    );
+    expect(titled("Изменение сохранено.\n\n<b>Ближайшие сходки</b>")).toEqual([
+      "body",
+    ]);
     expect(titled("Ближайшие сходки")).toEqual(["title"]);
     expect(titled("<b>Архив</b>")).toEqual(["title"]);
     expect(

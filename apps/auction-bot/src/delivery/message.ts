@@ -12,6 +12,7 @@ import { Api } from "grammy";
 import type { TelegramEnvironment } from "../config.js";
 import { money, truncate } from "../entry-screen.js";
 import { entryCallback, parseEntryCallback } from "../faq.js";
+import { screenMark } from "../screen-catalog.js";
 import type { AuctionNotificationContent } from "./notification.js";
 
 export type NotificationMessage = {
@@ -169,8 +170,11 @@ export function createNotificationSender(
     async send({ telegramUserId, message }) {
       try {
         // Личный чат с человеком имеет id самого человека. Telegram держит id в
-        // 52 битах, поэтому переход из bigint в number точен.
+        // 52 битах, поэтому переход из bigint в number точен. Метка каталога —
+        // чтобы линтер test kit видел и эту отправку: она идёт мимо адаптера
+        // экранов.
         await api.sendMessage(Number(telegramUserId), message.text, {
+          ...screenMark("notification"),
           reply_markup: { inline_keyboard: [[message.button]] },
           link_preview_options: { is_disabled: true },
         });

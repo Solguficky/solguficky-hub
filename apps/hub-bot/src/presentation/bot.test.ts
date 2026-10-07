@@ -635,9 +635,10 @@ describe("presentation adapter", () => {
     );
   });
 
-  // Источник принимается только ответом на вопрос. Отказ без ForceReply
-  // оставлял следующее сообщение — фотографию — вне формы (прогон PER-395).
-  it("asks for the source again as a question after rejecting one", async () => {
+  // Источник принимается только ответом на вопрос. Отказ — своё сообщение
+  // исхода с «Ввести заново», а новый вопрос задаёт эта кнопка: фотография
+  // после отказа не остаётся вне формы (прогон PER-395).
+  it("refuses the source with an outcome and asks again on re-entry", async () => {
     const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
       request.intent === "view-meetup"
         ? { kind: "meetup-card", meetup: publishedMeetup() }
@@ -663,8 +664,15 @@ describe("presentation adapter", () => {
     // Прежний вопрос снимается после того, как ушёл новый.
     expect(calls.at(-1)?.method).toBe("editMessageReplyMarkup");
     expect(JSON.stringify(rejection?.payload)).toContain("нельзя дать ссылку");
-    expect(JSON.stringify(rejection?.payload)).toContain('"force_reply":true');
+    expect(JSON.stringify(rejection?.payload)).not.toContain("force_reply");
+    expect(JSON.stringify(rejection?.payload)).toContain(
+      '"text":"Ввести заново","callback_data":"v1:mm:add:AZLzpLXGfY6fChssPU5fYA"',
+    );
+    expect(JSON.stringify(rejection?.payload)).toContain(
+      '"text":"‹ Материалы"',
+    );
 
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
     await bot.handleUpdate(forwardedReplyUpdate(lastQuestionId(calls)));
 
     expect(JSON.stringify(sentMessages(calls).at(-1)?.payload)).toContain(
@@ -818,16 +826,19 @@ describe("presentation adapter", () => {
     [
       "attach",
       "v1:mm:confirm-add:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw",
-      "v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw:3",
+      ["v1:mm:ca:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAAAAAAABfP4Lqmw:3"],
+      ["Сходка уже изменилась."],
     ],
     [
       "remove",
       "v1:mm:confirm-rm:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg",
-      "v1:mm:cr:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg:3",
+      // Снятие отвечает экраном исхода: предмет — материал, возврат — список.
+      ["v1:mm:list:AZLzpLXGfY6fChssPU5fYA", "«Уточнение по времени»"],
+      ["<b>Сходка уже изменилась</b>", "Твои изменения не сохранены."],
     ],
   ])(
     "answers a %s confirmation without a version by the current card instead of a command",
-    async (_, data, renewed) => {
+    async (_, data, renewed, texts) => {
       // Материал кнопки снятия ещё на месте, а материала кнопки прикрепления
       // ещё нет: ни одна цель не достигнута, и ответом остаётся кадр конфликта.
       const current = {
@@ -868,8 +879,9 @@ describe("presentation adapter", () => {
       expect(execute).toHaveBeenCalledWith(
         expect.objectContaining({ intent: "view-meetup" }),
       );
-      expect(JSON.stringify(calls)).toContain(renewed);
-      expect(JSON.stringify(calls)).toContain("Сходка уже изменилась.");
+      for (const part of [...renewed, ...texts]) {
+        expect(JSON.stringify(calls)).toContain(part);
+      }
     },
   );
 
@@ -953,7 +965,9 @@ describe("presentation adapter", () => {
     expect(records.at(-1)?.fields.error).toBe("version_conflict");
   });
 
-  it("asks to confirm a material removal again after a version conflict", async () => {
+  // Конфликт версии при снятии материала — экран исхода с возвратом к списку,
+  // а не повторное подтверждение: изменения не сохранены, данные надо перечитать.
+  it("answers a material removal version conflict with an outcome screen", async () => {
     const fresh = { ...publishedMeetup(), version: 7 };
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "conflict",
@@ -972,11 +986,17 @@ describe("presentation adapter", () => {
 
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: expect.stringContaining("Сходка уже изменилась.") },
+      payload: {
+        text: expect.stringContaining("<b>Сходка уже изменилась</b>"),
+      },
     });
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      "v1:mm:cr:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg:7",
+      "Твои изменения не сохранены. Проверь актуальные данные и повтори.",
     );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      '"text":"‹ Материалы","callback_data":"v1:mm:list:AZLzpLXGfY6fChssPU5fYA"',
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("v1:mm:cr:");
     expect(records.at(-1)?.fields.error).toBe("version_conflict");
   });
   it("does not treat a command replying to a user as a stale form answer", async () => {
@@ -2626,7 +2646,8 @@ describe("presentation adapter", () => {
             [
               {
                 text: "Да, отметить состоявшейся",
-                callback_data: "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA",
+                callback_data:
+                  "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA:1",
               },
             ],
             [
@@ -2870,16 +2891,17 @@ describe("presentation adapter", () => {
       useCase: "update_meetup",
       deadlineAt: expect.any(Number),
     });
-    // Ответ на вопрос — одно сообщение: карточка с заметкой над заголовком.
-    // Вопрос закрывается после неё: упавшая отправка не теряет шаг.
+    // Ответ на вопрос — одно сообщение: экран исхода с названием сходки.
+    // Вопрос закрывается после него: упавшая отправка не теряет шаг.
     const answered = restarted.calls.slice(-2);
     expect(answered.map((call) => call.method)).toEqual([
-      "sendRichMessage",
+      "sendMessage",
       "editMessageReplyMarkup",
     ]);
-    expect(JSON.stringify(answered[0]?.payload)).toContain(
-      "<p>Изменение сохранено.</p><h1>",
+    expect(sendMessageText(answered[0])).toBe(
+      "<b>Изменение сохранено</b>\n\n«Настолки»",
     );
+    expect(JSON.stringify(answered[0]?.payload)).toContain("‹ Сходка");
   });
 
   // Вопрос после рестарта знает, кому задан, из своей кнопки, и чужой ответ
@@ -2939,8 +2961,9 @@ describe("presentation adapter", () => {
               {
                 // Скрытие обратимо, поэтому кнопка не красится.
                 text: "Да, скрыть из списка",
+                // Версия сходки на экране едет в «Да» (PER-472).
                 callback_data:
-                  "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA",
+                  "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA:1",
               },
             ],
             [
@@ -2961,6 +2984,37 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenLastCalledWith(
       expect.objectContaining({ intent: "view-meetup" }),
     );
+  });
+
+  // «Да» несёт версию, которую человек видел, и она уходит в команду;
+  // кнопка прошлого релиза без версии работает по-прежнему (PER-472).
+  it.each([
+    [
+      "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA:7",
+      { expectedVersion: 7 },
+    ],
+    ["v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA", {}],
+  ])("passes the version of %s to the state command", async (data, version) => {
+    const meetup = publishedMeetup();
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-state-changed",
+      action: "unpublish",
+      meetup: { ...meetup, visibility: "hidden" },
+    });
+    const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(data));
+
+    const request = execute.mock.calls.at(-1)?.[0];
+    expect(request).toMatchObject({
+      intent: "change-meetup-state",
+      action: "unpublish",
+      ...version,
+    });
+    if (!("expectedVersion" in version)) {
+      expect(request).not.toHaveProperty("expectedVersion");
+    }
   });
 
   it("executes cancellation only from the confirmation callback", async () => {
@@ -3118,13 +3172,18 @@ describe("presentation adapter", () => {
       method: "sendMessage",
       payload: {
         text: expect.stringContaining(
-          "Сходка уже изменилась. Твои изменения не сохранены. Проверь актуальные данные и повтори.",
+          "<b>Сходка уже изменилась</b>\n\nТвои изменения не сохранены. Проверь актуальные данные и повтори.",
         ),
-        reply_markup: { force_reply: true },
       },
     });
     expect(sendMessageText(conflict)).toContain("Сейчас: Чужая правка");
     expect(sendMessageText(conflict)).toContain("Твоё значение: Моя правка");
+    // Исход не вопрос: ответ ждёт «Ввести заново», а прежний вопрос закрыт.
+    expect(JSON.stringify(conflict?.payload)).not.toContain("force_reply");
+    expect(JSON.stringify(conflict?.payload)).toContain(
+      '"text":"Ввести заново","callback_data":"v1:manage:draft:AZLzpLXGfY6fChssPU5fYA:title"',
+    );
+    expect(calls.at(-1)?.method).toBe("editMessageReplyMarkup");
     expectBoundary(records.at(-1), {
       level: "warn",
       result: "error",
@@ -3181,7 +3240,7 @@ describe("presentation adapter", () => {
     });
   });
 
-  it("asks to confirm a cancellation again after a version conflict", async () => {
+  it("answers a cancellation version conflict with an outcome screen", async () => {
     const meetup = publishedMeetup();
     const changed = { ...meetup, version: 2 };
     const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
@@ -3203,23 +3262,15 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringContaining(
-          "Проверь данные и подтверди действие ещё раз.",
-        ),
+        text: "<b>Сходка уже изменилась</b>\n\n«Настолки»\n\nТвои изменения не сохранены. Проверь актуальные данные и повтори.",
         reply_markup: {
           inline_keyboard: [
             [
               {
-                text: "Да, отменить сходку",
-                callback_data:
-                  "v1:manage:confirm-cancel:AZLzpLXGfY6fChssPU5fYA",
+                text: "‹ Сходка",
+                callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
               },
-            ],
-            [
-              {
-                text: "Нет",
-                callback_data: "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
-              },
+              { text: "Меню", callback_data: "v1:nav:start" },
             ],
           ],
         },
@@ -3260,13 +3311,14 @@ describe("presentation adapter", () => {
     });
   });
 
-  it("edits the pressed screen into the card with the publication note and a start link", async () => {
+  it("edits the pressed screen into the publication outcome with a start link", async () => {
     const meetup = publishedMeetup();
-    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
-      kind: "published",
-      meetup,
-    });
-    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup }
+        : { kind: "published", meetup },
+    );
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
       execute,
     });
     await bot.init();
@@ -3276,14 +3328,19 @@ describe("presentation adapter", () => {
     expect(calls.some((call) => call.method.startsWith("send"))).toBe(false);
     const edited = calls.find((call) => call.method === "editMessageText");
     expect(edited?.payload).toMatchObject({
-      rich_message: {
-        html: expect.stringContaining(
-          "<p>Сходка опубликована. Теперь она видна в списке. Ссылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA</p><h1>Настолки</h1>",
-        ),
-      },
+      text: "<b>Сходка опубликована</b>\n\n«Настолки»\n\nТеперь она видна в списке. Ссылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
+      parse_mode: "HTML",
     });
-    // Отдельного кадра «создана» нет: результат — сама карточка с её рядами.
+    // Исход — свой экран: ряды карточки на нём не стоят, возврат — «‹ Сходка».
     expect(JSON.stringify(edited?.payload)).toContain(
+      '"text":"‹ Сходка","callback_data":"v1:view:AZLzpLXGfY6fChssPU5fYA"',
+    );
+    expect(JSON.stringify(edited?.payload)).not.toContain(
+      "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
+    );
+    // Ряды карточки — после «‹ Сходка».
+    await bot.handleUpdate(callbackUpdate("v1:view:AZLzpLXGfY6fChssPU5fYA"));
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
       "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
     );
     const published = records.find(
@@ -3331,14 +3388,14 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        rich_message: { html: expect.stringContaining("Настолки") },
+        text: expect.stringContaining("«Настолки»"),
       },
     });
     // Правка стёрла сообщение первой публикации, но ссылка для чата осталась
     // на экране (PER-461).
-    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      "Сходка уже опубликована. Ссылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
-    );
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: "<b>Сходка уже опубликована</b>\n\n«Настолки»\n\nСсылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
+    });
   });
 
   it("redraws a stale preview by the current state without a new message", async () => {
@@ -3364,7 +3421,7 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        rich_message: { html: expect.stringContaining("Настолки у Лёши") },
+        text: expect.stringContaining("«Настолки у Лёши»"),
       },
     });
     expectBoundary(
@@ -3507,8 +3564,9 @@ describe("presentation adapter", () => {
         error: rejectedValueText,
         rejected: new ConnectError(leak, Code.InvalidArgument),
       },
-      shown: rejectedValueText,
-      also: "Как называется сходка?",
+      // Причина — экран исхода: заголовок и остаток; вопрос задаёт «Ввести заново».
+      shown: "Это значение не подошло",
+      also: "Ввести заново",
       grpc: "InvalidArgument",
     },
     {
@@ -4982,20 +5040,36 @@ describe("questions", () => {
 
       await bot.handleUpdate(update);
 
-      // Вопрос задан заново с подсказкой, шаг тот же; значение никуда не ушло.
+      // Отказ — экран исхода без ForceReply: вопрос задаёт «Ввести заново»,
+      // шаг тот же; значение никуда не ушло.
       const asked = calls
         .slice(before)
         .find((call) => call.method === "sendMessage");
       expect(asked?.payload).toMatchObject({
-        text: expect.stringContaining("Нужен ответ текстом."),
+        text: "<b>Нужен ответ текстом</b>",
         reply_markup: {
-          force_reply: true,
           inline_keyboard: [
-            [{ text: "Отмена", callback_data: `v1:q:fe:${token}:venue:42` }],
+            [
+              {
+                text: "Ввести заново",
+                callback_data: `v1:manage:field:${token}:venue`,
+              },
+            ],
+            [
+              { text: "‹ Сходка", callback_data: `v1:view:${token}` },
+              { text: "Меню", callback_data: "v1:nav:start" },
+            ],
           ],
         },
       });
+      expect(JSON.stringify(asked?.payload)).not.toContain("force_reply");
       expect(JSON.stringify(asked?.payload)).not.toContain("устарел");
+      // Прежний вопрос закрыт.
+      expect(
+        calls
+          .slice(before)
+          .some((call) => call.method === "editMessageReplyMarkup"),
+      ).toBe(true);
       expect(execute).not.toHaveBeenCalledWith(
         expect.objectContaining({ intent: "update-meetup-field" }),
       );
@@ -5158,11 +5232,15 @@ describe("notification frames", () => {
   // Из одной кнопки не видно, что даёт подписка (PER-402): ответ на неё
   // называет, что будет приходить, и куда идти за выключенным напоминанием.
   describe("subscription note", () => {
-    // Полезная нагрузка записана как unknown; карточка по умолчанию идёт
-    // rich-сообщением, и отсутствие поля даёт пустую строку, а не падение.
-    const cardHtml = (call: RecordedCall | undefined): string =>
-      (call?.payload as { rich_message?: { html?: string } } | undefined)
-        ?.rich_message?.html ?? "";
+    // Полезная нагрузка записана как unknown: заметка подписки — экран исхода
+    // с текстом, карточка идёт rich-сообщением, а отсутствие поля даёт пустую
+    // строку, а не падение.
+    const cardHtml = (call: RecordedCall | undefined): string => {
+      const payload = call?.payload as
+        | { text?: string; rich_message?: { html?: string } }
+        | undefined;
+      return payload?.text ?? payload?.rich_message?.html ?? "";
+    };
     const allCategories = (
       enabled: Partial<Record<MeetupCategory, boolean>>,
     ): CategoryState<MeetupCategory>[] =>
@@ -5193,7 +5271,7 @@ describe("notification frames", () => {
         ],
       });
       expect(html).toContain(
-        "Подписка включена. По этой сходке будут приходить: изменения данных и статуса, новые материалы, сообщения организатора.",
+        "<b>Подписка включена</b>\n\n«Настолки у Лёши»\n\nПо этой сходке будут приходить: изменения данных и статуса, новые материалы, сообщения организатора.",
       );
       expect(html).toContain(
         "Напоминание перед началом выключено, включить его можно в «Уведомлениях сходки».",
@@ -5233,9 +5311,11 @@ describe("notification frames", () => {
           { category: "organizer", enabled: false },
         ],
       });
+      expect(html).toContain("<b>Подписка включена</b>");
       expect(html).toContain(
-        "Подписка включена, но по этой сходке сейчас ничего не приходит",
+        "По этой сходке сейчас ничего не приходит: все категории выключены.",
       );
+      expect(html).toContain("Включить их можно в «Уведомлениях сходки».");
     });
 
     // Пропуск категории в ответе неотличим от «выключено»: заметка тогда не
@@ -6335,7 +6415,7 @@ describe("deferred publication frames", () => {
       expect(calls.at(-1)?.method).toBe("sendMessage");
     });
 
-    it("shows the card when the answer lands on an already published meetup", async () => {
+    it("shows the saved outcome when the answer lands on an already published meetup", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "draft",
         meetup: { ...draft, visibility: "visible" },
@@ -6350,8 +6430,9 @@ describe("deferred publication frames", () => {
       );
 
       const shown = JSON.stringify(calls.at(-1)?.payload);
-      expect(shown).toContain("Изменение сохранено.");
-      expect(shown).toContain("v1:manage:status:");
+      // Исход вместо формы черновика: возврат ведёт на карточку, где ряд статуса.
+      expect(shown).toContain("<b>Изменение сохранено</b>");
+      expect(shown).toContain("v1:view:");
       expect(shown).not.toContain("v1:manage:draft:");
     });
 
@@ -6449,11 +6530,9 @@ describe("deferred publication frames", () => {
       useCase: "update_meetup",
       deadlineAt: expect.any(Number),
     });
-    expect(
-      JSON.stringify(
-        calls.findLast((call) => call.method === "sendRichMessage")?.payload,
-      ),
-    ).toContain("<p>Публикация назначена на 01.10.2026 19:30.");
+    expect(sendMessageText(sentMessages(calls).at(-1))).toContain(
+      "<b>Публикация назначена на 01.10.2026 19:30</b>",
+    );
     expectBoundary(records.at(-1), {
       level: "info",
       result: "ok",
@@ -6534,9 +6613,11 @@ describe("deferred publication frames", () => {
     await answer();
     const retried = sentMessages(calls).at(-1);
     expect(sendMessageText(retried)).toContain("Это время уже прошло");
-    expect(retried?.payload).toMatchObject({
-      reply_markup: { force_reply: true },
-    });
+    // Отказ — исход без ForceReply: время вводят заново кнопкой.
+    expect(JSON.stringify(retried?.payload)).not.toContain("force_reply");
+    expect(JSON.stringify(retried?.payload)).toContain(
+      `"text":"Ввести заново","callback_data":"v1:manage:publish-later:${token}"`,
+    );
     const afterPast = calls.length;
 
     await answer();
@@ -6544,7 +6625,9 @@ describe("deferred publication frames", () => {
       calls.slice(afterPast).map((call) => call.payload),
     );
     expect(answered).toContain(
-      "Сходка уже опубликована. Назначать публикацию больше не нужно.",
+      JSON.stringify(
+        "<b>Сходка уже опубликована</b>\n\n«Настолки»\n\nНазначать публикацию больше не нужно.",
+      ).slice(1, -1),
     );
     expect(answered).not.toContain("Это время уже прошло");
   });
@@ -6657,7 +6740,7 @@ describe("deferred publication frames", () => {
             [
               {
                 text: "Да, отменить публикацию",
-                callback_data: `v1:manage:confirm-unschedule:${token}`,
+                callback_data: `v1:manage:confirm-unschedule:${token}:1`,
               },
             ],
             [{ text: "Нет", callback_data: `v1:manage:status:${token}` }],
@@ -6862,7 +6945,9 @@ describe("past meetup date", () => {
     );
 
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      "<p>Изменение сохранено. Дата сходки уже прошла",
+      JSON.stringify(
+        "<b>Изменение сохранено</b>\n\n«Настолки»\n\nДата сходки уже прошла, поэтому она в архиве",
+      ).slice(1, -1),
     );
   });
 });
@@ -7073,7 +7158,7 @@ describe("broadcast frames", () => {
     expect(JSON.stringify(confirmation?.payload)).toContain("v1:bc:no");
   });
 
-  it("asks again when the answer is too long to send", async () => {
+  it("refuses a broadcast that is too long to send with a re-entry button", async () => {
     const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
     await bot.init();
 
@@ -7089,9 +7174,15 @@ describe("broadcast frames", () => {
 
     const retry = sentMessages(calls).at(-1);
     expect(sendMessageText(retry)).toContain("длиннее 4096 символов");
-    expect(retry?.payload).toMatchObject({
-      reply_markup: { force_reply: true },
-    });
+    // Отказ — исход без ForceReply: рассылку вводят заново кнопкой.
+    expect(JSON.stringify(retry?.payload)).not.toContain("force_reply");
+    expect(JSON.stringify(retry?.payload)).toContain(
+      '"text":"Ввести заново","callback_data":"v1:bc:c"',
+    );
+    // Прежний вопрос закрыт, а кнопка задаёт новый.
+    expect(calls.at(-1)?.method).toBe("editMessageReplyMarkup");
+    await bot.handleUpdate(callbackUpdate("v1:bc:c"));
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain("force_reply");
   });
 
   it("sends the previewed text with the key from the button once confirmed", async () => {
@@ -7434,8 +7525,14 @@ describe("source channels", () => {
 
     // Код вне алфавита переспрашивается до вопроса о подписи.
     await bot.handleUpdate(answer("tg ads", calls));
-    expect(lastSent(calls)).toContain("Такой код в ссылку не встанет.");
+    expect(lastSent(calls)).toContain("<b>Такой код в ссылку не встанет</b>");
+    expect(lastSent(calls)).not.toContain("force_reply");
+    expect(lastSent(calls)).toContain(
+      '"text":"Ввести заново","callback_data":"v1:sc:a"',
+    );
 
+    // «Ввести заново» начинает цепочку с кода.
+    await bot.handleUpdate(callbackUpdate("v1:sc:a"));
     await bot.handleUpdate(answer(" tg_ads ", calls));
     expect(lastSent(calls)).toContain("Как подписать канал?");
     expect(identity.createSourceChannel).not.toHaveBeenCalled();
@@ -7452,7 +7549,7 @@ describe("source channels", () => {
     expect(screen).toContain("https://t.me/stub_bot?start=s_tg_ads");
   });
 
-  it("asks the label again when Identity rejects it", async () => {
+  it("refuses the label with a re-entry button when Identity rejects it", async () => {
     const identity = {
       ...channels([]),
       createSourceChannel: vi
@@ -7466,11 +7563,18 @@ describe("source channels", () => {
     await bot.handleUpdate(answer("tg_ads", calls));
     await bot.handleUpdate(answer("x".repeat(65), calls));
 
-    expect(lastSent(calls)).toContain("Подпись — одна строка до 64 символов.");
+    expect(lastSent(calls)).toContain(
+      "<b>Подпись — одна строка до 64 символов</b>",
+    );
+    expect(lastSent(calls)).not.toContain("force_reply");
+    // Отказ по подписи возвращает к первому вопросу цепочки — коду.
+    expect(lastSent(calls)).toContain(
+      '"text":"Ввести заново","callback_data":"v1:sc:a"',
+    );
     expect(identity.sourceChannels).not.toHaveBeenCalled();
   });
 
-  it("asks the label again when Identity is unavailable", async () => {
+  it("refuses the label with a re-entry button when Identity is unavailable", async () => {
     const identity = {
       ...channels([]),
       createSourceChannel: vi
@@ -7484,7 +7588,11 @@ describe("source channels", () => {
     await bot.handleUpdate(answer("tg_ads", calls));
     await bot.handleUpdate(answer("Реклама", calls));
 
-    expect(lastSent(calls)).toContain("Канал не сохранился.");
+    expect(lastSent(calls)).toContain("<b>Канал не сохранился</b>");
+    expect(lastSent(calls)).not.toContain("force_reply");
+    expect(lastSent(calls)).toContain(
+      '"text":"Ввести заново","callback_data":"v1:sc:a"',
+    );
     expect(identity.sourceChannels).not.toHaveBeenCalled();
   });
 

@@ -36,6 +36,7 @@ export type RuleName =
   | "unknown-screen"
   | "legacy-outlived"
   | "title"
+  | "body"
   | "nav"
   | "rows"
   | "style"
@@ -47,7 +48,7 @@ export type RuleName =
  * цвет кнопки в список не входят: их нарушение ломает бота или подтверждение,
  * и ждать перевёрстки оно не может.
  */
-export type WaivableRule = "title" | "nav" | "rows" | "vocabulary";
+export type WaivableRule = "title" | "body" | "nav" | "rows" | "vocabulary";
 
 /** Причина исключения начинается с задачи, которая его снимет. */
 export type Waiver = `PER-${number}: ${string}`;

@@ -235,12 +235,20 @@ export function createMeetupForm(
         );
         if (current.kind === "not-found") return { kind: "meetup-not-found" };
         if (current.kind !== "ok") return failure(current);
+        // Команда уходит с версией, которую человек видел на подтверждении:
+        // правка между экраном и «Да» даёт конфликт (PER-472). Решение «уже в
+        // этом состоянии» принимается по свежему снимку раньше: повтор того же
+        // действия отвечает «уже», а не конфликтом.
+        const target =
+          request.expectedVersion === undefined
+            ? current.meetup
+            : { ...current.meetup, version: request.expectedVersion };
         if (request.action === "hold") {
           // Повтор — успех без события (домен, MarkMeetupHeld); отдельного
           // ветвления «уже состоялась» не заводим и отдаём как есть.
           const changed = await meetups.markHeld(
             request.identity,
-            current.meetup,
+            target,
             rpcMeta(request),
           );
           if (changed.kind === "conflict") {
@@ -288,18 +296,18 @@ export function createMeetupForm(
           request.action === "unpublish"
             ? await meetups.unpublish(
                 request.identity,
-                current.meetup,
+                target,
                 rpcMeta(request),
               )
             : request.action === "unschedule"
               ? await meetups.cancelPublication(
                   request.identity,
-                  current.meetup,
+                  target,
                   rpcMeta(request),
                 )
               : await meetups.cancel(
                   request.identity,
-                  current.meetup,
+                  target,
                   rpcMeta(request),
                 );
         if (changed.kind === "conflict") {

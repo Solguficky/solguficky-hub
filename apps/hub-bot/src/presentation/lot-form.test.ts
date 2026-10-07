@@ -308,6 +308,21 @@ function dataOf(screen: Sent, text: string): string {
   return found;
 }
 
+// Экран исхода после непринятого ответа: причина в заголовке, «Ввести заново»
+// и возврат. Нажатие «Ввести заново» задаёт вопрос снова (PER-472).
+async function reasked(
+  bot: { handleUpdate: (update: Update) => Promise<void> },
+  calls: readonly RecordedCall[],
+  reason: string,
+) {
+  const refusal = last(calls);
+  expect(refusal.reply_markup?.force_reply).not.toBe(true);
+  // Заголовок экрана исхода — первое предложение причины без точки.
+  expect(plain(refusal).split("\n")[0]).toBe(reason.replace(/\.$/, ""));
+  await bot.handleUpdate(press(dataOf(refusal, "Ввести заново")));
+  return question(calls).payload;
+}
+
 // Последний вопрос в чате: его текст, клавиатура и номер сообщения, которым
 // ответил бы Telegram, — как их вернёт клиент в `reply_to_message`.
 function question(calls: readonly RecordedCall[]) {
@@ -467,10 +482,22 @@ describe("lot form", () => {
       },
     ]);
     const form = last(calls);
+    // Исход — свой экран: заголовок, название лота в кавычках и остаток.
     expect(form.text).toBe(
       [
+        "<b>Лот добавлен</b>",
+        "«Ваза синяя»",
+        "Задай цену и шаг: без них он не выйдет на торги.",
+      ].join("\n\n"),
+    );
+    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот", "Меню"]]);
+    expect(dataOf(form, "‹ Лот")).toBe(lotData(lotId));
+    // Форма с недостающими полями открывается кнопкой «Изменить лот».
+    await bot.handleUpdate(press(dataOf(form, "Изменить лот")));
+    const opened = last(calls);
+    expect(opened.text).toBe(
+      [
         "<b>Изменить лот</b>",
-        "Лот добавлен. Задай цену и шаг: без них он не выйдет на торги.",
         [
           "Название: Ваза синяя",
           "Описание: нет",
@@ -480,14 +507,13 @@ describe("lot form", () => {
         ].join("\n"),
       ].join("\n\n"),
     );
-    expect(labels(form)).toEqual([
+    expect(labels(opened)).toEqual([
       ["Название"],
       ["Описание"],
       ["Фото"],
       ["Цена и шаг"],
       ["‹ Лот", "Меню"],
     ]);
-    expect(dataOf(form, "‹ Лот")).toBe(lotData(lotId));
     // Лот виден в ленте аукциона сходки, пока без цены.
     await bot.handleUpdate(press(feedData));
     expect(JSON.stringify(last(calls))).toContain("Ваза синяя · готовится");
@@ -533,9 +559,14 @@ describe("lot form", () => {
       },
     });
     const form = last(calls);
-    expect(form.text).toContain("Цена и шаг сохранены.");
-    expect(form.text).toContain("Стартовая цена: 1 500 ₽");
-    expect(form.text).toContain("Шаг: 100 ₽");
+    expect(form.text).toBe(
+      ["<b>Цена и шаг сохранены</b>", "«Ваза»"].join("\n\n"),
+    );
+    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот", "Меню"]]);
+    // Значения видны на форме, которую открывает «Изменить лот».
+    await next(() => press(dataOf(form, "Изменить лот")));
+    expect(last(calls).text).toContain("Стартовая цена: 1 500 ₽");
+    expect(last(calls).text).toContain("Шаг: 100 ₽");
     // Заведённый формой лот стоит в ленте аукциона сходки со стартовой ценой.
     await next(() => press(feedData));
     expect(JSON.stringify(last(calls))).toContain("Ваза · старт 1 500 ₽");
@@ -562,7 +593,7 @@ describe("lot form", () => {
     expect(auction.methods()).toEqual(["createLotCard", "addLot"]);
   });
 
-  it("answers a price or a step that is not a number with the reason and the same question, not an exception", async () => {
+  it("answers a price or a step that is not a number with a reason screen and the question again on request, not an exception", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
     const { bot, calls, records } = harness(["admin", "public"], auction);
     await bot.init();
@@ -575,25 +606,40 @@ describe("lot form", () => {
         "Стартовая цена в рублях, целым числом. Например: 1500",
       ].join("\n"),
     );
+    const refused = question(calls);
     await bot.handleUpdate(answer(calls, "дорого"));
 
-    const again = question(calls).payload;
-    expect(again.text?.split("\n")[0]).toBe(
-      "Нужно целое число рублей: только цифры, без копеек.",
+    // Причина — новый экран без вопроса, прежний вопрос закрыт.
+    const refusal = last(calls);
+    expect(labels(refusal)).toEqual([["Ввести заново"], ["‹ Лот", "Меню"]]);
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "editMessageReplyMarkup" &&
+          (call.payload as { message_id?: number }).message_id ===
+            refused.messageId,
+      ),
+    ).toBe(true);
+    const again = await reasked(bot, calls, "Нужно целое число рублей");
+    expect(again.text).toBe(
+      [
+        "Сейчас: 500 ₽",
+        "Стартовая цена в рублях, целым числом. Например: 1500",
+      ].join("\n"),
     );
     expect(dataOf(again, "Отмена")).toBe(`v1:q:lp:${lot}:42`);
 
     await bot.handleUpdate(answer(calls, "700"));
     await bot.handleUpdate(answer(calls, "0"));
 
-    const step = question(calls).payload;
-    expect(step.text?.split("\n")[0]).toBe("Сумма — от 1 до 9 999 999 рублей.");
-    expect(dataOf(step, "Отмена")).toBe(`v1:q:ls:${lot}:700:42`);
+    // «Ввести заново» после шага ведёт к вопросу о цене с начала цепочки.
+    const step = await reasked(bot, calls, "Сумма — от 1 до 9 999 999 рублей.");
+    expect(dataOf(step, "Отмена")).toBe(`v1:q:lp:${lot}:42`);
     expect(auction.commands).toEqual([]);
     expect(records.every((record) => record.level !== "error")).toBe(true);
   });
 
-  it("changes one text of the card and returns to the form with the note", async () => {
+  it("changes one text of the card and shows the outcome with a way back to the form", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
     const { bot, calls } = harness(["admin", "public"], auction);
     await bot.init();
@@ -614,9 +660,14 @@ describe("lot form", () => {
         },
       },
     ]);
-    const form = last(calls);
-    expect(form.text).toContain("Изменение сохранено.");
-    expect(form.text).toContain("Описание: Ручная роспись, 300 мл.");
+    const saved = last(calls);
+    expect(saved.text).toBe(
+      ["<b>Изменение сохранено</b>", "«Кружка с совой»"].join("\n\n"),
+    );
+    expect(labels(saved)).toEqual([["Изменить лот"], ["‹ Лот", "Меню"]]);
+    // Новый текст виден на форме, которую открывает «Изменить лот».
+    await bot.handleUpdate(press(dataOf(saved, "Изменить лот")));
+    expect(last(calls).text).toContain("Описание: Ручная роспись, 300 мл.");
   });
 
   it("keeps the text and photo rows once trading started and refuses an old price button", async () => {
@@ -709,7 +760,7 @@ describe("lot form", () => {
     // Отказ вопросом не был, поэтому последний вопрос в чате — тот же.
     await bot.handleUpdate(answer(calls, "Ваза"));
 
-    expect(last(calls).text).toContain("Лот добавлен.");
+    expect(last(calls).text).toContain("<b>Лот добавлен</b>");
     expect(closed()).toBe(true);
     // Повтор создал тот же лот: идентификатор взят из кнопки вопроса.
     const created = auction.commands.map(
@@ -828,8 +879,12 @@ describe("lot form photo question", () => {
       },
     ]);
     const form = last(calls);
-    expect(form.text).toContain("Фото сохранено.");
-    expect(form.text).toContain("Фото: есть");
+    expect(form.text).toBe(
+      ["<b>Фото сохранено</b>", "«Кружка с совой»"].join("\n\n"),
+    );
+    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот", "Меню"]]);
+    await next(() => press(dataOf(form, "Изменить лот")));
+    expect(last(calls).text).toContain("Фото: есть");
 
     // Новый процесс с пустым кэшем `file_id` берёт фото у Auction.
     await next(() => press(lotData(existingLot)), "rich");
@@ -841,7 +896,7 @@ describe("lot form photo question", () => {
     );
   });
 
-  it("answers a photo above the limit of Auction with the limit and the same question, the lot unchanged", async () => {
+  it("answers a photo above the limit of Auction with the limit on a reason screen, the lot unchanged", async () => {
     const auction = fakeAuction({ lots: [scheduled], imageLimit: 4 });
     const telegram = fakeTelegramFiles({ large: jpeg });
     const { bot, calls, records } = harness(["admin", "public"], auction, [], {
@@ -852,16 +907,18 @@ describe("lot form photo question", () => {
     await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
     await bot.handleUpdate(reply(calls, photo));
 
-    const again = question(calls).payload;
-    expect(again.text?.split("\n")[0]).toBe(
+    const again = await reasked(
+      bot,
+      calls,
       "Фото больше 1 КБ, аукцион его не принял.",
     );
+    expect(again.text).toBe(["Сейчас: нет", photoQuestion].join("\n"));
     expect(dataOf(again, "Отмена")).toBe(`v1:q:li:${lot}:42`);
     expect(auction.lots.get(existingLot)?.card).toEqual(scheduled.card);
     expect(records.every((record) => record.level !== "error")).toBe(true);
   });
 
-  it("asks for a photo again when text, a document or a sticker comes instead, without Auction", async () => {
+  it("refuses with a reason screen when text, a document or a sticker comes instead of a photo, without Auction", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
     const { bot, calls, records } = harness(["admin", "public"], auction);
     await bot.init();
@@ -889,17 +946,19 @@ describe("lot form photo question", () => {
       },
     ]) {
       await bot.handleUpdate(reply(calls, content));
-      const again = question(calls).payload;
-      expect(again.text?.split("\n")[0]).toBe(
+      const again = await reasked(
+        bot,
+        calls,
         "Нужна фотография, а не текст, файл или стикер.",
       );
+      expect(again.text).toBe(["Сейчас: нет", photoQuestion].join("\n"));
       expect(dataOf(again, "Отмена")).toBe(`v1:q:li:${lot}:42`);
     }
     expect(auction.commands).toEqual([]);
     expect(records.every((record) => record.level === "info")).toBe(true);
   });
 
-  it("refuses an album once and ignores its other photos", async () => {
+  it("refuses an album once on a reason screen and ignores its other photos", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
     const telegram = fakeTelegramFiles({ large: jpeg });
     const { bot, calls } = harness(["admin", "public"], auction, [], {
@@ -911,7 +970,8 @@ describe("lot form photo question", () => {
     const albumPhoto = { ...photo, media_group_id: "album-1" };
 
     await bot.handleUpdate(reply(calls, albumPhoto));
-    const refused = question(calls);
+    const refused = last(calls);
+    const shownAfterFirst = shown(calls).length;
     // Второй снимок того же альбома отвечает на тот же первый вопрос.
     const second = reply(calls, albumPhoto);
     (
@@ -919,10 +979,12 @@ describe("lot form photo question", () => {
     ).reply_to_message.message_id = asked.messageId;
     await bot.handleUpdate(second);
 
-    expect(refused.payload.text?.split("\n")[0]).toBe(
-      "Нужна одна фотография, альбом не подходит.",
+    expect(plain(refused).split("\n")[0]).toBe(
+      "Нужна одна фотография, альбом не подходит",
     );
-    expect(question(calls).messageId).toBe(refused.messageId);
+    expect(refused.reply_markup?.force_reply).not.toBe(true);
+    // Остальные снимки альбома ничего нового не показали.
+    expect(shown(calls)).toHaveLength(shownAfterFirst);
     expect(telegram.downloads).toEqual([]);
     expect(auction.commands).toEqual([]);
   });
@@ -943,7 +1005,7 @@ describe("lot form photo question", () => {
       "timeout",
     ],
   ] as const)(
-    "asks for the photo again when %s, the lot unchanged",
+    "refuses with a reason screen and asks again on request when %s, the lot unchanged",
     async (_failure, telegram, category) => {
       const auction = fakeAuction({ lots: [scheduled] });
       const { bot, calls, records } = harness(
@@ -957,11 +1019,16 @@ describe("lot form photo question", () => {
 
       await bot.handleUpdate(reply(calls, photo));
 
-      expect(question(calls).payload.text?.split("\n")[0]).toBe(
+      // Запись об ответе — до нажатия «Ввести заново», которое пишет свою.
+      const answered = records.at(-1);
+      const again = await reasked(
+        bot,
+        calls,
         "Не получилось получить фото у Telegram.",
       );
+      expect(again.text).toBe(["Сейчас: нет", photoQuestion].join("\n"));
       expect(auction.commands).toEqual([]);
-      expect(records.at(-1)?.fields).toMatchObject({
+      expect(answered?.fields).toMatchObject({
         result: "error",
         error_category: category,
         use_case: "manage_lot",
@@ -993,6 +1060,6 @@ describe("lot form photo question", () => {
     await bot.handleUpdate(reply(calls, photo));
 
     expect(auction.methods()).toEqual(["editLotCard"]);
-    expect(last(calls).text).toContain("Фото сохранено.");
+    expect(last(calls).text).toContain("<b>Фото сохранено</b>");
   });
 });

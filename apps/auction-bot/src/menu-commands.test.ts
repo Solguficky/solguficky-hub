@@ -24,7 +24,7 @@ describe("bot command menu", () => {
     await registerCommands({ setMyCommands }, logger);
     expect(setMyCommands).toHaveBeenCalledWith(
       [
-        { command: "start", description: "Меню аукциона" },
+        { command: "menu", description: "Меню аукциона" },
         { command: "faq", description: "Правила и FAQ" },
       ],
       { scope: { type: "all_private_chats" } },

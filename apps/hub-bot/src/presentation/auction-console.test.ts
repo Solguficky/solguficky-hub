@@ -517,7 +517,10 @@ describe("auction console", () => {
         args: { auctionId, lotId: vaseId, opId: expect.any(String) },
       },
     ]);
-    expect(plain(last(calls))).toContain("Лот отмечен для финала.");
+    // Исход — свой экран без строк пульта; пульт открывает «‹ Пульт».
+    expect(last(calls).text).toBe("<b>Лот отмечен для финала</b>");
+    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(plain(last(calls))).toContain(
       "• Ваза — 1 200 ₽ · 3 ставки · в финал",
     );
@@ -527,11 +530,13 @@ describe("auction console", () => {
     );
 
     expect(auction.sent("deselectForFinal")).toHaveLength(1);
-    expect(plain(last(calls))).toContain("Отметка финала снята.");
+    expect(last(calls).text).toBe("<b>Отметка финала снята</b>");
+    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(labels(last(calls))[0]).toEqual(["В финал · Ваза"]);
   });
 
-  it("shows the refusal of a passed deadline instead of a success", async () => {
+  it("shows the refusal of a passed deadline as an outcome screen instead of a success", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       week: { ...week, final: true },
@@ -545,12 +550,16 @@ describe("auction console", () => {
     await bot.handleUpdate(press(dataOf(last(calls), "В финал · Ваза")));
 
     const screen = plain(last(calls));
-    expect(screen).toContain(
-      "Дедлайн лота прошёл: отметку финала уже не изменить.",
+    expect(last(calls).text).toBe(
+      "<b>Дедлайн лота прошёл</b>\n\nОтметку финала уже не изменить.",
     );
-    expect(screen).not.toContain("Лот отмечен для финала.");
-    expect(screen).toContain("• Ваза — 1 200 ₽ · 3 ставки");
-    expect(screen).not.toContain("в финал");
+    expect(screen).not.toContain("Лот отмечен для финала");
+    // Строк пульта на экране исхода нет; пульт за «‹ Пульт» без отметки.
+    expect(screen).not.toContain("• Ваза");
+    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    expect(plain(last(calls))).toContain("• Ваза — 1 200 ₽ · 3 ставки");
+    expect(plain(last(calls))).not.toContain("в финал");
   });
 });
 
@@ -575,18 +584,29 @@ describe("week of the auction", () => {
       "Например: 20.10.2026 18:00 — 27.10.2026 00:00",
     );
 
-    // Ответ, который не разобран, — тот же вопрос с причиной первой строкой.
+    // Ответ, который не разобран, — экран исхода с причиной в заголовке и
+    // «Ввести заново»; тот же вопрос задаёт только эта кнопка.
     await next((history) => answer(history, { text: "на следующей неделе" }));
-    expect(question(calls).payload.text?.split("\n")[0]).toBe(
-      "Не получилось разобрать сроки. Нужны начало и конец: ДД.ММ.ГГГГ ЧЧ:ММ — ДД.ММ.ГГГГ ЧЧ:ММ.",
+    expect(last(calls).text).toBe(
+      "<b>Не получилось разобрать сроки</b>\n\nНужны начало и конец: ДД.ММ.ГГГГ ЧЧ:ММ — ДД.ММ.ГГГГ ЧЧ:ММ.",
+    );
+    expect(last(calls).reply_markup?.force_reply).toBeUndefined();
+    expect(labels(last(calls))).toEqual([
+      ["Ввести заново"],
+      ["‹ Пульт", "Меню"],
+    ]);
+    await next((history) => press(dataOf(last(history), "Ввести заново")));
+    expect(question(calls).payload.text).toContain(
+      "Например: 20.10.2026 18:00 — 27.10.2026 00:00",
     );
     await next((history) =>
       answer(history, { text: "27.10.2026 00:00 — 20.10.2026 18:00" }),
     );
-    expect(question(calls).payload.text?.split("\n")[0]).toBe(
-      "Конец недели должен быть позже начала.",
+    expect(last(calls).text).toBe(
+      "<b>Конец недели должен быть позже начала</b>",
     );
     expect(auction.sent("scheduleAuction")).toEqual([]);
+    await next((history) => press(dataOf(last(history), "Ввести заново")));
 
     await next((history) =>
       answer(history, { text: "20.10.2026 18:00 — 27.10.2026 00:00" }),
@@ -603,8 +623,11 @@ describe("week of the auction", () => {
         },
       },
     ]);
+    // Исход сохранения — свой экран; сроки и кнопки пульта за «‹ Пульт».
+    expect(last(calls).text).toBe("<b>Сроки недели сохранены</b>");
+    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    await next((history) => press(dataOf(last(history), "‹ Пульт")));
     const screen = last(calls);
-    expect(plain(screen)).toContain("Сроки недели сохранены.");
     expect(plain(screen)).toContain(
       "Онлайн-неделя: с 20 октября, вт, 18:00 до 27 октября, вт, 00:00.\nФинал: есть.",
     );
@@ -616,7 +639,7 @@ describe("week of the auction", () => {
     ]);
   });
 
-  it("asks again with a hint when the answer is not text", async () => {
+  it("shows an outcome screen with a retry when the answer is not text", async () => {
     const auction = fakeAuction();
     const { bot, calls } = harness(["admin", "public"], auction);
     await bot.init();
@@ -626,9 +649,12 @@ describe("week of the auction", () => {
       answer(calls, { sticker: { file_id: "s", file_unique_id: "s" } }),
     );
 
-    expect(question(calls).payload.text?.split("\n")[0]).toBe(
-      "Нужен ответ текстом.",
-    );
+    expect(last(calls).text).toBe("<b>Нужен ответ текстом</b>");
+    expect(last(calls).reply_markup?.force_reply).toBeUndefined();
+    expect(labels(last(calls))).toEqual([
+      ["Ввести заново"],
+      ["‹ Пульт", "Меню"],
+    ]);
     expect(auction.sent("scheduleAuction")).toEqual([]);
   });
 
@@ -708,7 +734,7 @@ describe("week of the auction", () => {
     expect(labels(last(calls))).toContainEqual(["Вкл · Финал"]);
   });
 
-  it("asks again when the end of the week has already come", async () => {
+  it("shows an outcome screen with a retry when the end of the week has already come", async () => {
     const auction = fakeAuction();
     const { bot, calls } = harness(["admin", "public"], auction);
     await bot.init();
@@ -718,9 +744,11 @@ describe("week of the auction", () => {
       answer(calls, { text: "01.10.2026 18:00 — 06.10.2026 12:00" }),
     );
 
-    expect(question(calls).payload.text?.split("\n")[0]).toBe(
-      "Конец недели уже прошёл.",
-    );
+    expect(last(calls).text).toBe("<b>Конец недели уже прошёл</b>");
+    expect(labels(last(calls))).toEqual([
+      ["Ввести заново"],
+      ["‹ Пульт", "Меню"],
+    ]);
     expect(auction.sent("scheduleAuction")).toEqual([]);
   });
 });
@@ -755,9 +783,11 @@ describe("opening the online week", () => {
     await bot.handleUpdate(press(yes));
 
     expect(auction.state.status).toBe("prebidding");
-    expect(plain(last(calls))).toContain(
-      "Онлайн-неделя открыта: лоты принимают ставки.",
+    expect(last(calls).text).toBe(
+      "<b>Онлайн-неделя открыта</b>\n\nЛоты принимают ставки.",
     );
+    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(plain(last(calls))).toContain("Идут онлайн-торги до");
 
     await bot.handleUpdate(press(yes));
@@ -765,10 +795,12 @@ describe("opening the online week", () => {
     const [first, second] = auction.sent("startPrebidding");
     expect(second?.args).toEqual(first?.args);
     expect(auction.sent("startPrebidding")).toHaveLength(2);
-    expect(plain(last(calls))).toContain("Онлайн-неделя открыта");
+    expect(last(calls).text).toBe(
+      "<b>Онлайн-неделя открыта</b>\n\nЛоты принимают ставки.",
+    );
   });
 
-  it("shows a refusal of an already opened auction as an open week, not as an error", async () => {
+  it("shows a refusal of an already opened auction as an open week outcome, not as an error", async () => {
     const auction = fakeAuction({
       status: "scheduled",
       week: { ...week, final: true },
@@ -788,15 +820,15 @@ describe("opening the online week", () => {
 
     expect(auction.sent("startPrebidding")).toHaveLength(2);
     const screen = plain(last(calls));
-    expect(screen).toContain("Неделя уже открыта.");
-    expect(last(calls).text).not.toContain("Не получилось");
+    expect(last(calls).text).toBe("<b>Неделя уже открыта</b>");
+    expect(screen).not.toContain("Не получилось");
     // Старая кнопка открытия на открытом аукционе подтверждения не даёт.
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
-    expect(plain(last(calls))).toContain("Неделя уже открыта.");
+    expect(last(calls).text).toBe("<b>Неделя уже открыта</b>");
     expect(labels(last(calls))).not.toContainEqual(["Да, открыть неделю"]);
   });
 
-  it("names an ended week instead of a confirmation", async () => {
+  it("names an ended week on an outcome screen instead of a confirmation", async () => {
     const auction = fakeAuction({
       status: "scheduled",
       week: {
@@ -811,13 +843,13 @@ describe("opening the online week", () => {
 
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
 
-    expect(plain(last(calls))).toContain(
-      "Конец недели уже прошёл: задай новые сроки.",
+    expect(last(calls).text).toBe(
+      "<b>Конец недели уже прошёл</b>\n\nЗадай новые сроки.",
     );
     expect(labels(last(calls))).not.toContainEqual(["Да, открыть неделю"]);
   });
 
-  it("names a registry without priced lots instead of a confirmation", async () => {
+  it("names a registry without priced lots on an outcome screen instead of a confirmation", async () => {
     const auction = fakeAuction({
       status: "scheduled",
       week: { ...week, final: true },
@@ -828,8 +860,8 @@ describe("opening the online week", () => {
 
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
 
-    expect(plain(last(calls))).toContain(
-      "Нет лотов с ценой и шагом: открывать нечего.",
+    expect(last(calls).text).toBe(
+      "<b>Нет лотов с ценой и шагом</b>\n\nОткрывать нечего.",
     );
     expect(labels(last(calls))).not.toContainEqual(["Да, открыть неделю"]);
     expect(auction.sent("startPrebidding")).toEqual([]);
@@ -854,7 +886,7 @@ describe("final selection", () => {
     ]);
   });
 
-  it("shows the refusal of a selection without a final as the line of the console", async () => {
+  it("shows the refusal of a selection without a final as an outcome screen of the console", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       week: { ...week, final: true },
@@ -869,8 +901,11 @@ describe("final selection", () => {
     );
 
     const screen = plain(last(calls));
-    expect(screen).toContain("У недели нет финала: отбирать лоты некуда.");
-    expect(screen).not.toContain("Лот отмечен для финала.");
+    expect(last(calls).text).toBe(
+      "<b>У недели нет финала</b>\n\nОтбирать лоты некуда.",
+    );
+    expect(screen).not.toContain("Лот отмечен для финала");
+    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
   });
 
   it("marks a held lot as a finalist without buttons", async () => {

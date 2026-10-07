@@ -324,9 +324,9 @@ describe("meetup card auction row", () => {
     expect(JSON.stringify(card)).not.toContain("Включить аукцион");
   });
 
-  // Карточка, которой бот отвечает на «Опубликовать», — та же карточка, что
-  // из списка: ряд аукциона на ней есть (PER-468).
-  it("keeps the auction row on the card shown right after publishing", async () => {
+  // На «Опубликовать» бот отвечает экраном исхода; карточка за «‹ Сходка» —
+  // та же, что из списка: ряд аукциона на ней есть (PER-468, PER-472).
+  it("keeps the auction row on the card opened from the publishing outcome", async () => {
     const auction = fakeAuction();
     const { bot, calls } = harness(["admin"], auction, {
       snapshot: { ...meetup(), visibility: "hidden" },
@@ -334,18 +334,30 @@ describe("meetup card auction row", () => {
     await bot.init();
     await bot.handleUpdate(press(`v1:manage:publish:${meetupToken}`));
 
+    const outcome = lastScreen(calls);
+    expect(outcome.text).toContain("<b>Сходка опубликована</b>");
+    expect(labels(outcome)).toEqual([["‹ Сходка", "Меню"]]);
+    expect(JSON.stringify(outcome)).not.toContain("Включить аукцион");
+
+    await bot.handleUpdate(press(data(outcome, "‹ Сходка") ?? ""));
+
     const card = lastScreen(calls);
-    expect(JSON.stringify(card)).toContain("Сходка опубликована");
     expect(labels(card)).toContainEqual(["Материалы (0)", "Включить аукцион"]);
   });
 
-  it("shows the lots entry on the card right after publishing a meetup with an auction", async () => {
+  it("shows the lots entry on the card opened from the publishing outcome of a meetup with an auction", async () => {
     const auction = fakeAuction({ existing: true });
     const { bot, calls } = harness(["admin"], auction, {
       snapshot: { ...meetup(), visibility: "hidden" },
     });
     await bot.init();
     await bot.handleUpdate(press(`v1:manage:publish:${meetupToken}`));
+
+    const outcome = lastScreen(calls);
+    expect(outcome.text).toContain("<b>Сходка опубликована</b>");
+    expect(data(outcome, "Лоты")).toBeUndefined();
+
+    await bot.handleUpdate(press(data(outcome, "‹ Сходка") ?? ""));
 
     const card = lastScreen(calls);
     expect(data(card, "Лоты")).toBe(feedData);
@@ -404,19 +416,22 @@ describe("meetup card auction row", () => {
 });
 
 describe("enabling the auction", () => {
-  it("enables the auction and shows the card with its entry", async () => {
+  it("enables the auction and shows the outcome, with the card and its entry behind the way back", async () => {
     const auction = fakeAuction();
     const { bot, calls, records } = harness(["admin"], auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
 
-    const card = lastScreen(calls);
-    expect(card.rich_message?.html).toContain("Аукцион включён.");
-    expect(data(card, "Лоты")).toBe(feedData);
+    const outcome = lastScreen(calls);
+    expect(outcome.text).toContain("<b>Аукцион включён</b>");
+    expect(labels(outcome)).toEqual([["‹ Сходка", "Меню"]]);
+    expect(data(outcome, "Лоты")).toBeUndefined();
     expect(records.at(-1)?.fields).toMatchObject({
       result: "ok",
       use_case: "enable_auction",
     });
+    await bot.handleUpdate(press(data(outcome, "‹ Сходка") ?? ""));
+    expect(data(lastScreen(calls), "Лоты")).toBe(feedData);
   });
 
   it("does not birth a second auction on a repeated press", async () => {
@@ -429,8 +444,8 @@ describe("enabling the auction", () => {
     expect(auction.auctions.size).toBe(1);
     // Ключ команды рождается на нажатие, а аукцион один.
     expect(new Set(auction.opIds).size).toBe(2);
-    expect(lastScreen(calls).rich_message?.html).toContain(
-      "Аукцион у этой сходки уже включён.",
+    expect(lastScreen(calls).text).toContain(
+      "<b>Аукцион у этой сходки уже включён</b>",
     );
   });
 
@@ -867,7 +882,7 @@ describe("bid leaf in the hub", () => {
     await bot.handleUpdate(answer({ text: "1 300" }));
     const confirm = calls.find((call) => call.method === "sendMessage");
     expect(confirm?.payload).toMatchObject({
-      text: expect.stringMatching(/Сумма: 1\s300\s₽/),
+      text: expect.stringMatching(/^<b>Поставить 1\s300\s₽\?<\/b>/),
       reply_markup: {
         inline_keyboard: [
           [
@@ -924,20 +939,32 @@ describe("bid leaf in the hub", () => {
     });
   });
 
+  // Непринятый ответ — свой экран новым сообщением (PER-472): причина в
+  // заголовке, «Ввести заново» и «К лоту» вместо режима ответа.
   it.each([
-    [{ text: "много" }, "Это не сумма."],
-    [{ text: "$20" }, "Ставки принимаются только в рублях."],
-    [{ sticker: { file_id: "s" } }, "Нужен ответ текстом."],
-  ])("asks again with the reason for %j", async (extra, reason) => {
-    const { bot, calls } = await setup();
-    await bot.handleUpdate(answer(extra));
-    const asked = calls.find((call) => call.method === "sendMessage");
-    const text = (asked?.payload as { text?: string } | undefined)?.text;
-    expect(text?.startsWith(reason)).toBe(true);
-    expect(asked?.payload).toMatchObject({
-      reply_markup: { force_reply: true },
-    });
-  });
+    [{ text: "много" }, "Это не сумма"],
+    [{ text: "$20" }, "Ставки принимаются только в рублях"],
+    [{ sticker: { file_id: "s" } }, "Нужен ответ текстом"],
+  ])(
+    "answers a refused %j with its own screen and a retry",
+    async (extra, reason) => {
+      const { bot, calls } = await setup();
+      await bot.handleUpdate(answer(extra));
+      const sent = calls.find((call) => call.method === "sendMessage");
+      const payload = sent?.payload as
+        | {
+            text?: string;
+            reply_markup?: { inline_keyboard?: { text: string }[][] };
+          }
+        | undefined;
+      expect(payload?.text?.startsWith(`<b>${reason}</b>`)).toBe(true);
+      expect(
+        payload?.reply_markup?.inline_keyboard?.map((row) =>
+          row.map((button) => button.text),
+        ),
+      ).toEqual([["Ввести заново"], ["К лоту", "Меню"]]);
+    },
+  );
 
   it("deletes the question on cancel and sends the card anew", async () => {
     const { bot, calls } = await setup();

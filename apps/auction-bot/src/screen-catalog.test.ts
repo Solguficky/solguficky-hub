@@ -3,12 +3,13 @@ import { describe, expect, it } from "vitest";
 import { inspectCall, type ScreenEntry } from "../testkit/screen-lint.js";
 import type { AuctionListPage } from "./auctions.js";
 import { markupOf, richMessageOf } from "./bot.js";
+import { renderNotification } from "./delivery/message.js";
 import {
   type AuctionEntryScreen,
   type RenderedScreen,
   renderEntryScreen,
 } from "./entry-screen.js";
-import { type ScreenId, screenCatalog } from "./screen-catalog.js";
+import { type ScreenId, screenCatalog, screenMark } from "./screen-catalog.js";
 
 // Исключения каталога не переживают свою причину: каждая запись рендерится во
 // всех своих видах, линтер гоняется без исключений, и набор сработавших
@@ -179,7 +180,7 @@ const confirm = (command: "bid" | "proxy"): AuctionScreenBody => ({
 
 const question = (
   kind: "bid" | "proxy" | "alias",
-  refused: boolean,
+  titled: boolean,
 ): AuctionScreenBody => ({
   blocks: [
     {
@@ -188,7 +189,7 @@ const question = (
       lotId: "lot-1",
       auctionId: "auc-1",
       ...(kind === "alias" ? {} : { current: rub(550) }),
-      ...(refused ? { refusal: "not-a-number" as const } : {}),
+      ...(titled ? { title: "Кружка <с совой>" } : {}),
     },
   ],
   keyboard: [
@@ -220,6 +221,50 @@ const nameChoice = (username: boolean): AuctionScreenBody => ({
     [{ action: "name.back", callbackData: "v1:auc:lot:lot-1:1" }],
   ],
 });
+// Отказ команды и непринятый ответ (PER-472): кадры исхода с «К лоту», у
+// непринятого ответа над ней — «Ввести заново».
+const commandResult = (title: boolean): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "result",
+      result: {
+        command: "bid",
+        kind: "refused",
+        refusal: { kind: "bid-below-minimum", minRequired: rub(650) },
+      },
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      ...(title ? { title: "Кружка <с совой>" } : {}),
+    },
+  ],
+  keyboard: [[{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:1" }]],
+});
+
+const answerRefused = (retry: boolean): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "answer-refused",
+      refusal: retry ? "not-a-number" : "name-frozen",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      title: "Кружка <с совой>",
+    },
+  ],
+  keyboard: [
+    ...(retry
+      ? [
+          [
+            {
+              action: "answer.retry" as const,
+              callbackData: "v1:auc:ab:lot-1:1",
+            },
+          ],
+        ]
+      : []),
+    [{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:1" }],
+  ],
+});
+
 // Принятая команда (PER-473): кадр исхода с «К лоту», «Меню» ставит оболочка.
 const accepted = (
   command: "bid" | "proxy",
@@ -299,6 +344,10 @@ const shown: readonly {
   { screen: { kind: "auction", body: confirm("proxy") } },
   { screen: { kind: "auction", body: accepted("bid", true) } },
   { screen: { kind: "auction", body: accepted("proxy", false) } },
+  { screen: { kind: "auction", body: commandResult(true) } },
+  { screen: { kind: "auction", body: commandResult(false) } },
+  { screen: { kind: "auction", body: answerRefused(true) } },
+  { screen: { kind: "auction", body: answerRefused(false) } },
   { screen: { kind: "auction", body: question("bid", false) } },
   { screen: { kind: "auction", body: question("bid", true) } },
   { screen: { kind: "auction", body: question("proxy", false) } },
@@ -348,22 +397,57 @@ const bare = Object.fromEntries(
   entries.map(([id, { waive: _waive, ...entry }]) => [id, entry]),
 );
 
+// Момент показа: даты экранов — 2026 год, поэтому года в них нет.
+const now = new Date("2026-10-07T12:00:00Z");
+
 const rendered = shown.map(({ screen, faq, presentation }) =>
   renderEntryScreen(screen, {
     timeZone: "Europe/Moscow",
+    now,
     ...(faq === undefined ? {} : { faq }),
     ...(presentation === undefined ? {} : { presentation }),
   }),
 );
 
+// Уведомления — следы с меткой каталога, которые шлёт отправитель доставки в
+// той же форме (`delivery/message.ts`).
+const notifications = [
+  renderNotification(
+    {
+      kind: "lot-outbid",
+      lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+      currentPrice: rub(500),
+    },
+    "Банка солёных грибов",
+  ),
+  renderNotification({ kind: "access-granted" }),
+].map((message) => ({
+  chat_id: 42,
+  text: message.text,
+  ...screenMark("notification"),
+  reply_markup: { inline_keyboard: [[message.button]] },
+  link_preview_options: { is_disabled: true },
+}));
+
 function brokenRules(): Map<ScreenId, Set<string>> {
   const broken = new Map<ScreenId, Set<string>>();
-  for (const screen of rendered) {
-    const rules = broken.get(screen.id) ?? new Set<string>();
-    for (const violation of inspectCall(...sent(screen), bare)) {
+  const calls: [ScreenId, string, unknown][] = [
+    ...rendered.map((screen): [ScreenId, string, unknown] => [
+      screen.id,
+      ...sent(screen),
+    ]),
+    ...notifications.map((call): [ScreenId, string, unknown] => [
+      "notification",
+      "sendMessage",
+      call,
+    ]),
+  ];
+  for (const [id, method, payload] of calls) {
+    const rules = broken.get(id) ?? new Set<string>();
+    for (const violation of inspectCall(method, payload, bare)) {
       rules.add(violation.rule);
     }
-    broken.set(screen.id, rules);
+    broken.set(id, rules);
   }
   return broken;
 }
@@ -450,6 +534,47 @@ describe("auction screens beyond the linter", () => {
         .filter((screen) => !/^<(b|h1)>/.test(screen.text))
         .map((screen) => `${screen.id}: ${screen.text.slice(0, 40)}`),
     ).toEqual([]);
+  });
+
+  // Список в теле повторяет кнопки содержимого строками «• …» (дизайн-код,
+  // «Списки»): экран над вопросом теряет клавиатуру, и без строк он пуст.
+  it("lists every content button of a list as a line of the body", () => {
+    const lists = rendered.filter((screen) =>
+      ["auctions", "past", "feed"].includes(screen.id),
+    );
+    expect(lists.length).toBeGreaterThan(0);
+    // Среди видов есть непустые списки: на одних пустых проверка молчала бы.
+    expect(lists.some((screen) => screen.text.includes("\n• "))).toBe(true);
+    for (const screen of lists) {
+      const lines = screen.text
+        .split("\n")
+        .filter((line) => line.startsWith("• "));
+      const content = screen.keyboard
+        .flat()
+        .filter(
+          (button) =>
+            "callback_data" in button && !/^(‹ |←$|→$|Меню$)/.test(button.text),
+        );
+      expect(lines.length, screen.text).toBe(content.length);
+    }
+  });
+
+  // Карточка лота: строки «ключ: значение» без точки в конце, статус первой
+  // группой (дизайн-код, «Карточка лота»).
+  it("keeps the lot card lines as fields without a trailing full stop", () => {
+    const cards = rendered.filter((screen) => screen.id === "lot");
+    expect(cards.length).toBeGreaterThan(0);
+    for (const card of cards) {
+      // Блоки и переносы rich-карточки — строки.
+      const lines = card.text
+        .replace(/<\/(h1|p)>|<br>/g, "\n")
+        .replace(/<[^>]+>/g, "")
+        .split("\n")
+        .filter((line) => /^[А-ЯЁ][а-яё ]+: /.test(line));
+      expect(lines.length).toBeGreaterThan(0);
+      expect(lines[0]).toMatch(/^Статус: /);
+      expect(lines.filter((line) => line.endsWith("."))).toEqual([]);
+    }
   });
 
   it("sends every screen with markup", () => {
