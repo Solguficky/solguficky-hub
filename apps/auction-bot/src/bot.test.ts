@@ -346,7 +346,13 @@ describe("auction bot", () => {
           chat: privateChat,
           from,
           text,
-          entities: [{ type: "bot_command", offset: 0, length: 6 }],
+          entities: [
+            {
+              type: "bot_command",
+              offset: 0,
+              length: (text.split(" ")[0] ?? text).length,
+            },
+          ],
         }),
       );
       return calls.map((call) => call.payload);
@@ -357,6 +363,8 @@ describe("auction bot", () => {
       "/start s_",
       "/start m_AZLzpLXGfY6fChssPU5fYA",
       "/start not a payload",
+      // `/menu` из кнопки меню клиента — тот же вход (PER-472).
+      "/menu",
     ]) {
       expect(await answer(text)).toEqual(plain);
     }
@@ -369,6 +377,9 @@ describe("auction bot", () => {
     ["/start s_", { sourceCode: "" }],
     ["/start m_AZLzpLXGfY6fChssPU5fYA", {}],
     ["/start", {}],
+    // `/menu` — вход без кода канала, даже с хвостом.
+    ["/menu", {}],
+    ["/menu s_tg_ads", {}],
   ])(
     "enters on %s with the public circle and the first name",
     async (text, code) => {
@@ -385,7 +396,13 @@ describe("auction bot", () => {
           chat: privateChat,
           from,
           text,
-          entities: [{ type: "bot_command", offset: 0, length: 6 }],
+          entities: [
+            {
+              type: "bot_command",
+              offset: 0,
+              length: (text.split(" ")[0] ?? text).length,
+            },
+          ],
         }),
       );
       expect(requestRole).toHaveBeenCalledExactlyOnceWith({
