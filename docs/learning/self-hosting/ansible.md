@@ -296,6 +296,86 @@ Server-side apply отвечает `changed` только когда API-сер�
 - **Проверка с контрольной парой.** `failed_when: verify_rbac_cross.rc == 0 or 'Forbidden' not in verify_rbac_cross.stderr` — отказ должен случиться и должен быть нужным отказом. Рядом всегда шаг, который в разрешённом месте проходит.
 - **Разбор вывода фильтрами.** Счётчик host guard — `nft list table … | regex_findall('packets ([0-9]+)') | map('int') | sum`; слушающие порты — `ss -Htln`, затем `map('split') | map(attribute=3) | select('match', '.*:6443$')`. Первая версия считала строки `wc -l` и прошла бы на двух строках с 6443 без 10250.
 
+### Пользователь и его ключи: `exclusive` и пустой вход
+
+Рабочее место [PER-257](https://linear.app/anticnvm/issue/per-257) заводит `dev-solguficky` файлом `tasks/dev.yml`. Ключи лежат файлами `keys/dev-solguficky/<машина>.pub`, по одному на машину, а модуль ставит их одним вызовом:
+
+```yaml
+- name: Authorize developer keys
+  ansible.posix.authorized_key:
+    user: "{{ dev_user }}"
+    key: "{{ dev_public_keys | join('\n') }}"
+    path: /home/{{ dev_user }}/.ssh/authorized_keys
+    exclusive: true
+```
+
+`exclusive: true` значит «в файле ровно эти ключи»: лишние строки модуль удаляет. Поэтому ключи склеиваются в одну строку через `\n`, а не ставятся циклом. Цикл по файлам с `exclusive` на каждой итерации оставлял бы только текущий ключ, и после прогона жил бы последний. Та же семантика даёт уборку при восстановлении: ключ, дописанный руками через консоль, следующий прогон `--tags dev` снимает, и `--diff` показывает удалённую строку.
+
+У `exclusive` опасный пустой вход: пустой список стирает все ключи. Перед модулем стоят две проверки. Первая — файлы ключей вообще есть. Вторая — каждый файл содержит публичный ключ одной строкой:
+
+```yaml
+- dev_public_keys | reject('match', '^(ssh-(ed25519|rsa)|ecdsa-sha2-nistp[0-9]+|sk-[a-z0-9-]+@openssh\.com) [A-Za-z0-9+/=]+( |$)') | list | length == 0
+```
+
+Первая версия считала только файлы. Ось корректности ревью нашла сценарий: пустой `.pub` или заготовка с комментарием проходит счёт файлов, `join` даёт пустую строку, и `exclusive` оставляет пустой `authorized_keys`. Проверено на localhost:
+
+```text
+один ключ: rc=0
+плюс пустой файл: rc=2 Не публичный ключ
+плюс комментарий: rc=2 Не публичный ключ
+каталог пуст: rc=2 Нет ключей
+```
+
+`query('ansible.builtin.file', *dev_key_files)` читает файлы списком. Звёздочка — распаковка аргументов в Jinja, как `params` в C#: lookup `file` принимает пути отдельными аргументами, а не списком.
+
+### Значение из результата модуля и check mode
+
+Потолок памяти ставится drop-in на `user-<uid>.slice`, а uid заранее неизвестен: его выдаёт `useradd`. Модуль `user` возвращает его в результате, и задача забирает его через `register`:
+
+```yaml
+- name: Create developer
+  ansible.builtin.user: {name: "{{ dev_user }}", shell: /bin/bash}
+  register: dev_account
+
+- name: Cap developer memory
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/user-{{ dev_account.uid }}.slice.d/50-solguficky.conf
+  when: dev_account.uid is defined
+```
+
+В check mode на хосте, где пользователя ещё нет, модуль сообщает «создал бы», но uid не возвращает: его некому было выдать. Условие `dev_account.uid is defined` пропускает задачи потолка, и пробный прогон на живом хосте показал `skipped=3`: каталог drop-in, сам потолок и клон. Это та же слепая зона цепочки, что выше. Значение, которое появится только после соседнего шага, check mode показать не может.
+
+Новый drop-in systemd подхватывает только после `daemon-reload`. Он стоит handler'ом `Reload systemd units`, который уведомляет задача потолка. Сделать reload условием `when: dev_slice.changed` на обычной задаче отверг `ansible-lint` (правило `no-handler`): условие «запустить, если что-то изменилось» и есть handler. Применяется ли потолок к уже открытой сессии без её перезапуска, лаборатория не проверяла. По документации systemd — да. Проверь сам: открой `ssh solguficky-dev`, поменяй `dev_memory_max`, прогони `--tags dev` и сравни `cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/memory.max` в открытой сессии.
+
+### `verify.yml`: повтор, чтение юнита и контроль механизма
+
+Блок `--tags dev` добавил три приёма.
+
+- **`until` с переменными задачи, которые читают её же `register`.** sshd пишет журнал асинхронно, и строка отказа может не успеть появиться к моменту чтения. Задача читает журнал и повторяет чтение, пока все три строки не найдены:
+
+  ```yaml
+  vars:
+    journal_lines: "{{ verify_journal.stdout_lines | default([]) }}"
+    verify_journal_hits: ["{{ journal_lines | select('search', …) | list | length > 0 }}", …]
+  register: verify_journal
+  until: verify_journal_hits is all
+  retries: 5
+  ```
+
+  Переменные задачи вычисляются лениво, при каждом обращении. Внутри `until` имя `verify_journal` указывает на результат текущей попытки, а `default([])` закрывает самое первое вычисление. Сам вердикт выносит следующий `assert`: он печатает журнал целиком, если строк так и не нашлось.
+- **`systemd_service` без `state` — чтение, а не действие.** Модуль возвращает свойства юнита в `status`, как `systemctl show`. Так `MemoryMax` читается без `command` и без разбора текста: `verify_dev_memory.status.MemoryMax == (dev_memory_max | human_to_bytes | string)`. systemd отдаёт байты, `human_to_bytes` переводит `3G` в те же 3221225472.
+- **Контроль самого механизма проверки.** Отказ «dev не читает секреты» снят как `runuser -u dev-solguficky -- test -r <файл>` с ожидаемым кодом 1. Но 1 вернёт и сломанный `runuser`. Рядом стоит контроль тем же механизмом: dev читает свой `.git/HEAD`, ожидается 0. Это та же контрольная пара, что у RBAC и host guard выше, только про инструмент проверки, а не про предмет.
+
+### Лаборатория на control node без root
+
+Прежде чем отдать playbook на хост, его прогнали в контейнере Debian 13 с systemd и настоящим sshd, как k3s ([k3s.md](k3s.md#как-это-собиралось)). Control node — WSL владельца: там же лежат ключ и inventory прода, и лаборатория не должна их задеть. Три ловушки:
+
+- **ssh не читает `HOME`.** Подмена `HOME` на каталог лаборатории изолировала ключи для Ansible: `~` в путях раскрывает Python, и он смотрит в `HOME`. А ssh отказал: `Host key verification failed`. Он ищет `~/.ssh/known_hosts` в домашнем каталоге из passwd, а не из окружения. Лаборатория передаёт свой `known_hosts` явно: `ANSIBLE_SSH_COMMON_ARGS="-o UserKnownHostsFile=…"`. Путь к ключу в своих пробах `verify.yml` раскрывает фильтром `| expanduser`, а не отдаёт ssh строку с `~`.
+- **`-e key=value` режет значение по пробелам.** `-e "verify_ssh=ssh -o BatchMode=yes …"` положил в `verify_ssh` одно слово `ssh`, а остальное стало другими «переменными». Строка с пробелами передаётся JSON: `-e '{"verify_ssh": "ssh -o …"}'`.
+- **Docker Desktop из WSL.** Общий `~/.docker/config.json` называет `credsStore: desktop.exe`, а в этой WSL `.exe` не исполняется: `exec format error` на сборке. Лаборатория даёт docker свой пустой `DOCKER_CONFIG` — публичному образу `debian` учётные данные не нужны — и не трогает общий конфиг.
+
+Ещё лаборатория должна совпадать с хостом в том, от чего зависит проверяемое. Без `python3-apt` в образе падал check mode модуля `apt`. Без `libpam-systemd` потолок памяти не действовал: сессии не попадали в `user-<uid>.slice` ([memory-accounting.md](memory-accounting.md#кто-попадает-в-slice-пользователя)). Оба пакета на хосте есть, а в минимальном образе их нет.
+
 ## Как playbook ложится на свежий хост
 
 Порядок строится по одному правилу из [vocabulary.md](vocabulary.md#урок): не убирай путь отхода, пока не проверил запасной. Образ панели пускает только root по ключу. Конечное состояние пускает только `ops`. Между ними нельзя оказаться без обоих входов.
@@ -326,6 +406,9 @@ Server-side apply отвечает `changed` только когда API-сер�
 - **Проверка, которой нечего проверять, не должна выглядеть зелёной.** `readlink -f` на несуществующий путь отвечает кодом 0, и сравнение над его выводом проходит.
 - **Скрипт поставщика оборачивается условием, а не доверием.** `command` не знает, что делает скрипт: когда его запускать и что считать изменением, говорит задача. `creates:` отвечает только «запускался ли когда-то», а не «запускался ли для этой версии».
 - **Проверка и установка читают одни значения.** Два плейбука с копиями переменных расходятся молча, и проверка краснеет на правильном хосте или зеленеет на неправильном.
+- **«Ровно эти» опасно на пустом входе.** `exclusive: true` превращает пустой список в «удалить всё». Проверять приходится не наличие файлов, а их содержимое: пустой файл — тоже файл.
+- **Контрольная пара нужна и самому инструменту проверки.** Отказ, который выражен кодом возврата, неотличим от сбоя инструмента с тем же кодом. Рядом ставится тот же вызов, который обязан пройти.
+- **Лаборатория совпадает с хостом там, где живёт проверяемый механизм.** Минимальный образ без `libpam-systemd` дал «потолок есть, а процессы под ним не лежат» — честный зелёный на неверной модели хоста.
 
 ## Почему так, а не иначе
 
@@ -340,6 +423,9 @@ Server-side apply отвечает `changed` только когда API-сер�
 - **`kubectl apply` через `command` вместо `kubernetes.core.k8s`.** Не нужен `python3-kubernetes` на хосте, но `changed` пришлось бы выводить разбором текста, и `changed=0` держался бы на регулярке.
 - **Переменные в `group_vars/`.** Стандартное место Ansible, его подхватывают все плейбуки сами. Выбран явный `vars_files: [vars.yml]`: в репозитории один хост и два плейбука, и явная строка видна при чтении плейбука.
 - **Разметка из панели при установке ОС.** Панель Timeweb её не выбирает, поэтому LVM на дополнительном диске создаёт playbook ([disks.md](disks.md#почему-так-а-не-иначе)).
+- **Ключи разработчика строкой в `vars.yml`.** Короче, но добавление машины становится правкой общего файла переменных, а `exclusive` с одной опечаткой в нём стирает доступ. Файл на машину читается как «чей ключ» и удаляется вместе с машиной.
+- **Ключи без `exclusive`.** Безопаснее на пустом входе, но ключ, дописанный руками при восстановлении, жил бы вечно, и уборку пришлось бы делать отдельной задачей.
+- **Лаборатория с соединением `community.docker.docker`, как у k3s.** Не нужен sshd в контейнере, но тогда не проверяются сами `AllowUsers`, `LogLevel` и строки журнала — то, ради чего срез. Лаборатория рабочего места ходит в контейнер по настоящему ssh.
 
 ## Схема
 
@@ -398,6 +484,11 @@ sequenceDiagram
 - [kubernetes.core.k8s](https://docs.ansible.com/ansible/latest/collections/kubernetes/core/k8s_module.html) и [kubernetes.core.kustomize lookup](https://docs.ansible.com/ansible/latest/collections/kubernetes/core/kustomize_lookup.html) — `server_side_apply`, `definition` списком и где выполняется lookup.
 - [Blocks](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_blocks.html) — `block`/`rescue`/`always` как обработка ошибок.
 - [docs/access.md в ops-репозитории](https://github.com/Solguficky/solguficky-ops/blob/main/docs/access.md) — процедура консоли, rescue и отката политики SSH.
+- [ansible.posix.authorized_key](https://docs.ansible.com/ansible/latest/collections/ansible/posix/authorized_key_module.html) — `exclusive` и `key` с несколькими ключами через перевод строки.
+- [ansible.builtin.user](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/user_module.html) — что модуль возвращает, включая `uid`.
+- [ansible.builtin.systemd_service](https://docs.ansible.com/ansible/latest/collections/ansible/builtin/systemd_service_module.html) — `status` в результате и `daemon_reload`.
+- [Passing variables on the command line](https://docs.ansible.com/ansible/latest/playbook_guide/playbooks_variables.html#defining-variables-at-runtime) — `key=value` против JSON в `-e`.
+- [ssh(1), FILES](https://man.openbsd.org/ssh#FILES) — `~/.ssh/known_hosts` и `~/.ssh/config` пользователя; что `~` здесь — домашний каталог из passwd, видно по отказу лаборатории выше.
 
 ## Проверь себя
 
@@ -411,3 +502,6 @@ sequenceDiagram
 8. **Качает ли повторный прогон бинарь k3s заново?** `ansible-playbook site.yml -K --tags k3s` на настроенном хосте: `Download k3s binary` отвечает `ok`, в итоге `changed=0`.
 9. **Где выполняется kustomize, а где применение?** `kubectl kustomize ~/solguficky-ops/cluster | grep -c '^kind:'` в WSL печатает число объектов без всякого хоста; применение без `python3-kubernetes` на хосте упало бы с ошибкой импорта модуля — не воспроизводилось.
 10. **Растёт ли `ext4` вместе с томом?** На хосте не запускалось. Проверь, когда понадобится место: поднимите `state_lv_size_gb` в `vars.yml`, прогоните playbook и сравните `df -h /srv/state` до и после.
+11. **Что сделает `--tags dev`, если в `keys/dev-solguficky/` положить пустой файл?** `touch keys/dev-solguficky/empty.pub && ansible-playbook site.yml -K --check --tags dev` — прогон останавливается на `Every key file holds one public key`, до `authorized_key`. Потом `rm keys/dev-solguficky/empty.pub`.
+12. **Видит ли проверка, что на хосте лишний ключ?** После шага 3 восстановления из `docs/access.md` `ansible-playbook verify.yml -K --tags dev` падает на `Host authorizes exactly the declared keys` и печатает оба списка отпечатков; после `--tags dev` снова зелёный. В лаборатории так и было.
+13. **Почему `-e "a=b c"` не кладёт в `a` строку с пробелом?** `ansible localhost -m debug -a var=a -e "a=b c"` печатает `"b"`; `-e '{"a": "b c"}'` — `"b c"`.
