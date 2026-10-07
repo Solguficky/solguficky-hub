@@ -496,14 +496,14 @@ Subject называет повод, сообщение на всех повод
 |---|---|---|---|
 | `events.auction.lot_drafted` | `auction.v1.LotEvent` в `contracts/proto/auction/v1/auction_events.proto` | Auction | не заявлен |
 | `events.auction.lot_scheduled` | то же | Auction | не заявлен |
-| `events.auction.lot_opened` | то же | Auction | не заявлен |
-| `events.auction.bid_placed` | то же | Auction | Notifications, поводы `lot_outbid` ([PER-326](https://linear.app/anticnvm/issue/per-326)) и `lot_proxy_raised` ([PER-473](https://linear.app/anticnvm/issue/per-473)) |
+| `events.auction.lot_opened` | то же | Auction | Notifications, реплика лота для избранного — заявлена ([PER-522](https://linear.app/anticnvm/issue/per-522)) |
+| `events.auction.bid_placed` | то же | Auction | Notifications, поводы `lot_outbid` ([PER-326](https://linear.app/anticnvm/issue/per-326)) и `lot_proxy_raised` ([PER-473](https://linear.app/anticnvm/issue/per-473)); автодобавление в избранное и реплика лота — заявлены ([PER-522](https://linear.app/anticnvm/issue/per-522)) |
 | `events.auction.ask_advanced` | то же | Auction | не заявлен |
-| `events.auction.deadline_extended` | то же | Auction | уведомление «Лот продлён»; сервис-потребитель не выбран |
-| `events.auction.lot_sold` | то же | Auction | Notifications, повод `lot_purchased` ([PER-327](https://linear.app/anticnvm/issue/per-327)) и закрытие открытых окон частоты `lot_outbid` ([PER-514](https://linear.app/anticnvm/issue/per-514)) |
-| `events.auction.lot_unsold` | то же | Auction | не заявлен |
-| `events.auction.lot_withdrawn` | то же | Auction | не заявлен |
-| `events.auction.lot_held_for_final` | то же | Auction | не заявлен |
+| `events.auction.deadline_extended` | то же | Auction | Notifications, реплика лота для избранного — заявлена ([ADR-063](../decisions/ADR-063-auction-favorites-in-notifications.md), [PER-522](https://linear.app/anticnvm/issue/per-522)); отдельного уведомления «Лот продлён» нет |
+| `events.auction.lot_sold` | то же | Auction | Notifications, повод `lot_purchased` ([PER-327](https://linear.app/anticnvm/issue/per-327)) и закрытие открытых окон частоты `lot_outbid` ([PER-514](https://linear.app/anticnvm/issue/per-514)); реплика лота для избранного — заявлена ([PER-522](https://linear.app/anticnvm/issue/per-522)) |
+| `events.auction.lot_unsold` | то же | Auction | Notifications, реплика лота для избранного — заявлена ([PER-522](https://linear.app/anticnvm/issue/per-522)) |
+| `events.auction.lot_withdrawn` | то же | Auction | Notifications, реплика лота для избранного — заявлена ([PER-522](https://linear.app/anticnvm/issue/per-522)) |
+| `events.auction.lot_held_for_final` | то же | Auction | Notifications, реплика лота для избранного — заявлена ([PER-522](https://linear.app/anticnvm/issue/per-522)) |
 | `events.auction.lot_resumed` | то же | Auction | не заявлен |
 | `events.auction.auction_drafted` | `auction.v1.AuctionEvent` в том же файле | Auction | не заявлен |
 | `events.auction.auction_scheduled` | то же | Auction | не заявлен |
