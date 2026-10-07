@@ -21,6 +21,11 @@ service NotificationsService {
   rpc GetGlobalNotificationPreferences(GetGlobalNotificationPreferencesRequest) returns (GlobalNotificationPreferences);
   rpc GetMeetupNotificationPreferences(GetMeetupNotificationPreferencesRequest) returns (MeetupNotificationPreferences);
 
+  // How often the person hears that their lead on a lot was taken. This is
+  // not one of the categories below.
+  rpc GetOutbidPreference(GetOutbidPreferenceRequest) returns (OutbidPreference);
+  rpc SetOutbidPreference(SetOutbidPreferenceRequest) returns (OutbidPreference);
+
   // Two separate operations rather than one with an optional meetup id. They
   // share the acceptance message because one mechanism executes both.
   rpc BroadcastToMeetupSubscribers(BroadcastToMeetupSubscribersRequest) returns (BroadcastAccepted);
@@ -124,6 +129,47 @@ message MeetupNotificationPreferences {
 message CategoryPreference {
   NotificationCategory category = 1;
   bool enabled = 2;
+}
+
+message GetOutbidPreferenceRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+}
+
+message SetOutbidPreferenceRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Target value, never a step from the current one.
+  OutbidFrequency frequency = 2;
+}
+
+// Server-produced state. A person who never set the value gets the product
+// default, EVERY, not UNSPECIFIED.
+message OutbidPreference {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  OutbidFrequency frequency = 2;
+}
+
+// A fixed list rather than a number of minutes: only these intervals exist.
+// The interval is counted per lot.
+enum OutbidFrequency {
+  // No value: the field is unset or the value is unknown to the consumer.
+  OUTBID_FREQUENCY_UNSPECIFIED = 0;
+
+  // Every outbid on its own.
+  OUTBID_FREQUENCY_EVERY = 1;
+
+  // At most one message per lot in the interval, sent when it ends and only if
+  // the person is still outbid; it carries the price at that moment.
+  OUTBID_FREQUENCY_AT_MOST_EVERY_5_MINUTES = 2;
+  OUTBID_FREQUENCY_AT_MOST_EVERY_15_MINUTES = 3;
+  OUTBID_FREQUENCY_AT_MOST_EVERY_60_MINUTES = 4;
+
+  // No outbid messages. Purchase, proxy and access messages are not affected.
+  OUTBID_FREQUENCY_OFF = 5;
 }
 
 message BroadcastToMeetupSubscribersRequest {

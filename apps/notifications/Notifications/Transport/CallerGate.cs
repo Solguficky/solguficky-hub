@@ -28,6 +28,8 @@ public static class MethodAccess
             ["SetMeetupCategoryPreference"] = Bot,
             ["GetGlobalNotificationPreferences"] = Bot,
             ["GetMeetupNotificationPreferences"] = Bot,
+            ["GetOutbidPreference"] = Bot,
+            ["SetOutbidPreference"] = Bot,
             ["BroadcastToMeetupSubscribers"] = Bot,
             ["BroadcastToCommunity"] = Bot,
         };

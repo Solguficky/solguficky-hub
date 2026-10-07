@@ -46,6 +46,47 @@ public static class AuctionFixtures
 
     public static Task RestoreOutbox(IsolatedDatabase db) => Execute(db, "DROP TRIGGER reject_auction_fact ON notification;");
 
+    /// <summary>Ставка с заданной ценой: окно частоты запоминает цену последнего перебития.</summary>
+    public static global::Auction.V1.LotEvent PricedBid(string lotId, string previousLeader, string leader, long version,
+        long minorUnits)
+    {
+        var message = EventFactory.Bid(lotId, previousLeader, leader, version);
+        message.State.Trading.CurrentPrice.MinorUnits = minorUnits;
+        return message;
+    }
+
+    /// <summary>Настройка перебитий участника, как её записала бы команда.</summary>
+    public static async Task SetOutbid(IsolatedDatabase db, string identityId, OutbidFrequency frequency)
+    {
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        await using var work = await UnitOfWork.Begin(source, Cancellation);
+        await OutbidStore.SetPreference(work, Guid.Parse(identityId), frequency, EventFactory.Committed, Cancellation);
+        await work.Commit(Cancellation);
+    }
+
+    /// <summary>Закрывает все окна, наступившие к моменту, как это сделал бы проход.</summary>
+    public static async Task<int> CloseDueWindows(AuctionStore store, DateTimeOffset now)
+    {
+        var created = 0;
+        foreach (var key in await store.DueWindows(now, 256, Cancellation))
+        {
+            created += await store.CloseWindow(key, now, Cancellation);
+        }
+        return created;
+    }
+
+    /// <summary>Сдвигает момент закрытия всех окон в прошлое: время двигается данными.</summary>
+    public static Task ExpireWindows(IsolatedDatabase db) =>
+        Execute(db, "UPDATE outbid_window SET due_at = now() - interval '1 second';");
+
+    public static async Task<IReadOnlyList<Notification>> StoredFacts(IsolatedDatabase db)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+        var payloads = await connection.QueryAsync<byte[]>(
+            new CommandDefinition("SELECT payload FROM notification ORDER BY created_at;", cancellationToken: Cancellation));
+        return payloads.Select(payload => Notification.Parser.ParseFrom(payload)).ToArray();
+    }
+
     public static async Task PruneEventKeys(IsolatedDatabase db, DateTimeOffset threshold)
     {
         await using var source = NpgsqlDataSource.Create(db.ConnectionString);

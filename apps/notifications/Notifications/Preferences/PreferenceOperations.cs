@@ -135,6 +135,37 @@ public sealed class PreferenceOperations(
         CancellationToken cancellationToken) =>
         InMeetupScope(identityId, meetupId, static (_, _) => Task.CompletedTask, cancellationToken);
 
+    /// <summary>Действующая частота перебитий: заданная или умолчание продукта.</summary>
+    public async Task<OutbidFrequency> ReadOutbid(Guid identityId, CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+
+        var frequency = await OutbidStore.ReadPreference(work, identityId, cancellationToken);
+
+        await work.Commit(cancellationToken);
+
+        return frequency ?? OutbidFrequencies.Default;
+    }
+
+    /// <summary>
+    /// Ставит частоту перебитий. Открытые окна не трогаются: на закрытии окно
+    /// само перечитывает настройку, и выключивший перебития сообщения не получит.
+    /// </summary>
+    public async Task<OutbidFrequency> SetOutbid(
+        Guid identityId,
+        OutbidFrequency frequency,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+
+        await OutbidStore.SetPreference(work, identityId, frequency, DateTimeOffset.UtcNow, cancellationToken);
+        var stored = await OutbidStore.ReadPreference(work, identityId, cancellationToken);
+
+        await work.Commit(cancellationToken);
+
+        return stored ?? OutbidFrequencies.Default;
+    }
+
     /// <summary>
     /// Общая форма всех операций у сходки: команда и снимок после неё одной
     /// транзакцией. Чистое чтение передаёт пустую команду.

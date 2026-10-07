@@ -87,6 +87,20 @@ public class RequestValidationTests
             .ShouldBe(StatusCode.InvalidArgument);
     }
 
+    [Theory]
+    [InlineData(OutbidFrequency.Unspecified)]
+    [InlineData((OutbidFrequency)42)]
+    public void OutbidFrequency_UnspecifiedOrOutsideList_IsRejected(OutbidFrequency frequency)
+    {
+        Code(() => RequestValidation.OutbidFrequency(frequency)).ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void OutbidFrequency_ValueFromList_IsAccepted()
+    {
+        RequestValidation.OutbidFrequency(OutbidFrequency.Off).ShouldBe(OutbidFrequency.Off);
+    }
+
     [Fact]
     public void MeetupScopedCategory_CategoryAMeetupCanHold_IsAccepted()
     {

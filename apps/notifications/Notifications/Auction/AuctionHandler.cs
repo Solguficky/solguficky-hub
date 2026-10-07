@@ -65,6 +65,8 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionOutcome.Overtaken => "overtaken",
             AuctionOutcome.Purchased => "purchased",
             AuctionOutcome.Duplicate => "duplicate",
+            AuctionOutcome.Suppressed => "suppressed",
+            AuctionOutcome.Collected => "collected",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),
         }, application.FactsCreated);
     }

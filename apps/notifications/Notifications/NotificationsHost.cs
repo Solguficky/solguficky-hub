@@ -228,6 +228,11 @@ public static class NotificationsHost
         builder.Services.AddSingleton<ReplicaStore>();
         builder.Services.AddSingleton<ConsumedEventStore>();
         builder.Services.AddSingleton<AuctionStore>();
+        // Окна частоты перебитий (PER-514) закрываются и без шины: факт ложится
+        // в outbox, а в шину его выносит релей, когда она есть.
+        builder.Services.Configure<OutbidWindowOptions>(builder.Configuration.GetSection(OutbidWindowOptions.SectionName));
+        builder.Services.AddSingleton<OutbidWindowSweeper>();
+        builder.Services.AddHostedService(services => services.GetRequiredService<OutbidWindowSweeper>());
         // Срок хранения ключей сверяет с настоящим стримом сам потребитель при
         // привязке: копия настройки стрима здесь прошла бы молча, когда
         // топология поднимет окно хранения.

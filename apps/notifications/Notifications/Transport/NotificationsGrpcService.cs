@@ -118,6 +118,29 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Br
         return Map(preferences);
     }
 
+    public override async Task<OutbidPreference> GetOutbidPreference(
+        GetOutbidPreferenceRequest request,
+        ServerCallContext context)
+    {
+        var identityId = RequestValidation.IdentityId(request.IdentityId);
+
+        var frequency = await operations.ReadOutbid(identityId, context.CancellationToken);
+
+        return Map(identityId, frequency);
+    }
+
+    public override async Task<OutbidPreference> SetOutbidPreference(
+        SetOutbidPreferenceRequest request,
+        ServerCallContext context)
+    {
+        var identityId = RequestValidation.IdentityId(request.IdentityId);
+        var frequency = RequestValidation.OutbidFrequency(request.Frequency);
+
+        var stored = await operations.SetOutbid(identityId, frequency, context.CancellationToken);
+
+        return Map(identityId, stored);
+    }
+
     /// <summary>
     /// Ручная рассылка подписчикам сходки. Право действовать от имени сходки
     /// проверяет Meetups синхронным вызовом на самой команде.
@@ -228,4 +251,7 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Br
 
     private static CategoryPreference Map(CategoryState state) =>
         new() { Category = state.Category, Enabled = state.Enabled };
+
+    private static OutbidPreference Map(Guid identityId, OutbidFrequency frequency) =>
+        new() { IdentityId = identityId.ToString("D"), Frequency = frequency };
 }
