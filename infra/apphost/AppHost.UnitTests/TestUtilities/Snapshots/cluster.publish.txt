@@ -28,7 +28,30 @@ auction: ContainerResource
   relationship: WaitFor meetups
   relationship: WaitFor nats
   health: auction_http_/health_200_check
+auction-bot: ContainerResource
+  image: /placeholder:latest
+  build: <repo>/apps/auction-bot/Containerfile context=<repo>
+  env: AUCTION_BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: AUCTION_BOT_ENVIRONMENT=prod
+  env: AUCTION_BOT_NATS_URL={nats.connectionString}
+  env: AUCTION_BOT_SERVICE_TOKEN={auction-bot-service-token.value}
+  env: AUCTION_BOT_TOKEN={auction-bot-token.value}
+  env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
+  env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  waits: auction WaitUntilHealthy
+  waits: identity WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference auction
+  relationship: Reference auction-bot-service-token
+  relationship: Reference auction-bot-token
+  relationship: Reference identity
+  relationship: Reference nats
+  relationship: WaitFor auction
+  relationship: WaitFor identity
+  relationship: WaitFor nats
 auction-bot-service-token: ParameterResource
+  secret: True
+auction-bot-token: ParameterResource
   secret: True
 auction-db: ConnectionStringParameterResource
   secret: True

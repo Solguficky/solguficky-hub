@@ -1,0 +1,23 @@
+# Контекст сборки Containerfile рядом — корень репозитория, поэтому список
+# разрешённого: всё, что не названо ниже, в контекст не попадает. Так .env с
+# токеном, node_modules, dist и testkit рабочего дерева не доезжают до сборки.
+# Docker находит файл по имени сам, podman получает его через --ignorefile.
+*
+!contracts/proto
+!apps/auction-bot/package.json
+!apps/auction-bot/package-lock.json
+!apps/auction-bot/buf.gen.yaml
+!apps/auction-bot/tsconfig.json
+!apps/auction-bot/tsconfig.build.json
+!apps/auction-bot/src
+!shared/typescript/auction-bot-ui/package.json
+!shared/typescript/auction-bot-ui/package-lock.json
+!shared/typescript/auction-bot-ui/tsconfig.json
+!shared/typescript/auction-bot-ui/tsconfig.build.json
+!shared/typescript/auction-bot-ui/src
+!shared/typescript/telegram-delivery/package.json
+!shared/typescript/telegram-delivery/package-lock.json
+!shared/typescript/telegram-delivery/tsconfig.json
+!shared/typescript/telegram-delivery/tsconfig.build.json
+!shared/typescript/telegram-delivery/src
+**/*.test.ts

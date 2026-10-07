@@ -1,6 +1,6 @@
 # Stage хаба на VPS
 
-Stage — хаб с аукционом в namespace `test` k3s на VPS ([PER-311](https://linear.app/anticnvm/issue/per-311)): пять сервисов чарта из AppHost, PostgreSQL на CloudNativePG и NATS JetStream. Рантайм и правила кластера — [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md), решения про stage — его дополнение 2026-10-06. Бот аукциона, боевой токен, бэкапы, Flux и SOPS в stage не входят: это листья [PER-80](https://linear.app/anticnvm/issue/per-80).
+Stage — хаб с аукционом и оба бота в namespace `test` k3s на VPS ([PER-311](https://linear.app/anticnvm/issue/per-311), [PER-454](https://linear.app/anticnvm/issue/per-454)): шесть сервисов чарта из AppHost, PostgreSQL на CloudNativePG и NATS JetStream. Новые образы и чарт из `develop` stage выкатывает сам. Рантайм и правила кластера — [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md), решения про stage — его дополнения 2026-10-06 и 2026-10-07. Боевой токен, бэкапы, Flux и SOPS в stage не входят: это листья [PER-80](https://linear.app/anticnvm/issue/per-80) и [PER-383](https://linear.app/anticnvm/issue/per-383).
 
 Описание stage живёт в приватном ops-репозитории `solguficky-ops`, а не здесь: values с digest образов, манифесты PostgreSQL и NATS, сетевые разрешения и скрипты выкладки. Публичный репозиторий топологию среды не раскрывает (ADR-055, «Обоснование»). Этот файл — устойчивые правила работы со stage; команды и раскладка файлов — README ops-репозитория.
 
@@ -8,38 +8,78 @@ Stage — хаб с аукционом в namespace `test` k3s на VPS ([PER-31
 
 | Что | Где | Кто применяет |
 |---|---|---|
-| namespace `test`: квота 1280Mi памяти, LimitRange, Pod Security `restricted`, NetworkPolicy, учётка выкатки | ops, `cluster/` | `ansible-playbook site.yml -K --tags cluster`, под sudo владельца |
+| namespace `test`: квота 1360Mi памяти, LimitRange, Pod Security `restricted`, NetworkPolicy, учётка выкатки | ops, `cluster/` | `ansible-playbook site.yml -K --tags cluster`, под sudo владельца |
 | оператор CNPG, metrics-server, helm на хосте | ops, `cluster/`, `tasks/` | тот же playbook, теги `cluster` и `k3s` |
-| PostgreSQL 16 — кластер CNPG `hub-pg`, роль и база на сервис, роль `ops_readonly` | ops, `stage/test/postgres.yaml` | `bin/stage deploy` |
-| NATS 2.12 с JetStream на томе | ops, `stage/test/nats.yaml` | `bin/stage deploy` |
+| таймер автовыкладки, клон ops-репозитория под `ops` и его read-only deploy key | ops, `tasks/autodeploy.yml` | тот же playbook, тег `autodeploy` |
+| PostgreSQL 16 — кластер CNPG `hub-pg`, роль и база на сервис, роль `ops_readonly` | ops, `stage/test/postgres.yaml` | выкладка |
+| NATS 2.12 с JetStream на томе | ops, `stage/test/nats.yaml` | выкладка |
 | streams, durables, KV | чарт, Job `jetstream-topology` | Helm-hook при каждой выкладке |
-| пять сервисов | чарт из AppHost, values ops `stage/test/values.yaml` | `bin/stage deploy` |
+| шесть сервисов, из них два бота | чарт из AppHost, версия — ops `stage/test/release.yaml`, digest'ы — `stage/test/values.yaml` | выкладка |
+
+Выкладка — одна и та же: её запускает таймер на хосте после нового коммита в ops-репозитории или человек командой `bin/stage deploy`.
 
 Тома PostgreSQL и NATS — `local-path` на LV `/srv/state` хоста: они переживают рестарт пода и хоста.
 
 ## Секреты
 
-Секреты лежат в файле `~/.config/solguficky/test.env` на хосте, права 0600, владелец `ops`. В Git и в values их нет. `bin/stage init` создаёт файл и генерирует сервисные токены и пароли ролей; токен тестового бота `HUB_BOT_TOKEN` вписывается руками. Повторный `init` дописывает только новые переменные и прежних значений не меняет.
+Секреты лежат в файле `~/.config/solguficky/test.env` на хосте, права 0600, владелец `ops`. В Git и в values их нет. `bin/stage init` создаёт файл и генерирует сервисные токены и пароли ролей. Токены двух тестовых ботов, `HUB_BOT_TOKEN` и `AUCTION_BOT_TOKEN`, вписываются руками. Повторный `init` дописывает только новые переменные и прежних значений не меняет.
 
 При выкладке из файла собираются Secret'ы ролей PostgreSQL и values секретов чарта. Последние передаются helm временным файлом в tmpfs и удаляются после установки. Каждый секрет чарта берётся из переменной с его именем в верхнем регистре (`secrets.auction.auction_db_user` — `AUCTION_DB_USER`). Секрет, которого в файле нет, роняет выкладку, а не уезжает пустой строкой.
 
-Токен бота stage — отдельный тестовый бот продакшн-среды Telegram. Тот же токен нельзя одновременно держать в локальном `aspire run`: второй поллер получит `409 Conflict`.
+Боты stage — два отдельных тестовых бота продакшн-среды Telegram, по одному на бот хаба и бот аукциона. Два поллера на одном боте получают `409 Conflict` по очереди, и не работает ни один. Поэтому выкладка сравнивает id ботов — часть токена до двоеточия — и при совпадении отказывает до первого изменения кластера, без значения токена в выводе (дополнение ADR-055 от 2026-10-07). Тот же токен нельзя одновременно держать в локальном `aspire run`: этого выкладка не видит, и второй поллер получит `409 Conflict`.
 
-## Выкладка и обновление
+## Автовыкладка
 
-Команды запускаются с control node (WSL) из корня ops-репозитория. kubeconfig среды хост не покидает, поэтому `bin/stage` копирует `stage/` на хост и запускает там helm и kubectl учёткой выкатки.
+Мерж в `develop`, который меняет образ сервиса или чарт, доезжает до stage без ручных шагов (дополнение ADR-055 от 2026-10-07):
+
+1. CI публикует образ или чарт в GHCR (`image-*.yml`, `chart-publish.yml`).
+2. Джоба `stage` того же workflow (`stage-bump.yml`) коммитит digest в `stage/test/values.yaml` или версию чарта в `stage/test/release.yaml` прямо в `main` ops-репозитория. Ключ записи — секрет `OPS_DEPLOY_KEY` в environment `stage` этого репозитория, допущенном только для `develop`.
+3. Таймер `solguficky-stage-autodeploy` на хосте раз в две минуты тянет клон ops-репозитория своим read-only deploy key и выкатывает новый коммит.
+
+Входящего доступа к хосту у CI нет, API k3s по-прежнему закрыт. Публикации одного мержа приходят разными коммитами и выкатываются по очереди. Если чарт с новым сервисом пришёл раньше digest'а его образа, выкладка отказывает до изменения кластера, а коммит с digest'ом её чинит.
+
+Таймер отмечает коммит попыткой до выкладки. Упавшая выкладка остаётся упавшей ревизией helm: по кругу она не повторяется и сама не откатывается. Следующий коммит в ops-репозитории выкатывается заново, а откат — решение человека, как и раньше. Исключение — выкладка, которая не прочитала чарт из GHCR: кластер она не тронула, и тот же коммит повторяется следующим тиком.
 
 ```bash
-bin/stage deploy oci://ghcr.io/solguficky/charts/solguficky-hub 0.1.<N>   # опубликованный чарт
-bin/stage deploy ./solguficky-hub-<версия>.tgz                            # чарт ветки до публикации
-bin/stage status                                                          # поды и история релиза
+bin/stage autolog --since=today   # журнал таймера: коммит, версия чарта, digest каждого образа, итог
+bin/stage status                  # образы подов по digest, история релиза, последняя автовыкладка
+bin/stage pause                   # остановить автовыкладку; идущую выкладку пауза не прерывает
+bin/stage resume                  # вернуть; следующий тик выкатит main, даже если новых коммитов нет
 ```
 
-Порядок внутри: Secret'ы ролей, PostgreSQL и NATS с ожиданием готовности, затем `helm upgrade --install` с `--wait`. Pre-hook чарта применяет топологию JetStream до сервисов. Без `--atomic`: упавшая выкладка остаётся упавшей ревизией, и решение об откате принимает человек (ADR-055).
+Журнал — `journalctl -u solguficky-stage-autodeploy` на хосте, `bin/stage autolog` читает его с control node. Таймер — системный юнит под `ops` и после перезагрузки хоста работает сам. Проверка — `ansible-playbook verify.yml -K --tags autodeploy`: таймер включён и после загрузки уже срабатывал.
 
-Новая версия — новые digest образов в `stage/test/values.yaml` и версия чарта в команде. Правка values перекатывает поды сама: шаблон пода несёт контрольные суммы своих ConfigMap и Secret. Все сервисы — `Recreate`, поэтому каждая выкладка, меняющая под, даёт простой этого сервиса.
+Первая установка — `ansible-playbook site.yml -K --tags autodeploy`. Playbook создаёт ключ на хосте и останавливается с его текстом. Ключ добавляется в Deploy keys ops-репозитория без права записи, затем прогон повторяется.
 
-Чарт ставится с публичного GHCR без pull secret: пакеты образов и чарта открыты.
+## Ручная выкладка
+
+Команды запускаются с control node (WSL) из корня ops-репозитория. kubeconfig среды хост не покидает, поэтому `bin/stage` копирует `stage/` на хост и запускает там helm и kubectl учёткой выкатки. Ручная выкладка и таймер берут один lock и идут по очереди. CI пишет в `origin/main` ops-репозитория, поэтому копия на control node отстаёт сама: `bin/stage deploy` отказывает, пока в ней нет `origin/main`, — иначе он выкатил бы старые digest'ы, а таймер, у которого этот коммит уже отмечен, их бы не вернул.
+
+```bash
+bin/stage deploy                                 # чарт и версия из stage/test/release.yaml — то же, что делает таймер
+bin/stage deploy ./solguficky-hub-<версия>.tgz   # чарт ветки до публикации
+```
+
+Чарт ветки ставится только при остановленной автовыкладке: `bin/stage pause` до, `bin/stage resume` после. Иначе следующий коммит из `develop` выкатит опубликованный чарт поверх ветки.
+
+Порядок внутри выкладки: сначала проверки, которые могут отказать по входу, — секреты, токены ботов, digest каждого образа чарта. Затем Secret'ы ролей, PostgreSQL и NATS с ожиданием готовности, затем `helm upgrade --install` с `--wait`. Отказ проверки оставляет stage таким, каким он был. Pre-hook чарта применяет топологию JetStream до сервисов. Без `--atomic`: упавшая выкладка остаётся упавшей ревизией, и решение об откате принимает человек (ADR-055).
+
+Правка values перекатывает поды сама: шаблон пода несёт контрольные суммы своих ConfigMap и Secret. Все сервисы — `Recreate`, поэтому каждая выкладка, меняющая под, даёт простой этого сервиса.
+
+Чарт ставится с публичного GHCR без pull secret: пакеты образов и чарта открыты. Пакет нового образа GHCR создаёт приватным при первой публикации, и его открывают руками в настройках пакета.
+
+## Остановка одного бота
+
+Боты — разные процессы со своими токенами, и под одного не трогает другой.
+
+```bash
+bin/stage pause                 # иначе следующая выкладка вернёт под
+bin/stage stop auction-bot      # бот аукциона перестаёт отвечать, бот хаба работает
+bin/stage start auction-bot
+bin/stage resume
+```
+
+Так же останавливается любой сервис чарта. Чарт задаёт одну реплику, и выкладка во время остановки может вернуть под, поэтому на это время автовыкладка стоит на паузе, а под возвращает явный `start`.
 
 ## Откат
 
@@ -59,7 +99,7 @@ bin/stage rollback <ревизия>
 ## Логи, метрики и база
 
 ```bash
-bin/stage logs <сервис> [-f] [--since=1h] [--previous]   # identity, meetups, notifications, hub-bot, auction, nats, postgres
+bin/stage logs <сервис> [-f] [--since=1h] [--previous]   # identity, meetups, notifications, hub-bot, auction, auction-bot, nats, postgres
 bin/stage top                                            # память и CPU подов
 bin/stage db <база>                                      # туннель на localhost:15432 ролью ops_readonly, до Ctrl-C
 ```
@@ -73,5 +113,5 @@ bin/stage db <база>                                      # туннель н
 - **Простой PostgreSQL на обновлении оператора CNPG.** Инстанс один, и смена образа оператора пересоздаёт его: около трёх минут сервисы получают `connection refused`, а бот отвечает ошибкой зависимости. Так было 2026-10-06 после закрепления образа оператора по digest.
 - **Первое подключение нового пода к базе бывает отвергнуто.** Identity однажды перезапустился на старте с `connection refused` до `hub-pg-rw`, хотя PostgreSQL работал. Похоже на задержку, с которой NetworkPolicy k3s узнаёт адрес нового пода; рестарт её снимает.
 - **NATS на stage новее локального.** Stage работает на nats-server 2.12, AppHost локально — на `nats:2.10-alpine`. Топология и сервисы на 2.12 работают, но опираться на возможности 2.12 нельзя, пока версии не выровнены решением об обновлении.
-- **Память урезана.** Лимиты сервисов stage в сумме 864Mi против формы чарта 1792Mi. Auction в простое занимает 270Mi из 320Mi. OOMKilled — сигнал поднять квоту `test`, а не снять лимиты (дополнение ADR-055 от 2026-10-06).
+- **Память урезана.** Лимиты сервисов stage в сумме 944Mi против формы чарта 2048Mi. На 2026-10-07 в простое Auction занимает 295Mi из 320Mi, бот хаба — 84Mi из 112Mi, Identity — 14Mi из 48Mi. OOMKilled — сигнал поднять квоту `test`, а не снять лимиты (дополнения ADR-055 от 2026-10-06 и 2026-10-07).
 - **Администратор без `public` не видит лоты.** `GrantAdminRole` выдаёт только `admin`, без вложенных кругов, и экран лотов Auction отказывает `PERMISSION_DENIED`; правится в [PER-468](https://linear.app/anticnvm/issue/per-468).

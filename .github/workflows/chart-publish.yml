@@ -4,7 +4,9 @@ name: Chart publish
 # GHCR OCI-артефактом, откуда его тянет HelmRelease Flux. Pull request чарт не
 # публикует: его проверяет джоба apphost в ci.yml тем же рецептом
 # `just apphost-chart`. Push в develop публикует кандидата, как образы
-# (image-*.yml); промоушн — PR в ops-репозиторий, а не пересборка.
+# (image-*.yml); промоушн — PR в ops-репозиторий, а не пересборка. Версия
+# кандидата уходит в stage/test/release.yaml ops-репозитория (stage-bump.yml),
+# откуда stage выкатывает её сам (дополнение ADR-055 от 2026-10-07).
 #
 # Версия — 0.1.<номер прогона>: монотонна, поэтому HelmRelease с диапазоном
 # semver видит новую версию без пре-релизных меток. appVersion — коммит, из
@@ -39,6 +41,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      version: ${{ steps.package.outputs.version }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-dotnet@v6
@@ -50,7 +54,9 @@ jobs:
       # Тот же рецепт, что на PR: чарт, который не прошёл бы проверку, не публикуется.
       - run: just apphost-chart "$RUNNER_TEMP/chart"
       - name: Упаковка
+        id: package
         run: |
+          echo "version=0.1.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
           helm package "$RUNNER_TEMP/chart" \
             --version "0.1.${{ github.run_number }}" \
             --app-version "sha-$GITHUB_SHA" \
@@ -63,3 +69,15 @@ jobs:
           # Вход через stdin, а не --password: аргументы процесса видны в его argv.
           echo "$TOKEN" | helm registry login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           helm push "$RUNNER_TEMP"/package/*.tgz "oci://ghcr.io/$owner/charts"
+
+  stage:
+    needs: publish
+    permissions: {}
+    uses: ./.github/workflows/stage-bump.yml
+    with:
+      file: stage/test/release.yaml
+      key: .version
+      value: ${{ needs.publish.outputs.version }}
+      what: chart
+      # Номер прогона монотонен: перезапуск старого прогона не понизит версию на stage.
+      monotonic: true

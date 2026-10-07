@@ -33,7 +33,7 @@ internal static class AppHostTopology
         topology.AddService(R.Notifications, [R.Postgres, R.Nats, R.Loki, R.Identity, R.Meetups], NotificationsSetup.Configure, P.Workload(NotificationsSetup.Publish));
         topology.AddService(R.HubBot, [R.Nats, R.Identity, R.Meetups, R.Notifications, R.Auction], HubBotSetup.Configure, P.Workload(HubBotSetup.Publish));
         topology.AddService(R.Auction, [R.Postgres, R.Nats, R.Meetups], AuctionSetup.Configure, P.Workload(AuctionSetup.Publish));
-        topology.AddService(R.AuctionBot, [R.Nats, R.Identity, R.Auction], AuctionBotSetup.Configure, P.NotPublished("outside the MVP (ADR-055)"));
+        topology.AddService(R.AuctionBot, [R.Nats, R.Identity, R.Auction], AuctionBotSetup.Configure, P.Workload(AuctionBotSetup.Publish));
 
         topology.Build();
     }

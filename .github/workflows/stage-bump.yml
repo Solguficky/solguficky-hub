@@ -1,0 +1,106 @@
+name: Stage bump
+
+# Переиспользуемая запись нового кандидата в desired state stage: digest образа
+# или версия чарта, опубликованные из develop, коммитятся в приватный
+# ops-репозиторий, откуда их тянет таймер на хосте (дополнение ADR-055 от
+# 2026-10-07). Входящего доступа к хосту у CI нет: джоба пишет только в
+# ops-репозиторий. Когда выкладку возьмёт Flux (PER-383), джоба остаётся как
+# есть — меняется только тот, кто читает коммит.
+#
+# Входы:
+#   file  — файл ops-репозитория: stage/test/values.yaml или stage/test/release.yaml.
+#   key   — путь yq внутри файла, например .parameters.hub_bot.hub_bot_image.
+#   value — новое значение: `образ@sha256:...` или версия чарта.
+#   what  — что меняется, для заголовка коммита.
+#   monotonic — значение сравнимо как версия (чарт): меньшее или равное текущему
+#           не пишется, и перезапуск старого прогона не понижает stage. Digest так
+#           не сравнить; старый digest публикации образа не перебивают, потому
+#           что публикации одного образа идут по очереди своей группой concurrency.
+#           Ручной «Re-run» старого прогона образа digest понизит — его не делают.
+#
+# Ключ записи — deploy key ops-репозитория с правом записи, секрет
+# OPS_DEPLOY_KEY в environment `stage`. Environment допускает только develop,
+# поэтому код из PR ключа не получает, а сам ключ не пишет никуда, кроме
+# ops-репозитория.
+#
+# Публикации одного мержа приходят параллельно, по джобе на образ и на чарт, и
+# правят разные строки. Сериализация — повтором, а не concurrency: группа
+# concurrency держит один ожидающий прогон и отменяет остальные, и digest
+# пропал бы молча. Push отвергнут — клон сбрасывается на свежий main, правка
+# ставится заново.
+
+on:
+  workflow_call:
+    inputs:
+      file:
+        type: string
+        required: true
+      key:
+        type: string
+        required: true
+      value:
+        type: string
+        required: true
+      what:
+        type: string
+        required: true
+      monotonic:
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    environment: stage
+    steps:
+      - name: Commit to the ops repository
+        env:
+          OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}
+          FILE: ${{ inputs.file }}
+          KEY: ${{ inputs.key }}
+          VALUE: ${{ inputs.value }}
+          WHAT: ${{ inputs.what }}
+          MONOTONIC: ${{ inputs.monotonic }}
+        run: |
+          set -eu
+          [ -n "$OPS_DEPLOY_KEY" ] || { echo "::error::нет секрета OPS_DEPLOY_KEY в environment stage"; exit 1; }
+          [ -n "$VALUE" ] || { echo "::error::пустое значение для $KEY"; exit 1; }
+          key_file="$RUNNER_TEMP/ops-deploy-key"
+          (umask 077 && printf '%s\n' "$OPS_DEPLOY_KEY" > "$key_file")
+          # Ключ хоста GitHub закреплён, а не взят ssh-keyscan: первый ответ сети
+          # не становится доверенным. Источник — опубликованные отпечатки GitHub.
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          git clone --quiet --depth 1 git@github.com:Solguficky/solguficky-ops.git "$RUNNER_TEMP/ops"
+          cd "$RUNNER_TEMP/ops"
+          git config user.name "solguficky-stage-bump"
+          git config user.email "stage-bump@users.noreply.github.com"
+          short=$(echo "$GITHUB_SHA" | cut -c1-8)
+          for attempt in 1 2 3 4 5; do
+            [ -f "$FILE" ] || { echo "::error::в ops-репозитории нет $FILE"; exit 1; }
+            if [ "$MONOTONIC" = true ]; then
+              current=$(yq "$KEY // \"\"" "$FILE")
+              if [ -n "$current" ] && [ "$(printf '%s\n%s\n' "$current" "$VALUE" | sort -V | tail -1)" = "$current" ]; then
+                echo "stage-bump: $KEY уже $current, не ниже $VALUE — коммита нет"
+                exit 0
+              fi
+            fi
+            yq -i "$KEY = strenv(VALUE)" "$FILE"
+            if git diff --quiet; then
+              echo "stage-bump: $KEY уже $VALUE, коммита нет"
+              exit 0
+            fi
+            git commit --quiet -am "chore: Pin $WHAT for stage from hub $short"
+            if git push --quiet origin HEAD:main; then
+              echo "stage-bump: $FILE $KEY = $VALUE"
+              exit 0
+            fi
+            echo "stage-bump: push отвергнут, попытка $attempt — повтор на свежем main"
+            git fetch --quiet --depth 1 origin main
+            git reset --quiet --hard origin/main
+          done
+          echo "::error::stage-bump: пять отказов push подряд, $KEY не записан"
+          exit 1

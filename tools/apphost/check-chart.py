@@ -7,7 +7,8 @@ defect shows only on the cluster. So the chart is rendered with a values
 fixture in which every image is pinned by a synthetic digest, and each rendered
 workload is checked against the rules of the production chart:
 
-- the workloads are exactly the four MVP services and Auction, nothing else;
+- the workloads are exactly the four MVP services, Auction and the auction bot,
+  nothing else;
 - every service runs one replica with the Recreate strategy and no rollingUpdate
   block, which the Kubernetes API rejects next to Recreate;
 - every image comes from values as `@sha256:<64 hex>`, not a tag;
@@ -18,8 +19,8 @@ workload is checked against the rules of the production chart:
 - every service has liveness and readiness probes of its form: gRPC ones for
   the gRPC services; for Auction an HTTP readiness path and TCP startup and
   liveness, because its readiness path answers 503 while the database is down
-  and a liveness on it would restart the pod in a loop. The bot has no health
-  endpoint and is the one named exception;
+  and a liveness on it would restart the pod in a loop. The two bots have no
+  health endpoint and are the named exceptions;
 - every secret in the chart's own values.yaml is empty: secrets are parameters
   without values, and the ops repository supplies them per environment;
 - the one non-service workload is the JetStream topology Job: a pre-install and
@@ -48,10 +49,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-WORKLOADS = {"identity", "meetups", "notifications", "hub-bot", "auction"}
+WORKLOADS = {"identity", "meetups", "notifications", "hub-bot", "auction", "auction-bot"}
 HOOK_JOBS = {"jetstream-topology"}
 HOOK_EVENTS = "pre-install,pre-upgrade"
-WITHOUT_PROBES = {"hub-bot"}
+WITHOUT_PROBES = {"hub-bot", "auction-bot"}
 GRPC_PROBES = {"livenessProbe": "grpc", "readinessProbe": "grpc"}
 PROBES = {"auction": {"startupProbe": "tcpSocket", "livenessProbe": "tcpSocket", "readinessProbe": "httpGet"}}
 PROBE_ACTIONS = ("grpc", "httpGet", "tcpSocket", "exec")

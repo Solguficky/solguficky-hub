@@ -22,11 +22,11 @@ namespace AppHost.UnitTests;
 [Collection(RealAppHostCollection.Name)]
 public class ClusterPublishTests
 {
-    private static async Task<IDistributedApplicationTestingBuilder> PublishModelAsync()
+    private static async Task<IDistributedApplicationTestingBuilder> PublishModelAsync(params string[] extra)
     {
         var output = Path.Combine(Path.GetTempPath(), $"apphost-publish-{Guid.NewGuid():N}");
         return await DistributedApplicationTestingBuilder.CreateAsync<Projects.AppHost>(
-            ["--operation", "publish", "--publisher", "default", "--output-path", output],
+            ["--operation", "publish", "--publisher", "default", "--output-path", output, .. extra],
             TestContext.Current.CancellationToken);
     }
 
@@ -35,7 +35,7 @@ public class ClusterPublishTests
     /// которым владеет публикация NATS (PER-311).
     /// </summary>
     [Fact]
-    public async Task Publish_Workloads_AreTheFourMvpServicesAuctionAndTopologyJob()
+    public async Task Publish_Workloads_AreTheHubWithAuctionAndTopologyJob()
     {
         var builder = await PublishModelAsync();
 
@@ -43,11 +43,29 @@ public class ClusterPublishTests
         builder.Resources.OfType<IComputeResource>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.Auction, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications]);
+            .ShouldBe([R.Auction, R.AuctionBot, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications]);
     }
 
     /// <summary>
-    /// Identity, бот и Auction собираются по своим Containerfile из корня
+    /// Значений токенов при публикации нет — CI собирает чарт без секретов, —
+    /// поэтому ветка публикации бота аукциона проверку своего токена не зовёт:
+    /// повтор токена бота хаба ловит выкладка среды до старта подов. Иначе чарт
+    /// не собрался бы без токенов, а с одинаковыми — тем более.
+    /// </summary>
+    [Theory]
+    [InlineData("")]
+    [InlineData("same")]
+    public async Task Publish_AuctionBot_DoesNotCheckTokenValues(string token)
+    {
+        var builder = await PublishModelAsync(
+            $"--Parameters:auction-bot-token={token}",
+            $"--Parameters:hub-bot-token={token}");
+
+        builder.Resources.ShouldContain(resource => resource.Name == R.AuctionBot);
+    }
+
+    /// <summary>
+    /// Identity, боты и Auction собираются по своим Containerfile из корня
     /// репозитория, а не цепочкой buf/go build, sbt и голой JVM и не контейнером,
     /// который Aspire сгенерировал бы из <c>AddJavaScriptApp</c>: их кодогенерации
     /// нужен <c>contracts/proto</c>.
@@ -55,6 +73,7 @@ public class ClusterPublishTests
     [Theory]
     [InlineData(R.Identity, "apps/identity/Containerfile")]
     [InlineData(R.HubBot, "apps/hub-bot/Containerfile")]
+    [InlineData(R.AuctionBot, "apps/auction-bot/Containerfile")]
     [InlineData(R.Auction, "apps/auction/Containerfile")]
     public async Task Publish_ContainerfileServices_BuildFromRepositoryRoot(string name, string containerfile)
     {
@@ -95,15 +114,14 @@ public class ClusterPublishTests
     }
 
     /// <summary>
-    /// Чарт собирается из <c>cluster</c>, а локальный стенд — из <c>hub</c>.
-    /// Расхождение составов — решение, которое должно быть видно правкой этого
-    /// теста, а не тихо приехать в прод вместе с изменением локального профиля.
-    /// Единственное расхождение — Auction: stage поднимает аукцион вместе с хабом
-    /// (дополнение к ADR-055), а локальный <c>hub</c> JVM не тянет, и аукцион
-    /// поднимают профили <c>auction</c>, <c>auction-bot</c> и <c>hub-auction</c>.
+    /// Чарт собирается из <c>cluster</c>, а локальный стенд хаба с аукционом — из
+    /// <c>hub-auction</c>. Расхождение составов — решение, которое должно быть
+    /// видно правкой этого теста, а не тихо приехать в прод вместе с изменением
+    /// локального профиля. Stage поднимает хаб с аукционом и оба бота
+    /// (дополнения к ADR-055); локальный <c>hub</c> JVM не тянет.
     /// </summary>
     [Fact]
-    public void PublishProfile_MatchesHubComposition()
+    public void PublishProfile_MatchesHubAuctionComposition()
     {
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
@@ -111,13 +129,13 @@ public class ClusterPublishTests
             .Build();
 
         var cluster = ProfileResolver.PublishProfile(configuration).ShouldNotBeNull();
-        var hub = ProfileResolver.Resolve(new ConfigurationBuilder()
+        var local = ProfileResolver.Resolve(new ConfigurationBuilder()
             .AddConfiguration(configuration)
-            .AddInMemoryCollection([new("profile", "hub")])
+            .AddInMemoryCollection([new("profile", "hub-auction")])
             .Build());
 
         cluster.Name.ShouldBe("cluster");
-        cluster.Services.Order().ShouldBe(hub.Services.Append(R.Auction).Order());
-        cluster.Infrastructure.Order().ShouldBe(hub.Infrastructure.Order());
+        cluster.Services.Order().ShouldBe(local.Services.Order());
+        cluster.Infrastructure.Order().ShouldBe(local.Infrastructure.Order());
     }
 }

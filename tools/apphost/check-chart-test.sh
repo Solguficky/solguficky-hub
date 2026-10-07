@@ -2,7 +2,7 @@
 # Fixture cases for tools/apphost/check-chart.py.
 #
 # The chart CI renders is one happy path and cannot show that the check fails
-# where it must. So each case gets its own rendered tree: five Deployments in
+# where it must. So each case gets its own rendered tree: six Deployments in
 # the shape the generator emits, with one defect, and the failure must name the
 # workload and the rule it breaks. Runs without helm: it feeds rendered trees.
 
@@ -123,10 +123,10 @@ metadata:
 EOF
 }
 
-# tree CASE - a rendered tree with the five chart workloads and the topology Job
+# tree CASE - a rendered tree with the six chart workloads and the topology Job
 tree() {
     work="$scratch/$1"
-    for name in identity meetups notifications hub-bot auction; do
+    for name in identity meetups notifications hub-bot auction auction-bot; do
         mkdir -p "$work/solguficky-hub/templates/$name"
         deployment "$name" > "$work/solguficky-hub/templates/$name/deployment.yaml"
     done
@@ -159,11 +159,12 @@ assert_fails() {
 }
 
 work=$(tree good)
-assert_passes "five workloads and the topology Job by the rules pass" "$work"
+assert_passes "six workloads and the topology Job by the rules pass" "$work"
 
 work=$(tree bot-without-probes)
 sed -i '/Probe:/,/port:/d' "$work/solguficky-hub/templates/hub-bot/deployment.yaml"
-assert_passes "the bot is the one workload allowed without probes" "$work"
+sed -i '/Probe:/,/port:/d' "$work/solguficky-hub/templates/auction-bot/deployment.yaml"
+assert_passes "the two bots are the workloads allowed without probes" "$work"
 
 work=$(tree two-replicas)
 sed -i 's/replicas: 1/replicas: 2/' "$work/solguficky-hub/templates/meetups/deployment.yaml"
