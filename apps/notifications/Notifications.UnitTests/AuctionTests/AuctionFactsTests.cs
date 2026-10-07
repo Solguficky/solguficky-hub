@@ -25,6 +25,22 @@ public class AuctionFactsTests
     }
 
     [Fact]
+    public void When_WindowOutbidFactBuilt_Expect_GivenRecipientCauseAndPrice()
+    {
+        var recipient = Guid.CreateVersion7();
+        var lot = Guid.CreateVersion7();
+        var cause = Guid.CreateVersion7();
+        var price = new global::Auction.V1.Money { MinorUnits = 50000, Currency = "RUB" };
+        var now = EventFactory.Committed;
+        var fact = AuctionFacts.Outbid(Guid.CreateVersion7(), recipient, lot, cause, price, now, now.AddHours(24));
+        fact.RecipientId.ShouldBe(recipient.ToString());
+        fact.Cause.AuctionLotEventId.ShouldBe(cause.ToString());
+        fact.LotOutbid.LotId.ShouldBe(lot.ToString());
+        fact.LotOutbid.CurrentPrice.ShouldBe(price);
+        fact.LotOutbid.CurrentPrice.ShouldNotBeSameAs(price);
+    }
+
+    [Fact]
     public void When_PurchaseFactBuilt_Expect_WinnerCauseLotPriceAndExpiryWithoutRequestId()
     {
         var sale = AuctionMappingTests.DecodeSale(EventFactory.Sold(EventFactory.NewId()));

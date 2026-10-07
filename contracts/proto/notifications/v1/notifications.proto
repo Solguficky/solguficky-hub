@@ -70,7 +70,9 @@ message Notification {
 
     // Someone else's bid took the lead of a lot away from the recipient. Sent
     // only to the previous leader named by the auction fact: a subscription is
-    // not required.
+    // not required. The recipient's outbid frequency may withhold it or fold
+    // several outbids into one sent later; then the cause is the latest bid on
+    // the lot or its sale, and the price is that event's.
     LotOutbid lot_outbid = 14;
 
     // The recipient bought a lot: it was sold to them.

@@ -94,6 +94,16 @@ public static class RequestValidation
             : throw Invalid("category", "is configured globally only and has no per-meetup form");
 
     /// <summary>
+    /// Частота перебитий из фиксированного списка. Неизвестное значение
+    /// отвергается по той же причине, что неизвестная категория: оно и есть
+    /// цель команды.
+    /// </summary>
+    public static OutbidFrequency OutbidFrequency(OutbidFrequency frequency) =>
+        OutbidFrequencies.IsKnown(frequency)
+            ? frequency
+            : throw Invalid("frequency", "must be a known outbid frequency other than unspecified");
+
+    /// <summary>
     /// Канонический UUIDv7: строчные буквы, дефисы, версия и вариант по RFC 9562.
     /// Форма повторяет границу Meetups — оба сервиса обязаны отвечать одинаково
     /// на один и тот же кривой идентификатор.
