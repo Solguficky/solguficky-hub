@@ -19,6 +19,9 @@ service IdentityService {
   // accepts, read from current state. The caller names the roles; Identity
   // does not know which surface asks or what it guards.
   rpc CheckGlobalRole(CheckGlobalRoleRequest) returns (CheckGlobalRoleResponse);
+  // Answers whether a known identity holds the right now, read from current
+  // state: the right that comes with the circle or one granted apart from it.
+  rpc CheckAccessRight(CheckAccessRightRequest) returns (CheckAccessRightResponse);
   // Resolves the author of a meetup to their Telegram username for the meetup
   // card.
   rpc ResolveOrganizerUsername(ResolveOrganizerUsernameRequest) returns (ResolveOrganizerUsernameResponse);
@@ -47,6 +50,16 @@ service IdentityService {
   // Revokes the granted ACCESS_RIGHT_MODERATE_AUCTION. A right that comes with
   // the circle itself is not revoked by it.
   rpc RevokeAuctionModeration(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  // Lists the people holding ACCESS_RIGHT_MODERATE_AUCTION, on behalf of a
+  // holder of ACCESS_RIGHT_MANAGE_MEMBERSHIP.
+  rpc ListAuctionModerators(ListAuctionModeratorsRequest) returns (ListAuctionModeratorsResponse);
+  // Revokes ACCESS_RIGHT_AUCTION granted to a guest, on behalf of a holder of
+  // ACCESS_RIGHT_MODERATE_AUCTION. The guest keeps the circle with whatever
+  // rights remain, and the revocation is recorded as a declined application in
+  // the auction queue: a later RequestRole there answers DECLINED until the
+  // refusal is reconsidered. A right that comes with a circle is not revoked
+  // by it.
+  rpc RevokeAuctionRight(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   rpc ListAllowedUsernames(ListAllowedUsernamesRequest) returns (ListAllowedUsernamesResponse);
   rpc AddAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
   rpc RemoveAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
@@ -85,6 +98,23 @@ message ChangeCommunityMemberRequest {
   string identity_id = 2;
 }
 message ChangeCommunityMemberResponse { bool changed = 1; }
+
+// A holder of ACCESS_RIGHT_MODERATE_AUCTION.
+message AuctionModerator {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+  // Username without the leading '@'. Absent when the account has none.
+  optional string telegram_username = 2;
+  // Telegram user id, for naming a moderator without a username.
+  int64 telegram_user_id = 3;
+  // True when the right was granted apart from the circle, so that
+  // RevokeAuctionModeration takes it away. False when it comes with the
+  // administrator circle.
+  bool revocable = 4;
+}
+
+message ListAuctionModeratorsRequest { IdentityActor actor = 1; }
+message ListAuctionModeratorsResponse { repeated AuctionModerator moderators = 1; }
 
 message ListAllowedUsernamesRequest { IdentityActor actor = 1; }
 message ListAllowedUsernamesResponse { repeated string usernames = 1; }
@@ -429,6 +459,21 @@ message CheckGlobalRoleRequest {
 
 message CheckGlobalRoleResponse {
   // True only when the identity holds an accepted role right now.
+  bool granted = 1;
+}
+
+message CheckAccessRightRequest {
+  // Canonical lowercase UUIDv7 string with hyphens of the person to check.
+  string identity_id = 1;
+
+  // The right the calling surface requires. Must not be
+  // ACCESS_RIGHT_UNSPECIFIED.
+  AccessRight right = 2;
+}
+
+message CheckAccessRightResponse {
+  // True only when the identity holds the right right now. A blocked profile
+  // holds no right.
   bool granted = 1;
 }
 

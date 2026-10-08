@@ -17,11 +17,3 @@ lint:
 breaking:
   use:
     - FILE
-  # Временное объявленное исключение: значение 4 у GlobalRole (прежде PUBLIC)
-  # переименовано в GLOBAL_ROLE_GUEST по ADR-064, п. 10, и все потребители
-  # переименованы тем же изменением (PER-525). Провод не меняется, меняется имя.
-  # Снимается следующим изменением схем, когда база сравнения уже несёт новое
-  # имя; правило — docs/standards/contracts/protobuf.md, «Совместимость».
-  ignore_only:
-    ENUM_VALUE_SAME_NAME:
-      - identity/v1/roles.proto
