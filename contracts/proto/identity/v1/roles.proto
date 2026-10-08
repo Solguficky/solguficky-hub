@@ -40,6 +40,9 @@ enum AccessRight {
 
   // Deciding the auction queue. Shared by every auction.
   ACCESS_RIGHT_MODERATE_AUCTION = 4;
+
+  // Administering the auction: the lot catalog. Shared by every auction.
+  ACCESS_RIGHT_MANAGE_AUCTION = 5;
 }
 
 // The queue an application lies in. The queues are independent: a refusal in

@@ -42,7 +42,7 @@ func TestEveryGrantPathLeavesOneActiveCircle(t *testing.T) {
 
 	// Снимок outbox несёт круг и права после выдачи — те же, что ответ.
 	circle, rights := lastSnapshot(t, db, member)
-	if circle != roleAdmin || rights != "auction,hub,manage_membership,moderate_auction" {
+	if circle != roleAdmin || rights != "auction,hub,manage_auction,manage_membership,moderate_auction" {
 		t.Fatalf("admin snapshot: circle=%q rights=%q", circle, rights)
 	}
 	circle, rights = lastSnapshot(t, db, applicant)

@@ -186,6 +186,8 @@ func accessRight(name string) (identityv1.AccessRight, error) {
 		return identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP, nil
 	case "moderate_auction":
 		return identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION, nil
+	case "manage_auction":
+		return identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION, nil
 	default:
 		return identityv1.AccessRight_ACCESS_RIGHT_UNSPECIFIED, fmt.Errorf("outbox: unknown right %q", name)
 	}

@@ -76,6 +76,7 @@ import ch.qos.logback.classic.Logger as LogbackLogger
 import ch.qos.logback.classic.spi.ILoggingEvent
 import ch.qos.logback.core.read.ListAppender
 import com.google.protobuf.ByteString
+import identity.v1.roles.AccessRight as AccessRightMessage
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
 import io.grpc.Status
 import org.apache.pekko.grpc.GrpcServiceException
@@ -323,22 +324,22 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   "auction grpc service" should {
 
-    "refuses FAQ requests without a valid viewer or public role before storage" in {
+    "refuses FAQ requests without a valid viewer or auction right before storage" in {
       val auction = service(Unreachable)
       statusOf(auction.getFaqAcknowledgement(wire.GetFaqAcknowledgementRequest())) shouldBe Status.Code.INVALID_ARGUMENT
       statusOf(auction.acknowledgeFaq(wire.AcknowledgeFaqRequest())) shouldBe Status.Code.INVALID_ARGUMENT
-      val member = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER))
+      val hubOnly = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_HUB))
       statusOf(
-        auction.getFaqAcknowledgement(wire.GetFaqAcknowledgementRequest(Some(member)))
+        auction.getFaqAcknowledgement(wire.GetFaqAcknowledgementRequest(Some(hubOnly)))
       ) shouldBe Status.Code.PERMISSION_DENIED
-      statusOf(auction.acknowledgeFaq(wire.AcknowledgeFaqRequest(Some(member)))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(auction.acknowledgeFaq(wire.AcknowledgeFaqRequest(Some(hubOnly)))) shouldBe Status.Code.PERMISSION_DENIED
       statusOf(
         auction.acknowledgeFaq(wire.AcknowledgeFaqRequest(Some(viewer.withIdentityId("bad"))))
       ) shouldBe Status.Code.INVALID_ARGUMENT
-      val unknown = viewer.withGlobalRoles(Seq(GlobalRoleMessage.Unrecognized(999)))
+      val unknown = viewer.withRights(Seq(AccessRightMessage.Unrecognized(999)))
       statusOf(
         auction.getFaqAcknowledgement(wire.GetFaqAcknowledgementRequest(Some(unknown)))
-      ) shouldBe Status.Code.INVALID_ARGUMENT
+      ) shouldBe Status.Code.PERMISSION_DENIED
     }
 
     "records acknowledgement only for the viewer and answers repeated completion successfully" in {
@@ -371,16 +372,27 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       auction.acknowledgeFaq(wire.AcknowledgeFaqRequest(Some(viewer))).failed.futureValue shouldBe failure
     }
 
-    "refuses a bid from a viewer without the public role before reaching the lot" in {
-      val withoutPublic = Seq(
+    "refuses a bid from a viewer without the auction right before reaching the lot" in {
+      val withoutAuction = Seq(
         Seq.empty,
-        Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER),
-        Seq(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_MEMBER)
+        Seq(AccessRightMessage.ACCESS_RIGHT_HUB),
+        Seq(
+          AccessRightMessage.ACCESS_RIGHT_HUB,
+          AccessRightMessage.ACCESS_RIGHT_MANAGE_AUCTION,
+          AccessRightMessage.ACCESS_RIGHT_MODERATE_AUCTION
+        )
       )
-      withoutPublic.foreach { roles =>
-        val request = validBid.withViewer(viewer.withGlobalRoles(roles))
+      withoutAuction.foreach { rights =>
+        val request = validBid.withViewer(viewer.withRights(rights))
         statusOf(service(Unreachable).placeBid(request)) shouldBe Status.Code.PERMISSION_DENIED
       }
+    }
+
+    "refuses a bid and a proxy limit by the guest role alone because Auction decides by rights" in {
+      val roleOnly = viewer.clearRights.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_GUEST))
+      statusOf(service(Unreachable).placeBid(validBid.withViewer(roleOnly))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(service(Unreachable).setProxyLimit(validLimit.withViewer(roleOnly))) shouldBe
+        Status.Code.PERMISSION_DENIED
     }
 
     "refuses a malformed bid with INVALID_ARGUMENT before reaching the lot" in {
@@ -524,16 +536,16 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
 
     "answers an oversized image from an administrator with the limit before touching the store" in {
-      val admin = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_GUEST))
+      val admin = viewer.addRights(AccessRightMessage.ACCESS_RIGHT_MANAGE_AUCTION)
       val oversized = wire.LotImageUpload(ByteString.copyFrom(Array.fill[Byte](LotImage.MaxBytes + 1)(0)))
       val edit = wire.EditLotCardRequest(Some(admin), lot, "Лот", "").withReplaceImage(oversized)
       service(Unreachable).editLotCard(edit).futureValue.getRefused.reason.imageTooLarge shouldBe
         Some(wire.ImageTooLarge(LotImage.MaxBytes.toLong))
     }
 
-    "refuses an image read from a viewer without the public role or of a wrong form before the read model" in {
-      val member = Some(viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER)))
-      statusOf(service(Unreachable).getLotImage(wire.GetLotImageRequest(member, lot))) shouldBe
+    "refuses an image read from a viewer without the auction right or of a wrong form before the read model" in {
+      val hubOnly = Some(viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_HUB)))
+      statusOf(service(Unreachable).getLotImage(wire.GetLotImageRequest(hubOnly, lot))) shouldBe
         Status.Code.PERMISSION_DENIED
       statusOf(service(Unreachable).getLotImage(wire.GetLotImageRequest(Some(viewer), "lot"))) shouldBe
         Status.Code.INVALID_ARGUMENT
@@ -556,10 +568,12 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       statusOf(auction.getLotImage(wire.GetLotImageRequest(Some(viewer), other))) shouldBe Status.Code.NOT_FOUND
     }
 
-    "refuses a proxy limit and its withdrawal from a viewer without the public role before reaching the lot" in {
-      val member = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER))
-      statusOf(service(Unreachable).setProxyLimit(validLimit.withViewer(member))) shouldBe Status.Code.PERMISSION_DENIED
-      statusOf(service(Unreachable).withdrawProxyLimit(validWithdrawal.withViewer(member))) shouldBe
+    "refuses a proxy limit and its withdrawal from a viewer without the auction right before reaching the lot" in {
+      val hubOnly = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_HUB))
+      statusOf(
+        service(Unreachable).setProxyLimit(validLimit.withViewer(hubOnly))
+      ) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(service(Unreachable).withdrawProxyLimit(validWithdrawal.withViewer(hubOnly))) shouldBe
         Status.Code.PERMISSION_DENIED
     }
 
@@ -623,10 +637,10 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       acceptedNames.frozen shouldBe Set(ViewerId)
     }
 
-    "refuses a read from a viewer without the public role before touching the read model" in {
-      val member = Some(viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER)))
-      statusOf(service(Unreachable).getLot(wire.GetLotRequest(member, lot))) shouldBe Status.Code.PERMISSION_DENIED
-      statusOf(service(Unreachable).listAuctionLots(wire.ListAuctionLotsRequest(member, lot))) shouldBe
+    "refuses a read from a viewer without the auction right before touching the read model" in {
+      val hubOnly = Some(viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_HUB)))
+      statusOf(service(Unreachable).getLot(wire.GetLotRequest(hubOnly, lot))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(service(Unreachable).listAuctionLots(wire.ListAuctionLotsRequest(hubOnly, lot))) shouldBe
         Status.Code.PERMISSION_DENIED
     }
 
@@ -791,10 +805,10 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       auction.listAuctionLots(wire.ListAuctionLotsRequest(Some(viewer), lot)).futureValue.lots should have size 1
     }
 
-    "refuses a history read without the public role or with a forged token before touching the read model" in {
-      val member = Some(viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER)))
+    "refuses a history read without the auction right or with a forged token before touching the read model" in {
+      val hubOnly = Some(viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_HUB)))
       val auction = service(Unreachable)
-      statusOf(auction.listLotHistory(wire.ListLotHistoryRequest(member, lot))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(auction.listLotHistory(wire.ListLotHistoryRequest(hubOnly, lot))) shouldBe Status.Code.PERMISSION_DENIED
       statusOf(auction.listLotHistory(wire.ListLotHistoryRequest(Some(viewer), "lot"))) shouldBe
         Status.Code.INVALID_ARGUMENT
       statusOf(auction.listLotHistory(wire.ListLotHistoryRequest(Some(viewer), lot, "forged"))) shouldBe
@@ -1070,18 +1084,18 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       ledByPerson.getClosingPolicy.policy.isByAuctioneer shouldBe true
     }
 
-    "refuses name requests of a wrong form or without the public role before the store" in {
+    "refuses name requests of a wrong form or without the auction right before the store" in {
       val auction = service(Unreachable, names = UntouchableNames)
       val choose = wire.ChooseDisplayNameRequest(Some(viewer), lot).withAlias("Кот")
-      val member = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_MEMBER))
-      statusOf(auction.chooseDisplayName(choose.withViewer(member))) shouldBe Status.Code.PERMISSION_DENIED
+      val hubOnly = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_HUB))
+      statusOf(auction.chooseDisplayName(choose.withViewer(hubOnly))) shouldBe Status.Code.PERMISSION_DENIED
       statusOf(auction.chooseDisplayName(choose.clearChoice)) shouldBe Status.Code.INVALID_ARGUMENT
       statusOf(auction.chooseDisplayName(choose.withAuctionId("auction"))) shouldBe Status.Code.INVALID_ARGUMENT
       // Непустая строка, какой Telegram ником не присылает, — форма, а не отказ выбора.
       statusOf(auction.chooseDisplayName(choose.withTelegramUsername("not a nick"))) shouldBe
         Status.Code.INVALID_ARGUMENT
       val names = wire.GetDisplayNamesRequest(Some(viewer), lot, Seq(identity))
-      statusOf(auction.getDisplayNames(names.withViewer(member))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(auction.getDisplayNames(names.withViewer(hubOnly))) shouldBe Status.Code.PERMISSION_DENIED
       statusOf(auction.getDisplayNames(names.withParticipantIds(Seq("someone")))) shouldBe Status.Code.INVALID_ARGUMENT
     }
 

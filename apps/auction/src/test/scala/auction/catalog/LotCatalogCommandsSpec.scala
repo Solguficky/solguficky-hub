@@ -1,6 +1,6 @@
 package auction.catalog
 
-import auction.access.GlobalRole
+import auction.access.AccessRight
 import auction.access.Viewer
 import org.scalacheck.Gen
 import org.scalatest.concurrent.ScalaFutures
@@ -21,14 +21,15 @@ final class LotCatalogCommandsSpec
 
   private given ExecutionContext = ExecutionContext.parasitic
 
-  private val admin = Viewer(Set(GlobalRole.Admin, GlobalRole.Member, GlobalRole.Public))
+  private val admin = Viewer(AccessRight.values.toSet)
 
-  // Всё, что ниже администратора сходки: maintainer в круг admin не входит (ADR-043).
+  // Все, у кого нет права администрировать аукцион, в том числе держатель остальных прав администратора: каталог
+  // открывает только оно (PER-528).
   private val notAdmins = Gen.oneOf(
     Viewer(Set.empty),
-    Viewer(Set(GlobalRole.Public)),
-    Viewer(Set(GlobalRole.Member, GlobalRole.Public)),
-    Viewer(Set(GlobalRole.Maintainer, GlobalRole.Member, GlobalRole.Public))
+    Viewer(Set(AccessRight.Auction)),
+    Viewer(Set(AccessRight.Hub, AccessRight.Auction)),
+    Viewer(AccessRight.values.toSet - AccessRight.ManageAuction)
   )
 
   private val blankTitles = Gen.listOf(Gen.oneOf(' ', '\t', '\n', '\r', '\u00A0', '\u2007', '\u202F')).map(_.mkString)

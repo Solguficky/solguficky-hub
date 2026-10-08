@@ -192,8 +192,8 @@ func revokeGrantedRightTx(ctx context.Context, tx *sql.Tx, identityID, right str
 }
 
 // circleCarries — приходит ли право с кругом (identity_access_rights,
-// миграция 014): участник и мейнтейнер держат hub и auction, администратор —
-// все четыре.
+// миграции 014 и 016): участник и мейнтейнер держат hub и auction,
+// администратор — все пять.
 func circleCarries(circle, right string) bool {
 	switch circle {
 	case roleAdmin:

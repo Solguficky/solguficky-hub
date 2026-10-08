@@ -95,7 +95,7 @@ curl -i http://127.0.0.1:8080/lots
 gRPC-вызов идёт с токеном вызывающего в `authorization: Bearer`. Reflection сервис не отдаёт, поэтому `grpcurl` получает схему из `contracts/proto`:
 
 ```bash
-grpcurl -plaintext -import-path contracts/proto -proto auction/v1/auction_service.proto   -H 'authorization: Bearer hub-local' -H 'x-request-id: local-probe'   -d '{"viewer":{"identity_id":"01890a5d-ac96-774b-bcce-b302099a8057","global_roles":["GLOBAL_ROLE_GUEST"]},"lot_id":"01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e5f","amount":{"minor_units":150,"currency":"RUB"},"op_id":"01890a5d-ac98-7aaa-8bbb-cccccccccccc"}'   127.0.0.1:8081 auction.v1.AuctionService/PlaceBid
+grpcurl -plaintext -import-path contracts/proto -proto auction/v1/auction_service.proto   -H 'authorization: Bearer hub-local' -H 'x-request-id: local-probe'   -d '{"viewer":{"identity_id":"01890a5d-ac96-774b-bcce-b302099a8057","rights":["ACCESS_RIGHT_AUCTION"]},"lot_id":"01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e5f","amount":{"minor_units":150,"currency":"RUB"},"op_id":"01890a5d-ac98-7aaa-8bbb-cccccccccccc"}'   127.0.0.1:8081 auction.v1.AuctionService/PlaceBid
 ```
 
 На лот, которого нет, ответ — `NotFound`; без заголовка `authorization` или с чужим токеном — `Unauthenticated` до обращения к лоту. Запись границы — `request handled` с `operation=auction.v1.AuctionService/PlaceBid`, `grpc_code`, `caller` у допущенного вызова и `caller_refusal` (`missing_token`, `unknown_token`, `not_declared`) у отказанного. Токен, тело запроса и сообщение неожиданного исключения в запись не попадают: у такого отказа `error` — только класс исключения, а `stack` — классы и кадры без сообщений.

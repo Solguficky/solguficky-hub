@@ -1,34 +1,31 @@
 package auction.access
 
 /**
- * Глобальные роли Identity — круги сообщества (ADR-043), а не права на операции.
+ * Права Identity — то, что человеку можно, а не круг, в котором он состоит (ADR-064, пункт 7).
  *
- * Доменная копия `identity.v1.GlobalRole`: сгенерированный тип в домен не проходит, а значение, которого сервис не
- * знает, отображение на границе обязано отвергнуть, а не превратить в одну из этих ролей.
+ * Доменная копия `identity.v1.AccessRight`: сгенерированный тип в домен не проходит. Права, которых сервис не знает,
+ * отображение на границе отбрасывает: по контракту неизвестное право ничего не даёт.
  */
-enum GlobalRole {
-  case Admin
-  case Maintainer
-  case Member
-  case Public
+enum AccessRight {
+  case Hub
+  case Auction
+  case ManageMembership
+  case ModerateAuction
+  case ManageAuction
 }
 
 /**
- * Смотрящий: тот, от чьего имени пришла операция, с ролями, которые поверхность разрешила у Identity на этом же
- * действии (ADR-044). Решение о праве по ним принимает Auction как владелец ресурса.
+ * Смотрящий: тот, от чьего имени пришла операция, с правами, которые поверхность разрешила у Identity на этом же
+ * действии (ADR-064). Решение о праве по ним принимает Auction как владелец ресурса; роль-круг Auction не читает.
  */
-final case class Viewer(globalRoles: Set[GlobalRole]) {
+final case class Viewer(rights: Set[AccessRight]) {
+
+  /** Администратор аукциона: каталог лотов. Право приходит с кругом `admin` (PER-528). */
+  def isAuctionAdministrator: Boolean = rights.contains(AccessRight.ManageAuction)
 
   /**
-   * Администратор сходки. Отдельной роли организатора в MVP нет, и администратор сходки — это глобальный `admin`
-   * (ADR-043). Круги вложены вниз, а не вверх: `maintainer` в круг `admin` не входит.
+   * Участник торгов: право аукциона. Его держат гость по допуску, участник сообщества и администратор по кругу, поэтому
+   * отдельного разворота кругов здесь нет.
    */
-  def isMeetupAdministrator: Boolean = globalRoles.contains(GlobalRole.Admin)
-
-  /**
-   * Участник торгов: поверхность аукциона требует роль `public` (ADR-044), и Auction повторяет ту же проверку как
-   * владелец ресурса. Набор ролей от Identity плоский и вложенность кругов не разворачивает (ADR-043), поэтому проверка
-   * буквальная: администратор без `public` участником не считается.
-   */
-  def isParticipant: Boolean = globalRoles.contains(GlobalRole.Public)
+  def isParticipant: Boolean = rights.contains(AccessRight.Auction)
 }

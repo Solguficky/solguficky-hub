@@ -28,7 +28,7 @@ import scala.jdk.CollectionConverters.*
 import scala.util.control.NonFatal
 
 /**
- * Реализация `AuctionService`. Вызывающего здесь уже проверила [[GrpcBoundary]]; здесь порядок «форма → роль → домен»,
+ * Реализация `AuctionService`. Вызывающего здесь уже проверила [[GrpcBoundary]]; здесь порядок «форма → право → домен»,
  * и до шлюза лота или каталога доходит только запрос, прошедший оба первых шага.
  *
  * Отказ статусом — неудачное `Future` с `GrpcServiceException`: его превращает в трейлеры сгенерированный обработчик.
@@ -70,7 +70,7 @@ final class AuctionGrpcService(
     RequestMapping.placeBid(in) match {
       case Left(error) => invalid(error)
       case Right(command) if !command.acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(command) =>
         val participant = command.acting.participant
         asNamed(command.lotId, participant, ResponseMapping.displayNameNotChosen)(
@@ -151,7 +151,7 @@ final class AuctionGrpcService(
     RequestMapping.setProxyLimit(in) match {
       case Left(error) => invalid(error)
       case Right(command) if !command.acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(command) =>
         val participant = command.acting.participant
         asNamed(command.lotId, participant, ResponseMapping.proxyDisplayNameNotChosen)(
@@ -163,7 +163,7 @@ final class AuctionGrpcService(
     RequestMapping.withdrawProxyLimit(in) match {
       case Left(error) => invalid(error)
       case Right(command) if !command.acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(command) =>
         lots
           .withdrawProxyLimit(command.lotId, command.withdrawal, Initiator.Participant(command.acting.participant))
@@ -180,7 +180,7 @@ final class AuctionGrpcService(
     RequestMapping.getLot(in) match {
       case Left(error) => invalid(error)
       case Right(query) if !query.acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(query) =>
         views.find(query.lotId).flatMap {
           case Some(view) =>
@@ -198,7 +198,7 @@ final class AuctionGrpcService(
     RequestMapping.listAuctionLots(in) match {
       case Left(error) => invalid(error)
       case Right(query) if !query.acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(query) =>
         // На одну строку больше страницы: так известно, есть ли продолжение, без второго запроса.
         val read = if (AuctionGrpcService.isMeetupAuction(query.auctionId)) views.registryPage else views.page
@@ -221,7 +221,7 @@ final class AuctionGrpcService(
     RequestMapping.listLotHistory(in) match {
       case Left(error) => invalid(error)
       case Right(query) if !query.acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(query) =>
         // На одну строку больше страницы: так известно, есть ли продолжение, без второго запроса.
         views.history(query.lotId, query.after, query.limit + 1).flatMap {
@@ -239,7 +239,7 @@ final class AuctionGrpcService(
     RequestMapping.chooseDisplayName(in) match {
       case Left(error) => invalid(error)
       case Right(command) if !command.acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(command) =>
         names
           .choose(command.auctionId, command.acting.participant, command.choice)
@@ -251,7 +251,7 @@ final class AuctionGrpcService(
     RequestMapping.getDisplayNames(in) match {
       case Left(error) => invalid(error)
       case Right(query) if !query.acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(query) => names.names(query.auctionId, query.participants).map(ResponseMapping.displayNames)
     }
 
@@ -265,7 +265,7 @@ final class AuctionGrpcService(
     RequestMapping.acting(viewer) match {
       case Left(error) => invalid(error)
       case Right(acting) if !acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(acting) => run(acting.participant)
     }
 
@@ -277,7 +277,7 @@ final class AuctionGrpcService(
     RequestMapping.getLotImage(in) match {
       case Left(error) => invalid(error)
       case Right(query) if !query.acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(query) =>
         views.image(query.lotId).flatMap {
           case Some(image) => Future.successful(ResponseMapping.lotImage(image))

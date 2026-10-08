@@ -1,6 +1,6 @@
 package auction.grpc
 
-import auction.access.GlobalRole
+import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.OnlinePhase
@@ -38,6 +38,7 @@ import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
 import com.google.protobuf.ByteString
+import identity.v1.roles.AccessRight as AccessRightMessage
 import identity.v1.roles.GlobalRole as GlobalRoleMessage
 import org.scalatest.EitherValues
 import org.scalatest.matchers.should.Matchers
@@ -60,7 +61,7 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
       command.bid.amount shouldBe Money(150, CurrencyCode("RUB"))
       command.bid.opId.value shouldBe UUID.fromString(op)
       command.bid.source shouldBe BidSource.Bot
-      command.acting.viewer.globalRoles shouldBe Set(GlobalRole.Public)
+      command.acting.viewer.rights shouldBe Set(AccessRight.Auction)
     }
 
     "names viewer as the invalid field when the request has no viewer" in {
@@ -82,23 +83,35 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
       RequestMapping.placeBid(validBid.withAmount(MoneyMessage(150, ""))).left.value shouldBe FormError("amount")
     }
 
-    "rejects an unspecified or unknown role instead of treating the viewer as ordinary" in {
-      val unspecified = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_UNSPECIFIED))
-      val unknown = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_GUEST, GlobalRoleMessage.Unrecognized(9)))
-      RequestMapping.placeBid(validBid.withViewer(unspecified)).left.value shouldBe FormError("viewer.global_roles")
-      RequestMapping.placeBid(validBid.withViewer(unknown)).left.value shouldBe FormError("viewer.global_roles")
-    }
-
-    "keeps every known role of the viewer" in {
-      val all = viewer.withGlobalRoles(
+    "drops an unspecified or unknown right instead of rejecting the viewer" in {
+      val unknown = viewer.withRights(
         Seq(
-          GlobalRoleMessage.GLOBAL_ROLE_ADMIN,
-          GlobalRoleMessage.GLOBAL_ROLE_MAINTAINER,
-          GlobalRoleMessage.GLOBAL_ROLE_MEMBER,
-          GlobalRoleMessage.GLOBAL_ROLE_GUEST
+          AccessRightMessage.ACCESS_RIGHT_UNSPECIFIED,
+          AccessRightMessage.ACCESS_RIGHT_AUCTION,
+          AccessRightMessage.Unrecognized(9)
         )
       )
-      RequestMapping.acting(Some(all)).value.viewer.globalRoles shouldBe GlobalRole.values.toSet
+      RequestMapping.acting(Some(unknown)).value.viewer.rights shouldBe Set(AccessRight.Auction)
+    }
+
+    "reads rights alone and ignores the roles the caller still sends" in {
+      val roleOnly = viewer.clearRights.withGlobalRoles(
+        Seq(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_GUEST, GlobalRoleMessage.Unrecognized(9))
+      )
+      RequestMapping.acting(Some(roleOnly)).value.viewer.rights shouldBe empty
+    }
+
+    "keeps every known right of the viewer" in {
+      val all = viewer.withRights(
+        Seq(
+          AccessRightMessage.ACCESS_RIGHT_HUB,
+          AccessRightMessage.ACCESS_RIGHT_AUCTION,
+          AccessRightMessage.ACCESS_RIGHT_MANAGE_MEMBERSHIP,
+          AccessRightMessage.ACCESS_RIGHT_MODERATE_AUCTION,
+          AccessRightMessage.ACCESS_RIGHT_MANAGE_AUCTION
+        )
+      )
+      RequestMapping.acting(Some(all)).value.viewer.rights shouldBe AccessRight.values.toSet
     }
 
     "maps a well-formed proxy limit and its withdrawal to the viewer's own commands" in {
@@ -338,7 +351,7 @@ object RequestMappingSpec {
   val op = "01890a5d-ac98-7aaa-8bbb-cccccccccccc"
   val meetupId = "0190a0e0-0000-7000-8000-000000000001"
 
-  val viewer: ViewerMessage = ViewerMessage(identity, Seq(GlobalRoleMessage.GLOBAL_ROLE_GUEST))
+  val viewer: ViewerMessage = ViewerMessage(identity, rights = Seq(AccessRightMessage.ACCESS_RIGHT_AUCTION))
 
   val validBid: PlaceBidRequest = PlaceBidRequest(Some(viewer), lot, Some(MoneyMessage(150, "RUB")), op)
 

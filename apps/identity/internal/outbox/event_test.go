@@ -1,6 +1,7 @@
 package outbox_test
 
 import (
+	"slices"
 	"testing"
 	"time"
 
@@ -78,18 +79,22 @@ func TestRecordMessageCarriesCircleAndRights(t *testing.T) {
 	t.Parallel()
 	message, err := (outbox.Record{
 		Occasion: outbox.ProfileRegistered,
-		Circle:   "maintainer",
-		Rights:   []string{"hub", "manage_membership"},
+		Circle:   "admin",
+		Rights:   []string{"hub", "manage_membership", "manage_auction"},
 	}).Message()
 	if err != nil {
 		t.Fatal(err)
 	}
 	state := message.GetState()
-	if got := state.GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER {
+	if got := state.GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_ADMIN {
 		t.Fatalf("state.role: got %v", got)
 	}
-	want := []identityv1.AccessRight{identityv1.AccessRight_ACCESS_RIGHT_HUB, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP}
-	if got := state.GetRights(); len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+	want := []identityv1.AccessRight{
+		identityv1.AccessRight_ACCESS_RIGHT_HUB,
+		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP,
+		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION,
+	}
+	if got := state.GetRights(); !slices.Equal(got, want) {
 		t.Fatalf("state.rights: got %v want %v", got, want)
 	}
 }

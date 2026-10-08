@@ -60,7 +60,7 @@ object LotCatalogRules {
     } yield CardEdit(lotId, checked, description, change)
 
   private def admin(viewer: Viewer): Either[CatalogRefusal, Unit] =
-    Either.cond(viewer.isMeetupAdministrator, (), CatalogRefusal.NotAdmin)
+    Either.cond(viewer.isAuctionAdministrator, (), CatalogRefusal.NotAdmin)
 }
 
 /**
