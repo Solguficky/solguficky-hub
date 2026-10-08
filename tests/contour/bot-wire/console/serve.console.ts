@@ -4,13 +4,11 @@ import { relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, it } from "vitest";
 import {
-  botInfo as auctionBotInfo,
+  auctionBotInfo,
   openAuctionBotWire,
-  readAuctionContourEnvironment,
-} from "../../../../apps/hub-bot/testkit/auction/index.js";
-import {
   openBotWire,
   openDirectClients,
+  readAuctionContourEnvironment,
   readContourEnvironment,
 } from "../../../../apps/hub-bot/testkit/index.js";
 import { CommandError, help, parseCommand } from "./commands.js";

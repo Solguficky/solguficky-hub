@@ -1,8 +1,12 @@
 import type { Update } from "grammy/types";
-import type { Presentation } from "../../src/core/config.js";
-import { noopTracing } from "../../src/core/tracing.js";
-import { createClients } from "../../src/surfaces/auction/clients.js";
-import { createHarness, type LogRecord, type RecordedCall } from "./harness.js";
+import type { Presentation } from "../src/core/config.js";
+import { noopTracing } from "../src/core/tracing.js";
+import { createClients } from "../src/surfaces/auction/clients.js";
+import {
+  createAuctionHarness,
+  type LogRecord,
+  type RecordedCall,
+} from "./harness.js";
 
 // Провод бота аукциона против настоящих Identity и Auction (уровень L2). Среду
 // поднимает Contour.Host с флагом `--with-auction` (`just contour-bot-console`),
@@ -60,7 +64,7 @@ export function openAuctionBotWire(
   const calls: RecordedCall[] = [];
   // Логгер принадлежит процессу бота и меняется на рестарте; отказ имён
   // пишется в текущий, как это делает `main.ts`.
-  let current: ReturnType<typeof createHarness>;
+  let current: ReturnType<typeof createAuctionHarness>;
   const clients = createClients({
     identityUrl: environment.identityUrl,
     auctionUrl: environment.auctionUrl,
@@ -72,7 +76,7 @@ export function openAuctionBotWire(
         error: cause instanceof Error ? cause.message : String(cause),
       }),
   });
-  current = createHarness(clients.ports, calls, options);
+  current = createAuctionHarness(clients.ports, calls, options);
   return {
     // Разговор держит этот вход, а не сам бот: после рестарта он говорит уже
     // с новым процессом, а история чата остаётся прежней.
@@ -89,7 +93,7 @@ export function openAuctionBotWire(
      * теряются, Auction и история сообщений у человека остаются.
      */
     restart(): void {
-      current = createHarness(clients.ports, calls, options);
+      current = createAuctionHarness(clients.ports, calls, options);
     },
     close(): void {
       clients.close();

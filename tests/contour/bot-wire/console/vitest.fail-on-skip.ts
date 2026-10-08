@@ -28,7 +28,7 @@ import type {
 //
 // Копия файла apps/hub-bot/vitest.fail-on-skip.ts (другая копия — в
 // apps/community-site-api):
-// общего TypeScript-модуля в shared/ нет, а kit хаба отдаёт наружу только
+// общего TypeScript-модуля в shared/ нет, а kit пакета ботов отдаёт наружу только
 // testkit/index.ts.
 export class FailOnSkip implements Reporter {
   private vitest: Vitest | undefined;

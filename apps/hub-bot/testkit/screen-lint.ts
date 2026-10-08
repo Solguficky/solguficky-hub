@@ -1,11 +1,18 @@
+import type { Surface } from "../src/core/surface.js";
+import {
+  screenCatalog as auctionCatalog,
+  auctionListParent,
+  auctionLists,
+  screenTag as auctionTag,
+} from "../src/surfaces/auction/screen-catalog.js";
 import {
   auctionFeedParent,
   auctionFeedParents,
+  screenCatalog as hubCatalog,
   meetupListParent,
   meetupLists,
-  screenCatalog,
 } from "../src/surfaces/hub/presentation/screens/catalog.js";
-import { screenTag } from "../src/surfaces/hub/presentation/screens/show.js";
+import { screenTag as hubTag } from "../src/surfaces/hub/presentation/screens/show.js";
 import {
   inspectCall as inspectWith,
   type LintConfig,
@@ -14,10 +21,11 @@ import {
   type UnknownEntryKeys,
 } from "./lint/index.js";
 
-// Линтер экрана хаба: общий линтер дизайн-кода (`shared/typescript/screen-lint`)
-// с каталогом и частными правилами дерева хаба. Его зовёт записывающий
-// трансформер харнесса, поэтому правило проверяется в каждом тесте L0 и L2,
-// который вообще что-то отправил, а не в отдельном наборе.
+// Линтер экрана обеих поверхностей: линтер дизайн-кода (`lint/`) с каталогом и
+// частными правилами дерева поверхности. Его зовёт записывающий трансформер
+// харнесса, поэтому правило проверяется в каждом тесте L0 и L2, который
+// вообще что-то отправил, а не в отдельном наборе. Найденное у обеих
+// поверхностей копится в одном накопителе и снимается `lint-setup.ts`.
 
 export {
   reportViolations,
@@ -26,28 +34,34 @@ export {
   takeViolations,
 } from "./lint/index.js";
 
-// Каталог объявлен без `satisfies` — сборка бота не видит пакета линтера, — и
-// опечатку в необязательном поле записи ловит этот тип при typecheck.
-const catalogShape: [UnknownEntryKeys<typeof screenCatalog>] extends [never]
+// Каталоги объявлены без `satisfies` — сборка бота не видит линтера, — и
+// опечатку в необязательном поле записи ловят эти типы при typecheck.
+const hubShape: [UnknownEntryKeys<typeof hubCatalog>] extends [never]
   ? true
   : never = true;
-void catalogShape;
+const auctionShape: [UnknownEntryKeys<typeof auctionCatalog>] extends [never]
+  ? true
+  : never = true;
+void hubShape;
+void auctionShape;
 
-// Пары, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
+// Пары хаба, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
 // пара, которой в дизайн-коде нет: подписка живёт в карточке по решению
 // PER-402, и отдельным рядом она вывела бы карточку за пять рядов. Материалы
 // и аукцион сходки — содержимое сходки одним рядом (PER-307): у организатора
 // ряд аукциона иначе стал бы шестым. «#» — число материалов в подписи.
-const namedPairs: ReadonlySet<string> = new Set([
+const hubNamedPairs: ReadonlySet<string> = new Set([
   "Изменить|Статус",
   "Отписаться|Уведомления сходки",
   "Материалы (#)|Лоты",
   "Материалы (#)|Включить аукцион",
 ]);
 
-function configFor(catalog: Readonly<Record<string, ScreenEntry>>): LintConfig {
-  return {
-    tag: screenTag,
+type Catalog = Readonly<Record<string, ScreenEntry>>;
+
+const configFor: Record<Surface, (catalog: Catalog) => LintConfig> = {
+  hub: (catalog) => ({
+    tag: hubTag,
     catalog,
     // Карточка возвращает в тот список, в котором сходка стоит; лента лотов —
     // к сходке аукциона, а если бот её не знает, в «Ближайшие».
@@ -55,20 +69,31 @@ function configFor(catalog: Readonly<Record<string, ScreenEntry>>): LintConfig {
       [meetupListParent]: meetupLists,
       [auctionFeedParent]: auctionFeedParents,
     },
-    namedPairs,
-  };
-}
+    namedPairs: hubNamedPairs,
+  }),
+  // Именованных пар у дерева аукциона нет, группа родителей одна — списки
+  // аукционов, в которые возвращает лента.
+  auction: (catalog) => ({
+    tag: auctionTag,
+    catalog,
+    parentGroups: { [auctionListParent]: auctionLists },
+  }),
+};
 
-const hub = configFor(screenCatalog);
+const configs: Record<Surface, LintConfig> = {
+  hub: configFor.hub(hubCatalog),
+  auction: configFor.auction(auctionCatalog),
+};
 
-/** Каталог передаётся только в тестах самого линтера; в работе он один. */
+/** Каталог передаётся только в тестах каталогов и линтера; в работе он один. */
 export function inspectCall(
+  surface: Surface,
   method: string,
   payload: unknown,
-  catalog?: Readonly<Record<string, ScreenEntry>>,
+  catalog?: Catalog,
 ): ScreenViolation[] {
   return inspectWith(
-    catalog === undefined ? hub : configFor(catalog),
+    catalog === undefined ? configs[surface] : configFor[surface](catalog),
     method,
     payload,
   );

@@ -14,12 +14,21 @@ import {
 // свои у каждой только экраны, тексты и клиенты своего сценария в
 // `src/surfaces/<поверхность>`. Поверхности не импортируют друг друга, а общий
 // код не знает ни одной: функция, которой место у обеих, уходит в общий код, а
-// не копируется. Знать обе поверхности может только выбор процесса `src/main.ts`.
+// не копируется. Знать обе поверхности могут только выбор процесса
+// `src/main.ts` и test kit (`testkit/`): один kit гоняет обе поверхности.
 
 const src = path.join(app, "src");
 const testkit = path.join(app, "testkit");
 
-type Zone = "core" | "tree" | "hub" | "auction" | "gen" | "main" | "outside";
+type Zone =
+  | "core"
+  | "tree"
+  | "hub"
+  | "auction"
+  | "kit"
+  | "gen"
+  | "main"
+  | "outside";
 
 const zoneOf = (file: string): Zone => {
   if (!inside(file, app)) return "outside";
@@ -31,9 +40,8 @@ const zoneOf = (file: string): Zone => {
   if (file === path.join(testkit, "imports.ts")) return "core";
   if (file === path.join(testkit, "tracing.ts")) return "core";
   if (inside(file, path.join(src, "surfaces", "auction"))) return "auction";
-  if (inside(file, path.join(testkit, "auction"))) return "auction";
   if (inside(file, path.join(src, "surfaces", "hub"))) return "hub";
-  if (inside(file, testkit)) return "hub";
+  if (inside(file, testkit)) return "kit";
   // Сами тесты раскладки читают исходники и к поверхностям не относятся.
   return "core";
 };
@@ -43,8 +51,11 @@ const allowed: Record<Zone, readonly Zone[]> = {
   // дерево; дерево общего кода не знает (его `boundary.test.ts`).
   core: ["core", "tree", "gen", "outside"],
   tree: ["tree", "gen", "outside"],
-  hub: ["hub", "core", "tree", "gen", "outside"],
-  auction: ["auction", "core", "tree", "gen", "outside"],
+  // Тесты поверхности берут kit; kit знает обе, но поверхность через него
+  // другую не импортирует: прямых импортов между ними тест не пропускает.
+  hub: ["hub", "core", "tree", "kit", "gen", "outside"],
+  auction: ["auction", "core", "tree", "kit", "gen", "outside"],
+  kit: ["kit", "hub", "auction", "core", "tree", "gen", "outside"],
   gen: ["gen", "outside"],
   main: ["main", "core", "hub", "auction", "outside"],
   outside: [],

@@ -3,10 +3,7 @@ import { HttpError, InputFile, type Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GlobalRole } from "../../../gen/identity/v1/roles_pb.js";
-import {
-  inspectCall,
-  reportViolations,
-} from "../../../testkit/auction/screen-lint.js";
+import { inspectCall, reportViolations } from "../../../testkit/screen-lint.js";
 import {
   type EntryPort,
   encodeAuctionCallback,
@@ -95,7 +92,7 @@ function makeBot(
     calls.push({ method, payload });
     // Каждый экран сверяется с каталогом и дизайн-кодом в момент отправки;
     // найденное снимает хук набора (`testkit/lint-setup.ts`).
-    reportViolations(inspectCall(method, payload));
+    reportViolations(inspectCall("auction", method, payload));
     if (options.dropOnce === method) {
       delete options.dropOnce;
       return Promise.reject(

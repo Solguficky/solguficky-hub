@@ -1,9 +1,6 @@
 import type { Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
-import {
-  inspectCall,
-  reportViolations,
-} from "../../../testkit/auction/screen-lint.js";
+import { inspectCall, reportViolations } from "../../../testkit/screen-lint.js";
 import {
   type AccessAnswer,
   type AccessMatrixInput,
@@ -120,7 +117,7 @@ describeAccessMatrix("auction bot", "auction", (ports) => async (input) => {
   // Результат зависит от метода, фикстура его не знает: единственное
   // ослабление типа в тесте.
   const recorder: Transformer = (_prev, method, payload) => {
-    reportViolations(inspectCall(method, payload));
+    reportViolations(inspectCall("auction", method, payload));
     if ("text" in payload && typeof payload.text === "string") {
       shown.push(payload.text);
     }
