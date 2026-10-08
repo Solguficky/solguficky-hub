@@ -1818,14 +1818,15 @@ describe("presentation adapter", () => {
     });
 
     it.each([true, false])(
-      "opens an unknown person's card with username %s without a profile link",
+      "opens an unknown person's card with username %s using only public profile links",
       async (hasUsername) => {
         const { telegramUsername: _, ...withoutUsername } = first;
         const identity = moderating([
           shown(hasUsername ? first : withoutUsername, 1, 1),
         ]);
         const { bot, calls } = createHarness(identity);
-        // Telegram отклоняет сообщение со ссылкой tg://user целиком.
+        // Пользователь не известен хабу; его публичный username не требует
+        // tg://user и не должен влиять на доставку карточки.
         bot.api.config.use((prev, method, payload, signal) =>
           JSON.stringify(payload).includes("tg://user?id=")
             ? Promise.resolve({
@@ -1844,11 +1845,16 @@ describe("presentation adapter", () => {
           "Заявка 1 из 1",
         );
         expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain(
-          "Профиль ↗",
-        );
-        expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain(
           "tg://user",
         );
+        const payload = JSON.stringify(calls.at(-1)?.payload);
+        if (hasUsername) {
+          expect(payload).toContain("https://t.me/ivan_p");
+          expect(payload).toContain("Профиль ↗");
+        } else {
+          expect(payload).not.toContain("https://t.me/");
+          expect(payload).not.toContain("Профиль ↗");
+        }
       },
     );
 

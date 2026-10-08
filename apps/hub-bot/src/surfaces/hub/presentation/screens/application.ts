@@ -92,7 +92,7 @@ export function ageLabel(createdAtMs: number, nowMs: number): string {
   return `${plural(Math.floor(hours / 24), ["день", "дня", "дней"])} назад`;
 }
 
-/** Карточка без ссылки на профиль: бот хаба может не знать заявителя. */
+/** Карточка ведёт в профиль только по публичному username. */
 export function applicationCardScreen(
   { application, position }: { application: ApplicationCard; position: number },
   total: number,
@@ -100,15 +100,15 @@ export function applicationCardScreen(
 ): ShownScreen {
   const cursor = cursorOf(application);
   const data = cardCursorData(cursor);
-  const keyboard = withNav(
-    new InlineKeyboard()
-      .text("Допустить", `v1:cm:qa:${data}`)
-      .row()
-      .text("Отказать", `v1:cm:qd:${data}`)
-      .row()
-      .text("Пропустить", `v1:cm:q:${data}`),
-    toManage,
-  );
+  const rows = new InlineKeyboard()
+    .text("Допустить", `v1:cm:qa:${data}`)
+    .row()
+    .text("Отказать", `v1:cm:qd:${data}`);
+  if (application.telegramUsername !== undefined) {
+    rows.row().url("Профиль ↗", `https://t.me/${application.telegramUsername}`);
+  }
+  rows.row().text("Пропустить", `v1:cm:q:${data}`);
+  const keyboard = withNav(rows, toManage);
   return {
     id: "application",
     text: screenText(

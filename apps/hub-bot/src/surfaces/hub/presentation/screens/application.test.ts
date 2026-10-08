@@ -45,6 +45,7 @@ describe("application card", () => {
     expect(screen.keyboard.inline_keyboard).toEqual([
       [{ text: "Допустить", callback_data: `v1:cm:qa:${cursor}` }],
       [{ text: "Отказать", callback_data: `v1:cm:qd:${cursor}` }],
+      [{ text: "Профиль ↗", url: "https://t.me/ivan_p" }],
       [{ text: "Пропустить", callback_data: `v1:cm:q:${cursor}` }],
       [
         { text: "‹ Управление", callback_data: "v1:manage:menu" },
@@ -53,15 +54,17 @@ describe("application card", () => {
     ]);
   });
 
-  it("omits the profile link even when the person has a username", () => {
+  it("links to the public profile when the person has a username", () => {
     const screen = applicationCardScreen(
       { application: card, position: 1 },
       1,
       twoDaysLater,
     );
 
-    expect(JSON.stringify(screen.keyboard)).not.toContain("url");
-    expect(rows(screen.keyboard).flat()).not.toContain("Профиль ↗");
+    expect(screen.keyboard.inline_keyboard).toContainEqual([
+      { text: "Профиль ↗", url: "https://t.me/ivan_p" },
+    ]);
+    expect(JSON.stringify(screen.keyboard)).not.toContain("tg://user");
   });
 
   it("names a person without a username by name and code, without a profile link", () => {
