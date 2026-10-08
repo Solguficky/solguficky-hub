@@ -70,7 +70,7 @@ internal static class IdentitySetup
                 "apps/identity/Containerfile")
             .WithEndpoint(targetPort: ContainerGrpcPort, scheme: "http", name: AppHostNames.Endpoints.Grpc);
 
-        return Wire(context, identity).AsClusterWorkload(Cluster);
+        return Wire(context, identity).ExportsTelemetryToCollector().AsClusterWorkload(Cluster);
     }
 
     private static IResourceBuilder<T> Wire<T>(ServiceGraphContext context, IResourceBuilder<T> identity)

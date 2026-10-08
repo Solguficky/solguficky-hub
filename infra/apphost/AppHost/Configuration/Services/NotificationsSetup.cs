@@ -89,6 +89,7 @@ internal static class NotificationsSetup
             .WithEnvironment("NOTIFICATIONS_SILO_ADVERTISED_HOST", ReferenceExpression.Create($"{grpc.Property(EndpointProperty.Host)}"))
             .WithEnvironment("NOTIFICATIONS_CLUSTER_ID", clusterId)
             .WithEnvironment("NOTIFICATIONS_SERVICE_ID", serviceId)
+            .ExportsTelemetryToCollector()
             .AsClusterWorkload(Cluster);
     }
 }

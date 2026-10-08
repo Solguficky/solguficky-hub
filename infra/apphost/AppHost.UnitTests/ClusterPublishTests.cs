@@ -104,6 +104,54 @@ public class ClusterPublishTests
             .ShouldBe([R.AuctionDb, R.IdentityDb, R.MeetupsDb, R.Nats, R.NotificationsDb]);
     }
 
+    /// <summary>
+    /// Без дашборда Aspire не выдаёт сервису в чарте ни адреса OTLP, ни имени:
+    /// экспорт в поде молча выключается (PER-378). Адрес — Collector своей среды,
+    /// одинаковый во всех средах. Бот аукциона OTLP не шлёт, его логи Collector
+    /// читает из файлов подов, и адрес задвоил бы их, когда экспорт у бота появится.
+    /// </summary>
+    [Theory]
+    [InlineData(R.Identity)]
+    [InlineData(R.Meetups)]
+    [InlineData(R.Notifications)]
+    [InlineData(R.HubBot)]
+    [InlineData(R.Auction)]
+    public async Task Publish_OtlpServices_ExportToTheCollectorOfTheirEnvironment(string name)
+    {
+        var builder = await PublishModelAsync();
+
+        var environment = await PublishEnvironmentAsync(builder, name);
+
+        environment["OTEL_EXPORTER_OTLP_ENDPOINT"].ShouldBe("http://otel-collector:4317");
+        environment["OTEL_EXPORTER_OTLP_PROTOCOL"].ShouldBe("grpc");
+        environment["OTEL_SERVICE_NAME"].ShouldBe(name);
+    }
+
+    [Fact]
+    public async Task Publish_AuctionBot_HasNoOtlpEndpoint()
+    {
+        var builder = await PublishModelAsync();
+
+        var environment = await PublishEnvironmentAsync(builder, R.AuctionBot);
+
+        environment.Keys.ShouldNotContain(key => key.StartsWith("OTEL_EXPORTER_OTLP", StringComparison.Ordinal));
+    }
+
+    private static async Task<Dictionary<string, object>> PublishEnvironmentAsync(
+        IDistributedApplicationTestingBuilder builder,
+        string name)
+    {
+        var cancellationToken = TestContext.Current.CancellationToken;
+        var resource = builder.Resources.Single(resource => resource.Name == name);
+        var environment = new Dictionary<string, object>(StringComparer.Ordinal);
+        foreach (var callback in resource.Annotations.OfType<EnvironmentCallbackAnnotation>())
+        {
+            await callback.Callback(new EnvironmentCallbackContext(builder.ExecutionContext, resource, environment, cancellationToken));
+        }
+
+        return environment;
+    }
+
     [Fact]
     public async Task Publish_KubernetesEnvironment_HasNoDashboard()
     {

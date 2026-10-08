@@ -78,5 +78,6 @@ internal static class MeetupsSetup
     public static IResourceBuilder<ProjectResource> Publish(ServiceGraphContext context) =>
         Configure(context)
             .WithEndpoint(AppHostNames.Endpoints.Grpc, endpoint => endpoint.TargetPort = ContainerGrpcPort)
+            .ExportsTelemetryToCollector()
             .AsClusterWorkload(Cluster);
 }
