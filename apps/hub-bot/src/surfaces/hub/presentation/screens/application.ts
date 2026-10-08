@@ -1,11 +1,16 @@
 import { InlineKeyboard } from "grammy";
+import type { ApplicationQueue } from "../../../../auction-ui/index.js";
 import { applicationCode } from "../../application/hub-access.js";
 import type {
   ApplicationCard,
   ApplicationDecision,
 } from "../../identity/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { type CardCursor, cardCursorData } from "../parse-callback.js";
+import {
+  type CardCursor,
+  cardCursorData,
+  queueDomain,
+} from "../parse-callback.js";
 import {
   confirmKeyboard,
   escapeHtml,
@@ -17,7 +22,8 @@ import type { ShownScreen } from "./show.js";
 
 // Карточка заявки «по одному» (ADR-060, пункты 21–22): одна заявка, её круг,
 // источник и возраст. Курсор в кнопках — момент создания и токен заявки, порядок
-// очереди держит Identity: от старых к новым.
+// очереди держит Identity: от старых к новым. Очередей две (ADR-064, пункт 12),
+// и домен кнопок называет очередь: курсор одной другую не ставит.
 
 const circleLabel: Record<ApplicationCard["circle"], string> = {
   member: "хаб",
@@ -31,9 +37,17 @@ export function cursorOf(application: ApplicationCard): CardCursor {
   };
 }
 
-/** `v1:cm:qc:…` — та же карточка, пока заявка открыта. */
-export function sameCardData(cursor: CardCursor): string {
-  return `v1:cm:qc:${cardCursorData(cursor)}`;
+/** `…:qc:…` — та же карточка, пока заявка открыта. */
+export function sameCardData(
+  queue: ApplicationQueue,
+  cursor: CardCursor,
+): string {
+  return `${queueDomain(queue)}:qc:${cardCursorData(cursor)}`;
+}
+
+/** Заголовок очереди: «Заявки» — в сообщество, «Заявки в аукцион». */
+export function queueTitle(queue: ApplicationQueue): string {
+  return queue === "community" ? "Заявки" : "Заявки в аукцион";
 }
 
 // Человек без ника назван именем и кодом — последними восемью символами
@@ -92,22 +106,29 @@ export function ageLabel(createdAtMs: number, nowMs: number): string {
   return `${plural(Math.floor(hours / 24), ["день", "дня", "дней"])} назад`;
 }
 
-/** Карточка ведёт в профиль только по публичному username. */
+/**
+ * Карточка ведёт в профиль только по публичному username. Допуск зелёный,
+ * отказ красный (решение владельца по PER-534).
+ */
 export function applicationCardScreen(
+  queue: ApplicationQueue,
   { application, position }: { application: ApplicationCard; position: number },
   total: number,
   nowMs: number,
 ): ShownScreen {
   const cursor = cursorOf(application);
   const data = cardCursorData(cursor);
+  const domain = queueDomain(queue);
   const rows = new InlineKeyboard()
-    .text("Допустить", `v1:cm:qa:${data}`)
+    .text("Допустить", `${domain}:qa:${data}`)
+    .success()
     .row()
-    .text("Отказать", `v1:cm:qd:${data}`);
+    .text("Отказать", `${domain}:qd:${data}`)
+    .danger();
   if (application.telegramUsername !== undefined) {
     rows.row().url("Профиль ↗", `https://t.me/${application.telegramUsername}`);
   }
-  rows.row().text("Пропустить", `v1:cm:q:${data}`);
+  rows.row().text("Пропустить", `${domain}:q:${data}`);
   const keyboard = withNav(rows, toManage);
   return {
     id: "application",
@@ -129,15 +150,18 @@ export function applicationCardScreen(
  * кнопкой «С начала».
  */
 export function applicationQueueEndScreen(
+  queue: ApplicationQueue,
   total: number,
   afterCursor: boolean,
 ): ShownScreen {
   const keyboard = new InlineKeyboard();
-  if (afterCursor && total > 0) keyboard.text("С начала", "v1:cm:q");
+  if (afterCursor && total > 0) {
+    keyboard.text("С начала", `${queueDomain(queue)}:q`);
+  }
   return {
     id: "application",
     text: screenText(
-      "Заявки",
+      queueTitle(queue),
       total === 0
         ? "Новых заявок нет."
         : afterCursor
@@ -150,16 +174,18 @@ export function applicationQueueEndScreen(
 }
 
 /**
- * Подтверждение отказа называет последствие по кругу (ADR-060, пункт 12): отказ
- * в аукцион — блокировка профиля, отказ в хаб — только закрытая заявка.
+ * Подтверждение отказа называет последствие по кругу. Отказ — исход `declined`
+ * только своей очереди (ADR-064, пункт 15): в аукцион — закрытая заявка на
+ * аукцион без блокировки профиля, в хаб — закрытая заявка в хаб.
  */
 export function declineConfirmScreen(
+  queue: ApplicationQueue,
   application: ApplicationCard,
 ): ShownScreen {
   const person = personHtml(application);
   const consequence =
     application.circle === "public"
-      ? `Профиль ${person} будет заблокирован: доступа к аукциону не будет.`
+      ? `Заявка ${person} в аукцион будет отклонена. Профиль не блокируется, и путь в сообщество остаётся открытым.`
       : `Заявка ${person} в хаб будет отклонена. Доступ к аукциону, если он есть, останется.`;
   const cursor = cursorOf(application);
   return {
@@ -167,8 +193,9 @@ export function declineConfirmScreen(
     text: screenText("Отказать?", consequence),
     keyboard: confirmKeyboard({
       yes: "Да, отказать",
-      yesData: `v1:cm:qy:${cardCursorData(cursor)}`,
-      noData: sameCardData(cursor),
+      yesData: `${queueDomain(queue)}:qy:${cardCursorData(cursor)}`,
+      noData: sameCardData(queue, cursor),
+      style: "danger",
     }),
     format: "HTML",
   };

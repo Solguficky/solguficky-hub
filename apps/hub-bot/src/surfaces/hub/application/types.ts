@@ -12,9 +12,9 @@ import type {
   NotificationCategory,
 } from "../notifications/port.js";
 
-// Человек, каким его разрешил Identity. Допуск в хаб решают `rights`; роли
-// едут транзитом в Meetups и Auction, а «Управление» до PER-534 читает
-// по ним администратора.
+// Человек, каким его разрешил Identity. Допуск в хаб и пункты «Управления»
+// решают `rights`; роли едут транзитом в Meetups и Auction, и по роли
+// администратора бот показывает только пункты, которые Meetups решает по ней.
 export type Person = {
   identityId: string;
   globalRoles: readonly string[];

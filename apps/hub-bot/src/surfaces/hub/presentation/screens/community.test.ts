@@ -4,6 +4,8 @@ import { uuidToToken } from "../meetup-deep-link.js";
 import {
   closeAccessConfirmScreen,
   communityScreen,
+  moderatorCandidatesScreen,
+  moderatorsScreen,
   viewOfOrigin,
 } from "./community.js";
 import type { ShownScreen } from "./show.js";
@@ -54,9 +56,59 @@ describe("community root", () => {
       ["Ожидают допуска"],
       ["Допущенные"],
       ["Разрешённые ники"],
+      ["Модераторы аукциона"],
       ["Обновить"],
       ["‹ Управление", "Меню"],
     ]);
+  });
+});
+
+describe("auction moderators", () => {
+  const moderator = {
+    identityId: id(2),
+    telegramUsername: "user2",
+    telegramUserId: 2n,
+    revocable: true,
+  };
+  const admin = {
+    identityId: id(9),
+    telegramUserId: 9n,
+    revocable: false,
+  };
+
+  it("revokes only a granted right and leads to granting", () => {
+    const screen = moderatorsScreen([moderator, admin]);
+
+    expect(screen.id).toBe("community-moderators");
+    expect(screen.text).toBe(
+      "<b>Модераторы аукциона</b>\n\n• @user2\n• id 9 · администратор",
+    );
+    expect(rows(screen)).toEqual([
+      ["Отозвать @user2"],
+      ["Выдать модерацию"],
+      ["Обновить"],
+      nav,
+    ]);
+    expect(dataOf(screen, "Отозвать @user2")).toBe(
+      `v1:cm:mv:${uuidToToken(id(2))}`,
+    );
+  });
+
+  it("offers the admitted members who do not moderate yet", () => {
+    const screen = moderatorCandidatesScreen(
+      {
+        members: [person(1, false), person(2, true), person(3, true)],
+        allowedUsernames: [],
+      },
+      [moderator],
+      0,
+    );
+
+    expect(screen.id).toBe("community-moderator-candidates");
+    expect(rows(screen)).toEqual([["Выдать @user3"], ["‹ Модераторы", "Меню"]]);
+    expect(dataOf(screen, "Выдать @user3")).toBe(
+      `v1:cm:mg:${uuidToToken(id(3))}:0`,
+    );
   });
 });
 

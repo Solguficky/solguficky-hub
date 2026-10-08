@@ -34,6 +34,7 @@ function rows(keyboard: ShownScreen["keyboard"]): string[][] {
 describe("application card", () => {
   it("shows position, circle, person, source and age", () => {
     const screen = applicationCardScreen(
+      "auction",
       { application: card, position: 3 },
       17,
       twoDaysLater,
@@ -43,10 +44,22 @@ describe("application card", () => {
       "<b>Заявка 3 из 17 · аукцион</b>\n\nИван П. (@ivan_p)\nПришёл: канал «Солегуфики» · 2 дня назад",
     );
     expect(screen.keyboard.inline_keyboard).toEqual([
-      [{ text: "Допустить", callback_data: `v1:cm:qa:${cursor}` }],
-      [{ text: "Отказать", callback_data: `v1:cm:qd:${cursor}` }],
+      [
+        {
+          text: "Допустить",
+          callback_data: `v1:aq:qa:${cursor}`,
+          style: "success",
+        },
+      ],
+      [
+        {
+          text: "Отказать",
+          callback_data: `v1:aq:qd:${cursor}`,
+          style: "danger",
+        },
+      ],
       [{ text: "Профиль ↗", url: "https://t.me/ivan_p" }],
-      [{ text: "Пропустить", callback_data: `v1:cm:q:${cursor}` }],
+      [{ text: "Пропустить", callback_data: `v1:aq:q:${cursor}` }],
       [
         { text: "‹ Управление", callback_data: "v1:manage:menu" },
         { text: "Меню", callback_data: "v1:nav:start" },
@@ -56,6 +69,7 @@ describe("application card", () => {
 
   it("links to the public profile when the person has a username", () => {
     const screen = applicationCardScreen(
+      "community",
       { application: card, position: 1 },
       1,
       twoDaysLater,
@@ -70,6 +84,7 @@ describe("application card", () => {
   it("names a person without a username by name and code, without a profile link", () => {
     const { telegramUsername: _, ...withoutUsername } = card;
     const screen = applicationCardScreen(
+      "community",
       {
         application: { ...withoutUsername, circle: "member" },
         position: 1,
@@ -94,6 +109,7 @@ describe("application card", () => {
     [{ kind: "none" } as const, "Пришёл: напрямую"],
   ])("captions the source %o", (source, caption) => {
     const screen = applicationCardScreen(
+      "community",
       { application: { ...card, source }, position: 1 },
       1,
       twoDaysLater,
@@ -104,6 +120,7 @@ describe("application card", () => {
 
   it("escapes the name and the channel label", () => {
     const screen = applicationCardScreen(
+      "community",
       {
         application: {
           ...card,
@@ -140,14 +157,14 @@ describe("application age", () => {
 
 describe("application queue end", () => {
   it("says the queue is empty", () => {
-    const screen = applicationQueueEndScreen(0, false);
+    const screen = applicationQueueEndScreen("community", 0, false);
 
     expect(screen.text).toBe("<b>Заявки</b>\n\nНовых заявок нет.");
     expect(rows(screen.keyboard)).toEqual([["‹ Управление", "Меню"]]);
   });
 
   it("says the queue ended and offers the skipped ones from the start", () => {
-    const screen = applicationQueueEndScreen(2, true);
+    const screen = applicationQueueEndScreen("community", 2, true);
 
     expect(screen.text).toBe(
       "<b>Заявки</b>\n\nОчередь кончилась. Ещё открыто заявок: 2.",
@@ -156,28 +173,43 @@ describe("application queue end", () => {
       { text: "С начала", callback_data: "v1:cm:q" },
     ]);
   });
+
+  it("names the auction queue and keeps its buttons in its domain", () => {
+    const screen = applicationQueueEndScreen("auction", 2, true);
+
+    expect(screen.text).toContain("<b>Заявки в аукцион</b>");
+    expect(screen.keyboard.inline_keyboard[0]).toEqual([
+      { text: "С начала", callback_data: "v1:aq:q" },
+    ]);
+  });
 });
 
 describe("decline confirmation", () => {
-  it("names the block for the auction circle", () => {
-    const screen = declineConfirmScreen(card);
+  // ADR-064, пункт 15: отказ в аукцион — `declined` своей очереди, профиль не
+  // блокируется.
+  it("declines the auction application without blocking the profile", () => {
+    const screen = declineConfirmScreen("auction", card);
 
     expect(screen.text).toBe(
-      "<b>Отказать?</b>\n\nПрофиль Иван П. (@ivan_p) будет заблокирован: доступа к аукциону не будет.",
+      "<b>Отказать?</b>\n\nЗаявка Иван П. (@ivan_p) в аукцион будет отклонена. Профиль не блокируется, и путь в сообщество остаётся открытым.",
     );
+    expect(screen.text).not.toContain("заблокирован");
     expect(screen.keyboard.inline_keyboard).toEqual([
       [
         {
           text: "Да, отказать",
-          callback_data: `v1:cm:qy:${cursor}`,
+          callback_data: `v1:aq:qy:${cursor}`,
+          style: "danger",
         },
       ],
-      [{ text: "Нет", callback_data: `v1:cm:qc:${cursor}` }],
+      [{ text: "Нет", callback_data: `v1:aq:qc:${cursor}` }],
     ]);
   });
 
   it("keeps the auction for a refusal of the hub circle", () => {
-    expect(declineConfirmScreen({ ...card, circle: "member" }).text).toContain(
+    expect(
+      declineConfirmScreen("community", { ...card, circle: "member" }).text,
+    ).toContain(
       "в хаб будет отклонена. Доступ к аукциону, если он есть, останется.",
     );
   });

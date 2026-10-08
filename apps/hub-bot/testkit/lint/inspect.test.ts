@@ -41,6 +41,12 @@ const catalog = {
   },
   bid: { class: "screen", nav: "confirm", title: "Ставка", money: true },
   open: { class: "screen", nav: "confirm", title: "Неделя" },
+  decline: {
+    class: "screen",
+    nav: "confirm",
+    title: "Отказать?",
+    decision: true,
+  },
 } as const satisfies Catalog;
 
 const config: LintConfig = {
@@ -188,6 +194,32 @@ describe("inspectCall configuration", () => {
       confirm("open", "Неделя", key("Да, открыть неделю", { style: "danger" })),
     ).toEqual(["style"]);
     expect(confirm("open", "Неделя", key("Да, открыть неделю"))).toEqual([]);
+  });
+
+  // PER-534: экран решения по заявке красит отказ красным, допуск зелёным, и
+  // только он.
+  it("paints the application decision, and paints it always", () => {
+    const decline = (id: string, title: string, yes: Key) =>
+      rulesOf(
+        "sendMessage",
+        call(id, `<b>${title}</b>`, [[yes], [key("Нет")]]),
+      );
+    expect(
+      decline("decline", "Отказать?", key("Да, отказать", { style: "danger" })),
+    ).toEqual([]);
+    expect(decline("decline", "Отказать?", key("Да, отказать"))).toEqual([
+      "style",
+    ]);
+    expect(
+      decline(
+        "decline",
+        "Отказать?",
+        key("Да, отказать", { style: "success" }),
+      ),
+    ).toEqual(["style", "style"]);
+    expect(
+      decline("open", "Неделя", key("Да, отказать", { style: "danger" })),
+    ).toEqual(["style"]);
   });
 
   // PER-472: тело экрана — пустая строка после заголовка, а над ним ничего:

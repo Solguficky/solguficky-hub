@@ -28,6 +28,8 @@ import type {
   ApplicationCard,
   ApplicationDecision,
   ApplicationModerator,
+  AuctionModerationAdministrator,
+  AuctionModerator,
   CommunityAdministrator,
   IdentityFailure,
   IdentityResolver,
@@ -85,6 +87,10 @@ type SourceChannelAdminRpc = Pick<
   Client<typeof IdentityService>,
   "listSourceChannels" | "createSourceChannel"
 >;
+type AuctionModerationRpc = Pick<
+  Client<typeof IdentityService>,
+  "listAuctionModerators" | "grantAuctionModeration" | "revokeAuctionModeration"
+>;
 type ApplicationModeratorRpc = Pick<
   Client<typeof IdentityService>,
   "readApplicationQueue" | "admitApplication" | "declineApplication"
@@ -97,7 +103,8 @@ export type IdentityClient = IdentityResolver &
   CommunityAdministrator &
   ApplicationAdministrator &
   SourceChannelAdministrator &
-  ApplicationModerator & {
+  ApplicationModerator &
+  AuctionModerationAdministrator & {
     close(): void;
   };
 
@@ -127,6 +134,7 @@ export function createIdentityClient(
   });
   const sourceChannels = createSourceChannelAdministrator(client, timeoutMs);
   const moderator = createApplicationModerator(client, timeoutMs);
+  const moderation = createAuctionModerationAdministrator(client, timeoutMs);
   const recipients = createTelegramRecipientResolver(client, timeoutMs);
   const organizers = createOrganizerResolver(client, timeoutMs);
   return {
@@ -140,6 +148,7 @@ export function createIdentityClient(
     ...applications,
     ...sourceChannels,
     ...moderator,
+    ...moderation,
     close() {
       sessionManager.abort();
     },
@@ -250,13 +259,13 @@ export function createApplicationAdministrator(
     globalRoles: actor.globalRoles.map(roleValue),
   });
   return {
-    async refusedApplications(actor, meta) {
+    async refusedApplications(actor, queue, meta) {
       let response: Awaited<
         ReturnType<ApplicationAdminRpc["listRefusedApplications"]>
       >;
       try {
         response = await rpc.listRefusedApplications(
-          { actor: actorMessage(actor) },
+          { actor: actorMessage(actor), queue: wireQueue(queue) },
           options(meta),
         );
       } catch (cause) {
@@ -281,6 +290,80 @@ export function createApplicationAdministrator(
         return { kind: "ok", value: response.changed };
       } catch (cause) {
         return classifyReconsiderFailure(cause);
+      }
+    },
+  };
+}
+
+// Право модерации аукциона (ADR-064, пункт 7): список держателей, выдача и
+// отзыв. FAILED_PRECONDITION у выдачи — штатный ответ: человек не участник или
+// заблокирован.
+export function createAuctionModerationAdministrator(
+  rpc: AuctionModerationRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): AuctionModerationAdministrator {
+  const options = (meta?: RpcMetadata) => ({
+    timeoutMs: callTimeoutMs(meta, timeoutMs),
+    ...callHeaders(meta),
+  });
+  const actorMessage = (actor: {
+    identityId: string;
+    globalRoles: readonly string[];
+  }) => ({
+    identityId: actor.identityId,
+    globalRoles: actor.globalRoles.map(roleValue),
+  });
+  return {
+    async auctionModerators(actor, meta) {
+      let response: Awaited<
+        ReturnType<AuctionModerationRpc["listAuctionModerators"]>
+      >;
+      try {
+        response = await rpc.listAuctionModerators(
+          { actor: actorMessage(actor) },
+          options(meta),
+        );
+      } catch (cause) {
+        return classifyAdminFailure(cause);
+      }
+      const moderators: AuctionModerator[] = response.moderators.map(
+        (moderator) => ({
+          identityId: moderator.identityId,
+          telegramUserId: moderator.telegramUserId,
+          ...(moderator.telegramUsername === undefined
+            ? {}
+            : { telegramUsername: moderator.telegramUsername }),
+          revocable: moderator.revocable,
+        }),
+      );
+      return { kind: "ok", value: moderators };
+    },
+    async grantAuctionModeration(actor, identityId, meta) {
+      try {
+        const response = await rpc.grantAuctionModeration(
+          { actor: actorMessage(actor), identityId },
+          options(meta),
+        );
+        return { kind: "ok", value: response.changed };
+      } catch (cause) {
+        if (
+          cause instanceof ConnectError &&
+          cause.code === Code.FailedPrecondition
+        ) {
+          return { kind: "not-member" };
+        }
+        return classifyAdminFailure(cause);
+      }
+    },
+    async revokeAuctionModeration(actor, identityId, meta) {
+      try {
+        const response = await rpc.revokeAuctionModeration(
+          { actor: actorMessage(actor), identityId },
+          options(meta),
+        );
+        return { kind: "ok", value: response.changed };
+      } catch (cause) {
+        return classifyAdminFailure(cause);
       }
     },
   };
@@ -413,7 +496,7 @@ export function createApplicationModerator(
       : { kind: "ok", value: decision };
   };
   return {
-    async readApplicationQueue(actor, after, meta) {
+    async readApplicationQueue(actor, queue, after, meta) {
       let response: Awaited<
         ReturnType<ApplicationModeratorRpc["readApplicationQueue"]>
       >;
@@ -421,6 +504,7 @@ export function createApplicationModerator(
         response = await rpc.readApplicationQueue(
           {
             actor: actorMessage(actor),
+            queue: wireQueue(queue),
             ...(after === undefined
               ? {}
               : {

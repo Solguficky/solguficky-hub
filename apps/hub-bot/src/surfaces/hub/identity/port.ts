@@ -232,9 +232,13 @@ export type ApplicationDecision = {
   decidedBy?: { telegramUserId: bigint; telegramUsername?: string };
 };
 
+// Очередь заявок называет каждый вызов чтения: две очереди читаются порознь, и
+// курсор одной не ставит другую (ADR-064, пункт 12). Решение и пересмотр берут
+// очередь из самой заявки.
 export type ApplicationModerator = {
   readApplicationQueue(
     actor: IdentityActor,
+    queue: ApplicationQueue,
     after: ApplicationCursor | undefined,
     meta?: RpcMetadata,
   ): Promise<IdentityAdminResult<ApplicationQueueRead>>;
@@ -253,6 +257,7 @@ export type ApplicationModerator = {
 export type ApplicationAdministrator = {
   refusedApplications(
     actor: IdentityActor,
+    queue: ApplicationQueue,
     meta?: RpcMetadata,
   ): Promise<IdentityAdminResult<readonly RefusedApplication[]>>;
   reconsiderApplication(
@@ -260,6 +265,40 @@ export type ApplicationAdministrator = {
     applicationId: string,
     meta?: RpcMetadata,
   ): Promise<ReconsiderResult>;
+};
+
+// Держатель права модерировать аукцион (ADR-064, пункт 7). `revocable` —
+// право выдано записью и снимается отзывом; у администратора оно приходит с
+// кругом, и отзыв его не снимает.
+export type AuctionModerator = {
+  identityId: string;
+  telegramUserId: bigint;
+  telegramUsername?: string;
+  revocable: boolean;
+};
+// `not-member` у выдачи — человек не участник или заблокирован: модерацию
+// получает только участник, который остаётся в своём круге.
+export type GrantModerationResult =
+  | IdentityAdminResult<boolean>
+  | { kind: "not-member" };
+
+// Выдача и отзыв права модерации аукциона — у держателя права управлять
+// составом; Identity решает это сам по своему хранилищу.
+export type AuctionModerationAdministrator = {
+  auctionModerators(
+    actor: IdentityActor,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<readonly AuctionModerator[]>>;
+  grantAuctionModeration(
+    actor: IdentityActor,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<GrantModerationResult>;
+  revokeAuctionModeration(
+    actor: IdentityActor,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<boolean>>;
 };
 
 // Канал прихода (ADR-060, пункт 18): код из payload `s_<код>` без префикса и

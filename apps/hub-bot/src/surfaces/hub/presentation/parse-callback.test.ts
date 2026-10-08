@@ -323,13 +323,38 @@ describe("callback parser", () => {
       ["v1:cm:u:3", { kind: "community-usernames", page: 3 }],
       [`v1:cm:ad:${token}`, { kind: "admit-member", token }],
       [`v1:cm:ad:${token}:${next}`, { kind: "admit-member", token, next }],
-      ["v1:cm:r", { kind: "refused-applications", page: 0 }],
+      [
+        "v1:cm:r",
+        { kind: "refused-applications", queue: "community", page: 0 },
+      ],
       ["v1:sc:l", { kind: "source-channels", page: 0 }],
       ["v1:sc:l:4", { kind: "source-channels", page: 4 }],
       ["v1:sc:a", { kind: "ask-source-channel" }],
-      ["v1:cm:r:2", { kind: "refused-applications", page: 2 }],
-      [`v1:cm:rq:${token}:2`, { kind: "ask-reconsider", token, page: 2 }],
-      [`v1:cm:ry:${token}:9999`, { kind: "reconsider", token, page: 9999 }],
+      [
+        "v1:cm:r:2",
+        { kind: "refused-applications", queue: "community", page: 2 },
+      ],
+      [
+        `v1:cm:rq:${token}:2`,
+        { kind: "ask-reconsider", queue: "community", token, page: 2 },
+      ],
+      [
+        `v1:cm:ry:${token}:9999`,
+        { kind: "reconsider", queue: "community", token, page: 9999 },
+      ],
+      ["v1:aq:r", { kind: "refused-applications", queue: "auction", page: 0 }],
+      [
+        `v1:aq:rq:${token}:2`,
+        { kind: "ask-reconsider", queue: "auction", token, page: 2 },
+      ],
+      [
+        `v1:aq:ry:${token}:9999`,
+        { kind: "reconsider", queue: "auction", token, page: 9999 },
+      ],
+      ["v1:cm:m", { kind: "auction-moderators" }],
+      ["v1:cm:mc:3", { kind: "moderator-candidates", page: 3 }],
+      [`v1:cm:mg:${token}:3`, { kind: "grant-moderation", token, page: 3 }],
+      [`v1:cm:mv:${token}`, { kind: "revoke-moderation", token }],
       [
         `v1:cm:bq:${token}:p`,
         { kind: "ask-block-member", token, origin: { kind: "pending" } },
@@ -403,14 +428,30 @@ describe("callback parser", () => {
       createdAtMs: Date.parse("2026-10-02T11:05:00.123Z"),
     };
     const data = cardCursorData(cursor);
-    const cases: readonly (readonly [`v1:${string}`, unknown])[] = [
-      ["v1:cm:q", { kind: "application-card" }],
-      [`v1:cm:q:${data}`, { kind: "application-card", cursor, from: "after" }],
-      [`v1:cm:qc:${data}`, { kind: "application-card", cursor, from: "at" }],
-      [`v1:cm:qa:${data}`, { kind: "admit-application", cursor }],
-      [`v1:cm:qd:${data}`, { kind: "ask-decline-application", cursor }],
-      [`v1:cm:qy:${data}`, { kind: "decline-application", cursor }],
-    ];
+    // Очередь называет домен: `cm` — сообщество, `aq` — аукцион.
+    const cases = (["community", "auction"] as const).flatMap((queue) => {
+      const domain = queue === "community" ? "v1:cm" : "v1:aq";
+      return [
+        [`${domain}:q`, { kind: "application-card", queue }],
+        [
+          `${domain}:q:${data}`,
+          { kind: "application-card", queue, cursor, from: "after" },
+        ],
+        [
+          `${domain}:qc:${data}`,
+          { kind: "application-card", queue, cursor, from: "at" },
+        ],
+        [`${domain}:qa:${data}`, { kind: "admit-application", queue, cursor }],
+        [
+          `${domain}:qd:${data}`,
+          { kind: "ask-decline-application", queue, cursor },
+        ],
+        [
+          `${domain}:qy:${data}`,
+          { kind: "decline-application", queue, cursor },
+        ],
+      ] as const;
+    });
     for (const [raw, action] of cases) {
       // С префиксом трассировки данные длиннее на два байта.
       expect(Buffer.byteLength(traceCallback(raw))).toBeLessThanOrEqual(64);
@@ -422,6 +463,9 @@ describe("callback parser", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     for (const data of [
       "v1:cm:qc",
+      "v1:aq:qc",
+      `v1:aq:ad:${token}`,
+      "v1:aq:m",
       `v1:cm:q:${token}`,
       `v1:cm:qa:${token}`,
       `v1:cm:qa:short:mfz0`,

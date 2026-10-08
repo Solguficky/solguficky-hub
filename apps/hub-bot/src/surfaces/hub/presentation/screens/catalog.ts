@@ -70,6 +70,7 @@ export const screenCatalog = {
     title: "Ожидают допуска",
     parent: "community",
     refresh: true,
+    decision: true,
   },
   "community-admitted": {
     class: "screen",
@@ -85,10 +86,31 @@ export const screenCatalog = {
     parent: "community",
     refresh: true,
   },
+  "community-moderators": {
+    class: "screen",
+    nav: "tree",
+    title: "Модераторы аукциона",
+    parent: "community",
+    backName: "Модераторы",
+    refresh: true,
+  },
+  "community-moderator-candidates": {
+    class: "screen",
+    nav: "tree",
+    title: "Выдать модерацию",
+    parent: "community-moderators",
+  },
   refused: {
     class: "screen",
     nav: "tree",
     title: "Отказанные",
+    parent: "manage",
+  },
+  // Отказанные очереди аукциона (ADR-064, пункт 15) — свой список.
+  "refused-auction": {
+    class: "screen",
+    nav: "tree",
+    title: "Отказанные в аукцион",
     parent: "manage",
   },
   "source-channels": {
@@ -103,6 +125,7 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     parent: "manage",
+    decision: true,
   },
   card: {
     class: "screen",
@@ -234,8 +257,12 @@ export const screenCatalog = {
   "material-remove-confirm": { class: "screen", nav: "confirm" },
   "broadcast-confirm": { class: "screen", nav: "confirm" },
   "community-close-confirm": { class: "screen", nav: "confirm" },
-  "reconsider-confirm": { class: "screen", nav: "confirm" },
-  "application-decline-confirm": { class: "screen", nav: "confirm" },
+  "reconsider-confirm": { class: "screen", nav: "confirm", decision: true },
+  "application-decline-confirm": {
+    class: "screen",
+    nav: "confirm",
+    decision: true,
+  },
   "broadcast-result": { class: "screen", nav: "exit" },
   question: { class: "question", nav: "question" },
   // Выбор даты кнопками: экран, а не вопрос. Режима ответа у него нет, поэтому

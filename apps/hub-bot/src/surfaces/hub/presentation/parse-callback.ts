@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { ApplicationQueue } from "../../../auction-ui/index.js";
 import type {
   ConsoleSort,
   FormField,
@@ -171,19 +172,44 @@ type PlainAction =
   | { kind: "ask-block-member"; token: string; origin: BlockOrigin }
   | { kind: "block-member"; token: string; origin: BlockOrigin }
   | { kind: "remove-allowed-username"; username: string; page: number }
+  // Модераторы аукциона в составе (ADR-064, пункт 7): список с отзывом,
+  // кандидаты на выдачу листаются, страница — куда вернуть список кандидатов.
+  | { kind: "auction-moderators" }
+  | { kind: "moderator-candidates"; page: number }
+  | { kind: "grant-moderation"; token: string; page: number }
+  | { kind: "revoke-moderation"; token: string }
   // Отказанные: токен — заявки, а не человека; страница — куда вернуть список.
-  | { kind: "refused-applications"; page: number }
-  | { kind: "ask-reconsider"; token: string; page: number }
-  | { kind: "reconsider"; token: string; page: number }
+  // Очередь называет домен кнопки: `cm` — сообщество, `aq` — аукцион.
+  | { kind: "refused-applications"; queue: ApplicationQueue; page: number }
+  | {
+      kind: "ask-reconsider";
+      queue: ApplicationQueue;
+      token: string;
+      page: number;
+    }
+  | { kind: "reconsider"; queue: ApplicationQueue; token: string; page: number }
   // Каналы прихода (ADR-060, пункт 18): список со ссылками и вопрос о новом.
   | { kind: "source-channels"; page: number }
   | { kind: "ask-source-channel" }
   // Карточка заявки: без курсора — первая в очереди, `after` — следующая за
   // курсором («Пропустить»), `at` — та же, если она ещё открыта.
-  | { kind: "application-card"; cursor?: CardCursor; from?: "after" | "at" }
-  | { kind: "admit-application"; cursor: CardCursor }
-  | { kind: "ask-decline-application"; cursor: CardCursor }
-  | { kind: "decline-application"; cursor: CardCursor }
+  | {
+      kind: "application-card";
+      queue: ApplicationQueue;
+      cursor?: CardCursor;
+      from?: "after" | "at";
+    }
+  | { kind: "admit-application"; queue: ApplicationQueue; cursor: CardCursor }
+  | {
+      kind: "ask-decline-application";
+      queue: ApplicationQueue;
+      cursor: CardCursor;
+    }
+  | {
+      kind: "decline-application";
+      queue: ApplicationQueue;
+      cursor: CardCursor;
+    }
   | { kind: "create-meetup"; token: string }
   | { kind: "publish-meetup"; token: string }
   | { kind: "manage-edit"; token: string }
@@ -628,6 +654,9 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts[1] === "cm") {
     return parseCommunity(parts);
   }
+  if (parts[1] === "aq") {
+    return parseApplicationQueue(parts, "auction");
+  }
   // Кнопки состава одним списком из прошлого релиза. «Закрыть» там исполнялось
   // сразу; теперь та же кнопка ведёт в подтверждение, как и новая.
   if (parts.length === 4 && parts[1] === "community") {
@@ -1021,32 +1050,36 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
   const [, , verb, first, second] = parts;
   switch (verb) {
     case "q":
-    case "qc": {
-      if (verb === "q" && first === undefined) {
-        return { kind: "application-card" };
-      }
-      const cursor = parseCardCursor(first, second);
-      if (cursor === undefined) return malformed;
-      return {
-        kind: "application-card",
-        cursor,
-        from: verb === "q" ? "after" : "at",
-      };
-    }
+    case "qc":
     case "qa":
     case "qd":
-    case "qy": {
-      const cursor = parseCardCursor(first, second);
-      if (cursor === undefined) return malformed;
-      return {
-        kind:
-          verb === "qa"
-            ? "admit-application"
-            : verb === "qd"
-              ? "ask-decline-application"
-              : "decline-application",
-        cursor,
-      };
+    case "qy":
+    case "r":
+    case "rq":
+    case "ry":
+      return parseApplicationQueue(parts, "community");
+    case "m":
+      return first === undefined ? { kind: "auction-moderators" } : malformed;
+    case "mc": {
+      if (second !== undefined) return malformed;
+      const page = PageSchema.safeParse(first ?? "0");
+      return page.success
+        ? { kind: "moderator-candidates", page: page.data }
+        : malformed;
+    }
+    case "mg": {
+      const token = TokenSchema.safeParse(first);
+      const page = PageSchema.safeParse(second);
+      return token.success && page.success
+        ? { kind: "grant-moderation", token: token.data, page: page.data }
+        : malformed;
+    }
+    case "mv": {
+      if (second !== undefined) return malformed;
+      const token = TokenSchema.safeParse(first);
+      return token.success
+        ? { kind: "revoke-moderation", token: token.data }
+        : malformed;
     }
     case "p": {
       if (second !== undefined) return malformed;
@@ -1057,29 +1090,12 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
         : malformed;
     }
     case "a":
-    case "u":
-    case "r": {
+    case "u": {
       if (second !== undefined) return malformed;
       const page = PageSchema.safeParse(first ?? "0");
       if (!page.success) return malformed;
       return {
-        kind:
-          verb === "a"
-            ? "community-admitted"
-            : verb === "u"
-              ? "community-usernames"
-              : "refused-applications",
-        page: page.data,
-      };
-    }
-    case "rq":
-    case "ry": {
-      const token = TokenSchema.safeParse(first);
-      const page = PageSchema.safeParse(second);
-      if (!token.success || !page.success) return malformed;
-      return {
-        kind: verb === "rq" ? "ask-reconsider" : "reconsider",
-        token: token.data,
+        kind: verb === "a" ? "community-admitted" : "community-usernames",
         page: page.data,
       };
     }
@@ -1123,6 +1139,76 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
     default:
       return malformed;
   }
+}
+
+// Очередь заявок и её отказанные — одни глаголы у двух доменов: `cm` читает
+// очередь сообщества, `aq` — очередь аукциона (ADR-064, пункт 12). Очередь
+// едет доменом, а не полем: курсор одной очереди не ставит другую.
+function parseApplicationQueue(
+  parts: readonly string[],
+  queue: ApplicationQueue,
+): CallbackAction {
+  const malformed = { kind: "malformed" } as const;
+  if (parts.length > 5) return malformed;
+  const [, , verb, first, second] = parts;
+  switch (verb) {
+    case "q":
+    case "qc": {
+      if (verb === "q" && first === undefined) {
+        return { kind: "application-card", queue };
+      }
+      const cursor = parseCardCursor(first, second);
+      if (cursor === undefined) return malformed;
+      return {
+        kind: "application-card",
+        queue,
+        cursor,
+        from: verb === "q" ? "after" : "at",
+      };
+    }
+    case "qa":
+    case "qd":
+    case "qy": {
+      const cursor = parseCardCursor(first, second);
+      if (cursor === undefined) return malformed;
+      return {
+        kind:
+          verb === "qa"
+            ? "admit-application"
+            : verb === "qd"
+              ? "ask-decline-application"
+              : "decline-application",
+        queue,
+        cursor,
+      };
+    }
+    case "r": {
+      if (second !== undefined) return malformed;
+      const page = PageSchema.safeParse(first ?? "0");
+      return page.success
+        ? { kind: "refused-applications", queue, page: page.data }
+        : malformed;
+    }
+    case "rq":
+    case "ry": {
+      const token = TokenSchema.safeParse(first);
+      const page = PageSchema.safeParse(second);
+      if (!token.success || !page.success) return malformed;
+      return {
+        kind: verb === "rq" ? "ask-reconsider" : "reconsider",
+        queue,
+        token: token.data,
+        page: page.data,
+      };
+    }
+    default:
+      return malformed;
+  }
+}
+
+/** Домен кнопок очереди: `v1:cm` — сообщество, `v1:aq` — аукцион. */
+export function queueDomain(queue: ApplicationQueue): string {
+  return queue === "community" ? "v1:cm" : "v1:aq";
 }
 
 function parseBroadcast(parts: readonly string[]): CallbackAction {
