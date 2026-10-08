@@ -23,6 +23,23 @@ function fact(
 }
 
 describe("decodeNotification", () => {
+  it("recognizes a circle-change fact pending the dedicated delivery slice", () => {
+    const decoded = decodeNotification(
+      fact({
+        case: "circleChanged",
+        value: {
+          previousCircle: GlobalRole.GUEST,
+          currentCircle: GlobalRole.MEMBER,
+        },
+      }),
+    );
+
+    expect(decoded).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "foreign", type: "circleChanged" } },
+    });
+  });
+
   it("decodes an outbid fact with the lot and the current price", () => {
     expect(
       decodeNotification(

@@ -56,8 +56,14 @@ internal static class JetStreamTopology
 
         // Канал доставки (PER-217). Durable свой у каждого канала: общий на все
         // каналы сделал бы их конкурентами за одно сообщение.
-        new("hub-bot", ["NOTIFICATIONS_EVENTS"]),
-        new("auction-bot", ["NOTIFICATIONS_EVENTS"]),
+        new("hub-bot", ["NOTIFICATIONS_EVENTS"], new Dictionary<string, string>
+        {
+            ["NOTIFICATIONS_EVENTS"] = "events.notifications.notification_created.hub",
+        }),
+        new("auction-bot", ["NOTIFICATIONS_EVENTS"], new Dictionary<string, string>
+        {
+            ["NOTIFICATIONS_EVENTS"] = "events.notifications.notification_created.auction",
+        }),
         new("nats-tester", ["MEETUPS_EVENTS", "IDENTITY_EVENTS", "AUCTION_EVENTS", "NOTIFICATIONS_EVENTS"]),
     ];
 
@@ -83,7 +89,10 @@ internal static class JetStreamTopology
         from consumer in Consumers
         from streamName in consumer.Streams
         let stream = Streams.Single(candidate => candidate.Name == streamName)
-        select new ConsumerSpec(DurableName(consumer.Consumer, stream.Name), stream.Name, stream.Subject);
+        select new ConsumerSpec(
+            DurableName(consumer.Consumer, stream.Name),
+            stream.Name,
+            consumer.FilterSubjects?.GetValueOrDefault(stream.Name) ?? stream.Subject);
 
     /// <summary>
     /// <c>&lt;потребитель&gt;-&lt;стрим в нижнем регистре через дефис&gt;</c>:
@@ -157,6 +166,9 @@ internal sealed record KeyValueSpec(string Bucket, TimeSpan MaxAge);
 
 internal sealed record StreamSpec(string Name, string Subject);
 
-internal sealed record ConsumerStreams(string Consumer, IReadOnlyList<string> Streams);
+internal sealed record ConsumerStreams(
+    string Consumer,
+    IReadOnlyList<string> Streams,
+    IReadOnlyDictionary<string, string>? FilterSubjects = null);
 
 internal sealed record ConsumerSpec(string Durable, string Stream, string FilterSubject);

@@ -1,4 +1,5 @@
 import { Api, InlineKeyboard } from "grammy";
+import { encodeAuctionCallback } from "../../../auction-ui/index.js";
 import type { TelegramEnvironment } from "../../../core/config.js";
 import {
   classifyTelegramFailure,
@@ -10,6 +11,7 @@ import type {
   LocalDateTime,
   MeetupAspect,
   MeetupWhen,
+  NotificationMoney,
   NotifiedMeetup,
   RenderableContent,
 } from "../delivery/notification.js";
@@ -128,6 +130,29 @@ export function renderNotification(
       ),
     };
   }
+  if (
+    content.kind === "lot-outbid" ||
+    content.kind === "lot-proxy-raised" ||
+    content.kind === "lot-purchased"
+  ) {
+    const price =
+      content.kind === "lot-purchased" ? content.price : content.currentPrice;
+    const text =
+      content.kind === "lot-outbid"
+        ? `Твою ставку на лот перебили. Текущая цена — ${notificationMoney(price)}.`
+        : content.kind === "lot-proxy-raised"
+          ? `Твоя автоставка на лот подняла цену до ${notificationMoney(price)}: лидируешь ты.`
+          : `Лот твой за ${notificationMoney(price)}.`;
+    return {
+      text,
+      keyboard: new InlineKeyboard().text(
+        "К лоту",
+        traceCallback(
+          `v1:${encodeAuctionCallback({ kind: "lot", lotId: content.lotId, page: 0 }).slice(3)}`,
+        ),
+      ),
+    };
+  }
   if (content.kind === "community-announcement") {
     return {
       text: withHeadline("Объявление сообщества", content.body),
@@ -228,6 +253,16 @@ export function renderNotification(
       return _exhaustive;
     }
   }
+}
+
+function notificationMoney(amount: NotificationMoney): string {
+  const whole = amount.minorUnits % 100 === 0;
+  return new Intl.NumberFormat("ru-RU", {
+    style: "currency",
+    currency: amount.currency,
+    minimumFractionDigits: whole ? 0 : 2,
+    maximumFractionDigits: 2,
+  }).format(amount.minorUnits / 100);
 }
 
 type ChangeContent = Extract<RenderableContent, { kind: "meetup-changed" }>;

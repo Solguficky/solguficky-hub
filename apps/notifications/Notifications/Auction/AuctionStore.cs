@@ -69,7 +69,8 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
                     var notification = AuctionFacts.Outbid(Guid.CreateVersion7(now), bid, now, notAfter);
                     created[AuctionFacts.OutbidType] = await NotificationStore.AddAddressed(work, notification,
                         AuctionFacts.OutbidType, AuctionFacts.CauseKind, bid.EventId.ToString(), now, notAfter,
-                        cancellationToken);
+                        cancellationToken,
+                        await NotificationStore.DeliverySurface(work, recipient, cancellationToken));
                     outcome = AuctionOutcome.Outbid;
                     break;
                 case OutbidDecision.Collect collect:
@@ -88,7 +89,9 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         {
             var notification = AuctionFacts.ProxyRaised(Guid.CreateVersion7(now), bid, now, notAfter);
             created[AuctionFacts.ProxyRaisedType] = await NotificationStore.AddAddressed(work, notification,
-                AuctionFacts.ProxyRaisedType, AuctionFacts.CauseKind, bid.EventId.ToString(), now, notAfter, cancellationToken);
+                AuctionFacts.ProxyRaisedType, AuctionFacts.CauseKind, bid.EventId.ToString(), now, notAfter,
+                cancellationToken,
+                await NotificationStore.DeliverySurface(work, bid.ProxyRaisedRecipient.Value, cancellationToken));
         }
         await work.Commit(cancellationToken);
         return new AuctionApplication(outcome, created);
@@ -113,7 +116,8 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         {
             [AuctionFacts.PurchasedType] = await NotificationStore.AddAddressed(work, notification,
                 AuctionFacts.PurchasedType, AuctionFacts.CauseKind, sale.EventId.ToString(), now, notAfter,
-                cancellationToken),
+                cancellationToken,
+                await NotificationStore.DeliverySurface(work, sale.Winner, cancellationToken)),
         };
 
         // Торги кончились, и окна лота закрываются сейчас, а не по своему
@@ -190,6 +194,7 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         var notification = AuctionFacts.Outbid(Guid.CreateVersion7(now), window.RecipientId, window.LotId,
             causeEventId, price, now, notAfter);
         return await NotificationStore.AddAddressed(work, notification, AuctionFacts.OutbidType,
-            AuctionFacts.CauseKind, causeEventId.ToString(), now, notAfter, cancellationToken);
+            AuctionFacts.CauseKind, causeEventId.ToString(), now, notAfter, cancellationToken,
+            await NotificationStore.DeliverySurface(work, window.RecipientId, cancellationToken));
     }
 }
