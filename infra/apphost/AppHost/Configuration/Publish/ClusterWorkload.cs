@@ -10,13 +10,18 @@ namespace AppHost.Configuration.Publish;
 /// </summary>
 /// <param name="RunAsUser">UID пользователя образа: 1000 у Containerfile, 1654 у SDK-контейнера (Container.targets).</param>
 /// <param name="Probe">Пробы сервиса; <c>null</c> — у сервиса нет health-эндпоинта.</param>
+/// <param name="ImageOf">
+/// Узел, чей образ берёт сервис; <c>null</c> — свой. Бот аукциона берёт образ бота
+/// хаба (ADR-064, п. 18): у него нет сборки, а значит и своего ключа образа в values.
+/// </param>
 internal sealed record ClusterWorkload(
     long RunAsUser,
     string CpuRequest,
     string MemoryRequest,
     string CpuLimit,
     string MemoryLimit,
-    WorkloadProbe? Probe);
+    WorkloadProbe? Probe,
+    string? ImageOf = null);
 
 internal abstract record WorkloadProbe;
 
@@ -74,6 +79,15 @@ internal static class ClusterWorkloadExtensions
                     AllowPrivilegeEscalation = false,
                     Capabilities = new CapabilitiesV1 { Drop = { "ALL" } },
                 };
+
+                // Ключ образа генератор заводит только узлу со сборкой, и digest
+                // в него пишет среда. Узел без сборки читает тот же ключ, что
+                // владелец образа: значение одно, разойтись образам негде.
+                if (shape.ImageOf is { } owner)
+                {
+                    var key = ValuesKey(owner);
+                    container.Image = $"{{{{ .Values.parameters.{key}.{key}_image }}}}";
+                }
 
                 var values = ValuesKey(resource.Resource.Name);
                 container.Resources = new ResourceRequirementsV1

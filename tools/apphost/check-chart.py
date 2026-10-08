@@ -12,6 +12,9 @@ workload is checked against the rules of the production chart:
 - every service runs one replica with the Recreate strategy and no rollingUpdate
   block, which the Kubernetes API rejects next to Recreate;
 - every image comes from values as `@sha256:<64 hex>`, not a tag;
+- the auction bot runs the hub bot's image, character for character: one
+  package serves both surfaces (ADR-064, item 18), and an image of its own
+  would let the two bots drift apart under one name;
 - the pod runs as non-root and the container has resource limits;
 - the pod template carries checksums of the service's ConfigMap and Secret:
   the service reads them through envFrom, and without the checksums a values
@@ -53,6 +56,7 @@ WORKLOADS = {"identity", "meetups", "notifications", "hub-bot", "auction", "auct
 HOOK_JOBS = {"jetstream-topology"}
 HOOK_EVENTS = "pre-install,pre-upgrade"
 WITHOUT_PROBES = {"hub-bot", "auction-bot"}
+SHARED_IMAGES = {"auction-bot": "hub-bot"}
 GRPC_PROBES = {"livenessProbe": "grpc", "readinessProbe": "grpc"}
 PROBES = {"auction": {"startupProbe": "tcpSocket", "livenessProbe": "tcpSocket", "readinessProbe": "httpGet"}}
 PROBE_ACTIONS = ("grpc", "httpGet", "tcpSocket", "exec")
@@ -149,6 +153,7 @@ def hook_weight(text: str) -> int:
 def check_rendered(rendered: Path) -> list[str]:
     errors = []
     found = {}
+    images = {}
     inputs = {}
     jobs = {}
     for path, text in documents(rendered):
@@ -183,6 +188,7 @@ def check_rendered(rendered: Path) -> list[str]:
         if name in found:
             errors.append(f"{name}: rendered twice ({found[name]} and {path})")
         found[name] = path
+        images[name] = IMAGE.findall(text)
         if name in WORKLOADS:
             errors.extend(check_workload(name, text))
 
@@ -192,6 +198,9 @@ def check_rendered(rendered: Path) -> list[str]:
         errors.append(f"{name}: chart service has no workload")
     for name in sorted(HOOK_JOBS - set(found)):
         errors.append(f"{name}: chart has no hook Job")
+    for name, owner in sorted(SHARED_IMAGES.items()):
+        if name in images and owner in images and images[name] != images[owner]:
+            errors.append(f"{name}: image {images[name]} differs from {owner}'s {images[owner]}, the two must run one image")
     for name, (weight, references) in sorted(jobs.items()):
         # A reference to an object the chart does not render passes helm and
         # leaves the pod in ContainerCreating until the Job's deadline.
