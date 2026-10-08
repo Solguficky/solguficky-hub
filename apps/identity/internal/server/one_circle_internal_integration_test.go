@@ -97,3 +97,45 @@ func lastSnapshot(t *testing.T, db *sql.DB, identityID string) (string, string) 
 	}
 	return circle.String, rights
 }
+
+// Права управления живут, пока человек в круге admin или maintainer: снятый
+// мейнтейнер, бывший администратором, не сохраняет admin в проекции, а
+// администратор после цепочки admin → maintainer → admin снимается обычным
+// отзывом. GrantAdminRole мейнтейнеру круг не отнимает, а выдаёт права
+// управления; RevokeAdminRole их снимает.
+func TestManagementRightsLeaveWithAdminAndMaintainerCircles(t *testing.T) {
+	t.Parallel()
+	svc, db := newIdentityService(t)
+	system := maintainerActor()
+
+	chain := seedProfile(t, db, 9921)
+	mustChange(t)(svc.grantRole(t.Context(), chain, roleAdmin, system))
+	mustChange(t)(svc.grantRole(t.Context(), chain, roleMaintainer, system))
+	mustNotChange(t)(svc.grantRole(t.Context(), chain, roleAdmin, system))
+	mustChange(t)(svc.revokeRole(t.Context(), chain, roleAdmin, system))
+	assertActiveCircle(t, db, chain, roleMaintainer)
+	assertAccess(t, db, chain, "auction,hub", false)
+	mustChange(t)(svc.grantRole(t.Context(), chain, roleAdmin, system))
+	assertActiveCircle(t, db, chain, roleMaintainer)
+	assertAccess(t, db, chain, "auction,hub,manage_membership,moderate_auction", true)
+	mustChange(t)(svc.revokeRole(t.Context(), chain, roleMaintainer, system))
+	assertActiveCircle(t, db, chain, roleMember)
+	assertAccess(t, db, chain, "auction,hub", false)
+	if got := activeRightCountInternal(t, db, chain); got != 0 {
+		t.Fatalf("management records after maintainer revoke: %d active", got)
+	}
+}
+
+func assertAccess(t *testing.T, db *sql.DB, identityID, rights string, admin bool) {
+	t.Helper()
+	var got string
+	var hasAdmin bool
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT array_to_string(identity_access_rights($1), ','), 'admin' = ANY (identity_global_roles($1))`,
+		identityID).Scan(&got, &hasAdmin); err != nil {
+		t.Fatal(err)
+	}
+	if got != rights || hasAdmin != admin {
+		t.Fatalf("access of %s: rights=%q admin=%t, want %q %t", identityID, got, hasAdmin, rights, admin)
+	}
+}

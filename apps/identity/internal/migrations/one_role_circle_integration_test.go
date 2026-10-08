@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
+	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
 	"github.com/google/uuid"
 )
@@ -148,4 +149,34 @@ func legacyGlobalRoles(rows []string) string {
 	}
 	slices.Sort(names)
 	return strings.Join(slices.Compact(names), ",")
+}
+
+// Откат 014 проходит и тогда, когда после переноса outbox уже записал снимок с
+// guest: строки outbox неизменяемы, и ограничения возвращаются NOT VALID.
+// Участник получает обратно строку public.
+func TestOneRoleCircleMigrationRollsBackAfterEventsNamedGuest(t *testing.T) {
+	t.Parallel()
+	db := testdb.Open(t)
+	provider := migrationProvider(t, db)
+	if _, err := provider.Up(t.Context()); err != nil {
+		t.Fatalf("apply migrations: %v", err)
+	}
+	id := uuid.NewString()
+	registerProfile(t, db, id, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9801)`)
+	testdb.ExecAnnounced(t, db, id, outbox.RoleGranted, circleMember,
+		`INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+		VALUES ($1, $2, 'member', now(), NULL)`, uuid.NewString(), id)
+
+	if _, err := provider.DownTo(t.Context(), 13); err != nil {
+		t.Fatalf("roll back migration 14: %v", err)
+	}
+	var roles string
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT string_agg(role, ',' ORDER BY role) FROM identity_roles
+		WHERE identity_id = $1 AND revoked_at IS NULL`, id).Scan(&roles); err != nil {
+		t.Fatal(err)
+	}
+	if roles != "member,public" {
+		t.Fatalf("roles after rollback: %q, want member,public", roles)
+	}
 }

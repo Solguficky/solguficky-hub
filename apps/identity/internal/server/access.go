@@ -34,6 +34,10 @@ ON CONFLICT (identity_id, access_right) WHERE revoked_at IS NULL DO NOTHING`
 	revokeActiveRightsSQL = `
 UPDATE identity_rights SET revoked_at = GREATEST(now(), granted_at)
 WHERE identity_id = $1 AND revoked_at IS NULL`
+
+	revokeRightsSQL = `
+UPDATE identity_rights SET revoked_at = GREATEST(now(), granted_at)
+WHERE identity_id = $1 AND access_right = ANY($2) AND revoked_at IS NULL`
 )
 
 // Права хранилища. Имя называет продукт, а не бот (ADR-064, пункт 8).
@@ -43,6 +47,12 @@ const (
 	rightManageMembership = "manage_membership"
 	rightModerateAuction  = "moderate_auction"
 )
+
+// managementRights — права администратора домена, которые мейнтейнер получает
+// записями (ADR-064, пункт 7). Они живут, пока человек в круге admin или
+// maintainer: отзыв любого из них снимает и записи, иначе бывший
+// администратор сохранил бы admin в проекции global_roles.
+var managementRights = []string{rightManageMembership, rightModerateAuction}
 
 // circleRank упорядочивает круги: guest < member = maintainer < admin.
 // Мейнтейнер — технический круг с правами участника, а не администратор домена
@@ -126,16 +136,29 @@ func readAccess(ctx context.Context, q queryRower, identityID string) (access, e
 	return state, nil
 }
 
-// grantRightTx выдаёт право записью идемпотентно. Событие пишет вызывающий:
-// право здесь выдаётся только следствием выдачи круга, и его несёт снимок
-// role_granted той же транзакции.
-func grantRightTx(ctx context.Context, tx *sql.Tx, identityID, right string, performedBy uuid.NullUUID) error {
+// grantRightTx выдаёт право записью идемпотентно и отвечает, выдано ли оно
+// этим вызовом. Событие пишет вызывающий: право здесь выдаётся только
+// следствием выдачи круга, и его несёт снимок role_granted той же транзакции.
+func grantRightTx(ctx context.Context, tx *sql.Tx, identityID, right string, performedBy uuid.NullUUID) (bool, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		return err
+		return false, err
 	}
-	_, err = tx.ExecContext(ctx, grantRightSQL, id.String(), identityID, right, performedByValue(performedBy))
-	return err
+	result, err := tx.ExecContext(ctx, grantRightSQL, id.String(), identityID, right, performedByValue(performedBy))
+	if err != nil {
+		return false, err
+	}
+	return changed(result)
+}
+
+// revokeManagementRightsTx снимает записи прав управления и отвечает, было ли
+// что снимать.
+func revokeManagementRightsTx(ctx context.Context, tx *sql.Tx, identityID string) (bool, error) {
+	result, err := tx.ExecContext(ctx, revokeRightsSQL, identityID, managementRights)
+	if err != nil {
+		return false, err
+	}
+	return changed(result)
 }
 
 // splitList разбирает список, который выборка отдала строкой через запятую:

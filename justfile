@@ -306,7 +306,7 @@ identity-test: identity-proto
 # `go test -tags=integration -list . ./...` без базы. Опечатка в теге молча
 # выключает файл, на который не ссылаются соседние файлы пакета, и недобор до
 # порога — единственный её след; файл со ссылками роняет компиляцию пакета.
-IDENTITY_TEST_THRESHOLD := "235"
+IDENTITY_TEST_THRESHOLD := "238"
 
 # Все тесты Identity под тегом integration: unit-файлы тег не исключает, поэтому
 # прогон полный. База обязательна: `testdb` без PostgreSQL роняет тест, а не

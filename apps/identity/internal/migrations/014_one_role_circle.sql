@@ -28,12 +28,16 @@ END;
 $$;
 -- +goose StatementEnd
 
--- Перенос не меняет того, что потребители видят в global_roles: поле строится
--- из круга и прав функцией identity_global_roles ниже, и для каждого человека
--- оно после переноса то же, что было набором строк до него. Поэтому перенос
--- событий не пишет, а щит ID006 на время переноса выключен: иначе он требовал
--- бы события на каждую тронутую строку. Новые поля снимка — role и rights —
--- потребитель получит со следующим событием человека.
+-- Перенос событий не пишет, а щит ID006 на время переноса выключен: иначе он
+-- требовал бы события на каждую тронутую строку (согласие владельца по
+-- PER-526). global_roles строится из круга и прав функцией
+-- identity_global_roles ниже. У гостя, участника и администратора с тремя
+-- строками набор после переноса тот же, что был набором строк до него. Шире он
+-- становится у тех, кто держал admin или maintainer без member и public: они
+-- получают member и guest — это и есть починка дефекта 1 stage 2026-10-07.
+-- Реплика потребителя узнаёт об этом, как и о полях role и rights, со
+-- следующим событием человека; до него она видит прежний, более узкий набор,
+-- то есть ничего не теряет.
 ALTER TABLE identity_roles DISABLE TRIGGER identity_roles_announced;
 
 CREATE TABLE identity_rights (
@@ -279,6 +283,9 @@ $$;
 -- после него нельзя отличить их от отозванных решением. Возвращаются имя public,
 -- прежние ограничения и вложенность у оставшихся кругов: участнику — public,
 -- администратору без других строк — ничего, как было у выданного GrantAdminRole.
+-- Строки outbox неизменяемы (ID004, ID005), и записанные после 014 несут guest,
+-- поэтому ограничения outbox возвращаются NOT VALID, как в откате 013: новые
+-- строки они держат, старые не перепроверяют.
 
 -- +goose StatementBegin
 CREATE OR REPLACE FUNCTION reject_identity_outbox_change()
@@ -361,7 +368,7 @@ ALTER TABLE identity_roles ENABLE TRIGGER identity_roles_announced;
 
 ALTER TABLE identity_outbox
     ADD CONSTRAINT identity_outbox_global_roles_check
-        CHECK (global_roles <@ ARRAY['maintainer', 'admin', 'member', 'public']::TEXT[]),
+        CHECK (global_roles <@ ARRAY['maintainer', 'admin', 'member', 'public']::TEXT[]) NOT VALID,
     ADD CONSTRAINT identity_outbox_role_presence
         CHECK (
             (occasion IN ('role_granted', 'role_revoked')
@@ -371,4 +378,4 @@ ALTER TABLE identity_outbox
             OR (occasion NOT IN ('role_granted', 'role_revoked',
                     'application_submitted', 'application_admitted')
                 AND role IS NULL)
-        );
+        ) NOT VALID;
