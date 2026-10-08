@@ -39,6 +39,8 @@ Subjects удалённой аукционной ветки перечислен
 
 ### Identity gRPC
 
+> **Принято, не реализовано:** [ADR-064](../decisions/ADR-064-two-bots-by-audience-circle-and-rights.md) заменяет набор ролей в ответах на права, которые выводит Identity, и одну роль-круг на человека; роль `public` станет `guest`, заявка гостя — заявкой на право `auction`. Контракт — [PER-525](https://linear.app/anticnvm/issue/per-525); до него таблицы ниже описывают действующий провод.
+
 | RPC | Proto | Caller | Callee |
 |---|---|---|---|
 | `IdentityService.ResolveIdentity` | `identity.v1` в `contracts/proto/identity/v1/identity_service.proto` | Hub Bot и Auction Bot ([ADR-044](../decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)) | Identity |
@@ -384,6 +386,8 @@ Identity публикует события о регистрации, выдач
 
 ### Identity NATS
 
+> **Принято, не реализовано:** по [ADR-064](../decisions/ADR-064-two-bots-by-audience-circle-and-rights.md) события доступа описывают роль-круг и выданные права, а повод заявки несёт её очередь. Контракт — [PER-525](https://linear.app/anticnvm/issue/per-525).
+
 | Subject | Message | Producer | Consumers |
 |---|---|---|---|
 | `events.identity.profile_registered` | `identity.v1.IdentityEvent` в `contracts/proto/identity/v1/identity_events.proto` | Identity | Notifications; первый заявленный потребитель реплики |
@@ -459,6 +463,8 @@ Subject называет повод, сообщение на всех повод
 Данные повода несут только две ветки — `meetup_material_attached` и `meetup_material_removed`, обе идентификатором материала. У удаления это единственный факт словаря, который снимок выразить не может: материала в состоянии уже нет. У прикрепления поле парное и называет, какой элемент коллекции новый.
 
 ### Notifications NATS
+
+> **Принято, не реализовано:** по [ADR-064](../decisions/ADR-064-two-bots-by-audience-circle-and-rights.md) адресные факты доставляет бот круга человека, аукционные уведомления участникам — бот хаба, а о допуске и смене круга сообщает бот, который человека уже знает. Оповещение о заявке адресуется держателям права модерации её очереди. Срезы — [PER-529](https://linear.app/anticnvm/issue/per-529), [PER-536](https://linear.app/anticnvm/issue/per-536), [PER-537](https://linear.app/anticnvm/issue/per-537); до них колонка доставки ниже описывает действующий код.
 
 | Subject | Message | Producer | Consumers |
 |---|---|---|---|
