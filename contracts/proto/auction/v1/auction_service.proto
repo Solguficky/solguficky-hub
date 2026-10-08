@@ -10,7 +10,8 @@ import "identity/v1/roles.proto";
 // at a meetup, the registry of its lots, the trading conditions of a lot, the
 // scheduling of an auction and the start of its prebidding, the selection of lots
 // for the final, reads of a lot, of its history, of its image, of the display
-// names of participants and of auctions, the console of the meetup administrator,
+// names of participants and of auctions, the console and lot statistics of the
+// meetup administrator,
 // and the invoices of sold lots: the commands of the organizer and of the winner
 // and their reads.
 //
@@ -45,6 +46,7 @@ service AuctionService {
   rpc SelectForFinal(SelectForFinalRequest) returns (SelectForFinalResponse);
   rpc DeselectForFinal(DeselectForFinalRequest) returns (DeselectForFinalResponse);
   rpc GetAuctionConsole(GetAuctionConsoleRequest) returns (GetAuctionConsoleResponse);
+  rpc GetAuctionLotStatistics(GetAuctionLotStatisticsRequest) returns (GetAuctionLotStatisticsResponse);
   rpc GetMeetupAuction(GetMeetupAuctionRequest) returns (GetMeetupAuctionResponse);
   rpc ListAuctions(ListAuctionsRequest) returns (ListAuctionsResponse);
   rpc MarkInvoicePaid(MarkInvoicePaidRequest) returns (MarkInvoicePaidResponse);
@@ -1070,6 +1072,52 @@ message ConsoleLot {
   // The lot is trading past its deadline by more than the grace of the service:
   // it should have closed and has not. false is a real value.
   bool overdue = 3;
+}
+
+message GetAuctionLotStatisticsRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+}
+
+message GetAuctionLotStatisticsResponse {
+  // Exactly one is set. The refusal is shared with the administrator's console.
+  oneof outcome {
+    AuctionLotStatistics statistics = 1;
+    GetAuctionConsoleRefusal refused = 2;
+  }
+}
+
+message AuctionLotStatistics {
+  // Every lot of the registry, without pagination or a meaningful order.
+  // The caller ranks the complete list.
+  repeated LotStatistics lots = 1;
+}
+
+// Aggregates only: no participant ids, display names or proxy limit amounts.
+message LotStatistics {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // Accepted BidPlaced facts, manual and proxy alike, as LotSnapshot.bid_count.
+  // A folded proxy chain counts once; 0 means no accepted bid yet.
+  int64 bid_count = 2;
+
+  // Distinct people across BidPlaced and accepted ProxyLimitSet facts of the lot.
+  // A person counts once even if their limit never produced a bid in their name
+  // or was later withdrawn. Refused commands do not count; 0 is a real value.
+  int64 unique_participant_count = 3;
+
+  // Absolute difference between current and starting price, in the lot's currency,
+  // not a percentage. Unset when no starting price exists; set to zero before the
+  // first bid. A zero starting price does not make the difference undefined.
+  Money price_growth = 4;
+
+  // RFC 3339 instant in UTC of the last BidPlaced in journal sequence order,
+  // whether manual or proxy. Unset when no bid exists, not an empty string.
+  optional string last_bid_at = 5;
 }
 
 message GetMeetupAuctionRequest {

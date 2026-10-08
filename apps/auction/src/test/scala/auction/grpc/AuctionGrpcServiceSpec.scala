@@ -1126,6 +1126,16 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       answer.names(silent).text shouldBe "Участник 8999"
     }
 
+    "answers UNIMPLEMENTED on lot statistics without dependencies until the statistics slice" in {
+      val auction = service(Unreachable, names = UntouchableNames)
+      val auctionId = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
+      val request = wire.GetAuctionLotStatisticsRequest(Some(viewer), auctionId)
+      statusOf(auction.getAuctionLotStatistics(request)) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(
+        auction.getAuctionLotStatistics(wire.GetAuctionLotStatisticsRequest())
+      ) shouldBe Status.Code.UNIMPLEMENTED
+    }
+
     "answers UNIMPLEMENTED on invoices until the invoice slice" in {
       val auction = service(Unreachable)
       statusOf(auction.markInvoicePaid(wire.MarkInvoicePaidRequest())) shouldBe Status.Code.UNIMPLEMENTED

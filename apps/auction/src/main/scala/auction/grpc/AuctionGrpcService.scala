@@ -448,6 +448,10 @@ final class AuctionGrpcService(
         }
     }
 
+  // Статистика: контракт PER-480; подсчёт и проверку права приносит срез read model PER-481.
+  def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest): Future[wire.GetAuctionLotStatisticsResponse] =
+    unimplemented
+
   // Счета: контракт есть (PER-308), выставление, статусы и чтения приносит лист счёта (PER-338).
   def markInvoicePaid(in: wire.MarkInvoicePaidRequest): Future[wire.MarkInvoicePaidResponse] = unimplemented
 
