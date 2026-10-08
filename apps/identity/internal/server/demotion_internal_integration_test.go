@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/codes"
 )
 
-func TestDemoteMemberRevokesMemberKeepsPublicAndRecordsDecline(t *testing.T) {
+func TestDemoteMemberLeavesGuestWithAuctionAndRecordsDecline(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 8401)
@@ -34,13 +34,17 @@ func TestDemoteMemberRevokesMemberKeepsPublicAndRecordsDecline(t *testing.T) {
 		got.GetDecision().GetDecidedBy().GetIdentityId() != adminID {
 		t.Fatalf("refused application = %v", got)
 	}
+	// Пониженный остаётся гостем с правом аукциона (ADR-064, пункт 9).
+	assertActiveCircle(t, db, targetID, roleGuest)
+	if got := activeRightCountInternal(t, db, targetID); got != 1 {
+		t.Fatalf("active rights after demotion: got %d want 1", got)
+	}
 	assertEvents(t, db, targetID,
 		"v1 profile_registered() {} blocked=false",
-		"v2 role_granted(public) {public} blocked=false",
-		"v3 role_granted(member) {member,public} blocked=false",
-		"v4 role_revoked(member) {public} blocked=false",
+		"v2 role_granted(member) {guest,member} blocked=false",
+		"v3 role_revoked(member) {guest} blocked=false",
 	)
-	assertJournalSummary(t, db, targetID, "grant:public", "grant:member", "revoke:member@"+adminID)
+	assertJournalSummary(t, db, targetID, "grant:member", "grant:guest@"+adminID, "revoke:member@"+adminID)
 }
 
 // Отзыв идёт раньше вставки, поэтому упавшая вставка обязана откатить уже
@@ -69,7 +73,7 @@ FOR EACH ROW EXECUTE FUNCTION reject_application()`)
 	if got := len(outboxEvents(t, db, targetID)); got != eventsBefore {
 		t.Fatalf("events = %d after failed demotion, want %d", got, eventsBefore)
 	}
-	assertJournalSummary(t, db, targetID, "grant:public", "grant:member")
+	assertJournalSummary(t, db, targetID, "grant:member")
 	if got := applicationCount(t, db, targetID); got != 0 {
 		t.Fatalf("applications = %d, want 0", got)
 	}
@@ -104,8 +108,8 @@ func TestDemoteWithoutMemberRecordsNoDecline(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 8431)
-	publicID := seedProfile(t, db, 8432)
-	mustChange(t)(svc.grantRole(t.Context(), publicID, rolePublic, uuid.NullUUID{}))
+	guestID := seedProfile(t, db, 8432)
+	mustChange(t)(svc.grantRole(t.Context(), guestID, roleGuest, uuid.NullUUID{}))
 	blockedID := seedProfile(t, db, 8433)
 	mustChange(t)(svc.grantHubAdmission(t.Context(), blockedID, uuid.NullUUID{}))
 	mustChange(t)(svc.blockIdentity(t.Context(), blockedID, uuid.NullUUID{}))
@@ -115,7 +119,7 @@ func TestDemoteWithoutMemberRecordsNoDecline(t *testing.T) {
 		t.Fatal("first demote: changed=false, want true")
 	}
 
-	for identityID, want := range map[string]int{publicID: 0, blockedID: 0, demotedID: 1} {
+	for identityID, want := range map[string]int{guestID: 0, blockedID: 0, demotedID: 1} {
 		if demote(t, svc, adminID, identityID) {
 			t.Fatalf("demote %s: changed=true, want false", identityID)
 		}

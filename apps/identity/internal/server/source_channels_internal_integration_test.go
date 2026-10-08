@@ -142,7 +142,7 @@ func openApplicationWithCode(t *testing.T, svc identityService, db *sql.DB, iden
 	if err != nil {
 		t.Fatalf("resolve %q: %v", code, err)
 	}
-	id := seedApplication(t, db, identityID, rolePublic, createdAt)
+	id := seedApplication(t, db, identityID, roleGuest, createdAt)
 	execApplication(t, db, `UPDATE identity_applications SET source_channel = $2, source_unknown = $3 WHERE id = $1`,
 		id, source.channel, source.unknown)
 	return id

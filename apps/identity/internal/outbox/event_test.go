@@ -72,6 +72,44 @@ func TestRecordMessageCarriesEnvelopeAndSnapshot(t *testing.T) {
 	}
 }
 
+func TestRecordMessageCarriesCircleAndRights(t *testing.T) {
+	t.Parallel()
+	message, err := (outbox.Record{
+		Occasion: outbox.ProfileRegistered,
+		Circle:   "maintainer",
+		Rights:   []string{"hub", "manage_membership"},
+	}).Message()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := message.GetState()
+	if got := state.GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER {
+		t.Fatalf("state.role: got %v", got)
+	}
+	want := []identityv1.AccessRight{identityv1.AccessRight_ACCESS_RIGHT_HUB, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP}
+	if got := state.GetRights(); len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("state.rights: got %v want %v", got, want)
+	}
+}
+
+// Строка до миграции 014 не несёт круга и прав и публикуется с пустыми полями;
+// guest и прежнее public — одно значение контракта.
+func TestRecordMessageReadsRowsBeforeAndAfterOneRoleCircle(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"guest", "public"} {
+		message, err := (outbox.Record{Occasion: outbox.RoleGranted, Role: name, GlobalRoles: []string{name}}).Message()
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := message.GetRoleGranted().GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_GUEST {
+			t.Fatalf("%s: role %v", name, got)
+		}
+		if message.GetState().GetRole() != identityv1.GlobalRole_GLOBAL_ROLE_UNSPECIFIED || len(message.GetState().GetRights()) != 0 {
+			t.Fatalf("%s: row without circle got state %v", name, message.GetState())
+		}
+	}
+}
+
 func TestRecordMessageSetsExactlyTheOccasionBranch(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -119,5 +157,11 @@ func TestRecordMessageRejectsUnknownOccasionAndRole(t *testing.T) {
 	}
 	if _, err := (outbox.Record{Occasion: outbox.ProfileRegistered, GlobalRoles: []string{"owner"}}).Message(); err == nil {
 		t.Error("unknown snapshot role: got nil error")
+	}
+	if _, err := (outbox.Record{Occasion: outbox.ProfileRegistered, Circle: "owner"}).Message(); err == nil {
+		t.Error("unknown snapshot circle: got nil error")
+	}
+	if _, err := (outbox.Record{Occasion: outbox.ProfileRegistered, Rights: []string{"auction_bot"}}).Message(); err == nil {
+		t.Error("unknown snapshot right: got nil error")
 	}
 }

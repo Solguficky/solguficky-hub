@@ -12,14 +12,9 @@ import (
 )
 
 const (
-	holdsCircleSQL = `
-SELECT EXISTS (
-    SELECT 1 FROM identity_roles
-    WHERE identity_id = $1 AND revoked_at IS NULL AND role = ANY($2))`
-
-	// Отказ в силе с исходом declined (ADR-060, пункт 13). Отказ в public — это
+	// Отказ в силе с исходом declined (ADR-060, пункт 13). Отказ в guest — это
 	// блокировка: пока она стоит, его ловит отметка профиля раньше этой проверки,
-	// а снятая блокировка новую заявку на public уже не держит.
+	// а снятая блокировка новую заявку на guest уже не держит.
 	standingDeclineSQL = `
 SELECT EXISTS (
     SELECT 1 FROM identity_applications a
@@ -43,7 +38,7 @@ func (s identityService) RequestRole(ctx context.Context, req *identityv1.Reques
 	}
 	circle, ok := requestedCircle(req.GetRequestedRole())
 	if !ok {
-		return nil, status.Error(codes.InvalidArgument, "requested_role must be member or public")
+		return nil, status.Error(codes.InvalidArgument, "requested_role must be member or guest")
 	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
@@ -76,17 +71,19 @@ func (s identityService) RequestRole(ctx context.Context, req *identityv1.Reques
 			return nil, internal("announce application", err)
 		}
 	}
-	roles, err := listRoles(ctx, tx, identityID)
+	state, err := readAccess(ctx, tx, identityID)
 	if err != nil {
-		return nil, internal("list roles", err)
+		return nil, internal("read access", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, internal("commit", err)
 	}
 	return &identityv1.RequestRoleResponse{
 		IdentityId:  identityID,
-		GlobalRoles: roles,
+		GlobalRoles: state.globalRoles,
 		Outcome:     outcome,
+		Role:        state.role,
+		Rights:      state.rights,
 	}, nil
 }
 
@@ -141,20 +138,6 @@ func requestRoleTx(
 	return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING, opened, nil
 }
 
-// holdsCircle отвечает, есть ли у человека круг — сама роль или более сильная:
-// круги вложенные, и public у member уже есть (ADR-043).
-func holdsCircle(ctx context.Context, tx *sql.Tx, identityID, circle string) (bool, error) {
-	var roles []string
-	for role, rank := range circleRank {
-		if rank >= circleRank[circle] {
-			roles = append(roles, role)
-		}
-	}
-	var held bool
-	err := tx.QueryRowContext(ctx, holdsCircleSQL, identityID, roles).Scan(&held)
-	return held, err
-}
-
 // openApplication отвечает, открыла ли она заявку. Ложь без ошибки — открытая
 // заявка на этот круг уже была, и вставка ничего не сделала.
 func openApplication(ctx context.Context, tx *sql.Tx, identityID, circle string, req *identityv1.RequestRoleRequest) (bool, error) {
@@ -199,7 +182,7 @@ func requestedCircle(role identityv1.GlobalRole) (string, bool) {
 	case identityv1.GlobalRole_GLOBAL_ROLE_MEMBER:
 		return roleMember, true
 	case identityv1.GlobalRole_GLOBAL_ROLE_GUEST:
-		return rolePublic, true
+		return roleGuest, true
 	default:
 		return "", false
 	}

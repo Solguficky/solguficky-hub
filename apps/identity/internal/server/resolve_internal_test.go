@@ -31,7 +31,7 @@ func TestGlobalRoleMapsEveryDictionaryValue(t *testing.T) {
 		{roleMaintainer, identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER},
 		{roleAdmin, identityv1.GlobalRole_GLOBAL_ROLE_ADMIN},
 		{roleMember, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER},
-		{rolePublic, identityv1.GlobalRole_GLOBAL_ROLE_GUEST},
+		{roleGuest, identityv1.GlobalRole_GLOBAL_ROLE_GUEST},
 	} {
 		got, ok := globalRole(tt.role)
 		if !ok || got != tt.want {

@@ -34,7 +34,8 @@ func TestMaintainerAdminRoleLifecycle(t *testing.T) {
 		t.Fatalf("second grant: response=%v error=%v", second, err)
 	}
 	assertActiveRoleCount(t, db, profile.GetIdentityId(), 1)
-	assertRoles(t, resolve(t, client, 7001, nil).GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_ADMIN)
+	assertRoleSet(t, resolve(t, client, 7001, nil).GetGlobalRoles(),
+		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 
 	revoked, err := client.RevokeAdminRole(authorized, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()})
 	if err != nil || !revoked.GetChanged() {
@@ -44,7 +45,12 @@ func TestMaintainerAdminRoleLifecycle(t *testing.T) {
 	if err != nil || again.GetChanged() {
 		t.Fatalf("second revoke: response=%v error=%v", again, err)
 	}
-	assertActiveRoleCount(t, db, profile.GetIdentityId(), 0)
+	// Снятый администратор остаётся участником: круг у человека один, и отзыв
+	// опускает его на круг ниже, а не оставляет без круга.
+	assertActiveRoleCount(t, db, profile.GetIdentityId(), 1)
+	if got := resolve(t, client, 7001, nil).GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_MEMBER {
+		t.Fatalf("role after revoke: got %v want member", got)
+	}
 }
 
 func TestMaintainerRoleLifecycleNeedsTheSecret(t *testing.T) {
@@ -68,7 +74,8 @@ func TestMaintainerRoleLifecycleNeedsTheSecret(t *testing.T) {
 	if err != nil || again.GetChanged() {
 		t.Fatalf("second grant: response=%v error=%v", again, err)
 	}
-	assertRoles(t, resolve(t, client, 8101, nil).GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER)
+	assertRoleSet(t, resolve(t, client, 8101, nil).GetGlobalRoles(),
+		identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertJournalCount(t, db, profile, 1)
 	assertSystemJournalActor(t, db, profile)
 
@@ -80,8 +87,10 @@ func TestMaintainerRoleLifecycleNeedsTheSecret(t *testing.T) {
 	if err != nil || !revoked.GetChanged() {
 		t.Fatalf("revoke: response=%v error=%v", revoked, err)
 	}
-	assertActiveRoleCount(t, db, profile, 0)
-	assertJournalCount(t, db, profile, 2)
+	// Отзыв maintainer оставляет участником: отзыв и выдача круга ниже — две
+	// строки журнала.
+	assertActiveRoleCount(t, db, profile, 1)
+	assertJournalCount(t, db, profile, 3)
 }
 
 func TestMaintainerMethodsRejectMissingEmptyAndWrongCredentials(t *testing.T) {
@@ -165,12 +174,13 @@ func TestMaintainerRoleChangesAreJournaled(t *testing.T) {
 	if _, err := client.RevokeAdminRole(authorized, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()}); err != nil {
 		t.Fatal(err)
 	}
-	assertJournalCount(t, db, profile.GetIdentityId(), 2)
+	// Отзыв admin и выдача member на его место.
+	assertJournalCount(t, db, profile.GetIdentityId(), 3)
 
 	if _, err := client.RevokeAdminRole(authorized, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()}); err != nil {
 		t.Fatal(err)
 	}
-	assertJournalCount(t, db, profile.GetIdentityId(), 2)
+	assertJournalCount(t, db, profile.GetIdentityId(), 3)
 }
 
 func assertJournalCount(t *testing.T, db *sql.DB, identityID string, want int) {

@@ -44,7 +44,8 @@ func (s identityService) blockIdentity(ctx context.Context, identityID string, p
 	return changed, nil
 }
 
-// blockTx ставит отметку блокировки и отзывает все активные роли: без отметки
+// blockTx ставит отметку блокировки и отзывает активный круг и все выданные
+// права (IdentityState: заблокированный без круга и без прав): без отметки
 // отзыв не защитил бы будущую выдачу, а без отзыва заблокированный сохранил бы
 // доступ. Журнал получает одну строку: отзыв ролей — следствие одного решения, а
 // не отдельные решения, и метка времени у них общая, потому что now() внутри
@@ -56,7 +57,7 @@ func (s identityService) blockIdentity(ctx context.Context, identityID string, p
 // role_revoked.
 //
 // Блокировка закрывает все открытые заявки человека исходом «закрыта
-// блокировкой» (ADR-060, пункт 8). Отказ по заявке в public закрывает свою
+// блокировкой» (ADR-060, пункт 8). Отказ по заявке в guest закрывает свою
 // заявку отказом раньше этого вызова, и она здесь уже не открыта.
 func blockTx(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	blocked, err := lockProfile(ctx, tx, identityID)
@@ -76,6 +77,9 @@ func blockTx(ctx context.Context, tx *sql.Tx, identityID string, performedBy uui
 	}
 	if _, err := revokeActiveRoles(ctx, tx, identityID); err != nil {
 		return false, internal("revoke active roles", err)
+	}
+	if _, err := tx.ExecContext(ctx, revokeActiveRightsSQL, identityID); err != nil {
+		return false, internal("revoke active rights", err)
 	}
 	if err := appendJournal(ctx, tx, journalEntry{
 		identityID:  identityID,

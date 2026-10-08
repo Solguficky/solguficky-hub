@@ -48,22 +48,25 @@ RETURNING version, blocked`
 
 	// Снимок читается отдельным оператором после сдвига версии: изменения ролей
 	// этой транзакции ему уже видны, и он описывает состояние после применения.
-	// Порядок ролей контракт не обещает; сортировка делает строку воспроизводимой.
+	// Права и global_roles выводят функции схемы (миграция 014) — тот же вывод,
+	// что у ответов IdentityService; global_roles до снятия поля — проекция
+	// круга и прав на прежние вложенные имена. Порядок контракт не обещает;
+	// функции сортируют, и строка воспроизводима.
 	insertEventSQL = `
 INSERT INTO identity_outbox
     (event_id, identity_id, version, occasion, role, global_roles, blocked, occurred_at,
-     traceparent)
+     traceparent, circle, rights)
 SELECT $1::uuid, $2::uuid, $3::bigint, $4::text, $5::text,
-       COALESCE(
-           (SELECT array_agg(role ORDER BY role) FROM identity_roles
-            WHERE identity_id = $2::uuid AND revoked_at IS NULL),
-           '{}'),
-       $6::boolean, now(), $7::text`
+       identity_global_roles($2::uuid),
+       $6::boolean, now(), $7::text,
+       (SELECT role FROM identity_roles
+        WHERE identity_id = $2::uuid AND revoked_at IS NULL AND NOT $6::boolean),
+       identity_access_rights($2::uuid)`
 )
 
 // Append записывает событие о профиле в транзакции изменения. Он двигает версию
-// профиля и кладёт в очередь снимок доступа после применения: активные роли и
-// отметку блокировки, прочитанные этой же транзакцией. Роль задаётся только у
+// профиля и кладёт в очередь снимок доступа после применения: круг, права,
+// проекцию global_roles и отметку блокировки, прочитанные этой же транзакцией. Роль задаётся только у
 // выдачи, отзыва, заявки и допуска по ней — у двух последних это круг заявки.
 // Момент события — now() транзакции: тот же, что у журнала доступа и у меток
 // выдачи и отзыва.

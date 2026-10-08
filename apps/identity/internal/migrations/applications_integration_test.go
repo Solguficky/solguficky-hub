@@ -115,8 +115,9 @@ func TestApplicationSchemaHoldsDecisionInvariants(t *testing.T) {
 		{"admitted without decider", "admitted", nil, nil, circleMember},
 		{"decided keeps source", "admitted", deciderID, true, circleMember},
 		{"blocked member", "blocked", deciderID, nil, circleMember},
-		{"declined public", "declined", deciderID, nil, "public"},
-		{"unknown circle", nil, nil, nil, "admin"},
+		{"declined guest", "declined", deciderID, nil, guestRole},
+		{"circle named before 014", nil, nil, nil, publicRole},
+		{"unknown circle", nil, nil, nil, adminRole},
 	}
 	for _, tc := range rejected {
 		assertPgErrorCode(t, insert(tc.outcome, tc.decidedBy, tc.source, tc.role), "23514")
@@ -125,7 +126,7 @@ func TestApplicationSchemaHoldsDecisionInvariants(t *testing.T) {
 	// Профиль ждал допуска до миграции, поэтому заявка на member у него уже
 	// открыта, и вторая открытая на ту же пару отвергается.
 	assertPgErrorCode(t, insert(nil, nil, nil, circleMember), "23505")
-	if err := insert(nil, nil, true, "public"); err != nil {
+	if err := insert(nil, nil, true, guestRole); err != nil {
 		t.Fatalf("open application: %v", err)
 	}
 	// Понижение из member (ADR-060, пункт 13) запишет сразу закрытую заявку:
@@ -133,7 +134,7 @@ func TestApplicationSchemaHoldsDecisionInvariants(t *testing.T) {
 	if err := insert("declined", deciderID, nil, circleMember); err != nil {
 		t.Fatalf("closed declined application: %v", err)
 	}
-	if err := insert("closed_by_grant", nil, nil, "public"); err != nil {
+	if err := insert("closed_by_grant", nil, nil, guestRole); err != nil {
 		t.Fatalf("closed by allowed username: %v", err)
 	}
 	_, err := db.ExecContext(t.Context(), `UPDATE identity_applications SET refusal_lifted_at = now() WHERE outcome = 'closed_by_grant'`)

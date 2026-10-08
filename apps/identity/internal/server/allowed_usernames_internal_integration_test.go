@@ -161,10 +161,10 @@ func TestAllowedUsernameHubEntryUpgradesAuctionEntry(t *testing.T) {
 	svc, db := newIdentityService(t)
 	admin := uuid.NullUUID{UUID: uuid.Must(uuid.NewV7()), Valid: true}
 
-	mustChange(t)(svc.addAllowedUsername(t.Context(), "riser", rolePublic, admin))
-	mustNotChange(t)(svc.addAllowedUsername(t.Context(), "riser", rolePublic, admin))
+	mustChange(t)(svc.addAllowedUsername(t.Context(), "riser", roleGuest, admin))
+	mustNotChange(t)(svc.addAllowedUsername(t.Context(), "riser", roleGuest, admin))
 	mustChange(t)(svc.addAllowedUsername(t.Context(), "riser", roleMember, admin))
-	mustNotChange(t)(svc.addAllowedUsername(t.Context(), "riser", rolePublic, admin))
+	mustNotChange(t)(svc.addAllowedUsername(t.Context(), "riser", roleGuest, admin))
 
 	assertAllowedUsernameRows(t, db, "riser", allowedUsernameCounts{total: 2, removed: 1})
 	assertAllowedUsernameActors(t, db, "riser", admin.UUID.String())
@@ -187,17 +187,17 @@ func TestAllowedUsernameHubEntryUpgradesAuctionEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	slices.Sort(circles)
-	if want := []string{"member:true", "public:false"}; !slices.Equal(circles, want) {
+	if want := []string{"guest:false", "member:true"}; !slices.Equal(circles, want) {
 		t.Fatalf("entries: got %v want %v", circles, want)
 	}
 }
 
-// Аукционная запись выдаёт только public и в ResolveIdentity: гашение идёт по
+// Аукционная запись выдаёт только guest и в ResolveIdentity: гашение идёт по
 // кругу записи на любом пути (пункт 2).
-func TestResolveIdentityAuctionEntryGrantsOnlyPublic(t *testing.T) {
+func TestResolveIdentityAuctionEntryGrantsOnlyGuest(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	mustChange(t)(svc.addAllowedUsername(t.Context(), "Bidder", rolePublic, uuid.NullUUID{}))
+	mustChange(t)(svc.addAllowedUsername(t.Context(), "Bidder", roleGuest, uuid.NullUUID{}))
 
 	resp := resolveDirect(t, svc, 9301, "bidder")
 
@@ -292,7 +292,7 @@ func assertWhitelistJournal(t *testing.T, db *sql.DB, identityID string) {
 	if err := rows.Err(); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"member:allowed_username", "public:allowed_username"}
+	want := []string{"member:allowed_username"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("journal: got %v want %v", got, want)
 	}

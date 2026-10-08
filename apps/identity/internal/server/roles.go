@@ -12,17 +12,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// Круги хранилища. У человека активен один из них (ADR-064, пункт 6); порядок —
+// circleRank.
 const (
 	roleMaintainer = "maintainer"
 	roleAdmin      = "admin"
 	roleMember     = "member"
-	rolePublic     = "public"
+	roleGuest      = "guest"
 )
-
-// hubAdmissionRoles — роли допуска к хабу в порядке выдачи. Каждая выдача — своё
-// событие со снимком после неё, поэтому внешний круг идёт первым: промежуточный
-// снимок {member} без public нарушил бы вложенность кругов ADR-043.
-var hubAdmissionRoles = []string{rolePublic, roleMember}
 
 const (
 	lockProfileSQL = `SELECT blocked FROM profiles WHERE id = $1 FOR UPDATE`
@@ -107,7 +104,7 @@ func (s identityService) grantHubAdmission(ctx context.Context, identityID strin
 	if err := admitOpenApplication(ctx, tx, identityID, performedBy); err != nil {
 		return false, internal("admit open application", err)
 	}
-	anyChanged, err := grantHubAdmissionTx(ctx, tx, identityID, performedBy)
+	anyChanged, err := grantRoleTx(ctx, tx, identityID, roleMember, performedBy)
 	if err != nil {
 		return false, roleStorageError("grant hub admission", err)
 	}
@@ -127,28 +124,18 @@ func (s identityService) grantHubAdmission(ctx context.Context, identityID strin
 	return anyChanged, nil
 }
 
-// grantHubAdmissionTx выдаёт обе роли допуска к хабу одной транзакцией: круги
-// вложенные (member входит в public), и допуск половинкой инвариант
-// ADR-043 нарушает. Идемпотентность сохраняется по каждой роли отдельно.
-func grantHubAdmissionTx(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID) (bool, error) {
-	anyChanged := false
-	for _, role := range hubAdmissionRoles {
-		changed, err := grantRoleTx(ctx, tx, identityID, role, performedBy)
-		if err != nil {
-			return false, err
-		}
-		anyChanged = anyChanged || changed
-	}
-	return anyChanged, nil
-}
-
 func grantRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, performedBy uuid.NullUUID) (bool, error) {
 	return grantRoleTxWithReason(ctx, tx, identityID, role, performedBy, "", true)
 }
 
-// grantRoleTxWithReason выдаёт роль и, если announce, выпускает role_granted.
+// grantRoleTxWithReason выдаёт круг и, если announce, выпускает role_granted.
 // Без события выдача проходит только внутри регистрации: там её несёт снимок
 // profile_registered той же транзакции.
+//
+// Круг у человека один (ADR-064, пункт 6). Выдача круга, который человек уже
+// держит своим или более сильным кругом, холостая. Иначе прежний круг
+// отзывается той же транзакцией и одной строкой журнала, а событие одно —
+// role_granted нового круга: его снимок и есть состояние после замены.
 //
 // Через эту функцию идёт выдача любым путём, поэтому здесь же выдача закрывает
 // открытые заявки на свой и более слабые круги и снимает отказы по ним
@@ -168,34 +155,31 @@ func grantRoleTxWithReason(
 	if blocked {
 		return false, errProfileBlocked
 	}
-	grantID, err := uuid.NewV7()
+	current, err := activeCircle(ctx, tx, identityID)
 	if err != nil {
 		return false, err
 	}
-	result, err := tx.ExecContext(ctx, grantRoleSQL, grantID.String(), role, performedByValue(performedBy), identityID)
-	if err != nil {
-		return false, err
-	}
-	changed, err := changed(result)
-	if err != nil {
-		return false, err
-	}
-	// Следствия для заявок не зависят от того, была ли роль уже активна: круг у
+	// Следствия для заявок не зависят от того, была ли выдача холостой: круг у
 	// человека есть, и открытая заявка на него или отказ по нему ложны в любом
 	// случае.
-	if err := closeApplicationsOnGrant(ctx, tx, identityID, role, performedBy); err != nil {
+	if holds(current, role) {
+		return false, closeApplicationsOnGrant(ctx, tx, identityID, role, performedBy)
+	}
+	// Мейнтейнер круг не меняет: роль admin для него — права управления
+	// записями (ADR-064, пункт 7), а круг maintainer и право назначать
+	// администраторов остаются при нём.
+	if role == roleAdmin && current == roleMaintainer {
+		return grantManagementTx(ctx, tx, identityID, performedBy, reason, announce)
+	}
+	if current != "" {
+		if err := withdrawCircleTx(ctx, tx, identityID, current, performedBy); err != nil {
+			return false, err
+		}
+	}
+	if err := insertCircleTx(ctx, tx, identityID, role, current, performedBy, reason); err != nil {
 		return false, err
 	}
-	if !changed {
-		return false, nil
-	}
-	if err := appendJournal(ctx, tx, journalEntry{
-		identityID:  identityID,
-		performedBy: performedBy,
-		action:      actionGrant,
-		role:        role,
-		reason:      reason,
-	}); err != nil {
+	if err := closeApplicationsOnGrant(ctx, tx, identityID, role, performedBy); err != nil {
 		return false, err
 	}
 	if announce {
@@ -206,27 +190,143 @@ func grantRoleTxWithReason(
 	return true, nil
 }
 
-// revokeRoleTx отзывает роль и выпускает role_revoked. Строка профиля блокируется
-// до строки роли: событие двигает версию профиля, и обратный порядок встречно
-// шёл бы к blockIdentity, который берёт profiles раньше identity_roles. Отзыв у
-// несуществующего профиля — холостой, как и был до блокировки строки.
+// grantManagementTx выдаёт мейнтейнеру права управления записями — так выглядит
+// выдача ему роли admin. Холостая, если обе записи уже есть. Событие —
+// role_granted(admin): admin входит в проекцию global_roles по праву
+// управления составом.
+func grantManagementTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	identityID string,
+	performedBy uuid.NullUUID,
+	reason string,
+	announce bool,
+) (bool, error) {
+	granted := false
+	for _, right := range managementRights {
+		changed, err := grantRightTx(ctx, tx, identityID, right, performedBy)
+		if err != nil {
+			return false, err
+		}
+		granted = granted || changed
+	}
+	if err := closeApplicationsOnGrant(ctx, tx, identityID, roleAdmin, performedBy); err != nil {
+		return false, err
+	}
+	if !granted {
+		return false, nil
+	}
+	if err := appendJournal(ctx, tx, journalEntry{
+		identityID:  identityID,
+		performedBy: performedBy,
+		action:      actionGrant,
+		role:        roleAdmin,
+		reason:      reason,
+	}); err != nil {
+		return false, err
+	}
+	if announce {
+		if err := outbox.Append(ctx, tx, identityID, outbox.RoleGranted, roleAdmin); err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// insertCircleTx вставляет строку круга, выдаёт права, которые приходят вместе
+// с этим переходом, и пишет строку журнала. Права записью получают двое
+// (ADR-064, пункты 7–9): гость — право аукциона, без которого круг guest пуст, и
+// администратор, ставший мейнтейнером, — управление составом и модерацию
+// аукциона, которые иначе ушли бы вместе с кругом admin.
+func insertCircleTx(
+	ctx context.Context,
+	tx *sql.Tx,
+	identityID, role, previous string,
+	performedBy uuid.NullUUID,
+	reason string,
+) error {
+	grantID, err := uuid.NewV7()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, grantRoleSQL, grantID.String(), role, performedByValue(performedBy), identityID); err != nil {
+		return err
+	}
+	var rights []string
+	switch {
+	case role == roleGuest:
+		rights = []string{rightAuction}
+	case role == roleMaintainer && previous == roleAdmin:
+		rights = []string{rightManageMembership, rightModerateAuction}
+	}
+	for _, right := range rights {
+		if _, err := grantRightTx(ctx, tx, identityID, right, performedBy); err != nil {
+			return err
+		}
+	}
+	return appendJournal(ctx, tx, journalEntry{
+		identityID:  identityID,
+		performedBy: performedBy,
+		action:      actionGrant,
+		role:        role,
+		reason:      reason,
+	})
+}
+
+// withdrawCircleTx отзывает активный круг строкой журнала, без события: событие
+// пишет вызывающий, потому что снимок должен описывать состояние после всей
+// замены.
+func withdrawCircleTx(ctx context.Context, tx *sql.Tx, identityID, role string, performedBy uuid.NullUUID) error {
+	if _, err := withdrawActiveCircleTx(ctx, tx, identityID, role); err != nil {
+		return err
+	}
+	return appendJournal(ctx, tx, journalEntry{
+		identityID:  identityID,
+		performedBy: performedBy,
+		action:      actionRevoke,
+		role:        role,
+	})
+}
+
+// circleAfterRevoke — круг, в котором человек остаётся после отзыва своего:
+// снятый администратор и мейнтейнер остаются участниками, пониженный участник —
+// гостем с правом аукциона (ADR-064, пункт 9). Отзыв гостя оставляет без круга.
+func circleAfterRevoke(role string) string {
+	switch role {
+	case roleAdmin, roleMaintainer:
+		return roleMember
+	case roleMember:
+		return roleGuest
+	default:
+		return ""
+	}
+}
+
+// revokeRoleTx отзывает круг, ставит на его место следующий по circleAfterRevoke
+// и выпускает role_revoked. Заблокированному следующий круг не выдаётся: отзыв у
+// него — уборка роли, оставшейся мимо блокировки, а не понижение. Отзыв admin
+// или maintainer снимает и записи прав управления: они живут только в этих
+// кругах. Отзыв admin у мейнтейнера — снятие этих записей, круг он не меняет.
+//
+// Строка профиля блокируется до строки роли: событие двигает версию профиля, и
+// обратный порядок встречно шёл бы к blockIdentity, который берёт profiles
+// раньше identity_roles. Отзыв у несуществующего профиля — холостой, как и был
+// до блокировки строки.
 func revokeRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, performedBy uuid.NullUUID) (bool, error) {
-	if _, err := lockProfile(ctx, tx, identityID); err != nil {
+	blocked, err := lockProfile(ctx, tx, identityID)
+	if err != nil {
 		if errors.Is(err, errProfileNotFound) {
 			return false, nil
 		}
 		return false, err
 	}
-	result, err := tx.ExecContext(ctx, revokeRoleSQL, identityID, role)
+	current, err := activeCircle(ctx, tx, identityID)
 	if err != nil {
 		return false, err
 	}
-	changed, err := changed(result)
-	if err != nil {
+	revoked, err := revokeHeldRoleTx(ctx, tx, identityID, role, current)
+	if err != nil || !revoked {
 		return false, err
-	}
-	if !changed {
-		return false, nil
 	}
 	if err := appendJournal(ctx, tx, journalEntry{
 		identityID:  identityID,
@@ -236,8 +336,41 @@ func revokeRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, perf
 	}); err != nil {
 		return false, err
 	}
+	if next := circleAfterRevoke(role); next != "" && !blocked && current == role {
+		if err := insertCircleTx(ctx, tx, identityID, next, role, performedBy, ""); err != nil {
+			return false, err
+		}
+	}
 	if err := outbox.Append(ctx, tx, identityID, outbox.RoleRevoked, role); err != nil {
 		return false, err
+	}
+	return true, nil
+}
+
+// revokeHeldRoleTx снимает то, чем человек держит роль: у мейнтейнера роль
+// admin — записи прав управления, у остальных — сам активный круг.
+func revokeHeldRoleTx(ctx context.Context, tx *sql.Tx, identityID, role, current string) (bool, error) {
+	if role == roleAdmin && current == roleMaintainer {
+		return revokeManagementRightsTx(ctx, tx, identityID)
+	}
+	return withdrawActiveCircleTx(ctx, tx, identityID, role)
+}
+
+// withdrawActiveCircleTx отзывает активный круг role и, если это admin или
+// maintainer, записи прав управления. Отвечает, был ли круг активен.
+func withdrawActiveCircleTx(ctx context.Context, tx *sql.Tx, identityID, role string) (bool, error) {
+	result, err := tx.ExecContext(ctx, revokeRoleSQL, identityID, role)
+	if err != nil {
+		return false, err
+	}
+	revoked, err := changed(result)
+	if err != nil || !revoked {
+		return false, err
+	}
+	if role == roleAdmin || role == roleMaintainer {
+		if _, err := revokeManagementRightsTx(ctx, tx, identityID); err != nil {
+			return false, err
+		}
 	}
 	return true, nil
 }

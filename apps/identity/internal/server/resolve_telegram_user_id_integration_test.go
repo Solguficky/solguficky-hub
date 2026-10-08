@@ -77,16 +77,16 @@ func TestResolveTelegramUserIdDistinguishesMissingFromBlocked(t *testing.T) {
 }
 
 // Круг получателя выбирает Notifications, а не этот метод: профиль без ролей и
-// профиль с одной ролью public разрешаются так же, как член хаба.
+// профиль гостя разрешаются так же, как член хаба.
 func TestResolveTelegramUserIdDoesNotFilterByCircle(t *testing.T) {
 	t.Parallel()
 	db := migratedDB(t)
 	client := resolveClient(t, db)
 	pending := resolve(t, client, 8201, nil)
-	public := resolve(t, client, 8202, nil)
-	insertRole(t, db, public.GetIdentityId(), "public")
+	guest := resolve(t, client, 8202, nil)
+	insertRole(t, db, guest.GetIdentityId(), "guest")
 
-	for want, profile := range map[int64]*identityv1.ResolveIdentityResponse{8201: pending, 8202: public} {
+	for want, profile := range map[int64]*identityv1.ResolveIdentityResponse{8201: pending, 8202: guest} {
 		resp, err := client.ResolveTelegramUserId(t.Context(),
 			&identityv1.ResolveTelegramUserIdRequest{IdentityId: profile.GetIdentityId()})
 		if err != nil {

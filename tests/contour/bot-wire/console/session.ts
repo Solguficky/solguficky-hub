@@ -128,16 +128,14 @@ export function openConsoleSession(
       throw new CommandError(`«${who}» уже заведён`);
     }
     const telegramUserId = freshTelegramUserId();
-    // Ник есть у всех: Auction признаёт участником только буквальную роль
-    // `public`, а её человек получает вместе с `member` — по нику из белого
-    // списка на первом `/start`. Администратор вносит свой ник сам, как
-    // настоящий администратор состоит и в сообществе; одной ролью `admin`
-    // он не открыл бы ни ленту лотов, ни форму лота.
+    // Ник есть у всех. Администратор получает роль одним GrantAdminRole, как
+    // в продукте: круг у человека один, и Identity выводит из admin права хаба
+    // и аукциона, а в global_roles отдаёт admin, member и guest (PER-526), —
+    // поэтому белый список ему не нужен, чтобы открыть ленту лотов и форму лота.
     const username = usernameFor(telegramUserId);
     if (role === "admin") {
       const identityId = await direct.grantAdmin(telegramUserId);
       firstAdminId ??= identityId;
-      await direct.allowUsername(identityId, username);
     } else if (role === "member") {
       // Роль member человек получает на первом `/start`, как в продукте:
       // его ник заранее внесён администратором в whitelist.

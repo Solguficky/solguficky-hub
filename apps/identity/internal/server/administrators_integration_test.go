@@ -56,7 +56,8 @@ func TestAppointAdministratorByUsernameIsIdempotentAndNamesTheMaintainer(t *test
 		t.Fatalf("second appoint: response=%v error=%v", again, err)
 	}
 
-	assertRoles(t, resolve(t, f.client, 8201, new("Alice_Smith")).GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_ADMIN)
+	assertRoleSet(t, resolve(t, f.client, 8201, new("Alice_Smith")).GetGlobalRoles(),
+		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertJournalCount(t, f.db, target, 1)
 	assertJournalActor(t, f.db, target, "grant", f.maintainer)
 	assertGrantedBy(t, f.db, target, "admin", f.maintainer)
@@ -81,9 +82,15 @@ func TestDismissAdministratorIsIdempotentAndNamesTheMaintainer(t *testing.T) {
 		t.Fatalf("second dismiss: response=%v error=%v", again, err)
 	}
 
-	assertActiveRoleCount(t, f.db, target, 0)
-	assertJournalCount(t, f.db, target, 1)
+	// Снятый администратор остаётся участником: отзыв admin и выдача member —
+	// две строки журнала от имени мейнтейнера.
+	assertActiveRoleCount(t, f.db, target, 1)
+	if got := resolve(t, f.client, 8301, new("bob")).GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_MEMBER {
+		t.Fatalf("role after dismissal: got %v want member", got)
+	}
+	assertJournalCount(t, f.db, target, 2)
 	assertJournalActor(t, f.db, target, "revoke", f.maintainer)
+	assertJournalActor(t, f.db, target, "grant", f.maintainer)
 }
 
 // Снимок ролей собирает бот: Identity ему не верит и читает право сам.
@@ -173,8 +180,6 @@ func TestAdministratorMethodsLeaveMaintainersAndSelfAlone(t *testing.T) {
 	f := newAdministratorFixture(t)
 	peer := resolve(t, f.client, 8701, new("grace")).GetIdentityId()
 	insertRole(t, f.db, peer, "maintainer")
-	insertAdminRole(t, f.db, peer)
-	insertAdminRole(t, f.db, f.maintainer)
 
 	_, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: f.maintainer})
 	if status.Code(err) != codes.InvalidArgument {
@@ -195,8 +200,8 @@ func TestAdministratorMethodsLeaveMaintainersAndSelfAlone(t *testing.T) {
 		t.Fatalf("appoint maintainer: got %v want %s", err, codes.FailedPrecondition)
 	}
 
-	assertActiveRoleCount(t, f.db, f.maintainer, 2)
-	assertActiveRoleCount(t, f.db, peer, 2)
+	assertActiveRoleCount(t, f.db, f.maintainer, 1)
+	assertActiveRoleCount(t, f.db, peer, 1)
 	assertActiveRoleCount(t, f.db, plain, 1)
 }
 
