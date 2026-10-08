@@ -1239,6 +1239,37 @@ describe("auction bot", () => {
     expect(lines.join("")).not.toContain('"42"');
     expect(lines.join("")).not.toContain("v1:auc");
   });
+
+  // Переход участника в бот хаба — ответ по сценарию, а не отказ: отказы
+  // авторизации и спан update он не помечает.
+  it("logs the move of a community member to the hub bot as a handled update", async () => {
+    const lines: string[] = [];
+    const logger = createLogger("info", {
+      service: "auction-bot",
+      out: (line) => lines.push(line),
+    });
+    const base = publicPorts("r");
+    const { bot, calls } = makeBot(
+      () => ({
+        ...base,
+        identity: {
+          resolveIdentity: async () => ({
+            viewer: VIEWER,
+            rights: ["hub", "auction"],
+            blocked: false,
+          }),
+        },
+      }),
+      { logger },
+    );
+    await bot.handleUpdate(lotPress());
+    expect(calls.map((call) => call.payload)).toContainEqual(
+      expect.objectContaining({ text: deniedTexts["in-community"] }),
+    );
+    const record = JSON.parse(lines.at(-1) ?? "{}");
+    expect(record).toMatchObject({ result: "ok", screen: "denied" });
+    expect(record).not.toHaveProperty("error_category");
+  });
 });
 
 // Правило ожидания дизайн-кода на собранном боте. Сервис здесь — обещание,

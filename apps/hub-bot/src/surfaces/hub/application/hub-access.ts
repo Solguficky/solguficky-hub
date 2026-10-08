@@ -1,4 +1,4 @@
-import type { AccessRight } from "../../../auction-ui/index.js";
+import { type AccessRight, admission } from "../../../auction-ui/index.js";
 
 // `declined` виден только на `/start`: его несёт исход входа, а разрешение
 // личности на остальных действиях его не знает (ADR-060, пункт 13).
@@ -70,11 +70,21 @@ export function decideHubAccess(
   rights: readonly AccessRight[],
   blocked: boolean,
 ): HubAccess {
-  if (blocked) {
-    return "blocked";
+  switch (admission("hub", { rights, blocked })) {
+    case undefined:
+      return "admitted";
+    case "blocked":
+      return "blocked";
+    default:
+      return "pending";
   }
-  if (rights.includes("hub")) {
-    return "admitted";
-  }
-  return "pending";
+}
+
+/** Пускает ли хаб человека: та же политика дерева, без текста отказа. */
+export function admittedToHub(person: {
+  rights: readonly AccessRight[];
+}): boolean {
+  return (
+    admission("hub", { rights: person.rights, blocked: false }) === undefined
+  );
 }

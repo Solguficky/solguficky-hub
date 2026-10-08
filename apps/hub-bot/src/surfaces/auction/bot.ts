@@ -355,8 +355,10 @@ function refusalCategory(
   screen: AuctionEntryScreen,
 ): "authorization" | "invariant" | undefined {
   switch (screen.kind) {
+    // Переход участника в бот хаба — спроектированный ответ, а не отказ:
+    // счётчик отказов авторизации он не трогает (ADR-064, пункт 2).
     case "denied":
-      return "authorization";
+      return screen.reason === "in-community" ? undefined : "authorization";
     case "outdated":
       return "invariant";
     default:

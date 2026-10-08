@@ -1,5 +1,6 @@
 import { rpcMeta } from "../../../core/rpc-metadata.js";
 import type { MeetupAuctions } from "../auction/port.js";
+import { admittedToHub } from "./hub-access.js";
 import type {
   ExecuteRequest,
   ExecuteResult,
@@ -22,7 +23,7 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
     card: T,
     request: { identity: Person; requestId?: string; deadlineAt?: number },
   ): Promise<T> {
-    if (!request.identity.rights.includes("hub")) return card;
+    if (!admittedToHub(request.identity)) return card;
     const result = await auctions.getMeetupAuction(
       request.identity,
       card.meetup.id,
@@ -42,7 +43,7 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
     request: Extract<ExecuteRequest, { intent: "enable-auction" }>,
     viewCard: () => Promise<ExecuteResult>,
   ): Promise<ExecuteResult> {
-    if (!request.identity.rights.includes("hub")) {
+    if (!admittedToHub(request.identity)) {
       return { kind: "dependency-rejected", reason: "forbidden" };
     }
     const enabled = await auctions.enableAuction(

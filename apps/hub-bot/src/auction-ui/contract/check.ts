@@ -175,8 +175,6 @@ export function contractIdentity(
   };
 }
 
-const VIEWER = CONTRACT_VIEWER;
-
 export const CONTRACT_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
 const EMPTY_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a2";
 const LEADER_ID = "01929b7e-5c1d-7a3f-8e4b-000000000002";
@@ -327,20 +325,20 @@ const listCalls = (auctionId: string, tokens: readonly string[]): PortCall[] =>
   tokens.map((pageToken) => ({
     port: "auction",
     method: "listAuctionLots",
-    request: { viewer: VIEWER, auctionId, pageToken },
+    request: { viewer: CONTRACT_VIEWER, auctionId, pageToken },
   }));
 
 const getLotCall = (lotId: string): PortCall => ({
   port: "auction",
   method: "getLot",
-  request: { viewer: VIEWER, lotId },
+  request: { viewer: CONTRACT_VIEWER, lotId },
 });
 
 const namesCall = (...participantIds: string[]): PortCall => ({
   port: "auction",
   method: "getDisplayNames",
   request: {
-    viewer: VIEWER,
+    viewer: CONTRACT_VIEWER,
     auctionId: CONTRACT_AUCTION_ID,
     participantIds,
   },
@@ -350,7 +348,7 @@ const historyCalls = (lotId: string, tokens: readonly string[]): PortCall[] =>
   tokens.map((pageToken) => ({
     port: "auction",
     method: "listLotHistory",
-    request: { viewer: VIEWER, lotId, pageToken },
+    request: { viewer: CONTRACT_VIEWER, lotId, pageToken },
   }));
 
 const feedCallback = (auctionId: string, page: number) =>
@@ -801,7 +799,7 @@ const bidCall = (amount: number, opId: string = OP): PortCall => ({
   port: "auction",
   method: "placeBid",
   request: {
-    viewer: VIEWER,
+    viewer: CONTRACT_VIEWER,
     lotId: CONTRACT_LOT.lotId,
     amount: { minorUnits: amount, currency: "RUB" },
     opId,
@@ -812,7 +810,7 @@ const limitCall = (amount: number): PortCall => ({
   port: "auction",
   method: "setProxyLimit",
   request: {
-    viewer: VIEWER,
+    viewer: CONTRACT_VIEWER,
     lotId: CONTRACT_LOT.lotId,
     max: { minorUnits: amount, currency: "RUB" },
     opId: OP,
@@ -826,7 +824,7 @@ const chooseCall = (
 ): PortCall => ({
   port: "auction",
   method: "chooseDisplayName",
-  request: { viewer: VIEWER, auctionId: CONTRACT_AUCTION_ID, choice },
+  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID, choice },
 });
 
 const LOT_CALL = getLotCall(CONTRACT_LOT.lotId);
