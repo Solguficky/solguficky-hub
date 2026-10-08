@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { maxLotRubles } from "../application/lot-form.js";
 import {
+  auctionFaqData,
   cardCursorData,
   consoleConfirmData,
   consoleFinalData,
@@ -18,6 +19,18 @@ import {
 } from "./parse-callback.js";
 
 describe("callback parser", () => {
+  it("parses a hub FAQ action with its auction target", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    const data = auctionFaqData(token);
+    expect(data).toBe(`v1:faq:${token}`);
+    expect(Buffer.byteLength(data, "utf8")).toBeLessThanOrEqual(64);
+    expect(parseCallback(data)).toEqual({
+      kind: "auction-faq",
+      auction: token,
+    });
+    expect(parseCallback("v1:faq:short")).toEqual({ kind: "malformed" });
+  });
+
   it("parses a meetup card action", () => {
     expect(parseCallback("v1:view:AZjypHwefTqbIU-OEqs0zg")).toEqual({
       kind: "view-meetup",

@@ -89,6 +89,7 @@ export const hubSurface: SurfaceDefinition = ({
     tracing,
     presentation: config.presentation,
     environment,
+    faq: hub.faq,
     today,
     ...(hub.auctionBotUsername === undefined
       ? {}

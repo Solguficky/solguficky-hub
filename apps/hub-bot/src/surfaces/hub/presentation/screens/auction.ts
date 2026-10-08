@@ -12,7 +12,12 @@ import type {
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { consoleViewData, lotFormData, lotNewData } from "../parse-callback.js";
+import {
+  auctionFaqData,
+  consoleViewData,
+  lotFormData,
+  lotNewData,
+} from "../parse-callback.js";
 import {
   acceptedScreen,
   answerRefusedScreen,
@@ -161,7 +166,16 @@ function feedScreen(
     if (view.canAddLots !== false) {
       keyboard.text(addLotLabel, lotNewData(auction)).row();
     }
-    keyboard.text(consoleLabel, consoleViewData(auction));
+    // У администратора объединяем два коротких действия в разрешённую пару:
+    // это сохраняет предел рядов на полной странице из восьми лотов.
+    keyboard
+      .text(consoleLabel, consoleViewData(auction))
+      .text("Правила и FAQ", auctionFaqData(auction))
+      .row();
+  } else {
+    keyboard
+      .text("Правила и FAQ", auctionFaqData(uuidToToken(feed.auctionId)))
+      .row();
   }
   for (const row of view.body.keyboard) {
     nextRow(keyboard);

@@ -43,6 +43,7 @@ import type { MeetupSnapshot } from "../meetups/port.js";
 import type { CategoryState, MeetupCategory } from "../notifications/port.js";
 import { createBot } from "./bot.js";
 import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
+import { auctionFaqData } from "./parse-callback.js";
 import { refusalText } from "./screens/kit.js";
 
 function messageUpdate(text = "/start"): Update {
@@ -7903,5 +7904,31 @@ describe("source channels", () => {
       ...plain.calls.map((call) => call.payload),
       ...plain.calls.map((call) => call.payload),
     ]);
+  });
+
+  it("does not answer /faq on the hub surface", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity());
+    await bot.init();
+    calls.length = 0;
+
+    await bot.handleUpdate(messageUpdate("/faq"));
+
+    expect(calls).toEqual([]);
+  });
+
+  it("opens the hub FAQ for an admitted member and keeps the auction return", async () => {
+    const { bot, calls, records } = createHarness(resolvedIdentity());
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(auctionFaqData("AZLzpLXGfY6fChssPU5fYA")),
+    );
+
+    const rendered = calls.findLast(
+      (call) => call.method === "editMessageText",
+    )?.payload;
+    expect(JSON.stringify(rendered)).toContain("<b>Правила и FAQ</b>");
+    expect(JSON.stringify(rendered)).toContain("‹ Лоты");
+    expect(records.at(-1)?.fields.use_case).toBe("view_auction");
   });
 });

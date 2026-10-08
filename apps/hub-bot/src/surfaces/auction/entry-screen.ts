@@ -1,3 +1,4 @@
+import { renderFaqText } from "../../auction-faq.js";
 import {
   type AnswerRefusal,
   type AuctionBlock,
@@ -175,21 +176,10 @@ export function renderEntryScreen(
   const faq = options.faq ?? defaultFaq;
   switch (screen.kind) {
     case "faq": {
-      // Тексты организатора показываются дословно: разметки в них нет.
-      const section = (name: string, text: string) =>
-        `${heading(name)}\n${escapeHtml(text)}`;
       return {
         id: "faq",
         format: "html",
-        text: [
-          heading(faqTitle),
-          section("Что продаём", faq.items),
-          section("Куда идут средства", faq.purpose),
-          section("Правила ставок", "Отменить сделанную ставку нельзя."),
-          section("Почти одновременные ставки", faq.simultaneousBids),
-          section("Сбой и потеря связи", faq.connectionFailure),
-          section("Доставка победителю", faq.delivery),
-        ].join("\n\n"),
+        text: renderFaqText(faq),
         keyboard: [
           [
             faq.detailsUrl === undefined

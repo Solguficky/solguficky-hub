@@ -159,6 +159,7 @@ type PlainAction =
   // «Включить аукцион» на карточке сходки (PER-307). Кнопки входа в аукцион
   // здесь нет: она домена `auc`, и её пишет и разбирает аукционное дерево.
   | { kind: "manage-auction"; token: string }
+  | { kind: "auction-faq"; auction: string }
   // Форма лота администратора (PER-319). Кнопки несут лот, а новый лот —
   // аукцион: сходку форма не называет, её знает Auction.
   | { kind: "lot-new"; auction: string }
@@ -377,6 +378,11 @@ export function consoleMarkData(mark: {
   page: number;
 }): string {
   return `v1:ac:${mark.selected ? "s" : "d"}:${mark.auction}:${mark.lot}:${mark.page}`;
+}
+
+/** Кнопка FAQ из корня ленты аукциона сходки. */
+export function auctionFaqData(auction: string): string {
+  return `v1:faq:${auction}`;
 }
 
 /**
@@ -605,6 +611,12 @@ export function parseCallback(raw: unknown): CallbackAction {
   }
   if (parts[1] === "ac") {
     return parseConsole(parts);
+  }
+  if (parts[1] === "faq") {
+    const auction = TokenSchema.safeParse(parts[2]);
+    return parts.length === 3 && auction.success
+      ? { kind: "auction-faq", auction: auction.data }
+      : { kind: "malformed" };
   }
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success || parts[1] !== "manage") {

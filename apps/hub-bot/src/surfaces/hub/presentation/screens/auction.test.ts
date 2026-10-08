@@ -154,6 +154,48 @@ describe("lot card in the hub shell", () => {
 });
 
 describe("feed and history in the hub shell", () => {
+  it("keeps a full admin feed within the twelve-row keyboard limit", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      canManage: true,
+      canAddLots: true,
+      body: {
+        blocks: [
+          {
+            kind: "feed",
+            auctionId: "123e4567-e89b-42d3-a456-426614174000",
+            page: 0,
+            pageCount: 2,
+            lots: Array.from({ length: 8 }, (_, index) => ({
+              lotId: `lot-${index}`,
+              title: `Лот ${index}`,
+              status: { kind: "unsold" as const },
+            })),
+          },
+        ],
+        keyboard: [
+          ...Array.from({ length: 8 }, (_, index) => [
+            {
+              action: "feed.open-lot" as const,
+              lotId: `lot-${index}`,
+              callbackData: `lot-${index}`,
+            },
+          ]),
+          [{ action: "feed.next" as const, callbackData: "next" }],
+        ],
+      },
+    });
+    const rows = screen.keyboard.inline_keyboard.map((row) =>
+      row.map((button) => button.text),
+    );
+
+    expect(rows).toHaveLength(12);
+    expect(rows.slice(0, 2)).toEqual([
+      ["Добавить лот"],
+      ["Пульт", "Правила и FAQ"],
+    ]);
+  });
+
   it("lists every lot as a line of the body and as a button", () => {
     const { screen } = auctionScreen({
       ...view([]),
@@ -189,7 +231,9 @@ describe("feed and history in the hub shell", () => {
       .filter((line) => line.startsWith("• "));
     const content = screen.keyboard.inline_keyboard
       .flat()
-      .filter((button) => !/^(‹ |←$|→$|Меню$)/.test(button.text));
+      .filter(
+        (button) => !/^(‹ |←$|→$|Меню$|Правила и FAQ$)/.test(button.text),
+      );
     expect(lines.length).toBe(content.length);
   });
 
