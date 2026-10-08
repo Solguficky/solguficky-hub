@@ -30,6 +30,8 @@ ALTER TABLE identity_replica ADD COLUMN IF NOT EXISTS role text NULL;
 
 -- Права именами, без обещанного порядка. Пустой набор — состояние, а не
 -- отсутствие: так выглядят и недопущенный, и гость без прав, и заблокированный.
+-- NOT NULL без умолчания держится на сбросе выше: строк прежней формы к этому
+-- месту нет, а значение по умолчанию выдало бы пустые права за прочитанные.
 ALTER TABLE identity_replica ADD COLUMN IF NOT EXISTS rights text[] NOT NULL;
 
 ALTER TABLE identity_replica DROP CONSTRAINT IF EXISTS identity_replica_role_known;
