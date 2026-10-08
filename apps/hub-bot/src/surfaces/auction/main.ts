@@ -2,6 +2,7 @@ import {
   createDeliverNotification,
   startNatsDelivery,
 } from "../../core/delivery/index.js";
+import { createShutdown } from "../../core/shutdown.js";
 import { createBot } from "./bot.js";
 import { createClients } from "./clients.js";
 import { readConfig } from "./config.js";
@@ -13,7 +14,6 @@ import {
 import { decodeNotification } from "./delivery/notification.js";
 import { createLogger, serviceName } from "./logging.js";
 import { registerCommands } from "./menu-commands.js";
-import { createShutdown } from "./shutdown.js";
 
 const shutdownTimeoutMs = 15_000;
 

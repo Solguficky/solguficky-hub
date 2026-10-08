@@ -8,6 +8,14 @@ import { AuctionService } from "../../../../gen/auction/v1/auction_service_pb.js
 import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
 import type { Money, Viewer } from "../../../auction-ui/index.js";
 import {
+  bidOutcomeOf,
+  displayNameOutcomeOf,
+  limitOutcomeOf,
+  unansweredOn,
+} from "../../../core/auction/commands.js";
+import { historyPageOf } from "../../../core/auction/history.js";
+import { lotViewOf } from "../../../core/auction/snapshot.js";
+import {
   callHeaders,
   callTimeoutMs,
   presentServiceToken,
@@ -15,14 +23,7 @@ import {
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
-import {
-  bidOutcomeOf,
-  displayNameOutcomeOf,
-  limitOutcomeOf,
-  unansweredOn,
-} from "./commands.js";
 import { consoleOf } from "./console.js";
-import { historyPageOf } from "./history.js";
 import {
   type AddLotResult,
   type AuctionConsoles,
@@ -41,7 +42,6 @@ import {
   type StartPrebiddingResult,
   viewerOf,
 } from "./port.js";
-import { lotViewOf } from "./snapshot.js";
 
 // Тип клиента берётся из схемы, а не переписывается рядом с ней: Pick по
 // сгенерированному Client роняет typecheck на первом расхождении с

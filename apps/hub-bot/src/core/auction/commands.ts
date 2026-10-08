@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
 import type { Money as WireMoney } from "../../../gen/auction/v1/auction_pb.js";
 import type {
@@ -19,6 +18,7 @@ import { moneyOf } from "./snapshot.js";
 // Ответы команд участника в словаре пакета (PER-317). Отказ — значение ответа,
 // а не статус (integration.md, «Auction gRPC»); цену отказ несёт сам, и её
 // отсутствие — дефект соседа: перевод бросает, а не показывает отказ без цены.
+// Перевод общий у обеих поверхностей.
 
 export function bidOutcomeOf(
   response: PlaceBidResponse,
@@ -188,18 +188,4 @@ export async function unansweredOn<Outcome>(
     }
     throw cause;
   }
-}
-
-// `op_id` команды — канонический UUIDv7: время в старших байтах, остальное —
-// случайное. Код бота хаба с тем же генератором не импортируется (ADR-044).
-export function createUuidV7(now: number = Date.now()): string {
-  const bytes = Buffer.from(randomUUID().replaceAll("-", ""), "hex");
-  let time = BigInt(now);
-  for (let index = 5; index >= 0; index -= 1) {
-    bytes[index] = Number(time & 0xffn);
-    time >>= 8n;
-  }
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x70;
-  const hex = bytes.toString("hex");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }

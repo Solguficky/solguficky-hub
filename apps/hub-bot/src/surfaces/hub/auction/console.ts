@@ -3,13 +3,13 @@ import type {
   AuctionSnapshot,
   ConsoleLot as WireConsoleLot,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
+import { lotViewOf } from "../../../core/auction/snapshot.js";
 import type {
   AuctionConsoleView,
   AuctionWeek,
   ConsoleAuctionStatus,
   ConsoleLot,
 } from "../application/types.js";
-import { lotViewOf } from "./snapshot.js";
 
 // Перевод `auction.v1.AuctionConsole` в пульт хаба (PER-320). Как и перевод
 // лота, он держит то, чего схема не выражает: статус и лот выставлены всегда,

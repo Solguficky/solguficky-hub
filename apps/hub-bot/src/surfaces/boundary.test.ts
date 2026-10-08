@@ -39,7 +39,9 @@ const zoneOf = (file: string): Zone => {
 };
 
 const allowed: Record<Zone, readonly Zone[]> = {
-  core: ["core", "gen", "outside"],
+  // Перевод ответов Auction в словарь дерева общий, поэтому общий код знает
+  // дерево; дерево общего кода не знает (его `boundary.test.ts`).
+  core: ["core", "tree", "gen", "outside"],
   tree: ["tree", "gen", "outside"],
   hub: ["hub", "core", "tree", "gen", "outside"],
   auction: ["auction", "core", "tree", "gen", "outside"],
