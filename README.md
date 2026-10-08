@@ -32,7 +32,6 @@ docs/                         продукт, архитектура, решен
 infra/apphost/                локальная оркестрация .NET Aspire: AppHost и его тесты
 infra/observability/          конфигурация Loki, Promtail и Grafana
 shared/dotnet/                общая обвязка .NET-сервисов (ServiceDefaults)
-shared/typescript/            общие пакеты ботов: интерфейс аукциона, доставка, линтер экрана
 tests/                        сквозные наборы: контур Aspire и живой Telegram
 tools/git-hooks/              скрипты проверок для хуков и CI
 tools/nats-tester/            ручная проверка NATS-сообщений

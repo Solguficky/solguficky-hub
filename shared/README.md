@@ -2,13 +2,11 @@
 
 Код, которым владеет платформа, а не отдельное приложение.
 
-Подкаталог первого уровня — всегда язык: `shared/dotnet/`, `shared/typescript/`, позже `shared/go/`. Языконезависимого общего модуля здесь не бывает: переиспользование между Go и F# физически невозможно, и каталог с таким именем стал бы свалкой.
+Подкаталог первого уровня — всегда язык: `shared/dotnet/`, позже `shared/typescript/` или `shared/go/`. Языконезависимого общего модуля здесь не бывает: переиспользование между Go и F# физически невозможно, и каталог с таким именем стал бы свалкой.
 
 `shared/dotnet/ServiceDefaults/` — обвязка Aspire ServiceDefaults (логирование, OpenTelemetry, health checks, discovery). Её первый потребитель — Meetups.
 
-Каталог TypeScript-пакета называется kebab-case, как каталоги компонентов в `apps/`. Аукционный интерфейс двух ботов был здесь пакетом `auction-bot-ui`, а с переездом ботов в один пакет живёт в `apps/hub-bot/src/auction-ui` ([ADR-064](../docs/decisions/ADR-064-two-bots-by-audience-circle-and-rights.md), п. 18).
-
-`shared/typescript/telegram-delivery/` — механика доставки адресных фактов Notifications в Telegram, общая для двух ботов (дополнение [ADR-044](../docs/decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md) от 2026-10-04): потребитель durable, журнал попыток в JetStream KV, повторы и классы отказов Bot API. Доменных типов в нём нет: разбор своих веток уведомления, текст и клавиатуру держит каждый бот.
+TypeScript-пакетов здесь сейчас нет. Каталог TypeScript-пакета называется kebab-case, как каталоги компонентов в `apps/`. Аукционный интерфейс двух ботов, механика доставки уведомлений и линтер экрана жили здесь пакетами `auction-bot-ui`, `telegram-delivery` и `screen-lint`, а с переездом ботов в один пакет ([ADR-064](../docs/decisions/ADR-064-two-bots-by-audience-circle-and-rights.md), п. 18) у них один потребитель, и они живут в `apps/hub-bot`: `src/auction-ui`, `src/core/delivery` и `testkit/lint` — по правилу «Что сюда не попадает» ниже.
 
 Каталог .NET-проекта называется именем проекта, а не kebab-case: так же устроены `apps/meetups/Meetups` и `apps/meetups/Meetups.Contracts`. Kebab-case остаётся у каталогов компонентов (`apps/hub-bot`), которые проектом .NET не являются.
 
