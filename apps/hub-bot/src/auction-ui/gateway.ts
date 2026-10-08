@@ -84,7 +84,7 @@ function refusal(
 // проверку поверхность повторяет на своих экранах, чтобы политика была одна.
 export function admission(
   surface: AuctionSurface["kind"],
-  identity: Pick<ResolvedIdentity, "rights" | "blocked">,
+  identity: { rights: readonly AccessRight[]; blocked: boolean },
 ): AuctionDenial | undefined {
   // У заблокированного прав нет по контракту; отметка выбирает текст отказа.
   if (identity.blocked) return "blocked";
@@ -111,7 +111,10 @@ export async function handleAuctionUpdate(
   // Своя кнопка, даже нечитаемая, — уже действие аукциона: отказ
   // заблокированному положен на любом из них.
   const { identity } = update;
-  const denial = admission(surface.kind, identity);
+  const denial = admission(surface.kind, {
+    rights: identity.viewer.rights,
+    blocked: identity.blocked,
+  });
   if (denial !== undefined) return { kind: "denied", reason: denial };
   if (!parsed.ok) return { kind: "unreadable", error: parsed.error };
   const { input, user } = update;
@@ -170,7 +173,7 @@ export function decideEntry(
   surface: AuctionSurface["kind"],
   answer: RoleRequestAnswer,
 ): SurfaceEntry {
-  const { viewer, rights, outcome } = answer;
+  const { viewer, outcome } = answer;
   const { identityId } = viewer;
   const denied = (reason: AuctionDenial): SurfaceEntry => ({
     kind: "denied",
@@ -181,7 +184,7 @@ export function decideEntry(
   if (outcome === "blocked") return denied("blocked");
   // Участник в боте аукциона получает переход при любом исходе очереди
   // аукциона: о заявке ему здесь отвечать нечего (ADR-064, пункт 2).
-  const refused = refusal(surface, rights);
+  const refused = refusal(surface, viewer.rights);
   if (refused === "in-community") return denied(refused);
   switch (outcome) {
     case "declined":
@@ -193,7 +196,7 @@ export function decideEntry(
       // Исход говорит об очереди, а пускает право: разошлись — следующее же
       // нажатие отказало бы, поэтому вход отказывает так же, как оно.
       return refused === undefined
-        ? { kind: "entered", identity: { viewer, rights, blocked: false } }
+        ? { kind: "entered", identity: { viewer, blocked: false } }
         : denied(refused);
     default: {
       const _exhaustive: never = outcome;

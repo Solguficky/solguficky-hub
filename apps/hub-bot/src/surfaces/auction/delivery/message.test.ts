@@ -113,7 +113,7 @@ describe("parseTraceCallback", () => {
 
 function reads(overrides: Partial<NotificationReads> = {}): NotificationReads {
   return {
-    hasPublicRole: vi.fn(async () => true),
+    hasAuctionRight: vi.fn(async () => true),
     lotTitle: vi.fn(async () => "Кружка"),
     ...overrides,
   };
@@ -136,13 +136,13 @@ describe("access granted", () => {
     await expect(
       render({ kind: "access-granted" }, { recipientId }),
     ).resolves.toMatchObject({ kind: "ready" });
-    expect(source.hasPublicRole).toHaveBeenCalledWith(recipientId, undefined);
+    expect(source.hasAuctionRight).toHaveBeenCalledWith(recipientId, undefined);
     expect(source.lotTitle).not.toHaveBeenCalled();
   });
 
   it("finds a recipient who lost the role ineligible", async () => {
     const render = createRenderMessage(
-      reads({ hasPublicRole: vi.fn(async () => false) }),
+      reads({ hasAuctionRight: vi.fn(async () => false) }),
       () => {},
     );
     await expect(
@@ -161,13 +161,13 @@ describe("createRenderMessage", () => {
       kind: "ready",
       message: { text: expect.stringContaining("«Кружка»") },
     });
-    expect(source.hasPublicRole).toHaveBeenCalledWith(recipientId, "req-1");
+    expect(source.hasAuctionRight).toHaveBeenCalledWith(recipientId, "req-1");
     expect(source.lotTitle).toHaveBeenCalledWith(recipientId, lotId, "req-1");
   });
 
   // Без роли кнопка упёрлась бы в тот же отказ Auction: уведомление не уходит.
   it("finds a recipient without the public role ineligible", async () => {
-    const source = reads({ hasPublicRole: vi.fn(async () => false) });
+    const source = reads({ hasAuctionRight: vi.fn(async () => false) });
     const render = createRenderMessage(source, () => {});
     await expect(render(outbid, { recipientId })).resolves.toEqual({
       kind: "ineligible",
@@ -179,7 +179,7 @@ describe("createRenderMessage", () => {
   it("rejects for good when Identity refuses the role check", async () => {
     const denied = Object.assign(new Error("permission denied"), { code: 7 });
     const render = createRenderMessage(
-      reads({ hasPublicRole: vi.fn(async () => Promise.reject(denied)) }),
+      reads({ hasAuctionRight: vi.fn(async () => Promise.reject(denied)) }),
       () => {},
     );
     await expect(render(outbid, { recipientId })).resolves.toEqual({
@@ -205,7 +205,7 @@ describe("createRenderMessage", () => {
   it("asks for a retry when Identity cannot say", async () => {
     const down = new Error("unavailable");
     const render = createRenderMessage(
-      reads({ hasPublicRole: vi.fn(async () => Promise.reject(down)) }),
+      reads({ hasAuctionRight: vi.fn(async () => Promise.reject(down)) }),
       () => {},
     );
     await expect(render(outbid, { recipientId })).resolves.toEqual({

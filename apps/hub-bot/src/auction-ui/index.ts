@@ -42,7 +42,6 @@ export type {
   DisplayNameOutcome,
   DisplayNameRefusal,
   EntryPort,
-  GlobalRole,
   IdentityPort,
   LotCardView,
   LotHistoryEntryView,

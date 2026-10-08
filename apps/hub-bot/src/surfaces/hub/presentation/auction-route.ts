@@ -39,12 +39,12 @@ export function isAuctionCallback(data: string): boolean {
   return data.split(":")[1] === AUCTION_CALLBACK_DOMAIN;
 }
 
-/** Личность края в словаре пакета: роли, которых пакет не знает, не едут. */
+/** Личность края в словаре пакета: смотрящий несёт права, роли не едут. */
 export function packageIdentity(
   person: Person,
   blocked: boolean,
 ): ResolvedIdentity {
-  return { viewer: viewerOf(person), rights: person.rights, blocked };
+  return { viewer: viewerOf(person), blocked };
 }
 
 /**

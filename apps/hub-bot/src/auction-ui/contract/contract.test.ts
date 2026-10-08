@@ -38,7 +38,7 @@ describe("auction contract self-check", () => {
   it("fails when the port is called with another intent", async () => {
     const wrongIntent: AuctionContractApp = (ports) => async (update) => {
       await ports.auction.getLot({
-        viewer: { identityId: "someone-else", globalRoles: ["public"] },
+        viewer: { identityId: "someone-else", rights: ["auction"] },
         lotId: CONTRACT_LOT.lotId,
       });
       return appOf("auction")({
@@ -56,13 +56,38 @@ describe("auction contract self-check", () => {
     ]);
   });
 
+  // Заглушка, которая теряет права смотрящего: тот же человек и тот же лот,
+  // но Auction без прав отказал бы ему (ADR-064, пункт 6).
+  it("fails when the viewer reaches Auction without its rights", async () => {
+    const rightless: AuctionContractApp = (ports) =>
+      appOf("auction")({
+        ...ports,
+        auction: {
+          ...ports.auction,
+          getLot: (request) =>
+            ports.auction.getLot({
+              ...request,
+              viewer: { ...request.viewer, rights: [] },
+            }),
+        },
+      });
+    const violations = await checkAuctionContractCase(
+      "auction",
+      rightless,
+      LOT_CASE,
+    );
+    expect(violations.map((v) => [v.intent, v.kind])).toEqual([
+      ["lot: trading", "wrong-port-call"],
+    ]);
+  });
+
   // Приложение спросило лот, которого в снимке нет: шпион падает, и это
   // нарушение намерения, а не сломанный прогон.
   it("reports an app that throws on the spy answer", async () => {
     const lost: AuctionContractApp = (ports) => async () => {
       await ports.identity.resolveIdentity({ telegramUserId: 424242 });
       await ports.auction.getLot({
-        viewer: { identityId: CONTRACT_VIEWER.identityId, globalRoles: [] },
+        viewer: CONTRACT_VIEWER,
         lotId: "01929b7e-5c1d-7a3f-8e4b-ffffffffffff",
       });
       throw new Error("unreachable");

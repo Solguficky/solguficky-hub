@@ -771,6 +771,18 @@ contour-up *args="":
 contour-bot-test: hub-bot-proto
     dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- -- npm --prefix apps/hub-bot run test:contour
 
+# Провод обоих ботов с Auction (L2): торги, автоставка, карточка лота и отказ
+# без права аукциона через бот хаба и бот аукциона против настоящих Identity,
+# Meetups и Auction. Сценарии лежат в tests/contour/bot-wire/auction, конфиг —
+# vitest.contour-auction.config.ts. Контур поднимается с Auction
+# (`Contour.Host --with-auction`), поэтому нужно то же, что `contour-bot-test`,
+# и ещё JDK из apps/auction/.java-version и sbt. Аукцион — расширение хаба:
+# рецепт не входит ни в verify, ни в test-all, ни в CI.
+#
+# Провод обоих ботов против настоящего Auction; вне verify, test-all и CI
+contour-bot-auction-test: hub-bot-proto
+    dotnet run --project tests/contour/Contour.Host/Contour.Host.csproj -- --with-auction -- npm --prefix apps/hub-bot run test:contour-auction
+
 # Исследующий прогон RFC-012 (роль 3, PER-273): случайные последовательности
 # действий человека поверх провода бота, оракулы — каркас записи логов. Не
 # гейт и не входит ни в verify, ни в test-all, ни в CI: недетерминированный

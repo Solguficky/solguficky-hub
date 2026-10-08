@@ -1,6 +1,5 @@
 import type {
   AuctionPort,
-  GlobalRole,
   LotImagePort,
   LotView,
   Money,
@@ -244,20 +243,8 @@ export type AuctionScreens = {
   screenPorts(meta?: RpcMetadata): AuctionScreenPorts;
 };
 
-const globalRoles: readonly GlobalRole[] = [
-  "admin",
-  "maintainer",
-  "member",
-  "public",
-];
-
-// Смотрящий пакета: роли Identity, которых словарь пакета не знает, не
-// передаются — Auction их тоже не знает и решает по известным.
+// Смотрящий пакета — права, которые Identity вывел этому человеку (ADR-064,
+// пункт 6): роли в Auction не едут, он решает по правам.
 export function viewerOf(person: Person): Viewer {
-  return {
-    identityId: person.identityId,
-    globalRoles: globalRoles.filter((role) =>
-      person.globalRoles.includes(role),
-    ),
-  };
+  return { identityId: person.identityId, rights: person.rights };
 }

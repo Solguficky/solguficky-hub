@@ -10,6 +10,7 @@ import {
 import { requestIdHeader } from "../../core/rpc-metadata.js";
 import {
   type AuctionRpc,
+  createDeliveryPorts,
   createPorts,
   type IdentityRpc,
   imageTimeoutMs,
@@ -106,8 +107,15 @@ function rpcs() {
   };
 }
 
-const viewer = { identityId: "id-1", globalRoles: ["public"] as const };
-const wireViewer = { identityId: "id-1", globalRoles: [GlobalRole.GUEST] };
+// Смотрящий уходит в Auction с правами, как их вывел Identity, без ролей.
+const viewer = {
+  identityId: "id-1",
+  rights: ["auction", "manage-auction"] as const,
+};
+const wireViewer = {
+  identityId: "id-1",
+  rights: [AccessRight.AUCTION, AccessRight.MANAGE_AUCTION],
+};
 const callOptions = {
   timeoutMs: 1_000,
   headers: { [requestIdHeader]: "req-1" },
@@ -117,31 +125,29 @@ describe("createPorts", () => {
   it("does not treat an unconfirmed RPC response as saved completion", async () => {
     const { auction, ports } = rpcs();
     auction.acknowledgeFaq.mockResolvedValue({ acknowledged: false });
-    await expect(
-      ports.faq.acknowledge({ identityId: "id-1", globalRoles: ["public"] }),
-    ).rejects.toThrow("did not acknowledge");
+    await expect(ports.faq.acknowledge(viewer)).rejects.toThrow(
+      "did not acknowledge",
+    );
   });
   it("reads and records FAQ acknowledgement for the viewer with request metadata", async () => {
     const { auction, ports } = rpcs();
-    const viewer = { identityId: "id-1", globalRoles: ["public"] as const };
     expect(await ports.faq.acknowledged(viewer)).toBe(false);
     await ports.faq.acknowledge(viewer);
     for (const rpc of [auction.getFaqAcknowledgement, auction.acknowledgeFaq]) {
       expect(rpc).toHaveBeenCalledWith(
-        { viewer: { identityId: "id-1", globalRoles: [GlobalRole.GUEST] } },
+        { viewer: wireViewer },
         { timeoutMs: 1_000, headers: { [requestIdHeader]: "req-1" } },
       );
     }
   });
-  it("maps the resolved identity and drops the unspecified role and right", async () => {
+  it("maps the resolved identity into a viewer with rights and drops the unspecified right", async () => {
     const { identity, ports } = rpcs();
     const resolved = await ports.identity.resolveIdentity({
       telegramUserId: 42,
       telegramUsername: "nick",
     });
     expect(resolved).toEqual({
-      viewer: { identityId: "id-1", globalRoles: ["public", "member"] },
-      rights: ["hub", "auction"],
+      viewer: { identityId: "id-1", rights: ["hub", "auction"] },
       blocked: false,
     });
     expect(identity.resolveIdentity).toHaveBeenCalledWith(
@@ -159,8 +165,7 @@ describe("createPorts", () => {
       firstName: "Сова",
     });
     expect(answer).toEqual({
-      viewer: { identityId: "id-1", globalRoles: ["public"] },
-      rights: ["auction"],
+      viewer: { identityId: "id-1", rights: ["auction"] },
       outcome: "granted-by-allowlist",
     });
     expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
@@ -226,10 +231,7 @@ describe("createPorts", () => {
 
   it("sends the viewer to Auction and maps the snapshot", async () => {
     const { auction, ports } = rpcs();
-    const lot = await ports.auction.getLot({
-      viewer: { identityId: "id-1", globalRoles: ["public"] },
-      lotId: "lot-1",
-    });
+    const lot = await ports.auction.getLot({ viewer, lotId: "lot-1" });
     expect(lot).toEqual({
       lotId: "lot-1",
       auctionId: "auc-1",
@@ -238,10 +240,7 @@ describe("createPorts", () => {
       status: { kind: "unsold" },
     });
     expect(auction.getLot).toHaveBeenCalledWith(
-      {
-        viewer: { identityId: "id-1", globalRoles: [GlobalRole.GUEST] },
-        lotId: "lot-1",
-      },
+      { viewer: wireViewer, lotId: "lot-1" },
       { timeoutMs: 1_000, headers: { [requestIdHeader]: "req-1" } },
     );
   });
@@ -362,5 +361,40 @@ describe("action budget", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("notification reads", () => {
+  it("asks Identity for the auction right of the recipient", async () => {
+    const checkAccessRight = vi.fn(async () => ({ granted: false }));
+    const { reads } = createDeliveryPorts(
+      { checkAccessRight } as unknown as IdentityRpc,
+      {} as AuctionRpc,
+      1_000,
+    );
+    expect(await reads.hasAuctionRight("id-1", "req-1")).toBe(false);
+    expect(checkAccessRight).toHaveBeenCalledExactlyOnceWith(
+      { identityId: "id-1", right: AccessRight.AUCTION },
+      callOptions,
+    );
+  });
+
+  // Право получателя Identity подтвердил шагом раньше; ролей Auction не
+  // получает.
+  it("reads the lot title as the recipient with the auction right", async () => {
+    const getLot = vi.fn(async () => ({ card: { title: "Кружка" } }));
+    const { reads } = createDeliveryPorts(
+      {} as IdentityRpc,
+      { getLot } as unknown as AuctionRpc,
+      1_000,
+    );
+    expect(await reads.lotTitle("id-1", "lot-1", "req-1")).toBe("Кружка");
+    expect(getLot).toHaveBeenCalledExactlyOnceWith(
+      {
+        viewer: { identityId: "id-1", rights: [AccessRight.AUCTION] },
+        lotId: "lot-1",
+      },
+      callOptions,
+    );
   });
 });

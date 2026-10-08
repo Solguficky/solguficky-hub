@@ -3,18 +3,6 @@
 // сообщения. Пакет поэтому не зависит ни от `@bufbuild/protobuf`, ни от
 // сгенерированного кода, а contract suite подставляет вместо клиентов шпионов.
 
-export const GLOBAL_ROLES = [
-  "admin",
-  "maintainer",
-  "member",
-  "public",
-] as const;
-
-// Роли Identity в словаре пакета. Пакет их не читает: они едут транзитом в
-// `auction.v1.Viewer`, где Auction решает по ним о своём ресурсе, пока все
-// вызывающие не пришлют права.
-export type GlobalRole = (typeof GLOBAL_ROLES)[number];
-
 export const ACCESS_RIGHTS = [
   "hub",
   "auction",
@@ -28,11 +16,10 @@ export const ACCESS_RIGHTS = [
 // адаптер отбрасывает, и оно ничего не даёт.
 export type AccessRight = (typeof ACCESS_RIGHTS)[number];
 
-// Решение о допуске читает только `rights`: роли лежат в `viewer`, который
-// уходит в Auction как есть.
+// Решение о допуске читает только права смотрящего: те же права уходят в
+// Auction, и он решает по ним о своём ресурсе.
 export type ResolvedIdentity = {
   viewer: Viewer;
-  rights: readonly AccessRight[];
   // Отметка блокировки. Допуск она не решает — только выбирает текст отказа.
   blocked: boolean;
 };
@@ -78,7 +65,6 @@ export type RoleRequestOutcome = (typeof ROLE_REQUEST_OUTCOMES)[number];
 // Отметки блокировки в ответе входа нет: её несёт исход `blocked`.
 export type RoleRequestAnswer = {
   viewer: Viewer;
-  rights: readonly AccessRight[];
   outcome: RoleRequestOutcome;
 };
 
@@ -88,11 +74,12 @@ export interface EntryPort {
   requestRole(request: RoleRequest): Promise<RoleRequestAnswer>;
 }
 
-// Смотрящий в запросах Auction. Отметки блокировки здесь нет, как и в
-// `auction.v1.Viewer`: решение по ресурсу принимает Auction.
+// Смотрящий в запросах Auction с правами, которые вывел Identity (ADR-064,
+// пункт 6). Ролей и отметки блокировки здесь нет, как и в `auction.v1.Viewer`:
+// решение по ресурсу Auction принимает по правам.
 export type Viewer = {
   identityId: string;
-  globalRoles: readonly GlobalRole[];
+  rights: readonly AccessRight[];
 };
 
 // Сумма в минимальных единицах валюты — копейках для RUB. `number`, а не

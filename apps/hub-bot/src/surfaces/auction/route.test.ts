@@ -38,29 +38,32 @@ function summary(index: number, stage: AuctionSummary["stage"]) {
   };
 }
 
-// Роли едут транзитом в Auction и допуска не решают: пускает право.
-const VIEWER = {
-  identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-  globalRoles: ["public"],
-} as const;
+// Пускает право смотрящего; те же права уходят в Auction.
+const VIEWER_ID = "01926f3c-8b7a-7cde-8f00-00000000000a";
 const GUEST: readonly AccessRight[] = ["auction"];
 const MEMBER: readonly AccessRight[] = ["hub", "auction"];
 
 function identity(
-  overrides: Partial<Omit<ResolvedIdentity, "viewer">>,
+  overrides: { rights?: readonly AccessRight[]; blocked?: boolean } = {},
 ): ResolvedIdentity {
-  return { viewer: VIEWER, rights: [], blocked: false, ...overrides };
+  return {
+    viewer: { identityId: VIEWER_ID, rights: overrides.rights ?? [] },
+    blocked: overrides.blocked ?? false,
+  };
 }
 
 // Что вход ответил бы человеку с такой личностью: заблокированному —
 // `blocked`, с правом аукциона — что оно уже есть, остальным — заявку.
 function entered(resolved: ResolvedIdentity): RoleRequestAnswer {
+  const { rights } = resolved.viewer;
   return {
-    viewer: resolved.viewer,
-    rights: resolved.blocked ? [] : resolved.rights,
+    viewer: {
+      identityId: resolved.viewer.identityId,
+      rights: resolved.blocked ? [] : rights,
+    },
     outcome: resolved.blocked
       ? "blocked"
-      : resolved.rights.includes("auction")
+      : rights.includes("auction")
         ? "already-held"
         : "pending",
   };
@@ -225,7 +228,7 @@ describe("FAQ entry", () => {
     const p = ports(identity({ rights: [...MEMBER, "manage-membership"] }));
     expect(await routeAuctionStart({ ports: p, user, firstName })).toEqual({
       screen: { kind: "denied", reason: "in-community" },
-      identityId: VIEWER.identityId,
+      identityId: VIEWER_ID,
     });
     expect(
       (await routeAuctionCallback({ ports: p, user, data: lotButton })).screen,
@@ -299,7 +302,7 @@ describe("FAQ entry", () => {
     expect(p.faq.acknowledge).toHaveBeenCalledTimes(2);
     expect(p.faq.acknowledge).toHaveBeenCalledWith({
       identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-      globalRoles: ["public"],
+      rights: ["auction"],
     });
   });
 
@@ -422,7 +425,7 @@ describe("auction lists", () => {
     expect(p.catalog.listAuctions).toHaveBeenCalledWith({
       viewer: {
         identityId: admitted.viewer.identityId,
-        globalRoles: ["public"],
+        rights: ["auction"],
       },
       listing: "active",
       pageToken: "",
@@ -539,7 +542,7 @@ describe("routeAuctionCallback", () => {
     expect(outcome.identityId).toBe("01926f3c-8b7a-7cde-8f00-00000000000a");
     expect(outcome.viewer).toEqual({
       identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-      globalRoles: ["public"],
+      rights: ["auction"],
     });
   });
 

@@ -55,11 +55,11 @@ export function parseTraceCallback(data: string): string | undefined {
 }
 
 // Чтения, которые нужны тексту уведомления. Название лота отдаёт Auction
-// только зрителю с ролью `public` (Viewer.isParticipant), а роль получателя
+// только зрителю с правом `auction` (Viewer.isParticipant), а право получателя
 // канал не придумывает — спрашивает у Identity.
 export type NotificationReads = {
-  // true — роль есть, false — нет; недоступность Identity — исключение.
-  hasPublicRole(identityId: string, requestId?: string): Promise<boolean>;
+  // true — право есть, false — нет; недоступность Identity — исключение.
+  hasAuctionRight(identityId: string, requestId?: string): Promise<boolean>;
   // Название лота глазами получателя; любой отказ — исключение со своим кодом.
   lotTitle(
     identityId: string,
@@ -68,11 +68,11 @@ export type NotificationReads = {
   ): Promise<string>;
 };
 
-// Сборка сообщения. Без роли `public` уведомление не отправляется вовсе:
-// кнопка упёрлась бы в тот же отказ, а человек, у которого роль сняли, о
+// Сборка сообщения. Без права `auction` уведомление не отправляется вовсе:
+// кнопка упёрлась бы в тот же отказ, а человек, у которого право сняли, о
 // торгах больше не слышит. Недоступный Auction названия не роняет: перебитие
 // ценно вовремя, а название видно в карточке по кнопке. Отказ, который повтор
-// не изменит, — лот не найден или не виден получателю с ролью, — дефект: такое
+// не изменит, — лот не найден или не виден получателю с правом, — дефект: такое
 // уведомление снимается, а не уходит с кнопкой в тот же отказ.
 export function createRenderMessage(
   reads: NotificationReads,
@@ -81,7 +81,7 @@ export function createRenderMessage(
   return async (content, { recipientId, requestId }) => {
     let eligible: boolean;
     try {
-      eligible = await reads.hasPublicRole(recipientId, requestId);
+      eligible = await reads.hasAuctionRight(recipientId, requestId);
     } catch (cause) {
       return isPermanentFailure(cause)
         ? { kind: "rejected", cause }

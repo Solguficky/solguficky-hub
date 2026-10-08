@@ -6,7 +6,7 @@ import { FEED_PAGE_SIZE, openFeed, sortForFeed } from "./open-feed.js";
 const AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
 const VIEWER = {
   identityId: "01929b7e-5c1d-7a3f-8e4b-000000000001",
-  globalRoles: ["public"] as const,
+  rights: ["auction"] as const,
 };
 
 function lot(n: number, rubles?: number): LotView {

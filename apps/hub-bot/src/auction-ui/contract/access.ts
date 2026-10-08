@@ -78,11 +78,7 @@ export type AccessViolation = {
 };
 
 const FIRST_NAME = "Сова";
-// Роли едут транзитом в Auction и в матрице ничего не решают.
-const VIEWER = {
-  identityId: "01929b7e-5c1d-7a3f-8e4b-000000000009",
-  globalRoles: [],
-} as const;
+const VIEWER_ID = "01929b7e-5c1d-7a3f-8e4b-000000000009";
 
 const LOT_BUTTON: AccessAction = {
   kind: "callback",
@@ -365,8 +361,7 @@ export async function checkAccessMatrixCase(
       async resolveIdentity(request) {
         identityCalls.push({ method: "resolveIdentity", request });
         return {
-          viewer: VIEWER,
-          rights: person.rights,
+          viewer: { identityId: VIEWER_ID, rights: person.rights },
           blocked: person.blocked,
         };
       },
@@ -375,8 +370,7 @@ export async function checkAccessMatrixCase(
       async requestRole(request) {
         identityCalls.push({ method: "requestRole", request });
         return {
-          viewer: VIEWER,
-          rights: person.rights,
+          viewer: { identityId: VIEWER_ID, rights: person.rights },
           outcome: person.outcome,
         };
       },

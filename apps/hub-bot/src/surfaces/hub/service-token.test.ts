@@ -145,7 +145,7 @@ describe("auction client", () => {
       );
       // Порты экранов пакета ходят тем же транспортом.
       await auction.screenPorts(meta).auction.listAuctionLots({
-        viewer: { identityId: "id-1", globalRoles: ["member"] },
+        viewer: { identityId: "id-1", rights: ["hub", "auction"] },
         auctionId: "daef05c7-cd68-5048-b03d-cb4860e8dc73",
         pageToken: "",
       });

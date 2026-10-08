@@ -22,7 +22,14 @@ export default defineConfig({
     // переименовании файла.
     // Пульт (`console/`) — своя единица со своими vitest-конфигами: его L0
     // и сам пульт гоняются оттуда, а не конфигами хаба.
-    exclude: [...configDefaults.exclude, "explore/**", "console/**"],
+    // Сценарии с Auction (`auction/`) требуют контура с `--with-auction` и
+    // гоняются своим конфигом (`vitest.contour-auction.config.ts`).
+    exclude: [
+      ...configDefaults.exclude,
+      "explore/**",
+      "console/**",
+      "auction/**",
+    ],
     // Файлы делят одну топологию и одну базу: параллельный прогон смешал бы
     // их записи и сделал бы красный невоспроизводимым.
     fileParallelism: false,
