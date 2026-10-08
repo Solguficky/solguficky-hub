@@ -3849,9 +3849,7 @@ function managementRefusal(
     case "reconsider":
       return queueAllowed(action.queue, person)
         ? undefined
-        : action.queue === "community"
-          ? refusedForbiddenText
-          : auctionQueueForbiddenText;
+        : queueTexts[action.queue].refusedForbidden;
     default:
       return undefined;
   }
@@ -3863,17 +3861,30 @@ function queueAllowed(queue: ApplicationQueue, person: Person): boolean {
     : canModerateAuction(person);
 }
 
+// Тексты отказа у каждой очереди свои: кто решает её заявки и отказанных.
+// `toast` — всплывающий ответ на отказ сервиса посреди решения.
+const queueTexts: Record<
+  ApplicationQueue,
+  { forbidden: string; refusedForbidden: string; toast: string }
+> = {
+  community: {
+    forbidden: applicationsForbiddenText,
+    refusedForbidden: refusedForbiddenText,
+    toast: "Это может только администратор.",
+  },
+  auction: {
+    forbidden: auctionQueueForbiddenText,
+    refusedForbidden: auctionQueueForbiddenText,
+    toast: "Это может только модератор аукциона.",
+  },
+};
+
 function queueForbiddenText(queue: ApplicationQueue): string {
-  return queue === "community"
-    ? applicationsForbiddenText
-    : auctionQueueForbiddenText;
+  return queueTexts[queue].forbidden;
 }
 
-// Всплывающий ответ на отказ сервиса посреди решения: кто может это сделать.
 function forbiddenToast(queue: ApplicationQueue): string {
-  return queue === "community"
-    ? "Это может только администратор."
-    : "Это может только модератор аукциона.";
+  return queueTexts[queue].toast;
 }
 
 function moderationToast(
@@ -3975,11 +3986,9 @@ function showRefusedRefusal(
 ): Promise<void> {
   return showRefusal(
     ctx,
-    result.kind !== "forbidden"
-      ? unavailableText
-      : queue === "community"
-        ? refusedForbiddenText
-        : auctionQueueForbiddenText,
+    result.kind === "forbidden"
+      ? queueTexts[queue].refusedForbidden
+      : unavailableText,
     withNav(new InlineKeyboard(), toManage),
   );
 }
