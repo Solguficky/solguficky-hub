@@ -76,6 +76,7 @@ final class GrpcBoundarySpec
     def selectForFinal(in: wire.SelectForFinalRequest) = unused
     def deselectForFinal(in: wire.DeselectForFinalRequest) = unused
     def getAuctionConsole(in: wire.GetAuctionConsoleRequest) = unused
+    def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest) = unused
     def createLotCard(in: wire.CreateLotCardRequest) = unused
     def editLotCard(in: wire.EditLotCardRequest) = unused
     def listAuctionLots(in: wire.ListAuctionLotsRequest) = unused
@@ -205,6 +206,31 @@ final class GrpcBoundarySpec
       written("grpc_code") shouldBe "OK"
       written("caller") shouldBe "hub-bot"
       written("request_id") shouldBe "req-7"
+    }
+
+    "answers UNIMPLEMENTED to the hub bot reading lot statistics" in {
+      statusOf(
+        client
+          .getAuctionLotStatistics()
+          .addHeader("authorization", "Bearer hub")
+          .invoke(wire.GetAuctionLotStatisticsRequest())
+      ) shouldBe Status.Code.UNIMPLEMENTED
+      val written = record
+      written("operation") shouldBe "auction.v1.AuctionService/GetAuctionLotStatistics"
+      written("grpc_code") shouldBe "UNIMPLEMENTED"
+      written("caller") shouldBe "hub-bot"
+    }
+
+    "refuses lot statistics to the auction bot before reaching the service" in {
+      statusOf(
+        client
+          .getAuctionLotStatistics()
+          .addHeader("authorization", "Bearer auction")
+          .invoke(wire.GetAuctionLotStatisticsRequest())
+      ) shouldBe Status.Code.UNAUTHENTICATED
+      val written = record
+      written("caller_refusal") shouldBe "not_declared"
+      written("caller") shouldBe "auction-bot"
     }
 
     "answers UNAUTHENTICATED to a call without a token and records the reason" in {

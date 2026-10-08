@@ -35,6 +35,7 @@ object MethodAccess {
     "SelectForFinal" -> Set(Caller.HubBot),
     "DeselectForFinal" -> Set(Caller.HubBot),
     "GetAuctionConsole" -> Set(Caller.HubBot),
+    "GetAuctionLotStatistics" -> Set(Caller.HubBot),
     "GetMeetupAuction" -> Set(Caller.HubBot),
     "ListAuctions" -> bots,
     "MarkInvoicePaid" -> Set(Caller.AuctionBot),

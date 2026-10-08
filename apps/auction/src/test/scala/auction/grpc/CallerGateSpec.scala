@@ -21,6 +21,13 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
 
   "caller gate" should {
 
+    "admits only the hub bot on lot statistics" in {
+      CallerGate.decide(table, Some("GetAuctionLotStatistics"), Some("Bearer hub")) shouldBe
+        GateDecision.Admitted(Caller.HubBot)
+      CallerGate.decide(table, Some("GetAuctionLotStatistics"), Some("Bearer auction")) shouldBe
+        GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
+    }
+
     "admits only the auction bot on the FAQ methods" in {
       List("GetFaqAcknowledgement", "AcknowledgeFaq").foreach { method =>
         CallerGate.decide(table, Some(method), Some("Bearer auction")) shouldBe GateDecision.Admitted(Caller.AuctionBot)
