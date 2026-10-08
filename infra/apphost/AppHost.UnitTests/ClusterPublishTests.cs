@@ -65,7 +65,7 @@ public class ClusterPublishTests
     }
 
     /// <summary>
-    /// Identity, боты и Auction собираются по своим Containerfile из корня
+    /// Identity, бот хаба и Auction собираются по своим Containerfile из корня
     /// репозитория, а не цепочкой buf/go build, sbt и голой JVM и не контейнером,
     /// который Aspire сгенерировал бы из <c>AddJavaScriptApp</c>: их кодогенерации
     /// нужен <c>contracts/proto</c>.
@@ -73,7 +73,6 @@ public class ClusterPublishTests
     [Theory]
     [InlineData(R.Identity, "apps/identity/Containerfile")]
     [InlineData(R.HubBot, "apps/hub-bot/Containerfile")]
-    [InlineData(R.AuctionBot, "apps/hub-bot/Containerfile")]
     [InlineData(R.Auction, "apps/auction/Containerfile")]
     public async Task Publish_ContainerfileServices_BuildFromRepositoryRoot(string name, string containerfile)
     {
@@ -89,6 +88,23 @@ public class ClusterPublishTests
         // Перенос Containerfile без правки графа дал бы чарт, образ которого CI
         // соберёт по другому пути, — или не соберёт вовсе.
         File.Exists(build.DockerfilePath).ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Бот аукциона своей сборки не имеет: образ у пакета ботов один (ADR-064,
+    /// п. 18). Сборка дала бы ему свой ключ образа в values, и среда могла бы
+    /// выкатить двум ботам разный код под одним Containerfile. Что workload
+    /// читает ключ бота хаба, держит правило чарта (tools/apphost/check-chart.py).
+    /// </summary>
+    [Fact]
+    public async Task Publish_AuctionBot_HasNoBuildOfItsOwn()
+    {
+        var builder = await PublishModelAsync();
+
+        var resource = builder.Resources.Single(resource => resource.Name == R.AuctionBot);
+
+        resource.ShouldBeOfType<ContainerResource>();
+        resource.Annotations.OfType<DockerfileBuildAnnotation>().ShouldBeEmpty();
     }
 
     [Fact]

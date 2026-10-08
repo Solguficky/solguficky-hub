@@ -1,6 +1,8 @@
 name: Image Hub Bot
 
-# Production-образ Hub Bot по apps/hub-bot/Containerfile. Pull request
+# Production-образ пакета ботов по apps/hub-bot/Containerfile — один на бот
+# хаба и бот аукциона: процессы различает переменная BOT_SURFACE, а workload
+# auction-bot в чарте читает ключ образа hub-bot (ADR-064, п. 18). Pull request
 # только собирает образ и проверяет его: в GHCR ничего не пишется, и права
 # записи код из PR не получает. Push в develop публикует образ — кандидата на
 # stage. Мерж в main образ не пересобирает: на прод едет тот же digest, что
@@ -64,7 +66,8 @@ jobs:
       publish: true
 
   # Кандидат stage: digest уходит в ops-репозиторий, откуда stage выкатывает
-  # его сам (stage-bump.yml, дополнение ADR-055 от 2026-10-07).
+  # его сам (stage-bump.yml, дополнение ADR-055 от 2026-10-07). Ключ один на
+  # оба бота: bump перекатывает и бот хаба, и бот аукциона.
   stage:
     needs: publish
     permissions: {}

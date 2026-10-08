@@ -14,14 +14,15 @@ namespace AppHost.Configuration.Services;
 internal static class AuctionBotSetup
 {
     // Форма бота хаба: ни порта, ни health, поэтому проб нет и остаётся рестарт
-    // по выходу (HubBotSetup).
+    // по выходу (HubBotSetup). Образ — тоже его.
     private static readonly ClusterWorkload Cluster = new(
         RunAsUser: 1000,
         CpuRequest: "50m",
         MemoryRequest: "128Mi",
         CpuLimit: "500m",
         MemoryLimit: "256Mi",
-        Probe: null);
+        Probe: null,
+        ImageOf: AppHostNames.Resources.HubBot);
 
     public static IResourceBuilder<IResourceWithEnvironment> Configure(ServiceGraphContext context)
     {
@@ -36,19 +37,18 @@ internal static class AuctionBotSetup
     }
 
     /// <summary>
-    /// В чарте бот — образ по Containerfile пакета ботов из корня репозитория,
-    /// как бот хаба (ADR-055): образ тот же, поверхность выбирает переменная. Значения токенов при публикации неизвестны, поэтому
-    /// <see cref="RequireOwnToken"/> здесь не зовётся: в среде повтор токена
-    /// бота хаба ловит её выкладка до старта подов.
+    /// В чарте бот своей сборки не имеет: workload берёт образ бота хаба, а
+    /// поверхность выбирает переменная (ADR-064, п. 18). Имя образа здесь —
+    /// заглушка: шаблон пода читает ключ образа бота хаба
+    /// (<see cref="ClusterWorkload.ImageOf"/>). Значения токенов при публикации
+    /// неизвестны, поэтому <see cref="RequireOwnToken"/> здесь не зовётся: в
+    /// среде повтор токена бота хаба ловит её выкладка до старта подов.
     /// </summary>
     public static IResourceBuilder<ContainerResource> Publish(ServiceGraphContext context) =>
         Wire(
                 context,
                 TelegramEnvironment.Production,
-                context.Builder.AddDockerfile(
-                    AppHostNames.Resources.AuctionBot,
-                    RepositoryPaths.Root(context.Builder),
-                    "apps/hub-bot/Containerfile"))
+                context.Builder.AddContainer(AppHostNames.Resources.AuctionBot, AppHostNames.Resources.HubBot))
             .AsClusterWorkload(Cluster);
 
     private static IResourceBuilder<T> Wire<T>(

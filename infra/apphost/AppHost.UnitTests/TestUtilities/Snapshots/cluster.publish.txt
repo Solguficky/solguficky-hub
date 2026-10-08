@@ -29,8 +29,7 @@ auction: ContainerResource
   relationship: WaitFor nats
   health: auction_http_/health_200_check
 auction-bot: ContainerResource
-  image: /placeholder:latest
-  build: <repo>/apps/hub-bot/Containerfile context=<repo>
+  image: /hub-bot:latest
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod

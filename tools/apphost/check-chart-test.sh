@@ -49,6 +49,14 @@ EOF
     fi
 }
 
+# image NAME - the image a service runs: the auction bot runs the hub bot's
+image() {
+    case "$1" in
+        auction-bot) echo "ghcr.io/solguficky/hub-bot@$digest" ;;
+        *) echo "ghcr.io/solguficky/$1@$digest" ;;
+    esac
+}
+
 # deployment NAME - a Deployment that satisfies every rule; cases edit it with sed
 deployment() {
     cat <<EOF
@@ -65,7 +73,7 @@ spec:
         checksum/secrets: "$checksum"
     spec:
       containers:
-        - image: "ghcr.io/solguficky/$1@$digest"
+        - image: "$(image "$1")"
 EOF
     probes "$1"
     cat <<EOF
@@ -180,7 +188,12 @@ assert_fails "a rollingUpdate block next to Recreate" "notifications: rollingUpd
 
 work=$(tree image-tag)
 sed -i "s|hub-bot@$digest|hub-bot:latest|" "$work/solguficky-hub/templates/hub-bot/deployment.yaml"
+sed -i "s|hub-bot@$digest|hub-bot:latest|" "$work/solguficky-hub/templates/auction-bot/deployment.yaml"
 assert_fails "an image by tag" "hub-bot: image 'ghcr.io/solguficky/hub-bot:latest' is not pinned" "$work"
+
+work=$(tree auction-bot-own-image)
+sed -i "s|hub-bot@$digest|auction-bot@$digest|" "$work/solguficky-hub/templates/auction-bot/deployment.yaml"
+assert_fails "the auction bot on an image of its own" "auction-bot: image ['ghcr.io/solguficky/auction-bot@$digest'] differs from hub-bot's" "$work"
 
 work=$(tree root)
 sed -i '/runAsNonRoot/d' "$work/solguficky-hub/templates/identity/deployment.yaml"
