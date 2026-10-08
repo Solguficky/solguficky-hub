@@ -6,7 +6,7 @@
 
 `shared/dotnet/ServiceDefaults/` — обвязка Aspire ServiceDefaults (логирование, OpenTelemetry, health checks, discovery). Её первый потребитель — Meetups.
 
-`shared/typescript/auction-bot-ui/` — общий пакет аукционного интерфейса бота хаба и бота аукциона ([ADR-044](../docs/decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md)). Доменных типов торгов в нём нет: он держит модель экрана и кнопок и ходит в Auction через порт, а правила торгов остаются у сервиса. Каталог TypeScript-пакета называется kebab-case, как каталоги компонентов в `apps/`.
+Каталог TypeScript-пакета называется kebab-case, как каталоги компонентов в `apps/`. Аукционный интерфейс двух ботов был здесь пакетом `auction-bot-ui`, а с переездом ботов в один пакет живёт в `apps/hub-bot/src/auction-ui` ([ADR-064](../docs/decisions/ADR-064-two-bots-by-audience-circle-and-rights.md), п. 18).
 
 `shared/typescript/telegram-delivery/` — механика доставки адресных фактов Notifications в Telegram, общая для двух ботов (дополнение [ADR-044](../docs/decisions/ADR-044-two-telegram-bots-and-shared-auction-screens.md) от 2026-10-04): потребитель durable, журнал попыток в JetStream KV, повторы и классы отказов Bot API. Доменных типов в нём нет: разбор своих веток уведомления, текст и клавиатуру держит каждый бот.
 

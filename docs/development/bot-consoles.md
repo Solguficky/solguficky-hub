@@ -354,7 +354,7 @@ Web K опорным клиентом не является ([дизайн-ко�
 | `alice@hub document <имя>`, `alice@hub photo big` | `person.sendsDocument(fileName)`, `person.sendsPhoto("big")` |
 | `restart hub` | `wire.restart()` |
 | `last.text`, `pressable` | `person.sees()`, `person.pressable()` |
-| `carol@auction …` | сценариев L2 у бота аукциона пока нет: его провод `openAuctionBotWire` из `apps/auction-bot/testkit/` и тот же `Person` — вход для первого |
+| `carol@auction …` | сценариев L2 у бота аукциона пока нет: его провод `openAuctionBotWire` из `apps/hub-bot/testkit/auction/` и тот же `Person` — вход для первого |
 
 Проверку итога бери из прямых клиентов (`direct.readAsAdmin`, `direct.journalOf`), а не только с экрана: иначе провод проверяет сам себя. Находка, которую видно только на L3, становится кадром в `tests/telegram-live/*.live.test.ts`, если её можно выразить через `sendStart` и `press` драйвера, а иначе — задачей на расширение драйвера.
 
