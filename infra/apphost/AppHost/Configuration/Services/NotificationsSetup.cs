@@ -33,9 +33,10 @@ internal static class NotificationsSetup
             // В этом поясе реплика хранит расписание, и в нём же момент начала
             // становится мгновением, от которого считается напоминание.
             .WithEnvironment("NOTIFICATIONS_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
-            // Notifications вызывает Meetups и Identity и принимает бота (ADR-056).
+            // Notifications вызывает Meetups и Identity и принимает обоих ботов
+            // (ADR-056): бот аукциона — избранные лоты (ADR-063).
             .WithServiceToken(context)
-            .AcceptCallers(context, AppHostNames.Resources.HubBot)
+            .AcceptCallers(context, AppHostNames.Resources.HubBot, AppHostNames.Resources.AuctionBot)
             // Notifications — .NET, поэтому берёт готовую строку Npgsql, как Meetups.
             // Миграции применяет сам сервис при старте, до подъёма силоса: таблицы
             // membership Orleans заводит тот же DbUp.

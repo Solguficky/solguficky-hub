@@ -30,6 +30,12 @@ public sealed class PreferencesUnderTest : IAsyncDisposable
 
     public NotificationsService.NotificationsServiceClient Client { get; }
 
+    /// <summary>Клиент, предъявляющий <paramref name="token" />; <c>null</c> — без заголовка.</summary>
+    public NotificationsService.NotificationsServiceClient ClientPresenting(string? token) =>
+        token is null
+            ? new NotificationsService.NotificationsServiceClient(channel)
+            : new NotificationsService.NotificationsServiceClient(SiloUnderTest.Presenting(channel, token));
+
     /// <summary>Проба grpc.health.v1 по тому же каналу, что и команды.</summary>
     public Health.HealthClient Health { get; }
 

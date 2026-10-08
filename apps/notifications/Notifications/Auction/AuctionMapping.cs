@@ -6,14 +6,36 @@ using Google.Protobuf;
 namespace Notifications.Auction;
 
 /// <summary>
-/// Проверенная ставка; снимок лота не реплицируется и версией не фильтруется.
-/// Ручная ставка, которую та же команда перебила чужой автоставкой, лидерство
-/// прежнего лидера не отняла: оно вернулось к нему следующим фактом, и о
-/// перебитии ему не сообщают (PER-473). Автоставка, ответившая чужой команде,
-/// сообщает лидеру, что подняла цену.
+/// Положение лота в снимке факта. Конечные — продан, не продан и снят: после
+/// них лот не меняется, и с этого момента идёт срок хранения отметок (ADR-063).
+/// </summary>
+public enum LotStatus { Draft, Scheduled, Trading, Held, Sold, Unsold, Withdrawn }
+
+/// <summary>
+/// Снимок лота, который нужен избранному: дедлайн, лидер и положение. Дедлайна
+/// нет у лота без торгов, у лота, который ведёт человек, и у удержанного для
+/// финала; лидера нет до первой ставки. У проданного лидер — победитель.
+/// </summary>
+public sealed record LotSnapshot(Guid LotId, long Version, DateTimeOffset OccurredAt, LotStatus Status,
+    DateTimeOffset? Deadline, Guid? Leader)
+{
+    public bool Terminal => Status is LotStatus.Sold or LotStatus.Unsold or LotStatus.Withdrawn;
+}
+
+/// <summary>Факт лота без собственного повода: он только ведёт реплику.</summary>
+public sealed record AuctionLotFact(Guid EventId, LotSnapshot Snapshot);
+
+/// <summary>
+/// Проверенная ставка и снимок лота после неё. Ручная ставка, которую та же
+/// команда перебила чужой автоставкой, лидерство прежнего лидера не отняла:
+/// оно вернулось к нему следующим фактом, и о перебитии ему не сообщают
+/// (PER-473). Автоставка, ответившая чужой команде, сообщает лидеру, что
+/// подняла цену. Версией фильтруется только реплика, а не повод. Снимка нет,
+/// если его поля, которые повод не читает, кривые: повод важнее реплики.
 /// </summary>
 public sealed record AuctionBid(Guid EventId, Guid LotId, long Version, DateTimeOffset OccurredAt,
-    Guid? PreviousLeader, Guid Leader, Money Price, bool OvertakenByProxy = false, bool AnswersOtherBidder = false)
+    Guid? PreviousLeader, Guid Leader, Money Price, LotSnapshot? Snapshot, bool OvertakenByProxy = false,
+    bool AnswersOtherBidder = false)
 {
     public Guid? OutbidRecipient =>
         PreviousLeader is { } previous && previous != Leader && !OvertakenByProxy ? previous : null;
@@ -21,27 +43,31 @@ public sealed record AuctionBid(Guid EventId, Guid LotId, long Version, DateTime
     public Guid? ProxyRaisedRecipient => AnswersOtherBidder ? Leader : null;
 }
 
-/// <summary>Проверенная продажа: победитель и цена из state.sold.</summary>
+/// <summary>Проверенная продажа: победитель и цена из state.sold; снимок — как у ставки.</summary>
 public sealed record AuctionSale(Guid EventId, Guid LotId, long Version, DateTimeOffset OccurredAt,
-    Guid Winner, Money Price);
+    Guid Winner, Money Price, LotSnapshot? Snapshot);
 
 public abstract record AuctionDecoded
 {
     public sealed record Bid(AuctionBid Value) : AuctionDecoded;
     public sealed record Sale(AuctionSale Value) : AuctionDecoded;
+    public sealed record Lot(AuctionLotFact Value) : AuctionDecoded;
     public sealed record Poison(string Reason) : AuctionDecoded;
     public sealed record Ignored : AuctionDecoded;
 }
 
-/// <summary>Разбор только заявленных поводов. Другие subjects не декодируются как LotEvent.</summary>
+/// <summary>
+/// Разбор фактов лота. Факты аукциона и счёта под тем же префиксом не
+/// декодируются как LotEvent: тип сообщения выбирает subject.
+/// </summary>
 public static class AuctionMapping
 {
     public static AuctionDecoded Decode(string subject, ReadOnlyMemory<byte> payload)
     {
-        // В доменном стриме есть и LotEvent, и AuctionEvent. Этот модуль
-        // подписан на поводы ставки и продажи, а не на снимки остальных
-        // агрегатов: lot_unsold и lot_held_for_final факта не дают.
-        if (subject != AuctionFeed.BidPlacedSubject && subject != AuctionFeed.LotSoldSubject)
+        // В доменном стриме есть LotEvent, AuctionEvent и InvoiceEvent. Этот
+        // модуль ведёт реплику лота по каждому его факту, а поводы дают только
+        // ставка и продажа; снимки остальных агрегатов он не читает.
+        if (!AuctionFeed.LotSubjects.TryGetValue(subject, out var occasion))
         {
             return new AuctionDecoded.Ignored();
         }
@@ -64,18 +90,80 @@ public static class AuctionMapping
         {
             return new AuctionDecoded.Poison("occurred_at is not an RFC 3339 UTC instant");
         }
-        return subject == AuctionFeed.BidPlacedSubject
-            ? DecodeBid(message, eventId, lotId, occurredAt)
-            : DecodeSale(message, eventId, lotId, occurredAt);
+        if (message.OccasionCase != occasion)
+        {
+            return new AuctionDecoded.Poison($"{subject} subject does not match occasion");
+        }
+        if (message.State is not { } state || state.Id != message.LotId || !AuctionId(state.AuctionId))
+        {
+            return new AuctionDecoded.Poison("state does not identify the lot and its auction");
+        }
+        // Снимок, который не разобрался, отравляет только факт без повода: у
+        // ставки и продажи повод проверяется своими полями, и кривой дедлайн
+        // не должен стоить человеку «перебили» или «покупки».
+        var snapshot = Snapshot(state, lotId, message.Version, occurredAt);
+        return occasion switch
+        {
+            LotEvent.OccasionOneofCase.BidPlaced => DecodeBid(message, eventId, lotId, occurredAt, snapshot),
+            LotEvent.OccasionOneofCase.LotSold => DecodeSale(message, eventId, lotId, occurredAt, snapshot),
+            _ when snapshot is null => new AuctionDecoded.Poison("state status, deadline or leader is invalid"),
+            _ => new AuctionDecoded.Lot(new AuctionLotFact(eventId, snapshot)),
+        };
     }
 
-    private static AuctionDecoded DecodeBid(LotEvent message, Guid eventId, Guid lotId, DateTimeOffset occurredAt)
+    // Неизвестное положение — яд, а не «ничего не менять»: снимок без
+    // положения затёр бы реплику версией без содержания.
+    private static LotSnapshot? Snapshot(LotState state, Guid lotId, long version, DateTimeOffset occurredAt)
     {
-        if (message.OccasionCase != LotEvent.OccasionOneofCase.BidPlaced)
+        switch (state.StatusCase)
         {
-            return new AuctionDecoded.Poison("bid_placed subject does not match occasion");
+            case LotState.StatusOneofCase.Draft:
+                return new LotSnapshot(lotId, version, occurredAt, LotStatus.Draft, null, null);
+            case LotState.StatusOneofCase.Scheduled:
+                return new LotSnapshot(lotId, version, occurredAt, LotStatus.Scheduled, null, null);
+            case LotState.StatusOneofCase.Trading:
+            {
+                var trading = state.Trading;
+                DateTimeOffset? deadline = null;
+                if (trading.HasDeadline)
+                {
+                    if (!Instant(trading.Deadline, out var parsed)) return null;
+                    deadline = parsed;
+                }
+                return Leader(trading.HasLeaderId, trading.LeaderId, out var leader)
+                    ? new LotSnapshot(lotId, version, occurredAt, LotStatus.Trading, deadline, leader)
+                    : null;
+            }
+            case LotState.StatusOneofCase.Held:
+                return Leader(state.Held.HasLeaderId, state.Held.LeaderId, out var held)
+                    ? new LotSnapshot(lotId, version, occurredAt, LotStatus.Held, null, held)
+                    : null;
+            case LotState.StatusOneofCase.Sold:
+                return Id(state.Sold.WinnerId, out var winner)
+                    ? new LotSnapshot(lotId, version, occurredAt, LotStatus.Sold, null, winner)
+                    : null;
+            case LotState.StatusOneofCase.Unsold:
+                return new LotSnapshot(lotId, version, occurredAt, LotStatus.Unsold, null, null);
+            case LotState.StatusOneofCase.Withdrawn:
+                return new LotSnapshot(lotId, version, occurredAt, LotStatus.Withdrawn, null, null);
+            default:
+                return null;
         }
-        if (message.State is not { Trading: { } trading } state || state.Id != message.LotId || !AuctionId(state.AuctionId))
+    }
+
+    private static bool Leader(bool present, string value, out Guid? leader)
+    {
+        leader = null;
+        if (!present) return true;
+        if (!Id(value, out var id)) return false;
+        leader = id;
+        return true;
+    }
+
+    private static AuctionDecoded DecodeBid(LotEvent message, Guid eventId, Guid lotId, DateTimeOffset occurredAt,
+        LotSnapshot? snapshot)
+    {
+        if (message.State is not { Trading: { } trading } state)
         {
             return new AuctionDecoded.Poison("bid_placed state does not identify a trading lot and its auction");
         }
@@ -109,16 +197,13 @@ public static class AuctionMapping
             previous = previousId;
         }
         return new AuctionDecoded.Bid(new AuctionBid(eventId, lotId, message.Version, occurredAt, previous, leader, price.Clone(),
-            placed.OvertakenByProxy, placed.AnswersOtherBidder));
+            snapshot, placed.OvertakenByProxy, placed.AnswersOtherBidder));
     }
 
-    private static AuctionDecoded DecodeSale(LotEvent message, Guid eventId, Guid lotId, DateTimeOffset occurredAt)
+    private static AuctionDecoded DecodeSale(LotEvent message, Guid eventId, Guid lotId, DateTimeOffset occurredAt,
+        LotSnapshot? snapshot)
     {
-        if (message.OccasionCase != LotEvent.OccasionOneofCase.LotSold)
-        {
-            return new AuctionDecoded.Poison("lot_sold subject does not match occasion");
-        }
-        if (message.State is not { Sold: { } sold } state || state.Id != message.LotId || !AuctionId(state.AuctionId))
+        if (message.State is not { Sold: { } sold } state)
         {
             return new AuctionDecoded.Poison("lot_sold state does not identify a sold lot and its auction");
         }
@@ -133,7 +218,8 @@ public static class AuctionMapping
         {
             return new AuctionDecoded.Poison("lot_sold winner, bid, price, currency or sold_at is invalid");
         }
-        return new AuctionDecoded.Sale(new AuctionSale(eventId, lotId, message.Version, occurredAt, winner, price.Clone()));
+        return new AuctionDecoded.Sale(new AuctionSale(eventId, lotId, message.Version, occurredAt, winner, price.Clone(),
+            snapshot));
     }
 
     // RFC 3339 точность не ограничивает, а Auction пишет Instant.toString:

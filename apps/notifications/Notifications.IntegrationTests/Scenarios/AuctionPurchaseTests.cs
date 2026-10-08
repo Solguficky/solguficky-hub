@@ -38,18 +38,23 @@ public class AuctionPurchaseTests
         silo.Service<AuctionTelemetry>().Total("purchased").ShouldBe(1);
     }
 
+    /// <summary>
+    /// Непроданный и удержанный для финала лот повода не дают, но ведут реплику
+    /// лота избранного (ADR-063): ключ события и снимок, без факта.
+    /// </summary>
     [Fact]
-    public async Task When_LotUnsoldOrHeldForFinal_Expect_NoFactButEventsAcknowledged()
+    public async Task When_LotUnsoldOrHeldForFinal_Expect_ReplicaButNoFact()
     {
         using var db = Database();
         await using var nats = await NatsUnderTest.Start();
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         await nats.Publish("events.auction.lot_unsold", EventFactory.Unsold(EventFactory.NewId()));
         await nats.Publish("events.auction.lot_held_for_final", EventFactory.HeldForFinal(EventFactory.NewId()));
-        await Eventually(() => Task.FromResult(silo.Service<AuctionTelemetry>().Total("ignored")), count => count == 2);
+        await Eventually(() => Task.FromResult(silo.Service<AuctionTelemetry>().Total("lot_replicated")), count => count == 2);
         await Eventually(() => nats.Unacknowledged(AuctionFeed.Feed), pending => pending == 0);
         (await Count(db, "notification")).ShouldBe(0);
-        (await Count(db, "consumed_event")).ShouldBe(0);
+        (await Count(db, "consumed_event")).ShouldBe(2);
+        (await Count(db, "lot_replica")).ShouldBe(2);
         (await nats.PublishedFacts()).ShouldBeEmpty();
     }
 

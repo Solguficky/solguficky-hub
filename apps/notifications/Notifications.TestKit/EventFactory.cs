@@ -214,7 +214,68 @@ public static class EventFactory
     /// автоставка, ответившая чужой команде.
     /// </summary>
     public static global::Auction.V1.LotEvent Bid(string lotId, string? previousLeader = null,
-        string? leader = null, long version = 3, bool proxy = false, bool overtaken = false, bool answers = false) => new()
+        string? leader = null, long version = 3, bool proxy = false, bool overtaken = false, bool answers = false,
+        string? deadline = null)
+    {
+        var message = BidWithoutDeadline(lotId, previousLeader, leader, version, proxy, overtaken, answers);
+        if (deadline is not null) message.State.Trading.Deadline = deadline;
+        return message;
+    }
+
+    /// <summary>Дедлайн лота в форме контракта: момент через <paramref name="minutes" /> после коммита.</summary>
+    public static string Deadline(int minutes) => Committed.AddMinutes(minutes).ToString("O");
+
+    /// <summary>
+    /// Факт лота в торгах без повода: <paramref name="occasion" /> — имя ветки,
+    /// <c>lot_opened</c>, <c>ask_advanced</c>, <c>deadline_extended</c> или
+    /// <c>lot_resumed</c>. Дедлайн и лидер — как в снимке.
+    /// </summary>
+    public static global::Auction.V1.LotEvent Trading(string lotId, string occasion, long version = 2,
+        string? deadline = null, string? leader = null)
+    {
+        var message = Closed(lotId, version);
+        message.State.Config = Config();
+        message.State.Trading = new global::Auction.V1.LotTrading
+        {
+            CurrentPrice = new global::Auction.V1.Money { MinorUnits = 10000, Currency = "RUB" },
+            Phase = global::Auction.V1.LotPhase.Online,
+        };
+        if (deadline is not null) message.State.Trading.Deadline = deadline;
+        if (leader is not null)
+        {
+            message.State.Trading.LeaderId = leader;
+            message.State.Trading.LeadingBidId = NewId();
+        }
+        switch (occasion)
+        {
+            case "lot_opened": message.LotOpened = new global::Auction.V1.LotOpened(); break;
+            case "ask_advanced": message.AskAdvanced = new global::Auction.V1.AskAdvanced(); break;
+            case "deadline_extended": message.DeadlineExtended = new global::Auction.V1.DeadlineExtended(); break;
+            case "lot_resumed": message.LotResumed = new global::Auction.V1.LotResumed(); break;
+            default: throw new ArgumentOutOfRangeException(nameof(occasion));
+        }
+        return message;
+    }
+
+    public static global::Auction.V1.LotEvent Drafted(string lotId, long version = 1)
+    {
+        var message = Closed(lotId, version);
+        message.State.Draft = new global::Auction.V1.LotDraft();
+        message.LotDrafted = new global::Auction.V1.LotDrafted();
+        return message;
+    }
+
+    public static global::Auction.V1.LotEvent Withdrawn(string lotId, long version = 7)
+    {
+        var message = Closed(lotId, version);
+        message.State.Config = Config();
+        message.State.Withdrawn = global::Auction.V1.WithdrawnReason.ByOrganizer;
+        message.LotWithdrawn = new global::Auction.V1.LotWithdrawn();
+        return message;
+    }
+
+    private static global::Auction.V1.LotEvent BidWithoutDeadline(string lotId, string? previousLeader,
+        string? leader, long version, bool proxy, bool overtaken, bool answers) => new()
     {
         EventId = NewId(), LotId = lotId, Version = version,
         OccurredAt = Committed.AddMinutes(version).ToString("O"),

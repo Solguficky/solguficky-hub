@@ -17,6 +17,15 @@
 закрытие лота PER-292, доставка аукционным ботом — PER-328, они в этот срез
 не входят.
 
+Избранные лоты (PER-522, ADR-063) — модуль `Favorites/`: отметить, снять и
+прочитать свой список может только бот аукциона по gRPC. Реплику лота
+`lot_replica` ведёт тот же модуль `Auction/` по каждому факту лота, с версией
+в самом upsert, а лидер из снимка `bid_placed` получает отметку той же
+транзакцией, если на этом лоте у него не было ни отметки, ни снятия. Снятие
+— строка с `removed_at`, а не удаление: оно держит запрет автодобавления.
+`FavoritePruner` удаляет реплику и отметки лота через
+`Notifications:Dispatch:Retention` после его конечного положения.
+
 `Messaging/` содержит общий транспорт JetStream: привязку к durable, проверку
 retention, чтение, повтор подключения, ACK/NAK/TERM и очистку ключей повтора.
 `Replica/ReplicaHandler` и `Auction/AuctionHandler` отдельно определяют эффект,
@@ -66,7 +75,7 @@ retention, чтение, повтор подключения, ACK/NAK/TERM и о
 
 ## Транспорт
 
-gRPC-сервер на Kestrel в h2c. Реализованы все десять операций контракта: подписка, отписка, обе настройки категорий, оба чтения, чтение и запись настройки перебитий и обе ручные рассылки. Проба готовности по `grpc.health.v1` и рефлексия отвечают с первого дня.
+gRPC-сервер на Kestrel в h2c. Реализованы все тринадцать операций контракта: подписка, отписка, обе настройки категорий, оба чтения, чтение и запись настройки перебитий, отметка, снятие и список избранных лотов и обе ручные рассылки. Избранные лоты принимают только бота аукциона, остальное — только бота хаба. Проба готовности по `grpc.health.v1` и рефлексия отвечают с первого дня.
 
 `BroadcastToMeetupSubscribers` спрашивает право у Meetups (`CheckMeetupAuthority`, адрес в `NOTIFICATIONS_MEETUPS_GRPC_URL`), `BroadcastToCommunity` — у Identity (`CheckGlobalRole`, адрес в `NOTIFICATIONS_IDENTITY_GRPC_URL`), на самой команде и без реплики. Адрес не задан или владелец недоступен — рассылка отвечает `UNAVAILABLE`, а не уходит без проверки. Сообщение организатора получают подписчики сходки с включённой категорией, объявление — круг хаба с включённой глобальной категорией; число отобранных и отсечённых настройками уходит в запись `operation = broadcast` (поля `facts_created` и `facts_suppressed`) и в метрику `notifications.facts.*`, а не в ответ автору. Коды отказов — в [каталоге интеграций](../../docs/architecture/integration.md).
 
@@ -84,10 +93,10 @@ HTTP-эндпоинтов health у сервиса нет: Kestrel слушае�
 aspire run -- --profile notifications
 ```
 
-Вне Aspire нужна своя база; адрес берётся из `NOTIFICATIONS_DATABASE_URL` и принимает обе формы — готовую строку Npgsql и URI `postgres://…`. Пояс сообщества `NOTIFICATIONS_COMMUNITY_TIME_ZONE` (IANA) обязателен: без него процесс не стартует. Так же обязательны токен бота в таблице вызывающих `NOTIFICATIONS_CALLER_TOKEN_HUB_BOT` и свой токен `NOTIFICATIONS_SERVICE_TOKEN` ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)): AppHost генерирует оба, а вне него значения задаются руками, и команды сервису идут с `authorization: Bearer <токен бота>`:
+Вне Aspire нужна своя база; адрес берётся из `NOTIFICATIONS_DATABASE_URL` и принимает обе формы — готовую строку Npgsql и URI `postgres://…`. Пояс сообщества `NOTIFICATIONS_COMMUNITY_TIME_ZONE` (IANA) обязателен: без него процесс не стартует. Так же обязательны токены обоих ботов в таблице вызывающих — `NOTIFICATIONS_CALLER_TOKEN_HUB_BOT` и `NOTIFICATIONS_CALLER_TOKEN_AUCTION_BOT` — и свой токен `NOTIFICATIONS_SERVICE_TOKEN` ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)): AppHost генерирует все три, а вне него значения задаются руками, и команды сервису идут с `authorization: Bearer <токен бота>` — избранные лоты с токеном бота аукциона, остальное с токеном бота хаба:
 
 ```bash
-NOTIFICATIONS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/notifications NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow NOTIFICATIONS_CALLER_TOKEN_HUB_BOT=local-bot NOTIFICATIONS_SERVICE_TOKEN=local-notifications just notifications-run
+NOTIFICATIONS_DATABASE_URL=postgres://postgres:postgres@127.0.0.1:5432/notifications NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow NOTIFICATIONS_CALLER_TOKEN_HUB_BOT=local-bot NOTIFICATIONS_CALLER_TOKEN_AUCTION_BOT=local-auction-bot NOTIFICATIONS_SERVICE_TOKEN=local-notifications just notifications-run
 ```
 
 Миграции применяются при старте процесса, до подъёма силоса: без таблиц membership силос не поднимется.
