@@ -5,10 +5,6 @@ import {
   Http2SessionManager,
 } from "@connectrpc/connect-node";
 import {
-  classifyRecipientFailure,
-  type TelegramRecipientResolver,
-} from "@solguficky/telegram-delivery";
-import {
   AuctionService,
   AuctionListing as WireListing,
 } from "../../../gen/auction/v1/auction_service_pb.js";
@@ -29,6 +25,10 @@ import type {
   TelegramUser,
   Viewer,
 } from "../../auction-ui/index.js";
+import {
+  classifyRecipientFailure,
+  type TelegramRecipientResolver,
+} from "../../core/delivery/index.js";
 import {
   bidOutcomeOf,
   createUuidV7,

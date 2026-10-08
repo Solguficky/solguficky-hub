@@ -1,4 +1,7 @@
 import { create, toBinary } from "@bufbuild/protobuf";
+import { GrammyError } from "grammy";
+import { describe, expect, it, vi } from "vitest";
+import { NotificationSchema } from "../../../../gen/notifications/v1/notifications_pb.js";
 import {
   createDeliverNotification,
   type DeliveryJournal,
@@ -6,10 +9,7 @@ import {
   type DeliveryRecord,
   handleDeliveryMessage,
   type TelegramRecipientResolver,
-} from "@solguficky/telegram-delivery";
-import { GrammyError } from "grammy";
-import { describe, expect, it, vi } from "vitest";
-import { NotificationSchema } from "../../../../gen/notifications/v1/notifications_pb.js";
+} from "../../../core/delivery/index.js";
 import type { Logger } from "../logging.js";
 import {
   createNotificationSender,

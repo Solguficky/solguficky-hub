@@ -10,9 +10,4 @@
 !apps/hub-bot/tsconfig.json
 !apps/hub-bot/tsconfig.build.json
 !apps/hub-bot/src
-!shared/typescript/telegram-delivery/package.json
-!shared/typescript/telegram-delivery/package-lock.json
-!shared/typescript/telegram-delivery/tsconfig.json
-!shared/typescript/telegram-delivery/tsconfig.build.json
-!shared/typescript/telegram-delivery/src
 **/*.test.ts

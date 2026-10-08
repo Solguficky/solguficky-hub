@@ -1,7 +1,7 @@
 import {
   createDeliverNotification,
   startNatsDelivery,
-} from "@solguficky/telegram-delivery";
+} from "../../core/delivery/index.js";
 import { createBot } from "./bot.js";
 import { createClients } from "./clients.js";
 import { readConfig } from "./config.js";

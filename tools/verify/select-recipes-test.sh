@@ -67,8 +67,8 @@ assert_selects "auction surface selects the bot package and the console" \
     "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" apps/hub-bot/src/surfaces/auction/main.ts
 assert_selects "screen lint selects its own recipes and every consumer" \
     "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build screen-lint-typecheck screen-lint-lint screen-lint-test bot-console-typecheck bot-console-lint bot-console-test" shared/typescript/screen-lint/src/inspect.ts
-assert_selects "delivery package selects its own recipes and the bot package" \
-    "$always telegram-delivery-typecheck telegram-delivery-lint telegram-delivery-test hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" shared/typescript/telegram-delivery/src/deliver.ts
+assert_selects "delivery mechanics select the bot package and the console" \
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" apps/hub-bot/src/core/delivery/deliver.ts
 assert_selects "console selects itself and the hub whose lint covers it" \
     "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" tests/contour/bot-wire/console/commands.ts
 assert_selects "prefix match stops at the directory" "$always" apps/identity-old/readme.md

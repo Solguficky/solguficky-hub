@@ -1,10 +1,4 @@
 import { fromBinary } from "@bufbuild/protobuf";
-import {
-  type DeliveryNotification as ChannelNotification,
-  type DecodeResult,
-  type OtherBranch,
-  toDeliveryNotification,
-} from "@solguficky/telegram-delivery";
 import type { Money as WireMoney } from "../../../../gen/auction/v1/auction_pb.js";
 import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
 import {
@@ -12,6 +6,12 @@ import {
   NotificationSchema,
 } from "../../../../gen/notifications/v1/notifications_pb.js";
 import type { Money } from "../../../auction-ui/index.js";
+import {
+  type DeliveryNotification as ChannelNotification,
+  type DecodeResult,
+  type OtherBranch,
+  toDeliveryNotification,
+} from "../../../core/delivery/index.js";
 
 // Ветки, которые доставляет бот аукциона (integration.md, «потребитель
 // выбирается по ветке `oneof type`»). Факт несёт только лот и сумму: название

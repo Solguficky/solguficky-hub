@@ -1,10 +1,4 @@
 import { fromBinary } from "@bufbuild/protobuf";
-import {
-  type DeliveryNotification as ChannelNotification,
-  type DecodeResult,
-  type OtherBranch,
-  toDeliveryNotification,
-} from "@solguficky/telegram-delivery";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import {
   type DateValue,
@@ -19,6 +13,12 @@ import {
   NotificationSchema,
   MeetupAspect as WireMeetupAspect,
 } from "../../gen/notifications/v1/notifications_pb.js";
+import {
+  type DeliveryNotification as ChannelNotification,
+  type DecodeResult,
+  type OtherBranch,
+  toDeliveryNotification,
+} from "../core/delivery/index.js";
 
 export type LocalDate = { year: number; month: number; day: number };
 export type LocalDateTime = LocalDate & { hours: number; minutes: number };

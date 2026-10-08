@@ -1,9 +1,9 @@
+import { Api, InlineKeyboard } from "grammy";
 import {
   classifyTelegramFailure,
   type NotificationSender,
   type SendResult,
-} from "@solguficky/telegram-delivery";
-import { Api, InlineKeyboard } from "grammy";
+} from "../core/delivery/index.js";
 import type {
   LocalDate,
   LocalDateTime,

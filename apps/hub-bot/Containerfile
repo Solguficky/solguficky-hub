@@ -1,9 +1,8 @@
 # Production-образ пакета ботов: один образ на бот хаба и бот аукциона, процесс
 # выбирает поверхность переменной BOT_SURFACE (ADR-064, п. 18). Контекст сборки —
-# корень репозитория: `buf generate` нужен contracts/proto, а механика доставки
-# уведомлений — пакет shared/typescript/telegram-delivery (ADR-044). Что
-# попадает в контекст, решает соседний Containerfile.dockerignore — список
-# разрешённого, а не запрещённого.
+# корень репозитория: `buf generate` нужен contracts/proto. Что попадает в
+# контекст, решает соседний Containerfile.dockerignore — список разрешённого, а
+# не запрещённого.
 #
 # Каждая внешняя база закреплена по digest: tools/image/check-containerfile.sh
 # роняет сборку на теге. Тег рядом с digest только читается человеком, pull
@@ -16,13 +15,6 @@ FROM docker.io/bufbuild/buf:1.54.0@sha256:0ba85232090eb7c83e718b791fc5cb9e0c6756
 FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS build
 WORKDIR /src
 COPY --from=buf /usr/local/bin/buf /usr/local/bin/buf
-# Общий пакет собирается первым: бот берёт его `file:`-зависимостью, а
-# `exports` пакета ведут в `dist`.
-COPY shared/typescript/telegram-delivery/package.json shared/typescript/telegram-delivery/package-lock.json shared/typescript/telegram-delivery/
-RUN cd shared/typescript/telegram-delivery && npm ci --ignore-scripts
-COPY shared/typescript/telegram-delivery/tsconfig.json shared/typescript/telegram-delivery/tsconfig.build.json shared/typescript/telegram-delivery/
-COPY shared/typescript/telegram-delivery/src shared/typescript/telegram-delivery/src
-RUN cd shared/typescript/telegram-delivery && npm run build
 COPY apps/hub-bot/package.json apps/hub-bot/package-lock.json apps/hub-bot/
 RUN cd apps/hub-bot && npm ci --ignore-scripts
 COPY contracts/proto contracts/proto
@@ -32,31 +24,10 @@ RUN buf generate --template apps/hub-bot/buf.gen.yaml && cd apps/hub-bot && npm 
 
 # Production-зависимости ставятся отдельно от сборки: в стадии build лежат
 # devDependencies, и копировать оттуда node_modules значило бы везти их в образ.
-#
-# Общий пакет — `file:`-зависимость, и её ключ в lockfile — путь от каталога
-# бота (`../../shared/...`). Поэтому стадия повторяет глубину репозитория: из
-# /app путь ушёл бы выше корня, и npm не нашёл бы запись ссылки. `npm ci` ставит
-# пакет симлинком, и он здесь же заменяется копией: образ несёт собранный `dist`
-# пакета внутри node_modules бота, без исходников и без каталога shared.
 FROM docker.io/library/node:22-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS deps
-WORKDIR /src
-# Пакет доставки ставится со своими production-зависимостями по своему
-# lock-файлу: npm кладёт `file:`-зависимость симлинком, и её зависимости бот не
-# ставит.
-COPY shared/typescript/telegram-delivery/package.json shared/typescript/telegram-delivery/package-lock.json shared/typescript/telegram-delivery/
-RUN cd shared/typescript/telegram-delivery && npm ci --omit=dev --ignore-scripts
-COPY --from=build /src/shared/typescript/telegram-delivery/dist shared/typescript/telegram-delivery/dist
-COPY apps/hub-bot/package.json apps/hub-bot/package-lock.json apps/hub-bot/
-# Симлинк заменяется копией пакета: путь `../../shared/...` из /app в образе
-# никуда не ведёт, а копия кладёт пакет внутрь node_modules, где его и ищет
-# проверка состава /app.
-RUN cd apps/hub-bot && npm ci --omit=dev --ignore-scripts && npm cache clean --force \
-    && rm node_modules/@solguficky/telegram-delivery \
-    && mkdir node_modules/@solguficky/telegram-delivery \
-    && cp -R ../../shared/typescript/telegram-delivery/package.json \
-        ../../shared/typescript/telegram-delivery/dist \
-        ../../shared/typescript/telegram-delivery/node_modules \
-        node_modules/@solguficky/telegram-delivery/
+WORKDIR /app
+COPY apps/hub-bot/package.json apps/hub-bot/package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 # База со shell и coreutils, а не distroless: критерий `podman run <образ> id`
 # исполняет `id` из образа. Файлы приложения принадлежат root, процесс идёт от
@@ -66,7 +37,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 # package.json нужен рантайму: `"type": "module"` делает dist/*.js модулями ES.
 COPY apps/hub-bot/package.json ./
-COPY --from=deps /src/apps/hub-bot/node_modules node_modules
+COPY --from=deps /app/node_modules node_modules
 COPY --from=build /src/apps/hub-bot/dist dist
 # uid числом: runtime проверяет non-root без чтения /etc/passwd образа.
 USER 1000:1000

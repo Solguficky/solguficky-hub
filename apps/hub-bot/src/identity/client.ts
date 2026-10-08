@@ -4,7 +4,6 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
-import { classifyRecipientFailure as classifyDeliveryRecipientFailure } from "@solguficky/telegram-delivery";
 import {
   ApplicationOutcome,
   type DecideApplicationResponse,
@@ -15,6 +14,7 @@ import {
 } from "../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../gen/identity/v1/roles_pb.js";
 import { communityLocalTime } from "../community-time.js";
+import { classifyRecipientFailure as classifyDeliveryRecipientFailure } from "../core/delivery/index.js";
 import {
   callHeaders,
   callTimeoutMs,

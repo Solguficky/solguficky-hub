@@ -1,10 +1,10 @@
-import {
-  createDeliverNotification,
-  startNatsDelivery,
-} from "@solguficky/telegram-delivery";
 import { createDispatcher } from "./application/dispatcher.js";
 import { createAuctionClient } from "./auction/client.js";
 import { communityDay, parseTimeZone } from "./community-time.js";
+import {
+  createDeliverNotification,
+  startNatsDelivery,
+} from "./core/delivery/index.js";
 import { decodeNotification } from "./delivery/notification.js";
 import { countFailure } from "./failures.js";
 import { createIdentityClient } from "./identity/client.js";

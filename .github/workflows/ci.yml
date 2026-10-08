@@ -23,7 +23,6 @@ jobs:
       identity: ${{ steps.filter.outputs.identity }}
       meetups: ${{ steps.filter.outputs.meetups }}
       notifications: ${{ steps.filter.outputs.notifications }}
-      telegram-delivery: ${{ steps.filter.outputs.telegram-delivery }}
       hub-bot: ${{ steps.filter.outputs.hub-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
@@ -69,15 +68,9 @@ jobs:
               - 'justfile'
               - 'global.json'
               - '.github/workflows/ci.yml'
-            telegram-delivery:
-              - 'shared/typescript/telegram-delivery/**'
-              - 'justfile'
-              - '.github/workflows/ci.yml'
             hub-bot:
               - 'contracts/proto/**'
               - 'apps/hub-bot/**'
-              # Механику доставки уведомлений бот берёт `file:`-зависимостью.
-              - 'shared/typescript/telegram-delivery/**'
               # Сценарии провода бота и живого контура типизирует и линтует
               # конфиг бота; живой прогон (L3) CI не гоняет никогда.
               - 'tests/contour/bot-wire/**'
@@ -108,7 +101,6 @@ jobs:
             bot-console:
               - 'tests/contour/bot-wire/console/**'
               - 'apps/hub-bot/**'
-              - 'shared/typescript/telegram-delivery/**'
               - 'shared/typescript/screen-lint/**'
               - 'contracts/proto/**'
               - 'justfile'
@@ -145,7 +137,6 @@ jobs:
               - 'apps/identity/**'
               - 'apps/hub-bot/**'
               - 'shared/typescript/screen-lint/**'
-              - 'shared/typescript/telegram-delivery/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
               - 'shared/dotnet/**'
@@ -369,7 +360,6 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: |
-            shared/typescript/telegram-delivery/package-lock.json
             apps/hub-bot/package-lock.json
             tests/telegram-live/package-lock.json
       - id: tools
@@ -381,10 +371,6 @@ jobs:
           setup_only: true
           version: ${{ steps.tools.outputs.buf }}
           github_token: ${{ github.token }}
-      # Общий пакет — `file:`-зависимость бота, а его `exports` ведут в `dist`:
-      # он собирается до установки бота.
-      - run: npm ci && npm run build
-        working-directory: shared/typescript/telegram-delivery
       - run: npm ci
         working-directory: apps/hub-bot
       # mtcute живого контура: код драйвера проходит typecheck, lint и L0 бота.
@@ -473,34 +459,6 @@ jobs:
       - run: npm test
         working-directory: shared/typescript/screen-lint
 
-  # Общий пакет механики доставки уведомлений двух ботов: потребитель durable,
-  # журнал попыток и классы отказов Telegram. Джобы ботов стоят на его пути и
-  # проверяют пакет глазами потребителя.
-  telegram-delivery:
-    needs: changes
-    if: >-
-      ${{ !cancelled()
-      && (needs.changes.outputs.telegram-delivery == 'true'
-      || github.event_name == 'workflow_dispatch') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: shared/typescript/telegram-delivery/package-lock.json
-      - run: npm ci
-        working-directory: shared/typescript/telegram-delivery
-      - run: npm run typecheck
-        working-directory: shared/typescript/telegram-delivery
-      - run: npm run lint
-        working-directory: shared/typescript/telegram-delivery
-      - run: npm test
-        working-directory: shared/typescript/telegram-delivery
-
   # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
   # джобы правка графа или setup-а ресурса, которая не собирается, проходит
   # ревью зелёной.
@@ -561,7 +519,6 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: |
-            shared/typescript/telegram-delivery/package-lock.json
             apps/hub-bot/package-lock.json
             tests/contour/bot-wire/console/package-lock.json
       - id: tools
@@ -572,9 +529,7 @@ jobs:
           version: ${{ steps.tools.outputs.buf }}
           github_token: ${{ github.token }}
       # Typecheck пульта читает исходники обеих поверхностей пакета ботов, а те —
-      # собранный общий пакет и сгенерированный код.
-      - run: npm ci && npm run build
-        working-directory: shared/typescript/telegram-delivery
+      # сгенерированный код.
       - run: npm ci
         working-directory: apps/hub-bot
       - run: buf generate --template apps/hub-bot/buf.gen.yaml
@@ -754,11 +709,7 @@ jobs:
           node-version: "22"
           cache: npm
           cache-dependency-path: |
-            shared/typescript/telegram-delivery/package-lock.json
             apps/hub-bot/package-lock.json
-      # Провод бота читает код хаба, а тот — собранный общий пакет.
-      - run: npm ci && npm run build
-        working-directory: shared/typescript/telegram-delivery
       - run: npm ci
         working-directory: apps/hub-bot
       - uses: extractions/setup-just@v4

@@ -27,6 +27,7 @@ const isAuction = (file: string) => auction.some((dir) => inside(file, dir));
 // Общее у поверхностей: дерево, `gen/`, `testkit/imports.ts` и всё вне пакета.
 const isShared = (target: string) =>
   inside(target, tree) ||
+  inside(target, path.join(src, "core")) ||
   inside(target, path.join(app, "gen")) ||
   target === path.join(app, "testkit", "imports.ts") ||
   !inside(target, app);

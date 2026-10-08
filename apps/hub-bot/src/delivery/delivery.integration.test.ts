@@ -11,19 +11,6 @@ import {
 import { Kvm } from "@nats-io/kv";
 import { connect, type NatsConnection, nanos } from "@nats-io/transport-node";
 import {
-  createDeliverNotification,
-  createKvJournal,
-  type DeliveryJournal,
-  type DeliveryPolicy,
-  handleDeliveryMessage,
-  type NotificationSender,
-  notificationStream,
-  notificationSubject,
-  type SendResult,
-  startNotificationDelivery,
-  type TelegramRecipientResolver,
-} from "@solguficky/telegram-delivery";
-import {
   GenericContainer,
   type StartedTestContainer,
   Wait,
@@ -38,6 +25,19 @@ import {
   vi,
 } from "vitest";
 import { NotificationSchema } from "../../gen/notifications/v1/notifications_pb.js";
+import {
+  createDeliverNotification,
+  createKvJournal,
+  type DeliveryJournal,
+  type DeliveryPolicy,
+  handleDeliveryMessage,
+  type NotificationSender,
+  notificationStream,
+  notificationSubject,
+  type SendResult,
+  startNotificationDelivery,
+  type TelegramRecipientResolver,
+} from "../core/delivery/index.js";
 import type { Logger } from "../logging.js";
 import { decodeNotification, type RenderableContent } from "./notification.js";
 
