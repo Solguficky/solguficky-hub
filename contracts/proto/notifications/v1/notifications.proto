@@ -279,7 +279,8 @@ message LotPurchased {
 // moderator's own rights.
 message AccessRequested {
   // Superseded by queue: GLOBAL_ROLE_MEMBER for the community queue,
-  // GLOBAL_ROLE_GUEST for the auction queue.
+  // GLOBAL_ROLE_GUEST for the auction queue. Notifications keeps setting it
+  // until the field is removed.
   identity.v1.GlobalRole circle = 1;
 
   // The queue the application lies in, and so the screen the channel leads to.
@@ -290,8 +291,7 @@ message AccessRequested {
 // absent; which bot delivers it is a rule of the delivery channel, not of this
 // message.
 message AccessGranted {
-  // Superseded by queue: GLOBAL_ROLE_MEMBER for the community queue,
-  // GLOBAL_ROLE_GUEST for the auction queue.
+  // Superseded by queue and still set, as in AccessRequested.
   identity.v1.GlobalRole circle = 1;
 
   // The queue of the application.

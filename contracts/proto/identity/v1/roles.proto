@@ -16,8 +16,7 @@ enum GlobalRole {
   GLOBAL_ROLE_MEMBER = 3;
 
   // Outer circle: a person admitted to a public surface, such as the auction,
-  // without being a community member. Formerly named PUBLIC; the number is
-  // unchanged.
+  // without being a community member.
   GLOBAL_ROLE_GUEST = 4;
 }
 
@@ -43,18 +42,16 @@ enum AccessRight {
   ACCESS_RIGHT_MODERATE_AUCTION = 4;
 }
 
-// The queue an application lies in. Each queue is decided by the holders of its
-// own moderation right, and a refusal in one queue does not touch the other.
+// The queue an application lies in. The queues are independent: a refusal in
+// one does not touch the other.
 enum ApplicationQueue {
   // No value: the field is unset or the queue is unknown to the consumer.
   APPLICATION_QUEUE_UNSPECIFIED = 0;
 
   // An application to join the community: admission grants GLOBAL_ROLE_MEMBER.
-  // Decided by holders of ACCESS_RIGHT_MANAGE_MEMBERSHIP.
   APPLICATION_QUEUE_COMMUNITY = 1;
 
   // An application for ACCESS_RIGHT_AUCTION: admission grants the right and
-  // GLOBAL_ROLE_GUEST when the person has no circle yet. Decided by holders of
-  // ACCESS_RIGHT_MODERATE_AUCTION.
+  // GLOBAL_ROLE_GUEST when the person has no circle yet.
   APPLICATION_QUEUE_AUCTION = 2;
 }

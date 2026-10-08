@@ -41,8 +41,8 @@ service IdentityService {
   rpc BlockCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   // Demotes a hub member out of the member circle.
   rpc DemoteCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
-  // Grants ACCESS_RIGHT_MODERATE_AUCTION to a community member, who keeps their
-  // circle.
+  // Grants ACCESS_RIGHT_MODERATE_AUCTION to a member or a maintainer, who keeps
+  // their circle.
   rpc GrantAuctionModeration(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   // Revokes the granted ACCESS_RIGHT_MODERATE_AUCTION. A right that comes with
   // the circle itself is not revoked by it.
@@ -119,15 +119,15 @@ enum ApplicationOutcome {
   // No value: the field is unset or the outcome is unknown to the consumer.
   APPLICATION_OUTCOME_UNSPECIFIED = 0;
 
-  // An administrator admitted it.
+  // A moderator of its queue admitted it.
   APPLICATION_OUTCOME_ADMITTED = 1;
 
   // Refused without a block, in the application's queue only: the person keeps
   // their circle and rights, and an application in the other queue is untouched.
   APPLICATION_OUTCOME_DECLINED = 2;
 
-  // Refused with a block of the profile. A decision no longer produces it: only
-  // applications refused before decisions stopped blocking carry it.
+  // Refused with a block of the profile. A server that keeps queues apart no
+  // longer produces it for a decision; applications refused earlier keep it.
   APPLICATION_OUTCOME_BLOCKED = 3;
 
   // Closed by a grant of what the queue grants that was not a decision on it.
@@ -173,8 +173,8 @@ message ApplicationCard {
   optional string first_name = 5;
 
   // Superseded by queue: GLOBAL_ROLE_MEMBER for the community queue,
-  // GLOBAL_ROLE_GUEST for the auction queue. Kept until every consumer reads
-  // queue.
+  // GLOBAL_ROLE_GUEST for the auction queue. The server keeps setting it until
+  // the field is removed.
   GlobalRole requested_role = 6;
 
   // Absent when the person came without a source code.
@@ -196,7 +196,8 @@ message ReadApplicationQueueRequest {
   ApplicationCursor after = 2;
 
   // The queue to read. The two queues are read apart: a cursor of one does
-  // not position the other.
+  // not position the other. APPLICATION_QUEUE_UNSPECIFIED, from a caller that
+  // does not send it yet, reads both queues together, as before queues.
   ApplicationQueue queue = 3;
 }
 
@@ -269,7 +270,7 @@ message RefusedApplication {
   // is no first_name: it is erased when the application is decided.
   optional string telegram_username = 4;
 
-  // Superseded by queue, as in ApplicationCard.
+  // Superseded by queue and still set, as in ApplicationCard.
   GlobalRole requested_role = 5;
 
   // Outcome is APPLICATION_OUTCOME_BLOCKED or APPLICATION_OUTCOME_DECLINED.
@@ -282,7 +283,8 @@ message RefusedApplication {
 message ListRefusedApplicationsRequest {
   IdentityActor actor = 1;
 
-  // The queue whose refusals to list.
+  // The queue whose refusals to list. APPLICATION_QUEUE_UNSPECIFIED lists both
+  // queues, as in ReadApplicationQueueRequest.
   ApplicationQueue queue = 2;
 }
 message ListRefusedApplicationsResponse { repeated RefusedApplication applications = 1; }
@@ -313,7 +315,7 @@ message ResolveIdentityResponse {
   string identity_id = 1;
 
   // Superseded by role and rights. Platform-wide roles; an empty set means an
-  // ordinary user. Kept until every consumer reads role and rights.
+  // ordinary user. The server keeps setting it until the field is removed.
   repeated GlobalRole global_roles = 2;
 
   // True when the profile's block mark is on. It is not a role and is never

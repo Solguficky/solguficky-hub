@@ -77,8 +77,8 @@ message IdentityState {
 
   // Superseded by role and rights. Active platform-wide roles, in no promised
   // order. An empty set is a state, not an absent field: it is what a person has
-  // before they are admitted and what a blocked person is left with. Kept until
-  // every consumer reads role and rights.
+  // before they are admitted and what a blocked person is left with. The
+  // producer keeps setting it until the field is removed.
   repeated GlobalRole global_roles = 2;
 
   // True when the profile's block mark is on. It is not a role and is never
@@ -149,15 +149,15 @@ message ProfileUnblocked {}
 // they are data for the moderator and stay in IdentityService.
 message ApplicationSubmitted {
   // Superseded by queue: GLOBAL_ROLE_MEMBER for the community queue,
-  // GLOBAL_ROLE_GUEST for the auction queue.
+  // GLOBAL_ROLE_GUEST for the auction queue. The producer keeps setting it
+  // until the field is removed.
   GlobalRole role = 1;
 
-  // The queue the application lies in. Its moderators are the recipients of
-  // the fact, and the applicant is not one of them.
+  // The queue the application lies in.
   ApplicationQueue queue = 2;
 }
 
-// An administrator admitted the person by an application: they decided an open
+// A moderator of the queue admitted the person by an application: they decided an open
 // one, or reconsidered a refused one. It is reported apart from role_granted
 // because role_granted does not say why a role became active, and an admission
 // is the one cause the applicant is told about. The grants it made come as
@@ -167,16 +167,17 @@ message ApplicationSubmitted {
 // An allowed-username grant and a grant through a stronger circle are not
 // admissions and never produce this occasion; neither does a refusal.
 message ApplicationAdmitted {
-  // Superseded by queue, as in ApplicationSubmitted.
+  // Superseded by queue and still set, as in ApplicationSubmitted.
   GlobalRole role = 1;
 
   // The queue of the application.
   ApplicationQueue queue = 2;
 }
 
-// A right was granted to the person apart from their circle: ACCESS_RIGHT_AUCTION
-// to a guest, or ACCESS_RIGHT_MODERATE_AUCTION to a member. A right that comes
-// with a circle arrives with role_granted and is not reported here. The whole
+// A right was granted to the person apart from their circle, for example
+// ACCESS_RIGHT_AUCTION to a guest or ACCESS_RIGHT_MODERATE_AUCTION to a member.
+// A right that comes with a circle arrives with role_granted and is not
+// reported here. The whole
 // set after the grant is in state.rights.
 message RightGranted {
   AccessRight right = 1;
