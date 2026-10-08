@@ -117,11 +117,11 @@ public class MeetupReminderTests
     {
         await using var env = await BusScenario.Start(Firing);
         var meetupId = env.MeetupId;
-        var enabled = await Person(env.Db, "member");
-        var byDefault = await Person(env.Db, "member");
-        var offForMeetup = await Person(env.Db, "member");
-        var blocked = await Person(env.Db, blocked: true, "member");
-        var notSubscribed = await Person(env.Db, "member");
+        var enabled = await Person(env.Db, MemberCircle);
+        var byDefault = await Person(env.Db, MemberCircle);
+        var offForMeetup = await Person(env.Db, MemberCircle);
+        var blocked = await Person(env.Db, blocked: true, MemberCircle);
+        var notSubscribed = await Person(env.Db, MemberCircle);
 
         foreach (var person in new[] { enabled, byDefault, offForMeetup, blocked })
         {
@@ -160,7 +160,7 @@ public class MeetupReminderTests
     public async Task When_MovedAfterReminderFired_Expect_NewTaskAndSecondReminder()
     {
         await using var env = await BusScenario.Start(Firing);
-        var subscriber = await Person(env.Db, "member");
+        var subscriber = await Person(env.Db, MemberCircle);
         await Subscribe(env.Db, subscriber, env.MeetupId);
         await Preference(env.Db, subscriber, null, "meetup_reminder", enabled: true);
         var day = Day();
@@ -207,7 +207,7 @@ public class MeetupReminderTests
     public async Task When_TaskFiresBehindHiddenReplica_Expect_CancelledAndRestoredOnReturn()
     {
         await using var env = await BusScenario.Start(Waiting);
-        var subscriber = await Person(env.Db, "member");
+        var subscriber = await Person(env.Db, MemberCircle);
         await Subscribe(env.Db, subscriber, env.MeetupId);
         await Preference(env.Db, subscriber, null, "meetup_reminder", enabled: true);
         var day = Day();
@@ -237,7 +237,7 @@ public class MeetupReminderTests
     public async Task When_EventArrivesAfterStart_Expect_NoReminder()
     {
         await using var env = await BusScenario.Start(Firing);
-        var subscriber = await Person(env.Db, "member");
+        var subscriber = await Person(env.Db, MemberCircle);
         await Subscribe(env.Db, subscriber, env.MeetupId);
         await Preference(env.Db, subscriber, null, "meetup_reminder", enabled: true);
 

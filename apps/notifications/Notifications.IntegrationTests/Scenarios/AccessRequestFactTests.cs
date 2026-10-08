@@ -14,13 +14,13 @@ using static Notifications.IntegrationTests.Infrastructure.FactFixtures;
 namespace Notifications.IntegrationTests.Scenarios;
 
 /// <summary>
-/// Оповещение администраторов о новой заявке (PER-435): событие Identity
-/// <c>application_submitted</c> в стриме, разворот на администраторов по
-/// реплике, снятие неотправленного при закрытой заявке и видимость категории
-/// только администратору.
+/// Оповещение о новой заявке (PER-435, PER-529): событие Identity
+/// <c>application_submitted</c> в стриме, разворот на держателей права
+/// модерации очереди заявки по реплике, снятие неотправленного при закрытой
+/// заявке и видимость категории только модераторам очередей.
 /// </summary>
 /// <remarks>
-/// Администраторы и их настройки кладутся в базу напрямую, как в
+/// Модераторы и их настройки кладутся в базу напрямую, как в
 /// <see cref="MeetupPublishedFactTests" />: предмет здесь — решение «кому
 /// положено», а не путь события в реплику. Заявитель приходит в реплику самим
 /// событием заявки.
@@ -30,22 +30,25 @@ public class AccessRequestFactTests
     private const string ApplicationSubmittedSubject = "events.identity.application_submitted";
     private const string RoleGrantedSubject = "events.identity.role_granted";
     private const string ProfileBlockedSubject = "events.identity.profile_blocked";
+    private const string RightGrantedSubject = "events.identity.right_granted";
+    private const string RightRevokedSubject = "events.identity.right_revoked";
 
     private const string HeldRelay = "--Notifications:Dispatch:Period=01:00:00";
 
     [Fact]
-    public async Task When_ApplicationSubmitted_Expect_OneFactPerAdminWithCategoryOn()
+    public async Task When_CommunityApplicationSubmitted_Expect_OneFactPerMembershipManagerWithCategoryOn()
     {
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
 
-        var byDefault = await Person(db, "admin", "member", "public");
-        var explicitlyOn = await Person(db, "admin", "member", "public");
-        var switchedOff = await Person(db, "admin", "member", "public");
-        var blockedAdmin = await Person(db, blocked: true, "admin");
-        var maintainer = await Person(db, "maintainer", "member", "public");
-        var member = await Person(db, "member", "public");
+        var byDefault = await Person(db, AdminCircle);
+        var explicitlyOn = await Person(db, AdminCircle);
+        var switchedOff = await Person(db, AdminCircle);
+        var blockedAdmin = await Person(db, blocked: true, AdminCircle);
+        var maintainer = await Person(db, MaintainerCircle);
+        var member = await Person(db, MemberCircle);
+        var auctionModerator = await Person(db, MemberCircle.With("moderate_auction"));
         await Preference(db, explicitlyOn, null, "access_request", enabled: true);
         await Preference(db, switchedOff, null, "access_request", enabled: false);
 
@@ -53,17 +56,19 @@ public class AccessRequestFactTests
         var telemetry = silo.Service<FactTelemetry>();
 
         var applicant = EventFactory.NewId();
-        var application = EventFactory.Application(applicant, version: 2, GlobalRole.Guest);
+        var application = EventFactory.Application(applicant, version: 2, GlobalRole.Member);
         await nats.Publish(ApplicationSubmittedSubject, application);
 
         var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
 
+        // Модератор аукциона заявку в сообщество не решает и её не получает.
         facts.Select(fact => Guid.Parse(fact.Fact.RecipientId)).ShouldBe([byDefault, explicitlyOn], ignoreOrder: true);
         var recipients = facts.Select(fact => fact.Fact.RecipientId).ToList();
         recipients.ShouldNotContain(switchedOff.ToString());
         recipients.ShouldNotContain(blockedAdmin.ToString());
         recipients.ShouldNotContain(maintainer.ToString());
         recipients.ShouldNotContain(member.ToString());
+        recipients.ShouldNotContain(auctionModerator.ToString());
         recipients.ShouldNotContain(applicant);
 
         foreach (var (fact, messageId) in facts)
@@ -71,7 +76,7 @@ public class AccessRequestFactTests
             messageId.ShouldBe(fact.NotificationId);
             fact.Cause.IdentityEventId.ShouldBe(application.EventId);
             fact.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessRequested);
-            fact.AccessRequested.Circle.ShouldBe(GlobalRole.Guest);
+            fact.AccessRequested.Circle.ShouldBe(GlobalRole.Member);
             fact.HasNotAfter.ShouldBeTrue();
             fact.HasRequestId.ShouldBeFalse();
         }
@@ -80,13 +85,99 @@ public class AccessRequestFactTests
         telemetry.Total("suppressed").ShouldBe(1);
     }
 
+    /// <summary>
+    /// Заявка в аукцион уходит держателям права модерации аукциона: участнику,
+    /// которому его выдали, и администратору, у которого оно по кругу.
+    /// Участник без права, мейнтейнер без него и управляющий составом без него
+    /// её не получают (ADR-064, пункт 14).
+    /// </summary>
+    [Fact]
+    public async Task When_AuctionApplicationSubmitted_Expect_FactsForAuctionModeratorsOnly()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+
+        var admin = await Person(db, AdminCircle);
+        var auctionModerator = await Person(db, MemberCircle.With("moderate_auction"));
+        var member = await Person(db, MemberCircle);
+        var maintainer = await Person(db, MaintainerCircle);
+        var membershipManager = await Person(db, MaintainerCircle.With("manage_membership"));
+        var guest = await Person(db, GuestCircle);
+
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+
+        var application = EventFactory.Application(EventFactory.NewId(), version: 2, GlobalRole.Guest);
+        await nats.Publish(ApplicationSubmittedSubject, application);
+
+        var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
+
+        facts.Select(fact => Guid.Parse(fact.Fact.RecipientId)).ShouldBe([admin, auctionModerator], ignoreOrder: true);
+        var recipients = facts.Select(fact => fact.Fact.RecipientId).ToList();
+        recipients.ShouldNotContain(member.ToString());
+        recipients.ShouldNotContain(maintainer.ToString());
+        recipients.ShouldNotContain(membershipManager.ToString());
+        recipients.ShouldNotContain(guest.ToString());
+        facts.ShouldAllBe(fact => fact.Fact.AccessRequested.Circle == GlobalRole.Guest);
+    }
+
+    /// <summary>
+    /// Право модерации, выданное и отозванное событиями Identity, решает
+    /// адресатов следующей заявки: реплика пишет права из снимка события.
+    /// </summary>
+    [Fact]
+    public async Task When_ModerationRightRevoked_Expect_NextApplicationSkipsFormerModerator()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
+        var replica = silo.Service<ReplicaTelemetry>();
+
+        var moderator = EventFactory.NewId();
+        await Apply(nats, replica, RoleGrantedSubject, EventFactory.RoleGrant(moderator, version: 1, GlobalRole.Member));
+        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(moderator, version: 2, GlobalRole.Member, AccessRight.ModerateAuction));
+
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(EventFactory.NewId(), version: 2, GlobalRole.Guest));
+        (await Recipients(db)).ShouldBe([Guid.Parse(moderator)]);
+
+        await Apply(nats, replica, RightRevokedSubject, EventFactory.RightRevoke(moderator, version: 3, GlobalRole.Member, AccessRight.ModerateAuction));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(EventFactory.NewId(), version: 2, GlobalRole.Guest));
+
+        // Второй заявке адресатов нет: факт остался один, у первой.
+        (await Facts(db)).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Модератор, который сам подаёт заявку в очередь, которую модерирует, о
+    /// ней не узнаёт: о собственном действии человеку не сообщают.
+    /// </summary>
+    [Fact]
+    public async Task When_ModeratorAppliesToOwnQueue_Expect_NotAddressed()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        var other = await Person(db, AdminCircle);
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
+        var replica = silo.Service<ReplicaTelemetry>();
+
+        // Гость без права аукциона, но с правом его модерации: заявку ставить
+        // ему есть на что, а адресатом своей заявки он быть не должен.
+        var applicant = EventFactory.NewId();
+        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(applicant, version: 1, GlobalRole.Guest, AccessRight.ModerateAuction));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Guest));
+
+        (await Recipients(db)).ShouldBe([other]);
+    }
+
     [Fact]
     public async Task When_ApplicationRedelivered_Expect_FactsNotDoubled()
     {
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "admin", "member", "public");
+        await Person(db, AdminCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -111,7 +202,7 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "admin", "member", "public");
+        await Person(db, AdminCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -133,7 +224,7 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "admin", "member", "public");
+        await Person(db, AdminCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
         var telemetry = silo.Service<FactTelemetry>();
@@ -159,7 +250,7 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "admin", "member", "public");
+        await Person(db, AdminCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -174,7 +265,7 @@ public class AccessRequestFactTests
     }
 
     /// <summary>
-    /// Выдача public закрывает только заявку в аукцион: заявка в хаб ждёт
+    /// Выдача круга гостя закрывает только заявку в аукцион: заявка в хаб ждёт
     /// дальше, и оповещение о ней остаётся (ADR-060, пункт 8).
     /// </summary>
     [Fact]
@@ -183,7 +274,7 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "admin", "member", "public");
+        await Person(db, AdminCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -199,6 +290,52 @@ public class AccessRequestFactTests
     }
 
     /// <summary>
+    /// Выдача права аукциона закрывает заявку в аукцион так же, как выдача
+    /// круга (ADR-062, пункт 7 в редакции ADR-064): участник с заявкой в
+    /// сообщество получает право отдельно, и оповещение о ней остаётся.
+    /// </summary>
+    [Fact]
+    public async Task When_AuctionRightGrantedWhileFactsPending_Expect_OnlyAuctionFactWithdrawn()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await Person(db, AdminCircle);
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
+        var replica = silo.Service<ReplicaTelemetry>();
+
+        var applicant = EventFactory.NewId();
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Guest));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, GlobalRole.Member));
+
+        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(applicant, version: 4, GlobalRole.Guest, AccessRight.Auction));
+
+        var rows = await Rows(db);
+        rows.Single(row => row.AccessCircle == "public").WithdrawalReason.ShouldBe(NotificationFacts.WithdrawnOnApplicationClosed);
+        rows.Single(row => row.AccessCircle == "member").WithdrawnAt.ShouldBeNull();
+    }
+
+    /// <summary>
+    /// Выдача права модерации заявку не закрывает: оно не допускает в очередь.
+    /// </summary>
+    [Fact]
+    public async Task When_ModerationRightGrantedWhileFactPending_Expect_FactKept()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await Person(db, AdminCircle);
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
+        var replica = silo.Service<ReplicaTelemetry>();
+
+        var applicant = EventFactory.NewId();
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Guest));
+        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(applicant, version: 3, GlobalRole.Guest, AccessRight.ModerateAuction));
+
+        (await Rows(db)).Single().WithdrawnAt.ShouldBeNull();
+    }
+
+    /// <summary>
     /// Выдача, которая старше заявки, её не закрывает: запоздавшее событие
     /// снимает только факты о заявках, поданных до него.
     /// </summary>
@@ -208,7 +345,7 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "admin", "member", "public");
+        await Person(db, AdminCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -220,28 +357,34 @@ public class AccessRequestFactTests
         (await Rows(db)).Single().WithdrawnAt.ShouldBeNull();
     }
 
-    [Fact]
-    public async Task When_AdminReadsGlobalPreferences_Expect_AccessRequestsOnByDefault()
+    /// <summary>
+    /// Кто получает факт, тот видит переключатель: администратор и участник с
+    /// правом модерации аукциона (ADR-064).
+    /// </summary>
+    [Theory]
+    [InlineData("admin")]
+    [InlineData("auction moderator")]
+    public async Task When_QueueModeratorReadsGlobalPreferences_Expect_AccessRequestsOnByDefault(string who)
     {
         await using var service = await PreferencesUnderTest.Start();
-        var admin = await Person(service.Database, "admin", "member", "public");
+        var moderator = await Person(service.Database, who == "admin" ? AdminCircle : MemberCircle.With("moderate_auction"));
 
         var snapshot = await service.Client.GetGlobalNotificationPreferencesAsync(
-            new GetGlobalNotificationPreferencesRequest { IdentityId = admin.ToString("D") });
+            new GetGlobalNotificationPreferencesRequest { IdentityId = moderator.ToString("D") });
 
         snapshot.Categories.Single(preference => preference.Category == NotificationCategory.AccessRequest)
             .Enabled.ShouldBeTrue();
     }
 
     [Fact]
-    public async Task When_AdminSwitchesAccessRequestsOff_Expect_SnapshotCarriesItOff()
+    public async Task When_AuctionModeratorSwitchesAccessRequestsOff_Expect_SnapshotCarriesItOff()
     {
         await using var service = await PreferencesUnderTest.Start();
-        var admin = await Person(service.Database, "admin", "member", "public");
+        var moderator = await Person(service.Database, MemberCircle.With("moderate_auction"));
 
         var snapshot = await service.Client.SetGlobalCategoryPreferenceAsync(new SetGlobalCategoryPreferenceRequest
         {
-            IdentityId = admin.ToString("D"),
+            IdentityId = moderator.ToString("D"),
             Category = NotificationCategory.AccessRequest,
             Enabled = false,
         });
@@ -251,18 +394,26 @@ public class AccessRequestFactTests
     }
 
     /// <summary>
-    /// Не-администратор категории не видит и поставить её не может: ни
-    /// участник хаба, ни мейнтейнер, ни человек, которого реплика не знает.
+    /// Человек без права модерации категории не видит и поставить её не может:
+    /// ни участник хаба, ни мейнтейнер, ни гость, ни человек, которого реплика
+    /// не знает.
     /// </summary>
-    /// <param name="roles">Роли через запятую; пусто — реплика человека не знает.</param>
+    /// <param name="role">Круг человека; пусто — реплика человека не знает.</param>
     [Theory]
-    [InlineData("member,public")]
-    [InlineData("maintainer,member,public")]
+    [InlineData("member")]
+    [InlineData("maintainer")]
+    [InlineData("guest")]
     [InlineData("")]
-    public async Task When_NonAdminTouchesAccessRequests_Expect_HiddenAndPermissionDenied(string roles)
+    public async Task When_NonModeratorTouchesAccessRequests_Expect_HiddenAndPermissionDenied(string role)
     {
         await using var service = await PreferencesUnderTest.Start();
-        var person = roles == "" ? Guid.CreateVersion7() : await Person(service.Database, roles.Split(','));
+        var person = role switch
+        {
+            "" => Guid.CreateVersion7(),
+            "member" => await Person(service.Database, MemberCircle),
+            "maintainer" => await Person(service.Database, MaintainerCircle),
+            _ => await Person(service.Database, GuestCircle),
+        };
 
         var snapshot = await service.Client.GetGlobalNotificationPreferencesAsync(
             new GetGlobalNotificationPreferencesRequest { IdentityId = person.ToString("D") });
@@ -284,7 +435,7 @@ public class AccessRequestFactTests
     public async Task When_BlockedAdminTouchesAccessRequests_Expect_PermissionDenied()
     {
         await using var service = await PreferencesUnderTest.Start();
-        var blocked = await Person(service.Database, blocked: true, "admin");
+        var blocked = await Person(service.Database, blocked: true, AdminCircle);
 
         var refused = await Should.ThrowAsync<RpcException>(() =>
             service.Client.SetGlobalCategoryPreferenceAsync(new SetGlobalCategoryPreferenceRequest
@@ -300,7 +451,7 @@ public class AccessRequestFactTests
     public async Task When_AccessRequestsSetPerMeetup_Expect_InvalidArgument()
     {
         await using var service = await PreferencesUnderTest.Start();
-        var admin = await Person(service.Database, "admin", "member", "public");
+        var admin = await Person(service.Database, AdminCircle);
 
         var refused = await Should.ThrowAsync<RpcException>(() =>
             service.Client.SetMeetupCategoryPreferenceAsync(new SetMeetupCategoryPreferenceRequest
@@ -320,6 +471,12 @@ public class AccessRequestFactTests
         await Eventually(
             () => Task.FromResult(replica.Total(ReplicaFeeds.IdentitySource, "applied")),
             count => count == applied + 1);
+    }
+
+    private static async Task<IReadOnlyList<Guid>> Recipients(IsolatedDatabase db)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+        return (await connection.QueryAsync<Guid>("SELECT recipient_id FROM notification ORDER BY recipient_id;")).ToList();
     }
 
     private static Task<long> Facts(IsolatedDatabase db) => Scalar(db, "SELECT count(*) FROM notification;");

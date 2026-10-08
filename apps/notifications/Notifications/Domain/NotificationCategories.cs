@@ -12,9 +12,9 @@ namespace Notifications.Domain;
 /// читаться без второго файла.
 /// </param>
 /// <param name="Audience">
-/// Роли, которым категория видна. <c>null</c> — видна всем. Категория с
-/// аудиторией не попадает в снимок настроек человека без этих ролей, и
-/// поставить её он не может: она заведена для тех, кому положен её повод.
+/// Права, с любым из которых категория видна. <c>null</c> — видна всем.
+/// Категория с аудиторией не попадает в снимок настроек человека без этих прав,
+/// и поставить её он не может: она заведена для тех, кому положен её повод.
 /// </param>
 public sealed record CategoryDefinition(
     string Storage,
@@ -36,11 +36,10 @@ public sealed record CategoryDefinition(
 public static class NotificationCategories
 {
     /// <summary>
-    /// Роли администратора продукта. Только <c>admin</c>: <c>maintainer</c> —
-    /// техническая роль, ортогональная продуктовым (docs/product/overview.md).
-    /// Тот же круг принимает право на объявление сообществу.
+    /// Права модерации очередей заявок: управление составом решает очередь
+    /// сообщества, модерация аукциона — очередь аукциона (ADR-064, пункт 12).
     /// </summary>
-    public static readonly IReadOnlyList<string> Administrators = ["admin"];
+    public static readonly IReadOnlyList<string> QueueModerators = ["manage_membership", "moderate_auction"];
 
     // Порядок объявления — порядок словаря в контракте, и он же порядок
     // категорий в глобальном снимке: снимок тотален по словарю, поэтому
@@ -65,11 +64,11 @@ public static class NotificationCategories
         // эта выключается глобально, как любая другая.
         (NotificationCategory.CommunityAnnouncement, new CategoryDefinition("community_announcement", true, false)),
 
-        // Новая заявка на доступ. Видна только администратору: повод положен
-        // ему одному, а остальным переключатель обещал бы то, чего не бывает.
-        // Включена по умолчанию, иначе очередь копится незамеченной
-        // (ADR-062).
-        (NotificationCategory.AccessRequest, new CategoryDefinition("access_request", true, false, Administrators)),
+        // Новая заявка на доступ. Видна держателю права модерации хотя бы
+        // одной очереди: кто получает факт, тот видит переключатель, а
+        // остальным он обещал бы то, чего не бывает (ADR-064). Включена по
+        // умолчанию, иначе очередь копится незамеченной (ADR-062).
+        (NotificationCategory.AccessRequest, new CategoryDefinition("access_request", true, false, QueueModerators)),
     ];
 
     private static readonly IReadOnlyDictionary<NotificationCategory, CategoryDefinition> ByCategory =
@@ -97,11 +96,11 @@ public static class NotificationCategories
     public static bool IsMeetupScoped(NotificationCategory category) => Definition(category).MeetupScoped;
 
     /// <summary>
-    /// Видна ли категория человеку с этими активными ролями. Заблокированному
-    /// передают пустой набор: блокировка отзывает роли.
+    /// Видна ли категория человеку с этими правами. Заблокированному передают
+    /// пустой набор: блокировка отзывает права.
     /// </summary>
-    public static bool IsVisibleTo(NotificationCategory category, IReadOnlyCollection<string> roles) =>
-        Definition(category).Audience is not { } audience || audience.Any(roles.Contains);
+    public static bool IsVisibleTo(NotificationCategory category, IReadOnlyCollection<string> rights) =>
+        Definition(category).Audience is not { } audience || audience.Any(rights.Contains);
 
     /// <summary>Значение продукта по умолчанию.</summary>
     public static bool DefaultEnabled(NotificationCategory category) => Definition(category).DefaultEnabled;

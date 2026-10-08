@@ -95,11 +95,12 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         """;
 
     private const string IdentitySql = """
-        INSERT INTO identity_replica (identity_id, version, global_roles, blocked, occurred_at, applied_at)
-        VALUES (@IdentityId, @Version, @GlobalRoles, @Blocked, @OccurredAt, @Now)
+        INSERT INTO identity_replica (identity_id, version, role, rights, blocked, occurred_at, applied_at)
+        VALUES (@IdentityId, @Version, @Role, @Rights, @Blocked, @OccurredAt, @Now)
         ON CONFLICT (identity_id) DO UPDATE SET
             version = EXCLUDED.version,
-            global_roles = EXCLUDED.global_roles,
+            role = EXCLUDED.role,
+            rights = EXCLUDED.rights,
             blocked = EXCLUDED.blocked,
             occurred_at = EXCLUDED.occurred_at,
             applied_at = EXCLUDED.applied_at
@@ -110,10 +111,10 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
     private const string LastIdentitySql = "SELECT MAX(occurred_at) FROM identity_replica;";
 
-    // Заблокированный ролей не имеет: Identity отзывает их той же транзакцией,
+    // Заблокированный прав не имеет: Identity отзывает их той же транзакцией,
     // а условие здесь держит то же правило против рассогласованной строки.
-    private const string ActiveRolesSql = """
-        SELECT unnest(global_roles) FROM identity_replica
+    private const string ActiveRightsSql = """
+        SELECT unnest(rights) FROM identity_replica
         WHERE identity_id = @IdentityId AND NOT blocked;
         """;
 
@@ -220,11 +221,11 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
     }
 
     /// <summary>
-    /// Активные роли человека по реплике внутри чужой транзакции. Пусто, если
-    /// реплика о нём не знает или он заблокирован.
+    /// Права человека по реплике внутри чужой транзакции. Пусто, если реплика о
+    /// нём не знает или он заблокирован.
     /// </summary>
-    internal static Task<IReadOnlyList<string>> ActiveRoles(UnitOfWork work, Guid identityId, CancellationToken cancellationToken) =>
-        work.Query<string>(ActiveRolesSql, new { IdentityId = identityId }, cancellationToken);
+    internal static Task<IReadOnlyList<string>> ActiveRights(UnitOfWork work, Guid identityId, CancellationToken cancellationToken) =>
+        work.Query<string>(ActiveRightsSql, new { IdentityId = identityId }, cancellationToken);
 
     /// <summary>
     /// Момент коммита самого позднего применённого события источника. Нужен
@@ -347,7 +348,8 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         {
             fact.IdentityId,
             fact.Version,
-            GlobalRoles = fact.GlobalRoles.ToArray(),
+            fact.Role,
+            Rights = fact.Rights.ToArray(),
             fact.Blocked,
             OccurredAt = fact.OccurredAt.UtcDateTime,
             Now = now.UtcDateTime,

@@ -103,19 +103,29 @@ public sealed record ScheduleColumns(
 }
 
 /// <summary>Факт о допуске человека из Identity.</summary>
-/// <param name="OccasionRole">
-/// Роль повода: круг заявки у заявки и допуска, выданная роль у выдачи. У
-/// остальных поводов пусто.
+/// <param name="Role">
+/// Активная роль-круг именем; <c>null</c> — круга нет: человек не допущен или
+/// заблокирован.
 /// </param>
+/// <param name="Rights">
+/// Права, которые вывел Identity, именами. Реплика пишет их как есть: из роли
+/// права не выводятся (ADR-064, пункт 6).
+/// </param>
+/// <param name="OccasionRole">Выданная роль у <c>role_granted</c>; у остальных поводов пусто.</param>
+/// <param name="OccasionQueue">Очередь заявки у заявки и допуска; у остальных поводов пусто.</param>
+/// <param name="OccasionRight">Выданное право у <c>right_granted</c>; у остальных поводов пусто.</param>
 public sealed record IdentityFact(
     Guid EventId,
     Guid IdentityId,
     long Version,
     DateTimeOffset OccurredAt,
-    IReadOnlyList<string> GlobalRoles,
+    string? Role,
+    IReadOnlyList<string> Rights,
     bool Blocked,
     IdentityOccasion Occasion = IdentityOccasion.Other,
-    string? OccasionRole = null) : ReplicaEvent(EventId, IdentityId, Version, OccurredAt)
+    string? OccasionRole = null,
+    AccessQueue? OccasionQueue = null,
+    string? OccasionRight = null) : ReplicaEvent(EventId, IdentityId, Version, OccurredAt)
 {
     public override string Source => ReplicaFeeds.IdentitySource;
 }
@@ -125,25 +135,39 @@ public sealed record IdentityFact(
 /// </summary>
 /// <remarks>
 /// Своего типа факта удостоены заявка, допуск по ней и выдача роли <c>admin</c>
-/// (PER-468). Выдача других ролей и блокировка различаются потому, что закрывают
-/// заявку и снимают неотправленный факт о ней. Остальные
-/// поводы, включая неизвестные этому потребителю, только двигают реплику.
+/// (PER-468). Выдача других ролей, выдача права и блокировка различаются
+/// потому, что закрывают заявку и снимают неотправленный факт о ней. Остальные
+/// поводы, включая отзыв права и неизвестные этому потребителю, только двигают
+/// реплику.
 /// </remarks>
 public enum IdentityOccasion
 {
     Other,
 
-    /// <summary><c>application_submitted</c>: открыта новая заявка на круг.</summary>
+    /// <summary><c>application_submitted</c>: открыта новая заявка в очередь.</summary>
     ApplicationSubmitted,
 
-    /// <summary><c>application_admitted</c>: администратор допустил по заявке.</summary>
+    /// <summary><c>application_admitted</c>: модератор очереди допустил по заявке.</summary>
     ApplicationAdmitted,
 
     /// <summary><c>role_granted</c>: роль стала активной.</summary>
     RoleGranted,
 
+    /// <summary><c>right_granted</c>: право выдано отдельно от круга.</summary>
+    RightGranted,
+
     /// <summary><c>profile_blocked</c>: человек заблокирован.</summary>
     ProfileBlocked,
+}
+
+/// <summary>Очередь заявки (ADR-064, пункт 12): очереди независимы.</summary>
+public enum AccessQueue
+{
+    /// <summary>Заявка в сообщество: допуск выдаёт круг <c>member</c>.</summary>
+    Community,
+
+    /// <summary>Заявка на право <c>auction</c>.</summary>
+    Auction,
 }
 
 /// <summary>Итог разбора сообщения шины.</summary>

@@ -35,11 +35,11 @@ public class MeetupPublishedFactTests
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
 
-        var byDefault = await Person(db, "member");
-        var explicitlyOn = await Person(db, "admin", "member", "public");
-        var switchedOff = await Person(db, "member");
-        var auctionOnly = await Person(db, "public");
-        var blocked = await Person(db, blocked: true, "member");
+        var byDefault = await Person(db, MemberCircle);
+        var explicitlyOn = await Person(db, AdminCircle);
+        var switchedOff = await Person(db, MemberCircle);
+        var auctionOnly = await Person(db, GuestCircle);
+        var blocked = await Person(db, blocked: true, MemberCircle);
         await Preference(db, explicitlyOn, null, "meetup_published", enabled: true);
         await Preference(db, switchedOff, null, "meetup_published", enabled: false);
 
@@ -84,8 +84,8 @@ public class MeetupPublishedFactTests
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
 
-        var performer = await Person(db, "admin", "member");
-        var other = await Person(db, "member");
+        var performer = await Person(db, AdminCircle);
+        var other = await Person(db, MemberCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -112,7 +112,7 @@ public class MeetupPublishedFactTests
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
 
-        var author = await Person(db, "admin", "member");
+        var author = await Person(db, AdminCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
 
         var published = EventFactory.Meetup(EventFactory.NewId(), version: 2);
@@ -130,8 +130,8 @@ public class MeetupPublishedFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "member");
-        await Person(db, "member");
+        await Person(db, MemberCircle);
+        await Person(db, MemberCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -154,7 +154,7 @@ public class MeetupPublishedFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "member");
+        await Person(db, MemberCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -186,7 +186,7 @@ public class MeetupPublishedFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "member");
+        await Person(db, MemberCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -208,7 +208,7 @@ public class MeetupPublishedFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        var person = await Person(db, "member");
+        var person = await Person(db, MemberCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -237,7 +237,7 @@ public class MeetupPublishedFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "member");
+        await Person(db, MemberCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -262,7 +262,7 @@ public class MeetupPublishedFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "member");
+        await Person(db, MemberCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 

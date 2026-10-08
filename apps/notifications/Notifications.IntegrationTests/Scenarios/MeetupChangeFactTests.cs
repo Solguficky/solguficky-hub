@@ -46,10 +46,10 @@ public class MeetupChangeFactTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        var subscriber = await Person(db, "member");
-        var bystander = await Person(db, "member");
-        var blocked = await Person(db, blocked: true, "member");
-        var auctionOnly = await Person(db, "public");
+        var subscriber = await Person(db, MemberCircle);
+        var bystander = await Person(db, MemberCircle);
+        var blocked = await Person(db, blocked: true, MemberCircle);
+        var auctionOnly = await Person(db, GuestCircle);
         await Subscribe(db, subscriber, meetupId);
         await Subscribe(db, blocked, meetupId);
         await Subscribe(db, auctionOnly, meetupId);
@@ -105,7 +105,7 @@ public class MeetupChangeFactTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        await Subscribe(db, await Person(db, "member"), meetupId);
+        await Subscribe(db, await Person(db, MemberCircle), meetupId);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
@@ -132,7 +132,7 @@ public class MeetupChangeFactTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        var subscriber = await Person(db, "member");
+        var subscriber = await Person(db, MemberCircle);
         await Subscribe(db, subscriber, meetupId);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
@@ -162,10 +162,10 @@ public class MeetupChangeFactTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        var globalOffOverrideOn = await Person(db, "member");
-        var globalOnOverrideOff = await Person(db, "member");
-        var globalOff = await Person(db, "member");
-        var byDefault = await Person(db, "member");
+        var globalOffOverrideOn = await Person(db, MemberCircle);
+        var globalOnOverrideOff = await Person(db, MemberCircle);
+        var globalOff = await Person(db, MemberCircle);
+        var byDefault = await Person(db, MemberCircle);
 
         foreach (var person in new[] { globalOffOverrideOn, globalOnOverrideOff, globalOff, byDefault })
         {
@@ -206,9 +206,9 @@ public class MeetupChangeFactTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        var subscriber = await Person(db, "member");
-        var switchedOff = await Person(db, "member");
-        var announcedOnly = await Person(db, "member");
+        var subscriber = await Person(db, MemberCircle);
+        var switchedOff = await Person(db, MemberCircle);
+        var announcedOnly = await Person(db, MemberCircle);
         await Subscribe(db, subscriber, meetupId);
         await Subscribe(db, switchedOff, meetupId);
         await Preference(db, switchedOff, meetupId, "meetup_changed", enabled: false);
@@ -247,8 +247,8 @@ public class MeetupChangeFactTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        var performer = await Person(db, "admin", "member");
-        var other = await Person(db, "member");
+        var performer = await Person(db, AdminCircle);
+        var other = await Person(db, MemberCircle);
         await Subscribe(db, performer, meetupId);
         await Subscribe(db, other, meetupId);
 
@@ -290,9 +290,9 @@ public class MeetupChangeFactTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        var subscriber = await Person(db, "member");
-        var switchedOff = await Person(db, "member");
-        await Person(db, "member");
+        var subscriber = await Person(db, MemberCircle);
+        var switchedOff = await Person(db, MemberCircle);
+        await Person(db, MemberCircle);
         await Subscribe(db, subscriber, meetupId);
         await Subscribe(db, switchedOff, meetupId);
         await Preference(db, switchedOff, null, "meetup_material", enabled: false);
@@ -326,7 +326,7 @@ public class MeetupChangeFactTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        await Subscribe(db, await Person(db, "member"), meetupId);
+        await Subscribe(db, await Person(db, MemberCircle), meetupId);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();

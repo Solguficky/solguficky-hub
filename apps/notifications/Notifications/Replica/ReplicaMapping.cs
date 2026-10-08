@@ -296,49 +296,63 @@ public static class ReplicaMapping
             return new Decoded.Poison($"state.id '{state.Id}' does not repeat identity_id '{message.IdentityId}'");
         }
 
-        var roles = new SortedSet<string>(StringComparer.Ordinal);
-        foreach (var role in state.GlobalRoles)
+        // Роль — одно значение, и незнакомая роль приходит изменением
+        // контракта, которое обновляет и этого потребителя: молча прочитанная
+        // как «круга нет», она исказила бы правило о выдаче admin.
+        string? role = null;
+        if (state.Role != GlobalRole.Unspecified)
         {
-            // Неизвестная роль — не повод отбросить её молча: новая роль
-            // приходит изменением контракта, которое обновляет и этого
-            // потребителя, а пропущенная тихо исказила бы разворот аудитории.
-            if (RoleName(role) is not { } name)
+            if (RoleName(state.Role) is not { } name)
             {
-                return new Decoded.Poison($"state.global_roles carries unknown role {role}");
+                return new Decoded.Poison($"state.role carries unknown role {state.Role}");
             }
 
-            roles.Add(name);
+            role = name;
+        }
+
+        // Незнакомое право контракт велит читать как «ничего не даёт», а не
+        // как испорченное событие: право добавляет новая поверхность, и
+        // потребитель, который её ещё не знает, адресует по тем правам, что
+        // знает.
+        var rights = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var right in state.Rights)
+        {
+            if (RightName(right) is { } name)
+            {
+                rights.Add(name);
+            }
         }
 
         // Поводы, которых этот потребитель не знает, применяются к реплике как
         // раньше: снимок самодостаточен, а повод нужен только адресным фактам.
         IdentityOccasion occasion;
         string? occasionRole = null;
+        AccessQueue? occasionQueue = null;
+        string? occasionRight = null;
         switch (message.OccasionCase)
         {
             case IdentityEvent.OccasionOneofCase.ApplicationSubmitted:
-                // Заявку ставят только на круги поверхностей: другой круг —
-                // испорченное событие, а не повод оповестить администраторов.
-                occasionRole = RoleName(message.ApplicationSubmitted.Role);
-
-                if (occasionRole is not ("member" or "public"))
+                // Заявку ставят только в очередь: событие без неё испорчено, а
+                // не повод оповестить модераторов неизвестно какой очереди.
+                if (Queue(message.ApplicationSubmitted.Queue, message.ApplicationSubmitted.Role) is not { } submitted)
                 {
-                    return new Decoded.Poison($"application_submitted.role {message.ApplicationSubmitted.Role} is not a requestable circle");
+                    return new Decoded.Poison(
+                        $"application_submitted carries neither a known queue {message.ApplicationSubmitted.Queue} nor a requestable role {message.ApplicationSubmitted.Role}");
                 }
 
+                occasionQueue = submitted;
                 occasion = IdentityOccasion.ApplicationSubmitted;
                 break;
 
             case IdentityEvent.OccasionOneofCase.ApplicationAdmitted:
-                // Допускают по заявке тоже только в круги поверхностей: по
-                // кругу канал выбирает бот, которым придёт сообщение.
-                occasionRole = RoleName(message.ApplicationAdmitted.Role);
-
-                if (occasionRole is not ("member" or "public"))
+                // По очереди канал выбирает бот, которым придёт сообщение.
+                if (Queue(message.ApplicationAdmitted.Queue, message.ApplicationAdmitted.Role) is not { } admitted)
                 {
-                    return new Decoded.Poison($"application_admitted.role {message.ApplicationAdmitted.Role} is not a requestable circle");
+                    return new Decoded.Poison(
+                        $"application_admitted carries neither a known queue {message.ApplicationAdmitted.Queue} nor a requestable role {message.ApplicationAdmitted.Role}");
                 }
 
+                occasionQueue = admitted;
                 occasion = IdentityOccasion.ApplicationAdmitted;
                 break;
 
@@ -350,6 +364,21 @@ public static class ReplicaMapping
 
                 occasionRole = granted;
                 occasion = IdentityOccasion.RoleGranted;
+                break;
+
+            case IdentityEvent.OccasionOneofCase.RightGranted:
+                // Незнакомое право ничего не даёт и ничего не закрывает: повод
+                // остаётся только сдвигом реплики, как неизвестный повод.
+                if (RightName(message.RightGranted.Right) is { } right)
+                {
+                    occasionRight = right;
+                    occasion = IdentityOccasion.RightGranted;
+                }
+                else
+                {
+                    occasion = IdentityOccasion.Other;
+                }
+
                 break;
 
             case IdentityEvent.OccasionOneofCase.ProfileBlocked:
@@ -366,10 +395,13 @@ public static class ReplicaMapping
             identityId,
             message.Version,
             Instant(message.OccurredAt)!.Value,
-            roles.ToArray(),
+            role,
+            rights.ToArray(),
             state.Blocked,
             occasion,
-            occasionRole));
+            occasionRole,
+            occasionQueue,
+            occasionRight));
     }
 
     private static string? RoleName(GlobalRole role) => role switch
@@ -377,8 +409,36 @@ public static class ReplicaMapping
         GlobalRole.Admin => "admin",
         GlobalRole.Maintainer => "maintainer",
         GlobalRole.Member => "member",
-        GlobalRole.Guest => "public",
+        GlobalRole.Guest => "guest",
         _ => null,
+    };
+
+    private static string? RightName(AccessRight right) => right switch
+    {
+        AccessRight.Hub => "hub",
+        AccessRight.Auction => "auction",
+        AccessRight.ManageMembership => "manage_membership",
+        AccessRight.ModerateAuction => "moderate_auction",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Очередь повода заявки. Поле <c>queue</c> заменило круг заявки, но
+    /// производитель ставит оба, пока круг не снят; событие, записанное до
+    /// появления очереди, несёт только круг, и его очередь читается по нему
+    /// тем же правилом, что у Identity: <c>member</c> — сообщество, гость —
+    /// аукцион.
+    /// </summary>
+    private static AccessQueue? Queue(ApplicationQueue queue, GlobalRole role) => queue switch
+    {
+        ApplicationQueue.Community => AccessQueue.Community,
+        ApplicationQueue.Auction => AccessQueue.Auction,
+        _ => role switch
+        {
+            GlobalRole.Member => AccessQueue.Community,
+            GlobalRole.Guest => AccessQueue.Auction,
+            _ => null,
+        },
     };
 
     /// <summary>Общие правила конверта обоих источников.</summary>

@@ -37,7 +37,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             AND preference.meetup_id IS NULL
             AND preference.category = @Category
         WHERE NOT person.blocked
-            AND person.global_roles && @Circle
+            AND person.rights && @Rights
             AND person.identity_id IS DISTINCT FROM @Performer
         ORDER BY person.identity_id;
         """;
@@ -45,7 +45,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     // Подписчики сходки с действующим значением категории: переопределение у
     // сходки, иначе глобальная настройка, иначе значение продукта — то же
     // правило, что EffectivePreference.Resolve, одним запросом. Подписка
-    // правил круга не отменяет: заблокированный и человек вне круга хаба
+    // правил хаба не отменяет: заблокированный и человек без права хаба
     // адресатами не считаются, как и в развороте новой сходки.
     private const string SubscribersSql = """
         SELECT person.identity_id AS IdentityId,
@@ -62,7 +62,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             AND global.category = @Category
         WHERE subscription.meetup_id = @MeetupId
             AND NOT person.blocked
-            AND person.global_roles && @Circle
+            AND person.rights && @Rights
             AND person.identity_id IS DISTINCT FROM @Performer
         ORDER BY person.identity_id;
         """;
@@ -91,21 +91,29 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         """;
 
     // Заявитель всё ещё ждёт по последнему слову реплики, уже обновлённой
-    // этой транзакцией. Запоздавшая заявка — вернувшаяся после Nak, когда
-    // допуск или блокировка уже применились, — не оповещает о том, что решено.
+    // этой транзакцией: право очереди ему не выдано. Запоздавшая заявка —
+    // вернувшаяся после Nak, когда допуск или блокировка уже применились, — не
+    // оповещает о том, что решено.
     private const string StillWaitingSql = """
         SELECT EXISTS (
             SELECT 1 FROM identity_replica
-            WHERE identity_id = @IdentityId AND NOT blocked AND NOT (global_roles && @Holding));
+            WHERE identity_id = @IdentityId AND NOT blocked AND NOT (@Right = ANY(rights)));
         """;
 
-    // Допущенный всё ещё держит круг заявки по последнему слову реплики.
+    // Допущенный всё ещё держит право очереди по последнему слову реплики.
     // Запоздавший допуск — вернувшийся после Nak, когда человека уже
     // заблокировали или понизили, — не сообщает о доступе, которого нет.
     private const string StillAdmittedSql = """
         SELECT EXISTS (
             SELECT 1 FROM identity_replica
-            WHERE identity_id = @IdentityId AND NOT blocked AND global_roles && @Holding);
+            WHERE identity_id = @IdentityId AND NOT blocked AND @Right = ANY(rights));
+        """;
+
+    // То же для выдачи роли: человек всё ещё в выданном круге.
+    private const string StillInRoleSql = """
+        SELECT EXISTS (
+            SELECT 1 FROM identity_replica
+            WHERE identity_id = @IdentityId AND NOT blocked AND role = @Role);
         """;
 
     private const string InsertSql = """
@@ -327,9 +335,9 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     /// <summary>
     /// Разворачивает повод события Identity и пишет факты в транзакции
     /// <paramref name="work" /> — той же, где ключ события и снимок реплики.
-    /// Новая заявка оповещает администраторов, допуск по заявке — самого
-    /// заявителя, выдача <c>admin</c> — самого человека, выдача и блокировка
-    /// снимают неотправленное о закрытых заявках. Возвращает <c>null</c>, если
+    /// Новая заявка оповещает модераторов её очереди, допуск по заявке — самого
+    /// заявителя, выдача <c>admin</c> — самого человека, выдача роли или права и
+    /// блокировка снимают неотправленное о закрытых заявках. Возвращает <c>null</c>, если
     /// событие поводом не является или снимать было нечего.
     /// </summary>
     /// <remarks>
@@ -357,6 +365,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                     await AddAccessGranted(work, fact, now, now + staleAfter, cancellationToken));
 
             case IdentityOccasion.RoleGranted:
+            case IdentityOccasion.RightGranted:
             case IdentityOccasion.ProfileBlocked:
                 var withdrawn = await WithdrawOnApplicationClosed(work, fact, now, cancellationToken);
 
@@ -390,14 +399,6 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         }
     }
 
-    // Роли, которые держат круг: круги вложенные, а реплика плоская (ADR-043).
-    private static string[] Holding(string circle) => circle switch
-    {
-        "member" => ["admin", "maintainer", "member"],
-        "public" => ["admin", "maintainer", "member", "public"],
-        _ => throw new ArgumentOutOfRangeException(nameof(circle), circle, "circle is not requestable"),
-    };
-
     private static async Task<FactCount> AddAccessRequested(
         UnitOfWork work,
         IdentityFact fact,
@@ -405,23 +406,23 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
-        var circle = fact.OccasionRole!;
+        var queue = fact.OccasionQueue!.Value;
 
-        if (!await work.Scalar(StillWaitingSql, new { fact.IdentityId, Holding = Holding(circle) }, cancellationToken))
+        if (!await work.Scalar(StillWaitingSql, new { fact.IdentityId, Right = AccessQueues.AdmissionRight(queue) }, cancellationToken))
         {
             return FactCount.None;
         }
 
-        // Заявитель исключается как исполнитель: администратор заявки не
-        // подаёт — круг у него уже есть, — но правило «о себе не сообщают»
-        // держится и тут.
+        // Адресаты — держатели права модерации очереди, куда легла заявка
+        // (ADR-064, пункт 14). Заявитель исключается как исполнитель: правило
+        // «о себе не сообщают» держится и тут.
         var audience = await work.Query<AudienceRow>(
             AudienceSql,
             new
             {
                 Default = NotificationCategories.DefaultEnabled(NotificationFacts.AccessRequestCategory),
                 Category = NotificationCategories.Storage(NotificationFacts.AccessRequestCategory),
-                Circle = NotificationCategories.Administrators.ToArray(),
+                Rights = new[] { AccessQueues.ModeratorRight(queue) },
                 Performer = (Guid?)fact.IdentityId,
             },
             cancellationToken);
@@ -436,7 +437,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 RequestId: null)
             {
                 ApplicantId = fact.IdentityId,
-                AccessCircle = circle,
+                AccessCircle = AccessQueues.Circle(queue),
                 ApplicationVersion = fact.Version,
             },
             audience,
@@ -457,7 +458,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
-        if (!await work.Scalar(StillAdmittedSql, new { fact.IdentityId, Holding = Holding(fact.OccasionRole!) }, cancellationToken))
+        if (!await work.Scalar(StillAdmittedSql, new { fact.IdentityId, Right = AccessQueues.AdmissionRight(fact.OccasionQueue!.Value) }, cancellationToken))
         {
             return FactCount.None;
         }
@@ -487,7 +488,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
-        if (!await work.Scalar(StillAdmittedSql, new { fact.IdentityId, Holding = new[] { NotificationFacts.RoleGrantedRole } }, cancellationToken))
+        if (!await work.Scalar(StillInRoleSql, new { fact.IdentityId, Role = NotificationFacts.RoleGrantedRole }, cancellationToken))
         {
             return FactCount.None;
         }
@@ -511,12 +512,26 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        // Блокировка закрывает все заявки человека. Выдача — заявки на этот и
-        // более слабые круги (ADR-060, пункт 8): public закрывает только заявку
-        // в аукцион, любая роль сильнее — обе.
-        string[] circles = fact.Occasion == IdentityOccasion.RoleGranted && fact.OccasionRole == "public"
-            ? ["public"]
-            : ["member", "public"];
+        // Блокировка закрывает все заявки человека. Выдача роли — заявки на
+        // этот и более слабые круги (ADR-060, пункт 8): гость закрывает только
+        // заявку в аукцион, любой круг сильнее — обе. Выдача права закрывает
+        // заявку в очередь, которую оно решает (ADR-062, пункт 7 в редакции
+        // ADR-064): право аукциона — заявку в аукцион; права модерации не
+        // закрывают ничего.
+        string[] circles = fact switch
+        {
+            { Occasion: IdentityOccasion.RoleGranted, OccasionRole: "guest" } => [AccessQueues.Circle(AccessQueue.Auction)],
+            { Occasion: IdentityOccasion.RightGranted } => Enum.GetValues<AccessQueue>()
+                .Where(queue => AccessQueues.AdmissionRight(queue) == fact.OccasionRight)
+                .Select(AccessQueues.Circle)
+                .ToArray(),
+            _ => [AccessQueues.Circle(AccessQueue.Community), AccessQueues.Circle(AccessQueue.Auction)],
+        };
+
+        if (circles.Length == 0)
+        {
+            return [];
+        }
 
         var types = await work.Query<string>(
             WithdrawOnApplicationClosedSql,
@@ -710,7 +725,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             cancellationToken);
     }
 
-    // Круг хаба с глобальной настройкой категории. Категория обязана быть
+    // Держатели права хаба с глобальной настройкой категории. Категория обязана быть
     // глобальной: переопределения по сходке запрос не читает.
     private static Task<IReadOnlyList<AudienceRow>> Community(
         UnitOfWork work,
@@ -723,7 +738,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             {
                 Default = NotificationCategories.DefaultEnabled(category),
                 Category = NotificationCategories.Storage(category),
-                Circle = NotificationFacts.HubCircle.ToArray(),
+                Rights = new[] { NotificationFacts.HubRight },
                 Performer = performer,
             },
             cancellationToken);
@@ -741,7 +756,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 MeetupId = meetupId,
                 Default = NotificationCategories.DefaultEnabled(category),
                 Category = NotificationCategories.Storage(category),
-                Circle = NotificationFacts.HubCircle.ToArray(),
+                Rights = new[] { NotificationFacts.HubRight },
                 Performer = performer,
             },
             cancellationToken);
