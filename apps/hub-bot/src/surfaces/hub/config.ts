@@ -1,3 +1,4 @@
+import { type FaqContent, readFaqContent } from "../../auction-faq.js";
 import { type Env, type Loaded, reader } from "../../core/config.js";
 import { isTelegramBotUsername } from "./presentation/source-deep-link.js";
 
@@ -7,6 +8,7 @@ import { isTelegramBotUsername } from "./presentation/source-deep-link.js";
 export type HubConfig = {
   meetupsUrl: string;
   notificationsUrl: string;
+  faq: FaqContent;
   // Аукцион сходки (PER-307) — расширение, а не опора бота: без адреса Auction
   // карточка сходки обходится без ряда аукциона. В графе AppHost адрес
   // передаётся всегда; пустым он остаётся только у запуска вне графа.
@@ -17,6 +19,8 @@ export type HubConfig = {
 
 export function readHubConfig(env: Env): Loaded<HubConfig> {
   const read = reader(env);
+  const faq = readFaqContent(env);
+  if (!faq.ok) return faq;
   // Опечатка в имени бота аукциона дала бы администратору ссылку в чужой или
   // несуществующий бот, поэтому форма проверяется на старте, а не молча.
   const auctionBotUsername = read("BOT_AUCTION_BOT_USERNAME");
@@ -36,6 +40,7 @@ export function readHubConfig(env: Env): Loaded<HubConfig> {
       meetupsUrl: read("MEETUPS_GRPC_URL") ?? "http://127.0.0.1:50052",
       notificationsUrl:
         read("NOTIFICATIONS_GRPC_URL") ?? "http://127.0.0.1:50053",
+      faq: faq.content,
       ...(auctionUrl === undefined ? {} : { auctionUrl }),
       ...(auctionBotUsername === undefined ? {} : { auctionBotUsername }),
     },

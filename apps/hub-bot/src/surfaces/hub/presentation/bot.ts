@@ -6,6 +6,7 @@ import {
   InlineKeyboard,
   InputFile,
 } from "grammy";
+import { defaultFaq, type FaqContent } from "../../../auction-faq.js";
 import {
   type AuctionBlock,
   type AuctionResult,
@@ -121,6 +122,7 @@ import {
 import { newLotId, newLotIdOf, newLotKey } from "./new-lot-id.js";
 import { telegramTextLimit } from "./notification-message.js";
 import {
+  auctionFaqData,
   type CallbackAction,
   type CardCursor,
   consoleViewData,
@@ -156,6 +158,7 @@ import {
   weekConfirmScreen,
   weekQuestionText,
 } from "./screens/auction-console.js";
+import { auctionFaqScreen } from "./screens/auction-faq.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
   type CommunityView,
@@ -266,6 +269,7 @@ export type BotRuntime = {
   auction?: AuctionScreens;
   // Пояс, в котором человек читает дедлайн лота; тот же, что у Meetups.
   communityTimeZone?: string;
+  faq?: FaqContent;
   // Память процесса: тесты подставляют свою, чтобы проверить рестарт.
   auctionParents?: AuctionParents;
   lotPhotos?: LotPhotos;
@@ -1632,6 +1636,11 @@ async function handleCallback(
         lotPhotos,
         { questions },
       );
+      return;
+    }
+    if (action.kind === "auction-faq") {
+      useCase = "view_auction";
+      outcome = await handleAuctionFaqCallback(ctx, runtime, action.auction);
       return;
     }
     useCase = callbackUseCase(action.kind);
@@ -4992,6 +5001,36 @@ async function refuseConsole(
     identity_id: person.identityId,
     error_category: "authorization",
     error: "auction_console_forbidden",
+  };
+}
+
+// FAQ аукциона — экран оболочки хаба. Кнопка несёт аукцион, чтобы возврат не
+// зависел от памяти процесса и повторно проходил общий шлюз аукционного дерева.
+async function handleAuctionFaqCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  auction: string,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "view_auction";
+  const data = auctionFaqData(auction);
+  const identity = await resolvePerson(ctx, runtime, useCase, data);
+  if (identity.kind === "failed") return identity.outcome;
+  const denied = await denyHubAccessIfNeeded(
+    ctx,
+    runtime,
+    identity,
+    useCase,
+    true,
+  );
+  if (denied !== undefined) return denied;
+
+  await showScreen(ctx, auctionFaqScreen(runtime.faq ?? defaultFaq, auction));
+  return {
+    level: "info",
+    message: "auction FAQ screen sent",
+    result: "ok",
+    use_case: useCase,
+    identity_id: identity.person.identityId,
   };
 }
 

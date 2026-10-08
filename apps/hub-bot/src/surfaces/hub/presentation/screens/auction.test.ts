@@ -189,7 +189,9 @@ describe("feed and history in the hub shell", () => {
       .filter((line) => line.startsWith("• "));
     const content = screen.keyboard.inline_keyboard
       .flat()
-      .filter((button) => !/^(‹ |←$|→$|Меню$)/.test(button.text));
+      .filter(
+        (button) => !/^(‹ |←$|→$|Меню$|Правила и FAQ$)/.test(button.text),
+      );
     expect(lines.length).toBe(content.length);
   });
 

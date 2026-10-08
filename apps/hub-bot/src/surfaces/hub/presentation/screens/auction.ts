@@ -12,7 +12,12 @@ import type {
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { consoleViewData, lotFormData, lotNewData } from "../parse-callback.js";
+import {
+  auctionFaqData,
+  consoleViewData,
+  lotFormData,
+  lotNewData,
+} from "../parse-callback.js";
 import {
   acceptedScreen,
   answerRefusedScreen,
@@ -162,7 +167,11 @@ function feedScreen(
       keyboard.text(addLotLabel, lotNewData(auction)).row();
     }
     keyboard.text(consoleLabel, consoleViewData(auction));
+    keyboard.row();
   }
+  keyboard
+    .text("Правила и FAQ", auctionFaqData(uuidToToken(feed.auctionId)))
+    .row();
   for (const row of view.body.keyboard) {
     nextRow(keyboard);
     for (const button of row) {
