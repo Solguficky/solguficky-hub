@@ -395,11 +395,10 @@ describe("entries into the lot form", () => {
 
     await bot.handleUpdate(press(feedData));
     const feed = last(calls);
-    // Действия экрана стоят над лотами отдельными рядами.
-    expect(labels(feed).slice(0, 3)).toEqual([
+    // Действия экрана стоят над лотами отдельными рядами и разрешённой парой.
+    expect(labels(feed).slice(0, 2)).toEqual([
       ["Добавить лот"],
-      ["Пульт"],
-      ["Правила и FAQ"],
+      ["Пульт", "Правила и FAQ"],
     ]);
     expect(dataOf(feed, "Добавить лот")).toBe(`v1:lot:new:${auctionToken}`);
 
