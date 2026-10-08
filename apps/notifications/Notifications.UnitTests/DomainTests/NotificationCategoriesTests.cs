@@ -89,20 +89,21 @@ public class NotificationCategoriesTests
     }
 
     [Theory]
-    [InlineData(new[] { "admin" }, true)]
-    [InlineData(new[] { "admin", "member", "public" }, true)]
-    [InlineData(new[] { "maintainer", "member" }, false)]
-    [InlineData(new[] { "member", "public" }, false)]
+    [InlineData(new[] { "hub", "auction", "manage_membership", "moderate_auction" }, true)]
+    [InlineData(new[] { "hub", "auction", "moderate_auction" }, true)]
+    [InlineData(new[] { "hub", "auction", "manage_membership" }, true)]
+    [InlineData(new[] { "hub", "auction" }, false)]
+    [InlineData(new[] { "auction" }, false)]
     [InlineData(new string[0], false)]
-    public void IsVisibleTo_AccessRequests_OnlyToAdmin(string[] roles, bool visible)
+    public void IsVisibleTo_AccessRequests_OnlyToQueueModerators(string[] rights, bool visible)
     {
-        // maintainer — техническая роль, ортогональная продуктовым: заявки
-        // решает администратор (ADR-062).
-        NotificationCategories.IsVisibleTo(NotificationCategory.AccessRequest, roles).ShouldBe(visible);
+        // Кто получает факт, тот видит переключатель: держатель права модерации
+        // хотя бы одной очереди (ADR-064).
+        NotificationCategories.IsVisibleTo(NotificationCategory.AccessRequest, rights).ShouldBe(visible);
     }
 
     [Fact]
-    public void IsVisibleTo_EveryOtherCategory_IsVisibleWithoutRoles()
+    public void IsVisibleTo_EveryOtherCategory_IsVisibleWithoutRights()
     {
         NotificationCategories.All
             .Where(category => category != NotificationCategory.AccessRequest)

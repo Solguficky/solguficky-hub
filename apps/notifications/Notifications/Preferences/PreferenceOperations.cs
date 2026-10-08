@@ -54,7 +54,7 @@ public sealed class PreferenceOperations(
     /// подписку, поэтому действует и на уже существующие, и на будущие сходки.
     /// </summary>
     /// <exception cref="CategoryNotVisibleException">
-    /// Категория заведена для роли, которой у человека по реплике нет.
+    /// Категория заведена для прав, которых у человека по реплике нет.
     /// </exception>
     public async Task<GlobalPreferences> SetGlobalCategory(
         Guid identityId,
@@ -64,17 +64,17 @@ public sealed class PreferenceOperations(
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
 
-        // Роли читаются той же транзакцией, что и запись: проверка и снимок
+        // Права читаются той же транзакцией, что и запись: проверка и снимок
         // в ответе опираются на одно чтение реплики.
-        var roles = await ReplicaStore.ActiveRoles(work, identityId, cancellationToken);
+        var rights = await ReplicaStore.ActiveRights(work, identityId, cancellationToken);
 
-        if (!NotificationCategories.IsVisibleTo(category, roles))
+        if (!NotificationCategories.IsVisibleTo(category, rights))
         {
             throw new CategoryNotVisibleException(category);
         }
 
         await preferences.SetGlobal(work, identityId, category, enabled, cancellationToken);
-        var snapshot = await GlobalSnapshot(work, identityId, roles, cancellationToken);
+        var snapshot = await GlobalSnapshot(work, identityId, rights, cancellationToken);
 
         await work.Commit(cancellationToken);
 
@@ -120,8 +120,8 @@ public sealed class PreferenceOperations(
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
 
-        var roles = await ReplicaStore.ActiveRoles(work, identityId, cancellationToken);
-        var snapshot = await GlobalSnapshot(work, identityId, roles, cancellationToken);
+        var rights = await ReplicaStore.ActiveRights(work, identityId, cancellationToken);
+        var snapshot = await GlobalSnapshot(work, identityId, rights, cancellationToken);
 
         await work.Commit(cancellationToken);
 
@@ -193,21 +193,21 @@ public sealed class PreferenceOperations(
     private async Task<GlobalPreferences> GlobalSnapshot(
         UnitOfWork work,
         Guid identityId,
-        IReadOnlyCollection<string> roles,
+        IReadOnlyCollection<string> rights,
         CancellationToken cancellationToken)
     {
         var global = await preferences.ReadGlobal(work, identityId, cancellationToken);
 
-        return EffectivePreference.Global(identityId, global, roles);
+        return EffectivePreference.Global(identityId, global, rights);
     }
 }
 
 /// <summary>
-/// Человек ставит категорию, которая ему не видна: она заведена для роли,
-/// которой у него нет. Транспорт отвечает на это <c>PERMISSION_DENIED</c>.
+/// Человек ставит категорию, которая ему не видна: она заведена для прав,
+/// которых у него нет. Транспорт отвечает на это <c>PERMISSION_DENIED</c>.
 /// </summary>
 public sealed class CategoryNotVisibleException(NotificationCategory category)
-    : Exception($"category {category} is reserved to a role the person does not hold")
+    : Exception($"category {category} is reserved to rights the person does not hold")
 {
     public NotificationCategory Category { get; } = category;
 }

@@ -64,6 +64,7 @@ public class MigrationsTests
             "auction_proxy_raised",
             "outbid",
             "lot_favorites",
+            "identity_replica_rights",
         ]);
 
         var main = names.IndexOf("orleans_main");

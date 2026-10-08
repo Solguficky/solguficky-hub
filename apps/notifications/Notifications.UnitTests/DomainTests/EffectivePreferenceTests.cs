@@ -49,13 +49,15 @@ public class EffectivePreferenceTests
             .ShouldBeFalse();
     }
 
+    private static readonly string[] AdminRights = ["hub", "auction", "manage_membership", "moderate_auction"];
+
     [Fact]
     public void Global_NothingConfigured_CarriesEveryCategoryWithItsProductDefault()
     {
         // Критерий «новый человек получает значения по умолчанию без отдельной
         // команды»: ни одной строки в базе нет, а снимок полон. Администратор
-        // видит весь словарь.
-        var snapshot = EffectivePreference.Global(Guid.NewGuid(), Nothing, ["admin", "member", "public"]);
+        // со всеми правами видит весь словарь.
+        var snapshot = EffectivePreference.Global(Guid.NewGuid(), Nothing, AdminRights);
 
         snapshot.Categories.Select(state => state.Category)
             .ShouldBe(NotificationCategories.All, ignoreOrder: true);
@@ -70,25 +72,24 @@ public class EffectivePreferenceTests
         var snapshot = EffectivePreference.Global(
             Guid.NewGuid(),
             new Dictionary<NotificationCategory, bool> { [NotificationCategory.MeetupPublished] = false },
-            ["member", "public"]);
+            ["hub", "auction"]);
 
         Enabled(snapshot.Categories, NotificationCategory.MeetupPublished).ShouldBeFalse();
         Enabled(snapshot.Categories, NotificationCategory.MeetupChanged).ShouldBeTrue();
     }
 
     [Theory]
-    [InlineData("maintainer")]
-    [InlineData("member")]
-    [InlineData("public")]
+    [InlineData("hub")]
+    [InlineData("auction")]
     [InlineData(null)]
-    public void Global_PersonWithoutAdminRole_LeavesAccessRequestsOut(string? role)
+    public void Global_PersonWithoutModerationRight_LeavesAccessRequestsOut(string? right)
     {
-        // Категория администратора в снимке не прячется выключенной, а
+        // Категория модератора в снимке не прячется выключенной, а
         // отсутствует: иначе переключатель обещал бы повод, которого не бывает.
-        // null — заблокированный или неизвестный реплике, ролей у него нет.
-        string[] roles = role is null ? [] : [role];
+        // null — заблокированный или неизвестный реплике, прав у него нет.
+        string[] rights = right is null ? [] : [right];
 
-        var snapshot = EffectivePreference.Global(Guid.NewGuid(), Nothing, roles);
+        var snapshot = EffectivePreference.Global(Guid.NewGuid(), Nothing, rights);
 
         snapshot.Categories.Select(state => state.Category).ShouldNotContain(NotificationCategory.AccessRequest);
         snapshot.Categories.Select(state => state.Category)
@@ -96,12 +97,12 @@ public class EffectivePreferenceTests
     }
 
     [Fact]
-    public void Global_AdminWhoTurnedAccessRequestsOff_CarriesItOff()
+    public void Global_ModeratorWhoTurnedAccessRequestsOff_CarriesItOff()
     {
         var snapshot = EffectivePreference.Global(
             Guid.NewGuid(),
             new Dictionary<NotificationCategory, bool> { [NotificationCategory.AccessRequest] = false },
-            ["admin", "member", "public"]);
+            ["hub", "auction", "moderate_auction"]);
 
         Enabled(snapshot.Categories, NotificationCategory.AccessRequest).ShouldBeFalse();
     }

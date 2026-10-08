@@ -30,7 +30,7 @@ public class AccessGrantedFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, "admin", "member", "public");
+        await Person(db, AdminCircle);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
 
         var applicant = EventFactory.NewId();

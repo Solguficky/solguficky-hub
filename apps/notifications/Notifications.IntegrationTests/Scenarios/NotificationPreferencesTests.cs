@@ -175,7 +175,7 @@ public class NotificationPreferencesTests
 
         // Администратор видит весь словарь: категорию заявок другим ставить
         // нельзя, и ключ её до базы иначе не дошёл бы.
-        var identityId = (await FactFixtures.Person(service.Database, "admin", "member", "public")).ToString("D");
+        var identityId = (await FactFixtures.Person(service.Database, FactFixtures.AdminCircle)).ToString("D");
 
         // Словарь категорий живёт в коде, а ограничение схемы перечисляет те же
         // ключи литералами. Связывает их только этот тест: он прогоняет

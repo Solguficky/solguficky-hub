@@ -223,6 +223,12 @@ aspire profile="hub" *args="":
 aspire-smoke *args="":
     sh tools/apphost/smoke.sh {{args}}
 
+# Сбросить локальные данные дерева: тома PostgreSQL и NATS этого дерева, базы
+# всех сервисов и шину вместе. Без --yes только печатает, что удалит; занятые
+# тома не трогает — сначала остановить aspire run. Нужен Docker; в verify не входит.
+local-data-reset *args="":
+    sh tools/data/reset-local.sh {{args}}
+
 # appHost.path в aspire.config.json ведёт на существующий проект с Aspire.AppHost.Sdk.
 # Статически, без Aspire CLI и сборки: путь читает только CLI, и опечатка в нём
 # иначе проходит зелёной до первого `aspire run`.
@@ -560,8 +566,8 @@ notifications-build:
 # вместе с набором — добавил тест, обнови число своего уровня здесь тем же
 # изменением. Порог держит исчезновение тестов из набора; частичный пропуск
 # ловит --fail-skips.
-NOTIFICATIONS_UNIT_TEST_THRESHOLD := "440"
-NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "177"
+NOTIFICATIONS_UNIT_TEST_THRESHOLD := "456"
+NOTIFICATIONS_INTEGRATION_TEST_THRESHOLD := "187"
 
 # Unit-тесты (L0): Docker не нужен.
 # Runner — Microsoft.Testing.Platform (опция `test` в global.json); он принимает

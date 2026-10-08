@@ -8,7 +8,7 @@ public sealed record CategoryState(NotificationCategory Category, bool Enabled);
 /// <summary>
 /// Глобальный снимок. Тотален по словарю, видимому человеку: категория, которой
 /// он не касался, приезжает со значением продукта, а не отсутствующей записью, а
-/// категории чужой роли в нём нет вовсе.
+/// категории, заведённой для чужих прав, в нём нет вовсе.
 /// </summary>
 public sealed record GlobalPreferences(Guid IdentityId, IReadOnlyList<CategoryState> Categories);
 
@@ -43,20 +43,20 @@ public static class EffectivePreference
     public static bool Resolve(NotificationCategory category, bool? global, bool? @override) =>
         @override ?? global ?? NotificationCategories.DefaultEnabled(category);
 
-    /// <summary>Глобальный снимок по категориям словаря, видимым этим ролям.</summary>
-    /// <param name="roles">Активные роли человека; у заблокированного пусто.</param>
+    /// <summary>Глобальный снимок по категориям словаря, видимым с этими правами.</summary>
+    /// <param name="rights">Права человека; у заблокированного пусто.</param>
     /// <remarks>
     /// Сохранённое значение категории, которую человек больше не видит, не
-    /// удаляется, а только не показывается: вернувшаяся роль вернёт и его.
+    /// удаляется, а только не показывается: вернувшееся право вернёт и его.
     /// </remarks>
     public static GlobalPreferences Global(
         Guid identityId,
         IReadOnlyDictionary<NotificationCategory, bool> global,
-        IReadOnlyCollection<string> roles) =>
+        IReadOnlyCollection<string> rights) =>
         new(
             identityId,
             NotificationCategories.All
-                .Where(category => NotificationCategories.IsVisibleTo(category, roles))
+                .Where(category => NotificationCategories.IsVisibleTo(category, rights))
                 .Select(category => new CategoryState(category, Resolve(category, Lookup(global, category), null)))
                 .ToArray());
 
