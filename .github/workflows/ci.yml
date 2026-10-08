@@ -26,7 +26,6 @@ jobs:
       hub-bot: ${{ steps.filter.outputs.hub-bot }}
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
-      screen-lint: ${{ steps.filter.outputs.screen-lint }}
       bot-console: ${{ steps.filter.outputs.bot-console }}
       auction: ${{ steps.filter.outputs.auction }}
       contour: ${{ steps.filter.outputs.contour }}
@@ -75,8 +74,6 @@ jobs:
               # конфиг бота; живой прогон (L3) CI не гоняет никогда.
               - 'tests/contour/bot-wire/**'
               - 'tests/telegram-live/**'
-              # Линтер экрана: test kit бота берёт его исходники.
-              - 'shared/typescript/screen-lint/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
             auction:
@@ -92,16 +89,11 @@ jobs:
               - 'docs/published/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
-            screen-lint:
-              - 'shared/typescript/screen-lint/**'
-              - 'justfile'
-              - '.github/workflows/ci.yml'
             # Пульт провода двух ботов — своя единица, но код обоих ботов берёт из
             # дерева их пакета: правка test kit любой поверхности проверяет и пульт.
             bot-console:
               - 'tests/contour/bot-wire/console/**'
               - 'apps/hub-bot/**'
-              - 'shared/typescript/screen-lint/**'
               - 'contracts/proto/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
@@ -136,7 +128,6 @@ jobs:
               - 'infra/apphost/**'
               - 'apps/identity/**'
               - 'apps/hub-bot/**'
-              - 'shared/typescript/screen-lint/**'
               - 'apps/meetups/**'
               - 'apps/notifications/**'
               - 'shared/dotnet/**'
@@ -431,33 +422,6 @@ jobs:
           name: playwright-report
           path: apps/community-site-api/playwright-report/
           retention-days: 7
-
-  # Линтер экрана дизайн-кода. Сборки у пакета нет: тестовый код ботов и
-  # пакета аукциона берёт его исходники, а их джобы стоят на этом же пути.
-  screen-lint:
-    needs: changes
-    if: >-
-      ${{ !cancelled()
-      && (needs.changes.outputs.screen-lint == 'true'
-      || github.event_name == 'workflow_dispatch') }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: shared/typescript/screen-lint/package-lock.json
-      - run: npm ci
-        working-directory: shared/typescript/screen-lint
-      - run: npm run typecheck
-        working-directory: shared/typescript/screen-lint
-      - run: npm run lint
-        working-directory: shared/typescript/screen-lint
-      - run: npm test
-        working-directory: shared/typescript/screen-lint
 
   # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
   # джобы правка графа или setup-а ресурса, которая не собирается, проходит

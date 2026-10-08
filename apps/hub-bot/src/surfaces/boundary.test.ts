@@ -30,6 +30,7 @@ const isShared = (target: string) =>
   inside(target, path.join(src, "core")) ||
   inside(target, path.join(app, "gen")) ||
   target === path.join(app, "testkit", "imports.ts") ||
+  inside(target, path.join(app, "testkit", "lint")) ||
   !inside(target, app);
 
 const scanned = ["src", "testkit"].flatMap((dir) =>

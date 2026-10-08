@@ -1,11 +1,4 @@
 import {
-  inspectCall as inspectWith,
-  type LintConfig,
-  type ScreenEntry,
-  type ScreenViolation,
-  type UnknownEntryKeys,
-} from "../../../shared/typescript/screen-lint/src/index.js";
-import {
   auctionFeedParent,
   auctionFeedParents,
   meetupListParent,
@@ -13,6 +6,13 @@ import {
   screenCatalog,
 } from "../src/presentation/screens/catalog.js";
 import { screenTag } from "../src/presentation/screens/show.js";
+import {
+  inspectCall as inspectWith,
+  type LintConfig,
+  type ScreenEntry,
+  type ScreenViolation,
+  type UnknownEntryKeys,
+} from "./lint/index.js";
 
 // Линтер экрана хаба: общий линтер дизайн-кода (`shared/typescript/screen-lint`)
 // с каталогом и частными правилами дерева хаба. Его зовёт записывающий
@@ -24,7 +24,7 @@ export {
   type ScreenEntry,
   type ScreenViolation,
   takeViolations,
-} from "../../../shared/typescript/screen-lint/src/index.js";
+} from "./lint/index.js";
 
 // Каталог объявлен без `satisfies` — сборка бота не видит пакета линтера, — и
 // опечатку в необязательном поле записи ловит этот тип при typecheck.
