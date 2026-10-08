@@ -26,6 +26,11 @@ service NotificationsService {
   rpc GetOutbidPreference(GetOutbidPreferenceRequest) returns (OutbidPreference);
   rpc SetOutbidPreference(SetOutbidPreferenceRequest) returns (OutbidPreference);
 
+  // Favorite lots: "the person follows this lot".
+  rpc FollowLot(FollowLotRequest) returns (LotFollowing);
+  rpc UnfollowLot(UnfollowLotRequest) returns (LotFollowing);
+  rpc ListFollowedLots(ListFollowedLotsRequest) returns (FollowedLots);
+
   // Two separate operations rather than one with an optional meetup id. They
   // share the acceptance message because one mechanism executes both.
   rpc BroadcastToMeetupSubscribers(BroadcastToMeetupSubscribersRequest) returns (BroadcastAccepted);
@@ -170,6 +175,49 @@ enum OutbidFrequency {
 
   // No outbid messages. Purchase, proxy and access messages are not affected.
   OUTBID_FREQUENCY_OFF = 5;
+}
+
+message FollowLotRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The person whose own mark
+  // changes.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string lot_id = 2;
+}
+
+message UnfollowLotRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string lot_id = 2;
+}
+
+// Server-produced state of one mark after the command.
+message LotFollowing {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string lot_id = 2;
+
+  bool following = 3;
+}
+
+message ListFollowedLotsRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+}
+
+// The person's own list, earliest mark first. Price, deadline and outcome of
+// the lots are not here.
+message FollowedLots {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 strings with hyphens.
+  repeated string lot_ids = 2;
 }
 
 message BroadcastToMeetupSubscribersRequest {

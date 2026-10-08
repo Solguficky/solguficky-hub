@@ -22,6 +22,9 @@ public static class RequestValidation
     /// <summary>Идентификатор сходки.</summary>
     public static Guid MeetupId(string value) => UuidV7("meetup_id", value);
 
+    /// <summary>Идентификатор лота аукциона.</summary>
+    public static Guid LotId(string value) => UuidV7("lot_id", value);
+
     /// <summary>
     /// Идентификатор рассылки. Его генерирует вызывающий, и он же ключ
     /// идемпотентности, поэтому форма та же, что у остальных идентификаторов.

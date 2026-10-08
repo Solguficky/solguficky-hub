@@ -183,6 +183,9 @@ public sealed class SiloUnderTest : IAsyncDisposable
     /// </summary>
     public const string BotToken = "bot-token-under-test";
 
+    /// <summary>Токен бота аукциона: ему открыты избранные лоты (ADR-063).</summary>
+    public const string AuctionBotToken = "auction-bot-token-under-test";
+
     /// <summary>Свой токен Notifications: без него сервис не стартует.</summary>
     public const string OwnToken = "notifications-token-under-test";
 
@@ -201,6 +204,7 @@ public sealed class SiloUnderTest : IAsyncDisposable
     public static IReadOnlyDictionary<string, string> CallerEnvironment { get; } = new Dictionary<string, string>
     {
         [Caller.HubBot.TokenVariable] = BotToken,
+        [Caller.AuctionBot.TokenVariable] = AuctionBotToken,
         [ServiceToken.Variable] = OwnToken,
     };
 

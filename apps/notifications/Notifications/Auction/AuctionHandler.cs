@@ -5,7 +5,7 @@ using Notifications.Observability;
 
 namespace Notifications.Auction;
 
-/// <summary>Граница аукционных поводов со своими исходами и логами.</summary>
+/// <summary>Граница аукционных поводов и реплики лота со своими исходами и логами.</summary>
 public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetry, FactTelemetry facts,
     TimeProvider clock, ILogger<AuctionHandler> logger) : IEventHandler
 {
@@ -35,6 +35,9 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
                 (Func<Task<AuctionApplication>>)(() => store.Apply(bid, clock.GetUtcNow(), stoppingToken))),
             AuctionDecoded.Sale { Value: var sale } => (new EventRef(sale.EventId, sale.LotId, sale.Version, sale.OccurredAt),
                 () => store.Apply(sale, clock.GetUtcNow(), stoppingToken)),
+            AuctionDecoded.Lot { Value: var fact } => (new EventRef(fact.EventId, fact.Snapshot.LotId,
+                    fact.Snapshot.Version, fact.Snapshot.OccurredAt),
+                () => store.Apply(fact, clock.GetUtcNow(), stoppingToken)),
             _ => throw new ArgumentOutOfRangeException(nameof(message)),
         };
         AuctionApplication application;
@@ -67,6 +70,7 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionOutcome.Duplicate => "duplicate",
             AuctionOutcome.Suppressed => "suppressed",
             AuctionOutcome.Collected => "collected",
+            AuctionOutcome.LotReplicated => "lot_replicated",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),
         }, application.FactsCreated);
     }
