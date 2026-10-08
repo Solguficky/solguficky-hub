@@ -162,6 +162,15 @@ final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckD
         true
     }
 
+    // Журнал восстанавливает конфигурацию через `of`: валюту платформы он не сверяет, иначе её смена в коде сделала бы
+    // записанный аукцион нечитаемым и вместе с ним его таймеры закрытия.
+    "restores a window without lot defaults regardless of the currency of the platform" in {
+      val euro = window(1, 2, Set(lotA)).copy(step = Money(1, CurrencyCode("EUR")))
+      AuctionConfig
+        .of(Some(week), 1, ClosingPolicy.Mixed(onlineByDeadline = true), None, List(euro))
+        .isRight shouldBe true
+    }
+
     "refuses lot defaults whose step policy is contradictory" in {
       val unsorted = LotFixtures.configInput(StepPolicyInput.Tiered(tiers((0, 10), (500, 20), (100, 30))))
       AuctionConfig.parse(configInput(lotDefaults = Some(unsorted))) shouldBe

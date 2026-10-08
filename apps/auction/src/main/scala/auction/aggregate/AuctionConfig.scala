@@ -120,20 +120,20 @@ object AuctionConfig {
     else if (onlinePhase.exists(phase => phase.closesAt.exists(!_.isAfter(phase.opensAt))))
       Left(ConfigInvalid.ClosesAtNotAfterOpensAt)
     else if (finalBlocks < 0 || finalBlocks > MaxFinalBlocks) Left(ConfigInvalid.FinalBlocksOutOfRange)
-    else {
-      val currency = lotDefaults.fold(LotTerms.platform.currency)(_.currency)
-      windowsInvalid(onlinePhase, currency, stepWindows)
+    else
+      windowsInvalid(onlinePhase, lotDefaults.map(_.currency), stepWindows)
         .toLeft(AuctionConfig(onlinePhase, finalBlocks, closingPolicy, lotDefaults, stepWindows))
-    }
   }
 
   /**
    * Первое нарушение окон в порядке входа: сначала каждое окно само по себе, затем пары с общим лотом. Окно без
-   * `closesAt` не имеет верхней границы недели и отклоняется раньше проверки границ.
+   * `closesAt` не имеет верхней границы недели и отклоняется раньше проверки границ. Валюту окна `of` сверяет только с
+   * `lotDefaults` из самого значения: без них сверка с умолчаниями платформы — дело [[parse]], иначе смена константы
+   * платформы сделала бы записанный журнал нечитаемым.
    */
   private def windowsInvalid(
       onlinePhase: Option[OnlinePhase],
-      currency: CurrencyCode,
+      currency: Option[CurrencyCode],
       windows: List[StepWindowConfig]
   ): Option[ConfigInvalid] = {
     val indexed = windows.zipWithIndex
@@ -143,7 +143,7 @@ object AuctionConfig {
         case Some((opensAt, closesAt)) =>
           if (window.from.isBefore(opensAt) || !window.from.isBefore(window.until) || window.until.isAfter(closesAt))
             Some(ConfigInvalid.StepWindowOutsideOnlinePhase(index))
-          else if (window.step.minorUnits <= 0 || window.step.currency != currency)
+          else if (window.step.minorUnits <= 0 || currency.exists(_ != window.step.currency))
             Some(ConfigInvalid.StepWindowStepInvalid(index))
           else if (window.lots.isEmpty) Some(ConfigInvalid.StepWindowLotsEmpty(index))
           else None
@@ -158,9 +158,21 @@ object AuctionConfig {
     single.nextOption().orElse(pairs.nextOption())
   }
 
-  /** Проверка на входе `ScheduleAuction`: шаг — теми же конструкторами, что у `ScheduleLot` (И-15). */
+  /**
+   * Проверка на входе `ScheduleAuction`: шаг — теми же конструкторами, что у `ScheduleLot` (И-15). Без `lotDefaults`
+   * окна сверяются по валюте с умолчаниями платформы, которые лоты тогда получат, — после проверок самого значения.
+   */
   def parse(input: AuctionConfigInput): Either[ConfigInvalid, AuctionConfig] =
     input.lotDefaults
       .fold(Right(None))(LotConfig.parse(_).left.map(ConfigInvalid.LotDefaults(_)).map(Some(_)))
       .flatMap(of(input.onlinePhase, input.finalBlocks, input.closingPolicy, _, input.stepWindows))
+      .flatMap { config =>
+        val currency = LotTerms.platform.currency
+        config.stepWindows.zipWithIndex
+          .collectFirst {
+            case (window, index) if config.lotDefaults.isEmpty && window.step.currency != currency =>
+              ConfigInvalid.StepWindowStepInvalid(index)
+          }
+          .toLeft(config)
+      }
 }
