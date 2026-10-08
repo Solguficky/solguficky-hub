@@ -3,7 +3,7 @@ import {
   InMemorySpanExporter,
   SimpleSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
-import { createTracing, type Tracing } from "../src/tracing.js";
+import { createTracing, type Tracing } from "../src/core/tracing.js";
 
 // Настоящий SDK трейсов с экспортом в память: спан попадает в `exporter`
 // синхронно при `end()`, поэтому тест читает дерево сразу после update.

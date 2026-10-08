@@ -8,7 +8,7 @@ import type {
 import {
   tokenToUuid,
   uuidToToken,
-} from "../src/presentation/meetup-deep-link.js";
+} from "../src/surfaces/hub/presentation/meetup-deep-link.js";
 import { botInfo, type RecordedCall } from "./harness.js";
 
 // Разговор человека с ботом словами сценария: «написал», «нажал кнопку»,

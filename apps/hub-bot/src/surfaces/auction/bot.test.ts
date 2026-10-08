@@ -3,10 +3,7 @@ import { HttpError, InputFile, type Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GlobalRole } from "../../../gen/identity/v1/roles_pb.js";
-import {
-  inspectCall,
-  reportViolations,
-} from "../../../testkit/auction/screen-lint.js";
+import { inspectCall, reportViolations } from "../../../testkit/screen-lint.js";
 import {
   type EntryPort,
   encodeAuctionCallback,
@@ -14,6 +11,8 @@ import {
   type LotImagePort,
   type LotView,
 } from "../../auction-ui/index.js";
+import { createLogger, type Logger } from "../../core/logging.js";
+import { noopTracing } from "../../core/tracing.js";
 import type { AuctionListing, AuctionSummary } from "./auctions.js";
 import { createBot } from "./bot.js";
 import {
@@ -25,7 +24,6 @@ import {
 import { traceLotCallback } from "./delivery/message.js";
 import { deniedTexts } from "./entry-screen.js";
 import { entryCallback, startCallback } from "./faq.js";
-import { createLogger, type Logger } from "./logging.js";
 import { createPhotoCache, type PhotoCache } from "./photo-cache.js";
 import {
   actionBudgetMs,
@@ -77,6 +75,7 @@ function makeBot(
   const bot = createBot({
     token: "111:test-token",
     environment: "prod",
+    tracing: noopTracing(),
     ...(options.presentation === undefined
       ? {}
       : { presentation: options.presentation }),
@@ -93,7 +92,7 @@ function makeBot(
     calls.push({ method, payload });
     // Каждый экран сверяется с каталогом и дизайн-кодом в момент отправки;
     // найденное снимает хук набора (`testkit/lint-setup.ts`).
-    reportViolations(inspectCall(method, payload));
+    reportViolations(inspectCall("auction", method, payload));
     if (options.dropOnce === method) {
       delete options.dropOnce;
       return Promise.reject(
@@ -941,7 +940,10 @@ describe("auction bot", () => {
   // фото. Эта версия изображения больше не загружается.
   it("edits the card without the photo Telegram rejected and stops uploading it", async () => {
     const lines: string[] = [];
-    const logger = createLogger("info", (line) => lines.push(line));
+    const logger = createLogger("info", {
+      service: "auction-bot",
+      out: (line) => lines.push(line),
+    });
     const photos = createPhotoCache();
     const getLotImage = vi.fn(async () => ({
       content: new Uint8Array([1]),
@@ -1036,7 +1038,10 @@ describe("auction bot", () => {
   // без фото, а не превращается в «недоступно».
   it("shows the card without a photo when the image cannot be loaded", async () => {
     const lines: string[] = [];
-    const logger = createLogger("info", (line) => lines.push(line));
+    const logger = createLogger("info", {
+      service: "auction-bot",
+      out: (line) => lines.push(line),
+    });
     const { bot, calls } = makeBot(
       portsWith({
         lot: withImage,
@@ -1207,7 +1212,10 @@ describe("auction bot", () => {
 
   it("logs the frame of the update without Telegram identifiers", async () => {
     const lines: string[] = [];
-    const logger = createLogger("info", (line) => lines.push(line));
+    const logger = createLogger("info", {
+      service: "auction-bot",
+      out: (line) => lines.push(line),
+    });
     const { bot } = makeBot(publicPorts, { logger });
     await bot.handleUpdate(lotPress());
     const record = JSON.parse(lines.at(-1) ?? "{}");
@@ -1366,7 +1374,10 @@ describe("waiting", () => {
 
   it("delivers the screen when Telegram refuses the press answer", async () => {
     const lines: string[] = [];
-    const logger = createLogger("info", (line) => lines.push(line));
+    const logger = createLogger("info", {
+      service: "auction-bot",
+      out: (line) => lines.push(line),
+    });
     const { bot, calls } = makeBot(publicPorts, {
       logger,
       refuse: { answerCallbackQuery: "Bad Request: query is too old" },

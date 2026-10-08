@@ -33,7 +33,7 @@ export type BotName = (typeof bots)[number];
 export const slowServices = ["identity", "meetups", "auction"] as const;
 export type SlowService = (typeof slowServices)[number];
 
-// Виды фото повторяют `photoVariants` test kit хаба; копия здесь держит разбор
+// Виды фото повторяют `photoVariants` test kit пакета ботов; копия здесь держит разбор
 // без импорта kit, а расхождение ловит L0-тест языка.
 export const photoKinds = ["jpeg", "big", "broken", "lost"] as const;
 export type PhotoKind = (typeof photoKinds)[number];

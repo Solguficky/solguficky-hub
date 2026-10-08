@@ -1,17 +1,15 @@
 import type { Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
-import {
-  inspectCall,
-  reportViolations,
-} from "../../../testkit/auction/screen-lint.js";
+import { inspectCall, reportViolations } from "../../../testkit/screen-lint.js";
 import {
   type AccessAnswer,
   type AccessMatrixInput,
   describeAccessMatrix,
 } from "../../auction-ui/contract/index.js";
+import type { Logger } from "../../core/logging.js";
+import { noopTracing } from "../../core/tracing.js";
 import { createBot } from "./bot.js";
 import { deniedTexts } from "./entry-screen.js";
-import type { Logger } from "./logging.js";
 
 // Матрица доступа аукционного дерева над ботом поверхности аукциона целиком
 // (ADR-064, п. 19; ADR-060): update проходит тот же `createBot`, что и в
@@ -95,6 +93,7 @@ describeAccessMatrix("auction bot", "auction", (ports) => async (input) => {
   const bot = createBot({
     token: "111:test-token",
     environment: "prod",
+    tracing: noopTracing(),
     // Обычная карточка: её текст лежит в поле `text`, и ответ читается с него.
     presentation: "plain",
     ports: () => ({
@@ -118,7 +117,7 @@ describeAccessMatrix("auction bot", "auction", (ports) => async (input) => {
   // Результат зависит от метода, фикстура его не знает: единственное
   // ослабление типа в тесте.
   const recorder: Transformer = (_prev, method, payload) => {
-    reportViolations(inspectCall(method, payload));
+    reportViolations(inspectCall("auction", method, payload));
     if ("text" in payload && typeof payload.text === "string") {
       shown.push(payload.text);
     }

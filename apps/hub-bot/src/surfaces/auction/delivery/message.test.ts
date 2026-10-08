@@ -1,6 +1,6 @@
 import { GrammyError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
-import { inspectCall } from "../../../../testkit/auction/screen-lint.js";
+import { inspectCall } from "../../../../testkit/screen-lint.js";
 import { parseAuctionCallback } from "../../../auction-ui/index.js";
 import { screenMark } from "../screen-catalog.js";
 import {
@@ -266,9 +266,9 @@ describe("notification sender", () => {
       await sender.send({ telegramUserId: 42n, message });
     }
     expect(sent).toHaveLength(4);
-    expect(sent.flatMap((call) => inspectCall("sendMessage", call))).toEqual(
-      [],
-    );
+    expect(
+      sent.flatMap((call) => inspectCall("auction", "sendMessage", call)),
+    ).toEqual([]);
   });
 
   // Критерий приёмки: заблокировавший бота человек — окончательный отказ.

@@ -12,7 +12,6 @@ on:
   pull_request:
     paths:
       - 'apps/hub-bot/**'
-      - 'shared/typescript/telegram-delivery/**'
       - 'contracts/proto/**'
       - 'tools/image/**'
       - '.github/workflows/image-auction-bot.yml'
@@ -21,7 +20,6 @@ on:
     branches: [develop]
     paths:
       - 'apps/hub-bot/**'
-      - 'shared/typescript/telegram-delivery/**'
       - 'contracts/proto/**'
       - 'tools/image/**'
       - '.github/workflows/image-auction-bot.yml'

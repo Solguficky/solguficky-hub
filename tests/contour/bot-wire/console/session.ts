@@ -1,8 +1,8 @@
-import type { openAuctionBotWire } from "../../../../apps/hub-bot/testkit/auction/index.js";
 import {
   freshTelegramUserId,
   type LogRecord,
   meetupIdFromStartLink,
+  type openAuctionBotWire,
   type openBotWire,
   type openDirectClients,
   type Person,
@@ -189,8 +189,8 @@ export function openConsoleSession(
       throw error;
     }
     const tookMs = Math.round(performance.now() - startedAt);
-    // Линтер общий у двух kit: оба зовут один модуль `shared/typescript/screen-lint`,
-    // и найденное за действие принадлежит боту, который отвечал.
+    // Линтер и его накопитель у двух ботов одни (`testkit/screen-lint.ts`), и
+    // найденное за действие принадлежит боту, который отвечал.
     const lint = takeViolations();
     const calls = wire.calls.slice(callsBefore);
     const history = person.history();

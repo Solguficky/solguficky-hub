@@ -1,0 +1,256 @@
+// Каталог экранов бота — данные дизайн-кода (docs/design/bot/design-code.md).
+// Каждый вызов Bot API, который несёт клавиатуру, называет свою запись, и по
+// ней линтер test kit проверяет экран. Правила живут здесь, а не в ревью.
+//
+// Форма записи и сам линтер — линтер test kit `testkit/lint/`.
+// Сборка бота его не видит, поэтому `satisfies` здесь нет: форму каталога
+// проверяет test kit, когда отдаёт его линтеру (`testkit/screen-lint.ts`).
+
+export const meetupListParent = "meetup-list";
+
+/**
+ * Родитель ленты лотов: сходка, у которой идёт аукцион. После рестарта бот её
+ * может не знать — тогда лента возвращает в «Ближайшие» (ADR-030, дополнение
+ * 2026-10-04; PER-307).
+ */
+export const auctionFeedParent = "auction-feed-parent";
+
+export const screenCatalog = {
+  menu: {
+    class: "screen",
+    nav: "root",
+    title: "Меню",
+    backName: "Меню",
+  },
+  upcoming: {
+    class: "screen",
+    nav: "tree",
+    title: "Ближайшие сходки",
+    parent: "menu",
+    backName: "Ближайшие",
+  },
+  archive: {
+    class: "screen",
+    nav: "tree",
+    title: "Архив",
+    parent: "menu",
+    backName: "Архив",
+  },
+  "notify-global": {
+    class: "screen",
+    nav: "tree",
+    title: "Уведомления",
+    parent: "menu",
+  },
+  manage: {
+    class: "screen",
+    nav: "tree",
+    title: "Управление",
+    parent: "menu",
+    backName: "Управление",
+  },
+  hidden: {
+    class: "screen",
+    nav: "tree",
+    title: "Скрытые сходки",
+    parent: "manage",
+    backName: "Скрытые",
+  },
+  community: {
+    class: "screen",
+    nav: "tree",
+    title: "Состав сообщества",
+    parent: "manage",
+    backName: "Состав",
+    refresh: true,
+  },
+  "community-pending": {
+    class: "screen",
+    nav: "tree",
+    title: "Ожидают допуска",
+    parent: "community",
+    refresh: true,
+  },
+  "community-admitted": {
+    class: "screen",
+    nav: "tree",
+    title: "Допущенные",
+    parent: "community",
+    refresh: true,
+  },
+  "community-usernames": {
+    class: "screen",
+    nav: "tree",
+    title: "Разрешённые ники",
+    parent: "community",
+    refresh: true,
+  },
+  refused: {
+    class: "screen",
+    nav: "tree",
+    title: "Отказанные",
+    parent: "manage",
+  },
+  "source-channels": {
+    class: "screen",
+    nav: "tree",
+    title: "Каналы прихода",
+    parent: "manage",
+    backName: "Каналы",
+  },
+  // Заголовок карточки — номер заявки и круг, поэтому его даёт содержимое.
+  application: {
+    class: "screen",
+    nav: "tree",
+    parent: "manage",
+  },
+  card: {
+    class: "screen",
+    nav: "tree",
+    parent: meetupListParent,
+    backName: "Сходка",
+    maxRows: 5,
+  },
+  edit: {
+    class: "screen",
+    nav: "tree",
+    title: "Изменить сходку",
+    parent: "card",
+  },
+  status: {
+    class: "screen",
+    nav: "tree",
+    title: "Статус",
+    parent: "card",
+  },
+  materials: {
+    class: "screen",
+    nav: "tree",
+    title: "Материалы",
+    parent: "card",
+    backName: "Материалы",
+  },
+  // Аукцион сходки (PER-307): тело — аукционное дерево, оболочка — хаб.
+  lots: {
+    class: "screen",
+    nav: "tree",
+    title: "Лоты",
+    parent: auctionFeedParent,
+    backName: "Лоты",
+  },
+  // Заголовок карточки лота — его название. «Обновить» тело ставит, пока у
+  // лота нет итога: цена и лидер меняются без участия человека. Предел рядов
+  // назвал лист ставки (PER-317): три ряда ставки, «Обновить», «Ставки»,
+  // «Изменить лот» администратора и навигация.
+  lot: {
+    class: "screen",
+    nav: "tree",
+    parent: "lots",
+    backName: "Лот",
+    refresh: true,
+    maxRows: 7,
+  },
+  // Правка лота администратором (PER-319): экран хаба, а не тело пакета.
+  // Открывается с карточки лота и после названия нового лота.
+  "lot-form": {
+    class: "screen",
+    nav: "tree",
+    title: "Изменить лот",
+    parent: "lot",
+  },
+  // Пульт аукциона администратора (PER-320): экран хаба, а не тело пакета.
+  // Открывается из ленты лотов рядом с «Добавить лот».
+  "auction-console": {
+    class: "screen",
+    nav: "tree",
+    title: "Пульт",
+    parent: "lots",
+  },
+  // Открытие онлайн-недели: отменить его нельзя, поэтому — подтверждение.
+  // Цвета у него нет: неделю открывают штатно, денег оно не тратит (PER-473).
+  "week-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Онлайн-неделя",
+  },
+  // Хронология ставок лота (PER-309): тело — аукционное дерево, оболочка — хаб.
+  bids: {
+    class: "screen",
+    nav: "tree",
+    title: "Ставки",
+    parent: "lot",
+  },
+  // Лист ставки (PER-317): тело — аукционное дерево, тексты — оболочка хаба.
+  // Подтверждение — без ряда навигации, выбор имени — под карточкой лота.
+  // Ставка и автоставка — траты денег: их «Да» красное, и только оно
+  // (PER-473). Принятая команда — кадр исхода с «К лоту» и «Меню». Заголовок
+  // подтверждения — вопрос с суммой (PER-472), линтер сверяет его по началу.
+  "bid-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Поставить",
+    money: true,
+  },
+  "proxy-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Включить автоставку",
+    money: true,
+  },
+  "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
+  "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
+  // Отказ команды и непринятый ответ — кадры исхода (PER-472): исход в
+  // заголовке, поэтому в записи его нет.
+  "command-result": { class: "screen", nav: "exit" },
+  "answer-refused": { class: "screen", nav: "exit" },
+  "name-choice": {
+    class: "screen",
+    nav: "tree",
+    title: "Имя в аукционе",
+    parent: "lot",
+  },
+  "notify-meetup": {
+    class: "screen",
+    nav: "tree",
+    title: "Уведомления сходки",
+    parent: "card",
+  },
+  draft: {
+    class: "screen",
+    nav: "tree",
+    parent: "hidden",
+  },
+  "state-confirm": { class: "screen", nav: "confirm" },
+  "past-date-confirm": { class: "screen", nav: "confirm" },
+  "publish-confirm": { class: "screen", nav: "confirm" },
+  "material-confirm": { class: "screen", nav: "confirm" },
+  "material-remove-confirm": { class: "screen", nav: "confirm" },
+  "broadcast-confirm": { class: "screen", nav: "confirm" },
+  "community-close-confirm": { class: "screen", nav: "confirm" },
+  "reconsider-confirm": { class: "screen", nav: "confirm" },
+  "application-decline-confirm": { class: "screen", nav: "confirm" },
+  "broadcast-result": { class: "screen", nav: "exit" },
+  question: { class: "question", nav: "question" },
+  // Выбор даты кнопками: экран, а не вопрос. Режима ответа у него нет, поэтому
+  // выбор кнопкой ничего за собой не оставляет, а сам экран правится на месте.
+  "date-presets": { class: "screen", nav: "choice" },
+  refusal: { class: "screen", nav: "exit" },
+  // Исход действия — свой экран (PER-472): исход в заголовке, предмет в
+  // кавычках, выход — возврат туда, где действие сделано, и «Меню»; у
+  // непринятого ответа над ними — «Ввести заново».
+  outcome: { class: "screen", nav: "exit" },
+  "no-access": { class: "screen", nav: "none" },
+  // Тот же кадр ожидания или отказа в `member` у человека с `public`: ссылка в
+  // бот аукциона — единственная кнопка, навигации у кадра нет (PER-455).
+  "no-access-link": { class: "screen", nav: "links" },
+  notification: { class: "trace", nav: "free" },
+  "access-opened": { class: "trace", nav: "free" },
+} as const;
+
+export type ScreenId = keyof typeof screenCatalog;
+
+/** Списки, в которых может стоять сходка: родитель карточки — один из них. */
+export const meetupLists = ["upcoming", "archive", "hidden"] as const;
+
+/** Куда возвращает лента лотов: к сходке либо, если она неизвестна, в «Ближайшие». */
+export const auctionFeedParents = ["card", "upcoming"] as const;

@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  type BodyRules,
-  inspectBody,
-} from "../../../../shared/typescript/screen-lint/src/index.js";
+import { type BodyRules, inspectBody } from "../../testkit/lint/index.js";
 import {
   encodeAuctionCallback,
   MAX_COMMAND_AMOUNT,

@@ -63,7 +63,9 @@ gh attestation verify oci://ghcr.io/solguficky/hub-bot@sha256:<digest> --repo So
 
 ## Раскладка
 
-- `src/presentation/` — grammY, разбор update, Zod-схемы недоверенного ввода.
-- `src/application/` — диспетчер и юзкейсы. Сюда не импортируют `grammy`.
-- `src/identity/` — клиент `ResolveIdentity` через Connect gRPC.
-- `src/meetups/` — клиент чтения сходок, команд формы и команд материалов через Connect gRPC.
+- `src/main.ts` — выбор поверхности по `BOT_SURFACE`.
+- `src/core/` — общий процесс обеих поверхностей: конфигурация, логи, метрики и трейсы, остановка, оболочка grammY, механика доставки уведомлений и перевод ответов Auction.
+- `src/auction-ui/` — аукционное дерево, общее у поверхностей.
+- `src/surfaces/hub/` — поверхность хаба: `presentation/` — grammY, разбор update, Zod-схемы недоверенного ввода; `application/` — диспетчер и юзкейсы, сюда не импортируют `grammy`; `identity/`, `meetups/`, `notifications/`, `auction/` — клиенты сервисов через Connect gRPC.
+- `src/surfaces/auction/` — поверхность аукциона.
+- `testkit/` — один test kit обеих поверхностей и линтер экрана `testkit/lint/`.

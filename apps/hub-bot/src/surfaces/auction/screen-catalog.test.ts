@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  inspectCall,
-  type ScreenEntry,
-} from "../../../testkit/auction/screen-lint.js";
+import { inspectCall, type ScreenEntry } from "../../../testkit/screen-lint.js";
 import type { AuctionScreenBody } from "../../auction-ui/index.js";
 import type { AuctionListPage } from "./auctions.js";
 import { markupOf, richMessageOf } from "./bot.js";
@@ -447,7 +444,7 @@ function brokenRules(): Map<ScreenId, Set<string>> {
   ];
   for (const [id, method, payload] of calls) {
     const rules = broken.get(id) ?? new Set<string>();
-    for (const violation of inspectCall(method, payload, bare)) {
+    for (const violation of inspectCall("auction", method, payload, bare)) {
       rules.add(violation.rule);
     }
     broken.set(id, rules);

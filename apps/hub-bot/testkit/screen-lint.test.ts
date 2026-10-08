@@ -1,7 +1,10 @@
 import { InlineKeyboard } from "grammy";
 import { describe, expect, it } from "vitest";
-import type { IdentityResolver } from "../src/identity/port.js";
-import { screenMark, screenTag } from "../src/presentation/screens/show.js";
+import type { IdentityResolver } from "../src/surfaces/hub/identity/port.js";
+import {
+  screenMark,
+  screenTag,
+} from "../src/surfaces/hub/presentation/screens/show.js";
 import { createHarness } from "./harness.js";
 import {
   inspectCall,
@@ -97,12 +100,13 @@ const key = (text: string, style?: string): Key => ({
 });
 
 function rulesOf(method: string, payload: unknown): string[] {
-  return inspectCall(method, payload, catalog).map(({ rule }) => rule);
+  return inspectCall("hub", method, payload, catalog).map(({ rule }) => rule);
 }
 
 describe("inspectCall", () => {
   it("flags a keyboard sent without a screen mark", () => {
     const found = inspectCall(
+      "hub",
       "sendMessage",
       {
         chat_id: 42,

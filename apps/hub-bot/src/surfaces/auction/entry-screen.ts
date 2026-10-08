@@ -13,12 +13,12 @@ import {
   MAX_COMMAND_AMOUNT,
   type Money,
 } from "../../auction-ui/index.js";
+import type { Presentation } from "../../core/config.js";
 import type {
   AuctionListPage,
   AuctionStage,
   AuctionSummary,
 } from "./auctions.js";
-import type { Presentation } from "./config.js";
 import {
   defaultFaq,
   entryCallback,

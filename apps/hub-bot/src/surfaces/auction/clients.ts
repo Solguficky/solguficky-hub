@@ -1,13 +1,9 @@
-import type { Client, Interceptor } from "@connectrpc/connect";
-import { Code, ConnectError, createClient } from "@connectrpc/connect";
+import type { Client } from "@connectrpc/connect";
+import { createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
-import {
-  classifyRecipientFailure,
-  type TelegramRecipientResolver,
-} from "@solguficky/telegram-delivery";
 import {
   AuctionService,
   AuctionListing as WireListing,
@@ -31,15 +27,26 @@ import type {
 } from "../../auction-ui/index.js";
 import {
   bidOutcomeOf,
-  createUuidV7,
   displayNameOutcomeOf,
   limitOutcomeOf,
   unansweredOn,
-} from "./commands.js";
+} from "../../core/auction/commands.js";
+import { historyPageOf } from "../../core/auction/history.js";
+import { lotViewOf } from "../../core/auction/snapshot.js";
+import {
+  classifyRecipientFailure,
+  type TelegramRecipientResolver,
+} from "../../core/delivery/index.js";
+import {
+  callTimeoutMs,
+  presentServiceToken,
+  requestIdHeader,
+} from "../../core/rpc-metadata.js";
+import { type Tracing, traceRpc } from "../../core/tracing.js";
+import { createUuidV7 } from "../../core/uuid-v7.js";
 import type { NotificationReads } from "./delivery/message.js";
 import type { EntryPorts } from "./entry-ports.js";
-import { historyPageOf } from "./history.js";
-import { auctionSummaryOf, lotViewOf } from "./snapshot.js";
+import { auctionSummaryOf } from "./snapshot.js";
 
 export const rpcTimeoutMs = 3_000;
 // Байты изображения — до нескольких мегабайт, им нужно больше времени, чем
@@ -47,7 +54,6 @@ export const rpcTimeoutMs = 3_000;
 // режет и его: `GetLotImage` делит 5 секунд с личностью и чтением лота
 // (дизайн-код, «Показ фото лота»).
 export const imageTimeoutMs = 10_000;
-export const requestIdHeader = "x-request-id";
 
 // Тип клиента берётся из схемы, а не переписывается рядом с ней: Pick по
 // сгенерированному Client роняет typecheck на первом расхождении с contracts/proto.
@@ -83,27 +89,6 @@ export type PortsFactory = (
   deadlineAt?: number,
 ) => EntryPorts & { image: LotImagePort };
 
-/**
- * Дедлайн одного вызова: меньшее из его собственного и остатка бюджета
- * действия. Бюджет исчерпан — вызов не делается вовсе, а отказ тот же, что даёт
- * истёкший дедлайн транспорта: маршрут разбирает его уже существующей ветвью.
- */
-export function callTimeoutMs(
-  deadlineAt: number | undefined,
-  ownMs: number,
-  now: number = Date.now(),
-): number {
-  if (deadlineAt === undefined) return ownMs;
-  const left = deadlineAt - now;
-  if (left <= 0) {
-    throw new ConnectError(
-      "the action budget is exhausted",
-      Code.DeadlineExceeded,
-    );
-  }
-  return Math.min(ownMs, left);
-}
-
 export type PortsOptions = {
   timeoutMs?: number;
   // Источник `op_id`; тесты подменяют его, чтобы ключ команды был виден.
@@ -126,7 +111,10 @@ export function createPorts(
     const headers = { [requestIdHeader]: requestId };
     // Остаток бюджета считается в момент вызова, а не при сборке портов.
     const callOptions = (ownMs: number) => ({
-      timeoutMs: callTimeoutMs(deadlineAt, ownMs),
+      timeoutMs: callTimeoutMs(
+        deadlineAt === undefined ? undefined : { deadlineAt },
+        ownMs,
+      ),
       headers,
     });
     return {
@@ -398,25 +386,19 @@ export type Clients = {
   close(): void;
 };
 
-// Токен вызывающего (ADR-056) — свойство процесса, а не запроса, поэтому его
-// ставит транспорт на каждый вызов: клиент без него не собирается.
-function presentServiceToken(token: string): Interceptor {
-  const value = `Bearer ${token}`;
-  return (next) => (request) => {
-    request.header.set("authorization", value);
-    return next(request);
-  };
-}
-
 export function createClients(options: {
   identityUrl: string;
   auctionUrl: string;
   serviceToken: string;
+  tracing: Tracing;
   onNamesRefused?: (cause: unknown, requestId: string) => void;
 }): Clients {
   const identitySession = new Http2SessionManager(options.identityUrl);
   const auctionSession = new Http2SessionManager(options.auctionUrl);
-  const interceptors = [presentServiceToken(options.serviceToken)];
+  const interceptors = [
+    presentServiceToken(options.serviceToken),
+    traceRpc(options.tracing),
+  ];
   const identity = createClient(
     IdentityService,
     createGrpcTransport({
