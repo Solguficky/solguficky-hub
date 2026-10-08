@@ -356,7 +356,7 @@ func TestGrantAfterRefusalLiftsItFromRefusedList(t *testing.T) {
 	decide(t, svc.DeclineApplication, adminID, applicationID)
 	assertRefused(t, svc, adminID, applicationID)
 
-	// Выдача более сильного круга снимает отказ вложенно.
+	// Выдача более сильного круга снимает отказ по более слабому кругу.
 	mustChange(t)(svc.grantRole(t.Context(), applicantID, roleAdmin, uuid.NullUUID{}))
 	assertRefused(t, svc, adminID)
 	reconsidered, err := svc.ReconsiderApplication(t.Context(), &identityv1.ReconsiderApplicationRequest{Actor: adminActor(adminID), ApplicationId: applicationID})
@@ -630,7 +630,7 @@ func assertRefused(t *testing.T, svc identityService, adminID string, want ...st
 
 // assertAdmissions проверяет круги поводов application_admitted человека по
 // порядку версий: допуск по заявке объявляется ровно раз, а белый список,
-// вложенность и отказ его не дают (PER-442).
+// выдача более сильного круга и отказ его не дают (PER-442).
 func assertAdmissions(t *testing.T, db *sql.DB, identityID string, want ...string) {
 	t.Helper()
 	got := []string{}

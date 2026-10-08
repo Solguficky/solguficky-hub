@@ -129,7 +129,7 @@ var (
 )
 
 // circlesWithin — круги заявок, которые закрывает выдача роли: этот и более
-// слабые (ADR-060, пункт 8). Выдача admin закрывает и member, и public.
+// слабые (ADR-060, пункт 8). Выдача admin закрывает и member, и guest.
 func circlesWithin(role string) []string {
 	var circles []string
 	for _, circle := range applicationCircles {
@@ -156,7 +156,7 @@ func closeApplicationsOnGrant(ctx context.Context, tx *sql.Tx, identityID, role 
 }
 
 // closeApplicationsOnBlock закрывает все открытые заявки человека исходом
-// «закрыта блокировкой». Отказ по заявке в public закрывает свою заявку раньше,
+// «закрыта блокировкой». Отказ по заявке в guest закрывает свою заявку раньше,
 // поэтому здесь остаются только чужие для этой блокировки.
 func closeApplicationsOnBlock(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	result, err := tx.ExecContext(ctx, closeApplicationsOnBlockSQL, identityID, performedByValue(performedBy))
@@ -420,7 +420,7 @@ func (s identityService) ListRefusedApplications(ctx context.Context, req *ident
 }
 
 // ReconsiderApplication выдаёт круг отказанной заявки одной транзакцией
-// (пункт 14): для блокировки — снятие блокировки и выдача public, для declined —
+// (пункт 14): для блокировки — снятие блокировки и выдача guest, для declined —
 // допуск по закрытой заявке. Отметка снятия отказа читается под блокировкой
 // строки профиля, поэтому из двух пересмотров меняет состояние только первый.
 func (s identityService) ReconsiderApplication(ctx context.Context, req *identityv1.ReconsiderApplicationRequest) (*identityv1.ReconsiderApplicationResponse, error) {

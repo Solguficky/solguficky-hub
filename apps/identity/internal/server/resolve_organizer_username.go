@@ -23,8 +23,8 @@ WHERE p.id = $1
   AND NOT p.blocked
   AND 'admin' = ANY (identity_global_roles(p.id))`
 
-// memberCircle — роли, которые принимает хаб (ADR-043): вложенность кругов
-// Identity не разворачивает, поэтому круг перечислен плоско.
+// memberCircle — роли проекции global_roles, которые принимает хаб: круг
+// member и всё, что выше по порядку кругов, перечислены плоско.
 var memberCircle = []identityv1.GlobalRole{
 	identityv1.GlobalRole_GLOBAL_ROLE_ADMIN,
 	identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER,

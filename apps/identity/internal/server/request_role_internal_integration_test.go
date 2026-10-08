@@ -145,7 +145,7 @@ func TestRequestRoleAlreadyHeldStillConsumesAllowlist(t *testing.T) {
 }
 
 // guest ниже member по порядку кругов: member просит аукцион и уже его имеет.
-func TestRequestRoleNestedCircleIsAlreadyHeld(t *testing.T) {
+func TestRequestRoleStrongerCircleIsAlreadyHeld(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 7110)
