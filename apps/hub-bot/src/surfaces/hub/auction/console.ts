@@ -5,17 +5,17 @@ import type {
 } from "../../../../gen/auction/v1/auction_service_pb.js";
 import { lotViewOf } from "../../../core/auction/snapshot.js";
 import type {
-  AuctionConsoleView,
+  AuctionConsoleSnapshot,
   AuctionWeek,
   ConsoleAuctionStatus,
-  ConsoleLot,
+  ConsoleLotSnapshot,
 } from "../application/types.js";
 
 // Перевод `auction.v1.AuctionConsole` в пульт хаба (PER-320). Как и перевод
 // лота, он держит то, чего схема не выражает: статус и лот выставлены всегда,
 // число ставок помещается в безопасное целое. Нарушение — дефект соседа:
 // перевод бросает, и человек видит «недоступно», а не пульт с выдумкой.
-export function consoleOf(console: AuctionConsole): AuctionConsoleView {
+export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
   const auction = console.auction;
   if (auction === undefined) throw new Error("auction console without auction");
   const week = weekOf(auction);
@@ -69,7 +69,7 @@ function statusOf(status: AuctionSnapshot["status"]): ConsoleAuctionStatus {
   }
 }
 
-function consoleLotOf(entry: WireConsoleLot): ConsoleLot {
+function consoleLotOf(entry: WireConsoleLot): ConsoleLotSnapshot {
   if (entry.lot === undefined) throw new Error("console lot without lot");
   const bidCount = Number(entry.lot.bidCount);
   if (!Number.isSafeInteger(bidCount) || bidCount < 0) {

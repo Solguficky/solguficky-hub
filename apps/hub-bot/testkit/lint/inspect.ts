@@ -67,6 +67,15 @@ const carryingMethods: ReadonlySet<string> = new Set([
 const menuLabel = "Меню";
 const backSign = "‹ ";
 const confirmPrefix = "Да, ";
+
+// Цвета решения по заявке (решение владельца 8 октября 2026 года, PER-534):
+// допуск — зелёный, отказ — красный. Подпись без цвета здесь не красится.
+const decisionColors: ReadonlyMap<string, string> = new Map([
+  ["Допустить", "success"],
+  ["Да, пересмотреть", "success"],
+  ["Отказать", "danger"],
+  ["Да, отказать", "danger"],
+]);
 const linkSign = " ↗";
 const callbackDataLimit = 64;
 const defaultMaxRows = 12;
@@ -293,7 +302,18 @@ function checkRules(
   });
 
   // Цвет — по каталогу: красный только у «Да, …» подтверждения, где человек
-  // платит, и там он обязателен.
+  // платит, и там он обязателен. Экран решения по заявке красит допуск
+  // зелёным, а отказ красным — тоже обязательно (PER-534).
+  const decision = entry.decision === true;
+  for (const button of buttons) {
+    const color = decisionColors.get(button.text);
+    if (decision && color !== undefined && button.style !== color) {
+      found.push([
+        "style",
+        `«${button.text}» на экране решения по заявке красится ${color}`,
+      ]);
+    }
+  }
   const paid = entry.money === true && entry.nav === "confirm";
   const yes = buttons.find((button) => button.text.startsWith(confirmPrefix));
   if (paid && yes !== undefined && yes.style !== "danger") {
@@ -303,15 +323,16 @@ function checkRules(
     ]);
   }
   for (const button of buttons) {
-    if (
-      button.style !== undefined &&
-      (!paid ||
-        button.style !== "danger" ||
-        !button.text.startsWith(confirmPrefix))
-    ) {
+    const decided =
+      decision && decisionColors.get(button.text) === button.style;
+    const money =
+      paid &&
+      button.style === "danger" &&
+      button.text.startsWith(confirmPrefix);
+    if (button.style !== undefined && !decided && !money) {
       found.push([
         "style",
-        `цвет ${button.style} у «${button.text}»: красится только «${confirmPrefix}…» подтверждения с деньгами и только danger`,
+        `цвет ${button.style} у «${button.text}»: красится только «${confirmPrefix}…» подтверждения с деньгами (danger) и решение по заявке`,
       ]);
     }
     if (retiredLabels.has(button.text) || /^\[[x ]\] /.test(button.text)) {

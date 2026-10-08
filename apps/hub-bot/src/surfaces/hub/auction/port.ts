@@ -7,7 +7,7 @@ import type {
   Viewer,
 } from "../../../auction-ui/index.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
-import type { AuctionConsoleView, Person } from "../application/types.js";
+import type { AuctionConsoleSnapshot, Person } from "../application/types.js";
 
 // Аукцион у сходки (ADR-047, дополнение 2026-10-03; PER-307). Бот хаба зовёт
 // Auction в двух ролях. Оболочка сходки — эти два метода: аукцион сходки на
@@ -144,7 +144,21 @@ export type LotAdministration = {
 // `auction-not-found` — `NOT_FOUND`: аукциона нет, кнопка устарела.
 
 export type ConsoleReadResult =
-  | { kind: "ok"; console: AuctionConsoleView }
+  | { kind: "ok"; console: AuctionConsoleSnapshot }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+export type LotStatistics = {
+  lotId: string;
+  bidCount: number;
+  uniqueParticipantCount: number;
+  priceGrowth?: Money;
+};
+
+export type LotStatisticsReadResult =
+  | { kind: "ok"; lots: readonly LotStatistics[] }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
   | { kind: "auction-not-found" }
@@ -207,6 +221,11 @@ export type AuctionConsoles = {
     auctionId: string,
     meta?: RpcMetadata,
   ): Promise<ConsoleReadResult>;
+  getAuctionLotStatistics(
+    person: Person,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<LotStatisticsReadResult>;
   scheduleAuction(
     person: Person,
     config: AuctionWeekConfig,

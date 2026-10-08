@@ -313,7 +313,7 @@ describe("access request", () => {
     callback_data: "v1:notify:off:access",
   });
 
-  it("names the hub request, leads to the queue and offers to stop requests", () => {
+  it("names the hub request, leads to its queue and offers to stop requests", () => {
     const content: RenderableContent = {
       kind: "access-requested",
       circle: "member",
@@ -323,16 +323,17 @@ describe("access request", () => {
     );
     expect(buttons(content)).toEqual([
       expect.objectContaining({
-        text: "Открыть очередь",
-        callback_data: "v1:t:cm:p",
+        text: "Открыть заявки",
+        callback_data: "v1:t:cm:q",
       }),
       stop,
     ]);
   });
 
-  // Очередь хаба допускает в member: аукционную заявку туда не ведут. Категория
-  // у обоих кругов одна, и выключатель стоит под обоими.
-  it("names the auction request without leading to the hub queue", () => {
+  // Очередь хаба допускает в member: аукционную заявку ведут в очередь
+  // аукциона, где допуск выдаёт право аукциона (PER-534). Категория у обоих
+  // кругов одна, и выключатель стоит под обоими.
+  it("leads the auction request to the auction queue, not the hub one", () => {
     const content: RenderableContent = {
       kind: "access-requested",
       circle: "public",
@@ -340,7 +341,13 @@ describe("access request", () => {
     expect(renderNotification(content).text).toBe(
       "Новая заявка на участие в аукционе",
     );
-    expect(buttons(content)).toEqual([stop]);
+    expect(buttons(content)).toEqual([
+      expect.objectContaining({
+        text: "Открыть заявки",
+        callback_data: "v1:t:aq:q",
+      }),
+      stop,
+    ]);
   });
 });
 

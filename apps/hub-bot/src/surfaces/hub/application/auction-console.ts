@@ -3,6 +3,7 @@ import type {
   AuctionConsoles,
   AuctionFailure,
   ConsoleReadResult,
+  LotStatisticsReadResult,
 } from "../auction/port.js";
 import { communityInstant } from "../community-time.js";
 import type {
@@ -125,23 +126,88 @@ export function createAuctionConsole(
     | { kind: "ok"; console: AuctionConsoleView }
     | { kind: "refused"; result: ExecuteResult };
 
-  async function read(request: AuctionConsoleRequest): Promise<Read> {
-    const found: ConsoleReadResult = await consoles.getAuctionConsole(
-      request.identity,
-      request.auctionId,
-      rpcMeta(request),
-    );
-    switch (found.kind) {
-      case "ok":
-        return { kind: "ok", console: found.console };
+  function readFailure(
+    result: Exclude<
+      ConsoleReadResult | LotStatisticsReadResult,
+      { kind: "ok" }
+    >,
+  ): ExecuteResult {
+    switch (result.kind) {
       case "not-administrator":
       case "meetup-not-found":
-        return { kind: "refused", result: notAdministrator };
+        return notAdministrator;
       case "auction-not-found":
-        return { kind: "refused", result: auctionNotFound };
+        return auctionNotFound;
       default:
-        return { kind: "refused", result: failed(found) };
+        return failed(result);
     }
+  }
+
+  async function read(request: AuctionConsoleRequest): Promise<Read> {
+    const [found, statistics] = await Promise.all([
+      consoles.getAuctionConsole(
+        request.identity,
+        request.auctionId,
+        rpcMeta(request),
+      ),
+      consoles.getAuctionLotStatistics(
+        request.identity,
+        request.auctionId,
+        rpcMeta(request),
+      ),
+    ]);
+    if (found.kind !== "ok") {
+      return { kind: "refused", result: readFailure(found) };
+    }
+    if (statistics.kind !== "ok") {
+      return { kind: "refused", result: readFailure(statistics) };
+    }
+
+    const byLot = new Map<string, (typeof statistics.lots)[number]>();
+    for (const each of statistics.lots) {
+      if (byLot.has(each.lotId)) {
+        return {
+          kind: "refused",
+          result: failed({
+            kind: "invalid",
+            cause: new Error("duplicate lot in auction statistics"),
+          }),
+        };
+      }
+      byLot.set(each.lotId, each);
+    }
+    if (byLot.size !== found.console.lots.length) {
+      return {
+        kind: "refused",
+        result: failed({
+          kind: "invalid",
+          cause: new Error("auction console and statistics lot sets differ"),
+        }),
+      };
+    }
+
+    const lots = [];
+    for (const each of found.console.lots) {
+      const statistic = byLot.get(each.lot.lotId);
+      if (statistic === undefined) {
+        return {
+          kind: "refused",
+          result: failed({
+            kind: "invalid",
+            cause: new Error("lot missing from auction statistics"),
+          }),
+        };
+      }
+      lots.push({
+        ...each,
+        bidCount: statistic.bidCount,
+        uniqueParticipantCount: statistic.uniqueParticipantCount,
+        ...(statistic.priceGrowth === undefined
+          ? {}
+          : { priceGrowth: statistic.priceGrowth }),
+      });
+    }
+    return { kind: "ok", console: { ...found.console, lots } };
   }
 
   // Пульт после команды: чтение Auction с исходом первой строкой. Статус и

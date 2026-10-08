@@ -1,5 +1,10 @@
 import { z } from "zod";
-import type { FormField, LotTextField } from "../application/types.js";
+import type { ApplicationQueue } from "../../../auction-ui/index.js";
+import type {
+  ConsoleSort,
+  FormField,
+  LotTextField,
+} from "../application/types.js";
 import type { CommunityDay } from "../community-time.js";
 import type {
   MeetupCategory,
@@ -63,6 +68,37 @@ const PageSchema = z
   .string()
   .regex(/^\d{1,4}$/)
   .transform(Number);
+const ConsoleSortSchema = z.enum(["bd", "ba", "pd", "pa", "gd", "ga"]);
+export const defaultConsoleSort: ConsoleSort = {
+  metric: "bids",
+  direction: "descending",
+};
+
+function consoleSortToken(sort: ConsoleSort): string {
+  const metric =
+    sort.metric === "bids" ? "b" : sort.metric === "participants" ? "p" : "g";
+  return `${metric}${sort.direction === "descending" ? "d" : "a"}`;
+}
+
+function parseConsoleSort(raw: string | undefined): ConsoleSort | undefined {
+  const parsed = ConsoleSortSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  switch (parsed.data) {
+    case "bd":
+      return defaultConsoleSort;
+    case "ba":
+      return { metric: "bids", direction: "ascending" };
+    case "pd":
+      return { metric: "participants", direction: "descending" };
+    case "pa":
+      return { metric: "participants", direction: "ascending" };
+    case "gd":
+      return { metric: "growth", direction: "descending" };
+    case "ga":
+      return { metric: "growth", direction: "ascending" };
+  }
+  return undefined;
+}
 // Версия карточки, с которой человек начал действие с материалом. Её несёт
 // кнопка подтверждения: `ca` — confirm-add, `cr` — confirm-remove, сжатые ради
 // места. `v1:mm:ca:` с двумя токенами занимает 55 байт, и девять цифр — всё,
@@ -136,19 +172,44 @@ type PlainAction =
   | { kind: "ask-block-member"; token: string; origin: BlockOrigin }
   | { kind: "block-member"; token: string; origin: BlockOrigin }
   | { kind: "remove-allowed-username"; username: string; page: number }
+  // Модераторы аукциона в составе (ADR-064, пункт 7): список с отзывом,
+  // кандидаты на выдачу листаются, страница — куда вернуть список кандидатов.
+  | { kind: "auction-moderators" }
+  | { kind: "moderator-candidates"; page: number }
+  | { kind: "grant-moderation"; token: string; page: number }
+  | { kind: "revoke-moderation"; token: string }
   // Отказанные: токен — заявки, а не человека; страница — куда вернуть список.
-  | { kind: "refused-applications"; page: number }
-  | { kind: "ask-reconsider"; token: string; page: number }
-  | { kind: "reconsider"; token: string; page: number }
+  // Очередь называет домен кнопки: `cm` — сообщество, `aq` — аукцион.
+  | { kind: "refused-applications"; queue: ApplicationQueue; page: number }
+  | {
+      kind: "ask-reconsider";
+      queue: ApplicationQueue;
+      token: string;
+      page: number;
+    }
+  | { kind: "reconsider"; queue: ApplicationQueue; token: string; page: number }
   // Каналы прихода (ADR-060, пункт 18): список со ссылками и вопрос о новом.
   | { kind: "source-channels"; page: number }
   | { kind: "ask-source-channel" }
   // Карточка заявки: без курсора — первая в очереди, `after` — следующая за
   // курсором («Пропустить»), `at` — та же, если она ещё открыта.
-  | { kind: "application-card"; cursor?: CardCursor; from?: "after" | "at" }
-  | { kind: "admit-application"; cursor: CardCursor }
-  | { kind: "ask-decline-application"; cursor: CardCursor }
-  | { kind: "decline-application"; cursor: CardCursor }
+  | {
+      kind: "application-card";
+      queue: ApplicationQueue;
+      cursor?: CardCursor;
+      from?: "after" | "at";
+    }
+  | { kind: "admit-application"; queue: ApplicationQueue; cursor: CardCursor }
+  | {
+      kind: "ask-decline-application";
+      queue: ApplicationQueue;
+      cursor: CardCursor;
+    }
+  | {
+      kind: "decline-application";
+      queue: ApplicationQueue;
+      cursor: CardCursor;
+    }
   | { kind: "create-meetup"; token: string }
   | { kind: "publish-meetup"; token: string }
   | { kind: "manage-edit"; token: string }
@@ -167,7 +228,7 @@ type PlainAction =
   | { kind: "lot-ask"; lot: string; field: LotFormField }
   // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
   // финала — ещё лот и страницу пульта, на которую вернуться.
-  | { kind: "console-view"; auction: string; page: number }
+  | { kind: "console-view"; auction: string; page: number; sort: ConsoleSort }
   | { kind: "console-week"; auction: string }
   | { kind: "console-final"; auction: string; final: boolean }
   | { kind: "console-open"; auction: string }
@@ -180,6 +241,7 @@ type PlainAction =
       lot: string;
       selected: boolean;
       page: number;
+      sort: ConsoleSort;
     }
   | { kind: "manage-publish"; token: string }
   | { kind: "manage-unpublish"; token: string }
@@ -346,8 +408,15 @@ export function lotAskData(lot: string, field: LotFormField): string {
 // отметка финала с лотом и страницей, до 59 байт.
 
 /** Пульт аукциона на странице `page`; первая страница — без номера. */
-export function consoleViewData(auction: string, page = 0): string {
-  return page === 0 ? `v1:ac:v:${auction}` : `v1:ac:v:${auction}:${page}`;
+export function consoleViewData(
+  auction: string,
+  page = 0,
+  sort: ConsoleSort = defaultConsoleSort,
+): string {
+  if (sort.metric === "bids" && sort.direction === "descending") {
+    return page === 0 ? `v1:ac:v:${auction}` : `v1:ac:v:${auction}:${page}`;
+  }
+  return `v1:ac:v:${auction}:${page}:${consoleSortToken(sort)}`;
 }
 
 /** «Сроки недели»: вопрос о начале и конце онлайн-недели. */
@@ -376,8 +445,13 @@ export function consoleMarkData(mark: {
   lot: string;
   selected: boolean;
   page: number;
+  sort?: ConsoleSort;
 }): string {
-  return `v1:ac:${mark.selected ? "s" : "d"}:${mark.auction}:${mark.lot}:${mark.page}`;
+  const base = `v1:ac:${mark.selected ? "s" : "d"}:${mark.auction}:${mark.lot}:${mark.page}`;
+  return mark.sort === undefined ||
+    (mark.sort.metric === "bids" && mark.sort.direction === "descending")
+    ? base
+    : `${base}:${consoleSortToken(mark.sort)}`;
 }
 
 /** Кнопка FAQ из корня ленты аукциона сходки. */
@@ -580,6 +654,9 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts[1] === "cm") {
     return parseCommunity(parts);
   }
+  if (parts[1] === "aq") {
+    return parseApplicationQueue(parts, "auction");
+  }
   // Кнопки состава одним списком из прошлого релиза. «Закрыть» там исполнялось
   // сразу; теперь та же кнопка ведёт в подтверждение, как и новая.
   if (parts.length === 4 && parts[1] === "community") {
@@ -765,10 +842,12 @@ function parseConsole(parts: readonly string[]): CallbackAction {
   if (!auction.success) return { kind: "malformed" };
   switch (parts[2]) {
     case "v": {
-      if (parts.length > 5) return { kind: "malformed" };
+      if (parts.length > 6) return { kind: "malformed" };
       const page = PageSchema.safeParse(parts[4] ?? "0");
-      return page.success
-        ? { kind: "console-view", auction: auction.data, page: page.data }
+      const sort =
+        parts.length === 6 ? parseConsoleSort(parts[5]) : defaultConsoleSort;
+      return page.success && sort !== undefined
+        ? { kind: "console-view", auction: auction.data, page: page.data, sort }
         : { kind: "malformed" };
     }
     case "w":
@@ -799,13 +878,19 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     case "d": {
       const lot = TokenSchema.safeParse(parts[4]);
       const page = PageSchema.safeParse(parts[5]);
-      return parts.length === 6 && lot.success && page.success
+      const sort =
+        parts.length === 7 ? parseConsoleSort(parts[6]) : defaultConsoleSort;
+      return (parts.length === 6 || parts.length === 7) &&
+        lot.success &&
+        page.success &&
+        sort !== undefined
         ? {
             kind: "console-mark",
             auction: auction.data,
             lot: lot.data,
             selected: parts[2] === "s",
             page: page.data,
+            sort,
           }
         : { kind: "malformed" };
     }
@@ -965,32 +1050,36 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
   const [, , verb, first, second] = parts;
   switch (verb) {
     case "q":
-    case "qc": {
-      if (verb === "q" && first === undefined) {
-        return { kind: "application-card" };
-      }
-      const cursor = parseCardCursor(first, second);
-      if (cursor === undefined) return malformed;
-      return {
-        kind: "application-card",
-        cursor,
-        from: verb === "q" ? "after" : "at",
-      };
-    }
+    case "qc":
     case "qa":
     case "qd":
-    case "qy": {
-      const cursor = parseCardCursor(first, second);
-      if (cursor === undefined) return malformed;
-      return {
-        kind:
-          verb === "qa"
-            ? "admit-application"
-            : verb === "qd"
-              ? "ask-decline-application"
-              : "decline-application",
-        cursor,
-      };
+    case "qy":
+    case "r":
+    case "rq":
+    case "ry":
+      return parseApplicationQueue(parts, "community");
+    case "m":
+      return first === undefined ? { kind: "auction-moderators" } : malformed;
+    case "mc": {
+      if (second !== undefined) return malformed;
+      const page = PageSchema.safeParse(first ?? "0");
+      return page.success
+        ? { kind: "moderator-candidates", page: page.data }
+        : malformed;
+    }
+    case "mg": {
+      const token = TokenSchema.safeParse(first);
+      const page = PageSchema.safeParse(second);
+      return token.success && page.success
+        ? { kind: "grant-moderation", token: token.data, page: page.data }
+        : malformed;
+    }
+    case "mv": {
+      if (second !== undefined) return malformed;
+      const token = TokenSchema.safeParse(first);
+      return token.success
+        ? { kind: "revoke-moderation", token: token.data }
+        : malformed;
     }
     case "p": {
       if (second !== undefined) return malformed;
@@ -1001,29 +1090,12 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
         : malformed;
     }
     case "a":
-    case "u":
-    case "r": {
+    case "u": {
       if (second !== undefined) return malformed;
       const page = PageSchema.safeParse(first ?? "0");
       if (!page.success) return malformed;
       return {
-        kind:
-          verb === "a"
-            ? "community-admitted"
-            : verb === "u"
-              ? "community-usernames"
-              : "refused-applications",
-        page: page.data,
-      };
-    }
-    case "rq":
-    case "ry": {
-      const token = TokenSchema.safeParse(first);
-      const page = PageSchema.safeParse(second);
-      if (!token.success || !page.success) return malformed;
-      return {
-        kind: verb === "rq" ? "ask-reconsider" : "reconsider",
-        token: token.data,
+        kind: verb === "a" ? "community-admitted" : "community-usernames",
         page: page.data,
       };
     }
@@ -1067,6 +1139,76 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
     default:
       return malformed;
   }
+}
+
+// Очередь заявок и её отказанные — одни глаголы у двух доменов: `cm` читает
+// очередь сообщества, `aq` — очередь аукциона (ADR-064, пункт 12). Очередь
+// едет доменом, а не полем: курсор одной очереди не ставит другую.
+function parseApplicationQueue(
+  parts: readonly string[],
+  queue: ApplicationQueue,
+): CallbackAction {
+  const malformed = { kind: "malformed" } as const;
+  if (parts.length > 5) return malformed;
+  const [, , verb, first, second] = parts;
+  switch (verb) {
+    case "q":
+    case "qc": {
+      if (verb === "q" && first === undefined) {
+        return { kind: "application-card", queue };
+      }
+      const cursor = parseCardCursor(first, second);
+      if (cursor === undefined) return malformed;
+      return {
+        kind: "application-card",
+        queue,
+        cursor,
+        from: verb === "q" ? "after" : "at",
+      };
+    }
+    case "qa":
+    case "qd":
+    case "qy": {
+      const cursor = parseCardCursor(first, second);
+      if (cursor === undefined) return malformed;
+      return {
+        kind:
+          verb === "qa"
+            ? "admit-application"
+            : verb === "qd"
+              ? "ask-decline-application"
+              : "decline-application",
+        queue,
+        cursor,
+      };
+    }
+    case "r": {
+      if (second !== undefined) return malformed;
+      const page = PageSchema.safeParse(first ?? "0");
+      return page.success
+        ? { kind: "refused-applications", queue, page: page.data }
+        : malformed;
+    }
+    case "rq":
+    case "ry": {
+      const token = TokenSchema.safeParse(first);
+      const page = PageSchema.safeParse(second);
+      if (!token.success || !page.success) return malformed;
+      return {
+        kind: verb === "rq" ? "ask-reconsider" : "reconsider",
+        queue,
+        token: token.data,
+        page: page.data,
+      };
+    }
+    default:
+      return malformed;
+  }
+}
+
+/** Домен кнопок очереди: `v1:cm` — сообщество, `v1:aq` — аукцион. */
+export function queueDomain(queue: ApplicationQueue): string {
+  return queue === "community" ? "v1:cm" : "v1:aq";
 }
 
 function parseBroadcast(parts: readonly string[]): CallbackAction {

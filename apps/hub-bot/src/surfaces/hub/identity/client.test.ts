@@ -22,6 +22,7 @@ import { noopTracing } from "../../../core/tracing.js";
 import {
   createApplicationAdministrator,
   createApplicationModerator,
+  createAuctionModerationAdministrator,
   createIdentityClient,
   createIdentityResolver,
   createOrganizerResolver,
@@ -437,7 +438,10 @@ describe("application administrator", () => {
   }
 
   it("maps a refusal and moves its moment into the community zone", async () => {
-    const result = await listing(refusedRow()).refusedApplications(actor);
+    const result = await listing(refusedRow()).refusedApplications(
+      actor,
+      "community",
+    );
 
     expect(result).toEqual({
       kind: "ok",
@@ -462,7 +466,7 @@ describe("application administrator", () => {
         requestedRole: GlobalRole.MEMBER,
         outcome: ApplicationOutcome.DECLINED,
       }),
-    ).refusedApplications(actor);
+    ).refusedApplications(actor, "community");
 
     expect(result).toMatchObject({
       kind: "ok",
@@ -479,8 +483,27 @@ describe("application administrator", () => {
     ["a moment that is not RFC 3339", { decidedAt: "yesterday" }],
   ])("calls the whole list a contract violation on %s", async (_, row) => {
     await expect(
-      listing(refusedRow(), refusedRow(row)).refusedApplications(actor),
+      listing(refusedRow(), refusedRow(row)).refusedApplications(
+        actor,
+        "community",
+      ),
     ).resolves.toEqual({ kind: "invalid" });
+  });
+
+  it("names the queue whose refusals it lists", async () => {
+    const listRefusedApplications = vi
+      .fn()
+      .mockResolvedValue(create(ListRefusedApplicationsResponseSchema, {}));
+    const administrator = createApplicationAdministrator(
+      { listRefusedApplications, reconsiderApplication: vi.fn() },
+      { communityTimeZone: "UTC" },
+    );
+
+    await administrator.refusedApplications(actor, "auction");
+
+    expect(listRefusedApplications.mock.calls[0]?.[0]).toMatchObject({
+      queue: ApplicationQueue.AUCTION,
+    });
   });
 
   it("sends the actor and the application on reconsider", async () => {
@@ -525,6 +548,105 @@ describe("application administrator", () => {
 
     await expect(
       administrator.reconsiderApplication(actor, applicationId),
+    ).resolves.toMatchObject({ kind });
+  });
+});
+
+describe("auction moderation administrator", () => {
+  const actor = {
+    identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+    globalRoles: ["admin"],
+  };
+  const memberId = "0192f0a0-0000-7000-8000-00000000b001";
+
+  function moderation(
+    overrides: Partial<
+      Parameters<typeof createAuctionModerationAdministrator>[0]
+    > = {},
+  ) {
+    return createAuctionModerationAdministrator({
+      listAuctionModerators: vi.fn(),
+      grantAuctionModeration: vi.fn(),
+      revokeAuctionModeration: vi.fn(),
+      ...overrides,
+    });
+  }
+
+  it("maps the holders and tells a granted right from the circle", async () => {
+    const administrator = moderation({
+      listAuctionModerators: vi.fn().mockResolvedValue({
+        moderators: [
+          {
+            identityId: memberId,
+            telegramUsername: "moder",
+            telegramUserId: 42n,
+            revocable: true,
+          },
+          {
+            identityId: actor.identityId,
+            telegramUserId: 7n,
+            revocable: false,
+          },
+        ],
+      }),
+    });
+
+    await expect(administrator.auctionModerators(actor)).resolves.toEqual({
+      kind: "ok",
+      value: [
+        {
+          identityId: memberId,
+          telegramUsername: "moder",
+          telegramUserId: 42n,
+          revocable: true,
+        },
+        { identityId: actor.identityId, telegramUserId: 7n, revocable: false },
+      ],
+    });
+  });
+
+  it("sends the actor and the member on grant and revoke", async () => {
+    const grantAuctionModeration = vi.fn().mockResolvedValue({ changed: true });
+    const revokeAuctionModeration = vi
+      .fn()
+      .mockResolvedValue({ changed: false });
+    const administrator = moderation({
+      grantAuctionModeration,
+      revokeAuctionModeration,
+    });
+
+    await expect(
+      administrator.grantAuctionModeration(actor, memberId),
+    ).resolves.toEqual({ kind: "ok", value: true });
+    await expect(
+      administrator.revokeAuctionModeration(actor, memberId),
+    ).resolves.toEqual({ kind: "ok", value: false });
+    const request = {
+      actor: { identityId: actor.identityId, globalRoles: [GlobalRole.ADMIN] },
+      identityId: memberId,
+    };
+    expect(grantAuctionModeration).toHaveBeenCalledWith(
+      request,
+      expect.anything(),
+    );
+    expect(revokeAuctionModeration).toHaveBeenCalledWith(
+      request,
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    [Code.FailedPrecondition, "not-member"],
+    [Code.PermissionDenied, "forbidden"],
+    [Code.Unavailable, "unavailable"],
+  ])("maps grant failure %s to %s", async (code, kind) => {
+    const administrator = moderation({
+      grantAuctionModeration: () =>
+        Promise.reject(new ConnectError("refused", code)),
+    });
+
+    await expect(
+      administrator.grantAuctionModeration(actor, memberId),
     ).resolves.toMatchObject({ kind });
   });
 });
@@ -581,7 +703,7 @@ describe("application moderator", () => {
   it("maps a card and sends the cursor as an RFC 3339 moment", async () => {
     const { moderator, readApplicationQueue } = reading({});
 
-    const result = await moderator.readApplicationQueue(actor, {
+    const result = await moderator.readApplicationQueue(actor, "auction", {
       createdAtMs: Date.parse(createdAt),
       applicationId,
     });
@@ -610,6 +732,7 @@ describe("application moderator", () => {
           identityId: actor.identityId,
           globalRoles: [GlobalRole.ADMIN],
         },
+        queue: ApplicationQueue.AUCTION,
         after: { createdAt, applicationId },
       },
       expect.anything(),
@@ -620,7 +743,7 @@ describe("application moderator", () => {
     const { moderator, readApplicationQueue } = reading();
 
     await expect(
-      moderator.readApplicationQueue(actor, undefined),
+      moderator.readApplicationQueue(actor, "community", undefined),
     ).resolves.toEqual({ kind: "ok", value: { total: 17 } });
     expect(readApplicationQueue.mock.calls[0]?.[0]).not.toHaveProperty("after");
   });
@@ -632,7 +755,7 @@ describe("application moderator", () => {
     const { moderator } = reading({ source });
 
     await expect(
-      moderator.readApplicationQueue(actor, undefined),
+      moderator.readApplicationQueue(actor, "community", undefined),
     ).resolves.toMatchObject({
       value: { card: { application: { source: expected } } },
     });
@@ -643,7 +766,11 @@ describe("application moderator", () => {
     ["a moment that is not RFC 3339", { createdAt: "yesterday" }],
   ])("calls a card with %s a contract violation", async (_, card) => {
     await expect(
-      reading(card).moderator.readApplicationQueue(actor, undefined),
+      reading(card).moderator.readApplicationQueue(
+        actor,
+        "community",
+        undefined,
+      ),
     ).resolves.toEqual({ kind: "invalid" });
   });
 
