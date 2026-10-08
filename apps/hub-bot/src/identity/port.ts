@@ -55,7 +55,7 @@ export type RequestRoleInput = ResolveIdentityInput & {
 };
 
 // Отметки блокировки в ответе входа нет: её несёт исход `blocked`. Словарь
-// исходов — общего пакета: по нему политика пакета решает вход.
+// исходов — аукционного дерева: по нему политика дерева решает вход.
 export type RequestRoleResult =
   | {
       kind: "answered";

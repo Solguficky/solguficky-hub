@@ -14,7 +14,7 @@ import type {
 } from "../../auction-ui/index.js";
 import type { AuctionStage, AuctionSummary } from "./auctions.js";
 
-// Перевод `auction.v1.LotSnapshot` в срез общего пакета. Формат сообщения уже
+// Перевод `auction.v1.LotSnapshot` в срез аукционного дерева. Формат сообщения уже
 // проверил рантайм `@bufbuild/protobuf`; здесь — то, чего схема не выражает:
 // `status` выставлен всегда, а сумма помещается в безопасное целое. Нарушение —
 // дефект соседа: перевод бросает, и человек видит «недоступно», а не карточку
