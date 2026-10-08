@@ -121,7 +121,7 @@ export type MeetupPayloads = {
 };
 
 // Та же форма, что у регулярки бота
-// (apps/hub-bot/src/presentation/schemas.ts): payload другой формы бот
+// (apps/hub-bot/src/surfaces/hub/presentation/schemas.ts): payload другой формы бот
 // молча принимает за чистый `/start`, и отрицательный путь зеленел бы, не
 // дойдя до Meetups.
 const meetupPayload = /(?:^|\?start=)(m_[A-Za-z0-9_-]{22})$/;

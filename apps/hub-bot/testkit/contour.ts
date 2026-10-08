@@ -9,14 +9,14 @@ import { IdentityService } from "../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
 import { MeetupVisibility } from "../gen/meetups/v1/meetups_pb.js";
 import { MeetupsService } from "../gen/meetups/v1/meetups_service_pb.js";
-import { createDispatcher } from "../src/application/dispatcher.js";
-import { createAuctionClient } from "../src/auction/client.js";
-import { communityDay } from "../src/community-time.js";
-import { createIdentityClient } from "../src/identity/client.js";
-import { createMeetupsClient } from "../src/meetups/client.js";
-import type { TelegramFiles } from "../src/presentation/telegram-files.js";
-import { presentServiceToken } from "../src/rpc-metadata.js";
-import { noopTracing } from "../src/tracing.js";
+import { presentServiceToken } from "../src/core/rpc-metadata.js";
+import { noopTracing } from "../src/core/tracing.js";
+import { createDispatcher } from "../src/surfaces/hub/application/dispatcher.js";
+import { createAuctionClient } from "../src/surfaces/hub/auction/client.js";
+import { communityDay } from "../src/surfaces/hub/community-time.js";
+import { createIdentityClient } from "../src/surfaces/hub/identity/client.js";
+import { createMeetupsClient } from "../src/surfaces/hub/meetups/client.js";
+import type { TelegramFiles } from "../src/surfaces/hub/presentation/telegram-files.js";
 import { type PhotoVariant, photoVariantOf } from "./conversation.js";
 import {
   createHarness,

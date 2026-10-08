@@ -1,8 +1,10 @@
 import type { Transformer } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
-import type { Dispatcher } from "../src/application/dispatcher.js";
-import { createDispatcher } from "../src/application/dispatcher.js";
-import { inMemberCircle } from "../src/application/hub-access.js";
+import type { LogFields, Logger } from "../src/core/logging.js";
+import { noopTracing, type Tracing } from "../src/core/tracing.js";
+import type { Dispatcher } from "../src/surfaces/hub/application/dispatcher.js";
+import { createDispatcher } from "../src/surfaces/hub/application/dispatcher.js";
+import { inMemberCircle } from "../src/surfaces/hub/application/hub-access.js";
 import type {
   ApplicationAdministrator,
   ApplicationModerator,
@@ -10,10 +12,11 @@ import type {
   IdentityResolver,
   RoleRequester,
   SourceChannelAdministrator,
-} from "../src/identity/port.js";
-import type { LogFields, Logger } from "../src/logging.js";
-import { type BotRuntime, createBot } from "../src/presentation/bot.js";
-import { noopTracing, type Tracing } from "../src/tracing.js";
+} from "../src/surfaces/hub/identity/port.js";
+import {
+  type BotRuntime,
+  createBot,
+} from "../src/surfaces/hub/presentation/bot.js";
 import { inspectCall, reportViolations } from "./screen-lint.js";
 
 // Харнесс бота без Telegram: `botInfo` подставляется, поэтому `bot.init()` не

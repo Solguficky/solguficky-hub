@@ -1,6 +1,6 @@
-import { startHub } from "./hub-main.js";
-import { readSurface } from "./surface.js";
+import { readSurface } from "./core/surface.js";
 import { startAuction } from "./surfaces/auction/main.js";
+import { startHub } from "./surfaces/hub/main.js";
 
 // Один пакет, два процесса (ADR-064, п. 18): поверхность выбирает переменная
 // `BOT_SURFACE`, и каждый процесс поднимает своё дерево экранов, свои команды и

@@ -6,7 +6,7 @@
 export { afterAll, beforeAll, describe, expect, it } from "vitest";
 // Словарь категорий отказа и форма записи лога — для оракулов исследующего
 // прогона (`explore/`): словарь один, копия в наборе разошлась бы молча.
-export { failureCategories } from "../src/failures.js";
+export { failureCategories } from "../src/core/failures.js";
 export {
   type AuthorJournal,
   type ContourEnvironment,

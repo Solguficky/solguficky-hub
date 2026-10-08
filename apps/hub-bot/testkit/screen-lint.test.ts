@@ -1,7 +1,10 @@
 import { InlineKeyboard } from "grammy";
 import { describe, expect, it } from "vitest";
-import type { IdentityResolver } from "../src/identity/port.js";
-import { screenMark, screenTag } from "../src/presentation/screens/show.js";
+import type { IdentityResolver } from "../src/surfaces/hub/identity/port.js";
+import {
+  screenMark,
+  screenTag,
+} from "../src/surfaces/hub/presentation/screens/show.js";
 import { createHarness } from "./harness.js";
 import {
   inspectCall,

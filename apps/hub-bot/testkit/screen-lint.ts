@@ -4,8 +4,8 @@ import {
   meetupListParent,
   meetupLists,
   screenCatalog,
-} from "../src/presentation/screens/catalog.js";
-import { screenTag } from "../src/presentation/screens/show.js";
+} from "../src/surfaces/hub/presentation/screens/catalog.js";
+import { screenTag } from "../src/surfaces/hub/presentation/screens/show.js";
 import {
   inspectCall as inspectWith,
   type LintConfig,
