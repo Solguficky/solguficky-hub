@@ -1,7 +1,7 @@
 import {
   type AuctionDenial,
+  applicationQueue,
   decideEntry,
-  requestedRole,
 } from "../../../auction-ui/index.js";
 import type { HubAccess } from "../application/hub-access.js";
 import type { DeepLink, Person } from "../application/types.js";
@@ -12,12 +12,12 @@ import type {
   ResolveIdentityInput,
 } from "../identity/port.js";
 
-// Вход на `/start` в боте хаба (ADR-060). Круг и разбор исхода — политика
-// аукционного дерева, одна на оба бота (ADR-044, «Доступ как обязательный шлюз»):
-// хаб только называет свою поверхность и переводит ответ в свои кадры.
+// Вход на `/start` в боте хаба (ADR-060). Очередь и разбор исхода — политика
+// аукционного дерева, одна на оба бота (ADR-064, пересмотр ADR-044): хаб только
+// называет свою поверхность и переводит ответ в свои кадры.
 
 /**
- * Запрос входа: круг хаба, имя для карточки модератора и код канала. Код
+ * Запрос входа: очередь сообщества, имя для карточки модератора и код канала. Код
  * несёт только payload `s_<код>` — ссылка на сходку и чужой payload его не
  * несут, а пустой код после `s_` едет пустой строкой.
  */
@@ -30,14 +30,17 @@ export function hubRoleRequest(
     ...(person.telegramUsername === undefined
       ? {}
       : { telegramUsername: person.telegramUsername }),
-    requestedRole: requestedRole("hub"),
+    queue: applicationQueue("hub"),
     ...(deepLink?.kind === "source" ? { sourceCode: deepLink.code } : {}),
     firstName: person.firstName,
   };
 }
 
+// `in-community` политика хаба не отдаёт: право хаба его и пускает. Запись
+// есть только ради полноты словаря.
 const denials: Record<AuctionDenial, Exclude<HubAccess, "admitted">> = {
   "not-admitted": "pending",
+  "in-community": "pending",
   declined: "declined",
   blocked: "blocked",
 };
@@ -53,9 +56,11 @@ export function decideHubEntry(
   const person = {
     identityId: answer.identityId,
     globalRoles: answer.globalRoles,
+    rights: answer.rights,
   };
   const entry = decideEntry("hub", {
-    ...viewerOf(person),
+    viewer: viewerOf(person),
+    rights: person.rights,
     outcome: answer.outcome,
   });
   switch (entry.kind) {

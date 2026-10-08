@@ -39,7 +39,6 @@ import {
   type HubAccess,
   hubAccessErrors,
   hubAccessText,
-  offersAuctionBot,
 } from "../application/hub-access.js";
 import {
   type CommunityToday,
@@ -1436,14 +1435,7 @@ async function handleMessage(
     const identity = entry.person;
     const access = entry.access;
     if (access !== "admitted") {
-      outcome = await denyHubAccess(
-        ctx,
-        runtime,
-        access,
-        identity,
-        useCase,
-        false,
-      );
+      outcome = await denyHubAccess(ctx, access, identity, useCase, false);
       return;
     }
     const result = await runtime.dispatcher.execute(
@@ -4034,7 +4026,7 @@ async function renderArchiveList(
 // и выход последним рядом. Тексты кадров ошибок по смыслу не меняются.
 async function showFrame(
   ctx: UpdateContext,
-  id: "refusal" | "broadcast-result" | "no-access" | "no-access-link",
+  id: "refusal" | "broadcast-result" | "no-access",
   text: string,
   keyboard: InlineKeyboard,
   delivery?: "new",
@@ -5596,62 +5588,31 @@ async function denyHubAccessIfNeeded(
   useCase: ProductUseCase | undefined,
   edit: boolean,
 ): Promise<BoundaryOutcome | undefined> {
-  const access = decideHubAccess(identity.person.globalRoles, identity.blocked);
+  const access = decideHubAccess(identity.person.rights, identity.blocked);
   if (access === "admitted") {
     return undefined;
   }
-  return denyHubAccess(ctx, runtime, access, identity.person, useCase, edit);
+  return denyHubAccess(ctx, access, identity.person, useCase, edit);
 }
 
-// Человек с `public` уходит из кадра ссылкой в бот аукциона (ADR-044; PER-455):
-// хаб его не повышает, а аукцион у него есть. Без настроенного имени кадр тот
-// же, но без выхода.
+// Кадр отказа хаба без выхода: гостю намёк на бот аукциона не нужен, он там
+// уже есть (RFC-015, С-4).
 async function denyHubAccess(
   ctx: UpdateContext,
-  runtime: BotRuntime,
   access: Exclude<HubAccess, "admitted">,
   person: Person,
   useCase: ProductUseCase | undefined,
   edit: boolean,
 ): Promise<BoundaryOutcome> {
   const text = hubAccessText(access, person.identityId, ctx.from?.username);
-  const frame = noAccessFrame(
-    offersAuctionBot(access, person.globalRoles)
-      ? runtime.auctionBotUsername
-      : undefined,
-    ctx.me.username,
-  );
   await showFrame(
     ctx,
-    frame.id,
+    "no-access",
     text,
-    frame.keyboard,
+    new InlineKeyboard(),
     edit ? undefined : "new",
   );
   return hubAccessOutcome(access, person.identityId, useCase);
-}
-
-// Запись каталога и клавиатура выбираются вместе: кадр `no-access-link` без
-// кнопки или кнопка под `no-access` разошлись бы с правилом линтера. Имя,
-// совпавшее со своим, — ошибка настройки: ссылка вела бы по кругу в этот же
-// кадр, поэтому её нет.
-function noAccessFrame(
-  auctionBot: string | undefined,
-  ownUsername: string,
-): { id: "no-access" | "no-access-link"; keyboard: InlineKeyboard } {
-  if (
-    auctionBot === undefined ||
-    auctionBot.toLowerCase() === ownUsername.toLowerCase()
-  ) {
-    return { id: "no-access", keyboard: new InlineKeyboard() };
-  }
-  return {
-    id: "no-access-link",
-    keyboard: new InlineKeyboard().url(
-      "Бот аукциона ↗",
-      `https://t.me/${auctionBot}`,
-    ),
-  };
 }
 
 function hubAccessOutcome(
@@ -5706,6 +5667,7 @@ async function resolvePerson(
     person: {
       identityId: resolved.identityId,
       globalRoles: resolved.globalRoles,
+      rights: resolved.rights,
     },
     blocked: resolved.blocked,
   };

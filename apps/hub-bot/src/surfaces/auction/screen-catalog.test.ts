@@ -357,6 +357,7 @@ const shown: readonly {
   { screen: { kind: "denied", reason: "blocked" } },
   { screen: { kind: "denied", reason: "not-admitted" } },
   { screen: { kind: "denied", reason: "declined" } },
+  { screen: { kind: "denied", reason: "in-community" } },
   { screen: { kind: "outdated" } },
   // Повтор несёт данные исходного нажатия — здесь у самого предела кнопки.
   {

@@ -107,7 +107,10 @@ describe("meetups client", () => {
       communityTimeZone: "Europe/Moscow",
     });
     try {
-      await meetups.listVisible({ identityId: "id-1", globalRoles: [] }, meta);
+      await meetups.listVisible(
+        { identityId: "id-1", globalRoles: [], rights: [] },
+        meta,
+      );
     } finally {
       meetups.close();
     }
@@ -132,7 +135,11 @@ describe("auction client", () => {
     const auction = createAuctionClient(baseUrl, options());
     try {
       await auction.getMeetupAuction(
-        { identityId: "id-1", globalRoles: ["member"] },
+        {
+          identityId: "id-1",
+          globalRoles: ["member"],
+          rights: ["hub", "auction"],
+        },
         "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
         meta,
       );

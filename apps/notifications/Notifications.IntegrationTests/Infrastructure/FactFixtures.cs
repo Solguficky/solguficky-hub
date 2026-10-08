@@ -13,20 +13,48 @@ public static class FactFixtures
 {
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(30);
 
-    /// <summary>Человек в реплике Identity с этими глобальными ролями.</summary>
-    public static Task<Guid> Person(IsolatedDatabase db, params string[] roles) => Person(db, blocked: false, roles);
+    /// <summary>
+    /// Роль-круг и права человека в реплике. Права круга заданы так, как их
+    /// выводит Identity (ADR-064, пункт 7); выданные отдельно добавляет
+    /// <see cref="With" />.
+    /// </summary>
+    public sealed record Circle(string Role, string[] Rights)
+    {
+        public Circle With(params string[] granted) => this with { Rights = [.. Rights, .. granted] };
+    }
 
-    /// <inheritdoc cref="Person(IsolatedDatabase, string[])" />
-    public static async Task<Guid> Person(IsolatedDatabase db, bool blocked, params string[] roles)
+    public static readonly Circle AdminCircle = new("admin", ["hub", "auction", "manage_membership", "moderate_auction"]);
+
+    public static readonly Circle MaintainerCircle = new("maintainer", ["hub", "auction"]);
+
+    public static readonly Circle MemberCircle = new("member", ["hub", "auction"]);
+
+    /// <summary>Гость, допущенный к аукциону: право аукциона выдано записью.</summary>
+    public static readonly Circle GuestCircle = new("guest", ["auction"]);
+
+    /// <summary>Человек в реплике Identity с этой ролью и правами.</summary>
+    public static Task<Guid> Person(IsolatedDatabase db, Circle circle) => Person(db, blocked: false, circle);
+
+    /// <summary>
+    /// Заблокированный хранится так, как его пишет Identity: без роли и прав.
+    /// Круг здесь — тот, что у него был, и в реплику он не попадает.
+    /// </summary>
+    public static async Task<Guid> Person(IsolatedDatabase db, bool blocked, Circle circle)
     {
         var id = Guid.CreateVersion7();
         await Execute(
             db,
             """
-            INSERT INTO identity_replica (identity_id, version, global_roles, blocked, occurred_at, applied_at)
-            VALUES (@Id, 1, @Roles, @Blocked, now(), now());
+            INSERT INTO identity_replica (identity_id, version, role, rights, blocked, occurred_at, applied_at)
+            VALUES (@Id, 1, @Role, @Rights, @Blocked, now(), now());
             """,
-            new { Id = id, Roles = roles, Blocked = blocked });
+            new
+            {
+                Id = id,
+                Role = blocked ? null : circle.Role,
+                Rights = blocked ? [] : circle.Rights,
+                Blocked = blocked,
+            });
 
         return id;
     }

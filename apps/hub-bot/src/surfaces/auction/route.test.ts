@@ -1,6 +1,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import {
+  type AccessRight,
   encodeAuctionCallback,
   type ResolvedIdentity,
   type RoleRequestAnswer,
@@ -37,24 +38,29 @@ function summary(index: number, stage: AuctionSummary["stage"]) {
   };
 }
 
-function identity(overrides: Partial<ResolvedIdentity>): ResolvedIdentity {
-  return {
-    identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-    globalRoles: [],
-    blocked: false,
-    ...overrides,
-  };
+// Роли едут транзитом в Auction и допуска не решают: пускает право.
+const VIEWER = {
+  identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+  globalRoles: ["public"],
+} as const;
+const GUEST: readonly AccessRight[] = ["auction"];
+const MEMBER: readonly AccessRight[] = ["hub", "auction"];
+
+function identity(
+  overrides: Partial<Omit<ResolvedIdentity, "viewer">>,
+): ResolvedIdentity {
+  return { viewer: VIEWER, rights: [], blocked: false, ...overrides };
 }
 
 // Что вход ответил бы человеку с такой личностью: заблокированному —
-// `blocked`, с ролью `public` — что она уже есть, остальным — заявку.
+// `blocked`, с правом аукциона — что оно уже есть, остальным — заявку.
 function entered(resolved: ResolvedIdentity): RoleRequestAnswer {
   return {
-    identityId: resolved.identityId,
-    globalRoles: resolved.blocked ? [] : resolved.globalRoles,
+    viewer: resolved.viewer,
+    rights: resolved.blocked ? [] : resolved.rights,
     outcome: resolved.blocked
       ? "blocked"
-      : resolved.globalRoles.includes("public")
+      : resolved.rights.includes("auction")
         ? "already-held"
         : "pending",
   };
@@ -131,7 +137,7 @@ const QUESTION_STEP = encodeAuctionCallback({
 
 describe("FAQ entry", () => {
   it("shows no FAQ before admission and opens it on the first admitted start", async () => {
-    const p = ports(identity({ globalRoles: [] }));
+    const p = ports(identity({ rights: [] }));
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
     ).toEqual({
@@ -140,7 +146,7 @@ describe("FAQ entry", () => {
     });
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
     vi.mocked(p.entry.requestRole).mockResolvedValue(
-      entered(identity({ globalRoles: ["public"] })),
+      entered(identity({ rights: GUEST })),
     );
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
     expect(
@@ -160,9 +166,9 @@ describe("FAQ entry", () => {
     "details",
     "question",
   ] as const)(
-    "refuses a blocked person even with a stale public role on %s",
+    "refuses a blocked person even with a stale auction right on %s",
     async (action) => {
-      const p = ports(identity({ globalRoles: ["public"], blocked: true }));
+      const p = ports(identity({ rights: GUEST, blocked: true }));
       expect(
         (
           await routeAuctionCallback({
@@ -185,10 +191,53 @@ describe("FAQ entry", () => {
     },
   );
 
+  // Участнику сообщества бот аукциона отвечает только переходом в бот хаба:
+  // ни FAQ, ни меню, ни списков, ни торгов (ADR-064, пункт 2).
+  it.each([
+    "faq",
+    "menu",
+    "read",
+    "start",
+    "auctions",
+    "past",
+    "details",
+    "question",
+  ] as const)(
+    "sends a community member to the hub bot on %s",
+    async (action) => {
+      const p = ports(identity({ rights: MEMBER }));
+      expect(
+        (
+          await routeAuctionCallback({
+            ports: p,
+            user,
+            data: entryCallback(action),
+          })
+        ).screen,
+      ).toEqual({ kind: "denied", reason: "in-community" });
+      expect(p.faq.acknowledged).not.toHaveBeenCalled();
+      expect(p.faq.acknowledge).not.toHaveBeenCalled();
+      expect(p.catalog.listAuctions).not.toHaveBeenCalled();
+    },
+  );
+
+  it("sends a community member to the hub bot on /start and on a lot press", async () => {
+    const p = ports(identity({ rights: [...MEMBER, "manage-membership"] }));
+    expect(await routeAuctionStart({ ports: p, user, firstName })).toEqual({
+      screen: { kind: "denied", reason: "in-community" },
+      identityId: VIEWER.identityId,
+    });
+    expect(
+      (await routeAuctionCallback({ ports: p, user, data: lotButton })).screen,
+    ).toEqual({ kind: "denied", reason: "in-community" });
+    expect(p.auction.getLot).not.toHaveBeenCalled();
+    expect(p.faq.acknowledged).not.toHaveBeenCalled();
+  });
+
   it.each(["details", "question"] as const)(
     "opens the local %s destination and returns to FAQ",
     async (action) => {
-      const p = ports(identity({ globalRoles: ["public"] }));
+      const p = ports(identity({ rights: GUEST }));
       expect(
         (
           await routeAuctionCallback({
@@ -211,7 +260,7 @@ describe("FAQ entry", () => {
     },
   );
   it("shows FAQ on the first admitted start and leaves completion untouched", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+    const p = ports(identity({ rights: GUEST }));
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
@@ -226,7 +275,7 @@ describe("FAQ entry", () => {
   });
 
   it("shows the menu to a returning participant without an auction id", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+    const p = ports(identity({ rights: GUEST }));
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
     ).toEqual({
@@ -235,7 +284,7 @@ describe("FAQ entry", () => {
   });
 
   it("records completion on the return from FAQ and allows its repetition", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+    const p = ports(identity({ rights: GUEST }));
     for (let i = 0; i < 2; i++) {
       expect(
         (
@@ -257,7 +306,7 @@ describe("FAQ entry", () => {
   // «Меню» под лотом, списком или кадром отказа отметку не ставит: человек,
   // который FAQ не закрывал, видит FAQ, а не меню.
   it("opens the menu without recording completion", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+    const p = ports(identity({ rights: GUEST }));
     const menu = () =>
       routeAuctionCallback({ ports: p, user, data: entryCallback("menu") });
     expect((await menu()).screen).toEqual({ kind: "menu" });
@@ -267,7 +316,7 @@ describe("FAQ entry", () => {
   });
 
   it("does not enter the menu when completion cannot be saved", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+    const p = ports(identity({ rights: GUEST }));
     vi.mocked(p.faq.acknowledge).mockRejectedValue(
       new ConnectError("offline", Code.Unavailable),
     );
@@ -286,7 +335,7 @@ describe("FAQ entry", () => {
   });
 
   it("allows a manual return to FAQ without storage or Auction reads", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+    const p = ports(identity({ rights: GUEST }));
     expect(
       (
         await routeAuctionCallback({
@@ -304,7 +353,7 @@ describe("FAQ entry", () => {
   it.each([entryCallback("auctions"), entryCallback("past"), lotButton])(
     "shows FAQ before an unacknowledged participant follows %s",
     async (data) => {
-      const p = ports(identity({ globalRoles: ["public"] }));
+      const p = ports(identity({ rights: GUEST }));
       vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
       expect(
         (await routeAuctionCallback({ ports: p, user, data })).screen,
@@ -326,7 +375,7 @@ describe("FAQ entry", () => {
   ] as const)(
     "rechecks access on the old %s button before reaching FAQ storage",
     async (action) => {
-      const p = ports(identity({ globalRoles: [] }));
+      const p = ports(identity({ rights: [] }));
       expect(
         (
           await routeAuctionCallback({
@@ -342,7 +391,7 @@ describe("FAQ entry", () => {
   );
 
   it("fails closed if the completion read is unavailable", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+    const p = ports(identity({ rights: GUEST }));
     vi.mocked(p.faq.acknowledged).mockRejectedValue(
       new ConnectError("offline", Code.Unavailable),
     );
@@ -356,7 +405,7 @@ describe("FAQ entry", () => {
 });
 
 describe("auction lists", () => {
-  const admitted = identity({ globalRoles: ["public"] });
+  const admitted = identity({ rights: GUEST });
 
   it("lists one active auction as a one-row list, not as its feed", async () => {
     const only = summary(1, "prebidding");
@@ -371,7 +420,10 @@ describe("auction lists", () => {
       list: { page: 0, pageCount: 1, auctions: [only] },
     });
     expect(p.catalog.listAuctions).toHaveBeenCalledWith({
-      viewer: { identityId: admitted.identityId, globalRoles: ["public"] },
+      viewer: {
+        identityId: admitted.viewer.identityId,
+        globalRoles: ["public"],
+      },
       listing: "active",
       pageToken: "",
     });
@@ -474,9 +526,9 @@ describe("auction lists", () => {
 });
 
 describe("routeAuctionCallback", () => {
-  it("wraps the shared body into the entry screen for a public participant", async () => {
+  it("wraps the shared body into the entry screen for a guest", async () => {
     const outcome = await routeAuctionCallback({
-      ports: ports(identity({ globalRoles: ["public"] })),
+      ports: ports(identity({ rights: GUEST })),
       user,
       data: lotButton,
     });
@@ -491,8 +543,8 @@ describe("routeAuctionCallback", () => {
     });
   });
 
-  it("denies a person without the public role before calling Auction", async () => {
-    const p = ports(identity({ globalRoles: [] }));
+  it("denies a person without the auction right before calling Auction", async () => {
+    const p = ports(identity({ rights: [] }));
     const outcome = await routeAuctionCallback({
       ports: p,
       user,
@@ -546,7 +598,7 @@ describe("routeAuctionCallback", () => {
   });
 
   it("answers unavailable when Auction refuses the read", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+    const p = ports(identity({ rights: GUEST }));
     vi.mocked(p.auction.getLot).mockRejectedValueOnce(
       new ConnectError("not implemented", Code.Unimplemented),
     );
@@ -570,7 +622,7 @@ describe("routeAuctionCallback", () => {
   // Критерий PER-306: недоступный Auction — именованный экран, а не пустая
   // лента.
   it("answers unavailable, not an empty feed, when Auction refuses the list", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+    const p = ports(identity({ rights: GUEST }));
     vi.mocked(p.auction.listAuctionLots).mockRejectedValueOnce(
       new ConnectError("not implemented", Code.Unimplemented),
     );
@@ -598,8 +650,8 @@ describe("routeAuctionCallback", () => {
 });
 
 describe("routeAuctionStart", () => {
-  it("requests the public circle with the channel code and the first name", async () => {
-    const p = ports(identity({ globalRoles: [] }));
+  it("applies to the auction queue with the channel code and the first name", async () => {
+    const p = ports(identity({ rights: [] }));
     const outcome = await routeAuctionStart({
       ports: p,
       user: { telegramUserId: 42, telegramUsername: "owl" },
@@ -608,7 +660,7 @@ describe("routeAuctionStart", () => {
     });
     expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
       user: { telegramUserId: 42, telegramUsername: "owl" },
-      requestedRole: "public",
+      queue: "auction",
       sourceCode: "chat",
       firstName,
     });
@@ -625,7 +677,7 @@ describe("routeAuctionStart", () => {
     ["", { sourceCode: "" }],
     [undefined, {}],
   ])("passes the channel code %j as received", async (sourceCode, expected) => {
-    const p = ports(identity({ globalRoles: [] }));
+    const p = ports(identity({ rights: [] }));
     await routeAuctionStart({
       ports: p,
       user,
@@ -634,16 +686,16 @@ describe("routeAuctionStart", () => {
     });
     expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
       user,
-      requestedRole: "public",
+      queue: "auction",
       firstName,
       ...expected,
     });
   });
 
   it("opens the entry for a person the allowlist has just admitted", async () => {
-    const p = ports(identity({ globalRoles: [] }));
+    const p = ports(identity({ rights: [] }));
     vi.mocked(p.entry.requestRole).mockResolvedValue({
-      ...entered(identity({ globalRoles: ["public"] })),
+      ...entered(identity({ rights: GUEST })),
       outcome: "granted-by-allowlist",
     });
     expect(
@@ -652,9 +704,9 @@ describe("routeAuctionStart", () => {
   });
 
   it("answers a declined application with a refusal of its own", async () => {
-    const p = ports(identity({ globalRoles: [] }));
+    const p = ports(identity({ rights: [] }));
     vi.mocked(p.entry.requestRole).mockResolvedValue({
-      ...entered(identity({ globalRoles: [] })),
+      ...entered(identity({ rights: [] })),
       outcome: "declined",
     });
     expect(
@@ -663,10 +715,10 @@ describe("routeAuctionStart", () => {
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
   });
 
-  it("fails closed on an outcome it does not know, whatever the roles", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+  it("fails closed on an outcome it does not know, whatever the rights", async () => {
+    const p = ports(identity({ rights: GUEST }));
     vi.mocked(p.entry.requestRole).mockResolvedValue({
-      ...entered(identity({ globalRoles: ["public"] })),
+      ...entered(identity({ rights: GUEST })),
       outcome: "unspecified",
     });
     expect(await routeAuctionStart({ ports: p, user, firstName })).toEqual({
@@ -705,7 +757,7 @@ describe("routeAuctionStart", () => {
 // новичок после сбоя увидел бы «заявка на рассмотрении» без заявки.
 describe("entry retry", () => {
   it("requests the role again with the channel code and the first name", async () => {
-    const p = ports(identity({ globalRoles: [] }));
+    const p = ports(identity({ rights: [] }));
     const outcome = await routeAuctionCallback({
       ports: p,
       user,
@@ -713,7 +765,7 @@ describe("entry retry", () => {
     });
     expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
       user,
-      requestedRole: "public",
+      queue: "auction",
       sourceCode: "chat",
       firstName,
     });
@@ -722,7 +774,7 @@ describe("entry retry", () => {
   });
 
   it("opens the menu for an admitted person and FAQ before its completion", async () => {
-    const p = ports(identity({ globalRoles: ["public"] }));
+    const p = ports(identity({ rights: GUEST }));
     const retry = () =>
       routeAuctionCallback({ ports: p, user, data: startCallback() });
     expect((await retry()).screen).toEqual({ kind: "menu" });
@@ -746,7 +798,7 @@ describe("entry retry", () => {
       failed.screen.exit.kind !== "enter"
     )
       throw new Error("expected the entry retry frame");
-    const p = ports(identity({ globalRoles: [] }));
+    const p = ports(identity({ rights: [] }));
     await routeAuctionCallback({
       ports: p,
       user,
@@ -754,7 +806,7 @@ describe("entry retry", () => {
     });
     expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
       user,
-      requestedRole: "public",
+      queue: "auction",
       sourceCode: "",
       firstName,
     });

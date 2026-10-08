@@ -66,7 +66,12 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
           telegramUserId: Number(telegramUserId),
           ...(telegramUsername === undefined ? {} : { telegramUsername }),
         });
-        return { kind: "resolved", ...resolved };
+        return {
+          kind: "resolved",
+          ...resolved.viewer,
+          rights: resolved.rights,
+          blocked: resolved.blocked,
+        };
       },
       async requestRole({ telegramUserId, telegramUsername, ...request }) {
         const answered = await ports.entry.requestRole({
@@ -76,7 +81,12 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
           },
           ...request,
         });
-        return { kind: "answered", ...answered };
+        return {
+          kind: "answered",
+          ...answered.viewer,
+          rights: answered.rights,
+          outcome: answered.outcome,
+        };
       },
     },
     undefined,

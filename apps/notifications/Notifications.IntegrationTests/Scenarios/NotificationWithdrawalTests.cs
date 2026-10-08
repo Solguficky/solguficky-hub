@@ -47,7 +47,7 @@ public class NotificationWithdrawalTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        await Subscribe(db, await Person(db, "member"), meetupId);
+        await Subscribe(db, await Person(db, MemberCircle), meetupId);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
@@ -93,7 +93,7 @@ public class NotificationWithdrawalTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        await Subscribe(db, await Person(db, "member"), meetupId);
+        await Subscribe(db, await Person(db, MemberCircle), meetupId);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
@@ -128,7 +128,7 @@ public class NotificationWithdrawalTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        await Subscribe(db, await Person(db, "member"), meetupId);
+        await Subscribe(db, await Person(db, MemberCircle), meetupId);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
@@ -158,7 +158,7 @@ public class NotificationWithdrawalTests
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
 
-        await Person(db, "member");
+        await Person(db, MemberCircle);
 
         await using var silo = await SiloUnderTest.StartOnBus(
             db.ConnectionString,
@@ -195,7 +195,7 @@ public class NotificationWithdrawalTests
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
 
-        await Person(db, "member");
+        await Person(db, MemberCircle);
 
         await using var silo = await SiloUnderTest.StartOnBus(
             db.ConnectionString,
@@ -231,7 +231,7 @@ public class NotificationWithdrawalTests
         await using var nats = await NatsUnderTest.Start();
 
         var meetupId = EventFactory.NewId();
-        await Subscribe(db, await Person(db, "member"), meetupId);
+        await Subscribe(db, await Person(db, MemberCircle), meetupId);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();

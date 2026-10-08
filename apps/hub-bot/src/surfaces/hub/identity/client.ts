@@ -14,6 +14,7 @@ import {
 } from "../../../../gen/identity/v1/identity_service_pb.js";
 import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
 import { classifyRecipientFailure as classifyDeliveryRecipientFailure } from "../../../core/delivery/index.js";
+import { rightsOf, wireQueue } from "../../../core/identity/access.js";
 import {
   callHeaders,
   callTimeoutMs,
@@ -586,6 +587,7 @@ export function createIdentityResolver(
           globalRoles: response.globalRoles.flatMap(
             (role) => roleName(role) ?? [],
           ),
+          rights: rightsOf(response.rights),
           blocked: response.blocked,
         };
       } catch (cause) {
@@ -611,7 +613,7 @@ export function createRoleRequester(
             ...(input.telegramUsername === undefined
               ? {}
               : { telegramUsername: input.telegramUsername }),
-            requestedRole: roleValue(input.requestedRole),
+            queue: wireQueue(input.queue),
             // Присутствие кода значимо: пустой код после `s_` — «неизвестный
             // источник», а не его отсутствие.
             ...(input.sourceCode === undefined
@@ -627,6 +629,7 @@ export function createRoleRequester(
           globalRoles: response.globalRoles.flatMap(
             (role) => roleName(role) ?? [],
           ),
+          rights: rightsOf(response.rights),
           outcome: roleRequestOutcome(response.outcome),
         };
       } catch (cause) {

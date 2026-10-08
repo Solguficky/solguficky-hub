@@ -9,6 +9,7 @@ import { hubTradeCallback } from "./auction-route.js";
 // возврат «‹ Сходка» и ряд навигации — в suite не входит: у неё свои тесты.
 describeAuctionContract(
   "hub bot",
+  "hub",
   (ports) =>
     async ({ from, input }) =>
       hubTradeCallback({

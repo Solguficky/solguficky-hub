@@ -10,14 +10,28 @@ export const GLOBAL_ROLES = [
   "public",
 ] as const;
 
-// Плоский набор активных ролей, как его отдаёт Identity: вложенность кругов он
-// не разворачивает (ADR-043), и проверку круга делает шлюз.
+// Роли Identity в словаре пакета. Пакет их не читает: они едут транзитом в
+// `auction.v1.Viewer`, где Auction решает по ним о своём ресурсе, пока все
+// вызывающие не пришлют права.
 export type GlobalRole = (typeof GLOBAL_ROLES)[number];
 
+export const ACCESS_RIGHTS = [
+  "hub",
+  "auction",
+  "manage-membership",
+  "moderate-auction",
+] as const;
+
+// Права, которые Identity вывел из круга и выданных записей (ADR-064, пункты
+// 6–7). Поверхность пускает по праву и никогда по роли; незнакомое право
+// адаптер отбрасывает, и оно ничего не даёт.
+export type AccessRight = (typeof ACCESS_RIGHTS)[number];
+
+// Решение о допуске читает только `rights`: роли лежат в `viewer`, который
+// уходит в Auction как есть.
 export type ResolvedIdentity = {
-  // Канонический UUIDv7 в нижнем регистре с дефисами.
-  identityId: string;
-  globalRoles: readonly GlobalRole[];
+  viewer: Viewer;
+  rights: readonly AccessRight[];
   // Отметка блокировки. Допуск она не решает — только выбирает текст отказа.
   blocked: boolean;
 };
@@ -31,14 +45,14 @@ export interface IdentityPort {
   resolveIdentity(user: TelegramUser): Promise<ResolvedIdentity>;
 }
 
-// Круг, который поверхность запрашивает на `/start`: `admin` и `maintainer`
-// через вход не просят (`identity.v1.RequestRoleRequest`).
-export type SurfaceCircle = Extract<GlobalRole, "member" | "public">;
+// Очередь, в которую поверхность ставит заявку на `/start`: хаб — в очередь
+// сообщества, бот аукциона — в очередь аукциона (`identity.v1.ApplicationQueue`).
+export type ApplicationQueue = "community" | "auction";
 
-// Вход на `/start` (ADR-060, пункты 1–7 и 17–19).
+// Вход на `/start` (ADR-060, пункты 1–7 и 17–19; ADR-064, пункт 8).
 export type RoleRequest = {
   user: TelegramUser;
-  requestedRole: SurfaceCircle;
+  queue: ApplicationQueue;
   // Код канала из payload `s_<код>` без префикса, как пришёл: известен ли
   // канал, решает Identity. Нет — payload префикса не нёс; пустая строка —
   // пустой код после `s_`.
@@ -62,8 +76,8 @@ export type RoleRequestOutcome = (typeof ROLE_REQUEST_OUTCOMES)[number];
 
 // Отметки блокировки в ответе входа нет: её несёт исход `blocked`.
 export type RoleRequestAnswer = {
-  identityId: string;
-  globalRoles: readonly GlobalRole[];
+  viewer: Viewer;
+  rights: readonly AccessRight[];
   outcome: RoleRequestOutcome;
 };
 

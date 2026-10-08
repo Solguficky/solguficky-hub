@@ -181,8 +181,8 @@ public class NotificationFactsTests
         NotificationFacts.MeetupPublishedByDefault.ShouldBeTrue();
 
     [Fact]
-    public void HubCircle_PublicRole_IsOutside() =>
-        NotificationFacts.HubCircle.ShouldBe(["admin", "maintainer", "member"], ignoreOrder: true);
+    public void HubRight_IsTheRightOfTheHub() =>
+        NotificationFacts.HubRight.ShouldBe("hub");
 
     /// <summary>
     /// Повод напоминания — задание, а не событие: ссылка на него, карточка на

@@ -13,7 +13,11 @@ import {
   ResolveIdentityResponseSchema,
   RoleRequestOutcome,
 } from "../../../../gen/identity/v1/identity_service_pb.js";
-import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
+import {
+  AccessRight,
+  ApplicationQueue,
+  GlobalRole,
+} from "../../../../gen/identity/v1/roles_pb.js";
 import { noopTracing } from "../../../core/tracing.js";
 import {
   createApplicationAdministrator,
@@ -103,6 +107,7 @@ describe("identity client", () => {
           return create(ResolveIdentityResponseSchema, {
             identityId: "id-1",
             globalRoles: [GlobalRole.ADMIN],
+            rights: [AccessRight.HUB, AccessRight.AUCTION],
           });
         },
       },
@@ -114,6 +119,7 @@ describe("identity client", () => {
       kind: "resolved",
       identityId: "id-1",
       globalRoles: ["admin"],
+      rights: ["hub", "auction"],
       blocked: false,
     });
     expect(seenTimeout).toBe(75);
@@ -137,6 +143,7 @@ describe("identity client", () => {
       kind: "resolved",
       identityId: "id-1",
       globalRoles: ["maintainer", "admin", "member", "public"],
+      rights: [],
       blocked: false,
     });
   });
@@ -155,6 +162,7 @@ describe("identity client", () => {
       kind: "resolved",
       identityId: "id-1",
       globalRoles: ["admin"],
+      rights: [],
       blocked: true,
     });
   });
@@ -172,6 +180,7 @@ describe("identity client", () => {
       kind: "resolved",
       identityId: "id-1",
       globalRoles: [],
+      rights: [],
       blocked: true,
     });
   });
@@ -192,6 +201,7 @@ describe("identity client", () => {
       kind: "resolved",
       identityId: "",
       globalRoles: [],
+      rights: [],
       blocked: true,
     });
   });
@@ -752,10 +762,11 @@ describe("role requester", () => {
     create(RequestRoleResponseSchema, {
       identityId: "id-1",
       globalRoles: [GlobalRole.MEMBER, GlobalRole.GUEST],
+      rights: [AccessRight.HUB, AccessRight.AUCTION],
       outcome,
     });
 
-  it("requests the circle with the channel code and the first name", async () => {
+  it("applies to the queue with the channel code and the first name", async () => {
     const requestRole = vi.fn(async () =>
       answer(RoleRequestOutcome.GRANTED_BY_ALLOWLIST),
     );
@@ -765,7 +776,7 @@ describe("role requester", () => {
         {
           telegramUserId: 42n,
           telegramUsername: "alice",
-          requestedRole: "member",
+          queue: "community",
           sourceCode: "tg_ads",
           firstName: "Сова",
         },
@@ -775,13 +786,14 @@ describe("role requester", () => {
       kind: "answered",
       identityId: "id-1",
       globalRoles: ["member", "public"],
+      rights: ["hub", "auction"],
       outcome: "granted-by-allowlist",
     });
     expect(requestRole).toHaveBeenCalledExactlyOnceWith(
       {
         telegramUserId: 42n,
         telegramUsername: "alice",
-        requestedRole: GlobalRole.MEMBER,
+        queue: ApplicationQueue.COMMUNITY,
         sourceCode: "tg_ads",
         firstName: "Сова",
       },
@@ -804,14 +816,14 @@ describe("role requester", () => {
     const requestRole = vi.fn(async () => answer(RoleRequestOutcome.PENDING));
     await createRoleRequester({ requestRole }).requestRole({
       telegramUserId: 42n,
-      requestedRole: "public",
+      queue: "auction",
       ...(sourceCode === undefined ? {} : { sourceCode }),
       firstName: "Сова",
     });
     expect(requestRole).toHaveBeenCalledExactlyOnceWith(
       {
         telegramUserId: 42n,
-        requestedRole: GlobalRole.GUEST,
+        queue: ApplicationQueue.AUCTION,
         firstName: "Сова",
         ...expected,
       },
@@ -835,7 +847,7 @@ describe("role requester", () => {
     await expect(
       identity.requestRole({
         telegramUserId: 42n,
-        requestedRole: "member",
+        queue: "community",
         firstName: "Сова",
       }),
     ).resolves.toMatchObject({ kind: "answered", outcome });
@@ -847,7 +859,7 @@ describe("role requester", () => {
         requestRole: () => Promise.reject(cause),
       }).requestRole({
         telegramUserId: 42n,
-        requestedRole: "member",
+        queue: "community",
         firstName: "Сова",
       });
     await expect(
@@ -862,7 +874,7 @@ describe("role requester", () => {
     const requestRole = vi.fn();
     await expect(
       createRoleRequester({ requestRole }).requestRole(
-        { telegramUserId: 42n, requestedRole: "member", firstName: "Сова" },
+        { telegramUserId: 42n, queue: "community", firstName: "Сова" },
         { deadlineAt: Date.now() - 1 },
       ),
     ).resolves.toMatchObject({ kind: "unavailable" });

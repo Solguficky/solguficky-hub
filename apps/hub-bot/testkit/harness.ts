@@ -8,7 +8,6 @@ import { createBot as createAuctionBot } from "../src/surfaces/auction/bot.js";
 import type { PortsFactory } from "../src/surfaces/auction/clients.js";
 import type { Dispatcher } from "../src/surfaces/hub/application/dispatcher.js";
 import { createDispatcher } from "../src/surfaces/hub/application/dispatcher.js";
-import { inMemberCircle } from "../src/surfaces/hub/application/hub-access.js";
 import type {
   ApplicationAdministrator,
   ApplicationModerator,
@@ -200,7 +199,7 @@ export type HarnessOptions = Partial<
 /**
  * Вход на `/start` для фейка, у которого его нет: ответ выводится из его же
  * разрешения личности, как ответил бы Identity человеку с такой личностью —
- * заблокированному `blocked`, кругу `member` «уже есть», остальным заявку.
+ * заблокированному `blocked`, держателю права хаба «уже есть», остальным заявку.
  * Тест, которому важен сам вход, передаёт `requestRole` явно.
  */
 export function withEntry<T extends IdentityResolver & Partial<RoleRequester>>(
@@ -228,9 +227,10 @@ export function withEntry<T extends IdentityResolver & Partial<RoleRequester>>(
         kind: "answered",
         identityId: resolved.identityId,
         globalRoles: resolved.globalRoles,
+        rights: resolved.rights,
         outcome: resolved.blocked
           ? "blocked"
-          : inMemberCircle(resolved.globalRoles)
+          : resolved.rights.includes("hub")
             ? "already-held"
             : "pending",
       };

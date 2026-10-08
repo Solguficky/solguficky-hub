@@ -11,6 +11,7 @@ import { withMeetupAuthor } from "./meetup-author.js";
 const viewer = {
   identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
   globalRoles: ["member"],
+  rights: ["hub", "auction"] as const,
 };
 const organizerId = "0192f0a0-0000-7000-8000-00000000a001";
 

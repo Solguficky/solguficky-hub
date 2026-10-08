@@ -1,11 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import type { AccessRight } from "../../../auction-ui/index.js";
 import type { MeetupAuctions } from "../auction/port.js";
 import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { createDispatcher } from "./dispatcher.js";
 
 // Аукцион у сходки в прикладном слое (PER-307). Политика хаба уже не пускает
-// человека вне круга `member` к карточке, а этот слой второй раз не зовёт
+// человека без права хаба к карточке, а этот слой второй раз не зовёт
 // Auction за него: прикладной юзкейс не полагается на то, что край проверил.
 
 const meetupId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
@@ -56,10 +57,19 @@ function auctions() {
   return { getMeetupAuction, enableAuction };
 }
 
-const person = (globalRoles: readonly string[]) => ({
+// Роли едут транзитом и ничего не решают: край зовёт Auction по праву хаба.
+const person = (rights: readonly AccessRight[]) => ({
   identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-  globalRoles,
+  globalRoles: [],
+  rights,
 });
+const MEMBER: readonly AccessRight[] = ["hub", "auction"];
+const ADMIN: readonly AccessRight[] = [
+  "hub",
+  "auction",
+  "manage-membership",
+  "moderate-auction",
+];
 
 describe("meetup auction", () => {
   it("names the auction of the meetup on the card", async () => {
@@ -68,7 +78,7 @@ describe("meetup auction", () => {
 
     await expect(
       dispatcher.execute({
-        identity: person(["member"]),
+        identity: person(MEMBER),
         intent: "view-meetup",
         meetupId,
       }),
@@ -78,17 +88,17 @@ describe("meetup auction", () => {
     });
   });
 
-  it("does not ask Auction for a person outside the member circle", async () => {
+  it("does not ask Auction for a person without the hub right", async () => {
     const port = auctions();
     const dispatcher = createDispatcher(meetups(), undefined, undefined, port);
 
     const card = await dispatcher.execute({
-      identity: person(["public"]),
+      identity: person(["auction"]),
       intent: "view-meetup",
       meetupId,
     });
     const enabled = await dispatcher.execute({
-      identity: person(["public"]),
+      identity: person(["auction"]),
       intent: "enable-auction",
       meetupId,
       opId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa",
@@ -111,7 +121,7 @@ describe("meetup auction", () => {
 
     await expect(
       dispatcher.execute({
-        identity: person(["admin"]),
+        identity: person(ADMIN),
         intent: "enable-auction",
         meetupId,
         opId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa",
@@ -132,7 +142,7 @@ describe("meetup auction", () => {
 
     await expect(
       dispatcher.execute({
-        identity: person(["admin"]),
+        identity: person(ADMIN),
         intent: "publish-meetup",
         meetupId,
       }),
@@ -147,7 +157,7 @@ describe("meetup auction", () => {
     const without = createDispatcher(meetups());
     await expect(
       without.execute({
-        identity: person(["admin"]),
+        identity: person(ADMIN),
         intent: "publish-meetup",
         meetupId,
       }),
@@ -161,7 +171,7 @@ describe("meetup auction", () => {
     const refusing = createDispatcher(meetups(), undefined, undefined, port);
     await expect(
       refusing.execute({
-        identity: person(["admin"]),
+        identity: person(ADMIN),
         intent: "publish-meetup",
         meetupId,
       }),
@@ -181,7 +191,7 @@ describe("meetup auction", () => {
       }),
     });
     const answer = {
-      identity: person(["admin"]),
+      identity: person(ADMIN),
       intent: "set-meetup-field" as const,
       field: "description" as const,
       value: "Про всё",
@@ -231,7 +241,7 @@ describe("meetup auction", () => {
 
     await expect(
       dispatcher.execute({
-        identity: person(["member"]),
+        identity: person(MEMBER),
         intent: "set-meetup-subscription",
         meetupId,
         subscribed: true,

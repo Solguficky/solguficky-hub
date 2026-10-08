@@ -52,6 +52,13 @@ public static class NotificationFacts
     /// </summary>
     public const string RoleGrantedRole = "admin";
 
+    /// <summary>
+    /// Право, по которому видно, что выданное <see cref="RoleGrantedRole" />
+    /// ещё в силе: управление составом даёт и круг администратора, и выдача
+    /// admin мейнтейнеру, у которого круг не меняется (ADR-064, пункт 7).
+    /// </summary>
+    public const string RoleGrantedRight = "manage_membership";
+
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string MeetupEventCause = "meetup_event";
 
@@ -105,18 +112,17 @@ public static class NotificationFacts
     public const NotificationCategory CommunityAnnouncementCategory = NotificationCategory.CommunityAnnouncement;
 
     /// <summary>
-    /// Категория запросов доступа. Настраивается только глобально и видна только
-    /// администратору (ADR-062).
+    /// Категория запросов доступа. Настраивается только глобально и видна
+    /// держателю права модерации хотя бы одной очереди (ADR-062, ADR-064).
     /// </summary>
     public const NotificationCategory AccessRequestCategory = NotificationCategory.AccessRequest;
 
     /// <summary>
-    /// Роли круга <c>member</c>, который принимает хаб (ADR-043). Identity
-    /// отдаёт плоский набор активных ролей и вложенность не разворачивает,
-    /// поэтому круг перечислен целиком. Роль <c>public</c> — внешний круг
-    /// аукциона: сходок такой человек не видит, и новая сходка ему не положена.
+    /// Право хаба: поводы сходок адресуются его держателям (ADR-064, пункт 6).
+    /// Гость с одним правом аукциона сходок не видит, и новая сходка ему не
+    /// положена.
     /// </summary>
-    public static readonly IReadOnlyList<string> HubCircle = ["admin", "maintainer", "member"];
+    public const string HubRight = "hub";
 
     /// <summary>Значение категории для человека без строки настроек.</summary>
     public static bool MeetupPublishedByDefault => NotificationCategories.DefaultEnabled(MeetupPublishedCategory);
@@ -367,13 +373,11 @@ public static class NotificationFacts
         return notification;
     }
 
-    // Круг заявки — только круги поверхностей; другой разбор реплики не пропускает.
-    private static Identity.V1.GlobalRole RequestableCircle(IdentityFact fact) => fact.OccasionRole switch
-    {
-        "member" => Identity.V1.GlobalRole.Member,
-        "public" => Identity.V1.GlobalRole.Guest,
-        _ => throw new ArgumentException($"circle {fact.OccasionRole} is not requestable", nameof(fact)),
-    };
+    // Очередь у повода заявки обязательна; без неё разбор реплики событие не пропускает.
+    private static Identity.V1.GlobalRole RequestableCircle(IdentityFact fact) =>
+        fact.OccasionQueue is { } queue
+            ? AccessQueues.ContractCircle(queue)
+            : throw new ArgumentException("the occasion carries no queue", nameof(fact));
 
     /// <summary>RFC 3339 в UTC, как остальные моменты контрактов.</summary>
     public static string Instant(DateTimeOffset moment) =>

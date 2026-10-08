@@ -1,4 +1,5 @@
 using Dapper;
+using Identity.V1;
 using Microsoft.Extensions.Hosting;
 using NATS.Client.Core;
 using Notifications.Infrastructure;
@@ -128,8 +129,40 @@ public class FactReplicaTests
         var row = await Eventually(() => Identity(db, identityId), row => row is { version: 2 });
 
         row!.blocked.ShouldBeTrue();
-        row.global_roles.ShouldBeEmpty();
+        row.role.ShouldBeNull();
+        row.rights.ShouldBeEmpty();
         (await Scalar<long>(db, "SELECT count(*) FROM meetup_subscription;")).ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Реплика хранит круг и права из снимка события как есть: выданное
+    /// отдельно право модерации видно рядом с правами круга, а его отзыв
+    /// убирает только его (PER-529).
+    /// </summary>
+    [Fact]
+    public async Task When_RightGrantedAndRevoked_Expect_ReplicaFollowsSnapshotRights()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+
+        var identityId = EventFactory.NewId();
+        await nats.Publish(RoleGranted, EventFactory.Identity(identityId, version: 1));
+        await nats.Publish(
+            "events.identity.right_granted",
+            EventFactory.RightGrant(identityId, version: 2, GlobalRole.Member, AccessRight.ModerateAuction));
+
+        var granted = await Eventually(() => Identity(db, identityId), row => row is { version: 2 });
+        granted!.role.ShouldBe("member");
+        granted.rights.ShouldBe(["hub", "auction", "moderate_auction"], ignoreOrder: true);
+
+        await nats.Publish(
+            "events.identity.right_revoked",
+            EventFactory.RightRevoke(identityId, version: 3, GlobalRole.Member, AccessRight.ModerateAuction));
+
+        var revoked = await Eventually(() => Identity(db, identityId), row => row is { version: 3 });
+        revoked!.rights.ShouldBe(["hub", "auction"], ignoreOrder: true);
     }
 
     [Fact]
@@ -319,7 +352,7 @@ public class FactReplicaTests
     {
         await using var connection = new NpgsqlConnection(db.ConnectionString);
         return await connection.QuerySingleOrDefaultAsync<IdentityRow>(
-            "SELECT version, global_roles, blocked FROM identity_replica WHERE identity_id = @Id;",
+            "SELECT version, role, rights, blocked FROM identity_replica WHERE identity_id = @Id;",
             new { Id = Guid.Parse(identityId) });
     }
 
@@ -351,7 +384,9 @@ public class FactReplicaTests
     {
         public long version { get; init; }
 
-        public string[] global_roles { get; init; } = [];
+        public string? role { get; init; }
+
+        public string[] rights { get; init; } = [];
 
         public bool blocked { get; init; }
     }

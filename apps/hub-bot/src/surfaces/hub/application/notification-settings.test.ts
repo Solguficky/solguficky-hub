@@ -4,7 +4,11 @@ import type { Notifications } from "../notifications/port.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import type { Person } from "./types.js";
 
-const identity: Person = { identityId: "identity-id", globalRoles: [] };
+const identity: Person = {
+  identityId: "identity-id",
+  globalRoles: [],
+  rights: [],
+};
 const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf";
 
 const meetup: MeetupSnapshot = {

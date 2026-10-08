@@ -6,6 +6,7 @@ import { tradeCallback } from "./route.js";
 // поверхностью `auction`. FAQ и меню — оболочка бота, в suite они не входят.
 describeAuctionContract(
   "auction bot",
+  "auction",
   (ports) =>
     async ({ from, input }) =>
       tradeCallback({
