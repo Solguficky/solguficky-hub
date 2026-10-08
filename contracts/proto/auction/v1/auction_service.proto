@@ -62,15 +62,12 @@ message Viewer {
   // so a request cannot act for someone else.
   string identity_id = 1;
 
-  // Platform-wide roles from Identity. Auction no longer reads them: the
-  // caller still fills them until the field is removed. The block mark is
+  // Platform-wide roles from Identity. Superseded by rights. The block mark is
   // deliberately absent, as in meetups.v1.Viewer.
   repeated identity.v1.GlobalRole global_roles = 2;
 
   // Rights from Identity, copied as received from ResolveIdentityResponse.rights.
-  // Auction decides by them alone: an empty set grants nothing, and so does a
-  // value unknown to Auction. Domain permissions are not precomputed here;
-  // Auction applies them as the owner of the resource.
+  // An empty set means no rights.
   repeated identity.v1.AccessRight rights = 3;
 }
 

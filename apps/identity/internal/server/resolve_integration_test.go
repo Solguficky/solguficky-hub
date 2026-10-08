@@ -205,15 +205,15 @@ func TestResolveIdentityDerivesRightsFromCircle(t *testing.T) {
 	db := migratedDB(t)
 	client := resolveClient(t, db)
 	var (
-		hub        = identityv1.AccessRight_ACCESS_RIGHT_HUB
-		auction    = identityv1.AccessRight_ACCESS_RIGHT_AUCTION
-		manage     = identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP
-		moderate   = identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION
-		catalog    = identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION
-		admin      = identityv1.GlobalRole_GLOBAL_ROLE_ADMIN
-		maintainer = identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER
-		member     = identityv1.GlobalRole_GLOBAL_ROLE_MEMBER
-		guest      = identityv1.GlobalRole_GLOBAL_ROLE_GUEST
+		hub           = identityv1.AccessRight_ACCESS_RIGHT_HUB
+		auction       = identityv1.AccessRight_ACCESS_RIGHT_AUCTION
+		manage        = identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP
+		moderate      = identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION
+		manageAuction = identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION
+		admin         = identityv1.GlobalRole_GLOBAL_ROLE_ADMIN
+		maintainer    = identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER
+		member        = identityv1.GlobalRole_GLOBAL_ROLE_MEMBER
+		guest         = identityv1.GlobalRole_GLOBAL_ROLE_GUEST
 	)
 	for i, tc := range []struct {
 		circle      string
@@ -221,7 +221,7 @@ func TestResolveIdentityDerivesRightsFromCircle(t *testing.T) {
 		rights      []identityv1.AccessRight
 		globalRoles []identityv1.GlobalRole
 	}{
-		{"admin", admin, []identityv1.AccessRight{auction, hub, manage, moderate, catalog}, []identityv1.GlobalRole{admin, guest, member}},
+		{"admin", admin, []identityv1.AccessRight{auction, hub, manage, moderate, manageAuction}, []identityv1.GlobalRole{admin, guest, member}},
 		{"member", member, []identityv1.AccessRight{auction, hub}, []identityv1.GlobalRole{guest, member}},
 		{"maintainer", maintainer, []identityv1.AccessRight{auction, hub}, []identityv1.GlobalRole{guest, maintainer, member}},
 		{"guest", guest, []identityv1.AccessRight{auction}, []identityv1.GlobalRole{guest}},
