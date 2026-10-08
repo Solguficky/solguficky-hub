@@ -26,11 +26,17 @@ func TestApplicationRulesFollowCircleOrder(t *testing.T) {
 			t.Errorf("circlesWithin(%s) = %v, want %v", role, got, want)
 		}
 	}
-	if got := refusalOutcome(roleGuest); got != outcomeBlocked {
-		t.Errorf("refusal in guest = %s, want %s", got, outcomeBlocked)
+	for queue, want := range map[identityv1.ApplicationQueue]struct{ circle, right string }{
+		identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY: {roleMember, rightHub},
+		identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION:   {roleGuest, rightAuction},
+	} {
+		circle, ok := queueCircle(queue)
+		if !ok || circle != want.circle || circleQueue(circle) != queue || queueGrantedRight(circle) != want.right {
+			t.Errorf("queue %s: circle %q, right %q", queue, circle, queueGrantedRight(circle))
+		}
 	}
-	if got := refusalOutcome(roleMember); got != outcomeDeclined {
-		t.Errorf("refusal in member = %s, want %s", got, outcomeDeclined)
+	if _, ok := queueCircle(identityv1.ApplicationQueue_APPLICATION_QUEUE_UNSPECIFIED); ok {
+		t.Error("the unspecified queue has a circle")
 	}
 	for _, outcome := range []string{outcomeAdmitted, outcomeDeclined, outcomeBlocked, outcomeClosedByGrant, outcomeClosedByBlock} {
 		if applicationOutcome(outcome) == identityv1.ApplicationOutcome_APPLICATION_OUTCOME_UNSPECIFIED {

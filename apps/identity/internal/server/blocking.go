@@ -57,8 +57,8 @@ func (s identityService) blockIdentity(ctx context.Context, identityID string, p
 // role_revoked.
 //
 // Блокировка закрывает все открытые заявки человека исходом «закрыта
-// блокировкой» (ADR-060, пункт 8). Отказ по заявке в guest закрывает свою
-// заявку отказом раньше этого вызова, и она здесь уже не открыта.
+// блокировкой» (ADR-060, пункт 8). Отказ по заявке профиль больше не блокирует
+// (ADR-064, пункт 15): блокировку ставит только администратор.
 func blockTx(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	blocked, err := lockProfile(ctx, tx, identityID)
 	if err != nil {

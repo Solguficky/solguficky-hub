@@ -12,9 +12,10 @@ import (
 )
 
 const (
-	// Отказ в силе с исходом declined (ADR-060, пункт 13). Отказ в guest — это
-	// блокировка: пока она стоит, его ловит отметка профиля раньше этой проверки,
-	// а снятая блокировка новую заявку на guest уже не держит.
+	// Отказ в силе с исходом declined по очереди заявки (ADR-060, пункт 13;
+	// ADR-064, пункты 9 и 15): отказ, отзыв права аукциона и понижение. Отказ
+	// в guest до PER-527 — блокировка: пока она стоит, его ловит отметка
+	// профиля раньше этой проверки, а снятая блокировка новую заявку не держит.
 	standingDeclineSQL = `
 SELECT EXISTS (
     SELECT 1 FROM identity_applications a
@@ -36,9 +37,9 @@ func (s identityService) RequestRole(ctx context.Context, req *identityv1.Reques
 	if req.GetTelegramUserId() <= 0 {
 		return nil, status.Error(codes.InvalidArgument, "telegram_user_id must be positive")
 	}
-	circle, ok := requestedCircle(req.GetRequestedRole())
+	circle, ok := requestCircle(req)
 	if !ok {
-		return nil, status.Error(codes.InvalidArgument, "requested_role must be member or guest")
+		return nil, status.Error(codes.InvalidArgument, "queue or requested_role must name the community or the auction queue")
 	}
 
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
@@ -88,10 +89,12 @@ func (s identityService) RequestRole(ctx context.Context, req *identityv1.Reques
 }
 
 // requestRoleTx идёт по порядку пункта 1: заблокированному — ничего; белый
-// список гасится всегда, даже когда круг уже есть; круга нет и отказа в силе
-// нет — заявка. Строка профиля блокируется первой, поэтому два /start одного
-// человека идут друг за другом, а решение администратора не встаёт между
-// чтением ролей и заявкой. Второе значение отвечает, открыта ли заявка этим
+// список гасится всегда, даже когда то, что выдаёт очередь, уже есть; этого
+// нет и отказа в силе нет — заявка. «Уже есть» читается по праву очереди, а не
+// по кругу: гость без права аукциона в очередь аукциона попадает
+// (integration.md, ALREADY_HELD). Строка профиля блокируется первой, поэтому
+// два /start одного человека идут друг за другом, а решение администратора не
+// встаёт между чтением ролей и заявкой. Второе значение отвечает, открыта ли заявка этим
 // вызовом, а не найдена открытой.
 func requestRoleTx(
 	ctx context.Context,
@@ -107,7 +110,8 @@ func requestRoleTx(
 	if blocked {
 		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_BLOCKED, false, nil
 	}
-	heldBefore, err := holdsCircle(ctx, tx, identityID, circle)
+	granted := queueGrantedRight(circle)
+	heldBefore, err := holdsRight(ctx, tx, identityID, granted)
 	if err != nil {
 		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, false, err
 	}
@@ -117,7 +121,7 @@ func requestRoleTx(
 	if heldBefore {
 		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_ALREADY_HELD, false, nil
 	}
-	heldAfter, err := holdsCircle(ctx, tx, identityID, circle)
+	heldAfter, err := holdsRight(ctx, tx, identityID, granted)
 	if err != nil {
 		return identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_UNSPECIFIED, false, err
 	}
@@ -173,6 +177,16 @@ func nullableText(value string) any {
 		return nil
 	}
 	return value
+}
+
+// requestCircle — круг заявки, которым хранится очередь. Очередь называет
+// queue; requested_role читается, только когда queue не задана, — от
+// вызывающего, который ещё не перешёл.
+func requestCircle(req *identityv1.RequestRoleRequest) (string, bool) {
+	if req.GetQueue() != identityv1.ApplicationQueue_APPLICATION_QUEUE_UNSPECIFIED {
+		return queueCircle(req.GetQueue())
+	}
+	return requestedCircle(req.GetRequestedRole())
 }
 
 // requestedCircle принимает только круги поверхностей: admin и maintainer через

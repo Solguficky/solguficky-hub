@@ -23,6 +23,8 @@ func TestRecordSubjectNamesTheOccasion(t *testing.T) {
 		outbox.ProfileUnblocked:     "events.identity.profile_unblocked",
 		outbox.ApplicationSubmitted: "events.identity.application_submitted",
 		outbox.ApplicationAdmitted:  "events.identity.application_admitted",
+		outbox.RightGranted:         "events.identity.right_granted",
+		outbox.RightRevoked:         "events.identity.right_revoked",
 	}
 	for occasion, want := range cases {
 		if got := (outbox.Record{Occasion: occasion}).Subject(); got != want {
@@ -115,26 +117,35 @@ func TestRecordMessageSetsExactlyTheOccasionBranch(t *testing.T) {
 	cases := []struct {
 		occasion outbox.Occasion
 		role     string
+		right    string
 		check    func(*identityv1.IdentityEvent) bool
 	}{
-		{outbox.ProfileRegistered, "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileRegistered() != nil }},
-		{outbox.RoleGranted, "admin", func(e *identityv1.IdentityEvent) bool {
+		{outbox.ProfileRegistered, "", "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileRegistered() != nil }},
+		{outbox.RoleGranted, "admin", "", func(e *identityv1.IdentityEvent) bool {
 			return e.GetRoleGranted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_ADMIN
 		}},
-		{outbox.RoleRevoked, "maintainer", func(e *identityv1.IdentityEvent) bool {
+		{outbox.RoleRevoked, "maintainer", "", func(e *identityv1.IdentityEvent) bool {
 			return e.GetRoleRevoked().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER
 		}},
-		{outbox.ProfileBlocked, "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileBlocked() != nil }},
-		{outbox.ProfileUnblocked, "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileUnblocked() != nil }},
-		{outbox.ApplicationSubmitted, "public", func(e *identityv1.IdentityEvent) bool {
-			return e.GetApplicationSubmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_GUEST
+		{outbox.ProfileBlocked, "", "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileBlocked() != nil }},
+		{outbox.ProfileUnblocked, "", "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileUnblocked() != nil }},
+		{outbox.ApplicationSubmitted, "public", "", func(e *identityv1.IdentityEvent) bool {
+			return e.GetApplicationSubmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_GUEST &&
+				e.GetApplicationSubmitted().GetQueue() == identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION
 		}},
-		{outbox.ApplicationAdmitted, "member", func(e *identityv1.IdentityEvent) bool {
-			return e.GetApplicationAdmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_MEMBER
+		{outbox.ApplicationAdmitted, "member", "", func(e *identityv1.IdentityEvent) bool {
+			return e.GetApplicationAdmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_MEMBER &&
+				e.GetApplicationAdmitted().GetQueue() == identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY
+		}},
+		{outbox.RightGranted, "", "moderate_auction", func(e *identityv1.IdentityEvent) bool {
+			return e.GetRightGranted().GetRight() == identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION
+		}},
+		{outbox.RightRevoked, "", "auction", func(e *identityv1.IdentityEvent) bool {
+			return e.GetRightRevoked().GetRight() == identityv1.AccessRight_ACCESS_RIGHT_AUCTION
 		}},
 	}
 	for _, tc := range cases {
-		message, err := (outbox.Record{EventID: eventID, IdentityID: identityID, Version: 1, Occasion: tc.occasion, Role: tc.role}).Message()
+		message, err := (outbox.Record{EventID: eventID, IdentityID: identityID, Version: 1, Occasion: tc.occasion, Role: tc.role, Right: tc.right}).Message()
 		if err != nil {
 			t.Fatalf("%s: %v", tc.occasion, err)
 		}
@@ -163,5 +174,8 @@ func TestRecordMessageRejectsUnknownOccasionAndRole(t *testing.T) {
 	}
 	if _, err := (outbox.Record{Occasion: outbox.ProfileRegistered, Rights: []string{"auction_bot"}}).Message(); err == nil {
 		t.Error("unknown snapshot right: got nil error")
+	}
+	if _, err := (outbox.Record{Occasion: outbox.RightGranted, Right: "auction_bot"}).Message(); err == nil {
+		t.Error("unknown occasion right: got nil error")
 	}
 }

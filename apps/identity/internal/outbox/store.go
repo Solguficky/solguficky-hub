@@ -34,7 +34,8 @@ WHERE published_at IS NULL`
 	pendingSQL = `
 SELECT event_id, identity_id, version, occasion, COALESCE(role, ''),
        array_to_string(global_roles, ','), blocked, occurred_at, COALESCE(traceparent, ''),
-       COALESCE(circle, ''), array_to_string(COALESCE(rights, '{}'), ',')
+       COALESCE(circle, ''), array_to_string(COALESCE(rights, '{}'), ','),
+       COALESCE(access_right, '')
 FROM identity_outbox
 WHERE published_at IS NULL
 ORDER BY position
@@ -112,7 +113,7 @@ func ReadQueue(ctx context.Context, conn *sql.Conn, limit int) (Backlog, []Recor
 		)
 		if err := rows.Scan(&record.EventID, &record.IdentityID, &record.Version, &occasion,
 			&record.Role, &roles, &record.Blocked, &record.OccurredAt, &record.TraceParent,
-			&record.Circle, &rights); err != nil {
+			&record.Circle, &rights, &record.Right); err != nil {
 			return Backlog{}, nil, fmt.Errorf("scan pending: %w", err)
 		}
 		record.Occasion = Occasion(occasion)

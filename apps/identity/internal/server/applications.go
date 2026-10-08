@@ -25,6 +25,77 @@ const (
 // applicationCircles — круги, на которые бывает заявка, от слабого к сильному.
 var applicationCircles = []string{roleGuest, roleMember}
 
+// Очередь хранится кругом заявки (ADR-064, пункты 8 и 12): requested_role
+// member — очередь сообщества, guest — очередь аукциона. Очередь сообщества
+// выдаёт круг member, очередь аукциона — право auction и круг guest, если круга
+// ещё нет.
+
+// queueCircle — круг заявок очереди; UNSPECIFIED кругом не является.
+func queueCircle(queue identityv1.ApplicationQueue) (string, bool) {
+	switch queue {
+	case identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY:
+		return roleMember, true
+	case identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION:
+		return roleGuest, true
+	default:
+		return "", false
+	}
+}
+
+// circleQueue — очередь заявки по её кругу.
+func circleQueue(circle string) identityv1.ApplicationQueue {
+	switch circle {
+	case roleMember:
+		return identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY
+	case roleGuest:
+		return identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION
+	default:
+		return identityv1.ApplicationQueue_APPLICATION_QUEUE_UNSPECIFIED
+	}
+}
+
+// queueGrantedRight — право, по которому видно, что то, что выдаёт очередь,
+// у человека уже есть: кругом или выданной записью (integration.md,
+// ALREADY_HELD). Участник, мейнтейнер и администратор держат hub по кругу.
+func queueGrantedRight(circle string) string {
+	if circle == roleGuest {
+		return rightAuction
+	}
+	return rightHub
+}
+
+// queueFilter — круг для фильтра выборки очереди; nil — обе очереди, как до
+// разделения.
+func queueFilter(queue identityv1.ApplicationQueue) any {
+	if circle, ok := queueCircle(queue); ok {
+		return circle
+	}
+	return nil
+}
+
+// authorizeModerator — право актора на очередь (ADR-064, пункт 12). Очередь
+// аукциона решает держатель moderate_auction, и право читается из состояния
+// Identity: участнику с выданной модерацией снимок ролей в actor ничего не
+// говорит. Очередь сообщества и обе очереди вместе — администратор по снимку
+// actor, как до разделения очередей.
+func authorizeModerator(ctx context.Context, q queryRower, actor *identityv1.IdentityActor, circle string) (uuid.NullUUID, error) {
+	if circle == roleGuest {
+		return authorizeRight(ctx, q, actor, rightModerateAuction)
+	}
+	return authorizeAdmin(actor)
+}
+
+// authorizeAnyModerator пропускает актора, который решает хотя бы одну
+// очередь. Он идёт до чтения заявки: не-модератор получает отказ, а не узнаёт,
+// есть ли такая заявка.
+func authorizeAnyModerator(ctx context.Context, q queryRower, actor *identityv1.IdentityActor) error {
+	if _, err := authorizeAdmin(actor); err == nil {
+		return nil
+	}
+	_, err := authorizeRight(ctx, q, actor, rightModerateAuction)
+	return err
+}
+
 // standingRefusalSQL — условие «отказ в силе»: заявка закрыта отказом, а круг её
 // после отказа не выдан. Его читает список отказанных, а вход на /start
 // (standingDeclineSQL) дополняет исходом declined, чтобы не ставить новую заявку
@@ -93,7 +164,7 @@ FROM identity_applications a WHERE a.id = $1`
 WITH open AS (
     SELECT id, identity_id, requested_role, source_channel, source_unknown, first_name, created_at
     FROM identity_applications
-    WHERE outcome IS NULL
+    WHERE outcome IS NULL AND ($3::text IS NULL OR requested_role = $3)
 ), next AS (
     SELECT * FROM open
     WHERE $1::timestamptz IS NULL OR (created_at, id) > ($1::timestamptz, $2::uuid)
@@ -116,6 +187,7 @@ FROM identity_applications a
 JOIN profiles p ON p.id = a.identity_id
 LEFT JOIN profiles d ON d.id = a.decided_by
 WHERE ` + standingRefusalSQL + `
+  AND ($1::text IS NULL OR a.requested_role = $1)
 ORDER BY a.decided_at DESC, a.id DESC`
 )
 
@@ -156,8 +228,8 @@ func closeApplicationsOnGrant(ctx context.Context, tx *sql.Tx, identityID, role 
 }
 
 // closeApplicationsOnBlock закрывает все открытые заявки человека исходом
-// «закрыта блокировкой». Отказ по заявке в guest закрывает свою заявку раньше,
-// поэтому здесь остаются только чужие для этой блокировки.
+// «закрыта блокировкой». Отказ по заявке больше не блокирует (ADR-064, пункт
+// 15), поэтому здесь закрываются все открытые заявки человека.
 func closeApplicationsOnBlock(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID) (bool, error) {
 	result, err := tx.ExecContext(ctx, closeApplicationsOnBlockSQL, identityID, performedByValue(performedBy))
 	if err != nil {
@@ -178,7 +250,9 @@ func admitOpenApplication(ctx context.Context, tx *sql.Tx, identityID string, pe
 }
 
 func (s identityService) ReadApplicationQueue(ctx context.Context, req *identityv1.ReadApplicationQueueRequest) (*identityv1.ReadApplicationQueueResponse, error) {
-	if _, err := authorizeAdmin(req.GetActor()); err != nil {
+	filter := queueFilter(req.GetQueue())
+	circle, _ := queueCircle(req.GetQueue())
+	if _, err := authorizeModerator(ctx, s.db, req.GetActor(), circle); err != nil {
 		return nil, err
 	}
 	var afterAt, afterID any
@@ -199,7 +273,7 @@ func (s identityService) ReadApplicationQueue(ctx context.Context, req *identity
 		createdAt            sql.NullTime
 		position, total      int32
 	)
-	err := s.db.QueryRowContext(ctx, readApplicationQueueSQL, afterAt, afterID).Scan(
+	err := s.db.QueryRowContext(ctx, readApplicationQueueSQL, afterAt, afterID, filter).Scan(
 		&id, &identityID, &telegramUserID, &username, &firstName, &role, &channelLabel, &sourceUnknown, &createdAt, &position, &total)
 	if err != nil {
 		return nil, internal("read application queue", err)
@@ -214,6 +288,7 @@ func (s identityService) ReadApplicationQueue(ctx context.Context, req *identity
 		TelegramUserId: telegramUserID.Int64,
 		RequestedRole:  applicationRole(role.String),
 		CreatedAt:      formatInstant(createdAt.Time),
+		Queue:          circleQueue(role.String),
 	}
 	if username.Valid {
 		card.TelegramUsername = &username.String
@@ -272,8 +347,7 @@ func (s identityService) DeclineApplication(ctx context.Context, req *identityv1
 // закрытой. Сначала исход получает сама заявка, потом идут выдача или
 // блокировка: их следствия закрывают только остальные заявки человека.
 func (s identityService) decideApplication(ctx context.Context, req *identityv1.DecideApplicationRequest, admit bool) (*identityv1.DecideApplicationResponse, error) {
-	actor, err := authorizeAdmin(req.GetActor())
-	if err != nil {
+	if err := authorizeAnyModerator(ctx, s.db, req.GetActor()); err != nil {
 		return nil, err
 	}
 	applicationID, err := canonicalApplicationID(req.GetApplicationId())
@@ -287,7 +361,7 @@ func (s identityService) decideApplication(ctx context.Context, req *identityv1.
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	response, err := decideApplicationTx(ctx, tx, applicationID, actor, admit)
+	response, err := decideApplicationTx(ctx, tx, applicationID, req.GetActor(), admit)
 	if err != nil {
 		return nil, err
 	}
@@ -297,16 +371,20 @@ func (s identityService) decideApplication(ctx context.Context, req *identityv1.
 	return response, nil
 }
 
-func decideApplicationTx(ctx context.Context, tx *sql.Tx, applicationID string, actor uuid.NullUUID, admit bool) (*identityv1.DecideApplicationResponse, error) {
+func decideApplicationTx(ctx context.Context, tx *sql.Tx, applicationID string, moderator *identityv1.IdentityActor, admit bool) (*identityv1.DecideApplicationResponse, error) {
 	identityID, circle, err := selectApplication(ctx, tx, applicationID)
 	if err != nil {
 		return nil, applicationStatus(err)
+	}
+	actor, err := authorizeModerator(ctx, tx, moderator, circle)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := lockProfile(ctx, tx, identityID); err != nil {
 		return nil, roleStatus(roleStorageError("lock applicant", err))
 	}
 
-	outcome := refusalOutcome(circle)
+	outcome := outcomeDeclined
 	if admit {
 		outcome = outcomeAdmitted
 	}
@@ -328,14 +406,9 @@ func decideApplicationTx(ctx context.Context, tx *sql.Tx, applicationID string, 
 		}, nil
 	}
 
-	switch outcome {
-	case outcomeAdmitted:
+	if outcome == outcomeAdmitted {
 		if err := admitCircleTx(ctx, tx, identityID, circle, actor, "admit application"); err != nil {
 			return nil, err
-		}
-	case outcomeBlocked:
-		if _, err := blockTx(ctx, tx, identityID, actor); err != nil {
-			return nil, roleStatus(err)
 		}
 	}
 
@@ -348,19 +421,11 @@ func decideApplicationTx(ctx context.Context, tx *sql.Tx, applicationID string, 
 	}, nil
 }
 
-// refusalOutcome — исход отказа по кругу заявки (пункт 12): отказ в guest —
-// блокировка, в member — declined, роли человека не меняются. Отказ по очереди
-// без блокировки — PER-527.
-func refusalOutcome(circle string) string {
-	if circle == roleGuest {
-		return outcomeBlocked
-	}
-	return outcomeDeclined
-}
-
-// admitCircleTx — допуск по заявке: выдача круга и повод application_admitted
-// той же транзакцией (PER-442). Повод пишется после выдач, поэтому его снимок
-// уже держит круг. Выдача, которая ничего не меняет, повод всё равно даёт:
+// admitCircleTx — допуск по заявке: выдача того, что выдаёт очередь, и повод
+// application_admitted той же транзакцией (PER-442). Допуск в очередь аукциона
+// — выдача guest: она выдаёт круг с правом auction, гостю без права — право, а
+// у того, кто держит круг сильнее, холостая. Повод пишется после выдач,
+// поэтому его снимок уже держит выданное. Выдача, которая ничего не меняет, повод всё равно даёт:
 // решение администратора принято, а заявитель о нём ещё не знает.
 func admitCircleTx(ctx context.Context, tx *sql.Tx, identityID, circle string, actor uuid.NullUUID, operation string) error {
 	if err := grantCircleTx(ctx, tx, identityID, circle, actor); err != nil {
@@ -380,10 +445,11 @@ func grantCircleTx(ctx context.Context, tx *sql.Tx, identityID, circle string, p
 }
 
 func (s identityService) ListRefusedApplications(ctx context.Context, req *identityv1.ListRefusedApplicationsRequest) (*identityv1.ListRefusedApplicationsResponse, error) {
-	if _, err := authorizeAdmin(req.GetActor()); err != nil {
+	circle, _ := queueCircle(req.GetQueue())
+	if _, err := authorizeModerator(ctx, s.db, req.GetActor(), circle); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, listRefusedApplicationsSQL)
+	rows, err := s.db.QueryContext(ctx, listRefusedApplicationsSQL, queueFilter(req.GetQueue()))
 	if err != nil {
 		return nil, internal("list refused applications", err)
 	}
@@ -407,6 +473,7 @@ func (s identityService) ListRefusedApplications(ctx context.Context, req *ident
 			TelegramUserId: telegramUserID,
 			RequestedRole:  applicationRole(role),
 			Decision:       decision(outcome, decidedAt, decider),
+			Queue:          circleQueue(role),
 		}
 		if username.Valid {
 			refused.TelegramUsername = &username.String
@@ -424,8 +491,7 @@ func (s identityService) ListRefusedApplications(ctx context.Context, req *ident
 // допуск по закрытой заявке. Отметка снятия отказа читается под блокировкой
 // строки профиля, поэтому из двух пересмотров меняет состояние только первый.
 func (s identityService) ReconsiderApplication(ctx context.Context, req *identityv1.ReconsiderApplicationRequest) (*identityv1.ReconsiderApplicationResponse, error) {
-	actor, err := authorizeAdmin(req.GetActor())
-	if err != nil {
+	if err := authorizeAnyModerator(ctx, s.db, req.GetActor()); err != nil {
 		return nil, err
 	}
 	applicationID, err := canonicalApplicationID(req.GetApplicationId())
@@ -439,7 +505,7 @@ func (s identityService) ReconsiderApplication(ctx context.Context, req *identit
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	reconsidered, err := reconsiderApplicationTx(ctx, tx, applicationID, actor)
+	reconsidered, err := reconsiderApplicationTx(ctx, tx, applicationID, req.GetActor())
 	if err != nil {
 		return nil, err
 	}
@@ -452,10 +518,14 @@ func (s identityService) ReconsiderApplication(ctx context.Context, req *identit
 	return &identityv1.ReconsiderApplicationResponse{Changed: true}, nil
 }
 
-func reconsiderApplicationTx(ctx context.Context, tx *sql.Tx, applicationID string, actor uuid.NullUUID) (bool, error) {
+func reconsiderApplicationTx(ctx context.Context, tx *sql.Tx, applicationID string, moderator *identityv1.IdentityActor) (bool, error) {
 	identityID, circle, err := selectApplication(ctx, tx, applicationID)
 	if err != nil {
 		return false, applicationStatus(err)
+	}
+	actor, err := authorizeModerator(ctx, tx, moderator, circle)
+	if err != nil {
+		return false, err
 	}
 	blocked, err := lockProfile(ctx, tx, identityID)
 	if err != nil {
@@ -475,6 +545,12 @@ func reconsiderApplicationTx(ctx context.Context, tx *sql.Tx, applicationID stri
 	case lifted:
 		return false, nil
 	case outcome.String == outcomeBlocked:
+		// Отказ-блокировка остался от отказов до PER-527 и лежит в очереди
+		// аукциона, но блокировку снимает только администратор (ADR-064,
+		// пункт 15): модератору аукциона этот пересмотр закрыт.
+		if _, err := authorizeRight(ctx, tx, moderator, rightManageMembership); err != nil {
+			return false, err
+		}
 		if err := unblockRefusalTx(ctx, tx, applicationID, identityID, blocked, actor); err != nil {
 			return false, err
 		}

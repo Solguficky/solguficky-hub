@@ -34,6 +34,12 @@ const (
 	// или пересмотром. Пишется после выдач круга в той же транзакции; роль
 	// события — круг заявки.
 	ApplicationAdmitted Occasion = "application_admitted"
+	// RightGranted — право выдано отдельно от круга: модерация аукциона
+	// участнику или право аукциона гостю, у которого круг уже есть. Право,
+	// пришедшее с кругом, едет снимком role_granted и этого повода не даёт.
+	RightGranted Occasion = "right_granted"
+	// RightRevoked — право, выданное отдельно от круга, отозвано.
+	RightRevoked Occasion = "right_revoked"
 )
 
 // ErrProfileNotFound — событие названо на профиль, которого нет. Для вызывающего
@@ -55,13 +61,13 @@ RETURNING version, blocked`
 	insertEventSQL = `
 INSERT INTO identity_outbox
     (event_id, identity_id, version, occasion, role, global_roles, blocked, occurred_at,
-     traceparent, circle, rights)
+     traceparent, circle, rights, access_right)
 SELECT $1::uuid, $2::uuid, $3::bigint, $4::text, $5::text,
        identity_global_roles($2::uuid),
        $6::boolean, now(), $7::text,
        (SELECT role FROM identity_roles
         WHERE identity_id = $2::uuid AND revoked_at IS NULL AND NOT $6::boolean),
-       identity_access_rights($2::uuid)`
+       identity_access_rights($2::uuid), $8::text`
 )
 
 // Append записывает событие о профиле в транзакции изменения. Он двигает версию
@@ -77,6 +83,16 @@ SELECT $1::uuid, $2::uuid, $3::bigint, $4::text, $5::text,
 // Контекст трассировки ctx ложится в строку заголовком traceparent: по нему спан
 // публикации ссылается на трейс запроса. Вне спана колонка остаётся NULL.
 func Append(ctx context.Context, tx *sql.Tx, identityID string, occasion Occasion, role string) error {
+	return appendEvent(ctx, tx, identityID, occasion, role, "")
+}
+
+// AppendRight записывает повод права — right_granted или right_revoked — с
+// правом right в словаре хранилища. Остальное — как у Append.
+func AppendRight(ctx context.Context, tx *sql.Tx, identityID string, occasion Occasion, right string) error {
+	return appendEvent(ctx, tx, identityID, occasion, "", right)
+}
+
+func appendEvent(ctx context.Context, tx *sql.Tx, identityID string, occasion Occasion, role, right string) error {
 	var (
 		version int64
 		blocked bool
@@ -97,12 +113,16 @@ func Append(ctx context.Context, tx *sql.Tx, identityID string, occasion Occasio
 	if role != "" {
 		roleArg = role
 	}
+	var rightArg any
+	if right != "" {
+		rightArg = right
+	}
 	var traceArg any
 	if tp := TraceParent(ctx); tp != "" {
 		traceArg = tp
 	}
 	if _, err := tx.ExecContext(ctx, insertEventSQL,
-		eventID.String(), identityID, version, string(occasion), roleArg, blocked, traceArg); err != nil {
+		eventID.String(), identityID, version, string(occasion), roleArg, blocked, traceArg, rightArg); err != nil {
 		return fmt.Errorf("insert outbox event: %w", err)
 	}
 	return nil

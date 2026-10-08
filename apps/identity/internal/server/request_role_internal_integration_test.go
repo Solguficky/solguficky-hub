@@ -238,6 +238,7 @@ type roleRequest struct {
 	telegramUserID int64
 	username       string
 	circle         identityv1.GlobalRole
+	queue          identityv1.ApplicationQueue
 	source         *string
 	firstName      string
 }
@@ -247,6 +248,7 @@ func requestRole(t *testing.T, svc identityService, r roleRequest) *identityv1.R
 	req := &identityv1.RequestRoleRequest{
 		TelegramUserId: r.telegramUserID,
 		RequestedRole:  r.circle,
+		Queue:          r.queue,
 		SourceCode:     r.source,
 		FirstName:      r.firstName,
 	}
