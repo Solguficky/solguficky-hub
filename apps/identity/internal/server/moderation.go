@@ -80,8 +80,8 @@ func (s identityService) RevokeAuctionRight(ctx context.Context, req *identityv1
 type rightChange func(ctx context.Context, tx *sql.Tx, identityID string, actor uuid.NullUUID) (bool, error)
 
 // changeRight проверяет право актора и меняет право цели одной транзакцией.
-// Право актора читается той же транзакцией до блокировки цели: отзыв у
-// актора, ждавший его строку, решение не обгоняет.
+// Право актора читается без блокировки его строки, как и у решений по
+// заявкам: отзыв у актора, ещё не зафиксированный, решение не останавливает.
 func (s identityService) changeRight(
 	ctx context.Context,
 	req *identityv1.ChangeCommunityMemberRequest,

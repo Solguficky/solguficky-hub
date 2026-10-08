@@ -256,6 +256,15 @@ func TestReconsiderBlockedUnblocksAndGrantsGuestInOneOperation(t *testing.T) {
 	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	refuseByBlock(t, db, applicationID, applicantID, adminID)
 
+	// Модератор аукциона решает очередь аукциона, но блокировку не снимает.
+	moderatorID := seedProfile(t, db, 9703)
+	mustChange(t)(svc.grantRole(t.Context(), moderatorID, roleMember, uuid.NullUUID{}))
+	if _, err := svc.GrantAuctionModeration(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: adminActor(adminID), IdentityId: moderatorID}); err != nil {
+		t.Fatalf("grant moderation: %v", err)
+	}
+	_, err := svc.ReconsiderApplication(t.Context(), &identityv1.ReconsiderApplicationRequest{Actor: adminActor(moderatorID), ApplicationId: applicationID})
+	assertCode(t, err, codes.PermissionDenied)
+
 	reconsidered, err := svc.ReconsiderApplication(t.Context(), &identityv1.ReconsiderApplicationRequest{Actor: adminActor(adminID), ApplicationId: applicationID})
 	if err != nil || !reconsidered.GetChanged() {
 		t.Fatalf("reconsider: changed=%t error=%v", reconsidered.GetChanged(), err)

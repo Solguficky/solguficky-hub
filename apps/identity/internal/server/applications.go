@@ -545,6 +545,12 @@ func reconsiderApplicationTx(ctx context.Context, tx *sql.Tx, applicationID stri
 	case lifted:
 		return false, nil
 	case outcome.String == outcomeBlocked:
+		// Отказ-блокировка остался от отказов до PER-527 и лежит в очереди
+		// аукциона, но блокировку снимает только администратор (ADR-064,
+		// пункт 15): модератору аукциона этот пересмотр закрыт.
+		if _, err := authorizeRight(ctx, tx, moderator, rightManageMembership); err != nil {
+			return false, err
+		}
 		if err := unblockRefusalTx(ctx, tx, applicationID, identityID, blocked, actor); err != nil {
 			return false, err
 		}
