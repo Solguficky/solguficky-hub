@@ -36,6 +36,7 @@ import {
   type FinalistResult,
   type LotAdministration,
   type LotCardResult,
+  type LotStatisticsReadResult,
   type MeetupAuctions,
   type ScheduleAuctionResult,
   type ScheduleLotResult,
@@ -64,6 +65,7 @@ type AuctionRpc = Pick<
   | "chooseDisplayName"
   | "getLotImage"
   | "getAuctionConsole"
+  | "getAuctionLotStatistics"
   | "scheduleAuction"
   | "startPrebidding"
   | "selectForFinal"
@@ -238,6 +240,17 @@ export function createAuctionAdapter(
           options(meta),
         );
         return consoleResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async getAuctionLotStatistics(person, auctionId, meta) {
+      try {
+        const response = await rpc.getAuctionLotStatistics(
+          { viewer: wireViewer(viewerOf(person)), auctionId },
+          options(meta),
+        );
+        return lotStatisticsResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -617,6 +630,69 @@ function consoleResult(
       return _exhaustive;
     }
   }
+}
+
+function lotStatisticsResult(
+  outcome: Awaited<
+    ReturnType<AuctionRpc["getAuctionLotStatistics"]>
+  >["outcome"],
+): LotStatisticsReadResult {
+  switch (outcome.case) {
+    case "statistics":
+      return {
+        kind: "ok",
+        lots: outcome.value.lots.map((lot) => {
+          const bidCount = safeCount(lot.bidCount, "statistics bid count");
+          const uniqueParticipantCount = safeCount(
+            lot.uniqueParticipantCount,
+            "unique participant count",
+          );
+          return {
+            lotId: lot.lotId,
+            bidCount,
+            uniqueParticipantCount,
+            ...(lot.priceGrowth === undefined
+              ? {}
+              : { priceGrowth: moneyOf(lot.priceGrowth) }),
+          };
+        }),
+      };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case undefined:
+          return defect("auction lot statistics refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("auction lot statistics response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function safeCount(value: bigint, field: string): number {
+  const count = Number(value);
+  if (!Number.isSafeInteger(count) || count < 0) {
+    throw new Error(`${field} out of range`);
+  }
+  return count;
+}
+
+function moneyOf(value: { minorUnits: bigint; currency: string }): Money {
+  const minorUnits = Number(value.minorUnits);
+  if (!Number.isSafeInteger(minorUnits) || minorUnits < 0) {
+    throw new Error("price growth out of range");
+  }
+  return { minorUnits, currency: value.currency };
 }
 
 function scheduleAuctionResult(

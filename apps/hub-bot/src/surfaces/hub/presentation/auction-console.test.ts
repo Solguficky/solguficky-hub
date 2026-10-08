@@ -154,6 +154,16 @@ function fakeAuction(
         },
       };
     },
+    async getAuctionLotStatistics() {
+      return {
+        kind: "ok" as const,
+        lots: state.lots.map((each) => ({
+          lotId: each.lot.lotId,
+          bidCount: each.bidCount,
+          uniqueParticipantCount: each.uniqueParticipantCount,
+        })),
+      };
+    },
     async scheduleAuction(_person, config: AuctionWeekConfig) {
       commands.push({ method: "scheduleAuction", args: config });
       if (state.status !== "draft" && state.status !== "scheduled") {
@@ -345,12 +355,14 @@ function answer(
 const vase: ConsoleLot = {
   lot: trading(vaseId, "Ваза", 120_000),
   bidCount: 3,
+  uniqueParticipantCount: 2,
   markedForFinal: false,
   overdue: false,
 };
 const mug: ConsoleLot = {
   lot: trading(mugId, "Кружка", 50_000),
   bidCount: 1,
+  uniqueParticipantCount: 1,
   markedForFinal: true,
   overdue: true,
 };
@@ -361,12 +373,14 @@ const priced: ConsoleLot = {
     status: { kind: "scheduled", startingPrice: rub(50_000) },
   },
   bidCount: 0,
+  uniqueParticipantCount: 0,
   markedForFinal: false,
   overdue: false,
 };
 const unpriced: ConsoleLot = {
   lot: { ...trading(mugId, "Кружка", 0), status: { kind: "draft" } },
   bidCount: 0,
+  uniqueParticipantCount: 0,
   markedForFinal: false,
   overdue: false,
 };
@@ -475,6 +489,96 @@ describe("entry into the auction console", () => {
 });
 
 describe("auction console", () => {
+  it("sorts all lots by the selected metric and toggles the active direction", async () => {
+    const fewerParticipants: ConsoleLot = {
+      ...vase,
+      uniqueParticipantCount: 1,
+      priceGrowth: rub(90_000),
+    };
+    const moreParticipants: ConsoleLot = {
+      ...mug,
+      uniqueParticipantCount: 4,
+      priceGrowth: rub(20_000),
+    };
+    const noGrowthA: ConsoleLot = {
+      ...mug,
+      lot: {
+        ...mug.lot,
+        lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3e",
+        card: { title: "Без роста A", description: "" },
+      },
+      uniqueParticipantCount: 0,
+    };
+    const noGrowthB: ConsoleLot = {
+      ...mug,
+      lot: {
+        ...mug.lot,
+        lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3f",
+        card: { title: "Без роста B", description: "" },
+      },
+      uniqueParticipantCount: 0,
+    };
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [fewerParticipants, moreParticipants, noGrowthB, noGrowthA],
+    });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Люди")));
+    const descending = plain(last(calls));
+    expect(descending.indexOf("Кружка")).toBeLessThan(
+      descending.indexOf("Ваза"),
+    );
+    expect(descending).toContain("Сортировка: по участникам ↓.");
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Люди")));
+    const ascending = plain(last(calls));
+    expect(ascending.indexOf("Ваза")).toBeLessThan(ascending.indexOf("Кружка"));
+    expect(ascending).toContain("Сортировка: по участникам ↑.");
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Рост")));
+    const growth = plain(last(calls));
+    expect(growth.indexOf("Ваза")).toBeLessThan(growth.indexOf("Кружка"));
+    expect(growth.indexOf("Кружка")).toBeLessThan(
+      growth.indexOf("Без роста A"),
+    );
+    expect(growth.indexOf("Без роста A")).toBeLessThan(
+      growth.indexOf("Без роста B"),
+    );
+    expect(growth).toContain("рост 900 ₽");
+  });
+
+  it("keeps the current page when changing the sort metric", async () => {
+    const lots = Array.from({ length: 9 }, (_, index) => ({
+      ...vase,
+      lot: {
+        ...vase.lot,
+        lotId: `01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b${index.toString(16).padStart(2, "0")}`,
+        card: { title: `Лот ${index}`, description: "" },
+      },
+      bidCount: index,
+      uniqueParticipantCount: index,
+    }));
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots,
+    });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "→")));
+
+    expect(last(calls).text).toContain("Пульт · 2 из 2");
+    await bot.handleUpdate(press(dataOf(last(calls), "Люди")));
+
+    expect(last(calls).text).toContain("Пульт · 2 из 2");
+    expect(plain(last(calls))).toContain("Сортировка: по участникам ↓.");
+  });
+
   it("shows the state, the lots with price and bids, the final mark and the overdue lots on their own line", async () => {
     const auction = fakeAuction({
       status: "prebidding",
@@ -491,14 +595,16 @@ describe("auction console", () => {
       [
         "<b>Пульт</b>",
         "Идут онлайн-торги до 27 октября, вт, 00:00.\nФинал: есть.",
+        "Сортировка: по ставкам ↓.",
         [
-          "• Ваза — 1 200 ₽ · 3 ставки",
-          "• Кружка — 500 ₽ · 1 ставка · в финал",
+          "• Ваза — 1 200 ₽ · 3 ставки · 2 уч.",
+          "• Кружка — 500 ₽ · 1 ставка · 1 уч. · в финал",
         ].join("\n"),
         "Просрочены, не закрыты: Кружка.",
       ].join("\n\n"),
     );
     expect(labels(screen)).toEqual([
+      ["Ставки", "Люди", "Рост"],
       ["В финал · Ваза"],
       ["Снять из финала · Кружка"],
       ["‹ Лоты", "Меню"],
@@ -529,7 +635,7 @@ describe("auction console", () => {
     expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(plain(last(calls))).toContain(
-      "• Ваза — 1 200 ₽ · 3 ставки · в финал",
+      "• Ваза — 1 200 ₽ · 3 ставки · 2 уч. · в финал",
     );
 
     await bot.handleUpdate(
@@ -540,7 +646,8 @@ describe("auction console", () => {
     expect(last(calls).text).toBe("<b>Отметка финала снята</b>");
     expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
-    expect(labels(last(calls))[0]).toEqual(["В финал · Ваза"]);
+    expect(labels(last(calls))[0]).toEqual(["Ставки", "Люди", "Рост"]);
+    expect(labels(last(calls))).toContainEqual(["В финал · Ваза"]);
   });
 
   it("shows the refusal of a passed deadline as an outcome screen instead of a success", async () => {
@@ -565,7 +672,7 @@ describe("auction console", () => {
     expect(screen).not.toContain("• Ваза");
     expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
-    expect(plain(last(calls))).toContain("• Ваза — 1 200 ₽ · 3 ставки");
+    expect(plain(last(calls))).toContain("• Ваза — 1 200 ₽ · 3 ставки · 2 уч.");
     expect(plain(last(calls))).not.toContain("в финал");
   });
 });
@@ -582,7 +689,11 @@ describe("week of the auction", () => {
 
     await next(() => press(consoleData));
     expect(plain(last(calls))).toContain("Сроки недели не заданы.");
-    expect(labels(last(calls))).toEqual([["Сроки недели"], ["‹ Лоты", "Меню"]]);
+    expect(labels(last(calls))).toEqual([
+      ["Ставки", "Люди", "Рост"],
+      ["Сроки недели"],
+      ["‹ Лоты", "Меню"],
+    ]);
 
     await next((history) => press(dataOf(last(history), "Сроки недели")));
     const asked = question(calls).payload;
@@ -639,6 +750,7 @@ describe("week of the auction", () => {
       "Онлайн-неделя: с 20 октября, вт, 18:00 до 27 октября, вт, 00:00.\nФинал: есть.",
     );
     expect(labels(screen)).toEqual([
+      ["Ставки", "Люди", "Рост"],
       ["Сроки недели"],
       ["Вкл · Финал"],
       ["Открыть онлайн-неделю"],
@@ -888,6 +1000,7 @@ describe("final selection", () => {
     await bot.handleUpdate(press(consoleData));
 
     expect(labels(last(calls))).toEqual([
+      ["Ставки", "Люди", "Рост"],
       ["Снять из финала · Кружка"],
       ["‹ Лоты", "Меню"],
     ]);
@@ -922,6 +1035,7 @@ describe("final selection", () => {
         status: { kind: "held", currentPrice: rub(120_000) },
       },
       bidCount: 4,
+      uniqueParticipantCount: 3,
       markedForFinal: true,
       overdue: false,
     };
@@ -936,8 +1050,11 @@ describe("final selection", () => {
     await bot.handleUpdate(press(consoleData));
 
     expect(plain(last(calls))).toContain(
-      "• Ваза — 1 200 ₽ · 4 ставки · в финал",
+      "• Ваза — 1 200 ₽ · 4 ставки · 3 уч. · в финал",
     );
-    expect(labels(last(calls))).toEqual([["‹ Лоты", "Меню"]]);
+    expect(labels(last(calls))).toEqual([
+      ["Ставки", "Люди", "Рост"],
+      ["‹ Лоты", "Меню"],
+    ]);
   });
 });

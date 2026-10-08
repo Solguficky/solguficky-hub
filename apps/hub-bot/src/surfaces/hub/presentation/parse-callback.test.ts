@@ -922,11 +922,30 @@ describe("auction console callbacks", () => {
   const auction = "2u8Fx81oUEiwPctIYOjccw";
   const lot = "AZKbflwdej-OSy1snwobPA";
   const op = "AZnypHwefTqbIU-OEqs0qg";
+  const defaultSort = { metric: "bids", direction: "descending" };
 
   it("parses every button of the console within the byte budget", () => {
     const cases = [
-      [consoleViewData(auction), { kind: "console-view", auction, page: 0 }],
-      [consoleViewData(auction, 3), { kind: "console-view", auction, page: 3 }],
+      [
+        consoleViewData(auction),
+        { kind: "console-view", auction, page: 0, sort: defaultSort },
+      ],
+      [
+        consoleViewData(auction, 3),
+        { kind: "console-view", auction, page: 3, sort: defaultSort },
+      ],
+      [
+        consoleViewData(auction, 3, {
+          metric: "growth",
+          direction: "ascending",
+        }),
+        {
+          kind: "console-view",
+          auction,
+          page: 3,
+          sort: { metric: "growth", direction: "ascending" },
+        },
+      ],
       [consoleWeekData(auction), { kind: "console-week", auction }],
       [
         consoleFinalData(auction, false),
@@ -943,11 +962,42 @@ describe("auction console callbacks", () => {
       ],
       [
         consoleMarkData({ auction, lot, selected: true, page: 9999 }),
-        { kind: "console-mark", auction, lot, selected: true, page: 9999 },
+        {
+          kind: "console-mark",
+          auction,
+          lot,
+          selected: true,
+          page: 9999,
+          sort: defaultSort,
+        },
       ],
       [
         consoleMarkData({ auction, lot, selected: false, page: 0 }),
-        { kind: "console-mark", auction, lot, selected: false, page: 0 },
+        {
+          kind: "console-mark",
+          auction,
+          lot,
+          selected: false,
+          page: 0,
+          sort: defaultSort,
+        },
+      ],
+      [
+        consoleMarkData({
+          auction,
+          lot,
+          selected: true,
+          page: 9999,
+          sort: { metric: "growth", direction: "ascending" },
+        }),
+        {
+          kind: "console-mark",
+          auction,
+          lot,
+          selected: true,
+          page: 9999,
+          sort: { metric: "growth", direction: "ascending" },
+        },
       ],
     ] as const;
     for (const [data, expected] of cases) {
