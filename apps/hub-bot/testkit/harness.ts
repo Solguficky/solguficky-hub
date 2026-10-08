@@ -113,9 +113,12 @@ function recorder(
     if (answer !== undefined) {
       return Promise.resolve({ ok: true, result: answer as never });
     }
+    // Харнесс аукциона отвечает чатом получателя, харнесс хаба — всегда 42:
+    // так они отвечали до общего kit, и наборы обеих поверхностей на это
+    // опираются.
     const chatId = (payload as { chat_id?: unknown }).chat_id;
     const chat = {
-      id: typeof chatId === "number" ? chatId : 42,
+      id: surface === "auction" && typeof chatId === "number" ? chatId : 42,
       type: "private",
       first_name: "tester",
     };

@@ -80,6 +80,19 @@ describe("package layout", () => {
     },
   );
 
+  // Зоны выше смотрят на прямые импорты и разрешают тестам поверхностей kit,
+  // а kit знает обе поверхности. Прод-код поэтому не импортирует ничего из
+  // `testkit/`: иначе через kit одна поверхность дотянулась бы до другой, а
+  // сборка утянула бы тестовый код в `dist`.
+  it("keeps production code off the test kit", () => {
+    const crossings = scanned
+      .filter((file) => inside(file, src) && !file.endsWith(".test.ts"))
+      .flatMap(relativeImports)
+      .filter(({ target }) => inside(target, testkit))
+      .map(shown);
+    expect(crossings).toEqual([]);
+  });
+
   it("keeps the shared core off both surfaces", () => {
     expect(crossingsFrom("core")).toEqual([]);
   });
