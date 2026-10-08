@@ -112,7 +112,7 @@ vendor/
 bin/
 
 # ===================================================================
-# Node.js — apps/hub-bot, apps/community-site-api, shared/typescript
+# Node.js — apps/hub-bot, apps/community-site-api
 # ===================================================================
 
 node_modules/
