@@ -92,12 +92,7 @@ export function ageLabel(createdAtMs: number, nowMs: number): string {
   return `${plural(Math.floor(hours / 24), ["день", "дня", "дней"])} назад`;
 }
 
-/**
- * Карточка. Ссылка `tg://user?id=` открывает профиль, только если её пускают
- * настройки приватности человека, а иначе Telegram отклоняет всё сообщение.
- * Поэтому у карточки две клавиатуры: вторая ведёт в профиль по нику, а без ника
- * обходится без кнопки — человека и тогда называет код.
- */
+/** Карточка ведёт в профиль только по публичному username. */
 export function applicationCardScreen(
   { application, position }: { application: ApplicationCard; position: number },
   total: number,
@@ -105,15 +100,15 @@ export function applicationCardScreen(
 ): ShownScreen {
   const cursor = cursorOf(application);
   const data = cardCursorData(cursor);
-  const keyboard = (profile: string | undefined) => {
-    const rows = new InlineKeyboard()
-      .text("Допустить", `v1:cm:qa:${data}`)
-      .row()
-      .text("Отказать", `v1:cm:qd:${data}`)
-      .row();
-    if (profile !== undefined) rows.url("Профиль ↗", profile).row();
-    return withNav(rows.text("Пропустить", `v1:cm:q:${data}`), toManage);
-  };
+  const rows = new InlineKeyboard()
+    .text("Допустить", `v1:cm:qa:${data}`)
+    .row()
+    .text("Отказать", `v1:cm:qd:${data}`);
+  if (application.telegramUsername !== undefined) {
+    rows.row().url("Профиль ↗", `https://t.me/${application.telegramUsername}`);
+  }
+  rows.row().text("Пропустить", `v1:cm:q:${data}`);
+  const keyboard = withNav(rows, toManage);
   return {
     id: "application",
     text: screenText(
@@ -123,12 +118,7 @@ export function applicationCardScreen(
         `Пришёл: ${sourceLabel(application.source)} · ${ageLabel(application.createdAtMs, nowMs)}`,
       ].join("\n"),
     ),
-    keyboard: keyboard(`tg://user?id=${application.telegramUserId}`),
-    privacyFallback: keyboard(
-      application.telegramUsername === undefined
-        ? undefined
-        : `https://t.me/${application.telegramUsername}`,
-    ),
+    keyboard,
     format: "HTML",
   };
 }

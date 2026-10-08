@@ -37,12 +37,6 @@ export type ShownScreen = {
    */
   fileTrace?: string;
   /**
-   * Клавиатура без ссылки `tg://user?id=`. Ссылку на профиль Telegram пускает
-   * только по настройкам приватности человека, а иначе отклоняет всё сообщение
-   * (`BUTTON_USER_PRIVACY_RESTRICTED`) — тогда экран уходит с этой клавиатурой.
-   */
-  privacyFallback?: InlineKeyboard;
-  /**
    * Отказ Telegram не заменяется новым сообщением, а уходит вызывающему: так
    * экран с загрузкой фото решает сам, чем его заменить (дизайн-код, «Показ
    * фото лота»). Повтор тем же содержимым по-прежнему не отказ.
@@ -66,6 +60,17 @@ export type ScreenContext = Context & {
   fresh?: boolean;
 };
 
+/** Окончательный отказ доставки: кадр сбоя и запись границы — у обработчика update. */
+export class ScreenDeliveryError extends Error {
+  readonly screenId: ScreenId;
+
+  constructor(screenId: ScreenId, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause), { cause });
+    this.name = "ScreenDeliveryError";
+    this.screenId = screenId;
+  }
+}
+
 /**
  * Единый отправитель экрана (дизайн-код, «Доставка»). Нажатие правит своё
  * сообщение. Новым сообщением экран приходит после команды, из-под следа и
@@ -74,16 +79,14 @@ export type ScreenContext = Context & {
  */
 export async function showScreen(
   ctx: ScreenContext,
-  { privacyFallback, ...screen }: ShownScreen,
+  screen: ShownScreen,
 ): Promise<Message | undefined> {
-  if (privacyFallback === undefined) {
-    return await deliverScreen(ctx, screen);
-  }
   try {
     return await deliverScreen(ctx, screen);
   } catch (cause) {
-    if (!isPrivacyRestricted(cause)) throw cause;
-    return await deliverScreen(ctx, { ...screen, keyboard: privacyFallback });
+    // Фото имеет свой путь восстановления, которому нужен исходный GrammyError.
+    if (screen.strict === true) throw cause;
+    throw new ScreenDeliveryError(screen.id, cause);
   }
 }
 
@@ -155,11 +158,19 @@ async function deliverScreen(
     if (isNotModified(cause)) {
       return undefined;
     }
-    // Новое сообщение с той же клавиатурой Telegram отклонит так же.
-    if (isPrivacyRestricted(cause)) throw cause;
     if (strict === true) throw cause;
     await clearCallbackKeyboard(ctx);
-    return await send();
+    try {
+      return await send();
+    } catch (sendCause) {
+      const errorText = (error: unknown) =>
+        error instanceof Error ? error.message : String(error);
+      throw new AggregateError(
+        [cause, sendCause],
+        `Screen edit failed: ${errorText(cause)}; replacement failed: ${errorText(sendCause)}`,
+        { cause: sendCause },
+      );
+    }
   }
 }
 
@@ -219,12 +230,6 @@ function visibleText(html: string): string {
     .replaceAll("&gt;", ">")
     .replaceAll("&quot;", '"')
     .replaceAll("&amp;", "&");
-}
-
-/** Ссылку `tg://user?id=` не пускают настройки приватности её владельца. */
-export function isPrivacyRestricted(cause: unknown): boolean {
-  const text = cause instanceof Error ? cause.message : String(cause);
-  return text.includes("BUTTON_USER_PRIVACY_RESTRICTED");
 }
 
 /** Повторная правка тем же содержимым: Telegram отвечает отказом, человеку это успех. */
