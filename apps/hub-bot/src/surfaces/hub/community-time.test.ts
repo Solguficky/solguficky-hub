@@ -4,17 +4,9 @@ import {
   communityInstant,
   communityLocalTime,
   isBeforeDay,
-  parseTimeZone,
 } from "./community-time.js";
 
 describe("community time zone", () => {
-  it("accepts an IANA zone and rejects a missing or unknown one", () => {
-    expect(parseTimeZone("Europe/Moscow")).toBe("Europe/Moscow");
-    expect(parseTimeZone(undefined)).toBeUndefined();
-    expect(parseTimeZone("")).toBeUndefined();
-    expect(parseTimeZone("Europe/Moskva")).toBeUndefined();
-  });
-
   it("shows a UTC instant in community time, across midnight", () => {
     expect(communityLocalTime("2026-10-01T21:30:00Z", "Europe/Moscow")).toEqual(
       { year: 2026, month: 10, day: 2, hours: 0, minutes: 30 },

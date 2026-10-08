@@ -10,7 +10,7 @@ import {
   handleDeliveryMessage,
   type TelegramRecipientResolver,
 } from "../../../core/delivery/index.js";
-import type { Logger } from "../logging.js";
+import type { Logger } from "../../../core/logging.js";
 import {
   createNotificationSender,
   createRenderMessage,

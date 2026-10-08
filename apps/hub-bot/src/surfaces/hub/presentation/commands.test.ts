@@ -1,7 +1,8 @@
 import type { Api } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 import type { LogFields, Logger } from "../../../core/logging.js";
-import { botCommands, registerCommands } from "./commands.js";
+import { registerCommands } from "../../../core/menu-commands.js";
+import { botCommands } from "./commands.js";
 
 type LogRecord = { level: keyof Logger; message: string; fields: LogFields };
 
@@ -27,7 +28,7 @@ describe("bot command menu", () => {
   it("registers only /menu with its caption for private chats", async () => {
     const setMyCommands = vi.fn<Api["setMyCommands"]>().mockResolvedValue(true);
     const { logger, records } = capturingLogger();
-    await registerCommands({ setMyCommands }, logger);
+    await registerCommands({ setMyCommands }, botCommands, logger);
     expect(setMyCommands).toHaveBeenCalledWith(
       [{ command: "menu", description: "Главное меню" }],
       { scope: { type: "all_private_chats" } },
@@ -43,7 +44,7 @@ describe("bot command menu", () => {
       .mockRejectedValue(new Error("Too Many Requests"));
     const { logger, records } = capturingLogger();
     await expect(
-      registerCommands({ setMyCommands }, logger),
+      registerCommands({ setMyCommands }, botCommands, logger),
     ).resolves.toBeUndefined();
     expect(records).toEqual([
       {

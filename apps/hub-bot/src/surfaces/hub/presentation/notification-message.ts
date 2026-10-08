@@ -1,4 +1,5 @@
 import { Api, InlineKeyboard } from "grammy";
+import type { TelegramEnvironment } from "../../../core/config.js";
 import {
   classifyTelegramFailure,
   type NotificationSender,
@@ -12,7 +13,6 @@ import type {
   NotifiedMeetup,
   RenderableContent,
 } from "../delivery/notification.js";
-import type { TelegramEnvironment } from "./bot.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import {
   type NotifiedMeetupCategory,

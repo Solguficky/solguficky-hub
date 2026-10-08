@@ -13,7 +13,7 @@ import {
 } from "@opentelemetry/api";
 import { AsyncLocalStorageContextManager } from "@opentelemetry/context-async-hooks";
 import { W3CTraceContextPropagator } from "@opentelemetry/core";
-import { serviceName } from "./logging.js";
+import { serviceName } from "./service.js";
 
 // Трассировка процесса — явная зависимость, как у Identity: ни провайдер, ни
 // менеджер контекста, ни пропагатор не регистрируются глобально, и код,
@@ -56,7 +56,7 @@ export function createTracing(
 // уходит, а обёртки ниже пропускают вызов насквозь по `isRecording`.
 export function noopTracing(): Tracing {
   return createTracing(
-    new ProxyTracerProvider().getTracer(serviceName),
+    new ProxyTracerProvider().getTracer(serviceName()),
     async () => {},
   );
 }

@@ -5,7 +5,9 @@ import {
   SimpleLogRecordProcessor,
 } from "@opentelemetry/sdk-logs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createLogger, serviceName } from "./logging.js";
+import { createLogger } from "./logging.js";
+
+const service = "hub-bot";
 
 describe("createLogger", () => {
   let exporter: InMemoryLogRecordExporter;
@@ -24,7 +26,10 @@ describe("createLogger", () => {
   });
 
   it("sends the record over OTLP with the frame as attributes", () => {
-    const logger = createLogger("info", provider.getLogger(serviceName));
+    const logger = createLogger("info", {
+      service,
+      otlp: provider.getLogger(service),
+    });
 
     logger.info("identity resolved", {
       operation: "message",
@@ -38,7 +43,7 @@ describe("createLogger", () => {
     expect(records[0]?.body).toBe("identity resolved");
     expect(records[0]?.severityNumber).toBe(SeverityNumber.INFO);
     expect(records[0]?.attributes).toEqual({
-      service: serviceName,
+      service,
       operation: "message",
       result: "ok",
       request_id: "req-42",
@@ -48,7 +53,10 @@ describe("createLogger", () => {
   });
 
   it("keeps records below the level out of both outputs", () => {
-    const logger = createLogger("info", provider.getLogger(serviceName));
+    const logger = createLogger("info", {
+      service,
+      otlp: provider.getLogger(service),
+    });
 
     logger.debug("foreign answer ignored", { result: "ok" });
 
@@ -57,10 +65,30 @@ describe("createLogger", () => {
   });
 
   it("writes only stdout without an OTLP logger", () => {
-    const logger = createLogger("info");
+    const logger = createLogger("info", { service });
 
     logger.warn("identity unavailable", { result: "error" });
 
     expect(stdout).toHaveBeenCalledTimes(1);
+  });
+
+  it("names the service it was created for in every record", () => {
+    const lines: string[] = [];
+    const logger = createLogger("info", {
+      service: "auction-bot",
+      out: (line) => lines.push(line),
+    });
+
+    logger.info("auction-bot starting", { screen: "menu" });
+
+    expect(lines.map((line) => JSON.parse(line))).toEqual([
+      {
+        service: "auction-bot",
+        level: "info",
+        msg: "auction-bot starting",
+        screen: "menu",
+      },
+    ]);
+    expect(stdout).not.toHaveBeenCalled();
   });
 });

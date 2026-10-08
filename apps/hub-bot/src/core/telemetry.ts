@@ -21,7 +21,7 @@ import {
   BasicTracerProvider,
   BatchSpanProcessor,
 } from "@opentelemetry/sdk-trace-base";
-import { serviceName } from "./logging.js";
+import { serviceName } from "./service.js";
 import { createTracing, noopTracing, type Tracing } from "./tracing.js";
 
 export type Metrics = {
@@ -80,14 +80,14 @@ export function startTraces(): Tracing {
     resource: telemetryResource(),
     spanProcessors: [new BatchSpanProcessor(new OTLPTraceExporter())],
   });
-  return createTracing(provider.getTracer(serviceName), () =>
+  return createTracing(provider.getTracer(serviceName()), () =>
     provider.shutdown(),
   );
 }
 
 // JS SDK сам не читает OTEL_SERVICE_NAME и OTEL_RESOURCE_ATTRIBUTES, которые
 // выдаёт AppHost: без детектора сигналы ушли бы от unknown_service и не легли
-// бы на ресурс hub-bot в dashboard. Ресурс один на логи, метрики и трейсы,
+// бы на ресурс поверхности (hub-bot, auction-bot) в dashboard. Ресурс один на логи, метрики и трейсы,
 // иначе они снова разойдутся по разным ресурсам.
 export function telemetryResource(): Resource {
   return defaultResource().merge(detectResources({ detectors: [envDetector] }));

@@ -42,6 +42,7 @@ import {
   presentServiceToken,
   requestIdHeader,
 } from "../../core/rpc-metadata.js";
+import { type Tracing, traceRpc } from "../../core/tracing.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
 import type { NotificationReads } from "./delivery/message.js";
 import type { EntryPorts } from "./entry-ports.js";
@@ -389,11 +390,15 @@ export function createClients(options: {
   identityUrl: string;
   auctionUrl: string;
   serviceToken: string;
+  tracing: Tracing;
   onNamesRefused?: (cause: unknown, requestId: string) => void;
 }): Clients {
   const identitySession = new Http2SessionManager(options.identityUrl);
   const auctionSession = new Http2SessionManager(options.auctionUrl);
-  const interceptors = [presentServiceToken(options.serviceToken)];
+  const interceptors = [
+    presentServiceToken(options.serviceToken),
+    traceRpc(options.tracing),
+  ];
   const identity = createClient(
     IdentityService,
     createGrpcTransport({

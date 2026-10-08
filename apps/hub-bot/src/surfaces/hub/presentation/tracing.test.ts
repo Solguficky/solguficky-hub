@@ -4,10 +4,10 @@ import type { Update } from "grammy/types";
 import { describe, expect, it } from "vitest";
 import { botInfo, createHarness } from "../../../../testkit/harness.js";
 import { createRecordingTracing } from "../../../../testkit/tracing.js";
+import { traceBotApi, traceUpdate } from "../../../core/bot/tracing.js";
 import { noopTracing, type Tracing } from "../../../core/tracing.js";
 import { createDispatcher } from "../application/dispatcher.js";
 import type { IdentityResolver } from "../identity/port.js";
-import { traceBotApi, traceUpdate } from "./tracing.js";
 
 // Значения, которых не должно быть ни в одном атрибуте: Telegram id, ник и
 // текст сообщения. Они заметны в сериализованных атрибутах, в отличие от 42.

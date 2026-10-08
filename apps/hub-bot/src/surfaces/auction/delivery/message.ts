@@ -3,13 +3,13 @@ import {
   encodeAuctionCallback,
   parseAuctionCallback,
 } from "../../../auction-ui/index.js";
+import type { TelegramEnvironment } from "../../../core/config.js";
 import {
   classifyTelegramFailure,
   isPermanentFailure,
   type NotificationSender,
   type RenderMessage,
 } from "../../../core/delivery/index.js";
-import type { TelegramEnvironment } from "../config.js";
 import { money, truncate } from "../entry-screen.js";
 import { entryCallback, parseEntryCallback } from "../faq.js";
 import { screenMark } from "../screen-catalog.js";

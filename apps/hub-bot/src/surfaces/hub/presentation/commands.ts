@@ -1,6 +1,4 @@
-import type { Api } from "grammy";
-import { countFailure } from "../../../core/failures.js";
-import type { Logger } from "../../../core/logging.js";
+import type { BotCommand } from "../../../core/menu-commands.js";
 
 // Состав меню записан в брифе бота, раздел «Меню команд». Команда одна: разделы
 // — ближайшие сходки, архив, уведомления, управление — открываются кнопками
@@ -13,26 +11,4 @@ import type { Logger } from "../../../core/logging.js";
 // по-прежнему, а `/menu` разбирается как `/start` без payload.
 export const botCommands = [
   { command: "menu", description: "Главное меню" },
-] as const;
-
-// Меню — удобство, а не условие работы: отказ Telegram пишется в лог и не
-// выбрасывается, иначе он остановил бы процесс до начала polling. Прежний
-// список при этом остаётся в клиенте, а следующий старт повторяет запись.
-export async function registerCommands(
-  api: Pick<Api, "setMyCommands">,
-  logger: Logger,
-): Promise<void> {
-  try {
-    // Бот отвечает только в личных чатах, поэтому и меню видно только там.
-    await api.setMyCommands(botCommands, {
-      scope: { type: "all_private_chats" },
-    });
-    logger.info("bot commands registered");
-  } catch (cause) {
-    countFailure("dependency_unavailable");
-    logger.warn("bot commands not registered", {
-      error_category: "dependency_unavailable",
-      error: cause instanceof Error ? cause.message : String(cause),
-    });
-  }
-}
+] as const satisfies readonly BotCommand[];

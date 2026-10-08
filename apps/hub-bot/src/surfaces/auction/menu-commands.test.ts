@@ -1,7 +1,8 @@
 import type { Api } from "grammy";
 import { describe, expect, it, vi } from "vitest";
-import type { LogFields, Logger } from "./logging.js";
-import { registerCommands } from "./menu-commands.js";
+import type { LogFields, Logger } from "../../core/logging.js";
+import { registerCommands } from "../../core/menu-commands.js";
+import { botCommands } from "./menu-commands.js";
 
 function capturingLogger() {
   const records: { level: string; message: string; fields: LogFields }[] = [];
@@ -21,7 +22,7 @@ describe("bot command menu", () => {
   it("registers the menu and FAQ commands for private chats", async () => {
     const setMyCommands = vi.fn<Api["setMyCommands"]>().mockResolvedValue(true);
     const { logger, records } = capturingLogger();
-    await registerCommands({ setMyCommands }, logger);
+    await registerCommands({ setMyCommands }, botCommands, logger);
     expect(setMyCommands).toHaveBeenCalledWith(
       [
         { command: "menu", description: "Меню аукциона" },
@@ -38,7 +39,7 @@ describe("bot command menu", () => {
       .fn<Api["setMyCommands"]>()
       .mockRejectedValue(new Error("telegram is down"));
     const { logger, records } = capturingLogger();
-    await registerCommands({ setMyCommands }, logger);
+    await registerCommands({ setMyCommands }, botCommands, logger);
     expect(records).toEqual([
       {
         level: "warn",

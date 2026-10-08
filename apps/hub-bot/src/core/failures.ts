@@ -1,5 +1,5 @@
 import { type Counter, type MeterProvider, metrics } from "@opentelemetry/api";
-import { serviceName } from "./logging.js";
+import { serviceName } from "./service.js";
 
 export const failureCategories = [
   "authorization",
@@ -34,6 +34,8 @@ function failures(): Counter {
   return bound.counter;
 }
 
+export type CountFailure = (category: FailureCategory) => void;
+
 export function countFailure(category: FailureCategory): void {
-  failures().add(1, { service: serviceName, error_category: category });
+  failures().add(1, { service: serviceName(), error_category: category });
 }

@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
+import { type Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
 import {
   type AuctionBlock,
   type AuctionResult,
@@ -12,6 +11,12 @@ import {
   parseAuctionCallback,
   type Viewer,
 } from "../../../auction-ui/index.js";
+import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
+import { markUpdateFailed } from "../../../core/bot/tracing.js";
+import {
+  defaultTelegramEnvironment,
+  type TelegramEnvironment,
+} from "../../../core/config.js";
 import { countFailure, type FailureCategory } from "../../../core/failures.js";
 import type { LogFields, Logger } from "../../../core/logging.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
@@ -109,10 +114,7 @@ import {
   uuidToToken,
 } from "./meetup-deep-link.js";
 import { newLotId, newLotIdOf, newLotKey } from "./new-lot-id.js";
-import {
-  classifySendFailure,
-  telegramTextLimit,
-} from "./notification-message.js";
+import { telegramTextLimit } from "./notification-message.js";
 import {
   type CallbackAction,
   type CardCursor,
@@ -226,17 +228,11 @@ import {
   type FileDownload,
   type TelegramFiles,
 } from "./telegram-files.js";
-import {
-  markUpdateFailed,
-  type TracedContext,
-  traceUpdate,
-} from "./tracing.js";
 import { startWaiting, type Waiting } from "./waiting.js";
 
 // Среда Telegram: `test` уводит вызовы Bot API на выделенную тестовую
 // инфраструктуру (ADR-046). Значения совпадают с опцией grammY, чтобы между
 // переменной окружения и клиентом не появилось второго словаря.
-export type TelegramEnvironment = "prod" | "test";
 
 export type BotRuntime = {
   token: string;
@@ -271,23 +267,6 @@ export type BotRuntime = {
   // ходит в Telegram сам, по токену и среде выше.
   files?: TelegramFiles;
 };
-
-export const defaultTelegramEnvironment: TelegramEnvironment = "prod";
-
-/**
- * Разбирает значение `BOT_ENVIRONMENT`. Отсутствие переменной — это
- * продакшн; любое неизвестное значение — `undefined`, а не молчаливый откат к
- * умолчанию: опечатка в переменной должна останавливать процесс, а не уводить
- * его в другую среду.
- */
-export function parseTelegramEnvironment(
-  raw: string | undefined,
-): TelegramEnvironment | undefined {
-  if (raw === undefined || raw === "") {
-    return defaultTelegramEnvironment;
-  }
-  return raw === "prod" || raw === "test" ? raw : undefined;
-}
 
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
 
@@ -504,9 +483,7 @@ type HubPendingInput =
   | PendingLot
   | PendingConsoleWeek;
 
-type UpdateContext = TracedContext & {
-  requestId?: string;
-  startedAt?: bigint;
+type UpdateContext = ShellContext & {
   // Ожидание этого update: ответ на нажатие, индикатор и бюджет сервисов.
   waiting?: Waiting;
   // Кнопка стояла под следом: экран приходит новым сообщением.
@@ -550,10 +527,10 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     ...options,
     dispatcher: withMeetupAuthor(options.dispatcher, options.identity),
   };
-  // Среда передаётся всегда, а не только для `test`: умолчание живёт в одном
-  // месте, и отсутствие поля не читается как «grammY решит сам».
-  const bot = new Bot<UpdateContext>(runtime.token, {
-    client: { environment: runtime.environment ?? defaultTelegramEnvironment },
+  const bot = createBotShell<UpdateContext>({
+    token: runtime.token,
+    environment: runtime.environment ?? defaultTelegramEnvironment,
+    tracing: runtime.tracing,
   });
   const questions = new Map<string, PendingInput>();
   const auctionParents = runtime.auctionParents ?? createAuctionParents();
@@ -566,14 +543,9 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
     });
   const albums = createSeenAlbums();
   bot.use((ctx, next) => {
-    const requestId = randomUUID();
-    ctx.requestId = requestId;
-    ctx.startedAt = process.hrtime.bigint();
     ctx.today = runtime.today ?? utcToday;
     ctx.auctionParents = auctionParents;
-    // Спан открывается в первом middleware: всё, что ниже, включая вызовы Bot
-    // API и gRPC, становится его потомком.
-    return traceUpdate({ tracing: runtime.tracing, ctx, requestId, next });
+    return next();
   });
   bot.on("callback_query:data", (ctx) =>
     handleCallback(ctx, runtime, questions, lotPhotos),

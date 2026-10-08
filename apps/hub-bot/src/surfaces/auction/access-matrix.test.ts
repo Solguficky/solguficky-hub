@@ -9,9 +9,10 @@ import {
   type AccessMatrixInput,
   describeAccessMatrix,
 } from "../../auction-ui/contract/index.js";
+import type { Logger } from "../../core/logging.js";
+import { noopTracing } from "../../core/tracing.js";
 import { createBot } from "./bot.js";
 import { deniedTexts } from "./entry-screen.js";
-import type { Logger } from "./logging.js";
 
 // Матрица доступа аукционного дерева над ботом поверхности аукциона целиком
 // (ADR-064, п. 19; ADR-060): update проходит тот же `createBot`, что и в
@@ -95,6 +96,7 @@ describeAccessMatrix("auction bot", "auction", (ports) => async (input) => {
   const bot = createBot({
     token: "111:test-token",
     environment: "prod",
+    tracing: noopTracing(),
     // Обычная карточка: её текст лежит в поле `text`, и ответ читается с него.
     presentation: "plain",
     ports: () => ({

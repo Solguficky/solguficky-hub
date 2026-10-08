@@ -11,6 +11,7 @@ import {
   withEntry,
 } from "../../../../testkit/harness.js";
 import type { RoleRequestOutcome } from "../../../auction-ui/index.js";
+import type { TelegramEnvironment } from "../../../core/config.js";
 import * as failures from "../../../core/failures.js";
 import { noopTracing } from "../../../core/tracing.js";
 import type { Dispatcher } from "../application/dispatcher.js";
@@ -37,11 +38,7 @@ import type {
 } from "../identity/port.js";
 import type { MeetupSnapshot } from "../meetups/port.js";
 import type { CategoryState, MeetupCategory } from "../notifications/port.js";
-import {
-  createBot,
-  parseTelegramEnvironment,
-  type TelegramEnvironment,
-} from "./bot.js";
+import { createBot } from "./bot.js";
 import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
 import { refusalText } from "./screens/kit.js";
 
@@ -5078,22 +5075,6 @@ describe("questions", () => {
 });
 
 describe("telegram environment", () => {
-  it("reads an absent or empty variable as production", () => {
-    expect(parseTelegramEnvironment(undefined)).toBe("prod");
-    expect(parseTelegramEnvironment("")).toBe("prod");
-  });
-
-  it("accepts exactly the two known values", () => {
-    expect(parseTelegramEnvironment("prod")).toBe("prod");
-    expect(parseTelegramEnvironment("test")).toBe("test");
-  });
-
-  it("refuses an unknown value instead of falling back to production", () => {
-    expect(parseTelegramEnvironment("Test")).toBeUndefined();
-    expect(parseTelegramEnvironment("production")).toBeUndefined();
-    expect(parseTelegramEnvironment(" test")).toBeUndefined();
-  });
-
   it("calls the test server when the test environment is chosen", async () => {
     await expect(requestedUrl("test")).resolves.toBe(
       "https://api.telegram.org/bot111:test-token/test/getMe",

@@ -1,5 +1,3 @@
-export const serviceName = "hub-bot";
-
 import type {
   AnyValueMap,
   Logger as OtlpLogger,
@@ -18,6 +16,8 @@ export type LogFields = {
   request_id?: string;
   identity_id?: string;
   error_category?: FailureCategory;
+  // Какой экран получил человек: запись каталога экранов поверхности.
+  screen?: string;
   error?: string;
   stack?: string;
   grpc_code?: string;
@@ -43,26 +43,50 @@ export type Logger = {
   error(message: string, fields?: LogFields): void;
 };
 
+export type LoggerOptions = {
+  // Имя сервиса поверхности (`service.ts`): поле `service` каждой записи.
+  service: string;
+  // Есть — запись уходит ещё и по OTLP.
+  otlp?: OtlpLogger;
+  // Строка JSON с переводом строки; по умолчанию — stdout процесса.
+  out?: (line: string) => void;
+};
+
 // Запись всегда уходит JSON-строкой в stdout, а при переданном otlp — ещё и
 // по OTLP: Structured logs dashboard читает только его. Порог уровня общий для
 // обоих выходов.
-export function createLogger(level: string, otlp?: OtlpLogger): Logger {
+export function createLogger(level: string, options: LoggerOptions): Logger {
   const min = parseLevel(level);
+  const sink: Sink = {
+    service: options.service,
+    otlp: options.otlp,
+    out:
+      options.out ??
+      ((line) => {
+        process.stdout.write(line);
+      }),
+  };
   return {
     debug(message, fields) {
-      write("debug", 20, min, message, fields, otlp);
+      write("debug", 20, min, message, fields, sink);
     },
     info(message, fields) {
-      write("info", 30, min, message, fields, otlp);
+      write("info", 30, min, message, fields, sink);
     },
     warn(message, fields) {
-      write("warn", 40, min, message, fields, otlp);
+      write("warn", 40, min, message, fields, sink);
     },
     error(message, fields) {
-      write("error", 50, min, message, fields, otlp);
+      write("error", 50, min, message, fields, sink);
     },
   };
 }
+
+type Sink = {
+  service: string;
+  otlp: OtlpLogger | undefined;
+  out: (line: string) => void;
+};
 
 function parseLevel(raw: string): number {
   switch (raw) {
@@ -85,19 +109,19 @@ function write(
   min: number,
   message: string,
   fields: LogFields | undefined,
-  otlp: OtlpLogger | undefined,
+  sink: Sink,
 ): void {
   if (value < min) {
     return;
   }
   const record: LogFields = {
-    service: serviceName,
+    service: sink.service,
     level,
     msg: message,
     ...fields,
   };
-  process.stdout.write(`${JSON.stringify(record)}\n`);
-  otlp?.emit({
+  sink.out(`${JSON.stringify(record)}\n`);
+  sink.otlp?.emit({
     severityNumber: severity(value),
     severityText: level,
     body: message,

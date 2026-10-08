@@ -8,12 +8,8 @@ import {
 } from "@opentelemetry/api";
 import type { Context, NextFunction, Transformer } from "grammy";
 import type { Update } from "grammy/types";
-import type { FailureCategory } from "../../../core/failures.js";
-import {
-  errorType,
-  recordingParent,
-  type Tracing,
-} from "../../../core/tracing.js";
+import type { FailureCategory } from "../failures.js";
+import { errorType, recordingParent, type Tracing } from "../tracing.js";
 
 // Корневой спан update. Корень всегда новый: входящего `traceparent` у
 // Telegram нет, а контекст предыдущего update сюда попасть не должен. Вид —

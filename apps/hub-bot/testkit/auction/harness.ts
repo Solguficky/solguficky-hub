@@ -1,9 +1,10 @@
 import type { Transformer } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
+import type { Presentation } from "../../src/core/config.js";
+import type { LogFields, Logger } from "../../src/core/logging.js";
+import { noopTracing } from "../../src/core/tracing.js";
 import { createBot } from "../../src/surfaces/auction/bot.js";
 import type { PortsFactory } from "../../src/surfaces/auction/clients.js";
-import type { Presentation } from "../../src/surfaces/auction/config.js";
-import type { LogFields, Logger } from "../../src/surfaces/auction/logging.js";
 import { inspectCall, reportViolations } from "./screen-lint.js";
 
 // Харнесс бота аукциона без Telegram: `botInfo` подставляется, поэтому
@@ -103,6 +104,7 @@ export function createHarness(
   const bot = createBot({
     token: "111:test-token",
     environment: "prod",
+    tracing: noopTracing(),
     ...(options.presentation === undefined
       ? {}
       : { presentation: options.presentation }),

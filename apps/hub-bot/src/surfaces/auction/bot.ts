@@ -1,13 +1,17 @@
-import { randomUUID } from "node:crypto";
-import { Bot, type Context, GrammyError, HttpError, InputFile } from "grammy";
+import { type Bot, GrammyError, HttpError, InputFile } from "grammy";
 import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
 import {
   isAuctionQuestion,
   type LotImagePort,
   type Viewer,
 } from "../../auction-ui/index.js";
+import { createBotShell, type ShellContext } from "../../core/bot/shell.js";
+import { markUpdateFailed } from "../../core/bot/tracing.js";
+import type { Presentation, TelegramEnvironment } from "../../core/config.js";
+import { countFailure } from "../../core/failures.js";
+import type { LogFields, Logger } from "../../core/logging.js";
+import type { Tracing } from "../../core/tracing.js";
 import type { PortsFactory } from "./clients.js";
-import type { Presentation, TelegramEnvironment } from "./config.js";
 import { isTraceCallback, parseTraceCallback } from "./delivery/message.js";
 import {
   type AuctionEntryScreen,
@@ -16,7 +20,6 @@ import {
   retryLabel,
 } from "./entry-screen.js";
 import { entryCallback, type FaqContent } from "./faq.js";
-import type { LogFields, Logger } from "./logging.js";
 import {
   createPhotoCache,
   type ImageKey,
@@ -39,6 +42,7 @@ import { startWaiting } from "./waiting.js";
 export type BotOptions = {
   token: string;
   environment: TelegramEnvironment;
+  tracing: Tracing;
   // Форма карточки лота; по умолчанию `rich` (ADR-034, дополнение).
   presentation?: Presentation;
   ports: PortsFactory;
@@ -53,13 +57,15 @@ export type BotOptions = {
   botInfo?: UserFromGetMe;
 };
 
-type UpdateContext = Context & { requestId: string; startedAt: bigint };
+type UpdateContext = ShellContext;
 
 // Адаптер grammY: Telegram заканчивается здесь. Маршрут и оболочка Telegram
 // не знают, бот хаба этот модуль не импортирует (ADR-044).
 export function createBot(options: BotOptions): Bot<UpdateContext> {
-  const bot = new Bot<UpdateContext>(options.token, {
-    client: { environment: options.environment },
+  const bot = createBotShell<UpdateContext>({
+    token: options.token,
+    environment: options.environment,
+    tracing: options.tracing,
     ...(options.botInfo === undefined ? {} : { botInfo: options.botInfo }),
   });
   const { logger } = options;
@@ -73,12 +79,6 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     });
   const photos = options.photos ?? createPhotoCache();
   const questions = options.questions ?? createQuestionMemory();
-
-  bot.use((ctx, next) => {
-    ctx.requestId = randomUUID();
-    ctx.startedAt = process.hrtime.bigint();
-    return next();
-  });
 
   // Только личный чат: в группе бот аукциона молчит.
   const direct = bot.chatType("private");
@@ -286,6 +286,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   });
 
   bot.catch((failure) => {
+    countFailure("unexpected");
     logger.error("update failed", {
       ...frame(failure.ctx, "update"),
       result: "error",
@@ -321,6 +322,10 @@ function log(input: {
       : { identity_id: outcome.identityId }),
   };
   if (outcome.failure !== undefined) {
+    // Отказ — в счётчик сбоев и на корневой спан update, как у хаба
+    // (logging.md, «Категории ошибок»).
+    countFailure(outcome.failure.category);
+    markUpdateFailed(ctx.updateSpan, outcome.failure.category);
     logger.error("update handled", {
       ...fields,
       result: "error",
@@ -336,6 +341,8 @@ function log(input: {
   if (category === undefined) {
     logger.info("update handled", { ...fields, result: "ok" });
   } else {
+    countFailure(category);
+    markUpdateFailed(ctx.updateSpan, category);
     logger.info("update handled", {
       ...fields,
       result: "error",

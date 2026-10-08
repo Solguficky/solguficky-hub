@@ -1,18 +1,5 @@
 import type { MeetupSchedule } from "./meetups/port.js";
 
-/// Имя пояса IANA, которое понимает `Intl`, или `undefined`. Неизвестное имя —
-/// отказ, а не откат к UTC: опечатка в конфигурации должна останавливать
-/// процесс, а не сдвигать показанное время на разницу поясов.
-export function parseTimeZone(raw: string | undefined): string | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  try {
-    new Intl.DateTimeFormat("en-US", { timeZone: raw });
-    return raw;
-  } catch {
-    return undefined;
-  }
-}
-
 export type CommunityDay = { year: number; month: number; day: number };
 
 /// Сегодняшний день сообщества — тот, по которому Meetups решает, ушла ли

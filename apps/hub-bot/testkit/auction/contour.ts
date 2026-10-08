@@ -1,6 +1,7 @@
 import type { Update } from "grammy/types";
+import type { Presentation } from "../../src/core/config.js";
+import { noopTracing } from "../../src/core/tracing.js";
 import { createClients } from "../../src/surfaces/auction/clients.js";
-import type { Presentation } from "../../src/surfaces/auction/config.js";
 import { createHarness, type LogRecord, type RecordedCall } from "./harness.js";
 
 // Провод бота аукциона против настоящих Identity и Auction (уровень L2). Среду
@@ -64,6 +65,7 @@ export function openAuctionBotWire(
     identityUrl: environment.identityUrl,
     auctionUrl: environment.auctionUrl,
     serviceToken: environment.serviceToken,
+    tracing: noopTracing(),
     onNamesRefused: (cause, requestId) =>
       current.logger.warn("display names unavailable", {
         request_id: requestId,
