@@ -19,6 +19,8 @@ public static class MethodAccess
 
     private static readonly IReadOnlySet<Caller> Bot = new HashSet<Caller> { Caller.HubBot };
 
+    private static readonly IReadOnlySet<Caller> AuctionBot = new HashSet<Caller> { Caller.AuctionBot };
+
     public static readonly IReadOnlyDictionary<string, IReadOnlySet<Caller>> ByMethod =
         new Dictionary<string, IReadOnlySet<Caller>>(StringComparer.Ordinal)
         {
@@ -32,6 +34,9 @@ public static class MethodAccess
             ["SetOutbidPreference"] = Bot,
             ["BroadcastToMeetupSubscribers"] = Bot,
             ["BroadcastToCommunity"] = Bot,
+            ["FollowLot"] = AuctionBot,
+            ["UnfollowLot"] = AuctionBot,
+            ["ListFollowedLots"] = AuctionBot,
         };
 
     /// <summary>Все вызывающие, которых объявил хотя бы один метод: таблица токенов обязана знать каждого.</summary>

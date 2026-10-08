@@ -95,21 +95,150 @@ public class AuctionMappingTests
 
     [Theory]
     [InlineData("events.auction.auction_scheduled")]
-    [InlineData("events.auction.lot_unsold")]
-    [InlineData("events.auction.lot_held_for_final")]
+    [InlineData("events.auction.lot_added")]
+    [InlineData("events.auction.invoice_issued")]
     [InlineData("events.auction.future_occasion")]
-    public void When_UnrelatedSubject_Expect_NotParsedAsLotEvent(string subject) =>
+    public void When_NotLotSubject_Expect_NotParsedAsLotEvent(string subject) =>
         AuctionMapping.Decode(subject, new byte[] { 0xff }).ShouldBeOfType<AuctionDecoded.Ignored>();
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public void When_LotUnsoldOrHeldForFinal_Expect_IgnoredWithoutFact(bool held)
+    [InlineData("events.auction.lot_unsold")]
+    [InlineData("events.auction.lot_opened")]
+    public void When_LotSubjectCarriesBrokenProtobuf_Expect_Poison(string subject) =>
+        AuctionMapping.Decode(subject, new byte[] { 0xff }).ShouldBeOfType<AuctionDecoded.Poison>();
+
+    /// <summary>Каждый факт лота без повода ведёт реплику: снимок, а не факт уведомления.</summary>
+    [Theory]
+    [InlineData("events.auction.lot_drafted", LotStatus.Draft)]
+    [InlineData("events.auction.lot_opened", LotStatus.Trading)]
+    [InlineData("events.auction.ask_advanced", LotStatus.Trading)]
+    [InlineData("events.auction.deadline_extended", LotStatus.Trading)]
+    [InlineData("events.auction.lot_resumed", LotStatus.Trading)]
+    [InlineData("events.auction.lot_unsold", LotStatus.Unsold)]
+    [InlineData("events.auction.lot_withdrawn", LotStatus.Withdrawn)]
+    [InlineData("events.auction.lot_held_for_final", LotStatus.Held)]
+    public void When_LotFactWithoutCause_Expect_SnapshotOfItsStatus(string subject, LotStatus status)
     {
-        var (subject, message) = held
-            ? ("events.auction.lot_held_for_final", EventFactory.HeldForFinal(EventFactory.NewId()))
-            : ("events.auction.lot_unsold", EventFactory.Unsold(EventFactory.NewId()));
-        AuctionMapping.Decode(subject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Ignored>();
+        var lotId = EventFactory.NewId();
+        var occasion = subject["events.auction.".Length..];
+        var message = occasion switch
+        {
+            "lot_drafted" => EventFactory.Drafted(lotId),
+            "lot_unsold" => EventFactory.Unsold(lotId),
+            "lot_withdrawn" => EventFactory.Withdrawn(lotId),
+            "lot_held_for_final" => EventFactory.HeldForFinal(lotId),
+            _ => EventFactory.Trading(lotId, occasion),
+        };
+
+        var fact = AuctionMapping.Decode(subject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Lot>().Value;
+
+        fact.EventId.ShouldBe(Guid.Parse(message.EventId));
+        fact.Snapshot.LotId.ShouldBe(Guid.Parse(lotId));
+        fact.Snapshot.Version.ShouldBe(message.Version);
+        fact.Snapshot.Status.ShouldBe(status);
+        fact.Snapshot.Terminal.ShouldBe(status is LotStatus.Unsold or LotStatus.Withdrawn);
+    }
+
+    [Fact]
+    public void When_TradingSnapshotHasDeadlineAndLeader_Expect_BothInSnapshot()
+    {
+        var leader = EventFactory.NewId();
+        var message = EventFactory.Trading(EventFactory.NewId(), "deadline_extended", deadline: EventFactory.Deadline(90),
+            leader: leader);
+
+        var snapshot = AuctionMapping.Decode("events.auction.deadline_extended", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Lot>().Value.Snapshot;
+
+        snapshot.Deadline.ShouldBe(EventFactory.Committed.AddMinutes(90));
+        snapshot.Leader.ShouldBe(Guid.Parse(leader));
+    }
+
+    /// <summary>Лот, который ведёт человек, дедлайна не несёт: это не ошибка снимка.</summary>
+    [Fact]
+    public void When_TradingSnapshotWithoutDeadlineOrLeader_Expect_EmptyFields()
+    {
+        var snapshot = AuctionMapping.Decode("events.auction.lot_opened",
+                EventFactory.Bytes(EventFactory.Trading(EventFactory.NewId(), "lot_opened")))
+            .ShouldBeOfType<AuctionDecoded.Lot>().Value.Snapshot;
+
+        snapshot.Deadline.ShouldBeNull();
+        snapshot.Leader.ShouldBeNull();
+    }
+
+    [Fact]
+    public void When_HeldForFinal_Expect_LeaderWithoutDeadline()
+    {
+        var message = EventFactory.HeldForFinal(EventFactory.NewId());
+
+        var snapshot = AuctionMapping.Decode("events.auction.lot_held_for_final", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Lot>().Value.Snapshot;
+
+        snapshot.Leader.ShouldBe(Guid.Parse(message.State.Held.LeaderId));
+        snapshot.Deadline.ShouldBeNull();
+    }
+
+    [Fact]
+    public void When_BidCarriesDeadline_Expect_SnapshotWithLeaderAndDeadline()
+    {
+        var leader = EventFactory.NewId();
+        var bid = Decode(EventFactory.Bid(EventFactory.NewId(), leader: leader, deadline: EventFactory.Deadline(60)));
+
+        var snapshot = bid.Snapshot.ShouldNotBeNull();
+        snapshot.Status.ShouldBe(LotStatus.Trading);
+        snapshot.Leader.ShouldBe(Guid.Parse(leader));
+        snapshot.Deadline.ShouldBe(EventFactory.Committed.AddMinutes(60));
+        snapshot.Version.ShouldBe(bid.Version);
+    }
+
+    [Fact]
+    public void When_LotSold_Expect_TerminalSnapshotLedByWinner()
+    {
+        var winner = EventFactory.NewId();
+
+        var snapshot = DecodeSale(EventFactory.Sold(EventFactory.NewId(), winner)).Snapshot.ShouldNotBeNull();
+
+        snapshot.Status.ShouldBe(LotStatus.Sold);
+        snapshot.Terminal.ShouldBeTrue();
+        snapshot.Leader.ShouldBe(Guid.Parse(winner));
+    }
+
+    /// <summary>Кривой дедлайн снимка не стоит перебитому сообщения: повод остаётся, реплики нет.</summary>
+    [Fact]
+    public void When_BidSnapshotDeadlineInvalid_Expect_CauseKeptWithoutSnapshot()
+    {
+        var previous = EventFactory.NewId();
+        var bid = Decode(EventFactory.Bid(EventFactory.NewId(), previous, deadline: "tomorrow"));
+
+        bid.OutbidRecipient.ShouldBe(Guid.Parse(previous));
+        bid.Snapshot.ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData("deadline")]
+    [InlineData("leader")]
+    [InlineData("status")]
+    [InlineData("state")]
+    [InlineData("state_id")]
+    [InlineData("occasion")]
+    [InlineData("version")]
+    public void When_LotSnapshotInvalid_Expect_Poison(string field)
+    {
+        var message = EventFactory.Trading(EventFactory.NewId(), "deadline_extended", deadline: EventFactory.Deadline(30),
+            leader: EventFactory.NewId());
+        switch (field)
+        {
+            case "deadline": message.State.Trading.Deadline = "tomorrow"; break;
+            case "leader": message.State.Trading.LeaderId = "bad"; break;
+            case "status": message.State.ClearStatus(); break;
+            case "state": message.State = null; break;
+            case "state_id": message.State.Id = EventFactory.NewId(); break;
+            case "occasion": message.LotOpened = new LotOpened(); break;
+            case "version": message.Version = 0; break;
+            default: throw new ArgumentOutOfRangeException(nameof(field));
+        }
+
+        AuctionMapping.Decode("events.auction.deadline_extended", EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Poison>();
     }
 
     [Fact]

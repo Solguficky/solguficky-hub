@@ -315,7 +315,8 @@ public class BoundaryLogInterceptorTests
 
     private static CallerGateInterceptor Gate() =>
         new(CallerTable.FromConfiguration(
-            name => name == Caller.HubBot.TokenVariable ? BotToken : null,
+            name => name == Caller.HubBot.TokenVariable ? BotToken
+                : name == Caller.AuctionBot.TokenVariable ? "auction-bot-token" : null,
             MethodAccess.Declared));
 
     private static (RecordingLogger<BoundaryLogInterceptor> Logger, BoundaryLogInterceptor Interceptor) Create()

@@ -13,6 +13,9 @@ public sealed record Caller(string Node)
     /// <summary>Бот хаба.</summary>
     public static readonly Caller HubBot = new("hub-bot");
 
+    /// <summary>Бот аукциона (ADR-044): избранные лоты (ADR-063).</summary>
+    public static readonly Caller AuctionBot = new("auction-bot");
+
     /// <summary>
     /// Переменная, из которой AppHost отдаёт токен вызывающего: имя узла в
     /// верхнем регистре с <c>_</c> вместо <c>-</c> (integration.md, «Service authentication»).

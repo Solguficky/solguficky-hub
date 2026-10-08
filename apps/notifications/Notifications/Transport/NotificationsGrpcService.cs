@@ -2,6 +2,7 @@ using Grpc.Core;
 using Notifications.Broadcasts;
 using Notifications.Domain;
 using Notifications.Facts;
+using Notifications.Favorites;
 using Notifications.Infrastructure;
 using Notifications.Preferences;
 using Notifications.V1;
@@ -9,7 +10,7 @@ using Notifications.V1;
 namespace Notifications.Transport;
 
 /// <summary>
-/// gRPC-граница подписок, настроек категорий и ручных рассылок.
+/// gRPC-граница подписок, настроек категорий, избранных лотов и ручных рассылок.
 /// </summary>
 /// <remarks>
 /// Команда предъявляет внутренний идентификатор человека, и больше ничего:
@@ -18,7 +19,8 @@ namespace Notifications.Transport;
 /// меняет себе, а право на рассылку подтверждает владелец ресурса синхронным
 /// вызовом. Из какого интерфейса пришла команда, сервис не знает.
 /// </remarks>
-public sealed class NotificationsGrpcService(PreferenceOperations operations, BroadcastOperations broadcasts)
+public sealed class NotificationsGrpcService(PreferenceOperations operations, FavoriteOperations favorites,
+    BroadcastOperations broadcasts)
     : NotificationsService.NotificationsServiceBase
 {
     public override async Task<MeetupNotificationPreferences> SubscribeToMeetup(
@@ -142,6 +144,48 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Br
     }
 
     /// <summary>
+    /// Отметка лота избранным (ADR-063). Лот, которого реплика ещё не знает,
+    /// отметку не получает: это отставание реплики от Auction или чужой
+    /// идентификатор, и обоим отвечает FAILED_PRECONDITION без автоповтора.
+    /// </summary>
+    public override async Task<LotFollowing> FollowLot(FollowLotRequest request, ServerCallContext context)
+    {
+        var identityId = RequestValidation.IdentityId(request.IdentityId);
+        var lotId = RequestValidation.LotId(request.LotId);
+
+        return await favorites.Follow(identityId, lotId, context.CancellationToken) switch
+        {
+            FollowResult.Done done => Following(identityId, lotId, done.Following),
+            FollowResult.UnknownLot => throw Refused(StatusCode.FailedPrecondition, "lot is not known yet"),
+            _ => throw new InvalidOperationException("unknown follow result"),
+        };
+    }
+
+    /// <summary>Снятие отметки. Снятие лота без отметки отказом не является.</summary>
+    public override async Task<LotFollowing> UnfollowLot(UnfollowLotRequest request, ServerCallContext context)
+    {
+        var identityId = RequestValidation.IdentityId(request.IdentityId);
+        var lotId = RequestValidation.LotId(request.LotId);
+
+        var following = await favorites.Unfollow(identityId, lotId, context.CancellationToken);
+
+        return Following(identityId, lotId, following);
+    }
+
+    public override async Task<FollowedLots> ListFollowedLots(ListFollowedLotsRequest request, ServerCallContext context)
+    {
+        var identityId = RequestValidation.IdentityId(request.IdentityId);
+
+        var lots = await favorites.List(identityId, context.CancellationToken);
+
+        return new FollowedLots
+        {
+            IdentityId = identityId.ToString("D"),
+            LotIds = { lots.Select(lot => lot.ToString("D")) },
+        };
+    }
+
+    /// <summary>
     /// Ручная рассылка подписчикам сходки. Право действовать от имени сходки
     /// проверяет Meetups синхронным вызовом на самой команде.
     /// </summary>
@@ -251,6 +295,9 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Br
 
     private static CategoryPreference Map(CategoryState state) =>
         new() { Category = state.Category, Enabled = state.Enabled };
+
+    private static LotFollowing Following(Guid identityId, Guid lotId, bool following) =>
+        new() { IdentityId = identityId.ToString("D"), LotId = lotId.ToString("D"), Following = following };
 
     private static OutbidPreference Map(Guid identityId, OutbidFrequency frequency) =>
         new() { IdentityId = identityId.ToString("D"), Frequency = frequency };

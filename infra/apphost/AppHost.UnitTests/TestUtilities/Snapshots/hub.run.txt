@@ -150,6 +150,7 @@ notifications: ProjectResource
   env: ASPNETCORE_URLS={notifications.bindings.grpc.scheme}://localhost:{notifications.bindings.grpc.targetPort}
   env: DOTNET_SYSTEM_CONSOLE_ALLOW_ANSI_COLOR_REDIRECTION=true
   env: LOGGING__CONSOLE__FORMATTERNAME=simple
+  env: NOTIFICATIONS_CALLER_TOKEN_AUCTION_BOT={auction-bot-service-token.value}
   env: NOTIFICATIONS_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
   env: NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: NOTIFICATIONS_DATABASE_URL={postgres.connectionString};Database=notifications;SSL Mode=Disable
@@ -162,6 +163,7 @@ notifications: ProjectResource
   waits: nats WaitUntilHealthy
   waits: notifications-db WaitUntilHealthy
   waits: postgres WaitUntilHealthy
+  relationship: Reference auction-bot-service-token
   relationship: Reference hub-bot-service-token
   relationship: Reference identity
   relationship: Reference meetups

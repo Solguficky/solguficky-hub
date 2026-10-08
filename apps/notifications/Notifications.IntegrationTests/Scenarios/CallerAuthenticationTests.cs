@@ -59,6 +59,7 @@ public class CallerAuthenticationTests
     /// </summary>
     [Theory]
     [InlineData("NOTIFICATIONS_CALLER_TOKEN_HUB_BOT")]
+    [InlineData("NOTIFICATIONS_CALLER_TOKEN_AUCTION_BOT")]
     [InlineData(ServiceToken.Variable)]
     public async Task When_TokenVariableEmpty_Expect_ServiceRefusesToStart(string variable)
     {

@@ -8,7 +8,7 @@ using Npgsql;
 
 namespace Notifications.Auction;
 
-public enum AuctionOutcome { Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected }
+public enum AuctionOutcome { Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected, LotReplicated }
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
 public sealed record AuctionApplication(AuctionOutcome Outcome, IReadOnlyDictionary<string, int> Created)
@@ -16,7 +16,7 @@ public sealed record AuctionApplication(AuctionOutcome Outcome, IReadOnlyDiction
     public int FactsCreated => Created.Values.Sum();
 }
 
-/// <summary>Ключ события и адресный факт — одна транзакция, без чтения чужой реплики.</summary>
+/// <summary>Ключ события, реплика лота и адресный факт — одна транзакция, без чтения чужой реплики.</summary>
 /// <remarks>
 /// «Перебили» фильтрует настройка получателя (PER-514), и читается она той же
 /// транзакцией, что и ключ события: повтор, пришедший после смены настройки,
@@ -32,6 +32,17 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         {
             return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
         }
+
+        // Реплика и отметка — той же транзакцией, что ключ: повтор события до
+        // них не доходит, а дошедший после чистки ключа гаснет на версии
+        // реплики и первичном ключе отметки. Отметку получает лидер ставки
+        // (state.trading.leader_id), ручной и автоставки одинаково, если на этом
+        // лоте у него не было ни отметки, ни снятия (ADR-063, п. 2).
+        if (bid.Snapshot is { } snapshot)
+        {
+            await LotReplicaStore.Apply(work, snapshot, now, cancellationToken);
+        }
+        await FavoriteStore.AutoFollow(work, bid.Leader, bid.LotId, now, cancellationToken);
 
         var created = new Dictionary<string, int>();
         var notAfter = now + options.Value.StaleAfter;
@@ -91,6 +102,11 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
         }
 
+        if (sale.Snapshot is { } snapshot)
+        {
+            await LotReplicaStore.Apply(work, snapshot, now, cancellationToken);
+        }
+
         var notAfter = now + options.Value.StaleAfter;
         var notification = AuctionFacts.Purchased(Guid.CreateVersion7(now), sale, now, notAfter);
         var created = new Dictionary<string, int>
@@ -118,6 +134,21 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.Purchased, created);
+    }
+
+    /// <summary>Факт лота без повода: ключ и снимок реплики одной транзакцией.</summary>
+    public async Task<AuctionApplication> Apply(AuctionLotFact fact, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, fact.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        await LotReplicaStore.Apply(work, fact.Snapshot, now, cancellationToken);
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.LotReplicated, new Dictionary<string, int>());
     }
 
     /// <summary>Наступившие окна частоты для прохода.</summary>

@@ -7,6 +7,7 @@ using Notifications.Broadcasts;
 using Notifications.Auction;
 using Notifications.Messaging;
 using Notifications.Facts;
+using Notifications.Favorites;
 using Notifications.Infrastructure;
 using Notifications.Preferences;
 using Notifications.Reminders;
@@ -260,6 +261,12 @@ public static class NotificationsHost
             .ValidateOnStart();
         // Чистка, как и ключей событий, шины не требует.
         builder.Services.AddHostedService<NotificationPruner>();
+
+        // Избранные лоты (ADR-063): команды бота аукциона и чистка по сроку
+        // тем же горизонтом. Реплику лота и отметку по ставке ведёт
+        // потребитель аукционных поводов той же транзакцией, что и поводы.
+        builder.Services.AddSingleton<FavoriteOperations>();
+        builder.Services.AddHostedService<FavoritePruner>();
 
         if (natsUrl is not null)
         {

@@ -24,9 +24,12 @@ public class CallerGateTests
             [Caller.HubBot, Meetups]);
     }
 
+    private const string AuctionBotToken = "auction-bot-token";
+
     private static CallerTable BotOnly() =>
         CallerTable.FromConfiguration(
-            name => name == Caller.HubBot.TokenVariable ? BotToken : null,
+            name => name == Caller.HubBot.TokenVariable ? BotToken
+                : name == Caller.AuctionBot.TokenVariable ? AuctionBotToken : null,
             MethodAccess.Declared);
 
     [Fact]
@@ -132,14 +135,42 @@ public class CallerGateTests
         MethodAccess.ByMethod.Keys.ShouldAllBe(name => methods.Contains(name));
     }
 
-    /// <summary>Колонка Caller каталога: все восемь методов принимают только бота.</summary>
+    /// <summary>
+    /// Колонка Caller каталога: избранные лоты принимают только бота аукциона,
+    /// остальные методы — только бота хаба.
+    /// </summary>
     [Fact]
-    public void ByMethod_EveryContractMethod_AcceptsOnlyBot()
+    public void ByMethod_EveryContractMethod_AcceptsOnlyItsBot()
     {
+        string[] favorites = ["FollowLot", "UnfollowLot", "ListFollowedLots"];
         foreach (var method in NotificationsService.Descriptor.Methods)
         {
-            MethodAccess.ByMethod[method.Name].ShouldBe(new[] { Caller.HubBot }, ignoreOrder: true);
+            var expected = favorites.Contains(method.Name) ? Caller.AuctionBot : Caller.HubBot;
+            MethodAccess.ByMethod[method.Name].ShouldBe(new[] { expected }, ignoreOrder: true);
         }
+    }
+
+    /// <summary>Бот аукциона со своим токеном к методам хаба не допущен, и наоборот.</summary>
+    [Theory]
+    [InlineData("/notifications.v1.NotificationsService/FollowLot", false)]
+    [InlineData("/notifications.v1.NotificationsService/ListFollowedLots", false)]
+    [InlineData(Community, true)]
+    public void Decide_OtherBotsMethod_RefusesAsNotDeclared(string path, bool auctionBot)
+    {
+        var (token, caller) = auctionBot ? (AuctionBotToken, Caller.AuctionBot) : (BotToken, Caller.HubBot);
+
+        var decision = CallerGate.Decide(BotOnly(), path, $"Bearer {token}");
+
+        decision.ShouldBe(GateDecision.Refuse(CallerRefusal.NotDeclared, caller));
+    }
+
+    [Fact]
+    public void Decide_AuctionBotOnFavorites_Admits()
+    {
+        var decision = CallerGate.Decide(BotOnly(), "/notifications.v1.NotificationsService/FollowLot",
+            $"Bearer {AuctionBotToken}");
+
+        decision.ShouldBe(GateDecision.Admit(Caller.AuctionBot));
     }
 
     [Theory]
