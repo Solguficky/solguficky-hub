@@ -1306,7 +1306,7 @@ describe("waiting", () => {
     const identity = {
       resolveIdentity: rpcAfter(2_500, {
         identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-        globalRoles: [GlobalRole.PUBLIC],
+        globalRoles: [GlobalRole.GUEST],
         blocked: false,
       }),
     };

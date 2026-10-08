@@ -55,6 +55,8 @@ message IdentityEvent {
     ProfileUnblocked profile_unblocked = 10;
     ApplicationSubmitted application_submitted = 11;
     ApplicationAdmitted application_admitted = 12;
+    RightGranted right_granted = 13;
+    RightRevoked right_revoked = 14;
   }
 }
 
@@ -73,15 +75,26 @@ message IdentityState {
   // Canonical lowercase UUIDv7 with hyphens.
   string id = 1;
 
-  // Active platform-wide roles, in no promised order. An empty set is a state,
-  // not an absent field: it is what a person has before they are admitted and
-  // what a blocked person is left with.
+  // Superseded by role and rights. Active platform-wide roles, in no promised
+  // order. An empty set is a state, not an absent field: it is what a person has
+  // before they are admitted and what a blocked person is left with. Kept until
+  // every consumer reads role and rights.
   repeated GlobalRole global_roles = 2;
 
   // True when the profile's block mark is on. It is not a role and is never
   // derived from global_roles: blocking revokes active roles, so an empty set
   // alone does not distinguish a blocked profile from one that never started.
   bool blocked = 3;
+
+  // The one active role-circle. GLOBAL_ROLE_UNSPECIFIED is a state, not an
+  // absent field: no circle yet, or a blocked person.
+  GlobalRole role = 4;
+
+  // Rights Identity derived from the circle and the separately granted rights,
+  // in no promised order, as ResolveIdentityResponse.rights. An empty set is a
+  // state: what a person has before admission, what a guest whose last right
+  // was revoked keeps, and what a blocked person is left with.
+  repeated AccessRight rights = 5;
 
   // The Telegram user id and the username cache are deliberately absent: they are
   // personal data, and no consumer of these events may hold them. A delivery
@@ -100,16 +113,16 @@ message IdentityState {
 // set here would be wrong about exactly those people.
 message ProfileRegistered {}
 
-// A platform-wide role became active. The whole set after the grant is in
-// state.global_roles; the role names which one is the new one, so a consumer
-// without a replica need not diff.
+// A role-circle became active. The state after the grant is in state.role and
+// state.rights; the role names which one is the new one, so a consumer without
+// a replica need not diff.
 message RoleGranted {
   GlobalRole role = 1;
 }
 
 // A platform-wide role stopped being active. The role is carried because the
-// revoked role is no longer in the state: together with blocking, this is the
-// only fact of the dictionary that the snapshot cannot express by itself.
+// revoked role is no longer in the state: together with right_revoked and
+// blocking, these are the facts that the snapshot cannot express by itself.
 //
 // A transition into the blocked state revokes every active role and is reported
 // as profile_blocked alone, not as a revocation per role. A revocation with no
@@ -119,34 +132,59 @@ message RoleRevoked {
   GlobalRole role = 1;
 }
 
-// The person entered the blocked state. The mark is state.blocked, and
-// state.global_roles is empty: the same transaction revokes every active role.
+// The person entered the blocked state. The mark is state.blocked, state.role is
+// unset and state.rights is empty: the same transaction revokes every active
+// role and right.
 message ProfileBlocked {}
 
-// The block was lifted. Lifting it restores no role, so whatever set the person
-// had while blocked is the set they have after: this occasion never adds one.
+// The block was lifted. Lifting it restores no role or right, so whatever the
+// person had while blocked is what they have after: this occasion never adds
+// one.
 message ProfileUnblocked {}
 
-// A new application for a circle the person does not hold was opened. It changes
-// no access: the snapshot is the one the person already had.
+// A new application was opened in a queue whose grant the person does not hold.
+// It changes no access: the snapshot is the one the person already had.
 //
 // The applicant's name, username and arrival channel are deliberately absent:
 // they are data for the moderator and stay in IdentityService.
 message ApplicationSubmitted {
-  // The circle asked for: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  // Superseded by queue: GLOBAL_ROLE_MEMBER for the community queue,
+  // GLOBAL_ROLE_GUEST for the auction queue.
   GlobalRole role = 1;
+
+  // The queue the application lies in. Its moderators are the recipients of
+  // the fact, and the applicant is not one of them.
+  ApplicationQueue queue = 2;
 }
 
 // An administrator admitted the person by an application: they decided an open
 // one, or reconsidered a refused one. It is reported apart from role_granted
 // because role_granted does not say why a role became active, and an admission
 // is the one cause the applicant is told about. The grants it made come as
-// their own role_granted occasions earlier in the same transaction, so the
-// snapshot already holds the circle.
+// their own role_granted and right_granted occasions earlier in the same
+// transaction, so the snapshot already holds what the queue grants.
 //
 // An allowed-username grant and a grant through a stronger circle are not
 // admissions and never produce this occasion; neither does a refusal.
 message ApplicationAdmitted {
-  // The circle of the application: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  // Superseded by queue, as in ApplicationSubmitted.
   GlobalRole role = 1;
+
+  // The queue of the application.
+  ApplicationQueue queue = 2;
+}
+
+// A right was granted to the person apart from their circle: ACCESS_RIGHT_AUCTION
+// to a guest, or ACCESS_RIGHT_MODERATE_AUCTION to a member. A right that comes
+// with a circle arrives with role_granted and is not reported here. The whole
+// set after the grant is in state.rights.
+message RightGranted {
+  AccessRight right = 1;
+}
+
+// A right granted apart from the circle stopped being active. The right is
+// carried because it is no longer in the state. A transition into the blocked
+// state is reported as profile_blocked alone, as for roles.
+message RightRevoked {
+  AccessRight right = 1;
 }

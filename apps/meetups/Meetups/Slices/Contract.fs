@@ -150,7 +150,7 @@ module Inbound =
         | Identity.V1.GlobalRole.Maintainer -> Some Maintainer
         | Identity.V1.GlobalRole.Admin -> Some Administrator
         | Identity.V1.GlobalRole.Member -> Some Member
-        | Identity.V1.GlobalRole.Public -> Some Public
+        | Identity.V1.GlobalRole.Guest -> Some Public
         | _ -> None
 
     let viewer (value: Meetups.V1.Viewer) : Result<Viewer, InvalidRequest> =

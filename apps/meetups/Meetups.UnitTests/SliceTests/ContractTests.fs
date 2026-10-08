@@ -84,7 +84,7 @@ let ``Viewer with every known role should carry all of them into the domain`` ()
             Identity.V1.GlobalRole.Maintainer
             Identity.V1.GlobalRole.Admin
             Identity.V1.GlobalRole.Member
-            Identity.V1.GlobalRole.Public
+            Identity.V1.GlobalRole.Guest
         ]
 
     let parsed = Contract.Inbound.viewer (viewerWith roles)

@@ -435,7 +435,7 @@ describe("decodeNotification", () => {
 
     it.each([
       [GlobalRole.MEMBER, "member"],
-      [GlobalRole.PUBLIC, "public"],
+      [GlobalRole.GUEST, "public"],
     ] as const)("decodes a request for circle %s", (circle, expected) => {
       expect(decodeNotification(requested(circle))).toMatchObject({
         kind: "ok",
@@ -474,7 +474,7 @@ describe("decodeNotification", () => {
     // Допуск в аукцион доставляет бот аукциона: для хаба это чужая ветка,
     // которую он подтверждает без журнала и без отказа.
     it("leaves an admission to the auction to the auction bot", () => {
-      expect(decodeNotification(granted(GlobalRole.PUBLIC))).toMatchObject({
+      expect(decodeNotification(granted(GlobalRole.GUEST))).toMatchObject({
         kind: "ok",
         notification: { content: { kind: "foreign", type: "accessGranted" } },
       });
@@ -506,7 +506,7 @@ describe("decodeNotification", () => {
 
     // Notifications шлёт ветку только для администратора: иная роль — дефект
     // издателя, а не весть, которую можно показать.
-    it.each([GlobalRole.MEMBER, GlobalRole.PUBLIC, GlobalRole.UNSPECIFIED])(
+    it.each([GlobalRole.MEMBER, GlobalRole.GUEST, GlobalRole.UNSPECIFIED])(
       "rejects a grant of role %s",
       (role) => {
         expect(decodeNotification(roleGranted(role)).kind).toBe("malformed");

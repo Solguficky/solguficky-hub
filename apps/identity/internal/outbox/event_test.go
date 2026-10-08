@@ -58,7 +58,7 @@ func TestRecordMessageCarriesEnvelopeAndSnapshot(t *testing.T) {
 	if state.GetId() != identityID || state.GetBlocked() {
 		t.Fatalf("state: got id %q blocked %t", state.GetId(), state.GetBlocked())
 	}
-	wantRoles := []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC}
+	wantRoles := []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST}
 	if len(state.GetGlobalRoles()) != len(wantRoles) {
 		t.Fatalf("global_roles: got %v want %v", state.GetGlobalRoles(), wantRoles)
 	}
@@ -89,7 +89,7 @@ func TestRecordMessageSetsExactlyTheOccasionBranch(t *testing.T) {
 		{outbox.ProfileBlocked, "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileBlocked() != nil }},
 		{outbox.ProfileUnblocked, "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileUnblocked() != nil }},
 		{outbox.ApplicationSubmitted, "public", func(e *identityv1.IdentityEvent) bool {
-			return e.GetApplicationSubmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC
+			return e.GetApplicationSubmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_GUEST
 		}},
 		{outbox.ApplicationAdmitted, "member", func(e *identityv1.IdentityEvent) bool {
 			return e.GetApplicationAdmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_MEMBER

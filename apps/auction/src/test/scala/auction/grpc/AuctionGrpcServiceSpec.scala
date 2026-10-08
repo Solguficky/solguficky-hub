@@ -524,7 +524,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
 
     "answers an oversized image from an administrator with the limit before touching the store" in {
-      val admin = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_PUBLIC))
+      val admin = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_GUEST))
       val oversized = wire.LotImageUpload(ByteString.copyFrom(Array.fill[Byte](LotImage.MaxBytes + 1)(0)))
       val edit = wire.EditLotCardRequest(Some(admin), lot, "Лот", "").withReplaceImage(oversized)
       service(Unreachable).editLotCard(edit).futureValue.getRefused.reason.imageTooLarge shouldBe

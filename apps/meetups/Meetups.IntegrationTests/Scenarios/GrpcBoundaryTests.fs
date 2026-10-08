@@ -103,7 +103,7 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
         let newcomer = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000b")
         newcomer.GlobalRoles.Add(Identity.V1.GlobalRole.Maintainer)
         newcomer.GlobalRoles.Add(Identity.V1.GlobalRole.Member)
-        newcomer.GlobalRoles.Add(Identity.V1.GlobalRole.Public)
+        newcomer.GlobalRoles.Add(Identity.V1.GlobalRole.Guest)
         newcomer.GlobalRoles.Add(enum<Identity.V1.GlobalRole> 99)
 
         let actual =

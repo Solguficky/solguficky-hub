@@ -77,7 +77,7 @@ function toContent(
     // заявку в public, а допуск в хаб для аукциона чужой.
     case "accessGranted": {
       const circle = type.value.circle;
-      if (circle === GlobalRole.PUBLIC) return { kind: "access-granted" };
+      if (circle === GlobalRole.GUEST) return { kind: "access-granted" };
       if (circle === GlobalRole.MEMBER) {
         return { kind: "foreign", type: type.case };
       }

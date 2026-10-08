@@ -124,7 +124,7 @@ func TestResolveOrganizerUsernameRequiresMemberCircle(t *testing.T) {
 		"no roles": {IdentityId: viewer.GetIdentityId()},
 		"public": {
 			IdentityId:  viewer.GetIdentityId(),
-			GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC},
+			GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_GUEST},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

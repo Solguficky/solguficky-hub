@@ -63,7 +63,13 @@ message Viewer {
   // Platform-wide roles from Identity. Domain permissions are not precomputed
   // here; Auction applies them as the owner of the resource. An empty set means
   // an ordinary user. The block mark is deliberately absent, as in meetups.v1.Viewer.
+  // Superseded by rights for taking part in the auction.
   repeated identity.v1.GlobalRole global_roles = 2;
+
+  // Rights from Identity, copied as received from ResolveIdentityResponse.rights.
+  // Taking part in the auction requires identity.v1.ACCESS_RIGHT_AUCTION; the
+  // auction console stays with the meetup administrator, whom Meetups names.
+  repeated identity.v1.AccessRight rights = 3;
 }
 
 message PlaceBidRequest {

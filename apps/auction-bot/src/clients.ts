@@ -370,7 +370,7 @@ export function createDeliveryPorts(
     reads: {
       async hasPublicRole(identityId, requestId) {
         const response = await identity.checkGlobalRole(
-          { identityId, acceptedRoles: [WireRole.PUBLIC] },
+          { identityId, acceptedRoles: [WireRole.GUEST] },
           options(requestId),
         );
         return response.granted;
@@ -380,7 +380,7 @@ export function createDeliveryPorts(
         // не отдаёт, а выдумывать её зрителю канал не вправе.
         const snapshot = await auction.getLot(
           {
-            viewer: { identityId, globalRoles: [WireRole.PUBLIC] },
+            viewer: { identityId, globalRoles: [WireRole.GUEST] },
             lotId,
           },
           options(requestId),
@@ -454,7 +454,7 @@ function wireCircle(circle: SurfaceCircle): WireRole {
     case "member":
       return WireRole.MEMBER;
     case "public":
-      return WireRole.PUBLIC;
+      return WireRole.GUEST;
     default: {
       const _exhaustive: never = circle;
       return _exhaustive;
@@ -489,7 +489,7 @@ function roleName(role: WireRole): GlobalRole | undefined {
       return "admin";
     case WireRole.MEMBER:
       return "member";
-    case WireRole.PUBLIC:
+    case WireRole.GUEST:
       return "public";
     case WireRole.UNSPECIFIED:
       return undefined;
@@ -513,7 +513,7 @@ function roleValue(role: GlobalRole): WireRole {
     case "member":
       return WireRole.MEMBER;
     case "public":
-      return WireRole.PUBLIC;
+      return WireRole.GUEST;
   }
 }
 

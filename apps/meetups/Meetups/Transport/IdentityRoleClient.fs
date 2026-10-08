@@ -37,7 +37,7 @@ let private role (value: GlobalRole) : Identity.V1.GlobalRole =
     | Maintainer -> Identity.V1.GlobalRole.Maintainer
     | Administrator -> Identity.V1.GlobalRole.Admin
     | Member -> Identity.V1.GlobalRole.Member
-    | Public -> Identity.V1.GlobalRole.Public
+    | Public -> Identity.V1.GlobalRole.Guest
 
 /// Сведение отказа Identity (ADR-051, п. 6). NOT_FOUND — неизвестный Identity
 /// человек — становится тем же «нет», что и `granted = false`: иначе посторонний

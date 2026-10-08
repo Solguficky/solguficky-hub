@@ -113,7 +113,7 @@ func TestDeclineMemberKeepsPublicAndDoesNotBlock(t *testing.T) {
 	if resolved.GetBlocked() {
 		t.Fatal("decline in member blocked the profile")
 	}
-	assertRoleSetInternal(t, resolved.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resolved.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertRefused(t, svc, adminID, applicationID)
 	assertAdmissions(t, db, applicantID)
 }
@@ -165,7 +165,7 @@ func TestAdmitMemberClosesPublicApplicationByGrant(t *testing.T) {
 		t.Fatalf("outcome = %v, want ADMITTED", got)
 	}
 	assertRoleSetInternal(t, resolveDirect(t, svc, 9662, "").GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertApplicationOutcome(t, db, publicID, outcomeClosedByGrant, adminID)
 	assertAdmissions(t, db, applicantID, roleMember)
 }
@@ -179,7 +179,7 @@ func TestAdmitPublicKeepsMemberApplicationOpen(t *testing.T) {
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
 
 	decide(t, svc.AdmitApplication, adminID, publicID)
-	assertRoleSetInternal(t, resolveDirect(t, svc, 9672, "").GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resolveDirect(t, svc, 9672, "").GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertApplicationOutcome(t, db, memberID, "", "")
 	assertAdmissions(t, db, applicantID, rolePublic)
 }
@@ -235,7 +235,7 @@ func TestReconsiderBlockedUnblocksAndGrantsPublicInOneOperation(t *testing.T) {
 	if resolved.GetBlocked() {
 		t.Fatal("reconsider left the block")
 	}
-	assertRoleSetInternal(t, resolved.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resolved.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertEvents(t, db, applicantID,
 		"v1 profile_registered() {} blocked=false",
 		"v2 profile_blocked() {} blocked=true",
@@ -282,7 +282,7 @@ func TestReconsiderBlockedAfterUnblockGrantsPublic(t *testing.T) {
 	if err != nil || !reconsidered.GetChanged() {
 		t.Fatalf("reconsider: changed=%t error=%v", reconsidered.GetChanged(), err)
 	}
-	assertRoleSetInternal(t, resolveDirect(t, svc, 9832, "").GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resolveDirect(t, svc, 9832, "").GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertRefused(t, svc, adminID)
 }
 
@@ -311,7 +311,7 @@ func TestReconsiderDeclinedAdmitsToHub(t *testing.T) {
 		t.Fatalf("reconsider: changed=%t error=%v", reconsidered.GetChanged(), err)
 	}
 	assertRoleSetInternal(t, resolveDirect(t, svc, 9712, "").GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertRefused(t, svc, adminID)
 	assertAdmissions(t, db, applicantID, roleMember)
 }
@@ -478,7 +478,7 @@ func TestApplicationCardCarriesApplicantAndSource(t *testing.T) {
 	card := readQueue(t, svc, actor, nil).GetApplication()
 	if card.GetApplicationId() != withSource || card.GetIdentityId() != applicantID || card.GetTelegramUserId() != 9792 ||
 		card.GetTelegramUsername() != "applicant" || card.GetFirstName() != "Anna" ||
-		card.GetRequestedRole() != identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC {
+		card.GetRequestedRole() != identityv1.GlobalRole_GLOBAL_ROLE_GUEST {
 		t.Fatalf("card = %v", card)
 	}
 	if card.GetSource() == nil || card.GetSource().ChannelLabel != nil {
@@ -508,7 +508,7 @@ func TestRefusedApplicationsAreListedNewestFirst(t *testing.T) {
 		t.Fatalf("order = %s, %s; want %s, %s", got[0].GetApplicationId(), got[1].GetApplicationId(), newer, older)
 	}
 	if got[0].GetDecision().GetOutcome() != identityv1.ApplicationOutcome_APPLICATION_OUTCOME_BLOCKED ||
-		got[0].GetRequestedRole() != identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC || got[0].GetTelegramUserId() != 9803 ||
+		got[0].GetRequestedRole() != identityv1.GlobalRole_GLOBAL_ROLE_GUEST || got[0].GetTelegramUserId() != 9803 ||
 		got[0].GetDecision().GetDecidedBy().GetIdentityId() != adminID {
 		t.Fatalf("refused row = %v", got[0])
 	}

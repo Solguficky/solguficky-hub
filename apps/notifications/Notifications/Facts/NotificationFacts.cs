@@ -371,7 +371,7 @@ public static class NotificationFacts
     private static Identity.V1.GlobalRole RequestableCircle(IdentityFact fact) => fact.OccasionRole switch
     {
         "member" => Identity.V1.GlobalRole.Member,
-        "public" => Identity.V1.GlobalRole.Public,
+        "public" => Identity.V1.GlobalRole.Guest,
         _ => throw new ArgumentException($"circle {fact.OccasionRole} is not requestable", nameof(fact)),
     };
 

@@ -28,7 +28,7 @@ func TestCommunityAdministrationIsAuthorizedAndIdempotent(t *testing.T) {
 	}
 
 	resolved := resolveDirect(t, svc, 9502, "target")
-	assertRoleSetInternal(t, resolved.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resolved.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	// Допуск без заявки — тоже решение администратора: сообщение получает и
 	// тот, кто ждал на экране без строки заявки, а повтор второго не даёт.
 	assertAdmissions(t, db, targetID, roleMember)

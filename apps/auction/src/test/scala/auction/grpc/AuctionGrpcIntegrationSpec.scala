@@ -73,7 +73,7 @@ final class AuctionGrpcIntegrationSpec
 
   "FAQ grpc" should {
     "store completion through the production boundary only for the auction bot and its viewer" in withNode { node =>
-      val viewer = wire.Viewer("01926f3c-8b7a-7cde-8f00-000000000001", Seq(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC))
+      val viewer = wire.Viewer("01926f3c-8b7a-7cde-8f00-000000000001", Seq(GlobalRoleMessage.GLOBAL_ROLE_GUEST))
       val read = wire.GetFaqAcknowledgementRequest(Some(viewer))
       val finish = wire.AcknowledgeFaqRequest(Some(viewer))
       node.client
@@ -242,7 +242,7 @@ final class AuctionGrpcIntegrationSpec
 
   private def feed(node: Node, auction: String): Seq[String] =
     asHubBot(node.client.listAuctionLots())
-      .invoke(wire.ListAuctionLotsRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)), auction))
+      .invoke(wire.ListAuctionLotsRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)), auction))
       .futureValue
       .lots
       .map(_.id)
@@ -393,7 +393,7 @@ final class AuctionGrpcIntegrationSpec
           .isAuctionAlreadyStarted shouldBe true
         eventually {
           val snapshot = asHubBot(node.client.getLot())
-            .invoke(wire.GetLotRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)), lot))
+            .invoke(wire.GetLotRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)), lot))
             .futureValue
           snapshot.getTrading.deadline shouldBe Some(closesAt.toString)
           snapshot.getTrading.currentPrice shouldBe Some(MoneyMessage(500000, "RUB"))
@@ -534,7 +534,7 @@ final class AuctionGrpcIntegrationSpec
         asHubBot(node.client.scheduleLot()).invoke(conditions).futureValue.outcome.isAccepted shouldBe true
         lotJournal(node, lot) shouldBe 2
 
-        val reader = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        val reader = viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)
         eventually {
           val listed = asHubBot(node.client.listAuctionLots())
             .invoke(wire.ListAuctionLotsRequest(Some(reader), auction))
@@ -640,7 +640,7 @@ final class AuctionGrpcIntegrationSpec
 
   /** Участник с ролью `public`, выбравший имя в аукционе: без имени ставка до лота не доходит (ADR-059). */
   private def named(node: Node, auction: AuctionId, alias: String = "Кот"): wire.Viewer = {
-    val who = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+    val who = viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)
     choose(node, who, auction, alias).outcome.isAccepted shouldBe true
     who
   }
@@ -725,7 +725,7 @@ final class AuctionGrpcIntegrationSpec
     "answers NOT_FOUND through ListLotHistory for a lot that was never drafted" in withNode { node =>
       statusOf(
         asHubBot(node.client.listLotHistory()).invoke(
-          wire.ListLotHistoryRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)), newId())
+          wire.ListLotHistoryRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)), newId())
         )
       ) shouldBe Status.Code.NOT_FOUND
     }
@@ -734,7 +734,7 @@ final class AuctionGrpcIntegrationSpec
       val unknown = UuidV7.generator(Clock.systemUTC())().toString
       statusOf(
         asHubBot(node.client.getLot()).invoke(
-          wire.GetLotRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)), unknown)
+          wire.GetLotRequest(Some(viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)), unknown)
         )
       ) shouldBe Status.Code.NOT_FOUND
     }
@@ -757,7 +757,7 @@ final class AuctionGrpcIntegrationSpec
     "refuses a bid of a participant without a chosen name and leaves the lot untouched" in withNode { node =>
       val auction = freshAuction()
       val lotId = tradingLot(node, auction)
-      val stranger = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+      val stranger = viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)
       // Имя в другом аукционе не в счёт: выбор действует в одном аукционе.
       choose(node, stranger, freshAuction(), "Кот").outcome.isAccepted shouldBe true
       asHubBot(node.client.placeBid())
@@ -786,7 +786,7 @@ final class AuctionGrpcIntegrationSpec
         asHubBot(node.client.setProxyLimit())
           .invoke(wire.SetProxyLimitRequest(Some(who), lotId.toString, Some(MoneyMessage(300, "RUB")), newId()))
           .futureValue
-      limit(viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)).getRefused.reason.isDisplayNameNotChosen shouldBe true
+      limit(viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)).getRefused.reason.isDisplayNameNotChosen shouldBe true
       currentPrice(node, lotId) shouldBe money(100)
       val bidder = named(node, auction, "Кот")
       limit(bidder).outcome.isAccepted shouldBe true
@@ -796,7 +796,7 @@ final class AuctionGrpcIntegrationSpec
     "answers every requested participant by name, and one without a choice by a placeholder" in withNode { node =>
       val auction = freshAuction()
       val chosen = named(node, auction, "Кот")
-      val silent = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+      val silent = viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)
       val names = asHubBot(node.client.getDisplayNames())
         .invoke(
           wire.GetDisplayNamesRequest(Some(silent), auction.value.toString, Seq(chosen.identityId, silent.identityId))
@@ -818,7 +818,7 @@ final class AuctionGrpcIntegrationSpec
 
     "refuses a call without a caller token before the lot is reached" in withNode { node =>
       val lotId = tradingLot(node)
-      statusOf(node.client.placeBid(bid(lotId, 150, viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)))) shouldBe
+      statusOf(node.client.placeBid(bid(lotId, 150, viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)))) shouldBe
         Status.Code.UNAUTHENTICATED
       currentPrice(node, lotId) shouldBe money(100)
     }
@@ -826,7 +826,7 @@ final class AuctionGrpcIntegrationSpec
     "answers NOT_FOUND to a bid on a lot that was never drafted" in withNode { node =>
       val unknown = UuidV7.generator(Clock.systemUTC())()
       val call =
-        asHubBot(node.client.placeBid()).invoke(bid(unknown, 150, viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)))
+        asHubBot(node.client.placeBid()).invoke(bid(unknown, 150, viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)))
       statusOf(call) shouldBe Status.Code.NOT_FOUND
     }
 
@@ -845,7 +845,7 @@ final class AuctionGrpcIntegrationSpec
 
     "writes a lot image at the limit through the wire and reads the same bytes back with their version" in withNode {
       node =>
-        val admin = viewer(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        val admin = viewer(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_GUEST)
         val lotId = tradingLot(node)
         val atLimit = IArray.genericWrapArray(TestImages.jpeg(LotImage.MaxBytes)).toArray
         val created = asHubBot(node.client.createLotCard())
@@ -893,7 +893,7 @@ final class AuctionGrpcIntegrationSpec
 
     "answers NOT_FOUND through GetLotImage for a lot without an image and for one the read model does not hold" in
       withNode { node =>
-        val reader = viewer(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        val reader = viewer(GlobalRoleMessage.GLOBAL_ROLE_GUEST)
         val bare = tradingLot(node)
         eventually {
           asHubBot(node.client.getLot()).invoke(wire.GetLotRequest(Some(reader), bare.toString)).futureValue
@@ -903,7 +903,7 @@ final class AuctionGrpcIntegrationSpec
         ) shouldBe Status.Code.NOT_FOUND
         // Карточка с изображением есть, а лота в read model нет: изображение не видно, как и лот.
         val cardOnly = UuidV7.generator(Clock.systemUTC())().toString
-        val admin = viewer(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_PUBLIC)
+        val admin = viewer(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_GUEST)
         asHubBot(node.client.createLotCard())
           .invoke(
             wire.CreateLotCardRequest(

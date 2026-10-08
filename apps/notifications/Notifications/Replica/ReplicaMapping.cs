@@ -377,7 +377,7 @@ public static class ReplicaMapping
         GlobalRole.Admin => "admin",
         GlobalRole.Maintainer => "maintainer",
         GlobalRole.Member => "member",
-        GlobalRole.Public => "public",
+        GlobalRole.Guest => "public",
         _ => null,
     };
 

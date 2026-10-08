@@ -128,7 +128,7 @@ describe("identity client", () => {
             GlobalRole.MAINTAINER,
             GlobalRole.ADMIN,
             GlobalRole.MEMBER,
-            GlobalRole.PUBLIC,
+            GlobalRole.GUEST,
           ],
         }),
     });
@@ -403,7 +403,7 @@ describe("application administrator", () => {
       identityId: "0192f0a0-0000-7000-8000-00000000b001",
       telegramUserId: 42n,
       telegramUsername: "refused",
-      requestedRole: overrides.requestedRole ?? GlobalRole.PUBLIC,
+      requestedRole: overrides.requestedRole ?? GlobalRole.GUEST,
       decision: {
         outcome: overrides.outcome ?? ApplicationOutcome.BLOCKED,
         decidedBy: { identityId: actor.identityId, telegramUserId: 7n },
@@ -558,7 +558,7 @@ describe("application moderator", () => {
       identityId: "0192f0a0-0000-7000-8000-00000000b001",
       telegramUserId: 42n,
       firstName: "Иван",
-      requestedRole: overrides.requestedRole ?? GlobalRole.PUBLIC,
+      requestedRole: overrides.requestedRole ?? GlobalRole.GUEST,
       ...("source" in overrides
         ? overrides.source === undefined
           ? {}
@@ -751,7 +751,7 @@ describe("role requester", () => {
   const answer = (outcome: RoleRequestOutcome) =>
     create(RequestRoleResponseSchema, {
       identityId: "id-1",
-      globalRoles: [GlobalRole.MEMBER, GlobalRole.PUBLIC],
+      globalRoles: [GlobalRole.MEMBER, GlobalRole.GUEST],
       outcome,
     });
 
@@ -811,7 +811,7 @@ describe("role requester", () => {
     expect(requestRole).toHaveBeenCalledExactlyOnceWith(
       {
         telegramUserId: 42n,
-        requestedRole: GlobalRole.PUBLIC,
+        requestedRole: GlobalRole.GUEST,
         firstName: "Сова",
         ...expected,
       },

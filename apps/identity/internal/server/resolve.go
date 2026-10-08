@@ -221,7 +221,7 @@ func roleName(role identityv1.GlobalRole) (string, bool) {
 		return roleAdmin, true
 	case identityv1.GlobalRole_GLOBAL_ROLE_MEMBER:
 		return roleMember, true
-	case identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC:
+	case identityv1.GlobalRole_GLOBAL_ROLE_GUEST:
 		return rolePublic, true
 	default:
 		return "", false
@@ -237,7 +237,7 @@ func globalRole(role string) (identityv1.GlobalRole, bool) {
 	case roleMember:
 		return identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, true
 	case rolePublic:
-		return identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC, true
+		return identityv1.GlobalRole_GLOBAL_ROLE_GUEST, true
 	default:
 		return identityv1.GlobalRole_GLOBAL_ROLE_UNSPECIFIED, false
 	}

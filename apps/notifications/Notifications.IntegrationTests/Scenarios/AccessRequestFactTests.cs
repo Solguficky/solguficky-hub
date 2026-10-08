@@ -53,7 +53,7 @@ public class AccessRequestFactTests
         var telemetry = silo.Service<FactTelemetry>();
 
         var applicant = EventFactory.NewId();
-        var application = EventFactory.Application(applicant, version: 2, GlobalRole.Public);
+        var application = EventFactory.Application(applicant, version: 2, GlobalRole.Guest);
         await nats.Publish(ApplicationSubmittedSubject, application);
 
         var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
@@ -71,7 +71,7 @@ public class AccessRequestFactTests
             messageId.ShouldBe(fact.NotificationId);
             fact.Cause.IdentityEventId.ShouldBe(application.EventId);
             fact.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessRequested);
-            fact.AccessRequested.Circle.ShouldBe(GlobalRole.Public);
+            fact.AccessRequested.Circle.ShouldBe(GlobalRole.Guest);
             fact.HasNotAfter.ShouldBeTrue();
             fact.HasRequestId.ShouldBeFalse();
         }
@@ -164,7 +164,7 @@ public class AccessRequestFactTests
         var replica = silo.Service<ReplicaTelemetry>();
 
         var applicant = EventFactory.NewId();
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Public));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Guest));
         await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, GlobalRole.Member));
         (await Pending(db)).ShouldBe(2);
 
@@ -188,10 +188,10 @@ public class AccessRequestFactTests
         var replica = silo.Service<ReplicaTelemetry>();
 
         var applicant = EventFactory.NewId();
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Public));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Guest));
         await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, GlobalRole.Member));
 
-        await Apply(nats, replica, RoleGrantedSubject, EventFactory.RoleGrant(applicant, version: 4, GlobalRole.Public));
+        await Apply(nats, replica, RoleGrantedSubject, EventFactory.RoleGrant(applicant, version: 4, GlobalRole.Guest));
 
         var rows = await Rows(db);
         rows.Single(row => row.AccessCircle == "public").WithdrawalReason.ShouldBe(NotificationFacts.WithdrawnOnApplicationClosed);

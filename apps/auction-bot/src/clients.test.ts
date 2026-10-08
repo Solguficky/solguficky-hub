@@ -17,7 +17,7 @@ function rpcs() {
     resolveIdentity: vi.fn(async () => ({
       identityId: "id-1",
       globalRoles: [
-        GlobalRole.PUBLIC,
+        GlobalRole.GUEST,
         GlobalRole.UNSPECIFIED,
         GlobalRole.MEMBER,
       ],
@@ -25,7 +25,7 @@ function rpcs() {
     })),
     requestRole: vi.fn(async () => ({
       identityId: "id-1",
-      globalRoles: [GlobalRole.PUBLIC, GlobalRole.UNSPECIFIED],
+      globalRoles: [GlobalRole.GUEST, GlobalRole.UNSPECIFIED],
       outcome: RoleRequestOutcome.GRANTED_BY_ALLOWLIST,
     })),
   };
@@ -102,7 +102,7 @@ function rpcs() {
 }
 
 const viewer = { identityId: "id-1", globalRoles: ["public"] as const };
-const wireViewer = { identityId: "id-1", globalRoles: [GlobalRole.PUBLIC] };
+const wireViewer = { identityId: "id-1", globalRoles: [GlobalRole.GUEST] };
 const callOptions = {
   timeoutMs: 1_000,
   headers: { [requestIdHeader]: "req-1" },
@@ -123,7 +123,7 @@ describe("createPorts", () => {
     await ports.faq.acknowledge(viewer);
     for (const rpc of [auction.getFaqAcknowledgement, auction.acknowledgeFaq]) {
       expect(rpc).toHaveBeenCalledWith(
-        { viewer: { identityId: "id-1", globalRoles: [GlobalRole.PUBLIC] } },
+        { viewer: { identityId: "id-1", globalRoles: [GlobalRole.GUEST] } },
         { timeoutMs: 1_000, headers: { [requestIdHeader]: "req-1" } },
       );
     }
@@ -162,7 +162,7 @@ describe("createPorts", () => {
       {
         telegramUserId: 42n,
         telegramUsername: "nick",
-        requestedRole: GlobalRole.PUBLIC,
+        requestedRole: GlobalRole.GUEST,
         sourceCode: "tg_ads",
         firstName: "Сова",
       },
@@ -186,7 +186,7 @@ describe("createPorts", () => {
     expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
       {
         telegramUserId: 42n,
-        requestedRole: GlobalRole.PUBLIC,
+        requestedRole: GlobalRole.GUEST,
         firstName: "Сова",
         ...expected,
       },
@@ -233,7 +233,7 @@ describe("createPorts", () => {
     });
     expect(auction.getLot).toHaveBeenCalledWith(
       {
-        viewer: { identityId: "id-1", globalRoles: [GlobalRole.PUBLIC] },
+        viewer: { identityId: "id-1", globalRoles: [GlobalRole.GUEST] },
         lotId: "lot-1",
       },
       { timeoutMs: 1_000, headers: { [requestIdHeader]: "req-1" } },

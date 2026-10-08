@@ -798,7 +798,7 @@ function wireRole(role: Viewer["globalRoles"][number]): GlobalRole {
     case "member":
       return GlobalRole.MEMBER;
     case "public":
-      return GlobalRole.PUBLIC;
+      return GlobalRole.GUEST;
     default: {
       const _exhaustive: never = role;
       return _exhaustive;

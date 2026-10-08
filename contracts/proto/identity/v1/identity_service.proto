@@ -41,6 +41,12 @@ service IdentityService {
   rpc BlockCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   // Demotes a hub member out of the member circle.
   rpc DemoteCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  // Grants ACCESS_RIGHT_MODERATE_AUCTION to a community member, who keeps their
+  // circle.
+  rpc GrantAuctionModeration(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  // Revokes the granted ACCESS_RIGHT_MODERATE_AUCTION. A right that comes with
+  // the circle itself is not revoked by it.
+  rpc RevokeAuctionModeration(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   rpc ListAllowedUsernames(ListAllowedUsernamesRequest) returns (ListAllowedUsernamesResponse);
   rpc AddAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
   rpc RemoveAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
@@ -116,13 +122,15 @@ enum ApplicationOutcome {
   // An administrator admitted it.
   APPLICATION_OUTCOME_ADMITTED = 1;
 
-  // Refused without a block: the person keeps every role they hold.
+  // Refused without a block, in the application's queue only: the person keeps
+  // their circle and rights, and an application in the other queue is untouched.
   APPLICATION_OUTCOME_DECLINED = 2;
 
-  // Refused with a block of the profile.
+  // Refused with a block of the profile. A decision no longer produces it: only
+  // applications refused before decisions stopped blocking carry it.
   APPLICATION_OUTCOME_BLOCKED = 3;
 
-  // Closed by a grant of the circle that was not a decision on it.
+  // Closed by a grant of what the queue grants that was not a decision on it.
   APPLICATION_OUTCOME_CLOSED_BY_GRANT = 4;
 
   // Closed by a block of the profile that was not a refusal of it.
@@ -164,7 +172,9 @@ message ApplicationCard {
   // Absent for applications created by data migration.
   optional string first_name = 5;
 
-  // The circle applied for: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  // Superseded by queue: GLOBAL_ROLE_MEMBER for the community queue,
+  // GLOBAL_ROLE_GUEST for the auction queue. Kept until every consumer reads
+  // queue.
   GlobalRole requested_role = 6;
 
   // Absent when the person came without a source code.
@@ -173,6 +183,10 @@ message ApplicationCard {
   // RFC 3339 instant in UTC with exactly millisecond precision: the moment
   // the application was created.
   string created_at = 8;
+
+  // The queue the application lies in. Never APPLICATION_QUEUE_UNSPECIFIED
+  // from a server that sends it.
+  ApplicationQueue queue = 9;
 }
 
 message ReadApplicationQueueRequest {
@@ -180,6 +194,10 @@ message ReadApplicationQueueRequest {
 
   // Absent reads from the start of the queue.
   ApplicationCursor after = 2;
+
+  // The queue to read. The two queues are read apart: a cursor of one does
+  // not position the other.
+  ApplicationQueue queue = 3;
 }
 
 message ReadApplicationQueueResponse {
@@ -251,14 +269,22 @@ message RefusedApplication {
   // is no first_name: it is erased when the application is decided.
   optional string telegram_username = 4;
 
-  // The circle applied for: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  // Superseded by queue, as in ApplicationCard.
   GlobalRole requested_role = 5;
 
   // Outcome is APPLICATION_OUTCOME_BLOCKED or APPLICATION_OUTCOME_DECLINED.
   ApplicationDecision decision = 6;
+
+  // The queue the application was refused in.
+  ApplicationQueue queue = 7;
 }
 
-message ListRefusedApplicationsRequest { IdentityActor actor = 1; }
+message ListRefusedApplicationsRequest {
+  IdentityActor actor = 1;
+
+  // The queue whose refusals to list.
+  ApplicationQueue queue = 2;
+}
 message ListRefusedApplicationsResponse { repeated RefusedApplication applications = 1; }
 
 message ReconsiderApplicationRequest {
@@ -286,14 +312,24 @@ message ResolveIdentityResponse {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 
-  // Platform-wide roles. Domain permissions are not returned here; the owning
-  // domain applies them. An empty set means an ordinary user.
+  // Superseded by role and rights. Platform-wide roles; an empty set means an
+  // ordinary user. Kept until every consumer reads role and rights.
   repeated GlobalRole global_roles = 2;
 
   // True when the profile's block mark is on. It is not a role and is never
   // derived from global_roles: blocking revokes active roles, so an empty set
   // alone does not distinguish a blocked profile from one that never started.
   bool blocked = 3;
+
+  // The one active role-circle. GLOBAL_ROLE_UNSPECIFIED means no circle: a
+  // person never admitted, or a blocked one.
+  GlobalRole role = 4;
+
+  // Rights Identity derived from the circle and the separately granted rights,
+  // in no promised order. A surface admits by a right in this set and never by
+  // the role. Empty for a blocked profile. Domain permissions are not here; the
+  // owning domain applies them.
+  repeated AccessRight rights = 5;
 }
 
 message RequestRoleRequest {
@@ -304,8 +340,9 @@ message RequestRoleRequest {
   // Username without the leading '@'. Absent when the account has none.
   optional string telegram_username = 2;
 
-  // The circle the calling surface accepts: GLOBAL_ROLE_MEMBER or
-  // GLOBAL_ROLE_PUBLIC.
+  // Superseded by queue: GLOBAL_ROLE_MEMBER asks for the community queue,
+  // GLOBAL_ROLE_GUEST for the auction queue. Read only when queue is
+  // APPLICATION_QUEUE_UNSPECIFIED.
   GlobalRole requested_role = 3;
 
   // Channel code from the deep link payload "s_<code>", without the "s_"
@@ -315,26 +352,33 @@ message RequestRoleRequest {
 
   // Telegram first_name from the same update, for the moderation card.
   string first_name = 5;
+
+  // The queue the calling surface applies to: the hub bot to the community
+  // queue, the auction bot to the auction queue.
+  ApplicationQueue queue = 6;
 }
 
-// What became of the requested role. Only GRANTED_BY_ALLOWLIST means the call
-// itself granted it.
+// What became of the request in the named queue: of the circle the community
+// queue grants or of the right the auction queue grants. Only
+// GRANTED_BY_ALLOWLIST means the call itself granted it.
 enum RoleRequestOutcome {
   // No value: an outcome unknown to the consumer. The consumer reads it as a
   // refusal.
   ROLE_REQUEST_OUTCOME_UNSPECIFIED = 0;
 
-  // The requested role was active before the call.
+  // What the queue grants was held before the call, by the circle or as a
+  // granted right.
   ROLE_REQUEST_OUTCOME_ALREADY_HELD = 1;
 
-  // An allowed usernames entry was redeemed by this call and granted the role.
+  // An allowed usernames entry was redeemed by this call and granted what the
+  // queue grants.
   ROLE_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST = 2;
 
-  // An application for the role is open: created by this call or left by an
+  // An application in the queue is open: created by this call or left by an
   // earlier one. The two are not distinguished.
   ROLE_REQUEST_OUTCOME_PENDING = 3;
 
-  // An earlier application for this role was declined.
+  // An earlier application in this queue was declined.
   ROLE_REQUEST_OUTCOME_DECLINED = 4;
 
   // The profile is blocked.
@@ -345,12 +389,16 @@ message RequestRoleResponse {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 
-  // Active platform-wide roles after the call, same meaning as in
-  // ResolveIdentityResponse. May hold roles other than the requested one, for
-  // example ones an allowed usernames entry granted alongside it.
+  // Superseded by role and rights, as in ResolveIdentityResponse.
   repeated GlobalRole global_roles = 2;
 
   RoleRequestOutcome outcome = 3;
+
+  // The role-circle after the call, same meaning as in ResolveIdentityResponse.
+  GlobalRole role = 4;
+
+  // Rights after the call, same meaning as in ResolveIdentityResponse.
+  repeated AccessRight rights = 5;
 }
 
 message ResolveTelegramUserIdRequest {

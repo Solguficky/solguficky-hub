@@ -169,7 +169,7 @@ public static class EventFactory
         message.State.GlobalRoles.Add(circle);
         if (circle == GlobalRole.Member)
         {
-            message.State.GlobalRoles.Add(GlobalRole.Public);
+            message.State.GlobalRoles.Add(GlobalRole.Guest);
         }
 
         return message;
@@ -178,7 +178,7 @@ public static class EventFactory
     /// <summary>
     /// Выдача роли вне заявки. Снимок — после выдачи: незаблокирован и держит
     /// выданную роль, а у <see cref="GlobalRole.Admin" /> — ещё вложенные
-    /// <see cref="GlobalRole.Member" /> и <see cref="GlobalRole.Public" />,
+    /// <see cref="GlobalRole.Member" /> и <see cref="GlobalRole.Guest" />,
     /// как разворачивает вложенность Identity.
     /// </summary>
     public static IdentityEvent RoleGrant(
@@ -200,7 +200,7 @@ public static class EventFactory
         if (role == GlobalRole.Admin)
         {
             message.State.GlobalRoles.Add(GlobalRole.Member);
-            message.State.GlobalRoles.Add(GlobalRole.Public);
+            message.State.GlobalRoles.Add(GlobalRole.Guest);
         }
 
         return message;

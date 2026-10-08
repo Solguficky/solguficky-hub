@@ -84,7 +84,7 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
 
     "rejects an unspecified or unknown role instead of treating the viewer as ordinary" in {
       val unspecified = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_UNSPECIFIED))
-      val unknown = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC, GlobalRoleMessage.Unrecognized(9)))
+      val unknown = viewer.withGlobalRoles(Seq(GlobalRoleMessage.GLOBAL_ROLE_GUEST, GlobalRoleMessage.Unrecognized(9)))
       RequestMapping.placeBid(validBid.withViewer(unspecified)).left.value shouldBe FormError("viewer.global_roles")
       RequestMapping.placeBid(validBid.withViewer(unknown)).left.value shouldBe FormError("viewer.global_roles")
     }
@@ -95,7 +95,7 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
           GlobalRoleMessage.GLOBAL_ROLE_ADMIN,
           GlobalRoleMessage.GLOBAL_ROLE_MAINTAINER,
           GlobalRoleMessage.GLOBAL_ROLE_MEMBER,
-          GlobalRoleMessage.GLOBAL_ROLE_PUBLIC
+          GlobalRoleMessage.GLOBAL_ROLE_GUEST
         )
       )
       RequestMapping.acting(Some(all)).value.viewer.globalRoles shouldBe GlobalRole.values.toSet
@@ -338,7 +338,7 @@ object RequestMappingSpec {
   val op = "01890a5d-ac98-7aaa-8bbb-cccccccccccc"
   val meetupId = "0190a0e0-0000-7000-8000-000000000001"
 
-  val viewer: ViewerMessage = ViewerMessage(identity, Seq(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC))
+  val viewer: ViewerMessage = ViewerMessage(identity, Seq(GlobalRoleMessage.GLOBAL_ROLE_GUEST))
 
   val validBid: PlaceBidRequest = PlaceBidRequest(Some(viewer), lot, Some(MoneyMessage(150, "RUB")), op)
 

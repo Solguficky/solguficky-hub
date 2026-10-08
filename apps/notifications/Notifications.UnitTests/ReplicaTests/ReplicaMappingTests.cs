@@ -224,7 +224,7 @@ public class ReplicaMappingTests
 
     [Theory]
     [InlineData(GlobalRole.Member, "member")]
-    [InlineData(GlobalRole.Public, "public")]
+    [InlineData(GlobalRole.Guest, "public")]
     public void Identity_ApplicationSubmitted_CarriesOccasionAndCircle(GlobalRole circle, string expected)
     {
         var message = EventFactory.Application(IdentityId, version: 2, circle);
@@ -251,7 +251,7 @@ public class ReplicaMappingTests
 
     [Theory]
     [InlineData(GlobalRole.Member, "member")]
-    [InlineData(GlobalRole.Public, "public")]
+    [InlineData(GlobalRole.Guest, "public")]
     public void Identity_ApplicationAdmitted_CarriesOccasionAndCircle(GlobalRole circle, string expected)
     {
         var message = EventFactory.Admission(IdentityId, version: 4, circle);
