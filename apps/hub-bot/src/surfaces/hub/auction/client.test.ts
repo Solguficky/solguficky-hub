@@ -16,7 +16,7 @@ import {
   SelectForFinalResponseSchema,
   StartPrebiddingResponseSchema,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
-import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
+import { AccessRight } from "../../../../gen/identity/v1/roles_pb.js";
 import { createAuctionAdapter } from "./client.js";
 
 // Перевод ответов Auction для оболочки сходки (PER-307). Транспорт и токен
@@ -25,10 +25,16 @@ import { createAuctionAdapter } from "./client.js";
 const meetupId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
 const auctionId = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
 const opId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa";
+// Роли администратора в Auction не едут: он получает права, и каталог лотов
+// открывает `manage_auction` (ADR-064, дополнение 2026-10-08).
 const admin = {
   identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-  globalRoles: ["admin", "auditor"],
-  rights: ["hub", "auction"] as const,
+  globalRoles: ["admin"],
+  rights: ["hub", "auction", "manage-auction"] as const,
+};
+const wireAdmin = {
+  identityId: admin.identityId,
+  rights: [AccessRight.HUB, AccessRight.AUCTION, AccessRight.MANAGE_AUCTION],
 };
 
 const notUsed = () => Promise.reject(new Error("not used"));
@@ -95,7 +101,7 @@ describe("auction adapter", () => {
     });
   });
 
-  it("sends the meetup, the key of the press and only the roles Auction knows", async () => {
+  it("sends the meetup, the key of the press and the rights of the viewer without roles", async () => {
     const draftAuction = vi.fn(async () =>
       create(DraftAuctionResponseSchema, {
         outcome: {
@@ -112,10 +118,7 @@ describe("auction adapter", () => {
       expect.objectContaining({
         meetupId,
         opId,
-        viewer: {
-          identityId: admin.identityId,
-          globalRoles: [GlobalRole.ADMIN],
-        },
+        viewer: wireAdmin,
       }),
       expect.anything(),
     );
@@ -192,7 +195,7 @@ describe("auction adapter of the lot form", () => {
     });
     const sent = {
       ...card,
-      viewer: { identityId: admin.identityId, globalRoles: [GlobalRole.ADMIN] },
+      viewer: wireAdmin,
     };
     expect(createLotCard).toHaveBeenCalledWith(sent, expect.anything());
     expect(editLotCard).toHaveBeenCalledWith(sent, expect.anything());
@@ -257,10 +260,7 @@ describe("auction adapter of the lot form", () => {
     expect(editLotCard).toHaveBeenCalledWith(
       {
         ...card,
-        viewer: {
-          identityId: admin.identityId,
-          globalRoles: [GlobalRole.ADMIN],
-        },
+        viewer: wireAdmin,
         imageChange: { case: "replaceImage", value: { content } },
       },
       expect.anything(),
@@ -302,10 +302,7 @@ describe("auction adapter of the lot form", () => {
     ).resolves.toEqual({ kind: "ok" });
     expect(scheduleLot).toHaveBeenCalledWith(
       {
-        viewer: {
-          identityId: admin.identityId,
-          globalRoles: [GlobalRole.ADMIN],
-        },
+        viewer: wireAdmin,
         auctionId,
         lotId,
         opId,

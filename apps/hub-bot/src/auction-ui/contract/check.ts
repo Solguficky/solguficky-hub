@@ -152,27 +152,41 @@ export const CONTRACT_OP_IDS = [
   "01929b7e-5c1d-7a3f-8e4b-00000000c002",
 ] as const;
 
-// Зритель один на обе поверхности: роли едут в Auction транзитом и допуска не
-// решают, поэтому вызовы Auction у таблицы общие.
-export const CONTRACT_VIEWER: Viewer = {
-  identityId: "01929b7e-5c1d-7a3f-8e4b-000000000001",
-  globalRoles: ["member", "public"],
-};
-
+// Права зрителя у каждой поверхности: хаб пускает по праву хаба, бот
+// аукциона — по праву аукциона без права хаба.
 const CONTRACT_RIGHTS: Record<AuctionSurface["kind"], readonly AccessRight[]> =
   {
     hub: ["hub", "auction"],
     auction: ["auction"],
   };
 
+export function contractViewer(surface: AuctionSurface["kind"]): Viewer {
+  return {
+    identityId: "01929b7e-5c1d-7a3f-8e4b-000000000001",
+    rights: CONTRACT_RIGHTS[surface],
+  };
+}
+
+// Зритель таблицы. Вызовы Auction у неё общие на обе поверхности, а права у
+// зрителя свои: сверка подставляет в каждый ожидаемый вызов смотрящего той
+// поверхности, которую проверяет, — в Auction уходит ровно тот смотрящий, с
+// правами, которого разрешил Identity (ADR-064, пункт 6).
+export const CONTRACT_VIEWER: Viewer = contractViewer("hub");
+
 export function contractIdentity(
   surface: AuctionSurface["kind"],
 ): ResolvedIdentity {
   return {
-    viewer: CONTRACT_VIEWER,
-    rights: CONTRACT_RIGHTS[surface],
+    viewer: contractViewer(surface),
     blocked: false,
   };
+}
+
+// Ожидаемый вызов только сравнивается и печатается, поэтому тип вызова порта
+// за подстановкой не сохраняется.
+function withViewer(call: PortCall, viewer: Viewer): unknown {
+  if (call.port !== "auction" || !("viewer" in call.request)) return call;
+  return { ...call, request: { ...call.request, viewer } };
 }
 
 export const CONTRACT_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
@@ -1546,10 +1560,14 @@ export async function checkAuctionContractCase(
     );
   }
   const auctionCalls = calls.filter((call) => call.port === "auction");
-  if (!isDeepStrictEqual(auctionCalls, contractCase.auctionCalls)) {
+  const viewer = contractViewer(surface);
+  const expectedAuctionCalls = contractCase.auctionCalls.map((call) =>
+    withViewer(call, viewer),
+  );
+  if (!isDeepStrictEqual(auctionCalls, expectedAuctionCalls)) {
     violations.push(
       violation("wrong-port-call", {
-        expected: contractCase.auctionCalls,
+        expected: expectedAuctionCalls,
         actual: auctionCalls,
       }),
     );

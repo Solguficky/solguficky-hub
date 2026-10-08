@@ -115,7 +115,7 @@ export function routeAuctionReply(input: {
 }
 
 // `/start` — вход на поверхность (ADR-060): вместо разрешения личности бот
-// зовёт `RequestRole` с кругом `public`, кодом канала из payload `s_<код>` и
+// зовёт `RequestRole` в очередь аукциона, с кодом канала из payload `s_<код>` и
 // именем для карточки модератора. Identity гасит белый список или ставит
 // заявку, а ответ по исходу выбирает политика пакета.
 export function routeAuctionStart(input: {
@@ -226,7 +226,10 @@ async function routeEntry(input: {
   // Право перепроверяется на каждом действии той же политикой, что у шлюза:
   // старая клавиатура и отметка FAQ доступа не дают, а участник сообщества
   // получает переход в бот хаба и на экранах оболочки.
-  const denial = admission("auction", identity);
+  const denial = admission("auction", {
+    rights: viewer.rights,
+    blocked: identity.blocked,
+  });
   if (denial !== undefined) {
     return { screen: { kind: "denied", reason: denial }, identityId };
   }

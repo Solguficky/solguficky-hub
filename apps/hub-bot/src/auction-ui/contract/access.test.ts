@@ -66,7 +66,7 @@ describe("access matrix self-check", () => {
   it("fails when a denied person reaches Auction", async () => {
     const eager: AccessMatrixApp = (ports) => async (input) => {
       await ports.auction.getLot({
-        viewer: { identityId: "anyone", globalRoles: [] },
+        viewer: { identityId: "anyone", rights: [] },
         lotId: CONTRACT_LOT.lotId,
       });
       return appOf("auction")(ports)(input);
@@ -134,10 +134,13 @@ describe("access matrix self-check", () => {
       appOf("auction")({
         ...ports,
         identity: {
-          resolveIdentity: async (user) => ({
-            ...(await ports.identity.resolveIdentity(user)),
-            rights: ["auction"],
-          }),
+          resolveIdentity: async (user) => {
+            const resolved = await ports.identity.resolveIdentity(user);
+            return {
+              ...resolved,
+              viewer: { ...resolved.viewer, rights: ["auction"] },
+            };
+          },
         },
       })(input);
     expect(await kindsOf(lenient, "auction: hub right presses")).toEqual([

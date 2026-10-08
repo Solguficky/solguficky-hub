@@ -12,9 +12,8 @@ import {
   IdentityService,
   RoleRequestOutcome as WireOutcome,
 } from "../../../gen/identity/v1/identity_service_pb.js";
-import { GlobalRole as WireRole } from "../../../gen/identity/v1/roles_pb.js";
+import { AccessRight as WireRight } from "../../../gen/identity/v1/roles_pb.js";
 import type {
-  GlobalRole,
   LotImagePort,
   Money,
   ResolvedIdentity,
@@ -36,7 +35,7 @@ import {
   classifyRecipientFailure,
   type TelegramRecipientResolver,
 } from "../../core/delivery/index.js";
-import { rightsOf, wireQueue } from "../../core/identity/access.js";
+import { rightsOf, wireQueue, wireViewer } from "../../core/identity/access.js";
 import {
   callTimeoutMs,
   presentServiceToken,
@@ -62,7 +61,7 @@ export type IdentityRpc = Pick<
   | "resolveIdentity"
   | "requestRole"
   | "resolveTelegramUserId"
-  | "checkGlobalRole"
+  | "checkAccessRight"
 >;
 export type AuctionRpc = Pick<
   Client<typeof AuctionService>,
@@ -131,7 +130,6 @@ export function createPorts(
           );
           return {
             viewer: viewerFrom(response),
-            rights: rightsOf(response.rights),
             blocked: response.blocked,
           };
         },
@@ -156,7 +154,6 @@ export function createPorts(
           );
           return {
             viewer: viewerFrom(response),
-            rights: rightsOf(response.rights),
             outcome: outcomeName(response.outcome),
           };
         },
@@ -164,7 +161,7 @@ export function createPorts(
       auction: {
         async getLot(request: { viewer: Viewer; lotId: string }) {
           const snapshot = await auction.getLot(
-            { viewer: viewerOf(request.viewer), lotId: request.lotId },
+            { viewer: wireViewer(request.viewer), lotId: request.lotId },
             callOptions(timeoutMs),
           );
           return lotViewOf(snapshot);
@@ -172,7 +169,7 @@ export function createPorts(
         async listAuctionLots(request) {
           const page = await auction.listAuctionLots(
             {
-              viewer: viewerOf(request.viewer),
+              viewer: wireViewer(request.viewer),
               auctionId: request.auctionId,
               pageToken: request.pageToken,
             },
@@ -186,7 +183,7 @@ export function createPorts(
         async listLotHistory(request) {
           const page = await auction.listLotHistory(
             {
-              viewer: viewerOf(request.viewer),
+              viewer: wireViewer(request.viewer),
               lotId: request.lotId,
               pageToken: request.pageToken,
             },
@@ -198,7 +195,7 @@ export function createPorts(
           try {
             const response = await auction.getDisplayNames(
               {
-                viewer: viewerOf(request.viewer),
+                viewer: wireViewer(request.viewer),
                 auctionId: request.auctionId,
                 participantIds: [...request.participantIds],
               },
@@ -222,7 +219,7 @@ export function createPorts(
             bidOutcomeOf(
               await auction.placeBid(
                 {
-                  viewer: viewerOf(request.viewer),
+                  viewer: wireViewer(request.viewer),
                   lotId: request.lotId,
                   amount: wireMoney(request.amount),
                   opId: request.opId,
@@ -237,7 +234,7 @@ export function createPorts(
             limitOutcomeOf(
               await auction.setProxyLimit(
                 {
-                  viewer: viewerOf(request.viewer),
+                  viewer: wireViewer(request.viewer),
                   lotId: request.lotId,
                   max: wireMoney(request.max),
                   opId: request.opId,
@@ -252,7 +249,7 @@ export function createPorts(
           return displayNameOutcomeOf(
             await auction.chooseDisplayName(
               {
-                viewer: viewerOf(request.viewer),
+                viewer: wireViewer(request.viewer),
                 auctionId: request.auctionId,
                 choice:
                   choice.kind === "username"
@@ -269,7 +266,7 @@ export function createPorts(
         async listAuctions(request) {
           const page = await auction.listAuctions(
             {
-              viewer: viewerOf(request.viewer),
+              viewer: wireViewer(request.viewer),
               listing:
                 request.listing === "active"
                   ? WireListing.ACTIVE
@@ -287,7 +284,7 @@ export function createPorts(
       image: {
         async getLotImage(request) {
           const image = await auction.getLotImage(
-            { viewer: viewerOf(request.viewer), lotId: request.lotId },
+            { viewer: wireViewer(request.viewer), lotId: request.lotId },
             callOptions(imageTimeoutMs),
           );
           return {
@@ -300,14 +297,14 @@ export function createPorts(
       faq: {
         async acknowledged(viewer) {
           const response = await auction.getFaqAcknowledgement(
-            { viewer: viewerOf(viewer) },
+            { viewer: wireViewer(viewer) },
             callOptions(timeoutMs),
           );
           return response.acknowledged;
         },
         async acknowledge(viewer) {
           const response = await auction.acknowledgeFaq(
-            { viewer: viewerOf(viewer) },
+            { viewer: wireViewer(viewer) },
             callOptions(timeoutMs),
           );
           if (!response.acknowledged)
@@ -318,7 +315,7 @@ export function createPorts(
   };
 }
 
-// Канал доставки (PER-328): получатель уведомления, его роль `public` и
+// Канал доставки (PER-328): получатель уведомления, его право `auction` и
 // название лота для текста. Личности из update здесь нет — только
 // `identity_id` из факта, и `request_id` цепочки приходит из него же.
 export type DeliveryPorts = {
@@ -352,19 +349,20 @@ export function createDeliveryPorts(
       },
     },
     reads: {
-      async hasPublicRole(identityId, requestId) {
-        const response = await identity.checkGlobalRole(
-          { identityId, acceptedRoles: [WireRole.GUEST] },
+      async hasAuctionRight(identityId, requestId) {
+        const response = await identity.checkAccessRight(
+          { identityId, right: WireRight.AUCTION },
           options(requestId),
         );
         return response.granted;
       },
       async lotTitle(identityId, lotId, requestId) {
-        // Роль `public` у зрителя проверена шагом раньше: Auction без неё лот
-        // не отдаёт, а выдумывать её зрителю канал не вправе.
+        // Право `auction` у получателя Identity подтвердил шагом раньше, и
+        // смотрящий несёт только его: Auction без него лот не отдаёт, а
+        // выдумывать получателю права канал не вправе.
         const snapshot = await auction.getLot(
           {
-            viewer: { identityId, globalRoles: [WireRole.GUEST] },
+            viewer: wireViewer({ identityId, rights: ["auction"] }),
             lotId,
           },
           options(requestId),
@@ -427,14 +425,15 @@ export function createClients(options: {
   };
 }
 
-// Роли идут транзитом в `auction.v1.Viewer`: допуск по ним не решается.
+// Смотрящий несёт права, которые вывел Identity: по ним шлюз решает допуск, и
+// они же уходят в `auction.v1.Viewer`.
 function viewerFrom(response: {
   identityId: string;
-  globalRoles: readonly WireRole[];
+  rights: readonly WireRight[];
 }): Viewer {
   return {
     identityId: response.identityId,
-    globalRoles: response.globalRoles.flatMap((role) => roleName(role) ?? []),
+    rights: rightsOf(response.rights),
   };
 }
 
@@ -457,49 +456,6 @@ function outcomeName(outcome: WireOutcome): RoleRequestOutcome {
   }
 }
 
-function roleName(role: WireRole): GlobalRole | undefined {
-  switch (role) {
-    case WireRole.MAINTAINER:
-      return "maintainer";
-    case WireRole.ADMIN:
-      return "admin";
-    case WireRole.MEMBER:
-      return "member";
-    case WireRole.GUEST:
-      return "public";
-    case WireRole.UNSPECIFIED:
-      return undefined;
-    default:
-      // Новое значение словаря обязано получить имя: параметр типа never не
-      // соберётся. Число, которого словарь ещё не знает, игнорируется.
-      return ignoreUnknownRole(role);
-  }
-}
-
-function ignoreUnknownRole(_role: never): undefined {
-  return undefined;
-}
-
-function roleValue(role: GlobalRole): WireRole {
-  switch (role) {
-    case "admin":
-      return WireRole.ADMIN;
-    case "maintainer":
-      return WireRole.MAINTAINER;
-    case "member":
-      return WireRole.MEMBER;
-    case "public":
-      return WireRole.GUEST;
-  }
-}
-
 function wireMoney(money: Money) {
   return { minorUnits: BigInt(money.minorUnits), currency: money.currency };
-}
-
-function viewerOf(viewer: Viewer) {
-  return {
-    identityId: viewer.identityId,
-    globalRoles: viewer.globalRoles.map(roleValue),
-  };
 }

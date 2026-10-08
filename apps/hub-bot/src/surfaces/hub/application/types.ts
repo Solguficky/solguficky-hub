@@ -13,8 +13,9 @@ import type {
 } from "../notifications/port.js";
 
 // Человек, каким его разрешил Identity. Допуск в хаб и пункты «Управления»
-// решают `rights`; роли едут транзитом в Meetups и Auction, и по роли
-// администратора бот показывает только пункты, которые Meetups решает по ней.
+// решают `rights`, они же уходят в Auction в смотрящем; роли едут транзитом
+// в Meetups, и по роли администратора бот показывает только пункты, которые
+// Meetups решает по ней.
 export type Person = {
   identityId: string;
   globalRoles: readonly string[];

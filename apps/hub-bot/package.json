@@ -16,6 +16,7 @@
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:contour": "vitest run --config vitest.contour.config.ts",
+    "test:contour-auction": "vitest run --config vitest.contour-auction.config.ts",
     "explore:contour": "vitest run --config vitest.explore.config.ts",
     "test:live": "vitest run --config vitest.live.config.ts",
     "console:live": "vitest run --config vitest.live-console.config.ts",

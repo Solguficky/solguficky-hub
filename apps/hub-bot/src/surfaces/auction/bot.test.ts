@@ -48,11 +48,8 @@ const botInfo: UserFromGetMe = {
   supports_join_request_queries: false,
 };
 
-// Роли едут транзитом в Auction: допуск решают права.
-const VIEWER = {
-  identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-  globalRoles: ["public"],
-} as const;
+// Допуск решают права смотрящего; строки ниже дают ему свои.
+const VIEWER_ID = "01926f3c-8b7a-7cde-8f00-00000000000a";
 const lotId = "01926f3c-8b7a-7cde-8f00-0123456789ab";
 const from = { id: 42, is_bot: false, first_name: "Person" };
 const privateChat = { id: 42, type: "private" as const, first_name: "Person" };
@@ -169,8 +166,7 @@ function portsWith(
   return () => ({
     identity: {
       resolveIdentity: async () => ({
-        viewer: VIEWER,
-        rights: ["auction"],
+        viewer: { identityId: VIEWER_ID, rights: ["auction"] },
         blocked: false,
       }),
     },
@@ -178,8 +174,7 @@ function portsWith(
       requestRole:
         overrides.entry ??
         (async () => ({
-          viewer: VIEWER,
-          rights: ["auction"],
+          viewer: { identityId: VIEWER_ID, rights: ["auction"] },
           outcome: "already-held",
         })),
     },
@@ -391,8 +386,7 @@ describe("auction bot", () => {
     "enters on %s with the auction queue and the first name",
     async (text, code) => {
       const requestRole = vi.fn<EntryPort["requestRole"]>(async () => ({
-        viewer: VIEWER,
-        rights: [],
+        viewer: { identityId: VIEWER_ID, rights: [] },
         outcome: "pending",
       }));
       const { bot, calls } = makeBot(portsWith({ entry: requestRole }));
@@ -692,8 +686,7 @@ describe("auction bot", () => {
   it("retries the entry with the channel code after a failed /start", async () => {
     const requestRole = vi
       .fn<EntryPort["requestRole"]>(async () => ({
-        viewer: VIEWER,
-        rights: [],
+        viewer: { identityId: VIEWER_ID, rights: [] },
         outcome: "pending",
       }))
       .mockRejectedValueOnce(new ConnectError("down", Code.Unavailable));
@@ -780,8 +773,7 @@ describe("auction bot", () => {
         ...base,
         identity: {
           resolveIdentity: async () => ({
-            viewer: VIEWER,
-            rights: [...person.rights],
+            viewer: { identityId: VIEWER_ID, rights: [...person.rights] },
             blocked: person.blocked,
           }),
         },
@@ -1254,8 +1246,7 @@ describe("auction bot", () => {
         ...base,
         identity: {
           resolveIdentity: async () => ({
-            viewer: VIEWER,
-            rights: ["hub", "auction"],
+            viewer: { identityId: VIEWER_ID, rights: ["hub", "auction"] },
             blocked: false,
           }),
         },

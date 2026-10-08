@@ -23,11 +23,11 @@ const LOT: LotView = {
   proxyEnabled: false,
   status: { kind: "withdrawn" },
 };
-// Роли едут транзитом в Auction: шлюз их не читает, поэтому у всех строк ниже
-// они одни и те же, а различаются права.
+// Смотрящий без прав: строки ниже дают ему свои права, по которым шлюз
+// решает допуск.
 const VIEWER: Viewer = {
   identityId: "01929b7e-0000-7000-8000-000000000001",
-  globalRoles: ["member", "public"],
+  rights: [],
 };
 const MEMBER: AccessRight[] = ["hub", "auction"];
 const ADMIN: AccessRight[] = [
@@ -45,9 +45,12 @@ const LOT_BUTTON = encodeAuctionCallback({
 
 function surfaceFor(
   kind: AuctionSurface["kind"],
-  access: Omit<ResolvedIdentity, "viewer">,
+  access: { rights: readonly AccessRight[]; blocked: boolean },
 ) {
-  const identity: ResolvedIdentity = { viewer: VIEWER, ...access };
+  const identity: ResolvedIdentity = {
+    viewer: { ...VIEWER, rights: access.rights },
+    blocked: access.blocked,
+  };
   const calls = { identity: 0, auction: 0 };
   const surface: AuctionSurface = {
     kind,
@@ -274,9 +277,11 @@ describe("surface entry on /start", () => {
     ["auction", ["auction"], "already-held"],
     ["auction", ["auction"], "granted-by-allowlist"],
   ])("enters %s with %j on %s", (kind, rights, outcome) => {
-    expect(decideEntry(kind, { viewer: VIEWER, rights, outcome })).toEqual({
+    expect(
+      decideEntry(kind, { viewer: { ...VIEWER, rights }, outcome }),
+    ).toEqual({
       kind: "entered",
-      identity: { viewer: VIEWER, rights, blocked: false },
+      identity: { viewer: { ...VIEWER, rights }, blocked: false },
     });
   });
 
@@ -287,7 +292,9 @@ describe("surface entry on /start", () => {
     ["declined", ["auction"], "declined"],
     ["blocked", [], "blocked"],
   ])("denies the hub on %s with %j as %s", (outcome, rights, reason) => {
-    expect(decideEntry("hub", { viewer: VIEWER, rights, outcome })).toEqual({
+    expect(
+      decideEntry("hub", { viewer: { ...VIEWER, rights }, outcome }),
+    ).toEqual({
       kind: "denied",
       reason,
       identityId: IDENTITY_ID,
@@ -306,7 +313,7 @@ describe("surface entry on /start", () => {
     "sends %s with %j from the auction bot to the hub bot",
     (outcome, rights) => {
       expect(
-        decideEntry("auction", { viewer: VIEWER, rights, outcome }),
+        decideEntry("auction", { viewer: { ...VIEWER, rights }, outcome }),
       ).toEqual({
         kind: "denied",
         reason: "in-community",
@@ -318,8 +325,7 @@ describe("surface entry on /start", () => {
   it("refuses the blocked on the auction bot whatever the rights say", () => {
     expect(
       decideEntry("auction", {
-        viewer: VIEWER,
-        rights: [],
+        viewer: { ...VIEWER, rights: [] },
         outcome: "blocked",
       }),
     ).toEqual({ kind: "denied", reason: "blocked", identityId: IDENTITY_ID });
@@ -330,8 +336,7 @@ describe("surface entry on /start", () => {
   it("denies a held outcome without the right the surface admits by", () => {
     expect(
       decideEntry("auction", {
-        viewer: VIEWER,
-        rights: [],
+        viewer: { ...VIEWER, rights: [] },
         outcome: "already-held",
       }),
     ).toEqual({
@@ -344,8 +349,7 @@ describe("surface entry on /start", () => {
   it("does not enter on an outcome it does not know, whatever the rights", () => {
     expect(
       decideEntry("hub", {
-        viewer: VIEWER,
-        rights: MEMBER,
+        viewer: { ...VIEWER, rights: MEMBER },
         outcome: "unspecified",
       }),
     ).toEqual({ kind: "unknown-outcome", identityId: IDENTITY_ID });

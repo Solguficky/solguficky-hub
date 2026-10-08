@@ -5,8 +5,7 @@ import {
   Http2SessionManager,
 } from "@connectrpc/connect-node";
 import { AuctionService } from "../../../../gen/auction/v1/auction_service_pb.js";
-import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
-import type { Money, Viewer } from "../../../auction-ui/index.js";
+import type { Money } from "../../../auction-ui/index.js";
 import {
   bidOutcomeOf,
   displayNameOutcomeOf,
@@ -15,6 +14,7 @@ import {
 } from "../../../core/auction/commands.js";
 import { historyPageOf } from "../../../core/auction/history.js";
 import { lotViewOf } from "../../../core/auction/snapshot.js";
+import { wireViewer } from "../../../core/identity/access.js";
 import {
   callHeaders,
   callTimeoutMs,
@@ -856,28 +856,4 @@ function toFailure(cause: unknown): AuctionFailure {
     return { kind: "invalid", cause };
   }
   return { kind: "unavailable", cause };
-}
-
-function wireViewer(viewer: Viewer) {
-  return {
-    identityId: viewer.identityId,
-    globalRoles: viewer.globalRoles.map(wireRole),
-  };
-}
-
-function wireRole(role: Viewer["globalRoles"][number]): GlobalRole {
-  switch (role) {
-    case "admin":
-      return GlobalRole.ADMIN;
-    case "maintainer":
-      return GlobalRole.MAINTAINER;
-    case "member":
-      return GlobalRole.MEMBER;
-    case "public":
-      return GlobalRole.GUEST;
-    default: {
-      const _exhaustive: never = role;
-      return _exhaustive;
-    }
-  }
 }

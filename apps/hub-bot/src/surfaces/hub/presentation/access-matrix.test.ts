@@ -66,10 +66,11 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
           telegramUserId: Number(telegramUserId),
           ...(telegramUsername === undefined ? {} : { telegramUsername }),
         });
+        // Матрица решает по правам: ролей хаб от неё не получает.
         return {
           kind: "resolved",
           ...resolved.viewer,
-          rights: resolved.rights,
+          globalRoles: [],
           blocked: resolved.blocked,
         };
       },
@@ -84,7 +85,7 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
         return {
           kind: "answered",
           ...answered.viewer,
-          rights: answered.rights,
+          globalRoles: [],
           outcome: answered.outcome,
         };
       },

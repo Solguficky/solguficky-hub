@@ -60,7 +60,6 @@ export function decideHubEntry(
   };
   const entry = decideEntry("hub", {
     viewer: viewerOf(person),
-    rights: person.rights,
     outcome: answer.outcome,
   });
   switch (entry.kind) {
