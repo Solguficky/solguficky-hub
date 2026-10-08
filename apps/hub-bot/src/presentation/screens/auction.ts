@@ -1,3 +1,4 @@
+import { InlineKeyboard } from "grammy";
 import type {
   AuctionBlock,
   AuctionButton,
@@ -7,8 +8,7 @@ import type {
   HistoryItem,
   LotStatusView,
   Money,
-} from "@solguficky/auction-bot-ui";
-import { InlineKeyboard } from "grammy";
+} from "../../auction-ui/index.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";
@@ -38,7 +38,7 @@ import type { ScreenPhoto, ShownScreen } from "./show.js";
 
 // Оболочка хаба для тела аукциона (ADR-044, «Один аукцион, две оболочки»;
 // дизайн-код, «Аукцион: тело, шлюз, оболочка»). Тело — блоки и кнопки-действия
-// общего пакета — одно на два бота; здесь блоки становятся текстом, действия —
+// аукционного дерева — одно на два бота; здесь блоки становятся текстом, действия —
 // подписями, а последним рядом встаёт навигация хаба. Состав и порядок кнопок
 // тела оболочка не меняет: кнопку, которой правило не допускает, убирает пакет.
 

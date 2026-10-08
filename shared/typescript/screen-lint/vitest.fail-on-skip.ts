@@ -26,7 +26,7 @@ import type {
 // - флаг `--reporter` в командной строке заменяет reporters конфига и
 //   снимает правило вместе со штатным выводом.
 //
-// Копии лежат в apps/hub-bot, apps/auction-bot и apps/community-site-api:
+// Копии лежат в apps/hub-bot и apps/community-site-api:
 // пакет линтера экрана — тестовый код без зависимостей, а reporter нужен
 // конфигу каждого набора.
 export class FailOnSkip implements Reporter {

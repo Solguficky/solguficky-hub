@@ -1,9 +1,9 @@
-import type { LotView } from "@solguficky/auction-bot-ui";
 import type {
   AuctionFailure,
   LotAdministration,
   LotCardResult,
 } from "../auction/port.js";
+import type { LotView } from "../auction-ui/index.js";
 import { rpcMeta } from "../rpc-metadata.js";
 import type {
   ExecuteResult,

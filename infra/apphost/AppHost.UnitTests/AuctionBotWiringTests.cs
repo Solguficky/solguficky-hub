@@ -91,20 +91,24 @@ public class AuctionBotWiringTests
             .ToArray()
             .ShouldBe(
             [
-                "AUCTION_BOT_COMMUNITY_TIME_ZONE",
-                "AUCTION_BOT_ENVIRONMENT",
-                "AUCTION_BOT_NATS_URL",
-                "AUCTION_BOT_SERVICE_TOKEN",
-                "AUCTION_BOT_TOKEN",
                 "AUCTION_GRPC_URL",
+                "BOT_COMMUNITY_TIME_ZONE",
+                "BOT_ENVIRONMENT",
+                "BOT_NATS_URL",
+                "BOT_SERVICE_TOKEN",
+                "BOT_SURFACE",
+                "BOT_TOKEN",
                 "IDENTITY_GRPC_URL",
             ]);
-        ((ParameterResource)environment["AUCTION_BOT_TOKEN"]).Name.ShouldBe("auction-bot-token");
-        environment["AUCTION_BOT_ENVIRONMENT"].ShouldBe("prod");
-        environment["AUCTION_BOT_COMMUNITY_TIME_ZONE"].ShouldBe("Europe/Moscow");
+        // Поверхность аукциона пакета ботов (ADR-064, п. 18): переменные общие
+        // с ботом хаба, а значения — свои.
+        environment["BOT_SURFACE"].ShouldBe("auction");
+        ((ParameterResource)environment["BOT_TOKEN"]).Name.ShouldBe("auction-bot-token");
+        environment["BOT_ENVIRONMENT"].ShouldBe("prod");
+        environment["BOT_COMMUNITY_TIME_ZONE"].ShouldBe("Europe/Moscow");
         ((EndpointReference)environment["IDENTITY_GRPC_URL"]).Resource.Name.ShouldBe(Identity);
         ((EndpointReference)environment["AUCTION_GRPC_URL"]).Resource.Name.ShouldBe(Auction);
-        environment["AUCTION_BOT_NATS_URL"].ShouldNotBeNull();
+        environment["BOT_NATS_URL"].ShouldNotBeNull();
     }
 
     [Fact]
@@ -131,7 +135,7 @@ public class AuctionBotWiringTests
         var (bot, context) = Materialize("prod");
         var environment = await EnvironmentAsync(bot);
 
-        environment["AUCTION_BOT_SERVICE_TOKEN"].ShouldBeSameAs(context.ServiceToken(AuctionBot).Resource);
+        environment["BOT_SERVICE_TOKEN"].ShouldBeSameAs(context.ServiceToken(AuctionBot).Resource);
     }
 
     /// <summary>
@@ -153,8 +157,8 @@ public class AuctionBotWiringTests
         var (bot, _) = Materialize("test");
         var environment = await EnvironmentAsync(bot);
 
-        ((ParameterResource)environment["AUCTION_BOT_TOKEN"]).Name.ShouldBe("auction-bot-test-token");
-        environment["AUCTION_BOT_ENVIRONMENT"].ShouldBe("test");
+        ((ParameterResource)environment["BOT_TOKEN"]).Name.ShouldBe("auction-bot-test-token");
+        environment["BOT_ENVIRONMENT"].ShouldBe("test");
     }
 
     private static (IResource Bot, ServiceGraphContext Context) Materialize(

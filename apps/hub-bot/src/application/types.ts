@@ -1,4 +1,4 @@
-import type { LotView } from "@solguficky/auction-bot-ui";
+import type { LotView } from "../auction-ui/index.js";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,

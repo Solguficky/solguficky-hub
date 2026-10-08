@@ -30,13 +30,14 @@ auction: ContainerResource
   health: auction_http_/health_200_check
 auction-bot: ContainerResource
   image: /placeholder:latest
-  build: <repo>/apps/auction-bot/Containerfile context=<repo>
-  env: AUCTION_BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
-  env: AUCTION_BOT_ENVIRONMENT=prod
-  env: AUCTION_BOT_NATS_URL={nats.connectionString}
-  env: AUCTION_BOT_SERVICE_TOKEN={auction-bot-service-token.value}
-  env: AUCTION_BOT_TOKEN={auction-bot-token.value}
+  build: <repo>/apps/hub-bot/Containerfile context=<repo>
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
+  env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: BOT_ENVIRONMENT=prod
+  env: BOT_NATS_URL={nats.connectionString}
+  env: BOT_SERVICE_TOKEN={auction-bot-service-token.value}
+  env: BOT_SURFACE=auction
+  env: BOT_TOKEN={auction-bot-token.value}
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   waits: auction WaitUntilHealthy
   waits: identity WaitUntilHealthy
@@ -65,11 +66,12 @@ hub-bot: ContainerResource
   image: /placeholder:latest
   build: <repo>/apps/hub-bot/Containerfile context=<repo>
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
-  env: HUB_BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
-  env: HUB_BOT_ENVIRONMENT=prod
-  env: HUB_BOT_NATS_URL={nats.connectionString}
-  env: HUB_BOT_SERVICE_TOKEN={hub-bot-service-token.value}
-  env: HUB_BOT_TOKEN={hub-bot-token.value}
+  env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: BOT_ENVIRONMENT=prod
+  env: BOT_NATS_URL={nats.connectionString}
+  env: BOT_SERVICE_TOKEN={hub-bot-service-token.value}
+  env: BOT_SURFACE=hub
+  env: BOT_TOKEN={hub-bot-token.value}
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
   env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}

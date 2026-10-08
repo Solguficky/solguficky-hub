@@ -1,10 +1,10 @@
-import { encodeAuctionCallback } from "@solguficky/auction-bot-ui";
 import { InlineKeyboard } from "grammy";
 import type {
   MeetupAuctionView,
   MeetupAuthor,
   MeetupStateAction,
 } from "../../application/types.js";
+import { encodeAuctionCallback } from "../../auction-ui/index.js";
 import { type CommunityDay, isBeforeDay } from "../../community-time.js";
 import type {
   ArchivedMeetupSummary,

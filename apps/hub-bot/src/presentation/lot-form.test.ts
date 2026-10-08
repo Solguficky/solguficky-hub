@@ -1,8 +1,3 @@
-import {
-  encodeAuctionCallback,
-  type LotView,
-  type Money,
-} from "@solguficky/auction-bot-ui";
 import { InputFile } from "grammy";
 import type { Update } from "grammy/types";
 import { describe, expect, it } from "vitest";
@@ -15,6 +10,11 @@ import type {
   MeetupAuctions,
   ScheduleLotResult,
 } from "../auction/port.js";
+import {
+  encodeAuctionCallback,
+  type LotView,
+  type Money,
+} from "../auction-ui/index.js";
 import type { IdentityResolver } from "../identity/port.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import { newLotIdOf } from "./new-lot-id.js";

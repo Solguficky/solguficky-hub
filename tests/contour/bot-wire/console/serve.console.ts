@@ -7,7 +7,7 @@ import {
   botInfo as auctionBotInfo,
   openAuctionBotWire,
   readAuctionContourEnvironment,
-} from "../../../../apps/auction-bot/testkit/index.js";
+} from "../../../../apps/hub-bot/testkit/auction/index.js";
 import {
   openBotWire,
   openDirectClients,

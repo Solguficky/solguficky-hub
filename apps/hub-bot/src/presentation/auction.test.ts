@@ -1,8 +1,4 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import {
-  encodeAuctionCallback,
-  type LotView,
-} from "@solguficky/auction-bot-ui";
 import { InputFile } from "grammy";
 import type { Update } from "grammy/types";
 import { describe, expect, it, vi } from "vitest";
@@ -19,6 +15,7 @@ import type {
   MeetupAuctionResult,
   MeetupAuctions,
 } from "../auction/port.js";
+import { encodeAuctionCallback, type LotView } from "../auction-ui/index.js";
 import type { IdentityResolver } from "../identity/port.js";
 import type { MeetupSnapshot, Meetups } from "../meetups/port.js";
 import { createAuctionParents } from "./auction-parents.js";

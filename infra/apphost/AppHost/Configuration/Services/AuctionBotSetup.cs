@@ -1,4 +1,3 @@
-using Aspire.Hosting.JavaScript;
 using AppHost.Configuration.Extensions;
 using AppHost.Configuration.Publish;
 using AppHost.Configuration.Topology;
@@ -7,9 +6,10 @@ using Microsoft.Extensions.Configuration;
 namespace AppHost.Configuration.Services;
 
 /// <summary>
-/// Бот аукциона (ADR-044): отдельный процесс со своим токеном и своим поллером.
-/// Ни одной переменной бота хаба он не получает, и бот хаба — его: остановка
-/// одного поллера второй не трогает. Maintainer-секрета у него нет.
+/// Бот аукциона: поверхность аукциона пакета <c>apps/hub-bot</c> отдельным
+/// процессом со своим токеном и своим поллером (ADR-064, п. 18). Переменные у
+/// двух ботов общие, значения свои: остановка одного поллера второй не трогает.
+/// Maintainer-секрета у него нет.
 /// </summary>
 internal static class AuctionBotSetup
 {
@@ -32,15 +32,12 @@ internal static class AuctionBotSetup
         return Wire(
             context,
             environment,
-            context.Builder.AddJavaScriptApp(
-                AppHostNames.Resources.AuctionBot,
-                RepositoryPaths.App(context.Builder, "auction-bot"),
-                "start"));
+            BotBuild.Process(context.Builder, AppHostNames.Resources.AuctionBot));
     }
 
     /// <summary>
-    /// В чарте бот — образ по его Containerfile из корня репозитория, как бот
-    /// хаба (ADR-055). Значения токенов при публикации неизвестны, поэтому
+    /// В чарте бот — образ по Containerfile пакета ботов из корня репозитория,
+    /// как бот хаба (ADR-055): образ тот же, поверхность выбирает переменная. Значения токенов при публикации неизвестны, поэтому
     /// <see cref="RequireOwnToken"/> здесь не зовётся: в среде повтор токена
     /// бота хаба ловит её выкладка до старта подов.
     /// </summary>
@@ -51,7 +48,7 @@ internal static class AuctionBotSetup
                 context.Builder.AddDockerfile(
                     AppHostNames.Resources.AuctionBot,
                     RepositoryPaths.Root(context.Builder),
-                    "apps/auction-bot/Containerfile"))
+                    "apps/hub-bot/Containerfile"))
             .AsClusterWorkload(Cluster);
 
     private static IResourceBuilder<T> Wire<T>(
@@ -63,12 +60,13 @@ internal static class AuctionBotSetup
         var token = context.Builder.AddParameter(environment.AuctionBotTokenParameter, secret: true);
 
         return bot
-            .WithEnvironment("AUCTION_BOT_TOKEN", token)
+            .WithEnvironment("BOT_SURFACE", "auction")
+            .WithEnvironment("BOT_TOKEN", token)
             // Не путать с токеном Bot API выше: этим бот доказывает себя
             // Identity и Auction (ADR-056).
-            .WithServiceToken(context)
-            .WithEnvironment("AUCTION_BOT_ENVIRONMENT", environment.Value)
-            .WithEnvironment("AUCTION_BOT_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
+            .WithServiceToken(context, HubBotSetup.BotServiceTokenVariable)
+            .WithEnvironment("BOT_ENVIRONMENT", environment.Value)
+            .WithEnvironment("BOT_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
             .BindEndpoint(context, AppHostNames.Resources.Identity, AppHostNames.Endpoints.Grpc, "IDENTITY_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Auction, AppHostNames.Endpoints.Grpc, "AUCTION_GRPC_URL")
             // Второй вход бота — адресные факты аукциона из шины (PER-328).
@@ -77,7 +75,7 @@ internal static class AuctionBotSetup
             .BindConnection<T, IResourceWithConnectionString>(
                 context,
                 AppHostNames.Resources.Nats,
-                "AUCTION_BOT_NATS_URL",
+                "BOT_NATS_URL",
                 nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
     }
 

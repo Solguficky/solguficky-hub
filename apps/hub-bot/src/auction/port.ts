@@ -1,3 +1,4 @@
+import type { AuctionConsoleView, Person } from "../application/types.js";
 import type {
   AuctionPort,
   GlobalRole,
@@ -6,13 +7,12 @@ import type {
   Money,
   OperationIdPort,
   Viewer,
-} from "@solguficky/auction-bot-ui";
-import type { AuctionConsoleView, Person } from "../application/types.js";
+} from "../auction-ui/index.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 
 // Аукцион у сходки (ADR-047, дополнение 2026-10-03; PER-307). Бот хаба зовёт
 // Auction в двух ролях. Оболочка сходки — эти два метода: аукцион сходки на
-// карточке и его включение. Торговые экраны — порты общего пакета ниже: их
+// карточке и его включение. Торговые экраны — порты аукционного дерева ниже: их
 // юзкейсы живут в пакете, и бот только даёт им транспорт.
 
 export type AuctionFailure =
@@ -53,7 +53,7 @@ export type MeetupAuctions = {
 
 // Форма лота администратора (PER-319; ADR-057, дополнение 2026-10-05): команды
 // каталога, реестра и условий торгов и чтение лота для экрана правки. Третья
-// роль бота хаба перед Auction, и только его: общий пакет формы не несёт.
+// роль бота хаба перед Auction, и только его: аукционное дерево формы не несёт.
 // Именованный отказ Auction — значение ответа, и бот его не повторяет.
 
 // `card-conflict` бывает только у создания: карточка с этим `lot_id` уже есть

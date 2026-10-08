@@ -145,7 +145,7 @@ type Transformer = <M extends Methods<R>>(
 
 ### Фото: `file_id` против байтов и смена вида сообщения
 
-Бот аукциона показывает изображение лота в карточке (`apps/auction-bot/src/bot.ts`, функция `deliver`). Bot API принимает фото в поле `media` двумя способами, и grammY выражает их одним типом `string | InputFile`:
+Бот аукциона показывает изображение лота в карточке (`apps/hub-bot/src/surfaces/auction/bot.ts`, функция `deliver`). Bot API принимает фото в поле `media` двумя способами, и grammY выражает их одним типом `string | InputFile`:
 
 ```ts
 function mediaOf(photo: Photo): string | InputFile {
@@ -373,11 +373,11 @@ flowchart TD
 - `/start@other_bot` не вызывает, `/start@stub_bot` при `botInfo.username = "stub_bot"` вызывает. Проверено.
 - `Context.has.command` в `node_modules/grammy/out/context.js` начинается с `checker.filterQuery(":entities:bot_command")`. Прочитано в исходнике.
 
-Фото в боте аукциона проверялось на `grammy@1.46.0` из `apps/auction-bot`:
+Фото в боте аукциона проверялось на `grammy@1.46.0` из поверхности аукциона `apps/hub-bot`:
 
 - `InputFile` из `Uint8Array` отправляется повторно: `toRaw()` в `node_modules/grammy/out/types.node.js` возвращает буфер без отметки `consumed`, а поток помечает и второй раз бросает `Cannot reuse InputFile data source!`. Прочитано в исходнике.
 - `ctx.editMessageMedia` и `ctx.deleteMessage` берут `message_id` из `this.msg` нажатия. Прочитано в `node_modules/grammy/out/context.js`.
-- Переходы текст ↔ фото, кэш, повтор на `wrong file identifier` и откат в текст при отказе фото покрыты `apps/auction-bot/src/bot.test.ts` через transformer: `npx vitest run src/bot.test.ts`. Проверено на подменённом Bot API, а не на живом Telegram.
+- Переходы текст ↔ фото, кэш, повтор на `wrong file identifier` и откат в текст при отказе фото покрыты `apps/hub-bot/src/surfaces/auction/bot.test.ts` через transformer: `npx vitest run src/bot.test.ts`. Проверено на подменённом Bot API, а не на живом Telegram.
 
 Режим ответа, вид файла и rich с медиа проверялись в PER-443 зондом на dev-боте, Telegram Desktop и мобильный клиент Android:
 
@@ -396,4 +396,4 @@ flowchart TD
 
 - `bot.catch` в `createBot` не покрыт ни одним тестом: все тесты границы идут через `handleUpdate`, а он туда не заходит. Проверить его можно через `bot.handleUpdates([...])` или живым long polling — сделай это, когда появится живой бот.
 - `writeBoundary` в `bot.catch` читает `ctx.startedAt`, который ставит первая middleware. Если отказ случится в ней самой, `elapsedUs(undefined)` даст `TypeError: Cannot mix BigInt and other types` уже внутри обработчика ошибок — проверено отдельным вычислением. Сейчас туда попадают только `randomUUID` и `hrtime`, которые не бросают, но защиты нет.
-- Как поведёт себя `bot.stop()` посреди обработки update и хватает ли 15 секунд форсирующего таймера — проверь на живом боте: `HUB_BOT_TOKEN=... just hub-bot-run`, затем SIGTERM во время ответа.
+- Как поведёт себя `bot.stop()` посреди обработки update и хватает ли 15 секунд форсирующего таймера — проверь на живом боте: `BOT_SURFACE=hub BOT_TOKEN=... just hub-bot-run`, затем SIGTERM во время ответа.

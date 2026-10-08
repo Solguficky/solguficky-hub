@@ -9,9 +9,8 @@
   },
   "scripts": {
     "proto": "cd ../.. && buf generate --template apps/hub-bot/buf.gen.yaml",
-    "ui": "cd ../../shared/typescript/auction-bot-ui && npm install --no-audit --no-fund && npm run build",
     "delivery": "cd ../../shared/typescript/telegram-delivery && npm install --no-audit --no-fund && npm run build",
-    "prestart": "npm run ui && npm run delivery && npm run proto && npm run build",
+    "prestart": "npm run delivery && npm run proto && npm run build",
     "start": "node dist/src/main.js",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
@@ -40,7 +39,6 @@
     "@opentelemetry/sdk-logs": "^0.200.0",
     "@opentelemetry/sdk-metrics": "^2.11.0",
     "@opentelemetry/sdk-trace-base": "2.0.0",
-    "@solguficky/auction-bot-ui": "file:../../shared/typescript/auction-bot-ui",
     "@solguficky/telegram-delivery": "file:../../shared/typescript/telegram-delivery",
     "grammy": "^1.46.0",
     "zod": "^4.5.4"

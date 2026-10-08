@@ -1,4 +1,10 @@
 import { Code, ConnectError } from "@connectrpc/connect";
+import type { Money as WireMoney } from "../../gen/auction/v1/auction_pb.js";
+import type {
+  ChooseDisplayNameResponse,
+  PlaceBidResponse,
+  SetProxyLimitResponse,
+} from "../../gen/auction/v1/auction_service_pb.js";
 import type {
   BidRefusal,
   CommandOutcome,
@@ -6,13 +12,7 @@ import type {
   DisplayNameRefusal,
   Money,
   ProxyLimitRefusal,
-} from "@solguficky/auction-bot-ui";
-import type { Money as WireMoney } from "../../gen/auction/v1/auction_pb.js";
-import type {
-  ChooseDisplayNameResponse,
-  PlaceBidResponse,
-  SetProxyLimitResponse,
-} from "../../gen/auction/v1/auction_service_pb.js";
+} from "../auction-ui/index.js";
 import { moneyOf } from "./snapshot.js";
 
 // Ответы команд участника в словаре пакета (PER-317). Отказ — значение ответа,

@@ -1,11 +1,11 @@
+import type { HubAccess } from "../application/hub-access.js";
+import type { DeepLink, Person } from "../application/types.js";
+import { viewerOf } from "../auction/port.js";
 import {
   type AuctionDenial,
   decideEntry,
   requestedRole,
-} from "@solguficky/auction-bot-ui";
-import type { HubAccess } from "../application/hub-access.js";
-import type { DeepLink, Person } from "../application/types.js";
-import { viewerOf } from "../auction/port.js";
+} from "../auction-ui/index.js";
 import type {
   RequestRoleInput,
   RequestRoleResult,
@@ -13,7 +13,7 @@ import type {
 } from "../identity/port.js";
 
 // Вход на `/start` в боте хаба (ADR-060). Круг и разбор исхода — политика
-// общего пакета, одна на оба бота (ADR-044, «Доступ как обязательный шлюз»):
+// аукционного дерева, одна на оба бота (ADR-044, «Доступ как обязательный шлюз»):
 // хаб только называет свою поверхность и переводит ответ в свои кадры.
 
 /**

@@ -1,11 +1,11 @@
-import type { AuctionBlock, Money } from "@solguficky/auction-bot-ui";
 import { describe, expect, it } from "vitest";
+import type { AuctionBlock, Money } from "../../auction-ui/index.js";
 import { type AuctionView, auctionScreen } from "./auction.js";
 
 // L0: оболочка хаба над телом аукциона на данных, без бота и Telegram. Тексты
 // экранов аукциона у двух ботов обязаны совпадать (дизайн-код, «Карточка лота»,
-// «Лист ставки»): ожидания здесь те же, что в `apps/auction-bot/src/
-// entry-screen.test.ts`, и расхождение оболочек ловится с обеих сторон.
+// «Лист ставки»): ожидания здесь те же, что в
+// `src/surfaces/auction/entry-screen.test.ts`, и расхождение оболочек ловится с обеих сторон.
 
 const today = { year: 2026, month: 10, day: 7 };
 const rub = (rubles: number): Money => ({

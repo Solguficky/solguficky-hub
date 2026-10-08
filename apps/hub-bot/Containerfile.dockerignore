@@ -10,11 +10,6 @@
 !apps/hub-bot/tsconfig.json
 !apps/hub-bot/tsconfig.build.json
 !apps/hub-bot/src
-!shared/typescript/auction-bot-ui/package.json
-!shared/typescript/auction-bot-ui/package-lock.json
-!shared/typescript/auction-bot-ui/tsconfig.json
-!shared/typescript/auction-bot-ui/tsconfig.build.json
-!shared/typescript/auction-bot-ui/src
 !shared/typescript/telegram-delivery/package.json
 !shared/typescript/telegram-delivery/package-lock.json
 !shared/typescript/telegram-delivery/tsconfig.json

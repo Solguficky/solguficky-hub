@@ -1,3 +1,4 @@
+import { InlineKeyboard } from "grammy";
 import {
   type AnswerRefusal,
   type AuctionBlock,
@@ -5,8 +6,7 @@ import {
   type CommandResult,
   MAX_COMMAND_AMOUNT,
   type Money,
-} from "@solguficky/auction-bot-ui";
-import { InlineKeyboard } from "grammy";
+} from "../../auction-ui/index.js";
 import {
   confirmKeyboard,
   escapeHtml,

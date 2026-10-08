@@ -1,4 +1,3 @@
-import type { LotStatusView } from "@solguficky/auction-bot-ui";
 import { InlineKeyboard } from "grammy";
 import { formatLocalMoment } from "../../application/meetup-form.js";
 import type {
@@ -8,6 +7,7 @@ import type {
   ConsoleNote,
   WeekAskError,
 } from "../../application/types.js";
+import type { LotStatusView } from "../../auction-ui/index.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {

@@ -1,16 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import {
-  type AuctionBlock,
-  type AuctionResult,
-  type AuctionScreenBody,
-  type AuctionUpdate,
-  encodeAuctionCallback,
-  isAuctionQuestion,
-  type LotImagePort,
-  parseAuctionCallback,
-  type Viewer,
-} from "@solguficky/auction-bot-ui";
 import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
 import { acceptsLots } from "../application/auction-console.js";
 import {
@@ -49,6 +38,17 @@ import type {
 } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
 import { type AuctionScreens, viewerOf } from "../auction/port.js";
+import {
+  type AuctionBlock,
+  type AuctionResult,
+  type AuctionScreenBody,
+  type AuctionUpdate,
+  encodeAuctionCallback,
+  isAuctionQuestion,
+  type LotImagePort,
+  parseAuctionCallback,
+  type Viewer,
+} from "../auction-ui/index.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
   type ApplicationAdministrator,
@@ -259,7 +259,7 @@ export type BotRuntime = {
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
-  // Экраны аукциона сходки (PER-307): порты общего пакета поверх клиента
+  // Экраны аукциона сходки (PER-307): порты аукционного дерева поверх клиента
   // Auction. Нет — кнопки домена `auc` отвечают кадром недоступности.
   auction?: AuctionScreens;
   // Пояс, в котором человек читает дедлайн лота; тот же, что у Meetups.
@@ -275,7 +275,7 @@ export type BotRuntime = {
 export const defaultTelegramEnvironment: TelegramEnvironment = "prod";
 
 /**
- * Разбирает значение `HUB_BOT_ENVIRONMENT`. Отсутствие переменной — это
+ * Разбирает значение `BOT_ENVIRONMENT`. Отсутствие переменной — это
  * продакшн; любое неизвестное значение — `undefined`, а не молчаливый откат к
  * умолчанию: опечатка в переменной должна останавливать процесс, а не уводить
  * его в другую среду.
@@ -476,7 +476,7 @@ type PendingLot = {
   expiresAt: number;
 };
 // Вопрос листа ставки (PER-317): шаг и адресат лежат в его «Отмене» и
-// разбираются общим пакетом. Запись в карте нужна только уборке брошенного
+// разбираются аукционным деревом. Запись в карте нужна только уборке брошенного
 // вопроса — ответ принимается и после рестарта.
 type PendingAuction = {
   kind: "auction";
@@ -646,7 +646,7 @@ async function handleMessage(
         ? undefined
         : questions.get(questionKey(ctx.chat?.id, replyId));
     const repliedMessage = ctx.message?.reply_to_message;
-    // Ответ на вопрос листа ставки: шаг — `auc`, его разбирает общий пакет.
+    // Ответ на вопрос листа ставки: шаг — `auc`, его разбирает аукционное дерево.
     const auctionStep =
       replyId === undefined || repliedMessage?.from?.id !== ctx.me.id
         ? undefined
@@ -1584,7 +1584,7 @@ async function handleCallback(
   const waiting = startWaiting(ctx);
   ctx.waiting = waiting;
   try {
-    // Кнопки домена `auc` пишет и разбирает общий пакет аукциона (ADR-044):
+    // Кнопки домена `auc` пишет и разбирает аукционное дерево (ADR-044):
     // до разбора хаба они не доходят.
     const data = ctx.callbackQuery?.data ?? "";
     if (isAuctionCallback(data)) {
@@ -1639,7 +1639,7 @@ async function handleCallback(
     }
     ctx.fresh = action.trace === true || ctx.pressedGone === true;
     // «Отмена» под вопросом о названии нового лота возвращает в ленту
-    // аукциона, а её рисует общий пакет: дальше нажатие идёт как кнопка ленты,
+    // аукциона, а её рисует аукционное дерево: дальше нажатие идёт как кнопка ленты,
     // с той же политикой хаба и тем же шлюзом.
     if (action.kind === "lot-feed") {
       useCase = "view_auction";
@@ -6210,7 +6210,7 @@ function pendingOf(
 
 // Действие экрана: всё, что несёт кнопка, кроме самой «Отмены» под вопросом, —
 // она сводится к действию экрана, с которого вопрос задан.
-// Лента аукциона — не действие кнопки хаба: её рисует общий пакет под доменом
+// Лента аукциона — не действие кнопки хаба: её рисует аукционное дерево под доменом
 // `auc`, а сюда ведёт только «Отмена» вопроса о новом лоте.
 type ScreenAction =
   | Exclude<CallbackAction, { kind: "question" }>
