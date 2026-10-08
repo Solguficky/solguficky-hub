@@ -365,6 +365,16 @@ object ResponseMapping {
         wire.ConfigInvalid.Reason.FinalBlocksOutOfRange(wire.FinalBlocksOutOfRange())
       case ConfigInvalid.LotDefaults(_) =>
         wire.ConfigInvalid.Reason.LotDefaultsStepPolicyInvalid(wire.StepPolicyInvalid())
+      case ConfigInvalid.StepWindowWithoutClosesAt(window) =>
+        wire.ConfigInvalid.Reason.StepWindowWithoutClosesAt(wire.StepWindowWithoutClosesAt(window))
+      case ConfigInvalid.StepWindowOutsideOnlinePhase(window) =>
+        wire.ConfigInvalid.Reason.StepWindowOutsideOnlinePhase(wire.StepWindowOutsideOnlinePhase(window))
+      case ConfigInvalid.StepWindowsOverlap(first, second) =>
+        wire.ConfigInvalid.Reason.StepWindowsOverlap(wire.StepWindowsOverlap(first, second))
+      case ConfigInvalid.StepWindowStepInvalid(window) =>
+        wire.ConfigInvalid.Reason.StepWindowStepInvalid(wire.StepWindowStepInvalid(window))
+      case ConfigInvalid.StepWindowLotsEmpty(window) =>
+        wire.ConfigInvalid.Reason.StepWindowLotsEmpty(wire.StepWindowLotsEmpty(window))
     }
     wire.ConfigInvalid(named)
   }

@@ -97,7 +97,7 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
       val (_, journal) = manual.limit(setProxyLimit(who = 2, max = 115, opN = 2))
 
       bids(written(journal, before = 1)) shouldBe List(proxied(proxyBid(2), who = 2, amount = 115, previous = Some(1)))
-      Lot.minRequired(tradingOf(manual.lot)) shouldBe money(120)
+      Lot.minRequired(tradingOf(manual.lot), calm) shouldBe money(120)
     }
 
     "refuse a limit in another currency with CurrencyMismatch and keep no trace of it (Т-26)" in {
@@ -124,7 +124,7 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
         limits = Map(participant(1) -> limit(300, setSeq = 9), participant(2) -> limit(300, setSeq = 5))
       )
 
-      Lot.resolve(tradingOf(lot), proxyBid(1)) shouldBe Some(
+      Lot.resolve(tradingOf(lot), proxyBid(1), calm) shouldBe Some(
         proxied(proxyBid(1), who = 2, amount = 300, previous = Some(1))
       )
       val (_, journal) = Journal.of(lot).limit(setProxyLimit(who = 3, max = 260, opN = 1))
@@ -344,7 +344,7 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
               .map(_.max.minorUnits)
               .getOrElse(0L) should be >= placed.amount.minorUnits
           }
-          Lot.resolve(after, proxyBid(0)) shouldBe None
+          Lot.resolve(after, proxyBid(0), calm) shouldBe None
           next
         }
       }

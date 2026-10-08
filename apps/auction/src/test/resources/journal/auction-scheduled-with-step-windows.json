@@ -41,7 +41,31 @@
         },
         "proxyEnabled": true
       },
-      "stepWindows": null
+      "stepWindows": [
+        {
+          "from": "2026-10-02T18:00:00Z",
+          "until": "2026-10-02T20:00:00Z",
+          "step": {
+            "minorUnits": 1,
+            "currency": "RUB"
+          },
+          "lots": [
+            "0190f2a0-0000-7000-8000-00000000000b",
+            "0190f2a0-0000-7000-8000-00000000000c"
+          ]
+        },
+        {
+          "from": "2026-10-03T18:00:00Z",
+          "until": "2026-10-03T19:00:00Z",
+          "step": {
+            "minorUnits": 1,
+            "currency": "RUB"
+          },
+          "lots": [
+            "0190f2a0-0000-7000-8000-00000000000b"
+          ]
+        }
+      ]
     }
   }
 }

@@ -57,7 +57,8 @@
         }
       ],
       "extensionsUsed": 0,
-      "markedForFinal": false
+      "markedForFinal": false,
+      "stepWindows": null
     },
     "held": null,
     "sold": null,
@@ -184,7 +185,8 @@
             },
             "proxyEnabled": true
           },
-          "deadline": "2026-10-07T18:00:00Z"
+          "deadline": "2026-10-07T18:00:00Z",
+          "stepWindows": null
         },
         "bidPlaced": null,
         "lotScheduled": null,

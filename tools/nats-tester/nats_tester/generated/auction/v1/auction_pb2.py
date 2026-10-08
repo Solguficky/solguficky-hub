@@ -24,23 +24,23 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18\x61uction/v1/auction.proto\x12\nauction.v1\".\n\x05Money\x12\x13\n\x0bminor_units\x18\x01 \x01(\x03\x12\x10\n\x08\x63urrency\x18\x02 \x01(\t\"\x8c\x01\n\tLotConfig\x12\x10\n\x08\x63urrency\x18\x01 \x01(\t\x12+\n\x0bstep_policy\x18\x02 \x01(\x0b\x32\x16.auction.v1.StepPolicy\x12)\n\nanti_snipe\x18\x03 \x01(\x0b\x32\x15.auction.v1.AntiSnipe\x12\x15\n\rproxy_enabled\x18\x04 \x01(\x08\"e\n\nStepPolicy\x12\"\n\x05\x66ixed\x18\x01 \x01(\x0b\x32\x11.auction.v1.MoneyH\x00\x12)\n\x06tiered\x18\x02 \x01(\x0b\x32\x17.auction.v1.TieredStepsH\x00\x42\x08\n\x06policy\"2\n\x0bTieredSteps\x12#\n\x05tiers\x18\x01 \x03(\x0b\x32\x14.auction.v1.StepTier\"S\n\x08StepTier\x12&\n\x0blower_bound\x18\x01 \x01(\x0b\x32\x11.auction.v1.Money\x12\x1f\n\x04step\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\"V\n\tAntiSnipe\x12\x16\n\x0ewindow_seconds\x18\x01 \x01(\x03\x12\x19\n\x11\x65xtension_seconds\x18\x02 \x01(\x03\x12\x16\n\x0emax_extensions\x18\x03 \x01(\x05\"\n\n\x08LotDraft\"8\n\x0bLotSchedule\x12)\n\x0estarting_price\x18\x01 \x01(\x0b\x32\x11.auction.v1.Money\"\x8e\x02\n\nLotTrading\x12(\n\rcurrent_price\x18\x01 \x01(\x0b\x32\x11.auction.v1.Money\x12\x1e\n\x03\x61sk\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\x12\x16\n\tleader_id\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x1b\n\x0eleading_bid_id\x18\x04 \x01(\tH\x01\x88\x01\x01\x12\x15\n\x08\x64\x65\x61\x64line\x18\x05 \x01(\tH\x02\x88\x01\x01\x12\x17\n\x0f\x65xtensions_used\x18\x06 \x01(\x05\x12#\n\x05phase\x18\x07 \x01(\x0e\x32\x14.auction.v1.LotPhaseB\x0c\n\n_leader_idB\x11\n\x0f_leading_bid_idB\x0b\n\t_deadline\"\xa2\x01\n\x07LotHeld\x12(\n\rcurrent_price\x18\x01 \x01(\x0b\x32\x11.auction.v1.Money\x12\x16\n\tleader_id\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x1b\n\x0eleading_bid_id\x18\x03 \x01(\tH\x01\x88\x01\x01\x12\x17\n\x0f\x65xtensions_used\x18\x04 \x01(\x05\x42\x0c\n\n_leader_idB\x11\n\x0f_leading_bid_id\"_\n\x07LotSale\x12\x11\n\twinner_id\x18\x01 \x01(\t\x12 \n\x05price\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\x12\x0e\n\x06\x62id_id\x18\x03 \x01(\t\x12\x0f\n\x07sold_at\x18\x04 \x01(\t\"\xb6\x01\n\rAuctionConfig\x12-\n\x0conline_phase\x18\x01 \x01(\x0b\x32\x17.auction.v1.OnlinePhase\x12\x14\n\x0c\x66inal_blocks\x18\x02 \x01(\x05\x12\x31\n\x0e\x63losing_policy\x18\x03 \x01(\x0b\x32\x19.auction.v1.ClosingPolicy\x12-\n\x0clot_defaults\x18\x04 \x01(\x0b\x32\x17.auction.v1.LotDefaults\"Z\n\x0bOnlinePhase\x12\x10\n\x08opens_at\x18\x01 \x01(\t\x12\x16\n\tcloses_at\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x13\n\x0b\x63loses_lots\x18\x03 \x01(\x08\x42\x0c\n\n_closes_at\"\xb4\x01\n\rClosingPolicy\x12\x38\n\rby_auctioneer\x18\x01 \x01(\x0b\x32\x1f.auction.v1.ClosingByAuctioneerH\x00\x12\x34\n\x0b\x62y_deadline\x18\x02 \x01(\x0b\x32\x1d.auction.v1.ClosingByDeadlineH\x00\x12)\n\x05mixed\x18\x03 \x01(\x0b\x32\x18.auction.v1.MixedClosingH\x00\x42\x08\n\x06policy\"\x15\n\x13\x43losingByAuctioneer\"\x13\n\x11\x43losingByDeadline\"*\n\x0cMixedClosing\x12\x1a\n\x12online_by_deadline\x18\x01 \x01(\x08\"\x8e\x01\n\x0bLotDefaults\x12\x10\n\x08\x63urrency\x18\x01 \x01(\t\x12+\n\x0bstep_policy\x18\x02 \x01(\x0b\x32\x16.auction.v1.StepPolicy\x12)\n\nanti_snipe\x18\x03 \x01(\x0b\x32\x15.auction.v1.AntiSnipe\x12\x15\n\rproxy_enabled\x18\x04 \x01(\x08*O\n\x08LotPhase\x12\x19\n\x15LOT_PHASE_UNSPECIFIED\x10\x00\x12\x14\n\x10LOT_PHASE_ONLINE\x10\x01\x12\x12\n\x0eLOT_PHASE_LIVE\x10\x02*H\n\x0cUnsoldReason\x12\x1d\n\x19UNSOLD_REASON_UNSPECIFIED\x10\x00\x12\x19\n\x15UNSOLD_REASON_NO_BIDS\x10\x01*\x96\x01\n\x0fWithdrawnReason\x12 \n\x1cWITHDRAWN_REASON_UNSPECIFIED\x10\x00\x12!\n\x1dWITHDRAWN_REASON_BY_ORGANIZER\x10\x01\x12\x1e\n\x1aWITHDRAWN_REASON_BY_AUTHOR\x10\x02\x12\x1e\n\x1aWITHDRAWN_REASON_DUPLICATE\x10\x03*Q\n\tBidSource\x12\x1a\n\x16\x42ID_SOURCE_UNSPECIFIED\x10\x00\x12\x12\n\x0e\x42ID_SOURCE_BOT\x10\x01\x12\x14\n\x10\x42ID_SOURCE_FLOOR\x10\x02*\x97\x01\n\x11\x46ulfillmentMethod\x12\"\n\x1e\x46ULFILLMENT_METHOD_UNSPECIFIED\x10\x00\x12\x1d\n\x19\x46ULFILLMENT_METHOD_PICKUP\x10\x01\x12\x1f\n\x1b\x46ULFILLMENT_METHOD_DELIVERY\x10\x02\x12\x1e\n\x1a\x46ULFILLMENT_METHOD_DIGITAL\x10\x03\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18\x61uction/v1/auction.proto\x12\nauction.v1\".\n\x05Money\x12\x13\n\x0bminor_units\x18\x01 \x01(\x03\x12\x10\n\x08\x63urrency\x18\x02 \x01(\t\"\x8c\x01\n\tLotConfig\x12\x10\n\x08\x63urrency\x18\x01 \x01(\t\x12+\n\x0bstep_policy\x18\x02 \x01(\x0b\x32\x16.auction.v1.StepPolicy\x12)\n\nanti_snipe\x18\x03 \x01(\x0b\x32\x15.auction.v1.AntiSnipe\x12\x15\n\rproxy_enabled\x18\x04 \x01(\x08\"e\n\nStepPolicy\x12\"\n\x05\x66ixed\x18\x01 \x01(\x0b\x32\x11.auction.v1.MoneyH\x00\x12)\n\x06tiered\x18\x02 \x01(\x0b\x32\x17.auction.v1.TieredStepsH\x00\x42\x08\n\x06policy\"2\n\x0bTieredSteps\x12#\n\x05tiers\x18\x01 \x03(\x0b\x32\x14.auction.v1.StepTier\"S\n\x08StepTier\x12&\n\x0blower_bound\x18\x01 \x01(\x0b\x32\x11.auction.v1.Money\x12\x1f\n\x04step\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\"V\n\tAntiSnipe\x12\x16\n\x0ewindow_seconds\x18\x01 \x01(\x03\x12\x19\n\x11\x65xtension_seconds\x18\x02 \x01(\x03\x12\x16\n\x0emax_extensions\x18\x03 \x01(\x05\"\n\n\x08LotDraft\"8\n\x0bLotSchedule\x12)\n\x0estarting_price\x18\x01 \x01(\x0b\x32\x11.auction.v1.Money\"\x8e\x02\n\nLotTrading\x12(\n\rcurrent_price\x18\x01 \x01(\x0b\x32\x11.auction.v1.Money\x12\x1e\n\x03\x61sk\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\x12\x16\n\tleader_id\x18\x03 \x01(\tH\x00\x88\x01\x01\x12\x1b\n\x0eleading_bid_id\x18\x04 \x01(\tH\x01\x88\x01\x01\x12\x15\n\x08\x64\x65\x61\x64line\x18\x05 \x01(\tH\x02\x88\x01\x01\x12\x17\n\x0f\x65xtensions_used\x18\x06 \x01(\x05\x12#\n\x05phase\x18\x07 \x01(\x0e\x32\x14.auction.v1.LotPhaseB\x0c\n\n_leader_idB\x11\n\x0f_leading_bid_idB\x0b\n\t_deadline\"\xa2\x01\n\x07LotHeld\x12(\n\rcurrent_price\x18\x01 \x01(\x0b\x32\x11.auction.v1.Money\x12\x16\n\tleader_id\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x1b\n\x0eleading_bid_id\x18\x03 \x01(\tH\x01\x88\x01\x01\x12\x17\n\x0f\x65xtensions_used\x18\x04 \x01(\x05\x42\x0c\n\n_leader_idB\x11\n\x0f_leading_bid_id\"_\n\x07LotSale\x12\x11\n\twinner_id\x18\x01 \x01(\t\x12 \n\x05price\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\x12\x0e\n\x06\x62id_id\x18\x03 \x01(\t\x12\x0f\n\x07sold_at\x18\x04 \x01(\t\"\xeb\x01\n\rAuctionConfig\x12-\n\x0conline_phase\x18\x01 \x01(\x0b\x32\x17.auction.v1.OnlinePhase\x12\x14\n\x0c\x66inal_blocks\x18\x02 \x01(\x05\x12\x31\n\x0e\x63losing_policy\x18\x03 \x01(\x0b\x32\x19.auction.v1.ClosingPolicy\x12-\n\x0clot_defaults\x18\x04 \x01(\x0b\x32\x17.auction.v1.LotDefaults\x12\x33\n\x0cstep_windows\x18\x05 \x03(\x0b\x32\x1d.auction.v1.AuctionStepWindow\"b\n\x11\x41uctionStepWindow\x12\x0c\n\x04\x66rom\x18\x01 \x01(\t\x12\r\n\x05until\x18\x02 \x01(\t\x12\x1f\n\x04step\x18\x03 \x01(\x0b\x32\x11.auction.v1.Money\x12\x0f\n\x07lot_ids\x18\x04 \x03(\t\"Z\n\x0bOnlinePhase\x12\x10\n\x08opens_at\x18\x01 \x01(\t\x12\x16\n\tcloses_at\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x13\n\x0b\x63loses_lots\x18\x03 \x01(\x08\x42\x0c\n\n_closes_at\"\xb4\x01\n\rClosingPolicy\x12\x38\n\rby_auctioneer\x18\x01 \x01(\x0b\x32\x1f.auction.v1.ClosingByAuctioneerH\x00\x12\x34\n\x0b\x62y_deadline\x18\x02 \x01(\x0b\x32\x1d.auction.v1.ClosingByDeadlineH\x00\x12)\n\x05mixed\x18\x03 \x01(\x0b\x32\x18.auction.v1.MixedClosingH\x00\x42\x08\n\x06policy\"\x15\n\x13\x43losingByAuctioneer\"\x13\n\x11\x43losingByDeadline\"*\n\x0cMixedClosing\x12\x1a\n\x12online_by_deadline\x18\x01 \x01(\x08\"\x8e\x01\n\x0bLotDefaults\x12\x10\n\x08\x63urrency\x18\x01 \x01(\t\x12+\n\x0bstep_policy\x18\x02 \x01(\x0b\x32\x16.auction.v1.StepPolicy\x12)\n\nanti_snipe\x18\x03 \x01(\x0b\x32\x15.auction.v1.AntiSnipe\x12\x15\n\rproxy_enabled\x18\x04 \x01(\x08*O\n\x08LotPhase\x12\x19\n\x15LOT_PHASE_UNSPECIFIED\x10\x00\x12\x14\n\x10LOT_PHASE_ONLINE\x10\x01\x12\x12\n\x0eLOT_PHASE_LIVE\x10\x02*H\n\x0cUnsoldReason\x12\x1d\n\x19UNSOLD_REASON_UNSPECIFIED\x10\x00\x12\x19\n\x15UNSOLD_REASON_NO_BIDS\x10\x01*\x96\x01\n\x0fWithdrawnReason\x12 \n\x1cWITHDRAWN_REASON_UNSPECIFIED\x10\x00\x12!\n\x1dWITHDRAWN_REASON_BY_ORGANIZER\x10\x01\x12\x1e\n\x1aWITHDRAWN_REASON_BY_AUTHOR\x10\x02\x12\x1e\n\x1aWITHDRAWN_REASON_DUPLICATE\x10\x03*Q\n\tBidSource\x12\x1a\n\x16\x42ID_SOURCE_UNSPECIFIED\x10\x00\x12\x12\n\x0e\x42ID_SOURCE_BOT\x10\x01\x12\x14\n\x10\x42ID_SOURCE_FLOOR\x10\x02*\x97\x01\n\x11\x46ulfillmentMethod\x12\"\n\x1e\x46ULFILLMENT_METHOD_UNSPECIFIED\x10\x00\x12\x1d\n\x19\x46ULFILLMENT_METHOD_PICKUP\x10\x01\x12\x1f\n\x1b\x46ULFILLMENT_METHOD_DELIVERY\x10\x02\x12\x1e\n\x1a\x46ULFILLMENT_METHOD_DIGITAL\x10\x03\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'auction.v1.auction_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_LOTPHASE']._serialized_start=1857
-  _globals['_LOTPHASE']._serialized_end=1936
-  _globals['_UNSOLDREASON']._serialized_start=1938
-  _globals['_UNSOLDREASON']._serialized_end=2010
-  _globals['_WITHDRAWNREASON']._serialized_start=2013
-  _globals['_WITHDRAWNREASON']._serialized_end=2163
-  _globals['_BIDSOURCE']._serialized_start=2165
-  _globals['_BIDSOURCE']._serialized_end=2246
-  _globals['_FULFILLMENTMETHOD']._serialized_start=2249
-  _globals['_FULFILLMENTMETHOD']._serialized_end=2400
+  _globals['_LOTPHASE']._serialized_start=2010
+  _globals['_LOTPHASE']._serialized_end=2089
+  _globals['_UNSOLDREASON']._serialized_start=2091
+  _globals['_UNSOLDREASON']._serialized_end=2163
+  _globals['_WITHDRAWNREASON']._serialized_start=2166
+  _globals['_WITHDRAWNREASON']._serialized_end=2316
+  _globals['_BIDSOURCE']._serialized_start=2318
+  _globals['_BIDSOURCE']._serialized_end=2399
+  _globals['_FULFILLMENTMETHOD']._serialized_start=2402
+  _globals['_FULFILLMENTMETHOD']._serialized_end=2553
   _globals['_MONEY']._serialized_start=40
   _globals['_MONEY']._serialized_end=86
   _globals['_LOTCONFIG']._serialized_start=89
@@ -64,17 +64,19 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_LOTSALE']._serialized_start=1067
   _globals['_LOTSALE']._serialized_end=1162
   _globals['_AUCTIONCONFIG']._serialized_start=1165
-  _globals['_AUCTIONCONFIG']._serialized_end=1347
-  _globals['_ONLINEPHASE']._serialized_start=1349
-  _globals['_ONLINEPHASE']._serialized_end=1439
-  _globals['_CLOSINGPOLICY']._serialized_start=1442
-  _globals['_CLOSINGPOLICY']._serialized_end=1622
-  _globals['_CLOSINGBYAUCTIONEER']._serialized_start=1624
-  _globals['_CLOSINGBYAUCTIONEER']._serialized_end=1645
-  _globals['_CLOSINGBYDEADLINE']._serialized_start=1647
-  _globals['_CLOSINGBYDEADLINE']._serialized_end=1666
-  _globals['_MIXEDCLOSING']._serialized_start=1668
-  _globals['_MIXEDCLOSING']._serialized_end=1710
-  _globals['_LOTDEFAULTS']._serialized_start=1713
-  _globals['_LOTDEFAULTS']._serialized_end=1855
+  _globals['_AUCTIONCONFIG']._serialized_end=1400
+  _globals['_AUCTIONSTEPWINDOW']._serialized_start=1402
+  _globals['_AUCTIONSTEPWINDOW']._serialized_end=1500
+  _globals['_ONLINEPHASE']._serialized_start=1502
+  _globals['_ONLINEPHASE']._serialized_end=1592
+  _globals['_CLOSINGPOLICY']._serialized_start=1595
+  _globals['_CLOSINGPOLICY']._serialized_end=1775
+  _globals['_CLOSINGBYAUCTIONEER']._serialized_start=1777
+  _globals['_CLOSINGBYAUCTIONEER']._serialized_end=1798
+  _globals['_CLOSINGBYDEADLINE']._serialized_start=1800
+  _globals['_CLOSINGBYDEADLINE']._serialized_end=1819
+  _globals['_MIXEDCLOSING']._serialized_start=1821
+  _globals['_MIXEDCLOSING']._serialized_end=1863
+  _globals['_LOTDEFAULTS']._serialized_start=1866
+  _globals['_LOTDEFAULTS']._serialized_end=2008
 # @@protoc_insertion_point(module_scope)

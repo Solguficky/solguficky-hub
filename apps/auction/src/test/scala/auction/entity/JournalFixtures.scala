@@ -45,6 +45,11 @@ object JournalFixtures {
 
   val opened: LotEvent.LotOpened = LotEvent.LotOpened(money(10000), tieredConfig, Some(deadline))
 
+  /** Открытие с окном сниженного шага: «Счастливые часы» за два дня до дедлайна. */
+  val openedWithWindows: LotEvent.LotOpened = opened.copy(stepWindows =
+    List(StepWindow(Instant.parse("2026-10-05T12:00:00Z"), Instant.parse("2026-10-05T14:00:00Z"), money(100)))
+  )
+
   val placed: LotEvent.BidPlaced =
     LotEvent.BidPlaced(bid(1), participant(2), money(10500), Some(participant(1)), BidOrigin.Manual(BidSource.Bot))
 

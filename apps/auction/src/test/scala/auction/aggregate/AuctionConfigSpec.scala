@@ -1,7 +1,11 @@
 package auction.aggregate
 
 import auction.aggregate.AuctionFixtures.*
+import auction.catalog.LotId
+import auction.lot.CurrencyCode
 import auction.lot.LotFixtures
+import auction.lot.Money
+import auction.lot.StepWindow
 import auction.lot.LotFixtures.tiers
 import auction.lot.StepPolicyInput
 import auction.lot.StepPolicyInvalid
@@ -10,12 +14,21 @@ import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
 
+import java.util.UUID
+
 final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPropertyChecks {
 
   implicit override val generatorDrivenConfig: PropertyCheckConfiguration =
     PropertyCheckConfiguration(minSuccessful = 100)
 
   private val withoutClosesAt = Some(week.copy(closesAt = None))
+
+  private val lotA = LotId(new UUID(5L, 1L))
+  private val lotB = LotId(new UUID(5L, 2L))
+  private val lotC = LotId(new UUID(5L, 3L))
+
+  private def withWindows(windows: StepWindowConfig*): Either[ConfigInvalid, AuctionConfig] =
+    AuctionConfig.parse(configInput(stepWindows = windows.toList))
 
   private val policies: Gen[ClosingPolicy] =
     Gen.oneOf(
@@ -80,6 +93,82 @@ final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckD
       for (blocks <- List(-1, 2))
         AuctionConfig.parse(configInput(finalBlocks = blocks)) shouldBe Left(ConfigInvalid.FinalBlocksOutOfRange)
       AuctionConfig.parse(configInput(finalBlocks = 0)).isRight shouldBe true
+    }
+
+    "accepts step windows inside the week and hands each lot only the windows it is named in, by start" in {
+      val late = window(48, 50, Set(lotA))
+      val early = window(24, 26, Set(lotA, lotB))
+      val accepted = withWindows(late, early)
+
+      accepted.map(_.windowsOf(lotA)) shouldBe Right(
+        List(
+          StepWindow(early.from, early.until, early.step),
+          StepWindow(late.from, late.until, late.step)
+        )
+      )
+      accepted.map(_.windowsOf(lotB)) shouldBe Right(List(StepWindow(early.from, early.until, early.step)))
+      accepted.map(_.windowsOf(lotC)) shouldBe Right(Nil)
+    }
+
+    "accepts a window that spans the whole week, both ends on its bounds" in {
+      withWindows(StepWindowConfig(opensAt, closesAt, LotFixtures.money(1), Set(lotA))).isRight shouldBe true
+    }
+
+    // Т-68
+    "refuses a window that starts before the week, ends after it or ends before it starts" in {
+      val cases = List(
+        StepWindowConfig(opensAt.minusSeconds(1), opensAt.plusSeconds(3600), LotFixtures.money(1), Set(lotA)),
+        StepWindowConfig(opensAt, closesAt.plusSeconds(1), LotFixtures.money(1), Set(lotA)),
+        window(5, 5, Set(lotA)),
+        window(6, 5, Set(lotA))
+      )
+      for (invalid <- cases)
+        withWindows(window(1, 2, Set(lotB)), invalid) shouldBe Left(ConfigInvalid.StepWindowOutsideOnlinePhase(1))
+    }
+
+    // Т-68
+    "refuses a window when the week has no closesAt or there is no online phase at all" in {
+      val ledByPerson = configInput(
+        Some(OnlinePhase(opensAt, None, closesLots = false)),
+        closingPolicy = ClosingPolicy.ByAuctioneer,
+        stepWindows = List(window(1, 2, Set(lotA)))
+      )
+      AuctionConfig.parse(ledByPerson) shouldBe Left(ConfigInvalid.StepWindowWithoutClosesAt(0))
+      AuctionConfig.parse(ledByPerson.copy(onlinePhase = None)) shouldBe
+        Left(ConfigInvalid.StepWindowWithoutClosesAt(0))
+    }
+
+    // Т-69
+    "refuses two windows that share a lot and intersect, and accepts the same intervals on different lots" in {
+      withWindows(window(1, 3, Set(lotA)), window(5, 6, Set(lotC)), window(2, 4, Set(lotA, lotB))) shouldBe
+        Left(ConfigInvalid.StepWindowsOverlap(0, 2))
+      withWindows(window(1, 3, Set(lotA)), window(2, 4, Set(lotB))).isRight shouldBe true
+      withWindows(window(1, 3, Set(lotA)), window(3, 4, Set(lotA))).isRight shouldBe true
+    }
+
+    // Т-69
+    "refuses a window with no lots or with a step that is not positive" in {
+      withWindows(window(1, 2, Set.empty)) shouldBe Left(ConfigInvalid.StepWindowLotsEmpty(0))
+      withWindows(window(1, 2, Set(lotA), step = 0)) shouldBe Left(ConfigInvalid.StepWindowStepInvalid(0))
+      withWindows(window(1, 2, Set(lotA), step = -1)) shouldBe Left(ConfigInvalid.StepWindowStepInvalid(0))
+    }
+
+    "refuses a window in another currency than the lot defaults, or than the platform without them" in {
+      val euro = window(1, 2, Set(lotA)).copy(step = Money(1, CurrencyCode("EUR")))
+      withWindows(euro) shouldBe Left(ConfigInvalid.StepWindowStepInvalid(0))
+      AuctionConfig.parse(configInput(lotDefaults = None, stepWindows = List(euro))) shouldBe
+        Left(ConfigInvalid.StepWindowStepInvalid(0))
+      AuctionConfig.parse(configInput(lotDefaults = None, stepWindows = List(window(1, 2, Set(lotA))))).isRight shouldBe
+        true
+    }
+
+    // Журнал восстанавливает конфигурацию через `of`: валюту платформы он не сверяет, иначе её смена в коде сделала бы
+    // записанный аукцион нечитаемым и вместе с ним его таймеры закрытия.
+    "restores a window without lot defaults regardless of the currency of the platform" in {
+      val euro = window(1, 2, Set(lotA)).copy(step = Money(1, CurrencyCode("EUR")))
+      AuctionConfig
+        .of(Some(week), 1, ClosingPolicy.Mixed(onlineByDeadline = true), None, List(euro))
+        .isRight shouldBe true
     }
 
     "refuses lot defaults whose step policy is contradictory" in {

@@ -94,6 +94,13 @@ enum Phase {
 }
 
 /**
+ * Окно сниженного шага лота — полуинтервал `[from, until)` и сумма шага в нём (RFC-011, П-03; ADR-047, дополнение
+ * 2026-10-08). Лот получает только окна, в которые организатор его выбрал, поэтому списка лотов здесь нет; валюта суммы
+ * — валюта лота, окна в чужой валюте лот при открытии отбрасывает (И-04).
+ */
+final case class StepWindow(from: Instant, until: Instant, step: Money)
+
+/**
  * Действующий прокси-лимит участника (RFC-011, «Состояние лота»).
  *
  * `setSeq` — `sequence` события `ProxyLimitSet`, которое его записало: в payload он не входит, а берётся из конверта
@@ -110,7 +117,9 @@ final case class ProxyLimit(max: Money, setSeq: Long)
  * раз анти-снайп уже продлил дедлайн (П-04); он лежит рядом с дедлайном, чтобы лимит продлений восстанавливался из
  * журнала вместе с ним (ПП-2). `markedForFinal` — лот отмечен для финала (П-09): торги идут как обычно, а закрытие по
  * дедлайну удержит его вместо продажи. Это состояние, а не настройка: `false` из `LotOpened` и `LotResumed`, `true` из
- * `LotMarkedForFinal` (И-10).
+ * `LotMarkedForFinal` (И-10). `stepWindows` — окна сниженного шага из `LotOpened`, заморожены, как `config` (И-21), и
+ * действуют только в фазе `Online`. В живой финал они не доходят: удержание их не переносит, и `LotResumed` строит
+ * торги без окон.
  */
 final case class TradingState(
     config: LotConfig,
@@ -122,7 +131,8 @@ final case class TradingState(
     deadline: Option[Instant],
     extensionsUsed: Int,
     proxyLimits: Map[ParticipantId, ProxyLimit],
-    markedForFinal: Boolean
+    markedForFinal: Boolean,
+    stepWindows: List[StepWindow] = Nil
 )
 
 /**
@@ -196,10 +206,11 @@ final case class DraftLot(auction: AuctionId, opId: OpId)
 final case class ScheduleLot(startingPrice: Money, config: LotConfigInput, opId: OpId)
 
 /**
- * Открытие торгов лота. Стартовая цена и конфигурация берутся из `Scheduled`, а дедлайн приходит от аукциона, которому
- * он принадлежит (RFC-011, «Вход и выход команд»).
+ * Открытие торгов лота. Стартовая цена и конфигурация берутся из `Scheduled`, а дедлайн и окна сниженного шага приходят
+ * от аукциона, которому принадлежит их источник (RFC-011, «Вход и выход команд»). `stepWindows` — окна, в которые
+ * организатор выбрал этот лот; пусто, если таких нет.
  */
-final case class OpenLot(deadline: Option[Instant], opId: OpId)
+final case class OpenLot(deadline: Option[Instant], opId: OpId, stepWindows: List[StepWindow] = Nil)
 
 /**
  * Почему лот закрывают: наступил дедлайн — тогда наступил ли он, решает сам лот (RFC-011, П-05), — или закрывает
@@ -229,8 +240,8 @@ final case class UnmarkForFinal(opId: OpId)
 final case class ResumeLot(opId: OpId)
 
 /**
- * События лота. `LotOpened` несёт всю конфигурацию торгов, чтобы состояние восстанавливалось из журнала без обращения
- * наружу (И-07). `previousLeader` при первой ставке отсутствует, а не равен нулю (RFC-011, П-01).
+ * События лота. `LotOpened` несёт всю конфигурацию торгов и окна сниженного шага, чтобы состояние восстанавливалось из
+ * журнала без обращения наружу (И-07). `previousLeader` при первой ставке отсутствует, а не равен нулю (RFC-011, П-01).
  *
  * У `LotDrafted` payload нет (ADR-047): аукцион лежит в конверте строки. В доменном событии он полем, потому что
  * принадлежность лота аукциону восстанавливает `apply`, а конверт ядро не читает. `LotScheduled` несёт `Schedule`
@@ -251,7 +262,12 @@ final case class ResumeLot(opId: OpId)
 enum LotEvent {
   case LotDrafted(auction: AuctionId)
   case LotScheduled(schedule: Schedule)
-  case LotOpened(startingPrice: Money, config: LotConfig, deadline: Option[Instant])
+  case LotOpened(
+      startingPrice: Money,
+      config: LotConfig,
+      deadline: Option[Instant],
+      stepWindows: List[StepWindow] = Nil
+  )
   case BidPlaced(
       bidId: BidId,
       participant: ParticipantId,

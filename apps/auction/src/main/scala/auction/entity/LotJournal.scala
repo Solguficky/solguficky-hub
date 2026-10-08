@@ -47,7 +47,19 @@ final case class StoredConfig(
 /** Секция `LotScheduled` и состояния `Scheduled`: `Schedule` снимком. */
 final case class StoredSchedule(startingPrice: StoredMoney, config: StoredConfig)
 
-final case class StoredLotOpened(startingPrice: StoredMoney, config: StoredConfig, deadline: Option[Instant])
+/** Окно сниженного шага лота: полуинтервал `[from, until)` и сумма шага в нём (ADR-047, дополнение 2026-10-08). */
+final case class StoredStepWindow(from: Instant, until: Instant, step: StoredMoney)
+
+/**
+ * `stepWindows` пишется только непустым (ADR-047, дополнение 2026-10-08): строка без него — торги без окна, и так
+ * читается всё, что записано до этого поля.
+ */
+final case class StoredLotOpened(
+    startingPrice: StoredMoney,
+    config: StoredConfig,
+    deadline: Option[Instant],
+    stepWindows: Option[List[StoredStepWindow]] = None
+)
 
 /**
  * `source` есть только у ручной ставки: производную ставку прокси поставила система, а не канал. Строка, записанная до
@@ -128,7 +140,7 @@ final case class StoredProxyLimit(participant: UUID, max: StoredMoney, setSeq: L
  * `proxyLimits` необязателен по форме: snapshot, записанный до прокси-лимитов, его не несёт и читается как торги без
  * лимитов. Новый snapshot пишет его всегда, в порядке `setSeq`. `extensionsUsed` так же: snapshot, записанный до
  * анти-снайпа, читается как торги без продлений — других тогда и не было. `markedForFinal` так же: до отметки финала
- * отмеченных лотов не было.
+ * отмеченных лотов не было. `stepWindows` так же и пишется только непустым, как в `StoredLotOpened`.
  */
 final case class StoredTrading(
     config: StoredConfig,
@@ -140,7 +152,8 @@ final case class StoredTrading(
     deadline: Option[Instant],
     proxyLimits: Option[List[StoredProxyLimit]],
     extensionsUsed: Option[Int],
-    markedForFinal: Option[Boolean]
+    markedForFinal: Option[Boolean],
+    stepWindows: Option[List[StoredStepWindow]] = None
 )
 
 /**
@@ -286,10 +299,12 @@ object LotJournal {
       case LotEvent.LotDrafted(_) => StoredEvent.of("LotDrafted")
       case LotEvent.LotScheduled(schedule) =>
         StoredEvent.of("LotScheduled").copy(lotScheduled = Some(storeSchedule(schedule)))
-      case LotEvent.LotOpened(startingPrice, config, deadline) =>
+      case LotEvent.LotOpened(startingPrice, config, deadline, windows) =>
         StoredEvent
           .of("LotOpened")
-          .copy(lotOpened = Some(StoredLotOpened(storeMoney(startingPrice), storeConfig(config), deadline)))
+          .copy(lotOpened =
+            Some(StoredLotOpened(storeMoney(startingPrice), storeConfig(config), deadline, storeWindows(windows)))
+          )
       case LotEvent.BidPlaced(bidId, participant, amount, previousLeader, origin, overtakenByProxy) =>
         val (originKind, source) = origin match {
           case BidOrigin.Manual(channel) => ("Manual", Some(channel.toString))
@@ -360,7 +375,13 @@ object LotJournal {
         stored.lotScheduled.fold(mismatch)(schedule => LotEvent.LotScheduled(restoreSchedule(schedule)))
       case ("LotOpened", 1) =>
         stored.lotOpened.fold(mismatch) { opened =>
-          LotEvent.LotOpened(restoreMoney(opened.startingPrice), restoreConfig(opened.config), opened.deadline)
+          val config = restoreConfig(opened.config)
+          LotEvent.LotOpened(
+            restoreMoney(opened.startingPrice),
+            config,
+            opened.deadline,
+            restoreWindows(opened.stepWindows, config)
+          )
         }
       case ("BidPlaced", 1) =>
         stored.bidPlaced.fold(mismatch) { placed =>
@@ -450,7 +471,8 @@ object LotJournal {
               deadline = trading.deadline,
               proxyLimits = storeLimits(trading.proxyLimits),
               extensionsUsed = Some(trading.extensionsUsed),
-              markedForFinal = Some(trading.markedForFinal)
+              markedForFinal = Some(trading.markedForFinal),
+              stepWindows = storeWindows(trading.stepWindows)
             )
           ),
           held = None,
@@ -507,7 +529,8 @@ object LotJournal {
             deadline = trading.deadline,
             extensionsUsed = trading.extensionsUsed.getOrElse(0),
             proxyLimits = restoreLimits(trading.proxyLimits, config),
-            markedForFinal = trading.markedForFinal.getOrElse(false)
+            markedForFinal = trading.markedForFinal.getOrElse(false),
+            stepWindows = restoreWindows(trading.stepWindows, config)
           )
         )
       case ("Held", None, Some(held), None, None, None) =>
@@ -529,9 +552,28 @@ object LotJournal {
       case _ => corrupted(s"lot state of kind ${stored.kind} with sections that do not match it")
     }
 
-  private def storeMoney(money: Money): StoredMoney = StoredMoney(money.minorUnits, money.currency.value)
+  private def storeWindows(windows: List[StepWindow]): Option[List[StoredStepWindow]] =
+    Option.when(windows.nonEmpty)(
+      windows.map(window => StoredStepWindow(window.from, window.until, storeMoney(window.step)))
+    )
 
-  private def restoreMoney(stored: StoredMoney): Money = Money(stored.minorUnits, CurrencyCode(stored.currency))
+  /**
+   * Окна И-21: в валюте лота, `from` раньше `until`, без пересечений. Иное — испорченный журнал, а не торги без окна.
+   */
+  private def restoreWindows(stored: Option[List[StoredStepWindow]], config: LotConfig): List[StepWindow] = {
+    val windows = stored.getOrElse(Nil).map(window => StepWindow(window.from, window.until, restoreMoney(window.step)))
+    if (windows.exists(_.step.currency != config.currency)) corrupted("step window in another currency than the lot")
+    if (windows.exists(window => !window.from.isBefore(window.until)))
+      corrupted("step window that ends before it starts")
+    val ordered = windows.sortBy(_.from)
+    if (ordered.zip(ordered.drop(1)).exists((earlier, later) => later.from.isBefore(earlier.until)))
+      corrupted("overlapping step windows of one lot")
+    windows
+  }
+
+  private[entity] def storeMoney(money: Money): StoredMoney = StoredMoney(money.minorUnits, money.currency.value)
+
+  private[entity] def restoreMoney(stored: StoredMoney): Money = Money(stored.minorUnits, CurrencyCode(stored.currency))
 
   private def storeSchedule(schedule: Schedule): StoredSchedule =
     StoredSchedule(storeMoney(schedule.startingPrice), storeConfig(schedule.config))

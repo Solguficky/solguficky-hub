@@ -64,6 +64,18 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
       }
     }
 
+    // Т-71: окна выводятся из конфигурации аукциона, поэтому повторный OpenLot после рестарта несёт те же.
+    "opens a lot with the step windows it is named in and none of the others" in {
+      val windows = config(configInput(stepWindows = List(window(1, 2, Set(first)), window(3, 4, Set(second)))))
+      val withWindows = auctionIn(AuctionState.Prebidding(windows, op(3)))
+
+      LotRoster
+        .observed(withWindows, LotRoster.survey(withWindows)._1, first, LotFixtures.scheduled().state)
+        ._2 shouldBe
+        List(LotInstruction.Open(first, OpenLot(Some(closesAt), op(3), windows.windowsOf(first))))
+      windows.windowsOf(first).map(_.from) shouldBe List(opensAt.plusSeconds(3600))
+    }
+
     "opens a lot without a deadline when the config does not close lots" in {
       val ledByPerson = auctionIn(AuctionState.Prebidding(config(byAuctioneer), op(3)))
       LotRoster.observed(ledByPerson, asked, first, LotFixtures.scheduled().state)._2 shouldBe

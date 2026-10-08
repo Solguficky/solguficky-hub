@@ -90,6 +90,23 @@ final class LotJournalSpec
       keepsGolden("lot-opened", storedEvent(opened))
     }
 
+    "keep the stored form of an opening with step windows equal to its golden file and read it back" in {
+      keepsGolden("lot-opened-with-step-windows", storedEvent(openedWithWindows))
+      LotJournal.envelope(1, storedEvent(openedWithWindows)) shouldBe Envelope(1, op(1), openedWithWindows)
+    }
+
+    "refuse step windows of an opening that break И-21 instead of trading on them" in {
+      val body = storedEvent(openedWithWindows)
+      val windows = body.event.lotOpened.flatMap(_.stepWindows).get
+      val foreign = windows.map(window => window.copy(step = window.step.copy(currency = "EUR")))
+      val reversed = windows.map(window => window.copy(from = window.until, until = window.from))
+      for (broken <- List(foreign, reversed, windows ++ windows))
+        a[JournalCorrupted] should be thrownBy LotJournal.envelope(
+          1,
+          body.copy(event = body.event.copy(lotOpened = body.event.lotOpened.map(_.copy(stepWindows = Some(broken)))))
+        )
+    }
+
     "read an opening written before the auction and the schedule into the same event" in {
       val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
 

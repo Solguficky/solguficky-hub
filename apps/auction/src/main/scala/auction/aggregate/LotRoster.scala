@@ -137,7 +137,7 @@ object LotRoster {
           case LotState.Held(_) => (roster.mark(lot, LotStanding.Held), Nil)
           case LotState.Sold(_) | LotState.Unsold(_) => (roster.mark(lot, LotStanding.Closed), Nil)
           case LotState.Initial | LotState.Draft | LotState.Scheduled(_) =>
-            val open = LotInstruction.Open(lot, OpenLot(config.lotDeadline, startedBy))
+            val open = LotInstruction.Open(lot, OpenLot(config.lotDeadline, startedBy, config.windowsOf(lot)))
             (roster.mark(lot, LotStanding.Opening), List(open))
         }
       case _ => (roster, Nil)

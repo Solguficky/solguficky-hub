@@ -59,7 +59,7 @@ object LotFacts {
     event match {
       case LotEvent.LotDrafted(_) => Some("lot_drafted" -> bus.LotEvent.Occasion.LotDrafted(bus.LotDrafted()))
       case LotEvent.LotScheduled(_) => Some("lot_scheduled" -> bus.LotEvent.Occasion.LotScheduled(bus.LotScheduled()))
-      case LotEvent.LotOpened(_, _, _) => Some("lot_opened" -> bus.LotEvent.Occasion.LotOpened(bus.LotOpened()))
+      case _: LotEvent.LotOpened => Some("lot_opened" -> bus.LotEvent.Occasion.LotOpened(bus.LotOpened()))
       case LotEvent.BidPlaced(_, participant, _, previousLeader, origin, overtakenByProxy) =>
         val placed = bus.BidPlaced(
           previousLeaderId = previousLeader.map(_.value.toString),
