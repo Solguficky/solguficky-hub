@@ -45,7 +45,6 @@ describe("application card", () => {
     expect(screen.keyboard.inline_keyboard).toEqual([
       [{ text: "Допустить", callback_data: `v1:cm:qa:${cursor}` }],
       [{ text: "Отказать", callback_data: `v1:cm:qd:${cursor}` }],
-      [{ text: "Профиль ↗", url: "tg://user?id=77" }],
       [{ text: "Пропустить", callback_data: `v1:cm:q:${cursor}` }],
       [
         { text: "‹ Управление", callback_data: "v1:manage:menu" },
@@ -54,19 +53,18 @@ describe("application card", () => {
     ]);
   });
 
-  it("falls back to the username link when privacy hides the profile", () => {
+  it("omits the profile link even when the person has a username", () => {
     const screen = applicationCardScreen(
       { application: card, position: 1 },
       1,
       twoDaysLater,
     );
 
-    expect(screen.privacyFallback?.inline_keyboard[2]).toEqual([
-      { text: "Профиль ↗", url: "https://t.me/ivan_p" },
-    ]);
+    expect(JSON.stringify(screen.keyboard)).not.toContain("url");
+    expect(rows(screen.keyboard).flat()).not.toContain("Профиль ↗");
   });
 
-  it("names a person without a username by name and code, without a profile fallback", () => {
+  it("names a person without a username by name and code, without a profile link", () => {
     const { telegramUsername: _, ...withoutUsername } = card;
     const screen = applicationCardScreen(
       {
@@ -80,7 +78,7 @@ describe("application card", () => {
     expect(screen.text).toContain("<b>Заявка 1 из 2 · хаб</b>");
     expect(screen.text).toContain("Иван П. · код c0de1234");
     expect(screen.text).not.toContain(card.identityId);
-    expect(rows(screen.privacyFallback ?? screen.keyboard)).toEqual([
+    expect(rows(screen.keyboard)).toEqual([
       ["Допустить"],
       ["Отказать"],
       ["Пропустить"],

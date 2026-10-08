@@ -1,5 +1,5 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import { type Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
+import { type Bot, GrammyError, HttpError, InlineKeyboard, InputFile } from "grammy";
 import {
   type AuctionBlock,
   type AuctionResult,
@@ -213,6 +213,7 @@ import {
 } from "./screens/schedule-presets.js";
 import {
   clearCallbackKeyboard,
+  ScreenDeliveryError,
   type ScreenPhoto,
   type ShownScreen,
   screenMark,
@@ -1531,7 +1532,14 @@ async function handleMessage(
       }
     }
   } catch (cause) {
-    if (outcome === undefined) {
+    if (isScreenDeliveryFailure(cause)) {
+      outcome = await replyScreenFailure({
+        ctx,
+        cause,
+        previous: outcome,
+        useCase,
+      });
+    } else if (outcome === undefined) {
       outcome = unexpectedOutcome(cause, undefined, useCase);
     }
   } finally {
@@ -3263,7 +3271,14 @@ async function handleCallback(
       useCase,
     );
   } catch (cause) {
-    if (outcome === undefined) {
+    if (isScreenDeliveryFailure(cause)) {
+      outcome = await replyScreenFailure({
+        ctx,
+        cause,
+        previous: outcome,
+        useCase,
+      });
+    } else if (outcome === undefined) {
       outcome = unexpectedOutcome(cause, undefined, useCase);
     } else if (outcome.result === "error") {
       outcome = { ...outcome, reply_error: errorText(cause) };
@@ -5359,14 +5374,20 @@ async function renderMeetupCard(
       // Сама карточка от постера не зависит и приходит без них. Повтор идёт
       // только на отказ запроса (400): сеть, лимит и остальное — не про фото,
       // и второе сообщение там дало бы дубль.
+      const deliveryCause =
+        cause instanceof ScreenDeliveryError ? cause.cause : cause;
+      const telegramCause =
+        deliveryCause instanceof AggregateError
+          ? deliveryCause.cause
+          : deliveryCause;
       if (
         card.media === undefined ||
-        !(cause instanceof GrammyError) ||
-        cause.error_code !== 400
+        !(telegramCause instanceof GrammyError) ||
+        telegramCause.error_code !== 400
       ) {
         throw cause;
       }
-      ctx.postersRejected = cause.description;
+      ctx.postersRejected = telegramCause.description;
       await showScreen(ctx, {
         ...cardScreen({ ...view, posters: false }),
         delivery: "new",
@@ -6865,6 +6886,51 @@ function identityFailureOutcome(
   };
 }
 
+// Кадр не повторяет действие: юзкейс мог уже успешно изменить состояние.
+// Отказ самого кадра не запускает восстановление снова.
+async function replyScreenFailure({
+  ctx,
+  cause,
+  previous,
+  useCase,
+}: {
+  ctx: UpdateContext;
+  cause: unknown;
+  previous: BoundaryOutcome | undefined;
+  useCase: ProductUseCase | undefined;
+}): Promise<BoundaryOutcome> {
+  const outcome: BoundaryOutcome =
+    previous?.result === "error"
+      ? { ...previous, reply_error: errorText(cause) }
+      : unexpectedOutcome(
+          cause,
+          undefined,
+          useCase,
+          previous?.meetup_id,
+          previous?.identity_id,
+        );
+  try {
+    await showRefusal(
+      ctx,
+      "Не получилось показать экран. Это на моей стороне.\n\nОткрой меню и проверь состояние перед повтором действия.",
+      menuOnly(),
+      // Предыдущая попытка могла снять клавиатуру. Snapshot callback ещё
+      // содержит её: правка того же кадра была бы ошибочно пропущена.
+      "new",
+    );
+  } catch (replyCause) {
+    if (outcome.result === "error") {
+      return {
+        ...outcome,
+        reply_error: [outcome.reply_error, errorText(replyCause)]
+          .filter(Boolean)
+          .join("; "),
+      };
+    }
+  }
+  return outcome;
+}
+
 // Отказ самого ответа человеку нельзя терять: раньше outcome присваивался до
 // await, поэтому catch видел его непустым и 403 от Bot API не попадал ни в
 // запись границы, ни в bot.catch.
@@ -6876,11 +6942,23 @@ async function replyFailClosed(
     await showRefusal(ctx, unavailableText, menuOnly());
     return outcome;
   } catch (cause) {
-    if (outcome.result === "error") {
-      return { ...outcome, reply_error: errorText(cause) };
-    }
-    return outcome;
+    return await replyScreenFailure({
+      ctx,
+      cause,
+      previous: outcome,
+      useCase: outcome.use_case,
+    });
   }
+}
+
+// Некоторые вопросы и подтверждения ещё идут прямо через Context. Ошибки
+// доставки от grammY ловим и для них, не принимая отказ ack за отказ экрана.
+function isScreenDeliveryFailure(cause: unknown): boolean {
+  return (
+    cause instanceof ScreenDeliveryError ||
+    cause instanceof HttpError ||
+    (cause instanceof GrammyError && /^(send|editMessage)/.test(cause.method))
+  );
 }
 
 function unexpectedOutcome(

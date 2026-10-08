@@ -1817,16 +1817,51 @@ describe("presentation adapter", () => {
       expect(JSON.stringify(calls[1]?.payload)).toContain("Пётр (@petr)");
     });
 
-    it("links the profile by username when privacy refuses the id link", async () => {
-      const identity = moderating([shown(first, 1, 1)]);
-      const { bot, calls } = createHarness(identity);
-      // Telegram отклоняет сообщение со ссылкой tg://user целиком.
+    it.each([true, false])(
+      "opens an unknown person's card with username %s without a profile link",
+      async (hasUsername) => {
+        const { telegramUsername: _, ...withoutUsername } = first;
+        const identity = moderating([
+          shown(hasUsername ? first : withoutUsername, 1, 1),
+        ]);
+        const { bot, calls } = createHarness(identity);
+        // Telegram отклоняет сообщение со ссылкой tg://user целиком.
+        bot.api.config.use((prev, method, payload, signal) =>
+          JSON.stringify(payload).includes("tg://user?id=")
+            ? Promise.resolve({
+                ok: false,
+                error_code: 400,
+                description: "Bad Request: user not found",
+              })
+            : prev(method, payload, signal),
+        );
+        await bot.init();
+
+        await bot.handleUpdate(callbackUpdate("v1:cm:q"));
+
+        expect(calls.at(-1)).toMatchObject({ method: "editMessageText" });
+        expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+          "Заявка 1 из 1",
+        );
+        expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain(
+          "Профиль ↗",
+        );
+        expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain(
+          "tg://user",
+        );
+      },
+    );
+
+    it("sends the card as a new message when editing is unavailable", async () => {
+      const { bot, calls, records } = createHarness(
+        moderating([shown(first, 1, 1)]),
+      );
       bot.api.config.use((prev, method, payload, signal) =>
-        JSON.stringify(payload).includes("tg://user?id=")
+        method === "editMessageText"
           ? Promise.resolve({
               ok: false,
               error_code: 400,
-              description: "Bad Request: BUTTON_USER_PRIVACY_RESTRICTED",
+              description: "Bad Request: message can't be edited",
             })
           : prev(method, payload, signal),
       );
@@ -1834,11 +1869,51 @@ describe("presentation adapter", () => {
 
       await bot.handleUpdate(callbackUpdate("v1:cm:q"));
 
-      expect(calls.at(-1)).toMatchObject({ method: "editMessageText" });
-      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-        "https://t.me/ivan_p",
-      );
+      expect(calls.at(-1)).toMatchObject({
+        method: "sendMessage",
+        payload: { text: expect.stringContaining("Заявка 1 из 1") },
+      });
+      expect(records.at(-1)?.fields.result).toBe("ok");
     });
+
+    it.each([400, 403, 500])(
+      "shows a failure frame when Telegram rejects a card with %s",
+      async (errorCode) => {
+        const identity = moderating([shown(second, 1, 1)]);
+        const { bot, calls, records } = createHarness(identity);
+        bot.api.config.use((prev, method, payload, signal) =>
+          "text" in payload && String(payload.text).startsWith("<b>Заявка ")
+            ? Promise.resolve({
+                ok: false,
+                error_code: errorCode,
+                description: `card rejected ${method}`,
+              })
+            : prev(method, payload, signal),
+        );
+        await bot.init();
+
+        await bot.handleUpdate(callbackUpdate(`v1:cm:qa:${cursorOf(first)}`));
+
+        expect(calls.at(-1)).toMatchObject({
+          method: "sendMessage",
+          payload: {
+            text: expect.stringContaining("Не получилось показать экран"),
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "Меню", callback_data: "v1:nav:start" }],
+              ],
+            },
+          },
+        });
+        expect(identity.admitApplication).toHaveBeenCalledTimes(1);
+        expect(records.at(-1)?.fields.error).toContain(
+          "card rejected editMessageText",
+        );
+        expect(records.at(-1)?.fields.error).toContain(
+          "card rejected sendMessage",
+        );
+      },
+    );
   });
 
   describe("refused applications", () => {
@@ -4381,6 +4456,228 @@ describe("presentation adapter", () => {
       error_category: "invariant",
     });
     expect(records[0]?.fields.use_case).toBeUndefined();
+  });
+
+  it("shows a failure frame when a command response loses its connection", async () => {
+    const { bot, calls, records } = createHarness(resolvedIdentity());
+    let sends = 0;
+    bot.api.config.use((prev, method, payload, signal) => {
+      if (method === "sendMessage" && sends++ === 0) {
+        return Promise.reject(new Error("connection lost"));
+      }
+      return prev(method, payload, signal);
+    });
+    await bot.init();
+
+    await bot.handleUpdate(messageUpdate());
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining("Не получилось показать экран"),
+      },
+    });
+    expect(sends).toBe(2);
+    expect(records.at(-1)?.fields.error).toContain("connection lost");
+  });
+
+  it("records both failures without retrying a rejected failure frame", async () => {
+    const { bot, records } = createHarness(resolvedIdentity());
+    let sends = 0;
+    bot.api.config.use((prev, method, payload, signal) => {
+      if (method === "sendMessage") {
+        sends++;
+        return Promise.resolve({
+          ok: false,
+          error_code: 403,
+          description:
+            sends === 1
+              ? "original response rejected"
+              : "failure frame rejected",
+        });
+      }
+      return prev(method, payload, signal);
+    });
+    await bot.init();
+
+    await bot.handleUpdate(messageUpdate());
+
+    expect(sends).toBe(2);
+    expect(records.at(-1)?.fields.error).toContain(
+      "original response rejected",
+    );
+    expect(records.at(-1)?.fields.reply_error).toContain(
+      "failure frame rejected",
+    );
+  });
+
+  it("restores navigation when opening the menu from a failure frame fails again", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity());
+    const frameText =
+      "Не получилось показать экран. Это на моей стороне.\n\nОткрой меню и проверь состояние перед повтором действия.";
+    bot.api.config.use((prev, method, payload, signal) => {
+      if (
+        (method === "editMessageText" || method === "sendMessage") &&
+        "text" in payload &&
+        payload.text !== refusalText(frameText)
+      ) {
+        return Promise.resolve({
+          ok: false,
+          error_code: 400,
+          description: "menu rejected",
+        });
+      }
+      return prev(method, payload, signal);
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackMessageUpdate("v1:nav:start", {
+        text: "Не получилось показать экран. Это на моей стороне.\n\nОткрой меню и проверь состояние перед повтором действия.",
+        entities: [
+          {
+            type: "bold",
+            offset: 0,
+            length: "Не получилось показать экран.".length,
+          },
+        ],
+        reply_markup: {
+          inline_keyboard: [[{ text: "Меню", callback_data: "v1:nav:start" }]],
+        },
+      }),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: refusalText(frameText),
+        reply_markup: {
+          inline_keyboard: [[{ text: "Меню", callback_data: "v1:nav:start" }]],
+        },
+      },
+    });
+  });
+
+  it("does not replace an unchanged screen with a failure frame", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    bot.api.config.use((prev, method, payload, signal) =>
+      method === "editMessageText"
+        ? Promise.resolve({
+            ok: false,
+            error_code: 400,
+            description: "Bad Request: message is not modified",
+          })
+        : prev(method, payload, signal),
+    );
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+
+    expect(calls.map((call) => call.method)).toEqual(["answerCallbackQuery"]);
+  });
+
+  it("tries one fallback after an original refusal frame is rejected", async () => {
+    const { bot, records } = createHarness(refusedIdentity());
+    let sends = 0;
+    bot.api.config.use((prev, method, payload, signal) => {
+      if (method === "sendMessage") {
+        sends++;
+        return Promise.resolve({
+          ok: false,
+          error_code: 403,
+          description: "failure frame rejected",
+        });
+      }
+      return prev(method, payload, signal);
+    });
+    await bot.init();
+
+    await bot.handleUpdate(messageUpdate());
+
+    expect(sends).toBe(2);
+    expect(records.at(-1)?.fields.reply_error).toContain(
+      "failure frame rejected",
+    );
+  });
+
+  it("shows a fallback when Telegram rejects the original refusal but accepts the fallback", async () => {
+    const { bot, calls, records } = createHarness(refusedIdentity());
+    let sends = 0;
+    bot.api.config.use((prev, method, payload, signal) => {
+      if (method === "sendMessage" && sends++ === 0) {
+        return Promise.resolve({
+          ok: false,
+          error_code: 400,
+          description: "original refusal rejected",
+        });
+      }
+      return prev(method, payload, signal);
+    });
+    await bot.init();
+
+    await bot.handleUpdate(messageUpdate());
+
+    expect(sends).toBe(2);
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining("Не получилось показать экран"),
+      },
+    });
+    expect(records.at(-1)?.fields.reply_error).toContain(
+      "original refusal rejected",
+    );
+  });
+
+  it("shows a failure frame when Telegram rejects a directly sent material confirmation", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: publishedMeetup() }
+        : { kind: "rejected", reason: "unexpected" },
+    );
+    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+      execute,
+    });
+    bot.api.config.use((prev, method, payload, signal) => {
+      if (
+        method === "sendMessage" &&
+        JSON.stringify(payload).includes("v1:mm:ca:")
+      ) {
+        return Promise.resolve({
+          ok: false,
+          error_code: 400,
+          description: "material confirmation rejected",
+        });
+      }
+      return prev(method, payload, signal);
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
+    await bot.handleUpdate(forwardedReplyUpdate(lastQuestionId(calls)));
+
+    await bot.handleUpdate(
+      replyUpdate({
+        text: "Материал",
+        fromId: 42,
+        replyMessageId: lastQuestionId(calls),
+        replyFromId: 1,
+      }),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining("Не получилось показать экран"),
+      },
+    });
+    expect(records.at(-1)?.fields.error).toContain(
+      "material confirmation rejected",
+    );
+    expect(
+      execute.mock.calls.some(
+        ([request]) => request.intent === "attach-material",
+      ),
+    ).toBe(false);
   });
 
   it("logs unexpected handler failures with stack and request context", async () => {
