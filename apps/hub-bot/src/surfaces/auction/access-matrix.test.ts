@@ -1,11 +1,14 @@
+import type { Transformer } from "grammy";
+import type { Update, UserFromGetMe } from "grammy/types";
+import {
+  inspectCall,
+  reportViolations,
+} from "../../../testkit/auction/screen-lint.js";
 import {
   type AccessAnswer,
   type AccessMatrixInput,
   describeAccessMatrix,
-} from "@solguficky/auction-bot-ui/contract";
-import type { Transformer } from "grammy";
-import type { Update, UserFromGetMe } from "grammy/types";
-import { inspectCall, reportViolations } from "../testkit/screen-lint.js";
+} from "../../auction-ui/contract/index.js";
 import { createBot } from "./bot.js";
 import { deniedTexts } from "./entry-screen.js";
 import type { Logger } from "./logging.js";

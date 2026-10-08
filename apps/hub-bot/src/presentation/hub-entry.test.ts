@@ -1,7 +1,7 @@
-import type { RoleRequestOutcome } from "@solguficky/auction-bot-ui";
 import { describe, expect, it } from "vitest";
 import type { HubAccess } from "../application/hub-access.js";
 import type { DeepLink } from "../application/types.js";
+import type { RoleRequestOutcome } from "../auction-ui/index.js";
 import { decideHubEntry, hubRoleRequest } from "./hub-entry.js";
 
 const identityId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";

@@ -1,4 +1,3 @@
-import { encodeAuctionCallback } from "@solguficky/auction-bot-ui";
 import { InlineKeyboard } from "grammy";
 import { lotCurrency } from "../../application/lot-form.js";
 import type {
@@ -8,6 +7,7 @@ import type {
   LotRefusal,
   LotTermsView,
 } from "../../application/types.js";
+import { encodeAuctionCallback } from "../../auction-ui/index.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import { lotAskData, lotFormData } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";

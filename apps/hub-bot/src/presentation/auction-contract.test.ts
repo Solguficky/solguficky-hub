@@ -1,4 +1,4 @@
-import { describeAuctionContract } from "@solguficky/auction-bot-ui/contract";
+import { describeAuctionContract } from "../auction-ui/contract/index.js";
 import { hubTradeCallback } from "./auction-route.js";
 
 // Contract suite пакета над торговой веткой бота хаба (ADR-044, «Проверка

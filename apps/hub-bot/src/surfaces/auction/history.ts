@@ -1,13 +1,13 @@
+import { BidSource } from "../../../gen/auction/v1/auction_pb.js";
+import type {
+  HistoryBid,
+  ListLotHistoryResponse,
+} from "../../../gen/auction/v1/auction_service_pb.js";
 import type {
   BidOriginView,
   LotHistoryEntryView,
   LotHistoryPage,
-} from "@solguficky/auction-bot-ui";
-import { BidSource } from "../gen/auction/v1/auction_pb.js";
-import type {
-  HistoryBid,
-  ListLotHistoryResponse,
-} from "../gen/auction/v1/auction_service_pb.js";
+} from "../../auction-ui/index.js";
 import { moneyOf } from "./snapshot.js";
 
 // Перевод страницы `auction.v1.ListLotHistory` в срез общего пакета. Запись

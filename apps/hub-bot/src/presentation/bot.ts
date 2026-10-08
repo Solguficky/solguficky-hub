@@ -1,16 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { Code, ConnectError } from "@connectrpc/connect";
-import {
-  type AuctionBlock,
-  type AuctionResult,
-  type AuctionScreenBody,
-  type AuctionUpdate,
-  encodeAuctionCallback,
-  isAuctionQuestion,
-  type LotImagePort,
-  parseAuctionCallback,
-  type Viewer,
-} from "@solguficky/auction-bot-ui";
 import { Bot, GrammyError, InlineKeyboard, InputFile } from "grammy";
 import { acceptsLots } from "../application/auction-console.js";
 import {
@@ -49,6 +38,17 @@ import type {
 } from "../application/types.js";
 import { startExecuteRequest } from "../application/types.js";
 import { type AuctionScreens, viewerOf } from "../auction/port.js";
+import {
+  type AuctionBlock,
+  type AuctionResult,
+  type AuctionScreenBody,
+  type AuctionUpdate,
+  encodeAuctionCallback,
+  isAuctionQuestion,
+  type LotImagePort,
+  parseAuctionCallback,
+  type Viewer,
+} from "../auction-ui/index.js";
 import { countFailure, type FailureCategory } from "../failures.js";
 import {
   type ApplicationAdministrator,
@@ -275,7 +275,7 @@ export type BotRuntime = {
 export const defaultTelegramEnvironment: TelegramEnvironment = "prod";
 
 /**
- * Разбирает значение `HUB_BOT_ENVIRONMENT`. Отсутствие переменной — это
+ * Разбирает значение `BOT_ENVIRONMENT`. Отсутствие переменной — это
  * продакшн; любое неизвестное значение — `undefined`, а не молчаливый откат к
  * умолчанию: опечатка в переменной должна останавливать процесс, а не уводить
  * его в другую среду.

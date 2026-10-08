@@ -1,11 +1,11 @@
+import type { HubAccess } from "../application/hub-access.js";
+import type { DeepLink, Person } from "../application/types.js";
+import { viewerOf } from "../auction/port.js";
 import {
   type AuctionDenial,
   decideEntry,
   requestedRole,
-} from "@solguficky/auction-bot-ui";
-import type { HubAccess } from "../application/hub-access.js";
-import type { DeepLink, Person } from "../application/types.js";
-import { viewerOf } from "../auction/port.js";
+} from "../auction-ui/index.js";
 import type {
   RequestRoleInput,
   RequestRoleResult,

@@ -1,4 +1,4 @@
-import type { Viewer } from "@solguficky/auction-bot-ui";
+import type { Viewer } from "../../auction-ui/index.js";
 import { MAX_LIST_PAGE } from "./faq.js";
 
 // Списки аукционов — оболочка бота аукциона (PER-453): бот хаба их не

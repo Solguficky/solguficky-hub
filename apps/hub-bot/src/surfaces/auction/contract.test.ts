@@ -1,4 +1,4 @@
-import { describeAuctionContract } from "@solguficky/auction-bot-ui/contract";
+import { describeAuctionContract } from "../../auction-ui/contract/index.js";
 import { tradeCallback } from "./route.js";
 
 // Contract suite пакета над торговой веткой этого бота (ADR-044, «Проверка

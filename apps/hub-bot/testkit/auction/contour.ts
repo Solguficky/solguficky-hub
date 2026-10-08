@@ -1,6 +1,6 @@
 import type { Update } from "grammy/types";
-import { createClients } from "../src/clients.js";
-import type { Presentation } from "../src/config.js";
+import { createClients } from "../../src/surfaces/auction/clients.js";
+import type { Presentation } from "../../src/surfaces/auction/config.js";
 import { createHarness, type LogRecord, type RecordedCall } from "./harness.js";
 
 // Провод бота аукциона против настоящих Identity и Auction (уровень L2). Среду

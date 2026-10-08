@@ -4,13 +4,13 @@ import {
   type ScreenEntry,
   type ScreenViolation,
   type UnknownEntryKeys,
-} from "../../../shared/typescript/screen-lint/src/index.js";
+} from "../../../../shared/typescript/screen-lint/src/index.js";
 import {
   auctionListParent,
   auctionLists,
   screenCatalog,
   screenTag,
-} from "../src/screen-catalog.js";
+} from "../../src/surfaces/auction/screen-catalog.js";
 
 // Линтер экрана бота аукциона: общий линтер дизайн-кода
 // (`shared/typescript/screen-lint`) с каталогом этого бота. Именованных пар у
@@ -23,7 +23,7 @@ export {
   type ScreenEntry,
   type ScreenViolation,
   takeViolations,
-} from "../../../shared/typescript/screen-lint/src/index.js";
+} from "../../../../shared/typescript/screen-lint/src/index.js";
 
 // Каталог объявлен без `satisfies` — сборка бота не видит общего пакета, — и
 // опечатку в необязательном поле записи ловит этот тип при typecheck.

@@ -12,7 +12,7 @@ import {
   type LotStatusView,
   MAX_COMMAND_AMOUNT,
   type Money,
-} from "@solguficky/auction-bot-ui";
+} from "../../auction-ui/index.js";
 import type {
   AuctionListPage,
   AuctionStage,

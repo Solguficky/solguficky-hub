@@ -1,7 +1,4 @@
-import type {
-  RoleRequestOutcome,
-  SurfaceCircle,
-} from "@solguficky/auction-bot-ui";
+import type { RoleRequestOutcome, SurfaceCircle } from "../auction-ui/index.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 
 export type ResolveIdentityInput = {

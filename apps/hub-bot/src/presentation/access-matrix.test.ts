@@ -1,8 +1,3 @@
-import {
-  type AccessAnswer,
-  type AccessMatrixInput,
-  describeAccessMatrix,
-} from "@solguficky/auction-bot-ui/contract";
 import type { Update } from "grammy/types";
 import { createHarness } from "../../testkit/harness.js";
 import {
@@ -10,6 +5,11 @@ import {
   declinedHubAccessText,
   pendingHubAccessText,
 } from "../application/hub-access.js";
+import {
+  type AccessAnswer,
+  type AccessMatrixInput,
+  describeAccessMatrix,
+} from "../auction-ui/contract/index.js";
 import { refusalText } from "./screens/kit.js";
 
 // Матрица доступа пакета над ботом хаба целиком (ADR-044, «Проверка общего

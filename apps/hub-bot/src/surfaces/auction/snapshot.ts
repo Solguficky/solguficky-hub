@@ -1,17 +1,17 @@
+import {
+  LotPhase,
+  type Money as WireMoney,
+} from "../../../gen/auction/v1/auction_pb.js";
+import type {
+  AuctionSnapshot,
+  LotSnapshot,
+} from "../../../gen/auction/v1/auction_service_pb.js";
 import type {
   LotStatusView,
   LotView,
   Money,
   TradingPhase,
-} from "@solguficky/auction-bot-ui";
-import {
-  LotPhase,
-  type Money as WireMoney,
-} from "../gen/auction/v1/auction_pb.js";
-import type {
-  AuctionSnapshot,
-  LotSnapshot,
-} from "../gen/auction/v1/auction_service_pb.js";
+} from "../../auction-ui/index.js";
 import type { AuctionStage, AuctionSummary } from "./auctions.js";
 
 // Перевод `auction.v1.LotSnapshot` в срез общего пакета. Формат сообщения уже

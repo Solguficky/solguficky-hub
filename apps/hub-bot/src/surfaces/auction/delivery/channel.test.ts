@@ -9,7 +9,7 @@ import {
 } from "@solguficky/telegram-delivery";
 import { GrammyError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
-import { NotificationSchema } from "../../gen/notifications/v1/notifications_pb.js";
+import { NotificationSchema } from "../../../../gen/notifications/v1/notifications_pb.js";
 import type { Logger } from "../logging.js";
 import {
   createNotificationSender,

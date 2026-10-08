@@ -28,57 +28,56 @@ export type ConfigResult =
 // Конфигурация процесса из переменных, которые раздаёт AppHost. Отказ называет
 // только имя переменной: значения токенов в запись не попадают.
 //
-// Своя переменная токена и ни одной чужой: `HUB_BOT_TOKEN` бот аукциона не
-// читает даже запасным вариантом (ADR-044, «Конфигурация и Aspire»).
+// Переменные общие у двух поверхностей (`BOT_*`, ADR-064, п. 18), а значения у
+// процессов свои: токен поверхности аукциона раздаёт AppHost, и он же до старта
+// отказывает, если токен повторяет токен хаба.
 export function readConfig(
   env: Readonly<Record<string, string | undefined>>,
 ): ConfigResult {
   // Пустое значение равно отсутствующему: иначе `""` прошло бы мимо умолчания.
   const read = (name: string): string | undefined => env[name] || undefined;
-  const token = read("AUCTION_BOT_TOKEN");
+  const token = read("BOT_TOKEN");
   if (token === undefined || token.trim() === "") {
-    return { ok: false, error: "AUCTION_BOT_TOKEN is not set" };
+    return { ok: false, error: "BOT_TOKEN is not set" };
   }
   // Токен с переводом строки из user-secrets прошёл бы гейт AppHost, а Bot API
   // ответил бы 404 без внятной причины.
   if (token !== token.trim()) {
-    return { ok: false, error: "AUCTION_BOT_TOKEN has surrounding whitespace" };
+    return { ok: false, error: "BOT_TOKEN has surrounding whitespace" };
   }
   // Токен вызывающего (ADR-056) проверяется на старте: без него каждый вызов
   // Identity и Auction получил бы UNAUTHENTICATED уже на первом человеке.
   // Пробелы по краям Headers срезает молча, и токен ушёл бы искажённым.
-  const serviceToken = read("AUCTION_BOT_SERVICE_TOKEN");
+  const serviceToken = read("BOT_SERVICE_TOKEN");
   if (serviceToken === undefined || serviceToken.trim() === "") {
-    return { ok: false, error: "AUCTION_BOT_SERVICE_TOKEN is not set" };
+    return { ok: false, error: "BOT_SERVICE_TOKEN is not set" };
   }
   if (serviceToken !== serviceToken.trim()) {
     return {
       ok: false,
-      error: "AUCTION_BOT_SERVICE_TOKEN has surrounding whitespace",
+      error: "BOT_SERVICE_TOKEN has surrounding whitespace",
     };
   }
-  const environment = parseEnvironment(read("AUCTION_BOT_ENVIRONMENT"));
+  const environment = parseEnvironment(read("BOT_ENVIRONMENT"));
   if (environment === undefined) {
-    return { ok: false, error: "AUCTION_BOT_ENVIRONMENT must be prod or test" };
+    return { ok: false, error: "BOT_ENVIRONMENT must be prod or test" };
   }
-  const presentation = read("AUCTION_BOT_PRESENTATION") ?? "rich";
+  const presentation = read("BOT_PRESENTATION") ?? "rich";
   if (presentation !== "rich" && presentation !== "plain") {
     return {
       ok: false,
-      error: "AUCTION_BOT_PRESENTATION must be rich or plain",
+      error: "BOT_PRESENTATION must be rich or plain",
     };
   }
   const faq = readFaqContent(env);
   if (!faq.ok) return faq;
   // Неизвестное имя — отказ, а не откат к UTC: опечатка сдвинула бы каждый
   // показанный дедлайн на разницу поясов.
-  const communityTimeZone = parseTimeZone(
-    read("AUCTION_BOT_COMMUNITY_TIME_ZONE"),
-  );
+  const communityTimeZone = parseTimeZone(read("BOT_COMMUNITY_TIME_ZONE"));
   if (communityTimeZone === undefined) {
     return {
       ok: false,
-      error: "AUCTION_BOT_COMMUNITY_TIME_ZONE must be an IANA time zone name",
+      error: "BOT_COMMUNITY_TIME_ZONE must be an IANA time zone name",
     };
   }
   return {
@@ -90,8 +89,8 @@ export function readConfig(
       presentation,
       identityUrl: read("IDENTITY_GRPC_URL") ?? "http://127.0.0.1:50051",
       auctionUrl: read("AUCTION_GRPC_URL") ?? "http://127.0.0.1:8081",
-      natsUrl: read("AUCTION_BOT_NATS_URL") ?? "nats://127.0.0.1:4222",
-      logLevel: read("AUCTION_BOT_LOG_LEVEL") ?? "info",
+      natsUrl: read("BOT_NATS_URL") ?? "nats://127.0.0.1:4222",
+      logLevel: read("BOT_LOG_LEVEL") ?? "info",
       faq: faq.content,
       communityTimeZone,
     },

@@ -21,13 +21,18 @@ namespace AppHost.Configuration.Extensions;
 /// </summary>
 internal static class ServiceTokenExtensions
 {
-    /// <summary>Свой токен вызывающего, которым он подписывает каждый вызов.</summary>
+    /// <summary>
+    /// Свой токен вызывающего, которым он подписывает каждый вызов. Имя
+    /// переменной выводится из узла, если вызывающий не читает своё: два бота —
+    /// один пакет и одно имя переменной на два узла.
+    /// </summary>
     public static IResourceBuilder<T> WithServiceToken<T>(
         this IResourceBuilder<T> caller,
-        ServiceGraphContext context)
+        ServiceGraphContext context,
+        string? variable = null)
         where T : IResourceWithEnvironment =>
         caller.WithEnvironment(
-            $"{EnvironmentName(caller.Resource.Name)}_SERVICE_TOKEN",
+            variable ?? $"{EnvironmentName(caller.Resource.Name)}_SERVICE_TOKEN",
             context.ServiceToken(caller.Resource.Name));
 
     /// <summary>Таблица токенов вызываемого: строка на каждого вызывающего.</summary>

@@ -1,9 +1,9 @@
+import { describe, expect, it } from "vitest";
 import {
   type AuctionBlock,
   encodeAuctionCallback,
   type Money,
-} from "@solguficky/auction-bot-ui";
-import { describe, expect, it } from "vitest";
+} from "../../auction-ui/index.js";
 import type { AuctionSummary } from "./auctions.js";
 import {
   auctionLabel,

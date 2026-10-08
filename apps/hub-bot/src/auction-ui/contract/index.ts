@@ -12,6 +12,11 @@ import {
   type AuctionContractCase,
   checkAuctionContractCase,
 } from "./check.js";
+import {
+  AUCTION_SURFACES,
+  accessMatrixApp,
+  auctionContractApp,
+} from "./surfaces.js";
 
 export {
   ACCESS_MATRIX_CASES,
@@ -84,4 +89,19 @@ export function describeAccessMatrix(
       });
     }
   });
+}
+export {
+  AUCTION_SURFACES,
+  accessMatrixApp,
+  auctionContractApp,
+} from "./surfaces.js";
+
+// Contract suite и матрица доступа над одной фабрикой для каждой поверхности
+// (ADR-064, п. 19): намерение, добавленное в дерево строкой таблицы,
+// проверяется на всех поверхностях без правки второй.
+export function describeAuctionSurfaces(): void {
+  for (const kind of AUCTION_SURFACES) {
+    describeAuctionContract(`${kind} surface`, auctionContractApp(kind));
+    describeAccessMatrix(`${kind} surface`, kind, accessMatrixApp(kind));
+  }
 }

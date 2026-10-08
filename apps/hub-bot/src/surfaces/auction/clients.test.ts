@@ -1,8 +1,8 @@
 import { Code } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
-import { BidSource } from "../gen/auction/v1/auction_pb.js";
-import { RoleRequestOutcome } from "../gen/identity/v1/identity_service_pb.js";
-import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
+import { BidSource } from "../../../gen/auction/v1/auction_pb.js";
+import { RoleRequestOutcome } from "../../../gen/identity/v1/identity_service_pb.js";
+import { GlobalRole } from "../../../gen/identity/v1/roles_pb.js";
 import {
   type AuctionRpc,
   callTimeoutMs,

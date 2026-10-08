@@ -22,7 +22,7 @@ public class HubBotWiringTests
     {
         var environment = await EnvironmentAsync(" solguficky_auction_bot ");
 
-        environment["HUB_BOT_AUCTION_BOT_USERNAME"].ShouldBe("solguficky_auction_bot");
+        environment["BOT_AUCTION_BOT_USERNAME"].ShouldBe("solguficky_auction_bot");
     }
 
     [Fact]
@@ -30,7 +30,7 @@ public class HubBotWiringTests
     {
         var environment = await EnvironmentAsync(null);
 
-        environment.ShouldNotContainKey("HUB_BOT_AUCTION_BOT_USERNAME");
+        environment.ShouldNotContainKey("BOT_AUCTION_BOT_USERNAME");
     }
 
     private static async Task<Dictionary<string, object>> EnvironmentAsync(string? auctionBotUsername)

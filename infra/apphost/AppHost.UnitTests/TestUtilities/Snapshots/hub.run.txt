@@ -4,21 +4,32 @@ auction-db: PostgresDatabaseResource
   health: auction-db_check
 auction-service-token: ParameterResource
   secret: True
-hub-bot: JavaScriptAppResource
+bot-build: JavaScriptAppResource
   command: npm
   workdir: <repo>/apps/hub-bot
   arg: run
-  arg: start
-  env: HUB_BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
-  env: HUB_BOT_ENVIRONMENT=prod
-  env: HUB_BOT_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
-  env: HUB_BOT_SERVICE_TOKEN={hub-bot-service-token.value}
-  env: HUB_BOT_TOKEN={hub-bot-token.value}
+  arg: prestart
+  env: NODE_ENV=development
+  waits: bot-build-installer WaitForCompletion
+  relationship: WaitFor bot-build-installer
+bot-build-installer: JavaScriptInstallerResource
+  command: node
+  workdir: <repo>/apps/hub-bot
+  relationship: Parent bot-build
+hub-bot: ExecutableResource
+  command: node
+  workdir: <repo>/apps/hub-bot
+  arg: dist/src/main.js
+  env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: BOT_ENVIRONMENT=prod
+  env: BOT_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
+  env: BOT_SERVICE_TOKEN={hub-bot-service-token.value}
+  env: BOT_SURFACE=hub
+  env: BOT_TOKEN={hub-bot-token.value}
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
   env: MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
-  env: NODE_ENV=development
   env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
-  waits: hub-bot-installer WaitForCompletion
+  waits: bot-build WaitForCompletion
   waits: identity WaitUntilHealthy
   waits: meetups WaitUntilHealthy
   waits: nats WaitUntilHealthy
@@ -30,15 +41,11 @@ hub-bot: JavaScriptAppResource
   relationship: Reference nats
   relationship: Reference nats-password
   relationship: Reference notifications
-  relationship: WaitFor hub-bot-installer
+  relationship: WaitFor bot-build
   relationship: WaitFor identity
   relationship: WaitFor meetups
   relationship: WaitFor nats
   relationship: WaitFor notifications
-hub-bot-installer: JavaScriptInstallerResource
-  command: node
-  workdir: <repo>/apps/hub-bot
-  relationship: Parent hub-bot
 hub-bot-service-token: ParameterResource
   secret: True
 hub-bot-token: ParameterResource

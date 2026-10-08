@@ -1,21 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
-  type AuctionDenial,
-  type AuctionSurface,
-  decideEntry,
-  handleAuctionUpdate,
-  requestedRole,
-} from "../gateway.js";
-import {
   ACCESS_MATRIX_CASES,
-  type AccessAnswer,
   type AccessMatrixApp,
   type AccessMatrixCase,
   CONTRACT_LOT,
   checkAccessMatrix,
   checkAccessMatrixCase,
-  describeAccessMatrix,
 } from "./index.js";
+import { accessMatrixApp } from "./surfaces.js";
 
 function caseOf(name: string): AccessMatrixCase {
   const found = ACCESS_MATRIX_CASES.find((each) => each.name === name);
@@ -23,56 +15,17 @@ function caseOf(name: string): AccessMatrixCase {
   return found;
 }
 
-const ANSWERS: Record<AuctionDenial, AccessAnswer> = {
-  "not-admitted": "pending",
-  declined: "declined",
-  blocked: "blocked",
-};
-
-// Фабрики-заглушки двух поверхностей: вход и нажатие доведены до политики
-// пакета так, как их доведут приложения.
-const stubApp =
-  (kind: AuctionSurface["kind"]): AccessMatrixApp =>
-  (ports) =>
-  async ({ from, firstName, action }) => {
-    if (action.kind === "start") {
-      const entry = decideEntry(
-        kind,
-        await ports.entry.requestRole({
-          user: from,
-          requestedRole: requestedRole(kind),
-          ...(action.sourceCode === undefined
-            ? {}
-            : { sourceCode: action.sourceCode }),
-          firstName,
-        }),
-      );
-      if (entry.kind === "entered") return "admitted";
-      return entry.kind === "denied" ? ANSWERS[entry.reason] : "unavailable";
-    }
-    const result = await handleAuctionUpdate(
-      { kind, ports },
-      {
-        identity: await ports.identity.resolveIdentity(from),
-        user: from,
-        input: action,
-      },
-    );
-    if (result.kind === "screen") return "admitted";
-    if (result.kind === "denied") return ANSWERS[result.reason];
-    throw result.error;
-  };
-
-describeAccessMatrix("hub stub", "hub", stubApp("hub"));
-describeAccessMatrix("auction stub", "auction", stubApp("auction"));
+// Самопроверки идут над той же фабрикой, что и матрица поверхностей
+// (`surfaces.test.ts`).
+const appOf = accessMatrixApp;
 
 describe("access matrix self-check", () => {
   const kindsOf = async (app: AccessMatrixApp, name: string) =>
     (await checkAccessMatrixCase(app, caseOf(name))).map((v) => v.kind);
 
-  it("passes over the stub factories", async () => {
-    expect(await checkAccessMatrix("hub", stubApp("hub"))).toEqual([]);
-    expect(await checkAccessMatrix("auction", stubApp("auction"))).toEqual([]);
+  it("passes over the surface factories", async () => {
+    expect(await checkAccessMatrix("hub", appOf("hub"))).toEqual([]);
+    expect(await checkAccessMatrix("auction", appOf("auction"))).toEqual([]);
   });
 
   // Вход, каким он был до `RequestRole`: личность разрешена, заявки нет.
@@ -90,7 +43,7 @@ describe("access matrix self-check", () => {
 
   it("fails when the surface requests another circle", async () => {
     const wrongCircle: AccessMatrixApp = (ports) => (input) =>
-      stubApp("hub")({
+      appOf("hub")({
         ...ports,
         entry: {
           requestRole: (request) =>
@@ -104,7 +57,7 @@ describe("access matrix self-check", () => {
 
   it("fails when the channel code does not reach Identity", async () => {
     const dropping: AccessMatrixApp = (ports) => (input) =>
-      stubApp("auction")(ports)({ ...input, action: { kind: "start" } });
+      appOf("auction")(ports)({ ...input, action: { kind: "start" } });
     expect(await kindsOf(dropping, "auction: newcomer starts")).toEqual([
       "wrong-identity-calls",
     ]);
@@ -116,7 +69,7 @@ describe("access matrix self-check", () => {
         viewer: { identityId: "anyone", globalRoles: [] },
         lotId: CONTRACT_LOT.lotId,
       });
-      return stubApp("auction")(ports)(input);
+      return appOf("auction")(ports)(input);
     };
     expect(await kindsOf(eager, "auction: newcomer presses")).toEqual([
       "auction-reached",
@@ -127,7 +80,7 @@ describe("access matrix self-check", () => {
   // проверки матрица зелёная над приложением, которое забыло Auction.
   it("fails when an admitted press never reaches Auction", async () => {
     const idle: AccessMatrixApp = (ports) => async (input) => {
-      if (input.action.kind === "start") return stubApp("hub")(ports)(input);
+      if (input.action.kind === "start") return appOf("hub")(ports)(input);
       await ports.identity.resolveIdentity(input.from);
       return "admitted";
     };
@@ -140,7 +93,7 @@ describe("access matrix self-check", () => {
   // запомнило человека и на второй раз отказало, матрицу не проходит.
   it("fails when a repeated /start answers differently", async () => {
     const forgetful: AccessMatrixApp = (ports) => {
-      const act = stubApp("hub")(ports);
+      const act = appOf("hub")(ports);
       let seen = false;
       return async (input) => {
         const answer = await act(input);
@@ -159,7 +112,7 @@ describe("access matrix self-check", () => {
 
   it("fails when the second update skips Identity", async () => {
     const caching: AccessMatrixApp = (ports) => {
-      const act = stubApp("auction")(ports);
+      const act = appOf("auction")(ports);
       let cached: Awaited<ReturnType<typeof act>> | undefined;
       return async (input) => {
         cached ??= await act(input);
@@ -176,7 +129,7 @@ describe("access matrix self-check", () => {
 
   it("fails when the blocked get the answer of the pending", async () => {
     const flattening: AccessMatrixApp = (ports) => async (input) => {
-      const answer = await stubApp("hub")(ports)(input);
+      const answer = await appOf("hub")(ports)(input);
       return answer === "blocked" ? "pending" : answer;
     };
     expect(await kindsOf(flattening, "hub: blocked presses")).toEqual([
@@ -189,7 +142,7 @@ describe("access matrix self-check", () => {
 
   it("fails when an unknown outcome enters by the roles", async () => {
     const trusting: AccessMatrixApp = (ports) => async (input) => {
-      const answer = await stubApp("hub")(ports)(input);
+      const answer = await appOf("hub")(ports)(input);
       return answer === "unavailable" ? "admitted" : answer;
     };
     expect(await kindsOf(trusting, "hub: unknown outcome")).toEqual([
@@ -211,9 +164,9 @@ describe("access matrix self-check", () => {
     const auctionOnly = ACCESS_MATRIX_CASES.filter(
       (each) => each.surface === "auction",
     );
-    expect(await checkAccessMatrix("hub", stubApp("hub"), auctionOnly)).toEqual(
-      [{ case: "*", kind: "no-cases", detail: "no cases for hub" }],
-    );
+    expect(await checkAccessMatrix("hub", appOf("hub"), auctionOnly)).toEqual([
+      { case: "*", kind: "no-cases", detail: "no cases for hub" },
+    ]);
   });
 
   it("checks every row of the matrix", () => {

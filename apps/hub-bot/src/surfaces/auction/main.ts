@@ -17,10 +17,12 @@ import { createShutdown } from "./shutdown.js";
 
 const shutdownTimeoutMs = 15_000;
 
-// Composition root бота аукциона (ADR-044): связывает порты пакета с клиентами
+// Composition root поверхности аукциона (ADR-064, п. 18; процесс с
+// `BOT_SURFACE=auction`, выбирает его `main.ts` приложения): связывает порты пакета с клиентами
 // Identity и Auction, выбирает поверхность `auction`, держит lifecycle своего
-// поллера и второй вход — уведомления аукциона из шины (PER-328). Бот хаба — отдельный процесс со своим токеном: остановка одного
-// поллера другой не трогает.
+// поллера и второй вход — уведомления аукциона из шины (PER-328). Поверхность
+// хаба — отдельный процесс со своим токеном: остановка одного поллера другой не
+// трогает.
 async function main(): Promise<number> {
   const loaded = readConfig(process.env);
   // Уровень берётся из конфигурации, а при её отказе — по умолчанию: запись
@@ -142,16 +144,18 @@ async function main(): Promise<number> {
   }
 }
 
-main()
-  .then((code) => {
-    if (code !== 0) {
-      process.exit(code);
-    }
-  })
-  .catch((cause: unknown) => {
-    const message = cause instanceof Error ? cause.message : String(cause);
-    process.stderr.write(
-      `${JSON.stringify({ service: serviceName, level: "error", msg: "process failed", error: message })}\n`,
-    );
-    process.exit(1);
-  });
+export function startAuction(): void {
+  main()
+    .then((code) => {
+      if (code !== 0) {
+        process.exit(code);
+      }
+    })
+    .catch((cause: unknown) => {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      process.stderr.write(
+        `${JSON.stringify({ service: serviceName, level: "error", msg: "process failed", error: message })}\n`,
+      );
+      process.exit(1);
+    });
+}

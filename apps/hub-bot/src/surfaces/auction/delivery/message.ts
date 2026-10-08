@@ -1,14 +1,14 @@
 import {
-  encodeAuctionCallback,
-  parseAuctionCallback,
-} from "@solguficky/auction-bot-ui";
-import {
   classifyTelegramFailure,
   isPermanentFailure,
   type NotificationSender,
   type RenderMessage,
 } from "@solguficky/telegram-delivery";
 import { Api } from "grammy";
+import {
+  encodeAuctionCallback,
+  parseAuctionCallback,
+} from "../../../auction-ui/index.js";
 import type { TelegramEnvironment } from "../config.js";
 import { money, truncate } from "../entry-screen.js";
 import { entryCallback, parseEntryCallback } from "../faq.js";

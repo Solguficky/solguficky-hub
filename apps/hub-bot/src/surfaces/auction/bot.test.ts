@@ -1,16 +1,19 @@
 import { Code, ConnectError } from "@connectrpc/connect";
+import { HttpError, InputFile, type Transformer } from "grammy";
+import type { Update, UserFromGetMe } from "grammy/types";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { GlobalRole } from "../../../gen/identity/v1/roles_pb.js";
+import {
+  inspectCall,
+  reportViolations,
+} from "../../../testkit/auction/screen-lint.js";
 import {
   type EntryPort,
   encodeAuctionCallback,
   type LotHistoryEntryView,
   type LotImagePort,
   type LotView,
-} from "@solguficky/auction-bot-ui";
-import { HttpError, InputFile, type Transformer } from "grammy";
-import type { Update, UserFromGetMe } from "grammy/types";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
-import { inspectCall, reportViolations } from "../testkit/screen-lint.js";
+} from "../../auction-ui/index.js";
 import type { AuctionListing, AuctionSummary } from "./auctions.js";
 import { createBot } from "./bot.js";
 import {

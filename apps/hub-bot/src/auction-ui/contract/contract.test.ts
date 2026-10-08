@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type AuctionSurface, handleAuctionUpdate } from "../gateway.js";
+import { handleAuctionUpdate } from "../gateway.js";
 import {
   AUCTION_CONTRACT_CASES,
   type AuctionContractApp,
@@ -9,8 +9,8 @@ import {
   CONTRACT_USER,
   checkAuctionContract,
   checkAuctionContractCase,
-  describeAuctionContract,
 } from "./index.js";
+import { auctionContractApp } from "./surfaces.js";
 
 // Намерение карточки лота в торгах: на нём самопроверки ниже ловят дрейф
 // одного вызова, а не восьми сразу.
@@ -22,28 +22,14 @@ function caseOf(intent: string): AuctionContractCase {
   return found;
 }
 
-// Фабрики-заглушки двух поверхностей: вход доведён ровно до шлюза, как его
-// доведут приложения, — личность разрешается один раз и уходит в update.
-const stubApp =
-  (kind: AuctionSurface["kind"]): AuctionContractApp =>
-  (ports) =>
-  async ({ from, input }) =>
-    handleAuctionUpdate(
-      { kind, ports },
-      {
-        identity: await ports.identity.resolveIdentity(from),
-        user: from,
-        input,
-      },
-    );
-
-describeAuctionContract("hub stub", stubApp("hub"));
-describeAuctionContract("auction stub", stubApp("auction"));
+// Самопроверки идут над той же фабрикой, что и suite поверхностей
+// (`surfaces.test.ts`).
+const appOf = auctionContractApp;
 
 describe("auction contract self-check", () => {
-  it("passes over the stub factories", async () => {
-    expect(await checkAuctionContract(stubApp("hub"))).toEqual([]);
-    expect(await checkAuctionContract(stubApp("auction"))).toEqual([]);
+  it("passes over the surface factories", async () => {
+    expect(await checkAuctionContract(appOf("hub"))).toEqual([]);
+    expect(await checkAuctionContract(appOf("auction"))).toEqual([]);
   });
 
   // Заглушка, которая зовёт порт не с тем намерением: просит у Auction другой
@@ -54,7 +40,7 @@ describe("auction contract self-check", () => {
         viewer: { identityId: "someone-else", globalRoles: ["public"] },
         lotId: CONTRACT_LOT.lotId,
       });
-      return stubApp("auction")({
+      return appOf("auction")({
         ...ports,
         auction: { ...ports.auction, getLot: async () => CONTRACT_LOT },
       })(update);
@@ -84,7 +70,7 @@ describe("auction contract self-check", () => {
 
   it("fails when the canonical body or its buttons drift", async () => {
     const drifted: AuctionContractApp = (ports) => async (update) => {
-      const result = await stubApp("hub")(ports)(update);
+      const result = await appOf("hub")(ports)(update);
       if (result.kind !== "screen") return result;
       return {
         kind: "screen",
@@ -106,7 +92,7 @@ describe("auction contract self-check", () => {
   it("fails when identity is resolved twice for one update", async () => {
     const twice: AuctionContractApp = (ports) => async (pressed) => {
       await ports.identity.resolveIdentity(pressed.from);
-      return stubApp("hub")(ports)(pressed);
+      return appOf("hub")(ports)(pressed);
     };
     const kinds = (await checkAuctionContractCase(twice, LOT_CASE)).map(
       (v) => v.kind,
@@ -116,7 +102,7 @@ describe("auction contract self-check", () => {
 
   it("fails when the app resolves someone other than the presser", async () => {
     const wrongUser: AuctionContractApp = (ports) => async (pressed) =>
-      stubApp("hub")(ports)({ ...pressed, from: { telegramUserId: 1 } });
+      appOf("hub")(ports)({ ...pressed, from: { telegramUserId: 1 } });
     const kinds = (await checkAuctionContractCase(wrongUser, LOT_CASE)).map(
       (v) => v.kind,
     );
@@ -153,7 +139,7 @@ describe("auction contract self-check", () => {
   });
 
   it("treats an empty intent table as a violation", async () => {
-    expect(await checkAuctionContract(stubApp("hub"), [])).toEqual([
+    expect(await checkAuctionContract(appOf("hub"), [])).toEqual([
       { intent: "*", kind: "no-cases", detail: "intent table is empty" },
     ]);
   });

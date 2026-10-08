@@ -1,3 +1,4 @@
+import { InlineKeyboard } from "grammy";
 import type {
   AuctionBlock,
   AuctionButton,
@@ -7,8 +8,7 @@ import type {
   HistoryItem,
   LotStatusView,
   Money,
-} from "@solguficky/auction-bot-ui";
-import { InlineKeyboard } from "grammy";
+} from "../../auction-ui/index.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";

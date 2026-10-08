@@ -1,9 +1,9 @@
 import type { Transformer } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
-import { createBot } from "../src/bot.js";
-import type { PortsFactory } from "../src/clients.js";
-import type { Presentation } from "../src/config.js";
-import type { LogFields, Logger } from "../src/logging.js";
+import { createBot } from "../../src/surfaces/auction/bot.js";
+import type { PortsFactory } from "../../src/surfaces/auction/clients.js";
+import type { Presentation } from "../../src/surfaces/auction/config.js";
+import type { LogFields, Logger } from "../../src/surfaces/auction/logging.js";
 import { inspectCall, reportViolations } from "./screen-lint.js";
 
 // Харнесс бота аукциона без Telegram: `botInfo` подставляется, поэтому

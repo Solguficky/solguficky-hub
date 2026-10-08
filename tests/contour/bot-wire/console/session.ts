@@ -1,4 +1,4 @@
-import type { openAuctionBotWire } from "../../../../apps/auction-bot/testkit/index.js";
+import type { openAuctionBotWire } from "../../../../apps/hub-bot/testkit/auction/index.js";
 import {
   freshTelegramUserId,
   type LogRecord,

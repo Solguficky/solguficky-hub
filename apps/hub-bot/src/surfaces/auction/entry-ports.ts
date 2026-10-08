@@ -2,7 +2,7 @@ import type {
   AuctionBotPorts,
   EntryPort,
   Viewer,
-} from "@solguficky/auction-bot-ui";
+} from "../../auction-ui/index.js";
 import type { AuctionCatalogPort } from "./auctions.js";
 
 // FAQ и списки аукционов — локальные намерения оболочки: общий пакет торгов о

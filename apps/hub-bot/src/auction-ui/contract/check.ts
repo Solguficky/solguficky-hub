@@ -524,22 +524,6 @@ const LOT_AFTER_BID: LotView = {
   },
 };
 
-// Лот после принятого лимита: лимит виден смотрящему, цена не сдвинулась —
-// лимит выше порога, но перебивать пока некого, кроме лидера.
-const LOT_AFTER_LIMIT: LotView = {
-  ...CONTRACT_LOT,
-  version: 4,
-  viewerProxyLimit: rub(2000),
-  nextPrice: rub(1300),
-  status: {
-    kind: "trading",
-    currentPrice: rub(1250),
-    leaderId: CONTRACT_IDENTITY.identityId,
-    deadline: "2026-10-10T18:00:00Z",
-    phase: "online",
-  },
-};
-
 const OP = CONTRACT_OP_IDS[0];
 
 const commitCallback = (

@@ -1,7 +1,7 @@
-import { parseAuctionCallback } from "@solguficky/auction-bot-ui";
 import { GrammyError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
-import { inspectCall } from "../../testkit/screen-lint.js";
+import { inspectCall } from "../../../../testkit/auction/screen-lint.js";
+import { parseAuctionCallback } from "../../../auction-ui/index.js";
 import { screenMark } from "../screen-catalog.js";
 import {
   createNotificationSender,

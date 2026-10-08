@@ -1,3 +1,5 @@
+import type { Person } from "../application/types.js";
+import { viewerOf } from "../auction/port.js";
 import {
   AUCTION_CALLBACK_DOMAIN,
   type AuctionBotPorts,
@@ -6,9 +8,7 @@ import {
   handleAuctionUpdate,
   type ResolvedIdentity,
   type TelegramUser,
-} from "@solguficky/auction-bot-ui";
-import type { Person } from "../application/types.js";
-import { viewerOf } from "../auction/port.js";
+} from "../auction-ui/index.js";
 
 // Торговое нажатие в боте хаба (ADR-044, «Доступ как обязательный шлюз»):
 // личность уже разрешена краем, один раз на update, и уезжает в шлюз пакета

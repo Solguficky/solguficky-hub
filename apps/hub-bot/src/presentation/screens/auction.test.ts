@@ -1,5 +1,5 @@
-import type { AuctionBlock, Money } from "@solguficky/auction-bot-ui";
 import { describe, expect, it } from "vitest";
+import type { AuctionBlock, Money } from "../../auction-ui/index.js";
 import { type AuctionView, auctionScreen } from "./auction.js";
 
 // L0: оболочка хаба над телом аукциона на данных, без бота и Telegram. Тексты

@@ -73,7 +73,7 @@ public class ClusterPublishTests
     [Theory]
     [InlineData(R.Identity, "apps/identity/Containerfile")]
     [InlineData(R.HubBot, "apps/hub-bot/Containerfile")]
-    [InlineData(R.AuctionBot, "apps/auction-bot/Containerfile")]
+    [InlineData(R.AuctionBot, "apps/hub-bot/Containerfile")]
     [InlineData(R.Auction, "apps/auction/Containerfile")]
     public async Task Publish_ContainerfileServices_BuildFromRepositoryRoot(string name, string containerfile)
     {

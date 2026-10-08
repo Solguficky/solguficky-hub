@@ -1,4 +1,3 @@
-import type { LotView } from "@solguficky/auction-bot-ui";
 import { describe, expect, it } from "vitest";
 import type {
   AddLotResult,
@@ -7,6 +6,7 @@ import type {
   LotReadResult,
   ScheduleLotResult,
 } from "../auction/port.js";
+import type { LotView } from "../auction-ui/index.js";
 import { createDispatcher } from "./dispatcher.js";
 import { parseRubles } from "./lot-form.js";
 import type { NewLotId } from "./types.js";

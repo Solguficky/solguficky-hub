@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
+import { Bot, type Context, GrammyError, HttpError, InputFile } from "grammy";
+import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
 import {
   isAuctionQuestion,
   type LotImagePort,
   type Viewer,
-} from "@solguficky/auction-bot-ui";
-import { Bot, type Context, GrammyError, HttpError, InputFile } from "grammy";
-import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
+} from "../../auction-ui/index.js";
 import type { PortsFactory } from "./clients.js";
 import type { Presentation, TelegramEnvironment } from "./config.js";
 import { isTraceCallback, parseTraceCallback } from "./delivery/message.js";

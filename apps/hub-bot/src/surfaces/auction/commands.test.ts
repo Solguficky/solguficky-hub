@@ -1,13 +1,13 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
-import { MoneySchema } from "../gen/auction/v1/auction_pb.js";
+import { MoneySchema } from "../../../gen/auction/v1/auction_pb.js";
 import {
   ChooseDisplayNameResponseSchema,
   type PlaceBidRefusal,
   PlaceBidResponseSchema,
   SetProxyLimitResponseSchema,
-} from "../gen/auction/v1/auction_service_pb.js";
+} from "../../../gen/auction/v1/auction_service_pb.js";
 import {
   bidOutcomeOf,
   createUuidV7,

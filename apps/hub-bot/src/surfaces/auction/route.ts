@@ -9,7 +9,7 @@ import {
   requestedRole,
   type TelegramUser,
   type Viewer,
-} from "@solguficky/auction-bot-ui";
+} from "../../auction-ui/index.js";
 import { type AuctionListing, listPage, readAuctions } from "./auctions.js";
 import type { EntryPorts } from "./entry-ports.js";
 import type { AuctionEntryScreen, UnavailableExit } from "./entry-screen.js";

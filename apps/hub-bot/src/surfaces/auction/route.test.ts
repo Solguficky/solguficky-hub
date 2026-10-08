@@ -1,10 +1,10 @@
 import { Code, ConnectError } from "@connectrpc/connect";
+import { describe, expect, it, vi } from "vitest";
 import {
   encodeAuctionCallback,
   type ResolvedIdentity,
   type RoleRequestAnswer,
-} from "@solguficky/auction-bot-ui";
-import { describe, expect, it, vi } from "vitest";
+} from "../../auction-ui/index.js";
 import {
   type AuctionCatalogPort,
   type AuctionSummary,

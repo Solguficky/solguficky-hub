@@ -4,6 +4,19 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
+import {
+  classifyRecipientFailure,
+  type TelegramRecipientResolver,
+} from "@solguficky/telegram-delivery";
+import {
+  AuctionService,
+  AuctionListing as WireListing,
+} from "../../../gen/auction/v1/auction_service_pb.js";
+import {
+  IdentityService,
+  RoleRequestOutcome as WireOutcome,
+} from "../../../gen/identity/v1/identity_service_pb.js";
+import { GlobalRole as WireRole } from "../../../gen/identity/v1/roles_pb.js";
 import type {
   GlobalRole,
   LotImagePort,
@@ -15,20 +28,7 @@ import type {
   SurfaceCircle,
   TelegramUser,
   Viewer,
-} from "@solguficky/auction-bot-ui";
-import {
-  classifyRecipientFailure,
-  type TelegramRecipientResolver,
-} from "@solguficky/telegram-delivery";
-import {
-  AuctionService,
-  AuctionListing as WireListing,
-} from "../gen/auction/v1/auction_service_pb.js";
-import {
-  IdentityService,
-  RoleRequestOutcome as WireOutcome,
-} from "../gen/identity/v1/identity_service_pb.js";
-import { GlobalRole as WireRole } from "../gen/identity/v1/roles_pb.js";
+} from "../../auction-ui/index.js";
 import {
   bidOutcomeOf,
   createUuidV7,

@@ -16,6 +16,12 @@ internal static class HubBotSetup
     /// </summary>
     internal const string AuctionBotUsernameKey = "HubBot:AuctionBotUsername";
 
+    /// <summary>
+    /// Токен вызывающего в переменной пакета ботов, а не узла: оба процесса —
+    /// один код и читают одно имя. Значение у каждого узла своё (ADR-056).
+    /// </summary>
+    internal const string BotServiceTokenVariable = "BOT_SERVICE_TOKEN";
+
     // Проб нет: у бота нет ни порта, ни health-эндпоинта, а exec-проба «процесс
     // жив» дала бы сигнал, которому нельзя верить. Остаётся рестарт по выходу.
     private static readonly ClusterWorkload Cluster = new(
@@ -30,10 +36,7 @@ internal static class HubBotSetup
         Wire(
             context,
             TelegramEnvironment.Resolve(context.Builder.Configuration),
-            context.Builder.AddJavaScriptApp(
-                AppHostNames.Resources.HubBot,
-                RepositoryPaths.App(context.Builder, "hub-bot"),
-                "start"));
+            BotBuild.Process(context.Builder, AppHostNames.Resources.HubBot));
 
     /// <summary>
     /// В чарте бот — образ по его Containerfile из корня репозитория, а не
@@ -66,20 +69,23 @@ internal static class HubBotSetup
         var auctionBotUsername = context.Builder.Configuration[AuctionBotUsernameKey]?.Trim();
         if (!string.IsNullOrEmpty(auctionBotUsername))
         {
-            bot.WithEnvironment("HUB_BOT_AUCTION_BOT_USERNAME", auctionBotUsername);
+            bot.WithEnvironment("BOT_AUCTION_BOT_USERNAME", auctionBotUsername);
         }
 
         return bot
-            .WithEnvironment("HUB_BOT_TOKEN", token)
+            // Один пакет на два бота (ADR-064, п. 18): поверхность — параметр
+            // процесса, переменные у двух ботов общие, а значения свои.
+            .WithEnvironment("BOT_SURFACE", "hub")
+            .WithEnvironment("BOT_TOKEN", token)
             // Не путать с токеном Bot API выше: этим бот доказывает себя
             // Identity, Meetups и Notifications (ADR-056).
-            .WithServiceToken(context)
-            .WithEnvironment("HUB_BOT_ENVIRONMENT", environment.Value)
+            .WithServiceToken(context, BotServiceTokenVariable)
+            .WithEnvironment("BOT_ENVIRONMENT", environment.Value)
             // Бот показывает назначенный момент публикации в поясе сообщества,
             // а Meetups отдаёт его мгновением UTC. Значение общее с Meetups
             // (CommunityTime): разные пояса у двух сервисов дали бы карточку,
             // которая врёт о времени публикации на разницу поясов.
-            .WithEnvironment("HUB_BOT_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
+            .WithEnvironment("BOT_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
             .BindEndpoint(context, AppHostNames.Resources.Identity, "grpc", "IDENTITY_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Meetups, "grpc", "MEETUPS_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Notifications, "grpc", "NOTIFICATIONS_GRPC_URL")
@@ -93,7 +99,7 @@ internal static class HubBotSetup
             .BindConnection<T, IResourceWithConnectionString>(
                 context,
                 AppHostNames.Resources.Nats,
-                "HUB_BOT_NATS_URL",
+                "BOT_NATS_URL",
                 nats => ReferenceExpression.Create($"{nats.Resource.ConnectionStringExpression}"));
     }
 }

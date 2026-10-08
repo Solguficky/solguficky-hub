@@ -1,3 +1,4 @@
+import type { AuctionConsoleView, Person } from "../application/types.js";
 import type {
   AuctionPort,
   GlobalRole,
@@ -6,8 +7,7 @@ import type {
   Money,
   OperationIdPort,
   Viewer,
-} from "@solguficky/auction-bot-ui";
-import type { AuctionConsoleView, Person } from "../application/types.js";
+} from "../auction-ui/index.js";
 import type { RpcMetadata } from "../rpc-metadata.js";
 
 // Аукцион у сходки (ADR-047, дополнение 2026-10-03; PER-307). Бот хаба зовёт

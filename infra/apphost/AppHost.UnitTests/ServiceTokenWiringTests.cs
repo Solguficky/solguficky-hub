@@ -51,7 +51,7 @@ public class ServiceTokenWiringTests
             // выпавший из hub вызывающий падал здесь.
             foreach (var caller in callers.Where(caller => caller != AuctionBot && caller != Auction))
             {
-                var callerSide = tokens[caller][$"{Env(caller)}_SERVICE_TOKEN"];
+                var callerSide = tokens[caller][CallerVariable(caller)];
                 var calleeSide = tokens[callee][$"{Env(callee)}_CALLER_TOKEN_{Env(caller)}"];
 
                 calleeSide.ShouldBeSameAs(callerSide, $"{caller} -> {callee}");
@@ -91,7 +91,7 @@ public class ServiceTokenWiringTests
             [Identity] = ["IDENTITY_CALLER_TOKEN_AUCTION_BOT", "IDENTITY_CALLER_TOKEN_HUB_BOT", "IDENTITY_CALLER_TOKEN_MEETUPS", "IDENTITY_CALLER_TOKEN_NOTIFICATIONS"],
             [Meetups] = ["MEETUPS_CALLER_TOKEN_AUCTION", "MEETUPS_CALLER_TOKEN_HUB_BOT", "MEETUPS_CALLER_TOKEN_NOTIFICATIONS", "MEETUPS_SERVICE_TOKEN"],
             [Notifications] = ["NOTIFICATIONS_CALLER_TOKEN_AUCTION_BOT", "NOTIFICATIONS_CALLER_TOKEN_HUB_BOT", "NOTIFICATIONS_SERVICE_TOKEN"],
-            [HubBot] = ["HUB_BOT_SERVICE_TOKEN"],
+            [HubBot] = ["BOT_SERVICE_TOKEN"],
         };
 
         tokens.Keys.Order(StringComparer.Ordinal).ToArray().ShouldBe(expected.Keys.Order(StringComparer.Ordinal).ToArray());
@@ -220,4 +220,9 @@ public class ServiceTokenWiringTests
     }
 
     private static string Env(string resource) => resource.ToUpperInvariant().Replace('-', '_');
+
+    // Два бота — один пакет и одно имя переменной своего токена (ADR-064, п. 18);
+    // остальные вызывающие читают имя, выведенное из узла.
+    private static string CallerVariable(string caller) =>
+        caller is HubBot or AuctionBot ? "BOT_SERVICE_TOKEN" : $"{Env(caller)}_SERVICE_TOKEN";
 }

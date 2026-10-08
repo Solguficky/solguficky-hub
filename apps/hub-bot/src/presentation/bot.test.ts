@@ -1,5 +1,4 @@
 import { Code, ConnectError } from "@connectrpc/connect";
-import type { RoleRequestOutcome } from "@solguficky/auction-bot-ui";
 import { Api, BotError, Context, GrammyError, type Transformer } from "grammy";
 import type { Update } from "grammy/types";
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
@@ -19,6 +18,7 @@ import {
   pendingHubAccessText,
 } from "../application/hub-access.js";
 import { rejectedValueText } from "../application/meetup-form.js";
+import type { RoleRequestOutcome } from "../auction-ui/index.js";
 import * as failures from "../failures.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type {
