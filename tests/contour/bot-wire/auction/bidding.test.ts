@@ -74,8 +74,7 @@ describe("auction through both bots", () => {
     await admin.presses("Создать сходку");
     await fillsMeetupForm(admin, title);
     await admin.presses("Опубликовать");
-    await admin.presses("Ближайшие сходки");
-    await admin.presses(listedAs(title));
+    await admin.presses("‹ Сходка");
     await admin.presses("Включить аукцион");
     await admin.presses("Лоты");
     await admin.presses("Добавить лот");
