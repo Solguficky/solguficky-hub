@@ -6,8 +6,8 @@ import { createHarness, type LogRecord, type RecordedCall } from "./harness.js";
 // Провод бота аукциона против настоящих Identity и Auction (уровень L2). Среду
 // поднимает Contour.Host с флагом `--with-auction` (`just contour-bot-console`),
 // а этот модуль ею не владеет: он читает адреса из окружения и закрывает
-// только свои gRPC-сессии. Переменные — ровно те, что читает сам бот, и ни
-// одной переменной бота хаба (ADR-044).
+// только свои gRPC-сессии. Переменные — адреса и токен вызывающего бота
+// аукциона, которые отдаёт контур, и ни одной переменной бота хаба.
 
 export type AuctionContourEnvironment = {
   identityUrl: string;

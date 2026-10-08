@@ -27,7 +27,7 @@ import type {
 //   снимает правило вместе со штатным выводом.
 //
 // Копия файла apps/hub-bot/vitest.fail-on-skip.ts (другие копии — в
-// apps/auction-bot, apps/community-site-api и shared/typescript/screen-lint):
+// apps/community-site-api и shared/typescript/screen-lint):
 // общего TypeScript-модуля в shared/ нет, а kit хаба отдаёт наружу только
 // testkit/index.ts.
 export class FailOnSkip implements Reporter {

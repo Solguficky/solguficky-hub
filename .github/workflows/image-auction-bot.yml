@@ -1,27 +1,28 @@
 name: Image Auction Bot
 
-# Production-образ бота аукциона по apps/auction-bot/Containerfile — как образ
-# бота хаба (image-hub-bot.yml): pull request только собирает и проверяет, push
-# в develop публикует кандидата на stage и записывает его digest в ops-репозиторий
-# (stage-bump.yml), откуда stage выкатывает его сам.
+# Production-образ бота аукциона — тот же apps/hub-bot/Containerfile, что у бота
+# хаба (image-hub-bot.yml), под своим именем: один пакет на два процесса, и
+# поверхность выбирает переменная BOT_SURFACE (ADR-064, п. 18). Отдельное имя
+# образа держит выкладку stage прежней, пока его не снимет PER-538. Pull request
+# только собирает и проверяет, push в develop публикует кандидата на stage и
+# записывает его digest в ops-репозиторий (stage-bump.yml), откуда stage
+# выкатывает его сам.
 
 on:
   pull_request:
     paths:
-      - 'apps/auction-bot/**'
+      - 'apps/hub-bot/**'
       - 'shared/typescript/telegram-delivery/**'
       - 'contracts/proto/**'
-      - 'shared/typescript/auction-bot-ui/**'
       - 'tools/image/**'
       - '.github/workflows/image-auction-bot.yml'
       - '.github/workflows/image-publish.yml'
   push:
     branches: [develop]
     paths:
-      - 'apps/auction-bot/**'
+      - 'apps/hub-bot/**'
       - 'shared/typescript/telegram-delivery/**'
       - 'contracts/proto/**'
-      - 'shared/typescript/auction-bot-ui/**'
       - 'tools/image/**'
       - '.github/workflows/image-auction-bot.yml'
       - '.github/workflows/image-publish.yml'
@@ -38,8 +39,8 @@ jobs:
     with:
       image-name: auction-bot
       builder: containerfile
-      containerfile: apps/auction-bot/Containerfile
-      node-lock: apps/auction-bot/package-lock.json
+      containerfile: apps/hub-bot/Containerfile
+      node-lock: apps/hub-bot/package-lock.json
       publish: false
 
   publish:
@@ -57,8 +58,8 @@ jobs:
     with:
       image-name: auction-bot
       builder: containerfile
-      containerfile: apps/auction-bot/Containerfile
-      node-lock: apps/auction-bot/package-lock.json
+      containerfile: apps/hub-bot/Containerfile
+      node-lock: apps/hub-bot/package-lock.json
       publish: true
 
   stage:

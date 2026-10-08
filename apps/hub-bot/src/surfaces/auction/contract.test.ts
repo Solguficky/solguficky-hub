@@ -1,8 +1,8 @@
 import { describeAuctionContract } from "../../auction-ui/contract/index.js";
 import { tradeCallback } from "./route.js";
 
-// Contract suite пакета над торговой веткой этого бота (ADR-044, «Проверка
-// общего поведения»): нажатие идёт через ту же функцию, что и в маршруте, с
+// Contract suite аукционного дерева над торговой веткой этой поверхности
+// (ADR-064, п. 19): нажатие идёт через ту же функцию, что и в маршруте, с
 // поверхностью `auction`. FAQ и меню — оболочка бота, в suite они не входят.
 describeAuctionContract(
   "auction bot",

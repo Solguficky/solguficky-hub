@@ -1,5 +1,6 @@
 // Имя сервиса в записях и, когда появится telemetry, — имя ресурса: свои у
-// каждого бота (ADR-044, «Процессы и раскладка»).
+// каждого процесса (ADR-064, п. 18). От него же пакет доставки выводит durable,
+// bucket журнала и счётчик (`auction-bot-…`).
 export const serviceName = "auction-bot";
 
 export type ErrorCategory =

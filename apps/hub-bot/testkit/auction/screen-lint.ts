@@ -25,7 +25,7 @@ export {
   takeViolations,
 } from "../../../../shared/typescript/screen-lint/src/index.js";
 
-// Каталог объявлен без `satisfies` — сборка бота не видит общего пакета, — и
+// Каталог объявлен без `satisfies` — сборка бота не видит пакета линтера, — и
 // опечатку в необязательном поле записи ловит этот тип при typecheck.
 const catalogShape: [UnknownEntryKeys<typeof screenCatalog>] extends [never]
   ? true

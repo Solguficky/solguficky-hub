@@ -5,9 +5,9 @@ import {
 import type { LotSnapshot } from "../../gen/auction/v1/auction_service_pb.js";
 import type { LotStatusView, LotView, Money } from "../auction-ui/index.js";
 
-// Перевод `auction.v1.LotSnapshot` в срез общего пакета. Тот же перевод
-// держит бот аукциона (`apps/auction-bot/src/snapshot.ts`): адаптер
-// сгенерированного клиента — у каждого приложения свой, пакет gRPC не знает
+// Перевод `auction.v1.LotSnapshot` в срез аукционного дерева. Тот же перевод
+// держит поверхность аукциона (`src/surfaces/auction/snapshot.ts`): адаптер
+// сгенерированного клиента — у каждой поверхности свой, дерево gRPC не знает
 // (ADR-044).
 //
 // Формат сообщения уже проверил рантайм `@bufbuild/protobuf`; здесь — то, чего
