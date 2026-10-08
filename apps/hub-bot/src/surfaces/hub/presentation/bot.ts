@@ -51,6 +51,7 @@ import {
 import type {
   AuctionWeek,
   BroadcastAudience,
+  ConsoleSort,
   ExecuteRequest,
   ExecuteResult,
   FormField,
@@ -131,6 +132,7 @@ import {
   type CardCursor,
   consoleViewData,
   consoleWeekData,
+  defaultConsoleSort,
   lotAskData,
   lotNewData,
   type NotifiedMeetupCategory,
@@ -5013,11 +5015,12 @@ async function handleConsoleCallback(
     auctionId,
     ...rpcCall(ctx, useCase),
   };
-  const render = (result: ExecuteResult, page = 0) =>
+  const render = (result: ExecuteResult, page = 0, sort = defaultConsoleSort) =>
     renderConsoleResult(ctx, runtime, result, {
       person,
       questions,
       page,
+      sort,
       retry: ctx.callbackQuery?.data,
     });
   switch (action.kind) {
@@ -5028,6 +5031,7 @@ async function handleConsoleCallback(
           intent: "view-auction-console",
         }),
         action.page,
+        action.sort,
       );
     case "console-week":
       // Можно ли ещё менять сроки, решает юзкейс: вопрос либо пульт с причиной.
@@ -5074,6 +5078,7 @@ async function handleConsoleCallback(
           opId: createUuidV7(),
         }),
         action.page,
+        action.sort,
       );
     default: {
       const _exhaustive: never = action;
@@ -5093,6 +5098,7 @@ async function renderConsoleResult(
     person: Person;
     questions: Map<string, PendingInput>;
     page?: number;
+    sort?: ConsoleSort;
     retry?: string | undefined;
     replyId?: number;
   },
@@ -5121,6 +5127,7 @@ async function renderConsoleResult(
           console: result.console,
           ...(result.note === undefined ? {} : { note: result.note }),
           page: context.page ?? 0,
+          sort: context.sort ?? defaultConsoleSort,
           timeZone,
           today: communityToday(ctx),
         }),
@@ -6503,7 +6510,12 @@ function cancelTarget(step: QuestionStep): ScreenAction {
       return { kind: "lot-form", lot: step.lot };
     case "console-week":
       // Вопрос о сроках задан с пульта аукциона.
-      return { kind: "console-view", auction: step.auction, page: 0 };
+      return {
+        kind: "console-view",
+        auction: step.auction,
+        page: 0,
+        sort: defaultConsoleSort,
+      };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;

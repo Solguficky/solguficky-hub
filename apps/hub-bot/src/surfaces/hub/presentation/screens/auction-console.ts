@@ -6,6 +6,8 @@ import type {
   AuctionWeek,
   ConsoleLot,
   ConsoleNote,
+  ConsoleSort,
+  ConsoleSortMetric,
   WeekAskError,
 } from "../../application/types.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
@@ -17,6 +19,7 @@ import {
   consoleOpenData,
   consoleViewData,
   consoleWeekData,
+  defaultConsoleSort,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
 import {
@@ -49,6 +52,7 @@ export type ConsoleScreenView = {
   console: AuctionConsoleView;
   note?: ConsoleNote;
   page: number;
+  sort: ConsoleSort;
   timeZone: string;
   today: CommunityDay;
 };
@@ -188,8 +192,84 @@ function lotLine(entry: ConsoleLot): string {
   return [
     `• ${titleOf(entry)} — ${priceLabel(entry.lot.status)}`,
     bidsLabel(entry.bidCount),
+    `${entry.uniqueParticipantCount} уч.`,
+    ...(entry.priceGrowth === undefined
+      ? []
+      : [`рост ${money(entry.priceGrowth)}`]),
     ...(entry.markedForFinal ? ["в финал"] : []),
   ].join(" · ");
+}
+
+function compareLots(
+  left: ConsoleLot,
+  right: ConsoleLot,
+  sort: ConsoleSort,
+): number {
+  if (sort.metric === "growth") {
+    // Неизвестный рост всегда последний: отсутствие исходной цены нельзя
+    // считать нулевым ростом или менять его место направлением сортировки.
+    if (left.priceGrowth === undefined) {
+      return right.priceGrowth === undefined
+        ? left.lot.lotId.localeCompare(right.lot.lotId)
+        : 1;
+    }
+    if (right.priceGrowth === undefined) return -1;
+  }
+  const leftValue = metricValue(left, sort.metric);
+  const rightValue = metricValue(right, sort.metric);
+  const order =
+    leftValue === undefined || rightValue === undefined
+      ? 0
+      : leftValue < rightValue
+        ? -1
+        : leftValue > rightValue
+          ? 1
+          : 0;
+  return (
+    (sort.direction === "descending" ? -order : order) ||
+    left.lot.lotId.localeCompare(right.lot.lotId)
+  );
+}
+
+function metricValue(
+  lot: ConsoleLot,
+  metric: ConsoleSortMetric,
+): number | undefined {
+  switch (metric) {
+    case "bids":
+      return lot.bidCount;
+    case "participants":
+      return lot.uniqueParticipantCount;
+    case "growth":
+      return lot.priceGrowth?.minorUnits;
+    default: {
+      const _exhaustive: never = metric;
+      return _exhaustive;
+    }
+  }
+}
+
+function sortLine(sort: ConsoleSort): string {
+  const metric =
+    sort.metric === "bids"
+      ? "ставкам"
+      : sort.metric === "participants"
+        ? "участникам"
+        : "росту цены";
+  return `Сортировка: по ${metric} ${sort.direction === "descending" ? "↓" : "↑"}.`;
+}
+
+function nextSort(
+  current: ConsoleSort,
+  metric: ConsoleSortMetric,
+): ConsoleSort {
+  return current.metric === metric
+    ? {
+        metric,
+        direction:
+          current.direction === "descending" ? "ascending" : "descending",
+      }
+    : { metric, direction: "descending" };
 }
 
 // Отметку финала можно ставить, пока лот торгуется онлайн; остальное
@@ -210,18 +290,30 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       text: outcomeText(consoleNoteText[view.note]),
       keyboard: withNav(new InlineKeyboard(), {
         name: "Пульт",
-        data: consoleViewData(auction, view.page),
+        data: consoleViewData(auction, view.page, view.sort),
       }),
       format: "HTML",
     };
   }
   // Реестр Auction отдаёт без порядка; пульт держит порядок заведения —
   // идентификатор лота UUIDv7.
-  const lots = [...console.lots].sort((a, b) =>
-    a.lot.lotId.localeCompare(b.lot.lotId),
-  );
+  const lots = [...console.lots].sort((a, b) => compareLots(a, b, view.sort));
   const page = paginate(lots, view.page);
   const keyboard = new InlineKeyboard();
+  keyboard
+    .text(
+      "Ставки",
+      consoleViewData(auction, page.page, nextSort(view.sort, "bids")),
+    )
+    .text(
+      "Люди",
+      consoleViewData(auction, page.page, nextSort(view.sort, "participants")),
+    )
+    .text(
+      "Рост",
+      consoleViewData(auction, page.page, nextSort(view.sort, "growth")),
+    )
+    .row();
   const editable = console.status === "draft" || console.status === "scheduled";
   if (editable) {
     keyboard.text("Сроки недели", consoleWeekData(auction));
@@ -254,17 +346,21 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
           lot: uuidToToken(entry.lot.lotId),
           selected,
           page: page.page,
+          sort: view.sort,
         }),
       );
     }
   }
-  withPager(keyboard, page, (target) => consoleViewData(auction, target));
+  withPager(keyboard, page, (target) =>
+    consoleViewData(auction, target, view.sort),
+  );
   const overdue = lots.filter((entry) => entry.overdue);
   return {
     id: "auction-console",
     text: screenText(
       pagedTitle("Пульт", page),
       statusLines(view).map(escapeHtml).join("\n"),
+      escapeHtml(sortLine(view.sort)),
       lots.length === 0
         ? "Лотов пока нет."
         : page.items.map((entry) => escapeHtml(lotLine(entry))).join("\n"),
@@ -294,7 +390,7 @@ export function weekConfirmScreen(confirm: {
 }): ShownScreen {
   const auction = uuidToToken(confirm.console.auctionId);
   const closesAt = confirm.console.week?.closesAt;
-  const view = { ...confirm, page: 0 };
+  const view = { ...confirm, page: 0, sort: defaultConsoleSort };
   return {
     id: "week-confirm",
     text: screenText(

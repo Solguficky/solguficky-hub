@@ -4,6 +4,7 @@ import type {
   AuctionWeekConfig,
   ConsoleReadResult,
   FinalistResult,
+  LotStatisticsReadResult,
   ScheduleAuctionResult,
   StartPrebiddingResult,
 } from "../auction/port.js";
@@ -26,6 +27,7 @@ const admin: Person = {
 const zone = "Europe/Moscow";
 // Часы бота в тестах: 6 октября 2026 года, 12:00 по Москве.
 const now = new Date("2026-10-06T09:00:00Z");
+const noLotStatistics: LotStatisticsReadResult = { kind: "ok", lots: [] };
 const week = {
   opensAt: "2026-10-20T15:00:00Z",
   closesAt: "2026-10-26T21:00:00Z",
@@ -40,6 +42,7 @@ function view(
 
 function fake(answers: {
   read?: ConsoleReadResult;
+  statistics?: LotStatisticsReadResult;
   schedule?: ScheduleAuctionResult;
   start?: StartPrebiddingResult;
   mark?: FinalistResult;
@@ -48,6 +51,12 @@ function fake(answers: {
   const port: AuctionConsoles = {
     getAuctionConsole: async () =>
       answers.read ?? { kind: "ok", console: view("draft") },
+    getAuctionLotStatistics: async () => {
+      if (answers.statistics === undefined) {
+        throw new Error("statistics response not configured by test");
+      }
+      return answers.statistics;
+    },
     scheduleAuction: async (_person, config) => {
       scheduled.push(config);
       return answers.schedule ?? { kind: "ok" };
@@ -110,11 +119,11 @@ describe("parseWeek", () => {
   });
 });
 
-describe("auction console use cases", () => {
+describe("auction console", () => {
   const call = { identity: admin, auctionId };
 
   it("schedules the first week with the final and shows it over a lagging read", async () => {
-    const { run, scheduled } = fake({});
+    const { run, scheduled } = fake({ statistics: noLotStatistics });
 
     const result = await run({
       ...call,
@@ -135,6 +144,7 @@ describe("auction console use cases", () => {
     const current = view("scheduled", { week: { ...week, final: false } });
     const { run, scheduled } = fake({
       read: { kind: "ok", console: current },
+      statistics: noLotStatistics,
     });
 
     await expect(
@@ -151,6 +161,7 @@ describe("auction console use cases", () => {
   it("does not change the dates of an opened week", async () => {
     const { run, scheduled } = fake({
       read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
     });
 
     await expect(
@@ -165,7 +176,7 @@ describe("auction console use cases", () => {
   });
 
   it("asks for the dates before the final can be switched", async () => {
-    const { run, scheduled } = fake({});
+    const { run, scheduled } = fake({ statistics: noLotStatistics });
 
     await expect(
       run({ ...call, intent: "set-auction-final", final: false, opId }),
@@ -174,10 +185,14 @@ describe("auction console use cases", () => {
   });
 
   it("names a refused start by the state of the auction", async () => {
-    const draft = fake({ start: { kind: "not-scheduled" } });
+    const draft = fake({
+      start: { kind: "not-scheduled" },
+      statistics: noLotStatistics,
+    });
     const opened = fake({
       start: { kind: "not-scheduled" },
       read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
     });
 
     await expect(
@@ -191,6 +206,7 @@ describe("auction console use cases", () => {
   it("shows an accepted start over a read that has not seen it yet", async () => {
     const { run } = fake({
       read: { kind: "ok", console: view("scheduled") },
+      statistics: noLotStatistics,
     });
 
     await expect(
@@ -206,6 +222,7 @@ describe("auction console use cases", () => {
     const { run } = fake({
       mark: { kind: "refused", reason: "deadline-passed" },
       read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
     });
 
     await expect(
@@ -223,13 +240,29 @@ describe("auction console use cases", () => {
   });
 
   it("refuses the console to someone Auction does not take for the administrator", async () => {
-    const { run } = fake({ read: { kind: "meetup-not-found" } });
+    const { run } = fake({
+      read: { kind: "meetup-not-found" },
+      statistics: { kind: "meetup-not-found" },
+    });
 
     await expect(
       run({ ...call, intent: "view-auction-console" }),
     ).resolves.toEqual({
       kind: "auction-console-refused",
       reason: "not-administrator",
+    });
+  });
+
+  it("refuses the whole console when the statistics read is unavailable", async () => {
+    const { run } = fake({
+      statistics: { kind: "unavailable", cause: new Error("offline") },
+    });
+
+    await expect(
+      run({ ...call, intent: "view-auction-console" }),
+    ).resolves.toMatchObject({
+      kind: "dependency-rejected",
+      reason: "unavailable",
     });
   });
 });
@@ -242,6 +275,7 @@ describe("auction week start", () => {
   ): ConsoleLot => ({
     lot: { lotId: id, auctionId, version: 1, proxyEnabled: false, status },
     bidCount: 0,
+    uniqueParticipantCount: 0,
     markedForFinal: false,
     overdue: false,
   });
@@ -253,7 +287,17 @@ describe("auction week start", () => {
     kind: "draft",
   });
   const prepare = (console: AuctionConsoleView) =>
-    fake({ read: { kind: "ok", console } }).run({
+    fake({
+      read: { kind: "ok", console },
+      statistics: {
+        kind: "ok",
+        lots: console.lots.map((each) => ({
+          lotId: each.lot.lotId,
+          bidCount: each.bidCount,
+          uniqueParticipantCount: each.uniqueParticipantCount,
+        })),
+      },
+    }).run({
       ...call,
       intent: "prepare-auction-week-start",
       opId,
@@ -306,8 +350,11 @@ describe("auction week start", () => {
   );
 
   it("asks the dates only while they can change", async () => {
-    const draft = fake({});
-    const opened = fake({ read: { kind: "ok", console: view("prebidding") } });
+    const draft = fake({ statistics: noLotStatistics });
+    const opened = fake({
+      read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
+    });
 
     await expect(
       draft.run({ ...call, intent: "ask-auction-week" }),

@@ -8,6 +8,7 @@ import {
   DraftAuctionResponseSchema,
   EditLotCardResponseSchema,
   GetAuctionConsoleResponseSchema,
+  GetAuctionLotStatisticsResponseSchema,
   GetMeetupAuctionResponseSchema,
   LotSnapshotSchema,
   ScheduleAuctionResponseSchema,
@@ -43,6 +44,7 @@ function adapter(rpc: {
   scheduleLot?: Call;
   getLot?: Call;
   getAuctionConsole?: Call;
+  getAuctionLotStatistics?: Call;
   scheduleAuction?: Call;
   startPrebidding?: Call;
   selectForFinal?: Call;
@@ -64,6 +66,7 @@ function adapter(rpc: {
     chooseDisplayName: notUsed,
     getLotImage: notUsed,
     getAuctionConsole: (rpc.getAuctionConsole ?? notUsed) as never,
+    getAuctionLotStatistics: (rpc.getAuctionLotStatistics ?? notUsed) as never,
     scheduleAuction: (rpc.scheduleAuction ?? notUsed) as never,
     startPrebidding: (rpc.startPrebidding ?? notUsed) as never,
     selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
@@ -569,6 +572,47 @@ describe("auction console adapter", () => {
           },
         ],
       },
+    });
+  });
+
+  it("reads ranked-statistics inputs without exposing participant identities", async () => {
+    const read = adapter({
+      getAuctionLotStatistics: async (request) => {
+        expect(request).toMatchObject({
+          auctionId,
+          viewer: { identityId: admin.identityId },
+        });
+        return create(GetAuctionLotStatisticsResponseSchema, {
+          outcome: {
+            case: "statistics",
+            value: {
+              lots: [
+                {
+                  lotId,
+                  bidCount: 3n,
+                  uniqueParticipantCount: 2n,
+                  priceGrowth: { minorUnits: 70_000n, currency: "RUB" },
+                  lastBidAt: "2026-10-06T09:00:00Z",
+                },
+              ],
+            },
+          },
+        });
+      },
+    });
+
+    await expect(
+      read.getAuctionLotStatistics(admin, auctionId),
+    ).resolves.toEqual({
+      kind: "ok",
+      lots: [
+        {
+          lotId,
+          bidCount: 3,
+          uniqueParticipantCount: 2,
+          priceGrowth: { minorUnits: 70_000, currency: "RUB" },
+        },
+      ],
     });
   });
 

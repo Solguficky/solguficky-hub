@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { ApplicationQueue } from "../../../auction-ui/index.js";
-import type { FormField, LotTextField } from "../application/types.js";
+import type {
+  ConsoleSort,
+  FormField,
+  LotTextField,
+} from "../application/types.js";
 import type { CommunityDay } from "../community-time.js";
 import type {
   MeetupCategory,
@@ -64,6 +68,37 @@ const PageSchema = z
   .string()
   .regex(/^\d{1,4}$/)
   .transform(Number);
+const ConsoleSortSchema = z.enum(["bd", "ba", "pd", "pa", "gd", "ga"]);
+export const defaultConsoleSort: ConsoleSort = {
+  metric: "bids",
+  direction: "descending",
+};
+
+function consoleSortToken(sort: ConsoleSort): string {
+  const metric =
+    sort.metric === "bids" ? "b" : sort.metric === "participants" ? "p" : "g";
+  return `${metric}${sort.direction === "descending" ? "d" : "a"}`;
+}
+
+function parseConsoleSort(raw: string | undefined): ConsoleSort | undefined {
+  const parsed = ConsoleSortSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  switch (parsed.data) {
+    case "bd":
+      return defaultConsoleSort;
+    case "ba":
+      return { metric: "bids", direction: "ascending" };
+    case "pd":
+      return { metric: "participants", direction: "descending" };
+    case "pa":
+      return { metric: "participants", direction: "ascending" };
+    case "gd":
+      return { metric: "growth", direction: "descending" };
+    case "ga":
+      return { metric: "growth", direction: "ascending" };
+  }
+  return undefined;
+}
 // Версия карточки, с которой человек начал действие с материалом. Её несёт
 // кнопка подтверждения: `ca` — confirm-add, `cr` — confirm-remove, сжатые ради
 // места. `v1:mm:ca:` с двумя токенами занимает 55 байт, и девять цифр — всё,
@@ -193,7 +228,7 @@ type PlainAction =
   | { kind: "lot-ask"; lot: string; field: LotFormField }
   // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
   // финала — ещё лот и страницу пульта, на которую вернуться.
-  | { kind: "console-view"; auction: string; page: number }
+  | { kind: "console-view"; auction: string; page: number; sort: ConsoleSort }
   | { kind: "console-week"; auction: string }
   | { kind: "console-final"; auction: string; final: boolean }
   | { kind: "console-open"; auction: string }
@@ -206,6 +241,7 @@ type PlainAction =
       lot: string;
       selected: boolean;
       page: number;
+      sort: ConsoleSort;
     }
   | { kind: "manage-publish"; token: string }
   | { kind: "manage-unpublish"; token: string }
@@ -372,8 +408,15 @@ export function lotAskData(lot: string, field: LotFormField): string {
 // отметка финала с лотом и страницей, до 59 байт.
 
 /** Пульт аукциона на странице `page`; первая страница — без номера. */
-export function consoleViewData(auction: string, page = 0): string {
-  return page === 0 ? `v1:ac:v:${auction}` : `v1:ac:v:${auction}:${page}`;
+export function consoleViewData(
+  auction: string,
+  page = 0,
+  sort: ConsoleSort = defaultConsoleSort,
+): string {
+  if (sort.metric === "bids" && sort.direction === "descending") {
+    return page === 0 ? `v1:ac:v:${auction}` : `v1:ac:v:${auction}:${page}`;
+  }
+  return `v1:ac:v:${auction}:${page}:${consoleSortToken(sort)}`;
 }
 
 /** «Сроки недели»: вопрос о начале и конце онлайн-недели. */
@@ -402,8 +445,13 @@ export function consoleMarkData(mark: {
   lot: string;
   selected: boolean;
   page: number;
+  sort?: ConsoleSort;
 }): string {
-  return `v1:ac:${mark.selected ? "s" : "d"}:${mark.auction}:${mark.lot}:${mark.page}`;
+  const base = `v1:ac:${mark.selected ? "s" : "d"}:${mark.auction}:${mark.lot}:${mark.page}`;
+  return mark.sort === undefined ||
+    (mark.sort.metric === "bids" && mark.sort.direction === "descending")
+    ? base
+    : `${base}:${consoleSortToken(mark.sort)}`;
 }
 
 /** Кнопка FAQ из корня ленты аукциона сходки. */
@@ -794,10 +842,12 @@ function parseConsole(parts: readonly string[]): CallbackAction {
   if (!auction.success) return { kind: "malformed" };
   switch (parts[2]) {
     case "v": {
-      if (parts.length > 5) return { kind: "malformed" };
+      if (parts.length > 6) return { kind: "malformed" };
       const page = PageSchema.safeParse(parts[4] ?? "0");
-      return page.success
-        ? { kind: "console-view", auction: auction.data, page: page.data }
+      const sort =
+        parts.length === 6 ? parseConsoleSort(parts[5]) : defaultConsoleSort;
+      return page.success && sort !== undefined
+        ? { kind: "console-view", auction: auction.data, page: page.data, sort }
         : { kind: "malformed" };
     }
     case "w":
@@ -828,13 +878,19 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     case "d": {
       const lot = TokenSchema.safeParse(parts[4]);
       const page = PageSchema.safeParse(parts[5]);
-      return parts.length === 6 && lot.success && page.success
+      const sort =
+        parts.length === 7 ? parseConsoleSort(parts[6]) : defaultConsoleSort;
+      return (parts.length === 6 || parts.length === 7) &&
+        lot.success &&
+        page.success &&
+        sort !== undefined
         ? {
             kind: "console-mark",
             auction: auction.data,
             lot: lot.data,
             selected: parts[2] === "s",
             page: page.data,
+            sort,
           }
         : { kind: "malformed" };
     }

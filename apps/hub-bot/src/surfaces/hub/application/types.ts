@@ -318,18 +318,34 @@ export type AuctionWeek = {
 
 // Лот на пульте: снимок, число ставок, отметка «в финал» и просрочка — торги
 // идут дольше дедлайна, а лот не закрыт (решает Auction).
-export type ConsoleLot = {
+export type ConsoleLotSnapshot = {
   lot: LotView;
   bidCount: number;
   markedForFinal: boolean;
   overdue: boolean;
 };
 
+export type ConsoleLot = ConsoleLotSnapshot & {
+  uniqueParticipantCount: number;
+  priceGrowth?: LotAmount;
+};
+
+export type ConsoleSortMetric = "bids" | "participants" | "growth";
+export type ConsoleSortDirection = "ascending" | "descending";
+export type ConsoleSort = {
+  metric: ConsoleSortMetric;
+  direction: ConsoleSortDirection;
+};
+
 // `week` нет у черновика: сроков у него ещё не задавали.
-export type AuctionConsoleView = {
+export type AuctionConsoleSnapshot = {
   auctionId: string;
   status: ConsoleAuctionStatus;
   week?: AuctionWeek;
+  lots: readonly ConsoleLotSnapshot[];
+};
+
+export type AuctionConsoleView = Omit<AuctionConsoleSnapshot, "lots"> & {
   lots: readonly ConsoleLot[];
 };
 
