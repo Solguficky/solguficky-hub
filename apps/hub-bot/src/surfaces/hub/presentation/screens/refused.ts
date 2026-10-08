@@ -1,7 +1,9 @@
 import { InlineKeyboard } from "grammy";
+import type { ApplicationQueue } from "../../../../auction-ui/index.js";
 import type { CommunityDay } from "../../community-time.js";
 import type { RefusedApplication } from "../../identity/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
+import { queueDomain } from "../parse-callback.js";
 import {
   buttonText,
   confirmKeyboard,
@@ -18,7 +20,8 @@ import {
 import type { ShownScreen } from "./show.js";
 
 // Список отказанных и пересмотр (ADR-060, пункт 14). Подпись исхода различает
-// блокировку и `declined`: от неё зависит, что сделает пересмотр.
+// блокировку и `declined`: от неё зависит, что сделает пересмотр. Список —
+// одной очереди (ADR-064, пункт 15), и домен кнопок называет её.
 
 const circleLabel: Record<RefusedApplication["circle"], string> = {
   member: "в хаб",
@@ -30,7 +33,13 @@ const outcomeLabel: Record<RefusedApplication["outcome"], string> = {
   declined: "отклонена",
 };
 
-const refusedData = (page: number) => `v1:cm:r:${page}`;
+const refusedData = (queue: ApplicationQueue) => (page: number) =>
+  `${queueDomain(queue)}:r:${page}`;
+
+/** Заголовок списка: «Отказанные» — в сообщество, «Отказанные в аукцион». */
+export function refusedTitle(queue: ApplicationQueue): string {
+  return queue === "community" ? "Отказанные" : "Отказанные в аукцион";
+}
 
 // Ник, а без ника — ссылка на профиль по Telegram id: имени у отказанной
 // заявки нет, его обнулило решение.
@@ -67,6 +76,7 @@ function refusedLine(
 }
 
 export function refusedScreen(
+  queue: ApplicationQueue,
   applications: readonly RefusedApplication[],
   requestedPage: number,
   today: CommunityDay,
@@ -79,14 +89,14 @@ export function refusedScreen(
       buttonText(
         `Пересмотреть ${personLabel(application)} ${circleLabel[application.circle]}`,
       ),
-      `v1:cm:rq:${uuidToToken(application.applicationId)}:${page.page}`,
+      `${queueDomain(queue)}:rq:${uuidToToken(application.applicationId)}:${page.page}`,
     );
   }
-  withPager(keyboard, page, refusedData);
+  withPager(keyboard, page, refusedData(queue));
   return {
-    id: "refused",
+    id: queue === "community" ? "refused" : "refused-auction",
     text: screenText(
-      pagedTitle("Отказанные", page),
+      pagedTitle(refusedTitle(queue), page),
       page.items.length === 0
         ? "Пока никого."
         : page.items
@@ -103,6 +113,7 @@ export function refusedScreen(
  * выдачу роли, у `declined` — допуск по закрытой заявке.
  */
 export function reconsiderConfirmScreen(
+  queue: ApplicationQueue,
   application: RefusedApplication,
   page: number,
 ): ShownScreen {
@@ -120,8 +131,9 @@ export function reconsiderConfirmScreen(
     text: screenText("Пересмотреть отказ?", consequence),
     keyboard: confirmKeyboard({
       yes: "Да, пересмотреть",
-      yesData: `v1:cm:ry:${uuidToToken(application.applicationId)}:${page}`,
-      noData: refusedData(page),
+      yesData: `${queueDomain(queue)}:ry:${uuidToToken(application.applicationId)}:${page}`,
+      noData: refusedData(queue)(page),
+      style: "success",
     }),
     format: "HTML",
   };

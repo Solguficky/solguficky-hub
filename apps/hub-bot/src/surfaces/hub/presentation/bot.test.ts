@@ -31,6 +31,7 @@ import type {
   ApplicationCard,
   ApplicationModerator,
   ApplicationQueueRead,
+  AuctionModerationAdministrator,
   CommunityAdministrator,
   IdentityResolver,
   RefusedApplication,
@@ -212,11 +213,24 @@ const resolvedId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
 // транзитом и «Управление» до PER-534, а пускает право. Гостю и постороннему
 // тест передаёт права явно.
 const MEMBER_RIGHTS: readonly AccessRight[] = ["hub", "auction"];
+// Администратор держит кругом все права (ADR-064, пункт 7): так их отдаёт
+// Identity, и «Управление» бот показывает по ним.
+const ADMIN_RIGHTS: readonly AccessRight[] = [
+  "hub",
+  "auction",
+  "manage-membership",
+  "moderate-auction",
+  "manage-auction",
+];
 
 function resolvedIdentity(
   globalRoles: readonly string[] = ["member"],
   blocked = false,
-  rights: readonly AccessRight[] = blocked ? [] : MEMBER_RIGHTS,
+  rights: readonly AccessRight[] = blocked
+    ? []
+    : globalRoles.includes("admin")
+      ? ADMIN_RIGHTS
+      : MEMBER_RIGHTS,
 ): IdentityResolver {
   return {
     resolve: async () => ({
@@ -1618,6 +1632,7 @@ describe("presentation adapter", () => {
 
       expect(identity.readApplicationQueue).toHaveBeenCalledWith(
         expect.objectContaining({ globalRoles: ["admin"] }),
+        "community",
         undefined,
         expect.objectContaining({ useCase: "manage_community" }),
       );
@@ -1645,6 +1660,7 @@ describe("presentation adapter", () => {
       );
       expect(identity.readApplicationQueue).toHaveBeenCalledWith(
         expect.anything(),
+        "community",
         { createdAtMs: first.createdAtMs, applicationId: first.applicationId },
         expect.anything(),
       );
@@ -1693,6 +1709,7 @@ describe("presentation adapter", () => {
 
       expect(identity.readApplicationQueue).toHaveBeenCalledWith(
         expect.anything(),
+        "community",
         {
           createdAtMs: first.createdAtMs,
           applicationId: "0192f3a4-b5c6-7d8e-9f0a-00000000a000",
@@ -1714,6 +1731,7 @@ describe("presentation adapter", () => {
 
       expect(identity.readApplicationQueue).toHaveBeenCalledWith(
         expect.anything(),
+        "community",
         {
           createdAtMs: second.createdAtMs,
           applicationId: second.applicationId,
@@ -1728,6 +1746,7 @@ describe("presentation adapter", () => {
       });
     });
 
+    // Подделанное нажатие без права бот отклоняет сам, до Identity.
     it("does not open the card for a non-administrator", async () => {
       const identity = {
         ...resolvedIdentity(["member"]),
@@ -1740,16 +1759,14 @@ describe("presentation adapter", () => {
 
       await bot.handleUpdate(callbackUpdate("v1:cm:q"));
 
+      expect(identity.readApplicationQueue).not.toHaveBeenCalled();
       expect(calls.at(-1)).toMatchObject({
         method: "editMessageText",
         payload: {
           text: "<b>Разбирать заявки может только администратор.</b>",
           reply_markup: {
             inline_keyboard: [
-              [
-                { text: "‹ Управление", callback_data: "v1:manage:menu" },
-                { text: "Меню", callback_data: "v1:nav:start" },
-              ],
+              [{ text: "Меню", callback_data: "v1:nav:start" }],
             ],
           },
         },
@@ -1945,6 +1962,7 @@ describe("presentation adapter", () => {
 
       expect(identity.refusedApplications).toHaveBeenCalledWith(
         expect.objectContaining({ globalRoles: ["admin"] }),
+        "community",
         expect.objectContaining({ useCase: "manage_community" }),
       );
       const text = JSON.stringify(calls.at(-1)?.payload);
@@ -1964,16 +1982,14 @@ describe("presentation adapter", () => {
 
       await bot.handleUpdate(callbackUpdate("v1:cm:r"));
 
+      expect(identity.refusedApplications).not.toHaveBeenCalled();
       expect(calls.at(-1)).toMatchObject({
         method: "editMessageText",
         payload: {
           text: "<b>Пересматривать отказы может только администратор.</b>",
           reply_markup: {
             inline_keyboard: [
-              [
-                { text: "‹ Управление", callback_data: "v1:manage:menu" },
-                { text: "Меню", callback_data: "v1:nav:start" },
-              ],
+              [{ text: "Меню", callback_data: "v1:nav:start" }],
             ],
           },
         },
@@ -2724,7 +2740,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["admin"],
-        rights: ["hub", "auction"],
+        rights: ADMIN_RIGHTS,
       },
       intent: "change-meetup-state",
       action: "hold",
@@ -2940,7 +2956,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["admin"],
-        rights: ["hub", "auction"],
+        rights: ADMIN_RIGHTS,
       },
       intent: "update-meetup-field",
       field: "venue",
@@ -3102,7 +3118,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["admin"],
-        rights: ["hub", "auction"],
+        rights: ADMIN_RIGHTS,
       },
       intent: "change-meetup-state",
       action: "cancel",
@@ -3183,7 +3199,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["admin"],
-        rights: ["hub", "auction"],
+        rights: ADMIN_RIGHTS,
       },
       intent: "publish-meetup",
       meetupId: visible.id,
@@ -6261,7 +6277,7 @@ describe("deferred publication frames", () => {
   const admin = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
     globalRoles: ["admin"],
-    rights: ["hub", "auction"],
+    rights: ADMIN_RIGHTS,
   };
 
   function scheduledDraft(): MeetupSnapshot {
@@ -7140,7 +7156,7 @@ describe("past meetup date", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["admin"],
-        rights: ["hub", "auction"],
+        rights: ADMIN_RIGHTS,
       },
       intent: "set-meetup-field",
       field: "schedule",
@@ -7930,5 +7946,317 @@ describe("source channels", () => {
     expect(JSON.stringify(rendered)).toContain("<b>Правила и FAQ</b>");
     expect(JSON.stringify(rendered)).toContain("‹ Лоты");
     expect(records.at(-1)?.fields.use_case).toBe("view_auction");
+  });
+});
+
+// PER-534: пункты «Управления» по правам, очередь аукциона рядом с очередью
+// сообщества и выдача модерации аукциона из состава.
+describe("auction queue and moderation", () => {
+  const moderatorRights: readonly AccessRight[] = [
+    "hub",
+    "auction",
+    "moderate-auction",
+  ];
+  const guest: ApplicationCard = {
+    applicationId: "0192f3a4-b5c6-7d8e-9f0a-00000000a001",
+    identityId: "0192f3a4-b5c6-7d8e-9f0a-0000c0de0001",
+    telegramUserId: 77n,
+    telegramUsername: "guest",
+    firstName: "Гость",
+    circle: "public",
+    source: { kind: "none" },
+    createdAtMs: Date.parse("2026-10-02T11:05:00.123Z"),
+  };
+  const cursor = `${uuidToToken(guest.applicationId)}:${guest.createdAtMs.toString(36)}`;
+  const memberId = "0192f3a4-b5c6-7d8e-9f0a-0000c0de0002";
+
+  function labelsOf(payload: unknown): string[] {
+    const markup = (
+      payload as {
+        reply_markup?: { inline_keyboard: { text: string }[][] };
+      }
+    ).reply_markup;
+    return (markup?.inline_keyboard ?? []).flat().map((button) => button.text);
+  }
+
+  function queue(rights: readonly AccessRight[], globalRoles = ["member"]) {
+    return {
+      ...resolvedIdentity(globalRoles, false, rights),
+      readApplicationQueue: vi
+        .fn<ApplicationModerator["readApplicationQueue"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: { card: { application: guest, position: 1 }, total: 1 },
+        }),
+      admitApplication: vi
+        .fn<ApplicationModerator["admitApplication"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: { already: false, outcome: "admitted" },
+        }),
+      declineApplication: vi
+        .fn<ApplicationModerator["declineApplication"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: { already: false, outcome: "declined" },
+        }),
+      refusedApplications: vi
+        .fn<ApplicationAdministrator["refusedApplications"]>()
+        .mockResolvedValue({ kind: "ok", value: [] }),
+    };
+  }
+
+  it("shows the moderator only the auction items of management", async () => {
+    const { bot, calls } = createHarness(queue(moderatorRights));
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+
+    expect(labelsOf(calls.at(-1)?.payload)).toEqual([
+      "Заявки в аукцион",
+      "Отказанные в аукцион",
+      "‹ Меню",
+    ]);
+  });
+
+  it("shows the management entry by right, and not to a plain member", async () => {
+    const moderator = createHarness(queue(moderatorRights));
+    await moderator.bot.init();
+    await moderator.bot.handleUpdate(messageUpdate("/menu"));
+    expect(JSON.stringify(moderator.calls)).toContain("v1:manage:menu");
+
+    const member = createHarness(queue(MEMBER_RIGHTS));
+    await member.bot.init();
+    await member.bot.handleUpdate(messageUpdate("/menu"));
+    expect(JSON.stringify(member.calls)).not.toContain("v1:manage:menu");
+  });
+
+  it("offers the administrator both queues side by side", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+
+    const labels = labelsOf(calls.at(-1)?.payload);
+    expect(labels.indexOf("Заявки в аукцион")).toBe(
+      labels.indexOf("Заявки") + 1,
+    );
+    expect(labels).toContain("Отказанные в аукцион");
+  });
+
+  it("reads the auction queue for the moderator and admits into it", async () => {
+    const identity = queue(moderatorRights);
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:aq:q"));
+    expect(identity.readApplicationQueue).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "auction",
+      undefined,
+      expect.anything(),
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      `"callback_data":"v1:aq:qa:${cursor}","style":"success"`,
+    );
+
+    await bot.handleUpdate(callbackUpdate(`v1:aq:qa:${cursor}`));
+    expect(identity.admitApplication).toHaveBeenCalledWith(
+      expect.anything(),
+      guest.applicationId,
+      expect.anything(),
+    );
+    expect(identity.readApplicationQueue).toHaveBeenLastCalledWith(
+      expect.anything(),
+      "auction",
+      expect.anything(),
+      expect.anything(),
+    );
+  });
+
+  it("lists the refused of the auction queue only", async () => {
+    const identity = queue(moderatorRights);
+    const { bot } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:aq:r"));
+
+    expect(identity.refusedApplications).toHaveBeenCalledWith(
+      expect.anything(),
+      "auction",
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    [
+      "the auction queue without the moderation right",
+      MEMBER_RIGHTS,
+      "v1:aq:q",
+    ],
+    [
+      "a decision in the auction queue without the right",
+      MEMBER_RIGHTS,
+      `v1:aq:qy:${cursor}`,
+    ],
+    ["the community queue by an auction moderator", moderatorRights, "v1:cm:q"],
+    [
+      "the community refusals by an auction moderator",
+      moderatorRights,
+      "v1:cm:r",
+    ],
+  ])(
+    "refuses a forged press on %s before Identity",
+    async (_, rights, data) => {
+      const identity = queue(rights);
+      const { bot, calls, records } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(data));
+
+      expect(identity.readApplicationQueue).not.toHaveBeenCalled();
+      expect(identity.declineApplication).not.toHaveBeenCalled();
+      expect(identity.refusedApplications).not.toHaveBeenCalled();
+      expect(labelsOf(calls.at(-1)?.payload)).toEqual(["Меню"]);
+      expectBoundary(records[0], {
+        level: "warn",
+        result: "error",
+        operation: "callback_query",
+        error_category: "authorization",
+        use_case: "manage_community",
+      });
+    },
+  );
+
+  function moderation(holders: { identityId: string; revocable: boolean }[]) {
+    const auctionModerators = vi
+      .fn<AuctionModerationAdministrator["auctionModerators"]>()
+      .mockResolvedValue({
+        kind: "ok",
+        value: holders.map((holder) => ({
+          ...holder,
+          telegramUserId: 5n,
+          telegramUsername: "member",
+        })),
+      });
+    return {
+      ...resolvedIdentity(["admin"]),
+      auctionModerators,
+      grantAuctionModeration: vi
+        .fn<AuctionModerationAdministrator["grantAuctionModeration"]>()
+        .mockResolvedValue({ kind: "ok", value: true }),
+      revokeAuctionModeration: vi
+        .fn<AuctionModerationAdministrator["revokeAuctionModeration"]>()
+        .mockResolvedValue({ kind: "ok", value: true }),
+      community: vi
+        .fn<CommunityAdministrator["community"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: {
+            members: [
+              {
+                identityId: memberId,
+                telegramUsername: "member",
+                admitted: true,
+              },
+            ],
+            allowedUsernames: [],
+          },
+        }),
+    };
+  }
+
+  it("grants the moderation from the community and drops the member from candidates", async () => {
+    const identity = moderation([]);
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:cm:mc:0"));
+    expect(labelsOf(calls.at(-1)?.payload)).toContain("Выдать @member");
+
+    identity.auctionModerators.mockResolvedValue({
+      kind: "ok",
+      value: [
+        {
+          identityId: memberId,
+          telegramUserId: 5n,
+          telegramUsername: "member",
+          revocable: true,
+        },
+      ],
+    });
+    await bot.handleUpdate(
+      callbackUpdate(`v1:cm:mg:${uuidToToken(memberId)}:0`),
+    );
+
+    expect(identity.grantAuctionModeration).toHaveBeenCalledWith(
+      expect.objectContaining({ globalRoles: ["admin"] }),
+      memberId,
+      expect.anything(),
+    );
+    expect(calls.at(-2)?.payload).toMatchObject({ text: "Модерация выдана." });
+    expect(labelsOf(calls.at(-1)?.payload)).not.toContain("Выдать @member");
+  });
+
+  it("revokes only a granted moderation", async () => {
+    const identity = moderation([{ identityId: memberId, revocable: true }]);
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:cm:m"));
+    expect(labelsOf(calls.at(-1)?.payload)).toContain("Отозвать @member");
+
+    await bot.handleUpdate(callbackUpdate(`v1:cm:mv:${uuidToToken(memberId)}`));
+    expect(identity.revokeAuctionModeration).toHaveBeenCalledWith(
+      expect.anything(),
+      memberId,
+      expect.anything(),
+    );
+    expect(calls.at(-2)?.payload).toMatchObject({
+      text: "Модерация отозвана.",
+    });
+  });
+
+  // Кнопка появляется и пропадает вместе с правом: «Управление» читает права
+  // заново на каждое нажатие.
+  it("shows the auction queue once the right is granted and hides it once revoked", async () => {
+    let rights: readonly AccessRight[] = MEMBER_RIGHTS;
+    const identity: IdentityResolver = {
+      resolve: async () => ({
+        kind: "resolved",
+        identityId: memberId,
+        globalRoles: ["member"],
+        rights,
+        blocked: false,
+      }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(messageUpdate("/menu"));
+    expect(JSON.stringify(calls.at(-1))).not.toContain("v1:manage:menu");
+
+    rights = moderatorRights;
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+    expect(labelsOf(calls.at(-1)?.payload)).toContain("Заявки в аукцион");
+
+    rights = MEMBER_RIGHTS;
+    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+    expect(labelsOf(calls.at(-1)?.payload)).toEqual(["Меню"]);
+  });
+
+  it("refuses the moderators screen to someone who does not manage the community", async () => {
+    const identity = {
+      ...moderation([]),
+      ...resolvedIdentity(["member"], false, moderatorRights),
+    };
+    const { bot } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(`v1:cm:mg:${uuidToToken(memberId)}:0`),
+    );
+
+    expect(identity.grantAuctionModeration).not.toHaveBeenCalled();
   });
 });

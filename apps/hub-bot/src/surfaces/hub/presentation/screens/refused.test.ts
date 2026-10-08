@@ -48,6 +48,7 @@ function dataOf(screen: ShownScreen, text: string): string | undefined {
 describe("refused list", () => {
   it("names the circle, the outcome, who refused and when", () => {
     const screen = refusedScreen(
+      "community",
       [refused(1), refused(2, { circle: "member", outcome: "declined" })],
       0,
       today,
@@ -76,7 +77,7 @@ describe("refused list", () => {
 
   it("links a person without a username by Telegram id", () => {
     const { telegramUsername: _, decidedBy: __, ...anonymous } = refused(3);
-    const screen = refusedScreen([anonymous], 0, today);
+    const screen = refusedScreen("community", [anonymous], 0, today);
 
     expect(screen.text).toContain(
       '• <a href="tg://user?id=3">без ника</a> — заявка в аукцион, заблокирован\n  2 октября, пт, 14:05',
@@ -86,7 +87,7 @@ describe("refused list", () => {
 
   it("pages by eight and keeps the page in the reconsider button", () => {
     const all = Array.from({ length: 10 }, (_, index) => refused(index + 1));
-    const screen = refusedScreen(all, 1, today);
+    const screen = refusedScreen("community", all, 1, today);
 
     expect(screen.text).toContain("<b>Отказанные · 2 из 2</b>");
     expect(rows(screen)).toEqual([
@@ -101,15 +102,30 @@ describe("refused list", () => {
   });
 
   it("says so when nobody is refused", () => {
-    expect(refusedScreen([], 0, today).text).toBe(
+    expect(refusedScreen("community", [], 0, today).text).toBe(
       "<b>Отказанные</b>\n\nПока никого.",
+    );
+  });
+
+  it("lists the auction queue under its own title and domain", () => {
+    const screen = refusedScreen(
+      "auction",
+      [refused(1, { outcome: "declined" })],
+      0,
+      today,
+    );
+
+    expect(screen.id).toBe("refused-auction");
+    expect(screen.text).toContain("<b>Отказанные в аукцион</b>");
+    expect(dataOf(screen, "Пересмотреть @user1 в аукцион")).toBe(
+      `v1:aq:rq:${uuidToToken(id(1))}:0`,
     );
   });
 });
 
 describe("reconsider confirmation", () => {
   it("names lifting the block and granting the role", () => {
-    const screen = reconsiderConfirmScreen(refused(1), 2);
+    const screen = reconsiderConfirmScreen("community", refused(1), 2);
 
     expect(screen.text).toBe(
       "<b>Пересмотреть отказ?</b>\n\nБлокировка @user1 снимется, и сразу откроется доступ к аукциону.",
@@ -119,10 +135,14 @@ describe("reconsider confirmation", () => {
       `v1:cm:ry:${uuidToToken(id(1))}:2`,
     );
     expect(dataOf(screen, "Нет")).toBe("v1:cm:r:2");
+    expect(screen.keyboard.inline_keyboard[0]?.[0]).toMatchObject({
+      style: "success",
+    });
   });
 
   it("names admission by the closed application for a declined one", () => {
     const screen = reconsiderConfirmScreen(
+      "community",
       refused(2, { circle: "member", outcome: "declined" }),
       0,
     );

@@ -8,6 +8,7 @@ import {
 } from "grammy";
 import { defaultFaq, type FaqContent } from "../../../auction-faq.js";
 import {
+  type ApplicationQueue,
   type AuctionBlock,
   type AuctionResult,
   type AuctionScreenBody,
@@ -70,8 +71,11 @@ import {
   type ApplicationCursor,
   type ApplicationModerator,
   type ApplicationQueueRead,
+  type AuctionModerationAdministrator,
+  type AuctionModerator,
   type CommunityAdministrator,
   type CommunitySnapshot,
+  type GrantModerationResult,
   type IdentityAdminResult,
   type IdentityResolver,
   type OrganizerResolver,
@@ -164,6 +168,8 @@ import {
   type CommunityView,
   closeAccessConfirmScreen,
   communityScreen,
+  moderatorCandidatesScreen,
+  moderatorsScreen,
   viewOfOrigin,
 } from "./screens/community.js";
 import {
@@ -207,7 +213,14 @@ import {
   statusScreen,
   upcomingScreen,
 } from "./screens/meetup.js";
-import { isAdministrator, manageScreen, menuScreen } from "./screens/menu.js";
+import {
+  canManageMembership,
+  canModerateAuction,
+  canOpenManagement,
+  isAdministrator,
+  manageScreen,
+  menuScreen,
+} from "./screens/menu.js";
 import {
   categoryLabels,
   globalNotificationsScreen,
@@ -252,6 +265,7 @@ export type BotRuntime = {
     Partial<ApplicationAdministrator> &
     Partial<SourceChannelAdministrator> &
     Partial<ApplicationModerator> &
+    Partial<AuctionModerationAdministrator> &
     Partial<OrganizerResolver> &
     Partial<TelegramRecipientResolver>;
   logger: Logger;
@@ -325,6 +339,9 @@ const communityForbiddenText =
   "Управлять составом сообщества может только администратор.";
 const refusedForbiddenText =
   "Пересматривать отказы может только администратор.";
+const auctionQueueForbiddenText = "Заявки в аукцион решает модератор аукциона.";
+const moderatorsForbiddenText =
+  "Выдавать модерацию аукциона может тот, кто управляет составом.";
 const channelSavedListFailedText =
   "Канал заведён, но список не загрузился. Открой каналы ещё раз через минуту.";
 const sourceChannelsForbiddenText =
@@ -947,7 +964,7 @@ async function handleMessage(
         outcome = identity.outcome;
         return;
       }
-      if (!isAdministrator(identity.person)) {
+      if (!canManageMembership(identity.person)) {
         await answered();
         await showRefusal(ctx, sourceChannelsForbiddenText, menuOnly());
         outcome = sourceChannelsForbiddenOutcome(identity.person);
@@ -1678,27 +1695,17 @@ async function handleCallback(
       return;
     }
     const person = identity.person;
-    // Вход в управление и вопрос о нике видит только администратор, но старая
-    // кнопка остаётся в чате. Меню сервиса за собой не имеет, а вопрос отказал бы
-    // лишь после набора ответа, поэтому отказ приходит здесь. Остальные кнопки
-    // меню, кроме объявления с его вопросом, бот пропускает: право на них решают
-    // Meetups и Identity (PER-396). Отказ приходит правкой, как любой экран.
-    if (
-      (action.kind === "manage-menu" ||
-        action.kind === "ask-allowed-username" ||
-        action.kind === "source-channels" ||
-        action.kind === "ask-source-channel") &&
-      !isAdministrator(person)
-    ) {
-      await showRefusal(
-        ctx,
-        action.kind === "manage-menu"
-          ? managementForbiddenText
-          : action.kind === "ask-allowed-username"
-            ? communityForbiddenText
-            : sourceChannelsForbiddenText,
-        menuOnly(),
-      );
+    // Вход в управление и его пункты бот показывает по правам (ADR-064,
+    // пункт 6), но старая кнопка остаётся в чате, а нажатие можно подделать.
+    // Меню сервиса за собой не имеет, а вопрос отказал бы лишь после набора
+    // ответа, поэтому отказ приходит здесь, до Identity. Очередь аукциона
+    // требует права модерировать аукцион, очередь сообщества, состав и каналы —
+    // права управлять составом (решение владельца по PER-534). Остальные
+    // кнопки меню, кроме объявления с его вопросом, бот пропускает: право на
+    // них решают Meetups и Identity (PER-396). Отказ приходит правкой.
+    const refusedText = managementRefusal(action, person);
+    if (refusedText !== undefined) {
+      await showRefusal(ctx, refusedText, menuOnly());
       outcome = {
         level: "warn",
         message: "management rejected",
@@ -2117,13 +2124,18 @@ async function handleCallback(
       action.kind === "refused-applications" ||
       action.kind === "ask-reconsider"
     ) {
-      const result = await readRefused(ctx, runtime, person);
+      const result = await readRefused(ctx, runtime, person, action.queue);
       if (result.kind !== "ok") {
-        await showRefusedRefusal(ctx, result);
+        await showRefusedRefusal(ctx, result, action.queue);
       } else if (action.kind === "refused-applications") {
         await showScreen(
           ctx,
-          refusedScreen(result.value, action.page, communityToday(ctx)),
+          refusedScreen(
+            action.queue,
+            result.value,
+            action.page,
+            communityToday(ctx),
+          ),
         );
       } else {
         const applicationId = tokenToUuid(action.token);
@@ -2135,12 +2147,17 @@ async function handleCallback(
           await waiting.answer(reconsideredText);
           await showScreen(
             ctx,
-            refusedScreen(result.value, action.page, communityToday(ctx)),
+            refusedScreen(
+              action.queue,
+              result.value,
+              action.page,
+              communityToday(ctx),
+            ),
           );
         } else {
           await showScreen(
             ctx,
-            reconsiderConfirmScreen(application, action.page),
+            reconsiderConfirmScreen(action.queue, application, action.page),
           );
         }
       }
@@ -2171,11 +2188,67 @@ async function handleCallback(
             : result.kind === "invalid"
               ? "Изменение не сохранилось. Список перечитан заново."
               : result.kind === "forbidden"
-                ? "Это может только администратор."
+                ? forbiddenToast(action.queue)
                 : "Не получилось сохранить. Попробуй ещё раз.";
       await waiting.answer(toast);
-      await renderRefused(ctx, runtime, person, action.page);
+      await renderRefused(ctx, runtime, person, action.queue, action.page);
       outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (
+      action.kind === "auction-moderators" ||
+      action.kind === "moderator-candidates"
+    ) {
+      const result = await renderModerators(
+        ctx,
+        runtime,
+        person,
+        action.kind === "auction-moderators" ? undefined : action.page,
+      );
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (
+      action.kind === "grant-moderation" ||
+      action.kind === "revoke-moderation"
+    ) {
+      const identityId = tokenToUuid(action.token);
+      const moderation = runtime.identity;
+      const result: GrantModerationResult =
+        action.kind === "grant-moderation"
+          ? moderation.grantAuctionModeration === undefined
+            ? {
+                kind: "unavailable",
+                cause: new Error("auction moderation is not configured"),
+              }
+            : await moderation.grantAuctionModeration(
+                person,
+                identityId,
+                rpcCall(ctx, "manage_community"),
+              )
+          : moderation.revokeAuctionModeration === undefined
+            ? {
+                kind: "unavailable",
+                cause: new Error("auction moderation is not configured"),
+              }
+            : await moderation.revokeAuctionModeration(
+                person,
+                identityId,
+                rpcCall(ctx, "manage_community"),
+              );
+      await waiting.answer(moderationToast(action.kind, result));
+      // После команды экран перечитывается из Identity: выданный уходит из
+      // кандидатов, отозванный — из модераторов.
+      await renderModerators(
+        ctx,
+        runtime,
+        person,
+        action.kind === "grant-moderation" ? action.page : undefined,
+      );
+      outcome = adminOutcome(
+        result.kind === "not-member" ? { kind: "invalid" } : result,
+        person.identityId,
+      );
       return;
     }
     if (action.kind === "source-channels") {
@@ -2206,6 +2279,7 @@ async function handleCallback(
         ctx,
         runtime,
         person,
+        action.queue,
         action.cursor === undefined
           ? undefined
           : queueCursor(action.cursor, action.from ?? "after"),
@@ -2218,21 +2292,25 @@ async function handleCallback(
         ctx,
         runtime,
         person,
+        action.queue,
         queueCursor(action.cursor, "at"),
       );
       if (result.kind !== "ok") {
-        await showApplicationRefusal(ctx, result);
+        await showApplicationRefusal(ctx, result, action.queue);
       } else {
         const card = result.value.card;
         if (
           card?.application.applicationId === tokenToUuid(action.cursor.token)
         ) {
-          await showScreen(ctx, declineConfirmScreen(card.application));
+          await showScreen(
+            ctx,
+            declineConfirmScreen(action.queue, card.application),
+          );
         } else {
           // Заявку решил другой администратор, пока карточка висела: исход
           // назовёт только решение, а вопрос о нём уже не к месту.
           await waiting.answer("Эту заявку уже решили.");
-          await showApplicationQueue(ctx, result.value, true);
+          await showApplicationQueue(ctx, action.queue, result.value, true);
         }
       }
       outcome = adminOutcome(result, person.identityId);
@@ -2265,7 +2343,7 @@ async function handleCallback(
         result.kind === "ok"
           ? decisionToast(result.value)
           : result.kind === "forbidden"
-            ? "Это может только администратор."
+            ? forbiddenToast(action.queue)
             : "Решение не подтвердилось. Карточка перечитана заново.",
       );
       // Решённая заявка уступает место следующей. Неподтверждённое решение
@@ -2274,6 +2352,7 @@ async function handleCallback(
         ctx,
         runtime,
         person,
+        action.queue,
         queueCursor(action.cursor, result.kind === "ok" ? "after" : "at"),
       );
       outcome = adminOutcome(result, person.identityId);
@@ -3737,10 +3816,144 @@ async function renderCommunity(
   return result;
 }
 
+// Какой отказ бот даёт сам, до сервиса: пункт управления, на который у
+// человека нет права. `undefined` — пропустить к обработчику.
+function managementRefusal(
+  action: CallbackAction,
+  person: Person,
+): string | undefined {
+  switch (action.kind) {
+    case "manage-menu":
+      return canOpenManagement(person) ? undefined : managementForbiddenText;
+    case "ask-allowed-username":
+      return canManageMembership(person) ? undefined : communityForbiddenText;
+    case "source-channels":
+    case "ask-source-channel":
+      return canManageMembership(person)
+        ? undefined
+        : sourceChannelsForbiddenText;
+    case "auction-moderators":
+    case "moderator-candidates":
+    case "grant-moderation":
+    case "revoke-moderation":
+      return canManageMembership(person) ? undefined : moderatorsForbiddenText;
+    case "application-card":
+    case "admit-application":
+    case "ask-decline-application":
+    case "decline-application":
+      return queueAllowed(action.queue, person)
+        ? undefined
+        : queueForbiddenText(action.queue);
+    case "refused-applications":
+    case "ask-reconsider":
+    case "reconsider":
+      return queueAllowed(action.queue, person)
+        ? undefined
+        : action.queue === "community"
+          ? refusedForbiddenText
+          : auctionQueueForbiddenText;
+    default:
+      return undefined;
+  }
+}
+
+function queueAllowed(queue: ApplicationQueue, person: Person): boolean {
+  return queue === "community"
+    ? canManageMembership(person)
+    : canModerateAuction(person);
+}
+
+function queueForbiddenText(queue: ApplicationQueue): string {
+  return queue === "community"
+    ? applicationsForbiddenText
+    : auctionQueueForbiddenText;
+}
+
+// Всплывающий ответ на отказ сервиса посреди решения: кто может это сделать.
+function forbiddenToast(queue: ApplicationQueue): string {
+  return queue === "community"
+    ? "Это может только администратор."
+    : "Это может только модератор аукциона.";
+}
+
+function moderationToast(
+  kind: "grant-moderation" | "revoke-moderation",
+  result: GrantModerationResult,
+): string {
+  switch (result.kind) {
+    case "ok":
+      return !result.value
+        ? "Состояние уже было актуальным."
+        : kind === "grant-moderation"
+          ? "Модерация выдана."
+          : "Модерация отозвана.";
+    case "not-member":
+      return "Выдать нельзя: человек не участник сообщества.";
+    case "forbidden":
+      return moderatorsForbiddenText;
+    case "invalid":
+      return "Изменение не сохранилось. Список перечитан заново.";
+    default:
+      return "Не получилось сохранить. Попробуй ещё раз.";
+  }
+}
+
+// Модераторы и кандидаты читаются заново на каждое действие: состав меняется
+// без участия того, кто выдаёт. `candidatesPage` — экран выдачи, без него —
+// список модераторов. Отказ возвращает в состав.
+async function renderModerators(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+  candidatesPage: number | undefined,
+): Promise<IdentityAdminResult<unknown>> {
+  const moderators: IdentityAdminResult<readonly AuctionModerator[]> =
+    runtime.identity.auctionModerators === undefined
+      ? {
+          kind: "unavailable",
+          cause: new Error("auction moderation is not configured"),
+        }
+      : await runtime.identity.auctionModerators(
+          actor,
+          rpcCall(ctx, "manage_community"),
+        );
+  const refuse = (
+    result: Exclude<IdentityAdminResult<unknown>, { kind: "ok" }>,
+  ) =>
+    showRefusal(
+      ctx,
+      result.kind === "forbidden" ? moderatorsForbiddenText : unavailableText,
+      withNav(new InlineKeyboard(), toCommunity),
+    );
+  if (moderators.kind !== "ok") {
+    await refuse(moderators);
+    return moderators;
+  }
+  if (candidatesPage === undefined) {
+    await showScreen(ctx, moderatorsScreen(moderators.value));
+    return moderators;
+  }
+  const community = await readCommunity(ctx, runtime, actor);
+  if (community.kind !== "ok") {
+    await refuse(community);
+    return community;
+  }
+  await showScreen(
+    ctx,
+    moderatorCandidatesScreen(
+      community.value,
+      moderators.value,
+      candidatesPage,
+    ),
+  );
+  return community;
+}
+
 function readRefused(
   ctx: UpdateContext,
   runtime: BotRuntime,
   actor: Person,
+  queue: ApplicationQueue,
 ): Promise<IdentityAdminResult<readonly RefusedApplication[]>> {
   return runtime.identity.refusedApplications === undefined
     ? Promise.resolve({
@@ -3749,6 +3962,7 @@ function readRefused(
       })
     : runtime.identity.refusedApplications(
         actor,
+        queue,
         rpcCall(ctx, "manage_community"),
       );
 }
@@ -3757,10 +3971,15 @@ function readRefused(
 function showRefusedRefusal(
   ctx: UpdateContext,
   result: Exclude<IdentityAdminResult<unknown>, { kind: "ok" }>,
+  queue: ApplicationQueue,
 ): Promise<void> {
   return showRefusal(
     ctx,
-    result.kind === "forbidden" ? refusedForbiddenText : unavailableText,
+    result.kind !== "forbidden"
+      ? unavailableText
+      : queue === "community"
+        ? refusedForbiddenText
+        : auctionQueueForbiddenText,
     withNav(new InlineKeyboard(), toManage),
   );
 }
@@ -3769,14 +3988,18 @@ async function renderRefused(
   ctx: UpdateContext,
   runtime: BotRuntime,
   actor: Person,
+  queue: ApplicationQueue,
   page: number,
 ): Promise<void> {
-  const result = await readRefused(ctx, runtime, actor);
+  const result = await readRefused(ctx, runtime, actor, queue);
   if (result.kind !== "ok") {
-    await showRefusedRefusal(ctx, result);
+    await showRefusedRefusal(ctx, result, queue);
     return;
   }
-  await showScreen(ctx, refusedScreen(result.value, page, communityToday(ctx)));
+  await showScreen(
+    ctx,
+    refusedScreen(queue, result.value, page, communityToday(ctx)),
+  );
 }
 
 // Экран каналов открывается из управления, туда и возвращает отказ. После
@@ -3871,6 +4094,7 @@ function readApplicationQueue(
   ctx: UpdateContext,
   runtime: BotRuntime,
   actor: Person,
+  queue: ApplicationQueue,
   after: ApplicationCursor | undefined,
 ): Promise<IdentityAdminResult<ApplicationQueueRead>> {
   return runtime.identity.readApplicationQueue === undefined
@@ -3880,6 +4104,7 @@ function readApplicationQueue(
       })
     : runtime.identity.readApplicationQueue(
         actor,
+        queue,
         after,
         rpcCall(ctx, "manage_community"),
       );
@@ -3889,24 +4114,26 @@ function readApplicationQueue(
 function showApplicationRefusal(
   ctx: UpdateContext,
   result: Exclude<IdentityAdminResult<unknown>, { kind: "ok" }>,
+  queue: ApplicationQueue,
 ): Promise<void> {
   return showRefusal(
     ctx,
-    result.kind === "forbidden" ? applicationsForbiddenText : unavailableText,
+    result.kind === "forbidden" ? queueForbiddenText(queue) : unavailableText,
     withNav(new InlineKeyboard(), toManage),
   );
 }
 
 async function showApplicationQueue(
   ctx: UpdateContext,
+  queue: ApplicationQueue,
   read: ApplicationQueueRead,
   afterCursor: boolean,
 ): Promise<void> {
   await showScreen(
     ctx,
     read.card === undefined
-      ? applicationQueueEndScreen(read.total, afterCursor)
-      : applicationCardScreen(read.card, read.total, Date.now()),
+      ? applicationQueueEndScreen(queue, read.total, afterCursor)
+      : applicationCardScreen(queue, read.card, read.total, Date.now()),
   );
 }
 
@@ -3914,14 +4141,15 @@ async function renderApplicationCard(
   ctx: UpdateContext,
   runtime: BotRuntime,
   actor: Person,
+  queue: ApplicationQueue,
   after: ApplicationCursor | undefined,
 ): Promise<IdentityAdminResult<ApplicationQueueRead>> {
-  const result = await readApplicationQueue(ctx, runtime, actor, after);
+  const result = await readApplicationQueue(ctx, runtime, actor, queue, after);
   if (result.kind !== "ok") {
-    await showApplicationRefusal(ctx, result);
+    await showApplicationRefusal(ctx, result, queue);
     return result;
   }
-  await showApplicationQueue(ctx, result.value, after !== undefined);
+  await showApplicationQueue(ctx, queue, result.value, after !== undefined);
   return result;
 }
 
@@ -6617,6 +6845,10 @@ function callbackUseCase(
     | "refused-applications"
     | "ask-reconsider"
     | "reconsider"
+    | "auction-moderators"
+    | "moderator-candidates"
+    | "grant-moderation"
+    | "revoke-moderation"
     | "source-channels"
     | "ask-source-channel"
     | "application-card"
@@ -6735,6 +6967,10 @@ function callbackUseCase(
     case "ask-block-member":
     case "block-member":
     case "remove-allowed-username":
+    case "auction-moderators":
+    case "moderator-candidates":
+    case "grant-moderation":
+    case "revoke-moderation":
       return "manage_community";
     case "notify-global":
     case "notify-set-global":

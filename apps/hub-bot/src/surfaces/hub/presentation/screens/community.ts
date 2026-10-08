@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { applicationCode } from "../../application/hub-access.js";
 import type {
+  AuctionModerator,
   CommunityMember,
   CommunitySnapshot,
 } from "../../identity/port.js";
@@ -88,6 +89,8 @@ function rootScreen(snapshot: CommunitySnapshot): ShownScreen {
     .row()
     .text("Разрешённые ники", "v1:cm:u")
     .row()
+    .text("Модераторы аукциона", toModerators.data)
+    .row()
     .text(refreshLabel, toCommunity.data);
   return {
     id: "community",
@@ -143,6 +146,7 @@ function pendingScreen(
         ? `v1:cm:ad:${token}`
         : `v1:cm:ad:${token}:${nextToken}`,
     )
+    .success()
     .row()
     .text("Закрыть", `v1:cm:bq:${token}:${blockOriginData(origin)}`);
   if (nextToken !== undefined) {
@@ -220,6 +224,86 @@ function usernamesScreen(
             .join("\n"),
     ),
     keyboard: withNav(keyboard, toCommunity),
+    format: "HTML",
+  };
+}
+
+const toModerators = { name: "Модераторы", data: "v1:cm:m" };
+
+// Модератор с ником назван ником, без ника — Telegram id: кода заявки у
+// держателя права нет, а id открывает профиль.
+function moderatorLabel(moderator: AuctionModerator): string {
+  return moderator.telegramUsername === undefined
+    ? `id ${moderator.telegramUserId}`
+    : `@${moderator.telegramUsername}`;
+}
+
+/**
+ * Держатели права модерировать аукцион (ADR-064, пункт 7). Отзыв есть только у
+ * выданного записью: администратор держит право кругом.
+ */
+export function moderatorsScreen(
+  moderators: readonly AuctionModerator[],
+): ShownScreen {
+  const keyboard = new InlineKeyboard();
+  for (const moderator of moderators) {
+    if (!moderator.revocable) continue;
+    nextRow(keyboard).text(
+      `Отозвать ${moderatorLabel(moderator)}`,
+      `v1:cm:mv:${uuidToToken(moderator.identityId)}`,
+    );
+  }
+  nextRow(keyboard).text("Выдать модерацию", "v1:cm:mc:0");
+  nextRow(keyboard).text(refreshLabel, toModerators.data);
+  return {
+    id: "community-moderators",
+    text: screenText(
+      "Модераторы аукциона",
+      moderators.length === 0
+        ? "Пока никого."
+        : moderators
+            .map(
+              (moderator) =>
+                `• ${escapeHtml(moderatorLabel(moderator))}${moderator.revocable ? "" : " · администратор"}`,
+            )
+            .join("\n"),
+    ),
+    keyboard: withNav(keyboard, toCommunity),
+    format: "HTML",
+  };
+}
+
+/**
+ * Кому выдать модерацию: допущенные участники без неё. Список состава уже
+ * исключает администраторов и мейнтейнеров.
+ */
+export function moderatorCandidatesScreen(
+  snapshot: CommunitySnapshot,
+  moderators: readonly AuctionModerator[],
+  requestedPage: number,
+): ShownScreen {
+  const holders = new Set(moderators.map((moderator) => moderator.identityId));
+  const candidates = admittedOf(snapshot).filter(
+    (member) => !holders.has(member.identityId),
+  );
+  const page = paginate(candidates, requestedPage);
+  const keyboard = new InlineKeyboard();
+  for (const member of page.items) {
+    nextRow(keyboard).text(
+      `Выдать ${memberLabel(member)}`,
+      `v1:cm:mg:${uuidToToken(member.identityId)}:${page.page}`,
+    );
+  }
+  withPager(keyboard, page, (target) => `v1:cm:mc:${target}`);
+  return {
+    id: "community-moderator-candidates",
+    text: screenText(
+      pagedTitle("Выдать модерацию", page),
+      page.items.length === 0
+        ? "Все допущенные участники уже модерируют аукцион."
+        : "Модератор решает заявки в аукцион и видит их отказанных.",
+    ),
+    keyboard: withNav(keyboard, toModerators),
     format: "HTML",
   };
 }
