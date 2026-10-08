@@ -48,21 +48,17 @@ afterAll(() => {
   direct.close();
 });
 
-const LOT_TITLE = "Кружка солегуфика";
-
 /** Дата и время в поясе сообщества, как их пишет администратор в пульте. */
 function communityStamp(at: Date): string {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("ru-RU", {
-      timeZone: "Europe/Moscow",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    })
-      .formatToParts(at)
-      .map((part) => [part.type, part.value]),
-  );
-  return `${parts["day"]}.${parts["month"]}.${parts["year"]} 00:00`;
+  const parts = new Intl.DateTimeFormat("ru-RU", {
+    timeZone: "Europe/Moscow",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  }).formatToParts(at);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((found) => found.type === type)?.value ?? "";
+  return `${part("day")}.${part("month")}.${part("year")} 00:00`;
 }
 
 // Подписи сравниваются без различия пробелов: суммы бот разделяет
@@ -75,6 +71,11 @@ function pressableLike(person: Person, label: string): string | undefined {
 
 async function pressesAmount(person: Person, label: string): Promise<void> {
   await person.presses(pressableLike(person, label) ?? label);
+}
+
+/** Строка лота в ленте: подпись — название, затем цена. */
+function lotRow(person: Person, title: string): string | undefined {
+  return person.pressable().find((label) => label.startsWith(`${title} · `));
 }
 
 /**
@@ -100,6 +101,9 @@ describe("auction through both bots", () => {
     // право `manage_auction`, которое уходит в Auction в смотрящем.
     const { adminId, person: admin } = await organizerAtStart(hub, direct);
     const title = titleFor("Аукцион", freshTelegramUserId());
+    // Название лота своё на прогон: гость находит лот по нему, а не по цене,
+    // которая в ленте может отставать от ставки.
+    const lotTitle = titleFor("Кружка", freshTelegramUserId());
     await admin.presses("Управление");
     await admin.presses("Создать сходку");
     await fillsMeetupForm(admin, title);
@@ -121,8 +125,8 @@ describe("auction through both bots", () => {
     // «Лот не найден» несёт «Повторить».
     await eventually(admin, "Название", () => admin.presses("Повторить"));
     await admin.presses("Название");
-    await admin.says(LOT_TITLE);
-    expect(plain(admin.sees())).toContain(LOT_TITLE);
+    await admin.says(lotTitle);
+    expect(plain(admin.sees())).toContain(lotTitle);
     await admin.presses("Изменить лот");
     await eventually(admin, "Цена и шаг", () => admin.presses("Повторить"));
     await admin.presses("Цена и шаг");
@@ -130,7 +134,7 @@ describe("auction through both bots", () => {
     await admin.says("100");
     expect(plain(admin.sees())).toContain("Цена и шаг сохранены");
     await admin.presses("‹ Лот");
-    expect(plain(admin.sees())).toContain(LOT_TITLE);
+    expect(plain(admin.sees())).toContain(lotTitle);
 
     // Онлайн-неделя идёт с начала сегодняшнего дня по послезавтра.
     const day = 24 * 60 * 60 * 1000;
@@ -157,7 +161,7 @@ describe("auction through both bots", () => {
     await member.says("/start");
     await member.opensLink(meetupId);
     await member.presses("Лоты");
-    await pressesAmount(member, `${LOT_TITLE} · старт 1 000 ₽`);
+    await pressesAmount(member, `${lotTitle} · старт 1 000 ₽`);
     // Аукцион открывает лоты реестра сам, вслед за командой открытия недели.
     await eventually(member, "По шагу (1 100 ₽)", () =>
       member.presses("Обновить"),
@@ -186,18 +190,32 @@ describe("auction through both bots", () => {
     await admin.says("/menu");
     await admin.presses("Управление");
     await admin.presses("Заявки");
+    // Очередь отдаётся от старой заявки к новой, а карточка показывает одну:
+    // заявки прошлых прогонов администратор пропускает.
+    for (let skipped = 0; skipped < 20; skipped += 1) {
+      if (plain(admin.sees()).includes(guestUsername)) break;
+      await admin.presses("Пропустить");
+    }
     expect(plain(admin.sees())).toContain(guestUsername);
     await admin.presses("Допустить");
     await guest.says("/start");
     await guest.presses("‹ Меню");
     await guest.presses("Аукционы");
-    // Активный аукцион один — сходки этого прогона; строка называет его дату.
-    const row = guest
+    // Аукцион в боте аукциона адресуется только строкой списка, а строки
+    // аукционов с одной датой неотличимы. Поэтому сценарий требует свежей
+    // базы — рецепт поднимает её на каждый прогон, — и на базе, где остались
+    // аукционы прошлых прогонов (`just contour-up`), отказывает с причиной.
+    const rows = guest
       .pressable()
-      .find((label) => label.includes("идут ставки"));
-    expect(row).toBeDefined();
-    await guest.presses(row ?? "");
-    await pressesAmount(guest, `${LOT_TITLE} · 1 100 ₽`);
+      .filter((label) => label.includes("идут ставки"));
+    expect(rows, "сценарию нужна свежая база контура").toHaveLength(1);
+    await guest.presses(rows[0] ?? "");
+    // Цена в ленте может отставать от ставки участника: лот ищется по
+    // названию, а цену показывает карточка.
+    await guest.presses(lotRow(guest, lotTitle) ?? lotTitle);
+    await eventually(guest, "По шагу (1 200 ₽)", () =>
+      guest.presses("Обновить"),
+    );
     await pressesAmount(guest, "По шагу (1 200 ₽)");
     await pressesAmount(guest, "Да, поставить 1 200 ₽");
     await guest.presses("Взять псевдоним");
@@ -215,8 +233,8 @@ describe("auction through both bots", () => {
     await guest.presses("Да, включить автоставку");
     expect(plain(guest.sees())).toContain("5 000 ₽");
 
-    // Гость без права аукциона — заявка ещё на рассмотрении — до Auction не
-    // доходит: вход отвечает ожиданием, и ни меню, ни лота ему не открыто.
+    // Гость без права аукциона — заявка ещё на рассмотрении — получает отказ
+    // бота: вход отвечает ожиданием, и ни меню, ни лота ему не открыто.
     const pendingId = freshTelegramUserId();
     const pending = startConversation(auction.bot, auction.calls, pendingId, {
       username: usernameFor(pendingId),
