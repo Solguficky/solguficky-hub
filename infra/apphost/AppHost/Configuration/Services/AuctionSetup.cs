@@ -96,6 +96,7 @@ internal static class AuctionSetup
         return Wire(context, auction)
             .WithEnvironment("AUCTION_DATABASE_USER", user)
             .WithEnvironment("AUCTION_DATABASE_PASSWORD", password)
+            .ExportsTelemetryToCollector()
             .AsClusterWorkload(Cluster);
     }
 

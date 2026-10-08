@@ -51,6 +51,7 @@ internal static class HubBotSetup
                     AppHostNames.Resources.HubBot,
                     RepositoryPaths.Root(context.Builder),
                     "apps/hub-bot/Containerfile"))
+            .ExportsTelemetryToCollector()
             .AsClusterWorkload(Cluster);
 
     private static IResourceBuilder<T> Wire<T>(
