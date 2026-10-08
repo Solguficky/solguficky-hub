@@ -332,28 +332,47 @@ public static class ReplicaMapping
         switch (message.OccasionCase)
         {
             case IdentityEvent.OccasionOneofCase.ApplicationSubmitted:
-                // Заявку ставят только в очередь: событие без неё испорчено, а
-                // не повод оповестить модераторов неизвестно какой очереди.
-                if (Queue(message.ApplicationSubmitted.Queue, message.ApplicationSubmitted.Role) is not { } submitted)
+                switch (Queue(message.ApplicationSubmitted.Queue, message.ApplicationSubmitted.Role))
                 {
-                    return new Decoded.Poison(
-                        $"application_submitted carries neither a known queue {message.ApplicationSubmitted.Queue} nor a requestable role {message.ApplicationSubmitted.Role}");
+                    case QueueReading.Known known:
+                        occasionQueue = known.Queue;
+                        occasion = IdentityOccasion.ApplicationSubmitted;
+                        break;
+
+                    // Очередь, которой этот потребитель не знает, — новая
+                    // поверхность со своими модераторами: звать модераторов
+                    // известной очереди было бы ложью, а снимок остаётся верным.
+                    case QueueReading.Unknown:
+                        occasion = IdentityOccasion.Other;
+                        break;
+
+                    // Заявку ставят только в очередь: событие без неё испорчено,
+                    // а не повод оповестить модераторов неизвестно какой очереди.
+                    default:
+                        return new Decoded.Poison(
+                            $"application_submitted carries neither a queue nor a requestable role {message.ApplicationSubmitted.Role}");
                 }
 
-                occasionQueue = submitted;
-                occasion = IdentityOccasion.ApplicationSubmitted;
                 break;
 
             case IdentityEvent.OccasionOneofCase.ApplicationAdmitted:
                 // По очереди канал выбирает бот, которым придёт сообщение.
-                if (Queue(message.ApplicationAdmitted.Queue, message.ApplicationAdmitted.Role) is not { } admitted)
+                switch (Queue(message.ApplicationAdmitted.Queue, message.ApplicationAdmitted.Role))
                 {
-                    return new Decoded.Poison(
-                        $"application_admitted carries neither a known queue {message.ApplicationAdmitted.Queue} nor a requestable role {message.ApplicationAdmitted.Role}");
+                    case QueueReading.Known known:
+                        occasionQueue = known.Queue;
+                        occasion = IdentityOccasion.ApplicationAdmitted;
+                        break;
+
+                    case QueueReading.Unknown:
+                        occasion = IdentityOccasion.Other;
+                        break;
+
+                    default:
+                        return new Decoded.Poison(
+                            $"application_admitted carries neither a queue nor a requestable role {message.ApplicationAdmitted.Role}");
                 }
 
-                occasionQueue = admitted;
-                occasion = IdentityOccasion.ApplicationAdmitted;
                 break;
 
             case IdentityEvent.OccasionOneofCase.RoleGranted:
@@ -427,19 +446,38 @@ public static class ReplicaMapping
     /// производитель ставит оба, пока круг не снят; событие, записанное до
     /// появления очереди, несёт только круг, и его очередь читается по нему
     /// тем же правилом, что у Identity: <c>member</c> — сообщество, гость —
-    /// аукцион.
+    /// аукцион. По кругу читается только незаданная очередь: у незнакомой
+    /// круг тоже стоит, но называет он не её.
     /// </summary>
-    private static AccessQueue? Queue(ApplicationQueue queue, GlobalRole role) => queue switch
+    private static QueueReading Queue(ApplicationQueue queue, GlobalRole role) => queue switch
     {
-        ApplicationQueue.Community => AccessQueue.Community,
-        ApplicationQueue.Auction => AccessQueue.Auction,
-        _ => role switch
+        ApplicationQueue.Community => new QueueReading.Known(AccessQueue.Community),
+        ApplicationQueue.Auction => new QueueReading.Known(AccessQueue.Auction),
+        ApplicationQueue.Unspecified => role switch
         {
-            GlobalRole.Member => AccessQueue.Community,
-            GlobalRole.Guest => AccessQueue.Auction,
-            _ => null,
+            GlobalRole.Member => new QueueReading.Known(AccessQueue.Community),
+            GlobalRole.Guest => new QueueReading.Known(AccessQueue.Auction),
+            _ => QueueReading.Missing.Instance,
         },
+        _ => QueueReading.Unknown.Instance,
     };
+
+    private abstract record QueueReading
+    {
+        public sealed record Known(AccessQueue Queue) : QueueReading;
+
+        /// <summary>Очередь названа, но этому потребителю незнакома.</summary>
+        public sealed record Unknown : QueueReading
+        {
+            public static readonly Unknown Instance = new();
+        }
+
+        /// <summary>Ни очереди, ни круга, по которому её прочитать.</summary>
+        public sealed record Missing : QueueReading
+        {
+            public static readonly Missing Instance = new();
+        }
+    }
 
     /// <summary>Общие правила конверта обоих источников.</summary>
     private static Decoded.Poison? Envelope(string eventId, string aggregateId, long version, string occurredAt)

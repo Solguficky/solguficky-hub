@@ -299,6 +299,33 @@ public class ReplicaMappingTests
         fact.OccasionQueue.ShouldBe(expected);
     }
 
+    [Fact]
+    public void Identity_ApplicationToUnknownQueue_OnlyMovesReplica()
+    {
+        // Незнакомая очередь — новая поверхность со своими модераторами: круг,
+        // который производитель ещё ставит, называет не её, и звать модераторов
+        // аукциона было бы ложью.
+        var message = EventFactory.Application(IdentityId, version: 2, GlobalRole.Guest);
+        message.ApplicationSubmitted.Queue = (ApplicationQueue)99;
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(IdentityOccasion.Other);
+        fact.OccasionQueue.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Identity_AdmissionToUnknownQueue_OnlyMovesReplica()
+    {
+        var message = EventFactory.Admission(IdentityId, version: 4, GlobalRole.Guest);
+        message.ApplicationAdmitted.Queue = (ApplicationQueue)99;
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(IdentityOccasion.Other);
+        fact.Role.ShouldBe("guest");
+    }
+
     [Theory]
     [InlineData(GlobalRole.Admin)]
     [InlineData(GlobalRole.Maintainer)]

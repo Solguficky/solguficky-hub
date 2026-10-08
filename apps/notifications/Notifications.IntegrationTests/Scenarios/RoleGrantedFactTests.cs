@@ -47,6 +47,32 @@ public class RoleGrantedFactTests
     }
 
     /// <summary>
+    /// Мейнтейнеру admin выдаёт права управления, а круг оставляет прежним
+    /// (ADR-064, пункт 7): снимок несёт круг <c>maintainer</c>, и о выданной
+    /// роли человек узнаёт всё равно — держит ли он её, читается по праву.
+    /// </summary>
+    [Fact]
+    public async Task When_AdminGrantedToMaintainer_Expect_OneFactThoughCircleStays()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+
+        var person = EventFactory.NewId();
+        var grant = EventFactory.RoleGrant(person, version: 3, GlobalRole.Admin);
+        grant.State.Role = GlobalRole.Maintainer;
+        grant.State.Rights.Clear();
+        grant.State.Rights.Add([AccessRight.Hub, AccessRight.Auction, AccessRight.ManageMembership, AccessRight.ModerateAuction]);
+        await nats.Publish(RoleGrantedSubject, grant);
+
+        var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
+
+        facts.Single().Fact.RecipientId.ShouldBe(person);
+        facts.Single().Fact.RoleGranted.Role.ShouldBe(GlobalRole.Admin);
+    }
+
+    /// <summary>
     /// Выдачу круга дают и белый список, и вложенность, и о ней человеку не
     /// пишут: о допуске по заявке сообщает <c>access_granted</c>.
     /// </summary>

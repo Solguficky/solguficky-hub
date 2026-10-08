@@ -150,7 +150,9 @@ public class AccessRequestFactTests
 
     /// <summary>
     /// Модератор, который сам подаёт заявку в очередь, которую модерирует, о
-    /// ней не узнаёт: о собственном действии человеку не сообщают.
+    /// ней не узнаёт: о собственном действии человеку не сообщают. Снимок
+    /// заявки несёт его право модерации, поэтому выпадает он по правилу
+    /// исполнителя, а не по пустым правам.
     /// </summary>
     [Fact]
     public async Task When_ModeratorAppliesToOwnQueue_Expect_NotAddressed()
@@ -165,10 +167,37 @@ public class AccessRequestFactTests
         // Гость без права аукциона, но с правом его модерации: заявку ставить
         // ему есть на что, а адресатом своей заявки он быть не должен.
         var applicant = EventFactory.NewId();
-        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(applicant, version: 1, GlobalRole.Guest, AccessRight.ModerateAuction));
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Guest));
+        await Apply(
+            nats,
+            replica,
+            ApplicationSubmittedSubject,
+            EventFactory.Application(applicant, version: 2, GlobalRole.Guest, held: GlobalRole.Guest, granted: AccessRight.ModerateAuction));
 
+        (await Scalar(db, $"SELECT count(*) FROM identity_replica WHERE 'moderate_auction' = ANY(rights) AND identity_id = '{applicant}';")).ShouldBe(1);
         (await Recipients(db)).ShouldBe([other]);
+    }
+
+    /// <summary>
+    /// Гость с правом аукциона, подавший заявку в сообщество, ещё ждёт: заявку
+    /// закрывает право хаба, а не любое право.
+    /// </summary>
+    [Fact]
+    public async Task When_AuctionGuestAppliesToCommunity_Expect_MembershipManagersCalled()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        var admin = await Person(db, AdminCircle);
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
+        var replica = silo.Service<ReplicaTelemetry>();
+
+        await Apply(
+            nats,
+            replica,
+            ApplicationSubmittedSubject,
+            EventFactory.Application(EventFactory.NewId(), version: 2, GlobalRole.Member, held: GlobalRole.Guest, granted: AccessRight.Auction));
+
+        (await Recipients(db)).ShouldBe([admin]);
     }
 
     [Fact]

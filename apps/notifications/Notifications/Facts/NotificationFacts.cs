@@ -52,6 +52,13 @@ public static class NotificationFacts
     /// </summary>
     public const string RoleGrantedRole = "admin";
 
+    /// <summary>
+    /// Право, по которому видно, что выданное <see cref="RoleGrantedRole" />
+    /// ещё в силе: управление составом даёт и круг администратора, и выдача
+    /// admin мейнтейнеру, у которого круг не меняется (ADR-064, пункт 7).
+    /// </summary>
+    public const string RoleGrantedRight = "manage_membership";
+
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string MeetupEventCause = "meetup_event";
 

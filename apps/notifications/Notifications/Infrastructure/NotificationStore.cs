@@ -109,13 +109,6 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             WHERE identity_id = @IdentityId AND NOT blocked AND @Right = ANY(rights));
         """;
 
-    // То же для выдачи роли: человек всё ещё в выданном круге.
-    private const string StillInRoleSql = """
-        SELECT EXISTS (
-            SELECT 1 FROM identity_replica
-            WHERE identity_id = @IdentityId AND NOT blocked AND role = @Role);
-        """;
-
     private const string InsertSql = """
         INSERT INTO notification (
             notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at,
@@ -479,7 +472,9 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     // Адресат — сам человек, аудитории и категории нет, как у допуска. Писать
     // ли, решает последнее слово реплики: запоздавшая выдача, вернувшаяся после
     // Nak, когда роль уже отозвали или человека заблокировали, о роли, которой
-    // нет, не сообщает. Повтор события упирается в ключ повода
+    // нет, не сообщает. Держит ли человек выданное, читается по праву, а не по
+    // кругу: мейнтейнеру admin выдаёт права управления, а круг оставляет
+    // прежним (ADR-064, пункт 7). Повтор события упирается в ключ повода
     // notification_cause_once_per_recipient.
     private static async Task<FactCount> AddRoleGranted(
         UnitOfWork work,
@@ -488,7 +483,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
-        if (!await work.Scalar(StillInRoleSql, new { fact.IdentityId, Role = NotificationFacts.RoleGrantedRole }, cancellationToken))
+        if (!await work.Scalar(StillAdmittedSql, new { fact.IdentityId, Right = NotificationFacts.RoleGrantedRight }, cancellationToken))
         {
             return FactCount.None;
         }

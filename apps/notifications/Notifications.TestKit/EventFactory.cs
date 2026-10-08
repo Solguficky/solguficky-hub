@@ -138,13 +138,16 @@ public static class EventFactory
     /// Открыта заявка в очередь круга <paramref name="circle" />: <c>member</c> —
     /// сообщество, гость — аукцион. Повод несёт и очередь, и прежний круг, как
     /// их ставит Identity, пока круг не снят. Снимок — тот, что был до заявки:
-    /// незаблокирован, без круга и прав.
+    /// незаблокирован, с кругом <paramref name="held" /> и его правами, если
+    /// круг есть, и правами <paramref name="granted" />, выданными отдельно.
     /// </summary>
     public static IdentityEvent Application(
         string identityId,
         long version,
         GlobalRole circle,
-        string? eventId = null)
+        string? eventId = null,
+        GlobalRole held = GlobalRole.Unspecified,
+        params AccessRight[] granted)
     {
         var message = new IdentityEvent
         {
@@ -155,6 +158,8 @@ public static class EventFactory
             State = new IdentityState { Id = identityId },
             ApplicationSubmitted = new ApplicationSubmitted { Role = circle, Queue = Queue(circle) },
         };
+        Hold(message.State, held);
+        message.State.Rights.Add(granted.Where(right => !message.State.Rights.Contains(right)));
 
         return message;
     }
