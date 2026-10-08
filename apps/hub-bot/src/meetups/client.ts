@@ -495,7 +495,7 @@ function roleValue(role: string): GlobalRole {
     case "member":
       return GlobalRole.MEMBER;
     case "public":
-      return GlobalRole.PUBLIC;
+      return GlobalRole.GUEST;
     default:
       return GlobalRole.UNSPECIFIED;
   }

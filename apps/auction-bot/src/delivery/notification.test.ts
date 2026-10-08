@@ -94,7 +94,7 @@ describe("decodeNotification", () => {
   it("decodes an admission to the auction as its own branch", () => {
     expect(
       decodeNotification(
-        fact({ case: "accessGranted", value: { circle: GlobalRole.PUBLIC } }),
+        fact({ case: "accessGranted", value: { circle: GlobalRole.GUEST } }),
       ),
     ).toMatchObject({
       kind: "ok",

@@ -53,7 +53,7 @@ public class RoleGrantedFactTests
     [Theory]
     [InlineData(GlobalRole.Maintainer)]
     [InlineData(GlobalRole.Member)]
-    [InlineData(GlobalRole.Public)]
+    [InlineData(GlobalRole.Guest)]
     public async Task When_CircleGranted_Expect_NoFact(GlobalRole role)
     {
         using var db = new IsolatedDatabase();

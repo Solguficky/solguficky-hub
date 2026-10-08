@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17identity/v1/roles.proto\x12\x0bidentity.v1*\x8c\x01\n\nGlobalRole\x12\x1b\n\x17GLOBAL_ROLE_UNSPECIFIED\x10\x00\x12\x15\n\x11GLOBAL_ROLE_ADMIN\x10\x01\x12\x1a\n\x16GLOBAL_ROLE_MAINTAINER\x10\x02\x12\x16\n\x12GLOBAL_ROLE_MEMBER\x10\x03\x12\x16\n\x12GLOBAL_ROLE_PUBLIC\x10\x04\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17identity/v1/roles.proto\x12\x0bidentity.v1*\x8b\x01\n\nGlobalRole\x12\x1b\n\x17GLOBAL_ROLE_UNSPECIFIED\x10\x00\x12\x15\n\x11GLOBAL_ROLE_ADMIN\x10\x01\x12\x1a\n\x16GLOBAL_ROLE_MAINTAINER\x10\x02\x12\x16\n\x12GLOBAL_ROLE_MEMBER\x10\x03\x12\x15\n\x11GLOBAL_ROLE_GUEST\x10\x04*\xa2\x01\n\x0b\x41\x63\x63\x65ssRight\x12\x1c\n\x18\x41\x43\x43\x45SS_RIGHT_UNSPECIFIED\x10\x00\x12\x14\n\x10\x41\x43\x43\x45SS_RIGHT_HUB\x10\x01\x12\x18\n\x14\x41\x43\x43\x45SS_RIGHT_AUCTION\x10\x02\x12\"\n\x1e\x41\x43\x43\x45SS_RIGHT_MANAGE_MEMBERSHIP\x10\x03\x12!\n\x1d\x41\x43\x43\x45SS_RIGHT_MODERATE_AUCTION\x10\x04*u\n\x10\x41pplicationQueue\x12!\n\x1d\x41PPLICATION_QUEUE_UNSPECIFIED\x10\x00\x12\x1f\n\x1b\x41PPLICATION_QUEUE_COMMUNITY\x10\x01\x12\x1d\n\x19\x41PPLICATION_QUEUE_AUCTION\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,5 +32,9 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'identity.v1.roles_pb2', _gl
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_GLOBALROLE']._serialized_start=41
-  _globals['_GLOBALROLE']._serialized_end=181
+  _globals['_GLOBALROLE']._serialized_end=180
+  _globals['_ACCESSRIGHT']._serialized_start=183
+  _globals['_ACCESSRIGHT']._serialized_end=345
+  _globals['_APPLICATIONQUEUE']._serialized_start=347
+  _globals['_APPLICATIONQUEUE']._serialized_end=464
 # @@protoc_insertion_point(module_scope)

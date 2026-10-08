@@ -272,22 +272,30 @@ message LotPurchased {
   auction.v1.Money price = 2;
 }
 
-// A new application for a circle was opened. The applicant is not carried: who
-// asked, by which name and from which channel is data for the moderator, and the
-// channel leads the recipient to the application queue, where it is read from
-// IdentityService under the moderator's own rights.
+// A new application was opened in a queue the recipient moderates. The
+// applicant is not carried: who asked, by which name and from which channel is
+// data for the moderator, and the channel leads the recipient to the
+// application queue, where it is read from IdentityService under the
+// moderator's own rights.
 message AccessRequested {
-  // The circle asked for: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  // Superseded by queue: GLOBAL_ROLE_MEMBER for the community queue,
+  // GLOBAL_ROLE_GUEST for the auction queue. Notifications keeps setting it
+  // until the field is removed.
   identity.v1.GlobalRole circle = 1;
+
+  // The queue the application lies in, and so the screen the channel leads to.
+  identity.v1.ApplicationQueue queue = 2;
 }
 
-// The recipient was admitted to the circle they applied for. The circle names
-// the surface the application came from, and the channel of that surface
-// delivers it: the hub bot for GLOBAL_ROLE_MEMBER, the auction bot for
-// GLOBAL_ROLE_PUBLIC. Who decided is deliberately absent.
+// The recipient was admitted by an application. Who decided is deliberately
+// absent; which bot delivers it is a rule of the delivery channel, not of this
+// message.
 message AccessGranted {
-  // The circle of the application: GLOBAL_ROLE_MEMBER or GLOBAL_ROLE_PUBLIC.
+  // Superseded by queue and still set, as in AccessRequested.
   identity.v1.GlobalRole circle = 1;
+
+  // The queue of the application.
+  identity.v1.ApplicationQueue queue = 2;
 }
 
 // The recipient was granted a role outside of an application. The hub bot

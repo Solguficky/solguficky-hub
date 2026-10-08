@@ -16,7 +16,7 @@ import (
 
 const (
 	hubCircle     = identityv1.GlobalRole_GLOBAL_ROLE_MEMBER
-	auctionCircle = identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC
+	auctionCircle = identityv1.GlobalRole_GLOBAL_ROLE_GUEST
 )
 
 // Запись хаба гасится в любом боте и выдаёт свой круг, а не круг поверхности
@@ -29,7 +29,7 @@ func TestRequestRoleHubAllowlistInAuctionBotGrantsMemberAndPublic(t *testing.T) 
 	resp := requestRole(t, svc, roleRequest{telegramUserID: 7101, username: "insider", circle: auctionCircle, source: new("chan")})
 
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST)
-	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertAllowedUsernameRows(t, db, "insider", allowedUsernameCounts{total: 1, used: 1})
 	assertApplications(t, db, resp.GetIdentityId())
 	assertEvents(t, db, resp.GetIdentityId(), "v1 profile_registered() {member,public} blocked=false")
@@ -139,7 +139,7 @@ func TestRequestRoleAlreadyHeldStillConsumesAllowlist(t *testing.T) {
 	resp := requestRole(t, svc, roleRequest{telegramUserID: 7109, username: "bidder", circle: auctionCircle})
 
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_ALREADY_HELD)
-	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertAllowedUsernameRows(t, db, "bidder", allowedUsernameCounts{total: 1, used: 1})
 	assertApplicationEvents(t, db, identityID)
 }
@@ -168,7 +168,7 @@ func TestRequestRoleAuctionAllowlistInHubBotGrantsPublicAndOpensMemberApplicatio
 	resp := requestRole(t, svc, roleRequest{telegramUserID: 7111, username: "collector", circle: hubCircle, firstName: "Dan"})
 
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
-	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertApplications(t, db, resp.GetIdentityId(), "member source=<nil> name=Dan")
 	assertEvents(t, db, resp.GetIdentityId(),
 		"v1 profile_registered() {public} blocked=false",
@@ -185,7 +185,7 @@ func TestRequestRoleAllowlistAfterApplicationClosesIt(t *testing.T) {
 	resp := requestRole(t, svc, roleRequest{telegramUserID: 7112, username: "patient", circle: auctionCircle})
 
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST)
-	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertApplications(t, db, waiting.GetIdentityId())
 	assertApplicationEvents(t, db, waiting.GetIdentityId(), "public")
 }

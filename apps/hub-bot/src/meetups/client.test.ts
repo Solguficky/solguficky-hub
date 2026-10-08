@@ -134,7 +134,7 @@ describe("Meetups client", () => {
             GlobalRole.MAINTAINER,
             GlobalRole.ADMIN,
             GlobalRole.MEMBER,
-            GlobalRole.PUBLIC,
+            GlobalRole.GUEST,
             GlobalRole.UNSPECIFIED,
           ],
         },

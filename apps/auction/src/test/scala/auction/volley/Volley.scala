@@ -95,7 +95,7 @@ object Volley {
 
   /** Смотрящий-участник: ставить может только роль `public` (ADR-044). */
   def viewer(participant: UUID): wire.Viewer =
-    wire.Viewer(participant.toString, Seq(GlobalRoleMessage.GLOBAL_ROLE_PUBLIC))
+    wire.Viewer(participant.toString, Seq(GlobalRoleMessage.GLOBAL_ROLE_GUEST))
 }
 
 /**

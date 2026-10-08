@@ -469,7 +469,7 @@ export function createApplicationModerator(
 function circleOf(role: GlobalRole): "member" | "public" | undefined {
   return role === GlobalRole.MEMBER
     ? "member"
-    : role === GlobalRole.PUBLIC
+    : role === GlobalRole.GUEST
       ? "public"
       : undefined;
 }
@@ -560,7 +560,7 @@ function roleValue(role: string): GlobalRole {
     case "member":
       return GlobalRole.MEMBER;
     case "public":
-      return GlobalRole.PUBLIC;
+      return GlobalRole.GUEST;
     default:
       return GlobalRole.UNSPECIFIED;
   }
@@ -750,7 +750,7 @@ function roleName(role: GlobalRole): string | undefined {
       return "admin";
     case GlobalRole.MEMBER:
       return "member";
-    case GlobalRole.PUBLIC:
+    case GlobalRole.GUEST:
       return "public";
     case GlobalRole.UNSPECIFIED:
       return "unspecified";

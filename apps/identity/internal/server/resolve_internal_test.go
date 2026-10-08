@@ -31,7 +31,7 @@ func TestGlobalRoleMapsEveryDictionaryValue(t *testing.T) {
 		{roleMaintainer, identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER},
 		{roleAdmin, identityv1.GlobalRole_GLOBAL_ROLE_ADMIN},
 		{roleMember, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER},
-		{rolePublic, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC},
+		{rolePublic, identityv1.GlobalRole_GLOBAL_ROLE_GUEST},
 	} {
 		got, ok := globalRole(tt.role)
 		if !ok || got != tt.want {
@@ -60,7 +60,7 @@ func TestGlobalRoleWireNumbersAreStable(t *testing.T) {
 		1: "GLOBAL_ROLE_ADMIN",
 		2: "GLOBAL_ROLE_MAINTAINER",
 		3: "GLOBAL_ROLE_MEMBER",
-		4: "GLOBAL_ROLE_PUBLIC",
+		4: "GLOBAL_ROLE_GUEST",
 	}
 	if len(identityv1.GlobalRole_name) != len(want) {
 		t.Fatalf("GlobalRole_name: got %v want %v", identityv1.GlobalRole_name, want)

@@ -43,7 +43,7 @@ func TestAllowedUsernameOperationsNormalizeAndKeepHistory(t *testing.T) {
 	first := resolveDirect(t, svc, 9401, "@Alice")
 	assertRoleSetInternal(t, first.GetGlobalRoles(),
 		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER,
-		identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC,
+		identityv1.GlobalRole_GLOBAL_ROLE_GUEST,
 	)
 	assertAllowedUsernameRows(t, db, "alice", allowedUsernameCounts{total: 2, used: 1, removed: 1})
 
@@ -108,7 +108,7 @@ func TestResolveIdentityConsumesAllowedUsernameOnlyOnce(t *testing.T) {
 	first := resolveDirect(t, svc, 9411, "@mEmBeR")
 	assertRoleSetInternal(t, first.GetGlobalRoles(),
 		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER,
-		identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC,
+		identityv1.GlobalRole_GLOBAL_ROLE_GUEST,
 	)
 	assertWhitelistJournal(t, db, first.GetIdentityId())
 
@@ -201,7 +201,7 @@ func TestResolveIdentityAuctionEntryGrantsOnlyPublic(t *testing.T) {
 
 	resp := resolveDirect(t, svc, 9301, "bidder")
 
-	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertAllowedUsernameRows(t, db, "bidder", allowedUsernameCounts{total: 1, used: 1})
 }
 

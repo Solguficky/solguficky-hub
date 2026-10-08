@@ -357,7 +357,7 @@ function toAccessCircle(value: GlobalRole): AccessCircle | undefined {
   switch (value) {
     case GlobalRole.MEMBER:
       return "member";
-    case GlobalRole.PUBLIC:
+    case GlobalRole.GUEST:
       return "public";
     default:
       return undefined;

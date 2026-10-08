@@ -203,7 +203,7 @@ func TestResolveIdentityReturnsEveryGlobalRole(t *testing.T) {
 		identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER,
 		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN,
 		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER,
-		identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC,
+		identityv1.GlobalRole_GLOBAL_ROLE_GUEST,
 	)
 	if second.GetBlocked() {
 		t.Fatal("blocked with active roles: got true want false")
@@ -250,7 +250,7 @@ func TestResolveIdentityReadsBlockedSeparatelyFromRoles(t *testing.T) {
 	}
 
 	got = resolve(t, client, activeWithoutBlockID, &username)
-	assertRoles(t, got.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoles(t, got.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	if got.GetBlocked() {
 		t.Fatal("active without block: got true want false")
 	}

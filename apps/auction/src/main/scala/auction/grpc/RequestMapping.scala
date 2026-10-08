@@ -489,7 +489,7 @@ object RequestMapping {
       case GlobalRoleMessage.GLOBAL_ROLE_ADMIN => Right(GlobalRole.Admin)
       case GlobalRoleMessage.GLOBAL_ROLE_MAINTAINER => Right(GlobalRole.Maintainer)
       case GlobalRoleMessage.GLOBAL_ROLE_MEMBER => Right(GlobalRole.Member)
-      case GlobalRoleMessage.GLOBAL_ROLE_PUBLIC => Right(GlobalRole.Public)
+      case GlobalRoleMessage.GLOBAL_ROLE_GUEST => Right(GlobalRole.Public)
       case GlobalRoleMessage.GLOBAL_ROLE_UNSPECIFIED | GlobalRoleMessage.Unrecognized(_) =>
         Left(FormError("viewer.global_roles"))
     }

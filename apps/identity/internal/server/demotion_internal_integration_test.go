@@ -22,7 +22,7 @@ func TestDemoteMemberRevokesMemberKeepsPublicAndRecordsDecline(t *testing.T) {
 		t.Fatal("demote: changed=false, want true")
 	}
 
-	assertRoleSetInternal(t, resolveDirect(t, svc, 8402, "").GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resolveDirect(t, svc, 8402, "").GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	refused := refusedApplications(t, svc, adminID)
 	if len(refused) != 1 {
 		t.Fatalf("refused = %d applications, want 1", len(refused))
@@ -65,7 +65,7 @@ FOR EACH ROW EXECUTE FUNCTION reject_application()`)
 	assertCode(t, err, codes.Internal)
 
 	assertRoleSetInternal(t, resolveDirect(t, svc, 8412, "").GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	if got := len(outboxEvents(t, db, targetID)); got != eventsBefore {
 		t.Fatalf("events = %d after failed demotion, want %d", got, eventsBefore)
 	}
@@ -86,7 +86,7 @@ func TestDemoteMemberRequiresAdminActor(t *testing.T) {
 		nil,
 		{
 			IdentityId:  memberID,
-			GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC},
+			GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST},
 		},
 	} {
 		_, err := svc.DemoteCommunityMember(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: actor, IdentityId: targetID})
@@ -94,7 +94,7 @@ func TestDemoteMemberRequiresAdminActor(t *testing.T) {
 	}
 
 	assertRoleSetInternal(t, resolveDirect(t, svc, 8422, "").GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	if got := applicationCount(t, db, targetID); got != 0 {
 		t.Fatalf("applications = %d, want 0", got)
 	}
@@ -123,7 +123,7 @@ func TestDemoteWithoutMemberRecordsNoDecline(t *testing.T) {
 			t.Fatalf("applications of %s = %d, want %d", identityID, got, want)
 		}
 	}
-	assertRoleSetInternal(t, resolveDirect(t, svc, 8432, "").GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+	assertRoleSetInternal(t, resolveDirect(t, svc, 8432, "").GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 
 	_, err := svc.DemoteCommunityMember(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: adminActor(adminID), IdentityId: uuid.NewString()})
 	assertCode(t, err, codes.NotFound)
@@ -149,9 +149,9 @@ func TestDemoteOfStrongerRoleFailsPrecondition(t *testing.T) {
 		}
 	}
 	assertRoleSetInternal(t, resolveDirect(t, svc, 8441, "").GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertRoleSetInternal(t, resolveDirect(t, svc, 8442, "").GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+		identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 }
 
 func TestReconsiderDemotionRestoresMember(t *testing.T) {
@@ -173,7 +173,7 @@ func TestReconsiderDemotionRestoresMember(t *testing.T) {
 		t.Fatalf("reconsider: changed=%t error=%v", reconsidered.GetChanged(), err)
 	}
 	assertRoleSetInternal(t, resolveDirect(t, svc, 8452, "").GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC)
+		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertRefused(t, svc, adminID)
 }
 

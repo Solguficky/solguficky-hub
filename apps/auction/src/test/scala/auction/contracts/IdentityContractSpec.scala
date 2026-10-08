@@ -16,7 +16,7 @@ final class IdentityContractSpec extends AnyWordSpec with Matchers {
   "generated identity contract" should {
 
     "expose the outer circle role the auction link grants" in {
-      GlobalRole.GLOBAL_ROLE_PUBLIC.value shouldBe 4
+      GlobalRole.GLOBAL_ROLE_GUEST.value shouldBe 4
     }
 
     // Значение 0 объявлено в схеме, и проверка на нём тавтологична. Открытость

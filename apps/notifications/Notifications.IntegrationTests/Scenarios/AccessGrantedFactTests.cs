@@ -24,7 +24,7 @@ public class AccessGrantedFactTests
 
     [Theory]
     [InlineData(GlobalRole.Member)]
-    [InlineData(GlobalRole.Public)]
+    [InlineData(GlobalRole.Guest)]
     public async Task When_ApplicantAdmitted_Expect_OneFactToApplicantWithCircle(GlobalRole circle)
     {
         using var db = new IsolatedDatabase();
@@ -58,7 +58,7 @@ public class AccessGrantedFactTests
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
-        var admission = EventFactory.Admission(EventFactory.NewId(), version: 4, GlobalRole.Public);
+        var admission = EventFactory.Admission(EventFactory.NewId(), version: 4, GlobalRole.Guest);
         await nats.Publish(ApplicationAdmittedSubject, admission);
         await Eventually(() => Granted(db), count => count == 1);
 

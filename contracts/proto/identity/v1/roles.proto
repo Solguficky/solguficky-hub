@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package identity.v1;
 
+// The role-circle of a person. A person holds at most one active circle.
 enum GlobalRole {
   // No value: the field is unset or the role is unknown to the consumer.
   GLOBAL_ROLE_UNSPECIFIED = 0;
@@ -14,6 +15,43 @@ enum GlobalRole {
   // Inner community circle.
   GLOBAL_ROLE_MEMBER = 3;
 
-  // Outer circle: entered through the public auction link.
-  GLOBAL_ROLE_PUBLIC = 4;
+  // Outer circle: a person admitted to a public surface, such as the auction,
+  // without being a community member.
+  GLOBAL_ROLE_GUEST = 4;
+}
+
+// What a person may do. Identity derives the set from the role-circle and the
+// rights granted to the person separately; a consumer reads the set as given and
+// never derives it from the role itself. A value is named after the product,
+// not after the bot that serves it.
+enum AccessRight {
+  // No value: the field is unset or the right is unknown to the consumer. An
+  // unknown right grants nothing.
+  ACCESS_RIGHT_UNSPECIFIED = 0;
+
+  // The community hub: meetups and the auction of a meetup.
+  ACCESS_RIGHT_HUB = 1;
+
+  // The auction as a public product.
+  ACCESS_RIGHT_AUCTION = 2;
+
+  // Deciding the community queue and managing who is in the community.
+  ACCESS_RIGHT_MANAGE_MEMBERSHIP = 3;
+
+  // Deciding the auction queue. Shared by every auction.
+  ACCESS_RIGHT_MODERATE_AUCTION = 4;
+}
+
+// The queue an application lies in. The queues are independent: a refusal in
+// one does not touch the other.
+enum ApplicationQueue {
+  // No value: the field is unset or the queue is unknown to the consumer.
+  APPLICATION_QUEUE_UNSPECIFIED = 0;
+
+  // An application to join the community: admission grants GLOBAL_ROLE_MEMBER.
+  APPLICATION_QUEUE_COMMUNITY = 1;
+
+  // An application for ACCESS_RIGHT_AUCTION: admission grants the right and
+  // GLOBAL_ROLE_GUEST when the person has no circle yet.
+  APPLICATION_QUEUE_AUCTION = 2;
 }

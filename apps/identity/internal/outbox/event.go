@@ -118,7 +118,7 @@ func globalRole(name string) (identityv1.GlobalRole, error) {
 	case "member":
 		return identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, nil
 	case "public":
-		return identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC, nil
+		return identityv1.GlobalRole_GLOBAL_ROLE_GUEST, nil
 	default:
 		return identityv1.GlobalRole_GLOBAL_ROLE_UNSPECIFIED, fmt.Errorf("outbox: unknown role %q", name)
 	}

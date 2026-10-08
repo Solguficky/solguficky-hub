@@ -198,7 +198,7 @@ func requestedCircle(role identityv1.GlobalRole) (string, bool) {
 	switch role {
 	case identityv1.GlobalRole_GLOBAL_ROLE_MEMBER:
 		return roleMember, true
-	case identityv1.GlobalRole_GLOBAL_ROLE_PUBLIC:
+	case identityv1.GlobalRole_GLOBAL_ROLE_GUEST:
 		return rolePublic, true
 	default:
 		return "", false

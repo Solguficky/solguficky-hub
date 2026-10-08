@@ -248,7 +248,7 @@ public class NotificationFactsTests
     public void AccessRequested_Application_CarriesCircleAndIdentityEventButNotTheApplicant()
     {
         var applicant = EventFactory.NewId();
-        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Application(applicant, version: 2, Identity.V1.GlobalRole.Public)))
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Application(applicant, version: 2, Identity.V1.GlobalRole.Guest)))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
 
         var notification = NotificationFacts.AccessRequested(NotificationId, RecipientId, fact, Now, NotAfter);
@@ -256,7 +256,7 @@ public class NotificationFactsTests
         notification.RecipientId.ShouldBe(RecipientId.ToString());
         notification.Cause.IdentityEventId.ShouldBe(fact.EventId.ToString());
         notification.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessRequested);
-        notification.AccessRequested.Circle.ShouldBe(Identity.V1.GlobalRole.Public);
+        notification.AccessRequested.Circle.ShouldBe(Identity.V1.GlobalRole.Guest);
         notification.NotAfter.ShouldBe(NotificationFacts.Instant(NotAfter));
         notification.HasRequestId.ShouldBeFalse();
         // Кто просит — данные модератора: заявителя нет нигде в сообщении.
@@ -276,7 +276,7 @@ public class NotificationFactsTests
     public void AccessGranted_Admission_AddressesTheApplicantWithCircle()
     {
         var applicant = EventFactory.NewId();
-        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Admission(applicant, version: 4, Identity.V1.GlobalRole.Public)))
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Admission(applicant, version: 4, Identity.V1.GlobalRole.Guest)))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
 
         var notification = NotificationFacts.AccessGranted(NotificationId, fact, Now, NotAfter);
@@ -284,7 +284,7 @@ public class NotificationFactsTests
         notification.RecipientId.ShouldBe(applicant);
         notification.Cause.IdentityEventId.ShouldBe(fact.EventId.ToString());
         notification.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessGranted);
-        notification.AccessGranted.Circle.ShouldBe(Identity.V1.GlobalRole.Public);
+        notification.AccessGranted.Circle.ShouldBe(Identity.V1.GlobalRole.Guest);
         notification.NotAfter.ShouldBe(NotificationFacts.Instant(NotAfter));
         notification.HasRequestId.ShouldBeFalse();
     }
@@ -321,7 +321,7 @@ public class NotificationFactsTests
     [Theory]
     [InlineData(Identity.V1.GlobalRole.Maintainer)]
     [InlineData(Identity.V1.GlobalRole.Member)]
-    [InlineData(Identity.V1.GlobalRole.Public)]
+    [InlineData(Identity.V1.GlobalRole.Guest)]
     public void RoleGranted_OtherRole_Throws(Identity.V1.GlobalRole role)
     {
         // Выдачу круга дают и белый список, и вложенность: о ней не пишут.
