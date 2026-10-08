@@ -341,18 +341,14 @@ object Lot {
 
   /** Окно, которое действует в момент `at`: только в фазе `Online` — в живом финале окна нет по фазе (П-03). */
   def activeWindow(trading: TradingState, at: Instant): Option[StepWindow] =
-    Option
-      .when(trading.phase == Phase.Online)(trading.stepWindows)
-      .getOrElse(Nil)
-      .find(window => !at.isBefore(window.from) && at.isBefore(window.until))
+    onlineWindows(trading).find(window => !at.isBefore(window.from) && at.isBefore(window.until))
 
   /** Ближайшее окно, которое в момент `at` ещё не началось; в живом финале его нет, как и действующего. */
   def nextWindow(trading: TradingState, at: Instant): Option[StepWindow] =
-    Option
-      .when(trading.phase == Phase.Online)(trading.stepWindows)
-      .getOrElse(Nil)
-      .filter(_.from.isAfter(at))
-      .minByOption(_.from)
+    onlineWindows(trading).filter(_.from.isAfter(at)).minByOption(_.from)
+
+  private def onlineWindows(trading: TradingState): List[StepWindow] =
+    if (trading.phase == Phase.Online) trading.stepWindows else Nil
 
   /** Нижняя граница торга: текущая цена либо объявленный ask, если он выше (RFC-011, «Состояние лота»). */
   def floor(trading: TradingState): Money =

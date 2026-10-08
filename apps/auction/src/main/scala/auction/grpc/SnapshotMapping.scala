@@ -49,7 +49,7 @@ object SnapshotMapping {
           .withBaseStep(LotValues.money(Lot.baseStep(trading, trading.currentPrice)))
           .copy(
             viewerProxyLimit = own(trading.proxyLimits, viewer),
-            activeWindow = Lot.activeWindow(trading, at).map(active(trading, _, at)),
+            activeWindow = Lot.activeWindow(trading, at).flatMap(active(trading, _, at)),
             nextWindow = Lot.nextWindow(trading, at).map(window)
           )
           .withTrading(LotValues.trading(trading))
@@ -63,9 +63,14 @@ object SnapshotMapping {
     }
   }
 
-  /** Действующее окно несёт шаг, который действует: сумму окна, но не выше обычного шага при текущей цене. */
-  private def active(trading: TradingState, current: StepWindow, at: Instant): wire.LotStepWindow =
-    window(current).withStep(LotValues.money(Lot.step(trading, trading.currentPrice, at)))
+  /**
+   * Действующее окно несёт шаг, который действует. Окно, которое при текущей цене шаг не снижает, участнику не
+   * показывается: на дешёвых порогах `Tiered` оно ничего не меняет, и видно оно только в пульте (RFC-011, П-03).
+   */
+  private def active(trading: TradingState, current: StepWindow, at: Instant): Option[wire.LotStepWindow] = {
+    val step = Lot.step(trading, trading.currentPrice, at)
+    Option.when(step != Lot.baseStep(trading, trading.currentPrice))(window(current).withStep(LotValues.money(step)))
+  }
 
   private def window(value: StepWindow): wire.LotStepWindow =
     wire.LotStepWindow(

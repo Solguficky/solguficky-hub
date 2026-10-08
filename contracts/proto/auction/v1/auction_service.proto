@@ -374,14 +374,14 @@ message LotSnapshot {
   LotConfig config = 3;
 
   // Position of the last event in the journal of the lot, starting at 1: a lot
-  // that exists has at least its LotDrafted, so 0 is not a valid value.
+  // that exists has at least its LotDrafted, so 0 is not a valid value. It is not
+  // a key of the content: next_price, base_step and the windows are computed at
+  // the instant of the answer and can differ between two answers of one version.
   int64 version = 4;
 
   // The lowest amount a bid is accepted at now; in the live final the only amount.
   // Set only while the lot is trading, so a caller does not repeat the step rule.
-  // "Now" is the instant the service answered: inside a window of reduced step it
-  // is lower than outside, so the same version of a lot can carry a different
-  // next_price after a window starts or ends.
+  // "Now" is the instant the service answered.
   Money next_price = 5;
 
   // The viewer's own proxy limit on the lot. Unset when the viewer has none.
@@ -411,15 +411,16 @@ message LotSnapshot {
   // the lot is trading.
   Money base_step = 16;
 
-  // The window of reduced step in force at the instant of the answer. Unset when
-  // none is: outside every window of the lot, in the live final, and when the lot
-  // is not trading. Its step is the step in force, never above base_step.
+  // The window of reduced step in force at the instant of the answer, with the
+  // step in force. Unset when none is: outside every window of the lot, when the
+  // window does not lower the step at the current price, in the live final, and
+  // when the lot is not trading.
   LotStepWindow active_window = 17;
 
   // The nearest window of the lot that has not started yet at the instant of the
-  // answer. Unset when there is none, in the live final, and when the lot is not
-  // trading. Its step is the amount of the window as announced: whether it is
-  // lower than the regular step depends on the price when the window starts.
+  // answer, with the amount of the window as announced rather than the step it
+  // will put in force. Unset when there is none, in the live final, and when the
+  // lot is not trading.
   LotStepWindow next_window = 18;
 }
 

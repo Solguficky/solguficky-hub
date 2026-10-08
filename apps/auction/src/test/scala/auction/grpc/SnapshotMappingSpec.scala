@@ -54,12 +54,13 @@ final class SnapshotMappingSpec extends AnyWordSpec with Matchers {
       before.nextWindow shouldBe Some(lotWindow("12:00", "14:00", 1))
     }
 
-    "carry the step in force in the active window, never above the regular step" in {
+    "not show a window that does not lower the step at the current price as being in force" in {
       val lot = trading(price = 100, policy = fixedTen, stepWindows = List(stepWindow("12:00", "14:00", step = 50)))
       val snapshot = SnapshotMapping.snapshot(view(lot), participant(1), at("13:00"))
 
-      snapshot.activeWindow.flatMap(_.step) shouldBe Some(rub(10))
+      snapshot.activeWindow shouldBe None
       snapshot.nextPrice shouldBe Some(rub(110))
+      snapshot.baseStep shouldBe Some(rub(10))
     }
 
     "carry no window in the live final, in a held lot and before trading" in {

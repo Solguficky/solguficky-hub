@@ -167,8 +167,7 @@ message AuctionConfig {
   LotDefaults lot_defaults = 4;
 
   // Windows of the online phase with a reduced bid step on the lots they name.
-  // Empty is a real value: no window. A lot receives the windows it is named in
-  // when its trading opens, and they never change after that.
+  // Empty is a real value: no window.
   repeated AuctionStepWindow step_windows = 5;
 }
 
@@ -181,13 +180,11 @@ message AuctionStepWindow {
   // RFC 3339 instant in UTC: the first instant after the window.
   string until = 2;
 
-  // The bid step inside the window, in the currency of the lots. It caps the step:
-  // where the regular step of a lot is already lower, the regular step stays.
+  // The bid step inside the window, in the currency of the lots.
   Money step = 3;
 
   // Canonical lowercase UUIDv7 with hyphens, each the id of a lot the window
-  // applies to. Not empty. A lot of another auction or a lot that is not in the
-  // registry is not refused: the window does nothing for it.
+  // applies to.
   repeated string lot_ids = 4;
 }
 
