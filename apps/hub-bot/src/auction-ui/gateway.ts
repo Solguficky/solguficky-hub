@@ -7,6 +7,7 @@ import type {
   ResolvedIdentity,
   RoleRequestAnswer,
   TelegramUser,
+  Viewer,
 } from "./ports.js";
 import type { AuctionScreenBody } from "./screen.js";
 
@@ -84,7 +85,7 @@ function refusal(
 // проверку поверхность повторяет на своих экранах, чтобы политика была одна.
 export function admission(
   surface: AuctionSurface["kind"],
-  identity: { rights: readonly AccessRight[]; blocked: boolean },
+  identity: Pick<Viewer, "rights"> & Pick<ResolvedIdentity, "blocked">,
 ): AuctionDenial | undefined {
   // У заблокированного прав нет по контракту; отметка выбирает текст отказа.
   if (identity.blocked) return "blocked";

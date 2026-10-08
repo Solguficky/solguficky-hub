@@ -57,7 +57,7 @@ function auctions() {
   return { getMeetupAuction, enableAuction };
 }
 
-// Роли едут транзитом и ничего не решают: край зовёт Auction по праву хаба.
+// Роли ничего не решают: край зовёт Auction по праву хаба.
 const person = (rights: readonly AccessRight[]) => ({
   identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
   globalRoles: [],
