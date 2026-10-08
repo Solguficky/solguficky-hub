@@ -8088,6 +8088,29 @@ describe("auction queue and moderation", () => {
     );
   });
 
+  // Выдать нельзя — штатный ответ контракта: запись границы не считает его
+  // сбоем.
+  it("records a refused grant to a non-member as a regular answer", async () => {
+    const identity = moderation([]);
+    identity.grantAuctionModeration.mockResolvedValue({ kind: "not-member" });
+    const { bot, calls, records } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(`v1:cm:mg:${uuidToToken(memberId)}:0`),
+    );
+
+    expect(calls[0]?.payload).toMatchObject({
+      text: "Выдать нельзя: человек не участник сообщества.",
+    });
+    expectBoundary(records[0], {
+      level: "info",
+      result: "ok",
+      operation: "callback_query",
+      use_case: "manage_community",
+    });
+  });
+
   it.each([
     [
       "the auction queue without the moderation right",

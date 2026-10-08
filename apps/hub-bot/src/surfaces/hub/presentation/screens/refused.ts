@@ -75,15 +75,22 @@ function refusedLine(
   ].join("\n");
 }
 
+/**
+ * `liftsBlocks` — человек может снять блокировку: пересмотр отказа `blocked`
+ * Identity пускает по праву управлять составом. Модератору аукциона без него
+ * кнопка у такого отказа не рисуется: она вела бы в отказ.
+ */
 export function refusedScreen(
   queue: ApplicationQueue,
   applications: readonly RefusedApplication[],
   requestedPage: number,
   today: CommunityDay,
+  liftsBlocks = true,
 ): ShownScreen {
   const page = paginate(applications, requestedPage);
   const keyboard = new InlineKeyboard();
   for (const application of page.items) {
+    if (application.outcome === "blocked" && !liftsBlocks) continue;
     nextRow(keyboard).text(
       // Круг в подписи: у человека бывает по отказу в каждый из двух кругов.
       buttonText(

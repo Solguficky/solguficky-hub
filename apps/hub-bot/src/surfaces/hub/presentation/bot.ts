@@ -2135,6 +2135,7 @@ async function handleCallback(
             result.value,
             action.page,
             communityToday(ctx),
+            canManageMembership(person),
           ),
         );
       } else {
@@ -2152,6 +2153,7 @@ async function handleCallback(
               result.value,
               action.page,
               communityToday(ctx),
+              canManageMembership(person),
             ),
           );
         } else {
@@ -2245,10 +2247,17 @@ async function handleCallback(
         person,
         action.kind === "grant-moderation" ? action.page : undefined,
       );
-      outcome = adminOutcome(
-        result.kind === "not-member" ? { kind: "invalid" } : result,
-        person.identityId,
-      );
+      // Не участник или заблокирован — штатный ответ контракта, а не сбой.
+      outcome =
+        result.kind === "not-member"
+          ? {
+              level: "info",
+              message: "auction moderation not granted",
+              result: "ok",
+              use_case: "manage_community",
+              identity_id: person.identityId,
+            }
+          : adminOutcome(result, person.identityId);
       return;
     }
     if (action.kind === "source-channels") {
@@ -4007,7 +4016,13 @@ async function renderRefused(
   }
   await showScreen(
     ctx,
-    refusedScreen(queue, result.value, page, communityToday(ctx)),
+    refusedScreen(
+      queue,
+      result.value,
+      page,
+      communityToday(ctx),
+      canManageMembership(actor),
+    ),
   );
 }
 

@@ -231,7 +231,8 @@ function usernamesScreen(
 const toModerators = { name: "Модераторы", data: "v1:cm:m" };
 
 // Модератор с ником назван ником, без ника — Telegram id: кода заявки у
-// держателя права нет, а id открывает профиль.
+// держателя права нет, а id называет человека однозначно. Ссылки по id нет:
+// карточка без `tg://user` — свой лист (ADR-064, пункт 13).
 function moderatorLabel(moderator: AuctionModerator): string {
   return moderator.telegramUsername === undefined
     ? `id ${moderator.telegramUserId}`

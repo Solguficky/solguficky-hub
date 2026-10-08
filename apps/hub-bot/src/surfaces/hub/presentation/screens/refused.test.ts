@@ -107,6 +107,23 @@ describe("refused list", () => {
     );
   });
 
+  // Снять блокировку Identity пускает по праву управлять составом: модератору
+  // аукциона без него кнопка у такого отказа вела бы в отказ.
+  it("offers no reconsider of a block to someone who cannot lift it", () => {
+    const screen = refusedScreen(
+      "auction",
+      [refused(1), refused(2, { outcome: "declined" })],
+      0,
+      today,
+      false,
+    );
+
+    expect(rows(screen)).toEqual([
+      ["Пересмотреть @user2 в аукцион"],
+      ["‹ Управление", "Меню"],
+    ]);
+  });
+
   it("lists the auction queue under its own title and domain", () => {
     const screen = refusedScreen(
       "auction",
