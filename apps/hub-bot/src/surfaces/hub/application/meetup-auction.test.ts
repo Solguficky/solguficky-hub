@@ -69,6 +69,7 @@ const ADMIN: readonly AccessRight[] = [
   "auction",
   "manage-membership",
   "moderate-auction",
+  "manage-auction",
 ];
 
 describe("meetup auction", () => {

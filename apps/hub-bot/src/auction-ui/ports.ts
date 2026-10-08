@@ -20,6 +20,7 @@ export const ACCESS_RIGHTS = [
   "auction",
   "manage-membership",
   "moderate-auction",
+  "manage-auction",
 ] as const;
 
 // Права, которые Identity вывел из круга и выданных записей (ADR-064, пункты

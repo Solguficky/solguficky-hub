@@ -35,6 +35,7 @@ const ADMIN: AccessRight[] = [
   "auction",
   "manage-membership",
   "moderate-auction",
+  "manage-auction",
 ];
 const LOT_BUTTON = encodeAuctionCallback({
   kind: "lot",
