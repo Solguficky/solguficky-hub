@@ -53,6 +53,9 @@ const (
 	rightAuction          = "auction"
 	rightManageMembership = "manage_membership"
 	rightModerateAuction  = "moderate_auction"
+	// rightManageAuction приходит только с кругом admin и записью не выдаётся
+	// (решение владельца по PER-528).
+	rightManageAuction = "manage_auction"
 )
 
 // grantedModeration — права, которые выдаются участнику отдельно от круга и
@@ -212,6 +215,8 @@ func accessRight(name string) (identityv1.AccessRight, bool) {
 		return identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP, true
 	case rightModerateAuction:
 		return identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION, true
+	case rightManageAuction:
+		return identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION, true
 	default:
 		return identityv1.AccessRight_ACCESS_RIGHT_UNSPECIFIED, false
 	}

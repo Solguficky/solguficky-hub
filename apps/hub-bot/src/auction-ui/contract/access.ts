@@ -109,6 +109,7 @@ const ADMIN: Person = holder(
   "auction",
   "manage-membership",
   "moderate-auction",
+  "manage-auction",
 );
 const NEWCOMER: Person = {
   rights: [],

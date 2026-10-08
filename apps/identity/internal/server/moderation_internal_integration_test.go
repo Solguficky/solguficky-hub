@@ -242,7 +242,8 @@ func TestCheckAccessRightReadsCurrentState(t *testing.T) {
 	}
 	if !check(memberID, identityv1.AccessRight_ACCESS_RIGHT_HUB) || !check(memberID, identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION) ||
 		check(memberID, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP) || !check(adminID, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP) ||
-		check(blockedID, identityv1.AccessRight_ACCESS_RIGHT_HUB) {
+		check(blockedID, identityv1.AccessRight_ACCESS_RIGHT_HUB) ||
+		!check(adminID, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION) || check(memberID, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION) {
 		t.Fatal("check answered against current state")
 	}
 

@@ -57,6 +57,8 @@ func rightName(right identityv1.AccessRight) (string, bool) {
 		return rightManageMembership, true
 	case identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION:
 		return rightModerateAuction, true
+	case identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION:
+		return rightManageAuction, true
 	default:
 		return "", false
 	}

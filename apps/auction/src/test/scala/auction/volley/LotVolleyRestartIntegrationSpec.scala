@@ -15,7 +15,7 @@ import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service as wire
 import com.google.protobuf.descriptor.FieldDescriptorProto
 import com.typesafe.config.ConfigFactory
-import identity.v1.roles.GlobalRole as GlobalRoleMessage
+import identity.v1.roles.AccessRight as AccessRightMessage
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.grpc.GrpcClientSettings
@@ -75,7 +75,7 @@ final class LotVolleyRestartIntegrationSpec
   private val ownToken = "volley-own"
 
   private val administrator = Volley.uuidV7(Random(1), 1_700_000_000_000L).toString
-  private val adminViewer = wire.Viewer(administrator, Seq(GlobalRoleMessage.GLOBAL_ROLE_ADMIN))
+  private val adminViewer = wire.Viewer(administrator, rights = Seq(AccessRightMessage.ACCESS_RIGHT_MANAGE_AUCTION))
 
   private val currency = "RUB"
   private val start = 100_000L

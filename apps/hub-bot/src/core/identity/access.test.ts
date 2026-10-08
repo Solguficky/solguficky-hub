@@ -13,8 +13,15 @@ describe("identity access vocabulary", () => {
         WireRight.AUCTION,
         WireRight.MANAGE_MEMBERSHIP,
         WireRight.MODERATE_AUCTION,
+        WireRight.MANAGE_AUCTION,
       ]),
-    ).toEqual(["hub", "auction", "manage-membership", "moderate-auction"]);
+    ).toEqual([
+      "hub",
+      "auction",
+      "manage-membership",
+      "moderate-auction",
+      "manage-auction",
+    ]);
   });
 
   // Незнакомое право по контракту ничего не даёт: допуска оно не открывает.

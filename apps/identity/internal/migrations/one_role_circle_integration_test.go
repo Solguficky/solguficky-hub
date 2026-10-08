@@ -23,13 +23,18 @@ func TestOneRoleCircleMigrationKeepsOneActiveCircleAndWhatConsumersSaw(t *testin
 	db := testdb.Open(t)
 	applyThrough(t, db, 13)
 
-	const allRights = "auction,hub,manage_membership,moderate_auction"
+	// Администратор получает право каталога кругом (016), мейнтейнер с
+	// выданным управлением — нет (решение владельца по PER-528).
+	const (
+		allRights        = "auction,hub,manage_auction,manage_membership,moderate_auction"
+		maintainerRights = "auction,hub,manage_membership,moderate_auction"
+	)
 	people := map[string]migratedPerson{
 		"guest":            {legacy: []string{publicRole}, circle: guestRole, rights: "auction", globalRoles: "guest"},
 		"member":           {legacy: []string{publicRole, circleMember}, circle: circleMember, rights: "auction,hub", globalRoles: "guest,member"},
 		"admin-one-row":    {legacy: []string{adminRole}, circle: adminRole, rights: allRights, globalRoles: "admin,guest,member"},
 		"admin-three-rows": {legacy: []string{publicRole, circleMember, adminRole}, circle: adminRole, rights: allRights, globalRoles: "admin,guest,member"},
-		"admin-maintainer": {legacy: []string{adminRole, maintainerRole}, circle: maintainerRole, rights: allRights, globalRoles: "admin,guest,maintainer,member"},
+		"admin-maintainer": {legacy: []string{adminRole, maintainerRole}, circle: maintainerRole, rights: maintainerRights, globalRoles: "admin,guest,maintainer,member"},
 		"maintainer":       {legacy: []string{maintainerRole}, circle: maintainerRole, rights: "auction,hub", globalRoles: "guest,maintainer,member"},
 		"blocked":          {blocked: true},
 		"never-admitted":   {},

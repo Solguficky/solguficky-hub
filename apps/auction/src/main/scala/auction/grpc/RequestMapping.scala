@@ -1,6 +1,6 @@
 package auction.grpc
 
-import auction.access.GlobalRole
+import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.MeetupId
@@ -56,7 +56,7 @@ import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
-import identity.v1.roles.GlobalRole as GlobalRoleMessage
+import identity.v1.roles.AccessRight as AccessRightMessage
 
 import java.nio.charset.StandardCharsets
 import java.time.Duration
@@ -466,32 +466,27 @@ object RequestMapping {
     else Right(math.min(requested, MaxPageSize))
 
   /**
-   * Смотрящий. Роль, которой сервис не знает, — `UNSPECIFIED` или значение из чужой версии схемы, — нарушение формы, а
-   * не «обычный пользователь»: молча отброшенная роль спрятала бы ошибку вызывающего.
+   * Смотрящий. Решают только права: `global_roles` сервис не читает. Право, которого сервис не знает, — `UNSPECIFIED`
+   * или значение из чужой версии схемы, — отбрасывается, а не ломает форму: по контракту неизвестное право ничего не
+   * даёт, и вызывающий новее сервиса не теряет известные ему права.
    */
   def acting(viewer: Option[ViewerMessage]): Either[FormError, Acting] =
     viewer match {
       case None => Left(FormError("viewer"))
       case Some(message) =>
-        for {
-          identity <- uuidV7("viewer.identity_id", message.identityId)
-          roles <- roles(message.globalRoles)
-        } yield Acting(ParticipantId(identity), Viewer(roles))
+        uuidV7("viewer.identity_id", message.identityId).map { identity =>
+          Acting(ParticipantId(identity), Viewer(message.rights.flatMap(right).toSet))
+        }
     }
 
-  private def roles(values: Seq[GlobalRoleMessage]): Either[FormError, Set[GlobalRole]] =
-    values.foldLeft[Either[FormError, Set[GlobalRole]]](Right(Set.empty)) { (acc, value) =>
-      acc.flatMap(set => role(value).map(set + _))
-    }
-
-  private def role(value: GlobalRoleMessage): Either[FormError, GlobalRole] =
+  private def right(value: AccessRightMessage): Option[AccessRight] =
     value match {
-      case GlobalRoleMessage.GLOBAL_ROLE_ADMIN => Right(GlobalRole.Admin)
-      case GlobalRoleMessage.GLOBAL_ROLE_MAINTAINER => Right(GlobalRole.Maintainer)
-      case GlobalRoleMessage.GLOBAL_ROLE_MEMBER => Right(GlobalRole.Member)
-      case GlobalRoleMessage.GLOBAL_ROLE_GUEST => Right(GlobalRole.Public)
-      case GlobalRoleMessage.GLOBAL_ROLE_UNSPECIFIED | GlobalRoleMessage.Unrecognized(_) =>
-        Left(FormError("viewer.global_roles"))
+      case AccessRightMessage.ACCESS_RIGHT_HUB => Some(AccessRight.Hub)
+      case AccessRightMessage.ACCESS_RIGHT_AUCTION => Some(AccessRight.Auction)
+      case AccessRightMessage.ACCESS_RIGHT_MANAGE_MEMBERSHIP => Some(AccessRight.ManageMembership)
+      case AccessRightMessage.ACCESS_RIGHT_MODERATE_AUCTION => Some(AccessRight.ModerateAuction)
+      case AccessRightMessage.ACCESS_RIGHT_MANAGE_AUCTION => Some(AccessRight.ManageAuction)
+      case AccessRightMessage.ACCESS_RIGHT_UNSPECIFIED | AccessRightMessage.Unrecognized(_) => None
     }
 
   private def uuidV7(field: String, value: String): Either[FormError, UUID] =

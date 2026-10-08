@@ -25,6 +25,8 @@ function rightName(right: WireRight): AccessRight | undefined {
       return "manage-membership";
     case WireRight.MODERATE_AUCTION:
       return "moderate-auction";
+    case WireRight.MANAGE_AUCTION:
+      return "manage-auction";
     case WireRight.UNSPECIFIED:
       return undefined;
     default:

@@ -2,7 +2,7 @@ package auction.volley
 
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction_service as wire
-import identity.v1.roles.GlobalRole as GlobalRoleMessage
+import identity.v1.roles.AccessRight as AccessRightMessage
 import io.grpc.Status
 import io.grpc.StatusRuntimeException
 import org.apache.pekko.stream.Materializer
@@ -95,7 +95,7 @@ object Volley {
 
   /** Смотрящий-участник: ставить может только роль `public` (ADR-044). */
   def viewer(participant: UUID): wire.Viewer =
-    wire.Viewer(participant.toString, Seq(GlobalRoleMessage.GLOBAL_ROLE_GUEST))
+    wire.Viewer(participant.toString, rights = Seq(AccessRightMessage.ACCESS_RIGHT_AUCTION))
 }
 
 /**

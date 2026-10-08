@@ -1,6 +1,6 @@
 package auction.persistence
 
-import auction.access.GlobalRole
+import auction.access.AccessRight
 import auction.access.Viewer
 import auction.catalog.CatalogRefusal
 import auction.catalog.ImageChange
@@ -25,8 +25,8 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
 
   implicit override val patienceConfig: PatienceConfig = PatienceConfig(timeout = Span(20, Seconds))
 
-  private val admin = Viewer(Set(GlobalRole.Admin, GlobalRole.Member, GlobalRole.Public))
-  private val participant = Viewer(Set(GlobalRole.Public))
+  private val admin = Viewer(AccessRight.values.toSet)
+  private val participant = Viewer(Set(AccessRight.Auction))
 
   /** Изображение строки как его видит база, мимо сервиса: байты, тип и версия. */
   private final case class StoredImage(content: Seq[Byte], mediaType: String, version: String)
