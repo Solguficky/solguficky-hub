@@ -55,22 +55,23 @@ func TestRoleChangesAdvanceVersionWithSnapshotAfterChange(t *testing.T) {
 	identityID := seedProfile(t, db, 6002)
 
 	mustChange(t)(svc.grantRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{}))
-	mustChange(t)(svc.grantHubAdmission(t.Context(), identityID, uuid.NullUUID{}))
 	mustChange(t)(svc.revokeRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{}))
 
-	// Холостые операции состояние не меняют и событий не пишут.
-	mustNotChange(t)(svc.grantRole(t.Context(), identityID, roleMember, uuid.NullUUID{}))
+	// Холостые операции состояние не меняют и событий не пишут: участник уже
+	// держит круг member, а admin у него не активен.
+	mustNotChange(t)(svc.grantHubAdmission(t.Context(), identityID, uuid.NullUUID{}))
+	mustNotChange(t)(svc.grantRole(t.Context(), identityID, roleGuest, uuid.NullUUID{}))
 	mustNotChange(t)(svc.revokeRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{}))
 
+	// global_roles снимка — проекция круга на прежние вложенные имена: снятый
+	// администратор остаётся участником.
 	assertEvents(t, db, identityID,
 		"v1 profile_registered() {} blocked=false",
-		"v2 role_granted(admin) {admin} blocked=false",
-		"v3 role_granted(public) {admin,public} blocked=false",
-		"v4 role_granted(member) {admin,member,public} blocked=false",
-		"v5 role_revoked(admin) {member,public} blocked=false",
+		"v2 role_granted(admin) {admin,guest,member} blocked=false",
+		"v3 role_revoked(admin) {guest,member} blocked=false",
 	)
-	if got := profileVersion(t, db, identityID); got != 5 {
-		t.Fatalf("profile version: got %d want 5", got)
+	if got := profileVersion(t, db, identityID); got != 3 {
+		t.Fatalf("profile version: got %d want 3", got)
 	}
 }
 
@@ -88,34 +89,31 @@ func TestBlockPublishesOneEventWithEmptyRoles(t *testing.T) {
 
 	assertEvents(t, db, identityID,
 		"v1 profile_registered() {} blocked=false",
-		"v2 role_granted(public) {public} blocked=false",
-		"v3 role_granted(member) {member,public} blocked=false",
-		"v4 role_granted(admin) {admin,member,public} blocked=false",
-		"v5 profile_blocked() {} blocked=true",
-		"v6 profile_unblocked() {} blocked=false",
+		"v2 role_granted(member) {guest,member} blocked=false",
+		"v3 role_granted(admin) {admin,guest,member} blocked=false",
+		"v4 profile_blocked() {} blocked=true",
+		"v5 profile_unblocked() {} blocked=false",
 	)
 }
 
-// Роли, оставшиеся у заблокированного мимо сервиса, отзываются обычными отзывами:
-// перехода в блокировку нет, и повод у каждого — role_revoked со своим снимком.
-func TestBlockOfBlockedProfileRevokesLeftoverRolesOneByOne(t *testing.T) {
+// Роль, оставшаяся у заблокированного мимо сервиса, отзывается обычным отзывом:
+// перехода в блокировку нет, и повод — role_revoked со своим снимком. Круга
+// ниже заблокированный не получает: это уборка, а не понижение.
+func TestBlockOfBlockedProfileRevokesLeftoverRole(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 6004)
 	mustChange(t)(svc.grantRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{}))
-	mustChange(t)(svc.grantRole(t.Context(), identityID, roleMember, uuid.NullUUID{}))
 	setBlocked(t, db, identityID)
 
 	mustChange(t)(svc.blockIdentity(t.Context(), identityID, uuid.NullUUID{}))
 
 	assertEvents(t, db, identityID,
 		"v1 profile_registered() {} blocked=false",
-		"v2 role_granted(admin) {admin} blocked=false",
-		"v3 role_granted(member) {admin,member} blocked=false",
-		"v4 role_revoked(admin) {member} blocked=true",
-		"v5 role_revoked(member) {} blocked=true",
+		"v2 role_granted(admin) {admin,guest,member} blocked=false",
+		"v3 role_revoked(admin) {} blocked=true",
 	)
-	assertJournalSummary(t, db, identityID, "grant:admin", "grant:member", "revoke:admin", "revoke:member")
+	assertJournalSummary(t, db, identityID, "grant:admin", "revoke:admin")
 }
 
 func TestRegistrationCarriesAllowedUsernameAdmissionInOneEvent(t *testing.T) {
@@ -124,15 +122,15 @@ func TestRegistrationCarriesAllowedUsernameAdmissionInOneEvent(t *testing.T) {
 	mustChange(t)(svc.addAllowedUsername(t.Context(), "newcomer", roleMember, uuid.NullUUID{}))
 
 	registered := resolveInternal(t, svc, 6005, "newcomer")
-	assertEvents(t, db, registered, "v1 profile_registered() {member,public} blocked=false")
+	assertEvents(t, db, registered, "v1 profile_registered() {guest,member} blocked=false")
 
 	// Повторный вход и смена ника событием не являются.
 	resolveInternal(t, svc, 6005, "newcomer")
 	resolveInternal(t, svc, 6005, "renamed")
-	assertEvents(t, db, registered, "v1 profile_registered() {member,public} blocked=false")
+	assertEvents(t, db, registered, "v1 profile_registered() {guest,member} blocked=false")
 }
 
-func TestAdmissionOfExistingProfileGrantsOuterCircleFirst(t *testing.T) {
+func TestAdmissionOfExistingProfileGrantsOneCircleInOneEvent(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	existing := resolveInternal(t, svc, 6006, "latecomer")
@@ -142,8 +140,7 @@ func TestAdmissionOfExistingProfileGrantsOuterCircleFirst(t *testing.T) {
 
 	assertEvents(t, db, existing,
 		"v1 profile_registered() {} blocked=false",
-		"v2 role_granted(public) {public} blocked=false",
-		"v3 role_granted(member) {member,public} blocked=false",
+		"v2 role_granted(member) {guest,member} blocked=false",
 	)
 }
 
@@ -154,7 +151,7 @@ func TestConcurrentChangesOfOneProfileGetConsecutiveVersions(t *testing.T) {
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 6007)
 
-	roles := []string{roleMaintainer, roleAdmin, roleMember, rolePublic}
+	roles := []string{roleMaintainer, roleAdmin, roleMember, roleGuest}
 	errs := make(chan error, 2*len(roles))
 	var wg sync.WaitGroup
 	for _, role := range roles {

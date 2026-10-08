@@ -133,16 +133,6 @@ func circlesBelow(circle string) []string {
 	return circles
 }
 
-// allowedUsernameRoles — роли, которые выдаёт погашенная запись круга, в
-// порядке выдачи: запись хаба выдаёт member вместе с public, потому что круги
-// вложенные, запись аукциона — только public.
-func allowedUsernameRoles(circle string) []string {
-	if circle == roleMember {
-		return hubAdmissionRoles
-	}
-	return []string{circle}
-}
-
 // removeAllowedUsername снимает только ещё не использованную запись и делает
 // это отметкой, а не удалением: строка списка — основание допуска, и кто её
 // завёл, кто снял и кто по ней прошёл, должно остаться читаемым.

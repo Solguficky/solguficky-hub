@@ -18,7 +18,7 @@ func TestSourceChannelMigrationKeepsRecordedCodeAsUnknown(t *testing.T) {
 	db := testdb.Open(t)
 	applyThrough(t, db, 10)
 	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3821"
-	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 8121)`)
+	registerLegacyProfile(t, db, identityID, 8121)
 	withCode, withoutCode := uuid.NewString(), uuid.NewString()
 	if _, err := db.ExecContext(t.Context(), `INSERT INTO identity_applications (id, identity_id, requested_role, source_code, created_at)
 		VALUES ($1, $3, 'public', 'tg_ads', now()), ($2, $3, 'member', NULL, now())`, withCode, withoutCode, identityID); err != nil {
@@ -75,7 +75,7 @@ func TestSourceChannelSchemaRejectsWhatNoLinkCarries(t *testing.T) {
 	application := func(channel any, unknown bool) error {
 		_, err := db.ExecContext(t.Context(), `INSERT INTO identity_applications
 			(id, identity_id, requested_role, source_channel, source_unknown, created_at)
-			VALUES ($1, $2, 'public', $3, $4, now())`, uuid.NewString(), identityID, channel, unknown)
+			VALUES ($1, $2, 'guest', $3, $4, now())`, uuid.NewString(), identityID, channel, unknown)
 		return err
 	}
 	assertPgErrorCode(t, application(adsCode, true), "23514")

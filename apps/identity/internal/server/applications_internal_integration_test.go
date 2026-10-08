@@ -97,12 +97,12 @@ func TestRepeatedDecisionAnswersAlreadyDecidedWithTheSameActor(t *testing.T) {
 	assertAdmissions(t, db, applicantID, roleMember)
 }
 
-func TestDeclineMemberKeepsPublicAndDoesNotBlock(t *testing.T) {
+func TestDeclineMemberKeepsGuestAndDoesNotBlock(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9631)
 	applicantID := seedProfile(t, db, 9632)
-	mustChange(t)(svc.grantRole(t.Context(), applicantID, rolePublic, uuid.NullUUID{}))
+	mustChange(t)(svc.grantRole(t.Context(), applicantID, roleGuest, uuid.NullUUID{}))
 	applicationID := seedApplication(t, db, applicantID, roleMember, time.Now())
 
 	declined := decide(t, svc.DeclineApplication, adminID, applicationID)
@@ -134,31 +134,31 @@ func TestDeclineMemberWithoutRolesDoesNotBlock(t *testing.T) {
 	assertEvents(t, db, applicantID, "v1 profile_registered() {} blocked=false")
 }
 
-func TestDeclinePublicBlocksAndClosesOtherApplicationsByBlock(t *testing.T) {
+func TestDeclineGuestBlocksAndClosesOtherApplicationsByBlock(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9651)
 	applicantID := seedProfile(t, db, 9652)
-	publicID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	guestApplicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
 
-	if got := decide(t, svc.DeclineApplication, adminID, publicID).GetOutcome(); got != identityv1.ApplicationOutcome_APPLICATION_OUTCOME_BLOCKED {
+	if got := decide(t, svc.DeclineApplication, adminID, guestApplicationID).GetOutcome(); got != identityv1.ApplicationOutcome_APPLICATION_OUTCOME_BLOCKED {
 		t.Fatalf("outcome = %v, want BLOCKED", got)
 	}
 	if !resolveDirect(t, svc, 9652, "").GetBlocked() {
-		t.Fatal("decline in public did not block the profile")
+		t.Fatal("decline in guest did not block the profile")
 	}
 	assertApplicationOutcome(t, db, memberID, outcomeClosedByBlock, adminID)
-	assertRefused(t, svc, adminID, publicID)
+	assertRefused(t, svc, adminID, guestApplicationID)
 	assertAdmissions(t, db, applicantID)
 }
 
-func TestAdmitMemberClosesPublicApplicationByGrant(t *testing.T) {
+func TestAdmitMemberClosesGuestApplicationByGrant(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9661)
 	applicantID := seedProfile(t, db, 9662)
-	publicID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	guestApplicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
 
 	if got := decide(t, svc.AdmitApplication, adminID, memberID).GetOutcome(); got != identityv1.ApplicationOutcome_APPLICATION_OUTCOME_ADMITTED {
@@ -166,22 +166,22 @@ func TestAdmitMemberClosesPublicApplicationByGrant(t *testing.T) {
 	}
 	assertRoleSetInternal(t, resolveDirect(t, svc, 9662, "").GetGlobalRoles(),
 		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
-	assertApplicationOutcome(t, db, publicID, outcomeClosedByGrant, adminID)
+	assertApplicationOutcome(t, db, guestApplicationID, outcomeClosedByGrant, adminID)
 	assertAdmissions(t, db, applicantID, roleMember)
 }
 
-func TestAdmitPublicKeepsMemberApplicationOpen(t *testing.T) {
+func TestAdmitGuestKeepsMemberApplicationOpen(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9671)
 	applicantID := seedProfile(t, db, 9672)
-	publicID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	guestApplicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
 
-	decide(t, svc.AdmitApplication, adminID, publicID)
+	decide(t, svc.AdmitApplication, adminID, guestApplicationID)
 	assertRoleSetInternal(t, resolveDirect(t, svc, 9672, "").GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertApplicationOutcome(t, db, memberID, "", "")
-	assertAdmissions(t, db, applicantID, rolePublic)
+	assertAdmissions(t, db, applicantID, roleGuest)
 }
 
 func TestHubAdmissionIsDecisionOnMemberApplication(t *testing.T) {
@@ -189,7 +189,7 @@ func TestHubAdmissionIsDecisionOnMemberApplication(t *testing.T) {
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9681)
 	applicantID := seedProfile(t, db, 9682)
-	publicID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	guestApplicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
 
 	admitted, err := svc.AdmitCommunityMember(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: adminActor(adminID), IdentityId: applicantID})
@@ -197,7 +197,7 @@ func TestHubAdmissionIsDecisionOnMemberApplication(t *testing.T) {
 		t.Fatalf("admit community member: changed=%t error=%v", admitted.GetChanged(), err)
 	}
 	assertApplicationOutcome(t, db, memberID, outcomeAdmitted, adminID)
-	assertApplicationOutcome(t, db, publicID, outcomeClosedByGrant, adminID)
+	assertApplicationOutcome(t, db, guestApplicationID, outcomeClosedByGrant, adminID)
 	assertAdmissions(t, db, applicantID, roleMember)
 }
 
@@ -206,25 +206,25 @@ func TestRosterBlockClosesApplicationsWithoutRefusal(t *testing.T) {
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9691)
 	applicantID := seedProfile(t, db, 9692)
-	publicID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	guestApplicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
 
 	if _, err := svc.BlockCommunityMember(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: adminActor(adminID), IdentityId: applicantID}); err != nil {
 		t.Fatalf("block: %v", err)
 	}
-	assertApplicationOutcome(t, db, publicID, outcomeClosedByBlock, adminID)
+	assertApplicationOutcome(t, db, guestApplicationID, outcomeClosedByBlock, adminID)
 	assertApplicationOutcome(t, db, memberID, outcomeClosedByBlock, adminID)
 	assertRefused(t, svc, adminID)
-	_, err := svc.ReconsiderApplication(t.Context(), &identityv1.ReconsiderApplicationRequest{Actor: adminActor(adminID), ApplicationId: publicID})
+	_, err := svc.ReconsiderApplication(t.Context(), &identityv1.ReconsiderApplicationRequest{Actor: adminActor(adminID), ApplicationId: guestApplicationID})
 	assertCode(t, err, codes.FailedPrecondition)
 }
 
-func TestReconsiderBlockedUnblocksAndGrantsPublicInOneOperation(t *testing.T) {
+func TestReconsiderBlockedUnblocksAndGrantsGuestInOneOperation(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9701)
 	applicantID := seedProfile(t, db, 9702)
-	applicationID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	decide(t, svc.DeclineApplication, adminID, applicationID)
 
 	reconsidered, err := svc.ReconsiderApplication(t.Context(), &identityv1.ReconsiderApplicationRequest{Actor: adminActor(adminID), ApplicationId: applicationID})
@@ -240,8 +240,8 @@ func TestReconsiderBlockedUnblocksAndGrantsPublicInOneOperation(t *testing.T) {
 		"v1 profile_registered() {} blocked=false",
 		"v2 profile_blocked() {} blocked=true",
 		"v3 profile_unblocked() {} blocked=false",
-		"v4 role_granted(public) {public} blocked=false",
-		"v5 application_admitted(public) {public} blocked=false")
+		"v4 role_granted(guest) {guest} blocked=false",
+		"v5 application_admitted(guest) {guest} blocked=false")
 	assertUnblockAndGrantShareTransaction(t, db, applicantID)
 	assertRefused(t, svc, adminID)
 
@@ -257,7 +257,7 @@ func TestReconsiderBlockedLeavesBlockThatWasNotTheRefusal(t *testing.T) {
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9821)
 	applicantID := seedProfile(t, db, 9822)
-	applicationID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	decide(t, svc.DeclineApplication, adminID, applicationID)
 	mustChange(t)(svc.unblockIdentity(t.Context(), applicantID, uuid.NullUUID{}))
 	mustChange(t)(svc.blockIdentity(t.Context(), applicantID, uuid.NullUUID{}))
@@ -269,12 +269,12 @@ func TestReconsiderBlockedLeavesBlockThatWasNotTheRefusal(t *testing.T) {
 	}
 }
 
-func TestReconsiderBlockedAfterUnblockGrantsPublic(t *testing.T) {
+func TestReconsiderBlockedAfterUnblockGrantsGuest(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9831)
 	applicantID := seedProfile(t, db, 9832)
-	applicationID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	decide(t, svc.DeclineApplication, adminID, applicationID)
 	mustChange(t)(svc.unblockIdentity(t.Context(), applicantID, uuid.NullUUID{}))
 
@@ -291,10 +291,10 @@ func TestGrantOfHeldRoleStillClosesApplications(t *testing.T) {
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9841)
 	applicantID := seedProfile(t, db, 9842)
-	mustChange(t)(svc.grantRole(t.Context(), applicantID, rolePublic, uuid.NullUUID{}))
-	applicationID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	mustChange(t)(svc.grantRole(t.Context(), applicantID, roleGuest, uuid.NullUUID{}))
+	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 
-	mustNotChange(t)(svc.grantRole(t.Context(), applicantID, rolePublic, uuid.NullUUID{UUID: uuid.MustParse(adminID), Valid: true}))
+	mustNotChange(t)(svc.grantRole(t.Context(), applicantID, roleGuest, uuid.NullUUID{UUID: uuid.MustParse(adminID), Valid: true}))
 	assertApplicationOutcome(t, db, applicationID, outcomeClosedByGrant, adminID)
 }
 
@@ -337,7 +337,7 @@ func TestReconsiderOfApplicationNotClosedByRefusalFailsPrecondition(t *testing.T
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9731)
 	applicantID := seedProfile(t, db, 9732)
-	openID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	openID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	admittedID := seedApplication(t, db, applicantID, roleMember, time.Now())
 	decide(t, svc.AdmitApplication, adminID, admittedID)
 
@@ -389,7 +389,7 @@ func TestDecisionErasesSourceAndName(t *testing.T) {
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9761)
 	applicantID := seedProfile(t, db, 9762)
-	applicationID := seedApplication(t, db, applicantID, rolePublic, time.Now())
+	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	createChannel(t, svc, adminID, "tg_ads", "Реклама")
 	execApplication(t, db, `UPDATE identity_applications SET source_channel = 'tg_ads', first_name = 'Anna' WHERE id = $1`, applicationID)
 
@@ -411,7 +411,7 @@ func TestApplicationQueueReadsOldestFirstWithCursor(t *testing.T) {
 	adminID := seedProfile(t, db, 9771)
 	moment := time.Date(2026, time.October, 1, 10, 0, 0, 123_000_000, time.UTC)
 	first := seedApplication(t, db, seedProfile(t, db, 9772), roleMember, moment)
-	second := seedApplication(t, db, seedProfile(t, db, 9773), rolePublic, moment.Add(time.Second))
+	second := seedApplication(t, db, seedProfile(t, db, 9773), roleGuest, moment.Add(time.Second))
 	third := seedApplication(t, db, seedProfile(t, db, 9774), roleMember, moment.Add(2*time.Second))
 	actor := adminActor(adminID)
 
@@ -470,7 +470,7 @@ func TestApplicationCardCarriesApplicantAndSource(t *testing.T) {
 	adminID := seedProfile(t, db, 9791)
 	applicantID := resolveInternal(t, svc, 9792, "applicant")
 	moment := time.Date(2026, time.October, 1, 10, 0, 0, 0, time.UTC)
-	withSource := seedApplication(t, db, applicantID, rolePublic, moment)
+	withSource := seedApplication(t, db, applicantID, roleGuest, moment)
 	execApplication(t, db, `UPDATE identity_applications SET source_unknown = true, first_name = 'Anna' WHERE id = $1`, withSource)
 	withoutSource := seedApplication(t, db, applicantID, roleMember, moment.Add(time.Second))
 	actor := adminActor(adminID)
@@ -495,7 +495,7 @@ func TestRefusedApplicationsAreListedNewestFirst(t *testing.T) {
 	svc, db := newIdentityService(t)
 	adminID := seedProfile(t, db, 9801)
 	older := seedApplication(t, db, seedProfile(t, db, 9802), roleMember, time.Now())
-	newer := seedApplication(t, db, seedProfile(t, db, 9803), rolePublic, time.Now())
+	newer := seedApplication(t, db, seedProfile(t, db, 9803), roleGuest, time.Now())
 	decide(t, svc.DeclineApplication, adminID, older)
 	decide(t, svc.DeclineApplication, adminID, newer)
 

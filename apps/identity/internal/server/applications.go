@@ -23,11 +23,7 @@ const (
 )
 
 // applicationCircles — круги, на которые бывает заявка, от слабого к сильному.
-var applicationCircles = []string{rolePublic, roleMember}
-
-// circleRank упорядочивает вложенные круги maintainer ⊂ admin ⊂ member ⊂ public:
-// чем больше ранг, тем уже круг и тем сильнее роль.
-var circleRank = map[string]int{rolePublic: 1, roleMember: 2, roleAdmin: 3, roleMaintainer: 4}
+var applicationCircles = []string{roleGuest, roleMember}
 
 // standingRefusalSQL — условие «отказ в силе»: заявка закрыта отказом, а круг её
 // после отказа не выдан. Его читает список отказанных, а вход на /start
@@ -352,10 +348,11 @@ func decideApplicationTx(ctx context.Context, tx *sql.Tx, applicationID string, 
 	}, nil
 }
 
-// refusalOutcome — исход отказа по кругу заявки (пункт 12): отказ в public —
-// блокировка, в member — declined, роли человека не меняются.
+// refusalOutcome — исход отказа по кругу заявки (пункт 12): отказ в guest —
+// блокировка, в member — declined, роли человека не меняются. Отказ по очереди
+// без блокировки — PER-527.
 func refusalOutcome(circle string) string {
-	if circle == rolePublic {
+	if circle == roleGuest {
 		return outcomeBlocked
 	}
 	return outcomeDeclined
@@ -375,13 +372,9 @@ func admitCircleTx(ctx context.Context, tx *sql.Tx, identityID, circle string, a
 	return nil
 }
 
-// grantCircleTx выдаёт круг заявки. member выдаётся вместе с public: круги
-// вложенные, и допуск половинкой нарушил бы ADR-043.
+// grantCircleTx выдаёт круг заявки. Круг один: допуск в member заменяет круг
+// гостя, а не добавляется к нему.
 func grantCircleTx(ctx context.Context, tx *sql.Tx, identityID, circle string, performedBy uuid.NullUUID) error {
-	if circle == roleMember {
-		_, err := grantHubAdmissionTx(ctx, tx, identityID, performedBy)
-		return err
-	}
 	_, err := grantRoleTx(ctx, tx, identityID, circle, performedBy)
 	return err
 }

@@ -25,7 +25,6 @@ func TestCheckGlobalRoleGrantsAdminAndRefusesOrdinaryPerson(t *testing.T) {
 	ordinary := resolve(t, client, 9002, nil)
 	member := resolve(t, client, 9003, nil)
 	insertRole(t, db, member.GetIdentityId(), "member")
-	insertRole(t, db, member.GetIdentityId(), "public")
 
 	assertGranted(t, client, admin.GetIdentityId(), announcementRoles, true)
 	assertGranted(t, client, ordinary.GetIdentityId(), announcementRoles, false)
@@ -88,24 +87,25 @@ func TestCheckGlobalRoleRefusesBlockedProfileWithRoleLeftActive(t *testing.T) {
 	assertGranted(t, client, profile.GetIdentityId(), announcementRoles, false)
 }
 
-// Набор сравнивается как есть: любая из принятых ролей даёт право, а
-// вложенность кругов не разворачивается — носитель одной admin не проходит
-// поверхность, которая назвала только member.
-func TestCheckGlobalRoleMatchesAcceptedSetWithoutNesting(t *testing.T) {
+// Набор сравнивается с проекцией global_roles, той же, что в ответе
+// ResolveIdentity: администратор держит admin, member и guest, гость — только
+// guest. Любая из принятых ролей даёт право.
+func TestCheckGlobalRoleMatchesAcceptedSetAgainstProjection(t *testing.T) {
 	t.Parallel()
 	db := migratedDB(t)
 	client := resolveClient(t, db)
-	profile := resolve(t, client, 9401, nil)
-	insertAdminRole(t, db, profile.GetIdentityId())
+	admin := resolve(t, client, 9401, nil)
+	insertAdminRole(t, db, admin.GetIdentityId())
+	guest := resolve(t, client, 9402, nil)
+	insertRole(t, db, guest.GetIdentityId(), "guest")
 
-	hub := []identityv1.GlobalRole{
-		identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER,
-		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN,
-		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER,
-	}
-	assertGranted(t, client, profile.GetIdentityId(), hub, true)
-	assertGranted(t, client, profile.GetIdentityId(),
-		[]identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_MEMBER}, false)
+	member := []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_MEMBER}
+	auction := []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_GUEST}
+	assertGranted(t, client, admin.GetIdentityId(), member, true)
+	assertGranted(t, client, admin.GetIdentityId(), auction, true)
+	assertGranted(t, client, guest.GetIdentityId(), auction, true)
+	assertGranted(t, client, guest.GetIdentityId(), member, false)
+	assertGranted(t, client, guest.GetIdentityId(), announcementRoles, false)
 }
 
 func TestCheckGlobalRoleRejectsInvalidRequests(t *testing.T) {

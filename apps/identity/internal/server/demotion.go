@@ -18,13 +18,13 @@ const insertDemotionSQL = `
 INSERT INTO identity_applications (id, identity_id, requested_role, created_at, outcome, decided_by, decided_at)
 VALUES ($1, $2, 'member', date_trunc('milliseconds', now()), 'declined', $3, now())`
 
-// errDemotionOutranked — у человека роль сильнее member. Хаб пускает admin и
-// maintainer и без строки member (ADR-043), поэтому отзыв member ничего бы не
-// закрыл, а отказ declined остался бы записью без действия.
+// errDemotionOutranked — круг человека admin или maintainer, а не member: отзыв
+// member ничего бы не закрыл, а отказ declined остался бы записью без действия.
 var errDemotionOutranked = errors.New("identity holds a role above member")
 
-// demoteMember отзывает member, оставляет public и записывает отказ declined на
-// круг member от имени администратора — одной транзакцией: отзыв без отказа
+// demoteMember отзывает member, оставляет человека гостем с правом аукциона
+// (ADR-064, пункт 9) и записывает отказ declined на круг member от имени
+// администратора — одной транзакцией: отзыв без отказа
 // вернул бы человека в очередь повторным /start, отказ без отзыва оставил бы
 // его в хабе.
 func (s identityService) demoteMember(ctx context.Context, identityID string, actor uuid.NullUUID) (bool, error) {
@@ -58,11 +58,11 @@ func demoteMemberTx(ctx context.Context, tx *sql.Tx, identityID string, actor uu
 	if blocked {
 		return false, nil
 	}
-	outranked, err := holdsCircle(ctx, tx, identityID, roleAdmin)
+	current, err := activeCircle(ctx, tx, identityID)
 	if err != nil {
 		return false, err
 	}
-	if outranked {
+	if current == roleAdmin || current == roleMaintainer {
 		return false, errDemotionOutranked
 	}
 	revoked, err := revokeRoleTx(ctx, tx, identityID, roleMember, actor)

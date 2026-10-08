@@ -31,12 +31,6 @@ WHERE telegram_user_id = $1 AND username IS DISTINCT FROM $2
 RETURNING id`
 
 	selectProfileIDSQL = `SELECT id FROM profiles WHERE telegram_user_id = $1`
-
-	listRolesSQL = `
-SELECT role FROM identity_roles
-WHERE identity_id = $1 AND revoked_at IS NULL`
-
-	selectBlockedSQL = `SELECT blocked FROM profiles WHERE id = $1`
 )
 
 type identityService struct {
@@ -73,14 +67,9 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 		}
 	}
 
-	roles, err := listRoles(ctx, tx, identityID)
+	state, err := readAccess(ctx, tx, identityID)
 	if err != nil {
-		return nil, internal("list roles", err)
-	}
-
-	blocked, err := profileBlocked(ctx, tx, identityID)
-	if err != nil {
-		return nil, internal("select blocked", err)
+		return nil, internal("read access", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -89,8 +78,10 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 
 	return &identityv1.ResolveIdentityResponse{
 		IdentityId:  identityID,
-		GlobalRoles: roles,
-		Blocked:     blocked,
+		GlobalRoles: state.globalRoles,
+		Blocked:     state.blocked,
+		Role:        state.role,
+		Rights:      state.rights,
 	}, nil
 }
 
@@ -105,10 +96,9 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 // Отметка блокировки читается под FOR UPDATE до гашения записи: иначе
 // заблокированный сжёг бы своё разрешение, получив отказ триггера на выдаче.
 //
-// announce ложно при регистрации: тогда выдачи входят в снимок одного события
-// profile_registered, а не выходят отдельными role_granted. Для существующего
-// профиля каждая выдача — своё событие. public выдаётся раньше member: круги
-// вложенные, и промежуточный снимок {member} без public нарушил бы ADR-043.
+// announce ложно при регистрации: тогда выдача входит в снимок одного события
+// profile_registered, а не выходит отдельным role_granted. Для существующего
+// профиля выдача — своё событие.
 //
 // Запись гасится всегда, когда она есть, даже если её роли уже активны: иначе
 // она осталась бы ключом для следующего владельца ника (ADR-060, пункт 1).
@@ -129,12 +119,8 @@ func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username 
 	if err != nil || circle == "" {
 		return err
 	}
-	for _, role := range allowedUsernameRoles(circle) {
-		if _, err := grantRoleTxWithReason(ctx, tx, identityID, role, uuid.NullUUID{}, reasonAllowedUsername, announce); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err = grantRoleTxWithReason(ctx, tx, identityID, circle, uuid.NullUUID{}, reasonAllowedUsername, announce)
+	return err
 }
 
 func usernameArg(username string) any {
@@ -177,40 +163,6 @@ func upsertProfile(ctx context.Context, tx *sql.Tx, telegramUserID int64, userna
 	return identityID, false, nil
 }
 
-func listRoles(ctx context.Context, tx *sql.Tx, identityID string) ([]identityv1.GlobalRole, error) {
-	rows, err := tx.QueryContext(ctx, listRolesSQL, identityID)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	var roles []identityv1.GlobalRole
-	for rows.Next() {
-		var role string
-		if err := rows.Scan(&role); err != nil {
-			return nil, err
-		}
-		if mapped, ok := globalRole(role); ok {
-			roles = append(roles, mapped)
-		}
-	}
-	return roles, rows.Err()
-}
-
-// profileBlocked читает отметку блокировки отдельным запросом: она не выводится
-// из набора ролей, потому что блокировка отзывает активные роли и пустой набор
-// иначе не отличить от профиля, который ни разу не начинал.
-func profileBlocked(ctx context.Context, tx *sql.Tx, identityID string) (bool, error) {
-	var blocked bool
-	if err := tx.QueryRowContext(ctx, selectBlockedSQL, identityID).Scan(&blocked); err != nil {
-		return false, err
-	}
-	return blocked, nil
-}
-
-// globalRole переводит строку словаря identity_roles в значение контракта.
-// Неизвестная строка отбрасывается, а не отвергает ответ: словарь схемы и
-// контракта могут разойтись на время согласованного развёртывания.
 // roleName — обратное к globalRole: значение контракта в строку хранилища.
 // UNSPECIFIED и неизвестное значение строки не имеют.
 func roleName(role identityv1.GlobalRole) (string, bool) {
@@ -222,12 +174,15 @@ func roleName(role identityv1.GlobalRole) (string, bool) {
 	case identityv1.GlobalRole_GLOBAL_ROLE_MEMBER:
 		return roleMember, true
 	case identityv1.GlobalRole_GLOBAL_ROLE_GUEST:
-		return rolePublic, true
+		return roleGuest, true
 	default:
 		return "", false
 	}
 }
 
+// globalRole переводит строку словаря identity_roles в значение контракта.
+// Неизвестная строка отбрасывается, а не отвергает ответ: словарь схемы и
+// контракта могут разойтись на время согласованного развёртывания.
 func globalRole(role string) (identityv1.GlobalRole, bool) {
 	switch role {
 	case roleMaintainer:
@@ -236,7 +191,7 @@ func globalRole(role string) (identityv1.GlobalRole, bool) {
 		return identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, true
 	case roleMember:
 		return identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, true
-	case rolePublic:
+	case roleGuest:
 		return identityv1.GlobalRole_GLOBAL_ROLE_GUEST, true
 	default:
 		return identityv1.GlobalRole_GLOBAL_ROLE_UNSPECIFIED, false

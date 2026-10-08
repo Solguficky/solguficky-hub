@@ -4,6 +4,7 @@ package server_test
 
 import (
 	"database/sql"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -148,7 +149,16 @@ func TestResolveIdentityReturnsExistingAdminRole(t *testing.T) {
 	if second.GetIdentityId() != first.GetIdentityId() {
 		t.Fatalf("identity_id: got %q want %q", second.GetIdentityId(), first.GetIdentityId())
 	}
-	assertRoles(t, second.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_ADMIN)
+	// Одна строка admin даёт проекцию прежнего полного набора: админ без
+	// member и guest был дефектом 1 stage 2026-10-07.
+	assertRoleSet(t, second.GetGlobalRoles(),
+		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN,
+		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER,
+		identityv1.GlobalRole_GLOBAL_ROLE_GUEST,
+	)
+	if second.GetRole() != identityv1.GlobalRole_GLOBAL_ROLE_ADMIN {
+		t.Fatalf("role: got %v want admin", second.GetRole())
+	}
 	assertRoleCount(t, db, first.GetIdentityId(), 1)
 
 	other := resolve(t, client, otherTelegramID, &otherName)
@@ -185,35 +195,59 @@ func TestResolveIdentityDoesNotRestoreRevokedAdmin(t *testing.T) {
 	assertActiveRoleCount(t, db, first.GetIdentityId(), 0)
 }
 
-func TestResolveIdentityReturnsEveryGlobalRole(t *testing.T) {
+// Права выводит Identity из круга (ADR-064, пункт 7): администратор получает
+// все четыре, участник и мейнтейнер — хаб и аукцион без управления составом,
+// гость — только выданное ему право аукциона. global_roles — проекция круга и
+// прав на прежние вложенные имена (решение владельца по PER-526).
+func TestResolveIdentityDerivesRightsFromCircle(t *testing.T) {
 	t.Parallel()
 
 	db := migratedDB(t)
 	client := resolveClient(t, db)
-	username := "every-role"
-	const telegramUserID int64 = 7001
-
-	first := resolve(t, client, telegramUserID, &username)
-	for _, role := range []string{"maintainer", "admin", "member", "public"} {
-		insertRole(t, db, first.GetIdentityId(), role)
-	}
-
-	second := resolve(t, client, telegramUserID, &username)
-	assertRoleSet(t, second.GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER,
-		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN,
-		identityv1.GlobalRole_GLOBAL_ROLE_MEMBER,
-		identityv1.GlobalRole_GLOBAL_ROLE_GUEST,
+	var (
+		hub        = identityv1.AccessRight_ACCESS_RIGHT_HUB
+		auction    = identityv1.AccessRight_ACCESS_RIGHT_AUCTION
+		manage     = identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP
+		moderate   = identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION
+		admin      = identityv1.GlobalRole_GLOBAL_ROLE_ADMIN
+		maintainer = identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER
+		member     = identityv1.GlobalRole_GLOBAL_ROLE_MEMBER
+		guest      = identityv1.GlobalRole_GLOBAL_ROLE_GUEST
 	)
-	if second.GetBlocked() {
-		t.Fatal("blocked with active roles: got true want false")
+	for i, tc := range []struct {
+		circle      string
+		role        identityv1.GlobalRole
+		rights      []identityv1.AccessRight
+		globalRoles []identityv1.GlobalRole
+	}{
+		{"admin", admin, []identityv1.AccessRight{auction, hub, manage, moderate}, []identityv1.GlobalRole{admin, guest, member}},
+		{"member", member, []identityv1.AccessRight{auction, hub}, []identityv1.GlobalRole{guest, member}},
+		{"maintainer", maintainer, []identityv1.AccessRight{auction, hub}, []identityv1.GlobalRole{guest, maintainer, member}},
+		{"guest", guest, []identityv1.AccessRight{auction}, []identityv1.GlobalRole{guest}},
+		{"", identityv1.GlobalRole_GLOBAL_ROLE_UNSPECIFIED, nil, nil},
+	} {
+		telegramUserID := int64(7001 + i)
+		profile := resolve(t, client, telegramUserID, nil)
+		if tc.circle != "" {
+			insertRole(t, db, profile.GetIdentityId(), tc.circle)
+		}
+
+		got := resolve(t, client, telegramUserID, nil)
+		if got.GetRole() != tc.role {
+			t.Errorf("%q: role %v, want %v", tc.circle, got.GetRole(), tc.role)
+		}
+		assertRightSet(t, got.GetRights(), tc.rights...)
+		assertRoleSet(t, got.GetGlobalRoles(), tc.globalRoles...)
+		if got.GetBlocked() {
+			t.Errorf("%q: blocked, want not", tc.circle)
+		}
 	}
-	assertRoleCount(t, db, first.GetIdentityId(), 4)
 }
 
-// Отметка блокировки и набор ролей читаются по отдельности: блокировка мимо ядра
-// — до outbox или в обход щитов схемы — оставляет активную роль, и ответ обязан
-// отдать обе стороны независимо, а не вывести одну из другой.
+// Отметка блокировки читается сама, а не выводится из набора ролей: пустой
+// набор без отметки — человек, которого ещё не допустили. Заблокированный не
+// получает ни круга, ни прав, ни ролей проекции, даже если блокировка мимо ядра
+// — до outbox или в обход щитов схемы — оставила строку роли активной.
 func TestResolveIdentityReadsBlockedSeparatelyFromRoles(t *testing.T) {
 	t.Parallel()
 
@@ -233,10 +267,14 @@ func TestResolveIdentityReadsBlockedSeparatelyFromRoles(t *testing.T) {
 		`UPDATE profiles SET blocked = true WHERE id = $1`, withoutRoles.GetIdentityId())
 
 	active := resolve(t, client, activeWithoutBlockID, &username)
-	insertRole(t, db, active.GetIdentityId(), "public")
+	insertRole(t, db, active.GetIdentityId(), "guest")
 
 	got := resolve(t, client, blockedWithRolesID, &username)
-	assertRoles(t, got.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_ADMIN)
+	if len(got.GetGlobalRoles()) != 0 || len(got.GetRights()) != 0 ||
+		got.GetRole() != identityv1.GlobalRole_GLOBAL_ROLE_UNSPECIFIED {
+		t.Fatalf("blocked with a role left active: role=%v rights=%v global_roles=%v, want none",
+			got.GetRole(), got.GetRights(), got.GetGlobalRoles())
+	}
 	if !got.GetBlocked() {
 		t.Fatal("blocked with active role: got false want true")
 	}
@@ -358,7 +396,7 @@ func assertRoles(t *testing.T, got []identityv1.GlobalRole, want ...identityv1.G
 	}
 }
 
-// assertRoleSet сравнивает без порядка: listRolesSQL его не обещает, и контракт
+// assertRoleSet сравнивает без порядка: порядок проекции — деталь выборки, и контракт
 // тоже — роли приходят repeated-полем, а не упорядоченным списком.
 func assertRoleSet(t *testing.T, got []identityv1.GlobalRole, want ...identityv1.GlobalRole) {
 	t.Helper()
@@ -387,6 +425,18 @@ func assertProfileCount(t *testing.T, db *sql.DB, telegramUserID int64, want int
 	}
 	if n != want {
 		t.Fatalf("profiles for %d: got %d want %d", telegramUserID, n, want)
+	}
+}
+
+// assertRightSet сравнивает права без порядка: контракт его не обещает.
+func assertRightSet(t *testing.T, got []identityv1.AccessRight, want ...identityv1.AccessRight) {
+	t.Helper()
+	sorted := slices.Clone(got)
+	slices.Sort(sorted)
+	expected := slices.Clone(want)
+	slices.Sort(expected)
+	if !slices.Equal(sorted, expected) {
+		t.Fatalf("rights: got %v want %v (any order)", got, want)
 	}
 }
 
@@ -434,9 +484,16 @@ func insertRole(t *testing.T, db *sql.DB, identityID, role string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	testdb.ExecAnnounced(t, db, identityID, outbox.RoleGranted, role,
-		`INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ($1, $2, $3, now(), $2)`, grantID.String(), identityID, role)
+	grant := `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+		VALUES ($1, $2, $3, now(), $2)`
+	// Круг гостя пуст без права аукциона: сервис выдаёт их вместе, и фикстура
+	// повторяет это, иначе снимок role_granted(guest) не назвал бы guest.
+	if role == "guest" {
+		grant = `WITH circle AS (` + grant + `)
+			INSERT INTO identity_rights (id, identity_id, access_right, granted_at)
+			VALUES (gen_random_uuid(), $2, 'auction', now())`
+	}
+	testdb.ExecAnnounced(t, db, identityID, outbox.RoleGranted, role, grant, grantID.String(), identityID, role)
 }
 
 func profileUsername(t *testing.T, db *sql.DB, telegramUserID int64) string {

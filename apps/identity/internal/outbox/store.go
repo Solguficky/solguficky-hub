@@ -33,7 +33,8 @@ WHERE published_at IS NULL`
 	// содержит, а разбор массива через database/sql зависел бы от сканера драйвера.
 	pendingSQL = `
 SELECT event_id, identity_id, version, occasion, COALESCE(role, ''),
-       array_to_string(global_roles, ','), blocked, occurred_at, COALESCE(traceparent, '')
+       array_to_string(global_roles, ','), blocked, occurred_at, COALESCE(traceparent, ''),
+       COALESCE(circle, ''), array_to_string(COALESCE(rights, '{}'), ',')
 FROM identity_outbox
 WHERE published_at IS NULL
 ORDER BY position
@@ -107,14 +108,19 @@ func ReadQueue(ctx context.Context, conn *sql.Conn, limit int) (Backlog, []Recor
 			record   Record
 			occasion string
 			roles    string
+			rights   string
 		)
 		if err := rows.Scan(&record.EventID, &record.IdentityID, &record.Version, &occasion,
-			&record.Role, &roles, &record.Blocked, &record.OccurredAt, &record.TraceParent); err != nil {
+			&record.Role, &roles, &record.Blocked, &record.OccurredAt, &record.TraceParent,
+			&record.Circle, &rights); err != nil {
 			return Backlog{}, nil, fmt.Errorf("scan pending: %w", err)
 		}
 		record.Occasion = Occasion(occasion)
 		if roles != "" {
 			record.GlobalRoles = strings.Split(roles, ",")
+		}
+		if rights != "" {
+			record.Rights = strings.Split(rights, ",")
 		}
 		records = append(records, record)
 	}

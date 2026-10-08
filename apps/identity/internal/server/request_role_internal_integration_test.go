@@ -21,7 +21,7 @@ const (
 
 // Запись хаба гасится в любом боте и выдаёт свой круг, а не круг поверхности
 // (ADR-060, пункт 2): человек впервые открыл бот аукциона и получил хаб.
-func TestRequestRoleHubAllowlistInAuctionBotGrantsMemberAndPublic(t *testing.T) {
+func TestRequestRoleHubAllowlistInAuctionBotGrantsMember(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	mustChange(t)(svc.addAllowedUsername(t.Context(), "insider", roleMember, uuid.NullUUID{}))
@@ -32,7 +32,7 @@ func TestRequestRoleHubAllowlistInAuctionBotGrantsMemberAndPublic(t *testing.T) 
 	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertAllowedUsernameRows(t, db, "insider", allowedUsernameCounts{total: 1, used: 1})
 	assertApplications(t, db, resp.GetIdentityId())
-	assertEvents(t, db, resp.GetIdentityId(), "v1 profile_registered() {member,public} blocked=false")
+	assertEvents(t, db, resp.GetIdentityId(), "v1 profile_registered() {guest,member} blocked=false")
 	assertApplicationEvents(t, db, resp.GetIdentityId())
 }
 
@@ -50,10 +50,10 @@ func TestRequestRoleOutsideListsOpensOneApplication(t *testing.T) {
 	assertOutcome(t, first, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
 	assertOutcome(t, again, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
 	assertRoleSetInternal(t, again.GetGlobalRoles())
-	assertApplications(t, db, first.GetIdentityId(), "public source= name=Alice")
+	assertApplications(t, db, first.GetIdentityId(), "guest source= name=Alice")
 	assertEvents(t, db, first.GetIdentityId(),
 		"v1 profile_registered() {} blocked=false",
-		"v2 application_submitted(public) {} blocked=false")
+		"v2 application_submitted(guest) {} blocked=false")
 }
 
 // Заявка без источника и без имени: payload без `s_` и пустой first_name.
@@ -88,7 +88,7 @@ func TestRequestRoleBlockedGetsNeitherRoleNorApplication(t *testing.T) {
 	assertApplicationEvents(t, db, identityID)
 }
 
-// declined на member новой заявки на member не даёт, а на public — не мешает:
+// declined на member новой заявки на member не даёт, а на guest — не мешает:
 // отказ в хаб не закрывает дорогу в аукцион (пункты 12 и 13).
 func TestRequestRoleDeclinedGetsNoNewApplicationOnThatCircle(t *testing.T) {
 	t.Parallel()
@@ -103,8 +103,8 @@ func TestRequestRoleDeclinedGetsNoNewApplicationOnThatCircle(t *testing.T) {
 
 	assertOutcome(t, hub, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_DECLINED)
 	assertOutcome(t, auction, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
-	assertApplications(t, db, applicantID, "public source=<nil> name=Carol")
-	assertApplicationEvents(t, db, applicantID, "public")
+	assertApplications(t, db, applicantID, "guest source=<nil> name=Carol")
+	assertApplicationEvents(t, db, applicantID, "guest")
 }
 
 // Отказ, снятый выдачей круга, заявке больше не мешает: после понижения
@@ -133,7 +133,7 @@ func TestRequestRoleAlreadyHeldStillConsumesAllowlist(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 7109)
-	mustChange(t)(svc.grantRole(t.Context(), identityID, rolePublic, uuid.NullUUID{}))
+	mustChange(t)(svc.grantRole(t.Context(), identityID, roleGuest, uuid.NullUUID{}))
 	mustChange(t)(svc.addAllowedUsername(t.Context(), "bidder", roleMember, uuid.NullUUID{}))
 
 	resp := requestRole(t, svc, roleRequest{telegramUserID: 7109, username: "bidder", circle: auctionCircle})
@@ -144,7 +144,7 @@ func TestRequestRoleAlreadyHeldStillConsumesAllowlist(t *testing.T) {
 	assertApplicationEvents(t, db, identityID)
 }
 
-// public вложен в member: member просит аукцион и уже его имеет.
+// guest ниже member по порядку кругов: member просит аукцион и уже его имеет.
 func TestRequestRoleNestedCircleIsAlreadyHeld(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
@@ -158,12 +158,12 @@ func TestRequestRoleNestedCircleIsAlreadyHeld(t *testing.T) {
 	assertApplicationEvents(t, db, identityID)
 }
 
-// Аукционная запись в боте хаба гасится и выдаёт public, а исход говорит о
+// Аукционная запись в боте хаба гасится и выдаёт guest, а исход говорит о
 // запрошенном круге: заявка на member открыта (integration.md, RequestRole).
-func TestRequestRoleAuctionAllowlistInHubBotGrantsPublicAndOpensMemberApplication(t *testing.T) {
+func TestRequestRoleAuctionAllowlistInHubBotGrantsGuestAndOpensMemberApplication(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	mustChange(t)(svc.addAllowedUsername(t.Context(), "collector", rolePublic, uuid.NullUUID{}))
+	mustChange(t)(svc.addAllowedUsername(t.Context(), "collector", roleGuest, uuid.NullUUID{}))
 
 	resp := requestRole(t, svc, roleRequest{telegramUserID: 7111, username: "collector", circle: hubCircle, firstName: "Dan"})
 
@@ -171,8 +171,8 @@ func TestRequestRoleAuctionAllowlistInHubBotGrantsPublicAndOpensMemberApplicatio
 	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertApplications(t, db, resp.GetIdentityId(), "member source=<nil> name=Dan")
 	assertEvents(t, db, resp.GetIdentityId(),
-		"v1 profile_registered() {public} blocked=false",
-		"v2 application_submitted(member) {public} blocked=false")
+		"v1 profile_registered() {guest} blocked=false",
+		"v2 application_submitted(member) {guest} blocked=false")
 }
 
 // Белый список, сработавший позже заявки, закрывает её выдачей (пункт 8).
@@ -180,14 +180,14 @@ func TestRequestRoleAllowlistAfterApplicationClosesIt(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	waiting := requestRole(t, svc, roleRequest{telegramUserID: 7112, username: "patient", circle: auctionCircle, source: new("chan")})
-	mustChange(t)(svc.addAllowedUsername(t.Context(), "patient", rolePublic, uuid.NullUUID{}))
+	mustChange(t)(svc.addAllowedUsername(t.Context(), "patient", roleGuest, uuid.NullUUID{}))
 
 	resp := requestRole(t, svc, roleRequest{telegramUserID: 7112, username: "patient", circle: auctionCircle})
 
 	assertOutcome(t, resp, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST)
 	assertRoleSetInternal(t, resp.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
 	assertApplications(t, db, waiting.GetIdentityId())
-	assertApplicationEvents(t, db, waiting.GetIdentityId(), "public")
+	assertApplicationEvents(t, db, waiting.GetIdentityId(), "guest")
 }
 
 // Два /start одного человека идут друг за другом под блокировкой профиля:
@@ -216,8 +216,8 @@ func TestConcurrentRequestRoleOpensOneApplication(t *testing.T) {
 			t.Fatalf("request role: %v", err)
 		}
 	}
-	assertApplications(t, db, identityID, "public source=<nil> name=<nil>")
-	assertApplicationEvents(t, db, identityID, "public")
+	assertApplications(t, db, identityID, "guest source=<nil> name=<nil>")
+	assertApplicationEvents(t, db, identityID, "guest")
 }
 
 func TestRequestRoleRejectsInvalidArguments(t *testing.T) {

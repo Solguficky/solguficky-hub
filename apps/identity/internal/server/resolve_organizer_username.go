@@ -11,7 +11,9 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// Строка находится только у профиля с действующей ролью admin. Заблокированный
+// Строка находится только у профиля с admin в проекции global_roles: у
+// администратора и у мейнтейнера с выданным управлением составом, как в
+// ответах разрешения личности. Заблокированный
 // ролей не держит (identity_roles_blocked_guard), а отметка блокировки
 // проверяется рядом как страховка поверх инварианта, как в CheckGlobalRole.
 const selectOrganizerUsernameSQL = `
@@ -19,8 +21,7 @@ SELECT p.username
 FROM profiles p
 WHERE p.id = $1
   AND NOT p.blocked
-  AND EXISTS (SELECT 1 FROM identity_roles r
-              WHERE r.identity_id = p.id AND r.role = 'admin' AND r.revoked_at IS NULL)`
+  AND 'admin' = ANY (identity_global_roles(p.id))`
 
 // memberCircle — роли, которые принимает хаб (ADR-043): вложенность кругов
 // Identity не разворачивает, поэтому круг перечислен плоско.

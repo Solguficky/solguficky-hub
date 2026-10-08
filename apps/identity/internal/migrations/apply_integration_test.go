@@ -13,6 +13,7 @@ import (
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/pressly/goose/v3"
 	"github.com/pressly/goose/v3/lock"
@@ -44,9 +45,9 @@ func TestApplyMigratesLegacyAccessStatus(t *testing.T) {
 		       ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3705', $4, 'admin', $3, NULL)`,
 		grantID, blockedID, createdAt, pendingID)
 
-	if err := migrations.Apply(t.Context(), db); err != nil {
-		t.Fatalf("apply current migrations: %v", err)
-	}
+	// Проверяется перенос 004 — вложенные строки member и public. Одну
+	// роль-круг из них делает 014, её проверяет свой тест.
+	applyThrough(t, db, 13)
 
 	var accessStatusColumns int
 	if err := db.QueryRowContext(t.Context(), `
@@ -66,7 +67,7 @@ func TestApplyMigratesLegacyAccessStatus(t *testing.T) {
 	if got := activeRoleCount(t, db, allowedID); got != 2 {
 		t.Fatalf("allowed active roles: got %d want 2", got)
 	}
-	for _, role := range []string{"member", "public"} {
+	for _, role := range []string{circleMember, publicRole} {
 		var grantedAt time.Time
 		var grantedBy sql.NullString
 		if err := db.QueryRowContext(t.Context(), `
@@ -100,38 +101,40 @@ func TestApplyMigratesLegacyAccessStatus(t *testing.T) {
 	}
 }
 
-func TestActiveRoleGrantIsUniquePerIdentityAndRole(t *testing.T) {
+// Активная роль-круг у человека одна (ADR-064, пункт 6): вторая активная
+// строка отвергается схемой — и того же круга, и другого. Каждый круг словаря
+// при этом допустим сам по себе.
+func TestActiveRoleCircleIsOnePerIdentity(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	if err := migrations.Apply(t.Context(), db); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3601"
-	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id, username)
-		VALUES ($1, 4001, 'roles')`)
+	for i, role := range []string{maintainerRole, adminRole, circleMember, guestRole} {
+		identityID := uuid.NewString()
+		registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id, username)
+			VALUES ($1, $2, 'roles')`, int64(4001+i))
+		grant := `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`
+		// Гость без права аукциона не попадает в проекцию global_roles, и
+		// снимок role_granted(guest) его не назвал бы: право идёт той же правкой.
+		if role == guestRole {
+			grant = `WITH circle AS (` + grant + `)
+				INSERT INTO identity_rights (id, identity_id, access_right, granted_at)
+				VALUES (gen_random_uuid(), $2, 'auction', now())`
+		}
+		testdb.ExecAnnounced(t, db, identityID, outbox.RoleGranted, role, grant, uuid.NewString(), identityID, role)
 
-	roles := []string{"maintainer", "admin", "member", "public"}
-	grantIDs := []string{
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3602",
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3603",
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3604",
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3605",
-	}
-	duplicateIDs := []string{
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3612",
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3613",
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3614",
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3615",
-	}
-	for i, role := range roles {
-		testdb.ExecAnnounced(t, db, identityID, outbox.RoleGranted, role,
-			`INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, grantIDs[i], identityID, role)
-
-		err := execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, duplicateIDs[i], identityID, role)
-		assertUniqueViolation(t, err)
+		other := circleMember
+		if role == circleMember {
+			other = adminRole
+		}
+		for _, second := range []string{role, other} {
+			err := execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+				VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, uuid.NewString(), identityID, second)
+			assertUniqueViolation(t, err)
+		}
 	}
 }
 
@@ -378,9 +381,38 @@ func activeRoleCount(t *testing.T, db *sql.DB, identityID string) int {
 
 // registerProfile создаёт профиль запросом теста и пишет его регистрацию той же
 // транзакцией, как это делает сервис: без события профиль не фиксируется.
-func registerProfile(t *testing.T, db *sql.DB, identityID, query string) {
+func registerProfile(t *testing.T, db *sql.DB, identityID, query string, args ...any) {
 	t.Helper()
-	testdb.ExecAnnounced(t, db, identityID, outbox.ProfileRegistered, "", query, identityID)
+	testdb.ExecAnnounced(t, db, identityID, outbox.ProfileRegistered, "", query, append([]any{identityID}, args...)...)
+}
+
+// registerLegacyProfile регистрирует профиль на схеме до 014: outbox.Append
+// пишет колонки снимка, которых там ещё нет, поэтому событие вставляется
+// строкой в форме 007 той же транзакцией.
+func registerLegacyProfile(t *testing.T, db *sql.DB, identityID string, telegramUserID int64) {
+	t.Helper()
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	steps := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO profiles (id, telegram_user_id) VALUES ($1, $2)`, []any{identityID, telegramUserID}},
+		{`UPDATE profiles SET version = 1 WHERE id = $1`, []any{identityID}},
+		{`INSERT INTO identity_outbox (event_id, identity_id, version, occasion, global_roles, blocked, occurred_at)
+		  VALUES (gen_random_uuid(), $1, 1, 'profile_registered', '{}', false, now())`, []any{identityID}},
+	}
+	for _, step := range steps {
+		if _, err := tx.ExecContext(t.Context(), step.query, step.args...); err != nil {
+			t.Fatalf("register legacy profile: %v", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func execMigrationTest(t *testing.T, db *sql.DB, query string, args ...any) {

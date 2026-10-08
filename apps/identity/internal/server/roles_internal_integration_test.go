@@ -41,10 +41,10 @@ func TestGrantRoleRecordsPerformer(t *testing.T) {
 	identityID := seedProfile(t, db, 9303)
 	performer := uuid.NullUUID{UUID: uuid.MustParse(performerID), Valid: true}
 
-	if _, err := svc.grantRole(t.Context(), identityID, rolePublic, performer); err != nil {
+	if _, err := svc.grantRole(t.Context(), identityID, roleGuest, performer); err != nil {
 		t.Fatal(err)
 	}
-	assertJournalSummary(t, db, identityID, "grant:public@"+performerID)
+	assertJournalSummary(t, db, identityID, "grant:guest@"+performerID)
 }
 
 func TestGrantRoleRefusesBlockedProfile(t *testing.T) {
@@ -85,9 +85,7 @@ func TestRevokeRoleSucceedsWhenGrantedAtIsInTheFuture(t *testing.T) {
 	if err != nil || !changed {
 		t.Fatalf("revoke: changed=%t error=%v", changed, err)
 	}
-	if got := activeRoleCountInternal(t, db, identityID); got != 0 {
-		t.Fatalf("active roles: got %d want 0", got)
-	}
+	assertActiveCircle(t, db, identityID, roleMember)
 }
 
 func TestRevokeRoleInactiveIsNoChange(t *testing.T) {
@@ -108,28 +106,31 @@ func TestRevokeRoleInactiveIsNoChange(t *testing.T) {
 	if err != nil || !revoked {
 		t.Fatalf("revoke active: changed=%t error=%v", revoked, err)
 	}
-	assertJournalSummary(t, db, identityID, "grant:admin", "revoke:admin")
+	// Снятый администратор остаётся участником: круг ниже выдаётся той же
+	// транзакцией и пишет свою строку журнала.
+	assertJournalSummary(t, db, identityID, "grant:admin", "grant:member", "revoke:admin")
 }
 
-func TestGrantHubAdmissionGrantsBothRolesInOneTransaction(t *testing.T) {
+// Допуск в хаб заменяет круг гостя кругом member, а не добавляется к нему:
+// активная строка одна, прежняя отозвана той же транзакцией.
+func TestGrantHubAdmissionReplacesGuestCircle(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 9306)
+	mustChange(t)(svc.grantRole(t.Context(), identityID, roleGuest, uuid.NullUUID{}))
 
 	changed, err := svc.grantHubAdmission(t.Context(), identityID, uuid.NullUUID{})
 	if err != nil || !changed {
 		t.Fatalf("hub admission: changed=%t error=%v", changed, err)
 	}
-	if got := activeRoleCountInternal(t, db, identityID); got != 2 {
-		t.Fatalf("active roles: got %d want 2", got)
-	}
-	assertJournalSummary(t, db, identityID, "grant:member", "grant:public")
+	assertActiveCircle(t, db, identityID, roleMember)
+	assertJournalSummary(t, db, identityID, "grant:guest", "grant:member", "revoke:guest")
 
 	again, err := svc.grantHubAdmission(t.Context(), identityID, uuid.NullUUID{})
 	if err != nil || again {
 		t.Fatalf("repeated hub admission: changed=%t error=%v", again, err)
 	}
-	assertJournalSummary(t, db, identityID, "grant:member", "grant:public")
+	assertJournalSummary(t, db, identityID, "grant:guest", "grant:member", "revoke:guest")
 }
 
 func TestGrantHubAdmissionRefusesBlockedProfile(t *testing.T) {
@@ -202,6 +203,46 @@ func activeRoleCountInternal(t *testing.T, db *sql.DB, identityID string) int {
 		t.Fatal(err)
 	}
 	return count
+}
+
+func activeRightCountInternal(t *testing.T, db *sql.DB, identityID string) int {
+	t.Helper()
+	var count int
+	if err := db.QueryRowContext(t.Context(), `
+		SELECT COUNT(*) FROM identity_rights
+		WHERE identity_id = $1 AND revoked_at IS NULL`, identityID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	return count
+}
+
+// assertActiveCircle проверяет, что активная строка у человека одна и это want;
+// пустой want — круга нет.
+func assertActiveCircle(t *testing.T, db *sql.DB, identityID, want string) {
+	t.Helper()
+	var circles []string
+	rows, err := db.QueryContext(t.Context(), `
+		SELECT role FROM identity_roles WHERE identity_id = $1 AND revoked_at IS NULL`, identityID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rows.Close() }()
+	for rows.Next() {
+		var circle string
+		if err := rows.Scan(&circle); err != nil {
+			t.Fatal(err)
+		}
+		circles = append(circles, circle)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	switch {
+	case want == "" && len(circles) == 0:
+	case len(circles) == 1 && circles[0] == want:
+	default:
+		t.Fatalf("active circles of %s: got %v want [%s]", identityID, circles, want)
+	}
 }
 
 func profileBlockedInternal(t *testing.T, db *sql.DB, identityID string) bool {

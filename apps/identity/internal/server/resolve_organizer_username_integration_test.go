@@ -122,7 +122,7 @@ func TestResolveOrganizerUsernameRequiresMemberCircle(t *testing.T) {
 	for name, actor := range map[string]*identityv1.IdentityActor{
 		"absent":   nil,
 		"no roles": {IdentityId: viewer.GetIdentityId()},
-		"public": {
+		"guest": {
 			IdentityId:  viewer.GetIdentityId(),
 			GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_GUEST},
 		},

@@ -9,15 +9,16 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestBlockIdentityRevokesEveryActiveRole(t *testing.T) {
+// Блокировка снимает и круг, и права, выданные записями: гость, ставший
+// администратором, держит запись права аукциона, и она уходит вместе с кругом.
+func TestBlockIdentityRevokesCircleAndRights(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 9401)
-	if _, err := svc.grantRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.grantHubAdmission(t.Context(), identityID, uuid.NullUUID{}); err != nil {
-		t.Fatal(err)
+	mustChange(t)(svc.grantRole(t.Context(), identityID, roleGuest, uuid.NullUUID{}))
+	mustChange(t)(svc.grantRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{}))
+	if got := activeRightCountInternal(t, db, identityID); got != 1 {
+		t.Fatalf("active rights before block: got %d want 1", got)
 	}
 
 	changed, err := svc.blockIdentity(t.Context(), identityID, uuid.NullUUID{})
@@ -30,7 +31,10 @@ func TestBlockIdentityRevokesEveryActiveRole(t *testing.T) {
 	if got := activeRoleCountInternal(t, db, identityID); got != 0 {
 		t.Fatalf("active roles after block: got %d want 0", got)
 	}
-	assertJournalSummary(t, db, identityID, "block", "grant:admin", "grant:member", "grant:public")
+	if got := activeRightCountInternal(t, db, identityID); got != 0 {
+		t.Fatalf("active rights after block: got %d want 0", got)
+	}
+	assertJournalSummary(t, db, identityID, "block", "grant:admin", "grant:guest", "revoke:guest")
 }
 
 func TestBlockIdentityIsIdempotent(t *testing.T) {

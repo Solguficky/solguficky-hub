@@ -202,6 +202,8 @@ func TestDownMigrationRemovesOutbox(t *testing.T) {
 const (
 	adminRole            = "admin"
 	publicRole           = "public"
+	guestRole            = "guest"
+	maintainerRole       = "maintainer"
 	applicationSubmitted = "application_submitted"
 	applicationAdmitted  = "application_admitted"
 )
