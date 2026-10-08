@@ -115,7 +115,6 @@ func TestApplicationSchemaHoldsDecisionInvariants(t *testing.T) {
 		{"admitted without decider", "admitted", nil, nil, circleMember},
 		{"decided keeps source", "admitted", deciderID, true, circleMember},
 		{"blocked member", "blocked", deciderID, nil, circleMember},
-		{"declined guest", "declined", deciderID, nil, guestRole},
 		{"circle named before 014", nil, nil, nil, publicRole},
 		{"unknown circle", nil, nil, nil, adminRole},
 	}

@@ -163,7 +163,7 @@ func grantRoleTxWithReason(
 	// человека есть, и открытая заявка на него или отказ по нему ложны в любом
 	// случае.
 	if holds(current, role) {
-		return false, closeApplicationsOnGrant(ctx, tx, identityID, role, performedBy)
+		return grantHeldCircleTx(ctx, tx, identityID, role, current, performedBy, announce)
 	}
 	// Мейнтейнер круг не меняет: роль admin для него — права управления
 	// записями (ADR-064, пункт 7), а круг maintainer и право назначать
@@ -186,6 +186,38 @@ func grantRoleTxWithReason(
 		if err := outbox.Append(ctx, tx, identityID, outbox.RoleGranted, role); err != nil {
 			return false, err
 		}
+	}
+	return true, nil
+}
+
+// grantHeldCircleTx — выдача круга, который человек уже держит своим или более
+// сильным. Круга она не меняет, но гостю без права аукциона возвращает право:
+// выдача guest — это допуск в аукцион.
+func grantHeldCircleTx(ctx context.Context, tx *sql.Tx, identityID, role, current string, performedBy uuid.NullUUID, announce bool) (bool, error) {
+	if role == roleGuest && current == roleGuest {
+		return restoreAuctionRightTx(ctx, tx, identityID, performedBy, announce)
+	}
+	return false, closeApplicationsOnGrant(ctx, tx, identityID, role, performedBy)
+}
+
+// restoreAuctionRightTx возвращает гостю право аукциона, которое у него
+// отозвали: круг guest без права пуст (ADR-064, пункт 9), и выдача guest — путь
+// допуска в очередь аукциона и белого списка аукциона — выдаёт право записью.
+// Круг гость уже держит, поэтому событие — right_granted, а не role_granted.
+// Холостая, если право уже есть.
+func restoreAuctionRightTx(ctx context.Context, tx *sql.Tx, identityID string, performedBy uuid.NullUUID, announce bool) (bool, error) {
+	granted, err := grantRightTx(ctx, tx, identityID, rightAuction, performedBy)
+	if err != nil {
+		return false, err
+	}
+	if err := closeApplicationsOnGrant(ctx, tx, identityID, roleGuest, performedBy); err != nil {
+		return false, err
+	}
+	if !granted || !announce {
+		return granted, nil
+	}
+	if err := outbox.AppendRight(ctx, tx, identityID, outbox.RightGranted, rightAuction); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -251,6 +283,13 @@ func insertCircleTx(
 	}
 	if _, err := tx.ExecContext(ctx, grantRoleSQL, grantID.String(), role, performedByValue(performedBy), identityID); err != nil {
 		return err
+	}
+	// Круг admin несёт модерацию аукциона сам: выданная участнику запись
+	// снимается, и снятый потом администратор возвращается участником без неё.
+	if role == roleAdmin {
+		if _, err := revokeRightsTx(ctx, tx, identityID, grantedModeration); err != nil {
+			return err
+		}
 	}
 	var rights []string
 	switch {
@@ -348,12 +387,20 @@ func revokeRoleTx(ctx context.Context, tx *sql.Tx, identityID, role string, perf
 }
 
 // revokeHeldRoleTx снимает то, чем человек держит роль: у мейнтейнера роль
-// admin — записи прав управления, у остальных — сам активный круг.
+// admin — записи прав управления, у остальных — сам активный круг, а у
+// участника ещё и выданную ему модерацию аукциона.
 func revokeHeldRoleTx(ctx context.Context, tx *sql.Tx, identityID, role, current string) (bool, error) {
 	if role == roleAdmin && current == roleMaintainer {
 		return revokeManagementRightsTx(ctx, tx, identityID)
 	}
-	return withdrawActiveCircleTx(ctx, tx, identityID, role)
+	revoked, err := withdrawActiveCircleTx(ctx, tx, identityID, role)
+	if err != nil || !revoked || role != roleMember {
+		return revoked, err
+	}
+	// Понижение участника в гостя снимает выданную модерацию аукциона: её
+	// держит только участник (ADR-064, пункт 7).
+	_, err = revokeRightsTx(ctx, tx, identityID, grantedModeration)
+	return true, err
 }
 
 // withdrawActiveCircleTx отзывает активный круг role и, если это admin или

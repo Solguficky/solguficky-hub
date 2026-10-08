@@ -38,6 +38,13 @@ WHERE identity_id = $1 AND revoked_at IS NULL`
 	revokeRightsSQL = `
 UPDATE identity_rights SET revoked_at = GREATEST(now(), granted_at)
 WHERE identity_id = $1 AND access_right = ANY($2) AND revoked_at IS NULL`
+
+	// Право читается тем же выводом, что ответы и снимок outbox: круг и
+	// выданные записи. Заблокированный прав не держит.
+	holdsRightSQL = `
+SELECT NOT p.blocked AND $2 = ANY (identity_access_rights(p.id))
+FROM profiles p
+WHERE p.id = $1`
 )
 
 // Права хранилища. Имя называет продукт, а не бот (ADR-064, пункт 8).
@@ -47,6 +54,12 @@ const (
 	rightManageMembership = "manage_membership"
 	rightModerateAuction  = "moderate_auction"
 )
+
+// grantedModeration — права, которые выдаются участнику отдельно от круга и
+// живут, пока он в круге member или выше: понижение в гостя и выдача круга
+// admin, который несёт их сам, снимают записи (ADR-064, пункт 7; решение
+// владельца по PER-527).
+var grantedModeration = []string{rightModerateAuction}
 
 // managementRights — права администратора домена, которые мейнтейнер получает
 // записями (ADR-064, пункт 7). Они живут, пока человек в круге admin или
@@ -137,8 +150,9 @@ func readAccess(ctx context.Context, q queryRower, identityID string) (access, e
 }
 
 // grantRightTx выдаёт право записью идемпотентно и отвечает, выдано ли оно
-// этим вызовом. Событие пишет вызывающий: право здесь выдаётся только
-// следствием выдачи круга, и его несёт снимок role_granted той же транзакции.
+// этим вызовом. Событие пишет вызывающий: право, выданное следствием выдачи
+// круга, несёт снимок role_granted той же транзакции, а выданное отдельно от
+// круга — повод right_granted.
 func grantRightTx(ctx context.Context, tx *sql.Tx, identityID, right string, performedBy uuid.NullUUID) (bool, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -154,7 +168,25 @@ func grantRightTx(ctx context.Context, tx *sql.Tx, identityID, right string, per
 // revokeManagementRightsTx снимает записи прав управления и отвечает, было ли
 // что снимать.
 func revokeManagementRightsTx(ctx context.Context, tx *sql.Tx, identityID string) (bool, error) {
-	result, err := tx.ExecContext(ctx, revokeRightsSQL, identityID, managementRights)
+	return revokeRightsTx(ctx, tx, identityID, managementRights)
+}
+
+// holdsRight отвечает, держит ли человек право сейчас. Неизвестный профиль
+// права не держит.
+func holdsRight(ctx context.Context, q queryRower, identityID, right string) (bool, error) {
+	var held bool
+	err := q.QueryRowContext(ctx, holdsRightSQL, identityID, right).Scan(&held)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return held, err
+}
+
+// revokeRightsTx снимает активные записи прав и отвечает, было ли что снимать.
+// Право, пришедшее с кругом, записью не является и здесь не снимается. Событие
+// пишет вызывающий.
+func revokeRightsTx(ctx context.Context, tx *sql.Tx, identityID string, rights []string) (bool, error) {
+	result, err := tx.ExecContext(ctx, revokeRightsSQL, identityID, rights)
 	if err != nil {
 		return false, err
 	}

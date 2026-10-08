@@ -73,7 +73,7 @@ func TestConcurrentDecisionsOnOneApplicationLetOnlyOneThrough(t *testing.T) {
 func TestRepeatedDecisionAnswersAlreadyDecidedWithTheSameActor(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9621)
+	adminID := seedAdmin(t, svc, db, 9621)
 	applicantID := seedProfile(t, db, 9622)
 	applicationID := seedApplication(t, db, applicantID, roleMember, time.Now())
 	req := &identityv1.DecideApplicationRequest{Actor: adminActor(adminID), ApplicationId: applicationID}
@@ -100,7 +100,7 @@ func TestRepeatedDecisionAnswersAlreadyDecidedWithTheSameActor(t *testing.T) {
 func TestDeclineMemberKeepsGuestAndDoesNotBlock(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9631)
+	adminID := seedAdmin(t, svc, db, 9631)
 	applicantID := seedProfile(t, db, 9632)
 	mustChange(t)(svc.grantRole(t.Context(), applicantID, roleGuest, uuid.NullUUID{}))
 	applicationID := seedApplication(t, db, applicantID, roleMember, time.Now())
@@ -121,7 +121,7 @@ func TestDeclineMemberKeepsGuestAndDoesNotBlock(t *testing.T) {
 func TestDeclineMemberWithoutRolesDoesNotBlock(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9641)
+	adminID := seedAdmin(t, svc, db, 9641)
 	applicantID := seedProfile(t, db, 9642)
 	applicationID := seedApplication(t, db, applicantID, roleMember, time.Now())
 
@@ -134,29 +134,58 @@ func TestDeclineMemberWithoutRolesDoesNotBlock(t *testing.T) {
 	assertEvents(t, db, applicantID, "v1 profile_registered() {} blocked=false")
 }
 
-func TestDeclineGuestBlocksAndClosesOtherApplicationsByBlock(t *testing.T) {
+// Отказ в аукцион — declined только этой заявки (ADR-064, пункт 15): профиль
+// не блокируется, заявка в сообщество остаётся открытой, повторный /start в
+// боте аукциона видит отказ, а в боте хаба человек по-прежнему ждёт.
+func TestDeclineGuestDeclinesOnlyTheAuctionQueue(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9651)
+	adminID := seedAdmin(t, svc, db, 9651)
 	applicantID := seedProfile(t, db, 9652)
 	guestApplicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
 
-	if got := decide(t, svc.DeclineApplication, adminID, guestApplicationID).GetOutcome(); got != identityv1.ApplicationOutcome_APPLICATION_OUTCOME_BLOCKED {
-		t.Fatalf("outcome = %v, want BLOCKED", got)
+	if got := decide(t, svc.DeclineApplication, adminID, guestApplicationID).GetOutcome(); got != identityv1.ApplicationOutcome_APPLICATION_OUTCOME_DECLINED {
+		t.Fatalf("outcome = %v, want DECLINED", got)
 	}
-	if !resolveDirect(t, svc, 9652, "").GetBlocked() {
-		t.Fatal("decline in guest did not block the profile")
+	if resolveDirect(t, svc, 9652, "").GetBlocked() {
+		t.Fatal("decline in the auction queue blocked the profile")
 	}
-	assertApplicationOutcome(t, db, memberID, outcomeClosedByBlock, adminID)
+	assertApplicationOutcome(t, db, memberID, "", "")
 	assertRefused(t, svc, adminID, guestApplicationID)
 	assertAdmissions(t, db, applicantID)
+
+	auction := requestRole(t, svc, roleRequest{telegramUserID: 9652, queue: identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION})
+	assertOutcome(t, auction, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_DECLINED)
+	community := requestRole(t, svc, roleRequest{telegramUserID: 9652, queue: identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY})
+	assertOutcome(t, community, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
+	assertApplications(t, db, applicantID, "member source=<nil> name=<nil>")
+}
+
+// Отказ в аукцион не держит путь в сообщество и тогда, когда заявки в
+// сообщество ещё не было: после отказа человек ставит её в боте хаба.
+func TestDeclinedGuestAppliesToCommunity(t *testing.T) {
+	t.Parallel()
+	svc, db := newIdentityService(t)
+	adminID := seedAdmin(t, svc, db, 9655)
+	applicant := requestRole(t, svc, roleRequest{telegramUserID: 9656, queue: identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION})
+	guestApplicationID := openApplicationID(t, db, applicant.GetIdentityId(), roleGuest)
+
+	decide(t, svc.DeclineApplication, adminID, guestApplicationID)
+	community := requestRole(t, svc, roleRequest{telegramUserID: 9656, queue: identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY})
+
+	assertOutcome(t, community, identityv1.RoleRequestOutcome_ROLE_REQUEST_OUTCOME_PENDING)
+	assertApplications(t, db, applicant.GetIdentityId(), "member source=<nil> name=<nil>")
+	assertEvents(t, db, applicant.GetIdentityId(),
+		"v1 profile_registered() {} blocked=false",
+		"v2 application_submitted(guest) {} blocked=false",
+		"v3 application_submitted(member) {} blocked=false")
 }
 
 func TestAdmitMemberClosesGuestApplicationByGrant(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9661)
+	adminID := seedAdmin(t, svc, db, 9661)
 	applicantID := seedProfile(t, db, 9662)
 	guestApplicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
@@ -173,7 +202,7 @@ func TestAdmitMemberClosesGuestApplicationByGrant(t *testing.T) {
 func TestAdmitGuestKeepsMemberApplicationOpen(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9671)
+	adminID := seedAdmin(t, svc, db, 9671)
 	applicantID := seedProfile(t, db, 9672)
 	guestApplicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
@@ -187,7 +216,7 @@ func TestAdmitGuestKeepsMemberApplicationOpen(t *testing.T) {
 func TestHubAdmissionIsDecisionOnMemberApplication(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9681)
+	adminID := seedAdmin(t, svc, db, 9681)
 	applicantID := seedProfile(t, db, 9682)
 	guestApplicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
@@ -204,7 +233,7 @@ func TestHubAdmissionIsDecisionOnMemberApplication(t *testing.T) {
 func TestRosterBlockClosesApplicationsWithoutRefusal(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9691)
+	adminID := seedAdmin(t, svc, db, 9691)
 	applicantID := seedProfile(t, db, 9692)
 	guestApplicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	memberID := seedApplication(t, db, applicantID, roleMember, time.Now())
@@ -222,10 +251,10 @@ func TestRosterBlockClosesApplicationsWithoutRefusal(t *testing.T) {
 func TestReconsiderBlockedUnblocksAndGrantsGuestInOneOperation(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9701)
+	adminID := seedAdmin(t, svc, db, 9701)
 	applicantID := seedProfile(t, db, 9702)
 	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
-	decide(t, svc.DeclineApplication, adminID, applicationID)
+	refuseByBlock(t, db, applicationID, applicantID, adminID)
 
 	reconsidered, err := svc.ReconsiderApplication(t.Context(), &identityv1.ReconsiderApplicationRequest{Actor: adminActor(adminID), ApplicationId: applicationID})
 	if err != nil || !reconsidered.GetChanged() {
@@ -255,10 +284,10 @@ func TestReconsiderBlockedUnblocksAndGrantsGuestInOneOperation(t *testing.T) {
 func TestReconsiderBlockedLeavesBlockThatWasNotTheRefusal(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9821)
+	adminID := seedAdmin(t, svc, db, 9821)
 	applicantID := seedProfile(t, db, 9822)
 	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
-	decide(t, svc.DeclineApplication, adminID, applicationID)
+	refuseByBlock(t, db, applicationID, applicantID, adminID)
 	mustChange(t)(svc.unblockIdentity(t.Context(), applicantID, uuid.NullUUID{}))
 	mustChange(t)(svc.blockIdentity(t.Context(), applicantID, uuid.NullUUID{}))
 
@@ -272,10 +301,10 @@ func TestReconsiderBlockedLeavesBlockThatWasNotTheRefusal(t *testing.T) {
 func TestReconsiderBlockedAfterUnblockGrantsGuest(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9831)
+	adminID := seedAdmin(t, svc, db, 9831)
 	applicantID := seedProfile(t, db, 9832)
 	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
-	decide(t, svc.DeclineApplication, adminID, applicationID)
+	refuseByBlock(t, db, applicationID, applicantID, adminID)
 	mustChange(t)(svc.unblockIdentity(t.Context(), applicantID, uuid.NullUUID{}))
 
 	reconsidered, err := svc.ReconsiderApplication(t.Context(), &identityv1.ReconsiderApplicationRequest{Actor: adminActor(adminID), ApplicationId: applicationID})
@@ -289,7 +318,7 @@ func TestReconsiderBlockedAfterUnblockGrantsGuest(t *testing.T) {
 func TestGrantOfHeldRoleStillClosesApplications(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9841)
+	adminID := seedAdmin(t, svc, db, 9841)
 	applicantID := seedProfile(t, db, 9842)
 	mustChange(t)(svc.grantRole(t.Context(), applicantID, roleGuest, uuid.NullUUID{}))
 	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
@@ -301,7 +330,7 @@ func TestGrantOfHeldRoleStillClosesApplications(t *testing.T) {
 func TestReconsiderDeclinedAdmitsToHub(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9711)
+	adminID := seedAdmin(t, svc, db, 9711)
 	applicantID := seedProfile(t, db, 9712)
 	applicationID := seedApplication(t, db, applicantID, roleMember, time.Now())
 	decide(t, svc.DeclineApplication, adminID, applicationID)
@@ -319,7 +348,7 @@ func TestReconsiderDeclinedAdmitsToHub(t *testing.T) {
 func TestReconsiderDeclinedOfBlockedProfileFailsPrecondition(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9721)
+	adminID := seedAdmin(t, svc, db, 9721)
 	applicantID := seedProfile(t, db, 9722)
 	applicationID := seedApplication(t, db, applicantID, roleMember, time.Now())
 	decide(t, svc.DeclineApplication, adminID, applicationID)
@@ -335,7 +364,7 @@ func TestReconsiderDeclinedOfBlockedProfileFailsPrecondition(t *testing.T) {
 func TestReconsiderOfApplicationNotClosedByRefusalFailsPrecondition(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9731)
+	adminID := seedAdmin(t, svc, db, 9731)
 	applicantID := seedProfile(t, db, 9732)
 	openID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	admittedID := seedApplication(t, db, applicantID, roleMember, time.Now())
@@ -350,7 +379,7 @@ func TestReconsiderOfApplicationNotClosedByRefusalFailsPrecondition(t *testing.T
 func TestGrantAfterRefusalLiftsItFromRefusedList(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9741)
+	adminID := seedAdmin(t, svc, db, 9741)
 	applicantID := seedProfile(t, db, 9742)
 	applicationID := seedApplication(t, db, applicantID, roleMember, time.Now())
 	decide(t, svc.DeclineApplication, adminID, applicationID)
@@ -369,7 +398,7 @@ func TestGrantAfterRefusalLiftsItFromRefusedList(t *testing.T) {
 func TestAllowedUsernameClosesApplicationWithoutDecider(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9751)
+	adminID := seedAdmin(t, svc, db, 9751)
 	applicantID := resolveInternal(t, svc, 9752, "applicant")
 	applicationID := seedApplication(t, db, applicantID, roleMember, time.Now())
 	if _, err := svc.addAllowedUsername(t.Context(), "applicant", roleMember, uuid.NullUUID{}); err != nil {
@@ -387,7 +416,7 @@ func TestAllowedUsernameClosesApplicationWithoutDecider(t *testing.T) {
 func TestDecisionErasesSourceAndName(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9761)
+	adminID := seedAdmin(t, svc, db, 9761)
 	applicantID := seedProfile(t, db, 9762)
 	applicationID := seedApplication(t, db, applicantID, roleGuest, time.Now())
 	createChannel(t, svc, adminID, "tg_ads", "Реклама")
@@ -408,7 +437,7 @@ func TestDecisionErasesSourceAndName(t *testing.T) {
 func TestApplicationQueueReadsOldestFirstWithCursor(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9771)
+	adminID := seedAdmin(t, svc, db, 9771)
 	moment := time.Date(2026, time.October, 1, 10, 0, 0, 123_000_000, time.UTC)
 	first := seedApplication(t, db, seedProfile(t, db, 9772), roleMember, moment)
 	second := seedApplication(t, db, seedProfile(t, db, 9773), roleGuest, moment.Add(time.Second))
@@ -441,7 +470,7 @@ func TestApplicationQueueReadsOldestFirstWithCursor(t *testing.T) {
 func TestApplicationQueueCursorDoesNotRepeatCardWithinMillisecond(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9781)
+	adminID := seedAdmin(t, svc, db, 9781)
 	moment := time.Date(2026, time.October, 1, 10, 0, 0, 123_456_000, time.UTC)
 	ids := []string{
 		seedApplication(t, db, seedProfile(t, db, 9782), roleMember, moment),
@@ -467,7 +496,7 @@ func TestApplicationQueueCursorDoesNotRepeatCardWithinMillisecond(t *testing.T) 
 func TestApplicationCardCarriesApplicantAndSource(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9791)
+	adminID := seedAdmin(t, svc, db, 9791)
 	applicantID := resolveInternal(t, svc, 9792, "applicant")
 	moment := time.Date(2026, time.October, 1, 10, 0, 0, 0, time.UTC)
 	withSource := seedApplication(t, db, applicantID, roleGuest, moment)
@@ -493,7 +522,7 @@ func TestApplicationCardCarriesApplicantAndSource(t *testing.T) {
 func TestRefusedApplicationsAreListedNewestFirst(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9801)
+	adminID := seedAdmin(t, svc, db, 9801)
 	older := seedApplication(t, db, seedProfile(t, db, 9802), roleMember, time.Now())
 	newer := seedApplication(t, db, seedProfile(t, db, 9803), roleGuest, time.Now())
 	decide(t, svc.DeclineApplication, adminID, older)
@@ -507,8 +536,10 @@ func TestRefusedApplicationsAreListedNewestFirst(t *testing.T) {
 	if got[0].GetApplicationId() != newer || got[1].GetApplicationId() != older {
 		t.Fatalf("order = %s, %s; want %s, %s", got[0].GetApplicationId(), got[1].GetApplicationId(), newer, older)
 	}
-	if got[0].GetDecision().GetOutcome() != identityv1.ApplicationOutcome_APPLICATION_OUTCOME_BLOCKED ||
+	if got[0].GetDecision().GetOutcome() != identityv1.ApplicationOutcome_APPLICATION_OUTCOME_DECLINED ||
 		got[0].GetRequestedRole() != identityv1.GlobalRole_GLOBAL_ROLE_GUEST || got[0].GetTelegramUserId() != 9803 ||
+		got[0].GetQueue() != identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION ||
+		got[1].GetQueue() != identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY ||
 		got[0].GetDecision().GetDecidedBy().GetIdentityId() != adminID {
 		t.Fatalf("refused row = %v", got[0])
 	}
@@ -517,9 +548,9 @@ func TestRefusedApplicationsAreListedNewestFirst(t *testing.T) {
 func TestModerationRejectsInvalidRequests(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9811)
+	adminID := seedAdmin(t, svc, db, 9811)
 	actor := adminActor(adminID)
-	member := &identityv1.IdentityActor{IdentityId: adminID, GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_MEMBER}}
+	member := &identityv1.IdentityActor{IdentityId: seedProfile(t, db, 9812), GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_MEMBER}}
 	unknown := "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3799"
 
 	_, err := svc.ReadApplicationQueue(t.Context(), &identityv1.ReadApplicationQueueRequest{})
@@ -540,6 +571,48 @@ func TestModerationRejectsInvalidRequests(t *testing.T) {
 	assertCode(t, err, codes.NotFound)
 	_, err = svc.ReconsiderApplication(t.Context(), &identityv1.ReconsiderApplicationRequest{Actor: actor, ApplicationId: unknown})
 	assertCode(t, err, codes.NotFound)
+}
+
+// seedAdmin заводит администратора в хранилище: очередь аукциона решает
+// держатель moderate_auction по состоянию Identity, а не по снимку actor.
+func seedAdmin(t *testing.T, svc identityService, db *sql.DB, telegramUserID int64) string {
+	t.Helper()
+	identityID := seedProfile(t, db, telegramUserID)
+	mustChange(t)(svc.grantRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{}))
+	return identityID
+}
+
+// refuseByBlock повторяет отказ в guest до PER-527: исход blocked и блокировка
+// профиля одной транзакцией. Такие отказы остаются у профилей, отказанных
+// раньше, и пересмотр снимает их прежним путём.
+func refuseByBlock(t *testing.T, db *sql.DB, applicationID, applicantID, adminID string) {
+	t.Helper()
+	tx, err := db.BeginTx(t.Context(), &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(t.Context(), decideApplicationSQL, applicationID, outcomeBlocked, adminID); err != nil {
+		t.Fatalf("refuse by block: %v", err)
+	}
+	if _, err := blockTx(t.Context(), tx, applicantID, uuid.NullUUID{UUID: uuid.MustParse(adminID), Valid: true}); err != nil {
+		t.Fatalf("block refused applicant: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// openApplicationID — открытая заявка человека на круг.
+func openApplicationID(t *testing.T, db *sql.DB, identityID, circle string) string {
+	t.Helper()
+	var id string
+	if err := db.QueryRowContext(t.Context(),
+		`SELECT id FROM identity_applications WHERE identity_id = $1 AND requested_role = $2 AND outcome IS NULL`,
+		identityID, circle).Scan(&id); err != nil {
+		t.Fatalf("open application: %v", err)
+	}
+	return id
 }
 
 func adminActor(identityID string) *identityv1.IdentityActor {

@@ -252,7 +252,7 @@ func assertEvents(t *testing.T, db *sql.DB, identityID string, want ...string) {
 func outboxEvents(t *testing.T, db *sql.DB, identityID string) []eventRow {
 	t.Helper()
 	rows, err := db.QueryContext(t.Context(), `
-		SELECT version, occasion, COALESCE(role, ''), array_to_string(global_roles, ','), blocked
+		SELECT version, occasion, COALESCE(role, access_right, ''), array_to_string(global_roles, ','), blocked
 		FROM identity_outbox
 		WHERE identity_id = $1
 		ORDER BY version`, identityID)
