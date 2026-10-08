@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { encodeAuctionCallback } from "../../callback-data.js";
 import {
   AUCTION,
-  CONTRACT_IDENTITY,
   CONTRACT_LOT,
   CONTRACT_OP_IDS,
   CONTRACT_USER,
+  contractIdentity,
   type PortCall,
   spyPorts,
 } from "../../contract/check.js";
@@ -15,7 +15,7 @@ const press = (ports: ReturnType<typeof spyPorts>, data: string) =>
   handleAuctionUpdate(
     { kind: "auction", ports },
     {
-      identity: CONTRACT_IDENTITY,
+      identity: contractIdentity("auction"),
       user: CONTRACT_USER,
       input: { kind: "callback", data },
     },
@@ -183,7 +183,7 @@ describe("bid leaf commands", () => {
     const result = await handleAuctionUpdate(
       { kind: "auction", ports: spyPorts(calls, AUCTION) },
       {
-        identity: CONTRACT_IDENTITY,
+        identity: contractIdentity("auction"),
         user: { telegramUserId: 7 },
         input: {
           kind: "reply",

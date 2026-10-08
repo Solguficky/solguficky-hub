@@ -51,8 +51,11 @@ const user = {
 };
 
 const identity: ResolvedIdentity = {
-  identityId: "01929b7e-0000-7000-8000-000000000001",
-  globalRoles: ["member", "public"],
+  viewer: {
+    identityId: "01929b7e-0000-7000-8000-000000000001",
+    globalRoles: ["public"],
+  },
+  rights: ["auction"],
   blocked: false,
 };
 
@@ -80,7 +83,7 @@ const surface: AuctionSurface = {
             sequence: n + 4,
             occurredAt: "2026-10-04T12:00:00Z",
             bidId: `01929b7e-5c1d-7a3f-8e4b-1${String(n).padStart(11, "0")}`,
-            participantId: identity.identityId,
+            participantId: identity.viewer.identityId,
             amount: { minorUnits: 1000 + n, currency: "RUB" },
             origin: { kind: "proxy" as const },
           })),

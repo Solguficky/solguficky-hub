@@ -6,37 +6,35 @@ import {
   declinedHubAccessText,
   hubAccessErrors,
   hubAccessText,
-  offersAuctionBot,
   pendingHubAccessText,
 } from "./hub-access.js";
 
 const identityId = "01a0e306-a646-7d3a-9b21-4f8e12ab34cd";
 
 describe("decideHubAccess", () => {
-  it("admits a person who has the member role", () => {
-    expect(decideHubAccess(["member"], false)).toBe("admitted");
+  it("admits a person who has the hub right", () => {
+    expect(decideHubAccess(["hub", "auction"], false)).toBe("admitted");
+    expect(
+      decideHubAccess(
+        ["hub", "auction", "manage-membership", "moderate-auction"],
+        false,
+      ),
+    ).toBe("admitted");
   });
 
-  it("admits nested admin and maintainer as the member circle", () => {
-    expect(decideHubAccess(["admin"], false)).toBe("admitted");
-    expect(decideHubAccess(["maintainer"], false)).toBe("admitted");
-  });
-
-  it("admits a member even when other roles are present", () => {
-    expect(decideHubAccess(["admin", "member", "public"], false)).toBe(
-      "admitted",
-    );
-  });
-
-  it("keeps a person outside the member circle in pending", () => {
+  // Права выводит Identity: бот не достраивает право хаба ни из права
+  // модерации, ни из права аукциона.
+  it("keeps a person without the hub right in pending", () => {
     expect(decideHubAccess([], false)).toBe("pending");
-    expect(decideHubAccess(["public"], false)).toBe("pending");
+    expect(decideHubAccess(["auction"], false)).toBe("pending");
+    expect(decideHubAccess(["auction", "moderate-auction"], false)).toBe(
+      "pending",
+    );
   });
 
   it("closes access when the blocked mark is set", () => {
     expect(decideHubAccess([], true)).toBe("blocked");
-    expect(decideHubAccess(["member"], true)).toBe("blocked");
-    expect(decideHubAccess(["admin"], true)).toBe("blocked");
+    expect(decideHubAccess(["hub", "auction"], true)).toBe("blocked");
   });
 
   it("names pending, declined and blocked refusals differently", () => {
@@ -82,27 +80,5 @@ describe("applicationCode", () => {
     const text = pendingHubAccessText(identityId, "vasya");
     expect(text).not.toContain(applicationCode(identityId));
     expect(text).toContain("по твоему нику");
-  });
-});
-
-describe("offersAuctionBot", () => {
-  it("offers the auction bot to a person with public only", () => {
-    expect(offersAuctionBot("pending", ["public"])).toBe(true);
-  });
-
-  it("keeps the offer after a member decline: it does not take the auction", () => {
-    expect(offersAuctionBot("declined", ["public"])).toBe(true);
-  });
-
-  it("offers nothing to a person without roles or blocked", () => {
-    expect(offersAuctionBot("pending", [])).toBe(false);
-    expect(offersAuctionBot("declined", [])).toBe(false);
-    expect(offersAuctionBot("blocked", ["public"])).toBe(false);
-  });
-
-  it("offers nothing inside the member circle, whatever the refusal", () => {
-    // Расхождение кругов: хаб такого человека не отказывает, но ссылка его из
-    // хаба не уводит.
-    expect(offersAuctionBot("pending", ["member", "public"])).toBe(false);
   });
 });

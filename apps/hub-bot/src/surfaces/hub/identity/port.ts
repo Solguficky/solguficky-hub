@@ -1,6 +1,7 @@
 import type {
+  AccessRight,
+  ApplicationQueue,
   RoleRequestOutcome,
-  SurfaceCircle,
 } from "../../../auction-ui/index.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 
@@ -35,6 +36,7 @@ export type ResolveIdentityResult =
       kind: "resolved";
       identityId: string;
       globalRoles: readonly string[];
+      rights: readonly AccessRight[];
       blocked: boolean;
     }
   | IdentityFailure;
@@ -47,10 +49,10 @@ export type IdentityResolver = {
 };
 
 // Вход на `/start` (ADR-060, пункты 1–7 и 17–19): человек тот же, что у
-// разрешения личности, плюс круг поверхности, код канала и имя для карточки
+// разрешения личности, плюс очередь поверхности, код канала и имя для карточки
 // модератора.
 export type RequestRoleInput = ResolveIdentityInput & {
-  requestedRole: SurfaceCircle;
+  queue: ApplicationQueue;
   // Код канала из payload `s_<код>` без префикса, как пришёл. Нет — payload
   // префикса не нёс; пустая строка — пустой код после `s_`.
   sourceCode?: string;
@@ -64,6 +66,7 @@ export type RequestRoleResult =
       kind: "answered";
       identityId: string;
       globalRoles: readonly string[];
+      rights: readonly AccessRight[];
       outcome: RoleRequestOutcome;
     }
   | IdentityFailure;

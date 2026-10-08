@@ -85,6 +85,7 @@ function updateOf({ from, firstName, action }: AccessMatrixInput): Update {
 
 const refusals: ReadonlyArray<[string, AccessAnswer]> = [
   [deniedTexts["not-admitted"], "pending"],
+  [deniedTexts["in-community"], "in-community"],
   [deniedTexts.declined, "declined"],
   [deniedTexts.blocked, "blocked"],
 ];

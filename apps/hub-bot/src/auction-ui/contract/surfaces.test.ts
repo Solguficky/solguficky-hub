@@ -29,7 +29,7 @@ describe("auction surfaces", () => {
     const added = { ...template, intent: `${template.intent}: added` };
     for (const kind of AUCTION_SURFACES) {
       expect(
-        await checkAuctionContract(auctionContractApp(kind), [added]),
+        await checkAuctionContract(kind, auctionContractApp(kind), [added]),
       ).toEqual([]);
     }
   });

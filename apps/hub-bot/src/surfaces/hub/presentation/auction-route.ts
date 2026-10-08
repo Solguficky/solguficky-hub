@@ -12,7 +12,7 @@ import { viewerOf } from "../auction/port.js";
 
 // Торговое нажатие в боте хаба (ADR-044, «Доступ как обязательный шлюз»):
 // личность уже разрешена краем, один раз на update, и уезжает в шлюз пакета
-// готовой. Поверхность — `hub`: шлюз пускает круг `member`. Над этой функцией
+// готовой. Поверхность — `hub`: шлюз пускает право хаба. Над этой функцией
 // идёт contract suite пакета — той же, что и в маршруте бота.
 //
 // `input` — нажатие кнопки либо ответ на аукционный вопрос: шаг вопроса из
@@ -44,7 +44,7 @@ export function packageIdentity(
   person: Person,
   blocked: boolean,
 ): ResolvedIdentity {
-  return { ...viewerOf(person), blocked };
+  return { viewer: viewerOf(person), rights: person.rights, blocked };
 }
 
 /**

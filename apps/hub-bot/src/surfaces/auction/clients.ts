@@ -21,7 +21,6 @@ import type {
   RoleRequest,
   RoleRequestAnswer,
   RoleRequestOutcome,
-  SurfaceCircle,
   TelegramUser,
   Viewer,
 } from "../../auction-ui/index.js";
@@ -37,6 +36,7 @@ import {
   classifyRecipientFailure,
   type TelegramRecipientResolver,
 } from "../../core/delivery/index.js";
+import { rightsOf, wireQueue } from "../../core/identity/access.js";
 import {
   callTimeoutMs,
   presentServiceToken,
@@ -130,10 +130,8 @@ export function createPorts(
             callOptions(timeoutMs),
           );
           return {
-            identityId: response.identityId,
-            globalRoles: response.globalRoles.flatMap(
-              (role) => roleName(role) ?? [],
-            ),
+            viewer: viewerFrom(response),
+            rights: rightsOf(response.rights),
             blocked: response.blocked,
           };
         },
@@ -146,7 +144,7 @@ export function createPorts(
               ...(request.user.telegramUsername === undefined
                 ? {}
                 : { telegramUsername: request.user.telegramUsername }),
-              requestedRole: wireCircle(request.requestedRole),
+              queue: wireQueue(request.queue),
               // Присутствие кода значимо: пустой код после `s_` — «неизвестный
               // источник», а не его отсутствие.
               ...(request.sourceCode === undefined
@@ -157,10 +155,8 @@ export function createPorts(
             callOptions(timeoutMs),
           );
           return {
-            identityId: response.identityId,
-            globalRoles: response.globalRoles.flatMap(
-              (role) => roleName(role) ?? [],
-            ),
+            viewer: viewerFrom(response),
+            rights: rightsOf(response.rights),
             outcome: outcomeName(response.outcome),
           };
         },
@@ -431,17 +427,15 @@ export function createClients(options: {
   };
 }
 
-function wireCircle(circle: SurfaceCircle): WireRole {
-  switch (circle) {
-    case "member":
-      return WireRole.MEMBER;
-    case "public":
-      return WireRole.GUEST;
-    default: {
-      const _exhaustive: never = circle;
-      return _exhaustive;
-    }
-  }
+// Роли идут транзитом в `auction.v1.Viewer`: допуск по ним не решается.
+function viewerFrom(response: {
+  identityId: string;
+  globalRoles: readonly WireRole[];
+}): Viewer {
+  return {
+    identityId: response.identityId,
+    globalRoles: response.globalRoles.flatMap((role) => roleName(role) ?? []),
+  };
 }
 
 // Число, которого словарь ещё не знает, читается как `UNSPECIFIED`: по

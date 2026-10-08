@@ -2,7 +2,11 @@ import { Code } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { BidSource } from "../../../gen/auction/v1/auction_pb.js";
 import { RoleRequestOutcome } from "../../../gen/identity/v1/identity_service_pb.js";
-import { GlobalRole } from "../../../gen/identity/v1/roles_pb.js";
+import {
+  AccessRight,
+  ApplicationQueue,
+  GlobalRole,
+} from "../../../gen/identity/v1/roles_pb.js";
 import { requestIdHeader } from "../../core/rpc-metadata.js";
 import {
   type AuctionRpc,
@@ -20,11 +24,13 @@ function rpcs() {
         GlobalRole.UNSPECIFIED,
         GlobalRole.MEMBER,
       ],
+      rights: [AccessRight.HUB, AccessRight.UNSPECIFIED, AccessRight.AUCTION],
       blocked: false,
     })),
     requestRole: vi.fn(async () => ({
       identityId: "id-1",
       globalRoles: [GlobalRole.GUEST, GlobalRole.UNSPECIFIED],
+      rights: [AccessRight.AUCTION],
       outcome: RoleRequestOutcome.GRANTED_BY_ALLOWLIST,
     })),
   };
@@ -127,15 +133,15 @@ describe("createPorts", () => {
       );
     }
   });
-  it("maps the resolved identity and drops the unspecified role", async () => {
+  it("maps the resolved identity and drops the unspecified role and right", async () => {
     const { identity, ports } = rpcs();
     const resolved = await ports.identity.resolveIdentity({
       telegramUserId: 42,
       telegramUsername: "nick",
     });
     expect(resolved).toEqual({
-      identityId: "id-1",
-      globalRoles: ["public", "member"],
+      viewer: { identityId: "id-1", globalRoles: ["public", "member"] },
+      rights: ["hub", "auction"],
       blocked: false,
     });
     expect(identity.resolveIdentity).toHaveBeenCalledWith(
@@ -144,24 +150,24 @@ describe("createPorts", () => {
     );
   });
 
-  it("requests the circle on /start and maps the answer", async () => {
+  it("applies to the auction queue on /start and maps the answer", async () => {
     const { identity, ports } = rpcs();
     const answer = await ports.entry.requestRole({
       user: { telegramUserId: 42, telegramUsername: "nick" },
-      requestedRole: "public",
+      queue: "auction",
       sourceCode: "tg_ads",
       firstName: "Сова",
     });
     expect(answer).toEqual({
-      identityId: "id-1",
-      globalRoles: ["public"],
+      viewer: { identityId: "id-1", globalRoles: ["public"] },
+      rights: ["auction"],
       outcome: "granted-by-allowlist",
     });
     expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
       {
         telegramUserId: 42n,
         telegramUsername: "nick",
-        requestedRole: GlobalRole.GUEST,
+        queue: ApplicationQueue.AUCTION,
         sourceCode: "tg_ads",
         firstName: "Сова",
       },
@@ -178,14 +184,14 @@ describe("createPorts", () => {
     const { identity, ports } = rpcs();
     await ports.entry.requestRole({
       user: { telegramUserId: 42 },
-      requestedRole: "public",
+      queue: "auction",
       ...(sourceCode === undefined ? {} : { sourceCode }),
       firstName: "Сова",
     });
     expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
       {
         telegramUserId: 42n,
-        requestedRole: GlobalRole.GUEST,
+        queue: ApplicationQueue.AUCTION,
         firstName: "Сова",
         ...expected,
       },
@@ -207,11 +213,12 @@ describe("createPorts", () => {
     identity.requestRole.mockResolvedValue({
       identityId: "id-1",
       globalRoles: [],
+      rights: [],
       outcome: wire,
     });
     const answer = await ports.entry.requestRole({
       user: { telegramUserId: 42 },
-      requestedRole: "public",
+      queue: "auction",
       firstName: "Сова",
     });
     expect(answer.outcome).toBe(outcome);

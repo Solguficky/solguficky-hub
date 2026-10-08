@@ -21,6 +21,7 @@ const opId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa";
 const admin: Person = {
   identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
   globalRoles: ["admin"],
+  rights: ["hub", "auction"],
 };
 const zone = "Europe/Moscow";
 // Часы бота в тестах: 6 октября 2026 года, 12:00 по Москве.

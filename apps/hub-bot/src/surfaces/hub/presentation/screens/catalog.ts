@@ -240,9 +240,6 @@ export const screenCatalog = {
   // непринятого ответа над ними — «Ввести заново».
   outcome: { class: "screen", nav: "exit" },
   "no-access": { class: "screen", nav: "none" },
-  // Тот же кадр ожидания или отказа в `member` у человека с `public`: ссылка в
-  // бот аукциона — единственная кнопка, навигации у кадра нет (PER-455).
-  "no-access-link": { class: "screen", nav: "links" },
   notification: { class: "trace", nav: "free" },
   "access-opened": { class: "trace", nav: "free" },
 } as const;

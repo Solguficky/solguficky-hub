@@ -2,11 +2,12 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import {
   type AuctionBotPorts,
   type AuctionResult,
+  admission,
+  applicationQueue,
   decideEntry,
   handleAuctionUpdate,
   parseAuctionCallback,
   type ResolvedIdentity,
-  requestedRole,
   type TelegramUser,
   type Viewer,
 } from "../../auction-ui/index.js";
@@ -184,7 +185,7 @@ async function routeEntry(input: {
         "auction",
         await input.ports.entry.requestRole({
           user: input.user,
-          requestedRole: requestedRole("auction"),
+          queue: applicationQueue("auction"),
           ...(entering.sourceCode === undefined
             ? {}
             : { sourceCode: entering.sourceCode }),
@@ -220,19 +221,15 @@ async function routeEntry(input: {
   } catch (cause) {
     return { screen: unavailable, failure: classify(cause) };
   }
-  const identityId = identity.identityId;
-  // Роль перепроверяется на каждом действии. Старая клавиатура и отметка FAQ
-  // доступа не дают. Бот требует явную public и не разворачивает роли сам.
-  if (identity.blocked || !identity.globalRoles.includes("public")) {
-    return {
-      screen: {
-        kind: "denied",
-        reason: identity.blocked ? "blocked" : "not-admitted",
-      },
-      identityId,
-    };
+  const { viewer } = identity;
+  const identityId = viewer.identityId;
+  // Право перепроверяется на каждом действии той же политикой, что у шлюза:
+  // старая клавиатура и отметка FAQ доступа не дают, а участник сообщества
+  // получает переход в бот хаба и на экранах оболочки.
+  const denial = admission("auction", identity);
+  if (denial !== undefined) {
+    return { screen: { kind: "denied", reason: denial }, identityId };
   }
-  const viewer = { identityId, globalRoles: identity.globalRoles };
   try {
     const action = local?.action;
     if (action === "faq" || action === "details" || action === "question") {

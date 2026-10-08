@@ -6,6 +6,7 @@ import { rejectedValueText } from "./meetup-form.js";
 const identity = {
   identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
   globalRoles: ["admin"],
+  rights: ["hub", "auction"] as const,
 };
 const empty: MeetupSnapshot = {
   id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
@@ -207,7 +208,7 @@ describe("meetup creation form", () => {
     const dispatcher = createDispatcher(meetups);
     await expect(
       dispatcher.execute({
-        identity: { ...identity, globalRoles: [] },
+        identity: { ...identity, globalRoles: [], rights: [] },
         intent: "create-meetup",
         meetupId: empty.id,
       }),
