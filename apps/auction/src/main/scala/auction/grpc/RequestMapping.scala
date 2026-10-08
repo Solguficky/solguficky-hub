@@ -5,6 +5,7 @@ import auction.aggregate.AuctionConfigInput
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
+import auction.aggregate.StepWindowConfig
 import auction.lot.AuctionId
 import auction.projection.AuctionListing
 import auction.access.Viewer
@@ -25,6 +26,7 @@ import auction.lot.WithdrawProxyLimit
 import auction.naming.NameChoice
 import auction.naming.TelegramUsername
 import auction.v1.auction.AuctionConfig as AuctionConfigMessage
+import auction.v1.auction.AuctionStepWindow as AuctionStepWindowMessage
 import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
 import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.Money as MoneyMessage
@@ -338,7 +340,9 @@ object RequestMapping {
   /**
    * Конфигурация без проверки ADR-047: форма требует заданных `oneof` и сообщений, моментов в RFC 3339 и
    * неотрицательных секунд анти-снайпа. Противоречие значений между собой — `closesAt` не после `opensAt`, дедлайн без
-   * `closesAt`, число блоков финала — отказ домена `ConfigInvalid`, а не нарушение формы.
+   * `closesAt`, число блоков финала, окна сниженного шага вне недели, с общим лотом, с неположительной суммой или без
+   * лотов — отказ домена `ConfigInvalid`, а не нарушение формы. Форма окна — моменты, сумма и канонические UUIDv7
+   * лотов.
    */
   private def auctionConfig(config: AuctionConfigMessage): Either[FormError, AuctionConfigInput] =
     for {
@@ -363,7 +367,23 @@ object RequestMapping {
         case None => Right(None)
         case Some(set) => lotDefaults(set).map(Some(_))
       }
-    } yield AuctionConfigInput(phase, config.finalBlocks, closing, defaults)
+      windows <- config.stepWindows
+        .foldLeft[Either[FormError, List[StepWindowConfig]]](Right(Nil)) { (acc, window) =>
+          acc.flatMap(windows => stepWindow(window).map(_ :: windows))
+        }
+        .map(_.reverse)
+    } yield AuctionConfigInput(phase, config.finalBlocks, closing, defaults, windows)
+
+  private def stepWindow(window: AuctionStepWindowMessage): Either[FormError, StepWindowConfig] =
+    for {
+      from <- instant("config.step_windows.from", window.from)
+      until <- instant("config.step_windows.until", window.until)
+      step <- money("config.step_windows.step", window.step)
+      lots <- window.lotIds
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, raw) =>
+          acc.flatMap(lots => uuidV7("config.step_windows.lot_ids", raw).map(LotId(_) :: lots))
+        }
+    } yield StepWindowConfig(from, until, step, lots.toSet)
 
   private def lotDefaults(defaults: LotDefaultsMessage): Either[FormError, LotConfigInput] =
     for {

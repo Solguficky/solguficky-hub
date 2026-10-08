@@ -4,6 +4,8 @@ import auction.access.GlobalRole
 import auction.aggregate.AuctionConfigInput
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.OnlinePhase
+import auction.aggregate.StepWindowConfig
+import auction.catalog.LotId
 import auction.catalog.ImageChange
 import auction.lot.AntiSnipe
 import auction.lot.BidSource
@@ -14,6 +16,7 @@ import auction.lot.StepPolicy
 import auction.lot.StepPolicyInput
 import auction.v1.auction.AntiSnipe as AntiSnipeMessage
 import auction.v1.auction.AuctionConfig as AuctionConfigMessage
+import auction.v1.auction.AuctionStepWindow as AuctionStepWindowMessage
 import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
 import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.MixedClosing
@@ -233,6 +236,51 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
         .config
         .onlinePhase shouldBe
         None
+    }
+
+    "maps the step windows of an auction as sent, leaving their bounds and lots to the core" in {
+      val window = AuctionStepWindowMessage(
+        "2026-10-22T12:00:00Z",
+        "2026-10-22T14:00:00Z",
+        Some(MoneyMessage(100, "RUB")),
+        Seq(lot, lot)
+      )
+      // Окно вне недели форма пропускает: это ConfigInvalid ядра, а не нарушение формы.
+      val outside = window.withFrom("2026-11-01T12:00:00Z").withUntil("2026-11-01T10:00:00Z")
+      val command =
+        RequestMapping.scheduleAuction(
+          validAuctionSchedule.withConfig(validConfig.withStepWindows(Seq(window, outside)))
+        )
+
+      command.value.config.stepWindows shouldBe List(
+        StepWindowConfig(
+          Instant.parse("2026-10-22T12:00:00Z"),
+          Instant.parse("2026-10-22T14:00:00Z"),
+          Money(100, CurrencyCode("RUB")),
+          Set(LotId(UUID.fromString(lot)))
+        ),
+        StepWindowConfig(
+          Instant.parse("2026-11-01T12:00:00Z"),
+          Instant.parse("2026-11-01T10:00:00Z"),
+          Money(100, CurrencyCode("RUB")),
+          Set(LotId(UUID.fromString(lot)))
+        )
+      )
+      RequestMapping.scheduleAuction(validAuctionSchedule).value.config.stepWindows shouldBe Nil
+    }
+
+    "names the invalid field of a step window" in {
+      val window =
+        AuctionStepWindowMessage("2026-10-22T12:00:00Z", "2026-10-22T14:00:00Z", Some(MoneyMessage(1, "RUB")))
+      def field(broken: AuctionStepWindowMessage): FormError =
+        RequestMapping
+          .scheduleAuction(validAuctionSchedule.withConfig(validConfig.withStepWindows(Seq(broken))))
+          .left
+          .value
+      field(window.withFrom("22.10.2026")) shouldBe FormError("config.step_windows.from")
+      field(window.withUntil("")) shouldBe FormError("config.step_windows.until")
+      field(window.clearStep) shouldBe FormError("config.step_windows.step")
+      field(window.withLotIds(Seq(meetupAuction))) shouldBe FormError("config.step_windows.lot_ids")
     }
 
     "leaves the lot defaults to the auction when the configuration does not carry them" in {

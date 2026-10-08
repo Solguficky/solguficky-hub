@@ -30,7 +30,7 @@ object ConsoleMapping {
       auction = Some(ResponseMapping.auctionSnapshot(auction)),
       lots = lots.map { view =>
         wire.ConsoleLot(
-          lot = Some(SnapshotMapping.snapshot(view, viewer)),
+          lot = Some(SnapshotMapping.snapshot(view, viewer, now)),
           markedForFinal = marked(view.lot),
           overdue = overdue(view.lot, now, grace)
         )

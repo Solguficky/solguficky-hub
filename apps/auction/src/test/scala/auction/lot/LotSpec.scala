@@ -241,7 +241,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         .of(trading(price = 190, policy = tiered(0L -> 10L, 200L -> 20L)))
         .submit(placeBid(who = 1, amount = 200, opN = 1), bid(1))
 
-      Lot.minRequired(tradingOf(journal.lot)) shouldBe money(220)
+      Lot.minRequired(tradingOf(journal.lot), calm) shouldBe money(220)
     }
 
     "answer a bid above the last tier bound with the step of that tier (Т-32)" in {
@@ -397,7 +397,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       forAll(volleys) { (volley: (List[Int], Phase)) =>
         val (order, phase) = volley
         val start = trading(price = 100, phase = phase)
-        val price = Lot.minRequired(tradingOf(start)).minorUnits
+        val price = Lot.minRequired(tradingOf(start), calm).minorUnits
         val commands = order.map(who => placeBid(who, price, opN = who))
 
         val (results, journal) = Journal.of(start).submitAll(commands)

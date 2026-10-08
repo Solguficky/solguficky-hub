@@ -71,6 +71,14 @@ object LotFixtures {
 
   def openLot(opN: Int, deadline: Option[Instant] = Some(deadline)): OpenLot = OpenLot(deadline, op(opN))
 
+  /** Окно сниженного шага в день дедлайна: `from` и `until` — время UTC вида `12:00`. */
+  def stepWindow(from: String, until: String, step: Long, currency: CurrencyCode = rub): StepWindow =
+    StepWindow(at(from), at(until), Money(step, currency))
+
+  /** Момент дня дедлайна по времени UTC вида `12:00` или `13:59:59`. */
+  def at(time: String): Instant =
+    Instant.parse(s"2026-10-07T${if (time.length == 5) s"$time:00" else time}Z")
+
   def closeLot(opN: Int, reason: CloseReason = CloseReason.DeadlineReached): CloseLot = CloseLot(reason, op(opN))
 
   def markForFinal(opN: Int): MarkForFinal = MarkForFinal(op(opN))
@@ -96,7 +104,8 @@ object LotFixtures {
       proxyEnabled: Boolean = true,
       closesAt: Option[Instant] = Some(deadline),
       extensionsUsed: Int = 0,
-      markedForFinal: Boolean = false
+      markedForFinal: Boolean = false,
+      stepWindows: List[StepWindow] = Nil
   ): Lot =
     lotIn(
       LotState.Trading(
@@ -110,7 +119,8 @@ object LotFixtures {
           deadline = closesAt,
           extensionsUsed = extensionsUsed,
           proxyLimits = limits,
-          markedForFinal = markedForFinal
+          markedForFinal = markedForFinal,
+          stepWindows = stepWindows
         )
       )
     )

@@ -50,7 +50,16 @@
         "proxyEnabled": true
       },
       "deadline": "2026-10-07T18:00:00Z",
-      "stepWindows": null
+      "stepWindows": [
+        {
+          "from": "2026-10-05T12:00:00Z",
+          "until": "2026-10-05T14:00:00Z",
+          "step": {
+            "minorUnits": 100,
+            "currency": "RUB"
+          }
+        }
+      ]
     },
     "bidPlaced": null,
     "lotScheduled": null,

@@ -265,6 +265,34 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
       }
     }
 
+    // Критерий PER-503 и Т-65 на entity: окно восстанавливается из LotOpened — журналом и snapshot, — а не из часов.
+    "keep the step of a window over a restart inside it and return to the regular step at its end" in {
+      List(LotEntity.DefaultSnapshotEvery, 2).foreach { snapshotEvery =>
+        val time = MovingClock(decidedAt)
+        entity = EventSourcedBehaviorTestKit(
+          kit.system,
+          LotEntity(s"lot-window-$snapshotEvery", time, sequentialIds(), snapshotEvery),
+          serialization
+        )
+        val window = StepWindow(decidedAt.plus(Duration.ofHours(1)), decidedAt.plus(Duration.ofHours(3)), money(1))
+        draft(opN = 1)
+        plan(scheduleLot(opN = 2))
+        entity.runCommand[Either[OpenLotRejected, Envelope]](
+          LotEntity.Open(OpenLot(Some(distantDeadline), op(3), List(window)), Initiator.Scheduler, _)
+        )
+        time.now = decidedAt.plus(Duration.ofHours(2))
+
+        val restarted = entity.restart().state
+        tradingOf(restarted.lot).stepWindows shouldBe List(window)
+        bidOf(who = 1, amount = 101, opN = 4).reply.map(_.event) shouldBe a[Right[?, ?]]
+
+        time.now = window.until.minusSeconds(1)
+        bidOf(who = 2, amount = 102, opN = 5).reply.map(_.event) shouldBe a[Right[?, ?]]
+        time.now = window.until.plusSeconds(1)
+        bidOf(who = 1, amount = 103, opN = 6).reply shouldBe Left(PlaceBidRejected.BidBelowMinimum(money(112)))
+      }
+    }
+
     "write the hold of a marked lot at its deadline and keep it over a restart" in {
       val (marked, held) = holdThrough()
 

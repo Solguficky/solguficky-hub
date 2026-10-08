@@ -1,6 +1,8 @@
 package auction.aggregate
 
+import auction.catalog.LotId
 import auction.lot.LotConfigInput
+import auction.lot.LotFixtures.money
 
 import java.time.Instant
 
@@ -19,9 +21,14 @@ object AuctionFixtures {
       onlinePhase: Option[OnlinePhase] = Some(week),
       finalBlocks: Int = 1,
       closingPolicy: ClosingPolicy = ClosingPolicy.Mixed(onlineByDeadline = true),
-      lotDefaults: Option[LotConfigInput] = Some(auction.lot.LotFixtures.configInput())
+      lotDefaults: Option[LotConfigInput] = Some(auction.lot.LotFixtures.configInput()),
+      stepWindows: List[StepWindowConfig] = Nil
   ): AuctionConfigInput =
-    AuctionConfigInput(onlinePhase, finalBlocks, closingPolicy, lotDefaults)
+    AuctionConfigInput(onlinePhase, finalBlocks, closingPolicy, lotDefaults, stepWindows)
+
+  /** Окно сниженного шага внутри недели: часы от `opensAt`, сумма в рублях, как у умолчаний лотов. */
+  def window(fromHour: Long, untilHour: Long, lots: Set[LotId], step: Long = 1): StepWindowConfig =
+    StepWindowConfig(opensAt.plusSeconds(fromHour * 3600), opensAt.plusSeconds(untilHour * 3600), money(step), lots)
 
   def config(input: AuctionConfigInput = configInput()): AuctionConfig =
     AuctionConfig

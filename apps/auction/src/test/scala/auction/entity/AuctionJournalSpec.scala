@@ -56,6 +56,17 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       keepsGolden("prebidding-started", stored(started.event, 4))
     }
 
+    "keeps the stored form of a schedule with step windows and reads it back as one" in {
+      val windowed = AuctionEvent.AuctionScheduled(
+        AuctionFixtures.config(
+          AuctionFixtures.configInput(stepWindows =
+            List(AuctionFixtures.window(24, 26, Set(lot, LotId(uuid(12)))), AuctionFixtures.window(48, 49, Set(lot)))
+          )
+        )
+      )
+      keepsGolden("auction-scheduled-with-step-windows", stored(windowed, 3))
+    }
+
     "keeps the stored form of a schedule without lot defaults and reads it back as one" in {
       val bare = AuctionEvent.AuctionScheduled(AuctionFixtures.config(AuctionFixtures.configInput(lotDefaults = None)))
       keepsGolden("auction-scheduled-without-defaults", stored(bare, 3))

@@ -379,6 +379,9 @@ message LotSnapshot {
 
   // The lowest amount a bid is accepted at now; in the live final the only amount.
   // Set only while the lot is trading, so a caller does not repeat the step rule.
+  // "Now" is the instant the service answered: inside a window of reduced step it
+  // is lower than outside, so the same version of a lot can carry a different
+  // next_price after a window starts or ends.
   Money next_price = 5;
 
   // The viewer's own proxy limit on the lot. Unset when the viewer has none.
@@ -403,6 +406,32 @@ message LotSnapshot {
   // How many bids the lot has accepted, manual and proxy alike. 0 is a real value:
   // no bid yet.
   int64 bid_count = 15;
+
+  // The regular bid step at the current price, without any window. Set only while
+  // the lot is trading.
+  Money base_step = 16;
+
+  // The window of reduced step in force at the instant of the answer. Unset when
+  // none is: outside every window of the lot, in the live final, and when the lot
+  // is not trading. Its step is the step in force, never above base_step.
+  LotStepWindow active_window = 17;
+
+  // The nearest window of the lot that has not started yet at the instant of the
+  // answer. Unset when there is none, in the live final, and when the lot is not
+  // trading. Its step is the amount of the window as announced: whether it is
+  // lower than the regular step depends on the price when the window starts.
+  LotStepWindow next_window = 18;
+}
+
+// A window of reduced bid step of one lot: the half-open interval [from, until).
+message LotStepWindow {
+  // RFC 3339 instant in UTC: the first instant of the window.
+  string from = 1;
+
+  // RFC 3339 instant in UTC: the first instant after the window.
+  string until = 2;
+
+  Money step = 3;
 }
 
 message ListLotHistoryRequest {
@@ -805,6 +834,23 @@ message ConfigInvalid {
     // The step policy of lot_defaults contradicts itself or is in another
     // currency than lot_defaults.
     StepPolicyInvalid lot_defaults_step_policy_invalid = 4;
+
+    // A step window is set while closes_at is unset, also when there is no
+    // online phase at all.
+    StepWindowWithoutClosesAt step_window_without_closes_at = 5;
+
+    // A step window does not lie within opens_at <= from < until <= closes_at.
+    StepWindowOutsideOnlinePhase step_window_outside_online_phase = 6;
+
+    // Two step windows name a common lot and their intervals intersect.
+    StepWindowsOverlap step_windows_overlap = 7;
+
+    // The step of a step window is not positive or is in another currency than
+    // the lots: lot_defaults, or the platform defaults when they are unset.
+    StepWindowStepInvalid step_window_step_invalid = 8;
+
+    // A step window names no lot.
+    StepWindowLotsEmpty step_window_lots_empty = 9;
   }
 }
 
@@ -813,6 +859,32 @@ message ClosesAtMissing {}
 message ClosesAtNotAfterOpensAt {}
 
 message FinalBlocksOutOfRange {}
+
+// The windows below are named by their position in AuctionConfig.step_windows,
+// starting at 0. 0 is a real value: the first window.
+
+message StepWindowWithoutClosesAt {
+  int32 window_index = 1;
+}
+
+message StepWindowOutsideOnlinePhase {
+  int32 window_index = 1;
+}
+
+message StepWindowsOverlap {
+  // The earlier of the two windows in step_windows.
+  int32 first_index = 1;
+
+  int32 second_index = 2;
+}
+
+message StepWindowStepInvalid {
+  int32 window_index = 1;
+}
+
+message StepWindowLotsEmpty {
+  int32 window_index = 1;
+}
 
 // Prebidding has started: the configuration no longer changes.
 message AuctionAlreadyStarted {}

@@ -173,7 +173,8 @@ final class AuctionGrpcService(
 
   /**
    * Чтение лота — из read model проекции, а не из entity: чтение не будит шард. Сразу после команды ответ может ещё не
-   * содержать её события; `version` в ответе говорит, до какого события он дошёл.
+   * содержать её события; `version` в ответе говорит, до какого события он дошёл. Следующая цена и окна шага считаются
+   * на момент ответа по часам сервиса — по тем же, по которым entity судит ставку.
    */
   def getLot(in: wire.GetLotRequest): Future[wire.LotSnapshot] =
     RequestMapping.getLot(in) match {
@@ -182,7 +183,8 @@ final class AuctionGrpcService(
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no public role"))
       case Right(query) =>
         views.find(query.lotId).flatMap {
-          case Some(view) => Future.successful(SnapshotMapping.snapshot(view, query.acting.participant))
+          case Some(view) =>
+            Future.successful(SnapshotMapping.snapshot(view, query.acting.participant, clock.instant()))
           case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
         }
     }
@@ -201,10 +203,11 @@ final class AuctionGrpcService(
         // На одну строку больше страницы: так известно, есть ли продолжение, без второго запроса.
         val read = if (AuctionGrpcService.isMeetupAuction(query.auctionId)) views.registryPage else views.page
         read(query.auctionId, query.after, query.limit + 1).map { found =>
+          val at = clock.instant()
           val page = found.take(query.limit)
           val next = if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.lotId)) else None
           wire.ListAuctionLotsResponse(
-            page.map(SnapshotMapping.snapshot(_, query.acting.participant)),
+            page.map(SnapshotMapping.snapshot(_, query.acting.participant, at)),
             next.getOrElse("")
           )
         }

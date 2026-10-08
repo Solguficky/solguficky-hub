@@ -181,6 +181,13 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       invalid(ConfigInvalid.ClosesAtNotAfterOpensAt).isClosesAtNotAfterOpensAt shouldBe true
       invalid(ConfigInvalid.FinalBlocksOutOfRange).isFinalBlocksOutOfRange shouldBe true
       invalid(ConfigInvalid.LotDefaults(StepPolicyInvalid.StepNotPositive)).isLotDefaultsStepPolicyInvalid shouldBe true
+      invalid(ConfigInvalid.StepWindowWithoutClosesAt(0)).stepWindowWithoutClosesAt shouldBe
+        Some(wire.StepWindowWithoutClosesAt(0))
+      invalid(ConfigInvalid.StepWindowOutsideOnlinePhase(2)).stepWindowOutsideOnlinePhase shouldBe
+        Some(wire.StepWindowOutsideOnlinePhase(2))
+      invalid(ConfigInvalid.StepWindowsOverlap(1, 3)).stepWindowsOverlap shouldBe Some(wire.StepWindowsOverlap(1, 3))
+      invalid(ConfigInvalid.StepWindowStepInvalid(1)).stepWindowStepInvalid shouldBe Some(wire.StepWindowStepInvalid(1))
+      invalid(ConfigInvalid.StepWindowLotsEmpty(4)).stepWindowLotsEmpty shouldBe Some(wire.StepWindowLotsEmpty(4))
     }
 
     "answers a started prebidding without data and every refusal of the right and of the state as a value" in {

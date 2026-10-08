@@ -24,16 +24,20 @@ final case class StoredMixedClosing(onlineByDeadline: Boolean)
 /** `kind` — `ByAuctioneer`, `ByDeadline` или `Mixed`; секция `mixed` заполнена ровно у последнего. */
 final case class StoredClosingPolicy(kind: String, mixed: Option[StoredMixedClosing])
 
+/** Окно сниженного шага аукциона с его лотами (ADR-047, дополнение 2026-10-08). */
+final case class StoredAuctionStepWindow(from: Instant, until: Instant, step: StoredMoney, lots: List[UUID])
+
 /**
  * Payload `AuctionScheduled` и конфигурация в snapshot. `lotDefaults` — та же форма, что конфигурация лота; пусто,
  * когда администратор их не задал (дополнение ADR-047 от 2026-10-06). Строка, записанная до этого, несёт их всегда и
- * читается так же.
+ * читается так же. `stepWindows` пишется только непустым (дополнение 2026-10-08): строка без него — аукцион без окон.
  */
 final case class StoredAuctionConfig(
     onlinePhase: Option[StoredOnlinePhase],
     finalBlocks: Int,
     closingPolicy: StoredClosingPolicy,
-    lotDefaults: Option[StoredConfig]
+    lotDefaults: Option[StoredConfig],
+    stepWindows: Option[List[StoredAuctionStepWindow]] = None
 )
 
 /**
@@ -196,7 +200,15 @@ object AuctionJournal {
         case ClosingPolicy.Mixed(onlineByDeadline) =>
           StoredClosingPolicy("Mixed", Some(StoredMixedClosing(onlineByDeadline)))
       },
-      lotDefaults = config.lotDefaults.map(LotJournal.storeConfig)
+      lotDefaults = config.lotDefaults.map(LotJournal.storeConfig),
+      stepWindows = Option.when(config.stepWindows.nonEmpty)(config.stepWindows.map { window =>
+        StoredAuctionStepWindow(
+          window.from,
+          window.until,
+          LotJournal.storeMoney(window.step),
+          window.lots.toList.map(_.value).sorted
+        )
+      })
     )
 
   /** Конфигурация восстанавливается через ту же проверку, что и при планировании: журнал `ConfigInvalid` не обходит. */
@@ -212,7 +224,15 @@ object AuctionJournal {
         stored.onlinePhase.map(phase => OnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots)),
         stored.finalBlocks,
         policy,
-        stored.lotDefaults.map(LotJournal.restoreConfig)
+        stored.lotDefaults.map(LotJournal.restoreConfig),
+        stored.stepWindows.getOrElse(Nil).map { window =>
+          StepWindowConfig(
+            window.from,
+            window.until,
+            LotJournal.restoreMoney(window.step),
+            window.lots.map(LotId(_)).toSet
+          )
+        }
       )
       .fold(invalid => corrupted(s"auction config violates $invalid"), config => config)
   }

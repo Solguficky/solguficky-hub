@@ -140,7 +140,7 @@ final class AuctionClosingIntegrationSpec
 
   private def bid(node: Node, lot: LotId, who: ParticipantId): Unit = {
     val price = lotState(node, lot) match {
-      case LotState.Trading(trading) => Lot.minRequired(trading)
+      case LotState.Trading(trading) => Lot.minRequired(trading, Instant.now())
       case other => fail(s"the lot is not trading: $other")
     }
     lotRef(node, lot)

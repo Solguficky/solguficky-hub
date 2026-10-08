@@ -76,6 +76,10 @@ object Lot {
   /**
    * Открытие торгов. Как и у ставки, `seen` проверяется первым: повтор открытия получает исходный ответ, а не
    * `LotNotScheduled`. Условия торгов берутся из `Scheduled` и уже проверены, поэтому других отказов у открытия нет.
+   *
+   * Окна сниженного шага лот записывает только в своей валюте: аукцион валюты лота не знает, а лот, запланированный с
+   * прежними умолчаниями, сохраняет их валюту и после перепланирования аукциона (ADR-047, дополнение 2026-10-08, И-04).
+   * Окно в чужой валюте отбрасывается молча — отказа у открытия по-прежнему нет. Окна идут по возрастанию начала.
    */
   def decide(lot: Lot, command: OpenLot): Either[OpenLotRejected, Decision] =
     lot.seen.get(command.opId) match {
@@ -84,7 +88,14 @@ object Lot {
         lot.state match {
           case LotState.Initial => Left(OpenLotRejected.LotNotFound)
           case LotState.Scheduled(schedule) =>
-            Right(Decision.Accepted(LotEvent.LotOpened(schedule.startingPrice, schedule.config, command.deadline)))
+            val windows = command.stepWindows
+              .filter(_.step.currency == schedule.config.currency)
+              .sortBy(_.from)
+            Right(
+              Decision.Accepted(
+                LotEvent.LotOpened(schedule.startingPrice, schedule.config, command.deadline, windows)
+              )
+            )
           case LotState.Draft | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
             Left(OpenLotRejected.LotNotScheduled)
         }
@@ -115,8 +126,8 @@ object Lot {
         case LotState.Initial => Left(PlaceBidRejected.LotNotFound)
         case LotState.Draft | LotState.Scheduled(_) => Left(PlaceBidRejected.LotNotOpen)
         case LotState.Trading(trading) =>
-          placeBid(trading, command, bidId).map { placed =>
-            val derived = resolve(bidden(trading, placed), proxyBidId)
+          placeBid(trading, command, bidId, now).map { placed =>
+            val derived = resolve(bidden(trading, placed), proxyBidId, now)
             val overtaken = derived.exists(_.participant != command.participant)
             Decision.Accepted(placed.copy(overtakenByProxy = overtaken), derived.toList ++ extended(trading, now))
           }
@@ -153,7 +164,7 @@ object Lot {
         case LotState.Trading(trading) =>
           proxyLimitSet(trading.config, floor(trading), command).map { set =>
             val after = trading.copy(proxyLimits = limited(trading.proxyLimits, set, sequence))
-            val derived = resolve(after, proxyBidId).toList
+            val derived = resolve(after, proxyBidId, now).toList
             Decision.Accepted(set, if (derived.isEmpty) Nil else derived ++ extended(trading, now))
           }
         case LotState.Held(held) =>
@@ -304,14 +315,44 @@ object Lot {
     }
 
   /**
-   * Следующая цена: объявленный ask, если он выше текущей цены, иначе цена плюс шаг от неё (П-01, П-03). До первой
-   * ставки это стартовая цена плюс шаг.
+   * Следующая цена в момент `at`: объявленный ask, если он выше текущей цены, иначе цена плюс шаг от неё (П-01, П-03).
+   * До первой ставки это стартовая цена плюс шаг. `at` — серверное время команды, а у чтения — время ответа: в окне
+   * сниженного шага следующая цена ниже.
    */
-  def minRequired(trading: TradingState): Money =
+  def minRequired(trading: TradingState, at: Instant): Money =
     trading.ask.filter(_ > trading.currentPrice) match {
       case Some(ask) => ask
-      case None => trading.currentPrice.plus(StepPolicy.step(trading.config.stepPolicy, trading.currentPrice))
+      case None => trading.currentPrice.plus(step(trading, trading.currentPrice, at))
     }
+
+  /** Обычный шаг при цене `price`: политика шага лота без окон (П-03, `base`). */
+  def baseStep(trading: TradingState, price: Money): Money =
+    StepPolicy.step(trading.config.stepPolicy, price)
+
+  /**
+   * Шаг при цене `price` в момент `at` (П-03, дополнение 2026-10-08): сумма окна, если `at` внутри `[from, until)` окна
+   * лота и лот в фазе `Online`, но не выше обычного шага; иначе обычный шаг. Окна одного лота не пересекаются (И-21),
+   * поэтому подходит не больше одного. Событий на границах окна нет: шаг вычисляется в момент команды.
+   */
+  def step(trading: TradingState, price: Money, at: Instant): Money = {
+    val base = baseStep(trading, price)
+    activeWindow(trading, at).fold(base)(window => if (window.step < base) window.step else base)
+  }
+
+  /** Окно, которое действует в момент `at`: только в фазе `Online` — в живом финале окна нет по фазе (П-03). */
+  def activeWindow(trading: TradingState, at: Instant): Option[StepWindow] =
+    Option
+      .when(trading.phase == Phase.Online)(trading.stepWindows)
+      .getOrElse(Nil)
+      .find(window => !at.isBefore(window.from) && at.isBefore(window.until))
+
+  /** Ближайшее окно, которое в момент `at` ещё не началось; в живом финале его нет, как и действующего. */
+  def nextWindow(trading: TradingState, at: Instant): Option[StepWindow] =
+    Option
+      .when(trading.phase == Phase.Online)(trading.stepWindows)
+      .getOrElse(Nil)
+      .filter(_.from.isAfter(at))
+      .minByOption(_.from)
 
   /** Нижняя граница торга: текущая цена либо объявленный ask, если он выше (RFC-011, «Состояние лота»). */
   def floor(trading: TradingState): Money =
@@ -324,9 +365,10 @@ object Lot {
   private def placeBid(
       trading: TradingState,
       command: PlaceBid,
-      bidId: BidId
+      bidId: BidId,
+      now: Instant
   ): Either[PlaceBidRejected, LotEvent.BidPlaced] = {
-    val required = minRequired(trading)
+    val required = minRequired(trading, now)
     if (command.amount.currency != trading.config.currency) Left(PlaceBidRejected.CurrencyMismatch)
     else if (trading.leader.contains(command.participant)) Left(PlaceBidRejected.BidderIsLeader(trading.currentPrice))
     else if (trading.phase == Phase.Live && command.amount != required)
@@ -367,15 +409,18 @@ object Lot {
    * Цена на шаг выше насыщается на `Long.MaxValue`: лимит — ввод участника, и у самого большого из них сумма с шагом
    * переполнила бы `Long` в отрицательную, а пересчёт молча не нашёл бы ставки.
    *
+   * Шаг берётся в момент `now` команды — один на всю свёрнутую серию: в окне сниженного шага серия считается по шагу
+   * окна, вне окна — по обычному, и шаги двух режимов в одном событии не смешиваются (П-03).
+   *
    * Только фаза `Online`: в `Live` цель округляется до сетки, а это
    * [PER-293](https://linear.app/anticnvm/issue/per-293). После `AskAdvanced` пересчёт не запускается, пока открыт О-6.
    */
-  private[lot] def resolve(trading: TradingState, bidId: BidId): Option[LotEvent.BidPlaced] =
+  private[lot] def resolve(trading: TradingState, bidId: BidId, now: Instant): Option[LotEvent.BidPlaced] =
     if (trading.phase != Phase.Online) None
     else {
       val f = floor(trading)
       val stepAbove = (price: Money) => {
-        val step = StepPolicy.step(trading.config.stepPolicy, price).minorUnits
+        val step = Lot.step(trading, price, now).minorUnits
         if (price.minorUnits > Long.MaxValue - step) price.copy(minorUnits = Long.MaxValue)
         else price.copy(minorUnits = price.minorUnits + step)
       }
@@ -449,7 +494,9 @@ object Lot {
    * `DeadlineExtended` ставит дедлайн и счётчик из события, а не прибавляет к ним.
    *
    * Удержание `LotHeldForFinal` переносит цену, лидера, лимиты и счётчик продлений из торгов как есть, а возврат
-   * `LotResumed` строит торги живого финала из удержания: фаза `Live`, без дедлайна и ask, отметка снята (П-09).
+   * `LotResumed` строит торги живого финала из удержания: фаза `Live`, без дедлайна и ask, отметка снята (П-09). Окон
+   * сниженного шага удержание не несёт (RFC-011, «Состояние лота»), и в финале их нет; правило шага не применяет их в
+   * `Live` и тогда, когда они в состоянии лежат.
    */
   def apply(lot: Lot, envelope: Envelope): Lot = {
     val state = (lot.state, envelope.event) match {
@@ -467,7 +514,8 @@ object Lot {
             deadline = opened.deadline,
             extensionsUsed = 0,
             proxyLimits = Map.empty,
-            markedForFinal = false
+            markedForFinal = false,
+            stepWindows = opened.stepWindows
           )
         )
       case (LotState.Trading(trading), LotEvent.LotMarkedForFinal) =>

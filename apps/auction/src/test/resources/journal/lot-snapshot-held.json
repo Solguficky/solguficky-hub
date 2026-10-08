@@ -180,7 +180,8 @@
             },
             "proxyEnabled": true
           },
-          "deadline": "2026-10-07T18:00:00Z"
+          "deadline": "2026-10-07T18:00:00Z",
+          "stepWindows": null
         },
         "bidPlaced": null,
         "lotScheduled": null,

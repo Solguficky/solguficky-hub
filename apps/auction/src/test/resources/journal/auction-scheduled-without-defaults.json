@@ -25,7 +25,8 @@
           "onlineByDeadline": true
         }
       },
-      "lotDefaults": null
+      "lotDefaults": null,
+      "stepWindows": null
     }
   }
 }
