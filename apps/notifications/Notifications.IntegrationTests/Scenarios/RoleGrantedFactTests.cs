@@ -59,7 +59,7 @@ public class RoleGrantedFactTests
 
         await nats.Publish("events.identity.application_submitted",
             EventFactory.Application(applicant, 2, GlobalRole.Member, held: GlobalRole.Guest));
-        await Eventually(() => Count(db, "notification"), count => count == 1);
+        await Eventually(() => CountRows(db, "notification"), count => count == 1);
 
         var grant = EventFactory.RoleGrant(applicant, 3, GlobalRole.Admin);
         grant.State.Role = GlobalRole.Guest;
@@ -72,14 +72,8 @@ public class RoleGrantedFactTests
             published => published.Any(fact => fact.Fact.TypeCase == Notification.TypeOneofCase.RoleGranted));
         var roleFact = facts.Single(fact => fact.Fact.TypeCase == Notification.TypeOneofCase.RoleGranted);
         roleFact.Subject.ShouldBe("events.notifications.notification_created.hub");
-        (await Count(db, "notification")).ShouldBe(2);
-        await using var connection = new NpgsqlConnection(db.ConnectionString);
-        var closedRequest = await connection.ExecuteScalarAsync<bool>("""
-            SELECT withdrawn_at IS NOT NULL
-            FROM notification
-            WHERE type = 'access_requested' AND applicant_id = @Applicant;
-            """, new { Applicant = Guid.Parse(applicant) });
-        closedRequest.ShouldBeTrue();
+        (await CountRows(db, "notification")).ShouldBe(2);
+        (await AccessRequestWasWithdrawn(db, Guid.Parse(applicant))).ShouldBeTrue();
     }
 
     /// <summary>
@@ -177,9 +171,4 @@ public class RoleGrantedFactTests
         return await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM notification WHERE type = 'role_granted';");
     }
 
-    private static async Task<long> Count(IsolatedDatabase db, string table)
-    {
-        await using var connection = new NpgsqlConnection(db.ConnectionString);
-        return await connection.ExecuteScalarAsync<long>($"SELECT count(*) FROM {table};");
-    }
 }

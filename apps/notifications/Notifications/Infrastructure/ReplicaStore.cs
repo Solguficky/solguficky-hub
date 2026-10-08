@@ -107,8 +107,10 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         WHERE identity_replica.version < EXCLUDED.version;
         """;
 
-    // Предыдущий круг нужен только для факта смены гостя и участника. FOR
-    // UPDATE сериализует сравнение с upsert в этой же транзакции.
+    // Предыдущий круг нужен только для факта смены гостя и участника. Advisory
+    // lock ниже сериализует и первую вставку, когда строки для FOR UPDATE ещё нет.
+    private const string IdentityLockSql = "SELECT pg_advisory_xact_lock(hashtextextended(CAST(@IdentityId AS text), 0));";
+
     private const string IdentityBeforeSql = """
         SELECT role AS Role
         FROM identity_replica
@@ -182,6 +184,7 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         }
         else if (fact is IdentityFact identity)
         {
+            await work.Execute(IdentityLockSql, new { identity.IdentityId }, cancellationToken);
             var previous = await work.Query<IdentityBeforeRow>(IdentityBeforeSql,
                 new { identity.IdentityId }, cancellationToken);
             written = await work.Execute(IdentitySql, IdentityRow(identity, now), cancellationToken);

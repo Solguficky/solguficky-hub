@@ -32,7 +32,7 @@ public class AccessGrantedFactTests
         var person = EventFactory.NewId();
 
         await nats.Publish(RoleGrantedSubject, EventFactory.RoleGrant(person, 2, GlobalRole.Guest));
-        await Eventually(() => Count(db, "identity_replica"), count => count == 1);
+        await Eventually(() => CountRows(db, "identity_replica"), count => count == 1);
         await nats.Publish(RoleGrantedSubject, EventFactory.RoleGrant(person, 3, GlobalRole.Member));
 
         var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
@@ -53,7 +53,7 @@ public class AccessGrantedFactTests
         var person = EventFactory.NewId();
 
         await nats.Publish(RoleGrantedSubject, EventFactory.RoleGrant(person, 2, GlobalRole.Member));
-        await Eventually(() => Count(db, "identity_replica"), count => count == 1);
+        await Eventually(() => CountRows(db, "identity_replica"), count => count == 1);
         var demotion = EventFactory.Identity(person, 3);
         demotion.State.Role = GlobalRole.Guest;
         demotion.State.Rights.Clear();
@@ -111,7 +111,7 @@ public class AccessGrantedFactTests
 
         await nats.Publish("events.identity.application_submitted",
             EventFactory.Application(applicant, 2, GlobalRole.Member, held: GlobalRole.Guest));
-        await Eventually(() => Count(db, "identity_replica"), count => count == 1);
+        await Eventually(() => CountRows(db, "identity_replica"), count => count == 1);
         await nats.Publish(ApplicationAdmittedSubject, EventFactory.Admission(applicant, 3, GlobalRole.Member));
 
         var published = await Eventually(
@@ -193,9 +193,4 @@ public class AccessGrantedFactTests
         return await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM notification WHERE type = 'access_granted';");
     }
 
-    private static async Task<long> Count(IsolatedDatabase db, string table)
-    {
-        await using var connection = new NpgsqlConnection(db.ConnectionString);
-        return await connection.ExecuteScalarAsync<long>($"SELECT count(*) FROM {table};");
-    }
 }
