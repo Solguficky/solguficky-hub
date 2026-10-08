@@ -1,17 +1,17 @@
 import { isDeepStrictEqual } from "node:util";
 import { encodeAuctionCallback } from "../callback-data.js";
-import { type AuctionSurface, requestedRole } from "../gateway.js";
+import { type AuctionSurface, applicationQueue } from "../gateway.js";
 import type {
+  AccessRight,
   AuctionBotPorts,
   EntryPort,
-  GlobalRole,
   RoleRequest,
   RoleRequestOutcome,
   TelegramUser,
 } from "../ports.js";
 import { AUCTION, CONTRACT_LOT, CONTRACT_USER, spyPorts } from "./check.js";
 
-// Матрица доступа из ADR-044, «Проверка общего поведения», в редакции ADR-060.
+// Матрица доступа по правам (ADR-064, пункт 19), в редакции ADR-060.
 // Как и ядро contract suite, она чистая: нарушения возвращаются значением.
 
 export type AccessAction =
@@ -34,6 +34,8 @@ export type AccessAnswer =
   | "pending"
   | "declined"
   | "blocked"
+  // «Ты в сообществе, аукцион у тебя в боте хаба» (ADR-064, пункт 2).
+  | "in-community"
   // Сбой соседа: ни допуска, ни ответа о заявке.
   | "unavailable";
 
@@ -48,10 +50,10 @@ export type AccessMatrixApp = (
 export type AccessMatrixCase = {
   name: string;
   surface: AuctionSurface["kind"];
-  // Что Identity знает о человеке: роли и отметку отдаёт разрешение личности,
-  // роли и исход — вход.
+  // Что Identity знает о человеке: права и отметку отдаёт разрешение личности,
+  // права и исход — вход.
   person: {
-    globalRoles: readonly GlobalRole[];
+    rights: readonly AccessRight[];
     blocked: boolean;
     outcome: RoleRequestOutcome;
   };
@@ -66,7 +68,7 @@ export type AccessViolation = {
     | "app-threw"
     | "wrong-answer"
     // Identity спрошен не один раз, не тем вызовом или не о том человеке:
-    // `/start` — один вход с кругом поверхности, остальное — одно разрешение.
+    // `/start` — один вход с очередью поверхности, остальное — одно разрешение.
     | "wrong-identity-calls"
     // До Auction дошёл человек, которого поверхность не пускает.
     | "auction-reached"
@@ -76,7 +78,11 @@ export type AccessViolation = {
 };
 
 const FIRST_NAME = "Сова";
-const IDENTITY_ID = "01929b7e-5c1d-7a3f-8e4b-000000000009";
+// Роли едут транзитом в Auction и в матрице ничего не решают.
+const VIEWER = {
+  identityId: "01929b7e-5c1d-7a3f-8e4b-000000000009",
+  globalRoles: [],
+} as const;
 
 const LOT_BUTTON: AccessAction = {
   kind: "callback",
@@ -91,63 +97,69 @@ const START_FROM_CHANNEL: AccessAction = { kind: "start", sourceCode: "chat" };
 
 type Person = AccessMatrixCase["person"];
 
-const holder = (...globalRoles: GlobalRole[]): Person => ({
-  globalRoles,
+const holder = (...rights: AccessRight[]): Person => ({
+  rights,
   blocked: false,
   outcome: "already-held",
 });
+// Набор прав участника и администратора: матрице важны права, а не круг.
+const MEMBER: Person = holder("hub", "auction");
+const ADMIN: Person = holder(
+  "hub",
+  "auction",
+  "manage-membership",
+  "moderate-auction",
+);
 const NEWCOMER: Person = {
-  globalRoles: [],
+  rights: [],
   blocked: false,
   outcome: "pending",
 };
-const BLOCKED: Person = { globalRoles: [], blocked: true, outcome: "blocked" };
+const BLOCKED: Person = { rights: [], blocked: true, outcome: "blocked" };
 const DECLINED: Person = {
-  globalRoles: [],
+  rights: [],
   blocked: false,
   outcome: "declined",
 };
 
 // Строку добавляет лист, который меняет политику поверхности. До Auction
-// доходят только `member` в хабе и человек с `public` в боте аукциона.
+// доходят только право хаба в хабе и право аукциона без права хаба в боте
+// аукциона.
 export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
   {
-    name: "hub: member starts",
+    name: "hub: hub right starts",
     surface: "hub",
-    person: holder("member", "public"),
+    person: MEMBER,
     action: START,
     answer: "admitted",
   },
   {
-    name: "hub: member presses",
+    name: "hub: hub right presses",
     surface: "hub",
-    person: holder("member", "public"),
+    person: MEMBER,
     action: LOT_BUTTON,
     answer: "admitted",
   },
   {
     name: "hub: allowlisted starts",
     surface: "hub",
-    person: {
-      globalRoles: ["member", "public"],
-      blocked: false,
-      outcome: "granted-by-allowlist",
-    },
+    person: { ...MEMBER, outcome: "granted-by-allowlist" },
     action: START,
     answer: "admitted",
   },
-  // Один `public` хаб не открывает: вход ставит заявку на `member`.
+  // Право аукциона хаб не открывает: вход ставит заявку на участника, и она
+  // ложится в очередь сообщества (ADR-064, пункт 5).
   {
-    name: "hub: public only starts",
+    name: "hub: auction right only starts",
     surface: "hub",
-    person: { globalRoles: ["public"], blocked: false, outcome: "pending" },
-    action: START,
+    person: { rights: ["auction"], blocked: false, outcome: "pending" },
+    action: START_FROM_CHANNEL,
     answer: "pending",
   },
   {
-    name: "hub: public only presses",
+    name: "hub: auction right only presses",
     surface: "hub",
-    person: { globalRoles: ["public"], blocked: false, outcome: "pending" },
+    person: { rights: ["auction"], blocked: false, outcome: "pending" },
     action: LOT_BUTTON,
     answer: "pending",
   },
@@ -200,40 +212,69 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
   {
     name: "hub: unknown outcome",
     surface: "hub",
-    person: {
-      globalRoles: ["member", "public"],
-      blocked: false,
-      outcome: "unspecified",
-    },
+    person: { ...MEMBER, outcome: "unspecified" },
     action: START,
     answer: "unavailable",
   },
   {
-    name: "auction: public starts",
+    name: "auction: auction right starts",
     surface: "auction",
-    person: holder("public"),
+    person: holder("auction"),
     action: START,
     answer: "admitted",
   },
   {
-    name: "auction: public presses",
+    name: "auction: auction right presses",
     surface: "auction",
-    person: holder("public"),
+    person: holder("auction"),
     action: LOT_BUTTON,
     answer: "admitted",
   },
+  // Участнику и администратору бот аукциона отвечает только переходом в бот
+  // хаба: торгов и списков нет, и подделанное нажатие до Auction не доходит
+  // (ADR-064, пункт 2).
   {
-    name: "auction: member starts",
+    name: "auction: hub right starts",
     surface: "auction",
-    person: holder("member", "public"),
+    person: MEMBER,
     action: START,
-    answer: "admitted",
+    answer: "in-community",
+  },
+  {
+    name: "auction: hub right presses",
+    surface: "auction",
+    person: MEMBER,
+    action: LOT_BUTTON,
+    answer: "in-community",
+  },
+  {
+    name: "auction: all rights start",
+    surface: "auction",
+    person: ADMIN,
+    action: START,
+    answer: "in-community",
+  },
+  {
+    name: "auction: all rights press",
+    surface: "auction",
+    person: ADMIN,
+    action: LOT_BUTTON,
+    answer: "in-community",
+  },
+  // Право хаба без права аукциона Identity не отдаёт; строка держит, что
+  // переход решает право хаба, а не пара прав.
+  {
+    name: "auction: hub right only starts",
+    surface: "auction",
+    person: { rights: ["hub"], blocked: false, outcome: "pending" },
+    action: START,
+    answer: "in-community",
   },
   {
     name: "auction: allowlisted starts",
     surface: "auction",
     person: {
-      globalRoles: ["public"],
+      rights: ["auction"],
       blocked: false,
       outcome: "granted-by-allowlist",
     },
@@ -254,8 +295,8 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     action: LOT_BUTTON,
     answer: "pending",
   },
-  // Отказ в `public` — блокировка (ADR-060, пункт 12), поэтому Identity этот
-  // исход боту аукциона не отдаёт. Строка держит ответ на случай, если отдаст.
+  // Отказ по очереди аукциона — исход `declined` только этой очереди
+  // (ADR-064, пункт 15).
   {
     name: "auction: declined starts",
     surface: "auction",
@@ -280,7 +321,7 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
   {
     name: "auction: unknown outcome",
     surface: "auction",
-    person: { globalRoles: ["public"], blocked: false, outcome: "unspecified" },
+    person: { rights: ["auction"], blocked: false, outcome: "unspecified" },
     action: START,
     answer: "unavailable",
   },
@@ -300,7 +341,7 @@ function expectedIdentityCalls(matrixCase: AccessMatrixCase): IdentityCall[] {
       method: "requestRole",
       request: {
         user: CONTRACT_USER,
-        requestedRole: requestedRole(surface),
+        queue: applicationQueue(surface),
         ...(action.sourceCode === undefined
           ? {}
           : { sourceCode: action.sourceCode }),
@@ -323,8 +364,8 @@ export async function checkAccessMatrixCase(
       async resolveIdentity(request) {
         identityCalls.push({ method: "resolveIdentity", request });
         return {
-          identityId: IDENTITY_ID,
-          globalRoles: person.globalRoles,
+          viewer: VIEWER,
+          rights: person.rights,
           blocked: person.blocked,
         };
       },
@@ -333,8 +374,8 @@ export async function checkAccessMatrixCase(
       async requestRole(request) {
         identityCalls.push({ method: "requestRole", request });
         return {
-          identityId: IDENTITY_ID,
-          globalRoles: person.globalRoles,
+          viewer: VIEWER,
+          rights: person.rights,
           outcome: person.outcome,
         };
       },

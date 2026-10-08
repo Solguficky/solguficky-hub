@@ -36,13 +36,14 @@ export {
   type AuctionContractCase,
   type AuctionContractInput,
   CONTRACT_AUCTION_ID,
-  CONTRACT_IDENTITY,
   CONTRACT_LOT,
   CONTRACT_USER,
+  CONTRACT_VIEWER,
   type ContractAuction,
   type ContractViolation,
   checkAuctionContract,
   checkAuctionContractCase,
+  contractIdentity,
   type PortCall,
 } from "./check.js";
 
@@ -52,6 +53,7 @@ export {
 // дереве, и на входах ботов (ADR-064, п. 19).
 export function describeAuctionContract(
   name: string,
+  surface: AuctionSurface["kind"],
   createApp: AuctionContractApp,
   cases: readonly AuctionContractCase[] = AUCTION_CONTRACT_CASES,
 ): void {
@@ -61,9 +63,9 @@ export function describeAuctionContract(
     });
     for (const contractCase of cases) {
       it(`intent ${contractCase.intent}`, async () => {
-        expect(await checkAuctionContractCase(createApp, contractCase)).toEqual(
-          [],
-        );
+        expect(
+          await checkAuctionContractCase(surface, createApp, contractCase),
+        ).toEqual([]);
       });
     }
   });
@@ -102,7 +104,7 @@ export {
 // проверяется на всех поверхностях без правки второй.
 export function describeAuctionSurfaces(): void {
   for (const kind of AUCTION_SURFACES) {
-    describeAuctionContract(`${kind} surface`, auctionContractApp(kind));
+    describeAuctionContract(`${kind} surface`, kind, auctionContractApp(kind));
     describeAccessMatrix(`${kind} surface`, kind, accessMatrixApp(kind));
   }
 }

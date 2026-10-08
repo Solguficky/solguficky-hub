@@ -1,9 +1,9 @@
 import {
   type AuctionDenial,
   type AuctionSurface,
+  applicationQueue,
   decideEntry,
   handleAuctionUpdate,
-  requestedRole,
 } from "../gateway.js";
 import type { AccessAnswer, AccessMatrixApp } from "./access.js";
 import type { AuctionContractApp } from "./check.js";
@@ -19,6 +19,7 @@ export const AUCTION_SURFACES = Object.keys(KNOWN) as AuctionSurface["kind"][];
 
 const ANSWERS: Record<AuctionDenial, AccessAnswer> = {
   "not-admitted": "pending",
+  "in-community": "in-community",
   declined: "declined",
   blocked: "blocked",
 };
@@ -50,7 +51,7 @@ export const accessMatrixApp =
         kind,
         await ports.entry.requestRole({
           user: from,
-          requestedRole: requestedRole(kind),
+          queue: applicationQueue(kind),
           ...(action.sourceCode === undefined
             ? {}
             : { sourceCode: action.sourceCode }),

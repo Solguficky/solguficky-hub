@@ -7,7 +7,11 @@ import {
 } from "./broadcasts.js";
 import type { BroadcastRequest, Person } from "./types.js";
 
-const identity: Person = { identityId: "identity-id", globalRoles: ["admin"] };
+const identity: Person = {
+  identityId: "identity-id",
+  globalRoles: ["admin"],
+  rights: ["hub", "auction"],
+};
 
 function request(overrides: Partial<BroadcastRequest> = {}): BroadcastRequest {
   return {

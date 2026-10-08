@@ -2,7 +2,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { HttpError, InputFile, type Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { GlobalRole } from "../../../gen/identity/v1/roles_pb.js";
+import { AccessRight, GlobalRole } from "../../../gen/identity/v1/roles_pb.js";
 import { inspectCall, reportViolations } from "../../../testkit/screen-lint.js";
 import {
   type EntryPort,
@@ -48,6 +48,11 @@ const botInfo: UserFromGetMe = {
   supports_join_request_queries: false,
 };
 
+// Роли едут транзитом в Auction: допуск решают права.
+const VIEWER = {
+  identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+  globalRoles: ["public"],
+} as const;
 const lotId = "01926f3c-8b7a-7cde-8f00-0123456789ab";
 const from = { id: 42, is_bot: false, first_name: "Person" };
 const privateChat = { id: 42, type: "private" as const, first_name: "Person" };
@@ -164,8 +169,8 @@ function portsWith(
   return () => ({
     identity: {
       resolveIdentity: async () => ({
-        identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-        globalRoles: ["public"],
+        viewer: VIEWER,
+        rights: ["auction"],
         blocked: false,
       }),
     },
@@ -173,8 +178,8 @@ function portsWith(
       requestRole:
         overrides.entry ??
         (async () => ({
-          identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-          globalRoles: ["public"],
+          viewer: VIEWER,
+          rights: ["auction"],
           outcome: "already-held",
         })),
     },
@@ -383,11 +388,11 @@ describe("auction bot", () => {
     ["/menu", {}],
     ["/menu s_tg_ads", {}],
   ])(
-    "enters on %s with the public circle and the first name",
+    "enters on %s with the auction queue and the first name",
     async (text, code) => {
       const requestRole = vi.fn<EntryPort["requestRole"]>(async () => ({
-        identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-        globalRoles: [],
+        viewer: VIEWER,
+        rights: [],
         outcome: "pending",
       }));
       const { bot, calls } = makeBot(portsWith({ entry: requestRole }));
@@ -409,7 +414,7 @@ describe("auction bot", () => {
       );
       expect(requestRole).toHaveBeenCalledExactlyOnceWith({
         user: { telegramUserId: 42 },
-        requestedRole: "public",
+        queue: "auction",
         firstName: "Person",
         ...code,
       });
@@ -687,8 +692,8 @@ describe("auction bot", () => {
   it("retries the entry with the channel code after a failed /start", async () => {
     const requestRole = vi
       .fn<EntryPort["requestRole"]>(async () => ({
-        identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-        globalRoles: [],
+        viewer: VIEWER,
+        rights: [],
         outcome: "pending",
       }))
       .mockRejectedValueOnce(new ConnectError("down", Code.Unavailable));
@@ -717,7 +722,7 @@ describe("auction bot", () => {
     await bot.handleUpdate(lotPress({ data: startCallback("tg_ads") }));
     expect(requestRole).toHaveBeenLastCalledWith({
       user: { telegramUserId: 42 },
-      requestedRole: "public",
+      queue: "auction",
       sourceCode: "tg_ads",
       firstName: "Person",
     });
@@ -762,8 +767,11 @@ describe("auction bot", () => {
 
   // Та же проверка доступа, что у `/start`: недопущенный получает свой кадр.
   it.each([
-    [{ globalRoles: [], blocked: false }, "not-admitted"],
-    [{ globalRoles: ["public"], blocked: true }, "blocked"],
+    [{ rights: [], blocked: false }, "not-admitted"],
+    [{ rights: ["auction"], blocked: true }, "blocked"],
+    // Участнику сообщества бот аукциона и FAQ не открывает: только переход
+    // в бот хаба (ADR-064, пункт 2).
+    [{ rights: ["hub", "auction"], blocked: false }, "in-community"],
   ] as const)(
     "refuses /faq to %j with the %s frame",
     async (person, reason) => {
@@ -772,8 +780,8 @@ describe("auction bot", () => {
         ...base,
         identity: {
           resolveIdentity: async () => ({
-            identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-            globalRoles: [...person.globalRoles],
+            viewer: VIEWER,
+            rights: [...person.rights],
             blocked: person.blocked,
           }),
         },
@@ -1318,6 +1326,7 @@ describe("waiting", () => {
       resolveIdentity: rpcAfter(2_500, {
         identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
         globalRoles: [GlobalRole.GUEST],
+        rights: [AccessRight.AUCTION],
         blocked: false,
       }),
     };

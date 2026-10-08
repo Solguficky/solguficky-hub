@@ -10,7 +10,10 @@ import {
   type RecordedCall,
   withEntry,
 } from "../../../../testkit/harness.js";
-import type { RoleRequestOutcome } from "../../../auction-ui/index.js";
+import type {
+  AccessRight,
+  RoleRequestOutcome,
+} from "../../../auction-ui/index.js";
 import type { TelegramEnvironment } from "../../../core/config.js";
 import * as failures from "../../../core/failures.js";
 import { noopTracing } from "../../../core/tracing.js";
@@ -204,15 +207,22 @@ function draftMeetup() {
 
 const resolvedId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
 
+// Права участника — по умолчанию у любого незаблокированного: роль едет
+// транзитом и «Управление» до PER-534, а пускает право. Гостю и постороннему
+// тест передаёт права явно.
+const MEMBER_RIGHTS: readonly AccessRight[] = ["hub", "auction"];
+
 function resolvedIdentity(
   globalRoles: readonly string[] = ["member"],
   blocked = false,
+  rights: readonly AccessRight[] = blocked ? [] : MEMBER_RIGHTS,
 ): IdentityResolver {
   return {
     resolve: async () => ({
       kind: "resolved",
       identityId: resolvedId,
       globalRoles,
+      rights,
       blocked,
     }),
   };
@@ -1090,9 +1100,12 @@ describe("presentation adapter", () => {
 
   it("shows the waiting frame on /start when the person has no member role", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
-    const { bot, calls, records } = createHarness(resolvedIdentity([]), {
-      execute,
-    });
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity([], false, []),
+      {
+        execute,
+      },
+    );
     await bot.init();
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toBe(
@@ -1146,12 +1159,13 @@ describe("presentation adapter", () => {
   }
   const answered = (
     outcome: RoleRequestOutcome,
-    globalRoles: readonly string[] = [],
+    rights: readonly AccessRight[] = [],
   ) =>
     ({
       kind: "answered",
       identityId: resolvedId,
-      globalRoles,
+      globalRoles: [],
+      rights,
       outcome,
     }) as const;
 
@@ -1163,7 +1177,7 @@ describe("presentation adapter", () => {
     // `/menu` — тот же вход: начавший с него тоже получает заявку.
     ["/menu", {}],
   ])(
-    "enters on %s through RequestRole with the member circle",
+    "enters on %s through RequestRole into the community queue",
     async (text, code) => {
       const execute = vi.fn<Dispatcher["execute"]>();
       const identity = entering(answered("pending"));
@@ -1173,7 +1187,7 @@ describe("presentation adapter", () => {
       expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
         {
           telegramUserId: 42n,
-          requestedRole: "member",
+          queue: "community",
           firstName: "tester",
           ...code,
         },
@@ -1189,9 +1203,7 @@ describe("presentation adapter", () => {
   );
 
   it("opens /start for a person the allowlist has just admitted", async () => {
-    const identity = entering(
-      answered("granted-by-allowlist", ["member", "public"]),
-    );
+    const identity = entering(answered("granted-by-allowlist", MEMBER_RIGHTS));
     const { bot, calls } = createHarness(identity);
     await bot.init();
     await bot.handleUpdate(messageUpdate());
@@ -1202,7 +1214,7 @@ describe("presentation adapter", () => {
   it("answers a declined application on /start with a refusal of its own", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls, records } = createHarness(
-      entering(answered("declined", ["public"])),
+      entering(answered("declined", ["auction"])),
       { execute },
     );
     await bot.init();
@@ -1233,32 +1245,26 @@ describe("presentation adapter", () => {
     expect(records[0]?.fields.error).toBe("hub_access_blocked");
   });
 
-  // Человек с `public` уходит из кадра отказа в бот аукциона (ADR-044;
-  // PER-455): текст тот же, сходок нет, ссылка — единственная кнопка.
-  describe("link to the auction bot", () => {
-    const auctionBotUsername = "solguficky_auction_bot";
-    const link = [
-      [
-        {
-          text: "Бот аукциона ↗",
-          url: `https://t.me/${auctionBotUsername}`,
-        },
-      ],
-    ];
-    const withLink = (
-      identity: Parameters<typeof createHarness>[0],
-      dispatcher?: Dispatcher,
-      username = auctionBotUsername,
-    ) =>
-      createHarness(identity, dispatcher, [], undefined, undefined, undefined, {
-        auctionBotUsername: username,
+  // Гостю и постороннему хаб отвечает заявкой без выхода: ни сходок, ни
+  // аукциона, ни намёка на бот аукциона, даже когда имя бота настроено
+  // (RFC-015, С-4; ADR-064, пункт 5).
+  describe("no hint of the auction bot", () => {
+    const withAuctionBot = (identity: Parameters<typeof createHarness>[0]) =>
+      createHarness(identity, undefined, [], undefined, undefined, undefined, {
+        auctionBotUsername: "solguficky_auction_bot",
       });
 
-    it("leads a person with public only out on /start and on a press", async () => {
+    it("gives a guest only the pending frame on /start and on a press", async () => {
       const execute = vi.fn<Dispatcher["execute"]>();
-      const { bot, calls } = withLink(resolvedIdentity(["public"]), {
-        execute,
-      });
+      const { bot, calls } = createHarness(
+        resolvedIdentity(["public"], false, ["auction"]),
+        { execute },
+        [],
+        undefined,
+        undefined,
+        undefined,
+        { auctionBotUsername: "solguficky_auction_bot" },
+      );
       await bot.init();
       await bot.handleUpdate(messageUpdate());
       await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
@@ -1267,63 +1273,31 @@ describe("presentation adapter", () => {
         method: "sendMessage",
         payload: {
           text: refusalText(pendingHubAccessText(resolvedId, undefined)),
-          reply_markup: { inline_keyboard: link },
+          reply_markup: { inline_keyboard: [[]] },
         },
       });
       expect(calls[2]).toMatchObject({
         method: "editMessageText",
-        payload: { reply_markup: { inline_keyboard: link } },
+        payload: { reply_markup: { inline_keyboard: [[]] } },
       });
-    });
-
-    it("keeps the link after a member decline", async () => {
-      const { bot, calls } = withLink(
-        entering(answered("declined", ["public"])),
-      );
-      await bot.init();
-      await bot.handleUpdate(messageUpdate());
-      expect(sendMessageText(calls[0])).toBe(
-        refusalText(declinedHubAccessText),
-      );
-      expect(calls[0]?.payload).toMatchObject({
-        reply_markup: { inline_keyboard: link },
-      });
+      expect(JSON.stringify(calls)).not.toContain("t.me");
     });
 
     it.each([
-      ["a person without roles", resolvedIdentity([])],
-      ["a blocked person with public", resolvedIdentity(["public"], true)],
+      [
+        "a guest after a member decline",
+        entering(answered("declined", ["auction"])),
+      ],
+      ["a person without rights", resolvedIdentity([], false, [])],
+      ["a blocked person", resolvedIdentity(["public"], true, [])],
     ])("gives no link to %s", async (_name, identity) => {
-      const { bot, calls } = withLink(identity);
+      const { bot, calls } = withAuctionBot(identity);
       await bot.init();
       await bot.handleUpdate(messageUpdate());
       expect(JSON.stringify(calls[0]?.payload)).not.toContain("t.me");
-    });
-
-    it("shows the frame without a link when the name is not configured", async () => {
-      const { bot, calls } = createHarness(resolvedIdentity(["public"]));
-      await bot.init();
-      await bot.handleUpdate(messageUpdate());
-      expect(sendMessageText(calls[0])).toBe(
-        refusalText(pendingHubAccessText(resolvedId, undefined)),
-      );
-      expect(JSON.stringify(calls[0]?.payload)).not.toContain("t.me");
-    });
-
-    // Имя хаба в настройке бота аукциона увело бы человека по кругу в этот же
-    // кадр.
-    it("gives no link that leads back into the hub bot itself", async () => {
-      const { bot, calls } = withLink(
-        resolvedIdentity(["public"]),
-        undefined,
-        "Stub_Bot",
-      );
-      await bot.init();
-      await bot.handleUpdate(messageUpdate());
-      expect(sendMessageText(calls[0])).toBe(
-        refusalText(pendingHubAccessText(resolvedId, undefined)),
-      );
-      expect(JSON.stringify(calls[0]?.payload)).not.toContain("t.me");
+      expect(calls[0]?.payload).toMatchObject({
+        reply_markup: { inline_keyboard: [[]] },
+      });
     });
   });
 
@@ -1332,7 +1306,7 @@ describe("presentation adapter", () => {
   it("fails closed on /start when Identity answers an unknown outcome", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls, records } = createHarness(
-      entering(answered("unspecified", ["member", "public"])),
+      entering(answered("unspecified", MEMBER_RIGHTS)),
       { execute },
     );
     await bot.init();
@@ -1370,7 +1344,7 @@ describe("presentation adapter", () => {
   // Заявку ставит только вход: кнопка лишь проверяет роль.
   it("does not request a role on a button", async () => {
     const identity = {
-      ...resolvedIdentity(["public"]),
+      ...resolvedIdentity(["public"], false, ["auction"]),
       requestRole: vi.fn<RoleRequester["requestRole"]>(),
     };
     const { bot, calls } = createHarness(identity);
@@ -1385,7 +1359,7 @@ describe("presentation adapter", () => {
   it("does not show meetups to a pending person by list or deep link", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls, records } = createHarness(
-      resolvedIdentity(["public"]),
+      resolvedIdentity(["public"], false, ["auction"]),
       {
         execute,
       },
@@ -1412,9 +1386,12 @@ describe("presentation adapter", () => {
 
   it("does not open management for a person outside the member circle", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
-    const { bot, calls } = createHarness(resolvedIdentity(["public"]), {
-      execute,
-    });
+    const { bot, calls } = createHarness(
+      resolvedIdentity(["public"], false, ["auction"]),
+      {
+        execute,
+      },
+    );
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
     expect(execute).not.toHaveBeenCalled();
@@ -2746,6 +2723,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["admin"],
+        rights: ["hub", "auction"],
       },
       intent: "change-meetup-state",
       action: "hold",
@@ -2865,6 +2843,7 @@ describe("presentation adapter", () => {
               kind: "resolved",
               identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
               globalRoles: ["member"],
+              rights: ["hub", "auction"],
               blocked: false,
             }
           : { kind: "unavailable", cause: new Error("down") },
@@ -2960,6 +2939,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["admin"],
+        rights: ["hub", "auction"],
       },
       intent: "update-meetup-field",
       field: "venue",
@@ -3121,6 +3101,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["admin"],
+        rights: ["hub", "auction"],
       },
       intent: "change-meetup-state",
       action: "cancel",
@@ -3201,6 +3182,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["admin"],
+        rights: ["hub", "auction"],
       },
       intent: "publish-meetup",
       meetupId: visible.id,
@@ -3377,6 +3359,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["member"],
+        rights: ["hub", "auction"],
       },
       intent: "list-visible-meetups",
       requestId: expect.any(String),
@@ -3711,6 +3694,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["member"],
+        rights: ["hub", "auction"],
       },
       intent: "view-meetup",
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
@@ -3772,6 +3756,7 @@ describe("presentation adapter", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["member"],
+        rights: ["hub", "auction"],
       },
       intent: "view-meetup",
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
@@ -4093,6 +4078,7 @@ describe("presentation adapter", () => {
           kind: "resolved",
           identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
           globalRoles: ["member"],
+          rights: ["hub", "auction"],
           blocked: false,
         };
       },
@@ -4115,6 +4101,7 @@ describe("presentation adapter", () => {
           kind: "resolved",
           identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
           globalRoles: ["member"],
+          rights: ["hub", "auction"],
           blocked: false,
         };
       },
@@ -6273,6 +6260,7 @@ describe("deferred publication frames", () => {
   const admin = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
     globalRoles: ["admin"],
+    rights: ["hub", "auction"],
   };
 
   function scheduledDraft(): MeetupSnapshot {
@@ -7151,6 +7139,7 @@ describe("past meetup date", () => {
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
         globalRoles: ["admin"],
+        rights: ["hub", "auction"],
       },
       intent: "set-meetup-field",
       field: "schedule",

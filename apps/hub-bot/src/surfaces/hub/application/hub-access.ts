@@ -1,3 +1,5 @@
+import type { AccessRight } from "../../../auction-ui/index.js";
+
 // `declined` виден только на `/start`: его несёт исход входа, а разрешение
 // личности на остальных действиях его не знает (ADR-060, пункт 13).
 export type HubAccess = "admitted" | "pending" | "declined" | "blocked";
@@ -28,8 +30,8 @@ export const blockedHubAccessText = `Доступ к Solguficky Hub закрыт
 
 Если считаешь, что это ошибка, обратись к администратору в общем чате сообщества.`;
 
-// Отказ в `member` — не блокировка: аукцион он не отнимает, а новую заявку на
-// хаб человек не подаёт, пока администратор не пересмотрит решение.
+// Отказ в `member` — не блокировка: право аукциона он не отнимает, а новую
+// заявку на хаб человек не подаёт, пока администратор не пересмотрит решение.
 export const declinedHubAccessText = `Заявка на доступ отклонена.
 
 Если считаешь, что это ошибка, обратись к администратору в общем чате сообщества.`;
@@ -59,38 +61,20 @@ export const hubAccessErrors = {
   blocked: "hub_access_blocked",
 } as const;
 
-const memberCircleRoles = ["admin", "maintainer", "member"] as const;
-
-/** Круг `member` хаба: Identity отдаёт роли плоско и вложенность не разворачивает. */
-export function inMemberCircle(globalRoles: readonly string[]): boolean {
-  return memberCircleRoles.some((role) => globalRoles.includes(role));
-}
-
+/**
+ * Хаб пускает по праву хаба, которое вывел Identity (ADR-064, пункт 6): круга и
+ * вложенности бот не знает. Гостю и постороннему — заявка на участника, без
+ * сходок, аукциона и намёка на бот аукциона (RFC-015, С-4).
+ */
 export function decideHubAccess(
-  globalRoles: readonly string[],
+  rights: readonly AccessRight[],
   blocked: boolean,
 ): HubAccess {
   if (blocked) {
     return "blocked";
   }
-  if (inMemberCircle(globalRoles)) {
+  if (rights.includes("hub")) {
     return "admitted";
   }
   return "pending";
-}
-
-/**
- * Ссылка в бот аукциона под кадром отказа хаба (ADR-044; PER-455): только у
- * человека с `public` вне круга `member`. Отказ в `member` аукцион не отнимает,
- * поэтому `declined` ссылку получает; блокировка отнимает всё.
- */
-export function offersAuctionBot(
-  access: Exclude<HubAccess, "admitted">,
-  globalRoles: readonly string[],
-): boolean {
-  return (
-    access !== "blocked" &&
-    globalRoles.includes("public") &&
-    !inMemberCircle(globalRoles)
-  );
 }

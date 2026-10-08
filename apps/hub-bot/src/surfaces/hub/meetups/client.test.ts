@@ -17,7 +17,7 @@ import {
 import { createMeetupsAdapter } from "./client.js";
 import type { MeetupSnapshot } from "./port.js";
 
-const person = { identityId: "viewer-id", globalRoles: [] };
+const person = { identityId: "viewer-id", globalRoles: [], rights: [] };
 
 function storedMeetup(version: number): MeetupSnapshot {
   return {
@@ -122,6 +122,7 @@ describe("Meetups client", () => {
     const viewer = {
       identityId: "viewer-id",
       globalRoles: ["maintainer", "admin", "member", "public", "owner"],
+      rights: [],
     };
 
     await meetups.listVisible(viewer, { requestId: "request-1" });

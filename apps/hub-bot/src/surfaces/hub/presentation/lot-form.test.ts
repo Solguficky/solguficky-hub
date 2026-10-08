@@ -45,6 +45,7 @@ function identity(globalRoles: readonly string[]) {
       kind: "resolved" as const,
       identityId,
       globalRoles,
+      rights: ["hub", "auction"],
       blocked: false,
     }),
   } satisfies IdentityResolver;

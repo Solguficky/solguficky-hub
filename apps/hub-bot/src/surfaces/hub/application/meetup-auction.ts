@@ -1,6 +1,5 @@
 import { rpcMeta } from "../../../core/rpc-metadata.js";
 import type { MeetupAuctions } from "../auction/port.js";
-import { inMemberCircle } from "./hub-access.js";
 import type {
   ExecuteRequest,
   ExecuteResult,
@@ -15,7 +14,7 @@ type WithMeetup = { meetup: { id: string }; auction?: MeetupAuctionView };
 // Аукцион у сходки (PER-307; ADR-047, дополнение 2026-10-03). Аукцион —
 // расширение сходки: карточка показывает его вход, администратор включает его
 // с карточки. Решения о праве здесь нет — его принимает Auction, спрашивая
-// Meetups; край лишь не зовёт Auction за человека вне круга `member`.
+// Meetups; край лишь не зовёт Auction за человека без права хаба.
 export function createMeetupAuction(auctions: MeetupAuctions) {
   // Аукцион сходки на карточке. Отказ Auction карточку не роняет: сходка
   // читается из Meetups и остаётся верной, а ряда аукциона в кадре нет.
@@ -23,7 +22,7 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
     card: T,
     request: { identity: Person; requestId?: string; deadlineAt?: number },
   ): Promise<T> {
-    if (!inMemberCircle(request.identity.globalRoles)) return card;
+    if (!request.identity.rights.includes("hub")) return card;
     const result = await auctions.getMeetupAuction(
       request.identity,
       card.meetup.id,
@@ -43,7 +42,7 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
     request: Extract<ExecuteRequest, { intent: "enable-auction" }>,
     viewCard: () => Promise<ExecuteResult>,
   ): Promise<ExecuteResult> {
-    if (!inMemberCircle(request.identity.globalRoles)) {
+    if (!request.identity.rights.includes("hub")) {
       return { kind: "dependency-rejected", reason: "forbidden" };
     }
     const enabled = await auctions.enableAuction(

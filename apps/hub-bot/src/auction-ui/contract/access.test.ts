@@ -41,16 +41,16 @@ describe("access matrix self-check", () => {
     ]);
   });
 
-  it("fails when the surface requests another circle", async () => {
-    const wrongCircle: AccessMatrixApp = (ports) => (input) =>
+  it("fails when the surface applies to another queue", async () => {
+    const wrongQueue: AccessMatrixApp = (ports) => (input) =>
       appOf("hub")({
         ...ports,
         entry: {
           requestRole: (request) =>
-            ports.entry.requestRole({ ...request, requestedRole: "public" }),
+            ports.entry.requestRole({ ...request, queue: "auction" }),
         },
       })(input);
-    expect(await kindsOf(wrongCircle, "hub: newcomer starts")).toEqual([
+    expect(await kindsOf(wrongQueue, "hub: newcomer starts")).toEqual([
       "wrong-identity-calls",
     ]);
   });
@@ -84,7 +84,7 @@ describe("access matrix self-check", () => {
       await ports.identity.resolveIdentity(input.from);
       return "admitted";
     };
-    expect(await kindsOf(idle, "hub: member presses")).toEqual([
+    expect(await kindsOf(idle, "hub: hub right presses")).toEqual([
       "auction-not-reached",
     ]);
   });
@@ -127,6 +127,25 @@ describe("access matrix self-check", () => {
     expect(violations[0]?.detail).toContain('"attempt":2');
   });
 
+  // Бот аукциона, который пускает участника к торгам, как раньше пускал
+  // `public`: подделанное нажатие дошло бы до Auction.
+  it("fails when the auction bot lets a member trade", async () => {
+    const lenient: AccessMatrixApp = (ports) => (input) =>
+      appOf("auction")({
+        ...ports,
+        identity: {
+          resolveIdentity: async (user) => ({
+            ...(await ports.identity.resolveIdentity(user)),
+            rights: ["auction"],
+          }),
+        },
+      })(input);
+    expect(await kindsOf(lenient, "auction: hub right presses")).toEqual([
+      "auction-reached",
+      "wrong-answer",
+    ]);
+  });
+
   it("fails when the blocked get the answer of the pending", async () => {
     const flattening: AccessMatrixApp = (ports) => async (input) => {
       const answer = await appOf("hub")(ports)(input);
@@ -140,7 +159,7 @@ describe("access matrix self-check", () => {
     ]);
   });
 
-  it("fails when an unknown outcome enters by the roles", async () => {
+  it("fails when an unknown outcome enters by the rights", async () => {
     const trusting: AccessMatrixApp = (ports) => async (input) => {
       const answer = await appOf("hub")(ports)(input);
       return answer === "unavailable" ? "admitted" : answer;
@@ -154,7 +173,7 @@ describe("access matrix self-check", () => {
     const broken: AccessMatrixApp = () => async () => {
       throw new Error("boom");
     };
-    expect(await kindsOf(broken, "hub: member starts")).toEqual([
+    expect(await kindsOf(broken, "hub: hub right starts")).toEqual([
       "wrong-identity-calls",
       "app-threw",
     ]);
@@ -171,11 +190,11 @@ describe("access matrix self-check", () => {
 
   it("checks every row of the matrix", () => {
     expect(ACCESS_MATRIX_CASES.map((each) => each.name)).toEqual([
-      "hub: member starts",
-      "hub: member presses",
+      "hub: hub right starts",
+      "hub: hub right presses",
       "hub: allowlisted starts",
-      "hub: public only starts",
-      "hub: public only presses",
+      "hub: auction right only starts",
+      "hub: auction right only presses",
       "hub: newcomer starts",
       "hub: newcomer presses",
       "hub: declined starts",
@@ -183,9 +202,13 @@ describe("access matrix self-check", () => {
       "hub: blocked starts",
       "hub: blocked presses",
       "hub: unknown outcome",
-      "auction: public starts",
-      "auction: public presses",
-      "auction: member starts",
+      "auction: auction right starts",
+      "auction: auction right presses",
+      "auction: hub right starts",
+      "auction: hub right presses",
+      "auction: all rights start",
+      "auction: all rights press",
+      "auction: hub right only starts",
       "auction: allowlisted starts",
       "auction: newcomer starts",
       "auction: newcomer presses",

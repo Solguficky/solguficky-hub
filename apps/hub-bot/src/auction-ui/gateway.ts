@@ -1,11 +1,11 @@
 import { AuctionCallbackError, parseAuctionCallback } from "./callback-data.js";
 import { dispatchAuctionIntent } from "./dispatcher.js";
 import type {
+  AccessRight,
+  ApplicationQueue,
   AuctionBotPorts,
-  GlobalRole,
   ResolvedIdentity,
   RoleRequestAnswer,
-  SurfaceCircle,
   TelegramUser,
 } from "./ports.js";
 import type { AuctionScreenBody } from "./screen.js";
@@ -21,11 +21,11 @@ export type AuctionSurface = {
 
 // Узкая модель update: grammY-update разбирает приложение, а пакет не знает
 // типов Telegram. `/start` сюда не приходит: это вход на поверхность, а не
-// аукционное действие, и его политика — `requestedRole` и `decideEntry` ниже.
+// аукционное действие, и его политика — `applicationQueue` и `decideEntry` ниже.
 //
 // Личность приложение разрешает само, один раз на update, и приносит сюда:
 // по тому же ответу оно собирает свою оболочку. Второй вызов Identity внутри
-// шлюза дал бы оболочке и телу два разных ответа, и при отзыве роли между
+// шлюза дал бы оболочке и телу два разных ответа, и при отзыве права между
 // вызовами они разошлись бы (ADR-044, «Доступ как обязательный шлюз»).
 //
 // `user` — кто прислал update: Telegram id становится адресатом вопроса, а
@@ -42,13 +42,16 @@ export type AuctionUpdate = {
 };
 
 export type AuctionDenial =
-  // Нужной роли нет: заявка на рассмотрении. Текст выбирает оболочка
+  // Нужного права нет: заявка на рассмотрении. Текст выбирает оболочка
   // поверхности.
   | "not-admitted"
+  // Человек в сообществе: у него право хаба, и бот аукциона отвечает ему
+  // только переходом в бот хаба (ADR-064, пункт 2). В хабе не возникает.
+  | "in-community"
   // Прошлая заявка на круг поверхности отклонена (ADR-060, пункт 13). Виден
   // только на `/start`: разрешение личности этого исхода не несёт.
   | "declined"
-  // Отметка блокировки: отказ, отличный от отказа человеку без ролей.
+  // Отметка блокировки: отказ, отличный от отказа человеку без прав.
   | "blocked";
 
 export type AuctionResult =
@@ -56,27 +59,43 @@ export type AuctionResult =
   | { kind: "denied"; reason: AuctionDenial }
   | { kind: "unreadable"; error: AuctionCallbackError };
 
-// Роли, которые пускает поверхность. Identity отдаёт плоский набор и
-// вложенность кругов не разворачивает (ADR-043), поэтому хаб перечисляет
-// внутренний круг целиком, а аукцион принимает `public`, которую при допуске
-// получает и `member`.
-const ADMITTED: Record<AuctionSurface["kind"], readonly GlobalRole[]> = {
-  hub: ["admin", "maintainer", "member"],
-  auction: ["public"],
-};
-
-function admits(
+// Политика поверхности по правам, которые вывел Identity (ADR-064, пересмотр
+// ADR-044): хаб требует право хаба, бот аукциона — право аукциона и отсутствие
+// права хаба. Ни роли, ни вложенности кругов шлюз не знает. `undefined` —
+// пустить.
+function refusal(
   surface: AuctionSurface["kind"],
-  identity: ResolvedIdentity,
-): boolean {
-  return identity.globalRoles.some((role) => ADMITTED[surface].includes(role));
+  rights: readonly AccessRight[],
+): Exclude<AuctionDenial, "declined" | "blocked"> | undefined {
+  switch (surface) {
+    case "hub":
+      return rights.includes("hub") ? undefined : "not-admitted";
+    case "auction":
+      if (rights.includes("hub")) return "in-community";
+      return rights.includes("auction") ? undefined : "not-admitted";
+    default: {
+      const _exhaustive: never = surface;
+      return _exhaustive;
+    }
+  }
+}
+
+// Отказ на действии разрешённой личности или `undefined` — пустить. Ту же
+// проверку поверхность повторяет на своих экранах, чтобы политика была одна.
+export function admission(
+  surface: AuctionSurface["kind"],
+  identity: Pick<ResolvedIdentity, "rights" | "blocked">,
+): AuctionDenial | undefined {
+  // У заблокированного прав нет по контракту; отметка выбирает текст отказа.
+  if (identity.blocked) return "blocked";
+  return refusal(surface, identity.rights);
 }
 
 // Единственная публичная точка продуктового update (ADR-044, «Доступ как
 // обязательный шлюз»): сначала политика поверхности, затем диспетчер.
 //
-// Политика нажатия — проверка круга по разрешённой личности; вход на `/start`
-// решает `decideEntry`. Обе идут по одной таблице `ADMITTED`.
+// Политика нажатия — проверка права по разрешённой личности; вход на `/start`
+// решает `decideEntry`. Обе идут через одну функцию `refusal`.
 export async function handleAuctionUpdate(
   surface: AuctionSurface,
   update: AuctionUpdate,
@@ -92,12 +111,8 @@ export async function handleAuctionUpdate(
   // Своя кнопка, даже нечитаемая, — уже действие аукциона: отказ
   // заблокированному положен на любом из них.
   const { identity } = update;
-  if (!admits(surface.kind, identity)) {
-    return {
-      kind: "denied",
-      reason: identity.blocked ? "blocked" : "not-admitted",
-    };
-  }
+  const denial = admission(surface.kind, identity);
+  if (denial !== undefined) return { kind: "denied", reason: denial };
   if (!parsed.ok) return { kind: "unreadable", error: parsed.error };
   const { input, user } = update;
   // Ответом служит только вопрос, и только тому, кому он задан: после
@@ -116,10 +131,7 @@ export async function handleAuctionUpdate(
   const body = await dispatchAuctionIntent({
     auction: surface.ports.auction,
     operations: surface.ports.operations,
-    viewer: {
-      identityId: identity.identityId,
-      globalRoles: identity.globalRoles,
-    },
+    viewer: identity.viewer,
     user,
     intent: parsed.intent,
     ...(input.kind === "reply"
@@ -129,15 +141,17 @@ export async function handleAuctionUpdate(
   return { kind: "screen", body };
 }
 
-// Круг, который поверхность запрашивает у Identity на `/start` (ADR-060,
-// пункт 7).
-const REQUESTED: Record<AuctionSurface["kind"], SurfaceCircle> = {
-  hub: "member",
-  auction: "public",
+// Очередь, в которую поверхность ставит заявку на `/start` (ADR-064, пункт 8):
+// хаб — заявку на участника, бот аукциона — на право аукциона.
+const QUEUES: Record<AuctionSurface["kind"], ApplicationQueue> = {
+  hub: "community",
+  auction: "auction",
 };
 
-export function requestedRole(surface: AuctionSurface["kind"]): SurfaceCircle {
-  return REQUESTED[surface];
+export function applicationQueue(
+  surface: AuctionSurface["kind"],
+): ApplicationQueue {
+  return QUEUES[surface];
 }
 
 export type SurfaceEntry =
@@ -147,40 +161,40 @@ export type SurfaceEntry =
   // заявке: приложение отвечает как на сбой соседа и пишет нарушение в лог.
   | { kind: "unknown-outcome"; identityId: string };
 
-// Политика входа на `/start` — одна для обеих поверхностей (ADR-044, «Доступ
-// как обязательный шлюз»; ADR-060). Вызов `RequestRole` заменяет разрешение
-// личности: приложение зовёт его само, один раз на update, с кругом из
-// `requestedRole`, и приносит ответ сюда. Допуск решает роль — той же
-// таблицей, что и на нажатии, — а исход выбирает отказ.
+// Политика входа на `/start` — одна для обеих поверхностей (ADR-064, пересмотр
+// ADR-044 и ADR-060, пункт 7). Вызов `RequestRole` заменяет разрешение
+// личности: приложение зовёт его само, один раз на update, с очередью из
+// `applicationQueue`, и приносит ответ сюда. Допуск решает право — той же
+// функцией, что и на нажатии, — а исход выбирает отказ.
 export function decideEntry(
   surface: AuctionSurface["kind"],
   answer: RoleRequestAnswer,
 ): SurfaceEntry {
-  const { identityId, globalRoles, outcome } = answer;
+  const { viewer, rights, outcome } = answer;
+  const { identityId } = viewer;
   const denied = (reason: AuctionDenial): SurfaceEntry => ({
     kind: "denied",
     reason,
     identityId,
   });
+  if (outcome === "unspecified") return { kind: "unknown-outcome", identityId };
+  if (outcome === "blocked") return denied("blocked");
+  // Участник в боте аукциона получает переход при любом исходе очереди
+  // аукциона: о заявке ему здесь отвечать нечего (ADR-064, пункт 2).
+  const refused = refusal(surface, rights);
+  if (refused === "in-community") return denied(refused);
   switch (outcome) {
-    case "blocked":
-      return denied("blocked");
     case "declined":
       return denied("declined");
     case "pending":
       return denied("not-admitted");
     case "already-held":
-    case "granted-by-allowlist": {
-      const identity = { identityId, globalRoles, blocked: false };
-      // Identity считает круг по вложенности, а поверхность — по плоскому
-      // набору. Разошлись — следующее же нажатие отказало бы, поэтому вход
-      // отказывает так же, как оно.
-      return admits(surface, identity)
-        ? { kind: "entered", identity }
-        : denied("not-admitted");
-    }
-    case "unspecified":
-      return { kind: "unknown-outcome", identityId };
+    case "granted-by-allowlist":
+      // Исход говорит об очереди, а пускает право: разошлись — следующее же
+      // нажатие отказало бы, поэтому вход отказывает так же, как оно.
+      return refused === undefined
+        ? { kind: "entered", identity: { viewer, rights, blocked: false } }
+        : denied(refused);
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

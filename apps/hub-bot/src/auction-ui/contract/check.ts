@@ -4,8 +4,13 @@ import {
   encodeAuctionCallback,
   MAX_FEED_PAGE,
 } from "../callback-data.js";
-import type { AuctionResult, AuctionUpdate } from "../gateway.js";
 import type {
+  AuctionResult,
+  AuctionSurface,
+  AuctionUpdate,
+} from "../gateway.js";
+import type {
+  AccessRight,
   AuctionBotPorts,
   BidRefusal,
   CommandOutcome,
@@ -18,6 +23,7 @@ import type {
   ProxyLimitRefusal,
   ResolvedIdentity,
   TelegramUser,
+  Viewer,
 } from "../ports.js";
 import type { AuctionScreenBody, CommandResult } from "../screen.js";
 
@@ -130,8 +136,8 @@ export type ContractViolation = {
   detail: string;
 };
 
-// Одна установленная личность и один снимок Auction для обеих фабрик. Роли
-// пускают её на обе поверхности: `member` — в хаб, `public` — в бот аукциона.
+// Один человек и один снимок Auction для обеих фабрик. Права у него свои на
+// каждой поверхности — те, с которыми она пускает (`contractIdentity` ниже).
 export const CONTRACT_USER: TelegramUser = { telegramUserId: 424242 };
 
 // Тот же человек с ником: экран выбора имени предлагает его.
@@ -146,16 +152,30 @@ export const CONTRACT_OP_IDS = [
   "01929b7e-5c1d-7a3f-8e4b-00000000c002",
 ] as const;
 
-export const CONTRACT_IDENTITY: ResolvedIdentity = {
+// Зритель один на обе поверхности: роли едут в Auction транзитом и допуска не
+// решают, поэтому вызовы Auction у таблицы общие.
+export const CONTRACT_VIEWER: Viewer = {
   identityId: "01929b7e-5c1d-7a3f-8e4b-000000000001",
   globalRoles: ["member", "public"],
-  blocked: false,
 };
 
-const VIEWER = {
-  identityId: CONTRACT_IDENTITY.identityId,
-  globalRoles: CONTRACT_IDENTITY.globalRoles,
-};
+const CONTRACT_RIGHTS: Record<AuctionSurface["kind"], readonly AccessRight[]> =
+  {
+    hub: ["hub", "auction"],
+    auction: ["auction"],
+  };
+
+export function contractIdentity(
+  surface: AuctionSurface["kind"],
+): ResolvedIdentity {
+  return {
+    viewer: CONTRACT_VIEWER,
+    rights: CONTRACT_RIGHTS[surface],
+    blocked: false,
+  };
+}
+
+const VIEWER = CONTRACT_VIEWER;
 
 export const CONTRACT_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
 const EMPTY_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a2";
@@ -518,7 +538,7 @@ const LOT_AFTER_BID: LotView = {
   status: {
     kind: "trading",
     currentPrice: rub(1300),
-    leaderId: CONTRACT_IDENTITY.identityId,
+    leaderId: CONTRACT_VIEWER.identityId,
     deadline: "2026-10-10T18:00:00Z",
     phase: "online",
   },
@@ -710,7 +730,7 @@ const LOT_LED_BY_VIEWER: LotView = {
   status: {
     kind: "trading",
     currentPrice: rub(1200),
-    leaderId: CONTRACT_IDENTITY.identityId,
+    leaderId: CONTRACT_VIEWER.identityId,
     deadline: "2026-10-10T18:00:00Z",
     phase: "online",
   },
@@ -719,7 +739,7 @@ const LOT_LED_BY_VIEWER: LotView = {
 const LED_BY_VIEWER: ContractAuction = {
   ...AUCTION,
   lots: [LOT_LED_BY_VIEWER],
-  names: { ...NAMES, [CONTRACT_IDENTITY.identityId]: "@me" },
+  names: { ...NAMES, [CONTRACT_VIEWER.identityId]: "@me" },
 };
 
 const pending = (command: "bid" | "proxy", amount: number) => ({
@@ -1388,6 +1408,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
 export function spyPorts(
   calls: PortCall[],
   snapshot: ContractAuction,
+  identity: ResolvedIdentity = contractIdentity("hub"),
 ): AuctionBotPorts {
   // Очереди ответов команд и `op_id`: каждый вызов берёт следующий.
   const bids = [...(snapshot.bids ?? [])];
@@ -1404,7 +1425,7 @@ export function spyPorts(
     identity: {
       async resolveIdentity(request) {
         calls.push({ port: "identity", method: "resolveIdentity", request });
-        return CONTRACT_IDENTITY;
+        return identity;
       },
     },
     auction: {
@@ -1471,11 +1492,14 @@ function callbackDataOf(body: AuctionScreenBody): string[] {
 }
 
 export async function checkAuctionContractCase(
+  surface: AuctionSurface["kind"],
   createApp: AuctionContractApp,
   contractCase: AuctionContractCase,
 ): Promise<ContractViolation[]> {
   const calls: PortCall[] = [];
-  const handle = createApp(spyPorts(calls, contractCase.auction));
+  const handle = createApp(
+    spyPorts(calls, contractCase.auction, contractIdentity(surface)),
+  );
   const violation = (
     kind: ContractViolation["kind"],
     detail: unknown,
@@ -1564,6 +1588,7 @@ export async function checkAuctionContractCase(
 // Пустая таблица — нарушение, а не зелёный прогон: suite без намерений не
 // проверяет подключение ничем.
 export async function checkAuctionContract(
+  surface: AuctionSurface["kind"],
   createApp: AuctionContractApp,
   cases: readonly AuctionContractCase[] = AUCTION_CONTRACT_CASES,
 ): Promise<ContractViolation[]> {
@@ -1572,7 +1597,7 @@ export async function checkAuctionContract(
   }
   const perCase = await Promise.all(
     cases.map((contractCase) =>
-      checkAuctionContractCase(createApp, contractCase),
+      checkAuctionContractCase(surface, createApp, contractCase),
     ),
   );
   return perCase.flat();

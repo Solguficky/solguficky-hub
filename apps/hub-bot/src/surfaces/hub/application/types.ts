@@ -1,4 +1,4 @@
-import type { LotView } from "../../../auction-ui/index.js";
+import type { AccessRight, LotView } from "../../../auction-ui/index.js";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
@@ -12,7 +12,14 @@ import type {
   NotificationCategory,
 } from "../notifications/port.js";
 
-export type Person = { identityId: string; globalRoles: readonly string[] };
+// Человек, каким его разрешил Identity. Допуск в хаб решают `rights`; роли
+// едут транзитом в Meetups и Auction, а «Управление» до PER-534 читает
+// по ним администратора.
+export type Person = {
+  identityId: string;
+  globalRoles: readonly string[];
+  rights: readonly AccessRight[];
+};
 // Как карточка называет автора (PER-404): самому автору — «вы», остальным —
 // ник, который Identity отдаёт только для действующего администратора.
 // Отсутствие поля в результате — строки автора нет: ника нет, Identity

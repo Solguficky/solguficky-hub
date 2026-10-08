@@ -8,6 +8,7 @@ import {
   type RecordedCall,
 } from "../../../../testkit/harness.js";
 import {
+  type AccessRight,
   encodeAuctionCallback,
   type LotView,
 } from "../../../auction-ui/index.js";
@@ -74,12 +75,19 @@ const lot: LotView = {
   },
 };
 
-function identity(globalRoles: readonly string[], blocked = false) {
+// Пускает право хаба, роли едут транзитом. По умолчанию права участника;
+// гостю тест передаёт их явно.
+function identity(
+  globalRoles: readonly string[],
+  blocked = false,
+  rights: readonly AccessRight[] = blocked ? [] : ["hub", "auction"],
+) {
   return {
     resolve: async () => ({
       kind: "resolved" as const,
       identityId,
       globalRoles,
+      rights,
       blocked,
     }),
   } satisfies IdentityResolver;
@@ -218,14 +226,16 @@ function harness(
   auction: ReturnType<typeof fakeAuction>,
   options: Omit<HarnessOptions, "auction"> & {
     blocked?: boolean;
+    rights?: readonly AccessRight[];
     snapshot?: MeetupSnapshot;
     meetupsDown?: boolean;
     presentation?: "rich" | "plain";
   } = {},
 ) {
-  const { blocked, snapshot, meetupsDown, presentation, ...rest } = options;
+  const { blocked, rights, snapshot, meetupsDown, presentation, ...rest } =
+    options;
   return createHarness(
-    identity(roles, blocked),
+    identity(roles, blocked, rights),
     createDispatcher(
       fakeMeetups(snapshot, meetupsDown),
       undefined,
@@ -392,9 +402,11 @@ describe("meetup card auction row", () => {
     expect(JSON.stringify(card)).not.toContain("Лоты");
   });
 
-  it("does not call Auction for a person outside the member circle", async () => {
+  it("does not call Auction for a person without the hub right", async () => {
     const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness(["public"], auction);
+    const { bot, calls } = harness(["public"], auction, {
+      rights: ["auction"],
+    });
     await bot.init();
     await bot.handleUpdate(press(`v1:view:${meetupToken}`));
     await bot.handleUpdate(press(feedData));
