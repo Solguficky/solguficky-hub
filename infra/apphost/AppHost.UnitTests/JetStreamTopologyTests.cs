@@ -72,9 +72,8 @@ public class JetStreamTopologyTests
     [Fact]
     public void Durables_HubBot_ReadsOnlyNotificationFacts() =>
         JetStreamTopology.Durables
-            .Where(durable => durable.Durable.StartsWith("hub-bot-", StringComparison.Ordinal))
-            .Select(durable => durable.Durable)
-            .ShouldBe(["hub-bot-notifications-events"]);
+            .Single(durable => durable.Durable == "hub-bot-notifications-events")
+            .FilterSubject.ShouldBe("events.notifications.notification_created.hub");
 
     /// <summary>
     /// Бот аукциона — второй канал доставки (PER-328): свой durable на тех же
@@ -84,9 +83,8 @@ public class JetStreamTopologyTests
     [Fact]
     public void Durables_AuctionBot_ReadsNotificationFactsOnItsOwnDurable() =>
         JetStreamTopology.Durables
-            .Where(durable => durable.Durable.StartsWith("auction-bot-", StringComparison.Ordinal))
-            .Select(durable => durable.Durable)
-            .ShouldBe(["auction-bot-notifications-events"]);
+            .Single(durable => durable.Durable == "auction-bot-notifications-events")
+            .FilterSubject.ShouldBe("events.notifications.notification_created.auction");
 
     /// <summary>
     /// Запись журнала обязана пережить последнюю повторную выдачу своего
@@ -125,7 +123,10 @@ public class JetStreamTopologyTests
 
         foreach (var durable in JetStreamTopology.Durables)
         {
-            durable.FilterSubject.ShouldBe(subjects[durable.Stream]);
+            if (!durable.FilterSubject.StartsWith("events.notifications.notification_created.", StringComparison.Ordinal))
+            {
+                durable.FilterSubject.ShouldBe(subjects[durable.Stream]);
+            }
         }
     }
 

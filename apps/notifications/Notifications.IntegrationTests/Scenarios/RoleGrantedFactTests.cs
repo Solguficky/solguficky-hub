@@ -44,6 +44,36 @@ public class RoleGrantedFactTests
         fact.RoleGranted.Role.ShouldBe(GlobalRole.Admin);
         fact.HasNotAfter.ShouldBeTrue();
         fact.HasRequestId.ShouldBeFalse();
+        facts.Single().Subject.ShouldBe("events.notifications.notification_created.hub");
+    }
+
+    [Fact]
+    public async Task When_AdminGrantedToGuestAndClosesApplication_Expect_RoleFactInHub()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+        await using var nats = await NatsUnderTest.Start();
+        await Person(db, AdminCircle);
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var applicant = EventFactory.NewId();
+
+        await nats.Publish("events.identity.application_submitted",
+            EventFactory.Application(applicant, 2, GlobalRole.Member, held: GlobalRole.Guest));
+        await Eventually(() => CountRows(db, "notification"), count => count == 1);
+
+        var grant = EventFactory.RoleGrant(applicant, 3, GlobalRole.Admin);
+        grant.State.Role = GlobalRole.Guest;
+        grant.State.Rights.Clear();
+        grant.State.Rights.Add([AccessRight.Auction, AccessRight.ManageMembership]);
+        await nats.Publish(RoleGrantedSubject, grant);
+
+        var facts = await Eventually(
+            nats.PublishedFacts,
+            published => published.Any(fact => fact.Fact.TypeCase == Notification.TypeOneofCase.RoleGranted));
+        var roleFact = facts.Single(fact => fact.Fact.TypeCase == Notification.TypeOneofCase.RoleGranted);
+        roleFact.Subject.ShouldBe("events.notifications.notification_created.hub");
+        (await CountRows(db, "notification")).ShouldBe(2);
+        (await AccessRequestWasWithdrawn(db, Guid.Parse(applicant))).ShouldBeTrue();
     }
 
     /// <summary>
@@ -140,4 +170,5 @@ public class RoleGrantedFactTests
         await using var connection = new NpgsqlConnection(db.ConnectionString);
         return await connection.ExecuteScalarAsync<long>("SELECT count(*) FROM notification WHERE type = 'role_granted';");
     }
+
 }

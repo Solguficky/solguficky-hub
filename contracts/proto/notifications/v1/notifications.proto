@@ -94,6 +94,11 @@ message Notification {
     // price of a lot; the recipient leads. Sent only to that bidder: a
     // subscription is not required.
     LotProxyRaised lot_proxy_raised = 19;
+
+    // The recipient's circle changed between guest and member. This fact is
+    // delivered by the bot of the previous circle; it carries both circles so
+    // that the channel can explain the transition without a link to another bot.
+    CircleChanged circle_changed = 20;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -303,4 +308,13 @@ message AccessGranted {
 message RoleGranted {
   // The granted role.
   identity.v1.GlobalRole role = 1;
+}
+
+// The person's active circle changed between guest and member.
+message CircleChanged {
+  // The circle the person had before the event.
+  identity.v1.GlobalRole previous_circle = 1;
+
+  // The circle the person has after the event.
+  identity.v1.GlobalRole current_circle = 2;
 }

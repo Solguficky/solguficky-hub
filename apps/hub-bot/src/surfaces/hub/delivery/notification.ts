@@ -1,4 +1,5 @@
 import { fromBinary } from "@bufbuild/protobuf";
+import type { Money as WireMoney } from "../../../../gen/auction/v1/auction_pb.js";
 import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
 import {
   type DateValue,
@@ -91,7 +92,13 @@ export type RenderableContent =
   | { kind: "access-granted" }
   // Роль, выданная вне заявки, — сегодня только администратора (PER-468).
   // Получает сам человек; кто выдал, контракт не несёт.
-  | { kind: "role-granted"; role: "admin" };
+  | { kind: "role-granted"; role: "admin" }
+  // Аукционные факты об участнике сообщества доставляет бот хаба (ADR-064).
+  | { kind: "lot-outbid"; lotId: string; currentPrice: NotificationMoney }
+  | { kind: "lot-proxy-raised"; lotId: string; currentPrice: NotificationMoney }
+  | { kind: "lot-purchased"; lotId: string; price: NotificationMoney };
+
+export type NotificationMoney = { minorUnits: number; currency: string };
 
 // Круги, на которые ставят заявку: хаб и аукцион.
 export type AccessCircle = "member" | "public";
@@ -205,15 +212,50 @@ function toContent(message: Notification): NotificationContent | undefined {
       return type.value.role === GlobalRole.ADMIN
         ? { kind: "role-granted", role: "admin" }
         : undefined;
-    // Ветки аукциона доставляет бот аукциона (PER-328): общий поток несёт их
-    // и сюда, и хаб подтверждает их без журнала и без отказа.
-    case "lotOutbid":
-    case "lotProxyRaised":
-    case "lotPurchased":
+    // PER-537 добавит текст и отправку; пока факт маршрутизирован в этот
+    // durable, но канал не должен трактовать известную ветку как дефект схемы.
+    case "circleChanged":
       return { kind: "foreign", type: type.case };
+    case "lotOutbid": {
+      const lotId = canonical(type.value.lotId);
+      const currentPrice = toMoney(type.value.currentPrice);
+      return lotId === undefined || currentPrice === undefined
+        ? undefined
+        : { kind: "lot-outbid", lotId, currentPrice };
+    }
+    case "lotProxyRaised": {
+      const lotId = canonical(type.value.lotId);
+      const currentPrice = toMoney(type.value.currentPrice);
+      return lotId === undefined || currentPrice === undefined
+        ? undefined
+        : { kind: "lot-proxy-raised", lotId, currentPrice };
+    }
+    case "lotPurchased": {
+      const lotId = canonical(type.value.lotId);
+      const price = toMoney(type.value.price);
+      return lotId === undefined || price === undefined
+        ? undefined
+        : { kind: "lot-purchased", lotId, price };
+    }
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };
   }
+}
+
+const CANONICAL_UUID =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const CURRENCY = /^[A-Z]{3}$/;
+
+function canonical(id: string): string | undefined {
+  return CANONICAL_UUID.test(id) ? id : undefined;
+}
+
+function toMoney(money: WireMoney | undefined): NotificationMoney | undefined {
+  if (money === undefined || !CURRENCY.test(money.currency)) return undefined;
+  const minorUnits = Number(money.minorUnits);
+  return Number.isSafeInteger(minorUnits) && minorUnits >= 0
+    ? { minorUnits, currency: money.currency }
+    : undefined;
 }
 
 // Пустое тело контракт запрещает: у поля нет значения «не указано». Тело из

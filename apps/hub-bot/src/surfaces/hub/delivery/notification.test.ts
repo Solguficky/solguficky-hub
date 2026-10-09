@@ -8,6 +8,7 @@ import {
 import {
   AccessGrantedSchema,
   AccessRequestedSchema,
+  CircleChangedSchema,
   CommunityAnnouncementSchema,
   MeetupAspect,
   type MeetupCard,
@@ -62,6 +63,25 @@ function published(
 }
 
 describe("decodeNotification", () => {
+  it("recognizes a circle-change fact pending the dedicated delivery slice", () => {
+    const decoded = decodeNotification(
+      published((message) => {
+        message.type = {
+          case: "circleChanged",
+          value: create(CircleChangedSchema, {
+            previousCircle: GlobalRole.GUEST,
+            currentCircle: GlobalRole.MEMBER,
+          }),
+        };
+      }),
+    );
+
+    expect(decoded).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "foreign", type: "circleChanged" } },
+    });
+  });
+
   it("decodes a published meetup with its schedule and request id", () => {
     expect(decodeNotification(published())).toEqual({
       kind: "ok",
@@ -102,8 +122,8 @@ describe("decodeNotification", () => {
     });
   });
 
-  // Ветку бота аукциона хаб узнаёт и отдаёт механике как чужую: общий поток
-  // несёт её каждому каналу, и это не отказ.
+  // Аукционные факты участника теперь приходят в hub subject и разбираются
+  // самим Hub Bot.
   it.each([
     [
       "lotOutbid",
@@ -136,7 +156,7 @@ describe("decodeNotification", () => {
       },
     ],
   ] as const)(
-    "hands the auction branch %s over as another channel's",
+    "decodes the auction branch %s for the hub recipient",
     (name, type) => {
       const decoded = decodeNotification(
         toBinary(
@@ -151,7 +171,16 @@ describe("decodeNotification", () => {
       );
       expect(decoded).toMatchObject({
         kind: "ok",
-        notification: { content: { kind: "foreign", type: name } },
+        notification: {
+          content: {
+            kind:
+              name === "lotOutbid"
+                ? "lot-outbid"
+                : name === "lotProxyRaised"
+                  ? "lot-proxy-raised"
+                  : "lot-purchased",
+          },
+        },
       });
     },
   );

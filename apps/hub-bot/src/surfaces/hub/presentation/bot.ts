@@ -1589,6 +1589,11 @@ async function handleCallback(
     // до разбора хаба они не доходят.
     const data = ctx.callbackQuery?.data ?? "";
     if (isAuctionCallback(data)) {
+      // Кнопка под адресным фактом сохраняет его в истории: снимаем trace-маркер
+      // перед parser аукционного дерева и открываем карточку новым сообщением.
+      const traced = data.startsWith("v1:t:auc:");
+      const auctionData = traced ? `v1:${data.slice("v1:t:".length)}` : data;
+      if (traced) ctx.fresh = true;
       useCase = "view_auction";
       const pressedId = ctx.callbackQuery?.message?.message_id;
       // «Отмена» под вопросом листа ставки: вопрос удаляется, экран приходит
@@ -1601,9 +1606,15 @@ async function handleCallback(
         ctx.fresh = ctx.pressedGone;
       }
       await dropOpenQuestions(ctx, questions, pressedId);
-      outcome = await handleAuctionCallback(ctx, runtime, data, lotPhotos, {
-        questions,
-      });
+      outcome = await handleAuctionCallback(
+        ctx,
+        runtime,
+        auctionData,
+        lotPhotos,
+        {
+          questions,
+        },
+      );
       return;
     }
     const pressed = parseCallback(ctx.callbackQuery?.data);

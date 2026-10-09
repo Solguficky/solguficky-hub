@@ -102,6 +102,22 @@ public static class FactFixtures
             """,
             new { Person = person, MeetupId = meetupId is null ? (Guid?)null : Guid.Parse(meetupId), Category = category, Enabled = enabled });
 
+    public static async Task<long> CountRows(IsolatedDatabase db, string table)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+        return await connection.ExecuteScalarAsync<long>($"SELECT count(*) FROM {table};");
+    }
+
+    public static async Task<bool> AccessRequestWasWithdrawn(IsolatedDatabase db, Guid applicant)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+        return await connection.ExecuteScalarAsync<bool>("""
+            SELECT withdrawn_at IS NOT NULL
+            FROM notification
+            WHERE type = 'access_requested' AND applicant_id = @Applicant;
+            """, new { Applicant = applicant });
+    }
+
     public static async Task Execute(IsolatedDatabase db, string sql, object parameters)
     {
         await using var connection = new NpgsqlConnection(db.ConnectionString);

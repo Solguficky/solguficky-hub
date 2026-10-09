@@ -16,6 +16,23 @@ namespace Notifications.IntegrationTests.Scenarios;
 public class AuctionOutbidTests
 {
     [Theory]
+    [InlineData("member", "events.notifications.notification_created.hub")]
+    [InlineData("guest", "events.notifications.notification_created.auction")]
+    public async Task When_OutbidRecipientHasCircle_Expect_FactOnCircleSubject(string circle, string subject)
+    {
+        using var db = Database();
+        await using var nats = await NatsUnderTest.Start();
+        var recipient = await Person(db, circle == "member" ? MemberCircle : GuestCircle);
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+
+        await nats.Publish(AuctionFeed.BidPlacedSubject,
+            EventFactory.Bid(EventFactory.NewId(), recipient.ToString()));
+
+        var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
+        published.Single().Subject.ShouldBe(subject);
+    }
+
+    [Theory]
     [InlineData(false)]
     [InlineData(true)]
     public async Task When_ManualOrFoldedProxyOutbids_Expect_OneAddressedFactWithoutReplicaOrSubscription(bool proxy)

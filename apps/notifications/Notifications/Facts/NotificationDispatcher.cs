@@ -81,7 +81,7 @@ public sealed class NotificationDispatcher(
     ILogger<NotificationDispatcher> logger) : BackgroundService
 {
     /// <summary>Subject адресного факта (docs/architecture/integration.md, «Notifications NATS»).</summary>
-    public const string Subject = "events.notifications.notification_created";
+    public const string Subject = NotificationSubjects.Base;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -151,7 +151,7 @@ public sealed class NotificationDispatcher(
     private async Task Publish(PendingNotification notification, CancellationToken cancellationToken)
     {
         var ack = await jetStream.PublishAsync(
-            Subject,
+            NotificationSubjects.For(notification.DeliverySurface),
             notification.Payload,
             opts: new NatsJSPubOpts { MsgId = notification.NotificationId.ToString() },
             cancellationToken: cancellationToken);

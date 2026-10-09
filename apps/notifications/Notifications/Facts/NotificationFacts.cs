@@ -45,6 +45,9 @@ public static class NotificationFacts
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string RoleGrantedType = "role_granted";
 
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string CircleChangedType = "circle_changed";
+
     /// <summary>
     /// Единственная роль, выдача которой — повод факта <see cref="RoleGranted" />:
     /// её даёт служебный вызов, а не заявка, белый список или вложенность
@@ -373,11 +376,42 @@ public static class NotificationFacts
         return notification;
     }
 
+    /// <summary>Факт о смене member/guest, доставляемый в прежний круг.</summary>
+    public static Notification CircleChanged(
+        Guid notificationId,
+        IdentityFact fact,
+        string previousRole,
+        string currentRole,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(
+            notificationId,
+            fact.IdentityId,
+            new Cause { IdentityEventId = fact.EventId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        notification.CircleChanged = new V1.CircleChanged
+        {
+            PreviousCircle = ContractCircle(previousRole),
+            CurrentCircle = ContractCircle(currentRole),
+        };
+        return notification;
+    }
+
     // Очередь у повода заявки обязательна; без неё разбор реплики событие не пропускает.
     private static Identity.V1.GlobalRole RequestableCircle(IdentityFact fact) =>
         fact.OccasionQueue is { } queue
             ? AccessQueues.ContractCircle(queue)
             : throw new ArgumentException("the occasion carries no queue", nameof(fact));
+
+    private static Identity.V1.GlobalRole ContractCircle(string role) => role switch
+    {
+        "member" => Identity.V1.GlobalRole.Member,
+        "guest" => Identity.V1.GlobalRole.Guest,
+        _ => throw new ArgumentOutOfRangeException(nameof(role), role, "role is not a requestable circle"),
+    };
 
     /// <summary>RFC 3339 в UTC, как остальные моменты контрактов.</summary>
     public static string Instant(DateTimeOffset moment) =>
