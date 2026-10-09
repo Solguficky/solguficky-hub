@@ -112,7 +112,7 @@ public sealed class NatsUnderTest : IAsyncDisposable
     /// Все адресные факты, опубликованные в шину к этому моменту, вместе с
     /// заголовком <c>Nats-Msg-Id</c> каждого.
     /// </summary>
-    public async Task<IReadOnlyList<(Notification Fact, string? MessageId)>> PublishedFacts()
+    public async Task<IReadOnlyList<PublishedNotification>> PublishedFacts()
     {
         var stream = await JetStream.GetStreamAsync(FactsStream);
         var total = (int)stream.Info.State.Messages;
@@ -122,17 +122,18 @@ public sealed class NatsUnderTest : IAsyncDisposable
         }
 
         var consumer = await JetStream.CreateOrderedConsumerAsync(FactsStream);
-        var facts = new List<(Notification, string?)>(total);
+        var facts = new List<PublishedNotification>(total);
 
         await foreach (var message in consumer.ConsumeAsync<byte[]>())
         {
-            if (message.Subject != NotificationDispatcher.Subject)
+            if (message.Subject is not ("events.notifications.notification_created.hub"
+                or "events.notifications.notification_created.auction"))
             {
-                throw new InvalidOperationException($"fact published to {message.Subject}, not {NotificationDispatcher.Subject}");
+                throw new InvalidOperationException($"fact published to unexpected subject {message.Subject}");
             }
 
             var messageId = message.Headers is { } headers && headers.TryGetValue("Nats-Msg-Id", out var id) ? id.ToString() : null;
-            facts.Add((Notification.Parser.ParseFrom(message.Data), messageId));
+            facts.Add(new PublishedNotification(Notification.Parser.ParseFrom(message.Data), messageId, message.Subject));
 
             if (facts.Count == total)
             {
@@ -197,5 +198,14 @@ public sealed class NatsUnderTest : IAsyncDisposable
 
         await connection.DisposeAsync();
         await container.DisposeAsync();
+    }
+}
+
+public sealed record PublishedNotification(Notification Fact, string? MessageId, string Subject)
+{
+    public void Deconstruct(out Notification fact, out string? messageId)
+    {
+        fact = Fact;
+        messageId = MessageId;
     }
 }

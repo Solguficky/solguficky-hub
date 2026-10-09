@@ -19,6 +19,7 @@ import {
 } from "./notification-message.js";
 
 const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cf";
+const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
 
 function content(
   when: MeetupWhen,
@@ -77,6 +78,23 @@ function grammyError(code: number, retryAfter?: number): GrammyError {
 }
 
 describe("renderNotification", () => {
+  it("renders an outbid for a community member with a traced lot button", () => {
+    const rendered = renderNotification({
+      kind: "lot-outbid",
+      lotId,
+      currentPrice: { minorUnits: 150_000, currency: "RUB" },
+    });
+
+    expect(rendered.text).toBe(
+      "Твою ставку на лот перебили. Текущая цена — 1 500 ₽.",
+    );
+    const button = rendered.keyboard?.inline_keyboard[0]?.[0];
+    expect(button?.text).toBe("К лоту");
+    expect(button).toMatchObject({
+      callback_data: expect.stringMatching(/^v1:t:auc:lot:/),
+    });
+  });
+
   it("names the meetup, when and where, with two buttons", () => {
     const message = renderNotification(
       content({

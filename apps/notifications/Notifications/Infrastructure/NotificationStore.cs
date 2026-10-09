@@ -30,7 +30,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     // собственном действии человеку не сообщают. NULL — исполнителя нет, и
     // исключать некого.
     private const string AudienceSql = """
-        SELECT person.identity_id AS IdentityId, COALESCE(preference.enabled, @Default) AS Enabled
+        SELECT person.identity_id AS IdentityId, COALESCE(preference.enabled, @Default) AS Enabled,
+               CASE WHEN person.role = 'guest' THEN 'auction' ELSE 'hub' END AS DeliverySurface
         FROM identity_replica AS person
         LEFT JOIN notification_preference AS preference
             ON preference.identity_id = person.identity_id
@@ -112,16 +113,18 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     private const string InsertSql = """
         INSERT INTO notification (
             notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at,
-            not_after, applicant_id, access_circle, application_version)
+            not_after, applicant_id, access_circle, application_version, delivery_surface)
         SELECT id, recipient, @Type, @CauseKind, @CauseId, @MeetupId, payload, @RequestId, @Now, @NotAfter,
-            @ApplicantId, @AccessCircle, @ApplicationVersion
-        FROM unnest(@Ids, @Recipients, @Payloads) AS fact (id, recipient, payload)
+            @ApplicantId, @AccessCircle, @ApplicationVersion, delivery_surface
+        FROM unnest(@Ids, @Recipients, @Payloads, @DeliverySurfaces)
+            AS fact (id, recipient, payload, delivery_surface)
         ON CONFLICT DO NOTHING;
         """;
 
     /// <summary>Адресат уже определён поводом: без разворота подписок и реплики людей.</summary>
     public static Task<int> AddAddressed(UnitOfWork work, Notification fact, string type, string causeKind,
-        string causeId, DateTimeOffset now, DateTimeOffset notAfter, CancellationToken cancellationToken) =>
+        string causeId, DateTimeOffset now, DateTimeOffset notAfter, CancellationToken cancellationToken,
+        string deliverySurface = NotificationSubjects.Hub) =>
         work.Execute(InsertSql, new
         {
             Type = type, CauseKind = causeKind, CauseId = causeId,
@@ -131,6 +134,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             Ids = new[] { Guid.Parse(fact.NotificationId) },
             Recipients = new[] { Guid.Parse(fact.RecipientId) },
             Payloads = new[] { fact.ToByteArray() },
+            DeliverySurfaces = new[] { deliverySurface },
         }, cancellationToken);
 
     // Снятие при отмене: неотправленное этой сходки больше не нужно — человек
@@ -176,7 +180,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     // блокировки, и счётчик попыток одной строки два прохода не делят. Порядок
     // между фактами контракт не обещает — каждый факт самостоятелен.
     private const string PendingSql = """
-        SELECT notification_id AS NotificationId, type AS Type, not_after AS NotAfter, payload AS Payload,
+        SELECT notification_id AS NotificationId, type AS Type, delivery_surface AS DeliverySurface,
+               not_after AS NotAfter, payload AS Payload,
                dispatch_attempts AS Attempts
         FROM notification
         WHERE dispatched_at IS NULL AND withdrawn_at IS NULL AND rejected_at IS NULL
@@ -341,21 +346,30 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     internal static async Task<ProducedFacts?> AddForIdentityEvent(
         UnitOfWork work,
         IdentityFact fact,
+        string? previousRole,
         DateTimeOffset now,
         TimeSpan staleAfter,
         CancellationToken cancellationToken)
     {
+        var transition = GetCircleTransition(previousRole, fact.Role);
+        var circleChanged = transition is { } changed
+            ? await AddCircleChanged(work, fact, changed, now, now + staleAfter, cancellationToken)
+            : FactCount.None;
+
         switch (fact.Occasion)
         {
             case IdentityOccasion.ApplicationSubmitted:
+                var requested = await AddAccessRequested(work, fact, now, now + staleAfter, cancellationToken);
                 return new ProducedFacts(
-                    NotificationFacts.AccessRequestedType,
-                    await AddAccessRequested(work, fact, now, now + staleAfter, cancellationToken));
+                    transition is null ? NotificationFacts.AccessRequestedType : NotificationFacts.CircleChangedType,
+                    Combine(requested, circleChanged));
 
             case IdentityOccasion.ApplicationAdmitted:
+                var granted = await AddAccessGranted(work, fact, AdmissionSurface(previousRole, fact), now,
+                    now + staleAfter, cancellationToken);
                 return new ProducedFacts(
-                    NotificationFacts.AccessGrantedType,
-                    await AddAccessGranted(work, fact, now, now + staleAfter, cancellationToken));
+                    transition is null ? NotificationFacts.AccessGrantedType : NotificationFacts.CircleChangedType,
+                    Combine(granted, circleChanged));
 
             case IdentityOccasion.RoleGranted:
             case IdentityOccasion.RightGranted:
@@ -367,11 +381,21 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 // снятое отменой у поводов Meetups.
                 if (fact is { Occasion: IdentityOccasion.RoleGranted, OccasionRole: NotificationFacts.RoleGrantedRole })
                 {
+                    var roleGranted = await AddRoleGranted(work, fact, now, now + staleAfter, cancellationToken);
                     return new ProducedFacts(
                         NotificationFacts.RoleGrantedType,
-                        await AddRoleGranted(work, fact, now, now + staleAfter, cancellationToken))
+                        Combine(roleGranted, circleChanged))
                     {
                         Withdrawn = withdrawn,
+                        WithdrawalReason = NotificationFacts.WithdrawnOnApplicationClosed,
+                    };
+                }
+
+                if (transition is not null)
+                {
+                    return new ProducedFacts(NotificationFacts.CircleChangedType, circleChanged)
+                    {
+                        Withdrawn = fact.Occasion == IdentityOccasion.RoleGranted ? withdrawn : null,
                         WithdrawalReason = NotificationFacts.WithdrawnOnApplicationClosed,
                     };
                 }
@@ -388,9 +412,14 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                     };
 
             default:
-                return null;
+                return transition is null
+                    ? null
+                    : new ProducedFacts(NotificationFacts.CircleChangedType, circleChanged);
         }
     }
+
+    private static FactCount Combine(FactCount first, FactCount second) =>
+        new(first.Created + second.Created, first.Suppressed + second.Suppressed);
 
     private static async Task<FactCount> AddAccessRequested(
         UnitOfWork work,
@@ -447,6 +476,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     private static async Task<FactCount> AddAccessGranted(
         UnitOfWork work,
         IdentityFact fact,
+        string deliverySurface,
         DateTimeOffset now,
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
@@ -464,7 +494,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             fact.EventId.ToString(),
             now,
             notAfter,
-            cancellationToken);
+            cancellationToken,
+            deliverySurface);
 
         return new FactCount(created, 0);
     }
@@ -496,7 +527,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             fact.EventId.ToString(),
             now,
             notAfter,
-            cancellationToken);
+            cancellationToken,
+            NotificationSubjects.Hub);
 
         return new FactCount(created, 0);
     }
@@ -765,7 +797,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
-        var recipients = audience.Where(person => person.Enabled).Select(person => person.IdentityId).ToArray();
+        var selected = audience.Where(person => person.Enabled).ToArray();
+        var recipients = selected.Select(person => person.IdentityId).ToArray();
         var suppressed = audience.Count - recipients.Length;
 
         if (recipients.Length == 0)
@@ -792,6 +825,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                 cause.ApplicantId,
                 cause.AccessCircle,
                 cause.ApplicationVersion,
+                DeliverySurfaces = selected.Select(person => person.DeliverySurface).ToArray(),
                 Now = now.UtcDateTime,
                 NotAfter = notAfter.UtcDateTime,
                 Ids = ids,
@@ -913,6 +947,64 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     }
 
     /// <summary>
+    /// Круг адресата по последнему снимку реплики. Аукционный факт может
+    /// появиться раньше первой реплики личности; в этом случае сохраняется
+    /// прежний маршрут аукционного канала.
+    /// </summary>
+    public static async Task<string> DeliverySurface(
+        UnitOfWork work,
+        Guid recipientId,
+        CancellationToken cancellationToken)
+    {
+        const string sql = """
+            SELECT CASE WHEN role = 'guest' THEN 'auction' ELSE 'hub' END
+            FROM identity_replica
+            WHERE identity_id = @RecipientId;
+            """;
+        var surfaces = await work.Query<string>(sql, new { RecipientId = recipientId }, cancellationToken);
+        return surfaces.SingleOrDefault() ?? NotificationSubjects.Auction;
+    }
+
+    private static async Task<FactCount> AddCircleChanged(
+        UnitOfWork work,
+        IdentityFact fact,
+        CircleTransition transition,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        var notification = NotificationFacts.CircleChanged(
+            Guid.CreateVersion7(now), fact, transition.PreviousRole, transition.CurrentRole, now, notAfter);
+        var created = await AddAddressed(
+            work,
+            notification,
+            NotificationFacts.CircleChangedType,
+            NotificationFacts.IdentityEventCause,
+            fact.EventId.ToString(),
+            now,
+            notAfter,
+            cancellationToken,
+            SurfaceForRole(transition.PreviousRole));
+        return new FactCount(created, 0);
+    }
+
+    private static string AdmissionSurface(string? previousRole, IdentityFact fact) =>
+        previousRole is null
+            ? fact.OccasionQueue == AccessQueue.Auction ? NotificationSubjects.Auction : NotificationSubjects.Hub
+            : SurfaceForRole(fact.Role);
+
+    private static string SurfaceForRole(string? role) =>
+        role == "guest" ? NotificationSubjects.Auction : NotificationSubjects.Hub;
+
+    private static CircleTransition? GetCircleTransition(string? previousRole, string? currentRole) =>
+        (previousRole, currentRole) switch
+        {
+            ("guest", "member") => new CircleTransition("guest", "member"),
+            ("member", "guest") => new CircleTransition("member", "guest"),
+            _ => null,
+        };
+
+    /// <summary>
     /// Удаляет строки, исход которых — вынос, снятие или вычёркивание — старше
     /// <paramref name="threshold" />. Строка без исхода остаётся при любом
     /// возрасте. Возвращает число удалённых.
@@ -967,7 +1059,11 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         public Guid IdentityId { get; init; }
 
         public bool Enabled { get; init; }
+
+        public string DeliverySurface { get; init; } = NotificationSubjects.Hub;
     }
+
+    private sealed record CircleTransition(string PreviousRole, string CurrentRole);
 }
 
 /// <summary>Неотправленный факт в том виде, в каком его публикует релей.</summary>
@@ -976,6 +1072,8 @@ public sealed class PendingNotification
     public Guid NotificationId { get; init; }
 
     public string Type { get; init; } = "";
+
+    public string DeliverySurface { get; init; } = NotificationSubjects.Hub;
 
     /// <summary>Срок годности в UTC; пусто у фактов без срока.</summary>
     public DateTime? NotAfter { get; init; }

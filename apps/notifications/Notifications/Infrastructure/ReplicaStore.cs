@@ -107,6 +107,17 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         WHERE identity_replica.version < EXCLUDED.version;
         """;
 
+    // Предыдущий круг нужен только для факта смены гостя и участника. Advisory
+    // lock ниже сериализует и первую вставку, когда строки для FOR UPDATE ещё нет.
+    private const string IdentityLockSql = "SELECT pg_advisory_xact_lock(hashtextextended(CAST(@IdentityId AS text), 0));";
+
+    private const string IdentityBeforeSql = """
+        SELECT role AS Role
+        FROM identity_replica
+        WHERE identity_id = @IdentityId
+        FOR UPDATE;
+        """;
+
     private const string LastMeetupSql = "SELECT MAX(occurred_at) FROM meetup_replica;";
 
     private const string LastIdentitySql = "SELECT MAX(occurred_at) FROM identity_replica;";
@@ -173,6 +184,9 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         }
         else if (fact is IdentityFact identity)
         {
+            await work.Execute(IdentityLockSql, new { identity.IdentityId }, cancellationToken);
+            var previous = await work.Query<IdentityBeforeRow>(IdentityBeforeSql,
+                new { identity.IdentityId }, cancellationToken);
             written = await work.Execute(IdentitySql, IdentityRow(identity, now), cancellationToken);
 
             // Как у сходки: повод не зависит от сдвига реплики, а адресатов и
@@ -180,6 +194,7 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
             facts = await NotificationStore.AddForIdentityEvent(
                 work,
                 identity,
+                written > 0 ? previous.SingleOrDefault()?.Role : null,
                 now,
                 factOptions.Value.StaleAfter,
                 cancellationToken);
@@ -330,6 +345,11 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
                     ScheduleStartTime,
                     ScheduleEndDate,
                     ScheduleEndTime));
+    }
+
+    private sealed class IdentityBeforeRow
+    {
+        public string? Role { get; init; }
     }
 
     private sealed class PassThrough<T>(System.Data.DbType type) : SqlMapper.TypeHandler<T>

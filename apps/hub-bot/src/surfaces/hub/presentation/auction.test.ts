@@ -723,8 +723,22 @@ describe("review findings", () => {
     expect(isAuctionCallback("manage:menu")).toBe(false);
     expect(isAuctionCallback("v1:nav:hub")).toBe(false);
     expect(isAuctionCallback(feedData)).toBe(true);
+    expect(isAuctionCallback(`v1:t:${lotData.slice("v1:".length)}`)).toBe(true);
     // Своя кнопка, даже нечитаемая, остаётся аукционной.
     expect(isAuctionCallback("v9:auc:feed:broken")).toBe(true);
+  });
+
+  it("opens a traced auction callback from a notification as a new screen", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness(["member"], auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:t:${lotData.slice("v1:".length)}`));
+
+    expect(auction.getLot).toHaveBeenCalledOnce();
+    expect(lastScreen(calls).rich_message?.html).toContain("Кружка с совой");
+    expect(calls.some((call) => call.method === "sendRichMessage")).toBe(true);
+    expect(calls.some((call) => call.method === "editMessageText")).toBe(false);
   });
 
   it("shows the blocking frame, not an outage, when Auction is not configured", async () => {

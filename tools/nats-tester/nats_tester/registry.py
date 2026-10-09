@@ -33,7 +33,8 @@ from nats_tester.generated.meetups.v1 import meetups_events_pb2
 from nats_tester.generated.notifications.v1 import notifications_pb2
 
 EVENT_TYPES: dict[str, Type[Message]] = {
-    'events.notifications.notification_created': notifications_pb2.Notification,
+    'events.notifications.notification_created.hub': notifications_pb2.Notification,
+    'events.notifications.notification_created.auction': notifications_pb2.Notification,
     'events.identity.profile_registered': identity_events_pb2.IdentityEvent,
     'events.identity.role_granted': identity_events_pb2.IdentityEvent,
     'events.identity.role_revoked': identity_events_pb2.IdentityEvent,
