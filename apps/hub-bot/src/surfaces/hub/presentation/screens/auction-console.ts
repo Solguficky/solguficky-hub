@@ -14,6 +14,8 @@ import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleConfirmData,
+  consoleDiscardConfirmData,
+  consoleDiscardData,
   consoleFinalData,
   consoleMarkData,
   consoleOpenData,
@@ -78,6 +80,7 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "selection-not-applicable": "У недели нет финала. Отбирать лоты некуда.",
   "week-ended": "Конец недели уже прошёл. Задай новые сроки.",
   "no-lots-to-open": "Нет лотов с ценой и шагом. Открывать нечего.",
+  "discard-too-late": "Онлайн-неделя уже открыта. Удалить аукцион нельзя.",
 };
 
 /** Всплывающий текст принятого переключателя финала (кадр P-08). */
@@ -330,6 +333,9 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     );
     nextRow(keyboard).text("Открыть онлайн-неделю", consoleOpenData(auction));
   }
+  if (editable) {
+    nextRow(keyboard).text("Удалить аукцион", consoleDiscardData(auction));
+  }
   if (console.status === "prebidding") {
     // Без финала отбирать некуда: «В финал» не ставится, а снять прежнюю
     // отметку можно и после того, как финал выключили.
@@ -417,6 +423,39 @@ export function weekConfirmScreen(confirm: {
     format: "HTML",
   };
 }
+
+/**
+ * Подтверждение удаления аукциона до торгов. Ключ команды рождён здесь и едет
+ * в «Да»: повторное нажатие той же кнопки Auction примет как повтор.
+ */
+export function discardConfirmScreen(confirm: {
+  auctionId: string;
+  opId: string;
+  lots: number;
+}): ShownScreen {
+  const auction = uuidToToken(confirm.auctionId);
+  return {
+    id: "discard-confirm",
+    text: screenText(
+      "Удалить аукцион?",
+      confirm.lots === 0
+        ? undefined
+        : escapeHtml(`Из аукциона уйдут: ${lotsLabel(confirm.lots)}.`),
+      escapeHtml(
+        "Лоты и сроки пропадут. Включить аукцион у сходки можно заново.",
+      ),
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, удалить",
+      yesData: consoleDiscardConfirmData(auction, uuidToToken(confirm.opId)),
+      noData: consoleViewData(auction),
+    }),
+    format: "HTML",
+  };
+}
+
+export const auctionDiscardedText =
+  "Аукцион удалён. Включить его у сходки можно заново.";
 
 /** Причина отказа ответу о сроках недели: заголовок экрана исхода. */
 export const weekAskErrorText: Record<WeekAskError, string> = {

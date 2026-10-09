@@ -54,6 +54,7 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       keepsGolden("lot-removed", stored(AuctionEvent.LotRemoved(lot), 3))
       keepsGolden("auction-scheduled", stored(scheduled.event, 3))
       keepsGolden("prebidding-started", stored(started.event, 4))
+      keepsGolden("auction-discarded", stored(AuctionEvent.AuctionDiscarded, 5))
     }
 
     "keeps the stored form of a schedule with step windows and reads it back as one" in {
@@ -100,10 +101,17 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
 
     "restores every event it stored into the same domain event" in {
       val ledByPerson = AuctionEvent.AuctionScheduled(config(byAuctioneer))
-      List(drafted.event, added.event, AuctionEvent.LotRemoved(lot), scheduled.event, ledByPerson, started.event)
-        .foreach { event =>
-          AuctionJournal.envelope(4, stored(event, 4)) shouldBe AuctionEnvelope(4, op(4), event)
-        }
+      List(
+        drafted.event,
+        added.event,
+        AuctionEvent.LotRemoved(lot),
+        scheduled.event,
+        ledByPerson,
+        started.event,
+        AuctionEvent.AuctionDiscarded
+      ).foreach { event =>
+        AuctionJournal.envelope(4, stored(event, 4)) shouldBe AuctionEnvelope(4, op(4), event)
+      }
     }
 
     "refuses a snapshot whose meetup breaks the invariant of the auction instead of failing on a later command" in {
@@ -137,6 +145,7 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       a[JournalCorrupted] should be thrownBy
         AuctionJournal.restoreEvent(body.copy(auctionDrafted = Some(StoredAuctionDrafted(meetup.value))))
       a[JournalCorrupted] should be thrownBy AuctionJournal.restoreEvent(body.copy(kind = "PrebiddingStarted"))
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreEvent(body.copy(kind = "AuctionDiscarded"))
     }
   }
 }

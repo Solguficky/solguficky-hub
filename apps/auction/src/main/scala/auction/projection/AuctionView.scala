@@ -1,6 +1,7 @@
 package auction.projection
 
 import auction.aggregate.Auction
+import auction.aggregate.AuctionEvent
 import auction.aggregate.AuctionState
 import auction.entity.AuctionJournal
 import auction.entity.StoredAuction
@@ -10,7 +11,9 @@ import java.util.UUID
 
 /**
  * Строка read model аукциона: снимок в модели хранения snapshot (ADR-058) и сходка, по которой аукцион ищется. Версия —
- * номер последнего применённого события журнала аукциона.
+ * номер последнего применённого события журнала аукциона. Удалённый до торгов аукцион строку сохраняет — со снимком
+ * `Initial` и сходкой, у которой он был: версия обязана идти подряд, и новое рождение после удаления продолжает её, а
+ * не начинает заново.
  */
 final case class AuctionViewRow(auctionId: UUID, meetupId: UUID, stored: StoredAuction) {
   def version: Long = stored.sequence
@@ -43,9 +46,12 @@ object AuctionView {
     else {
       val before = current.fold(Auction.initial)(row => AuctionJournal.restoreAuction(row.stored))
       val after = Auction.apply(before, AuctionJournal.envelope(sequence, stored))
-      (after.state, after.meetup) match {
-        case (AuctionState.Initial, _) | (_, None) => Left(AuctionViewDefect.Unborn(auctionId, sequence))
-        case (_, Some(meetup)) =>
+      val discarded = AuctionJournal.restoreEvent(stored.event) == AuctionEvent.AuctionDiscarded
+      (after.state, after.meetup, current) match {
+        case (AuctionState.Initial, None, Some(row)) if discarded =>
+          Right(Some(AuctionViewRow(auctionId, row.meetupId, AuctionJournal.storeAuction(after, sequence))))
+        case (AuctionState.Initial, _, _) | (_, None, _) => Left(AuctionViewDefect.Unborn(auctionId, sequence))
+        case (_, Some(meetup), _) =>
           Right(Some(AuctionViewRow(auctionId, meetup.value, AuctionJournal.storeAuction(after, sequence))))
       }
     }

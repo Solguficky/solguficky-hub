@@ -504,6 +504,31 @@ final class AuctionGrpcIntegrationSpec
       eventually(feed(node, auction) shouldBe Seq(lot))
     }
 
+    "discards an unstarted auction from the meetup and its feed, and enables it again empty" in withNode { node =>
+      val meetup = newId()
+      val auction = enable(node, meetup).getAccepted.auctionId
+      val lot = newId()
+      val add = wire.AddLotRequest(Some(administrator), auction, lot, newId())
+      asHubBot(node.client.addLot()).invoke(add).futureValue.outcome.isAccepted shouldBe true
+      eventually(feed(node, auction) shouldBe Seq(lot))
+
+      val discard = wire.DiscardAuctionRequest(Some(administrator), auction, newId())
+      asHubBot(node.client.discardAuction()).invoke(discard).futureValue.outcome.isAccepted shouldBe true
+      eventually(meetupAuction(node, meetup) shouldBe None)
+      eventually(feed(node, auction) shouldBe empty)
+      // Повтор того же op_id отвечает принятием и Meetups второй раз не спрашивает.
+      val asked = node.authority.asked
+      asHubBot(node.client.discardAuction()).invoke(discard).futureValue.outcome.isAccepted shouldBe true
+      node.authority.asked shouldBe asked
+      statusOf(asHubBot(node.client.discardAuction()).invoke(discard.withOpId(newId()))) shouldBe
+        Status.Code.NOT_FOUND
+
+      val again = enable(node, meetup).getAccepted
+      again.auctionId shouldBe auction
+      again.alreadyExisted shouldBe false
+      eventually(meetupAuction(node, meetup).map(_.lotIds) shouldBe Some(Seq.empty))
+    }
+
     "refuses a lot born in another auction with FAILED_PRECONDITION and keeps it out of the feed" in withNode { node =>
       val auction = enable(node, newId()).getAccepted.auctionId
       // Лот тестового аукциона из настройки бота: рождён в нём, а не в аукционе сходки.

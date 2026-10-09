@@ -158,6 +158,7 @@ describe("feed and history in the hub shell", () => {
     const { screen } = auctionScreen({
       ...view([]),
       canManage: true,
+      canEditLots: true,
       canAddLots: true,
       body: {
         blocks: [

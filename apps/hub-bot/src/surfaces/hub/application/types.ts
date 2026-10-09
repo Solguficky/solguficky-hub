@@ -371,7 +371,9 @@ export type ConsoleNote =
   | "selection-not-applicable"
   // Открывать неделю нельзя: конец прошёл либо лотов с ценой и шагом нет.
   | "week-ended"
-  | "no-lots-to-open";
+  | "no-lots-to-open"
+  // Удалить аукцион можно только до открытия недели.
+  | "discard-too-late";
 
 // Почему вопрос о сроках недели задан заново.
 export type WeekAskError =
@@ -406,6 +408,9 @@ export type AuctionConsoleRequest =
       opId: string;
     })
   | (AuctionConsoleCall & { intent: "start-auction-week"; opId: string })
+  // Подтверждение удаления, пока неделя не открыта; ключ уедет в «Да».
+  | (AuctionConsoleCall & { intent: "prepare-auction-discard"; opId: string })
+  | (AuctionConsoleCall & { intent: "discard-auction"; opId: string })
   | (AuctionConsoleCall & {
       intent: "mark-auction-finalist";
       lotId: string;
@@ -582,6 +587,16 @@ export type ExecuteResult =
       opening: number;
       idle: number;
     }
+  // Подтверждение удаления аукциона до торгов: `lots` — сколько лотов уйдёт
+  // из аукциона вместе с ним. `opId` уедет в «Да».
+  | {
+      kind: "auction-discard-confirm";
+      auctionId: string;
+      opId: string;
+      lots: number;
+    }
+  // Аукцион удалён: у сходки снова «Включить аукцион».
+  | { kind: "auction-discarded"; auctionId: string }
   // Отказ пульту целиком: не администратор сходки либо аукциона нет.
   | {
       kind: "auction-console-refused";

@@ -31,6 +31,15 @@ export function canModerateAuction(person: Viewer): boolean {
   return person.rights.includes("moderate-auction");
 }
 
+// Каталог лотов — право администрировать аукцион (ADR-064, дополнение
+// 2026-10-08): Auction пускает в карточку лота по нему, а не по роли, и
+// вход в форму лота без него вёл бы в отказ.
+export function canManageAuction(person: {
+  rights: readonly AccessRight[];
+}): boolean {
+  return person.rights.includes("manage-auction");
+}
+
 /** «Управление» видно, если в нём есть хотя бы один пункт для человека. */
 export function canOpenManagement(person: Viewer): boolean {
   return (

@@ -26,6 +26,7 @@ import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction.StepTier
 import auction.v1.auction.TieredSteps
 import auction.v1.auction_service.CreateLotCardRequest
+import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.LotImageRemoval
@@ -339,6 +340,18 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
       RequestMapping.startPrebidding(StartPrebiddingRequest(Some(viewer), lot, op)).left.value shouldBe
         FormError("auction_id")
       RequestMapping.startPrebidding(StartPrebiddingRequest(None, meetupAuction, op)).left.value shouldBe
+        FormError("viewer")
+    }
+
+    "maps the discard of a meetup auction only" in {
+      val command = RequestMapping.discardAuction(DiscardAuctionRequest(Some(viewer), meetupAuction, op)).value
+      command.auctionId.value shouldBe UUID.fromString(meetupAuction)
+      command.opId.value shouldBe UUID.fromString(op)
+      RequestMapping.discardAuction(DiscardAuctionRequest(Some(viewer), lot, op)).left.value shouldBe
+        FormError("auction_id")
+      RequestMapping.discardAuction(DiscardAuctionRequest(Some(viewer), meetupAuction, "op")).left.value shouldBe
+        FormError("op_id")
+      RequestMapping.discardAuction(DiscardAuctionRequest(None, meetupAuction, op)).left.value shouldBe
         FormError("viewer")
     }
   }

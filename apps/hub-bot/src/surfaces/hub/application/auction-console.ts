@@ -378,6 +378,53 @@ export function createAuctionConsole(
     }
   }
 
+  // «Удалить аукцион»: подтверждение — только пока неделя не открыта, ставок
+  // ещё не было. Ключ удаления рождён краем и уедет в «Да».
+  async function prepareDiscard(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "prepare-auction-discard" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    if (!editable(console)) {
+      return { kind: "auction-console", console, note: "discard-too-late" };
+    }
+    return {
+      kind: "auction-discard-confirm",
+      auctionId: request.auctionId,
+      opId: request.opId,
+      lots: console.lots.length,
+    };
+  }
+
+  // Удаление. Повтор той же кнопки Auction принимает как повтор; аукцион,
+  // который уже удалили другим нажатием, Auction не находит.
+  async function discard(
+    request: Extract<AuctionConsoleRequest, { intent: "discard-auction" }>,
+  ): Promise<ExecuteResult> {
+    const discarded = await consoles.discardAuction(
+      request.identity,
+      { auctionId: request.auctionId, opId: request.opId },
+      rpcMeta(request),
+    );
+    switch (discarded.kind) {
+      case "ok":
+        return { kind: "auction-discarded", auctionId: request.auctionId };
+      case "already-started":
+        return after(request, "discard-too-late");
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(discarded);
+    }
+  }
+
   async function markFinalist(
     request: Extract<
       AuctionConsoleRequest,
@@ -497,6 +544,10 @@ export function createAuctionConsole(
         return startWeek(request);
       case "mark-auction-finalist":
         return markFinalist(request);
+      case "prepare-auction-discard":
+        return prepareDiscard(request);
+      case "discard-auction":
+        return discard(request);
       default: {
         const _exhaustive: never = request;
         return _exhaustive;

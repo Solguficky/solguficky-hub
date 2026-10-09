@@ -36,6 +36,7 @@ import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.ChooseDisplayNameRequest
 import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.DeselectForFinalRequest
+import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.DraftAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.GetAuctionConsoleRequest
@@ -118,6 +119,9 @@ final case class AuctionScheduleCommand(auctionId: AuctionId, config: AuctionCon
 
 /** Открытие онлайн-торгов аукциона. */
 final case class PrebiddingCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
+
+/** Удаление аукциона до торгов. */
+final case class DiscardCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 
 /** Чтение аукциона сходки. */
 final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
@@ -344,6 +348,13 @@ object RequestMapping {
       auction <- meetupAuction(request.auctionId)
       opId <- uuidV7("op_id", request.opId)
     } yield PrebiddingCommand(auction, OpId(opId), acting)
+
+  def discardAuction(request: DiscardAuctionRequest): Either[FormError, DiscardCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+    } yield DiscardCommand(auction, OpId(opId), acting)
 
   /**
    * Конфигурация без проверки ADR-047: форма требует заданных `oneof` и сообщений, моментов в RFC 3339 и

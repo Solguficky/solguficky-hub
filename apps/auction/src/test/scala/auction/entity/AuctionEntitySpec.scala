@@ -244,6 +244,11 @@ final class AuctionEntitySpec
       AuctionEntity.Start(StartPrebidding(op(opN)), administrator, _)
     )
 
+  private def discard(opN: Int) =
+    entity.runCommand[Either[DiscardAuctionRejected, AuctionAnswer]](
+      AuctionEntity.Discard(DiscardAuction(op(opN)), administrator, _)
+    )
+
   private def roster: LotRoster = entity.runCommand[LotRoster](AuctionEntity.Roster(_)).reply
 
   private val step = StepPolicyInput.Fixed(LotFixtures.money(250))
@@ -318,6 +323,30 @@ final class AuctionEntitySpec
     "refuses a registry command before the birth without writing" in {
       val refused = add(1)
       refused.reply shouldBe Left(AddLotRejected.AuctionNotFound)
+      refused.events shouldBe empty
+    }
+
+    "discards a scheduled auction, keeps it discarded over a restart and lets the same meetup draft it again" in {
+      val next = scheduledWith(lot)
+      discard(next).reply shouldBe
+        Right(AuctionAnswer.Written(AuctionEnvelope(4, op(next), AuctionEvent.AuctionDiscarded)))
+      val restarted = entity.restart().state
+      restarted.sequence shouldBe 4
+      restarted.auction.state shouldBe AuctionState.Initial
+      restarted.auction.lots shouldBe empty
+      discard(next).events shouldBe empty
+      draft(next + 1).reply shouldBe
+        AuctionAnswer.Written(AuctionEnvelope(5, op(next + 1), AuctionEvent.AuctionDrafted(meetup)))
+      entity.runCommand[Inspection](AuctionEntity.Inspect(op(next + 2), _)).reply shouldBe
+        Inspection.Present(meetup, registryOpen = true)
+    }
+
+    "refuses to discard an auction that was never drafted or whose prebidding started, without writing" in {
+      discard(1).reply shouldBe Left(DiscardAuctionRejected.AuctionNotFound)
+      val next = scheduledWith(lot)
+      start(next).reply.isRight shouldBe true
+      val refused = discard(next + 1)
+      refused.reply shouldBe Left(DiscardAuctionRejected.AuctionAlreadyStarted)
       refused.events shouldBe empty
     }
 

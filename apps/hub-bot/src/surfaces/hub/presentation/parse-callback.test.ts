@@ -4,6 +4,8 @@ import {
   auctionFaqData,
   cardCursorData,
   consoleConfirmData,
+  consoleDiscardConfirmData,
+  consoleDiscardData,
   consoleFinalData,
   consoleMarkData,
   consoleOpenData,
@@ -1004,6 +1006,11 @@ describe("auction console callbacks", () => {
         consoleConfirmData(auction, op),
         { kind: "console-confirm", auction, op },
       ],
+      [consoleDiscardData(auction), { kind: "console-discard", auction }],
+      [
+        consoleDiscardConfirmData(auction, op),
+        { kind: "console-discard-confirm", auction, op },
+      ],
       [
         consoleMarkData({ auction, lot, selected: true, page: 9999 }),
         {
@@ -1072,7 +1079,10 @@ describe("auction console callbacks", () => {
       `v1:ac:y:${auction}:short`,
       `v1:ac:s:${auction}:${lot}`,
       `v1:ac:d:${auction}:${lot}:-1`,
-      `v1:ac:x:${auction}`,
+      `v1:ac:x:${auction}:1`,
+      `v1:ac:z:${auction}`,
+      `v1:ac:z:${auction}:short`,
+      `v1:ac:q:${auction}`,
     ]) {
       expect(parseCallback(data)).toEqual({ kind: "malformed" });
     }

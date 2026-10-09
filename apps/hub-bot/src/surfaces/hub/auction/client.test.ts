@@ -5,6 +5,7 @@ import {
   AddLotResponseSchema,
   AuctionSnapshotSchema,
   CreateLotCardResponseSchema,
+  DiscardAuctionResponseSchema,
   DraftAuctionResponseSchema,
   EditLotCardResponseSchema,
   GetAuctionConsoleResponseSchema,
@@ -53,6 +54,7 @@ function adapter(rpc: {
   getAuctionLotStatistics?: Call;
   scheduleAuction?: Call;
   startPrebidding?: Call;
+  discardAuction?: Call;
   selectForFinal?: Call;
   deselectForFinal?: Call;
 }) {
@@ -75,6 +77,7 @@ function adapter(rpc: {
     getAuctionLotStatistics: (rpc.getAuctionLotStatistics ?? notUsed) as never,
     scheduleAuction: (rpc.scheduleAuction ?? notUsed) as never,
     startPrebidding: (rpc.startPrebidding ?? notUsed) as never,
+    discardAuction: (rpc.discardAuction ?? notUsed) as never,
     selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
     deselectForFinal: (rpc.deselectForFinal ?? notUsed) as never,
   });
@@ -660,5 +663,41 @@ describe("auction console adapter", () => {
     await expect(
       started.selectForFinal(admin, { auctionId, lotId, opId }),
     ).resolves.toEqual({ kind: "refused", reason: "deadline-passed" });
+  });
+
+  it("reads a discarded auction, a started week and a missing auction as answers", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      discardAuction: async (request: unknown) => {
+        sent.push(request);
+        return create(DiscardAuctionResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    const late = adapter({
+      discardAuction: async () =>
+        create(DiscardAuctionResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "auctionAlreadyStarted", value: {} } },
+          },
+        }),
+    });
+    const missing = adapter({
+      discardAuction: () =>
+        Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+
+    await expect(
+      accepted.discardAuction(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([{ auctionId, opId }]);
+    await expect(
+      late.discardAuction(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "already-started" });
+    await expect(
+      missing.discardAuction(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
   });
 });

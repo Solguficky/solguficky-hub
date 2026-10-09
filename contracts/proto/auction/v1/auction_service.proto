@@ -43,6 +43,7 @@ service AuctionService {
   rpc ScheduleLot(ScheduleLotRequest) returns (ScheduleLotResponse);
   rpc ScheduleAuction(ScheduleAuctionRequest) returns (ScheduleAuctionResponse);
   rpc StartPrebidding(StartPrebiddingRequest) returns (StartPrebiddingResponse);
+  rpc DiscardAuction(DiscardAuctionRequest) returns (DiscardAuctionResponse);
   rpc SelectForFinal(SelectForFinalRequest) returns (SelectForFinalResponse);
   rpc DeselectForFinal(DeselectForFinalRequest) returns (DeselectForFinalResponse);
   rpc GetAuctionConsole(GetAuctionConsoleRequest) returns (GetAuctionConsoleResponse);
@@ -929,6 +930,38 @@ message StartPrebiddingRefusal {
 
 // The auction has no configuration yet: ScheduleAuction comes first.
 message AuctionNotScheduled {}
+
+message DiscardAuctionRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message DiscardAuctionResponse {
+  // Exactly one is set.
+  oneof outcome {
+    AuctionDiscardAccepted accepted = 1;
+    DiscardAuctionRefusal refused = 2;
+  }
+}
+
+// Carries nothing: the meetup has no auction any more, and DraftAuction gives it
+// one again under the same auction_id.
+message AuctionDiscardAccepted {}
+
+message DiscardAuctionRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    AuctionAlreadyStarted auction_already_started = 3;
+  }
+}
 
 message SelectForFinalRequest {
   // The administrator of the meetup of the auction, checked with the meetup.

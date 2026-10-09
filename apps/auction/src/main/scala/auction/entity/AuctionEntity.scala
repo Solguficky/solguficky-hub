@@ -110,6 +110,13 @@ object AuctionEntity {
       replyTo: ActorRef[Either[StartPrebiddingRejected, AuctionAnswer]]
   ) extends Command
 
+  /** Удаление до торгов: событие `AuctionDiscarded`, после него аукцион — снова `Initial`. */
+  final case class Discard(
+      command: DiscardAuction,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[DiscardAuctionRejected, AuctionAnswer]]
+  ) extends Command
+
   /**
    * Условия торгов лоту реестра — `ScheduleLot`, идущий через аукцион; `PlanLot` — имя сообщения, как `LotEntity.Plan`
    * у лота. События аукцион не пишет: решает, можно ли ещё менять условия, и шлёт команду лоту. Ответ приходит после
@@ -314,6 +321,9 @@ object AuctionEntity {
             case Schedule(schedule, initiator, replyTo) =>
               val decision = Auction.decide(state.auction, schedule)
               answered(state.auction, decision, schedule.opId, initiator, replyTo, clock, newId)
+            case Discard(discard, initiator, replyTo) =>
+              val decision = Auction.decide(state.auction, discard)
+              answered(state.auction, decision, discard.opId, initiator, replyTo, clock, newId)
             case Get(replyTo) => Effect.reply(replyTo)(state.auction)
           }
 

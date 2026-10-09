@@ -173,9 +173,13 @@ object AuctionJournal {
       case AuctionEvent.AuctionScheduled(config) =>
         StoredAuctionEventBody.of("AuctionScheduled").copy(auctionScheduled = Some(storeConfig(config)))
       case AuctionEvent.PrebiddingStarted => StoredAuctionEventBody.of("PrebiddingStarted")
+      case AuctionEvent.AuctionDiscarded => StoredAuctionEventBody.of("AuctionDiscarded")
     }
 
-  /** Ровно одна секция, и та, что названа `kind`; у `PrebiddingStarted` — ни одной. Иначе строка испорчена. */
+  /**
+   * Ровно одна секция, и та, что названа `kind`; у `PrebiddingStarted` и `AuctionDiscarded` — ни одной. Иначе строка
+   * испорчена.
+   */
   def restoreEvent(stored: StoredAuctionEventBody): AuctionEvent =
     stored match {
       case StoredAuctionEventBody("AuctionDrafted", Some(drafted), None, None, None) =>
@@ -187,6 +191,7 @@ object AuctionJournal {
       case StoredAuctionEventBody("AuctionScheduled", None, None, None, Some(config)) =>
         AuctionEvent.AuctionScheduled(restoreConfig(config))
       case StoredAuctionEventBody("PrebiddingStarted", None, None, None, None) => AuctionEvent.PrebiddingStarted
+      case StoredAuctionEventBody("AuctionDiscarded", None, None, None, None) => AuctionEvent.AuctionDiscarded
       case other => corrupted(s"auction event of kind ${other.kind} with sections that do not match it")
     }
 
