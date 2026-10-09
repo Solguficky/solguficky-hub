@@ -2,7 +2,6 @@ package auction.entity
 
 import auction.AuctionNode
 import auction.aggregate.*
-import auction.aggregate.AuctionFixtures.closesAt
 import auction.aggregate.AuctionFixtures.configInput
 import auction.catalog.LotId
 import auction.lot.AuctionId
@@ -36,6 +35,8 @@ import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
 
 import java.time.Clock
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import java.util.UUID
 import scala.concurrent.Future
 import scala.concurrent.duration.*
@@ -62,6 +63,11 @@ final class AuctionOpeningIntegrationSpec
   private val person: ParticipantId = participant(1)
 
   private val step = StepPolicyInput.Fixed(money(10))
+
+  /** Общий дедлайн от часов теста: дата образца прошла бы, и лот закрылся бы сразу после открытия. */
+  private val closesAt: Instant = Instant.now().plus(30, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS)
+
+  private val week: OnlinePhase = OnlinePhase(Instant.now().minusSeconds(3600), Some(closesAt), closesLots = true)
 
   private final class StubAuthority extends MeetupAuthority {
     @volatile var answer: Authority = Authority.Granted
@@ -131,7 +137,7 @@ final class AuctionOpeningIntegrationSpec
       .ask[Either[ScheduleLotRejected, Envelope]](LotEntity.Plan(scheduleLot(opN = 2), Initiator.Operator(person), _))
       .futureValue
       .isRight shouldBe true
-    node.commands.schedule(auction, configInput(), newOp(), person).futureValue shouldBe Right(())
+    node.commands.schedule(auction, configInput(Some(week)), newOp(), person).futureValue shouldBe Right(())
     Scheduled(meetup, auction, planned, bare)
   }
 
