@@ -3,6 +3,7 @@ package auction.projection
 import auction.entity.JournalFixtures.*
 import auction.entity.LotJournal
 import auction.entity.StoredLotEvent
+import auction.entity.StoredMoney
 import auction.lot.*
 import auction.lot.LotFixtures.*
 import org.scalacheck.Gen
@@ -30,6 +31,17 @@ final class LotViewSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       )
     (Vector(lotDrafted, lotScheduled, opened) ++ bids).zipWithIndex.map((event, index) => stored(index + 1, event))
   }
+
+  /** Тот же журнал, а за ставками — прокси-лимит третьего участника и его отзыв. */
+  private def journalWithLimit(raises: List[Long]): Vector[StoredLotEvent] = {
+    val trading = journal(raises)
+    trading ++ Vector(limitSet, limitWithdrawn).zipWithIndex.map((event, index) =>
+      stored(trading.size + index + 1, event)
+    )
+  }
+
+  private def folded(row: Option[LotViewRow], events: Seq[(Long, StoredLotEvent)]): LotViewFold =
+    LotView.fold(row, lotId, events).fold(defect => fail(defect.toString), done => done)
 
   /** Свёртка доставок через проекцию; каждая доставка — номер события и строка журнала. */
   private def deliver(deliveries: Seq[(Long, StoredLotEvent)]): (Option[LotViewRow], List[BidRecord]) =
@@ -100,15 +112,15 @@ final class LotViewSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
     "catches up over a gap when the missing events are folded in before the delivered one" in {
       val events = numbered(journal(List(500, 500)))
       val (row, _) = deliver(events.take(2))
-      val (folded, bids) = LotView.fold(row, lotId, events.drop(2)).fold(defect => fail(defect.toString), done => done)
-      folded shouldBe deliver(events)._1
-      bids.map(_.sequence) shouldBe List(4L, 5L)
+      val caughtUp = folded(row, events.drop(2))
+      caughtUp.row shouldBe deliver(events)._1
+      caughtUp.bids.map(_.sequence) shouldBe List(4L, 5L)
     }
 
     "folds a redelivered prefix without writing a row" in {
       val events = numbered(journal(Nil))
       val (row, _) = deliver(events)
-      LotView.fold(row, lotId, events) shouldBe Right((None, Nil))
+      LotView.fold(row, lotId, events) shouldBe Right(LotViewFold(None, Nil, Nil, None))
     }
 
     "keeps a gap a defect when the catch-up still misses an event" in {
@@ -122,6 +134,38 @@ final class LotViewSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       val applied = LotView.replay(row, lotId, events).fold(defect => fail(defect.toString), done => done)
       applied.map(_.sequence) shouldBe List(2L, 3L, 4L, 5L)
       applied.map(step => Some(step.row)) shouldBe (2 to 5).map(n => deliver(events.take(n))._1).toList
+    }
+
+    "counts the authors of bids and the owner of a withdrawn proxy limit as participants of the lot" in {
+      forAll(raises) { steps =>
+        val facts = folded(None, numbered(journalWithLimit(steps)))
+        val bidders = steps.indices.map(index => participant(index % 2).value).toSet
+        facts.participants.toSet shouldBe bidders + participant(2).value
+      }
+    }
+
+    "takes the starting price of the lot from its opening" in {
+      val facts = folded(None, numbered(journal(List(500))))
+      facts.startingPrice shouldBe Some(
+        StoredMoney(opened.startingPrice.minorUnits, opened.startingPrice.currency.value)
+      )
+    }
+
+    "collects the same statistics facts however the deliveries are split and redelivered" in {
+      forAll(raises, Gen.choose(1, 4)) { (steps, size) =>
+        val events = numbered(journalWithLimit(steps))
+        val whole = folded(None, events)
+        val (_, chunks) = events.grouped(size).foldLeft((Option.empty[LotViewRow], List.empty[LotViewFold])) {
+          case ((row, collected), chunk) =>
+            val first = folded(row, chunk)
+            val next = first.row.orElse(row)
+            folded(next, chunk) shouldBe LotViewFold(None, Nil, Nil, None)
+            (next, collected :+ first)
+        }
+        chunks.flatMap(_.bids) shouldBe whole.bids
+        chunks.flatMap(_.participants).toSet shouldBe whole.participants.toSet
+        chunks.flatMap(_.startingPrice) shouldBe whole.startingPrice.toList
+      }
     }
 
     "skips an event at or below the version of the row" in {

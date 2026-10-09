@@ -1,7 +1,9 @@
 package auction.grpc
 
+import auction.aggregate.Auction
 import auction.aggregate.AuctionCommands
 import auction.aggregate.Correlation
+import auction.aggregate.Denial
 import auction.catalog.LotCatalogCommands
 import auction.entity.Initiator
 import auction.entity.LotGateway
@@ -400,25 +402,51 @@ final class AuctionGrpcService(
     RequestMapping.getAuctionConsole(in) match {
       case Left(error) => invalid(error)
       case Right(query) =>
-        val auctionId = query.auctionId.value
-        auctions.current(query.auctionId).recoverWith(awaited).flatMap {
+        administered(query, ResponseMapping.consoleDenied) { auction =>
+          val auctionId = query.auctionId.value
+          // Страница — весь реестр: пустой реестр всё равно читается страницей в одну строку.
+          val wholeRegistry = auction.lots.size.max(1)
+          views.registryPage(auctionId, None, wholeRegistry).map { lots =>
+            val view = AuctionSnapshotView(auctionId, auction)
+            val console =
+              ConsoleMapping.console(view, lots, query.acting.participant, clock.instant(), overdueGrace)
+            wire.GetAuctionConsoleResponse().withConsole(console)
+          }
+        }
+    }
+
+  /**
+   * Статистика лотов реестра для ручного отбора финалистов (PER-481). Право и отказы — те же, что у пульта, и тем же
+   * порядком: статистика сравнивает лоты для рабочего выбора организатора. Числа — из read model и согласованы в
+   * конечном счёте.
+   */
+  def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest): Future[wire.GetAuctionLotStatisticsResponse] =
+    RequestMapping.getAuctionLotStatistics(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) =>
+        administered(query, ResponseMapping.statisticsDenied) { _ =>
+          views
+            .statistics(query.auctionId.value)
+            .map(lots => wire.GetAuctionLotStatisticsResponse().withStatistics(StatisticsMapping.statistics(lots)))
+        }
+    }
+
+  /**
+   * Чтение администратора сходки: аукцион у entity, без журнала или без сходки — `NOT_FOUND` до вопроса Meetups, затем
+   * право у Meetups, и только после него `read`.
+   */
+  private def administered[R](query: ConsoleQuery, denied: Denial => Either[Status, R])(
+      read: Auction => Future[R]
+  ): Future[R] =
+    auctions.current(query.auctionId).recoverWith(awaited).flatMap {
+      case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+      case Some(auction) =>
+        auction.meetup match {
           case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
-          case Some(auction) =>
-            auction.meetup match {
-              case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
-              case Some(meetup) =>
-                auctions.authorize(meetup, query.acting.participant).flatMap {
-                  case Left(denial) => ResponseMapping.consoleDenied(denial).fold(refuse, Future.successful)
-                  case Right(()) =>
-                    // Страница — весь реестр: пустой реестр всё равно читается страницей в одну строку.
-                    val wholeRegistry = auction.lots.size.max(1)
-                    views.registryPage(auctionId, None, wholeRegistry).map { lots =>
-                      val view = AuctionSnapshotView(auctionId, auction)
-                      val console =
-                        ConsoleMapping.console(view, lots, query.acting.participant, clock.instant(), overdueGrace)
-                      wire.GetAuctionConsoleResponse().withConsole(console)
-                    }
-                }
+          case Some(meetup) =>
+            auctions.authorize(meetup, query.acting.participant).flatMap {
+              case Left(denial) => denied(denial).fold(refuse, Future.successful)
+              case Right(()) => read(auction)
             }
         }
     }
@@ -447,10 +475,6 @@ final class AuctionGrpcService(
           wire.ListAuctionsResponse(page.map(ResponseMapping.auctionSnapshot), next.getOrElse(""))
         }
     }
-
-  // Статистика: контракт PER-480; подсчёт и проверку права приносит срез read model PER-481.
-  def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest): Future[wire.GetAuctionLotStatisticsResponse] =
-    unimplemented
 
   // Счета: контракт есть (PER-308), выставление, статусы и чтения приносит лист счёта (PER-338).
   def markInvoicePaid(in: wire.MarkInvoicePaidRequest): Future[wire.MarkInvoicePaidResponse] = unimplemented

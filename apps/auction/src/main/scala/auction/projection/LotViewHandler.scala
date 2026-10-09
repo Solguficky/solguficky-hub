@@ -2,6 +2,7 @@ package auction.projection
 
 import auction.entity.StoredLot
 import auction.entity.StoredLotEvent
+import auction.entity.StoredMoney
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.projection.eventsourced.EventEnvelope
@@ -44,7 +45,9 @@ object LotViewJson {
  * транзакции, и read model могла бы оказаться впереди offset.
  *
  * Повторная доставка события после отката пропускается по версии строки ([[LotView.project]]), так что обработчик
- * идемпотентен и без offset. Пропуск номера в потоке тега дочитывается из журнала лота ([[LotJournalGap]]).
+ * идемпотентен и без offset. Факты статистики — участники лота и стартовая цена (PER-481) — пишутся той же транзакцией
+ * и только из применённых событий, поэтому повтор не меняет и их. Пропуск номера в потоке тега дочитывается из журнала
+ * лота ([[LotJournalGap]]).
  */
 final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
     extends JdbcHandler[EventEnvelope[StoredLotEvent], JdbcSession] {
@@ -56,12 +59,40 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
       val events = gap.events(connection, before, lotId, envelope.persistenceId, envelope.sequenceNr, envelope.event)
       LotView.fold(before, lotId, events) match {
         case Left(defect) => throw new LotViewDefectException(defect)
-        case Right((written, bids)) =>
-          written.foreach(rows.write(connection, before.fold(0L)(_.version), _))
-          bids.foreach(record(connection, _))
+        case Right(folded) =>
+          folded.row.foreach(rows.write(connection, before.fold(0L)(_.version), _))
+          folded.bids.foreach(record(connection, _))
+          folded.participants.distinct.foreach(addParticipant(connection, lotId, _))
+          folded.startingPrice.foreach(recordStartingPrice(connection, lotId, _))
       }
     }
   }
+
+  // Строка участника не удаляется: отзыв лимита участия не снимает, а повтор гасит первичный ключ.
+  private def addParticipant(connection: Connection, lotId: UUID, participant: UUID): Unit =
+    Using.resource(
+      connection.prepareStatement(
+        "INSERT INTO lot_participant (lot_id, participant_id) VALUES (?, ?) ON CONFLICT (lot_id, participant_id) DO NOTHING"
+      )
+    ) { statement =>
+      statement.setObject(1, lotId)
+      statement.setObject(2, participant)
+      statement.executeUpdate()
+    }
+
+  // `LotOpened` у лота один: `ON CONFLICT` здесь только на случай перестройки поверх уже записанной строки.
+  private def recordStartingPrice(connection: Connection, lotId: UUID, price: StoredMoney): Unit =
+    Using.resource(
+      connection.prepareStatement(
+        """INSERT INTO lot_starting_price (lot_id, minor_units, currency) VALUES (?, ?, ?)
+          |ON CONFLICT (lot_id) DO UPDATE SET minor_units = EXCLUDED.minor_units, currency = EXCLUDED.currency""".stripMargin
+      )
+    ) { statement =>
+      statement.setObject(1, lotId)
+      statement.setLong(2, price.minorUnits)
+      statement.setString(3, price.currency)
+      statement.executeUpdate()
+    }
 
   private def record(connection: Connection, bid: BidRecord): Unit =
     Using.resource(
