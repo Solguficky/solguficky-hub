@@ -5,6 +5,7 @@ import {
   type RecordedCall,
 } from "../../../../testkit/harness.js";
 import {
+  type AccessRight,
   encodeAuctionCallback,
   type LotView,
   type Money,
@@ -63,13 +64,27 @@ function trading(lotId: string, title: string, price: number): LotView {
   };
 }
 
-function identity(globalRoles: readonly string[]) {
+// Права, как их выводит Identity: круг `admin` несёт право администрировать
+// аукцион, участник — только права хаба и аукциона. `rights` задаёт тест,
+// которому нужен администратор без каталога — мейнтейнер с управлением.
+function identity(
+  globalRoles: readonly string[],
+  rights: readonly AccessRight[] = globalRoles.includes("admin")
+    ? [
+        "hub",
+        "auction",
+        "manage-membership",
+        "moderate-auction",
+        "manage-auction",
+      ]
+    : ["hub", "auction"],
+) {
   return {
     resolve: async () => ({
       kind: "resolved" as const,
       identityId,
       globalRoles,
-      rights: ["hub", "auction"],
+      rights,
       blocked: false,
     }),
   } satisfies IdentityResolver;
@@ -98,6 +113,7 @@ function fakeAuction(
     week?: AuctionConsoleView["week"];
     lots: ConsoleLot[];
     startedBy?: string;
+    discarded?: true;
   } = {
     status: options.status ?? "draft",
     ...(options.week === undefined ? {} : { week: options.week }),
@@ -188,6 +204,15 @@ function fakeAuction(
         ? { kind: "ok" }
         : { kind: "not-scheduled" };
     },
+    async discardAuction(_person, discard) {
+      commands.push({ method: "discardAuction", args: discard });
+      if (state.discarded === true) return { kind: "ok" };
+      if (state.status !== "draft" && state.status !== "scheduled") {
+        return { kind: "already-started" };
+      }
+      state.discarded = true;
+      return { kind: "ok" };
+    },
     selectForFinal: mark(true),
     deselectForFinal: mark(false),
     screenPorts() {
@@ -223,9 +248,10 @@ function harness(
   roles: readonly string[],
   auction: ReturnType<typeof fakeAuction>,
   calls: RecordedCall[] = [],
+  rights?: readonly AccessRight[],
 ) {
   return createHarness(
-    identity(roles),
+    identity(roles, rights),
     createDispatcher(undefined, undefined, today, auction.port, auction.port, {
       auctions: auction.port,
       timeZone,
@@ -439,6 +465,35 @@ describe("entry into the auction console", () => {
       ["Добавить лот"],
       ["Пульт", "Правила и FAQ"],
     ]);
+  });
+
+  // Мейнтейнер с выданным управлением — администратор сходки для Meetups, но
+  // каталог лотов Auction пускает только по праву администрировать аукцион
+  // (ADR-064, дополнение 2026-10-08): входа в форму лота у него нет.
+  it("keeps the console and hides the lot entries from an administrator without the catalog right", async () => {
+    const auction = fakeAuction({ lots: [vase] });
+    const maintainer = [
+      "hub",
+      "auction",
+      "manage-membership",
+      "moderate-auction",
+    ] as const;
+    const { bot, calls } = harness(
+      ["admin", "public"],
+      auction,
+      [],
+      maintainer,
+    );
+    await bot.init();
+
+    await bot.handleUpdate(press(feedData));
+    expect(labels(last(calls))[0]).toEqual(["Пульт", "Правила и FAQ"]);
+    expect(JSON.stringify(last(calls))).not.toContain("Добавить лот");
+    expect(auction.sent("getAuctionConsole")).toEqual([]);
+
+    await bot.handleUpdate(press(`v1:lot:new:${auctionToken}`));
+    expect(last(calls).text).toContain("Это действие тебе недоступно.");
+    expect(auction.commands).toEqual([]);
   });
 
   it("does not read the console for a member's feed", async () => {
@@ -692,6 +747,7 @@ describe("week of the auction", () => {
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
       ["Сроки недели"],
+      ["Удалить аукцион"],
       ["‹ Лоты", "Меню"],
     ]);
 
@@ -754,6 +810,7 @@ describe("week of the auction", () => {
       ["Сроки недели"],
       ["Вкл · Финал"],
       ["Открыть онлайн-неделю"],
+      ["Удалить аукцион"],
       ["‹ Лоты", "Меню"],
     ]);
   });
@@ -1056,5 +1113,75 @@ describe("final selection", () => {
       ["Ставки", "Люди", "Рост"],
       ["‹ Лоты", "Меню"],
     ]);
+  });
+});
+
+describe("discarding the auction", () => {
+  it("offers the discard while the week is not open and discards only after the confirmation", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced],
+    });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Удалить аукцион")));
+    const confirm = last(calls);
+    expect(plain(confirm)).toContain("Удалить аукцион?");
+    expect(plain(confirm)).toContain("Из аукциона уйдут: 1 лот.");
+    expect(plain(confirm)).toContain(
+      "Лоты и сроки пропадут. Включить аукцион у сходки можно заново.",
+    );
+    expect(labels(confirm)).toEqual([["Да, удалить"], ["Нет"]]);
+    expect(dataOf(confirm, "Нет")).toBe(consoleData);
+    expect(auction.sent("discardAuction")).toEqual([]);
+
+    const yes = dataOf(confirm, "Да, удалить");
+    await bot.handleUpdate(press(yes));
+    expect(auction.state.discarded).toBe(true);
+    expect(last(calls).text).toBe(
+      "<b>Аукцион удалён</b>\n\nВключить его у сходки можно заново.",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Ближайшие", "Меню"]]);
+
+    // Повторное «Да» несёт тот же ключ: Auction примет его как повтор.
+    await bot.handleUpdate(press(yes));
+    const [first, second] = auction.sent("discardAuction");
+    expect(second?.args).toEqual(first?.args);
+  });
+
+  it("offers no discard once the week is open and names it for an old button", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase],
+    });
+    const { bot, calls } = harness(["admin", "public"], auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(JSON.stringify(last(calls))).not.toContain("Удалить аукцион");
+
+    await bot.handleUpdate(press(`v1:ac:x:${auctionToken}`));
+    expect(last(calls).text).toBe(
+      "<b>Онлайн-неделя уже открыта</b>\n\nУдалить аукцион нельзя.",
+    );
+    expect(auction.sent("discardAuction")).toEqual([]);
+  });
+
+  it("refuses an old discard button of someone who is not an administrator before Auction is asked", async () => {
+    const auction = fakeAuction({ lots: [vase] });
+    const { bot, calls } = harness(["member", "public"], auction);
+    await bot.init();
+
+    for (const data of [
+      `v1:ac:x:${auctionToken}`,
+      `v1:ac:z:${auctionToken}:${uuidToToken(vaseId)}`,
+    ]) {
+      await bot.handleUpdate(press(data));
+      expect(last(calls).text).toContain("Это действие тебе недоступно.");
+    }
+    expect(auction.commands).toEqual([]);
   });
 });

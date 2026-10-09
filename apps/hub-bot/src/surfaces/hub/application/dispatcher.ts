@@ -233,6 +233,8 @@ export function createDispatcher(
         case "set-auction-final":
         case "start-auction-week":
         case "mark-auction-finalist":
+        case "prepare-auction-discard":
+        case "discard-auction":
           return auctionConsole === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : auctionConsole(request);

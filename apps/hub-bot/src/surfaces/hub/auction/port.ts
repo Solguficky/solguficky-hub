@@ -183,6 +183,14 @@ export type StartPrebiddingResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
+export type DiscardAuctionResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "already-started" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
 export type FinalistRefusal =
   | "not-in-prebidding"
   | "lot-not-in-auction"
@@ -238,6 +246,13 @@ export type AuctionConsoles = {
     start: { auctionId: string; opId: string },
     meta?: RpcMetadata,
   ): Promise<StartPrebiddingResult>;
+  // Удаление до торгов: аукцион сходки пропадает, и «Включить аукцион»
+  // рождает его заново пустым. Повтор того же `opId` Auction принимает.
+  discardAuction(
+    person: Person,
+    discard: { auctionId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<DiscardAuctionResult>;
   selectForFinal(
     person: Person,
     mark: FinalistMark,

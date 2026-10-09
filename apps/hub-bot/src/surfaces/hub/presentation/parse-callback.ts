@@ -235,6 +235,9 @@ type PlainAction =
   // «Да» подтверждения: ключ открытия рождён, когда подтверждение показано,
   // и повторное нажатие несёт тот же.
   | { kind: "console-confirm"; auction: string; op: string }
+  // «Удалить аукцион»: подтверждение, затем «Да» с ключом удаления.
+  | { kind: "console-discard"; auction: string }
+  | { kind: "console-discard-confirm"; auction: string; op: string }
   | {
       kind: "console-mark";
       auction: string;
@@ -437,6 +440,16 @@ export function consoleOpenData(auction: string): string {
 /** «Да» подтверждения открытия: аукцион и ключ команды. */
 export function consoleConfirmData(auction: string, op: string): string {
   return `v1:ac:y:${auction}:${op}`;
+}
+
+/** «Удалить аукцион»: подтверждение, а не команда. */
+export function consoleDiscardData(auction: string): string {
+  return `v1:ac:x:${auction}`;
+}
+
+/** «Да» подтверждения удаления: аукцион и ключ команды. */
+export function consoleDiscardConfirmData(auction: string, op: string): string {
+  return `v1:ac:z:${auction}:${op}`;
 }
 
 /** Отметка лота для финала (`s`) или её снятие (`d`). */
@@ -836,7 +849,8 @@ function parseLot(parts: readonly string[]): CallbackAction {
 
 // Кнопки пульта аукциона (PER-320): `v1:ac:v:<аукцион>[:<страница>]`,
 // `v1:ac:w:<аукцион>`, `v1:ac:f:<аукцион>:<0|1>`, `v1:ac:o:<аукцион>`,
-// `v1:ac:y:<аукцион>:<ключ>` и `v1:ac:<s|d>:<аукцион>:<лот>:<страница>`.
+// `v1:ac:y:<аукцион>:<ключ>`, `v1:ac:x:<аукцион>`, `v1:ac:z:<аукцион>:<ключ>`
+// и `v1:ac:<s|d>:<аукцион>:<лот>:<страница>`.
 function parseConsole(parts: readonly string[]): CallbackAction {
   const auction = TokenSchema.safeParse(parts[3]);
   if (!auction.success) return { kind: "malformed" };
@@ -872,6 +886,20 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       const op = TokenSchema.safeParse(parts[4]);
       return parts.length === 5 && op.success
         ? { kind: "console-confirm", auction: auction.data, op: op.data }
+        : { kind: "malformed" };
+    }
+    case "x":
+      return parts.length === 4
+        ? { kind: "console-discard", auction: auction.data }
+        : { kind: "malformed" };
+    case "z": {
+      const op = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && op.success
+        ? {
+            kind: "console-discard-confirm",
+            auction: auction.data,
+            op: op.data,
+          }
         : { kind: "malformed" };
     }
     case "s":

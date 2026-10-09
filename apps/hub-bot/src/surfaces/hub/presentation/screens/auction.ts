@@ -57,10 +57,16 @@ export type AuctionView = {
   /** Фото карточки лота, уже готовое к отправке; нет — карточка без фото. */
   photo?: ScreenPhoto;
   /**
-   * Смотрящий — администратор: оболочка добавляет входы в форму лота (PER-319).
+   * Смотрящий — администратор: оболочка добавляет вход в пульт (PER-320).
    * Право это не решает — его проверяют Auction и Meetups на каждой команде.
    */
   canManage?: boolean;
+  /**
+   * Смотрящий держит право администрировать аукцион: оболочка добавляет входы
+   * в форму лота (PER-319) — «Добавить лот» и «Изменить лот». Каталог лотов
+   * Auction пускает по этому праву, а не по роли.
+   */
+  canEditLots?: boolean;
   /**
    * Принимает ли аукцион новые лоты: `false` — онлайн-неделя открыта, и ряда
    * «Добавить лот» в ленте нет (PER-468). Статус аукциона лента тела не несёт,
@@ -161,11 +167,11 @@ function feedScreen(
   const keyboard = new InlineKeyboard();
   // Действие экрана стоит первым рядом, над лотами и листанием. После старта
   // онлайн-недели добавлять лот нельзя, и ряда нет; «Пульт» остаётся.
+  const auction = uuidToToken(feed.auctionId);
+  if (view.canEditLots === true && view.canAddLots !== false) {
+    keyboard.text(addLotLabel, lotNewData(auction)).row();
+  }
   if (view.canManage === true) {
-    const auction = uuidToToken(feed.auctionId);
-    if (view.canAddLots !== false) {
-      keyboard.text(addLotLabel, lotNewData(auction)).row();
-    }
     // У администратора объединяем два коротких действия в разрешённую пару:
     // это сохраняет предел рядов на полной странице из восьми лотов.
     keyboard
@@ -173,9 +179,7 @@ function feedScreen(
       .text("Правила и FAQ", auctionFaqData(auction))
       .row();
   } else {
-    keyboard
-      .text("Правила и FAQ", auctionFaqData(uuidToToken(feed.auctionId)))
-      .row();
+    keyboard.text("Правила и FAQ", auctionFaqData(auction)).row();
   }
   for (const row of view.body.keyboard) {
     nextRow(keyboard);
@@ -267,7 +271,7 @@ function lotScreen(
   if (back === undefined) {
     throw new Error("lot body without a way back to the feed");
   }
-  if (view.canManage === true) {
+  if (view.canEditLots === true) {
     nextRow(keyboard).text(editLotLabel, lotFormData(uuidToToken(lot.lotId)));
   }
   const title = truncate(lot.card?.title ?? untitled, titleLimit);

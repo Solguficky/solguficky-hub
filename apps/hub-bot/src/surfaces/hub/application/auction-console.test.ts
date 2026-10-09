@@ -3,6 +3,7 @@ import type {
   AuctionConsoles,
   AuctionWeekConfig,
   ConsoleReadResult,
+  DiscardAuctionResult,
   FinalistResult,
   LotStatisticsReadResult,
   ScheduleAuctionResult,
@@ -46,6 +47,7 @@ function fake(answers: {
   schedule?: ScheduleAuctionResult;
   start?: StartPrebiddingResult;
   mark?: FinalistResult;
+  discard?: DiscardAuctionResult;
 }) {
   const scheduled: AuctionWeekConfig[] = [];
   const port: AuctionConsoles = {
@@ -62,6 +64,7 @@ function fake(answers: {
       return answers.schedule ?? { kind: "ok" };
     },
     startPrebidding: async () => answers.start ?? { kind: "ok" },
+    discardAuction: async () => answers.discard ?? { kind: "ok" },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },
   };
@@ -362,5 +365,70 @@ describe("auction week start", () => {
     await expect(
       opened.run({ ...call, intent: "ask-auction-week" }),
     ).resolves.toMatchObject({ kind: "auction-console", note: "week-frozen" });
+  });
+});
+
+describe("auction discard", () => {
+  const call = { identity: admin, auctionId };
+
+  it("confirms the discard with the number of lots while the week is not open", async () => {
+    const { run } = fake({ statistics: noLotStatistics });
+
+    await expect(
+      run({ ...call, intent: "prepare-auction-discard", opId }),
+    ).resolves.toEqual({
+      kind: "auction-discard-confirm",
+      auctionId,
+      opId,
+      lots: 0,
+    });
+  });
+
+  it("names an opened week instead of a confirmation", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
+    });
+
+    await expect(
+      run({ ...call, intent: "prepare-auction-discard", opId }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "discard-too-late",
+    });
+  });
+
+  it("answers a discarded auction and names a week that opened in between", async () => {
+    const accepted = fake({});
+    const late = fake({
+      discard: { kind: "already-started" },
+      read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
+    });
+
+    await expect(
+      accepted.run({ ...call, intent: "discard-auction", opId }),
+    ).resolves.toEqual({ kind: "auction-discarded", auctionId });
+    await expect(
+      late.run({ ...call, intent: "discard-auction", opId }),
+    ).resolves.toMatchObject({ note: "discard-too-late" });
+  });
+
+  it("refuses the discard as the console when Auction does not take the person for the administrator or lacks the auction", async () => {
+    const forbidden = fake({ discard: { kind: "not-administrator" } });
+    const missing = fake({ discard: { kind: "auction-not-found" } });
+
+    await expect(
+      forbidden.run({ ...call, intent: "discard-auction", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "not-administrator",
+    });
+    await expect(
+      missing.run({ ...call, intent: "discard-auction", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "auction-not-found",
+    });
   });
 });

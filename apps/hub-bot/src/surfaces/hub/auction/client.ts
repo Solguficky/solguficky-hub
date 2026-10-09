@@ -31,6 +31,7 @@ import {
   type AuctionScreenPorts,
   type AuctionScreens,
   type ConsoleReadResult,
+  type DiscardAuctionResult,
   type EnableAuctionResult,
   type FinalistRefusal,
   type FinalistResult,
@@ -68,6 +69,7 @@ type AuctionRpc = Pick<
   | "getAuctionLotStatistics"
   | "scheduleAuction"
   | "startPrebidding"
+  | "discardAuction"
   | "selectForFinal"
   | "deselectForFinal"
 >;
@@ -292,6 +294,17 @@ export function createAuctionAdapter(
           options(meta),
         );
         return startPrebiddingResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async discardAuction(person, discard, meta) {
+      try {
+        const response = await rpc.discardAuction(
+          { viewer: wireViewer(viewerOf(person)), ...discard },
+          options(meta),
+        );
+        return discardAuctionResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -758,6 +771,36 @@ function startPrebiddingResult(
       }
     case undefined:
       return defect("start prebidding response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function discardAuctionResult(
+  outcome: Awaited<ReturnType<AuctionRpc["discardAuction"]>>["outcome"],
+): DiscardAuctionResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "auctionAlreadyStarted":
+          return { kind: "already-started" };
+        case undefined:
+          return defect("discard auction refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("discard auction response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

@@ -6,6 +6,7 @@ import {
   type RecordedCall,
 } from "../../../../testkit/harness.js";
 import {
+  type AccessRight,
   encodeAuctionCallback,
   type LotView,
   type Money,
@@ -39,13 +40,27 @@ const lotData = (lotId: string) =>
 
 const rub = (minorUnits: number): Money => ({ minorUnits, currency: "RUB" });
 
-function identity(globalRoles: readonly string[]) {
+// Права, как их выводит Identity: круг `admin` несёт право администрировать
+// аукцион, участник — только права хаба и аукциона. `rights` задаёт тест,
+// которому нужен администратор без каталога — мейнтейнер с управлением.
+function identity(
+  globalRoles: readonly string[],
+  rights: readonly AccessRight[] = globalRoles.includes("admin")
+    ? [
+        "hub",
+        "auction",
+        "manage-membership",
+        "moderate-auction",
+        "manage-auction",
+      ]
+    : ["hub", "auction"],
+) {
   return {
     resolve: async () => ({
       kind: "resolved" as const,
       identityId,
       globalRoles,
-      rights: ["hub", "auction"],
+      rights,
       blocked: false,
     }),
   } satisfies IdentityResolver;

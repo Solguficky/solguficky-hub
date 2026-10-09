@@ -157,8 +157,10 @@ import {
   lotPhotoId,
 } from "./screens/auction.js";
 import {
+  auctionDiscardedText,
   consoleMissingText,
   consoleScreen,
+  discardConfirmScreen,
   finalToast,
   weekAskErrorText,
   weekConfirmScreen,
@@ -216,6 +218,7 @@ import {
   upcomingScreen,
 } from "./screens/meetup.js";
 import {
+  canManageAuction,
   canManageMembership,
   canModerateAuction,
   canOpenManagement,
@@ -1142,7 +1145,7 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      if (!isAdministrator(identity.person)) {
+      if (!canManageAuction(identity.person)) {
         await answered();
         outcome = await refuseLotForm(ctx, identity.person);
         return;
@@ -1192,7 +1195,7 @@ async function handleMessage(
       // в чате, и шаг его кнопки можно прислать и чужой. Отказ приходит до
       // Auction: иначе цена прошла бы разбор и человек получил бы второй
       // вопрос вместо отказа.
-      if (!isAdministrator(identity.person)) {
+      if (!canManageAuction(identity.person)) {
         await answered();
         outcome = await refuseLotForm(ctx, identity.person);
         return;
@@ -1530,6 +1533,8 @@ async function handleMessage(
       case "auction-console":
       case "auction-week-ask":
       case "auction-week-confirm":
+      case "auction-discard-confirm":
+      case "auction-discarded":
       case "auction-console-refused":
         outcome = {
           level: "error",
@@ -1730,7 +1735,8 @@ async function handleCallback(
       };
       return;
     }
-    // Форма лота (PER-319): входы в неё видит только администратор, но старая
+    // Форма лота (PER-319): входы в неё видит только держатель права
+    // администрировать аукцион — по нему Auction пускает в каталог, — но старая
     // кнопка остаётся в чате. Вопрос отказал бы лишь после набора ответа, а
     // экран правки без права ничего сделать не даёт, поэтому отказ приходит
     // здесь. Право на сами команды решают Auction и Meetups.
@@ -1739,7 +1745,7 @@ async function handleCallback(
       action.kind === "lot-form" ||
       action.kind === "lot-ask"
     ) {
-      outcome = isAdministrator(person)
+      outcome = canManageAuction(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
         : await refuseLotForm(ctx, person);
       return;
@@ -1753,6 +1759,8 @@ async function handleCallback(
       action.kind === "console-final" ||
       action.kind === "console-open" ||
       action.kind === "console-confirm" ||
+      action.kind === "console-discard" ||
+      action.kind === "console-discard-confirm" ||
       action.kind === "console-mark"
     ) {
       outcome = isAdministrator(person)
@@ -5015,6 +5023,8 @@ async function handleConsoleCallback(
         | "console-final"
         | "console-open"
         | "console-confirm"
+        | "console-discard"
+        | "console-discard-confirm"
         | "console-mark";
     }
   >,
@@ -5076,6 +5086,24 @@ async function handleConsoleCallback(
         await runtime.dispatcher.execute({
           ...call,
           intent: "start-auction-week",
+          opId: tokenToUuid(action.op),
+        }),
+      );
+    case "console-discard":
+      // Подтверждение либо пульт с причиной решает юзкейс; ключ удаления
+      // рождается здесь и уедет в «Да».
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-auction-discard",
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-discard-confirm":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "discard-auction",
           opId: tokenToUuid(action.op),
         }),
       );
@@ -5162,6 +5190,24 @@ async function renderConsoleResult(
         }),
       );
       return handled("auction week confirmation sent");
+    case "auction-discard-confirm":
+      await showScreen(ctx, discardConfirmScreen(result));
+      return handled("auction discard confirmation sent");
+    case "auction-discarded": {
+      // Возврат — к сходке, у которой был аукцион: там снова «Включить
+      // аукцион». После рестарта бот сходку может не знать.
+      const meetupId = ctx.auctionParents?.meetupOf(result.auctionId);
+      await showScreen(ctx, {
+        id: "outcome",
+        text: outcomeText(auctionDiscardedText),
+        keyboard: withNav(
+          new InlineKeyboard(),
+          meetupId === undefined ? toUpcoming : toCard(uuidToToken(meetupId)),
+        ),
+        format: "HTML",
+      });
+      return handled("auction discarded");
+    }
     case "auction-week-ask":
       await askConsoleWeek(ctx, context.questions, {
         auctionId: result.auctionId,
@@ -5440,7 +5486,11 @@ async function handleAuctionCallback(
     }
   }
   const canManage = isAdministrator(person);
-  const feedAuctionId = canManage ? feedAuctionOf(result.body) : undefined;
+  const canEditLots = canManageAuction(person);
+  // Статус нужен только ряду «Добавить лот»; читается он у пульта, который
+  // Auction отдаёт администратору сходки.
+  const feedAuctionId =
+    canManage && canEditLots ? feedAuctionOf(result.body) : undefined;
   const canAddLots =
     feedAuctionId === undefined
       ? undefined
@@ -5451,9 +5501,10 @@ async function handleAuctionCallback(
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: communityToday(ctx),
-    // Входы в форму лота видит администратор — по той же роли, что правку
-    // сходки и «Включить аукцион».
+    // Пульт видит администратор — по той же роли, что правку сходки и
+    // «Включить аукцион»; входы в форму лота — держатель права каталога.
     canManage,
+    canEditLots,
     ...(canAddLots === undefined ? {} : { canAddLots }),
   };
   const shown = auctionScreen(view);
@@ -6917,6 +6968,8 @@ function callbackUseCase(
     | "console-final"
     | "console-open"
     | "console-confirm"
+    | "console-discard"
+    | "console-discard-confirm"
     | "console-mark"
     | "manage-publish"
     | "manage-unpublish"
@@ -7038,6 +7091,8 @@ function callbackUseCase(
     case "console-final":
     case "console-open":
     case "console-confirm":
+    case "console-discard":
+    case "console-discard-confirm":
     case "console-mark":
       return "manage_auction";
     case "home":
