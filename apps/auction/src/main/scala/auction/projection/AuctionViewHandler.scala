@@ -38,13 +38,17 @@ object AuctionViewHandler {
 
   /**
    * Статус аукциона строкой `auction_view.status` — по нему перечисляются активные и прошедшие. Значения — имена
-   * статусов `AuctionSnapshot` контракта.
+   * статусов `AuctionSnapshot` контракта, кроме `discarded`: так помечена строка аукциона, удалённого до торгов. В
+   * контракте такого статуса нет, и чтения эту строку не отдают.
    */
+  val Discarded = "discarded"
+
   def status(stored: StoredAuction): String =
     stored.state match {
       case "Draft" => "draft"
       case "Scheduled" => "scheduled"
       case "Prebidding" => "prebidding"
+      case "Initial" => Discarded
       case other => throw new IllegalStateException(s"auction view of state $other has no status")
     }
 }

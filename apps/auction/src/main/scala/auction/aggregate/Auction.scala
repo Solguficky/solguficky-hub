@@ -23,10 +23,11 @@ import java.util.UUID
 final case class MeetupId(value: UUID)
 
 /**
- * Где аукцион (ADR-047). `Initial` — аукцион без журнала: под шардингом entity поднимается на любой `auction_id`, и из
- * `Initial` выводит только `AuctionDrafted`. `Draft` — после рождения. `Scheduled` несёт проверенную конфигурацию,
- * которую повторное планирование заменяет целиком. `Prebidding` — онлайн-торги: конфигурация и реестр заморожены, а
- * `startedBy` — `op_id` команды открытия, с которым аукцион шлёт лотам `OpenLot`. Перерыв и финал приносит PER-334.
+ * Где аукцион (ADR-047). `Initial` — аукцион без журнала или удалённый до торгов: под шардингом entity поднимается на
+ * любой `auction_id`, и из `Initial` выводит только `AuctionDrafted`. `Draft` — после рождения. `Scheduled` несёт
+ * проверенную конфигурацию, которую повторное планирование заменяет целиком. `Prebidding` — онлайн-торги: конфигурация
+ * и реестр заморожены, а `startedBy` — `op_id` команды открытия, с которым аукцион шлёт лотам `OpenLot`. Перерыв и
+ * финал приносит PER-334.
  */
 enum AuctionState {
   case Initial
@@ -47,6 +48,12 @@ final case class ScheduleAuction(config: AuctionConfigInput, opId: OpId)
 
 /** Открытие онлайн-торгов. Лоты открывает не сама команда, а протокол подтверждения после неё ([[LotRoster]]). */
 final case class StartPrebidding(opId: OpId)
+
+/**
+ * Удаление аукциона до торгов (ADR-047, дополнение 2026-10-09): аукцион в `Draft` или `Scheduled` возвращается в
+ * `Initial`, и `DraftAuction` рождает его у той же сходки заново под тем же `auction_id`.
+ */
+final case class DiscardAuction(opId: OpId)
 
 /**
  * `ScheduleLot` словаря ADR-047, каким он приходит аукциону: администратор задаёт стартовую цену и шаг, остальные
@@ -93,6 +100,7 @@ enum AuctionEvent {
   case LotRemoved(lot: LotId)
   case AuctionScheduled(config: AuctionConfig)
   case PrebiddingStarted
+  case AuctionDiscarded
 }
 
 /** Строка журнала аукциона в той части конверта, которую читает ядро; `sequence` назначает тот, кто пишет журнал. */
@@ -115,6 +123,12 @@ enum RemoveLotRejected {
 enum ScheduleAuctionRejected {
   case AuctionNotFound
   case ConfigInvalid(reason: auction.aggregate.ConfigInvalid)
+  case AuctionAlreadyStarted
+}
+
+/** Отказы `DiscardAuction`: аукциона нет или торги уже открыты — ставки могли быть, и удалять поздно. */
+enum DiscardAuctionRejected {
+  case AuctionNotFound
   case AuctionAlreadyStarted
 }
 
@@ -154,7 +168,8 @@ enum FinalChoiceRejected[+R] {
  * Исход принятой команды.
  *
  * `Unchanged` — команда принята, но событие не нужно: аукцион у сходки уже есть. Такой ответ в окно `seen` не попадает,
- * потому что ничего не записано, и повтор того же `op_id` приходит к тому же решению заново — `Draft` необратим.
+ * потому что ничего не записано, и повтор того же `op_id` приходит к тому же решению заново. После удаления аукциона
+ * (`AuctionDiscarded`) такой запоздавший повтор родит аукцион снова — это то же, что новое нажатие «Включить».
  */
 enum AuctionDecision {
   case Accepted(event: AuctionEvent)
@@ -242,7 +257,8 @@ object Auction {
   /**
    * Лот в реестр (И-20: только до старта торгов). Лот, который уже в реестре, тоже пишет `LotAdded`: реестр —
    * множество, а `op_id` попадает в окно `seen`. Ответ без события повтором не защищён, и запоздавший повтор после
-   * `RemoveLot` вернул бы снятый лот; у включения аукциона такой опасности нет, потому что `Draft` необратим.
+   * `RemoveLot` вернул бы снятый лот. У включения аукциона ответ без события возможен, и его запоздавший повтор после
+   * удаления рождает аукцион снова — это не возврат прежнего, а новое включение пустого аукциона.
    */
   def decide(auction: Auction, command: AddLot): Either[AddLotRejected, AuctionDecision] =
     auction.seen.get(command.opId) match {
@@ -303,6 +319,22 @@ object Auction {
           case AuctionState.Initial => Left(StartPrebiddingRejected.AuctionNotFound)
           case AuctionState.Scheduled(_) => Right(AuctionDecision.Accepted(AuctionEvent.PrebiddingStarted))
           case AuctionState.Draft | AuctionState.Prebidding(_, _) => Left(StartPrebiddingRejected.AuctionNotScheduled)
+        }
+    }
+
+  /**
+   * Удаление до торгов: из `Draft` и `Scheduled`. После старта торгов — `AuctionAlreadyStarted`: у лотов могли быть
+   * ставки. Повтор того же `op_id` получает исходный ответ из окна `seen`, которое удаление не очищает.
+   */
+  def decide(auction: Auction, command: DiscardAuction): Either[DiscardAuctionRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(DiscardAuctionRejected.AuctionNotFound)
+          case AuctionState.Draft | AuctionState.Scheduled(_) =>
+            Right(AuctionDecision.Accepted(AuctionEvent.AuctionDiscarded))
+          case AuctionState.Prebidding(_, _) => Left(DiscardAuctionRejected.AuctionAlreadyStarted)
         }
     }
 
@@ -374,6 +406,9 @@ object Auction {
         auction.copy(state = AuctionState.Scheduled(config))
       case (AuctionState.Scheduled(config), AuctionEvent.PrebiddingStarted) =>
         auction.copy(state = AuctionState.Prebidding(config, envelope.opId))
+      // Сходка, реестр и конфигурация уходят, окно `seen` остаётся: повтор любой прежней команды узнаёт свой ответ.
+      case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.AuctionDiscarded) =>
+        Auction.initial.copy(seen = auction.seen)
       case _ => auction
     }
     val seen = if (auction.seen.contains(envelope.opId)) auction.seen else auction.seen.updated(envelope.opId, envelope)

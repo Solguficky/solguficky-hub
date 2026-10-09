@@ -2,6 +2,7 @@ package auction.grpc
 
 import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
+import auction.aggregate.DiscardRefusal
 import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.OpeningRefusal
 import auction.aggregate.SchedulingRefusal
@@ -197,6 +198,19 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       reason(OpeningRefusal.Denied(Denial.NotAdministrator)).isNotMeetupAdministrator shouldBe true
       reason(OpeningRefusal.Denied(Denial.MeetupNotFound)).isMeetupNotFound shouldBe true
       reason(OpeningRefusal.AuctionNotScheduled).isAuctionNotScheduled shouldBe true
+    }
+
+    "answers a discard without data and every refusal of the right and of the state as a value" in {
+      def reason(refusal: DiscardRefusal): wire.DiscardAuctionRefusal.Reason =
+        ResponseMapping.discardAuction(Left(refusal)).value.getRefused.reason
+      ResponseMapping.discardAuction(Right(())).value.outcome.isAccepted shouldBe true
+      reason(DiscardRefusal.Denied(Denial.NotAdministrator)).isNotMeetupAdministrator shouldBe true
+      reason(DiscardRefusal.Denied(Denial.MeetupNotFound)).isMeetupNotFound shouldBe true
+      reason(DiscardRefusal.AuctionAlreadyStarted).isAuctionAlreadyStarted shouldBe true
+      ResponseMapping.discardAuction(Left(DiscardRefusal.Denied(Denial.Unavailable))).left.value.getCode shouldBe
+        Status.Code.UNAVAILABLE
+      ResponseMapping.discardAuction(Left(DiscardRefusal.Denied(Denial.AuctionNotFound))).left.value.getCode shouldBe
+        Status.Code.NOT_FOUND
     }
 
     "answers auction commands with a status when the authority is unavailable or the auction does not exist" in {

@@ -3,6 +3,7 @@ package auction.grpc
 import auction.aggregate.AuctionState
 import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
+import auction.aggregate.DiscardRefusal
 import auction.aggregate.Drafted
 import auction.aggregate.FinalChoiceRefusal
 import auction.aggregate.LotSchedulingRefusal
@@ -400,6 +401,24 @@ object ResponseMapping {
 
   private def openingRefused(reason: wire.StartPrebiddingRefusal.Reason): wire.StartPrebiddingResponse =
     wire.StartPrebiddingResponse().withRefused(wire.StartPrebiddingRefusal(reason))
+
+  def discardAuction(outcome: Either[DiscardRefusal, Unit]): Either[Status, wire.DiscardAuctionResponse] =
+    outcome match {
+      case Right(()) => Right(wire.DiscardAuctionResponse().withAccepted(wire.AuctionDiscardAccepted()))
+      case Left(DiscardRefusal.AuctionAlreadyStarted) =>
+        Right(discardRefused(wire.DiscardAuctionRefusal.Reason.AuctionAlreadyStarted(wire.AuctionAlreadyStarted())))
+      case Left(DiscardRefusal.Denied(Denial.NotAdministrator)) =>
+        Right(discardRefused(wire.DiscardAuctionRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
+      case Left(DiscardRefusal.Denied(Denial.MeetupNotFound)) =>
+        Right(discardRefused(wire.DiscardAuctionRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(DiscardRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(DiscardRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(DiscardRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"auction discard answered $denial")
+    }
+
+  private def discardRefused(reason: wire.DiscardAuctionRefusal.Reason): wire.DiscardAuctionResponse =
+    wire.DiscardAuctionResponse().withRefused(wire.DiscardAuctionRefusal(reason))
 
   /**
    * Отметка для финала (ADR-047, дополнение 2026-10-06). Отказы аукциона и лота — значения ответа: `DeadlinePassed`

@@ -367,6 +367,17 @@ final class AuctionGrpcService(
           .flatMap(outcome => ResponseMapping.startPrebidding(outcome).fold(refuse, Future.successful))
     }
 
+  /** Удаление аукциона до торгов (ADR-047, дополнение 2026-10-09): право у Meetups, состояние решает аукцион. */
+  def discardAuction(in: wire.DiscardAuctionRequest): Future[wire.DiscardAuctionResponse] =
+    RequestMapping.discardAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .discard(command.auctionId, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.discardAuction(outcome).fold(refuse, Future.successful))
+    }
+
   /**
    * Отметка лота для финала и её снятие (ADR-047, дополнение 2026-10-06): право у Meetups, фазу и реестр решает
    * аукцион, дедлайн и сам признак — лот. Один срок ожидания накрывает оба перехода, как у `scheduleLot`.

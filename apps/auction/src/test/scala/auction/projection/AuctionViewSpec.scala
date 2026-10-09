@@ -61,6 +61,33 @@ final class AuctionViewSpec extends AnyWordSpec with Matchers {
       AuctionJournal.restoreAuction(row.stored).state shouldBe AuctionState.Prebidding(config(), op(4))
     }
 
+    "keeps the row of a discarded auction at its meetup, empty and in no listing, and lets it be born again" in {
+      val discarded = journal.take(3) ++ List(
+        4L -> stored(AuctionEvent.AuctionDiscarded, 4),
+        5L -> stored(AuctionEvent.AuctionDrafted(meetup), 5)
+      )
+      val row = AuctionView.fold(None, auctionId, discarded.take(4)) match {
+        case Right(Some(row)) => row
+        case other => fail(s"expected a row, got $other")
+      }
+      row.version shouldBe 4
+      row.meetupId shouldBe meetup.value
+      row.lots shouldBe empty
+      AuctionViewHandler.status(row.stored) shouldBe AuctionViewHandler.Discarded
+      AuctionListing.values.foreach { listing =>
+        AuctionViews.statuses(listing) should not contain AuctionViewHandler.Discarded
+      }
+      val (sequence, drafted) = discarded(4)
+      val reborn = AuctionView.project(Some(row), auctionId, sequence, drafted).toOption.flatten.get
+      reborn.version shouldBe 5
+      AuctionViewHandler.status(reborn.stored) shouldBe "draft"
+    }
+
+    "refuses a discard the read model holds no row for, as an auction it never saw born" in {
+      AuctionView.project(None, auctionId, 1, stored(AuctionEvent.AuctionDiscarded, 1)) shouldBe
+        Left(AuctionViewDefect.Unborn(auctionId, 1))
+    }
+
     "skips an event it already holds and reports a gap instead of folding past it" in {
       val (sequence, event) = journal(2)
       AuctionView.project(Some(rowAfter(3)), auctionId, sequence, event) shouldBe Right(None)

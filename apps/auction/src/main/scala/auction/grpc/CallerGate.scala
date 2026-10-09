@@ -32,6 +32,7 @@ object MethodAccess {
     "ScheduleLot" -> Set(Caller.HubBot),
     "ScheduleAuction" -> Set(Caller.HubBot),
     "StartPrebidding" -> Set(Caller.HubBot),
+    "DiscardAuction" -> Set(Caller.HubBot),
     "SelectForFinal" -> Set(Caller.HubBot),
     "DeselectForFinal" -> Set(Caller.HubBot),
     "GetAuctionConsole" -> Set(Caller.HubBot),

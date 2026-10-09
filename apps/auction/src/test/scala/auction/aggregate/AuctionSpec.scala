@@ -158,6 +158,42 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       Auction.decide(started, DraftAuction(meetup, op(4))) shouldBe AuctionDecision.Unchanged
     }
 
+    "is discarded from a draft and once scheduled, losing its meetup, registry and config but not its window" in {
+      for (auction <- List(holding(born), holding(scheduled))) {
+        val decision = Auction.decide(auction, DiscardAuction(op(10)))
+        decision shouldBe Right(AuctionDecision.Accepted(AuctionEvent.AuctionDiscarded))
+        val discarded = applied(auction, decision.toOption.get, 10, 10)
+        discarded.state shouldBe AuctionState.Initial
+        discarded.meetup shouldBe None
+        discarded.lots shouldBe empty
+        discarded.seen.keySet shouldBe auction.seen.keySet + op(10)
+        Auction.inspect(discarded, op(11)) shouldBe Inspection.Absent
+      }
+    }
+
+    "refuses a discard before it is born and once prebidding started" in {
+      Auction.decide(Auction.initial, DiscardAuction(op(4))) shouldBe Left(DiscardAuctionRejected.AuctionNotFound)
+      Auction.decide(started, DiscardAuction(op(4))) shouldBe Left(DiscardAuctionRejected.AuctionAlreadyStarted)
+    }
+
+    "answers a repeated discard with the original envelope, and a repeated command from before it with its own" in {
+      val discarded = Auction.apply(holding(born), AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded))
+      Auction.decide(discarded, DiscardAuction(op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded)))
+      Auction.decide(discarded, AddLot(lot, op(8))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(8, op(8), AuctionEvent.LotAdded(lot))))
+    }
+
+    "is born again at the same meetup after a discard, with an empty registry" in {
+      val discarded = Auction.apply(holding(scheduled), AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded))
+      val decision = Auction.decide(discarded, DraftAuction(meetup, op(11)))
+      decision shouldBe AuctionDecision.Accepted(AuctionEvent.AuctionDrafted(meetup))
+      val reborn = applied(discarded, decision, 11, 11)
+      reborn.state shouldBe AuctionState.Draft
+      reborn.meetup shouldBe Some(meetup)
+      reborn.lots shouldBe empty
+    }
+
     "refuses scheduling before it is born" in {
       Auction.decide(Auction.initial, ScheduleAuction(configInput(), op(2))) shouldBe
         Left(ScheduleAuctionRejected.AuctionNotFound)

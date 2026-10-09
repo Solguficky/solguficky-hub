@@ -76,6 +76,12 @@ enum SchedulingRefusal {
   case AuctionAlreadyStarted
 }
 
+/** Отказ `DiscardAuction`: проверка до агрегата или решение агрегата. */
+enum DiscardRefusal {
+  case Denied(denial: Denial)
+  case AuctionAlreadyStarted
+}
+
 /** Отказ `StartPrebidding`: проверка до агрегата или решение агрегата. */
 enum OpeningRefusal {
   case Denied(denial: Denial)
@@ -234,6 +240,24 @@ final class AuctionCommands(
         authorized(meetup, person, OpeningRefusal.Denied(_))(start(auctionId, opId, person))
     }
 
+  /**
+   * Удаление аукциона до торгов (ADR-047, дополнение 2026-10-09). Порядок тот же, что у остальных команд: повтор, затем
+   * аукцион без журнала, затем право у Meetups, затем агрегат.
+   */
+  def discard(auctionId: AuctionId, opId: OpId, person: ParticipantId): Future[Either[DiscardRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Right(()))
+      case Inspection.Absent => Future.successful(Left(DiscardRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, DiscardRefusal.Denied(_)) {
+          auctions.discard(auctionId, DiscardAuction(opId), Initiator.Operator(person)).map {
+            case Left(DiscardAuctionRejected.AuctionNotFound) => Left(DiscardRefusal.Denied(Denial.AuctionNotFound))
+            case Left(DiscardAuctionRejected.AuctionAlreadyStarted) => Left(DiscardRefusal.AuctionAlreadyStarted)
+            case Right(_) => Right(())
+          }
+        }
+    }
+
   def scheduleLot(
       auctionId: AuctionId,
       lot: LotId,
@@ -348,7 +372,7 @@ final class AuctionCommands(
     event match {
       case AuctionEvent.AuctionDrafted(_) => true
       case AuctionEvent.LotAdded(_) | AuctionEvent.LotRemoved(_) | AuctionEvent.AuctionScheduled(_) |
-          AuctionEvent.PrebiddingStarted =>
+          AuctionEvent.PrebiddingStarted | AuctionEvent.AuctionDiscarded =>
         false
     }
 }

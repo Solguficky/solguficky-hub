@@ -68,6 +68,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(startAnswer)
     }
 
+    var discardAnswer: Either[DiscardAuctionRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def discard(auctionId: AuctionId, command: DiscardAuction, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(discardAnswer)
+    }
+
     var planAnswer: Either[ScheduleAuctionLotRejected, Unit] = Right(())
 
     def scheduleLot(auctionId: AuctionId, command: ScheduleAuctionLot, initiator: Initiator) = {
@@ -289,6 +296,47 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       auctions.startAnswer = Left(StartPrebiddingRejected.AuctionNotScheduled)
       commands.startPrebidding(auctionOfMeetup, op(4), person).futureValue shouldBe
         Left(OpeningRefusal.AuctionNotScheduled)
+    }
+
+    "answers a discard of an auction without a journal with AuctionNotFound before meetups" in {
+      val meetups = Meetups(Authority.Granted)
+      AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
+        .discard(auctionOfMeetup, op(2), person)
+        .futureValue shouldBe Left(DiscardRefusal.Denied(Denial.AuctionNotFound))
+      meetups.asked shouldBe 0
+    }
+
+    "refuses a discard that meetups does not confirm and does not reach the auction" in {
+      for (
+        (answer, denial) <- List(
+          Authority.NotAdministrator -> Denial.NotAdministrator,
+          Authority.MeetupNotFound -> Denial.MeetupNotFound,
+          Authority.Unavailable -> Denial.Unavailable
+        )
+      ) {
+        val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+        AuctionCommands(auctions, noLots, Meetups(answer)).discard(auctionOfMeetup, op(2), person).futureValue shouldBe
+          Left(DiscardRefusal.Denied(denial))
+        auctions.commands shouldBe empty
+      }
+    }
+
+    "discards the auction once meetups confirms the administrator and passes its refusal through" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      commands.discard(auctionOfMeetup, op(2), person).futureValue shouldBe Right(())
+      auctions.discardAnswer = Left(DiscardAuctionRejected.AuctionAlreadyStarted)
+      commands.discard(auctionOfMeetup, op(3), person).futureValue shouldBe
+        Left(DiscardRefusal.AuctionAlreadyStarted)
+      auctions.commands shouldBe List(DiscardAuction(op(2)), DiscardAuction(op(3)))
+    }
+
+    "answers a repeated discard from the window without asking meetups or the auction" in {
+      val auctions = Auctions(Inspection.Repeated(AuctionEnvelope(3, op(3), AuctionEvent.AuctionDiscarded)))
+      val meetups = Meetups(Authority.NotAdministrator)
+      AuctionCommands(auctions, noLots, meetups).discard(auctionOfMeetup, op(3), person).futureValue shouldBe Right(())
+      meetups.asked shouldBe 0
+      auctions.commands shouldBe empty
     }
 
     "answers a repeated scheduling from the window without asking meetups or the auction" in {

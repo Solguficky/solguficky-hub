@@ -4,6 +4,7 @@ import auction.aggregate.MeetupId
 import auction.entity.AuctionJournal
 import auction.projection.AuctionListing
 import auction.projection.AuctionSnapshotView
+import auction.projection.AuctionViewHandler
 import auction.projection.AuctionViewJson
 import auction.projection.AuctionViews
 import org.apache.pekko.actor.typed.ActorSystem
@@ -27,7 +28,8 @@ final class SlickAuctionViews(database: Database, json: AuctionViewJson)(using E
   def byMeetup(meetup: MeetupId): Future[Option[AuctionSnapshotView]] =
     database.run(
       sql"""SELECT auction_id::text, state::text FROM auction_view
-            WHERE meetup_id = ${meetup.value.toString}::uuid""".as[AuctionSnapshotView].headOption
+            WHERE meetup_id = ${meetup.value.toString}::uuid
+              AND status <> ${AuctionViewHandler.Discarded}""".as[AuctionSnapshotView].headOption
     )
 
   def page(listing: AuctionListing, after: Option[UUID], limit: Int): Future[List[AuctionSnapshotView]] = {
