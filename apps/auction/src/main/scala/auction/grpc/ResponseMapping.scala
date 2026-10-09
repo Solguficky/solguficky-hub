@@ -474,13 +474,19 @@ object ResponseMapping {
   }
 
   /** Отказ права на чтение пульта: значения ответа, как у команд; недоступный Meetups — статус. */
-  def consoleDenied(denial: Denial): Either[Status, wire.GetAuctionConsoleResponse] = {
+  def consoleDenied(denial: Denial): Either[Status, wire.GetAuctionConsoleResponse] =
+    consoleRefusal(denial).map(wire.GetAuctionConsoleResponse().withRefused)
+
+  /** Отказ права на статистику лотов — тот же, что у пульта: контракт делит с ним тип отказа. */
+  def statisticsDenied(denial: Denial): Either[Status, wire.GetAuctionLotStatisticsResponse] =
+    consoleRefusal(denial).map(wire.GetAuctionLotStatisticsResponse().withRefused)
+
+  private def consoleRefusal(denial: Denial): Either[Status, wire.GetAuctionConsoleRefusal] = {
     import wire.GetAuctionConsoleRefusal.Reason
-    def refused(reason: Reason) =
-      Right(wire.GetAuctionConsoleResponse().withRefused(wire.GetAuctionConsoleRefusal(reason)))
     denial match {
-      case Denial.NotAdministrator => refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
-      case Denial.MeetupNotFound => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.NotAdministrator =>
+        Right(wire.GetAuctionConsoleRefusal(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
+      case Denial.MeetupNotFound => Right(wire.GetAuctionConsoleRefusal(Reason.MeetupNotFound(wire.MeetupNotFound())))
       case Denial.Unavailable => Left(unavailable)
       case Denial.AuctionNotFound => Left(auctionNotFound)
       case Denial.LotsFrozen | Denial.LotOfAnotherAuction =>

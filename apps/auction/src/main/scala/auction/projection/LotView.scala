@@ -3,6 +3,7 @@ package auction.projection
 import auction.entity.LotJournal
 import auction.entity.StoredLot
 import auction.entity.StoredLotEvent
+import auction.entity.StoredMoney
 import auction.lot.Lot
 import auction.lot.LotState
 
@@ -28,6 +29,19 @@ final case class BidRecord(
     origin: String,
     source: Option[String],
     occurredAt: Instant
+)
+
+/**
+ * Что пишет свёртка нескольких событий лота: строку после последнего применённого события и факты статистики из
+ * применённых событий. `participants` — авторы ставок и владельцы принятых прокси-лимитов в порядке журнала, с
+ * повторами: отзыв лимита участника не снимает, поэтому строки только добавляются. `startingPrice` — стартовая цена из
+ * `LotOpened`: в состоянии лота после открытия её нет, а рост цены статистики считается от неё.
+ */
+final case class LotViewFold(
+    row: Option[LotViewRow],
+    bids: List[BidRecord],
+    participants: List[UUID],
+    startingPrice: Option[StoredMoney]
 )
 
 /** Событие, которое свёртка применила, и строка лота сразу после него. */
@@ -90,16 +104,30 @@ object LotView {
 
   /**
    * Свёртка нескольких событий лота подряд — догонка пропуска вместе с доставленным событием. Итог — строка после
-   * последнего применённого события, если хоть одно применилось, и ставки всех применённых.
+   * последнего применённого события, если хоть одно применилось, и факты всех применённых: ставки, участники и
+   * стартовая цена. Повторно доставленное событие фактов не даёт, как и строки.
    */
   def fold(
       current: Option[LotViewRow],
       lotId: UUID,
       events: Seq[(Long, StoredLotEvent)]
-  ): Either[LotViewDefect, (Option[LotViewRow], List[BidRecord])] =
+  ): Either[LotViewDefect, LotViewFold] =
     replay(current, lotId, events).map { applied =>
-      (applied.lastOption.map(_.row), applied.flatMap(step => bid(lotId, step.sequence, step.stored)))
+      LotViewFold(
+        row = applied.lastOption.map(_.row),
+        bids = applied.flatMap(step => bid(lotId, step.sequence, step.stored)),
+        participants = applied.flatMap(step => participant(step.stored)),
+        startingPrice = applied.flatMap(step => step.stored.event.lotOpened.map(_.startingPrice)).lastOption
+      )
     }
+
+  /**
+   * Участник лота для статистики (`LotStatistics.unique_participant_count`): автор принятой ставки, ручной или
+   * производной, и владелец принятого прокси-лимита. Отказанная команда в журнал не попадает, а отзыв лимита участия не
+   * снимает.
+   */
+  def participant(stored: StoredLotEvent): Option[UUID] =
+    stored.event.bidPlaced.map(_.participant).orElse(stored.event.proxyLimitSet.map(_.participant))
 
   /**
    * Та же свёртка, но с состоянием после каждого применённого события, а не только после последнего: публикации нужен

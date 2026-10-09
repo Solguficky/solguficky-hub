@@ -10,6 +10,7 @@ import auction.lot.*
 import auction.lot.LotFixtures.*
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
+import auction.persistence.SlickLotViews
 import auction.telemetry.ProjectionMetrics
 import auction.testkit.PostgresFixture
 import com.typesafe.config.ConfigFactory
@@ -141,6 +142,50 @@ final class LotProjectionIntegrationSpec
       )
       .futureValue
 
+  private def withdrawOn(node: Node, id: UUID, who: Int): Either[WithdrawProxyLimitRejected, Envelope] =
+    lot(node, id)
+      .ask[Either[WithdrawProxyLimitRejected, Envelope]](
+        LotEntity.WithdrawLimit(WithdrawProxyLimit(participant(who), OpId(ids())), Initiator.Scheduler, _)
+      )
+      .futureValue
+
+  /**
+   * Лот в реестре аукциона: статистика перечисляет реестр, а проекцию аукционов этот сьют не поднимает. Состояние
+   * аукциона статистика не читает, поэтому строка `auction_view` — только опора для внешнего ключа реестра.
+   */
+  private def registered(database: DatabaseSettings, auctionId: UUID, lots: UUID*): Unit =
+    withConnection(database) { connection =>
+      Using.resource(
+        connection.prepareStatement(
+          """INSERT INTO auction_view (auction_id, meetup_id, version, status, state) VALUES (?, ?, 1, 'prebidding', '{}')"""
+        )
+      ) { statement =>
+        statement.setObject(1, auctionId)
+        statement.setObject(2, UUID.randomUUID())
+        statement.executeUpdate()
+      }
+      lots.foreach { id =>
+        Using.resource(connection.prepareStatement("INSERT INTO auction_lot (auction_id, lot_id) VALUES (?, ?)")) {
+          statement =>
+            statement.setObject(1, auctionId)
+            statement.setObject(2, id)
+            statement.executeUpdate()
+        }
+      }
+    }
+
+  /** Статистика тем же чтением, что у gRPC; сравнивается по значениям, а не по снимку лота целиком. */
+  private def statisticsOf(node: Node, auctionId: UUID) =
+    SlickLotViews(node.kit.system)
+      .statistics(auctionId)
+      .futureValue
+      .map(view => (view.lotId, view.bidCount, view.participantCount, view.priceGrowth, view.lastBidAt))
+
+  private def bidders(database: DatabaseSettings, id: UUID): Set[UUID] =
+    query(database, "SELECT DISTINCT participant_id FROM lot_bid WHERE lot_id = ?", id)(
+      _.getObject(1, classOf[UUID])
+    ).toSet
+
   private def query[A](database: DatabaseSettings, sql: String, params: Any*)(read: java.sql.ResultSet => A): List[A] =
     withConnection(database) { connection =>
       Using.resource(connection.prepareStatement(sql)) { statement =>
@@ -255,6 +300,66 @@ final class LotProjectionIntegrationSpec
         version(database, id) shouldBe Some(6L)
       }
       bidRows(database, id) shouldBe 3
+    }
+
+    "counts the statistics of a lot once per event and the same again after a rebuild from scratch" in {
+      val database = migrated()
+      val auctionId = UUID.randomUUID()
+      val (busy, quiet) = (UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000011"), ids())
+      val (incremental, limitOwners) = withNode(database) { node =>
+        tradingLot(node, busy)
+        tradingLot(node, quiet)
+        registered(database, auctionId, busy, quiet)
+        bidOn(node, busy, who = 1, amount = 110).futureValue.isRight shouldBe true
+        // Лимит второго ставит производную ставку от его имени, ответ первому — ещё одну.
+        limitOn(node, busy, who = 2, max = 300).isRight shouldBe true
+        bidOn(node, busy, who = 1, amount = 150).futureValue.isRight shouldBe true
+        // Лимит третьего ниже лимита лидера: он поднимает цену ставкой от имени лидера, своих ставок у него нет.
+        limitOn(node, busy, who = 3, max = 200).isRight shouldBe true
+        // Лимит четвёртого отозван: участия это не снимает.
+        val withdrawn = limitOn(node, busy, who = 4, max = 250).isRight
+        withdrawn shouldBe true
+        withdrawOn(node, busy, who = 4).isRight shouldBe true
+        // Отказанная ставка ниже цены в журнал не попадает и участника не добавляет.
+        bidOn(node, busy, who = 9, amount = 50).futureValue.isLeft shouldBe true
+        eventually(version(database, busy) shouldBe Some(journalVersion(database, busy)))
+        eventually(version(database, quiet) shouldBe Some(3L))
+        (statisticsOf(node, auctionId), Set(2, 3, 4).map(participant(_).value))
+      }
+
+      val busyStatistics = incremental.find(_._1 == busy).getOrElse(fail("busy lot is missing"))
+      val lastBid = query(
+        database,
+        "SELECT occurred_at FROM lot_bid WHERE lot_id = ? ORDER BY sequence DESC LIMIT 1",
+        busy
+      )(_.getTimestamp(1).toInstant).headOption
+      busyStatistics._2 shouldBe bidRows(database, busy).toLong
+      busyStatistics._3 shouldBe (bidders(database, busy) ++ limitOwners).size.toLong
+      bidders(database, busy) should not contain participant(9).value
+      busyStatistics._5 shouldBe lastBid
+      busyStatistics._4.map(_.minorUnits).exists(_ > 0) shouldBe true
+      incremental.find(_._1 == quiet) shouldBe Some((quiet, 0L, 0L, Some(money(0)), None))
+
+      // Повторная доставка: без offset журнал переигрывается целиком, а числа не меняются.
+      withConnection(database)(_.createStatement().execute("DELETE FROM pekko_projection_offset_store"))
+      withNode(database) { node =>
+        eventually(node.probe.calls.get() shouldBe (journalVersion(database, busy) + 3).toInt)
+        statisticsOf(node, auctionId) shouldBe incremental
+      }
+
+      // Перестройка с нуля, как в V9: read model пуста, offset проекции нет, числа — те же, что инкрементальные.
+      withConnection(database) { connection =>
+        val statement = connection.createStatement()
+        List("lot_bid", "lot_view", "lot_participant", "lot_starting_price").foreach(table =>
+          statement.execute(s"DELETE FROM $table")
+        )
+        statement.execute("DELETE FROM pekko_projection_offset_store WHERE projection_name = 'lot-view'")
+      }
+      withNode(database) { node =>
+        eventually(version(database, busy) shouldBe Some(journalVersion(database, busy)))
+        eventually(version(database, quiet) shouldBe Some(3L))
+        statisticsOf(node, auctionId) shouldBe incremental
+      }
     }
 
     "never leaves the read model ahead of the offset when the handler fails inside a transaction of two events" in {

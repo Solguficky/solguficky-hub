@@ -33,6 +33,7 @@ import auction.entity.AuctionAnswer
 import auction.entity.AuctionGateway
 import auction.entity.Initiator
 import auction.entity.LotGateway
+import auction.contract.LotValues
 import auction.lot.AuctionId
 import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
@@ -67,6 +68,7 @@ import auction.projection.AuctionViews
 import auction.projection.LotImageView
 import auction.projection.BidRecord
 import auction.projection.LotSnapshotView
+import auction.projection.LotStatisticsView
 import auction.projection.LotViews
 import auction.v1.auction.BidSource as BidSourceMessage
 import auction.v1.auction.Money as MoneyMessage
@@ -221,6 +223,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def image(lotId: UUID): Future[Option[LotImageView]] = fail("the image was read")
     def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[BidRecord]]] =
       fail("the history was touched")
+    def statistics(auctionId: UUID): Future[List[LotStatisticsView]] = fail("the statistics were read")
   }
 
   private object UntouchableViews extends Views
@@ -1140,14 +1143,72 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       answer.names(silent).text shouldBe "Участник 8999"
     }
 
-    "answers UNIMPLEMENTED on lot statistics without dependencies until the statistics slice" in {
-      val auction = service(Unreachable, names = UntouchableNames)
-      val auctionId = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
-      val request = wire.GetAuctionLotStatisticsRequest(Some(viewer), auctionId)
-      statusOf(auction.getAuctionLotStatistics(request)) shouldBe Status.Code.UNIMPLEMENTED
+    "answers the administrator the statistics of every lot of the registry" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val (busy, quiet) = (new UUID(7L, 1L), new UUID(7L, 2L))
+      val lastBid = deadline.minusSeconds(60)
+      val read = new Views {
+        override def statistics(auctionId: UUID) =
+          if (auctionId != meetupAuction) fail(s"statistics of $auctionId")
+          else
+            Future.successful(
+              List(
+                LotStatisticsView(busy, trading(price = 450), Some(money(300)), 5, 3, Some(lastBid)),
+                LotStatisticsView(quiet, trading(price = 300), Some(money(300)), 0, 1, None)
+              )
+            )
+      }
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val lots = service(
+        Unreachable,
+        views = read,
+        auctions = AuctionCommands(consoleOf(busy, quiet), Unreachable, granted)
+      ).getAuctionLotStatistics(wire.GetAuctionLotStatisticsRequest(Some(viewer), meetupAuction.toString))
+        .futureValue
+        .getStatistics
+        .lots
+
+      lots.map(lot => (lot.lotId, lot.bidCount, lot.uniqueParticipantCount, lot.priceGrowth, lot.lastBidAt)) shouldBe
+        Seq(
+          (busy.toString, 5L, 3L, Some(LotValues.money(money(150))), Some(lastBid.toString)),
+          (quiet.toString, 0L, 1L, Some(LotValues.money(money(0))), None)
+        )
+    }
+
+    "refuses the statistics to a viewer whom the meetup does not confirm and reads no lot" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      service(Unreachable, auctions = AuctionCommands(consoleOf(new UUID(7L, 1L)), Unreachable, stranger))
+        .getAuctionLotStatistics(wire.GetAuctionLotStatisticsRequest(Some(viewer), meetupAuction.toString))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+    }
+
+    "answers UNAVAILABLE on the statistics when meetups cannot confirm the administrator" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val silent: MeetupAuthority = (_, _, _) => Future.successful(Authority.Unavailable)
       statusOf(
-        auction.getAuctionLotStatistics(wire.GetAuctionLotStatisticsRequest())
-      ) shouldBe Status.Code.UNIMPLEMENTED
+        service(Unreachable, auctions = AuctionCommands(consoleOf(new UUID(7L, 1L)), Unreachable, silent))
+          .getAuctionLotStatistics(wire.GetAuctionLotStatisticsRequest(Some(viewer), meetupAuction.toString))
+      ) shouldBe Status.Code.UNAVAILABLE
+    }
+
+    "answers NOT_FOUND for the statistics of an auction without a journal, before asking meetups" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val absent = new Auctions {
+        override def get(auctionId: AuctionId) = Future.successful(Auction.initial)
+      }
+      statusOf(
+        service(Unreachable, auctions = AuctionCommands(absent, Unreachable, NoMeetups))
+          .getAuctionLotStatistics(wire.GetAuctionLotStatisticsRequest(Some(viewer), meetupAuction.toString))
+      ) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "answers INVALID_ARGUMENT on statistics without a viewer or an auction, before the auction" in {
+      statusOf(service(Unreachable).getAuctionLotStatistics(wire.GetAuctionLotStatisticsRequest())) shouldBe
+        Status.Code.INVALID_ARGUMENT
     }
 
     "answers UNIMPLEMENTED on invoices until the invoice slice" in {

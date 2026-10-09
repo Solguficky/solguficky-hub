@@ -5,9 +5,12 @@ import auction.catalog.LotCard
 import auction.catalog.LotId
 import auction.catalog.LotTitle
 import auction.entity.LotJournal
+import auction.lot.CurrencyCode
+import auction.lot.Money
 import auction.projection.LotImageView
 import auction.projection.BidRecord
 import auction.projection.LotSnapshotView
+import auction.projection.LotStatisticsView
 import auction.projection.LotViewJson
 import auction.projection.LotViews
 import org.apache.pekko.actor.typed.ActorSystem
@@ -26,6 +29,9 @@ import scala.concurrent.Future
  * изображения снимок не выбирает — только версию; их читает отдельный `image`.
  */
 final class SlickLotViews(database: Database, json: LotViewJson)(using ExecutionContext) extends LotViews {
+
+  // Число ставок лота `v` — одно выражение у снимка и у статистики: контракт требует, чтобы они совпадали.
+  private val BidCountSql = "(SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id)"
 
   private given GetResult[LotSnapshotView] = GetResult { row =>
     val lotId = UUID.fromString(row.nextString())
@@ -47,7 +53,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
   def find(lotId: UUID): Future[Option[LotSnapshotView]] =
     database.run(
       sql"""SELECT v.lot_id::text, v.auction_id::text, v.version, v.state::text, c.title, c.description,
-                   c.image_version, (SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id)
+                   c.image_version, #$BidCountSql
             FROM lot_view v LEFT JOIN lot_catalog c ON c.lot_id = v.lot_id
             WHERE v.lot_id = ${lotId.toString}::uuid""".as[LotSnapshotView].headOption
     )
@@ -57,7 +63,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
     val from = after.getOrElse(new UUID(0L, 0L)).toString
     database.run(
       sql"""SELECT v.lot_id::text, v.auction_id::text, v.version, v.state::text, c.title, c.description,
-                   c.image_version, (SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id)
+                   c.image_version, #$BidCountSql
             FROM lot_view v LEFT JOIN lot_catalog c ON c.lot_id = v.lot_id
             WHERE v.auction_id = ${auctionId.toString}::uuid AND v.lot_id > $from::uuid
             ORDER BY v.lot_id LIMIT $limit""".as[LotSnapshotView].map(_.toList)
@@ -68,7 +74,7 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
     val from = after.getOrElse(new UUID(0L, 0L)).toString
     database.run(
       sql"""SELECT v.lot_id::text, v.auction_id::text, v.version, v.state::text, c.title, c.description,
-                   c.image_version, (SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id)
+                   c.image_version, #$BidCountSql
             FROM auction_lot r JOIN lot_view v ON v.lot_id = r.lot_id
             LEFT JOIN lot_catalog c ON c.lot_id = v.lot_id
             WHERE r.auction_id = ${auctionId.toString}::uuid AND r.lot_id > $from::uuid
@@ -110,6 +116,27 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
     } yield known.map(_ => bids.toList)
     database.run(read)
   }
+
+  private given GetResult[LotStatisticsView] = GetResult { row =>
+    val lotId = UUID.fromString(row.nextString())
+    val lot = LotJournal.restoreLot(json.read(row.nextString()))
+    val start = (row.nextLongOption(), row.nextStringOption()) match {
+      case (Some(minorUnits), Some(currency)) => Some(Money(minorUnits, CurrencyCode(currency)))
+      case _ => None
+    }
+    LotStatisticsView(lotId, lot, start, row.nextLong(), row.nextLong(), row.nextTimestampOption().map(_.toInstant))
+  }
+
+  def statistics(auctionId: UUID): Future[List[LotStatisticsView]] =
+    database.run(
+      sql"""SELECT v.lot_id::text, v.state::text, s.minor_units, s.currency, #$BidCountSql,
+                   (SELECT COUNT(*) FROM lot_participant p WHERE p.lot_id = v.lot_id),
+                   (SELECT b.occurred_at FROM lot_bid b WHERE b.lot_id = v.lot_id ORDER BY b.sequence DESC LIMIT 1)
+            FROM auction_lot r JOIN lot_view v ON v.lot_id = r.lot_id
+            LEFT JOIN lot_starting_price s ON s.lot_id = v.lot_id
+            WHERE r.auction_id = ${auctionId.toString}::uuid
+            ORDER BY r.lot_id""".as[LotStatisticsView].map(_.toList)
+    )
 
   // Та же защита, что у SlickLotCatalogStore: строка с пустым по типу названием — запись в обход сервиса.
   private def restored(lotId: UUID, title: String): LotTitle =

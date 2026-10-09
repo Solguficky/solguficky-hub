@@ -208,7 +208,7 @@ final class GrpcBoundarySpec
       written("request_id") shouldBe "req-7"
     }
 
-    "answers UNIMPLEMENTED to the hub bot reading lot statistics" in {
+    "admits the hub bot to lot statistics with its token" in {
       statusOf(
         client
           .getAuctionLotStatistics()

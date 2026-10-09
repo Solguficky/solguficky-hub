@@ -39,6 +39,7 @@ import auction.v1.auction_service.DeselectForFinalRequest
 import auction.v1.auction_service.DraftAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.GetAuctionConsoleRequest
+import auction.v1.auction_service.GetAuctionLotStatisticsRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
 import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.GetLotRequest
@@ -289,9 +290,16 @@ object RequestMapping {
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
 
   def getAuctionConsole(request: GetAuctionConsoleRequest): Either[FormError, ConsoleQuery] =
+    administered(request.viewer, request.auctionId)
+
+  /** Статистика лотов несёт то же, что пульт: аукцион сходки и смотрящего, которого Meetups проверит на право. */
+  def getAuctionLotStatistics(request: GetAuctionLotStatisticsRequest): Either[FormError, ConsoleQuery] =
+    administered(request.viewer, request.auctionId)
+
+  private def administered(viewer: Option[ViewerMessage], auctionId: String): Either[FormError, ConsoleQuery] =
     for {
-      acting <- acting(request.viewer)
-      auction <- meetupAuction(request.auctionId)
+      acting <- acting(viewer)
+      auction <- meetupAuction(auctionId)
     } yield ConsoleQuery(auction, acting)
 
   def scheduleLot(request: ScheduleLotRequest): Either[FormError, LotScheduleCommand] =
