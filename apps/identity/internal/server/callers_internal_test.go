@@ -172,6 +172,8 @@ func TestCallerGateAdmitsDeclaredCaller(t *testing.T) {
 		// право place_bids, без которого Auction не отдаст лот для текста.
 		{identityv1.IdentityService_ResolveTelegramUserId_FullMethodName, CallerAuctionBot},
 		{identityv1.IdentityService_CheckAccessRight_FullMethodName, CallerAuctionBot},
+		// Закрытие регистрации в розыгрыше (PER-499): право place_bids кандидатов.
+		{identityv1.IdentityService_CheckAccessRight_FullMethodName, CallerAuction},
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.caller)+tc.method, func(t *testing.T) {
