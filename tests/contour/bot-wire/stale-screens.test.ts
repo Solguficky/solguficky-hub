@@ -92,10 +92,13 @@ describe("кнопки на старых экранах", () => {
     // Вход в управление есть только у администратора (PER-396).
     const { person: organizer } = await organizerAtStart(wire, direct);
 
-    // Кнопка, чей обычный экран — меню управления, а не список: иначе
+    // Кнопка, чей обычный экран — группа управления, а не список: иначе
     // исполненная как обычная она дала бы тот же экран, что и устаревшая.
-    await organizer.pressesFromOlderRelease("Управление");
-    expect(organizer.sees()).toMatch(/^Сходки/);
+    // Корневого меню с «Управлением» нет (решение владельца 10 октября 2026
+    // года), поэтому кнопка берётся с экрана «Управление».
+    await organizer.says("/manage");
+    await organizer.pressesFromOlderRelease("Сходки и объявления");
+    expect(organizer.sees()).toMatch(/^Сходки(?! и объявления)/);
     expect(organizer.buttons()).not.toContain("Создать сходку");
 
     // Процесс жив: следующее нажатие обрабатывается как обычно.
