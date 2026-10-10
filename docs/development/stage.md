@@ -164,14 +164,20 @@ bin/stage db <база>                                      # туннель н
 
 ### Разовая выкладка ADR-065
 
-Переход на круг, наборы и права с глаголом выкладывается на stage один раз и в таком порядке:
+Переход на круг, наборы и права с глаголом ([ADR-065](../decisions/ADR-065-circle-presets-and-verb-rights.md)) меняет контракты пяти сервисов без обратной совместимости, поэтому выкатывается один раз, целиком и в таком порядке. Сброс данных не нужен: миграции Identity 017 и Notifications 024 переносят состояние, а мейнтейнер stage получает наборы `maintainer` и `admin` и назначать себя заново ему не нужно.
 
-1. Остановить оба бота, чтобы Identity не писал новых событий.
-2. Дождаться, пока outbox Identity опубликован целиком: `SELECT count(*) FROM identity_outbox WHERE published_at IS NULL` в базе `identity` даёт 0.
-3. Дождаться, пока у durable `notifications-identity-events` на стриме `IDENTITY_EVENTS` не осталось неподтверждённых сообщений.
-4. Выкладывать.
+1. **До мержа — `bin/stage pause`.** Автовыкладка катит каждую публикацию мержа отдельным коммитом ops раз в две минуты. Без паузы новый образ одного сервиса встанет рядом со старыми соседями, а Identity применит миграцию раньше, чем остановлены боты.
+2. **Мерж и публикации.** Мержится pull request; CI публикует образы `identity`, `meetups`, `notifications`, `auction`, `hub-bot` и чарт. Дождаться, пока все джобы `stage` этих публикаций зелёные (`gh run list --branch develop`), и `git pull` в копии ops: в `stage/test/values.yaml` новые digest'ы пяти образов, в `release.yaml` новая версия чарта.
+3. **Остановить ботов** — `bin/stage stop hub-bot`, `bin/stage stop auction-bot`. Без них Identity не пишет новых событий, а Notifications дочитывает старые.
+4. **Проверки до выкладки** в `bin/stage db identity`:
+   - `SELECT count(*) FROM identity_outbox WHERE published_at IS NULL;` — 0. Иначе подождать: релей старого Identity ещё работает. Миграция 017 помечает неопубликованные строки прежней формы опубликованными — в новой форме их не закодировать, и событие пропало бы.
+   - `SELECT count(*) FROM identity_roles r JOIN profiles p ON p.id = r.identity_id WHERE p.blocked AND r.revoked_at IS NULL;` — 0. Иначе миграция 017 откажет на старте с `a blocked profile holds an active role`.
+5. **Дождаться, пока Notifications дочитал события Identity** — у durable `notifications-identity-events` стрима `IDENTITY_EVENTS` нет ни ожидающих, ни неподтверждённых сообщений (`nats consumer info IDENTITY_EVENTS notifications-identity-events`: `Unprocessed Messages: 0`, `Outstanding Acks: 0`). Готовой команды в `bin/stage` для этого нет. Событие прежней формы, прочитанное Notifications после его миграции 024, легло бы в реплику без круга и до следующего события человека уводило бы доставку не в тот бот.
+6. **Выкладка** — `bin/stage deploy` (или `bin/stage resume`, и таймер выкатит `main` ops). Одна выкладка меняет все сервисы разом; боты возвращаются ею же. В логах Identity и Notifications (`bin/stage logs identity`, `bin/stage logs notifications`) — применённые миграции 017 и 024 без ошибок.
+7. **Проверка результата.** В `bin/stage db identity`: `SELECT preset, count(*) FROM identity_presets WHERE revoked_at IS NULL GROUP BY preset;` — у мейнтейнера `maintainer` и `admin`. С телефона: в боте хаба есть «Управление», в аукционе сходки — «Добавить лот», и лот добавляется. Гость в боте аукциона по-прежнему торгует.
+8. **`bin/stage resume`**, если на шаге 6 выкладка шла командой `deploy`.
 
-Миграция Identity 017 помечает ещё не опубликованные строки outbox прежней формы опубликованными: в новой форме их не закодировать, и без шага 2 эти события пропадут. Событие прежней формы, которое Notifications прочтёт уже после своей миграции 024, читается без круга и затирает перенесённую строку реплики до следующего события человека — шаг 3 это исключает.
+Откат этой выкладки — не `bin/stage rollback`: старые образы не понимают схему после 017 и 024, а `goose down` выкладка не запускает. Если выкладка упала и не чинится вперёд, путь назад — сброс данных (раздел «Сброс данных») и повторная выкладка новой версии с bootstrap мейнтейнера.
 
 ## Если что-то не так
 
