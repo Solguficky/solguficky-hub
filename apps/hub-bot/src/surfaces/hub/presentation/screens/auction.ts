@@ -194,7 +194,7 @@ function feedScreen(
         : feed.lots
             .map((item) =>
               bullet(
-                `${escapeHtml(truncate(oneLine(item.title ?? untitled), titleLimit))} — ${priceLabel(item.status)}`,
+                `${escapeHtml(truncate(oneLine(item.title ?? untitled), titleLimit))} — ${priceLabel(item.status)}${item.activeWindow === undefined ? "" : ", счастливые часы"}`,
               ),
             )
             .join("\n"),
@@ -502,9 +502,7 @@ function statusGroups(
           ...(block.nextPrice === undefined
             ? []
             : [`Следующая ставка: от ${money(block.nextPrice)}`]),
-          ...(block.fixedStep === undefined
-            ? []
-            : [`Шаг: ${money(block.fixedStep)}`]),
+          ...stepLines(block, view),
           ...(status.deadline === undefined
             ? []
             : [
@@ -548,6 +546,45 @@ function statusGroups(
       return _exhaustive;
     }
   }
+}
+
+// Шаг лота в торгах — те же строки, что у бота аукциона (дизайн-код,
+// «Карточка лота»): в окне «Счастливых часов» шаг окна до его конца и обычный
+// шаг, иначе «Шаг», когда он один на все цены; будущее окно — своей строкой.
+function stepLines(
+  block: Extract<AuctionBlock, { kind: "lot" }>,
+  view: AuctionView,
+): string[] {
+  const local = (instant: string) => communityLocalTime(instant, view.timeZone);
+  const at = (instant: string) => readableMoment(local(instant), view.today);
+  const active = block.activeWindow;
+  const current =
+    active === undefined
+      ? block.fixedStep === undefined
+        ? []
+        : [`Шаг: ${money(block.fixedStep)}`]
+      : [
+          `Счастливые часы: шаг ${money(active.step)} до ${at(active.until)}`,
+          ...(block.baseStep === undefined
+            ? []
+            : [`Обычный шаг: ${money(block.baseStep)}`]),
+        ];
+  const next = block.nextWindow;
+  if (next === undefined) return current;
+  // Окно внутри одного дня называет день один раз.
+  const from = local(next.from);
+  const until = local(next.until);
+  const sameDay =
+    from.year === until.year &&
+    from.month === until.month &&
+    from.day === until.day;
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return [
+    ...current,
+    `Счастливые часы: с ${at(next.from)} до ${
+      sameDay ? `${pad(until.hours)}:${pad(until.minutes)}` : at(next.until)
+    }, шаг ${money(next.step)}`,
+  ];
 }
 
 // Имени нет, а лидер есть — Auction не отдал имя. Идентификатор вместо имени

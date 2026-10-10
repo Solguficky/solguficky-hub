@@ -9,7 +9,10 @@ import {
   UnsoldReason,
   WithdrawnReason,
 } from "../../../gen/auction/v1/auction_pb.js";
-import { LotSnapshotSchema } from "../../../gen/auction/v1/auction_service_pb.js";
+import {
+  LotSnapshotSchema,
+  LotStepWindowSchema,
+} from "../../../gen/auction/v1/auction_service_pb.js";
 import { lotViewOf } from "./snapshot.js";
 
 const rub = (rubles: bigint): Money =>
@@ -125,6 +128,52 @@ describe("lotViewOf", () => {
       minorUnits: 5_000,
       currency: "RUB",
     });
+  });
+
+  // «Счастливые часы» (PER-505): обычный шаг и оба окна снимка доходят до
+  // экранов как есть — какое окно показать, решает карточка.
+  it("reads the regular step and the windows of reduced step", () => {
+    const window = (from: string, until: string) =>
+      create(LotStepWindowSchema, { from, until, step: rub(10n) });
+    const view = lotViewOf(
+      create(LotSnapshotSchema, {
+        ...base,
+        baseStep: rub(50n),
+        activeWindow: window("2026-10-10T15:00:00Z", "2026-10-10T18:00:00Z"),
+        nextWindow: window("2026-10-11T12:00:00Z", "2026-10-11T15:00:00Z"),
+        status: {
+          case: "trading",
+          value: { currentPrice: rub(1200n), phase: LotPhase.ONLINE },
+        },
+      }),
+    );
+    const step = { minorUnits: 1_000, currency: "RUB" };
+    expect(view.baseStep).toEqual({ minorUnits: 5_000, currency: "RUB" });
+    expect(view.activeWindow).toEqual({
+      from: "2026-10-10T15:00:00Z",
+      until: "2026-10-10T18:00:00Z",
+      step,
+    });
+    expect(view.nextWindow).toEqual({
+      from: "2026-10-11T12:00:00Z",
+      until: "2026-10-11T15:00:00Z",
+      step,
+    });
+  });
+
+  it("refuses a window without a step", () => {
+    const snapshot = create(LotSnapshotSchema, {
+      ...base,
+      activeWindow: create(LotStepWindowSchema, {
+        from: "2026-10-10T15:00:00Z",
+        until: "2026-10-10T18:00:00Z",
+      }),
+      status: {
+        case: "trading",
+        value: { currentPrice: rub(1200n), phase: LotPhase.ONLINE },
+      },
+    });
+    expect(() => lotViewOf(snapshot)).toThrow("without an amount");
   });
 
   it("refuses a snapshot without status", () => {
