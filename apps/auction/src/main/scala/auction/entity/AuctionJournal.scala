@@ -17,7 +17,13 @@ final case class StoredAuctionDrafted(meetupId: UUID)
 
 final case class StoredLotRef(lotId: UUID)
 
-final case class StoredOnlinePhase(opensAt: Instant, closesAt: Option[Instant], closesLots: Boolean)
+/** `raffleClosesAt` добавлен в конец (PER-499): строка без него — аукцион без розыгрыша. */
+final case class StoredOnlinePhase(
+    opensAt: Instant,
+    closesAt: Option[Instant],
+    closesLots: Boolean,
+    raffleClosesAt: Option[Instant] = None
+)
 
 final case class StoredMixedClosing(onlineByDeadline: Boolean)
 
@@ -197,7 +203,9 @@ object AuctionJournal {
 
   private def storeConfig(config: AuctionConfig): StoredAuctionConfig =
     StoredAuctionConfig(
-      onlinePhase = config.onlinePhase.map(phase => StoredOnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots)),
+      onlinePhase = config.onlinePhase.map(phase =>
+        StoredOnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots, phase.raffleClosesAt)
+      ),
       finalBlocks = config.finalBlocks,
       closingPolicy = config.closingPolicy match {
         case ClosingPolicy.ByAuctioneer => StoredClosingPolicy("ByAuctioneer", None)
@@ -226,7 +234,9 @@ object AuctionJournal {
     }
     AuctionConfig
       .of(
-        stored.onlinePhase.map(phase => OnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots)),
+        stored.onlinePhase.map(phase =>
+          OnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots, phase.raffleClosesAt)
+        ),
         stored.finalBlocks,
         policy,
         stored.lotDefaults.map(LotJournal.restoreConfig),

@@ -360,7 +360,7 @@ object RequestMapping {
    * Конфигурация без проверки ADR-047: форма требует заданных `oneof` и сообщений, моментов в RFC 3339 и
    * неотрицательных секунд анти-снайпа. Противоречие значений между собой — `closesAt` не после `opensAt`, дедлайн без
    * `closesAt`, число блоков финала, окна сниженного шага вне недели, с общим лотом, с неположительной суммой или без
-   * лотов — отказ домена `ConfigInvalid`, а не нарушение формы. Форма окна — моменты, сумма и канонические UUIDv7
+   * лотов, закрытие регистрации в розыгрыше вне онлайн-этапа — отказ домена `ConfigInvalid`, а не нарушение формы. Форма окна — моменты, сумма и канонические UUIDv7
    * лотов.
    */
   private def auctionConfig(config: AuctionConfigMessage): Either[FormError, AuctionConfigInput] =
@@ -374,7 +374,11 @@ object RequestMapping {
               case None => Right(None)
               case Some(raw) => instant("config.online_phase.closes_at", raw).map(Some(_))
             }
-          } yield Some(OnlinePhase(opensAt, closesAt, phase.closesLots))
+            raffleClosesAt <- phase.raffleClosesAt match {
+              case None => Right(None)
+              case Some(raw) => instant("config.online_phase.raffle_closes_at", raw).map(Some(_))
+            }
+          } yield Some(OnlinePhase(opensAt, closesAt, phase.closesLots, raffleClosesAt))
       }
       closing <- config.closingPolicy.map(_.policy) match {
         case Some(ClosingPolicyMessage.Policy.ByAuctioneer(_)) => Right(ClosingPolicy.ByAuctioneer)

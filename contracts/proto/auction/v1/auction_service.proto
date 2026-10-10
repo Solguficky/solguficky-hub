@@ -11,7 +11,7 @@ import "identity/v1/access.proto";
 // scheduling of an auction and the start of its prebidding, the selection of lots
 // for the final, reads of a lot, of its history, of its image, of the display
 // names of participants and of auctions, the console and lot statistics of the
-// meetup administrator,
+// meetup administrator, the raffle among participants,
 // and the invoices of sold lots: the commands of the organizer and of the winner
 // and their reads.
 //
@@ -50,6 +50,9 @@ service AuctionService {
   rpc GetAuctionLotStatistics(GetAuctionLotStatisticsRequest) returns (GetAuctionLotStatisticsResponse);
   rpc GetMeetupAuction(GetMeetupAuctionRequest) returns (GetMeetupAuctionResponse);
   rpc ListAuctions(ListAuctionsRequest) returns (ListAuctionsResponse);
+  rpc RegisterForRaffle(RegisterForRaffleRequest) returns (RegisterForRaffleResponse);
+  rpc CancelRaffleRegistration(CancelRaffleRegistrationRequest) returns (CancelRaffleRegistrationResponse);
+  rpc GetRaffle(GetRaffleRequest) returns (GetRaffleResponse);
   rpc MarkInvoicePaid(MarkInvoicePaidRequest) returns (MarkInvoicePaidResponse);
   rpc MarkInvoiceHandedOver(MarkInvoiceHandedOverRequest) returns (MarkInvoiceHandedOverResponse);
   rpc ChooseFulfillment(ChooseFulfillmentRequest) returns (ChooseFulfillmentResponse);
@@ -858,8 +861,18 @@ message ConfigInvalid {
 
     // A step window names no lot.
     StepWindowLotsEmpty step_window_lots_empty = 9;
+
+    // online_phase.raffle_closes_at is not after opens_at.
+    RaffleClosesAtNotAfterOpensAt raffle_closes_at_not_after_opens_at = 10;
+
+    // online_phase.raffle_closes_at is not before closes_at.
+    RaffleClosesAtNotBeforeClosesAt raffle_closes_at_not_before_closes_at = 11;
   }
 }
+
+message RaffleClosesAtNotAfterOpensAt {}
+
+message RaffleClosesAtNotBeforeClosesAt {}
 
 message ClosesAtMissing {}
 
@@ -1223,6 +1236,172 @@ message AuctionSnapshot {
     AuctionState.Final in_final = 16;
     AuctionState.Finished finished = 17;
   }
+}
+
+message RegisterForRaffleRequest {
+  // The participant who registers: there is no separate participant field. The
+  // viewer must hold place_bids.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: the auction whose raffle it is.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message RegisterForRaffleResponse {
+  // Exactly one is set. A repeated registration is accepted and returns the same
+  // registration: a participant never holds a second ticket.
+  oneof outcome {
+    Raffle accepted = 1;
+    RaffleRegistrationRefusal refused = 2;
+  }
+}
+
+message RaffleRegistrationRefusal {
+  // Exactly one is set.
+  oneof reason {
+    RaffleNotFound raffle_not_found = 1;
+    RaffleRegistrationClosed registration_closed = 2;
+    DisplayNameNotChosen display_name_not_chosen = 3;
+  }
+}
+
+message CancelRaffleRegistrationRequest {
+  // The participant whose registration is cancelled. The viewer must hold
+  // place_bids.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message CancelRaffleRegistrationResponse {
+  // Exactly one is set. Cancelling without a registration is accepted.
+  oneof outcome {
+    Raffle accepted = 1;
+    RaffleCancellationRefusal refused = 2;
+  }
+}
+
+message RaffleCancellationRefusal {
+  // Exactly one is set.
+  oneof reason {
+    RaffleNotFound raffle_not_found = 1;
+    RaffleRegistrationClosed registration_closed = 2;
+  }
+}
+
+// The auction has no raffle: it was scheduled without raffle_closes_at, or its
+// prebidding has not started yet.
+message RaffleNotFound {}
+
+// Registration closed at closes_at: the pool no longer changes.
+message RaffleRegistrationClosed {}
+
+message GetRaffleRequest {
+  // The viewer must hold place_bids. registered and my_ticket are about them.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+}
+
+message GetRaffleResponse {
+  // Unset when the auction has no raffle: absent, not an error.
+  Raffle raffle = 1;
+}
+
+// The raffle among the participants of an auction as the viewer sees it.
+// Hashes are SHA-256 of a UTF-8 string written as lowercase hex.
+message Raffle {
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 1;
+
+  // Where the raffle is. UNSPECIFIED is not a value.
+  RaffleStatus status = 2;
+
+  // RFC 3339 instant in UTC: when registration closes.
+  string closes_at = 3;
+
+  // The hash of the seed, published when registration opened. Empty only when
+  // the raffle is not held.
+  string commitment = 4;
+
+  // The round of the drand quicknet chain whose randomness enters the draw. 0
+  // only when the raffle is not held.
+  uint64 beacon_round = 5;
+
+  // Whether the viewer holds a registration. Once the pool is fixed it is true
+  // exactly when the viewer holds a ticket: a registration excluded at closing
+  // is not kept.
+  bool registered = 6;
+
+  // The tickets 1..N of the fixed pool in registration order. Empty until the
+  // pool is fixed, and empty when it is fixed with no ticket.
+  repeated RaffleTicket tickets = 7;
+
+  // The number of the viewer's ticket. Unset until the pool is fixed and when
+  // the viewer has no ticket in it.
+  optional uint32 my_ticket = 8;
+
+  // Unset until the draw is revealed: set with DRAWN and NO_TICKETS.
+  RaffleReveal reveal = 9;
+}
+
+enum RaffleStatus {
+  RAFFLE_STATUS_UNSPECIFIED = 0;
+
+  // Registration is open.
+  RAFFLE_STATUS_OPEN = 1;
+
+  // closes_at has passed and the pool is being fixed; registration is closed.
+  RAFFLE_STATUS_CLOSING = 2;
+
+  // The pool is fixed and the draw waits for the randomness of beacon_round.
+  RAFFLE_STATUS_AWAITING_BEACON = 3;
+
+  // The winning ticket is drawn.
+  RAFFLE_STATUS_DRAWN = 4;
+
+  // The pool was fixed with no ticket: the raffle did not take place, and the
+  // seed is revealed without a draw.
+  RAFFLE_STATUS_NO_TICKETS = 5;
+
+  // Prebidding started no earlier than closes_at: registration never opened.
+  RAFFLE_STATUS_NOT_HELD = 6;
+}
+
+message RaffleTicket {
+  // 1..N without gaps.
+  uint32 number = 1;
+
+  // The display name of the holder as the bid history shows it, marks applied,
+  // as it was when the pool was fixed. Unset once names are erased after the
+  // retention period: the number stays.
+  optional string display_name = 2;
+}
+
+// What a participant needs to recompute the draw without access to the service.
+message RaffleReveal {
+  // The seed: 64 lowercase hex characters. Its hash is commitment.
+  string seed = 1;
+
+  // The randomness of beacon_round as drand publishes it, lowercase hex. Empty
+  // with NO_TICKETS.
+  string randomness = 2;
+
+  // The hash of "<seed>:<N>:<randomness>", N in decimal without leading zeros.
+  // Empty with NO_TICKETS.
+  string value = 3;
+
+  // value read as an unsigned big-endian number, modulo N, plus one. Unset with
+  // NO_TICKETS.
+  optional uint32 winning_ticket = 4;
 }
 
 message MarkInvoicePaidRequest {

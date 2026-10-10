@@ -203,6 +203,12 @@ message OnlinePhase {
   // Whether the end of the online phase closes the lots. false is a real value:
   // the lots stay open and a person closes them.
   bool closes_lots = 3;
+
+  // RFC 3339 instant in UTC: when registration for the raffle among the
+  // participants closes. Unset is a real value: an auction without a raffle; it
+  // is then absent, not empty. When set, it is after opens_at and, if closes_at
+  // is set, before it.
+  optional string raffle_closes_at = 4;
 }
 
 // Who closes the lots. Exactly one is set, and an empty oneof is not a value.
