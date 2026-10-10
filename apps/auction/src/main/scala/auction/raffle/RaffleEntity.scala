@@ -14,6 +14,7 @@ import org.apache.pekko.pattern.after
 import org.apache.pekko.persistence.typed.PersistenceId
 import org.apache.pekko.persistence.typed.RecoveryCompleted
 import org.apache.pekko.persistence.typed.scaladsl.Effect
+import org.apache.pekko.persistence.typed.scaladsl.EffectBuilder
 import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
 import org.apache.pekko.persistence.typed.scaladsl.RetentionCriteria
 
@@ -33,11 +34,11 @@ import scala.util.Try
  * владельца в PER-499): persistence id `raffle|<auction_id>`. Решение в [[Raffle.decide]], состояние меняет только
  * [[Raffle.apply]], `onPersistFailure` не задан (ADR-045).
  *
- * Торгов entity не знает по построению: ни порта лотов, ни состояния аукциона она не получает (ADR-066, п. 1). Открывает
- * её аукцион командой `Open` после записи `PrebiddingStarted` и повторяет её, пока не получит ответ.
+ * Торгов entity не знает по построению: ни порта лотов, ни состояния аукциона она не получает (ADR-066, п. 1).
+ * Открывает её аукцион командой `Open` после записи `PrebiddingStarted` и повторяет её, пока не получит ответ.
  *
- * Три шага после открытия идут без человека и переживают рестарт: entity помнится шардингом, а таймеры взводятся
- * заново на `RecoveryCompleted` по тому, что лежит в журнале.
+ * Три шага после открытия идут без человека и переживают рестарт: entity помнится шардингом, а таймеры взводятся заново
+ * на `RecoveryCompleted` по тому, что лежит в журнале.
  *   - В момент закрытия — проверка права кандидатов у Identity в окне `screeningWindow`, затем фиксация пула. Окно
  *     кончается до времени раунда маяка; неотвеченный кандидат остаётся в пуле.
  *   - После фиксации — снимок «номер — имя» в строку `raffle_ticket`, с повтором до успеха.
@@ -122,7 +123,11 @@ object RaffleEntity {
         var expiring = false
 
         def arm(key: Any, message: Command, at: Instant): Unit =
-          timers.startSingleTimer(key, message, Duration.between(clock.instant(), at).toScala.max(Duration.ZERO.toScala))
+          timers.startSingleTimer(
+            key,
+            message,
+            Duration.between(clock.instant(), at).toScala.max(Duration.ZERO.toScala)
+          )
 
         def warn(message: String, failure: Option[Throwable]): Unit = {
           val fields = Seq(
@@ -145,7 +150,7 @@ object RaffleEntity {
               else if (!expiring) context.self ! ExpireNames
           }
 
-        def persist(opId: OpId, event: RaffleEvent): Effect[StoredRaffleEvent, State] =
+        def persist(opId: OpId, event: RaffleEvent): EffectBuilder[StoredRaffleEvent, State] =
           Effect.persist(RaffleJournal.store(newId(), opId, clock.instant())(event))
 
         def systemOp(): OpId = OpId(newId())
@@ -161,7 +166,11 @@ object RaffleEntity {
             replyTo: ActorRef[Either[RegistrationRejected, Raffle]]
         ): Effect[StoredRaffleEvent, State] =
           decision match {
-            case Left(rejected) => Effect.reply(replyTo)(Left(rejected)).thenRun(forgetIfAbsent)
+            case Left(rejected) =>
+              Effect.none.thenRun { after =>
+                replyTo ! Left(rejected)
+                forgetIfAbsent(after)
+              }
             case Right(RaffleDecision.Accepted(event)) =>
               persist(opId, event).thenRun(after => replyTo ! Right(after.raffle))
             case Right(RaffleDecision.Repeated(_) | RaffleDecision.Unchanged) =>
@@ -183,7 +192,11 @@ object RaffleEntity {
               registration(state, Raffle.decide(state.raffle, register, clock.instant()), register.opId, replyTo)
             case Leave(cancel, replyTo) =>
               registration(state, Raffle.decide(state.raffle, cancel, clock.instant()), cancel.opId, replyTo)
-            case Get(replyTo) => Effect.reply(replyTo)(state.raffle).thenRun(forgetIfAbsent)
+            case Get(replyTo) =>
+              Effect.none.thenRun { after =>
+                replyTo ! after.raffle
+                forgetIfAbsent(after)
+              }
             case CloseDue =>
               state.raffle.state match {
                 case RaffleState.Open(terms, _) if clock.instant().isBefore(terms.closesAt) =>

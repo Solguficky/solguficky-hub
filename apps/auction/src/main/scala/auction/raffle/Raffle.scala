@@ -59,8 +59,8 @@ final case class FixPool(excluded: Set[ParticipantId])
 final case class DrawWinner(randomness: Randomness, at: Instant)
 
 /**
- * Исход принятой команды. `Unchanged` — команда принята без события: регистрация уже есть, отменять нечего или
- * розыгрыш уже открыт. `Repeated` — повтор `op_id` получает исходный конверт.
+ * Исход принятой команды. `Unchanged` — команда принята без события: регистрация уже есть, отменять нечего или розыгрыш
+ * уже открыт. `Repeated` — повтор `op_id` получает исходный конверт.
  */
 enum RaffleDecision {
   case Accepted(event: RaffleEvent)

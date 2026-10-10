@@ -117,7 +117,8 @@ object RaffleJournal {
     raffle.state match {
       case RaffleState.Initial => StoredRaffle(sequence, "Initial", None, None, Nil, None, seen)
       case RaffleState.NotHeld(closesAt) => StoredRaffle(sequence, "NotHeld", Some(closesAt), None, Nil, None, seen)
-      case RaffleState.Open(value, entries) => StoredRaffle(sequence, "Open", None, terms(value), ids(entries), None, seen)
+      case RaffleState.Open(value, entries) =>
+        StoredRaffle(sequence, "Open", None, terms(value), ids(entries), None, seen)
       case RaffleState.Fixed(value, tickets) =>
         StoredRaffle(sequence, "Fixed", None, terms(value), ids(tickets), None, seen)
       case RaffleState.Drawn(value, tickets, drawn, at) =>

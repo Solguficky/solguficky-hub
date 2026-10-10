@@ -188,6 +188,11 @@ object GrpcBoundary {
       refuse
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest): Future[wire.GetMeetupAuctionResponse] = refuse
     def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] = refuse
+    def registerForRaffle(in: wire.RegisterForRaffleRequest): Future[wire.RegisterForRaffleResponse] = refuse
+    def cancelRaffleRegistration(
+        in: wire.CancelRaffleRegistrationRequest
+    ): Future[wire.CancelRaffleRegistrationResponse] = refuse
+    def getRaffle(in: wire.GetRaffleRequest): Future[wire.GetRaffleResponse] = refuse
     def markInvoicePaid(in: wire.MarkInvoicePaidRequest): Future[wire.MarkInvoicePaidResponse] = refuse
     def markInvoiceHandedOver(in: wire.MarkInvoiceHandedOverRequest): Future[wire.MarkInvoiceHandedOverResponse] =
       refuse

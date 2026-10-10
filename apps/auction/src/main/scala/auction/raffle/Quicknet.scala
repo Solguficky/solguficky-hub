@@ -80,7 +80,7 @@ object Quicknet {
    * или их два — ждём: расхождение зеркал — то же ожидание, что недоступность.
    */
   def agreed(readings: Seq[Option[Randomness]]): Option[Randomness] =
-    readings.flatten.groupBy(identity).collect { case (value, same) if same.sizeIs >= 2 => value }.toList match {
+    readings.flatten.groupBy(value => value).collect { case (value, same) if same.sizeIs >= 2 => value }.toList match {
       case single :: Nil => Some(single)
       case _ => None
     }
@@ -96,6 +96,6 @@ object Draw {
   /** Номер выигравшего билета: `(V mod N) + 1`, где V — 256-битное беззнаковое число, старший байт первым. */
   def winner(seed: Seed, tickets: Int, randomness: Randomness): Int = {
     require(tickets > 0, "a draw needs at least one ticket")
-    (BigInt(value(seed, tickets, randomness), 16).mod(BigInt(tickets))).toInt + 1
+    BigInt(value(seed, tickets, randomness), 16).mod(BigInt(tickets)).toInt + 1
   }
 }

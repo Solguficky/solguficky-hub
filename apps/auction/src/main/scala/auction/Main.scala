@@ -1,14 +1,23 @@
 package auction
 
+import auction.beacon.BeaconSettings
+import auction.beacon.DrandBeacon
 import auction.boundary.BoundaryLogging
 import auction.boundary.HealthRoutes
+import auction.entity.AuctionRaffle
 import auction.entity.UuidV7
 import auction.grpc.CallerTable
 import auction.grpc.MethodAccess
+import auction.identity.GrpcRaffleAccess
+import auction.identity.IdentitySettings
 import auction.meetup.GrpcMeetupAuthority
 import auction.meetup.MeetupsSettings
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
+import auction.persistence.SlickDisplayNameStore
+import auction.persistence.SlickRaffleTickets
+import auction.naming.DisplayNameCommands
+import auction.raffle.RaffleSettings
 import auction.publication.PublicationSettings
 import auction.telemetry.DeadlineMetrics
 import auction.telemetry.ProjectionMetrics
@@ -73,6 +82,22 @@ object Main {
       case Left(reason) => fail(reason, None)
     }
 
+    // Розыгрыш (ADR-066): Identity для проверки права при закрытии, зеркала
+    // маяка и окна — тоже до ActorSystem, по той же причине, что Meetups.
+    val identity = IdentitySettings.fromConfig(config) match {
+      case Right(settings) => settings
+      case Left(reason) => fail(reason, None)
+    }
+    val beacon = BeaconSettings.fromConfig(config) match {
+      case Right(settings) => settings
+      case Left(reason) => fail(reason, None)
+    }
+    val raffle = RaffleSettings.fromConfig(config) match {
+      case Right(settings) => settings
+      case Left(reason) => fail(reason, None)
+    }
+    val erasureEvery: FiniteDuration = config.getDuration("auction.raffle.erasure-every").toScala
+
     // Схема применяется до ActorSystem: журнал, поднятый на базе без таблиц,
     // отказал бы только на первой записи агрегата, а не на старте.
     val migrations =
@@ -97,7 +122,30 @@ object Main {
     val clock = Clock.systemUTC()
     val sharding = AuctionNode.join(system)
     AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
-    AuctionNode.registerAuctions(system, sharding, clock, UuidV7.generator(clock), askTimeout)
+    val raffleTickets = SlickRaffleTickets(system, DisplayNameCommands(SlickDisplayNameStore(system)))
+    AuctionNode.registerRaffles(
+      system,
+      sharding,
+      clock,
+      UuidV7.generator(clock),
+      GrpcRaffleAccess(identity),
+      DrandBeacon(beacon),
+      raffleTickets,
+      raffle
+    )
+    AuctionNode.registerAuctions(
+      system,
+      sharding,
+      clock,
+      UuidV7.generator(clock),
+      askTimeout,
+      AuctionRaffle.sharded(sharding, askTimeout)
+    )
+    AuctionNode.eraseRaffleNames(system, raffleTickets, clock, erasureEvery)
+    if (identity.url.isEmpty)
+      logger.warn(
+        "auction raffle access check is off: AUCTION_IDENTITY_GRPC_URL is not set, pools are fixed without exclusions"
+      )
     if (meetups.url.isEmpty)
       logger.warn(
         "auction meetup authority is off: AUCTION_MEETUPS_GRPC_URL is not set, admin commands are unavailable"

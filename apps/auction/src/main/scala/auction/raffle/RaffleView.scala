@@ -41,8 +41,8 @@ final case class RaffleView(
 object RaffleView {
 
   /**
-   * `names` — снимок «номер — имя» на момент фиксации; номер без имени — имя стёрто или снимок ещё не записан. Розыгрыша
-   * нет — `None`.
+   * `names` — снимок «номер — имя» на момент фиксации; номер без имени — имя стёрто или снимок ещё не записан.
+   * Розыгрыша нет — `None`.
    */
   def of(raffle: Raffle, viewer: ParticipantId, now: Instant, names: Map[Int, String]): Option[RaffleView] = {
     def numbered(tickets: Vector[ParticipantId]): Vector[RaffleTicketView] =

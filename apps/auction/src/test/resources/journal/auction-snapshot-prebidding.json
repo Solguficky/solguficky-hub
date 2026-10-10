@@ -44,7 +44,8 @@
           "onlinePhase": {
             "opensAt": "2026-10-01T18:00:00Z",
             "closesAt": "2026-10-08T21:00:00Z",
-            "closesLots": true
+            "closesLots": true,
+            "raffleClosesAt": null
           },
           "finalBlocks": 1,
           "closingPolicy": {
@@ -89,7 +90,8 @@
     "onlinePhase": {
       "opensAt": "2026-10-01T18:00:00Z",
       "closesAt": "2026-10-08T21:00:00Z",
-      "closesLots": true
+      "closesLots": true,
+      "raffleClosesAt": null
     },
     "finalBlocks": 1,
     "closingPolicy": {

@@ -95,6 +95,9 @@ final class GrpcBoundarySpec
     def discardAuction(in: wire.DiscardAuctionRequest) = unused
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest) = unused
     def listAuctions(in: wire.ListAuctionsRequest) = unused
+    def registerForRaffle(in: wire.RegisterForRaffleRequest) = unused
+    def cancelRaffleRegistration(in: wire.CancelRaffleRegistrationRequest) = unused
+    def getRaffle(in: wire.GetRaffleRequest) = unused
     def markInvoicePaid(in: wire.MarkInvoicePaidRequest) = unused
     def markInvoiceHandedOver(in: wire.MarkInvoiceHandedOverRequest) = unused
     def chooseFulfillment(in: wire.ChooseFulfillmentRequest) = unused

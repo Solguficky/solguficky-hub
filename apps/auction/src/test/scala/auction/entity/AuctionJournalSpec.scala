@@ -88,6 +88,22 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]) shouldBe auction
     }
 
+    "keeps the stored form of a schedule with a raffle and reads it back as one" in {
+      val raffled = AuctionEvent.AuctionScheduled(
+        AuctionFixtures.config(
+          AuctionFixtures.configInput(onlinePhase =
+            Some(AuctionFixtures.week.copy(raffleClosesAt = Some(java.time.Instant.parse("2026-10-07T18:00:00Z"))))
+          )
+        )
+      )
+      keepsGolden("auction-scheduled-with-raffle", stored(raffled, 3))
+    }
+
+    "reads a schedule written before the raffle existed as a schedule without a raffle" in {
+      legacy("auction-scheduled-without-raffle", stored(scheduled.event, 3)) shouldBe stored(scheduled.event, 3)
+      config().raffleClosesAt shouldBe None
+    }
+
     "keeps no fractional number in a scheduled config" in {
       val row = write(kit.system, stored(scheduled.event, 3))
       numbers(row.json).filterNot(_.isIntegralNumber) shouldBe empty
