@@ -58,7 +58,7 @@ import auction.v1.auction_service.SetProxyLimitRequest
 import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
-import identity.v1.roles.AccessRight as AccessRightMessage
+import identity.v1.access.AccessRight as AccessRightMessage
 
 import java.nio.charset.StandardCharsets
 import java.time.Duration
@@ -500,11 +500,12 @@ object RequestMapping {
 
   private def right(value: AccessRightMessage): Option[AccessRight] =
     value match {
-      case AccessRightMessage.ACCESS_RIGHT_HUB => Some(AccessRight.Hub)
-      case AccessRightMessage.ACCESS_RIGHT_AUCTION => Some(AccessRight.Auction)
-      case AccessRightMessage.ACCESS_RIGHT_MANAGE_MEMBERSHIP => Some(AccessRight.ManageMembership)
-      case AccessRightMessage.ACCESS_RIGHT_MODERATE_AUCTION => Some(AccessRight.ModerateAuction)
-      case AccessRightMessage.ACCESS_RIGHT_MANAGE_AUCTION => Some(AccessRight.ManageAuction)
+      case AccessRightMessage.ACCESS_RIGHT_ACCESS_HUB => Some(AccessRight.AccessHub)
+      case AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS => Some(AccessRight.PlaceBids)
+      case AccessRightMessage.ACCESS_RIGHT_MANAGE_MEMBERS => Some(AccessRight.ManageMembers)
+      case AccessRightMessage.ACCESS_RIGHT_ADMIT_BIDDERS => Some(AccessRight.AdmitBidders)
+      case AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS => Some(AccessRight.ManageMeetups)
+      case AccessRightMessage.ACCESS_RIGHT_GRANT_ADMINS => Some(AccessRight.GrantAdmins)
       case AccessRightMessage.ACCESS_RIGHT_UNSPECIFIED | AccessRightMessage.Unrecognized(_) => None
     }
 

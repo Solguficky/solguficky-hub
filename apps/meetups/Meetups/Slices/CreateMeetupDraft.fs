@@ -119,8 +119,8 @@ module Api =
         match error with
         | CreateMeetupDraftError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | CreateMeetupDraftError.Forbidden NotAnAdministrator ->
-            Status(StatusCode.PermissionDenied, "an administrator role is required")
+        | CreateMeetupDraftError.Forbidden CannotManageMeetups ->
+            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
         // Чужой черновик отвечает как несуществующий: иначе ответ подтвердил бы, что
         // он существует (ADR-031, ADR-022). Видимость своего кода не имеет.
         | CreateMeetupDraftError.Domain DraftBelongsToAnotherAuthor

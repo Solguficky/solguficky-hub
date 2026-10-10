@@ -7,8 +7,8 @@ export type MeetupCategory = "changes" | "material" | "reminder" | "organizer";
 
 // Глобальные категории поверх тех же четырёх: подписаться на ещё не созданную
 // сходку нельзя, а объявление и заявка не привязаны ни к одной. Запросы
-// доступа видит только администратор, но решает это сервис: категории нет в
-// снимке остальных, и бот рисует снимок, а не роль.
+// доступа видит только модератор очереди, но решает это сервис: категории нет
+// в снимке остальных, и бот рисует снимок, а не права.
 export type GlobalOnlyCategory = "published" | "announcement" | "access";
 
 export type NotificationCategory = MeetupCategory | GlobalOnlyCategory;

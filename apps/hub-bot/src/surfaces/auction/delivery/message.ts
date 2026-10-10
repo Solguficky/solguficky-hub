@@ -59,7 +59,7 @@ export function parseTraceCallback(data: string): string | undefined {
 // канал не придумывает — спрашивает у Identity.
 export type NotificationReads = {
   // true — право есть, false — нет; недоступность Identity — исключение.
-  hasAuctionRight(identityId: string, requestId?: string): Promise<boolean>;
+  holdsPlaceBids(identityId: string, requestId?: string): Promise<boolean>;
   // Название лота глазами получателя; любой отказ — исключение со своим кодом.
   lotTitle(
     identityId: string,
@@ -81,7 +81,7 @@ export function createRenderMessage(
   return async (content, { recipientId, requestId }) => {
     let eligible: boolean;
     try {
-      eligible = await reads.hasAuctionRight(recipientId, requestId);
+      eligible = await reads.holdsPlaceBids(recipientId, requestId);
     } catch (cause) {
       return isPermanentFailure(cause)
         ? { kind: "rejected", cause }

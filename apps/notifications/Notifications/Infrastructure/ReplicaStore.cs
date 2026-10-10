@@ -95,11 +95,12 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         """;
 
     private const string IdentitySql = """
-        INSERT INTO identity_replica (identity_id, version, role, rights, blocked, occurred_at, applied_at)
-        VALUES (@IdentityId, @Version, @Role, @Rights, @Blocked, @OccurredAt, @Now)
+        INSERT INTO identity_replica (identity_id, version, circle, presets, rights, blocked, occurred_at, applied_at)
+        VALUES (@IdentityId, @Version, @Circle, @Presets, @Rights, @Blocked, @OccurredAt, @Now)
         ON CONFLICT (identity_id) DO UPDATE SET
             version = EXCLUDED.version,
-            role = EXCLUDED.role,
+            circle = EXCLUDED.circle,
+            presets = EXCLUDED.presets,
             rights = EXCLUDED.rights,
             blocked = EXCLUDED.blocked,
             occurred_at = EXCLUDED.occurred_at,
@@ -112,7 +113,7 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
     private const string IdentityLockSql = "SELECT pg_advisory_xact_lock(hashtextextended(CAST(@IdentityId AS text), 0));";
 
     private const string IdentityBeforeSql = """
-        SELECT role AS Role
+        SELECT circle AS Circle
         FROM identity_replica
         WHERE identity_id = @IdentityId
         FOR UPDATE;
@@ -194,7 +195,7 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
             facts = await NotificationStore.AddForIdentityEvent(
                 work,
                 identity,
-                written > 0 ? previous.SingleOrDefault()?.Role : null,
+                written > 0 ? previous.SingleOrDefault()?.Circle : null,
                 now,
                 factOptions.Value.StaleAfter,
                 cancellationToken);
@@ -349,7 +350,7 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
     private sealed class IdentityBeforeRow
     {
-        public string? Role { get; init; }
+        public string? Circle { get; init; }
     }
 
     private sealed class PassThrough<T>(System.Data.DbType type) : SqlMapper.TypeHandler<T>
@@ -368,7 +369,8 @@ public sealed class ReplicaStore(NpgsqlDataSource source, IOptions<FactOptions> 
         {
             fact.IdentityId,
             fact.Version,
-            fact.Role,
+            fact.Circle,
+            Presets = fact.Presets.ToArray(),
             Rights = fact.Rights.ToArray(),
             fact.Blocked,
             OccurredAt = fact.OccurredAt.UtcDateTime,

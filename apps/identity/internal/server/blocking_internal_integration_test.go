@@ -9,124 +9,90 @@ import (
 	"github.com/google/uuid"
 )
 
-// Блокировка снимает и круг, и права, выданные записями: гость, ставший
-// администратором, держит запись права аукциона, и она уходит вместе с кругом.
-func TestBlockIdentityRevokesCircleAndRights(t *testing.T) {
+// Блокировка снимает круг, наборы и записи: гость держит запись place_bids, и
+// она уходит вместе с кругом.
+func TestBlockRevokesCircleAndRights(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 9401)
-	mustChange(t)(svc.grantRole(t.Context(), identityID, roleGuest, uuid.NullUUID{}))
-	mustChange(t)(svc.grantRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{}))
+	mustChange(t)(svc.grantCircle(t.Context(), identityID, circleGuest, uuid.NullUUID{}))
 	if got := activeRightCountInternal(t, db, identityID); got != 1 {
-		t.Fatalf("active rights before block: got %d want 1", got)
+		t.Fatalf("active records before block: got %d want 1", got)
 	}
 
-	changed, err := svc.blockIdentity(t.Context(), identityID, uuid.NullUUID{})
-	if err != nil || !changed {
-		t.Fatalf("block: changed=%t error=%v", changed, err)
-	}
+	mustChange(t)(svc.block(t.Context(), identityID, uuid.NullUUID{}))
 	if !profileBlockedInternal(t, db, identityID) {
 		t.Fatal("profile is not blocked")
 	}
-	if got := activeRoleCountInternal(t, db, identityID); got != 0 {
-		t.Fatalf("active roles after block: got %d want 0", got)
-	}
+	assertActiveCircle(t, db, identityID, "")
 	if got := activeRightCountInternal(t, db, identityID); got != 0 {
-		t.Fatalf("active rights after block: got %d want 0", got)
+		t.Fatalf("active records after block: got %d want 0", got)
 	}
-	assertJournalSummary(t, db, identityID, "block", "grant:admin", "grant:guest", "revoke:guest")
+	assertJournalSummary(t, db, identityID, "block", "grant:guest")
 }
 
-func TestBlockIdentityIsIdempotent(t *testing.T) {
+func TestBlockIsIdempotent(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 9402)
-	if _, err := svc.blockIdentity(t.Context(), identityID, uuid.NullUUID{}); err != nil {
-		t.Fatal(err)
-	}
+	mustChange(t)(svc.block(t.Context(), identityID, uuid.NullUUID{}))
 
-	changed, err := svc.blockIdentity(t.Context(), identityID, uuid.NullUUID{})
-	if err != nil || changed {
-		t.Fatalf("repeated block: changed=%t error=%v", changed, err)
-	}
+	mustNotChange(t)(svc.block(t.Context(), identityID, uuid.NullUUID{}))
 	assertJournalSummary(t, db, identityID, "block")
 }
 
-func TestUnblockIdentityDoesNotRestoreRoles(t *testing.T) {
+func TestUnblockDoesNotRestoreAccess(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 9403)
-	if _, err := svc.grantRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := svc.blockIdentity(t.Context(), identityID, uuid.NullUUID{}); err != nil {
-		t.Fatal(err)
-	}
+	mustChange(t)(svc.grantPreset(t.Context(), identityID, presetAdmin, uuid.NullUUID{}))
+	mustChange(t)(svc.block(t.Context(), identityID, uuid.NullUUID{}))
 
-	changed, err := svc.unblockIdentity(t.Context(), identityID, uuid.NullUUID{})
-	if err != nil || !changed {
-		t.Fatalf("unblock: changed=%t error=%v", changed, err)
-	}
+	mustChange(t)(svc.unblock(t.Context(), identityID, uuid.NullUUID{}))
 	if profileBlockedInternal(t, db, identityID) {
 		t.Fatal("profile stayed blocked")
 	}
-	if got := activeRoleCountInternal(t, db, identityID); got != 0 {
-		t.Fatalf("active roles after unblock: got %d want 0", got)
+	assertActiveCircle(t, db, identityID, "")
+	if got := activePresets(t, db, identityID); len(got) != 0 {
+		t.Fatalf("presets after unblock: %v", got)
 	}
 
-	granted, err := svc.grantRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{})
-	if err != nil || !granted {
-		t.Fatalf("grant after unblock: changed=%t error=%v", granted, err)
-	}
-	assertJournalSummary(t, db, identityID, "block", "grant:admin", "grant:admin", "unblock")
+	mustChange(t)(svc.grantPreset(t.Context(), identityID, presetAdmin, uuid.NullUUID{}))
+	assertJournalSummary(t, db, identityID,
+		"block", "grant:member", "grant:member", "grant:preset:admin", "grant:preset:admin", "unblock")
 }
 
-func TestUnblockIdentityIsIdempotent(t *testing.T) {
+func TestUnblockIsIdempotent(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 9404)
 
-	changed, err := svc.unblockIdentity(t.Context(), identityID, uuid.NullUUID{})
-	if err != nil || changed {
-		t.Fatalf("unblock an unblocked profile: changed=%t error=%v", changed, err)
-	}
+	mustNotChange(t)(svc.unblock(t.Context(), identityID, uuid.NullUUID{}))
 	assertJournalSummary(t, db, identityID)
 }
 
-func TestBlockIdentitySucceedsWhenGrantedAtIsInTheFuture(t *testing.T) {
+func TestBlockSucceedsWhenGrantedAtIsInTheFuture(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 9405)
-	insertRoleGrantedAhead(t, db, identityID, roleAdmin)
+	insertCircleGrantedAhead(t, db, identityID, circleMember)
 
-	changed, err := svc.blockIdentity(t.Context(), identityID, uuid.NullUUID{})
-	if err != nil || !changed {
-		t.Fatalf("block: changed=%t error=%v", changed, err)
-	}
-	if got := activeRoleCountInternal(t, db, identityID); got != 0 {
-		t.Fatalf("active roles: got %d want 0", got)
-	}
+	mustChange(t)(svc.block(t.Context(), identityID, uuid.NullUUID{}))
+	assertActiveCircle(t, db, identityID, "")
 }
 
-func TestBlockIdentityRevokesRolesLeftByDirectBlock(t *testing.T) {
+func TestBlockRevokesAccessLeftByDirectBlock(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	identityID := seedProfile(t, db, 9406)
-	if _, err := svc.grantRole(t.Context(), identityID, roleAdmin, uuid.NullUUID{}); err != nil {
-		t.Fatal(err)
-	}
-	// Блокировка мимо ядра оставляет активную роль, и вызов её отзывает: иначе
+	mustChange(t)(svc.grantCircle(t.Context(), identityID, circleMember, uuid.NullUUID{}))
+	// Блокировка мимо ядра оставляет активный круг, и вызов его отзывает: иначе
 	// снятие вернуло бы доступ без записанного решения.
 	setBlocked(t, db, identityID)
 
-	changed, err := svc.blockIdentity(t.Context(), identityID, uuid.NullUUID{})
-	if err != nil || !changed {
-		t.Fatalf("block: changed=%t error=%v", changed, err)
-	}
-	if got := activeRoleCountInternal(t, db, identityID); got != 0 {
-		t.Fatalf("active roles: got %d want 0", got)
-	}
-	assertJournalSummary(t, db, identityID, "grant:admin", "revoke:admin")
+	mustChange(t)(svc.block(t.Context(), identityID, uuid.NullUUID{}))
+	assertActiveCircle(t, db, identityID, "")
+	assertJournalSummary(t, db, identityID, "grant:member", "revoke:member")
 }
 
 func TestBlockUnblockUnknownProfileReturnsNotFound(t *testing.T) {
@@ -134,10 +100,10 @@ func TestBlockUnblockUnknownProfileReturnsNotFound(t *testing.T) {
 	svc, _ := newIdentityService(t)
 	missing := uuid.NewString()
 
-	if _, err := svc.blockIdentity(t.Context(), missing, uuid.NullUUID{}); !errors.Is(err, errProfileNotFound) {
+	if _, err := svc.block(t.Context(), missing, uuid.NullUUID{}); !errors.Is(err, errProfileNotFound) {
 		t.Fatalf("block: got %v want %v", err, errProfileNotFound)
 	}
-	if _, err := svc.unblockIdentity(t.Context(), missing, uuid.NullUUID{}); !errors.Is(err, errProfileNotFound) {
+	if _, err := svc.unblock(t.Context(), missing, uuid.NullUUID{}); !errors.Is(err, errProfileNotFound) {
 		t.Fatalf("unblock: got %v want %v", err, errProfileNotFound)
 	}
 }

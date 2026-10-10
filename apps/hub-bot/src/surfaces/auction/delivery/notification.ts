@@ -1,6 +1,6 @@
 import { fromBinary } from "@bufbuild/protobuf";
 import type { Money as WireMoney } from "../../../../gen/auction/v1/auction_pb.js";
-import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
+import { ApplicationQueue } from "../../../../gen/identity/v1/access_pb.js";
 import {
   type Notification,
   NotificationSchema,
@@ -74,11 +74,11 @@ function toContent(
         : { kind: "lot-purchased", lotId, price };
     }
     // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
-    // заявку в public, а допуск в хаб для аукциона чужой.
+    // заявку в аукцион, а допуск в хаб для аукциона чужой.
     case "accessGranted": {
-      const circle = type.value.circle;
-      if (circle === GlobalRole.GUEST) return { kind: "access-granted" };
-      if (circle === GlobalRole.MEMBER) {
+      const queue = type.value.queue;
+      if (queue === ApplicationQueue.AUCTION) return { kind: "access-granted" };
+      if (queue === ApplicationQueue.COMMUNITY) {
         return { kind: "foreign", type: type.case };
       }
       return undefined;
@@ -93,7 +93,7 @@ function toContent(
     case "communityAnnouncement":
     case "meetupUnpublished":
     case "accessRequested":
-    case "roleGranted":
+    case "presetGranted":
     case "circleChanged":
       return { kind: "foreign", type: type.case };
     default:

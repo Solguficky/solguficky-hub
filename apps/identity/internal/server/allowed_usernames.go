@@ -12,16 +12,16 @@ import (
 
 const (
 	addAllowedUsernameSQL = `
-INSERT INTO allowed_usernames (id, normalized_username, grants_role, created_by)
+INSERT INTO allowed_usernames (id, normalized_username, grants_circle, created_by)
 VALUES ($1, $2, $3, $4)
 ON CONFLICT (normalized_username) WHERE used_at IS NULL AND removed_at IS NULL DO NOTHING`
 
-	// Снимает непогашенную запись более слабого круга, чтобы на её месте завести
-	// запись хаба: строка не переписывается, и видно, кто завёл ник в какой круг.
-	removeWeakerAllowedUsernameSQL = `
+	// Снимает непогашенную запись гостя, чтобы на её месте завести запись хаба:
+	// строка не переписывается, и видно, кто завёл ник в какой круг.
+	removeGuestAllowedUsernameSQL = `
 UPDATE allowed_usernames
 SET removed_at = now(), removed_by = $2
-WHERE normalized_username = $1 AND grants_role = ANY($3)
+WHERE normalized_username = $1 AND grants_circle = 'guest'
   AND used_at IS NULL AND removed_at IS NULL`
 
 	removeAllowedUsernameSQL = `
@@ -38,7 +38,7 @@ WHERE id = (
     WHERE normalized_username = $1 AND used_at IS NULL AND removed_at IS NULL
     FOR UPDATE
 )
-RETURNING grants_role`
+RETURNING grants_circle`
 )
 
 var (
@@ -84,9 +84,9 @@ func normalizeUsername(username string) (string, error) {
 // уникальность действует только среди записей, которые ещё могут сработать.
 //
 // Один ник — одна непогашенная запись любого круга (ADR-060, пункт 5). Запись
-// того же или более сильного круга делает добавление холостым: ник из списка
-// хаба в аукционный список не добавляется. Запись более слабого круга
-// повышается — снимается и заменяется новой одной транзакцией.
+// хаба делает добавление холостым: ник из списка хаба в аукционный список не
+// добавляется, потому что участник ставит и так. Запись гостя заменяется
+// записью хаба — снимается и заводится новая одной транзакцией.
 func (s identityService) addAllowedUsername(ctx context.Context, username, circle string, performedBy uuid.NullUUID) (bool, error) {
 	normalized, err := normalizeUsername(username)
 	if err != nil {
@@ -102,9 +102,9 @@ func (s identityService) addAllowedUsername(ctx context.Context, username, circl
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	if weaker := circlesBelow(circle); len(weaker) > 0 {
-		if _, err := tx.ExecContext(ctx, removeWeakerAllowedUsernameSQL, normalized, performedByValue(performedBy), weaker); err != nil {
-			return false, internal("remove weaker allowed username", err)
+	if circle == circleMember {
+		if _, err := tx.ExecContext(ctx, removeGuestAllowedUsernameSQL, normalized, performedByValue(performedBy)); err != nil {
+			return false, internal("remove guest allowed username", err)
 		}
 	}
 	result, err := tx.ExecContext(ctx, addAllowedUsernameSQL, id.String(), normalized, circle, performedByValue(performedBy))
@@ -119,18 +119,6 @@ func (s identityService) addAllowedUsername(ctx context.Context, username, circl
 		return false, internal("commit", err)
 	}
 	return added, nil
-}
-
-// circlesBelow — круги белого списка слабее данного: их запись повышается
-// записью этого круга.
-func circlesBelow(circle string) []string {
-	var circles []string
-	for _, candidate := range applicationCircles {
-		if circleRank[candidate] < circleRank[circle] {
-			circles = append(circles, candidate)
-		}
-	}
-	return circles
 }
 
 // removeAllowedUsername снимает только ещё не использованную запись и делает

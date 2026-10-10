@@ -66,6 +66,7 @@ public class MigrationsTests
             "lot_favorites",
             "identity_replica_rights",
             "notification_delivery_surface",
+            "identity_replica_circle_presets",
         ]);
 
         var main = names.IndexOf("orleans_main");

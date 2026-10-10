@@ -3,7 +3,7 @@ syntax = "proto3";
 package notifications.v1;
 
 import "auction/v1/auction.proto";
-import "identity/v1/roles.proto";
+import "identity/v1/access.proto";
 import "meetups/v1/meetups.proto";
 
 // The addressed notification fact: "this person is owed this notification".
@@ -30,6 +30,9 @@ message Notification {
 
   // The fact that made this notification due. Exactly one reference is set.
   Cause cause = 5;
+
+  reserved 18;
+  reserved "role_granted";
 
   // Exactly one type is set. Every branch carries the data a channel needs to
   // render the message without calling other services: Notifications knows
@@ -85,10 +88,9 @@ message Notification {
     // only to the applicant: a subscription and a category are not required.
     AccessGranted access_granted = 17;
 
-    // A maintainer or an administrator granted the recipient a role outside of
-    // an application. Sent only to the recipient: a subscription and a category
-    // are not required.
-    RoleGranted role_granted = 18;
+    // The recipient was granted a preset. Sent only to the recipient: a
+    // subscription and a category are not required.
+    PresetGranted preset_granted = 21;
 
     // The recipient's proxy limit answered another participant and raised the
     // price of a lot; the recipient leads. Sent only to that bidder: a
@@ -283,10 +285,8 @@ message LotPurchased {
 // application queue, where it is read from IdentityService under the
 // moderator's own rights.
 message AccessRequested {
-  // Superseded by queue: GLOBAL_ROLE_MEMBER for the community queue,
-  // GLOBAL_ROLE_GUEST for the auction queue. Notifications keeps setting it
-  // until the field is removed.
-  identity.v1.GlobalRole circle = 1;
+  reserved 1;
+  reserved "circle";
 
   // The queue the application lies in, and so the screen the channel leads to.
   identity.v1.ApplicationQueue queue = 2;
@@ -296,25 +296,25 @@ message AccessRequested {
 // absent; which bot delivers it is a rule of the delivery channel, not of this
 // message.
 message AccessGranted {
-  // Superseded by queue and still set, as in AccessRequested.
-  identity.v1.GlobalRole circle = 1;
+  reserved 1;
+  reserved "circle";
 
   // The queue of the application.
   identity.v1.ApplicationQueue queue = 2;
 }
 
-// The recipient was granted a role outside of an application. The hub bot
-// delivers it. Who granted is deliberately absent.
-message RoleGranted {
-  // The granted role.
-  identity.v1.GlobalRole role = 1;
+// The recipient was granted a preset. The hub bot delivers it. Who granted is
+// deliberately absent.
+message PresetGranted {
+  // The granted preset.
+  identity.v1.Preset preset = 1;
 }
 
 // The person's active circle changed between guest and member.
 message CircleChanged {
   // The circle the person had before the event.
-  identity.v1.GlobalRole previous_circle = 1;
+  identity.v1.Circle previous_circle = 1;
 
   // The circle the person has after the event.
-  identity.v1.GlobalRole current_circle = 2;
+  identity.v1.Circle current_circle = 2;
 }

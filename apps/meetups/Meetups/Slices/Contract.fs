@@ -62,11 +62,11 @@ module Inbound =
     let meetupId (value: string) : Result<MeetupId, InvalidRequest> = uuidV7 "id" value |> Result.map MeetupId
 
     /// Человек, о котором спрашивает другой сервис, приходит одним идентификатором —
-    /// без ролей: их Meetups спрашивает у Identity сам (ADR-051).
+    /// без прав: их Meetups спрашивает у Identity сам (ADR-051).
     let identityId (value: string) : Result<PersonId, InvalidRequest> =
         uuidV7 "identity_id" value |> Result.map PersonId
 
-    /// Принимаемые отношения, в отличие от ролей смотрящего, неизвестного значения
+    /// Принимаемые отношения, в отличие от прав смотрящего, неизвестного значения
     /// не прощают: пустой набор, UNSPECIFIED и значение вне словаря — ошибка
     /// вызывающего, и молчаливый отказ спрятал бы её (ADR-051, п. 2). Отбросить
     /// неизвестное здесь значило бы сузить набор, который вызывающий объявил.
@@ -137,20 +137,22 @@ module Inbound =
     let expectedVersion (value: int64) : Result<int64, InvalidRequest> =
         if value > 0L then Ok value else Error(invalid "expected_version" "must be a positive aggregate version")
 
-    /// Неизвестная роль отбрасывается, а не отвергается. Схема сама объявляет
-    /// GLOBAL_ROLE_UNSPECIFIED значением «роль неизвестна потребителю», и неизвестная
-    /// роль ничего не разрешает — отбрасывание остаётся fail-closed. Отказ по ней
-    /// превратил бы расширение словаря ролей в Identity в отказ обслуживания у
-    /// Meetups до согласованного деплоя обоих сервисов.
+    /// Неизвестное право отбрасывается, а не отвергается. Схема сама объявляет
+    /// ACCESS_RIGHT_UNSPECIFIED значением «право неизвестно потребителю», и
+    /// неизвестное право ничего не разрешает — отбрасывание остаётся fail-closed.
+    /// Отказ по нему превратил бы расширение словаря прав в Identity в отказ
+    /// обслуживания у Meetups до согласованного деплоя обоих сервисов.
     ///
-    /// Известные роли переходят в доменный словарь целиком: решения читают только
-    /// Administrator, но словарь типа совпадает со словарём контракта.
-    let private role (value: Identity.V1.GlobalRole) : GlobalRole option =
+    /// Известные права переходят в доменный словарь целиком: решения читают только
+    /// ManageMeetups, но словарь типа совпадает со словарём контракта.
+    let private right (value: Identity.V1.AccessRight) : AccessRight option =
         match value with
-        | Identity.V1.GlobalRole.Maintainer -> Some Maintainer
-        | Identity.V1.GlobalRole.Admin -> Some Administrator
-        | Identity.V1.GlobalRole.Member -> Some Member
-        | Identity.V1.GlobalRole.Guest -> Some Public
+        | Identity.V1.AccessRight.AccessHub -> Some AccessHub
+        | Identity.V1.AccessRight.PlaceBids -> Some PlaceBids
+        | Identity.V1.AccessRight.ManageMembers -> Some ManageMembers
+        | Identity.V1.AccessRight.AdmitBidders -> Some AdmitBidders
+        | Identity.V1.AccessRight.ManageMeetups -> Some ManageMeetups
+        | Identity.V1.AccessRight.GrantAdmins -> Some GrantAdmins
         | _ -> None
 
     let viewer (value: Meetups.V1.Viewer) : Result<Viewer, InvalidRequest> =
@@ -161,7 +163,7 @@ module Inbound =
             |> Result.map (fun identity ->
                 {
                     IdentityId = PersonId identity
-                    Roles = value.GlobalRoles |> Seq.choose role |> Set.ofSeq
+                    Rights = value.Rights |> Seq.choose right |> Set.ofSeq
                 }
             )
 

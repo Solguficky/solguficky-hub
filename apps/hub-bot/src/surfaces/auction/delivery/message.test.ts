@@ -113,7 +113,7 @@ describe("parseTraceCallback", () => {
 
 function reads(overrides: Partial<NotificationReads> = {}): NotificationReads {
   return {
-    hasAuctionRight: vi.fn(async () => true),
+    holdsPlaceBids: vi.fn(async () => true),
     lotTitle: vi.fn(async () => "Кружка"),
     ...overrides,
   };
@@ -130,19 +130,19 @@ describe("access granted", () => {
   });
 
   // Лота у допуска нет: название не читается, а роль проверяется, как у торгов.
-  it("checks the role and reads no lot", async () => {
+  it("checks the right to bid and reads no lot", async () => {
     const source = reads();
     const render = createRenderMessage(source, () => {});
     await expect(
       render({ kind: "access-granted" }, { recipientId }),
     ).resolves.toMatchObject({ kind: "ready" });
-    expect(source.hasAuctionRight).toHaveBeenCalledWith(recipientId, undefined);
+    expect(source.holdsPlaceBids).toHaveBeenCalledWith(recipientId, undefined);
     expect(source.lotTitle).not.toHaveBeenCalled();
   });
 
-  it("finds a recipient who lost the role ineligible", async () => {
+  it("finds a recipient who lost the right to bid ineligible", async () => {
     const render = createRenderMessage(
-      reads({ hasAuctionRight: vi.fn(async () => false) }),
+      reads({ holdsPlaceBids: vi.fn(async () => false) }),
       () => {},
     );
     await expect(
@@ -152,7 +152,7 @@ describe("access granted", () => {
 });
 
 describe("createRenderMessage", () => {
-  it("reads the title as the recipient with the public role", async () => {
+  it("reads the title as the recipient with the right to bid", async () => {
     const source = reads();
     const render = createRenderMessage(source, () => {});
     await expect(
@@ -161,13 +161,13 @@ describe("createRenderMessage", () => {
       kind: "ready",
       message: { text: expect.stringContaining("«Кружка»") },
     });
-    expect(source.hasAuctionRight).toHaveBeenCalledWith(recipientId, "req-1");
+    expect(source.holdsPlaceBids).toHaveBeenCalledWith(recipientId, "req-1");
     expect(source.lotTitle).toHaveBeenCalledWith(recipientId, lotId, "req-1");
   });
 
   // Без роли кнопка упёрлась бы в тот же отказ Auction: уведомление не уходит.
-  it("finds a recipient without the public role ineligible", async () => {
-    const source = reads({ hasAuctionRight: vi.fn(async () => false) });
+  it("finds a recipient without the right to bid ineligible", async () => {
+    const source = reads({ holdsPlaceBids: vi.fn(async () => false) });
     const render = createRenderMessage(source, () => {});
     await expect(render(outbid, { recipientId })).resolves.toEqual({
       kind: "ineligible",
@@ -176,10 +176,10 @@ describe("createRenderMessage", () => {
   });
 
   // Отказ, который повтор не изменит, — дефект: снимается без повторов.
-  it("rejects for good when Identity refuses the role check", async () => {
+  it("rejects for good when Identity refuses the right check", async () => {
     const denied = Object.assign(new Error("permission denied"), { code: 7 });
     const render = createRenderMessage(
-      reads({ hasAuctionRight: vi.fn(async () => Promise.reject(denied)) }),
+      reads({ holdsPlaceBids: vi.fn(async () => Promise.reject(denied)) }),
       () => {},
     );
     await expect(render(outbid, { recipientId })).resolves.toEqual({
@@ -205,7 +205,7 @@ describe("createRenderMessage", () => {
   it("asks for a retry when Identity cannot say", async () => {
     const down = new Error("unavailable");
     const render = createRenderMessage(
-      reads({ hasAuctionRight: vi.fn(async () => Promise.reject(down)) }),
+      reads({ holdsPlaceBids: vi.fn(async () => Promise.reject(down)) }),
       () => {},
     );
     await expect(render(outbid, { recipientId })).resolves.toEqual({

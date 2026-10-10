@@ -34,12 +34,11 @@ func TestResolveTelegramUserIdDistinguishesMissingFromBlocked(t *testing.T) {
 	db := migratedDB(t)
 	client := resolveClient(t, db)
 	admin := resolve(t, client, 8101, nil)
-	insertAdminRole(t, db, admin.GetIdentityId())
+	insertPreset(t, db, admin.GetIdentityId(), "admin")
 	target := resolve(t, client, 8102, nil)
 
 	actor := &identityv1.IdentityActor{
-		IdentityId:  admin.GetIdentityId(),
-		GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_ADMIN},
+		IdentityId: admin.GetIdentityId(),
 	}
 	if _, err := client.BlockCommunityMember(t.Context(), &identityv1.ChangeCommunityMemberRequest{
 		Actor: actor, IdentityId: target.GetIdentityId(),
@@ -64,7 +63,7 @@ func TestResolveTelegramUserIdDistinguishesMissingFromBlocked(t *testing.T) {
 
 	// Снятие блокировки возвращает адрес: отказ читает текущую отметку, а не
 	// историю профиля.
-	testdb.ExecAnnounced(t, db, target.GetIdentityId(), outbox.ProfileUnblocked, "",
+	testdb.ExecAnnounced(t, db, target.GetIdentityId(), outbox.Event{Occasion: outbox.ProfileUnblocked},
 		`UPDATE profiles SET blocked = false WHERE id = $1`, target.GetIdentityId())
 	resp, err := client.ResolveTelegramUserId(t.Context(),
 		&identityv1.ResolveTelegramUserIdRequest{IdentityId: target.GetIdentityId()})
@@ -84,7 +83,7 @@ func TestResolveTelegramUserIdDoesNotFilterByCircle(t *testing.T) {
 	client := resolveClient(t, db)
 	pending := resolve(t, client, 8201, nil)
 	guest := resolve(t, client, 8202, nil)
-	insertRole(t, db, guest.GetIdentityId(), "guest")
+	insertCircle(t, db, guest.GetIdentityId(), "guest")
 
 	for want, profile := range map[int64]*identityv1.ResolveIdentityResponse{8201: pending, 8202: guest} {
 		resp, err := client.ResolveTelegramUserId(t.Context(),

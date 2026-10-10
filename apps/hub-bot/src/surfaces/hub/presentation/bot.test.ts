@@ -11,8 +11,8 @@ import {
   withEntry,
 } from "../../../../testkit/harness.js";
 import type {
+  AccessRequestOutcome,
   AccessRight,
-  RoleRequestOutcome,
 } from "../../../auction-ui/index.js";
 import type { TelegramEnvironment } from "../../../core/config.js";
 import * as failures from "../../../core/failures.js";
@@ -27,6 +27,7 @@ import {
 import { rejectedValueText } from "../application/meetup-form.js";
 import { createIdentityResolver } from "../identity/client.js";
 import type {
+  AccessRequester,
   ApplicationAdministrator,
   ApplicationCard,
   ApplicationModerator,
@@ -35,7 +36,6 @@ import type {
   CommunityAdministrator,
   IdentityResolver,
   RefusedApplication,
-  RoleRequester,
   SourceChannel,
   SourceChannelAdministrator,
   TelegramRecipientResolver,
@@ -212,31 +212,36 @@ const resolvedId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
 // Права участника — по умолчанию у любого незаблокированного: роль нужна
 // только «Управлению» до PER-534, а пускает право. Гостю и постороннему
 // тест передаёт права явно.
-const MEMBER_RIGHTS: readonly AccessRight[] = ["hub", "auction"];
-// Администратор держит кругом все права (ADR-064, пункт 7): так их отдаёт
+const MEMBER_RIGHTS: readonly AccessRight[] = ["access-hub", "place-bids"];
+// Участник с набором `admin` (RFC-016): права круга и набора, как их отдаёт
 // Identity, и «Управление» бот показывает по ним.
 const ADMIN_RIGHTS: readonly AccessRight[] = [
-  "hub",
-  "auction",
-  "manage-membership",
-  "moderate-auction",
-  "manage-auction",
+  "access-hub",
+  "place-bids",
+  "manage-members",
+  "admit-bidders",
+  "manage-meetups",
 ];
 
+// Кого тест разрешает: участника, участника с набором `admin`, гостя или
+// человека без круга. Права по умолчанию — те, что Identity вывел бы для него.
+type Holder = "member" | "admin" | "guest" | "none";
+
 function resolvedIdentity(
-  globalRoles: readonly string[] = ["member"],
+  holder: Holder = "member",
   blocked = false,
   rights: readonly AccessRight[] = blocked
     ? []
-    : globalRoles.includes("admin")
+    : holder === "admin"
       ? ADMIN_RIGHTS
-      : MEMBER_RIGHTS,
+      : holder === "member"
+        ? MEMBER_RIGHTS
+        : [],
 ): IdentityResolver {
   return {
     resolve: async () => ({
       kind: "resolved",
       identityId: resolvedId,
-      globalRoles,
       rights,
       blocked,
     }),
@@ -528,7 +533,7 @@ describe("presentation adapter", () => {
       kind: "meetup-card",
       meetup: { ...publishedMeetup(), materials },
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["member"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("member"), {
       execute,
     });
     await bot.init();
@@ -556,12 +561,9 @@ describe("presentation adapter", () => {
 
   it("does not open material attachment for a non-admin", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
-    const { bot, calls, records } = createHarness(
-      resolvedIdentity(["member"]),
-      {
-        execute,
-      },
-    );
+    const { bot, calls, records } = createHarness(resolvedIdentity("member"), {
+      execute,
+    });
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:mm:add:AZLzpLXGfY6fChssPU5fYA"));
@@ -596,7 +598,7 @@ describe("presentation adapter", () => {
       }
       return { kind: "rejected", reason: "unexpected" };
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -666,7 +668,7 @@ describe("presentation adapter", () => {
         ? { kind: "meetup-card", meetup: publishedMeetup() }
         : { kind: "rejected", reason: "unexpected" },
     );
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -708,7 +710,7 @@ describe("presentation adapter", () => {
       kind: "material-attached",
       meetup,
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -764,7 +766,7 @@ describe("presentation adapter", () => {
         ? { kind: "meetup-card", meetup }
         : { kind: "material-removed", meetup: publishedMeetup() },
     );
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -807,7 +809,7 @@ describe("presentation adapter", () => {
       kind: "conflict",
       meetup: fresh,
     });
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -881,7 +883,7 @@ describe("presentation adapter", () => {
         kind: "meetup-card",
         meetup: current,
       });
-      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
         execute,
       });
       await bot.init();
@@ -912,7 +914,7 @@ describe("presentation adapter", () => {
       kind: "meetup-card",
       meetup: { ...publishedMeetup(), version: 3 },
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -930,7 +932,7 @@ describe("presentation adapter", () => {
 
   it("refuses a confirmation without a version from a non-admin without reading the meetup", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
-    const { bot, calls } = createHarness(resolvedIdentity(["member"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("member"), {
       execute,
     });
     await bot.init();
@@ -952,7 +954,7 @@ describe("presentation adapter", () => {
       kind: "conflict",
       meetup: { ...publishedMeetup(), version: 5 },
     });
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     bot.api.config.use((prev, method, payload, signal) =>
@@ -995,7 +997,7 @@ describe("presentation adapter", () => {
       kind: "conflict",
       meetup: fresh,
     });
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -1096,7 +1098,7 @@ describe("presentation adapter", () => {
   });
 
   it("offers management on /start to an admin", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
     await bot.handleUpdate(messageUpdate());
     expect(calls[0]?.payload).toMatchObject({
@@ -1113,10 +1115,10 @@ describe("presentation adapter", () => {
     });
   });
 
-  it("shows the waiting frame on /start when the person has no member role", async () => {
+  it("shows the waiting frame on /start when the person has no right to the hub", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls, records } = createHarness(
-      resolvedIdentity([], false, []),
+      resolvedIdentity("none", false, []),
       {
         execute,
       },
@@ -1144,7 +1146,7 @@ describe("presentation adapter", () => {
   it("shows the closed frame on /start when the person is blocked", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls, records } = createHarness(
-      resolvedIdentity(["member"], true),
+      resolvedIdentity("member", true),
       { execute },
     );
     await bot.init();
@@ -1161,25 +1163,28 @@ describe("presentation adapter", () => {
   });
 
   // Вход на `/start` (ADR-060): вместо разрешения личности бот зовёт
-  // `RequestRole` с кругом хаба, и Identity ставит заявку или гасит белый
-  // список. Фейк с явным `requestRole` показывает сам вход, а не вывод
+  // `RequestAccess` с кругом хаба, и Identity ставит заявку или гасит белый
+  // список. Фейк с явным `requestAccess` показывает сам вход, а не вывод
   // харнесса из `resolve`.
   function entering(
-    answer: Awaited<ReturnType<RoleRequester["requestRole"]>>,
-  ): IdentityResolver & { requestRole: Mock<RoleRequester["requestRole"]> } {
+    answer: Awaited<ReturnType<AccessRequester["requestAccess"]>>,
+  ): IdentityResolver & {
+    requestAccess: Mock<AccessRequester["requestAccess"]>;
+  } {
     return {
       resolve: vi.fn<IdentityResolver["resolve"]>(),
-      requestRole: vi.fn<RoleRequester["requestRole"]>(async () => answer),
+      requestAccess: vi.fn<AccessRequester["requestAccess"]>(
+        async () => answer,
+      ),
     };
   }
   const answered = (
-    outcome: RoleRequestOutcome,
+    outcome: AccessRequestOutcome,
     rights: readonly AccessRight[] = [],
   ) =>
     ({
       kind: "answered",
       identityId: resolvedId,
-      globalRoles: [],
       rights,
       outcome,
     }) as const;
@@ -1192,14 +1197,14 @@ describe("presentation adapter", () => {
     // `/menu` — тот же вход: начавший с него тоже получает заявку.
     ["/menu", {}],
   ])(
-    "enters on %s through RequestRole into the community queue",
+    "enters on %s through RequestAccess into the community queue",
     async (text, code) => {
       const execute = vi.fn<Dispatcher["execute"]>();
       const identity = entering(answered("pending"));
       const { bot, calls } = createHarness(identity, { execute });
       await bot.init();
       await bot.handleUpdate(messageUpdate(text));
-      expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
+      expect(identity.requestAccess).toHaveBeenCalledExactlyOnceWith(
         {
           telegramUserId: 42n,
           queue: "community",
@@ -1229,7 +1234,7 @@ describe("presentation adapter", () => {
   it("answers a declined application on /start with a refusal of its own", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls, records } = createHarness(
-      entering(answered("declined", ["auction"])),
+      entering(answered("declined", ["place-bids"])),
       { execute },
     );
     await bot.init();
@@ -1272,7 +1277,7 @@ describe("presentation adapter", () => {
     it("gives a guest only the pending frame on /start and on a press", async () => {
       const execute = vi.fn<Dispatcher["execute"]>();
       const { bot, calls } = createHarness(
-        resolvedIdentity(["public"], false, ["auction"]),
+        resolvedIdentity("guest", false, ["place-bids"]),
         { execute },
         [],
         undefined,
@@ -1301,10 +1306,10 @@ describe("presentation adapter", () => {
     it.each([
       [
         "a guest after a member decline",
-        entering(answered("declined", ["auction"])),
+        entering(answered("declined", ["place-bids"])),
       ],
-      ["a person without rights", resolvedIdentity([], false, [])],
-      ["a blocked person", resolvedIdentity(["public"], true, [])],
+      ["a person without rights", resolvedIdentity("none", false, [])],
+      ["a blocked person", resolvedIdentity("guest", true, [])],
     ])("gives no link to %s", async (_name, identity) => {
       const { bot, calls } = withAuctionBot(identity);
       await bot.init();
@@ -1334,7 +1339,7 @@ describe("presentation adapter", () => {
       error_category: "invariant",
       use_case: "find_meetup",
     });
-    expect(records[0]?.fields.error).toBe("role_request_outcome_unspecified");
+    expect(records[0]?.fields.error).toBe("access_request_outcome_unspecified");
     expect(records[0]?.fields.identity_id).toBe(resolvedId);
   });
 
@@ -1357,15 +1362,15 @@ describe("presentation adapter", () => {
   });
 
   // Заявку ставит только вход: кнопка лишь проверяет роль.
-  it("does not request a role on a button", async () => {
+  it("does not request access on a button", async () => {
     const identity = {
-      ...resolvedIdentity(["public"], false, ["auction"]),
-      requestRole: vi.fn<RoleRequester["requestRole"]>(),
+      ...resolvedIdentity("guest", false, ["place-bids"]),
+      requestAccess: vi.fn<AccessRequester["requestAccess"]>(),
     };
     const { bot, calls } = createHarness(identity);
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
-    expect(identity.requestRole).not.toHaveBeenCalled();
+    expect(identity.requestAccess).not.toHaveBeenCalled();
     expect(screen(calls[1]).text).toBe(
       refusalText(pendingHubAccessText(resolvedId, undefined)),
     );
@@ -1374,7 +1379,7 @@ describe("presentation adapter", () => {
   it("does not show meetups to a pending person by list or deep link", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls, records } = createHarness(
-      resolvedIdentity(["public"], false, ["auction"]),
+      resolvedIdentity("guest", false, ["place-bids"]),
       {
         execute,
       },
@@ -1402,7 +1407,7 @@ describe("presentation adapter", () => {
   it("does not open management for a person outside the member circle", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls } = createHarness(
-      resolvedIdentity(["public"], false, ["auction"]),
+      resolvedIdentity("guest", false, ["place-bids"]),
       {
         execute,
       },
@@ -1419,7 +1424,7 @@ describe("presentation adapter", () => {
   });
 
   it("opens /start for an admin without a stored member row", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
     await bot.handleUpdate(messageUpdate());
     expect(sendMessageText(calls[0])).toContain("Привет.");
@@ -1444,13 +1449,13 @@ describe("presentation adapter", () => {
           allowedUsernames: ["invited"],
         },
       });
-    const identity = { ...resolvedIdentity(["admin"]), community };
+    const identity = { ...resolvedIdentity("admin"), community };
     const { bot, calls } = createHarness(identity);
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:community:list"));
 
     expect(community).toHaveBeenCalledWith(
-      expect.objectContaining({ globalRoles: ["admin"] }),
+      expect.objectContaining({ identityId: resolvedId }),
       expect.objectContaining({ useCase: "manage_community" }),
     );
     expect(calls[1]).toMatchObject({
@@ -1483,7 +1488,7 @@ describe("presentation adapter", () => {
       const block = vi
         .fn<CommunityAdministrator["block"]>()
         .mockResolvedValue({ kind: "ok", value: true });
-      return { ...resolvedIdentity(["admin"]), community, block };
+      return { ...resolvedIdentity("admin"), community, block };
     }
 
     it("asks before closing and does not call Identity to block", async () => {
@@ -1538,7 +1543,7 @@ describe("presentation adapter", () => {
       await bot.handleUpdate(callbackUpdate(`v1:cm:by:${memberToken}:p`));
 
       expect(identity.block).toHaveBeenCalledWith(
-        expect.objectContaining({ globalRoles: ["admin"] }),
+        expect.objectContaining({ identityId: resolvedId }),
         memberId,
         expect.objectContaining({ useCase: "manage_community" }),
       );
@@ -1606,7 +1611,7 @@ describe("presentation adapter", () => {
         readApplicationQueue.mockResolvedValueOnce(read);
       }
       return {
-        ...resolvedIdentity(["admin"]),
+        ...resolvedIdentity("admin"),
         readApplicationQueue,
         admitApplication: vi
           .fn<ApplicationModerator["admitApplication"]>()
@@ -1631,7 +1636,7 @@ describe("presentation adapter", () => {
       await bot.handleUpdate(callbackUpdate("v1:cm:q"));
 
       expect(identity.readApplicationQueue).toHaveBeenCalledWith(
-        expect.objectContaining({ globalRoles: ["admin"] }),
+        expect.objectContaining({ identityId: resolvedId }),
         "community",
         undefined,
         expect.objectContaining({ useCase: "manage_community" }),
@@ -1654,7 +1659,7 @@ describe("presentation adapter", () => {
       await bot.handleUpdate(callbackUpdate(`v1:cm:qa:${cursorOf(first)}`));
 
       expect(identity.admitApplication).toHaveBeenCalledWith(
-        expect.objectContaining({ globalRoles: ["admin"] }),
+        expect.objectContaining({ identityId: resolvedId }),
         first.applicationId,
         expect.objectContaining({ useCase: "manage_community" }),
       );
@@ -1749,7 +1754,7 @@ describe("presentation adapter", () => {
     // Подделанное нажатие без права бот отклоняет сам, до Identity.
     it("does not open the card for a non-administrator", async () => {
       const identity = {
-        ...resolvedIdentity(["member"]),
+        ...resolvedIdentity("member"),
         readApplicationQueue: vi
           .fn<ApplicationModerator["readApplicationQueue"]>()
           .mockResolvedValue({ kind: "forbidden" }),
@@ -1945,7 +1950,7 @@ describe("presentation adapter", () => {
         .fn<ApplicationAdministrator["reconsiderApplication"]>()
         .mockResolvedValue({ kind: "ok", value: changed });
       return {
-        ...resolvedIdentity(["admin"]),
+        ...resolvedIdentity("admin"),
         refusedApplications,
         reconsiderApplication,
       };
@@ -1961,7 +1966,7 @@ describe("presentation adapter", () => {
       await bot.handleUpdate(callbackUpdate("v1:cm:r"));
 
       expect(identity.refusedApplications).toHaveBeenCalledWith(
-        expect.objectContaining({ globalRoles: ["admin"] }),
+        expect.objectContaining({ identityId: resolvedId }),
         "community",
         expect.objectContaining({ useCase: "manage_community" }),
       );
@@ -1972,7 +1977,7 @@ describe("presentation adapter", () => {
 
     it("does not open the list for a non-administrator", async () => {
       const identity = {
-        ...resolvedIdentity(["member"]),
+        ...resolvedIdentity("member"),
         refusedApplications: vi
           .fn<ApplicationAdministrator["refusedApplications"]>()
           .mockResolvedValue({ kind: "forbidden" }),
@@ -2031,7 +2036,7 @@ describe("presentation adapter", () => {
       await bot.handleUpdate(callbackUpdate(`v1:cm:ry:${applicationToken}:0`));
 
       expect(identity.reconsiderApplication).toHaveBeenCalledWith(
-        expect.objectContaining({ globalRoles: ["admin"] }),
+        expect.objectContaining({ identityId: resolvedId }),
         applicationId,
         expect.objectContaining({ useCase: "manage_community" }),
       );
@@ -2126,7 +2131,7 @@ describe("presentation adapter", () => {
         admitted,
       }));
     const identity = {
-      ...resolvedIdentity(["admin"]),
+      ...resolvedIdentity("admin"),
       community: vi
         .fn<CommunityAdministrator["community"]>()
         .mockResolvedValue({
@@ -2155,7 +2160,7 @@ describe("presentation adapter", () => {
     const firstId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
     const secondId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61";
     const identity = {
-      ...resolvedIdentity(["admin"]),
+      ...resolvedIdentity("admin"),
       community: vi
         .fn<CommunityAdministrator["community"]>()
         .mockResolvedValue({
@@ -2202,7 +2207,7 @@ describe("presentation adapter", () => {
     const firstId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
     const secondId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61";
     const identity = {
-      ...resolvedIdentity(["admin"]),
+      ...resolvedIdentity("admin"),
       community: vi
         .fn<CommunityAdministrator["community"]>()
         .mockResolvedValue({
@@ -2260,7 +2265,7 @@ describe("presentation adapter", () => {
     const resolveTelegramUserId =
       vi.fn<TelegramRecipientResolver["resolveTelegramUserId"]>();
     const identity = {
-      ...resolvedIdentity(["admin"]),
+      ...resolvedIdentity("admin"),
       community,
       admit,
       resolveTelegramUserId,
@@ -2281,7 +2286,7 @@ describe("presentation adapter", () => {
     const community = vi
       .fn<CommunityAdministrator["community"]>()
       .mockResolvedValue({ kind: "forbidden" });
-    const identity = { ...resolvedIdentity(["member"]), community };
+    const identity = { ...resolvedIdentity("member"), community };
     const { bot, calls, records } = createHarness(identity);
     await bot.init();
     // Старая кнопка из меню бот не сторожит: право решает Identity, а отказ
@@ -2378,7 +2383,7 @@ describe("presentation adapter", () => {
       kind: "message",
       text: "Привет. Главный экран.",
     });
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -2477,7 +2482,7 @@ describe("presentation adapter", () => {
         },
       ],
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -2501,7 +2506,7 @@ describe("presentation adapter", () => {
         },
       ],
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -2536,7 +2541,7 @@ describe("presentation adapter", () => {
         },
       ],
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -2547,7 +2552,7 @@ describe("presentation adapter", () => {
   });
 
   it("offers the hidden meetups section in the management menu", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
     expect(JSON.stringify(calls[1]?.payload)).toContain(
@@ -2575,7 +2580,7 @@ describe("presentation adapter", () => {
         },
       ],
     });
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -2700,7 +2705,7 @@ describe("presentation adapter", () => {
         ? { kind: "meetup-card", meetup }
         : { kind: "meetup-state-changed", action: "hold", meetup: held },
     );
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -2739,7 +2744,6 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenLastCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: ["admin"],
         rights: ADMIN_RIGHTS,
       },
       intent: "change-meetup-state",
@@ -2756,7 +2760,7 @@ describe("presentation adapter", () => {
       kind: "meetup-card",
       meetup: { ...publishedMeetup(), lifecycle: "held" },
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -2859,8 +2863,7 @@ describe("presentation adapter", () => {
           ? {
               kind: "resolved",
               identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-              globalRoles: ["member"],
-              rights: ["hub", "auction"],
+              rights: ["access-hub", "place-bids"],
               blocked: false,
             }
           : { kind: "unavailable", cause: new Error("down") },
@@ -2912,7 +2915,7 @@ describe("presentation adapter", () => {
         ? { kind: "meetup-card", meetup }
         : { kind: "meetup-updated", meetup: updated },
     );
-    const first = createHarness(resolvedIdentity(["admin"]), { execute });
+    const first = createHarness(resolvedIdentity("admin"), { execute });
     await first.bot.init();
     await first.bot.handleUpdate(
       callbackUpdate("v1:manage:field:AZLzpLXGfY6fChssPU5fYA:venue"),
@@ -2937,7 +2940,7 @@ describe("presentation adapter", () => {
       },
     });
 
-    const restarted = createHarness(resolvedIdentity(["admin"]), { execute });
+    const restarted = createHarness(resolvedIdentity("admin"), { execute });
     await restarted.bot.init();
     await restarted.bot.handleUpdate(
       replyUpdate({
@@ -2955,7 +2958,6 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenLastCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: ["admin"],
         rights: ADMIN_RIGHTS,
       },
       intent: "update-meetup-field",
@@ -2988,7 +2990,7 @@ describe("presentation adapter", () => {
     "ignores a foreign answer to $kind question after restart",
     async ({ data }) => {
       const execute = vi.fn<Dispatcher["execute"]>();
-      const restarted = createHarness(resolvedIdentity(["admin"]), {
+      const restarted = createHarness(resolvedIdentity("admin"), {
         execute,
       });
       await restarted.bot.init();
@@ -3014,7 +3016,7 @@ describe("presentation adapter", () => {
       kind: "meetup-card",
       meetup,
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -3076,7 +3078,7 @@ describe("presentation adapter", () => {
       action: "unpublish",
       meetup: { ...meetup, visibility: "hidden" },
     });
-    const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
+    const { bot } = createHarness(resolvedIdentity("admin"), { execute });
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate(data));
@@ -3104,7 +3106,7 @@ describe("presentation adapter", () => {
             meetup: cancelled,
           },
     );
-    const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
+    const { bot } = createHarness(resolvedIdentity("admin"), { execute });
     await bot.init();
 
     await bot.handleUpdate(
@@ -3117,7 +3119,6 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenLastCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: ["admin"],
         rights: ADMIN_RIGHTS,
       },
       intent: "change-meetup-state",
@@ -3134,7 +3135,7 @@ describe("presentation adapter", () => {
       kind: "meetup-card",
       meetup: { ...publishedMeetup(), lifecycle: "cancelled" },
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -3159,7 +3160,7 @@ describe("presentation adapter", () => {
         visibility: "hidden",
       },
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -3186,7 +3187,7 @@ describe("presentation adapter", () => {
         ? { kind: "meetup-card", meetup: hidden }
         : { kind: "published", meetup: visible },
     );
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -3198,7 +3199,6 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenLastCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: ["admin"],
         rights: ADMIN_RIGHTS,
       },
       intent: "publish-meetup",
@@ -3325,7 +3325,7 @@ describe("presentation adapter", () => {
         ? { kind: "meetup-card", meetup }
         : { kind: "conflict", meetup: changed, action: "cancel" },
     );
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -3375,8 +3375,7 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: ["member"],
-        rights: ["hub", "auction"],
+        rights: ["access-hub", "place-bids"],
       },
       intent: "list-visible-meetups",
       requestId: expect.any(String),
@@ -3396,7 +3395,7 @@ describe("presentation adapter", () => {
         ? { kind: "meetup-card", meetup }
         : { kind: "published", meetup },
     );
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -3446,7 +3445,7 @@ describe("presentation adapter", () => {
       .fn<Dispatcher["execute"]>()
       .mockResolvedValueOnce({ kind: "published", meetup })
       .mockResolvedValueOnce({ kind: "published", meetup, repeated: true });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -3483,7 +3482,7 @@ describe("presentation adapter", () => {
       meetup: current,
       repeated: true,
     });
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -3552,7 +3551,7 @@ describe("presentation adapter", () => {
         ? { kind: "meetup-card", meetup: { ...meetup, visibility: "hidden" } }
         : { kind: "published", meetup, repeated: true },
     );
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -3670,10 +3669,9 @@ describe("presentation adapter", () => {
           ? { kind: "meetup-card", meetup }
           : result,
       );
-      const { bot, calls, records } = createHarness(
-        resolvedIdentity(["admin"]),
-        { execute },
-      );
+      const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
       await bot.init();
       await bot.handleUpdate(update());
 
@@ -3710,8 +3708,7 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenLastCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: ["member"],
-        rights: ["hub", "auction"],
+        rights: ["access-hub", "place-bids"],
       },
       intent: "view-meetup",
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
@@ -3772,8 +3769,7 @@ describe("presentation adapter", () => {
     expect(execute).toHaveBeenCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: ["member"],
-        rights: ["hub", "auction"],
+        rights: ["access-hub", "place-bids"],
       },
       intent: "view-meetup",
       meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
@@ -3872,7 +3868,7 @@ describe("presentation adapter", () => {
     expect(sendMessageText(calls[0])).toContain("Привет.");
   });
 
-  it("opens the start screen from /menu with the keyboard of the role", async () => {
+  it("opens the start screen from /menu with the keyboard of the rights", async () => {
     const { bot, calls, records } = createHarness(resolvedIdentity());
     await bot.init();
     await bot.handleUpdate(messageUpdate("/menu"));
@@ -3925,7 +3921,7 @@ describe("presentation adapter", () => {
   it("applies the hub access policy to a blocked person on a button", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const { bot, calls, records } = createHarness(
-      resolvedIdentity(["member"], true),
+      resolvedIdentity("member", true),
       { execute },
     );
     await bot.init();
@@ -3946,7 +3942,7 @@ describe("presentation adapter", () => {
       }
       return { kind: "meetup-updated", meetup: { ...meetup, venue: "Зал" } };
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -3987,7 +3983,7 @@ describe("presentation adapter", () => {
     const execute = vi
       .fn<Dispatcher["execute"]>()
       .mockResolvedValue({ kind: "meetup-card", meetup });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     bot.api.config.use((prev, method, payload, signal) =>
@@ -4010,7 +4006,7 @@ describe("presentation adapter", () => {
     const execute = vi
       .fn<Dispatcher["execute"]>()
       .mockResolvedValue({ kind: "meetup-card", meetup });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -4094,8 +4090,7 @@ describe("presentation adapter", () => {
         return {
           kind: "resolved",
           identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-          globalRoles: ["member"],
-          rights: ["hub", "auction"],
+          rights: ["access-hub", "place-bids"],
           blocked: false,
         };
       },
@@ -4117,8 +4112,7 @@ describe("presentation adapter", () => {
         return {
           kind: "resolved",
           identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-          globalRoles: ["member"],
-          rights: ["hub", "auction"],
+          rights: ["access-hub", "place-bids"],
           blocked: false,
         };
       },
@@ -4176,7 +4170,7 @@ describe("presentation adapter", () => {
     {
       name: "menu",
       data: "v1:manage:menu",
-      roles: ["admin"],
+      roles: "admin" as const,
       result: undefined,
       use_case: "create_meetup",
       message: "manage menu sent",
@@ -4569,7 +4563,7 @@ describe("presentation adapter", () => {
   });
 
   it("does not replace an unchanged screen with a failure frame", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    const { bot, calls } = createHarness(resolvedIdentity("admin"));
     bot.api.config.use((prev, method, payload, signal) =>
       method === "editMessageText"
         ? Promise.resolve({
@@ -4645,7 +4639,7 @@ describe("presentation adapter", () => {
         ? { kind: "meetup-card", meetup: publishedMeetup() }
         : { kind: "rejected", reason: "unexpected" },
     );
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     bot.api.config.use((prev, method, payload, signal) => {
@@ -4912,7 +4906,7 @@ describe("confirmations", () => {
     const execute = vi
       .fn<Dispatcher["execute"]>()
       .mockResolvedValue({ kind: "meetup-card", meetup });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -4940,7 +4934,7 @@ describe("confirmations", () => {
       kind: "meetup-card",
       meetup: publishedMeetup(),
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -4969,7 +4963,7 @@ describe("confirmations", () => {
       kind: "meetup-card",
       meetup: publishedMeetup(),
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -5027,7 +5021,7 @@ describe("questions", () => {
     );
 
   it("leaves one place to act: the asking screen loses its keyboard", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute: viewing(),
     });
     await bot.init();
@@ -5049,7 +5043,7 @@ describe("questions", () => {
   });
 
   it("closes the question once its answer is accepted", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute: viewing(),
     });
     await bot.init();
@@ -5079,7 +5073,7 @@ describe("questions", () => {
         ? { kind: "meetup-card", meetup: publishedMeetup() }
         : { kind: "dependency-rejected", reason: "timeout" },
     );
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -5102,7 +5096,7 @@ describe("questions", () => {
 
   it("returns a cancelled question to the screen it was asked from", async () => {
     const execute = viewing();
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -5130,7 +5124,7 @@ describe("questions", () => {
 
   it("edits the cancelled question in place when Telegram refuses to delete it", async () => {
     const execute = viewing();
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     bot.api.config.use((prev, method, payload, signal) =>
@@ -5153,7 +5147,7 @@ describe("questions", () => {
 
   it("forgets a cancelled question: a late answer to it is stale", async () => {
     const execute = viewing();
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -5209,7 +5203,7 @@ describe("questions", () => {
     "calls a question of the previous release with $name outdated",
     async ({ name: _name, ...replied }) => {
       const execute = viewing();
-      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
         execute,
       });
       await bot.init();
@@ -5233,7 +5227,7 @@ describe("questions", () => {
 
   it("sends a restarted material title question back to the materials", async () => {
     const execute = viewing();
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -5271,7 +5265,7 @@ describe("questions", () => {
     `v1:q:bm:${token}:42`,
   ])("cancels %s without a command to the service", async (data) => {
     const execute = viewing();
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -5300,7 +5294,7 @@ describe("questions", () => {
     const execute = vi
       .fn<Dispatcher["execute"]>()
       .mockResolvedValue({ kind: "meetup-card", meetup: draft });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -5324,7 +5318,7 @@ describe("questions", () => {
     "keeps a field question waiting after an answer without text",
     async (content) => {
       const execute = viewing();
-      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
         execute,
       });
       await bot.init();
@@ -6276,7 +6270,6 @@ describe("deferred publication frames", () => {
   const moment = { year: 2026, month: 10, day: 1, hours: 19, minutes: 30 };
   const admin = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-    globalRoles: ["admin"],
     rights: ADMIN_RIGHTS,
   };
 
@@ -6303,7 +6296,7 @@ describe("deferred publication frames", () => {
       kind: "meetup-card",
       meetup,
     }));
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -6326,7 +6319,7 @@ describe("deferred publication frames", () => {
         ? { kind: "ask", field: "title", meetup: draft }
         : { kind: "draft", meetup: draft },
     );
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -6391,7 +6384,7 @@ describe("deferred publication frames", () => {
     const execute = vi
       .fn<Dispatcher["execute"]>()
       .mockResolvedValue({ kind: "meetup-card", meetup: draft });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -6452,7 +6445,7 @@ describe("deferred publication frames", () => {
         .fn<Dispatcher["execute"]>()
         .mockResolvedValue({ kind: "meetup-card", meetup: draft });
       const { bot, calls } = createHarness(
-        resolvedIdentity(["admin"]),
+        resolvedIdentity("admin"),
         { execute },
         [],
         undefined,
@@ -6489,7 +6482,7 @@ describe("deferred publication frames", () => {
       const execute = vi
         .fn<Dispatcher["execute"]>()
         .mockResolvedValue({ kind: "meetup-card", meetup: draft });
-      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
         execute,
       });
       await bot.init();
@@ -6526,7 +6519,7 @@ describe("deferred publication frames", () => {
       const execute = vi
         .fn<Dispatcher["execute"]>()
         .mockResolvedValue({ kind: "meetup-card", meetup: draft });
-      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
         execute,
       });
       await bot.init();
@@ -6567,7 +6560,7 @@ describe("deferred publication frames", () => {
             },
       );
       const { bot, calls } = createHarness(
-        resolvedIdentity(["admin"]),
+        resolvedIdentity("admin"),
         { execute },
         [],
         undefined,
@@ -6609,7 +6602,7 @@ describe("deferred publication frames", () => {
     it("turns the day presets into time presets in the same message", async () => {
       const execute = vi.fn<Dispatcher["execute"]>();
       const { bot, calls } = createHarness(
-        resolvedIdentity(["admin"]),
+        resolvedIdentity("admin"),
         { execute },
         [],
         undefined,
@@ -6649,10 +6642,9 @@ describe("deferred publication frames", () => {
       const execute = vi
         .fn<Dispatcher["execute"]>()
         .mockResolvedValue({ kind: "draft", meetup: draft });
-      const { bot, calls, records } = createHarness(
-        resolvedIdentity(["admin"]),
-        { execute },
-      );
+      const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
       await bot.init();
 
       await bot.handleUpdate(
@@ -6688,7 +6680,7 @@ describe("deferred publication frames", () => {
         kind: "dependency-rejected",
         reason: "timeout",
       });
-      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
         execute,
       });
       await bot.init();
@@ -6709,7 +6701,7 @@ describe("deferred publication frames", () => {
         kind: "draft",
         meetup: { ...draft, visibility: "visible" },
       });
-      const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
         execute,
       });
       await bot.init();
@@ -6729,7 +6721,7 @@ describe("deferred publication frames", () => {
       const execute = vi
         .fn<Dispatcher["execute"]>()
         .mockResolvedValue({ kind: "meetup-updated", meetup: draft });
-      const { bot } = createHarness(resolvedIdentity(["admin"]), { execute });
+      const { bot } = createHarness(resolvedIdentity("admin"), { execute });
       await bot.init();
 
       await bot.handleUpdate(
@@ -6750,7 +6742,7 @@ describe("deferred publication frames", () => {
     const execute = vi
       .fn<Dispatcher["execute"]>()
       .mockResolvedValue({ kind: "meetup-card", meetup });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -6775,7 +6767,7 @@ describe("deferred publication frames", () => {
             meetup: { ...draft, publishAt: moment },
           },
     );
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -6839,7 +6831,7 @@ describe("deferred publication frames", () => {
             meetup: { ...draft, publishAt: moment },
           },
     );
-    const first = createHarness(resolvedIdentity(["admin"]), { execute });
+    const first = createHarness(resolvedIdentity("admin"), { execute });
     await first.bot.init();
     await first.bot.handleUpdate(callbackUpdate(`v1:manage:when:${token}:p:t`));
     const question = sentMessages(first.calls).at(-1);
@@ -6847,7 +6839,7 @@ describe("deferred publication frames", () => {
     expect(questionText).not.toContain("Шаг:");
     expect(questionText).not.toContain("v1:manage");
 
-    const restarted = createHarness(resolvedIdentity(["admin"]), { execute });
+    const restarted = createHarness(resolvedIdentity("admin"), { execute });
     await restarted.bot.init();
     await restarted.bot.handleUpdate(
       replyUpdate({
@@ -6882,7 +6874,7 @@ describe("deferred publication frames", () => {
         kind: "publication-unavailable",
         meetup: publishedMeetup(),
       });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -6926,7 +6918,7 @@ describe("deferred publication frames", () => {
       kind: "meetup-card",
       meetup: publishedMeetup(),
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -6949,7 +6941,7 @@ describe("deferred publication frames", () => {
       kind: "meetup-card",
       meetup: draftMeetup(),
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -6974,7 +6966,7 @@ describe("deferred publication frames", () => {
       kind: "publication-unavailable",
       meetup: draftMeetup(),
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7007,7 +6999,7 @@ describe("deferred publication frames", () => {
             meetup: unscheduledDraft(),
           },
     );
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7056,7 +7048,7 @@ describe("deferred publication frames", () => {
       kind: "meetup-card",
       meetup: draftMeetup(),
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7087,7 +7079,7 @@ describe("past meetup date", () => {
         ? { kind: "ask", field: "schedule", meetup }
         : { kind: "confirm-past-schedule", meetup, schedule: pastSchedule },
     );
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7141,7 +7133,7 @@ describe("past meetup date", () => {
       field: "venue",
       meetup,
     });
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7155,7 +7147,6 @@ describe("past meetup date", () => {
     expect(execute).toHaveBeenLastCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-        globalRoles: ["admin"],
         rights: ADMIN_RIGHTS,
       },
       intent: "set-meetup-field",
@@ -7181,7 +7172,7 @@ describe("past meetup date", () => {
       kind: "meetup-card",
       meetup,
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7226,7 +7217,7 @@ describe("past meetup date", () => {
       meetup,
       archived: true,
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7265,8 +7256,8 @@ describe("broadcast frames", () => {
     const execute = vi
       .fn<Dispatcher["execute"]>()
       .mockResolvedValue({ kind: "meetup-card", meetup });
-    const admin = createHarness(resolvedIdentity(["admin"]), { execute });
-    const member = createHarness(resolvedIdentity(["member"]), { execute });
+    const admin = createHarness(resolvedIdentity("admin"), { execute });
+    const member = createHarness(resolvedIdentity("member"), { execute });
     await admin.bot.init();
     await member.bot.init();
 
@@ -7278,8 +7269,8 @@ describe("broadcast frames", () => {
   });
 
   it("offers the community announcement in management to an admin only", async () => {
-    const admin = createHarness(resolvedIdentity(["admin"]));
-    const member = createHarness(resolvedIdentity(["member"]));
+    const admin = createHarness(resolvedIdentity("admin"));
+    const member = createHarness(resolvedIdentity("member"));
     await admin.bot.init();
     await member.bot.init();
 
@@ -7292,10 +7283,9 @@ describe("broadcast frames", () => {
 
   it("refuses the old management button to a non-admin without naming a service", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
-    const { bot, calls, records } = createHarness(
-      resolvedIdentity(["member"]),
-      { execute },
-    );
+    const { bot, calls, records } = createHarness(resolvedIdentity("member"), {
+      execute,
+    });
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
@@ -7322,7 +7312,7 @@ describe("broadcast frames", () => {
   });
 
   it("opens the management menu in place of the pressed screen", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
@@ -7338,7 +7328,7 @@ describe("broadcast frames", () => {
   });
 
   it("offers the whole management menu to an admin", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
@@ -7351,7 +7341,7 @@ describe("broadcast frames", () => {
   });
 
   it("does not ask a non-admin for an allowed username", async () => {
-    const { bot, calls, records } = createHarness(resolvedIdentity(["member"]));
+    const { bot, calls, records } = createHarness(resolvedIdentity("member"));
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:community:allow"));
@@ -7376,10 +7366,9 @@ describe("broadcast frames", () => {
 
   it("does not ask a non-admin for broadcast text", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
-    const { bot, calls, records } = createHarness(
-      resolvedIdentity(["member"]),
-      { execute },
-    );
+    const { bot, calls, records } = createHarness(resolvedIdentity("member"), {
+      execute,
+    });
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate(`v1:bc:m:${meetupToken}`));
@@ -7407,7 +7396,7 @@ describe("broadcast frames", () => {
     const execute = vi
       .fn<Dispatcher["execute"]>()
       .mockResolvedValue({ kind: "meetup-card", meetup });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7449,7 +7438,7 @@ describe("broadcast frames", () => {
   });
 
   it("refuses a broadcast that is too long to send with a re-entry button", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:bc:c"));
@@ -7480,7 +7469,7 @@ describe("broadcast frames", () => {
       kind: "broadcast-accepted",
       audience: { kind: "community" },
     });
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7523,10 +7512,9 @@ describe("broadcast frames", () => {
       kind: "dependency-rejected",
       reason: "forbidden",
     });
-    const { bot, calls, records } = createHarness(
-      resolvedIdentity(["member"]),
-      { execute },
-    );
+    const { bot, calls, records } = createHarness(resolvedIdentity("member"), {
+      execute,
+    });
     await bot.init();
 
     await bot.handleUpdate(
@@ -7562,7 +7550,7 @@ describe("broadcast frames", () => {
       audience: { kind: "community" },
       repeated: true,
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7589,7 +7577,7 @@ describe("broadcast frames", () => {
       kind: "dependency-rejected",
       reason: "unavailable",
     });
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7607,7 +7595,7 @@ describe("broadcast frames", () => {
 
   it("refuses a confirmation whose preview is not the bot's own message", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
-    const { bot, calls, records } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7650,7 +7638,7 @@ describe("meetup author", () => {
   ) {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue(card);
     const harness = createHarness(
-      resolvedIdentity(["member"]),
+      resolvedIdentity("member"),
       { execute },
       [],
       undefined,
@@ -7718,7 +7706,7 @@ describe("meetup author", () => {
             author: organizer,
           },
     );
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]), {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -7747,7 +7735,7 @@ describe("source channels", () => {
       .fn<SourceChannelAdministrator["createSourceChannel"]>()
       .mockResolvedValue({ kind: "ok", value: changed });
     return {
-      ...resolvedIdentity(["admin"]),
+      ...resolvedIdentity("admin"),
       sourceChannels,
       createSourceChannel,
     };
@@ -7776,7 +7764,7 @@ describe("source channels", () => {
     await bot.handleUpdate(callbackUpdate("v1:sc:l"));
 
     expect(identity.sourceChannels).toHaveBeenCalledWith(
-      expect.objectContaining({ globalRoles: ["admin"] }),
+      expect.objectContaining({ identityId: resolvedId }),
       expect.objectContaining({ useCase: "manage_community" }),
     );
     const text = JSON.stringify(calls.at(-1)?.payload);
@@ -7787,7 +7775,7 @@ describe("source channels", () => {
   it("does not open the screen or ask a question for a non-administrator", async () => {
     const identity = {
       ...channels([[]]),
-      ...resolvedIdentity(["member"]),
+      ...resolvedIdentity("member"),
     };
     const { bot, calls } = createHarness(identity);
     await bot.init();
@@ -7830,7 +7818,7 @@ describe("source channels", () => {
     await bot.handleUpdate(answer("Реклама", calls));
 
     expect(identity.createSourceChannel).toHaveBeenCalledWith(
-      expect.objectContaining({ globalRoles: ["admin"] }),
+      expect.objectContaining({ identityId: resolvedId }),
       { code: "tg_ads", label: "Реклама" },
       expect.objectContaining({ useCase: "manage_community" }),
     );
@@ -7953,9 +7941,9 @@ describe("source channels", () => {
 // сообщества и выдача модерации аукциона из состава.
 describe("auction queue and moderation", () => {
   const moderatorRights: readonly AccessRight[] = [
-    "hub",
-    "auction",
-    "moderate-auction",
+    "access-hub",
+    "place-bids",
+    "admit-bidders",
   ];
   const guest: ApplicationCard = {
     applicationId: "0192f3a4-b5c6-7d8e-9f0a-00000000a001",
@@ -7979,9 +7967,9 @@ describe("auction queue and moderation", () => {
     return (markup?.inline_keyboard ?? []).flat().map((button) => button.text);
   }
 
-  function queue(rights: readonly AccessRight[], globalRoles = ["member"]) {
+  function queue(rights: readonly AccessRight[], holder: Holder = "member") {
     return {
-      ...resolvedIdentity(globalRoles, false, rights),
+      ...resolvedIdentity(holder, false, rights),
       readApplicationQueue: vi
         .fn<ApplicationModerator["readApplicationQueue"]>()
         .mockResolvedValue({
@@ -8032,7 +8020,7 @@ describe("auction queue and moderation", () => {
   });
 
   it("offers the administrator both queues side by side", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity(["admin"]));
+    const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
@@ -8163,7 +8151,7 @@ describe("auction queue and moderation", () => {
         })),
       });
     return {
-      ...resolvedIdentity(["admin"]),
+      ...resolvedIdentity("admin"),
       auctionModerators,
       grantAuctionModeration: vi
         .fn<AuctionModerationAdministrator["grantAuctionModeration"]>()
@@ -8213,7 +8201,7 @@ describe("auction queue and moderation", () => {
     );
 
     expect(identity.grantAuctionModeration).toHaveBeenCalledWith(
-      expect.objectContaining({ globalRoles: ["admin"] }),
+      expect.objectContaining({ identityId: resolvedId }),
       memberId,
       expect.anything(),
     );
@@ -8248,7 +8236,6 @@ describe("auction queue and moderation", () => {
       resolve: async () => ({
         kind: "resolved",
         identityId: memberId,
-        globalRoles: ["member"],
         rights,
         blocked: false,
       }),
@@ -8271,7 +8258,7 @@ describe("auction queue and moderation", () => {
   it("refuses the moderators screen to someone who does not manage the community", async () => {
     const identity = {
       ...moderation([]),
-      ...resolvedIdentity(["member"], false, moderatorRights),
+      ...resolvedIdentity("member", false, moderatorRights),
     };
     const { bot } = createHarness(identity);
     await bot.init();

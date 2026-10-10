@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
 	"github.com/google/uuid"
 )
@@ -32,9 +31,7 @@ func TestApplicationMigrationOpensMemberApplicationForWaitingProfiles(t *testing
 	testdb.ExecBypassingShields(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
 		VALUES ($1, $2, 'member', $3, NULL)`, grantID, memberID, createdAt)
 
-	if err := migrations.Apply(t.Context(), db); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
+	applyThrough(t, db, 16)
 
 	rows, err := db.QueryContext(t.Context(), `SELECT id, identity_id, requested_role, created_at,
 		source_channel IS NULL AND NOT source_unknown AND first_name IS NULL AND outcome IS NULL FROM identity_applications`)
@@ -91,9 +88,7 @@ func TestApplicationSchemaHoldsDecisionInvariants(t *testing.T) {
 		deciderID  = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3812"
 	)
 	testdb.ExecBypassingShields(t, db, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 8111)`, identityID)
-	if err := migrations.Apply(t.Context(), db); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
+	applyThrough(t, db, 16)
 
 	insert := func(outcome, decidedBy, source any, role string) error {
 		var decidedAt any

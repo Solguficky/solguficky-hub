@@ -8,18 +8,18 @@ import {
   AuctionService,
   AuctionListing as WireListing,
 } from "../../../gen/auction/v1/auction_service_pb.js";
+import { AccessRight as WireRight } from "../../../gen/identity/v1/access_pb.js";
 import {
   IdentityService,
-  RoleRequestOutcome as WireOutcome,
+  AccessRequestOutcome as WireOutcome,
 } from "../../../gen/identity/v1/identity_service_pb.js";
-import { AccessRight as WireRight } from "../../../gen/identity/v1/roles_pb.js";
 import type {
+  AccessRequest,
+  AccessRequestAnswer,
+  AccessRequestOutcome,
   LotImagePort,
   Money,
   ResolvedIdentity,
-  RoleRequest,
-  RoleRequestAnswer,
-  RoleRequestOutcome,
   TelegramUser,
   Viewer,
 } from "../../auction-ui/index.js";
@@ -59,7 +59,7 @@ export const imageTimeoutMs = 10_000;
 export type IdentityRpc = Pick<
   Client<typeof IdentityService>,
   | "resolveIdentity"
-  | "requestRole"
+  | "requestAccess"
   | "resolveTelegramUserId"
   | "checkAccessRight"
 >;
@@ -135,8 +135,10 @@ export function createPorts(
         },
       },
       entry: {
-        async requestRole(request: RoleRequest): Promise<RoleRequestAnswer> {
-          const response = await identity.requestRole(
+        async requestAccess(
+          request: AccessRequest,
+        ): Promise<AccessRequestAnswer> {
+          const response = await identity.requestAccess(
             {
               telegramUserId: BigInt(request.user.telegramUserId),
               ...(request.user.telegramUsername === undefined
@@ -349,20 +351,20 @@ export function createDeliveryPorts(
       },
     },
     reads: {
-      async hasAuctionRight(identityId, requestId) {
+      async holdsPlaceBids(identityId, requestId) {
         const response = await identity.checkAccessRight(
-          { identityId, right: WireRight.AUCTION },
+          { identityId, right: WireRight.PLACE_BIDS },
           options(requestId),
         );
         return response.granted;
       },
       async lotTitle(identityId, lotId, requestId) {
-        // Право `auction` у получателя Identity подтвердил шагом раньше, и
+        // Право `place-bids` у получателя Identity подтвердил шагом раньше, и
         // смотрящий несёт только его: Auction без него лот не отдаёт, а
         // выдумывать получателю права канал не вправе.
         const snapshot = await auction.getLot(
           {
-            viewer: wireViewer({ identityId, rights: ["auction"] }),
+            viewer: wireViewer({ identityId, rights: ["place-bids"] }),
             lotId,
           },
           options(requestId),
@@ -439,7 +441,7 @@ function viewerFrom(response: {
 
 // Число, которого словарь ещё не знает, читается как `UNSPECIFIED`: по
 // контракту незнакомый исход — отказ, а не допуск.
-function outcomeName(outcome: WireOutcome): RoleRequestOutcome {
+function outcomeName(outcome: WireOutcome): AccessRequestOutcome {
   switch (outcome) {
     case WireOutcome.ALREADY_HELD:
       return "already-held";

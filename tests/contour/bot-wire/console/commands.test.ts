@@ -27,7 +27,7 @@ describe("console command language", () => {
     expect(parseCommand("new alice admin")).toEqual({
       kind: "new",
       who: "alice",
-      role: "admin",
+      holder: "admin",
     });
     expect(parseCommand("alice@hub answer 2 Новое место")).toEqual({
       kind: "answer",
@@ -122,7 +122,7 @@ describe("console command language", () => {
 
   it.each([
     ["", "пустая"],
-    ["new alice owner", "роль"],
+    ["new alice owner", "вид"],
     ["new people admin", "имя"],
     ["Alice@hub say hi", "имя"],
     ["alice say hi", "не назван бот"],

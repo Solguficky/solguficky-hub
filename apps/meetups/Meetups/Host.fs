@@ -157,17 +157,17 @@ let buildWith (configure: IServiceCollection -> unit) (args: string array) : Web
     // у шины: без адреса хост поднимается, а метод отвечает UNAVAILABLE — профиль
     // `meetups` Identity не поднимает намеренно. Недоступный Identity при заданном
     // адресе — тот же UNAVAILABLE, но уже ответом на вызов, а не молчаливым отключением.
-    match builder.Configuration[IdentityRoleClient.UrlVariable] with
+    match builder.Configuration[IdentityRightClient.UrlVariable] with
     | null
     | "" ->
         builder.Services.AddSingleton<CheckMeetupAuthority.Port>(CheckMeetupAuthority.Port.Unconfigured)
         |> ignore
     | url ->
-        let send = IdentityRoleClient.connect url
+        let send = IdentityRightClient.connect url
 
         builder.Services.AddSingleton<CheckMeetupAuthority.Port>(
             CheckMeetupAuthority.Port.Connected(
-                IdentityRoleClient.ask send serviceToken IdentityRoleClient.defaultDeadline
+                IdentityRightClient.ask send serviceToken IdentityRightClient.defaultDeadline
             )
         )
         |> ignore

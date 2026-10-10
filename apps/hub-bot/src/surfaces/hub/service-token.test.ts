@@ -107,10 +107,7 @@ describe("meetups client", () => {
       communityTimeZone: "Europe/Moscow",
     });
     try {
-      await meetups.listVisible(
-        { identityId: "id-1", globalRoles: [], rights: [] },
-        meta,
-      );
+      await meetups.listVisible({ identityId: "id-1", rights: [] }, meta);
     } finally {
       meetups.close();
     }
@@ -137,15 +134,14 @@ describe("auction client", () => {
       await auction.getMeetupAuction(
         {
           identityId: "id-1",
-          globalRoles: ["member"],
-          rights: ["hub", "auction"],
+          rights: ["access-hub", "place-bids"],
         },
         "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
         meta,
       );
       // Порты экранов пакета ходят тем же транспортом.
       await auction.screenPorts(meta).auction.listAuctionLots({
-        viewer: { identityId: "id-1", rights: ["hub", "auction"] },
+        viewer: { identityId: "id-1", rights: ["access-hub", "place-bids"] },
         auctionId: "daef05c7-cd68-5048-b03d-cb4860e8dc73",
         pageToken: "",
       });

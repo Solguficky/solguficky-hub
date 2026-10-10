@@ -23,24 +23,39 @@ type Occasion string
 
 const (
 	ProfileRegistered Occasion = "profile_registered"
-	RoleGranted       Occasion = "role_granted"
-	RoleRevoked       Occasion = "role_revoked"
 	ProfileBlocked    Occasion = "profile_blocked"
 	ProfileUnblocked  Occasion = "profile_unblocked"
-	// ApplicationSubmitted — открыта новая заявка на круг. Доступ не меняет, но
-	// версию занимает, как любое событие профиля; роль события — запрошенный круг.
+	// ApplicationSubmitted — открыта новая заявка в очередь. Доступ не меняет,
+	// но версию занимает, как любое событие профиля; событие называет очередь.
 	ApplicationSubmitted Occasion = "application_submitted"
-	// ApplicationAdmitted — администратор допустил человека по заявке: решением
-	// или пересмотром. Пишется после выдач круга в той же транзакции; роль
-	// события — круг заявки.
+	// ApplicationAdmitted — модератор очереди допустил человека по заявке:
+	// решением или пересмотром. Пишется после выдач той же транзакции; событие
+	// называет очередь.
 	ApplicationAdmitted Occasion = "application_admitted"
-	// RightGranted — право выдано отдельно от круга: модерация аукциона
-	// участнику или право аукциона гостю, у которого круг уже есть. Право,
-	// пришедшее с кругом, едет снимком role_granted и этого повода не даёт.
+	// RightGranted — право выдано поштучной записью: admit_bidders участнику или
+	// place_bids гостю, у которого круг уже есть. Запись, пришедшая со сменой
+	// круга, едет снимком circle_changed и этого повода не даёт.
 	RightGranted Occasion = "right_granted"
-	// RightRevoked — право, выданное отдельно от круга, отозвано.
+	// RightRevoked — поштучная запись снята, и права у человека больше нет.
 	RightRevoked Occasion = "right_revoked"
+	// CircleChanged — у человека появился круг или он перешёл между guest и
+	// member; событие называет прежний круг.
+	CircleChanged Occasion = "circle_changed"
+	// PresetGranted и PresetRevoked — набор выдан или снят; событие называет набор.
+	PresetGranted Occasion = "preset_granted"
+	PresetRevoked Occasion = "preset_revoked"
 )
+
+// Event — повод и то, что он называет, в словаре хранилища. Заполняется только
+// поле своего повода: PreviousCircle у circle_changed (пусто — круга не было),
+// Preset у поводов набора, Right у поводов права, Queue у поводов заявки.
+type Event struct {
+	Occasion       Occasion
+	PreviousCircle string
+	Preset         string
+	Right          string
+	Queue          string
+}
 
 // ErrProfileNotFound — событие названо на профиль, которого нет. Для вызывающего
 // это сломанный инвариант: события пишутся после изменения существующего профиля.
@@ -52,47 +67,33 @@ UPDATE profiles SET version = version + 1
 WHERE id = $1
 RETURNING version, blocked`
 
-	// Снимок читается отдельным оператором после сдвига версии: изменения ролей
-	// этой транзакции ему уже видны, и он описывает состояние после применения.
-	// Права и global_roles выводят функции схемы (миграция 014) — тот же вывод,
-	// что у ответов IdentityService; global_roles до снятия поля — проекция
-	// круга и прав на прежние вложенные имена. Порядок контракт не обещает;
-	// функции сортируют, и строка воспроизводима.
+	// Снимок читается отдельным оператором после сдвига версии: изменения этой
+	// транзакции ему уже видны, и он описывает состояние после применения. Права
+	// и наборы выводят функции схемы (миграция 017) — тот же вывод, что у
+	// ответов IdentityService. Порядок контракт не обещает; функции сортируют, и
+	// строка воспроизводима.
 	insertEventSQL = `
 INSERT INTO identity_outbox
-    (event_id, identity_id, version, occasion, role, global_roles, blocked, occurred_at,
-     traceparent, circle, rights, access_right)
-SELECT $1::uuid, $2::uuid, $3::bigint, $4::text, $5::text,
-       identity_global_roles($2::uuid),
-       $6::boolean, now(), $7::text,
-       (SELECT role FROM identity_roles
-        WHERE identity_id = $2::uuid AND revoked_at IS NULL AND NOT $6::boolean),
-       identity_access_rights($2::uuid), $8::text`
+    (event_id, identity_id, version, occasion, blocked, occurred_at, traceparent,
+     circle, rights, presets, access_right, preset, previous_circle, queue)
+SELECT $1::uuid, $2::uuid, $3::bigint, $4::text, $5::boolean, now(), $6::text,
+       (SELECT circle FROM identity_circles
+        WHERE identity_id = $2::uuid AND revoked_at IS NULL AND NOT $5::boolean),
+       identity_access_rights($2::uuid), identity_active_presets($2::uuid),
+       $7::text, $8::text, $9::text, $10::text`
 )
 
 // Append записывает событие о профиле в транзакции изменения. Он двигает версию
-// профиля и кладёт в очередь снимок доступа после применения: круг, права,
-// проекцию global_roles и отметку блокировки, прочитанные этой же транзакцией. Роль задаётся только у
-// выдачи, отзыва, заявки и допуска по ней — у двух последних это круг заявки.
-// Момент события — now() транзакции: тот же, что у журнала доступа и у меток
-// выдачи и отзыва.
+// профиля и кладёт в очередь снимок доступа после применения: круг, наборы,
+// права и отметку блокировки, прочитанные этой же транзакцией. Момент события —
+// now() транзакции: тот же, что у журнала доступа и у меток выдачи и отзыва.
 //
 // Откат транзакции откатывает и событие, и сдвиг версии: отдельной фиксации у
 // очереди нет.
 //
 // Контекст трассировки ctx ложится в строку заголовком traceparent: по нему спан
 // публикации ссылается на трейс запроса. Вне спана колонка остаётся NULL.
-func Append(ctx context.Context, tx *sql.Tx, identityID string, occasion Occasion, role string) error {
-	return appendEvent(ctx, tx, identityID, occasion, role, "")
-}
-
-// AppendRight записывает повод права — right_granted или right_revoked — с
-// правом right в словаре хранилища. Остальное — как у Append.
-func AppendRight(ctx context.Context, tx *sql.Tx, identityID string, occasion Occasion, right string) error {
-	return appendEvent(ctx, tx, identityID, occasion, "", right)
-}
-
-func appendEvent(ctx context.Context, tx *sql.Tx, identityID string, occasion Occasion, role, right string) error {
+func Append(ctx context.Context, tx *sql.Tx, identityID string, event Event) error {
 	var (
 		version int64
 		blocked bool
@@ -109,21 +110,19 @@ func appendEvent(ctx context.Context, tx *sql.Tx, identityID string, occasion Oc
 	if err != nil {
 		return fmt.Errorf("generate event id: %w", err)
 	}
-	var roleArg any
-	if role != "" {
-		roleArg = role
-	}
-	var rightArg any
-	if right != "" {
-		rightArg = right
-	}
-	var traceArg any
-	if tp := TraceParent(ctx); tp != "" {
-		traceArg = tp
-	}
 	if _, err := tx.ExecContext(ctx, insertEventSQL,
-		eventID.String(), identityID, version, string(occasion), roleArg, blocked, traceArg, rightArg); err != nil {
+		eventID.String(), identityID, version, string(event.Occasion), blocked, nullable(TraceParent(ctx)),
+		nullable(event.Right), nullable(event.Preset), nullable(event.PreviousCircle), nullable(event.Queue)); err != nil {
 		return fmt.Errorf("insert outbox event: %w", err)
 	}
 	return nil
+}
+
+// nullable — пустая строка в колонку уходит NULL: отсутствие значения, а не
+// пустое значение.
+func nullable(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
 }

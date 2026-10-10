@@ -13,22 +13,23 @@ const SubjectPrefix = "events.identity."
 
 // Record — неотправленная строка очереди в том виде, в каком её читает релей.
 type Record struct {
-	EventID     string
-	IdentityID  string
-	Version     int64
-	Occasion    Occasion
-	Role        string
-	GlobalRoles []string
-	Blocked     bool
-	// Circle — активный круг после события; пусто — круга нет или строка
-	// записана до одной роли-круга (миграция 014).
+	EventID    string
+	IdentityID string
+	Version    int64
+	Occasion   Occasion
+	Blocked    bool
+	// Circle — активный круг после события; пусто — круга нет.
 	Circle string
-	// Rights — права после события; у строки до миграции 014 пусто.
-	Rights []string
-	// Right — право повода right_granted и right_revoked; у остальных поводов
-	// пусто.
-	Right      string
-	OccurredAt time.Time
+	// Presets и Rights — наборы и права после события.
+	Presets []string
+	Rights  []string
+	// Right, Preset, PreviousCircle и Queue — то, что называет повод; у чужих
+	// поводов пусто.
+	Right          string
+	Preset         string
+	PreviousCircle string
+	Queue          string
+	OccurredAt     time.Time
 	// TraceParent — контекст трассировки запроса, записавшего строку; пусто, если
 	// запись шла вне спана. В сообщение не входит.
 	TraceParent string
@@ -41,7 +42,8 @@ func (r Record) Subject() string {
 }
 
 // Message собирает сообщение контракта из строки очереди. Отказ означает строку,
-// которую схема пропустить не должна была: неизвестный повод или роль.
+// которую схема пропустить не должна была: неизвестный повод, круг, набор или
+// право.
 func (r Record) Message() (*identityv1.IdentityEvent, error) {
 	state, err := r.state()
 	if err != nil {
@@ -62,8 +64,7 @@ func (r Record) Message() (*identityv1.IdentityEvent, error) {
 	return event, nil
 }
 
-// setOccasion ставит ветку повода. Поводы без данных, поводы круга и поводы
-// права разобраны отдельно: у каждой группы своё поле строки.
+// setOccasion ставит ветку повода. У каждой группы поводов своё поле строки.
 func (r Record) setOccasion(event *identityv1.IdentityEvent) error {
 	switch r.Occasion {
 	case ProfileRegistered:
@@ -72,43 +73,48 @@ func (r Record) setOccasion(event *identityv1.IdentityEvent) error {
 		event.Occasion = &identityv1.IdentityEvent_ProfileBlocked{ProfileBlocked: &identityv1.ProfileBlocked{}}
 	case ProfileUnblocked:
 		event.Occasion = &identityv1.IdentityEvent_ProfileUnblocked{ProfileUnblocked: &identityv1.ProfileUnblocked{}}
+	case CircleChanged:
+		return r.setCircleOccasion(event)
+	case PresetGranted, PresetRevoked:
+		return r.setPresetOccasion(event)
 	case RightGranted, RightRevoked:
 		return r.setRightOccasion(event)
-	default:
-		return r.setRoleOccasion(event)
-	}
-	return nil
-}
-
-// setRoleOccasion — поводы, которые несут круг: выдача, отзыв, заявка и допуск.
-func (r Record) setRoleOccasion(event *identityv1.IdentityEvent) error {
-	switch r.Occasion {
-	case RoleGranted, RoleRevoked, ApplicationSubmitted, ApplicationAdmitted:
+	case ApplicationSubmitted, ApplicationAdmitted:
+		return r.setApplicationOccasion(event)
 	default:
 		return fmt.Errorf("outbox: unknown occasion %q", r.Occasion)
 	}
-	role, err := globalRole(r.Role)
+	return nil
+}
+
+// setCircleOccasion — смена круга; пустой прежний круг — круга не было.
+func (r Record) setCircleOccasion(event *identityv1.IdentityEvent) error {
+	var previous identityv1.Circle
+	if r.PreviousCircle != "" {
+		var err error
+		if previous, err = circle(r.PreviousCircle); err != nil {
+			return err
+		}
+	}
+	event.Occasion = &identityv1.IdentityEvent_CircleChanged{CircleChanged: &identityv1.CircleChanged{Previous: previous}}
+	return nil
+}
+
+// setPresetOccasion — набор выдан или снят.
+func (r Record) setPresetOccasion(event *identityv1.IdentityEvent) error {
+	value, err := preset(r.Preset)
 	if err != nil {
 		return err
 	}
-	switch r.Occasion {
-	case RoleGranted:
-		event.Occasion = &identityv1.IdentityEvent_RoleGranted{RoleGranted: &identityv1.RoleGranted{Role: role}}
-	case RoleRevoked:
-		event.Occasion = &identityv1.IdentityEvent_RoleRevoked{RoleRevoked: &identityv1.RoleRevoked{Role: role}}
-	case ApplicationSubmitted:
-		event.Occasion = &identityv1.IdentityEvent_ApplicationSubmitted{
-			ApplicationSubmitted: &identityv1.ApplicationSubmitted{Role: role, Queue: applicationQueue(role)},
-		}
-	default:
-		event.Occasion = &identityv1.IdentityEvent_ApplicationAdmitted{
-			ApplicationAdmitted: &identityv1.ApplicationAdmitted{Role: role, Queue: applicationQueue(role)},
-		}
+	if r.Occasion == PresetGranted {
+		event.Occasion = &identityv1.IdentityEvent_PresetGranted{PresetGranted: &identityv1.PresetGranted{Preset: value}}
+	} else {
+		event.Occasion = &identityv1.IdentityEvent_PresetRevoked{PresetRevoked: &identityv1.PresetRevoked{Preset: value}}
 	}
 	return nil
 }
 
-// setRightOccasion — поводы права, выданного или отозванного отдельно от круга.
+// setRightOccasion — поштучная запись права выдана или снята.
 func (r Record) setRightOccasion(event *identityv1.IdentityEvent) error {
 	right, err := accessRight(r.Right)
 	if err != nil {
@@ -122,102 +128,110 @@ func (r Record) setRightOccasion(event *identityv1.IdentityEvent) error {
 	return nil
 }
 
+// setApplicationOccasion — заявка открыта или допущена.
+func (r Record) setApplicationOccasion(event *identityv1.IdentityEvent) error {
+	queue, err := applicationQueue(r.Queue)
+	if err != nil {
+		return err
+	}
+	if r.Occasion == ApplicationSubmitted {
+		event.Occasion = &identityv1.IdentityEvent_ApplicationSubmitted{
+			ApplicationSubmitted: &identityv1.ApplicationSubmitted{Queue: queue},
+		}
+	} else {
+		event.Occasion = &identityv1.IdentityEvent_ApplicationAdmitted{
+			ApplicationAdmitted: &identityv1.ApplicationAdmitted{Queue: queue},
+		}
+	}
+	return nil
+}
+
 // state собирает снимок доступа после события.
 func (r Record) state() (*identityv1.IdentityState, error) {
-	roles, err := snapshotRoles(r.GlobalRoles)
-	if err != nil {
-		return nil, err
-	}
-	rights, err := snapshotRights(r.Rights)
-	if err != nil {
-		return nil, err
-	}
-	var circle identityv1.GlobalRole
-	if r.Circle != "" {
-		if circle, err = globalRole(r.Circle); err != nil {
-			return nil, err
-		}
-	}
-	return &identityv1.IdentityState{
-		Id:          r.IdentityID,
-		GlobalRoles: roles,
-		Blocked:     r.Blocked,
-		Role:        circle,
-		Rights:      rights,
-	}, nil
-}
-
-// snapshotRoles переводит активные роли снимка в значения контракта.
-func snapshotRoles(names []string) ([]identityv1.GlobalRole, error) {
-	roles := make([]identityv1.GlobalRole, 0, len(names))
-	for _, name := range names {
-		role, err := globalRole(name)
-		if err != nil {
-			return nil, err
-		}
-		roles = append(roles, role)
-	}
-	return roles, nil
-}
-
-// snapshotRights переводит права снимка в значения контракта; неизвестное право
-// — отказ, как и неизвестная роль.
-func snapshotRights(names []string) ([]identityv1.AccessRight, error) {
-	rights := make([]identityv1.AccessRight, 0, len(names))
-	for _, name := range names {
+	rights := make([]identityv1.AccessRight, 0, len(r.Rights))
+	for _, name := range r.Rights {
 		right, err := accessRight(name)
 		if err != nil {
 			return nil, err
 		}
 		rights = append(rights, right)
 	}
-	return rights, nil
+	presets := make([]identityv1.Preset, 0, len(r.Presets))
+	for _, name := range r.Presets {
+		value, err := preset(name)
+		if err != nil {
+			return nil, err
+		}
+		presets = append(presets, value)
+	}
+	var current identityv1.Circle
+	if r.Circle != "" {
+		var err error
+		if current, err = circle(r.Circle); err != nil {
+			return nil, err
+		}
+	}
+	return &identityv1.IdentityState{
+		Id:      r.IdentityID,
+		Blocked: r.Blocked,
+		Circle:  current,
+		Presets: presets,
+		Rights:  rights,
+	}, nil
 }
 
-// accessRight переводит строку словаря identity_rights в значение контракта;
-// неизвестное право — отказ, как и неизвестная роль.
+// Переводы словаря хранилища в значения контракта. В отличие от чтения
+// разрешения личности, неизвестное значение здесь отказ, а не пропуск: снимок
+// без одного права был бы ложным фактом, а не неполным ответом.
+
 func accessRight(name string) (identityv1.AccessRight, error) {
 	switch name {
-	case "hub":
-		return identityv1.AccessRight_ACCESS_RIGHT_HUB, nil
-	case "auction":
-		return identityv1.AccessRight_ACCESS_RIGHT_AUCTION, nil
-	case "manage_membership":
-		return identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP, nil
-	case "moderate_auction":
-		return identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION, nil
-	case "manage_auction":
-		return identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION, nil
+	case "access_hub":
+		return identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, nil
+	case "place_bids":
+		return identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, nil
+	case "manage_members":
+		return identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERS, nil
+	case "admit_bidders":
+		return identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, nil
+	case "manage_meetups":
+		return identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS, nil
+	case "grant_admins":
+		return identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS, nil
 	default:
 		return identityv1.AccessRight_ACCESS_RIGHT_UNSPECIFIED, fmt.Errorf("outbox: unknown right %q", name)
 	}
 }
 
-// applicationQueue — очередь заявки по её кругу: заявка на member лежит в
-// очереди сообщества, на guest — в очереди аукциона.
-func applicationQueue(role identityv1.GlobalRole) identityv1.ApplicationQueue {
-	if role == identityv1.GlobalRole_GLOBAL_ROLE_MEMBER {
-		return identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY
+func preset(name string) (identityv1.Preset, error) {
+	switch name {
+	case "admin":
+		return identityv1.Preset_PRESET_ADMIN, nil
+	case "maintainer":
+		return identityv1.Preset_PRESET_MAINTAINER, nil
+	default:
+		return identityv1.Preset_PRESET_UNSPECIFIED, fmt.Errorf("outbox: unknown preset %q", name)
 	}
-	return identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION
 }
 
-// globalRole переводит строку словаря identity_roles в значение контракта. В
-// отличие от чтения разрешения личности, неизвестная роль здесь отказ, а не
-// пропуск: снимок без одной роли был бы ложным фактом, а не неполным ответом.
-// public — имя гостя в строках, записанных до миграции 014: строки outbox
-// неизменяемы и публикуются с прежним именем.
-func globalRole(name string) (identityv1.GlobalRole, error) {
+func circle(name string) (identityv1.Circle, error) {
 	switch name {
-	case "maintainer":
-		return identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER, nil
-	case "admin":
-		return identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, nil
 	case "member":
-		return identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, nil
-	case "guest", "public":
-		return identityv1.GlobalRole_GLOBAL_ROLE_GUEST, nil
+		return identityv1.Circle_CIRCLE_MEMBER, nil
+	case "guest":
+		return identityv1.Circle_CIRCLE_GUEST, nil
 	default:
-		return identityv1.GlobalRole_GLOBAL_ROLE_UNSPECIFIED, fmt.Errorf("outbox: unknown role %q", name)
+		return identityv1.Circle_CIRCLE_UNSPECIFIED, fmt.Errorf("outbox: unknown circle %q", name)
+	}
+}
+
+func applicationQueue(name string) (identityv1.ApplicationQueue, error) {
+	switch name {
+	case "community":
+		return identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY, nil
+	case "auction":
+		return identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION, nil
+	default:
+		return identityv1.ApplicationQueue_APPLICATION_QUEUE_UNSPECIFIED, fmt.Errorf("outbox: unknown queue %q", name)
 	}
 }

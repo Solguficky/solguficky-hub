@@ -17,7 +17,7 @@ from pathlib import Path
 from nats_tester.proto_sources import generated_modules, resolve_generation_set
 
 # protoc resolves Python imports from the proto path, so a schema importing another
-# schema of the same module emits `from identity.v1 import roles_pb2`. The generated
+# schema of the same module emits `from identity.v1 import access_pb2`. The generated
 # tree lives inside a package, where that name does not exist. The rewrite below moves
 # such imports under the package; the alias protoc puts after `as` stays untouched, so
 # every use site keeps working.

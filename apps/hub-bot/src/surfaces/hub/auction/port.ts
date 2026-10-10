@@ -277,8 +277,8 @@ export type AuctionScreens = {
   screenPorts(meta?: RpcMetadata): AuctionScreenPorts;
 };
 
-// Смотрящий пакета — права, которые Identity вывел этому человеку (ADR-064,
-// пункт 6): роли в Auction не едут, он решает по правам.
+// Смотрящий пакета — права, которые Identity вывел этому человеку (RFC-016):
+// Auction решает по правам.
 export function viewerOf(person: Person): Viewer {
   return { identityId: person.identityId, rights: person.rights };
 }

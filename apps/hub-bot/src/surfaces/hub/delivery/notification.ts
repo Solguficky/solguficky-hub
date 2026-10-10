@@ -1,6 +1,9 @@
 import { fromBinary } from "@bufbuild/protobuf";
 import type { Money as WireMoney } from "../../../../gen/auction/v1/auction_pb.js";
-import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
+import {
+  Preset,
+  ApplicationQueue as WireQueue,
+} from "../../../../gen/identity/v1/access_pb.js";
 import {
   type DateValue,
   type Schedule,
@@ -86,13 +89,13 @@ export type RenderableContent =
   | { kind: "community-announcement"; body: string }
   // Заявку на доступ получает администратор. Заявителя контракт не несёт: кто
   // просит, модератор видит в очереди, куда ведёт сообщение.
-  | { kind: "access-requested"; circle: AccessCircle }
-  // Допуск в хаб получает сам заявитель (PER-442). Круг здесь всегда member:
-  // допуск в аукцион доставляет бот аукциона.
+  | { kind: "access-requested"; queue: ApplicationQueue }
+  // Допуск в хаб получает сам заявитель (PER-442). Очередь здесь всегда
+  // сообщества: допуск в аукцион доставляет бот аукциона.
   | { kind: "access-granted" }
-  // Роль, выданная вне заявки, — сегодня только администратора (PER-468).
+  // Выданный набор — сегодня только администратора (PER-468, RFC-016).
   // Получает сам человек; кто выдал, контракт не несёт.
-  | { kind: "role-granted"; role: "admin" }
+  | { kind: "preset-granted"; preset: "admin" }
   // Аукционные факты об участнике сообщества доставляет бот хаба (ADR-064).
   | { kind: "lot-outbid"; lotId: string; currentPrice: NotificationMoney }
   | { kind: "lot-proxy-raised"; lotId: string; currentPrice: NotificationMoney }
@@ -100,8 +103,8 @@ export type RenderableContent =
 
 export type NotificationMoney = { minorUnits: number; currency: string };
 
-// Круги, на которые ставят заявку: хаб и аукцион.
-export type AccessCircle = "member" | "public";
+// Очереди, в которые ставят заявку: сообщество и аукцион.
+export type ApplicationQueue = "community" | "auction";
 
 export type NotificationContent = RenderableContent | OtherBranch;
 
@@ -192,25 +195,25 @@ function toContent(message: Notification): NotificationContent | undefined {
         : { kind: "community-announcement", body };
     }
     case "accessRequested": {
-      const circle = toAccessCircle(type.value.circle);
-      return circle === undefined
+      const queue = toQueue(type.value.queue);
+      return queue === undefined
         ? undefined
-        : { kind: "access-requested", circle };
+        : { kind: "access-requested", queue };
     }
     // Допуск доставляет бот той поверхности, куда подана заявка: хаб — заявку
-    // в member, а допуск в аукцион для него чужой, как ветки торгов.
+    // в сообщество, а допуск в аукцион для него чужой, как ветки торгов.
     case "accessGranted": {
-      const circle = toAccessCircle(type.value.circle);
-      if (circle === undefined) return undefined;
-      return circle === "member"
+      const queue = toQueue(type.value.queue);
+      if (queue === undefined) return undefined;
+      return queue === "community"
         ? { kind: "access-granted" }
         : { kind: "foreign", type: type.case };
     }
-    // Права администратора: Notifications шлёт ветку только для роли admin,
-    // иная роль — дефект издателя, а не новая весть.
-    case "roleGranted":
-      return type.value.role === GlobalRole.ADMIN
-        ? { kind: "role-granted", role: "admin" }
+    // Набор администратора: Notifications шлёт ветку только для него, иной
+    // набор — дефект издателя, а не новая весть.
+    case "presetGranted":
+      return type.value.preset === Preset.ADMIN
+        ? { kind: "preset-granted", preset: "admin" }
         : undefined;
     // PER-537 добавит текст и отправку; пока факт маршрутизирован в этот
     // durable, но канал не должен трактовать известную ветку как дефект схемы.
@@ -394,13 +397,13 @@ function toDateTime(
   };
 }
 
-// Заявку ставят только на круги поверхностей; другой круг — дефект издателя.
-function toAccessCircle(value: GlobalRole): AccessCircle | undefined {
+// Незнакомая или пустая очередь — дефект издателя.
+function toQueue(value: WireQueue): ApplicationQueue | undefined {
   switch (value) {
-    case GlobalRole.MEMBER:
-      return "member";
-    case GlobalRole.GUEST:
-      return "public";
+    case WireQueue.COMMUNITY:
+      return "community";
+    case WireQueue.AUCTION:
+      return "auction";
     default:
       return undefined;
   }

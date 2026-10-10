@@ -12,20 +12,22 @@ import (
 const (
 	eventID    = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3901"
 	identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3902"
+	member     = "member"
 )
 
 func TestRecordSubjectNamesTheOccasion(t *testing.T) {
 	t.Parallel()
 	cases := map[outbox.Occasion]string{
 		outbox.ProfileRegistered:    "events.identity.profile_registered",
-		outbox.RoleGranted:          "events.identity.role_granted",
-		outbox.RoleRevoked:          "events.identity.role_revoked",
 		outbox.ProfileBlocked:       "events.identity.profile_blocked",
 		outbox.ProfileUnblocked:     "events.identity.profile_unblocked",
 		outbox.ApplicationSubmitted: "events.identity.application_submitted",
 		outbox.ApplicationAdmitted:  "events.identity.application_admitted",
 		outbox.RightGranted:         "events.identity.right_granted",
 		outbox.RightRevoked:         "events.identity.right_revoked",
+		outbox.CircleChanged:        "events.identity.circle_changed",
+		outbox.PresetGranted:        "events.identity.preset_granted",
+		outbox.PresetRevoked:        "events.identity.preset_revoked",
 	}
 	for occasion, want := range cases {
 		if got := (outbox.Record{Occasion: occasion}).Subject(); got != want {
@@ -38,13 +40,14 @@ func TestRecordMessageCarriesEnvelopeAndSnapshot(t *testing.T) {
 	t.Parallel()
 	occurredAt := time.Date(2026, time.September, 25, 12, 30, 0, 123000000, time.FixedZone("MSK", 3*60*60))
 	record := outbox.Record{
-		EventID:     eventID,
-		IdentityID:  identityID,
-		Version:     3,
-		Occasion:    outbox.RoleGranted,
-		Role:        "member",
-		GlobalRoles: []string{"member", "public"},
-		OccurredAt:  occurredAt,
+		EventID:        eventID,
+		IdentityID:     identityID,
+		Version:        3,
+		Occasion:       outbox.CircleChanged,
+		Circle:         member,
+		PreviousCircle: "guest",
+		Rights:         []string{"access_hub", "place_bids"},
+		OccurredAt:     occurredAt,
 	}
 
 	message, err := record.Message()
@@ -58,129 +61,117 @@ func TestRecordMessageCarriesEnvelopeAndSnapshot(t *testing.T) {
 		t.Fatalf("occurred_at: got %q want %q", got, want)
 	}
 	state := message.GetState()
-	if state.GetId() != identityID || state.GetBlocked() {
-		t.Fatalf("state: got id %q blocked %t", state.GetId(), state.GetBlocked())
+	if state.GetId() != identityID || state.GetBlocked() || state.GetCircle() != identityv1.Circle_CIRCLE_MEMBER {
+		t.Fatalf("state: got %v", state)
 	}
-	wantRoles := []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST}
-	if len(state.GetGlobalRoles()) != len(wantRoles) {
-		t.Fatalf("global_roles: got %v want %v", state.GetGlobalRoles(), wantRoles)
-	}
-	for i, role := range wantRoles {
-		if state.GetGlobalRoles()[i] != role {
-			t.Fatalf("global_roles: got %v want %v", state.GetGlobalRoles(), wantRoles)
-		}
-	}
-	if got := message.GetRoleGranted().GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_MEMBER {
-		t.Fatalf("role_granted.role: got %v", got)
+	if got := message.GetCircleChanged().GetPrevious(); got != identityv1.Circle_CIRCLE_GUEST {
+		t.Fatalf("circle_changed.previous: got %v", got)
 	}
 }
 
-func TestRecordMessageCarriesCircleAndRights(t *testing.T) {
+func TestRecordMessageCarriesPresetsAndRights(t *testing.T) {
 	t.Parallel()
 	message, err := (outbox.Record{
 		Occasion: outbox.ProfileRegistered,
-		Circle:   "admin",
-		Rights:   []string{"hub", "manage_membership", "manage_auction"},
+		Circle:   member,
+		Presets:  []string{"admin", "maintainer"},
+		Rights:   []string{"access_hub", "manage_members", "manage_meetups", "grant_admins"},
 	}).Message()
 	if err != nil {
 		t.Fatal(err)
 	}
 	state := message.GetState()
-	if got := state.GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_ADMIN {
-		t.Fatalf("state.role: got %v", got)
+	wantPresets := []identityv1.Preset{identityv1.Preset_PRESET_ADMIN, identityv1.Preset_PRESET_MAINTAINER}
+	if got := state.GetPresets(); !slices.Equal(got, wantPresets) {
+		t.Fatalf("state.presets: got %v want %v", got, wantPresets)
 	}
 	want := []identityv1.AccessRight{
-		identityv1.AccessRight_ACCESS_RIGHT_HUB,
-		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP,
-		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION,
+		identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB,
+		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERS,
+		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS,
+		identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS,
 	}
 	if got := state.GetRights(); !slices.Equal(got, want) {
 		t.Fatalf("state.rights: got %v want %v", got, want)
 	}
 }
 
-// Строка до миграции 014 не несёт круга и прав и публикуется с пустыми полями;
-// guest и прежнее public — одно значение контракта.
-func TestRecordMessageReadsRowsBeforeAndAfterOneRoleCircle(t *testing.T) {
+// Первый круг: прежнего нет, и повод несёт CIRCLE_UNSPECIFIED, а не отказ.
+func TestRecordMessageReadsFirstCircleWithoutPrevious(t *testing.T) {
 	t.Parallel()
-	for _, name := range []string{"guest", "public"} {
-		message, err := (outbox.Record{Occasion: outbox.RoleGranted, Role: name, GlobalRoles: []string{name}}).Message()
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if got := message.GetRoleGranted().GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_GUEST {
-			t.Fatalf("%s: role %v", name, got)
-		}
-		if message.GetState().GetRole() != identityv1.GlobalRole_GLOBAL_ROLE_UNSPECIFIED || len(message.GetState().GetRights()) != 0 {
-			t.Fatalf("%s: row without circle got state %v", name, message.GetState())
-		}
+	message, err := (outbox.Record{Occasion: outbox.CircleChanged, Circle: "guest", Rights: []string{"place_bids"}}).Message()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := message.GetCircleChanged().GetPrevious(); got != identityv1.Circle_CIRCLE_UNSPECIFIED {
+		t.Fatalf("previous: got %v", got)
+	}
+	if message.GetState().GetCircle() != identityv1.Circle_CIRCLE_GUEST {
+		t.Fatalf("state: got %v", message.GetState())
 	}
 }
 
 func TestRecordMessageSetsExactlyTheOccasionBranch(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		occasion outbox.Occasion
-		role     string
-		right    string
-		check    func(*identityv1.IdentityEvent) bool
+		record outbox.Record
+		check  func(*identityv1.IdentityEvent) bool
 	}{
-		{outbox.ProfileRegistered, "", "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileRegistered() != nil }},
-		{outbox.RoleGranted, "admin", "", func(e *identityv1.IdentityEvent) bool {
-			return e.GetRoleGranted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_ADMIN
+		{outbox.Record{Occasion: outbox.ProfileRegistered}, func(e *identityv1.IdentityEvent) bool { return e.GetProfileRegistered() != nil }},
+		{outbox.Record{Occasion: outbox.ProfileBlocked}, func(e *identityv1.IdentityEvent) bool { return e.GetProfileBlocked() != nil }},
+		{outbox.Record{Occasion: outbox.ProfileUnblocked}, func(e *identityv1.IdentityEvent) bool { return e.GetProfileUnblocked() != nil }},
+		{outbox.Record{Occasion: outbox.ApplicationSubmitted, Queue: "auction"}, func(e *identityv1.IdentityEvent) bool {
+			return e.GetApplicationSubmitted().GetQueue() == identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION
 		}},
-		{outbox.RoleRevoked, "maintainer", "", func(e *identityv1.IdentityEvent) bool {
-			return e.GetRoleRevoked().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER
+		{outbox.Record{Occasion: outbox.ApplicationAdmitted, Queue: "community"}, func(e *identityv1.IdentityEvent) bool {
+			return e.GetApplicationAdmitted().GetQueue() == identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY
 		}},
-		{outbox.ProfileBlocked, "", "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileBlocked() != nil }},
-		{outbox.ProfileUnblocked, "", "", func(e *identityv1.IdentityEvent) bool { return e.GetProfileUnblocked() != nil }},
-		{outbox.ApplicationSubmitted, "public", "", func(e *identityv1.IdentityEvent) bool {
-			return e.GetApplicationSubmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_GUEST &&
-				e.GetApplicationSubmitted().GetQueue() == identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION
+		{outbox.Record{Occasion: outbox.RightGranted, Right: "admit_bidders"}, func(e *identityv1.IdentityEvent) bool {
+			return e.GetRightGranted().GetRight() == identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS
 		}},
-		{outbox.ApplicationAdmitted, "member", "", func(e *identityv1.IdentityEvent) bool {
-			return e.GetApplicationAdmitted().GetRole() == identityv1.GlobalRole_GLOBAL_ROLE_MEMBER &&
-				e.GetApplicationAdmitted().GetQueue() == identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY
+		{outbox.Record{Occasion: outbox.RightRevoked, Right: "place_bids"}, func(e *identityv1.IdentityEvent) bool {
+			return e.GetRightRevoked().GetRight() == identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS
 		}},
-		{outbox.RightGranted, "", "moderate_auction", func(e *identityv1.IdentityEvent) bool {
-			return e.GetRightGranted().GetRight() == identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION
+		{outbox.Record{Occasion: outbox.CircleChanged, Circle: "guest", PreviousCircle: member}, func(e *identityv1.IdentityEvent) bool {
+			return e.GetCircleChanged().GetPrevious() == identityv1.Circle_CIRCLE_MEMBER
 		}},
-		{outbox.RightRevoked, "", "auction", func(e *identityv1.IdentityEvent) bool {
-			return e.GetRightRevoked().GetRight() == identityv1.AccessRight_ACCESS_RIGHT_AUCTION
+		{outbox.Record{Occasion: outbox.PresetGranted, Preset: "admin"}, func(e *identityv1.IdentityEvent) bool {
+			return e.GetPresetGranted().GetPreset() == identityv1.Preset_PRESET_ADMIN
+		}},
+		{outbox.Record{Occasion: outbox.PresetRevoked, Preset: "maintainer"}, func(e *identityv1.IdentityEvent) bool {
+			return e.GetPresetRevoked().GetPreset() == identityv1.Preset_PRESET_MAINTAINER
 		}},
 	}
 	for _, tc := range cases {
-		message, err := (outbox.Record{EventID: eventID, IdentityID: identityID, Version: 1, Occasion: tc.occasion, Role: tc.role, Right: tc.right}).Message()
+		tc.record.EventID, tc.record.IdentityID, tc.record.Version = eventID, identityID, 1
+		message, err := tc.record.Message()
 		if err != nil {
-			t.Fatalf("%s: %v", tc.occasion, err)
+			t.Fatalf("%s: %v", tc.record.Occasion, err)
 		}
 		if !tc.check(message) {
-			t.Errorf("%s: occasion branch not set as expected: %v", tc.occasion, message.GetOccasion())
+			t.Errorf("%s: occasion branch not set as expected: %v", tc.record.Occasion, message.GetOccasion())
 		}
 		if message.GetState() == nil {
-			t.Errorf("%s: state must always be set", tc.occasion)
+			t.Errorf("%s: state must always be set", tc.record.Occasion)
 		}
 	}
 }
 
-func TestRecordMessageRejectsUnknownOccasionAndRole(t *testing.T) {
+func TestRecordMessageRejectsUnknownValues(t *testing.T) {
 	t.Parallel()
-	if _, err := (outbox.Record{Occasion: "profile_renamed"}).Message(); err == nil {
-		t.Error("unknown occasion: got nil error")
-	}
-	if _, err := (outbox.Record{Occasion: outbox.RoleGranted, Role: "owner"}).Message(); err == nil {
-		t.Error("unknown occasion role: got nil error")
-	}
-	if _, err := (outbox.Record{Occasion: outbox.ProfileRegistered, GlobalRoles: []string{"owner"}}).Message(); err == nil {
-		t.Error("unknown snapshot role: got nil error")
-	}
-	if _, err := (outbox.Record{Occasion: outbox.ProfileRegistered, Circle: "owner"}).Message(); err == nil {
-		t.Error("unknown snapshot circle: got nil error")
-	}
-	if _, err := (outbox.Record{Occasion: outbox.ProfileRegistered, Rights: []string{"auction_bot"}}).Message(); err == nil {
-		t.Error("unknown snapshot right: got nil error")
-	}
-	if _, err := (outbox.Record{Occasion: outbox.RightGranted, Right: "auction_bot"}).Message(); err == nil {
-		t.Error("unknown occasion right: got nil error")
+	for name, record := range map[string]outbox.Record{
+		"unknown occasion":          {Occasion: "profile_renamed"},
+		"retired occasion":          {Occasion: "role_granted"},
+		"unknown snapshot circle":   {Occasion: outbox.ProfileRegistered, Circle: "admin"},
+		"unknown snapshot preset":   {Occasion: outbox.ProfileRegistered, Presets: []string{"owner"}},
+		"unknown snapshot right":    {Occasion: outbox.ProfileRegistered, Rights: []string{"hub"}},
+		"unknown occasion right":    {Occasion: outbox.RightGranted, Right: "moderate_auction"},
+		"unknown occasion preset":   {Occasion: outbox.PresetGranted, Preset: "owner"},
+		"unknown previous circle":   {Occasion: outbox.CircleChanged, Circle: member, PreviousCircle: "maintainer"},
+		"unknown application queue": {Occasion: outbox.ApplicationSubmitted, Queue: member},
+	} {
+		if _, err := record.Message(); err == nil {
+			t.Errorf("%s: got nil error", name)
+		}
 	}
 }

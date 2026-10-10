@@ -38,7 +38,7 @@ describe("auction contract self-check", () => {
   it("fails when the port is called with another intent", async () => {
     const wrongIntent: AuctionContractApp = (ports) => async (update) => {
       await ports.auction.getLot({
-        viewer: { identityId: "someone-else", rights: ["auction"] },
+        viewer: { identityId: "someone-else", rights: ["place-bids"] },
         lotId: CONTRACT_LOT.lotId,
       });
       return appOf("auction")({

@@ -154,8 +154,8 @@ module Api =
         match error with
         | ScheduleMeetupPublicationError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | ScheduleMeetupPublicationError.Forbidden NotAnAdministrator ->
-            Status(StatusCode.PermissionDenied, "an administrator role is required")
+        | ScheduleMeetupPublicationError.Forbidden CannotManageMeetups ->
+            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
         | ScheduleMeetupPublicationError.Domain MeetupNotFound
         | ScheduleMeetupPublicationError.Domain DraftBelongsToAnotherAuthor ->
             Status(StatusCode.NotFound, "meetup not found")

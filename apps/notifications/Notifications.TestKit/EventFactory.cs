@@ -115,38 +115,43 @@ public static class EventFactory
         }
         else
         {
-            Hold(message.State, GlobalRole.Member);
-            message.RoleGranted = new RoleGranted { Role = GlobalRole.Member };
+            Hold(message.State, Circle.Member);
+            message.CircleChanged = new CircleChanged();
         }
 
         return message;
     }
 
     /// <summary>
-    /// Права, которые круг даёт сам, как их выводит Identity (ADR-064, пункт
-    /// 7): администратору — все, участнику и мейнтейнеру — хаб и аукцион,
-    /// гостю — ничего, кроме выданного отдельно.
+    /// Права, которые круг даёт сам, как их выводит Identity (RFC-016):
+    /// участнику — хаб и ставки, гостю — ничего, кроме выданного записью.
     /// </summary>
-    public static AccessRight[] CircleRights(GlobalRole role) => role switch
+    public static AccessRight[] CircleRights(Circle circle) => circle switch
     {
-        GlobalRole.Admin => [AccessRight.Hub, AccessRight.Auction, AccessRight.ManageMembership, AccessRight.ModerateAuction],
-        GlobalRole.Member or GlobalRole.Maintainer => [AccessRight.Hub, AccessRight.Auction],
+        Circle.Member => [AccessRight.AccessHub, AccessRight.PlaceBids],
+        _ => [],
+    };
+
+    /// <summary>Права набора, как их выводит Identity (RFC-016).</summary>
+    public static AccessRight[] PresetRights(Preset preset) => preset switch
+    {
+        Preset.Admin => [AccessRight.AdmitBidders, AccessRight.ManageMembers, AccessRight.ManageMeetups],
+        Preset.Maintainer => [AccessRight.GrantAdmins],
         _ => [],
     };
 
     /// <summary>
     /// Открыта заявка в очередь круга <paramref name="circle" />: <c>member</c> —
-    /// сообщество, гость — аукцион. Повод несёт и очередь, и прежний круг, как
-    /// их ставит Identity, пока круг не снят. Снимок — тот, что был до заявки:
+    /// сообщество, гость — аукцион. Снимок — тот, что был до заявки:
     /// незаблокирован, с кругом <paramref name="held" /> и его правами, если
-    /// круг есть, и правами <paramref name="granted" />, выданными отдельно.
+    /// круг есть, и правами <paramref name="granted" />, выданными записями.
     /// </summary>
     public static IdentityEvent Application(
         string identityId,
         long version,
-        GlobalRole circle,
+        Circle circle,
         string? eventId = null,
-        GlobalRole held = GlobalRole.Unspecified,
+        Circle held = Circle.Unspecified,
         params AccessRight[] granted)
     {
         var message = new IdentityEvent
@@ -156,7 +161,7 @@ public static class EventFactory
             Version = version,
             OccurredAt = Committed.AddMinutes(version).ToString("O"),
             State = new IdentityState { Id = identityId },
-            ApplicationSubmitted = new ApplicationSubmitted { Role = circle, Queue = Queue(circle) },
+            ApplicationSubmitted = new ApplicationSubmitted { Queue = Queue(circle) },
         };
         Hold(message.State, held);
         message.State.Rights.Add(granted.Where(right => !message.State.Rights.Contains(right)));
@@ -167,12 +172,12 @@ public static class EventFactory
     /// <summary>
     /// Допуск по заявке в очередь круга <paramref name="circle" />. Снимок —
     /// после выдач той же транзакции: участник держит круг и его права, гость —
-    /// круг гостя и выданное право аукциона.
+    /// круг гостя и выданное право ставок.
     /// </summary>
     public static IdentityEvent Admission(
         string identityId,
         long version,
-        GlobalRole circle,
+        Circle circle,
         string? eventId = null)
     {
         var message = new IdentityEvent
@@ -182,25 +187,27 @@ public static class EventFactory
             Version = version,
             OccurredAt = Committed.AddMinutes(version).ToString("O"),
             State = new IdentityState { Id = identityId },
-            ApplicationAdmitted = new ApplicationAdmitted { Role = circle, Queue = Queue(circle) },
+            ApplicationAdmitted = new ApplicationAdmitted { Queue = Queue(circle) },
         };
         Hold(message.State, circle);
-        if (circle == GlobalRole.Guest)
+        if (circle == Circle.Guest)
         {
-            message.State.Rights.Add(AccessRight.Auction);
+            message.State.Rights.Add(AccessRight.PlaceBids);
         }
 
         return message;
     }
 
     /// <summary>
-    /// Выдача роли вне заявки. Снимок — после выдачи: незаблокирован, держит
-    /// выданный круг и права, которые круг даёт сам.
+    /// Смена круга вне заявки. Снимок — после смены: незаблокирован, держит
+    /// новый круг и права, которые круг даёт сам; гость — ещё и право ставок,
+    /// которое Identity выдаёт ему записью.
     /// </summary>
-    public static IdentityEvent RoleGrant(
+    public static IdentityEvent CircleChange(
         string identityId,
         long version,
-        GlobalRole role,
+        Circle circle,
+        Circle previous = Circle.Unspecified,
         string? eventId = null)
     {
         var message = new IdentityEvent
@@ -210,21 +217,51 @@ public static class EventFactory
             Version = version,
             OccurredAt = Committed.AddMinutes(version).ToString("O"),
             State = new IdentityState { Id = identityId },
-            RoleGranted = new RoleGranted { Role = role },
+            CircleChanged = new CircleChanged { Previous = previous },
         };
-        Hold(message.State, role);
+        Hold(message.State, circle);
+        if (circle == Circle.Guest)
+        {
+            message.State.Rights.Add(AccessRight.PlaceBids);
+        }
 
         return message;
     }
 
     /// <summary>
-    /// Выдача права отдельно от круга. Снимок — после выдачи: круг
-    /// <paramref name="role" /> с его правами и выданное право.
+    /// Выдача набора участнику. Снимок — после выдачи: круг <c>member</c> с его
+    /// правами, набор и его права.
+    /// </summary>
+    public static IdentityEvent PresetGrant(
+        string identityId,
+        long version,
+        Preset preset,
+        string? eventId = null)
+    {
+        var message = new IdentityEvent
+        {
+            EventId = eventId ?? NewId(),
+            IdentityId = identityId,
+            Version = version,
+            OccurredAt = Committed.AddMinutes(version).ToString("O"),
+            State = new IdentityState { Id = identityId },
+            PresetGranted = new PresetGranted { Preset = preset },
+        };
+        Hold(message.State, Circle.Member);
+        message.State.Presets.Add(preset);
+        message.State.Rights.Add(PresetRights(preset).Where(right => !message.State.Rights.Contains(right)));
+
+        return message;
+    }
+
+    /// <summary>
+    /// Выдача права записью. Снимок — после выдачи: круг
+    /// <paramref name="circle" /> с его правами и выданное право.
     /// </summary>
     public static IdentityEvent RightGrant(
         string identityId,
         long version,
-        GlobalRole role,
+        Circle circle,
         AccessRight right,
         string? eventId = null)
     {
@@ -237,7 +274,7 @@ public static class EventFactory
             State = new IdentityState { Id = identityId },
             RightGranted = new RightGranted { Right = right },
         };
-        Hold(message.State, role);
+        Hold(message.State, circle);
         if (!message.State.Rights.Contains(right))
         {
             message.State.Rights.Add(right);
@@ -247,13 +284,13 @@ public static class EventFactory
     }
 
     /// <summary>
-    /// Отзыв права, выданного отдельно от круга. Снимок — после отзыва: круг
-    /// <paramref name="role" /> только с его собственными правами.
+    /// Отзыв права, выданного записью. Снимок — после отзыва: круг
+    /// <paramref name="circle" /> только с его собственными правами.
     /// </summary>
     public static IdentityEvent RightRevoke(
         string identityId,
         long version,
-        GlobalRole role,
+        Circle circle,
         AccessRight right,
         string? eventId = null)
     {
@@ -266,21 +303,21 @@ public static class EventFactory
             State = new IdentityState { Id = identityId },
             RightRevoked = new RightRevoked { Right = right },
         };
-        Hold(message.State, role);
+        Hold(message.State, circle);
 
         return message;
     }
 
-    private static void Hold(IdentityState state, GlobalRole role)
+    private static void Hold(IdentityState state, Circle circle)
     {
-        state.Role = role;
-        state.Rights.Add(CircleRights(role));
+        state.Circle = circle;
+        state.Rights.Add(CircleRights(circle));
     }
 
-    private static ApplicationQueue Queue(GlobalRole circle) => circle switch
+    private static ApplicationQueue Queue(Circle circle) => circle switch
     {
-        GlobalRole.Member => ApplicationQueue.Community,
-        GlobalRole.Guest => ApplicationQueue.Auction,
+        Circle.Member => ApplicationQueue.Community,
+        Circle.Guest => ApplicationQueue.Auction,
         _ => ApplicationQueue.Unspecified,
     };
 

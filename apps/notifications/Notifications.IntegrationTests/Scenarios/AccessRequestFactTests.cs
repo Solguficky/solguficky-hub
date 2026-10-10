@@ -28,7 +28,7 @@ namespace Notifications.IntegrationTests.Scenarios;
 public class AccessRequestFactTests
 {
     private const string ApplicationSubmittedSubject = "events.identity.application_submitted";
-    private const string RoleGrantedSubject = "events.identity.role_granted";
+    private const string CircleChangedSubject = "events.identity.circle_changed";
     private const string ProfileBlockedSubject = "events.identity.profile_blocked";
     private const string RightGrantedSubject = "events.identity.right_granted";
     private const string RightRevokedSubject = "events.identity.right_revoked";
@@ -42,13 +42,13 @@ public class AccessRequestFactTests
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
 
-        var byDefault = await Person(db, AdminCircle);
-        var explicitlyOn = await Person(db, AdminCircle);
-        var switchedOff = await Person(db, AdminCircle);
-        var blockedAdmin = await Person(db, blocked: true, AdminCircle);
-        var maintainer = await Person(db, MaintainerCircle);
-        var member = await Person(db, MemberCircle);
-        var auctionModerator = await Person(db, MemberCircle.With("moderate_auction"));
+        var byDefault = await Person(db, AdminHolding);
+        var explicitlyOn = await Person(db, AdminHolding);
+        var switchedOff = await Person(db, AdminHolding);
+        var blockedAdmin = await Person(db, blocked: true, AdminHolding);
+        var maintainer = await Person(db, MaintainerHolding);
+        var member = await Person(db, MemberHolding);
+        var auctionModerator = await Person(db, MemberHolding.With("admit_bidders"));
         await Preference(db, explicitlyOn, null, "access_request", enabled: true);
         await Preference(db, switchedOff, null, "access_request", enabled: false);
 
@@ -56,7 +56,7 @@ public class AccessRequestFactTests
         var telemetry = silo.Service<FactTelemetry>();
 
         var applicant = EventFactory.NewId();
-        var application = EventFactory.Application(applicant, version: 2, GlobalRole.Member);
+        var application = EventFactory.Application(applicant, version: 2, Circle.Member);
         await nats.Publish(ApplicationSubmittedSubject, application);
 
         var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
@@ -76,7 +76,7 @@ public class AccessRequestFactTests
             messageId.ShouldBe(fact.NotificationId);
             fact.Cause.IdentityEventId.ShouldBe(application.EventId);
             fact.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessRequested);
-            fact.AccessRequested.Circle.ShouldBe(GlobalRole.Member);
+            fact.AccessRequested.Queue.ShouldBe(ApplicationQueue.Community);
             fact.HasNotAfter.ShouldBeTrue();
             fact.HasRequestId.ShouldBeFalse();
         }
@@ -86,10 +86,10 @@ public class AccessRequestFactTests
     }
 
     /// <summary>
-    /// Заявка в аукцион уходит держателям права модерации аукциона: участнику,
-    /// которому его выдали, и администратору, у которого оно по кругу.
-    /// Участник без права, мейнтейнер без него и управляющий составом без него
-    /// её не получают (ADR-064, пункт 14).
+    /// Заявка в аукцион уходит держателям права допуска к торгам: участнику,
+    /// которому его выдали записью, и администратору, у которого оно по
+    /// набору. Участник без права и мейнтейнер без набора admin её не
+    /// получают (ADR-064, пункт 14; RFC-016).
     /// </summary>
     [Fact]
     public async Task When_AuctionApplicationSubmitted_Expect_FactsForAuctionModeratorsOnly()
@@ -98,16 +98,15 @@ public class AccessRequestFactTests
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
 
-        var admin = await Person(db, AdminCircle);
-        var auctionModerator = await Person(db, MemberCircle.With("moderate_auction"));
-        var member = await Person(db, MemberCircle);
-        var maintainer = await Person(db, MaintainerCircle);
-        var membershipManager = await Person(db, MaintainerCircle.With("manage_membership"));
-        var guest = await Person(db, GuestCircle);
+        var admin = await Person(db, AdminHolding);
+        var auctionModerator = await Person(db, MemberHolding.With("admit_bidders"));
+        var member = await Person(db, MemberHolding);
+        var maintainer = await Person(db, MaintainerHolding);
+        var guest = await Person(db, GuestHolding);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
 
-        var application = EventFactory.Application(EventFactory.NewId(), version: 2, GlobalRole.Guest);
+        var application = EventFactory.Application(EventFactory.NewId(), version: 2, Circle.Guest);
         await nats.Publish(ApplicationSubmittedSubject, application);
 
         var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
@@ -116,9 +115,8 @@ public class AccessRequestFactTests
         var recipients = facts.Select(fact => fact.Fact.RecipientId).ToList();
         recipients.ShouldNotContain(member.ToString());
         recipients.ShouldNotContain(maintainer.ToString());
-        recipients.ShouldNotContain(membershipManager.ToString());
         recipients.ShouldNotContain(guest.ToString());
-        facts.ShouldAllBe(fact => fact.Fact.AccessRequested.Circle == GlobalRole.Guest);
+        facts.ShouldAllBe(fact => fact.Fact.AccessRequested.Queue == ApplicationQueue.Auction);
     }
 
     /// <summary>
@@ -135,14 +133,14 @@ public class AccessRequestFactTests
         var replica = silo.Service<ReplicaTelemetry>();
 
         var moderator = EventFactory.NewId();
-        await Apply(nats, replica, RoleGrantedSubject, EventFactory.RoleGrant(moderator, version: 1, GlobalRole.Member));
-        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(moderator, version: 2, GlobalRole.Member, AccessRight.ModerateAuction));
+        await Apply(nats, replica, CircleChangedSubject, EventFactory.CircleChange(moderator, version: 1, Circle.Member));
+        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(moderator, version: 2, Circle.Member, AccessRight.AdmitBidders));
 
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(EventFactory.NewId(), version: 2, GlobalRole.Guest));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(EventFactory.NewId(), version: 2, Circle.Guest));
         (await Recipients(db)).ShouldBe([Guid.Parse(moderator)]);
 
-        await Apply(nats, replica, RightRevokedSubject, EventFactory.RightRevoke(moderator, version: 3, GlobalRole.Member, AccessRight.ModerateAuction));
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(EventFactory.NewId(), version: 2, GlobalRole.Guest));
+        await Apply(nats, replica, RightRevokedSubject, EventFactory.RightRevoke(moderator, version: 3, Circle.Member, AccessRight.AdmitBidders));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(EventFactory.NewId(), version: 2, Circle.Guest));
 
         // Второй заявке адресатов нет: факт остался один, у первой.
         (await Facts(db)).ShouldBe(1);
@@ -160,7 +158,7 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        var other = await Person(db, AdminCircle);
+        var other = await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -171,9 +169,9 @@ public class AccessRequestFactTests
             nats,
             replica,
             ApplicationSubmittedSubject,
-            EventFactory.Application(applicant, version: 2, GlobalRole.Guest, held: GlobalRole.Guest, granted: AccessRight.ModerateAuction));
+            EventFactory.Application(applicant, version: 2, Circle.Guest, held: Circle.Guest, granted: AccessRight.AdmitBidders));
 
-        (await Scalar(db, $"SELECT count(*) FROM identity_replica WHERE 'moderate_auction' = ANY(rights) AND identity_id = '{applicant}';")).ShouldBe(1);
+        (await Scalar(db, $"SELECT count(*) FROM identity_replica WHERE 'admit_bidders' = ANY(rights) AND identity_id = '{applicant}';")).ShouldBe(1);
         (await Recipients(db)).ShouldBe([other]);
     }
 
@@ -187,7 +185,7 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        var admin = await Person(db, AdminCircle);
+        var admin = await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
 
@@ -195,7 +193,7 @@ public class AccessRequestFactTests
             nats,
             replica,
             ApplicationSubmittedSubject,
-            EventFactory.Application(EventFactory.NewId(), version: 2, GlobalRole.Member, held: GlobalRole.Guest, granted: AccessRight.Auction));
+            EventFactory.Application(EventFactory.NewId(), version: 2, Circle.Member, held: Circle.Guest, granted: AccessRight.PlaceBids));
 
         (await Recipients(db)).ShouldBe([admin]);
     }
@@ -206,11 +204,11 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, AdminCircle);
+        await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
-        var application = EventFactory.Application(EventFactory.NewId(), version: 2, GlobalRole.Member);
+        var application = EventFactory.Application(EventFactory.NewId(), version: 2, Circle.Member);
         await nats.Publish(ApplicationSubmittedSubject, application);
         await Eventually(() => Facts(db), count => count == 1);
 
@@ -231,13 +229,13 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, AdminCircle);
+        await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
         var applicant = EventFactory.NewId();
-        await nats.Publish(RoleGrantedSubject, EventFactory.Identity(applicant, version: 3));
-        await nats.Publish(ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Member));
+        await nats.Publish(CircleChangedSubject, EventFactory.Identity(applicant, version: 3));
+        await nats.Publish(ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, Circle.Member));
 
         await Eventually(() => Task.FromResult(replica.Total(ReplicaFeeds.IdentitySource, "stale")), count => count == 1);
         (await Facts(db)).ShouldBe(0);
@@ -253,16 +251,16 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, AdminCircle);
+        await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
         var telemetry = silo.Service<FactTelemetry>();
 
         var applicant = EventFactory.NewId();
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Member));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, Circle.Member));
         (await Pending(db)).ShouldBe(1);
 
-        await Apply(nats, replica, RoleGrantedSubject, EventFactory.Identity(applicant, version: 3));
+        await Apply(nats, replica, CircleChangedSubject, EventFactory.Identity(applicant, version: 3));
 
         var row = (await Rows(db)).Single();
         row.WithdrawalReason.ShouldBe(NotificationFacts.WithdrawnOnApplicationClosed);
@@ -279,13 +277,13 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, AdminCircle);
+        await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
 
         var applicant = EventFactory.NewId();
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Guest));
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, GlobalRole.Member));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, Circle.Guest));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, Circle.Member));
         (await Pending(db)).ShouldBe(2);
 
         await Apply(nats, replica, ProfileBlockedSubject, EventFactory.Identity(applicant, version: 4, blocked: true));
@@ -303,15 +301,15 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, AdminCircle);
+        await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
 
         var applicant = EventFactory.NewId();
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Guest));
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, GlobalRole.Member));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, Circle.Guest));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, Circle.Member));
 
-        await Apply(nats, replica, RoleGrantedSubject, EventFactory.RoleGrant(applicant, version: 4, GlobalRole.Guest));
+        await Apply(nats, replica, CircleChangedSubject, EventFactory.CircleChange(applicant, version: 4, Circle.Guest));
 
         var rows = await Rows(db);
         rows.Single(row => row.AccessCircle == "public").WithdrawalReason.ShouldBe(NotificationFacts.WithdrawnOnApplicationClosed);
@@ -329,15 +327,15 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, AdminCircle);
+        await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
 
         var applicant = EventFactory.NewId();
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Guest));
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, GlobalRole.Member));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, Circle.Guest));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, Circle.Member));
 
-        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(applicant, version: 4, GlobalRole.Guest, AccessRight.Auction));
+        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(applicant, version: 4, Circle.Guest, AccessRight.PlaceBids));
 
         var rows = await Rows(db);
         rows.Single(row => row.AccessCircle == "public").WithdrawalReason.ShouldBe(NotificationFacts.WithdrawnOnApplicationClosed);
@@ -353,13 +351,13 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, AdminCircle);
+        await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
 
         var applicant = EventFactory.NewId();
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, GlobalRole.Guest));
-        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(applicant, version: 3, GlobalRole.Guest, AccessRight.ModerateAuction));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 2, Circle.Guest));
+        await Apply(nats, replica, RightGrantedSubject, EventFactory.RightGrant(applicant, version: 3, Circle.Guest, AccessRight.AdmitBidders));
 
         (await Rows(db)).Single().WithdrawnAt.ShouldBeNull();
     }
@@ -374,13 +372,13 @@ public class AccessRequestFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, AdminCircle);
+        await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, HeldRelay);
         var replica = silo.Service<ReplicaTelemetry>();
 
         var applicant = EventFactory.NewId();
-        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, GlobalRole.Member));
-        await nats.Publish(RoleGrantedSubject, EventFactory.Identity(applicant, version: 2));
+        await Apply(nats, replica, ApplicationSubmittedSubject, EventFactory.Application(applicant, version: 3, Circle.Member));
+        await nats.Publish(CircleChangedSubject, EventFactory.Identity(applicant, version: 2));
         await Eventually(() => Task.FromResult(replica.Total(ReplicaFeeds.IdentitySource, "stale")), count => count == 1);
 
         (await Rows(db)).Single().WithdrawnAt.ShouldBeNull();
@@ -396,7 +394,7 @@ public class AccessRequestFactTests
     public async Task When_QueueModeratorReadsGlobalPreferences_Expect_AccessRequestsOnByDefault(string who)
     {
         await using var service = await PreferencesUnderTest.Start();
-        var moderator = await Person(service.Database, who == "admin" ? AdminCircle : MemberCircle.With("moderate_auction"));
+        var moderator = await Person(service.Database, who == "admin" ? AdminHolding : MemberHolding.With("admit_bidders"));
 
         var snapshot = await service.Client.GetGlobalNotificationPreferencesAsync(
             new GetGlobalNotificationPreferencesRequest { IdentityId = moderator.ToString("D") });
@@ -409,7 +407,7 @@ public class AccessRequestFactTests
     public async Task When_AuctionModeratorSwitchesAccessRequestsOff_Expect_SnapshotCarriesItOff()
     {
         await using var service = await PreferencesUnderTest.Start();
-        var moderator = await Person(service.Database, MemberCircle.With("moderate_auction"));
+        var moderator = await Person(service.Database, MemberHolding.With("admit_bidders"));
 
         var snapshot = await service.Client.SetGlobalCategoryPreferenceAsync(new SetGlobalCategoryPreferenceRequest
         {
@@ -427,7 +425,7 @@ public class AccessRequestFactTests
     /// ни участник хаба, ни мейнтейнер, ни гость, ни человек, которого реплика
     /// не знает.
     /// </summary>
-    /// <param name="role">Круг человека; пусто — реплика человека не знает.</param>
+    /// <param name="role">Кто это: круг или набор человека; пусто — реплика человека не знает.</param>
     [Theory]
     [InlineData("member")]
     [InlineData("maintainer")]
@@ -439,9 +437,9 @@ public class AccessRequestFactTests
         var person = role switch
         {
             "" => Guid.CreateVersion7(),
-            "member" => await Person(service.Database, MemberCircle),
-            "maintainer" => await Person(service.Database, MaintainerCircle),
-            _ => await Person(service.Database, GuestCircle),
+            "member" => await Person(service.Database, MemberHolding),
+            "maintainer" => await Person(service.Database, MaintainerHolding),
+            _ => await Person(service.Database, GuestHolding),
         };
 
         var snapshot = await service.Client.GetGlobalNotificationPreferencesAsync(
@@ -464,7 +462,7 @@ public class AccessRequestFactTests
     public async Task When_BlockedAdminTouchesAccessRequests_Expect_PermissionDenied()
     {
         await using var service = await PreferencesUnderTest.Start();
-        var blocked = await Person(service.Database, blocked: true, AdminCircle);
+        var blocked = await Person(service.Database, blocked: true, AdminHolding);
 
         var refused = await Should.ThrowAsync<RpcException>(() =>
             service.Client.SetGlobalCategoryPreferenceAsync(new SetGlobalCategoryPreferenceRequest
@@ -480,7 +478,7 @@ public class AccessRequestFactTests
     public async Task When_AccessRequestsSetPerMeetup_Expect_InvalidArgument()
     {
         await using var service = await PreferencesUnderTest.Start();
-        var admin = await Person(service.Database, AdminCircle);
+        var admin = await Person(service.Database, AdminHolding);
 
         var refused = await Should.ThrowAsync<RpcException>(() =>
             service.Client.SetMeetupCategoryPreferenceAsync(new SetMeetupCategoryPreferenceRequest

@@ -92,7 +92,7 @@ type rowQuerier interface {
 // (ADR-060, пункт 18). Код — недоверенные данные из Telegram update: чужой
 // формат, лишняя длина и промах мимо реестра дают «неизвестный источник», а не
 // отказ во входе. Код чужого формата до реестра не доходит, поэтому запрос
-// нужен только коду, который мог бы быть каналом. Вызывает его RequestRole той
+// нужен только коду, который мог бы быть каналом. Вызывает его RequestAccess той
 // же транзакцией, что и вставку заявки.
 func resolveApplicationSource(ctx context.Context, q rowQuerier, code *string) (applicationSource, error) {
 	if code == nil {
@@ -113,7 +113,7 @@ func resolveApplicationSource(ctx context.Context, q rowQuerier, code *string) (
 }
 
 func (s identityService) ListSourceChannels(ctx context.Context, req *identityv1.ListSourceChannelsRequest) (*identityv1.ListSourceChannelsResponse, error) {
-	if _, err := authorizeAdmin(req.GetActor()); err != nil {
+	if _, err := authorizeMembers(ctx, s.db, req.GetActor()); err != nil {
 		return nil, err
 	}
 	rows, err := s.db.QueryContext(ctx, listSourceChannelsSQL)
@@ -139,7 +139,7 @@ func (s identityService) ListSourceChannels(ctx context.Context, req *identityv1
 // отвечает changed=false и подпись не переписывает — для этого есть
 // переименование.
 func (s identityService) CreateSourceChannel(ctx context.Context, req *identityv1.ChangeSourceChannelRequest) (*identityv1.ChangeSourceChannelResponse, error) {
-	actor, err := authorizeAdmin(req.GetActor())
+	actor, err := authorizeMembers(ctx, s.db, req.GetActor())
 	if err != nil {
 		return nil, err
 	}
@@ -161,7 +161,7 @@ func (s identityService) CreateSourceChannel(ctx context.Context, req *identityv
 // RenameSourceChannel меняет подпись канала. Новая подпись видна и на открытых
 // заявках: заявка ссылается на канал, а не копирует подпись.
 func (s identityService) RenameSourceChannel(ctx context.Context, req *identityv1.ChangeSourceChannelRequest) (*identityv1.ChangeSourceChannelResponse, error) {
-	actor, err := authorizeAdmin(req.GetActor())
+	actor, err := authorizeMembers(ctx, s.db, req.GetActor())
 	if err != nil {
 		return nil, err
 	}

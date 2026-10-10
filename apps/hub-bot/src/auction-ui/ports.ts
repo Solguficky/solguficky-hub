@@ -4,16 +4,17 @@
 // сгенерированного кода, а contract suite подставляет вместо клиентов шпионов.
 
 export const ACCESS_RIGHTS = [
-  "hub",
-  "auction",
-  "manage-membership",
-  "moderate-auction",
-  "manage-auction",
+  "access-hub",
+  "place-bids",
+  "manage-members",
+  "admit-bidders",
+  "manage-meetups",
+  "grant-admins",
 ] as const;
 
-// Права, которые Identity вывел из круга и выданных записей (ADR-064, пункты
-// 6–7). Поверхность пускает по праву и никогда по роли; незнакомое право
-// адаптер отбрасывает, и оно ничего не даёт.
+// Права, которые Identity вывел из круга, наборов и выданных записей (RFC-016).
+// Поверхность пускает только по праву — ни круг, ни набор допуск не решают;
+// незнакомое право адаптер отбрасывает, и оно ничего не даёт.
 export type AccessRight = (typeof ACCESS_RIGHTS)[number];
 
 // Решение о допуске читает только права смотрящего: те же права уходят в
@@ -38,7 +39,7 @@ export interface IdentityPort {
 export type ApplicationQueue = "community" | "auction";
 
 // Вход на `/start` (ADR-060, пункты 1–7 и 17–19; ADR-064, пункт 8).
-export type RoleRequest = {
+export type AccessRequest = {
   user: TelegramUser;
   queue: ApplicationQueue;
   // Код канала из payload `s_<код>` без префикса, как пришёл: известен ли
@@ -49,7 +50,7 @@ export type RoleRequest = {
   firstName: string;
 };
 
-export const ROLE_REQUEST_OUTCOMES = [
+export const ACCESS_REQUEST_OUTCOMES = [
   "already-held",
   "granted-by-allowlist",
   "pending",
@@ -59,23 +60,23 @@ export const ROLE_REQUEST_OUTCOMES = [
   "unspecified",
 ] as const;
 
-// `identity.v1.RoleRequestOutcome` в словаре пакета.
-export type RoleRequestOutcome = (typeof ROLE_REQUEST_OUTCOMES)[number];
+// `identity.v1.AccessRequestOutcome` в словаре пакета.
+export type AccessRequestOutcome = (typeof ACCESS_REQUEST_OUTCOMES)[number];
 
 // Отметки блокировки в ответе входа нет: её несёт исход `blocked`.
-export type RoleRequestAnswer = {
+export type AccessRequestAnswer = {
   viewer: Viewer;
-  outcome: RoleRequestOutcome;
+  outcome: AccessRequestOutcome;
 };
 
 // Порт входа отдельный от `IdentityPort`: шлюзу нажатия он не нужен, а вход
 // зовёт приложение — один раз на `/start`, вместо разрешения личности.
 export interface EntryPort {
-  requestRole(request: RoleRequest): Promise<RoleRequestAnswer>;
+  requestAccess(request: AccessRequest): Promise<AccessRequestAnswer>;
 }
 
-// Смотрящий в запросах Auction с правами, которые вывел Identity (ADR-064,
-// пункт 6). Ролей и отметки блокировки здесь нет, как и в `auction.v1.Viewer`:
+// Смотрящий в запросах Auction с правами, которые вывел Identity (RFC-016).
+// Круга, наборов и отметки блокировки здесь нет, как и в `auction.v1.Viewer`:
 // решение по ресурсу Auction принимает по правам.
 export type Viewer = {
   identityId: string;

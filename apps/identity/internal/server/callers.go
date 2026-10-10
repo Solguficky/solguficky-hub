@@ -38,9 +38,8 @@ func (c Caller) TokenVariable() string {
 // пока его вызывающий не объявлен здесь.
 var methodAccess = map[string][]Caller{
 	identityv1.IdentityService_ResolveIdentity_FullMethodName:          {CallerHubBot, CallerAuctionBot},
-	identityv1.IdentityService_RequestRole_FullMethodName:              {CallerHubBot, CallerAuctionBot},
+	identityv1.IdentityService_RequestAccess_FullMethodName:            {CallerHubBot, CallerAuctionBot},
 	identityv1.IdentityService_ResolveTelegramUserId_FullMethodName:    {CallerHubBot, CallerAuctionBot},
-	identityv1.IdentityService_CheckGlobalRole_FullMethodName:          {CallerMeetups, CallerNotifications, CallerAuctionBot},
 	identityv1.IdentityService_CheckAccessRight_FullMethodName:         {CallerMeetups, CallerNotifications, CallerAuctionBot},
 	identityv1.IdentityService_ResolveOrganizerUsername_FullMethodName: {CallerHubBot},
 	identityv1.IdentityService_ListCommunityMembers_FullMethodName:     {CallerHubBot},
@@ -70,10 +69,8 @@ var methodAccess = map[string][]Caller{
 // maintainerMethods защищает секрет ADR-037, а не таблица вызывающих: гейт их
 // пропускает к authenticateMaintainer и токен вызывающего туда не открывает.
 var maintainerMethods = []string{
-	identityv1.IdentityService_GrantAdminRole_FullMethodName,
-	identityv1.IdentityService_RevokeAdminRole_FullMethodName,
-	identityv1.IdentityService_GrantMaintainerRole_FullMethodName,
-	identityv1.IdentityService_RevokeMaintainerRole_FullMethodName,
+	identityv1.IdentityService_GrantPreset_FullMethodName,
+	identityv1.IdentityService_RevokePreset_FullMethodName,
 }
 
 // exemptPrefixes читают пробы AppHost и оркестратора без токена. Не «всё вне

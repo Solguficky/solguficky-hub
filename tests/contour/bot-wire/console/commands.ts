@@ -24,8 +24,10 @@
 //   help                             эта справка
 //   quit                             остановить пульт; контур снимет Contour.Host
 
-export const roles = ["admin", "member", "guest"] as const;
-export type Role = (typeof roles)[number];
+// Кого заводит `new`: участника с набором `admin`, участника или гостя с
+// правом ставок (RFC-016).
+export const holders = ["admin", "member", "guest"] as const;
+export type Holder = (typeof holders)[number];
 
 export const bots = ["hub", "auction"] as const;
 export type BotName = (typeof bots)[number];
@@ -43,7 +45,7 @@ export type PhotoKind = (typeof photoKinds)[number];
 export const maxDelayMs = 60_000;
 
 export type Command =
-  | { kind: "new"; who: string; role: Role }
+  | { kind: "new"; who: string; holder: Holder }
   | { kind: "say"; who: string; bot: BotName; text: string }
   | { kind: "answer"; who: string; bot: BotName; number: number; text: string }
   | { kind: "press"; who: string; bot: BotName; label: string }
@@ -140,14 +142,14 @@ export function parseCommand(line: string): Command {
       return { kind: "restart", bot: checkBot(bot) };
     }
     case "new": {
-      const [who, role] = splitWord(rest);
+      const [who, holder] = splitWord(rest);
       checkName(who);
-      if (!isRole(role)) {
+      if (!isHolder(holder)) {
         throw new CommandError(
-          `роль «${role}» неизвестна; допустимы ${roles.join(", ")}`,
+          `вид «${holder}» неизвестен; допустимы ${holders.join(", ")}`,
         );
       }
-      return { kind: "new", who, role };
+      return { kind: "new", who, holder };
     }
     case "slow": {
       const [service, delay] = splitWord(rest);
@@ -315,8 +317,8 @@ function checkService(value: string): SlowService {
   return value as SlowService;
 }
 
-function isRole(value: string): value is Role {
-  return (roles as readonly string[]).includes(value);
+function isHolder(value: string): value is Holder {
+  return (holders as readonly string[]).includes(value);
 }
 
 function isPhotoKind(value: string): value is PhotoKind {

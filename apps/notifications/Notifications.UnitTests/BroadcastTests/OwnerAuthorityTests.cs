@@ -31,7 +31,7 @@ public class OwnerAuthorityTests
     {
         public CheckMeetupAuthorityRequest? Meetups { get; set; }
 
-        public CheckGlobalRoleRequest? Identity { get; set; }
+        public CheckAccessRightRequest? Identity { get; set; }
 
         public Metadata? Headers { get; set; }
 
@@ -53,7 +53,7 @@ public class OwnerAuthorityTests
                 seen.Identity = request;
                 seen.Headers = headers;
                 seen.Deadline = deadline;
-                return new CheckGlobalRoleResponse { Granted = await (identityOutcome ?? (() => Task.FromResult(true)))() };
+                return new CheckAccessRightResponse { Granted = await (identityOutcome ?? (() => Task.FromResult(true)))() };
             },
             OwnToken,
             new FixedClock(Now));
@@ -90,7 +90,7 @@ public class OwnerAuthorityTests
     }
 
     [Fact]
-    public async Task CommunityAnnouncement_Granted_AsksIdentityForAdminRoleOnly()
+    public async Task CommunityAnnouncement_Granted_AsksIdentityForManageMeetupsRight()
     {
         var seen = new Recorded();
 
@@ -98,11 +98,11 @@ public class OwnerAuthorityTests
 
         answer.Verdict.ShouldBe(AuthorityVerdict.Granted);
         seen.Identity!.IdentityId.ShouldBe(Author.ToString("D"));
-        seen.Identity.AcceptedRoles.ShouldBe([GlobalRole.Admin]);
+        seen.Identity.Right.ShouldBe(AccessRight.ManageMeetups);
     }
 
     [Fact]
-    public async Task CommunityAnnouncement_RoleNotHeld_IsDenied()
+    public async Task CommunityAnnouncement_RightNotHeld_IsDenied()
     {
         var answer = await Authority(new Recorded(), identityOutcome: () => Task.FromResult(false))
             .CommunityAnnouncement(Author, Chain());

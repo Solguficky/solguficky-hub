@@ -1,11 +1,11 @@
 import { AuctionCallbackError, parseAuctionCallback } from "./callback-data.js";
 import { dispatchAuctionIntent } from "./dispatcher.js";
 import type {
+  AccessRequestAnswer,
   AccessRight,
   ApplicationQueue,
   AuctionBotPorts,
   ResolvedIdentity,
-  RoleRequestAnswer,
   TelegramUser,
   Viewer,
 } from "./ports.js";
@@ -60,20 +60,19 @@ export type AuctionResult =
   | { kind: "denied"; reason: AuctionDenial }
   | { kind: "unreadable"; error: AuctionCallbackError };
 
-// Политика поверхности по правам, которые вывел Identity (ADR-064, пересмотр
-// ADR-044): хаб требует право хаба, бот аукциона — право аукциона и отсутствие
-// права хаба. Ни роли, ни вложенности кругов шлюз не знает. `undefined` —
-// пустить.
+// Политика поверхности по правам, которые вывел Identity (ADR-064, RFC-016):
+// хаб требует `access-hub`, бот аукциона — `place-bids` и отсутствие
+// `access-hub`. Ни круга, ни набора шлюз не знает. `undefined` — пустить.
 function refusal(
   surface: AuctionSurface["kind"],
   rights: readonly AccessRight[],
 ): Exclude<AuctionDenial, "declined" | "blocked"> | undefined {
   switch (surface) {
     case "hub":
-      return rights.includes("hub") ? undefined : "not-admitted";
+      return rights.includes("access-hub") ? undefined : "not-admitted";
     case "auction":
-      if (rights.includes("hub")) return "in-community";
-      return rights.includes("auction") ? undefined : "not-admitted";
+      if (rights.includes("access-hub")) return "in-community";
+      return rights.includes("place-bids") ? undefined : "not-admitted";
     default: {
       const _exhaustive: never = surface;
       return _exhaustive;
@@ -166,13 +165,13 @@ export type SurfaceEntry =
   | { kind: "unknown-outcome"; identityId: string };
 
 // Политика входа на `/start` — одна для обеих поверхностей (ADR-064, пересмотр
-// ADR-044 и ADR-060, пункт 7). Вызов `RequestRole` заменяет разрешение
+// ADR-044 и ADR-060, пункт 7). Вызов `RequestAccess` заменяет разрешение
 // личности: приложение зовёт его само, один раз на update, с очередью из
 // `applicationQueue`, и приносит ответ сюда. Допуск решает право — той же
 // функцией, что и на нажатии, — а исход выбирает отказ.
 export function decideEntry(
   surface: AuctionSurface["kind"],
-  answer: RoleRequestAnswer,
+  answer: AccessRequestAnswer,
 ): SurfaceEntry {
   const { viewer, outcome } = answer;
   const { identityId } = viewer;

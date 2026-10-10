@@ -14,7 +14,7 @@ type HiddenMeetupReadTests() =
 
     let administrator () =
         let viewer = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000a")
-        viewer.GlobalRoles.Add Identity.V1.GlobalRole.Admin
+        viewer.Rights.Add Identity.V1.AccessRight.ManageMeetups
         viewer
 
     let ordinary () = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000c")
@@ -210,7 +210,7 @@ type HiddenMeetupReadTests() =
     ///
     /// Identity здесь подменён портом, а не поднят: сведение его ответов проверено
     /// unit-тестами адаптера, а этот сценарий держит путь «граница — срез — база».
-    /// Порт отвечает «да» только администраторам и только на роль Administrator —
+    /// Порт отвечает «да» только администраторам и только на право ManageMeetups —
     /// так же, как ответил бы Identity на вопрос, который задаёт Meetups.
     [<Fact>]
     member _.``The authority check neither exposes a hidden meetup nor withholds it from administrators``() =
@@ -221,12 +221,12 @@ type HiddenMeetupReadTests() =
                     "0199c0de-0000-7000-8000-00000000000d"
                 ]
 
-        let identity: Meetups.Slices.CheckMeetupAuthority.AskRoles =
-            fun (Meetups.Domain.PersonId person) roles ->
+        let identity: Meetups.Slices.CheckMeetupAuthority.AskRight =
+            fun (Meetups.Domain.PersonId person) right ->
                 Threading.Tasks.Task.FromResult(
                     Ok(
                         administrators.Contains(person.ToString "D")
-                        && roles.Contains Meetups.Domain.Administrator
+                        && right = Meetups.Domain.ManageMeetups
                     )
                 )
 

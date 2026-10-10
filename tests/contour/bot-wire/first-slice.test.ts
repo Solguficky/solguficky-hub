@@ -98,14 +98,14 @@ describe("сценарий первого среза", () => {
     expect(member.buttons()).not.toContain("Управление");
   });
 
-  it("E-01: создать сходку после отзыва роли отказывает Meetups, и журнал не растёт", async () => {
+  it("E-01: создать сходку после снятия набора admin отказывает Meetups, и журнал не растёт", async () => {
     const adminId = await direct.grantAdmin(freshTelegramUserId());
     const { telegramUserId, person } = await memberAllowedBy(
       wire,
       direct,
       adminId,
     );
-    // Роль `member` человек получает первым `/start`: без неё после отзыва он
+    // Круг `member` человек получает первым `/start`: без него после отзыва он
     // упёрся бы в кадр ожидания доступа, а не в Meetups.
     await person.says("/start");
     await direct.grantAdmin(telegramUserId);

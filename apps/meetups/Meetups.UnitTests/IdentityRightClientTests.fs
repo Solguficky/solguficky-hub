@@ -1,4 +1,4 @@
-module Meetups.IdentityRoleClientTests
+module Meetups.IdentityRightClientTests
 
 open System
 open System.Threading.Tasks
@@ -20,39 +20,33 @@ let private forwarded: Forwarded =
     }
 
 /// Отправка, которая записывает запрос, заголовки, срок и отмену и отвечает заданным.
-type private Recorder(respond: unit -> Task<Identity.V1.CheckGlobalRoleResponse>) =
+type private Recorder(respond: unit -> Task<Identity.V1.CheckAccessRightResponse>) =
     let sent =
-        ResizeArray<Metadata * DateTime * Threading.CancellationToken * Identity.V1.CheckGlobalRoleRequest>()
+        ResizeArray<Metadata * DateTime * Threading.CancellationToken * Identity.V1.CheckAccessRightRequest>()
 
     member _.Sent = List.ofSeq sent
 
-    member _.Send: IdentityRoleClient.Send =
+    member _.Send: IdentityRightClient.Send =
         fun headers deadline cancellation request ->
             sent.Add(headers, deadline, cancellation, request)
             respond ()
 
-let private runWith (incoming: Forwarded) (send: IdentityRoleClient.Send) =
-    IdentityRoleClient.ask
-        send
-        "meetups-token"
-        (TimeSpan.FromSeconds 2.0)
-        incoming
-        Sample.authorId
-        (Set.singleton Administrator)
+let private runWith (incoming: Forwarded) (send: IdentityRightClient.Send) =
+    IdentityRightClient.ask send "meetups-token" (TimeSpan.FromSeconds 2.0) incoming Sample.authorId ManageMeetups
     |> Async.AwaitTask
     |> Async.RunSynchronously
 
-let private run (send: IdentityRoleClient.Send) = runWith forwarded send
+let private run (send: IdentityRightClient.Send) = runWith forwarded send
 
-let private granting () = Task.FromResult(Identity.V1.CheckGlobalRoleResponse(Granted = true))
+let private granting () = Task.FromResult(Identity.V1.CheckAccessRightResponse(Granted = true))
 
-let private declining (code: StatusCode) () : Task<Identity.V1.CheckGlobalRoleResponse> =
-    Task.FromException<Identity.V1.CheckGlobalRoleResponse>(RpcException(Status(code, "declined")))
+let private declining (code: StatusCode) () : Task<Identity.V1.CheckAccessRightResponse> =
+    Task.FromException<Identity.V1.CheckAccessRightResponse>(RpcException(Status(code, "declined")))
 
 [<Fact>]
-let ``The adapter asks Identity about the person with the roles it was given`` () =
+let ``The adapter asks Identity about the person with the right it was given`` () =
     let recorder =
-        Recorder(fun () -> Task.FromResult(Identity.V1.CheckGlobalRoleResponse(Granted = true)))
+        Recorder(fun () -> Task.FromResult(Identity.V1.CheckAccessRightResponse(Granted = true)))
 
     let before = DateTime.UtcNow
     let result = run recorder.Send
@@ -65,7 +59,7 @@ let ``The adapter asks Identity about the person with the roles it was given`` (
         <@
             result = Ok true
             && request.IdentityId = expectedId
-            && List.ofSeq request.AcceptedRoles = [ Identity.V1.GlobalRole.Admin ]
+            && request.Right = Identity.V1.AccessRight.ManageMeetups
             && deadline > before
             && deadline
                <= DateTime.UtcNow + TimeSpan.FromSeconds 2.0
@@ -77,7 +71,7 @@ let ``The adapter asks Identity about the person with the roles it was given`` (
 [<Fact>]
 let ``A refusal by Identity is a refusal of the right`` () =
     let result =
-        run (Recorder(fun () -> Task.FromResult(Identity.V1.CheckGlobalRoleResponse(Granted = false)))).Send
+        run (Recorder(fun () -> Task.FromResult(Identity.V1.CheckAccessRightResponse(Granted = false)))).Send
 
     test <@ result = Ok false @>
 
@@ -85,7 +79,7 @@ let ``A refusal by Identity is a refusal of the right`` () =
 [<Fact>]
 let ``Absent chain values are not forwarded`` () =
     let headers =
-        IdentityRoleClient.metadata
+        IdentityRightClient.metadata
             "meetups-token"
             { forwarded with
                 RequestId = None
@@ -120,7 +114,7 @@ let ``The caller's shorter deadline and its cancellation bound the Identity call
     test <@ deadline = callerDeadline && token = expectedToken @>
 
 /// Сведение проверяется на всём словаре кодов: ни один отказ Identity не становится
-/// правом, неизвестный человек неотличим от человека без роли, а «не подтверждено»
+/// правом, неизвестный человек неотличим от человека без права, а «не подтверждено»
 /// отделено от дефекта (ADR-051, п. 6).
 [<Fact>]
 let ``Every Identity status reduces to a refusal, an unconfirmed right or a failure`` () =

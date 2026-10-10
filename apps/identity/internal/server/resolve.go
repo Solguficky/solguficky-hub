@@ -59,10 +59,10 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 		return nil, internal("admit allowed username", err)
 	}
 	// Регистрация пишется после допуска: снимок события — состояние после всей
-	// транзакции, и допуск по списку ников приходит в нём ролями, а не отдельными
-	// выдачами.
+	// транзакции, и допуск по списку ников приходит в нём кругом и правами, а не
+	// отдельными выдачами.
 	if registered {
-		if err := outbox.Append(ctx, tx, identityID, outbox.ProfileRegistered, ""); err != nil {
+		if err := outbox.Append(ctx, tx, identityID, outbox.Event{Occasion: outbox.ProfileRegistered}); err != nil {
 			return nil, internal("announce registration", err)
 		}
 	}
@@ -77,11 +77,11 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 	}
 
 	return &identityv1.ResolveIdentityResponse{
-		IdentityId:  identityID,
-		GlobalRoles: state.globalRoles,
-		Blocked:     state.blocked,
-		Role:        state.role,
-		Rights:      state.rights,
+		IdentityId: identityID,
+		Blocked:    state.blocked,
+		Circle:     state.circle,
+		Presets:    state.presets,
+		Rights:     state.rights,
 	}, nil
 }
 
@@ -97,13 +97,13 @@ func (s identityService) ResolveIdentity(ctx context.Context, req *identityv1.Re
 // заблокированный сжёг бы своё разрешение, получив отказ триггера на выдаче.
 //
 // announce ложно при регистрации: тогда выдача входит в снимок одного события
-// profile_registered, а не выходит отдельным role_granted. Для существующего
+// profile_registered, а не выходит отдельным circle_changed. Для существующего
 // профиля выдача — своё событие.
 //
-// Запись гасится всегда, когда она есть, даже если её роли уже активны: иначе
+// Запись гасится всегда, когда она есть, даже если её круг уже выдан: иначе
 // она осталась бы ключом для следующего владельца ника (ADR-060, пункт 1).
-// Выдаёт она роли своего круга, а не круга вызывающей поверхности: запись хаба
-// даёт member и в боте аукциона (пункт 2).
+// Выдаёт она свой круг, а не круг вызывающей поверхности: запись хаба даёт
+// member и в боте аукциона (пункт 2).
 func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username string, announce bool) error {
 	if username == "" {
 		return nil
@@ -119,7 +119,7 @@ func admitAllowedUsername(ctx context.Context, tx *sql.Tx, identityID, username 
 	if err != nil || circle == "" {
 		return err
 	}
-	_, err = grantRoleTxWithReason(ctx, tx, identityID, circle, uuid.NullUUID{}, reasonAllowedUsername, announce)
+	_, err = grantCircleTxWithReason(ctx, tx, identityID, circle, uuid.NullUUID{}, reasonAllowedUsername, announce)
 	return err
 }
 
@@ -161,39 +161,4 @@ func upsertProfile(ctx context.Context, tx *sql.Tx, telegramUserID int64, userna
 		return "", false, err
 	}
 	return identityID, false, nil
-}
-
-// roleName — обратное к globalRole: значение контракта в строку хранилища.
-// UNSPECIFIED и неизвестное значение строки не имеют.
-func roleName(role identityv1.GlobalRole) (string, bool) {
-	switch role {
-	case identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER:
-		return roleMaintainer, true
-	case identityv1.GlobalRole_GLOBAL_ROLE_ADMIN:
-		return roleAdmin, true
-	case identityv1.GlobalRole_GLOBAL_ROLE_MEMBER:
-		return roleMember, true
-	case identityv1.GlobalRole_GLOBAL_ROLE_GUEST:
-		return roleGuest, true
-	default:
-		return "", false
-	}
-}
-
-// globalRole переводит строку словаря identity_roles в значение контракта.
-// Неизвестная строка отбрасывается, а не отвергает ответ: словарь схемы и
-// контракта могут разойтись на время согласованного развёртывания.
-func globalRole(role string) (identityv1.GlobalRole, bool) {
-	switch role {
-	case roleMaintainer:
-		return identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER, true
-	case roleAdmin:
-		return identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, true
-	case roleMember:
-		return identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, true
-	case roleGuest:
-		return identityv1.GlobalRole_GLOBAL_ROLE_GUEST, true
-	default:
-		return identityv1.GlobalRole_GLOBAL_ROLE_UNSPECIFIED, false
-	}
 }

@@ -117,7 +117,7 @@ export function refusedScreen(
 
 /**
  * Подтверждение пересмотра называет последствие: у блокировки — её снятие и
- * выдачу роли, у `declined` — допуск по закрытой заявке.
+ * выдачу круга, у `declined` — допуск по закрытой заявке.
  */
 export function reconsiderConfirmScreen(
   queue: ApplicationQueue,

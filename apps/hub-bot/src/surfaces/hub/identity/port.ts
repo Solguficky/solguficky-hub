@@ -1,7 +1,7 @@
 import type {
+  AccessRequestOutcome,
   AccessRight,
   ApplicationQueue,
-  RoleRequestOutcome,
 } from "../../../auction-ui/index.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 
@@ -25,7 +25,7 @@ export function toResolveIdentityInput(
 // поэтому first-slice.md требует различать их в логах и метриках.
 //
 // Отметка блокировки идёт отдельным полем, а не выводится из пустого набора
-// ролей: блокировка отзывает роли, и заблокированный иначе неотличим от
+// прав: блокировка отзывает права, и заблокированный иначе неотличим от
 // человека, который ни разу не начинал.
 export type IdentityFailure =
   | { kind: "unavailable"; cause: unknown }
@@ -35,7 +35,6 @@ export type ResolveIdentityResult =
   | {
       kind: "resolved";
       identityId: string;
-      globalRoles: readonly string[];
       rights: readonly AccessRight[];
       blocked: boolean;
     }
@@ -51,7 +50,7 @@ export type IdentityResolver = {
 // Вход на `/start` (ADR-060, пункты 1–7 и 17–19): человек тот же, что у
 // разрешения личности, плюс очередь поверхности, код канала и имя для карточки
 // модератора.
-export type RequestRoleInput = ResolveIdentityInput & {
+export type RequestAccessInput = ResolveIdentityInput & {
   queue: ApplicationQueue;
   // Код канала из payload `s_<код>` без префикса, как пришёл. Нет — payload
   // префикса не нёс; пустая строка — пустой код после `s_`.
@@ -61,21 +60,20 @@ export type RequestRoleInput = ResolveIdentityInput & {
 
 // Отметки блокировки в ответе входа нет: её несёт исход `blocked`. Словарь
 // исходов — аукционного дерева: по нему политика дерева решает вход.
-export type RequestRoleResult =
+export type RequestAccessResult =
   | {
       kind: "answered";
       identityId: string;
-      globalRoles: readonly string[];
       rights: readonly AccessRight[];
-      outcome: RoleRequestOutcome;
+      outcome: AccessRequestOutcome;
     }
   | IdentityFailure;
 
-export type RoleRequester = {
-  requestRole(
-    input: RequestRoleInput,
+export type AccessRequester = {
+  requestAccess(
+    input: RequestAccessInput,
     meta?: RpcMetadata,
-  ): Promise<RequestRoleResult>;
+  ): Promise<RequestAccessResult>;
 };
 
 // Обратный путь для канала доставки: уведомление несёт внутренний идентификатор,
@@ -96,9 +94,10 @@ export type TelegramRecipientResolver = {
   ): Promise<TelegramRecipientResult>;
 };
 
+// Действующий в командах Identity. Права Identity читает у себя (RFC-016):
+// бот передаёт только идентификатор.
 export type IdentityActor = {
   identityId: string;
-  globalRoles: readonly string[];
 };
 
 // Ник автора сходки для карточки (PER-404). Identity отвечает только про

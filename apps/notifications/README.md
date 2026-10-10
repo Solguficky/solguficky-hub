@@ -36,7 +36,7 @@ retention, чтение, повтор подключения, ACK/NAK/TERM и о
 | Проект | Ответственность |
 |---|---|
 | `Notifications` | силос Orleans, co-hosted с gRPC-сервером; миграции, грины, доступ к базе |
-| `Notifications.Contracts` | generated-only: C# из `contracts/proto/notifications/v1` и импортируемого `meetups/v1`, события реплики и клиенты `CheckMeetupAuthority` и `CheckGlobalRole` |
+| `Notifications.Contracts` | generated-only: C# из `contracts/proto/notifications/v1` и импортируемого `meetups/v1`, события реплики и клиенты `CheckMeetupAuthority` и `CheckAccessRight` |
 | `Notifications.UnitTests` | словарь категорий, вывод действующего значения, разбор входящих полей, решение по заданию напоминания, раскладка миграций и строка подключения; базы не требует |
 | `Notifications.IntegrationTests` | ограничения схемы, команды через настоящий gRPC-канал, рестарт силоса, жизненный цикл задания и простой кластера на PostgreSQL через Testcontainers |
 | `Notifications.TestKit` | утилиты обоих тестовых наборов: `EventFactory` — валидные контрактные события Meetups, Identity и Auction; ссылается только на `Notifications.Contracts` |
@@ -77,7 +77,7 @@ retention, чтение, повтор подключения, ACK/NAK/TERM и о
 
 gRPC-сервер на Kestrel в h2c. Реализованы все тринадцать операций контракта: подписка, отписка, обе настройки категорий, оба чтения, чтение и запись настройки перебитий, отметка, снятие и список избранных лотов и обе ручные рассылки. Избранные лоты принимают только бота аукциона, остальное — только бота хаба. Проба готовности по `grpc.health.v1` и рефлексия отвечают с первого дня.
 
-`BroadcastToMeetupSubscribers` спрашивает право у Meetups (`CheckMeetupAuthority`, адрес в `NOTIFICATIONS_MEETUPS_GRPC_URL`), `BroadcastToCommunity` — у Identity (`CheckGlobalRole`, адрес в `NOTIFICATIONS_IDENTITY_GRPC_URL`), на самой команде и без реплики. Адрес не задан или владелец недоступен — рассылка отвечает `UNAVAILABLE`, а не уходит без проверки. Сообщение организатора получают подписчики сходки с включённой категорией, объявление — круг хаба с включённой глобальной категорией; число отобранных и отсечённых настройками уходит в запись `operation = broadcast` (поля `facts_created` и `facts_suppressed`) и в метрику `notifications.facts.*`, а не в ответ автору. Коды отказов — в [каталоге интеграций](../../docs/architecture/integration.md).
+`BroadcastToMeetupSubscribers` спрашивает право у Meetups (`CheckMeetupAuthority`, адрес в `NOTIFICATIONS_MEETUPS_GRPC_URL`), `BroadcastToCommunity` — у Identity (`CheckAccessRight` с правом `manage_meetups`, адрес в `NOTIFICATIONS_IDENTITY_GRPC_URL`), на самой команде и без реплики. Адрес не задан или владелец недоступен — рассылка отвечает `UNAVAILABLE`, а не уходит без проверки. Сообщение организатора получают подписчики сходки с включённой категорией, объявление — круг хаба с включённой глобальной категорией; число отобранных и отсечённых настройками уходит в запись `operation = broadcast` (поля `facts_created` и `facts_suppressed`) и в метрику `notifications.facts.*`, а не в ответ автору. Коды отказов — в [каталоге интеграций](../../docs/architecture/integration.md).
 
 Команда предъявляет только `identity_id`. Ролей в запросах нет намеренно: свои подписки и настройки человек меняет себе, и решения о доступе по ролям сервис не принимает — разбор в [каталоге интеграций](../../docs/architecture/integration.md).
 

@@ -9,11 +9,11 @@ import type { PortsFactory } from "../src/surfaces/auction/clients.js";
 import type { Dispatcher } from "../src/surfaces/hub/application/dispatcher.js";
 import { createDispatcher } from "../src/surfaces/hub/application/dispatcher.js";
 import type {
+  AccessRequester,
   ApplicationAdministrator,
   ApplicationModerator,
   CommunityAdministrator,
   IdentityResolver,
-  RoleRequester,
   SourceChannelAdministrator,
 } from "../src/surfaces/hub/identity/port.js";
 import {
@@ -200,19 +200,19 @@ export type HarnessOptions = Partial<
  * Вход на `/start` для фейка, у которого его нет: ответ выводится из его же
  * разрешения личности, как ответил бы Identity человеку с такой личностью —
  * заблокированному `blocked`, держателю права хаба «уже есть», остальным заявку.
- * Тест, которому важен сам вход, передаёт `requestRole` явно.
+ * Тест, которому важен сам вход, передаёт `requestAccess` явно.
  */
-export function withEntry<T extends IdentityResolver & Partial<RoleRequester>>(
-  identity: T,
-): T & RoleRequester {
-  if (identity.requestRole !== undefined) {
+export function withEntry<
+  T extends IdentityResolver & Partial<AccessRequester>,
+>(identity: T): T & AccessRequester {
+  if (identity.requestAccess !== undefined) {
     // Поле проверено строкой выше; сужение обобщённого `T` компилятор до
     // пересечения не доводит.
-    return identity as T & RoleRequester;
+    return identity as T & AccessRequester;
   }
   return {
     ...identity,
-    async requestRole(input, meta) {
+    async requestAccess(input, meta) {
       const resolved = await identity.resolve(
         {
           telegramUserId: input.telegramUserId,
@@ -226,11 +226,10 @@ export function withEntry<T extends IdentityResolver & Partial<RoleRequester>>(
       return {
         kind: "answered",
         identityId: resolved.identityId,
-        globalRoles: resolved.globalRoles,
         rights: resolved.rights,
         outcome: resolved.blocked
           ? "blocked"
-          : resolved.rights.includes("hub")
+          : resolved.rights.includes("access-hub")
             ? "already-held"
             : "pending",
       };
@@ -244,7 +243,7 @@ export function withEntry<T extends IdentityResolver & Partial<RoleRequester>>(
  */
 export function createHarness(
   identity: IdentityResolver &
-    Partial<RoleRequester> &
+    Partial<AccessRequester> &
     Partial<CommunityAdministrator> &
     Partial<ApplicationAdministrator> &
     Partial<SourceChannelAdministrator> &

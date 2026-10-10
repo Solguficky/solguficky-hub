@@ -38,13 +38,13 @@ func NewTestCallers(t *testing.T, maintainerToken string) Callers {
 
 // PresentDeclaredCaller играет настоящего вызывающего метода: вызов без
 // authorization получает токен того, кто объявлен у метода, — Meetups у
-// CheckGlobalRole, бота у остальных. Явный заголовок теста (maintainer-секрет,
+// CheckAccessRight, бота у остальных. Явный заголовок теста (maintainer-секрет,
 // чужой токен) остаётся как есть, поэтому отказы проверяются тем же клиентом.
 func PresentDeclaredCaller() grpc.DialOption {
 	return grpc.WithUnaryInterceptor(func(ctx context.Context, method string, req, reply any, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 		if md, ok := metadata.FromOutgoingContext(ctx); !ok || len(md.Get("authorization")) == 0 {
 			caller := CallerHubBot
-			if method == identityv1.IdentityService_CheckGlobalRole_FullMethodName {
+			if method == identityv1.IdentityService_CheckAccessRight_FullMethodName {
 				caller = CallerMeetups
 			}
 			ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+CallerTokens[caller])

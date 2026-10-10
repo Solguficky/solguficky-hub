@@ -156,8 +156,8 @@ export const CONTRACT_OP_IDS = [
 // аукциона — по праву аукциона без права хаба.
 const CONTRACT_RIGHTS: Record<AuctionSurface["kind"], readonly AccessRight[]> =
   {
-    hub: ["hub", "auction"],
-    auction: ["auction"],
+    hub: ["access-hub", "place-bids"],
+    auction: ["place-bids"],
   };
 
 export function contractViewer(surface: AuctionSurface["kind"]): Viewer {

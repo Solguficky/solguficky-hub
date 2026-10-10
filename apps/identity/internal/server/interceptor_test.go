@@ -286,8 +286,8 @@ func TestUnaryLoggingNamesRecognizedCauses(t *testing.T) {
 		cause error
 		want  string
 	}{
-		{name: "deadline", cause: context.DeadlineExceeded, want: "list roles: deadline exceeded"},
-		{name: "canceled", cause: context.Canceled, want: "list roles: canceled"},
+		{name: "deadline", cause: context.DeadlineExceeded, want: "list rights: deadline exceeded"},
+		{name: "canceled", cause: context.Canceled, want: "list rights: canceled"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -297,7 +297,7 @@ func TestUnaryLoggingNamesRecognizedCauses(t *testing.T) {
 			info := &grpc.UnaryServerInfo{FullMethod: resolveMethod}
 			_, err := unaryLogging(slog.New(logs))(t.Context(), nil, info,
 				func(context.Context, any) (any, error) {
-					return nil, internal("list roles", fmt.Errorf("query: %w", tc.cause))
+					return nil, internal("list rights", fmt.Errorf("query: %w", tc.cause))
 				})
 			if status.Code(err) != codes.Internal {
 				t.Fatalf("code: got %v want %s", err, codes.Internal)
@@ -587,10 +587,10 @@ func TestUnaryLoggingOmitsNonCanonicalIdentityIDOfTelegramLookup(t *testing.T) {
 	assertNoAttr(t, logs.sole(t), "identity_id")
 }
 
-func TestUnaryLoggingNamesProfileOfRoleCheckFromRequest(t *testing.T) {
+func TestUnaryLoggingNamesProfileOfRightCheckFromRequest(t *testing.T) {
 	t.Parallel()
 
-	info := &grpc.UnaryServerInfo{FullMethod: "/identity.v1.IdentityService/CheckGlobalRole"}
+	info := &grpc.UnaryServerInfo{FullMethod: "/identity.v1.IdentityService/CheckAccessRight"}
 	for name, tc := range map[string]struct {
 		raw  string
 		want string
@@ -602,7 +602,7 @@ func TestUnaryLoggingNamesProfileOfRoleCheckFromRequest(t *testing.T) {
 			t.Parallel()
 			logs := &capture{}
 			_, _ = unaryLogging(slog.New(logs))(t.Context(),
-				&identityv1.CheckGlobalRoleRequest{IdentityId: tc.raw}, info,
+				&identityv1.CheckAccessRightRequest{IdentityId: tc.raw}, info,
 				func(context.Context, any) (any, error) {
 					return nil, status.Error(codes.NotFound, "identity not found")
 				})

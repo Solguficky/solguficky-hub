@@ -2,11 +2,11 @@ import { isDeepStrictEqual } from "node:util";
 import { encodeAuctionCallback } from "../callback-data.js";
 import { type AuctionSurface, applicationQueue } from "../gateway.js";
 import type {
+  AccessRequest,
+  AccessRequestOutcome,
   AccessRight,
   AuctionBotPorts,
   EntryPort,
-  RoleRequest,
-  RoleRequestOutcome,
   TelegramUser,
 } from "../ports.js";
 import { AUCTION, CONTRACT_LOT, CONTRACT_USER, spyPorts } from "./check.js";
@@ -55,7 +55,7 @@ export type AccessMatrixCase = {
   person: {
     rights: readonly AccessRight[];
     blocked: boolean;
-    outcome: RoleRequestOutcome;
+    outcome: AccessRequestOutcome;
   };
   action: AccessAction;
   answer: AccessAnswer;
@@ -99,13 +99,13 @@ const holder = (...rights: AccessRight[]): Person => ({
   outcome: "already-held",
 });
 // Набор прав участника и администратора: матрице важны права, а не круг.
-const MEMBER: Person = holder("hub", "auction");
+const MEMBER: Person = holder("access-hub", "place-bids");
 const ADMIN: Person = holder(
-  "hub",
-  "auction",
-  "manage-membership",
-  "moderate-auction",
-  "manage-auction",
+  "access-hub",
+  "place-bids",
+  "manage-members",
+  "admit-bidders",
+  "manage-meetups",
 );
 const NEWCOMER: Person = {
   rights: [],
@@ -149,14 +149,14 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
   {
     name: "hub: auction right only starts",
     surface: "hub",
-    person: { rights: ["auction"], blocked: false, outcome: "pending" },
+    person: { rights: ["place-bids"], blocked: false, outcome: "pending" },
     action: START_FROM_CHANNEL,
     answer: "pending",
   },
   {
     name: "hub: auction right only presses",
     surface: "hub",
-    person: { rights: ["auction"], blocked: false, outcome: "pending" },
+    person: { rights: ["place-bids"], blocked: false, outcome: "pending" },
     action: LOT_BUTTON,
     answer: "pending",
   },
@@ -216,14 +216,14 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
   {
     name: "auction: auction right starts",
     surface: "auction",
-    person: holder("auction"),
+    person: holder("place-bids"),
     action: START,
     answer: "admitted",
   },
   {
     name: "auction: auction right presses",
     surface: "auction",
-    person: holder("auction"),
+    person: holder("place-bids"),
     action: LOT_BUTTON,
     answer: "admitted",
   },
@@ -263,7 +263,7 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
   {
     name: "auction: hub right only starts",
     surface: "auction",
-    person: { rights: ["hub"], blocked: false, outcome: "pending" },
+    person: { rights: ["access-hub"], blocked: false, outcome: "pending" },
     action: START,
     answer: "in-community",
   },
@@ -271,7 +271,7 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     name: "auction: allowlisted starts",
     surface: "auction",
     person: {
-      rights: ["auction"],
+      rights: ["place-bids"],
       blocked: false,
       outcome: "granted-by-allowlist",
     },
@@ -318,7 +318,7 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
   {
     name: "auction: unknown outcome",
     surface: "auction",
-    person: { rights: ["auction"], blocked: false, outcome: "unspecified" },
+    person: { rights: ["place-bids"], blocked: false, outcome: "unspecified" },
     action: START,
     answer: "unavailable",
   },
@@ -326,7 +326,7 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
 
 type IdentityCall =
   | { method: "resolveIdentity"; request: TelegramUser }
-  | { method: "requestRole"; request: RoleRequest };
+  | { method: "requestAccess"; request: AccessRequest };
 
 function expectedIdentityCalls(matrixCase: AccessMatrixCase): IdentityCall[] {
   const { action, surface } = matrixCase;
@@ -335,7 +335,7 @@ function expectedIdentityCalls(matrixCase: AccessMatrixCase): IdentityCall[] {
   }
   return [
     {
-      method: "requestRole",
+      method: "requestAccess",
       request: {
         user: CONTRACT_USER,
         queue: applicationQueue(surface),
@@ -367,8 +367,8 @@ export async function checkAccessMatrixCase(
       },
     },
     entry: {
-      async requestRole(request) {
-        identityCalls.push({ method: "requestRole", request });
+      async requestAccess(request) {
+        identityCalls.push({ method: "requestAccess", request });
         return {
           viewer: { identityId: VIEWER_ID, rights: person.rights },
           outcome: person.outcome,

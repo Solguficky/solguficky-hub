@@ -8,7 +8,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
 	"github.com/google/uuid"
@@ -30,8 +29,8 @@ func TestOneRoleCircleMigrationKeepsOneActiveCircleAndWhatConsumersSaw(t *testin
 		maintainerRights = "auction,hub,manage_membership,moderate_auction"
 	)
 	people := map[string]migratedPerson{
-		"guest":            {legacy: []string{publicRole}, circle: guestRole, rights: "auction", globalRoles: "guest"},
-		"member":           {legacy: []string{publicRole, circleMember}, circle: circleMember, rights: "auction,hub", globalRoles: "guest,member"},
+		guestRole:          {legacy: []string{publicRole}, circle: guestRole, rights: auctionQueue, globalRoles: guestRole},
+		circleMember:       {legacy: []string{publicRole, circleMember}, circle: circleMember, rights: "auction,hub", globalRoles: "guest,member"},
 		"admin-one-row":    {legacy: []string{adminRole}, circle: adminRole, rights: allRights, globalRoles: "admin,guest,member"},
 		"admin-three-rows": {legacy: []string{publicRole, circleMember, adminRole}, circle: adminRole, rights: allRights, globalRoles: "admin,guest,member"},
 		"admin-maintainer": {legacy: []string{adminRole, maintainerRole}, circle: maintainerRole, rights: maintainerRights, globalRoles: "admin,guest,maintainer,member"},
@@ -57,9 +56,7 @@ func TestOneRoleCircleMigrationKeepsOneActiveCircleAndWhatConsumersSaw(t *testin
 	testdb.ExecBypassingShields(t, db, `INSERT INTO allowed_usernames (id, normalized_username, grants_role, created_by)
 		VALUES ($1, 'auction_guest', 'public', NULL)`, uuid.NewString())
 
-	if err := migrations.Apply(t.Context(), db); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
+	applyThrough(t, db, 16)
 
 	for name, p := range people {
 		assertMigratedAccess(t, db, name, ids[name], p)
@@ -130,7 +127,7 @@ func TestOneRoleCircleMigrationRefusesActiveRoleOfBlockedProfile(t *testing.T) {
 	testdb.ExecBypassingShields(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
 		VALUES ($1, $2, 'member', now(), NULL)`, uuid.NewString(), id)
 
-	err := migrations.Apply(t.Context(), db)
+	_, err := migrationProvider(t, db).UpTo(t.Context(), 16)
 	if err == nil || !strings.Contains(err.Error(), "blocked profile holds an active role") {
 		t.Fatalf("apply: %v, want the blocked-profile refusal", err)
 	}
@@ -156,9 +153,9 @@ func legacyGlobalRoles(rows []string) string {
 	return strings.Join(slices.Compact(names), ",")
 }
 
-// Откат 014 проходит и тогда, когда после переноса outbox уже записал снимок с
-// guest: строки outbox неизменяемы, и ограничения возвращаются NOT VALID.
-// Участник получает обратно строку public.
+// Откат 017 и 014 проходит и тогда, когда после переноса outbox уже записал
+// снимок нового словаря: строки outbox неизменяемы, и ограничения возвращаются
+// NOT VALID. Участник получает обратно строку public.
 func TestOneRoleCircleMigrationRollsBackAfterEventsNamedGuest(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
@@ -168,8 +165,8 @@ func TestOneRoleCircleMigrationRollsBackAfterEventsNamedGuest(t *testing.T) {
 	}
 	id := uuid.NewString()
 	registerProfile(t, db, id, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9801)`)
-	testdb.ExecAnnounced(t, db, id, outbox.RoleGranted, circleMember,
-		`INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+	testdb.ExecAnnounced(t, db, id, outbox.Event{Occasion: outbox.CircleChanged},
+		`INSERT INTO identity_circles (id, identity_id, circle, granted_at, granted_by)
 		VALUES ($1, $2, 'member', now(), NULL)`, uuid.NewString(), id)
 
 	if _, err := provider.DownTo(t.Context(), 13); err != nil {

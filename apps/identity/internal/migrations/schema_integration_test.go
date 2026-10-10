@@ -80,7 +80,7 @@ func TestDuplicateUsernameAndMissingUsernameAreAllowed(t *testing.T) {
 		VALUES ($1, 2004, NULL)`)
 }
 
-func TestRoleRevocationIsAMarkNotDeletion(t *testing.T) {
+func TestCircleRevocationIsAMarkNotDeletion(t *testing.T) {
 	t.Parallel()
 	db := isolatedDB(t)
 	mustApply(t, db)
@@ -90,16 +90,21 @@ func TestRoleRevocationIsAMarkNotDeletion(t *testing.T) {
 	const regrantID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3503"
 
 	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id, username)
-		VALUES ($1, 3001, 'admin')`)
-	testdb.ExecAnnounced(t, db, identityID, outbox.RoleGranted, adminRole,
-		`INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ($1, $2, 'admin', TIMESTAMPTZ '2026-09-01 12:00:00+00', $2)`, grantID, identityID)
+		VALUES ($1, 3001, 'member')`)
+	testdb.ExecAnnounced(t, db, identityID, outbox.Event{Occasion: outbox.CircleChanged},
+		`INSERT INTO identity_circles (id, identity_id, circle, granted_at, granted_by)
+		VALUES ($1, $2, 'member', TIMESTAMPTZ '2026-09-01 12:00:00+00', $2)`, grantID, identityID)
 
-	testdb.ExecAnnounced(t, db, identityID, outbox.RoleRevoked, adminRole,
-		`UPDATE identity_roles SET revoked_at = TIMESTAMPTZ '2026-09-01 13:00:00+00' WHERE id = $1`, grantID)
+	// Отзыв без замены событием круга не выражается; правка несёт повод, снимок
+	// которого с ней согласен.
+	testdb.ExecAnnounced(t, db, identityID, outbox.Event{Occasion: outbox.ProfileUnblocked},
+		`UPDATE identity_circles SET revoked_at = TIMESTAMPTZ '2026-09-01 13:00:00+00' WHERE id = $1`, grantID)
+	testdb.ExecAnnounced(t, db, identityID, outbox.Event{Occasion: outbox.CircleChanged},
+		`INSERT INTO identity_circles (id, identity_id, circle, granted_at, granted_by)
+		VALUES ($1, $2, 'guest', TIMESTAMPTZ '2026-09-01 14:00:00+00', $2)`, regrantID, identityID)
 
 	var n int
-	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM identity_roles WHERE id = $1`, grantID).Scan(&n); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT COUNT(*) FROM identity_circles WHERE id = $1`, grantID).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
@@ -107,16 +112,12 @@ func TestRoleRevocationIsAMarkNotDeletion(t *testing.T) {
 	}
 
 	var revoked sql.NullTime
-	if err := db.QueryRowContext(t.Context(), `SELECT revoked_at FROM identity_roles WHERE id = $1`, grantID).Scan(&revoked); err != nil {
+	if err := db.QueryRowContext(t.Context(), `SELECT revoked_at FROM identity_circles WHERE id = $1`, grantID).Scan(&revoked); err != nil {
 		t.Fatal(err)
 	}
 	if !revoked.Valid {
 		t.Fatal("revoked_at: got NULL want a timestamp")
 	}
-
-	testdb.ExecAnnounced(t, db, identityID, outbox.RoleGranted, adminRole,
-		`INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ($1, $2, 'admin', TIMESTAMPTZ '2026-09-01 14:00:00+00', $2)`, regrantID, identityID)
 }
 
 func isolatedDB(t *testing.T) *sql.DB {

@@ -13,10 +13,12 @@ const identityId = "01a0e306-a646-7d3a-9b21-4f8e12ab34cd";
 
 describe("decideHubAccess", () => {
   it("admits a person who has the hub right", () => {
-    expect(decideHubAccess(["hub", "auction"], false)).toBe("admitted");
+    expect(decideHubAccess(["access-hub", "place-bids"], false)).toBe(
+      "admitted",
+    );
     expect(
       decideHubAccess(
-        ["hub", "auction", "manage-membership", "moderate-auction"],
+        ["access-hub", "place-bids", "manage-members", "admit-bidders"],
         false,
       ),
     ).toBe("admitted");
@@ -26,15 +28,15 @@ describe("decideHubAccess", () => {
   // модерации, ни из права аукциона.
   it("keeps a person without the hub right in pending", () => {
     expect(decideHubAccess([], false)).toBe("pending");
-    expect(decideHubAccess(["auction"], false)).toBe("pending");
-    expect(decideHubAccess(["auction", "moderate-auction"], false)).toBe(
+    expect(decideHubAccess(["place-bids"], false)).toBe("pending");
+    expect(decideHubAccess(["place-bids", "admit-bidders"], false)).toBe(
       "pending",
     );
   });
 
   it("closes access when the blocked mark is set", () => {
     expect(decideHubAccess([], true)).toBe("blocked");
-    expect(decideHubAccess(["hub", "auction"], true)).toBe("blocked");
+    expect(decideHubAccess(["access-hub", "place-bids"], true)).toBe("blocked");
   });
 
   it("names pending, declined and blocked refusals differently", () => {

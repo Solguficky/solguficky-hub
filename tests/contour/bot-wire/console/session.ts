@@ -16,8 +16,8 @@ import {
   type BotName,
   type Command,
   CommandError,
+  type Holder,
   help,
-  type Role,
   type SlowService,
 } from "./commands.js";
 
@@ -36,7 +36,7 @@ type Outage = {
 };
 
 type Member = {
-  role: Role;
+  holder: Holder;
   telegramUserId: bigint;
   username: string;
   persons: Record<BotName, Person>;
@@ -64,9 +64,9 @@ export type Reply =
   | {
       ok: true;
       kind: "people";
-      people: { who: string; role: Role; username: string }[];
+      people: { who: string; holder: Holder; username: string }[];
     }
-  | { ok: true; kind: "new"; who: string; role: Role; username: string }
+  | { ok: true; kind: "new"; who: string; holder: Holder; username: string }
   | {
       ok: true;
       kind: "screen";
@@ -123,21 +123,21 @@ export function openConsoleSession(
     return found;
   }
 
-  async function create(who: string, role: Role): Promise<Reply> {
+  async function create(who: string, holder: Holder): Promise<Reply> {
     if (people.has(who)) {
       throw new CommandError(`«${who}» уже заведён`);
     }
     const telegramUserId = freshTelegramUserId();
-    // Ник есть у всех. Администратор получает роль одним GrantAdminRole, как
-    // в продукте: круг у человека один, и Identity выводит из admin права хаба
-    // и аукциона, а в global_roles отдаёт admin, member и guest (PER-526), —
+    // Ник есть у всех. Администратор получает набор `admin` одним GrantPreset
+    // общим секретом: та же выдача делает его участником (RFC-016), и права
+    // хаба, ставок и ведения сходок Identity выводит из круга и набора, —
     // поэтому белый список ему не нужен, чтобы открыть ленту лотов и форму лота.
     const username = usernameFor(telegramUserId);
-    if (role === "admin") {
+    if (holder === "admin") {
       const identityId = await direct.grantAdmin(telegramUserId);
       firstAdminId ??= identityId;
-    } else if (role === "member") {
-      // Роль member человек получает на первом `/start`, как в продукте:
+    } else if (holder === "member") {
+      // Круг member человек получает на первом `/start`, как в продукте:
       // его ник заранее внесён администратором в whitelist.
       if (firstAdminId === undefined) {
         throw new CommandError(
@@ -151,7 +151,7 @@ export function openConsoleSession(
     const conversation = (wire: HubWire | AuctionWire) =>
       startConversation(wire.bot, wire.calls, telegramUserId, { username });
     people.set(who, {
-      role,
+      holder,
       telegramUserId,
       username,
       persons: {
@@ -159,7 +159,7 @@ export function openConsoleSession(
         auction: conversation(wires.auction),
       },
     });
-    return { ok: true, kind: "new", who, role, username };
+    return { ok: true, kind: "new", who, holder, username };
   }
 
   async function act(
@@ -243,14 +243,14 @@ export function openConsoleSession(
         return {
           ok: true,
           kind: "people",
-          people: [...people].map(([who, { role, username }]) => ({
+          people: [...people].map(([who, { holder, username }]) => ({
             who,
-            role,
+            holder,
             username,
           })),
         };
       case "new":
-        return create(command.who, command.role);
+        return create(command.who, command.holder);
       case "say":
         return act(command.who, command.bot, (person) =>
           person.says(command.text),

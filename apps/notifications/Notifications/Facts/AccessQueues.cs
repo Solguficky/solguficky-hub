@@ -4,43 +4,44 @@ namespace Notifications.Facts;
 
 /// <summary>
 /// Что очередь заявки значит для адресных фактов: кто её модерирует, какое
-/// право закрывает заявку в неё и каким кругом её называет факт.
+/// право закрывает заявку в неё и под каким ключом схема помнит факт о ней.
 /// </summary>
 /// <remarks>
-/// Соответствие задают ADR-064 (пункты 8, 12 и 14) и контракт <c>identity.v1</c>,
-/// а не вывод прав из роли: право человека Notifications по-прежнему берёт из
-/// реплики как есть, здесь только имя права, которое ищется в ней.
+/// Соответствие задают ADR о круге без ранга и наборах (RFC-016) и контракт
+/// <c>identity.v1</c>, а не вывод прав из круга или набора: право человека
+/// Notifications берёт из реплики как есть, здесь только имя права, которое
+/// ищется в ней.
 /// </remarks>
 public static class AccessQueues
 {
     /// <summary>
     /// Право, держателям которого уходит оповещение о заявке: очередь
-    /// сообщества решает управление составом, очередь аукциона — модерация
-    /// аукциона.
+    /// сообщества решает <c>manage_members</c>, очередь аукциона —
+    /// <c>admit_bidders</c>.
     /// </summary>
     public static string ModeratorRight(AccessQueue queue) => queue switch
     {
-        AccessQueue.Community => "manage_membership",
-        AccessQueue.Auction => "moderate_auction",
+        AccessQueue.Community => "manage_members",
+        AccessQueue.Auction => "admit_bidders",
         _ => throw new ArgumentOutOfRangeException(nameof(queue), queue, "queue is not known"),
     };
 
     /// <summary>
     /// Право, которое выдаёт допуск в очередь. Кто его держит, тот уже не ждёт:
     /// заявку в сообщество закрывает право хаба, заявку в аукцион — право
-    /// аукциона.
+    /// ставок.
     /// </summary>
     public static string AdmissionRight(AccessQueue queue) => queue switch
     {
-        AccessQueue.Community => "hub",
-        AccessQueue.Auction => "auction",
+        AccessQueue.Community => "access_hub",
+        AccessQueue.Auction => "place_bids",
         _ => throw new ArgumentOutOfRangeException(nameof(queue), queue, "queue is not known"),
     };
 
     /// <summary>
-    /// Круг заявки в колонке <c>notification.access_circle</c> — прежнее имя,
-    /// под которым схема помнит факт о заявке. Очередь сообщества — круг
-    /// <c>member</c>, очередь аукциона — <c>public</c>.
+    /// Ключ очереди в колонке <c>notification.access_circle</c> — прежнее имя,
+    /// под которым схема помнит факт о заявке. Очередь сообщества — <c>member</c>,
+    /// очередь аукциона — <c>public</c>. Наружу ключ не выходит.
     /// </summary>
     public static string Circle(AccessQueue queue) => queue switch
     {
@@ -49,14 +50,11 @@ public static class AccessQueues
         _ => throw new ArgumentOutOfRangeException(nameof(queue), queue, "queue is not known"),
     };
 
-    /// <summary>
-    /// Круг заявки в адресном факте: контракт <c>notifications.v1</c> несёт
-    /// только запрошенный круг (ADR-062, пункт 6).
-    /// </summary>
-    public static Identity.V1.GlobalRole ContractCircle(AccessQueue queue) => queue switch
+    /// <summary>Очередь заявки в адресном факте контракта <c>notifications.v1</c>.</summary>
+    public static Identity.V1.ApplicationQueue ContractQueue(AccessQueue queue) => queue switch
     {
-        AccessQueue.Community => Identity.V1.GlobalRole.Member,
-        AccessQueue.Auction => Identity.V1.GlobalRole.Guest,
+        AccessQueue.Community => Identity.V1.ApplicationQueue.Community,
+        AccessQueue.Auction => Identity.V1.ApplicationQueue.Auction,
         _ => throw new ArgumentOutOfRangeException(nameof(queue), queue, "queue is not known"),
     };
 }

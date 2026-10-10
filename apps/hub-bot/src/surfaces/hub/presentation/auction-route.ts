@@ -43,7 +43,7 @@ export function isAuctionCallback(data: string): boolean {
   );
 }
 
-/** Личность края в словаре пакета: смотрящий несёт права, роли не едут. */
+/** Личность края в словаре пакета: смотрящий несёт только права. */
 export function packageIdentity(
   person: Person,
   blocked: boolean,

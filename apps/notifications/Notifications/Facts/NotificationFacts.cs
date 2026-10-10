@@ -43,24 +43,17 @@ public static class NotificationFacts
     public const string AccessGrantedType = "access_granted";
 
     /// <inheritdoc cref="MeetupPublishedType" />
-    public const string RoleGrantedType = "role_granted";
+    public const string PresetGrantedType = "preset_granted";
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string CircleChangedType = "circle_changed";
 
     /// <summary>
-    /// Единственная роль, выдача которой — повод факта <see cref="RoleGranted" />:
-    /// её даёт служебный вызов, а не заявка, белый список или вложенность
-    /// (ADR-043, PER-468).
+    /// Единственный набор, выдача которого — повод факта <see cref="PresetGranted" />
+    /// (PER-468): назначение администратором. Набор <c>maintainer</c> выдаёт
+    /// только общий секрет, и сообщать о нём боту некому.
     /// </summary>
-    public const string RoleGrantedRole = "admin";
-
-    /// <summary>
-    /// Право, по которому видно, что выданное <see cref="RoleGrantedRole" />
-    /// ещё в силе: управление составом даёт и круг администратора, и выдача
-    /// admin мейнтейнеру, у которого круг не меняется (ADR-064, пункт 7).
-    /// </summary>
-    public const string RoleGrantedRight = "manage_membership";
+    public const string PresetGrantedPreset = "admin";
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string MeetupEventCause = "meetup_event";
@@ -122,10 +115,10 @@ public static class NotificationFacts
 
     /// <summary>
     /// Право хаба: поводы сходок адресуются его держателям (ADR-064, пункт 6).
-    /// Гость с одним правом аукциона сходок не видит, и новая сходка ему не
+    /// Гость с одним правом ставок сходок не видит, и новая сходка ему не
     /// положена.
     /// </summary>
-    public const string HubRight = "hub";
+    public const string HubRight = "access_hub";
 
     /// <summary>Значение категории для человека без строки настроек.</summary>
     public static bool MeetupPublishedByDefault => NotificationCategories.DefaultEnabled(MeetupPublishedCategory);
@@ -306,15 +299,15 @@ public static class NotificationFacts
             requestId: null,
             now,
             notAfter);
-        notification.AccessRequested = new V1.AccessRequested { Circle = RequestableCircle(fact) };
+        notification.AccessRequested = new V1.AccessRequested { Queue = ContractQueue(fact) };
 
         return notification;
     }
 
     /// <summary>
     /// Факт «вас допустили» самому заявителю (PER-442). Кто решил, в
-    /// сообщение не попадает; круг называет поверхность, бот которой его
-    /// доставит.
+    /// сообщение не попадает; бот, который его доставит, выбран каналом
+    /// доставки при записи факта.
     /// </summary>
     /// <param name="fact">Событие Identity о допуске по заявке.</param>
     public static Notification AccessGranted(
@@ -335,33 +328,32 @@ public static class NotificationFacts
             requestId: null,
             now,
             notAfter);
-        notification.AccessGranted = new V1.AccessGranted { Circle = RequestableCircle(fact) };
+        notification.AccessGranted = new V1.AccessGranted { Queue = ContractQueue(fact) };
 
         return notification;
     }
 
     /// <summary>
-    /// Факт «вам выдали роль администратора» самому человеку (PER-468). Повод —
-    /// <c>role_granted</c> с ролью <c>admin</c>: её даёт только служебный вызов
-    /// мейнтейнера или администратора, не заявка. Выдача круга по белому списку
-    /// или вложенностью фактом не является: о допуске сообщает
-    /// <see cref="AccessGranted" />. Кто выдал, в сообщение не попадает.
+    /// Факт «вас назначили администратором» самому человеку (PER-468). Повод —
+    /// <c>preset_granted</c> с набором <c>admin</c>. Выдача круга фактом не
+    /// является: о допуске сообщает <see cref="AccessGranted" />. Кто выдал, в
+    /// сообщение не попадает.
     /// </summary>
-    /// <param name="fact">Событие Identity о выдаче роли.</param>
-    public static Notification RoleGranted(
+    /// <param name="fact">Событие Identity о выдаче набора.</param>
+    public static Notification PresetGranted(
         Guid notificationId,
         IdentityFact fact,
         DateTimeOffset now,
         DateTimeOffset notAfter)
     {
-        if (fact.Occasion != IdentityOccasion.RoleGranted)
+        if (fact.Occasion != IdentityOccasion.PresetGranted)
         {
-            throw new ArgumentException($"occasion {fact.Occasion} is not a role grant", nameof(fact));
+            throw new ArgumentException($"occasion {fact.Occasion} is not a preset grant", nameof(fact));
         }
 
-        if (fact.OccasionRole != RoleGrantedRole)
+        if (fact.OccasionPreset != PresetGrantedPreset)
         {
-            throw new ArgumentException($"a grant of {fact.OccasionRole} is not a cause of a notification", nameof(fact));
+            throw new ArgumentException($"a grant of {fact.OccasionPreset} is not a cause of a notification", nameof(fact));
         }
 
         var notification = Envelope(
@@ -371,7 +363,7 @@ public static class NotificationFacts
             requestId: null,
             now,
             notAfter);
-        notification.RoleGranted = new V1.RoleGranted { Role = Identity.V1.GlobalRole.Admin };
+        notification.PresetGranted = new V1.PresetGranted { Preset = Identity.V1.Preset.Admin };
 
         return notification;
     }
@@ -380,8 +372,8 @@ public static class NotificationFacts
     public static Notification CircleChanged(
         Guid notificationId,
         IdentityFact fact,
-        string previousRole,
-        string currentRole,
+        string previousCircle,
+        string currentCircle,
         DateTimeOffset now,
         DateTimeOffset notAfter)
     {
@@ -394,23 +386,23 @@ public static class NotificationFacts
             notAfter);
         notification.CircleChanged = new V1.CircleChanged
         {
-            PreviousCircle = ContractCircle(previousRole),
-            CurrentCircle = ContractCircle(currentRole),
+            PreviousCircle = ContractCircle(previousCircle),
+            CurrentCircle = ContractCircle(currentCircle),
         };
         return notification;
     }
 
     // Очередь у повода заявки обязательна; без неё разбор реплики событие не пропускает.
-    private static Identity.V1.GlobalRole RequestableCircle(IdentityFact fact) =>
+    private static Identity.V1.ApplicationQueue ContractQueue(IdentityFact fact) =>
         fact.OccasionQueue is { } queue
-            ? AccessQueues.ContractCircle(queue)
+            ? AccessQueues.ContractQueue(queue)
             : throw new ArgumentException("the occasion carries no queue", nameof(fact));
 
-    private static Identity.V1.GlobalRole ContractCircle(string role) => role switch
+    private static Identity.V1.Circle ContractCircle(string circle) => circle switch
     {
-        "member" => Identity.V1.GlobalRole.Member,
-        "guest" => Identity.V1.GlobalRole.Guest,
-        _ => throw new ArgumentOutOfRangeException(nameof(role), role, "role is not a requestable circle"),
+        "member" => Identity.V1.Circle.Member,
+        "guest" => Identity.V1.Circle.Guest,
+        _ => throw new ArgumentOutOfRangeException(nameof(circle), circle, "circle is not known"),
     };
 
     /// <summary>RFC 3339 в UTC, как остальные моменты контрактов.</summary>

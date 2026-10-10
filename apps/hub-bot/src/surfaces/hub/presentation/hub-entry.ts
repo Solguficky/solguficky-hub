@@ -7,8 +7,8 @@ import type { HubAccess } from "../application/hub-access.js";
 import type { DeepLink, Person } from "../application/types.js";
 import { viewerOf } from "../auction/port.js";
 import type {
-  RequestRoleInput,
-  RequestRoleResult,
+  RequestAccessInput,
+  RequestAccessResult,
   ResolveIdentityInput,
 } from "../identity/port.js";
 
@@ -21,10 +21,10 @@ import type {
  * несёт только payload `s_<код>` — ссылка на сходку и чужой payload его не
  * несут, а пустой код после `s_` едет пустой строкой.
  */
-export function hubRoleRequest(
+export function hubAccessRequest(
   person: ResolveIdentityInput & { firstName: string },
   deepLink: DeepLink | undefined,
-): RequestRoleInput {
+): RequestAccessInput {
   return {
     telegramUserId: person.telegramUserId,
     ...(person.telegramUsername === undefined
@@ -51,11 +51,10 @@ export type HubEntry =
   | { kind: "unknown-outcome"; identityId: string };
 
 export function decideHubEntry(
-  answer: Extract<RequestRoleResult, { kind: "answered" }>,
+  answer: Extract<RequestAccessResult, { kind: "answered" }>,
 ): HubEntry {
   const person = {
     identityId: answer.identityId,
-    globalRoles: answer.globalRoles,
     rights: answer.rights,
   };
   const entry = decideEntry("hub", {

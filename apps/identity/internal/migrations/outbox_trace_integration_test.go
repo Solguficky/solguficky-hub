@@ -28,7 +28,7 @@ func TestAppendStoresTraceParentOfTheSpan(t *testing.T) {
 	want := outbox.TraceParent(ctx)
 	tx := beginTx(t, db)
 	mustTxExec(t, tx, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9371)`, traced)
-	if err := outbox.Append(ctx, tx, traced, outbox.ProfileRegistered, ""); err != nil {
+	if err := outbox.Append(ctx, tx, traced, outbox.Event{Occasion: outbox.ProfileRegistered}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

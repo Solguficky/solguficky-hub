@@ -1,19 +1,19 @@
 import { describe, expect, it } from "vitest";
 import type {
+  AccessRequestOutcome,
   AccessRight,
-  RoleRequestOutcome,
 } from "../../../auction-ui/index.js";
 import type { HubAccess } from "../application/hub-access.js";
 import type { DeepLink } from "../application/types.js";
-import { decideHubEntry, hubRoleRequest } from "./hub-entry.js";
+import { decideHubEntry, hubAccessRequest } from "./hub-entry.js";
 
 const identityId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
 const person = { telegramUserId: 42n, firstName: "Сова" };
 
-describe("hubRoleRequest", () => {
+describe("hubAccessRequest", () => {
   it("applies to the community queue with the first name", () => {
     expect(
-      hubRoleRequest({ ...person, telegramUsername: "owl" }, undefined),
+      hubAccessRequest({ ...person, telegramUsername: "owl" }, undefined),
     ).toEqual({
       telegramUserId: 42n,
       telegramUsername: "owl",
@@ -30,7 +30,7 @@ describe("hubRoleRequest", () => {
     [{ kind: "meetup", payload: "m_AZLzpLXGfY6fChssPU5fYA" }, {}],
     [{ kind: "unclassified", payload: "anything" }, {}],
   ])("carries the channel code of %j as %j", (deepLink, expected) => {
-    expect(hubRoleRequest(person, deepLink)).toEqual({
+    expect(hubAccessRequest(person, deepLink)).toEqual({
       telegramUserId: 42n,
       queue: "community",
       firstName: "Сова",
@@ -40,28 +40,30 @@ describe("hubRoleRequest", () => {
 });
 
 describe("decideHubEntry", () => {
-  it.each<[RoleRequestOutcome, readonly AccessRight[], HubAccess]>([
-    ["already-held", ["hub", "auction"], "admitted"],
-    ["already-held", ["hub", "auction", "manage-membership"], "admitted"],
-    ["granted-by-allowlist", ["hub", "auction"], "admitted"],
+  it.each<[AccessRequestOutcome, readonly AccessRight[], HubAccess]>([
+    ["already-held", ["access-hub", "place-bids"], "admitted"],
+    [
+      "already-held",
+      ["access-hub", "place-bids", "manage-members"],
+      "admitted",
+    ],
+    ["granted-by-allowlist", ["access-hub", "place-bids"], "admitted"],
     ["pending", [], "pending"],
     // Право аукциона хаб не открывает: заявка на участника ждёт решения.
-    ["pending", ["auction"], "pending"],
-    ["declined", ["auction"], "declined"],
+    ["pending", ["place-bids"], "pending"],
+    ["declined", ["place-bids"], "declined"],
     ["blocked", [], "blocked"],
   ])("answers %s with %j as %s", (outcome, rights, access) => {
-    const globalRoles = ["member"];
     expect(
       decideHubEntry({
         kind: "answered",
         identityId,
-        globalRoles,
         rights,
         outcome,
       }),
     ).toEqual({
       kind: "decided",
-      person: { identityId, globalRoles, rights },
+      person: { identityId, rights },
       access,
     });
   });
@@ -73,16 +75,14 @@ describe("decideHubEntry", () => {
       decideHubEntry({
         kind: "answered",
         identityId,
-        globalRoles: ["unspecified", "member"],
-        rights: ["hub", "auction"],
+        rights: ["access-hub", "place-bids"],
         outcome: "already-held",
       }),
     ).toEqual({
       kind: "decided",
       person: {
         identityId,
-        globalRoles: ["unspecified", "member"],
-        rights: ["hub", "auction"],
+        rights: ["access-hub", "place-bids"],
       },
       access: "admitted",
     });
@@ -93,8 +93,7 @@ describe("decideHubEntry", () => {
       decideHubEntry({
         kind: "answered",
         identityId,
-        globalRoles: ["member", "public"],
-        rights: ["hub", "auction"],
+        rights: ["access-hub", "place-bids"],
         outcome: "unspecified",
       }),
     ).toEqual({ kind: "unknown-outcome", identityId });

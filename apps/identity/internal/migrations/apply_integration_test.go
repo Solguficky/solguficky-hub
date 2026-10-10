@@ -101,44 +101,45 @@ func TestApplyMigratesLegacyAccessStatus(t *testing.T) {
 	}
 }
 
-// Активная роль-круг у человека одна (ADR-064, пункт 6): вторая активная
-// строка отвергается схемой — и того же круга, и другого. Каждый круг словаря
-// при этом допустим сам по себе.
-func TestActiveRoleCircleIsOnePerIdentity(t *testing.T) {
+// Активный круг у человека один: вторая активная строка отвергается схемой — и
+// того же круга, и другого. Активный набор того же имени тоже один.
+func TestActiveCircleIsOnePerIdentity(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	if err := migrations.Apply(t.Context(), db); err != nil {
 		t.Fatalf("apply migrations: %v", err)
 	}
 
-	for i, role := range []string{maintainerRole, adminRole, circleMember, guestRole} {
+	for i, circle := range []string{circleMember, guestRole} {
 		identityID := uuid.NewString()
 		registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id, username)
-			VALUES ($1, $2, 'roles')`, int64(4001+i))
-		grant := `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+			VALUES ($1, $2, 'circles')`, int64(4001+i))
+		grant := `INSERT INTO identity_circles (id, identity_id, circle, granted_at, granted_by)
 			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`
-		// Гость без права аукциона не попадает в проекцию global_roles, и
-		// снимок role_granted(guest) его не назвал бы: право идёт той же правкой.
-		if role == guestRole {
-			grant = `WITH circle AS (` + grant + `)
-				INSERT INTO identity_rights (id, identity_id, access_right, granted_at)
-				VALUES (gen_random_uuid(), $2, 'auction', now())`
-		}
-		testdb.ExecAnnounced(t, db, identityID, outbox.RoleGranted, role, grant, uuid.NewString(), identityID, role)
+		testdb.ExecAnnounced(t, db, identityID, outbox.Event{Occasion: outbox.CircleChanged}, grant, uuid.NewString(), identityID, circle)
 
 		other := circleMember
-		if role == circleMember {
-			other = adminRole
+		if circle == circleMember {
+			other = guestRole
 		}
-		for _, second := range []string{role, other} {
-			err := execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
+		for _, second := range []string{circle, other} {
+			err := execMigration(t, db, `INSERT INTO identity_circles (id, identity_id, circle, granted_at, granted_by)
 				VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, uuid.NewString(), identityID, second)
 			assertUniqueViolation(t, err)
 		}
 	}
+
+	holder := uuid.NewString()
+	registerProfile(t, db, holder, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 4010)`)
+	presetGrant := `INSERT INTO identity_presets (id, identity_id, preset, granted_at, granted_by) VALUES ($1, $2, 'admin', now(), NULL)`
+	testdb.ExecAnnounced(t, db, holder, outbox.Event{Occasion: outbox.PresetGranted, Preset: adminRole}, presetGrant, uuid.NewString(), holder)
+	assertUniqueViolation(t, execMigration(t, db, presetGrant, uuid.NewString(), holder))
 }
 
-func TestRoleDictionaryRejectsUnknownRole(t *testing.T) {
+// Словари круга, набора и записи закрыты: прежние круги admin и maintainer
+// активной строкой не бывают, неизвестный набор не принимается, а записью
+// выдаются только place_bids и admit_bidders.
+func TestAccessDictionariesRejectUnknownValues(t *testing.T) {
 	t.Parallel()
 	db := testdb.Open(t)
 	if err := migrations.Apply(t.Context(), db); err != nil {
@@ -147,11 +148,20 @@ func TestRoleDictionaryRejectsUnknownRole(t *testing.T) {
 
 	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3621"
 	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id, username)
-		VALUES ($1, 4002, 'roles')`)
+		VALUES ($1, 4002, 'circles')`)
 
-	err := execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3622', $1, 'unknown', TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, identityID)
-	assertCheckViolation(t, err)
+	for _, circle := range []string{"unknown", adminRole, maintainerRole, publicRole} {
+		err := execMigration(t, db, `INSERT INTO identity_circles (id, identity_id, circle, granted_at, granted_by)
+			VALUES ($1, $2, $3, TIMESTAMPTZ '2026-09-01 12:00:00+00', NULL)`, uuid.NewString(), identityID, circle)
+		assertCheckViolation(t, err)
+	}
+	assertCheckViolation(t, execMigration(t, db, `INSERT INTO identity_presets (id, identity_id, preset, granted_at)
+		VALUES ($1, $2, 'owner', now())`, uuid.NewString(), identityID))
+	for _, right := range []string{"access_hub", "manage_members", "manage_meetups", "grant_admins", "hub"} {
+		err := execMigration(t, db, `INSERT INTO identity_rights (id, identity_id, access_right, granted_at)
+			VALUES ($1, $2, $3, now())`, uuid.NewString(), identityID, right)
+		assertCheckViolation(t, err)
+	}
 }
 
 func TestAccessJournalIsAppendOnly(t *testing.T) {
@@ -166,7 +176,7 @@ func TestAccessJournalIsAppendOnly(t *testing.T) {
 		journalID  = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3712"
 	)
 	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9201)`)
-	execMigrationTest(t, db, `INSERT INTO identity_access_journal (id, identity_id, performed_by, action, role, occurred_at)
+	execMigrationTest(t, db, `INSERT INTO identity_access_journal (id, identity_id, performed_by, action, preset, occurred_at)
 		VALUES ($1, $2, NULL, 'grant', 'admin', now())`, journalID, identityID)
 
 	assertPgErrorCode(t, execMigration(t, db,
@@ -194,23 +204,25 @@ func TestBlockedGuardRejectsActiveRoleForBlockedProfile(t *testing.T) {
 	testdb.ExecBypassingShields(t, db, `INSERT INTO profiles (id, telegram_user_id, blocked) VALUES ($1, 9201, true)`, blockedID)
 	registerProfile(t, db, unblockedID, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9202)`)
 
-	const insertRole = `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ($1, $2, 'admin', now(), NULL)`
+	const insertCircle = `INSERT INTO identity_circles (id, identity_id, circle, granted_at, granted_by)
+		VALUES ($1, $2, 'member', now(), NULL)`
 
-	assertPgErrorCode(t, execMigration(t, db, insertRole, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3724", blockedID), "ID003")
+	assertPgErrorCode(t, execMigration(t, db, insertCircle, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3724", blockedID), "ID003")
+	assertPgErrorCode(t, execMigration(t, db, `INSERT INTO identity_presets (id, identity_id, preset, granted_at)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3726', $1, 'admin', now())`, blockedID), "ID003")
 
 	// Отозванная строка щиту не мешает: ограничение держит только активные выдачи.
-	testdb.ExecAnnounced(t, db, blockedID, outbox.RoleRevoked, adminRole,
-		`INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by, revoked_at)
-		VALUES ($1, $2, 'admin', now() - interval '1 day', NULL, now())`, revokedID, blockedID)
+	testdb.ExecAnnounced(t, db, blockedID, outbox.Event{Occasion: outbox.ProfileBlocked},
+		`INSERT INTO identity_circles (id, identity_id, circle, granted_at, granted_by, revoked_at)
+		VALUES ($1, $2, 'member', now() - interval '1 day', NULL, now())`, revokedID, blockedID)
 
 	// Возврат доступа снятием отметки отзыва закрыт тем же щитом.
 	assertPgErrorCode(t, execMigration(t, db,
-		`UPDATE identity_roles SET revoked_at = NULL WHERE id = $1`, revokedID), "ID003")
+		`UPDATE identity_circles SET revoked_at = NULL WHERE id = $1`, revokedID), "ID003")
 
 	// Незаблокированный профиль активную выдачу принимает.
-	testdb.ExecAnnounced(t, db, unblockedID, outbox.RoleGranted, adminRole,
-		insertRole, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3725", unblockedID)
+	testdb.ExecAnnounced(t, db, unblockedID, outbox.Event{Occasion: outbox.CircleChanged},
+		insertCircle, "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3725", unblockedID)
 }
 
 // TestBlockedGuardWaitsForConcurrentBlock проверяет, что щит читает blocked под
@@ -238,14 +250,14 @@ func TestBlockedGuardWaitsForConcurrentBlock(t *testing.T) {
 	if _, err := tx.ExecContext(t.Context(), `UPDATE profiles SET blocked = true WHERE id = $1`, identityID); err != nil {
 		t.Fatalf("block profile: %v", err)
 	}
-	if err := outbox.Append(t.Context(), tx, identityID, outbox.ProfileBlocked, ""); err != nil {
+	if err := outbox.Append(t.Context(), tx, identityID, outbox.Event{Occasion: outbox.ProfileBlocked}); err != nil {
 		t.Fatalf("announce block: %v", err)
 	}
 
 	result := make(chan error, 1)
 	go func() {
-		_, err := db.ExecContext(context.Background(), `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-			VALUES ($1, $2, 'admin', now(), NULL)`, roleID, identityID)
+		_, err := db.ExecContext(context.Background(), `INSERT INTO identity_circles (id, identity_id, circle, granted_at, granted_by)
+			VALUES ($1, $2, 'member', now(), NULL)`, roleID, identityID)
 		result <- err
 	}()
 
@@ -383,7 +395,7 @@ func activeRoleCount(t *testing.T, db *sql.DB, identityID string) int {
 // транзакцией, как это делает сервис: без события профиль не фиксируется.
 func registerProfile(t *testing.T, db *sql.DB, identityID, query string, args ...any) {
 	t.Helper()
-	testdb.ExecAnnounced(t, db, identityID, outbox.ProfileRegistered, "", query, append([]any{identityID}, args...)...)
+	testdb.ExecAnnounced(t, db, identityID, outbox.Event{Occasion: outbox.ProfileRegistered}, query, append([]any{identityID}, args...)...)
 }
 
 // registerLegacyProfile регистрирует профиль на схеме до 014: outbox.Append

@@ -6,46 +6,31 @@ import type { ShownScreen } from "./show.js";
 // Корень дерева и вход в управление. Подпись кнопки раздела совпадает с
 // заголовком экрана, который она открывает.
 
-// Пункты Meetups — создание сходки, скрытые сходки, объявление — решает роль
-// администратора: так их проверяют Meetups и Identity, и вход, который ведёт в
-// отказ, хуже его отсутствия.
-export function isAdministrator(person: {
-  globalRoles: readonly string[];
-}): boolean {
-  return person.globalRoles.includes("admin");
+// Бот показывает и пропускает пункты по праву, которое проверит сервис
+// (RFC-016): вход, который ведёт в отказ, хуже его отсутствия. Круг и набор
+// пунктов не решают. Сходки, скрытые сходки, объявление и аукцион у сходки с
+// каталогом лотов — праву вести сходки; очередь сообщества, состав и каналы —
+// праву управлять составом; очередь аукциона — праву допускать к торгам.
+type Viewer = { rights: readonly AccessRight[] };
+
+export function canManageMeetups(person: Viewer): boolean {
+  return person.rights.includes("manage-meetups");
 }
 
-// Состав и очереди бот показывает по праву, а не по роли (ADR-064, пункт 6):
-// очередь сообщества и состав — праву управлять составом, очередь аукциона —
-// праву модерировать аукцион. Решает всё равно Identity.
-type Viewer = {
-  globalRoles: readonly string[];
-  rights: readonly AccessRight[];
-};
-
-export function canManageMembership(person: Viewer): boolean {
-  return person.rights.includes("manage-membership");
+export function canManageMembers(person: Viewer): boolean {
+  return person.rights.includes("manage-members");
 }
 
-export function canModerateAuction(person: Viewer): boolean {
-  return person.rights.includes("moderate-auction");
-}
-
-// Каталог лотов — право администрировать аукцион (ADR-064, дополнение
-// 2026-10-08): Auction пускает в карточку лота по нему, а не по роли, и
-// вход в форму лота без него вёл бы в отказ.
-export function canManageAuction(person: {
-  rights: readonly AccessRight[];
-}): boolean {
-  return person.rights.includes("manage-auction");
+export function canAdmitBidders(person: Viewer): boolean {
+  return person.rights.includes("admit-bidders");
 }
 
 /** «Управление» видно, если в нём есть хотя бы один пункт для человека. */
 export function canOpenManagement(person: Viewer): boolean {
   return (
-    isAdministrator(person) ||
-    canManageMembership(person) ||
-    canModerateAuction(person)
+    canManageMeetups(person) ||
+    canManageMembers(person) ||
+    canAdmitBidders(person)
   );
 }
 
@@ -82,27 +67,27 @@ export function manageScreen(
   const item = (label: string, data: string) => {
     nextRow(keyboard).text(label, data);
   };
-  if (isAdministrator(person)) {
+  if (canManageMeetups(person)) {
     item("Создать сходку", `v1:manage:new:${newMeetupToken}`);
     item("Скрытые сходки", "v1:manage:hidden");
   }
-  if (canManageMembership(person)) {
+  if (canManageMembers(person)) {
     item("Заявки", "v1:cm:q");
   }
-  if (canModerateAuction(person)) {
+  if (canAdmitBidders(person)) {
     item("Заявки в аукцион", "v1:aq:q");
   }
-  if (canManageMembership(person)) {
+  if (canManageMembers(person)) {
     item("Состав сообщества", "v1:community:list");
     item("Отказанные", "v1:cm:r");
   }
-  if (canModerateAuction(person)) {
+  if (canAdmitBidders(person)) {
     item("Отказанные в аукцион", "v1:aq:r");
   }
-  if (canManageMembership(person)) {
+  if (canManageMembers(person)) {
     item("Каналы прихода", "v1:sc:l");
   }
-  if (isAdministrator(person)) {
+  if (canManageMeetups(person)) {
     item("Объявление сообществу", "v1:bc:c");
   }
   return {

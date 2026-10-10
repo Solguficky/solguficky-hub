@@ -40,26 +40,23 @@ const lotData = (lotId: string) =>
 
 const rub = (minorUnits: number): Money => ({ minorUnits, currency: "RUB" });
 
-// Права, как их выводит Identity: круг `admin` несёт право администрировать
-// аукцион, участник — только права хаба и аукциона. `rights` задаёт тест,
-// которому нужен администратор без каталога — мейнтейнер с управлением.
-function identity(
-  globalRoles: readonly string[],
-  rights: readonly AccessRight[] = globalRoles.includes("admin")
-    ? [
-        "hub",
-        "auction",
-        "manage-membership",
-        "moderate-auction",
-        "manage-auction",
-      ]
-    : ["hub", "auction"],
-) {
+// Права, как их выводит Identity (RFC-016): набор `admin` несёт право вести
+// сходки с каталогом лотов, участник — только права хаба и ставок.
+function identity(holder: "admin" | "member") {
+  const rights: readonly AccessRight[] =
+    holder === "admin"
+      ? [
+          "access-hub",
+          "place-bids",
+          "manage-members",
+          "admit-bidders",
+          "manage-meetups",
+        ]
+      : ["access-hub", "place-bids"];
   return {
     resolve: async () => ({
       kind: "resolved" as const,
       identityId,
-      globalRoles,
       rights,
       blocked: false,
     }),
@@ -201,7 +198,7 @@ function fakeAuction(
 
 // Новый бот над тем же Auction и той же историей чата: так выглядит рестарт.
 function harness(
-  roles: readonly string[],
+  holder: "admin" | "member",
   auction: ReturnType<typeof fakeAuction>,
   calls: RecordedCall[] = [],
   options: {
@@ -211,7 +208,7 @@ function harness(
 ) {
   const telegram = options.telegram ?? fakeTelegramFiles();
   return createHarness(
-    identity(roles),
+    identity(holder),
     createDispatcher(
       undefined,
       undefined,
@@ -405,7 +402,7 @@ const scheduled: LotView = {
 describe("entries into the lot form", () => {
   it("shows the administrator how to add a lot in the feed and how to change one under its card", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(feedData));
@@ -427,7 +424,7 @@ describe("entries into the lot form", () => {
 
   it("shows a member neither entry", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
-    const { bot, calls } = harness(["member", "public"], auction);
+    const { bot, calls } = harness("member", auction);
     await bot.init();
 
     await bot.handleUpdate(press(feedData));
@@ -441,10 +438,10 @@ describe("entries into the lot form", () => {
   it("refuses a form button and an answer of someone who is not an administrator before Auction is asked", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
     // Вопрос остался в чате от администратора; роль с тех пор сняли.
-    const asked = harness(["admin", "public"], auction);
+    const asked = harness("admin", auction);
     await asked.bot.init();
     await asked.bot.handleUpdate(press(`v1:lot:new:${auctionToken}`));
-    const member = harness(["member", "public"], auction);
+    const member = harness("member", auction);
     await member.bot.init();
 
     for (const data of [
@@ -475,7 +472,7 @@ describe("entries into the lot form", () => {
 describe("lot form", () => {
   it("asks only the title, adds the lot to the auction and opens its form with the rest left to fill", async () => {
     const auction = fakeAuction();
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(`v1:lot:new:${auctionToken}`));
@@ -546,7 +543,7 @@ describe("lot form", () => {
     const calls: RecordedCall[] = [];
     // Каждый шаг ведёт новый бот: память процесса между шагами не доживает.
     const next = async (update: (history: RecordedCall[]) => Update) => {
-      const { bot } = harness(["admin", "public"], auction, calls);
+      const { bot } = harness("admin", auction, calls);
       await bot.init();
       await bot.handleUpdate(update(calls));
     };
@@ -597,13 +594,13 @@ describe("lot form", () => {
   it("ignores an answer to a question of the form from anyone but the asked after a restart", async () => {
     const auction = fakeAuction();
     const calls: RecordedCall[] = [];
-    const first = harness(["admin", "public"], auction, calls);
+    const first = harness("admin", auction, calls);
     await first.bot.init();
     await first.bot.handleUpdate(press(`v1:lot:new:${auctionToken}`));
     const shownBefore = shown(calls).length;
 
     // Новый бот знает спрашиваемого только из кнопки вопроса (PER-461).
-    const second = harness(["admin", "public"], auction, calls);
+    const second = harness("admin", auction, calls);
     await second.bot.init();
     await second.bot.handleUpdate(answer(calls, "Чужая ваза", 77));
 
@@ -617,7 +614,7 @@ describe("lot form", () => {
 
   it("answers a price or a step that is not a number with a reason screen and the question again on request, not an exception", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
-    const { bot, calls, records } = harness(["admin", "public"], auction);
+    const { bot, calls, records } = harness("admin", auction);
     await bot.init();
     const lot = uuidToToken(existingLot);
 
@@ -663,7 +660,7 @@ describe("lot form", () => {
 
   it("changes one text of the card and shows the outcome with a way back to the form", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(
@@ -705,7 +702,7 @@ describe("lot form", () => {
         },
       ],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     const lot = uuidToToken(existingLot);
 
@@ -736,7 +733,7 @@ describe("lot form", () => {
       lots: [scheduled],
       schedule: () => ({ kind: "lots-frozen" }),
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(
@@ -759,7 +756,7 @@ describe("lot form", () => {
       add: () =>
         down ? { kind: "timeout", cause: new Error("no answer") } : undefined,
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(`v1:lot:new:${auctionToken}`));
@@ -800,7 +797,7 @@ describe("lot form", () => {
 
   it("returns to the feed of the auction when the title question is cancelled", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(`v1:lot:new:${auctionToken}`));
@@ -815,7 +812,7 @@ describe("lot form", () => {
 
   it("returns to the form of the lot when a field question is cancelled", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(
@@ -829,7 +826,7 @@ describe("lot form", () => {
 
   it("answers a form button of a lot Auction does not know with a refusal and a way to press it again", async () => {
     const auction = fakeAuction();
-    const { bot, calls, records } = harness(["admin", "public"], auction);
+    const { bot, calls, records } = harness("admin", auction);
     await bot.init();
     const pressed = `v1:lot:form:${uuidToToken(existingLot)}`;
 
@@ -870,7 +867,7 @@ describe("lot form photo question", () => {
       update: (history: RecordedCall[]) => Update,
       presentation: "rich" | "plain" = "plain",
     ) => {
-      const { bot } = harness(["admin", "public"], auction, calls, {
+      const { bot } = harness("admin", auction, calls, {
         telegram,
         presentation,
       });
@@ -921,7 +918,7 @@ describe("lot form photo question", () => {
   it("answers a photo above the limit of Auction with the limit on a reason screen, the lot unchanged", async () => {
     const auction = fakeAuction({ lots: [scheduled], imageLimit: 4 });
     const telegram = fakeTelegramFiles({ large: jpeg });
-    const { bot, calls, records } = harness(["admin", "public"], auction, [], {
+    const { bot, calls, records } = harness("admin", auction, [], {
       telegram,
     });
     await bot.init();
@@ -942,7 +939,7 @@ describe("lot form photo question", () => {
 
   it("refuses with a reason screen when text, a document or a sticker comes instead of a photo, without Auction", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
-    const { bot, calls, records } = harness(["admin", "public"], auction);
+    const { bot, calls, records } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
 
@@ -983,7 +980,7 @@ describe("lot form photo question", () => {
   it("refuses an album once on a reason screen and ignores its other photos", async () => {
     const auction = fakeAuction({ lots: [scheduled] });
     const telegram = fakeTelegramFiles({ large: jpeg });
-    const { bot, calls } = harness(["admin", "public"], auction, [], {
+    const { bot, calls } = harness("admin", auction, [], {
       telegram,
     });
     await bot.init();
@@ -1030,12 +1027,9 @@ describe("lot form photo question", () => {
     "refuses with a reason screen and asks again on request when %s, the lot unchanged",
     async (_failure, telegram, category) => {
       const auction = fakeAuction({ lots: [scheduled] });
-      const { bot, calls, records } = harness(
-        ["admin", "public"],
-        auction,
-        [],
-        { telegram },
-      );
+      const { bot, calls, records } = harness("admin", auction, [], {
+        telegram,
+      });
       await bot.init();
       await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
 
@@ -1073,7 +1067,7 @@ describe("lot form photo question", () => {
       ],
     });
     const telegram = fakeTelegramFiles({ large: jpeg });
-    const { bot, calls } = harness(["admin", "public"], auction, [], {
+    const { bot, calls } = harness("admin", auction, [], {
       telegram,
     });
     await bot.init();

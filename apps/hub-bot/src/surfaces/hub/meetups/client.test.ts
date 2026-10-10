@@ -1,7 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
-import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
+import { AccessRight } from "../../../../gen/identity/v1/access_pb.js";
 import {
   MeetupLifecycle,
   MeetupMaterialFileKind,
@@ -17,7 +17,7 @@ import {
 import { createMeetupsAdapter } from "./client.js";
 import type { MeetupSnapshot } from "./port.js";
 
-const person = { identityId: "viewer-id", globalRoles: [], rights: [] };
+const person = { identityId: "viewer-id", rights: [] };
 
 function storedMeetup(version: number): MeetupSnapshot {
   return {
@@ -108,21 +108,20 @@ describe("Meetups client", () => {
     });
     expect(listVisibleMeetups).toHaveBeenCalledWith(
       {
-        viewer: { identityId: "viewer-id", globalRoles: [] },
+        viewer: { identityId: "viewer-id", rights: [] },
       },
       { timeoutMs: 3_000, headers: { "x-request-id": "request-1" } },
     );
   });
 
-  it("passes every known role through and sends an unknown name as unspecified", async () => {
+  it("passes the viewer's rights to Meetups as Identity derived them", async () => {
     const listVisibleMeetups = vi.fn(async () =>
       create(ListVisibleMeetupsResponseSchema, { meetups: [] }),
     );
     const meetups = createMeetupsAdapter(rpcWithList(listVisibleMeetups));
     const viewer = {
       identityId: "viewer-id",
-      globalRoles: ["maintainer", "admin", "member", "public", "owner"],
-      rights: [],
+      rights: ["access-hub", "place-bids", "manage-meetups"] as const,
     };
 
     await meetups.listVisible(viewer, { requestId: "request-1" });
@@ -131,12 +130,10 @@ describe("Meetups client", () => {
       {
         viewer: {
           identityId: "viewer-id",
-          globalRoles: [
-            GlobalRole.MAINTAINER,
-            GlobalRole.ADMIN,
-            GlobalRole.MEMBER,
-            GlobalRole.GUEST,
-            GlobalRole.UNSPECIFIED,
+          rights: [
+            AccessRight.ACCESS_HUB,
+            AccessRight.PLACE_BIDS,
+            AccessRight.MANAGE_MEETUPS,
           ],
         },
       },
@@ -156,7 +153,7 @@ describe("Meetups client", () => {
     });
     expect(listVisibleMeetups).toHaveBeenCalledWith(
       {
-        viewer: { identityId: "viewer-id", globalRoles: [] },
+        viewer: { identityId: "viewer-id", rights: [] },
       },
       {
         timeoutMs: 3_000,
@@ -174,7 +171,7 @@ describe("Meetups client", () => {
     await meetups.listVisible(person, { requestId: "request-1" });
     expect(listVisibleMeetups).toHaveBeenCalledWith(
       {
-        viewer: { identityId: "viewer-id", globalRoles: [] },
+        viewer: { identityId: "viewer-id", rights: [] },
       },
       { timeoutMs: 3_000, headers: { "x-request-id": "request-1" } },
     );
@@ -522,7 +519,7 @@ describe("Meetups client", () => {
 
     expect(rpc.attachMaterial).toHaveBeenCalledWith(
       {
-        viewer: { identityId: "viewer-id", globalRoles: [] },
+        viewer: { identityId: "viewer-id", rights: [] },
         id: "meetup-id",
         materialId: "material-id",
         title: "Афиша",
@@ -536,7 +533,7 @@ describe("Meetups client", () => {
     );
     expect(rpc.removeMaterial).toHaveBeenCalledWith(
       {
-        viewer: { identityId: "viewer-id", globalRoles: [] },
+        viewer: { identityId: "viewer-id", rights: [] },
         id: "meetup-id",
         materialId: "material-id",
         expectedVersion: 5n,
@@ -597,7 +594,7 @@ describe("Meetups client", () => {
       ],
     });
     expect(rpc.listArchivedMeetups).toHaveBeenCalledWith(
-      { viewer: { identityId: "viewer-id", globalRoles: [] } },
+      { viewer: { identityId: "viewer-id", rights: [] } },
       { timeoutMs: 3_000 },
     );
   });
@@ -619,7 +616,7 @@ describe("Meetups client", () => {
     ).resolves.toMatchObject({ kind: "ok", meetup: { lifecycle: "held" } });
     expect(rpc.markMeetupHeld).toHaveBeenCalledWith(
       {
-        viewer: { identityId: "viewer-id", globalRoles: [] },
+        viewer: { identityId: "viewer-id", rights: [] },
         id: "meetup-id",
         expectedVersion: 2n,
       },

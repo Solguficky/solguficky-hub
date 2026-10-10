@@ -13,7 +13,7 @@ import {
 type Wire = ReturnType<typeof openBotWire>;
 type Direct = ReturnType<typeof openDirectClients>;
 
-/** Администратор с настоящей ролью, уже открывший бота. */
+/** Администратор с настоящим набором `admin`, уже открывший бота. */
 export async function organizerAtStart(wire: Wire, direct: Direct) {
   const telegramUserId = freshTelegramUserId();
   const adminId = await direct.grantAdmin(telegramUserId);
@@ -24,7 +24,7 @@ export async function organizerAtStart(wire: Wire, direct: Direct) {
 
 /**
  * Солегуфик из сценария среза: ник заранее внесён администратором в
- * whitelist, и роль `member` он получит на своём первом `/start`.
+ * whitelist, и круг `member` он получит на своём первом `/start`.
  */
 export async function memberAllowedBy(
   wire: Wire,

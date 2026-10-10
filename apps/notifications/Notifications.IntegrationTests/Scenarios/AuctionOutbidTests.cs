@@ -22,7 +22,7 @@ public class AuctionOutbidTests
     {
         using var db = Database();
         await using var nats = await NatsUnderTest.Start();
-        var recipient = await Person(db, circle == "member" ? MemberCircle : GuestCircle);
+        var recipient = await Person(db, circle == "member" ? MemberHolding : GuestHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
 
         await nats.Publish(AuctionFeed.BidPlacedSubject,

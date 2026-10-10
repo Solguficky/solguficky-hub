@@ -113,8 +113,8 @@ module Api =
         match error with
         | PublishMeetupError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | PublishMeetupError.Forbidden NotAnAdministrator ->
-            Status(StatusCode.PermissionDenied, "an administrator role is required")
+        | PublishMeetupError.Forbidden CannotManageMeetups ->
+            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
         | PublishMeetupError.Domain MeetupNotFound
         | PublishMeetupError.Domain DraftBelongsToAnotherAuthor -> Status(StatusCode.NotFound, "meetup not found")
         // Единственный срез, который решает переход к публикации, поэтому единственный,

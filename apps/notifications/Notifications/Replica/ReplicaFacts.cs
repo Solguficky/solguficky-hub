@@ -103,15 +103,16 @@ public sealed record ScheduleColumns(
 }
 
 /// <summary>Факт о допуске человека из Identity.</summary>
-/// <param name="Role">
-/// Активная роль-круг именем; <c>null</c> — круга нет: человек не допущен или
-/// заблокирован.
+/// <param name="Circle">
+/// Круг именем — <c>member</c> или <c>guest</c>; <c>null</c> — круга нет:
+/// человек не допущен или заблокирован. Круг решает только бот доставки.
 /// </param>
+/// <param name="Presets">Наборы именами. Адресация их не читает: права приходят в <paramref name="Rights" />.</param>
 /// <param name="Rights">
-/// Права, которые вывел Identity, именами. Реплика пишет их как есть: из роли
-/// права не выводятся (ADR-064, пункт 6).
+/// Права, которые вывел Identity, именами. Реплика пишет их как есть: из круга
+/// и наборов права не выводятся (RFC-016).
 /// </param>
-/// <param name="OccasionRole">Выданная роль у <c>role_granted</c>; у остальных поводов пусто.</param>
+/// <param name="OccasionPreset">Выданный набор у <c>preset_granted</c>; у остальных поводов пусто.</param>
 /// <param name="OccasionQueue">Очередь заявки у заявки и допуска; у остальных поводов пусто.</param>
 /// <param name="OccasionRight">Выданное право у <c>right_granted</c>; у остальных поводов пусто.</param>
 public sealed record IdentityFact(
@@ -119,11 +120,12 @@ public sealed record IdentityFact(
     Guid IdentityId,
     long Version,
     DateTimeOffset OccurredAt,
-    string? Role,
+    string? Circle,
+    IReadOnlyList<string> Presets,
     IReadOnlyList<string> Rights,
     bool Blocked,
     IdentityOccasion Occasion = IdentityOccasion.Other,
-    string? OccasionRole = null,
+    string? OccasionPreset = null,
     AccessQueue? OccasionQueue = null,
     string? OccasionRight = null) : ReplicaEvent(EventId, IdentityId, Version, OccurredAt)
 {
@@ -134,11 +136,11 @@ public sealed record IdentityFact(
 /// Повод события Identity, сведённый к тому, что различает адресные факты.
 /// </summary>
 /// <remarks>
-/// Своего типа факта удостоены заявка, допуск по ней и выдача роли <c>admin</c>
-/// (PER-468). Выдача других ролей, выдача права и блокировка различаются
+/// Своего типа факта удостоены заявка, допуск по ней и выдача набора
+/// <c>admin</c> (PER-468). Смена круга, выдача права и блокировка различаются
 /// потому, что закрывают заявку и снимают неотправленный факт о ней. Остальные
-/// поводы, включая отзыв права и неизвестные этому потребителю, только двигают
-/// реплику.
+/// поводы, включая отзыв права или набора и неизвестные этому потребителю,
+/// только двигают реплику.
 /// </remarks>
 public enum IdentityOccasion
 {
@@ -150,10 +152,13 @@ public enum IdentityOccasion
     /// <summary><c>application_admitted</c>: модератор очереди допустил по заявке.</summary>
     ApplicationAdmitted,
 
-    /// <summary><c>role_granted</c>: роль стала активной.</summary>
-    RoleGranted,
+    /// <summary><c>circle_changed</c>: человек получил круг или сменил его.</summary>
+    CircleChanged,
 
-    /// <summary><c>right_granted</c>: право выдано отдельно от круга.</summary>
+    /// <summary><c>preset_granted</c>: выдан набор.</summary>
+    PresetGranted,
+
+    /// <summary><c>right_granted</c>: право выдано поштучной записью.</summary>
     RightGranted,
 
     /// <summary><c>profile_blocked</c>: человек заблокирован.</summary>
@@ -166,7 +171,7 @@ public enum AccessQueue
     /// <summary>Заявка в сообщество: допуск выдаёт круг <c>member</c>.</summary>
     Community,
 
-    /// <summary>Заявка на право <c>auction</c>.</summary>
+    /// <summary>Заявка на право <c>place_bids</c>.</summary>
     Auction,
 }
 

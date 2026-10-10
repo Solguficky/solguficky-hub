@@ -300,7 +300,7 @@ func logRPC(ctx context.Context, log *slog.Logger, method string, start time.Tim
 // идентификатор есть только в ответе. У ResolveTelegramUserId он приходит в
 // запросе, а ответ несёт Telegram user id, которому в логе не место; запрос
 // читается и на отказе, чтобы NOT_FOUND и FAILED_PRECONDITION связывались с
-// профилем. CheckGlobalRole читается так же: его отказ NOT_FOUND должен
+// профилем. CheckAccessRight читается так же: его отказ NOT_FOUND должен
 // называть профиль, а ответ несёт только вердикт. ResolveOrganizerUsername
 // называет автора по запросу: его ответ несёт ник, которому в логе не место.
 // Строка из запроса — ввод вызывающего, поэтому в запись идёт только
@@ -313,7 +313,7 @@ func loggedIdentityID(req, resp any) string {
 	switch lookup := req.(type) {
 	case *identityv1.ResolveTelegramUserIdRequest:
 		raw = lookup.GetIdentityId()
-	case *identityv1.CheckGlobalRoleRequest:
+	case *identityv1.CheckAccessRightRequest:
 		raw = lookup.GetIdentityId()
 	case *identityv1.ResolveOrganizerUsernameRequest:
 		raw = lookup.GetIdentityId()

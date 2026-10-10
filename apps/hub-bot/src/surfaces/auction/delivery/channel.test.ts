@@ -94,7 +94,7 @@ function channel(
     journal,
     recipients,
     render: createRenderMessage(
-      { hasAuctionRight: async () => true, lotTitle: async () => "Кружка" },
+      { holdsPlaceBids: async () => true, lotTitle: async () => "Кружка" },
       () => {},
     ),
     sender: createNotificationSender({ sendMessage } as never),

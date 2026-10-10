@@ -18,12 +18,12 @@ type MeetupBoundaryTests() =
 
     let administrator () =
         let viewer = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000a")
-        viewer.GlobalRoles.Add Identity.V1.GlobalRole.Admin
+        viewer.Rights.Add Identity.V1.AccessRight.ManageMeetups
         viewer
 
     let otherAdministrator () =
         let viewer = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000b")
-        viewer.GlobalRoles.Add Identity.V1.GlobalRole.Admin
+        viewer.Rights.Add Identity.V1.AccessRight.ManageMeetups
         viewer
 
     let ordinary () = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000c")

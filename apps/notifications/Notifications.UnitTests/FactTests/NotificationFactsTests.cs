@@ -182,7 +182,7 @@ public class NotificationFactsTests
 
     [Fact]
     public void HubRight_IsTheRightOfTheHub() =>
-        NotificationFacts.HubRight.ShouldBe("hub");
+        NotificationFacts.HubRight.ShouldBe("access_hub");
 
     /// <summary>
     /// Повод напоминания — задание, а не событие: ссылка на него, карточка на
@@ -245,10 +245,10 @@ public class NotificationFactsTests
     }
 
     [Fact]
-    public void AccessRequested_Application_CarriesCircleAndIdentityEventButNotTheApplicant()
+    public void AccessRequested_Application_CarriesQueueAndIdentityEventButNotTheApplicant()
     {
         var applicant = EventFactory.NewId();
-        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Application(applicant, version: 2, Identity.V1.GlobalRole.Guest)))
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Application(applicant, version: 2, Identity.V1.Circle.Guest)))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
 
         var notification = NotificationFacts.AccessRequested(NotificationId, RecipientId, fact, Now, NotAfter);
@@ -256,7 +256,7 @@ public class NotificationFactsTests
         notification.RecipientId.ShouldBe(RecipientId.ToString());
         notification.Cause.IdentityEventId.ShouldBe(fact.EventId.ToString());
         notification.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessRequested);
-        notification.AccessRequested.Circle.ShouldBe(Identity.V1.GlobalRole.Guest);
+        notification.AccessRequested.Queue.ShouldBe(Identity.V1.ApplicationQueue.Auction);
         notification.NotAfter.ShouldBe(NotificationFacts.Instant(NotAfter));
         notification.HasRequestId.ShouldBeFalse();
         // Кто просит — данные модератора: заявителя нет нигде в сообщении.
@@ -273,10 +273,10 @@ public class NotificationFactsTests
     }
 
     [Fact]
-    public void AccessGranted_Admission_AddressesTheApplicantWithCircle()
+    public void AccessGranted_Admission_AddressesTheApplicantWithQueue()
     {
         var applicant = EventFactory.NewId();
-        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Admission(applicant, version: 4, Identity.V1.GlobalRole.Guest)))
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Admission(applicant, version: 4, Identity.V1.Circle.Guest)))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
 
         var notification = NotificationFacts.AccessGranted(NotificationId, fact, Now, NotAfter);
@@ -284,7 +284,7 @@ public class NotificationFactsTests
         notification.RecipientId.ShouldBe(applicant);
         notification.Cause.IdentityEventId.ShouldBe(fact.EventId.ToString());
         notification.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessGranted);
-        notification.AccessGranted.Circle.ShouldBe(Identity.V1.GlobalRole.Guest);
+        notification.AccessGranted.Queue.ShouldBe(Identity.V1.ApplicationQueue.Auction);
         notification.NotAfter.ShouldBe(NotificationFacts.Instant(NotAfter));
         notification.HasRequestId.ShouldBeFalse();
     }
@@ -292,7 +292,7 @@ public class NotificationFactsTests
     [Fact]
     public void AccessGranted_OtherOccasion_Throws()
     {
-        // Выдача роли допуском по заявке не является: её даёт и белый список.
+        // Смена круга допуском по заявке не является: её даёт и белый список.
         var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Identity(EventFactory.NewId(), version: 2)))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
 
@@ -300,44 +300,53 @@ public class NotificationFactsTests
     }
 
     [Fact]
-    public void RoleGranted_AdminGrant_AddressesThePersonWithRole()
+    public void PresetGranted_AdminGrant_AddressesThePersonWithPreset()
     {
         var person = EventFactory.NewId();
-        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.RoleGrant(person, version: 3, Identity.V1.GlobalRole.Admin)))
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.PresetGrant(person, version: 3, Identity.V1.Preset.Admin)))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
 
-        var notification = NotificationFacts.RoleGranted(NotificationId, fact, Now, NotAfter);
+        var notification = NotificationFacts.PresetGranted(NotificationId, fact, Now, NotAfter);
 
         notification.NotificationId.ShouldBe(NotificationId.ToString());
         notification.RecipientId.ShouldBe(person);
         notification.CreatedAt.ShouldBe("2026-09-25T10:15:30Z");
         notification.Cause.IdentityEventId.ShouldBe(fact.EventId.ToString());
-        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.RoleGranted);
-        notification.RoleGranted.Role.ShouldBe(Identity.V1.GlobalRole.Admin);
+        notification.TypeCase.ShouldBe(Notification.TypeOneofCase.PresetGranted);
+        notification.PresetGranted.Preset.ShouldBe(Identity.V1.Preset.Admin);
         notification.NotAfter.ShouldBe(NotificationFacts.Instant(NotAfter));
         notification.HasRequestId.ShouldBeFalse();
     }
 
-    [Theory]
-    [InlineData(Identity.V1.GlobalRole.Maintainer)]
-    [InlineData(Identity.V1.GlobalRole.Member)]
-    [InlineData(Identity.V1.GlobalRole.Guest)]
-    public void RoleGranted_OtherRole_Throws(Identity.V1.GlobalRole role)
+    [Fact]
+    public void PresetGranted_MaintainerGrant_Throws()
     {
-        // Выдачу круга дают и белый список, и вложенность: о ней не пишут.
-        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.RoleGrant(EventFactory.NewId(), version: 3, role)))
+        // Набор maintainer выдаёт только общий секрет: о нём не пишут.
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.PresetGrant(EventFactory.NewId(), version: 3, Identity.V1.Preset.Maintainer)))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
 
-        Should.Throw<ArgumentException>(() => NotificationFacts.RoleGranted(NotificationId, fact, Now, NotAfter));
+        Should.Throw<ArgumentException>(() => NotificationFacts.PresetGranted(NotificationId, fact, Now, NotAfter));
+    }
+
+    [Theory]
+    [InlineData(Identity.V1.Circle.Member)]
+    [InlineData(Identity.V1.Circle.Guest)]
+    public void PresetGranted_CircleChange_Throws(Identity.V1.Circle circle)
+    {
+        // Смену круга дают и белый список, и допуск: о ней пишет не этот факт.
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.CircleChange(EventFactory.NewId(), version: 3, circle)))
+            .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
+
+        Should.Throw<ArgumentException>(() => NotificationFacts.PresetGranted(NotificationId, fact, Now, NotAfter));
     }
 
     [Fact]
-    public void RoleGranted_OtherOccasion_Throws()
+    public void PresetGranted_OtherOccasion_Throws()
     {
-        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Admission(EventFactory.NewId(), version: 4, Identity.V1.GlobalRole.Member)))
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Admission(EventFactory.NewId(), version: 4, Identity.V1.Circle.Member)))
             .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
 
-        Should.Throw<ArgumentException>(() => NotificationFacts.RoleGranted(NotificationId, fact, Now, NotAfter));
+        Should.Throw<ArgumentException>(() => NotificationFacts.PresetGranted(NotificationId, fact, Now, NotAfter));
     }
 
     private static MeetupFact Decode(Meetups.V1.MeetupEvent message) =>

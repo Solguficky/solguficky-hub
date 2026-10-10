@@ -39,8 +39,7 @@ import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
 import com.google.protobuf.ByteString
-import identity.v1.roles.AccessRight as AccessRightMessage
-import identity.v1.roles.GlobalRole as GlobalRoleMessage
+import identity.v1.access.AccessRight as AccessRightMessage
 import org.scalatest.EitherValues
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -62,7 +61,7 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
       command.bid.amount shouldBe Money(150, CurrencyCode("RUB"))
       command.bid.opId.value shouldBe UUID.fromString(op)
       command.bid.source shouldBe BidSource.Bot
-      command.acting.viewer.rights shouldBe Set(AccessRight.Auction)
+      command.acting.viewer.rights shouldBe Set(AccessRight.PlaceBids)
     }
 
     "names viewer as the invalid field when the request has no viewer" in {
@@ -88,28 +87,22 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
       val unknown = viewer.withRights(
         Seq(
           AccessRightMessage.ACCESS_RIGHT_UNSPECIFIED,
-          AccessRightMessage.ACCESS_RIGHT_AUCTION,
+          AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS,
           AccessRightMessage.Unrecognized(9)
         )
       )
-      RequestMapping.acting(Some(unknown)).value.viewer.rights shouldBe Set(AccessRight.Auction)
-    }
-
-    "reads rights alone and ignores the roles the caller still sends" in {
-      val roleOnly = viewer.clearRights.withGlobalRoles(
-        Seq(GlobalRoleMessage.GLOBAL_ROLE_ADMIN, GlobalRoleMessage.GLOBAL_ROLE_GUEST, GlobalRoleMessage.Unrecognized(9))
-      )
-      RequestMapping.acting(Some(roleOnly)).value.viewer.rights shouldBe empty
+      RequestMapping.acting(Some(unknown)).value.viewer.rights shouldBe Set(AccessRight.PlaceBids)
     }
 
     "keeps every known right of the viewer" in {
       val all = viewer.withRights(
         Seq(
-          AccessRightMessage.ACCESS_RIGHT_HUB,
-          AccessRightMessage.ACCESS_RIGHT_AUCTION,
-          AccessRightMessage.ACCESS_RIGHT_MANAGE_MEMBERSHIP,
-          AccessRightMessage.ACCESS_RIGHT_MODERATE_AUCTION,
-          AccessRightMessage.ACCESS_RIGHT_MANAGE_AUCTION
+          AccessRightMessage.ACCESS_RIGHT_ACCESS_HUB,
+          AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS,
+          AccessRightMessage.ACCESS_RIGHT_MANAGE_MEMBERS,
+          AccessRightMessage.ACCESS_RIGHT_ADMIT_BIDDERS,
+          AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS,
+          AccessRightMessage.ACCESS_RIGHT_GRANT_ADMINS
         )
       )
       RequestMapping.acting(Some(all)).value.viewer.rights shouldBe AccessRight.values.toSet
@@ -364,7 +357,7 @@ object RequestMappingSpec {
   val op = "01890a5d-ac98-7aaa-8bbb-cccccccccccc"
   val meetupId = "0190a0e0-0000-7000-8000-000000000001"
 
-  val viewer: ViewerMessage = ViewerMessage(identity, rights = Seq(AccessRightMessage.ACCESS_RIGHT_AUCTION))
+  val viewer: ViewerMessage = ViewerMessage(identity, rights = Seq(AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS))
 
   val validBid: PlaceBidRequest = PlaceBidRequest(Some(viewer), lot, Some(MoneyMessage(150, "RUB")), op)
 

@@ -31,11 +31,11 @@ func (s identityService) ResolveTelegramUserId(ctx context.Context, req *identit
 	err = s.db.QueryRowContext(ctx, selectTelegramUserIDSQL, identityID).Scan(&telegramUserID, &blocked)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return nil, roleStatus(errProfileNotFound)
+		return nil, accessStatus(errProfileNotFound)
 	case err != nil:
 		return nil, internal("select telegram user id", err)
 	case blocked:
-		return nil, roleStatus(errProfileBlocked)
+		return nil, accessStatus(errProfileBlocked)
 	}
 	return &identityv1.ResolveTelegramUserIdResponse{TelegramUserId: telegramUserID}, nil
 }

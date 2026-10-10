@@ -4,8 +4,7 @@ import { createMeetupMaterials } from "./meetup-materials.js";
 
 const person = {
   identityId: "person-id",
-  globalRoles: ["admin"],
-  rights: ["hub", "auction"] as const,
+  rights: ["access-hub", "place-bids"] as const,
 };
 const meetup: MeetupSnapshot = {
   id: "meetup-id",

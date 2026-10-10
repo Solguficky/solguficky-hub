@@ -98,7 +98,7 @@ async function eventually(
 describe("auction through both bots", () => {
   it("lets the admin, a member and an admitted guest act with their rights and refuses a guest without the auction right", async () => {
     // Администратор заводит сходку с аукционом и лот: каталог лотов открывает
-    // право `manage_auction`, которое уходит в Auction в смотрящем.
+    // право `manage_meetups`, которое уходит в Auction в смотрящем.
     const { adminId, person: admin } = await organizerAtStart(hub, direct);
     const title = titleFor("Аукцион", freshTelegramUserId());
     // Название лота своё на прогон: гость находит лот по нему, а не по цене,
@@ -189,7 +189,9 @@ describe("auction through both bots", () => {
     await guest.says("/start");
     await admin.says("/menu");
     await admin.presses("Управление");
-    await admin.presses("Заявки");
+    // Заявка гостя лежит в очереди аукциона, отдельной от очереди сообщества
+    // (дополнение ADR-064 к пункту 12).
+    await admin.presses("Заявки в аукцион");
     // Очередь отдаётся от старой заявки к новой, а карточка показывает одну:
     // заявки прошлых прогонов администратор пропускает.
     for (let skipped = 0; skipped < 20; skipped += 1) {

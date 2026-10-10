@@ -4,138 +4,90 @@ package server
 
 import (
 	"database/sql"
-	"slices"
 	"testing"
 	"time"
 
-	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"github.com/google/uuid"
 )
 
-// Критерий приёмки PER-526: после любого из трёх путей выдачи у человека одна
-// активная роль-круг. Каждый путь начинает с гостя, чтобы выдача была заменой
-// круга, а не первой строкой.
+// После любого пути выдачи у человека одна активная строка круга. Каждый путь
+// начинает с гостя, чтобы выдача была заменой круга, а не первой строкой, а
+// набор круга не меняет: держатель набора остаётся участником.
 func TestEveryGrantPathLeavesOneActiveCircle(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 
 	// Белый список: запись хаба поверх гостя.
 	listed := resolveInternal(t, svc, 9901, "listed")
-	mustChange(t)(svc.grantRole(t.Context(), listed, roleGuest, uuid.NullUUID{}))
-	mustChange(t)(svc.addAllowedUsername(t.Context(), "listed", roleMember, uuid.NullUUID{}))
+	mustChange(t)(svc.grantCircle(t.Context(), listed, circleGuest, uuid.NullUUID{}))
+	mustChange(t)(svc.addAllowedUsername(t.Context(), "listed", circleMember, uuid.NullUUID{}))
 	resolveInternal(t, svc, 9901, "listed")
-	assertActiveCircle(t, db, listed, roleMember)
+	assertActiveCircle(t, db, listed, circleMember)
 
-	// Допуск по заявке на member.
-	adminID := seedProfile(t, db, 9902)
+	// Допуск по заявке в очередь сообщества.
+	adminID := seedAdmin(t, svc, db, 9902)
 	applicant := seedProfile(t, db, 9903)
-	mustChange(t)(svc.grantRole(t.Context(), applicant, roleGuest, uuid.NullUUID{}))
-	decide(t, svc.AdmitApplication, adminID, seedApplication(t, db, applicant, roleMember, time.Now()))
-	assertActiveCircle(t, db, applicant, roleMember)
+	mustChange(t)(svc.grantCircle(t.Context(), applicant, circleGuest, uuid.NullUUID{}))
+	decide(t, svc.AdmitApplication, adminID, seedApplication(t, db, applicant, queueCommunity, time.Now()))
+	assertActiveCircle(t, db, applicant, circleMember)
 
-	// GrantAdminRole поверх участника: тот же вызов, что делает метод после
-	// проверки секрета.
-	member := seedProfile(t, db, 9904)
-	mustChange(t)(svc.grantHubAdmission(t.Context(), member, uuid.NullUUID{}))
-	mustChange(t)(svc.grantRole(t.Context(), member, roleAdmin, maintainerActor()))
-	assertActiveCircle(t, db, member, roleAdmin)
+	// Набор общим секретом поверх гостя: тот же вызов, что делает GrantPreset
+	// после проверки секрета.
+	guest := seedProfile(t, db, 9904)
+	mustChange(t)(svc.grantCircle(t.Context(), guest, circleGuest, uuid.NullUUID{}))
+	mustChange(t)(svc.grantPreset(t.Context(), guest, presetAdmin, maintainerActor()))
+	assertActiveCircle(t, db, guest, circleMember)
 
-	// Снимок outbox несёт круг и права после выдачи — те же, что ответ.
-	circle, rights := lastSnapshot(t, db, member)
-	if circle != roleAdmin || rights != "auction,hub,manage_auction,manage_membership,moderate_auction" {
-		t.Fatalf("admin snapshot: circle=%q rights=%q", circle, rights)
+	// Снимок outbox несёт круг, права и наборы после выдачи — те же, что ответ.
+	circle, rights, presets := lastSnapshot(t, db, guest)
+	if circle != circleMember || rights != "access_hub,admit_bidders,manage_meetups,manage_members,place_bids" || presets != "admin" {
+		t.Fatalf("admin snapshot: circle=%q rights=%q presets=%q", circle, rights, presets)
 	}
-	circle, rights = lastSnapshot(t, db, applicant)
-	if circle != roleMember || rights != "auction,hub" {
-		t.Fatalf("member snapshot: circle=%q rights=%q", circle, rights)
+	circle, rights, presets = lastSnapshot(t, db, applicant)
+	if circle != circleMember || rights != "access_hub,place_bids" || presets != "" {
+		t.Fatalf("member snapshot: circle=%q rights=%q presets=%q", circle, rights, presets)
 	}
 }
 
-// Администратор, ставший мейнтейнером, сохраняет управление составом и
-// модерацию аукциона записями: право назначать администраторов даёт ему круг
-// maintainer, а админские экраны ботов — admin в проекции (решение владельца
-// по PER-526). Тот же переход делает перенос 014.
-func TestMaintainerGrantToAdminKeepsManagementAsGrantedRights(t *testing.T) {
+// Права друг друга не подразумевают: набор maintainer без набора admin не
+// даёт ни сходок, ни состава, а набор admin — права назначать администраторов
+// (С-1 выражается двумя наборами).
+func TestPresetsCarryOnlyTheirOwnRights(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	identityID := seedProfile(t, db, 9911)
-	mustChange(t)(svc.grantRole(t.Context(), identityID, roleAdmin, maintainerActor()))
-	mustChange(t)(svc.grantRole(t.Context(), identityID, roleMaintainer, maintainerActor()))
+	maintainer := seedProfile(t, db, 9911)
+	mustChange(t)(svc.grantPreset(t.Context(), maintainer, presetMaintainer, maintainerActor()))
+	assertRights(t, svc, maintainer, rightAccessHub, rightGrantAdmins, rightPlaceBids)
 
-	assertActiveCircle(t, db, identityID, roleMaintainer)
-	state, err := readAccess(t.Context(), db, identityID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if state.role != identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER || len(state.rights) != 4 {
-		t.Fatalf("maintainer from admin: role=%v rights=%v", state.role, state.rights)
-	}
-	if !slices.Contains(state.globalRoles, identityv1.GlobalRole_GLOBAL_ROLE_ADMIN) {
-		t.Fatalf("global_roles %v lost admin", state.globalRoles)
-	}
-
-	// Мейнтейнер без выданного управления — участник по правам.
-	plain := seedProfile(t, db, 9912)
-	mustChange(t)(svc.grantRole(t.Context(), plain, roleMaintainer, maintainerActor()))
-	state, err = readAccess(t.Context(), db, plain)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(state.rights) != 2 || slices.Contains(state.globalRoles, identityv1.GlobalRole_GLOBAL_ROLE_ADMIN) {
-		t.Fatalf("plain maintainer: rights=%v global_roles=%v", state.rights, state.globalRoles)
-	}
+	admin := seedProfile(t, db, 9912)
+	mustChange(t)(svc.grantPreset(t.Context(), admin, presetAdmin, maintainerActor()))
+	assertRights(t, svc, admin, rightAccessHub, rightAdmitBidders, rightManageMeetups, rightManageMembers, rightPlaceBids)
 }
 
-func lastSnapshot(t *testing.T, db *sql.DB, identityID string) (string, string) {
+func lastSnapshot(t *testing.T, db *sql.DB, identityID string) (string, string, string) {
 	t.Helper()
 	var circle sql.NullString
-	var rights string
+	var rights, presets string
 	if err := db.QueryRowContext(t.Context(), `
-		SELECT circle, array_to_string(rights, ',') FROM identity_outbox
-		WHERE identity_id = $1 ORDER BY version DESC LIMIT 1`, identityID).Scan(&circle, &rights); err != nil {
+		SELECT circle, array_to_string(rights, ','), array_to_string(presets, ',') FROM identity_outbox
+		WHERE identity_id = $1 ORDER BY version DESC LIMIT 1`, identityID).Scan(&circle, &rights, &presets); err != nil {
 		t.Fatal(err)
 	}
-	return circle.String, rights
+	return circle.String, rights, presets
 }
 
-// Права управления живут, пока человек в круге admin или maintainer: снятый
-// мейнтейнер, бывший администратором, не сохраняет admin в проекции, а
-// администратор после цепочки admin → maintainer → admin снимается обычным
-// отзывом. GrantAdminRole мейнтейнеру круг не отнимает, а выдаёт права
-// управления; RevokeAdminRole их снимает.
-func TestManagementRightsLeaveWithAdminAndMaintainerCircles(t *testing.T) {
+// Набор admin несёт admit_bidders сам: выданная участнику запись снимается при
+// выдаче набора, и снятый администратор возвращается участником без неё.
+func TestAdminPresetReplacesAdmitBiddersRecord(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	system := maintainerActor()
+	manager := seedAdmin(t, svc, db, 9921)
+	member := seedMember(t, svc, db, 9922)
+	changeMember(t, svc.GrantAuctionModeration, manager, member, true)
 
-	chain := seedProfile(t, db, 9921)
-	mustChange(t)(svc.grantRole(t.Context(), chain, roleAdmin, system))
-	mustChange(t)(svc.grantRole(t.Context(), chain, roleMaintainer, system))
-	mustNotChange(t)(svc.grantRole(t.Context(), chain, roleAdmin, system))
-	mustChange(t)(svc.revokeRole(t.Context(), chain, roleAdmin, system))
-	assertActiveCircle(t, db, chain, roleMaintainer)
-	assertAccess(t, db, chain, "auction,hub", false)
-	mustChange(t)(svc.grantRole(t.Context(), chain, roleAdmin, system))
-	assertActiveCircle(t, db, chain, roleMaintainer)
-	assertAccess(t, db, chain, "auction,hub,manage_membership,moderate_auction", true)
-	mustChange(t)(svc.revokeRole(t.Context(), chain, roleMaintainer, system))
-	assertActiveCircle(t, db, chain, roleMember)
-	assertAccess(t, db, chain, "auction,hub", false)
-	if got := activeRightCountInternal(t, db, chain); got != 0 {
-		t.Fatalf("management records after maintainer revoke: %d active", got)
-	}
-}
-
-func assertAccess(t *testing.T, db *sql.DB, identityID, rights string, admin bool) {
-	t.Helper()
-	var got string
-	var hasAdmin bool
-	if err := db.QueryRowContext(t.Context(), `
-		SELECT array_to_string(identity_access_rights($1), ','), 'admin' = ANY (identity_global_roles($1))`,
-		identityID).Scan(&got, &hasAdmin); err != nil {
-		t.Fatal(err)
-	}
-	if got != rights || hasAdmin != admin {
-		t.Fatalf("access of %s: rights=%q admin=%t, want %q %t", identityID, got, hasAdmin, rights, admin)
-	}
+	mustChange(t)(svc.grantPreset(t.Context(), member, presetAdmin, maintainerActor()))
+	assertActiveRights(t, db, member)
+	mustChange(t)(svc.revokePreset(t.Context(), member, presetAdmin, maintainerActor()))
+	assertActiveCircle(t, db, member, circleMember)
+	assertRights(t, svc, member, rightAccessHub, rightPlaceBids)
 }

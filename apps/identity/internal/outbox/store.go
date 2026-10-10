@@ -29,13 +29,14 @@ FROM identity_outbox
 WHERE published_at IS NULL`
 
 	// Порядок — position, а не occurred_at: внутри профиля он совпадает с версией,
-	// а момент начала транзакции — нет. Роли едут строкой: словарь ролей запятых не
-	// содержит, а разбор массива через database/sql зависел бы от сканера драйвера.
+	// а момент начала транзакции — нет. Наборы и права едут строкой: словари
+	// запятых не содержат, а разбор массива через database/sql зависел бы от
+	// сканера драйвера.
 	pendingSQL = `
-SELECT event_id, identity_id, version, occasion, COALESCE(role, ''),
-       array_to_string(global_roles, ','), blocked, occurred_at, COALESCE(traceparent, ''),
-       COALESCE(circle, ''), array_to_string(COALESCE(rights, '{}'), ','),
-       COALESCE(access_right, '')
+SELECT event_id, identity_id, version, occasion, blocked, occurred_at, COALESCE(traceparent, ''),
+       COALESCE(circle, ''), array_to_string(COALESCE(presets, '{}'), ','),
+       array_to_string(COALESCE(rights, '{}'), ','), COALESCE(access_right, ''),
+       COALESCE(preset, ''), COALESCE(previous_circle, ''), COALESCE(queue, '')
 FROM identity_outbox
 WHERE published_at IS NULL
 ORDER BY position
@@ -108,17 +109,17 @@ func ReadQueue(ctx context.Context, conn *sql.Conn, limit int) (Backlog, []Recor
 		var (
 			record   Record
 			occasion string
-			roles    string
+			presets  string
 			rights   string
 		)
 		if err := rows.Scan(&record.EventID, &record.IdentityID, &record.Version, &occasion,
-			&record.Role, &roles, &record.Blocked, &record.OccurredAt, &record.TraceParent,
-			&record.Circle, &rights, &record.Right); err != nil {
+			&record.Blocked, &record.OccurredAt, &record.TraceParent, &record.Circle, &presets,
+			&rights, &record.Right, &record.Preset, &record.PreviousCircle, &record.Queue); err != nil {
 			return Backlog{}, nil, fmt.Errorf("scan pending: %w", err)
 		}
 		record.Occasion = Occasion(occasion)
-		if roles != "" {
-			record.GlobalRoles = strings.Split(roles, ",")
+		if presets != "" {
+			record.Presets = strings.Split(presets, ",")
 		}
 		if rights != "" {
 			record.Rights = strings.Split(rights, ",")

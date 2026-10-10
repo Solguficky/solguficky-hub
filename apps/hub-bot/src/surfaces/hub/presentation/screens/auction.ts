@@ -57,16 +57,12 @@ export type AuctionView = {
   /** Фото карточки лота, уже готовое к отправке; нет — карточка без фото. */
   photo?: ScreenPhoto;
   /**
-   * Смотрящий — администратор: оболочка добавляет вход в пульт (PER-320).
-   * Право это не решает — его проверяют Auction и Meetups на каждой команде.
+   * Смотрящий держит право вести сходки: оболочка добавляет вход в пульт
+   * (PER-320) и входы в форму лота (PER-319) — «Добавить лот» и «Изменить
+   * лот». Каталог лотов и пульт входят в одно право (RFC-016). Решает его не
+   * оболочка — Auction и Meetups проверяют право на каждой команде.
    */
   canManage?: boolean;
-  /**
-   * Смотрящий держит право администрировать аукцион: оболочка добавляет входы
-   * в форму лота (PER-319) — «Добавить лот» и «Изменить лот». Каталог лотов
-   * Auction пускает по этому праву, а не по роли.
-   */
-  canEditLots?: boolean;
   /**
    * Принимает ли аукцион новые лоты: `false` — онлайн-неделя открыта, и ряда
    * «Добавить лот» в ленте нет (PER-468). Статус аукциона лента тела не несёт,
@@ -168,7 +164,7 @@ function feedScreen(
   // Действие экрана стоит первым рядом, над лотами и листанием. После старта
   // онлайн-недели добавлять лот нельзя, и ряда нет; «Пульт» остаётся.
   const auction = uuidToToken(feed.auctionId);
-  if (view.canEditLots === true && view.canAddLots !== false) {
+  if (view.canManage === true && view.canAddLots !== false) {
     keyboard.text(addLotLabel, lotNewData(auction)).row();
   }
   if (view.canManage === true) {
@@ -271,7 +267,7 @@ function lotScreen(
   if (back === undefined) {
     throw new Error("lot body without a way back to the feed");
   }
-  if (view.canEditLots === true) {
+  if (view.canManage === true) {
     nextRow(keyboard).text(editLotLabel, lotFormData(uuidToToken(lot.lotId)));
   }
   const title = truncate(lot.card?.title ?? untitled, titleLimit);

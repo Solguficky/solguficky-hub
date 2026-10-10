@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"google.golang.org/grpc/codes"
 )
@@ -19,10 +21,9 @@ const (
 func TestSourceChannelOperationsRequireAdministrator(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	member := &identityv1.IdentityActor{
-		IdentityId:  seedProfile(t, db, 9901),
-		GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_MEMBER},
-	}
+	memberID := seedProfile(t, db, 9901)
+	mustChange(t)(svc.grantCircle(t.Context(), memberID, circleMember, uuid.NullUUID{}))
+	member := &identityv1.IdentityActor{IdentityId: memberID}
 	change := &identityv1.ChangeSourceChannelRequest{Actor: member, Code: adsCode, Label: adsLabel}
 
 	_, err := svc.ListSourceChannels(t.Context(), &identityv1.ListSourceChannelsRequest{Actor: member})
@@ -33,7 +34,7 @@ func TestSourceChannelOperationsRequireAdministrator(t *testing.T) {
 	assertCode(t, err, codes.PermissionDenied)
 	_, err = svc.RenameSourceChannel(t.Context(), change)
 	assertCode(t, err, codes.PermissionDenied)
-	if channels := listChannels(t, svc, seedProfile(t, db, 9902)); len(channels) != 0 {
+	if channels := listChannels(t, svc, seedAdmin(t, svc, db, 9902)); len(channels) != 0 {
 		t.Fatalf("registry after refused calls = %v", channels)
 	}
 }
@@ -41,7 +42,7 @@ func TestSourceChannelOperationsRequireAdministrator(t *testing.T) {
 func TestSourceChannelOperationsCreateRenameAndList(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9911)
+	adminID := seedAdmin(t, svc, db, 9911)
 	actor := adminActor(adminID)
 
 	if !createChannel(t, svc, adminID, adsCode, "  Реклама  ") {
@@ -89,7 +90,7 @@ func TestSourceChannelOperationsCreateRenameAndList(t *testing.T) {
 func TestApplicationSourceIsResolvedWhenWritten(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9921)
+	adminID := seedAdmin(t, svc, db, 9921)
 	actor := adminActor(adminID)
 	createChannel(t, svc, adminID, adsCode, adsLabel)
 	moment := time.Date(2026, time.October, 3, 10, 0, 0, 0, time.UTC)
@@ -142,7 +143,7 @@ func openApplicationWithCode(t *testing.T, svc identityService, db *sql.DB, iden
 	if err != nil {
 		t.Fatalf("resolve %q: %v", code, err)
 	}
-	id := seedApplication(t, db, identityID, roleGuest, createdAt)
+	id := seedApplication(t, db, identityID, queueAuction, createdAt)
 	execApplication(t, db, `UPDATE identity_applications SET source_channel = $2, source_unknown = $3 WHERE id = $1`,
 		id, source.channel, source.unknown)
 	return id
