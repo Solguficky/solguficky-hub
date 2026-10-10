@@ -10,10 +10,8 @@ import {
 import {
   confirmKeyboard,
   escapeHtml,
-  menuLabel,
   nextRow,
   screenText,
-  toMenu,
   withNav,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
@@ -85,7 +83,8 @@ export function confirmScreen(
 }
 
 // Принятая команда — свой экран (PER-473): сумма в заголовке, карточку с новой
-// ценой открывает «К лоту» — в одном ряду с «Меню», как выход кадра исхода.
+// ценой открывает «К лоту» — единственный выход, как у кадра исхода: кнопки
+// «Меню» нет (решение владельца 10 октября 2026 года).
 export function acceptedScreen(
   block: AcceptedBlock,
   keyboard: readonly (readonly AuctionButton[])[],
@@ -101,9 +100,10 @@ export function acceptedScreen(
           quoted(block.title),
           "Лимит видишь только ты.",
         ),
-    keyboard: new InlineKeyboard()
-      .text("К лоту", dataOf(keyboard, "accepted.lot"))
-      .text(menuLabel, toMenu.data),
+    keyboard: new InlineKeyboard().text(
+      "К лоту",
+      dataOf(keyboard, "accepted.lot"),
+    ),
     format: "HTML",
   };
 }
@@ -213,8 +213,8 @@ export function nameChoiceScreen(
 }
 
 // Исход — свой экран (дизайн-код, «Экран исхода», PER-472): исход в заголовке
-// без точки, название лота в кавычках, затем пояснение; «К лоту» и «Меню»
-// одним рядом, у непринятого ответа над ними — «Ввести заново».
+// без точки, название лота в кавычках, затем пояснение; выход — «К лоту», у
+// непринятого ответа над ним — «Ввести заново».
 type Outcome = { title: string; detail?: string };
 
 function outcomeText(outcome: Outcome, lotTitle: string | undefined): string {
@@ -229,9 +229,7 @@ function toLotRow(
   rows: InlineKeyboard,
   keyboard: readonly (readonly AuctionButton[])[],
 ): InlineKeyboard {
-  return nextRow(rows)
-    .text("К лоту", dataOf(keyboard, "result.lot"))
-    .text(menuLabel, toMenu.data);
+  return nextRow(rows).text("К лоту", dataOf(keyboard, "result.lot"));
 }
 
 export function commandResultScreen(

@@ -134,12 +134,12 @@ describe("waiting", () => {
 
     const handled = bot.handleUpdate({
       update_id: 1,
-      message: { message_id: 7, date: 0, chat, from, text: "/menu" },
+      message: { message_id: 7, date: 0, chat, from, text: "/meetups" },
     });
     await vi.advanceTimersByTimeAsync(typingAfterMs);
     expect(methods(calls)).toEqual(["sendChatAction"]);
 
-    service.respond({ kind: "message", text: "Привет" });
+    service.respond({ kind: "meetup-list", meetups: [] });
     await handled;
     expect(methods(calls)).toEqual(["sendChatAction", "sendMessage"]);
   });

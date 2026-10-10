@@ -15,6 +15,7 @@ import {
 import {
   confirmKeyboard,
   escapeHtml,
+  type Parent,
   screenText,
   toManage,
   withNav,
@@ -117,6 +118,8 @@ export function applicationCardScreen(
   { application, position }: { application: ApplicationCard; position: number },
   total: number,
   nowMs: number,
+  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  parent: Parent = toManage,
 ): ShownScreen {
   const cursor = cursorOf(application);
   const data = cardCursorData(cursor);
@@ -128,7 +131,7 @@ export function applicationCardScreen(
     rows.row().url("Профиль ↗", `https://t.me/${application.telegramUsername}`);
   }
   rows.row().text("Пропустить", `${domain}:q:${data}`);
-  const keyboard = withNav(rows, toManage);
+  const keyboard = withNav(rows, parent);
   return {
     id: "application",
     text: screenText(
@@ -152,6 +155,8 @@ export function applicationQueueEndScreen(
   queue: ApplicationQueue,
   total: number,
   afterCursor: boolean,
+  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  parent: Parent = toManage,
 ): ShownScreen {
   const keyboard = new InlineKeyboard();
   if (afterCursor && total > 0) {
@@ -167,7 +172,7 @@ export function applicationQueueEndScreen(
           ? `Очередь кончилась. Ещё открыто заявок: ${total}.`
           : undefined,
     ),
-    keyboard: withNav(keyboard, toManage),
+    keyboard: withNav(keyboard, parent),
     format: "HTML",
   };
 }

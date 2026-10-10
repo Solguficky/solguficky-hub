@@ -5,12 +5,23 @@ import {
   type AccessMatrixInput,
   describeAccessMatrix,
 } from "../../../auction-ui/contract/index.js";
+import { createDispatcher } from "../application/dispatcher.js";
 import {
   blockedHubAccessText,
   declinedHubAccessText,
   pendingHubAccessText,
 } from "../application/hub-access.js";
 import { refusalText } from "./screens/kit.js";
+
+// Допущенный вход открывает «Сходки» (решение владельца 10 октября 2026
+// года): список отвечает пустым, остальное — диспетчер без соседей.
+const bare = createDispatcher();
+const dispatcher: typeof bare = {
+  execute: async (request) =>
+    request.intent === "list-visible-meetups"
+      ? { kind: "meetup-list", meetups: [] }
+      : bare.execute(request),
+};
 
 // Матрица доступа пакета над ботом хаба целиком (ADR-044, «Проверка общего
 // поведения»; ADR-060): update проходит тот же `createBot`, что и в проде, а
@@ -88,7 +99,7 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
         };
       },
     },
-    undefined,
+    dispatcher,
     [],
     undefined,
     undefined,

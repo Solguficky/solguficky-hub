@@ -142,32 +142,48 @@ describe("parseUpdate", () => {
     ).toBe("ignored");
   });
 
-  // Команды разделов из меню убраны (PER-468): разделы открываются кнопками
-  // стартового экрана, а прежняя команда — неизвестная, как любая другая.
-  it("ignores the former section commands", () => {
-    for (const text of ["/meetups", "/archive", "/notifications"]) {
-      expect(messageText(text)).toEqual({ kind: "ignored" });
+  // Решение владельца 10 октября 2026 года: разделы открываются командами,
+  // корня «Меню» нет; отменяет «одна команда /menu» PER-468.
+  it("reads the section commands", () => {
+    for (const command of [
+      "meetups",
+      "next",
+      "settings",
+      "manage",
+      "help",
+    ] as const) {
+      expect(messageText(`/${command}`)).toEqual({
+        kind: "command",
+        command,
+        telegramUserId: 42n,
+      });
     }
-    expect(messageText("/ARCHIVE@Stub_Bot")).toEqual({ kind: "ignored" });
-  });
-
-  it("reads /menu as /start without a payload", () => {
-    expect(messageText("/menu")).toEqual({
-      kind: "start",
-      firstName: "tester",
+    expect(messageText("/SETTINGS@Stub_Bot")).toEqual({
+      kind: "command",
+      command: "settings",
       telegramUserId: 42n,
     });
-    expect(messageText("/MENU@Stub_Bot")).toEqual({
-      kind: "start",
-      firstName: "tester",
+  });
+
+  it("ignores the commands of the former sections", () => {
+    for (const text of ["/archive", "/notifications"]) {
+      expect(messageText(text)).toEqual({ kind: "ignored" });
+    }
+  });
+
+  // `/menu` убран из списка, но по старой привычке открывает «Сходки».
+  it("reads /menu as /meetups", () => {
+    expect(messageText("/menu")).toEqual({
+      kind: "command",
+      command: "meetups",
       telegramUserId: 42n,
     });
   });
 
   it("does not turn a tail after /menu into a deep link", () => {
     expect(messageText("/menu m_AZLzpLXGfY6fChssPU5fYA")).toEqual({
-      kind: "start",
-      firstName: "tester",
+      kind: "command",
+      command: "meetups",
       telegramUserId: 42n,
     });
   });
@@ -183,7 +199,7 @@ describe("parseUpdate", () => {
   });
 
   it("ignores unknown commands, including prototype property names", () => {
-    for (const text of ["/help", "/constructor", "/toString", "/__proto__"]) {
+    for (const text of ["/faq", "/constructor", "/toString", "/__proto__"]) {
       expect(messageText(text)).toEqual({ kind: "ignored" });
     }
   });

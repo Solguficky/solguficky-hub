@@ -43,6 +43,7 @@ import type {
 import type { MeetupSnapshot } from "../meetups/port.js";
 import type { CategoryState, MeetupCategory } from "../notifications/port.js";
 import { createBot } from "./bot.js";
+import { managerCommands } from "./commands.js";
 import { tokenToUuid, uuidToToken } from "./meetup-deep-link.js";
 import { auctionFaqData } from "./parse-callback.js";
 import { refusalText } from "./screens/kit.js";
@@ -289,6 +290,20 @@ function sendMessageText(call: RecordedCall | undefined): string | undefined {
   const text = call.payload.text;
   return typeof text === "string" ? text : undefined;
 }
+
+// Допущенный вход открывает «Сходки» (решение владельца 10 октября 2026
+// года): диспетчер с пустым списком, остальное — без соседей.
+const bareDispatcher = createDispatcher();
+function listing(): Dispatcher {
+  return {
+    execute: async (request) =>
+      request.intent === "list-visible-meetups"
+        ? { kind: "meetup-list", meetups: [] }
+        : bareDispatcher.execute(request),
+  };
+}
+const emptyMeetupsText =
+  "<b>Сходки</b>\n\nПока ни одной запланированной сходки нет.\n\nКогда организатор создаст новую, она появится здесь.";
 
 function expectBoundary(
   record: LogRecord | undefined,
@@ -1024,7 +1039,7 @@ describe("presentation adapter", () => {
     expect(records.at(-1)?.fields.error).toBe("version_conflict");
   });
   it("does not treat a command replying to a user as a stale form answer", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity());
+    const { bot, calls } = createHarness(resolvedIdentity(), listing());
     await bot.init();
     await bot.handleUpdate(
       replyUpdate({
@@ -1036,7 +1051,7 @@ describe("presentation adapter", () => {
     );
     expect(
       sendMessageText(calls.find((call) => call.method === "sendMessage")),
-    ).toContain("Привет.");
+    ).toBe(emptyMeetupsText);
   });
 
   it("does not dispatch another user's answer to a pending question", async () => {
@@ -1070,11 +1085,17 @@ describe("presentation adapter", () => {
     );
     expect(execute).toHaveBeenCalledTimes(1);
   });
-  it("resolves identity and replies to /start", async () => {
-    const { bot, calls, records } = createHarness(resolvedIdentity());
+  // Решение владельца 10 октября 2026 года: корня «Меню» нет, допущенный
+  // `/start` открывает «Сходки», а у человека без права управления прежний
+  // список команд чата снимается.
+  it("resolves identity and opens the meetups on /start", async () => {
+    const { bot, calls, records } = createHarness(
+      resolvedIdentity(),
+      listing(),
+    );
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(sendMessageText(calls[0])).toContain("Привет.");
+    expect(sendMessageText(calls[0])).toBe(emptyMeetupsText);
     expect(records).toHaveLength(1);
     expectBoundary(records[0], {
       level: "info",
@@ -1082,35 +1103,27 @@ describe("presentation adapter", () => {
       operation: "message",
       use_case: "find_meetup",
     });
-    // Управление солегуфику недоступно, и вход в него он не видит (PER-396).
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
-            { text: "Архив", callback_data: "v1:nav:archive" },
-          ],
-          [{ text: "Уведомления", callback_data: "v1:notify:global" }],
-        ],
+        inline_keyboard: [[{ text: "Архив", callback_data: "v1:nav:archive" }]],
       },
+    });
+    expect(calls[1]).toMatchObject({
+      method: "deleteMyCommands",
+      payload: { scope: { type: "chat", chat_id: 42 } },
     });
     expect(JSON.stringify(calls)).not.toContain("v1:manage:menu");
   });
 
-  it("offers management on /start to an admin", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity("admin"));
+  it("puts /manage into the chat commands of an admin on /start", async () => {
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), listing());
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(calls[0]?.payload).toMatchObject({
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
-            { text: "Архив", callback_data: "v1:nav:archive" },
-          ],
-          [{ text: "Уведомления", callback_data: "v1:notify:global" }],
-          [{ text: "Управление", callback_data: "v1:manage:menu" }],
-        ],
+    expect(calls[1]).toMatchObject({
+      method: "setMyCommands",
+      payload: {
+        commands: managerCommands,
+        scope: { type: "chat", chat_id: 42 },
       },
     });
   });
@@ -1194,8 +1207,6 @@ describe("presentation adapter", () => {
     ["/start s_", { sourceCode: "" }],
     ["/start m_AZLzpLXGfY6fChssPU5fYA", {}],
     ["/start", {}],
-    // `/menu` — тот же вход: начавший с него тоже получает заявку.
-    ["/menu", {}],
   ])(
     "enters on %s through RequestAccess into the community queue",
     async (text, code) => {
@@ -1224,10 +1235,10 @@ describe("presentation adapter", () => {
 
   it("opens /start for a person the allowlist has just admitted", async () => {
     const identity = entering(answered("granted-by-allowlist", MEMBER_RIGHTS));
-    const { bot, calls } = createHarness(identity);
+    const { bot, calls } = createHarness(identity, listing());
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(sendMessageText(calls[0])).toContain("Привет.");
+    expect(sendMessageText(calls[0])).toBe(emptyMeetupsText);
     expect(identity.resolve).not.toHaveBeenCalled();
   });
 
@@ -1424,10 +1435,10 @@ describe("presentation adapter", () => {
   });
 
   it("opens /start for an admin without a stored member row", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity("admin"));
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), listing());
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(sendMessageText(calls[0])).toContain("Привет.");
+    expect(sendMessageText(calls[0])).toBe(emptyMeetupsText);
     expect(sendMessageText(calls[0])).not.toBe(
       refusalText(pendingHubAccessText(resolvedId, undefined)),
     );
@@ -1771,7 +1782,7 @@ describe("presentation adapter", () => {
           text: "<b>Разбирать заявки может только администратор.</b>",
           reply_markup: {
             inline_keyboard: [
-              [{ text: "Меню", callback_data: "v1:nav:start" }],
+              [{ text: "‹ Сходки", callback_data: "v1:nav:hub" }],
             ],
           },
         },
@@ -1906,7 +1917,7 @@ describe("presentation adapter", () => {
             text: expect.stringContaining("Не получилось показать экран"),
             reply_markup: {
               inline_keyboard: [
-                [{ text: "Меню", callback_data: "v1:nav:start" }],
+                [{ text: "‹ Сходки", callback_data: "v1:nav:hub" }],
               ],
             },
           },
@@ -1994,7 +2005,7 @@ describe("presentation adapter", () => {
           text: "<b>Пересматривать отказы может только администратор.</b>",
           reply_markup: {
             inline_keyboard: [
-              [{ text: "Меню", callback_data: "v1:nav:start" }],
+              [{ text: "‹ Сходки", callback_data: "v1:nav:hub" }],
             ],
           },
         },
@@ -2361,27 +2372,30 @@ describe("presentation adapter", () => {
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:hub"));
-    // Переход по меню приходит правкой экрана, всплывающего окна нет.
+    // Переход приходит правкой экрана, всплывающего окна нет.
     expect(calls[0]?.method).toBe("answerCallbackQuery");
     expect(calls[0]?.payload).not.toHaveProperty("text");
+    // «Сходки» — корень: ряда навигации нет, «Архив» — его дочерний экран.
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Ближайшие сходки</b>\n\nПока ни одной запланированной сходки нет.\n\nКогда организатор создаст новую, она появится здесь.",
+        text: emptyMeetupsText,
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
+            [{ text: "Архив", callback_data: "v1:nav:archive" }],
           ],
         },
       },
     });
   });
 
-  it("returns from the meetup list to the start screen by editing the same message", async () => {
+  // Старая кнопка «Меню» в чате: корня «Меню» больше нет, и она правит
+  // сообщение в «Сходки» (решение владельца 10 октября 2026 года).
+  it("opens the meetups from a former menu button by editing the same message", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
-      kind: "message",
-      text: "Привет. Главный экран.",
+      kind: "meetup-list",
+      meetups: [],
     });
     const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
@@ -2389,7 +2403,7 @@ describe("presentation adapter", () => {
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:nav:start"));
     expect(execute).toHaveBeenCalledWith(
-      expect.objectContaining({ intent: "start" }),
+      expect.objectContaining({ intent: "list-visible-meetups" }),
     );
     expect(calls.map((call) => call.method)).toEqual([
       "answerCallbackQuery",
@@ -2397,20 +2411,7 @@ describe("presentation adapter", () => {
     ]);
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
-      payload: {
-        message_id: 9,
-        text: "<b>Меню</b>\n\nПривет. Главный экран.",
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
-              { text: "Архив", callback_data: "v1:nav:archive" },
-            ],
-            [{ text: "Уведомления", callback_data: "v1:notify:global" }],
-            [{ text: "Управление", callback_data: "v1:manage:menu" }],
-          ],
-        },
-      },
+      payload: { message_id: 9, text: emptyMeetupsText },
     });
     expectBoundary(records[0], {
       level: "info",
@@ -2444,7 +2445,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Ближайшие сходки</b>\n\nС датой\n• 15 августа, сб — Настолки\n\nБез даты\n• Без даты",
+        text: "<b>Сходки</b>\n\nС датой\n• 15 августа, сб — Настолки\n\nБез даты\n• Без даты",
         reply_markup: {
           inline_keyboard: [
             [
@@ -2459,7 +2460,7 @@ describe("presentation adapter", () => {
                 callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
               },
             ],
-            [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
+            [{ text: "Архив", callback_data: "v1:nav:archive" }],
           ],
         },
       },
@@ -2490,7 +2491,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Ближайшие сходки</b>\n\nБез даты\n• Черновик (скрыта)\n• Настолки",
+        text: "<b>Сходки</b>\n\nБез даты\n• Черновик (скрыта)\n• Настолки",
       },
     });
   });
@@ -2514,7 +2515,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Ближайшие сходки</b>\n\nБез даты\n• Без названия",
+        text: "<b>Сходки</b>\n\nБез даты\n• Без названия",
         reply_markup: {
           inline_keyboard: expect.arrayContaining([
             [
@@ -2551,14 +2552,15 @@ describe("presentation adapter", () => {
     expect(text).toContain("• Без названия (отменена)");
   });
 
-  it("offers the hidden meetups section in the management menu", async () => {
+  it("offers the hidden meetups and the refused in their management groups", async () => {
     const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
-    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+    await bot.handleUpdate(callbackUpdate("v1:manage:g:m"));
+    await bot.handleUpdate(callbackUpdate("v1:manage:g:a"));
     expect(JSON.stringify(calls[1]?.payload)).toContain(
       '{"text":"Скрытые сходки","callback_data":"v1:manage:hidden"}',
     );
-    expect(JSON.stringify(calls[1]?.payload)).toContain(
+    expect(JSON.stringify(calls[3]?.payload)).toContain(
       '{"text":"Отказанные","callback_data":"v1:cm:r"}',
     );
   });
@@ -2601,8 +2603,10 @@ describe("presentation adapter", () => {
               },
             ],
             [
-              { text: "‹ Управление", callback_data: "v1:manage:menu" },
-              { text: "Меню", callback_data: "v1:nav:start" },
+              {
+                text: "‹ Сходки и объявления",
+                callback_data: "v1:manage:g:m",
+              },
             ],
           ],
         },
@@ -2637,8 +2641,10 @@ describe("presentation adapter", () => {
         reply_markup: {
           inline_keyboard: [
             [
-              { text: "‹ Управление", callback_data: "v1:manage:menu" },
-              { text: "Меню", callback_data: "v1:nav:start" },
+              {
+                text: "‹ Сходки и объявления",
+                callback_data: "v1:manage:g:m",
+              },
             ],
           ],
         },
@@ -2796,7 +2802,6 @@ describe("presentation adapter", () => {
         reply_markup: {
           inline_keyboard: [
             [{ text: "Повторить", callback_data: "v1:nav:hub" }],
-            [{ text: "Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -2838,7 +2843,6 @@ describe("presentation adapter", () => {
         reply_markup: {
           inline_keyboard: [
             [{ text: "Повторить", callback_data: "v1:nav:hub" }],
-            [{ text: "Меню", callback_data: "v1:nav:start" }],
           ],
         },
       },
@@ -3364,7 +3368,6 @@ describe("presentation adapter", () => {
                 text: "‹ Сходка",
                 callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
               },
-              { text: "Меню", callback_data: "v1:nav:start" },
             ],
           ],
         },
@@ -3463,7 +3466,6 @@ describe("presentation adapter", () => {
                 text: "‹ Сходка",
                 callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
               },
-              { text: "Меню", callback_data: "v1:nav:start" },
             ],
           ],
         },
@@ -3873,7 +3875,7 @@ describe("presentation adapter", () => {
       useCase: "view_meetup",
       deadlineAt: expect.any(Number),
     });
-    expect(calls.at(-1)).toMatchObject({
+    expect(calls.at(-2)).toMatchObject({
       method: "sendRichMessage",
       payload: {
         rich_message: {
@@ -3895,12 +3897,7 @@ describe("presentation adapter", () => {
     );
     expect(calls[0]?.payload).toMatchObject({
       reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "‹ Ближайшие", callback_data: "v1:nav:hub" },
-            { text: "Меню", callback_data: "v1:nav:start" },
-          ],
-        ],
+        inline_keyboard: [[{ text: "‹ Сходки", callback_data: "v1:nav:hub" }]],
       },
     });
   });
@@ -4019,36 +4016,170 @@ describe("presentation adapter", () => {
   });
 
   it("resolves /start with a bot mention", async () => {
-    const { bot, calls } = createHarness(resolvedIdentity());
+    const { bot, calls } = createHarness(resolvedIdentity(), listing());
     await bot.init();
     await bot.handleUpdate(messageUpdate("/START@stub_bot"));
-    expect(sendMessageText(calls[0])).toContain("Привет.");
+    expect(sendMessageText(calls[0])).toBe(emptyMeetupsText);
   });
 
-  it("opens the start screen from /menu with the keyboard of the rights", async () => {
-    const { bot, calls, records } = createHarness(resolvedIdentity());
-    await bot.init();
-    await bot.handleUpdate(messageUpdate("/menu"));
-    expect(sendMessageText(calls[0])).toContain("Привет.");
-    expectBoundary(records[0], {
-      level: "info",
-      result: "ok",
-      operation: "message",
-      use_case: "find_meetup",
-    });
-    // Солегуфику вход в управление не показывается (PER-396).
-    expect(calls[0]?.payload).toMatchObject({
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "Ближайшие сходки", callback_data: "v1:nav:hub" },
-            { text: "Архив", callback_data: "v1:nav:archive" },
-          ],
-          [{ text: "Уведомления", callback_data: "v1:notify:global" }],
-        ],
+  // Решение владельца 10 октября 2026 года: разделы открываются командами
+  // кнопки меню клиента, корня «Меню» нет. Команда раздела входом не является:
+  // личность разрешается, как у нажатия, заявка не ставится.
+  describe("section commands", () => {
+    it.each(["/meetups", "/menu"])(
+      "opens the meetups on %s without an application",
+      async (text) => {
+        const identity = entering(answered("pending"));
+        vi.mocked(identity.resolve).mockImplementation(
+          resolvedIdentity().resolve,
+        );
+        const { bot, calls, records } = createHarness(identity, listing());
+        await bot.init();
+        await bot.handleUpdate(messageUpdate(text));
+        expect(identity.requestAccess).not.toHaveBeenCalled();
+        expect(identity.resolve).toHaveBeenCalledOnce();
+        expect(sendMessageText(calls[0])).toBe(emptyMeetupsText);
+        expectBoundary(records[0], {
+          level: "info",
+          result: "ok",
+          operation: "message",
+          use_case: "find_meetup",
+        });
       },
+    );
+
+    it("opens the settings root with the notifications inside", async () => {
+      const { bot, calls } = createHarness(resolvedIdentity());
+      await bot.init();
+      await bot.handleUpdate(messageUpdate("/settings"));
+      expect(calls[0]).toMatchObject({
+        method: "sendMessage",
+        payload: {
+          text: "<b>Настройки</b>\n\nЧто и когда бот тебе присылает.",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "Уведомления", callback_data: "v1:notify:global" }],
+            ],
+          },
+        },
+      });
     });
-    expect(JSON.stringify(calls)).not.toContain("v1:manage:menu");
+
+    it("lists the commands of the person in the help", async () => {
+      const member = createHarness(resolvedIdentity());
+      await member.bot.init();
+      await member.bot.handleUpdate(messageUpdate("/help"));
+      const text = sendMessageText(member.calls[0]) ?? "";
+      expect(text).toMatch(/^<b>Помощь<\/b>\n\nПривет\./);
+      expect(text).toContain("• /meetups — Сходки");
+      expect(text).not.toContain("/manage");
+      expect(member.calls[0]?.payload).toMatchObject({
+        reply_markup: { inline_keyboard: [[]] },
+      });
+
+      const admin = createHarness(resolvedIdentity("admin"));
+      await admin.bot.init();
+      await admin.bot.handleUpdate(messageUpdate("/help"));
+      expect(sendMessageText(admin.calls[0])).toContain(
+        "• /manage — Управление",
+      );
+    });
+
+    it("opens management by right and refuses it without one", async () => {
+      const admin = createHarness(resolvedIdentity("admin"));
+      await admin.bot.init();
+      await admin.bot.handleUpdate(messageUpdate("/manage"));
+      expect(admin.calls[0]).toMatchObject({
+        method: "sendMessage",
+        payload: {
+          text: "<b>Управление</b>",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "Сходки и объявления", callback_data: "v1:manage:g:m" }],
+              [{ text: "Заявки и отказы", callback_data: "v1:manage:g:a" }],
+              [{ text: "Участники", callback_data: "v1:manage:g:p" }],
+            ],
+          },
+        },
+      });
+
+      const member = createHarness(resolvedIdentity());
+      await member.bot.init();
+      await member.bot.handleUpdate(messageUpdate("/manage"));
+      expect(sendMessageText(member.calls[0])).toBe(
+        refusalText("Управление сходками доступно администратору."),
+      );
+    });
+
+    it("opens the card of the nearest published meetup on /next", async () => {
+      vi.useFakeTimers({
+        toFake: ["Date"],
+        now: new Date("2026-08-01T12:00Z"),
+      });
+      const meetup = publishedMeetup();
+      const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+        request.intent === "list-visible-meetups"
+          ? {
+              kind: "meetup-list",
+              meetups: [
+                {
+                  id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34c1",
+                  title: "Черновик раньше",
+                  schedule: { year: 2026, month: 8, day: 2 },
+                  visibility: "hidden" as const,
+                },
+                {
+                  id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34c2",
+                  title: "Позже",
+                  schedule: { year: 2026, month: 8, day: 20 },
+                  visibility: "visible" as const,
+                },
+                {
+                  id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34c3",
+                  title: "Ближе",
+                  schedule: { year: 2026, month: 8, day: 9 },
+                  visibility: "visible" as const,
+                },
+                {
+                  id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34c4",
+                  title: "Без даты",
+                  visibility: "visible" as const,
+                },
+              ],
+            }
+          : { kind: "meetup-card", meetup },
+      );
+      const { bot } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(messageUpdate("/next"));
+      expect(execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          intent: "view-meetup",
+          meetupId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34c3",
+        }),
+      );
+    });
+
+    it("opens the meetups on /next when no meetup has a date ahead", async () => {
+      const { bot, calls } = createHarness(resolvedIdentity(), listing());
+      await bot.init();
+      await bot.handleUpdate(messageUpdate("/next"));
+      expect(sendMessageText(calls[0])).toBe(emptyMeetupsText);
+    });
+
+    it("gives the pending frame to a person without the hub right", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>();
+      const { bot, calls } = createHarness(
+        resolvedIdentity("none", false, []),
+        { execute },
+      );
+      await bot.init();
+      await bot.handleUpdate(messageUpdate("/settings"));
+      expect(sendMessageText(calls[0])).toBe(
+        refusalText(pendingHubAccessText(resolvedId, undefined)),
+      );
+      expect(execute).not.toHaveBeenCalled();
+    });
   });
 
   it("does not resolve identity for /start mentioned for another bot", async () => {
@@ -4060,14 +4191,12 @@ describe("presentation adapter", () => {
     expect(calls).toEqual([]);
   });
 
-  // Прежние команды разделов (PER-345) из меню убраны (PER-468): разделы
-  // открываются кнопками стартового экрана, а команда стала неизвестной.
   it("stays silent on a former section command", async () => {
     const execute = vi.fn<Dispatcher["execute"]>();
     const resolve = vi.fn(resolvedIdentity().resolve);
     const { bot, calls } = createHarness({ resolve }, { execute });
     await bot.init();
-    for (const text of ["/meetups", "/archive", "/notifications"]) {
+    for (const text of ["/archive", "/notifications"]) {
       await bot.handleUpdate(messageUpdate(text));
     }
     expect(resolve).not.toHaveBeenCalled();
@@ -4094,8 +4223,8 @@ describe("presentation adapter", () => {
       if (request.intent === "view-meetup") {
         return { kind: "meetup-card", meetup };
       }
-      if (request.intent === "start") {
-        return { kind: "message", text: "Привет" };
+      if (request.intent === "list-visible-meetups") {
+        return { kind: "meetup-list", meetups: [] };
       }
       return { kind: "meetup-updated", meetup: { ...meetup, venue: "Зал" } };
     });
@@ -4119,9 +4248,9 @@ describe("presentation adapter", () => {
 
     await bot.handleUpdate(replyTo("/menu"));
     expect(execute).toHaveBeenLastCalledWith(
-      expect.objectContaining({ intent: "start" }),
+      expect.objectContaining({ intent: "list-visible-meetups" }),
     );
-    expect(sendMessageText(sentMessages(calls).at(-1))).toContain("Привет");
+    expect(sendMessageText(sentMessages(calls).at(-1))).toBe(emptyMeetupsText);
     // Человек ушёл от вопроса: брошенный вопрос удаляется, иначе клиент
     // включал бы режим ответа на него при каждом входе в чат.
     expect(
@@ -4193,7 +4322,7 @@ describe("presentation adapter", () => {
     const resolve = vi.fn(resolvedIdentity().resolve);
     const { bot, calls } = createHarness({ resolve });
     await bot.init();
-    await bot.handleUpdate(messageUpdate("/help"));
+    await bot.handleUpdate(messageUpdate("/faq"));
     expect(resolve).not.toHaveBeenCalled();
     expect(calls).toEqual([]);
   });
@@ -4675,7 +4804,7 @@ describe("presentation adapter", () => {
   it("restores navigation when opening the menu from a failure frame fails again", async () => {
     const { bot, calls } = createHarness(resolvedIdentity());
     const frameText =
-      "Не получилось показать экран. Это на моей стороне.\n\nОткрой меню и проверь состояние перед повтором действия.";
+      "Не получилось показать экран. Это на моей стороне.\n\nОткрой раздел заново и проверь состояние перед повтором действия.";
     bot.api.config.use((prev, method, payload, signal) => {
       if (
         (method === "editMessageText" || method === "sendMessage") &&
@@ -4694,7 +4823,7 @@ describe("presentation adapter", () => {
 
     await bot.handleUpdate(
       callbackMessageUpdate("v1:nav:start", {
-        text: "Не получилось показать экран. Это на моей стороне.\n\nОткрой меню и проверь состояние перед повтором действия.",
+        text: "Не получилось показать экран. Это на моей стороне.\n\nОткрой раздел заново и проверь состояние перед повтором действия.",
         entities: [
           {
             type: "bold",
@@ -4703,7 +4832,9 @@ describe("presentation adapter", () => {
           },
         ],
         reply_markup: {
-          inline_keyboard: [[{ text: "Меню", callback_data: "v1:nav:start" }]],
+          inline_keyboard: [
+            [{ text: "‹ Сходки", callback_data: "v1:nav:hub" }],
+          ],
         },
       }),
     );
@@ -4713,7 +4844,9 @@ describe("presentation adapter", () => {
       payload: {
         text: refusalText(frameText),
         reply_markup: {
-          inline_keyboard: [[{ text: "Меню", callback_data: "v1:nav:start" }]],
+          inline_keyboard: [
+            [{ text: "‹ Сходки", callback_data: "v1:nav:hub" }],
+          ],
         },
       },
     });
@@ -5120,10 +5253,7 @@ describe("confirmations", () => {
     );
     expect(keyboardOf(calls[2])).toEqual([
       [{ text: "Ввести заново", callback_data: `v1:mm:add:${token}` }],
-      [
-        { text: "‹ Материалы", callback_data: `v1:mm:list:${token}` },
-        { text: "Меню", callback_data: "v1:nav:start" },
-      ],
+      [{ text: "‹ Материалы", callback_data: `v1:mm:list:${token}` }],
     ]);
   });
 
@@ -5169,19 +5299,13 @@ describe("confirmations", () => {
     // Текст в кнопку не помещается: «Ввести заново» задаёт вопрос снова.
     expect(keyboardOf(calls.at(-1))).toEqual([
       [{ text: "Ввести заново", callback_data: `v1:bc:m:${token}` }],
-      [
-        { text: "‹ Сходка", callback_data: `v1:view:${token}` },
-        { text: "Меню", callback_data: "v1:nav:start" },
-      ],
+      [{ text: "‹ Сходка", callback_data: `v1:view:${token}` }],
     ]);
 
     await bot.handleUpdate(callbackUpdate("v1:bc:no"));
     expect(keyboardOf(calls.at(-1))).toEqual([
       [{ text: "Ввести заново", callback_data: "v1:bc:c" }],
-      [
-        { text: "‹ Управление", callback_data: "v1:manage:menu" },
-        { text: "Меню", callback_data: "v1:nav:start" },
-      ],
+      [{ text: "‹ Управление", callback_data: "v1:manage:menu" }],
     ]);
   });
 });
@@ -5429,10 +5553,7 @@ describe("questions", () => {
       text: refusalText("Этот вопрос уже устарел. Прикрепи материал заново."),
       reply_markup: {
         inline_keyboard: [
-          [
-            { text: "‹ Материалы", callback_data: `v1:mm:list:${token}` },
-            { text: "Меню", callback_data: "v1:nav:start" },
-          ],
+          [{ text: "‹ Материалы", callback_data: `v1:mm:list:${token}` }],
         ],
       },
     });
@@ -5534,10 +5655,7 @@ describe("questions", () => {
                 callback_data: `v1:manage:field:${token}:venue`,
               },
             ],
-            [
-              { text: "‹ Сходка", callback_data: `v1:view:${token}` },
-              { text: "Меню", callback_data: "v1:nav:start" },
-            ],
+            [{ text: "‹ Сходка", callback_data: `v1:view:${token}` }],
           ],
         },
       });
@@ -5696,10 +5814,7 @@ describe("notification frames", () => {
           callback_data: `v1:notify:settings:${token}`,
         },
       ],
-      [
-        { text: "‹ Сходка", callback_data: `v1:view:${token}` },
-        { text: "Меню", callback_data: "v1:nav:start" },
-      ],
+      [{ text: "‹ Сходка", callback_data: `v1:view:${token}` }],
     ]);
   });
 
@@ -5718,10 +5833,7 @@ describe("notification frames", () => {
       "<b>Подписка выключена</b>\n\n«Настолки у Лёши»\n\nУведомления по этой сходке больше не придут.",
     );
     expect(shown.reply_markup?.inline_keyboard).toEqual([
-      [
-        { text: "‹ Сходка", callback_data: `v1:view:${token}` },
-        { text: "Меню", callback_data: "v1:nav:start" },
-      ],
+      [{ text: "‹ Сходка", callback_data: `v1:view:${token}` }],
     ]);
   });
 
@@ -5891,7 +6003,7 @@ describe("notification frames", () => {
   // Отказ по природе, а не один «сбой на моей стороне»: «Повторить» на отказе
   // по праву и на устаревшем экране не лечит ничего.
   it.each([
-    ["forbidden", "Это действие тебе недоступно.", "v1:nav:start"],
+    ["forbidden", "Это действие тебе недоступно.", "v1:nav:hub"],
     ["invalid", "Этот экран устарел.", "v1:notify:global"],
     ["conflict", "Это уже сделано.", "v1:notify:global"],
   ])(
@@ -5953,7 +6065,6 @@ describe("notification frames", () => {
     });
     expect(payload.reply_markup?.inline_keyboard.at(-1)).toEqual([
       { text: "‹ Сходка", callback_data: `v1:view:${token}` },
-      { text: "Меню", callback_data: "v1:nav:start" },
     ]);
   });
 
@@ -6137,7 +6248,7 @@ describe("notification frames", () => {
       // Повтор — та же кнопка в уведомлении: своя кнопка повтора у отказа
       // дописала бы успех под текстом отказа. Выход у кадра один — меню.
       expect(payload.reply_markup?.inline_keyboard).toEqual([
-        [{ text: "Меню", callback_data: "v1:nav:start" }],
+        [{ text: "‹ Сходки", callback_data: "v1:nav:hub" }],
       ]);
     });
 
@@ -6585,10 +6696,7 @@ describe("deferred publication frames", () => {
               callback_data: `v1:manage:publish-later:${draftToken}:d`,
             },
           ],
-          [
-            { text: "‹ Скрытые", callback_data: "v1:manage:hidden" },
-            { text: "Меню", callback_data: "v1:nav:start" },
-          ],
+          [{ text: "‹ Скрытые", callback_data: "v1:manage:hidden" }],
         ],
       },
     });
@@ -7492,8 +7600,8 @@ describe("broadcast frames", () => {
     await admin.bot.init();
     await member.bot.init();
 
-    await admin.bot.handleUpdate(callbackUpdate("v1:manage:menu"));
-    await member.bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+    await admin.bot.handleUpdate(callbackUpdate("v1:manage:g:m"));
+    await member.bot.handleUpdate(callbackUpdate("v1:manage:g:m"));
 
     expect(JSON.stringify(admin.calls)).toContain("v1:bc:c");
     expect(JSON.stringify(member.calls)).not.toContain("v1:bc:c");
@@ -7514,7 +7622,9 @@ describe("broadcast frames", () => {
       payload: {
         text: refusalText("Управление сходками доступно администратору."),
         reply_markup: {
-          inline_keyboard: [[{ text: "Меню", callback_data: "v1:nav:start" }]],
+          inline_keyboard: [
+            [{ text: "‹ Сходки", callback_data: "v1:nav:hub" }],
+          ],
         },
       },
     });
@@ -7545,12 +7655,48 @@ describe("broadcast frames", () => {
     });
   });
 
-  it("offers the whole management menu to an admin", async () => {
+  // Решение владельца 10 октября 2026 года: девять пунктов разложены по
+  // трём группам, у каждой — возврат в «Управление».
+  it("offers the whole management to an admin through its groups", async () => {
     const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
 
-    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
-
+    for (const group of ["m", "a", "p"]) {
+      await bot.handleUpdate(callbackUpdate(`v1:manage:g:${group}`));
+    }
+    expect(calls[1]?.payload).toMatchObject({
+      text: "<b>Сходки и объявления</b>",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Создать сходку" }],
+          [{ text: "Скрытые сходки", callback_data: "v1:manage:hidden" }],
+          [{ text: "Объявление сообществу", callback_data: "v1:bc:c" }],
+          [{ text: "‹ Управление", callback_data: "v1:manage:menu" }],
+        ],
+      },
+    });
+    expect(calls[3]?.payload).toMatchObject({
+      text: "<b>Заявки и отказы</b>",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Заявки", callback_data: "v1:cm:q" }],
+          [{ text: "Заявки в аукцион", callback_data: "v1:aq:q" }],
+          [{ text: "Отказанные", callback_data: "v1:cm:r" }],
+          [{ text: "Отказанные в аукцион", callback_data: "v1:aq:r" }],
+          [{ text: "‹ Управление", callback_data: "v1:manage:menu" }],
+        ],
+      },
+    });
+    expect(calls[5]?.payload).toMatchObject({
+      text: "<b>Участники</b>",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "Состав сообщества", callback_data: "v1:community:list" }],
+          [{ text: "Каналы прихода", callback_data: "v1:sc:l" }],
+          [{ text: "‹ Управление", callback_data: "v1:manage:menu" }],
+        ],
+      },
+    });
     const sent = JSON.stringify(calls);
     expect(sent).toContain("v1:manage:new:");
     expect(sent).toContain("v1:manage:hidden");
@@ -8212,8 +8358,11 @@ describe("auction queue and moderation", () => {
     };
   }
 
+  // Одна видимая группа — «Управление» сразу показывает её пункты (решение
+  // владельца 10 октября 2026 года), а их возврат ведёт в «Управление».
   it("shows the moderator only the auction items of management", async () => {
-    const { bot, calls } = createHarness(queue(moderatorRights));
+    const identity = queue(moderatorRights);
+    const { bot, calls } = createHarness(identity);
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
@@ -8221,27 +8370,36 @@ describe("auction queue and moderation", () => {
     expect(labelsOf(calls.at(-1)?.payload)).toEqual([
       "Заявки в аукцион",
       "Отказанные в аукцион",
-      "‹ Меню",
     ]);
+
+    await bot.handleUpdate(callbackUpdate("v1:aq:r"));
+    expect(labelsOf(calls.at(-1)?.payload).at(-1)).toBe("‹ Управление");
   });
 
-  it("shows the management entry by right, and not to a plain member", async () => {
-    const moderator = createHarness(queue(moderatorRights));
+  it("puts /manage into the chat commands by right, and not of a plain member", async () => {
+    const moderator = createHarness(queue(moderatorRights), listing());
     await moderator.bot.init();
-    await moderator.bot.handleUpdate(messageUpdate("/menu"));
-    expect(JSON.stringify(moderator.calls)).toContain("v1:manage:menu");
+    await moderator.bot.handleUpdate(messageUpdate("/start"));
+    expect(
+      moderator.calls.find((call) => call.method === "setMyCommands")?.payload,
+    ).toMatchObject({ commands: managerCommands });
 
-    const member = createHarness(queue(MEMBER_RIGHTS));
+    const member = createHarness(queue(MEMBER_RIGHTS), listing());
     await member.bot.init();
-    await member.bot.handleUpdate(messageUpdate("/menu"));
-    expect(JSON.stringify(member.calls)).not.toContain("v1:manage:menu");
+    await member.bot.handleUpdate(messageUpdate("/start"));
+    expect(member.calls.map((call) => call.method)).not.toContain(
+      "setMyCommands",
+    );
+    expect(member.calls.map((call) => call.method)).toContain(
+      "deleteMyCommands",
+    );
   });
 
   it("offers the administrator both queues side by side", async () => {
     const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
 
-    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+    await bot.handleUpdate(callbackUpdate("v1:manage:g:a"));
 
     const labels = labelsOf(calls.at(-1)?.payload);
     expect(labels.indexOf("Заявки в аукцион")).toBe(
@@ -8346,7 +8504,7 @@ describe("auction queue and moderation", () => {
       expect(identity.readApplicationQueue).not.toHaveBeenCalled();
       expect(identity.declineApplication).not.toHaveBeenCalled();
       expect(identity.refusedApplications).not.toHaveBeenCalled();
-      expect(labelsOf(calls.at(-1)?.payload)).toEqual(["Меню"]);
+      expect(labelsOf(calls.at(-1)?.payload)).toEqual(["‹ Сходки"]);
       expectBoundary(records[0], {
         level: "warn",
         result: "error",
@@ -8470,7 +8628,7 @@ describe("auction queue and moderation", () => {
 
     rights = MEMBER_RIGHTS;
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
-    expect(labelsOf(calls.at(-1)?.payload)).toEqual(["Меню"]);
+    expect(labelsOf(calls.at(-1)?.payload)).toEqual(["‹ Сходки"]);
   });
 
   it("refuses the moderators screen to someone who does not manage the community", async () => {

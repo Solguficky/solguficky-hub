@@ -68,7 +68,7 @@ describe("refused list", () => {
     expect(rows(screen)).toEqual([
       ["Пересмотреть @user1 в аукцион"],
       ["Пересмотреть @user2 в хаб"],
-      ["‹ Управление", "Меню"],
+      ["‹ Управление"],
     ]);
     expect(dataOf(screen, "Пересмотреть @user1 в аукцион")).toBe(
       `v1:cm:rq:${uuidToToken(id(1))}:0`,
@@ -94,7 +94,7 @@ describe("refused list", () => {
       ["Пересмотреть @user9 в аукцион"],
       ["Пересмотреть @user10 в аукцион"],
       ["←"],
-      ["‹ Управление", "Меню"],
+      ["‹ Управление"],
     ]);
     expect(dataOf(screen, "Пересмотреть @user9 в аукцион")).toBe(
       `v1:cm:rq:${uuidToToken(id(9))}:1`,
@@ -120,7 +120,7 @@ describe("refused list", () => {
 
     expect(rows(screen)).toEqual([
       ["Пересмотреть @user2 в аукцион"],
-      ["‹ Управление", "Меню"],
+      ["‹ Управление"],
     ]);
   });
 

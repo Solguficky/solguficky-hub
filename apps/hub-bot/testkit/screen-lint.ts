@@ -10,6 +10,7 @@ import {
   auctionFeedParent,
   auctionFeedParents,
   screenCatalog as hubCatalog,
+  manageParents,
   meetupListParent,
   meetupLists,
 } from "../src/surfaces/hub/presentation/screens/catalog.js";
@@ -70,10 +71,12 @@ const configFor: Record<Surface, (catalog: Catalog) => LintConfig> = {
     tag: hubTag,
     catalog,
     // Карточка возвращает в тот список, в котором сходка стоит; лента лотов —
-    // к сходке аукциона, а если бот её не знает, в «Ближайшие».
+    // к сходке аукциона, а если бот её не знает, в «Сходки»; пункт управления —
+    // в свою группу либо, у человека с одной группой, в «Управление».
     parentGroups: {
       [meetupListParent]: meetupLists,
       [auctionFeedParent]: auctionFeedParents,
+      ...manageParents,
     },
     namedPairs: hubNamedPairs,
   }),

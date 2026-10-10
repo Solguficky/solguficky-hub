@@ -12,7 +12,6 @@ import type { CommunityDay } from "../../community-time.js";
 // рядом навигации в конце. Слова здесь закрыты: новое слово для той же
 // функции не заводится, и линтер test kit держит это правило.
 
-export const menuLabel = "Меню";
 export const retryLabel = "Повторить";
 export const cancelLabel = "Отмена";
 export const noLabel = confirmNoLabel;
@@ -82,9 +81,17 @@ export function refusalText(text: string): string {
 /** Куда ведёт возврат: короткое имя родителя и данные его кнопки. */
 export type Parent = { name: string; data: string };
 
-export const toMenu: Parent = { name: menuLabel, data: "v1:nav:start" };
-export const toUpcoming: Parent = { name: "Ближайшие", data: "v1:nav:hub" };
+/**
+ * Корень основного раздела — «Сходки». Корневого экрана «Меню» нет: туда, где
+ * «Меню» было единственным выходом, ведёт этот возврат (решение владельца
+ * 10 октября 2026 года).
+ */
+export const toMeetups: Parent = { name: "Сходки", data: "v1:nav:hub" };
 export const toArchive: Parent = { name: "Архив", data: "v1:nav:archive" };
+export const toSettings: Parent = {
+  name: "Настройки",
+  data: "v1:nav:settings",
+};
 export const toManage: Parent = { name: "Управление", data: "v1:manage:menu" };
 export const toHidden: Parent = { name: "Скрытые", data: "v1:manage:hidden" };
 export const toSourceChannels: Parent = { name: "Каналы", data: "v1:sc:l" };
@@ -116,23 +123,23 @@ export function backLabel(parent: Parent): string {
 }
 
 /**
- * Последний ряд экрана: `[‹ Родитель] [Меню]`. У детей меню родитель и есть
- * меню, поэтому кнопка одна.
+ * Последний ряд экрана — одна кнопка `[‹ Родитель]`: кнопки «Меню» нет, между
+ * разделами человек ходит командами (решение владельца 10 октября 2026 года).
  */
 export function withNav(
   keyboard: InlineKeyboard,
   parent: Parent,
 ): InlineKeyboard {
   nextRow(keyboard).text(backLabel(parent), parent.data);
-  if (parent.data !== toMenu.data) {
-    keyboard.text(menuLabel, toMenu.data);
-  }
   return keyboard;
 }
 
-/** Выход из кадра отказа, у которого родителя нет: только «Меню». */
-export function menuOnly(keyboard = new InlineKeyboard()): InlineKeyboard {
-  return nextRow(keyboard).text(menuLabel, toMenu.data);
+/**
+ * Выход кадра, у которого родителя нет, — отказа, устаревшего экрана: возврат
+ * в корень основного раздела «‹ Сходки».
+ */
+export function exitToMeetups(keyboard = new InlineKeyboard()): InlineKeyboard {
+  return withNav(keyboard, toMeetups);
 }
 
 /**

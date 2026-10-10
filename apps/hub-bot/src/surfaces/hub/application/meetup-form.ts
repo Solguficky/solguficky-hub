@@ -442,7 +442,7 @@ function mapPublished(
   today: CommunityDay,
 ): ExecuteResult {
   if (result.kind !== "ok") return failure(result);
-  // Ответ о публикации не обещает место в «Ближайших», которого у сходки нет:
+  // Ответ о публикации не обещает место в «Сходках», которого у сходки нет:
   // с прошедшей датой она сразу в архиве (PER-342).
   const schedule = result.meetup.schedule;
   const archived = schedule !== undefined && isBeforeDay(schedule, today);

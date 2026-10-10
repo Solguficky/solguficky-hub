@@ -10,6 +10,7 @@ import type {
   MeetupCategory,
   NotificationCategory,
 } from "../notifications/port.js";
+import { type ManageGroup, manageGroupOf } from "./screens/menu.js";
 
 const CallbackSchema = z.string().max(64);
 const TokenSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/);
@@ -155,11 +156,18 @@ function parseCardCursor(
 }
 
 type PlainAction =
+  // Старая кнопка «Меню» и «‹ Меню» в чатах: корня «Меню» больше нет, и она
+  // открывает «Сходки» (решение владельца 10 октября 2026 года).
   | { kind: "home" }
+  // Корни разделов, которые открывают команды; кнопкой — повтор после сбоя.
+  | { kind: "settings" }
+  | { kind: "help" }
+  | { kind: "next" }
   // Списки листаются: страница едет в кнопке листания, без неё — первая.
   | { kind: "hub"; page?: number }
   | { kind: "archive"; page?: number }
   | { kind: "manage-menu" }
+  | { kind: "manage-group"; group: ManageGroup }
   | { kind: "manage-hidden"; page?: number }
   | { kind: "community" }
   // Курсор очереди — токен человека, а не номер: очередь меняется.
@@ -577,6 +585,15 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:community:allow")
     return { kind: "ask-allowed-username" };
   if (parsed.data === "v1:nav:start") return { kind: "home" };
+  if (parsed.data === "v1:nav:settings") return { kind: "settings" };
+  if (parsed.data === "v1:nav:help") return { kind: "help" };
+  if (parsed.data === "v1:nav:next") return { kind: "next" };
+  if (parts.length === 4 && parts[1] === "manage" && parts[2] === "g") {
+    const group = manageGroupOf(parts[3] ?? "");
+    return group === undefined
+      ? { kind: "malformed" }
+      : { kind: "manage-group", group };
+  }
   if (parsed.data === "v1:nav:hub") return { kind: "hub" };
   if (parsed.data === "v1:notify:global") return { kind: "notify-global" };
   if (parsed.data === "v1:nav:archive") return { kind: "archive" };

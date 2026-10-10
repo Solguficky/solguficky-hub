@@ -390,7 +390,7 @@ describe("bid sheet in the hub shell", () => {
     );
     expect(
       screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
-    ).toEqual([["К лоту", "Меню"]]);
+    ).toEqual([["К лоту"]]);
   });
 
   // Непринятый ответ — свой экран с «Ввести заново» над «К лоту» (PER-472).
@@ -418,6 +418,6 @@ describe("bid sheet in the hub shell", () => {
     expect(plain(screen.text)).toBe("<b>Это не сумма</b>\n\n«Кружка»");
     expect(
       screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
-    ).toEqual([["Ввести заново"], ["К лоту", "Меню"]]);
+    ).toEqual([["Ввести заново"], ["К лоту"]]);
   });
 });

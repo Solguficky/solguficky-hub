@@ -34,8 +34,7 @@ import {
   toCard,
   toHidden,
   toManage,
-  toMenu,
-  toUpcoming,
+  toMeetups,
   withNav,
   withPager,
 } from "./kit.js";
@@ -67,7 +66,7 @@ export function meetupParent(
   const past =
     meetup.schedule !== undefined && isBeforeDay(meetup.schedule, today);
   if (meetup.lifecycle !== "planned" || past) return toArchive;
-  return meetup.visibility === "hidden" ? toHidden : toUpcoming;
+  return meetup.visibility === "hidden" ? toHidden : toMeetups;
 }
 
 function meetupButton(
@@ -97,25 +96,37 @@ function listLine(
     : `• ${readableDay(meetup.schedule, today)} — ${title}${tail}`;
 }
 
+function listRows(
+  page: Page<MeetupSummary>,
+  today: CommunityDay,
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const meetup of page.items) {
+    keyboard.text(...meetupButton(meetup, today)).row();
+  }
+  return keyboard;
+}
+
 function listKeyboard(
   page: Page<MeetupSummary>,
   today: CommunityDay,
   pager: (page: number) => string,
   parent: Parent,
 ): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
-  for (const meetup of page.items) {
-    keyboard.text(...meetupButton(meetup, today)).row();
-  }
-  return withNav(withPager(keyboard, page, pager), parent);
+  return withNav(withPager(listRows(page, today), page, pager), parent);
 }
 
-export function upcomingScreen(
+/**
+ * «Сходки» — корень основного раздела (решение владельца 10 октября 2026 года;
+ * прежде «Ближайшие сходки»): ряда навигации нет, «Архив» — его дочерний экран
+ * последним рядом содержимого, перед листанием.
+ */
+export function meetupsScreen(
   meetups: readonly MeetupSummary[],
   requestedPage: number,
   today: CommunityDay,
 ): ShownScreen {
-  const title = "Ближайшие сходки";
+  const title = "Сходки";
   // Сходки с датой идут первыми, и страница режется по этому порядку: секции
   // на странице называют только то, что на ней есть.
   const ordered = [
@@ -138,7 +149,7 @@ export function upcomingScreen(
   const section = (name: string, rows: readonly string[]) =>
     rows.length === 0 ? undefined : `${name}\n${rows.join("\n")}`;
   return {
-    id: "upcoming",
+    id: "meetups",
     text:
       meetups.length === 0
         ? screenText(
@@ -151,7 +162,11 @@ export function upcomingScreen(
             section("С датой", lines(true)),
             section("Без даты", lines(false)),
           ),
-    keyboard: listKeyboard(page, today, (to) => `v1:nav:hub:${to}`, toMenu),
+    keyboard: withPager(
+      nextRow(listRows(page, today)).text(toArchive.name, toArchive.data),
+      page,
+      (to) => `v1:nav:hub:${to}`,
+    ),
     format: "HTML",
   };
 }
@@ -188,7 +203,12 @@ export function archiveScreen(
               )
               .join("\n"),
           ),
-    keyboard: listKeyboard(page, today, (to) => `v1:nav:archive:${to}`, toMenu),
+    keyboard: listKeyboard(
+      page,
+      today,
+      (to) => `v1:nav:archive:${to}`,
+      toMeetups,
+    ),
     format: "HTML",
   };
 }
@@ -199,6 +219,9 @@ export function hiddenScreen(
   meetups: readonly MeetupSummary[],
   requestedPage: number,
   today: CommunityDay,
+  // Родитель — группа «Сходки и объявления» либо само «Управление»
+  // (`manageItemParent`).
+  parent: Parent = toManage,
 ): ShownScreen {
   const title = "Скрытые сходки";
   const hidden = meetups.filter((meetup) => meetup.visibility === "hidden");
@@ -220,7 +243,7 @@ export function hiddenScreen(
       page,
       today,
       (to) => `v1:manage:hidden:${to}`,
-      toManage,
+      parent,
     ),
     format: "HTML",
   };

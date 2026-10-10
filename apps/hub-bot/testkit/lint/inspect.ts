@@ -72,16 +72,20 @@ const carryingMethods: ReadonlySet<string> = new Set([
 ]);
 
 // Словарь у обоих ботов один (дизайн-код, «Аукцион: тело, шлюз, оболочка»).
-const menuLabel = "Меню";
 const backSign = "‹ ";
+// Выход кадра исхода аукциона — к карточке лота, как у кнопки следа.
+const toLotLabel = "К лоту";
 const removeMaterialLabel = marked(pictogram.remove, "Убрать");
 const linkSign = " ↗";
 const callbackDataLimit = 64;
 const defaultMaxRows = 12;
 
 // Слова, которые дизайн-код заменил: возврат называет родителя, подтверждение —
-// действие, состояние переключателя пишется словом.
+// действие, состояние переключателя пишется словом. Кнопки «Меню» нет: корня
+// «Меню» нет ни в одном боте, между разделами человек ходит командами
+// (решение владельца 10 октября 2026 года).
 const retiredLabels: ReadonlySet<string> = new Set([
+  "Меню",
   "Назад",
   "К списку",
   "К сходке",
@@ -171,19 +175,17 @@ function checkRules(
       }
       break;
     case "tree": {
+      // Ряд навигации — одна кнопка `[‹ Родитель]`: кнопки «Меню» нет
+      // (решение владельца 10 октября 2026 года).
       const parents = backNamesOf(config, entry.parent);
-      const [back, menu, ...rest] = labels(last);
-      const toMenu = entry.parent === "menu";
+      const [back, ...rest] = labels(last);
       const backOk =
         back !== undefined &&
         parents.some((name) => back === `${backSign}${name}`);
-      const tailOk = toMenu
-        ? menu === undefined
-        : menu === menuLabel && rest.length === 0;
-      if (!backOk || !tailOk) {
+      if (!backOk || rest.length > 0) {
         found.push([
           "nav",
-          `последний ряд ${describeRow(last)}, а нужен [${backSign}${parents.join(" | ")}]${toMenu ? "" : ` [${menuLabel}]`}`,
+          `последний ряд ${describeRow(last)}, а нужен [${backSign}${parents.join(" | ")}]`,
         ]);
       }
       break;
@@ -234,7 +236,7 @@ function checkRules(
         !labels(last).some(
           (label) =>
             label === "Повторить" ||
-            label === menuLabel ||
+            label === toLotLabel ||
             label.startsWith(backSign),
         )
       ) {
@@ -246,7 +248,7 @@ function checkRules(
       break;
     case "links": {
       // Кадр без доступа, которому есть куда уйти вне бота: ссылка не ведёт
-      // по дереву, поэтому возврат и «Меню» здесь нарушение, как у `none`.
+      // по дереву, поэтому возврат здесь нарушение, как у `none`.
       // Пустая клавиатура — тоже нарушение: кадр без выхода — это `none`, и
       // потерянная ссылка иначе прошла бы молча.
       const stray = buttons.filter(

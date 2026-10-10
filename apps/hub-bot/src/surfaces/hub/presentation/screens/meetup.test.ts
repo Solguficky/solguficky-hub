@@ -10,8 +10,8 @@ import {
   hiddenScreen,
   materialsScreen,
   meetupParent,
+  meetupsScreen,
   statusScreen,
-  upcomingScreen,
 } from "./meetup.js";
 
 // L0: сборщики экранов сходки на данных, без бота и Telegram. Что экран
@@ -179,8 +179,8 @@ describe("card posters", () => {
 });
 
 describe("meetupParent", () => {
-  it("returns a planned visible meetup to the upcoming list", () => {
-    expect(meetupParent(meetup(), today).name).toBe("Ближайшие");
+  it("returns a planned visible meetup to the meetups list", () => {
+    expect(meetupParent(meetup(), today).name).toBe("Сходки");
   });
 
   it("returns a hidden planned meetup to the hidden section", () => {
@@ -207,7 +207,7 @@ describe("meetupParent", () => {
     ).toBe("Архив");
   });
 
-  it("keeps a meetup of today in the upcoming list", () => {
+  it("keeps a meetup of today in the meetups list", () => {
     expect(
       meetupParent(
         meetup({
@@ -215,31 +215,34 @@ describe("meetupParent", () => {
         }),
         today,
       ).name,
-    ).toBe("Ближайшие");
+    ).toBe("Сходки");
   });
 });
 
-describe("upcomingScreen", () => {
+describe("meetupsScreen", () => {
   it("cuts the list into pages of eight with a pager and the page in the title", () => {
-    const first = upcomingScreen(summaries(17), 0, today);
-    const last = upcomingScreen(summaries(17), 2, today);
+    const first = meetupsScreen(summaries(17), 0, today);
+    const last = meetupsScreen(summaries(17), 2, today);
 
-    expect(first.text).toContain("<b>Ближайшие сходки · 1 из 3</b>");
+    expect(first.text).toContain("<b>Сходки · 1 из 3</b>");
+    // «Сходки» — корень (решение владельца 10 октября 2026 года): ряда
+    // навигации нет, «Архив» — последним рядом содержимого, перед листанием.
     expect(rows(first)).toHaveLength(8 + 2);
-    expect(rows(first).at(-2)).toEqual(["→"]);
-    expect(first.keyboard.inline_keyboard.at(-2)?.[0]).toMatchObject({
+    expect(rows(first).at(-2)).toEqual(["Архив"]);
+    expect(rows(first).at(-1)).toEqual(["→"]);
+    expect(first.keyboard.inline_keyboard.at(-1)?.[0]).toMatchObject({
       callback_data: "v1:nav:hub:1",
     });
     expect(last.text).toContain("· 3 из 3");
-    expect(rows(last)).toEqual([["17 августа · Сходка 17"], ["←"], ["‹ Меню"]]);
+    expect(rows(last)).toEqual([["17 августа · Сходка 17"], ["Архив"], ["←"]]);
   });
 
   it("opens the last page for a page beyond the list", () => {
-    expect(upcomingScreen(summaries(9), 7, today).text).toContain("· 2 из 2");
+    expect(meetupsScreen(summaries(9), 7, today).text).toContain("· 2 из 2");
   });
 
   it("names the year of a date outside the current one", () => {
-    const next = upcomingScreen(
+    const next = meetupsScreen(
       [
         {
           id: "0198f2a4-7c1e-7d3a-9b21-000000000001",
@@ -257,7 +260,7 @@ describe("upcomingScreen", () => {
   });
 
   it("escapes a title in the text and leaves it as is on the button", () => {
-    const screen = upcomingScreen(
+    const screen = meetupsScreen(
       [
         {
           id: "0198f2a4-7c1e-7d3a-9b21-000000000001",
@@ -275,7 +278,7 @@ describe("upcomingScreen", () => {
 });
 
 describe("archiveScreen", () => {
-  it("names how each meetup ended and returns to the menu", () => {
+  it("names how each meetup ended and returns to the meetups", () => {
     const archived: ArchivedMeetupSummary[] = [
       { ...summaries(1)[0], status: "held" } as ArchivedMeetupSummary,
     ];
@@ -284,7 +287,7 @@ describe("archiveScreen", () => {
     expect(screen.text).toBe(
       "<b>Архив</b>\n\n• 1 августа, сб — Сходка 1 (состоялась)",
     );
-    expect(rows(screen).at(-1)).toEqual(["‹ Меню"]);
+    expect(rows(screen).at(-1)).toEqual(["‹ Сходки"]);
   });
 });
 
@@ -302,10 +305,7 @@ describe("hiddenScreen", () => {
     expect(screen.text).toBe(
       "<b>Скрытые сходки</b>\n\n• 1 августа, сб — Сходка 1",
     );
-    expect(rows(screen)).toEqual([
-      ["1 августа · Сходка 1"],
-      ["‹ Управление", "Меню"],
-    ]);
+    expect(rows(screen)).toEqual([["1 августа · Сходка 1"], ["‹ Управление"]]);
   });
 });
 
@@ -320,7 +320,7 @@ describe("cardScreen", () => {
       ["Материалы (0)"],
       ["Написать подписчикам"],
       ["Отписаться", "Уведомления сходки"],
-      ["‹ Ближайшие", "Меню"],
+      ["‹ Сходки"],
     ]);
   });
 
@@ -329,7 +329,7 @@ describe("cardScreen", () => {
 
     expect(rows(cardScreen({ ...participant, meetup: meetup() }))).toEqual([
       ["Подписаться на сходку"],
-      ["‹ Ближайшие", "Меню"],
+      ["‹ Сходки"],
     ]);
     expect(
       rows(
@@ -350,11 +350,7 @@ describe("cardScreen", () => {
           }),
         }),
       ),
-    ).toEqual([
-      ["Материалы (1)"],
-      ["Подписаться на сходку"],
-      ["‹ Ближайшие", "Меню"],
-    ]);
+    ).toEqual([["Материалы (1)"], ["Подписаться на сходку"], ["‹ Сходки"]]);
   });
 
   // Исход действия на карточку не ложится: он свой экран, а карточка
@@ -389,7 +385,7 @@ describe("cardScreen", () => {
     expect(rows(screen)).toEqual([
       ["Написать подписчикам"],
       ["Уведомления сходки"],
-      ["‹ Архив", "Меню"],
+      ["‹ Архив"],
     ]);
   });
 });
@@ -411,7 +407,7 @@ describe("statusScreen", () => {
       ["Отменить отложенную публикацию"],
       ["Отметить состоявшейся"],
       ["Отменить сходку"],
-      ["‹ Сходка", "Меню"],
+      ["‹ Сходка"],
     ]);
     expect(screen.text).toContain(
       "Публикация назначена на 10 августа, пн, 09:30",
@@ -441,18 +437,14 @@ describe("materialsScreen", () => {
     expect(rows(screen).slice(-3)).toEqual([
       ["→"],
       ["Прикрепить материал"],
-      ["‹ Сходка", "Меню"],
+      ["‹ Сходка"],
     ]);
   });
 
   it("shows a participant the materials without management", () => {
     const screen = materialsScreen(meetup({ materials }), false, 1);
 
-    expect(rows(screen)).toEqual([
-      ["Материал 9 ↗"],
-      ["←"],
-      ["‹ Сходка", "Меню"],
-    ]);
+    expect(rows(screen)).toEqual([["Материал 9 ↗"], ["←"], ["‹ Сходка"]]);
     expect(screen.text).toContain("<b>Материалы · 2 из 2</b>");
   });
 });

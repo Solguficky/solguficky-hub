@@ -3,6 +3,7 @@ import type { ScreenEntry } from "../../../../../testkit/screen-lint.js";
 import {
   auctionFeedParent,
   auctionFeedParents,
+  manageParents,
   meetupListParent,
   meetupLists,
   screenCatalog,
@@ -15,12 +16,14 @@ describe("screen catalog", () => {
     const orphans = entries
       .filter(([, entry]) => entry.nav === "tree")
       .filter(([, entry]) => {
-        const parents: readonly string[] =
-          entry.parent === meetupListParent
-            ? meetupLists
-            : entry.parent === auctionFeedParent
-              ? auctionFeedParents
-              : [entry.parent ?? ""];
+        const groups: Readonly<Record<string, readonly string[]>> = {
+          [meetupListParent]: meetupLists,
+          [auctionFeedParent]: auctionFeedParents,
+          ...manageParents,
+        };
+        const parents: readonly string[] = groups[entry.parent ?? ""] ?? [
+          entry.parent ?? "",
+        ];
         return !parents.every(
           (parent) =>
             (screenCatalog as Record<string, ScreenEntry>)[parent]?.backName !==
@@ -32,12 +35,14 @@ describe("screen catalog", () => {
     expect(orphans).toEqual([]);
   });
 
-  it("keeps the tree rooted in the menu alone", () => {
+  // Решение владельца 10 октября 2026 года: корня «Меню» нет, корни — разделы,
+  // которые открывают команды.
+  it("roots the tree in the sections the commands open", () => {
     const roots = entries
       .filter(([, entry]) => entry.nav === "root")
       .map(([id]) => id);
 
-    expect(roots).toEqual(["menu"]);
+    expect(roots).toEqual(["meetups", "settings", "help", "manage"]);
   });
 
   it("does not hang a parent on a message that is not a tree screen", () => {

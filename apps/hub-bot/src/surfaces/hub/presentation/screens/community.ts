@@ -16,6 +16,7 @@ import {
   confirmKeyboard,
   escapeHtml,
   nextRow,
+  type Parent,
   pagedTitle,
   paginate,
   removeLabel,
@@ -66,10 +67,12 @@ export function communityScreen(
   snapshot: CommunitySnapshot,
   view: CommunityView,
   notice?: string,
+  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  parent: Parent = toManage,
 ): ShownScreen {
   switch (view.kind) {
     case "root":
-      return rootScreen(snapshot);
+      return rootScreen(snapshot, parent);
     case "pending":
       return pendingScreen(snapshot, view.cursor);
     case "admitted":
@@ -83,7 +86,7 @@ export function communityScreen(
   }
 }
 
-function rootScreen(snapshot: CommunitySnapshot): ShownScreen {
+function rootScreen(snapshot: CommunitySnapshot, parent: Parent): ShownScreen {
   const keyboard = new InlineKeyboard()
     .text("Ожидают допуска", "v1:cm:p")
     .row()
@@ -104,7 +107,7 @@ function rootScreen(snapshot: CommunitySnapshot): ShownScreen {
         `Разрешённые ники: ${snapshot.allowedUsernames.length}`,
       ].join("\n"),
     ),
-    keyboard: withNav(keyboard, toManage),
+    keyboard: withNav(keyboard, parent),
     format: "HTML",
   };
 }

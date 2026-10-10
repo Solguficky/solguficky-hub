@@ -50,10 +50,7 @@ describe("application card", () => {
       ],
       [{ text: "Профиль ↗", url: "https://t.me/ivan_p" }],
       [{ text: "Пропустить", callback_data: `v1:aq:q:${cursor}` }],
-      [
-        { text: "‹ Управление", callback_data: "v1:manage:menu" },
-        { text: "Меню", callback_data: "v1:nav:start" },
-      ],
+      [{ text: "‹ Управление", callback_data: "v1:manage:menu" }],
     ]);
   });
 
@@ -89,7 +86,7 @@ describe("application card", () => {
     expect(rows(screen.keyboard)).toEqual([
       ["✔️ Допустить", "✖️ Отказать"],
       ["Пропустить"],
-      ["‹ Управление", "Меню"],
+      ["‹ Управление"],
     ]);
   });
 
@@ -149,7 +146,7 @@ describe("application queue end", () => {
     const screen = applicationQueueEndScreen("community", 0, false);
 
     expect(screen.text).toBe("<b>Заявки</b>\n\nНовых заявок нет.");
-    expect(rows(screen.keyboard)).toEqual([["‹ Управление", "Меню"]]);
+    expect(rows(screen.keyboard)).toEqual([["‹ Управление"]]);
   });
 
   it("says the queue ended and offers the skipped ones from the start", () => {

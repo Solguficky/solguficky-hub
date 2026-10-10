@@ -9,6 +9,7 @@ import {
   confirmKeyboard,
   escapeHtml,
   nextRow,
+  type Parent,
   pagedTitle,
   paginate,
   readableMoment,
@@ -86,6 +87,8 @@ export function refusedScreen(
   requestedPage: number,
   today: CommunityDay,
   liftsBlocks = true,
+  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  parent: Parent = toManage,
 ): ShownScreen {
   const page = paginate(applications, requestedPage);
   const keyboard = new InlineKeyboard();
@@ -110,7 +113,7 @@ export function refusedScreen(
             .map((application) => refusedLine(application, today))
             .join("\n"),
     ),
-    keyboard: withNav(keyboard, toManage),
+    keyboard: withNav(keyboard, parent),
     format: "HTML",
   };
 }

@@ -16,26 +16,24 @@ import {
 // маленький: правило проверяется само по себе, а не состоянием перевёрстки.
 
 const catalog: Record<string, ScreenEntry> = {
-  menu: { class: "screen", nav: "root", title: "Меню", backName: "Меню" },
-  upcoming: {
+  meetups: {
     class: "screen",
-    nav: "tree",
-    title: "Ближайшие сходки",
-    parent: "menu",
-    backName: "Ближайшие",
+    nav: "root",
+    title: "Сходки",
+    backName: "Сходки",
   },
   archive: {
     class: "screen",
     nav: "tree",
     title: "Архив",
-    parent: "menu",
+    parent: "meetups",
     backName: "Архив",
   },
   hidden: {
     class: "screen",
     nav: "tree",
     title: "Скрытые сходки",
-    parent: "menu",
+    parent: "meetups",
     backName: "Скрытые",
   },
   card: {
@@ -50,7 +48,7 @@ const catalog: Record<string, ScreenEntry> = {
     class: "screen",
     nav: "tree",
     title: "Состав сообщества",
-    parent: "menu",
+    parent: "meetups",
     refresh: true,
   },
   confirm: { class: "screen", nav: "confirm" },
@@ -65,7 +63,7 @@ const catalog: Record<string, ScreenEntry> = {
     class: "screen",
     nav: "tree",
     title: "Архив",
-    parent: "menu",
+    parent: "meetups",
     legacy: true,
   },
 };
@@ -111,7 +109,7 @@ describe("inspectCall", () => {
       {
         chat_id: 42,
         text: "Привет",
-        reply_markup: { inline_keyboard: [[key("Меню")]] },
+        reply_markup: { inline_keyboard: [[key("Архив")]] },
       },
       catalog,
     );
@@ -151,25 +149,33 @@ describe("inspectCall", () => {
     ).toEqual(["unknown-screen"]);
   });
 
-  it("accepts a first-level screen that returns to the menu", () => {
+  // Решение владельца 10 октября 2026 года: корень раздела ряда навигации не
+  // несёт, ряд навигации ребёнка — одна кнопка возврата, «Меню» нет нигде.
+  it("accepts a section root without a navigation row", () => {
     expect(
       rulesOf(
         "editMessageText",
-        screen("upcoming", "<b>Ближайшие сходки</b>\n\nПока пусто.", [
+        screen("meetups", "<b>Сходки</b>\n\nПока пусто.", [
           [key("12 июня · Настолки")],
-          [key("‹ Меню")],
+          [key("Архив")],
         ]),
       ),
     ).toEqual([]);
+    expect(
+      rulesOf(
+        "editMessageText",
+        screen("meetups", "<b>Сходки</b>", [[key("Архив")], [key("‹ Сходки")]]),
+      ),
+    ).toEqual(["nav"]);
   });
 
-  it("requires the parent's name and the menu button on a deeper screen", () => {
+  it("requires the parent's name alone in the navigation row", () => {
     const nav = (row: Key[]) =>
       rulesOf("editMessageText", screen("status", "<b>Статус</b>", [row]));
 
-    expect(nav([key("‹ Сходка"), key("Меню")])).toEqual([]);
-    expect(nav([key("‹ Сходка")])).toEqual(["nav"]);
-    expect(nav([key("‹ Архив"), key("Меню")])).toEqual(["nav"]);
+    expect(nav([key("‹ Сходка")])).toEqual([]);
+    expect(nav([key("‹ Сходка"), key("Меню")])).toEqual(["nav", "vocabulary"]);
+    expect(nav([key("‹ Архив")])).toEqual(["nav"]);
     expect(nav([key("Назад")])).toEqual(["nav", "vocabulary"]);
   });
 
@@ -179,14 +185,14 @@ describe("inspectCall", () => {
         chat_id: 42,
         message_id: 9,
         rich_message: { html: "<h1>Настолки</h1><p>Когда: завтра</p>" },
-        reply_markup: { inline_keyboard: [[key(back), key("Меню")]] },
+        reply_markup: { inline_keyboard: [[key(back)]] },
         [screenTag]: "card",
       });
 
-    expect(card("‹ Ближайшие")).toEqual([]);
+    expect(card("‹ Сходки")).toEqual([]);
     expect(card("‹ Архив")).toEqual([]);
     expect(card("‹ Скрытые")).toEqual([]);
-    expect(card("‹ Меню")).toEqual(["nav"]);
+    expect(card("‹ Управление")).toEqual(["nav"]);
   });
 
   // Над заголовком ничего: исход действия — свой экран (PER-472).
@@ -194,17 +200,15 @@ describe("inspectCall", () => {
     const titled = (text: string, extra?: Record<string, unknown>) =>
       rulesOf(
         "sendMessage",
-        screen("upcoming", text, [[key("‹ Меню")]], extra),
+        screen("archive", text, [[key("‹ Сходки")]], extra),
       );
 
-    expect(titled("Изменение сохранено.\n\n<b>Ближайшие сходки</b>")).toEqual([
-      "body",
+    expect(titled("Изменение сохранено.\n\n<b>Архив</b>")).toEqual(["body"]);
+    expect(titled("Архив")).toEqual(["title"]);
+    expect(titled("<b>Сходки</b>")).toEqual(["title"]);
+    expect(titled("<b>Архив</b>", { parse_mode: undefined })).toEqual([
+      "title",
     ]);
-    expect(titled("Ближайшие сходки")).toEqual(["title"]);
-    expect(titled("<b>Архив</b>")).toEqual(["title"]);
-    expect(
-      titled("<b>Ближайшие сходки</b>", { parse_mode: undefined }),
-    ).toEqual(["title"]);
   });
 
   it("holds a confirmation to a verb answer and a plain no", () => {
@@ -268,7 +272,7 @@ describe("inspectCall", () => {
         text: "<b>Архив</b>",
         parse_mode: "HTML",
         reply_markup: {
-          inline_keyboard: [...rows, [key("‹ Меню")]],
+          inline_keyboard: [...rows, [key("‹ Сходки")]],
         },
         [screenTag]: "archive",
       });
@@ -333,9 +337,9 @@ describe("inspectCall", () => {
     expect(
       rulesOf(
         "editMessageText",
-        screen("upcoming", "<b>Ближайшие сходки</b>", [
+        screen("archive", "<b>Архив</b>", [
           [key("Обновить")],
-          [key("‹ Меню")],
+          [key("‹ Сходки")],
         ]),
       ),
     ).toEqual(["vocabulary"]);
@@ -344,25 +348,22 @@ describe("inspectCall", () => {
         "editMessageText",
         screen("community", "<b>Состав сообщества</b>", [
           [key("Обновить")],
-          [key("‹ Меню")],
+          [key("‹ Сходки")],
         ]),
       ),
     ).toEqual([]);
     expect(
       rulesOf(
         "editMessageText",
-        screen("upcoming", "<b>Ближайшие сходки</b>", [
-          [key("Отмена")],
-          [key("‹ Меню")],
-        ]),
+        screen("archive", "<b>Архив</b>", [[key("Отмена")], [key("‹ Сходки")]]),
       ),
     ).toEqual(["vocabulary"]);
     expect(
       rulesOf(
         "editMessageText",
-        screen("upcoming", "<b>Ближайшие сходки</b>", [
+        screen("archive", "<b>Архив</b>", [
           [key("[x] Новые сходки")],
-          [key("‹ Меню")],
+          [key("‹ Сходки")],
         ]),
       ),
     ).toEqual(["vocabulary"]);
@@ -375,13 +376,15 @@ describe("inspectCall", () => {
         screen("refusal", "<b>Не получилось</b>", rows),
       );
 
-    expect(refusal([[key("Повторить")], [key("Меню")]])).toEqual([]);
+    expect(refusal([[key("Повторить")], [key("‹ Сходки")]])).toEqual([]);
     expect(refusal([[key("‹ Сходка")]])).toEqual([]);
+    expect(refusal([[key("К лоту")]])).toEqual([]);
     expect(refusal([])).toEqual(["nav"]);
+    expect(refusal([[key("Меню")]])).toEqual(["nav", "vocabulary"]);
     expect(
       rulesOf(
         "sendMessage",
-        screen("no-access", "<b>Заявка ждёт проверки</b>", [[key("Меню")]]),
+        screen("no-access", "<b>Заявка ждёт проверки</b>", [[key("‹ Сходки")]]),
       ),
     ).toEqual(["nav"]);
   });
@@ -398,7 +401,9 @@ describe("inspectCall", () => {
     // Кадр со ссылкой, потерявший её, не проходит за кадр без выхода.
     expect(linked([])).toEqual(["nav"]);
     expect(linked([[link("Бот аукциона")]])).toEqual(["nav"]);
-    expect(linked([[link("Бот аукциона ↗")], [key("Меню")]])).toEqual(["nav"]);
+    expect(linked([[link("Бот аукциона ↗")], [key("‹ Сходки")]])).toEqual([
+      "nav",
+    ]);
     // Под кадром без выхода ссылка по-прежнему нарушение.
     expect(
       rulesOf(
@@ -415,7 +420,7 @@ describe("inspectCall", () => {
         message_id: 9,
         rich_message: { html: "<h1>Настолки</h1>" },
         reply_markup: {
-          inline_keyboard: [...keyboard, [key("‹ Архив"), key("Меню")]],
+          inline_keyboard: [...keyboard, [key("‹ Архив")]],
         },
         [screenTag]: "card",
       });
@@ -436,9 +441,9 @@ describe("inspectCall", () => {
     expect(
       rulesOf(
         "editMessageText",
-        screen("upcoming", "<b>Ближайшие сходки</b>", [
+        screen("archive", "<b>Архив</b>", [
           [{ text: "Сходка", callback_data: "v".repeat(65) }],
-          [key("‹ Меню")],
+          [key("‹ Сходки")],
         ]),
       ),
     ).toEqual(["callback-data"]);
@@ -472,7 +477,7 @@ describe("inspectCall", () => {
     expect(
       rulesOf(
         "editMessageText",
-        screen("old", "<b>Архив</b>", [[key("‹ Меню")]]),
+        screen("old", "<b>Архив</b>", [[key("‹ Сходки")]]),
       ),
     ).toEqual(["legacy-outlived"]);
   });
@@ -493,7 +498,7 @@ describe("harness recorder", () => {
     await bot.init();
 
     await bot.api.sendMessage(42, "Привет", {
-      reply_markup: new InlineKeyboard().text("Меню", "v1:nav:start"),
+      reply_markup: new InlineKeyboard().text("Сходки", "v1:nav:hub"),
     });
 
     expect(takeViolations()).toMatchObject([
@@ -507,7 +512,7 @@ describe("harness recorder", () => {
 
     await bot.api.sendMessage(42, "Доступ открыт.", {
       ...screenMark("access-opened"),
-      reply_markup: new InlineKeyboard().text("Ближайшие сходки", "v1:nav:hub"),
+      reply_markup: new InlineKeyboard().text("Сходки", "v1:nav:hub"),
     });
 
     expect(takeViolations()).toEqual([]);

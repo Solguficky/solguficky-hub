@@ -23,7 +23,6 @@ export function auctionFaqScreen(
       page: 0,
     }),
   );
-  keyboard.text("Меню", "v1:nav:start");
   return {
     id: "auction-faq",
     text: renderFaqText(faq),

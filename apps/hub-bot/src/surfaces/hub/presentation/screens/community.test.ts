@@ -36,7 +36,7 @@ function dataOf(screen: ShownScreen, text: string): string | undefined {
     : undefined;
 }
 
-const nav = ["‹ Состав", "Меню"];
+const nav = ["‹ Состав"];
 
 describe("community root", () => {
   it("shows the three counts and leads to the three lists", () => {
@@ -58,7 +58,7 @@ describe("community root", () => {
       ["Разрешённые ники"],
       ["Модераторы аукциона"],
       ["Обновить"],
-      ["‹ Управление", "Меню"],
+      ["‹ Управление"],
     ]);
   });
 });
@@ -105,7 +105,7 @@ describe("auction moderators", () => {
     );
 
     expect(screen.id).toBe("community-moderator-candidates");
-    expect(rows(screen)).toEqual([["Выдать @user3"], ["‹ Модераторы", "Меню"]]);
+    expect(rows(screen)).toEqual([["Выдать @user3"], ["‹ Модераторы"]]);
     expect(dataOf(screen, "Выдать @user3")).toBe(
       `v1:cm:mg:${uuidToToken(id(3))}:0`,
     );

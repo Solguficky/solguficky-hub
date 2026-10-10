@@ -528,7 +528,7 @@ describe("entry into the auction console", () => {
     await bot.handleUpdate(press(consoleData));
 
     expect(plain(last(calls))).toContain("Это действие тебе недоступно.");
-    expect(labels(last(calls))).toEqual([["Меню"]]);
+    expect(labels(last(calls))).toEqual([["‹ Сходки"]]);
     expect(records.at(-1)?.fields).toMatchObject({
       result: "error",
       error_category: "authorization",
@@ -656,7 +656,7 @@ describe("auction console", () => {
       ["Ставки", "Люди", "Рост"],
       ["В финал · Ваза"],
       ["Снять из финала · Кружка"],
-      ["‹ Лоты", "Меню"],
+      ["‹ Лоты"],
     ]);
     expect(dataOf(screen, "‹ Лоты")).toBe(feedData);
   });
@@ -681,7 +681,7 @@ describe("auction console", () => {
     ]);
     // Исход — свой экран без строк пульта; пульт открывает «‹ Пульт».
     expect(last(calls).text).toBe("<b>Лот отмечен для финала</b>");
-    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(plain(last(calls))).toContain(
       "• Ваза — 1 200 ₽ · 3 ставки · 2 уч. · в финал",
@@ -693,7 +693,7 @@ describe("auction console", () => {
 
     expect(auction.sent("deselectForFinal")).toHaveLength(1);
     expect(last(calls).text).toBe("<b>Отметка финала снята</b>");
-    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(labels(last(calls))[0]).toEqual(["Ставки", "Люди", "Рост"]);
     expect(labels(last(calls))).toContainEqual(["В финал · Ваза"]);
@@ -719,7 +719,7 @@ describe("auction console", () => {
     expect(screen).not.toContain("Лот отмечен для финала");
     // Строк пульта на экране исхода нет; пульт за «‹ Пульт» без отметки.
     expect(screen).not.toContain("• Ваза");
-    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(plain(last(calls))).toContain("• Ваза — 1 200 ₽ · 3 ставки · 2 уч.");
     expect(plain(last(calls))).not.toContain("в финал");
@@ -742,7 +742,7 @@ describe("week of the auction", () => {
       ["Ставки", "Люди", "Рост"],
       ["Сроки недели"],
       ["🗑 Удалить аукцион"],
-      ["‹ Лоты", "Меню"],
+      ["‹ Лоты"],
     ]);
 
     await next((history) => press(dataOf(last(history), "Сроки недели")));
@@ -759,10 +759,7 @@ describe("week of the auction", () => {
       "<b>Не получилось разобрать сроки</b>\n\nНужны начало и конец: ДД.ММ.ГГГГ ЧЧ:ММ — ДД.ММ.ГГГГ ЧЧ:ММ.",
     );
     expect(last(calls).reply_markup?.force_reply).toBeUndefined();
-    expect(labels(last(calls))).toEqual([
-      ["Ввести заново"],
-      ["‹ Пульт", "Меню"],
-    ]);
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
     await next((history) => press(dataOf(last(history), "Ввести заново")));
     expect(question(calls).payload.text).toContain(
       "Например: 20.10.2026 18:00 — 27.10.2026 00:00",
@@ -793,7 +790,7 @@ describe("week of the auction", () => {
     ]);
     // Исход сохранения — свой экран; сроки и кнопки пульта за «‹ Пульт».
     expect(last(calls).text).toBe("<b>Сроки недели сохранены</b>");
-    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
     await next((history) => press(dataOf(last(history), "‹ Пульт")));
     const screen = last(calls);
     expect(plain(screen)).toContain(
@@ -805,7 +802,7 @@ describe("week of the auction", () => {
       ["Вкл · Финал"],
       ["Открыть онлайн-неделю"],
       ["🗑 Удалить аукцион"],
-      ["‹ Лоты", "Меню"],
+      ["‹ Лоты"],
     ]);
   });
 
@@ -821,10 +818,7 @@ describe("week of the auction", () => {
 
     expect(last(calls).text).toBe("<b>Нужен ответ текстом</b>");
     expect(last(calls).reply_markup?.force_reply).toBeUndefined();
-    expect(labels(last(calls))).toEqual([
-      ["Ввести заново"],
-      ["‹ Пульт", "Меню"],
-    ]);
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
     expect(auction.sent("scheduleAuction")).toEqual([]);
   });
 
@@ -915,10 +909,7 @@ describe("week of the auction", () => {
     );
 
     expect(last(calls).text).toBe("<b>Конец недели уже прошёл</b>");
-    expect(labels(last(calls))).toEqual([
-      ["Ввести заново"],
-      ["‹ Пульт", "Меню"],
-    ]);
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
     expect(auction.sent("scheduleAuction")).toEqual([]);
   });
 });
@@ -956,7 +947,7 @@ describe("opening the online week", () => {
     expect(last(calls).text).toBe(
       "<b>Онлайн-неделя открыта</b>\n\nЛоты принимают ставки.",
     );
-    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(plain(last(calls))).toContain("Идут онлайн-торги до");
 
@@ -1053,7 +1044,7 @@ describe("final selection", () => {
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
       ["Снять из финала · Кружка"],
-      ["‹ Лоты", "Меню"],
+      ["‹ Лоты"],
     ]);
   });
 
@@ -1076,7 +1067,7 @@ describe("final selection", () => {
       "<b>У недели нет финала</b>\n\nОтбирать лоты некуда.",
     );
     expect(screen).not.toContain("Лот отмечен для финала");
-    expect(labels(last(calls))).toEqual([["‹ Пульт", "Меню"]]);
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
   });
 
   it("marks a held lot as a finalist without buttons", async () => {
@@ -1105,7 +1096,7 @@ describe("final selection", () => {
     );
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["‹ Лоты", "Меню"],
+      ["‹ Лоты"],
     ]);
   });
 });
@@ -1138,7 +1129,7 @@ describe("discarding the auction", () => {
     expect(last(calls).text).toBe(
       "<b>Аукцион удалён</b>\n\nВключить его у сходки можно заново.",
     );
-    expect(labels(last(calls))).toEqual([["‹ Ближайшие", "Меню"]]);
+    expect(labels(last(calls))).toEqual([["‹ Сходки"]]);
 
     // Повторное «Да» несёт тот же ключ: Auction примет его как повтор.
     await bot.handleUpdate(press(yes));
