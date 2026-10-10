@@ -6,6 +6,7 @@ import {
   ApplicationQueue,
 } from "../../../gen/identity/v1/access_pb.js";
 import { AccessRequestOutcome } from "../../../gen/identity/v1/identity_service_pb.js";
+import { OutbidFrequency as WireFrequency } from "../../../gen/notifications/v1/notifications_service_pb.js";
 import { requestIdHeader } from "../../core/rpc-metadata.js";
 import {
   type AuctionRpc,
@@ -13,6 +14,7 @@ import {
   createPorts,
   type IdentityRpc,
   imageTimeoutMs,
+  type NotificationsRpc,
 } from "./clients.js";
 
 function rpcs() {
@@ -330,6 +332,61 @@ describe("createPorts", () => {
       { viewer: wireViewer, lotId: "lot-1" },
       { timeoutMs: imageTimeoutMs, headers: { [requestIdHeader]: "req-1" } },
     );
+  });
+});
+
+// PER-515: настройка «перебили» — на личности, без прав смотрящего.
+describe("outbid preference port", () => {
+  function outbidPorts(answer: WireFrequency) {
+    const notifications = {
+      getOutbidPreference: vi.fn(async () => ({
+        identityId: "id-1",
+        frequency: answer,
+      })),
+      setOutbidPreference: vi.fn(async () => ({
+        identityId: "id-1",
+        frequency: answer,
+      })),
+    };
+    const { identity, auction } = rpcs();
+    const ports = createPorts(
+      identity as unknown as IdentityRpc,
+      auction as unknown as AuctionRpc,
+      {
+        timeoutMs: 1_000,
+        notifications: notifications as unknown as NotificationsRpc,
+      },
+    )("req-1");
+    return { notifications, ports };
+  }
+
+  it("has no port without a Notifications client", () => {
+    expect(rpcs().ports.outbid).toBeUndefined();
+  });
+
+  it("reads and sets the frequency of the person with request metadata", async () => {
+    const { notifications, ports } = outbidPorts(
+      WireFrequency.AT_MOST_EVERY_15_MINUTES,
+    );
+    expect(await ports.outbid?.get(viewer)).toBe("15");
+    expect(await ports.outbid?.set(viewer, "15")).toBe("15");
+    expect(notifications.getOutbidPreference).toHaveBeenCalledWith(
+      { identityId: "id-1" },
+      callOptions,
+    );
+    expect(notifications.setOutbidPreference).toHaveBeenCalledWith(
+      {
+        identityId: "id-1",
+        frequency: WireFrequency.AT_MOST_EVERY_15_MINUTES,
+      },
+      callOptions,
+    );
+  });
+
+  // Умолчание `EVERY` отдаёт сервер; `UNSPECIFIED` — ответ вне контракта.
+  it("does not turn an unspecified answer into a frequency", async () => {
+    const { ports } = outbidPorts(WireFrequency.UNSPECIFIED);
+    expect(await ports.outbid?.get(viewer)).toBeUndefined();
   });
 });
 

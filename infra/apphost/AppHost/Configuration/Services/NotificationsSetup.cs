@@ -34,7 +34,8 @@ internal static class NotificationsSetup
             // становится мгновением, от которого считается напоминание.
             .WithEnvironment("NOTIFICATIONS_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
             // Notifications вызывает Meetups и Identity и принимает обоих ботов
-            // (ADR-056): бот аукциона — избранные лоты (ADR-063).
+            // (ADR-056): бот аукциона — избранные лоты (ADR-063) и настройка
+            // «перебили» (PER-515).
             .WithServiceToken(context)
             .AcceptCallers(context, AppHostNames.Resources.HubBot, AppHostNames.Resources.AuctionBot)
             // Notifications — .NET, поэтому берёт готовую строку Npgsql, как Meetups.

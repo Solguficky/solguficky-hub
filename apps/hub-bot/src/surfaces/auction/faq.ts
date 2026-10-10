@@ -1,9 +1,12 @@
+import { OUTBID_FREQUENCIES, type OutbidFrequency } from "./outbid.js";
+
 export type { FaqConfigResult, FaqContent } from "../../auction-faq.js";
 export { defaultFaq, readFaqContent } from "../../auction-faq.js";
 
 // `menu` — вход в меню с любого экрана. `read` — возврат «‹ Меню» под FAQ:
 // только он ставит отметку ознакомления (дизайн-код, «Дерево бота аукциона»).
-// `start` — повтор входа после сбоя `/start`.
+// `start` — повтор входа после сбоя `/start`. `notify` — настройка частоты
+// «перебили» (PER-515): без хвоста — экран, с хвостом частоты — выбор.
 export const ENTRY_ACTIONS = [
   "faq",
   "menu",
@@ -13,6 +16,7 @@ export const ENTRY_ACTIONS = [
   "past",
   "details",
   "question",
+  "notify",
 ] as const;
 export type EntryAction = (typeof ENTRY_ACTIONS)[number];
 
@@ -23,10 +27,12 @@ export type ListAction = Extract<EntryAction, "auctions" | "past">;
 export const MAX_LIST_PAGE = 999;
 
 // `sourceCode` — код канала прихода: он есть только у повтора входа, хвостом
-// `start`.
+// `start`. `choose` — выбранная частота: целевое значение, а не шаг, поэтому
+// повтор нажатия безопасен.
 export type EntryIntent =
-  | { action: Exclude<EntryAction, "start">; page: number }
-  | { action: "start"; page: 0; sourceCode?: string };
+  | { action: Exclude<EntryAction, "start" | "notify">; page: number }
+  | { action: "start"; page: 0; sourceCode?: string }
+  | { action: "notify"; page: 0; choose?: OutbidFrequency };
 
 export function entryCallback(action: EntryAction): string {
   return `v1:entry:${action}`;
@@ -41,6 +47,12 @@ export function startCallback(sourceCode?: string): string {
   return sourceCode === undefined || sourceCode.length > MAX_RETRY_SOURCE
     ? entryCallback("start")
     : `${entryCallback("start")}:${sourceCode}`;
+}
+
+export function notifyCallback(choose?: OutbidFrequency): string {
+  return choose === undefined
+    ? entryCallback("notify")
+    : `${entryCallback("notify")}:${choose}`;
 }
 
 export function listCallback(action: ListAction, page: number): string {
@@ -62,6 +74,10 @@ export function parseEntryCallback(raw: unknown): EntryIntent | undefined {
   const action = ENTRY_ACTIONS.find((each) => raw === entryCallback(each));
   if (action === "start") return { action, page: 0 };
   if (action !== undefined) return { action, page: 0 };
+  const choose = OUTBID_FREQUENCIES.find(
+    (each) => raw === notifyCallback(each),
+  );
+  if (choose !== undefined) return { action: "notify", page: 0, choose };
   const sourceCode = START_SOURCE.exec(raw)?.[1];
   if (sourceCode !== undefined) return { action: "start", page: 0, sourceCode };
   const paged = LIST_PAGE.exec(raw);

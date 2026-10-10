@@ -136,16 +136,16 @@ public class CallerGateTests
     }
 
     /// <summary>
-    /// Колонка Caller каталога: избранные лоты принимают только бота аукциона,
-    /// остальные методы — только бота хаба.
+    /// Колонка Caller каталога: избранные лоты и настройку перебитий принимают
+    /// только бота аукциона, остальные методы — только бота хаба.
     /// </summary>
     [Fact]
     public void ByMethod_EveryContractMethod_AcceptsOnlyItsBot()
     {
-        string[] favorites = ["FollowLot", "UnfollowLot", "ListFollowedLots"];
+        string[] auction = ["FollowLot", "UnfollowLot", "ListFollowedLots", "GetOutbidPreference", "SetOutbidPreference"];
         foreach (var method in NotificationsService.Descriptor.Methods)
         {
-            var expected = favorites.Contains(method.Name) ? Caller.AuctionBot : Caller.HubBot;
+            var expected = auction.Contains(method.Name) ? Caller.AuctionBot : Caller.HubBot;
             MethodAccess.ByMethod[method.Name].ShouldBe(new[] { expected }, ignoreOrder: true);
         }
     }
@@ -154,6 +154,7 @@ public class CallerGateTests
     [Theory]
     [InlineData("/notifications.v1.NotificationsService/FollowLot", false)]
     [InlineData("/notifications.v1.NotificationsService/ListFollowedLots", false)]
+    [InlineData("/notifications.v1.NotificationsService/SetOutbidPreference", false)]
     [InlineData(Community, true)]
     public void Decide_OtherBotsMethod_RefusesAsNotDeclared(string path, bool auctionBot)
     {

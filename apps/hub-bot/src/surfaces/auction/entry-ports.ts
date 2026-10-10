@@ -4,10 +4,12 @@ import type {
   Viewer,
 } from "../../auction-ui/index.js";
 import type { AuctionCatalogPort } from "./auctions.js";
+import type { OutbidPreferencePort } from "./outbid.js";
 
 // FAQ и списки аукционов — локальные намерения оболочки: аукционное дерево торгов о
 // них не знает. Вход `entry` зовёт `/start` вместо разрешения личности
-// (ADR-060).
+// (ADR-060). Настройка «перебили» — у Notifications (PER-515); без адреса
+// Notifications порта нет, и настройки в боте тоже.
 export type EntryPorts = AuctionBotPorts & {
   entry: EntryPort;
   catalog: AuctionCatalogPort;
@@ -15,4 +17,5 @@ export type EntryPorts = AuctionBotPorts & {
     acknowledged(viewer: Viewer): Promise<boolean>;
     acknowledge(viewer: Viewer): Promise<void>;
   };
+  outbid?: OutbidPreferencePort;
 };

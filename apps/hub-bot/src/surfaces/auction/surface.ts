@@ -16,7 +16,8 @@ import { decodeNotification } from "./delivery/notification.js";
 import { botCommands } from "./menu-commands.js";
 
 // Поверхность аукциона (ADR-064, п. 18): процесс с `BOT_SURFACE=auction`.
-// Здесь — порты дерева поверх клиентов Identity и Auction, бот и разбор веток
+// Здесь — порты дерева поверх клиентов Identity и Auction, настройка
+// «перебили» поверх Notifications (PER-515), бот и разбор веток
 // уведомлений аукциона (PER-328); процесс вокруг них общий
 // (`src/core/process.ts`). Поверхность хаба — отдельный процесс со своим
 // токеном: остановка одного поллера другой не трогает.
@@ -32,6 +33,9 @@ export const auctionSurface: SurfaceDefinition = ({
   const clients = createClients({
     identityUrl: config.identityUrl,
     auctionUrl: auction.auctionUrl,
+    ...(auction.notificationsUrl === undefined
+      ? {}
+      : { notificationsUrl: auction.notificationsUrl }),
     serviceToken: config.serviceToken,
     tracing,
     onNamesRefused: (cause, requestId) =>
@@ -78,6 +82,7 @@ export const auctionSurface: SurfaceDefinition = ({
                     error:
                       cause instanceof Error ? cause.message : String(cause),
                   }),
+                clients.outbidSettings,
               ),
               sender,
             }),
