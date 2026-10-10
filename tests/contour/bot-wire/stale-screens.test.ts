@@ -48,6 +48,7 @@ async function memberLookingAtPublishedMeetup(scenario: string) {
   await organizer.presses("Создать сходку");
   await fillsMeetupForm(organizer, title);
   await organizer.presses("Опубликовать");
+  await organizer.presses("✔️ Да, опубликовать сходку");
   const [meetupId] = (await direct.journalOf(adminId)).meetupIds;
   if (meetupId === undefined) throw new Error("сходка не заведена");
 

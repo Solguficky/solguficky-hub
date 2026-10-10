@@ -211,7 +211,10 @@ type PlainAction =
       cursor: CardCursor;
     }
   | { kind: "create-meetup"; token: string }
-  | { kind: "publish-meetup"; token: string }
+  // Команда публикации. С версией — «Да» подтверждения с черновика (решение
+  // владельца 10 октября 2026 года); без версии — «Да, опубликовать» кадра
+  // конфликта и кнопки, оставшиеся в чатах до подтверждения.
+  | { kind: "publish-meetup"; token: string; version?: number }
   | { kind: "manage-edit"; token: string }
   | { kind: "manage-field"; token: string; field: FormField }
   // Черновик формы создания: без поля — сам экран, с полем — вопрос о нём.
@@ -246,7 +249,9 @@ type PlainAction =
       page: number;
       sort: ConsoleSort;
     }
-  | { kind: "manage-publish"; token: string }
+  // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
+  | { kind: "manage-publish"; token: string; origin: PublishOrigin }
+  | { kind: "manage-confirm-publish"; token: string; version: number }
   | { kind: "manage-unpublish"; token: string }
   | { kind: "manage-confirm-unpublish"; token: string; version?: number }
   | { kind: "manage-cancel"; token: string }
@@ -716,6 +721,12 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "create-meetup", token: token.data };
   if (parts.length === 4 && parts[2] === "publish")
     return { kind: "publish-meetup", token: token.data };
+  if (parts.length === 5 && parts[2] === "publish") {
+    const version = VersionSchema.safeParse(parts[4]);
+    return version.success
+      ? { kind: "publish-meetup", token: token.data, version: version.data }
+      : { kind: "malformed" };
+  }
   if (parts.length === 4 && parts[2] === "edit")
     return { kind: "manage-edit", token: token.data };
   if (parts.length === 5 && parts[2] === "field") {
@@ -798,7 +809,20 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts.length === 4 && parts[2] === "auction")
     return { kind: "manage-meetups", token: token.data };
   if (parts.length === 4 && parts[2] === "republish")
-    return { kind: "manage-publish", token: token.data };
+    return { kind: "manage-publish", token: token.data, origin: "status" };
+  // `d` — «Опубликовать» на черновике: «Нет» подтверждения вернёт на него.
+  if (parts.length === 5 && parts[2] === "republish" && parts[4] === "d")
+    return { kind: "manage-publish", token: token.data, origin: "draft" };
+  if (parts.length === 5 && parts[2] === "confirm-publish") {
+    const version = VersionSchema.safeParse(parts[4]);
+    return version.success
+      ? {
+          kind: "manage-confirm-publish",
+          token: token.data,
+          version: version.data,
+        }
+      : { kind: "malformed" };
+  }
   if (parts.length === 4 && parts[2] === "unpublish")
     return { kind: "manage-unpublish", token: token.data };
   if (parts[2] === "confirm-unpublish")

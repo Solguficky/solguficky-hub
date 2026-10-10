@@ -73,6 +73,7 @@ describe("сценарий первого среза", () => {
     expect(hiddenAnswer).not.toContain(title);
 
     await organizer.presses("Опубликовать");
+    await organizer.presses("✔️ Да, опубликовать сходку");
     expect(organizer.sees()).toContain("Сходка опубликована");
 
     // P-03 и P-04: тот же человек видит сходку в списке и её карточку.

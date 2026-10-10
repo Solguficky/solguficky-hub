@@ -3192,6 +3192,28 @@ describe("presentation adapter", () => {
       callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
     );
 
+    // Публикация выходит наружу и идёт через подтверждение; «Нет» вернёт в
+    // «Статус», «Да» несёт версию показанного снимка.
+    expect(execute).not.toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "publish-meetup" }),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: "<b>Опубликовать сходку?</b>\n\n«Настолки»\nСходка станет видна участникам. Уведомление получат подписчики новых сходок, а если сходку уже публиковали — её подписчики.",
+      },
+    });
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      '"text":"✔️ Да, опубликовать сходку","callback_data":"v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1"',
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      '"text":"✖️ Нет","callback_data":"v1:manage:status:AZLzpLXGfY6fChssPU5fYA"',
+    );
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1"),
+    );
+
     expect(execute).toHaveBeenLastCalledWith({
       identity: {
         identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
@@ -3199,6 +3221,7 @@ describe("presentation adapter", () => {
       },
       intent: "publish-meetup",
       meetupId: visible.id,
+      expectedVersion: 1,
       requestId: expect.any(String),
       useCase: "update_meetup",
       deadlineAt: expect.any(Number),
@@ -3355,6 +3378,144 @@ describe("presentation adapter", () => {
       use_case: "update_meetup",
     });
   });
+
+  it("confirms a draft publication with the version it shows", async () => {
+    const draft = { ...publishedMeetup(), visibility: "hidden" as const };
+    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
+      request.intent === "view-meetup"
+        ? { kind: "meetup-card", meetup: draft }
+        : { kind: "published", meetup: publishedMeetup() },
+    );
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA:d"),
+    );
+    expect(execute).not.toHaveBeenCalledWith(
+      expect.objectContaining({ intent: "publish-meetup" }),
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: "<b>Опубликовать сходку?</b>\n\n«Настолки»\nСходка станет видна участникам, подписчики новых сходок получат уведомление.",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "✔️ Да, опубликовать сходку",
+                callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:1",
+              },
+              {
+                text: "✖️ Нет",
+                callback_data: "v1:manage:draft:AZLzpLXGfY6fChssPU5fYA",
+              },
+            ],
+          ],
+        },
+      },
+    });
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:1"),
+    );
+    expect(execute).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        intent: "publish-meetup",
+        expectedVersion: 1,
+        useCase: "create_meetup",
+      }),
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+      "<b>Сходка опубликована</b>",
+    );
+  });
+
+  it("answers a publication confirmed over a changed meetup with an outcome screen", async () => {
+    const changed = {
+      ...publishedMeetup(),
+      visibility: "hidden" as const,
+      version: 2,
+    };
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "conflict",
+      meetup: changed,
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:1"),
+    );
+
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageText",
+      payload: {
+        text: "<b>Сходка уже изменилась</b>\n\n«Настолки»\n\nТвои изменения не сохранены. Проверь актуальные данные и повтори.",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "‹ Сходка",
+                callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
+              },
+              { text: "Меню", callback_data: "v1:nav:start" },
+            ],
+          ],
+        },
+      },
+    });
+    expectBoundary(records.at(-1), {
+      level: "warn",
+      result: "error",
+      error_category: "invariant",
+      operation: "callback_query",
+      use_case: "create_meetup",
+    });
+  });
+
+  it.each([
+    {
+      name: "already published",
+      meetup: publishedMeetup(),
+      shown: "<b>Сходка уже опубликована</b>",
+    },
+    {
+      name: "untitled",
+      meetup: {
+        ...publishedMeetup(),
+        title: "",
+        visibility: "hidden" as const,
+      },
+      shown: "У сходки нет названия",
+    },
+  ])(
+    "answers the publish button on an $name meetup without a confirmation",
+    async ({ meetup, shown }) => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup,
+      });
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA:d"),
+      );
+
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(shown);
+      expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain(
+        "Опубликовать сходку?",
+      );
+      expect(execute).toHaveBeenCalledTimes(1);
+    },
+  );
 
   it("rebuilds an outdated callback from current Meetups state", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
@@ -3550,11 +3711,13 @@ describe("presentation adapter", () => {
     });
     await bot.init();
     await bot.handleUpdate(
-      callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+      callbackUpdate("v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1"),
     );
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { rich_message: { html: expect.stringContaining("Настолки") } },
+      payload: {
+        text: expect.stringContaining("<b>Сходка уже опубликована</b>"),
+      },
     });
     expect(
       records.find((record) => record.message === "meetup published"),
@@ -3577,7 +3740,7 @@ describe("presentation adapter", () => {
     {
       name: "state action rejected as invalid",
       update: () =>
-        callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+        callbackUpdate("v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1"),
       result: rejection(Code.InvalidArgument),
       shown: "Это на моей стороне.",
       grpc: "InvalidArgument",
@@ -3585,7 +3748,7 @@ describe("presentation adapter", () => {
     {
       name: "state action on a stale screen",
       update: () =>
-        callbackUpdate("v1:manage:republish:AZLzpLXGfY6fChssPU5fYA"),
+        callbackUpdate("v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:1"),
       result: rejection(Code.FailedPrecondition),
       shown: "Сейчас это действие недоступно.",
       grpc: "FailedPrecondition",
@@ -4924,7 +5087,7 @@ describe("confirmations", () => {
     ]);
   });
 
-  it("leaves a declined file as a trace and returns to the materials", async () => {
+  it("leaves a declined file as a trace and offers to send it again", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-card",
       meetup: publishedMeetup(),
@@ -4950,7 +5113,18 @@ describe("confirmations", () => {
     expect(execute).not.toHaveBeenCalledWith(
       expect.objectContaining({ intent: "attach-material" }),
     );
-    expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
+    // «Нет» над только что присланным — исход с «Ввести заново»: вопрос
+    // задаётся с начала цепочки, с источника материала.
+    expect(sendMessageText(calls[2])).toBe(
+      "<b>Не прикреплено</b>\n\n«Настолки»\n\nСвязь со сходкой не появилась.",
+    );
+    expect(keyboardOf(calls[2])).toEqual([
+      [{ text: "Ввести заново", callback_data: `v1:mm:add:${token}` }],
+      [
+        { text: "‹ Материалы", callback_data: `v1:mm:list:${token}` },
+        { text: "Меню", callback_data: "v1:nav:start" },
+      ],
+    ]);
   });
 
   it("asks before a broadcast with a red answer and returns a refusal to the meetup", async () => {
@@ -4990,11 +5164,22 @@ describe("confirmations", () => {
 
     await bot.handleUpdate(callbackUpdate(`v1:bc:no:${token}`));
     expect(calls.at(-1)?.payload).toMatchObject({
-      text: "<b>Не отправлено.</b> Текст никуда не ушёл.",
+      text: "<b>Не отправлено</b>\n\nТекст никуда не ушёл.",
     });
+    // Текст в кнопку не помещается: «Ввести заново» задаёт вопрос снова.
     expect(keyboardOf(calls.at(-1))).toEqual([
+      [{ text: "Ввести заново", callback_data: `v1:bc:m:${token}` }],
       [
         { text: "‹ Сходка", callback_data: `v1:view:${token}` },
+        { text: "Меню", callback_data: "v1:nav:start" },
+      ],
+    ]);
+
+    await bot.handleUpdate(callbackUpdate("v1:bc:no"));
+    expect(keyboardOf(calls.at(-1))).toEqual([
+      [{ text: "Ввести заново", callback_data: "v1:bc:c" }],
+      [
+        { text: "‹ Управление", callback_data: "v1:manage:menu" },
         { text: "Меню", callback_data: "v1:nav:start" },
       ],
     ]);
@@ -5303,7 +5488,7 @@ describe("questions", () => {
     );
 
     const shown = JSON.stringify(calls.at(-1)?.payload);
-    expect(shown).toContain(`v1:manage:publish:${token}`);
+    expect(shown).toContain(`v1:manage:republish:${token}:d`);
     expect(shown).not.toContain("v1:manage:cancel:");
   });
 
@@ -6391,7 +6576,7 @@ describe("deferred publication frames", () => {
           [
             {
               text: "Опубликовать",
-              callback_data: `v1:manage:publish:${draftToken}`,
+              callback_data: `v1:manage:republish:${draftToken}:d`,
             },
           ],
           [
@@ -6447,7 +6632,7 @@ describe("deferred publication frames", () => {
             [
               {
                 text: "Опубликовать",
-                callback_data: `v1:manage:publish:${draftToken}`,
+                callback_data: `v1:manage:republish:${draftToken}:d`,
               },
             ],
           ]),
@@ -6566,7 +6751,7 @@ describe("deferred publication frames", () => {
         payload: { message_id: 9 },
       });
       expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-        `v1:manage:publish:${draftToken}`,
+        `v1:manage:republish:${draftToken}:d`,
       );
     });
 
@@ -6696,7 +6881,7 @@ describe("deferred publication frames", () => {
         payload: { message_id: 9 },
       });
       expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-        `v1:manage:publish:${draftToken}`,
+        `v1:manage:republish:${draftToken}:d`,
       );
       expectBoundary(records[0], {
         level: "info",
@@ -7019,7 +7204,7 @@ describe("deferred publication frames", () => {
     expect(answered).not.toContain("Сходка уже опубликована");
   });
 
-  it("cancels a scheduled publication only from the confirmation callback", async () => {
+  it("cancels a scheduled publication straight from the status screen", async () => {
     const scheduled = scheduledDraft();
     const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
       request.intent === "view-meetup"
@@ -7035,12 +7220,16 @@ describe("deferred publication frames", () => {
     });
     await bot.init();
 
+    // Снятие обратимо и наружу не выходит: кнопка «Статуса» — сразу команда с
+    // версией показанного снимка, без подтверждения (решение владельца
+    // 10 октября 2026 года).
     await bot.handleUpdate(callbackUpdate(`v1:manage:status:${token}`));
     expect(payloadText(calls.at(-1))).toContain(
-      `"callback_data":"v1:manage:unschedule:${token}"`,
+      `"callback_data":"v1:manage:confirm-unschedule:${token}:1"`,
     );
     expect(payloadText(calls.at(-1))).toContain("Перенести публикацию");
 
+    // Кнопка, оставшаяся в чате до решения, по-прежнему открывает подтверждение.
     await bot.handleUpdate(callbackUpdate(`v1:manage:unschedule:${token}`));
     expect(execute).toHaveBeenCalledTimes(2);
     expect(calls.at(-1)).toMatchObject({

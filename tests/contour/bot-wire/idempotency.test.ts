@@ -77,7 +77,7 @@ describe("идемпотентность по журналу Meetups", () => {
     expect(journal.events).toBe(2);
   });
 
-  it("E-09: двойное нажатие «Опубликовать» публикует один раз", async () => {
+  it("E-09: двойное нажатие «Да, опубликовать сходку» публикует один раз", async () => {
     const { telegramUserId, adminId, organizer } =
       await organizerInManagement();
     await organizer.presses("Создать сходку");
@@ -87,7 +87,8 @@ describe("идемпотентность по журналу Meetups", () => {
     );
     const before = await direct.journalOf(adminId);
 
-    await organizer.pressesTwice("Опубликовать");
+    await organizer.presses("Опубликовать");
+    await organizer.pressesTwice("✔️ Да, опубликовать сходку");
 
     const after = await direct.journalOf(adminId);
     expect(after.meetupIds).toEqual(before.meetupIds);

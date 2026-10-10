@@ -269,6 +269,7 @@ export const screenCatalog = {
     irreversible: true,
   },
   "past-date-confirm": { class: "screen", nav: "confirm" },
+  // Подтверждение публикации и, у кнопки без версии, кадр её конфликта.
   "publish-confirm": { class: "screen", nav: "confirm" },
   "material-confirm": { class: "screen", nav: "confirm" },
   "material-remove-confirm": {

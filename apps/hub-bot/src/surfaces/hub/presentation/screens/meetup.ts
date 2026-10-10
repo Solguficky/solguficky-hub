@@ -502,7 +502,8 @@ export function draftScreen(view: {
     .row()
     .text("Описание", `v1:manage:draft:${token}:description`)
     .row()
-    .text("Опубликовать", `v1:manage:publish:${token}`)
+    // `d` — источник подтверждения: «Нет» под ним вернёт на черновик.
+    .text("Опубликовать", `v1:manage:republish:${token}:d`)
     .row()
     .text(
       meetup.publishAt === undefined
@@ -630,8 +631,14 @@ export function statusScreen(
       )
       .row();
     if (meetup.publishAt !== undefined) {
+      // Снятие отложенной публикации обратимо с того же экрана — момент
+      // назначается заново — и наружу не выходит, поэтому без подтверждения
+      // (решение владельца 10 октября 2026 года). Кнопка сразу несёт версию.
       keyboard
-        .text(stateActionCopy.unschedule.label, `v1:manage:unschedule:${token}`)
+        .text(
+          stateActionCopy.unschedule.label,
+          confirmStateCallback("unschedule", token, meetup.version),
+        )
         .row();
     }
   }
@@ -652,6 +659,45 @@ export function statusScreen(
       ...cardLines(meetup, author, today, true),
     ].join("\n"),
     keyboard: withNav(keyboard, toCard(token)),
+    format: "HTML",
+  };
+}
+
+/**
+ * Подтверждение публикации (решение владельца 10 октября 2026 года): публикация
+ * выходит наружу — сходку видят участники, уведомления уходят. «Да» несёт
+ * версию, которую человек видит; «Нет» возвращает туда, где нажали
+ * «Опубликовать». Первая публикация уведомляет подписчиков новых сходок, возврат
+ * скрытой — подписчиков самой сходки (Notifications, PER-216 и PER-218); с
+ * черновика бывает только первая.
+ */
+export function publishConfirmScreen(confirm: {
+  meetup: Pick<MeetupSnapshot, "id" | "title" | "version">;
+  /** Где нажали «Опубликовать»: на черновике или в «Статусе». */
+  origin: "draft" | "status";
+}): ShownScreen {
+  const token = uuidToToken(confirm.meetup.id);
+  return {
+    id: "publish-confirm",
+    text: [
+      heading("Опубликовать сходку?"),
+      "",
+      `«${escapeHtml(meetupTitleLabel(confirm.meetup.title))}»`,
+      confirm.origin === "draft"
+        ? "Сходка станет видна участникам, подписчики новых сходок получат уведомление."
+        : "Сходка станет видна участникам. Уведомление получат подписчики новых сходок, а если сходку уже публиковали — её подписчики.",
+    ].join("\n"),
+    keyboard: confirmKeyboard({
+      yes: "Да, опубликовать сходку",
+      yesData:
+        confirm.origin === "draft"
+          ? `v1:manage:publish:${token}:${confirm.meetup.version}`
+          : `v1:manage:confirm-publish:${token}:${confirm.meetup.version}`,
+      noData:
+        confirm.origin === "draft"
+          ? `v1:manage:draft:${token}`
+          : `v1:manage:status:${token}`,
+    }),
     format: "HTML",
   };
 }

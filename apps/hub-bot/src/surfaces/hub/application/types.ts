@@ -192,6 +192,9 @@ export type ExecuteRequest =
       identity: Person;
       intent: "publish-meetup";
       meetupId: string;
+      // Версия, которую человек видел на подтверждении публикации: правка
+      // между экраном и «Да» даёт конфликт, а не публикацию поверх неё.
+      expectedVersion?: number;
       requestId?: string;
       useCase?: string;
       deadlineAt?: number;

@@ -213,6 +213,7 @@ import {
   materialsScreen,
   materialTitle,
   meetupTitleLabel,
+  publishConfirmScreen,
   stateConfirmScreen,
   statusScreen,
   upcomingScreen,
@@ -304,6 +305,9 @@ const unavailableText = `Не получилось загрузить данны
 // ни то, ни другое, а ведёт к карточке, где видно текущее состояние (E-04).
 const staleMeetupText =
   "Сейчас это действие недоступно. Открой сходку заново и проверь её состояние и название.";
+// Публикация сразу без названия: Meetups отказывает, и подтверждать нечего.
+const untitledPublishText =
+  "У сходки нет названия, а без него сходку не опубликовать. Добавь название через «Изменить» на карточке.";
 // Отложенная публикация черновика без названия (PER-457): Meetups отказывает,
 // потому что опубликовать сходку без названия нельзя и по расписанию.
 const untitledPublicationText =
@@ -2043,13 +2047,23 @@ async function handleCallback(
           action.page ?? 0,
         );
       } else if (action.kind === "decline-attach-material") {
-        await renderMaterialManagement(
-          ctx,
-          current.meetup,
-          canManageMaterials,
-          0,
-          "Не прикреплено.",
-        );
+        // «Нет» под только что присланным материалом — экран исхода с «Ввести
+        // заново» (решение владельца 10 октября 2026 года). Файл в
+        // подтверждении остаётся следом с подписью «Не прикреплено.».
+        const step = { kind: "material-title", token: action.token } as const;
+        await showScreen(ctx, {
+          id: "outcome",
+          text: outcomeText(
+            "Не прикреплено. Связь со сходкой не появилась.",
+            current.meetup.title,
+          ),
+          keyboard: withNav(
+            new InlineKeyboard().text(retryAnswerLabel, reopenData(step)),
+            answerParent(step),
+          ),
+          format: "HTML",
+          fileTrace: "Не прикреплено.",
+        });
       } else if (action.kind === "begin-attach-material") {
         await askQuestion(
           ctx,
@@ -2723,26 +2737,34 @@ async function handleCallback(
           "Отложенной публикации у сходки уже нет.",
           exitToCard(token),
         );
+      } else if (
+        action.kind === "manage-publish" &&
+        meetup.visibility === "visible"
+      ) {
+        // Устаревшая кнопка: сходку уже опубликовали — вручную или по
+        // расписанию. Подтверждать нечего.
+        await renderMeetupCard(
+          ctx,
+          current,
+          true,
+          runtime.presentation ?? "rich",
+          true,
+          `Сходка уже опубликована. Ссылка для чата: ${meetupStartLink(ctx.me.username, meetup.id)}`,
+        );
+      } else if (
+        action.kind === "manage-publish" &&
+        meetup.title.trim() === ""
+      ) {
+        // Без названия Meetups сходку не опубликует (PER-457): подтверждение
+        // закончилось бы отказом домена.
+        await showRefusal(ctx, untitledPublishText, exitToCard(token));
       } else if (action.kind === "manage-publish") {
-        // Публикация — единственное действие статуса, которое не перечитывает
-        // сходку в юзкейсе: устаревшую кнопку разбираем по снимку выше, иначе
-        // домен ответит FailedPrecondition и человек увидит кадр недоступности
-        // вместо причины отказа.
-        const result = await runtime.dispatcher.execute({
-          identity: person,
-          intent: "publish-meetup",
-          meetupId,
-          ...rpcCall(ctx, useCase),
-        });
-        await renderStateResult(ctx, result, runtime.presentation ?? "rich");
-        outcome = screenBoundary(result, {
-          ok: ["published"],
-          okMessage: "meetup published",
-          rejectedMessage: "meetup republish rejected",
-          useCase,
-          meetupId,
-        });
-        return;
+        // Публикация выходит наружу — через подтверждение (решение владельца
+        // 10 октября 2026 года); «Да» несёт версию этого снимка.
+        await showScreen(
+          ctx,
+          publishConfirmScreen({ meetup, origin: action.origin }),
+        );
       } else {
         // Все действия смены состояния живут в «Статусе», и отказ от
         // подтверждения возвращает туда.
@@ -3013,14 +3035,22 @@ async function handleCallback(
       return;
     }
     if (action.kind === "cancel-broadcast") {
-      await showFrame(
-        ctx,
-        "broadcast-result",
-        "Не отправлено. Текст никуда не ушёл.",
+      // «Нет» под текстом, который человек только что прислал, — экран исхода
+      // с «Ввести заново» (решение владельца 10 октября 2026 года): текст в
+      // кнопку не помещается, и вопрос задаётся снова с начала.
+      const step: QuestionStep =
         action.token === undefined
-          ? withNav(new InlineKeyboard(), toManage)
-          : exitToCard(action.token),
-      );
+          ? { kind: "broadcast" }
+          : { kind: "broadcast", token: action.token };
+      await showScreen(ctx, {
+        id: "outcome",
+        text: outcomeText("Не отправлено. Текст никуда не ушёл."),
+        keyboard: withNav(
+          new InlineKeyboard().text(retryAnswerLabel, reopenData(step)),
+          answerParent(step),
+        ),
+        format: "HTML",
+      });
       outcome = {
         level: "info",
         message: "broadcast cancelled",
@@ -3116,15 +3146,33 @@ async function handleCallback(
       });
       return;
     }
-    if (action.kind === "publish-meetup") {
+    if (
+      action.kind === "publish-meetup" ||
+      action.kind === "manage-confirm-publish"
+    ) {
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
         identity: person,
         intent: "publish-meetup",
         meetupId,
+        ...(action.version === undefined
+          ? {}
+          : { expectedVersion: action.version }),
         ...rpcCall(ctx, useCase),
       });
-      if (result.kind === "published" && result.repeated === true) {
+      if (result.kind === "conflict" && action.version !== undefined) {
+        // Подтверждение устарело, пока человек решал: заново оно не задаётся,
+        // приходит исход, и публикацию человек повторяет по свежим данным.
+        await showScreen(ctx, {
+          id: "outcome",
+          text: outcomeText(
+            conflictText,
+            meetupTitleLabel(result.meetup.title),
+          ),
+          keyboard: exitToCard(uuidToToken(result.meetup.id)),
+          format: "HTML",
+        });
+      } else if (result.kind === "published" && result.repeated === true) {
         // Повтор (E-09) и устаревший предпросмотр (E-04): карточка по текущему
         // состоянию вместо второго «Сходка создана». При повторе правка стирает
         // сообщение первой публикации, поэтому ссылка для чата стоит на
@@ -7004,6 +7052,7 @@ function callbackUseCase(
     | "console-discard-confirm"
     | "console-mark"
     | "manage-publish"
+    | "manage-confirm-publish"
     | "manage-unpublish"
     | "manage-confirm-unpublish"
     | "manage-cancel"
@@ -7052,6 +7101,7 @@ function callbackUseCase(
     case "manage-field":
     case "manage-status":
     case "manage-publish":
+    case "manage-confirm-publish":
     case "manage-unpublish":
     case "manage-confirm-unpublish":
     case "manage-cancel":

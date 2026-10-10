@@ -321,7 +321,8 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 | меню, A-16 | Управление, ‹ Управление | `v1:manage:menu` | 14 |
 | A-02 | Создать сходку | `v1:manage:new:kR7dNq2XmB` | 24 |
 | A-01, P-04 | Скрытые сходки, ‹ Скрытые | `v1:manage:hidden` | 16 |
-| A-06 | Опубликовать | `v1:manage:publish:AZLzpLXGfY6fChssPU5fYA` | 40 |
+| A-06 | Опубликовать (открывает подтверждение; хвост `:d` — «Нет» вернёт на черновик) | `v1:manage:republish:AZLzpLXGfY6fChssPU5fYA:d` | 44 |
+| A-06 | Да, опубликовать сходку (версия — как у «Да, скрыть из списка»); без версии — «Да, опубликовать» кадра конфликта и кнопки до подтверждения публикации | `v1:manage:publish:AZLzpLXGfY6fChssPU5fYA:12` | 43 |
 | A-06 | черновик: «Отмена» под вопросом формы возвращает на него | `v1:manage:draft:AZLzpLXGfY6fChssPU5fYA` | 38 |
 | A-06 | Дата и время, Место, Описание (последний сегмент — поле) | `v1:manage:draft:AZLzpLXGfY6fChssPU5fYA:description` | 50 |
 | P-04 | Изменить | `v1:manage:edit:AZLzpLXGfY6fChssPU5fYA` | 37 |
@@ -331,7 +332,8 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 | A-16 | Да, сохранить дату (`c` — создание, `e` — правка; дата `ДДММГГГГЧЧММ`) | `v1:manage:past:AZLzpLXGfY6fChssPU5fYA:e:210920261930` | 52 |
 | A-16 | Нет (вопрос о дате задаётся заново) | `v1:manage:past-retry:AZLzpLXGfY6fChssPU5fYA:e` | 45 |
 | A-10 | Скрыть из списка | `v1:manage:unpublish:AZLzpLXGfY6fChssPU5fYA` | 42 |
-| A-10 | Опубликовать | `v1:manage:republish:AZLzpLXGfY6fChssPU5fYA` | 42 |
+| A-10 | Опубликовать (открывает подтверждение) | `v1:manage:republish:AZLzpLXGfY6fChssPU5fYA` | 42 |
+| A-10 | Да, опубликовать сходку (версия — как у «Да, скрыть из списка»; с девятью цифрами — 58 байт) | `v1:manage:confirm-publish:AZLzpLXGfY6fChssPU5fYA:12` | 51 |
 | A-10 | Отменить сходку | `v1:manage:cancel:AZLzpLXGfY6fChssPU5fYA` | 39 |
 | A-10 | Да, скрыть из списка (последний сегмент — версия сходки на экране, до девяти цифр; [PER-472](https://linear.app/anticnvm/issue/per-472)) | `v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA:12` | 53 |
 | A-10 | Да, отменить сходку (версия — как у «Да, скрыть из списка») | `v1:manage:confirm-cancel:AZLzpLXGfY6fChssPU5fYA:12` | 50 |
@@ -341,8 +343,8 @@ v<версия>:<домен>:<действие>[:<аргумент>]…
 | экран выбора даты | заготовка времени (`ДДММГГГГЧЧММ`) | `v1:manage:when:AZLzpLXGfY6fChssPU5fYA:e:031020261930` | 52 |
 | экран выбора даты | Другая дата (`t`), Отмена (`x`) | `v1:manage:when:AZLzpLXGfY6fChssPU5fYA:e:t` | 41 |
 | A-06, A-10 | Опубликовать позже, Перенести публикацию (на черновике — с хвостом `:d`) | `v1:manage:publish-later:AZLzpLXGfY6fChssPU5fYA:d` | 48 |
-| A-10 | Отменить отложенную публикацию | `v1:manage:unschedule:AZLzpLXGfY6fChssPU5fYA` | 43 |
-| A-10 | Да, отменить публикацию (версия — как у «Да, скрыть из списка»; с девятью цифрами — 61 байт) | `v1:manage:confirm-unschedule:AZLzpLXGfY6fChssPU5fYA:12` | 54 |
+| A-10 | Отменить отложенную публикацию — кнопка прежнего релиза, открывает подтверждение; «Статус» сейчас ставит сразу «Да» с версией | `v1:manage:unschedule:AZLzpLXGfY6fChssPU5fYA` | 43 |
+| A-10 | Отменить отложенную публикацию, Да, отменить публикацию (версия — как у «Да, скрыть из списка»; с девятью цифрами — 61 байт) | `v1:manage:confirm-unschedule:AZLzpLXGfY6fChssPU5fYA:12` | 54 |
 | P-04, A-13 | Материалы (N), ‹ Материалы | `v1:mm:list:AZLzpLXGfY6fChssPU5fYA` | 33 |
 | A-11 | Следующая страница | `v1:mm:list:AZLzpLXGfY6fChssPU5fYA:3` | 35 |
 | A-11 | Прикрепить материал | `v1:mm:add:AZLzpLXGfY6fChssPU5fYA` | 32 |
