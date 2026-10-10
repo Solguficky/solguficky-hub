@@ -66,6 +66,15 @@ export const screenCatalog = {
     parent: "menu",
     backName: "Прошедшие",
   },
+  // Частота «перебили» (PER-515): узел меню, пять режимов по одному в ряд.
+  // Отказ Notifications — общий кадр `unavailable`.
+  notify: {
+    class: "screen",
+    nav: "tree",
+    title: "Уведомления",
+    parent: "menu",
+    backName: "Уведомления",
+  },
   // Лента возвращает в тот список, где аукцион стоит сейчас.
   feed: {
     class: "screen",

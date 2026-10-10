@@ -38,17 +38,21 @@ auction-bot: ContainerResource
   env: BOT_SURFACE=auction
   env: BOT_TOKEN={auction-bot-token.value}
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
   waits: auction WaitUntilHealthy
   waits: identity WaitUntilHealthy
   waits: nats WaitUntilHealthy
+  waits: notifications WaitUntilHealthy
   relationship: Reference auction
   relationship: Reference auction-bot-service-token
   relationship: Reference auction-bot-token
   relationship: Reference identity
   relationship: Reference nats
+  relationship: Reference notifications
   relationship: WaitFor auction
   relationship: WaitFor identity
   relationship: WaitFor nats
+  relationship: WaitFor notifications
 auction-bot-service-token: ParameterResource
   secret: True
 auction-bot-token: ParameterResource

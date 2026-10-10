@@ -2,15 +2,18 @@ import { GrammyError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 import { inspectCall } from "../../../../testkit/screen-lint.js";
 import { parseAuctionCallback } from "../../../auction-ui/index.js";
+import { notifyCallback, parseEntryCallback } from "../faq.js";
 import { screenMark } from "../screen-catalog.js";
 import {
   createNotificationSender,
   createRenderMessage,
   type NotificationReads,
+  notificationMarkup,
   parseTraceCallback,
   renderNotification,
   traceAuctionsCallback,
   traceLotCallback,
+  traceNotifyCallback,
 } from "./message.js";
 import type { AuctionNotificationContent } from "./notification.js";
 
@@ -87,6 +90,47 @@ describe("renderNotification", () => {
     expect(parseAuctionCallback(inner)).toEqual({
       ok: true,
       intent: { kind: "lot", lotId, page: 0 },
+    });
+  });
+});
+
+// PER-515: «Реже» стоит рядом с «К лоту» только под перебитием и только у
+// бота с Notifications; покупку и автоставку настройка не трогает.
+describe("outbid settings button", () => {
+  it("pairs the lot button with the settings under an outbid", () => {
+    const message = renderNotification(outbid, "Кружка", true);
+    expect(notificationMarkup(message)).toEqual({
+      inline_keyboard: [
+        [
+          { text: "К лоту", callback_data: traceLotCallback(lotId) },
+          { text: "Реже", callback_data: traceNotifyCallback() },
+        ],
+      ],
+    });
+    const inner = parseTraceCallback(traceNotifyCallback());
+    expect(inner).toBe(notifyCallback());
+    expect(parseEntryCallback(inner)).toEqual({ action: "notify", page: 0 });
+    expect(Buffer.byteLength(traceNotifyCallback())).toBeLessThanOrEqual(64);
+  });
+
+  it("keeps one button elsewhere and without Notifications", () => {
+    for (const content of [raised, purchased]) {
+      expect(
+        renderNotification(content, "Кружка", true).settings,
+      ).toBeUndefined();
+    }
+    expect(renderNotification(outbid, "Кружка").settings).toBeUndefined();
+  });
+
+  it("puts the settings under an outbid rendered for delivery", async () => {
+    const reads: NotificationReads = {
+      holdsPlaceBids: async () => true,
+      lotTitle: async () => "Кружка",
+    };
+    const render = createRenderMessage(reads, () => {}, true);
+    await expect(render(outbid, { recipientId })).resolves.toMatchObject({
+      kind: "ready",
+      message: { settings: { text: "Реже" } },
     });
   });
 });
@@ -259,13 +303,14 @@ describe("notification sender", () => {
     const sender = createNotificationSender({ sendMessage } as never);
     for (const message of [
       renderNotification(outbid, "Кружка"),
+      renderNotification(outbid, "Кружка", true),
       renderNotification(raised),
       renderNotification(purchased, "Кружка"),
       renderNotification({ kind: "access-granted" }),
     ]) {
       await sender.send({ telegramUserId: 42n, message });
     }
-    expect(sent).toHaveLength(4);
+    expect(sent).toHaveLength(5);
     expect(
       sent.flatMap((call) => inspectCall("auction", "sendMessage", call)),
     ).toEqual([]);

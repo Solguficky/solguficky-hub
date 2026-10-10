@@ -26,7 +26,13 @@ import {
   type FaqContent,
   type ListAction,
   listCallback,
+  notifyCallback,
 } from "./faq.js";
+import {
+  OUTBID_FREQUENCIES,
+  type OutbidFrequency,
+  outbidLabels,
+} from "./outbid.js";
 import type { ScreenId } from "./screen-catalog.js";
 
 // Оболочка бота аукциона (ADR-044, «Один аукцион, две оболочки»). Экран здесь
@@ -38,9 +44,12 @@ import type { ScreenId } from "./screen-catalog.js";
 // лота — тело аукционного дерева (PER-306), лист ставки — PER-317. Правила экрана
 // — дизайн-код (docs/design/bot/design-code.md): жирный заголовок, HTML,
 // последний ряд `[‹ Родитель] [Меню]`, кадр отказа с выходом.
+// `notify` у меню — пункт «Уведомления»: он есть, когда у бота есть
+// Notifications (PER-515).
 export type AuctionEntryScreen =
   | { kind: "faq" }
-  | { kind: "menu" }
+  | { kind: "menu"; notify?: true }
+  | { kind: "notify"; current: OutbidFrequency }
   | { kind: "auctions"; list: AuctionListPage }
   | { kind: "past"; list: AuctionListPage }
   | { kind: "details" }
@@ -50,7 +59,8 @@ export type AuctionEntryScreen =
   | { kind: "auction"; body: AuctionScreenBody; parent?: ListAction }
   | { kind: "denied"; reason: AuctionDenial }
   | { kind: "outdated" }
-  | { kind: "unavailable"; exit: UnavailableExit };
+  // `subject` называет недоступный сервис, когда это не аукцион.
+  | { kind: "unavailable"; exit: UnavailableExit; subject?: "notifications" };
 
 // Выход кадра «недоступно». `retry` — «Повторить» с данными действия, на
 // котором случился отказ: хранилища у экранов нет, и повтор едет в кнопке.
@@ -133,6 +143,12 @@ export const deniedTexts: Record<AuctionDenial, string> = {
 };
 
 const faqTitle = "Правила и FAQ";
+const notifyTitle = "Уведомления";
+
+/** Подтверждение выбора всплывающим текстом: что теперь будет приходить. */
+export function outbidToast(current: OutbidFrequency): string {
+  return `Теперь: ${outbidLabels[current].state}.`;
+}
 // Вход в меню с любого экрана. Отметку ознакомления с FAQ ставит не он, а
 // возврат под самим FAQ.
 const menuButton = { text: "Меню", callback_data: entryCallback("menu") };
@@ -217,7 +233,33 @@ export function renderEntryScreen(
             { text: "Аукционы", callback_data: entryCallback("auctions") },
             { text: "Прошедшие", callback_data: entryCallback("past") },
           ],
+          ...(screen.notify === true
+            ? [[{ text: notifyTitle, callback_data: notifyCallback() }]]
+            : []),
           [{ text: faqTitle, callback_data: entryCallback("faq") }],
+        ],
+      };
+    // Частота «перебили» (PER-515): пять режимов по одному в ряд, текущий —
+    // строкой «Сейчас: …» в теле, а не меткой на кнопке (дизайн-код,
+    // «Уведомления»). Выбор отменяется с того же экрана, поэтому
+    // подтверждения «Да» у него нет: что сработало, говорит ответ на нажатие.
+    case "notify":
+      return {
+        id: "notify",
+        format: "html",
+        text: screenText(
+          notifyTitle,
+          "Как часто писать, что твою ставку перебили. О покупке лота и ответе автоставки пишу всегда.",
+          `Сейчас: ${outbidLabels[screen.current].state}.`,
+        ),
+        keyboard: [
+          ...OUTBID_FREQUENCIES.map((frequency) => [
+            {
+              text: outbidLabels[frequency].button,
+              callback_data: notifyCallback(frequency),
+            },
+          ]),
+          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
         ],
       };
     case "auctions":
@@ -288,7 +330,11 @@ export function renderEntryScreen(
       return {
         id: "unavailable",
         format: "html",
-        text: `<b>Аукцион сейчас недоступен.</b> ${
+        text: `<b>${
+          screen.subject === "notifications"
+            ? "Настройка уведомлений сейчас недоступна."
+            : "Аукцион сейчас недоступен."
+        }</b> ${
           exit.kind === "answer"
             ? "Пришли ответ ещё раз через минуту."
             : "Попробуй ещё раз через минуту."

@@ -183,6 +183,9 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         data,
       });
       const screen = render(outcome.screen);
+      // Подтверждение выбора уходит ответом на нажатие до показа экрана:
+      // показ ответил бы на нажатие сам, без текста.
+      if (outcome.toast !== undefined) await waiting.answer(outcome.toast);
       const delivery = {
         screen,
         photos,

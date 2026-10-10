@@ -11,13 +11,19 @@ import {
   type RenderMessage,
 } from "../../../core/delivery/index.js";
 import { money, truncate } from "../entry-screen.js";
-import { entryCallback, parseEntryCallback } from "../faq.js";
+import { entryCallback, notifyCallback, parseEntryCallback } from "../faq.js";
 import { screenMark } from "../screen-catalog.js";
 import type { AuctionNotificationContent } from "./notification.js";
 
+type TraceButton = { text: string; callback_data: string };
+
+// `settings` — «Реже» рядом с «К лоту» у перебития (PER-515): пара одним
+// рядом, единственная вторая кнопка следа (дизайн-код, «Уведомления
+// аукциона»).
 export type NotificationMessage = {
   text: string;
-  button: { text: string; callback_data: string };
+  button: TraceButton;
+  settings?: TraceButton;
 };
 
 // Кнопка под следом (дизайн-код, «Доставка»): карточка лота приходит новым
@@ -42,6 +48,12 @@ export function traceLotCallback(lotId: string): string {
 // PER-453).
 export function traceAuctionsCallback(): string {
   return `${tracePrefix}${entryCallback("auctions")}`;
+}
+
+// «Реже» под перебитием — экран частоты тем же путём, что пункт меню
+// «Уведомления», новым сообщением (PER-515).
+export function traceNotifyCallback(): string {
+  return `${tracePrefix}${notifyCallback()}`;
 }
 
 // Кнопка внутри следа: лот или пункт входа. Не след или след без читаемой
@@ -74,9 +86,12 @@ export type NotificationReads = {
 // ценно вовремя, а название видно в карточке по кнопке. Отказ, который повтор
 // не изменит, — лот не найден или не виден получателю с правом, — дефект: такое
 // уведомление снимается, а не уходит с кнопкой в тот же отказ.
+//
+// `outbidSettings` — у бота есть Notifications, и под перебитием стоит «Реже».
 export function createRenderMessage(
   reads: NotificationReads,
   onTitleMissing: (cause: unknown, requestId?: string) => void,
+  outbidSettings = false,
 ): RenderMessage<AuctionNotificationContent, NotificationMessage> {
   return async (content, { recipientId, requestId }) => {
     let eligible: boolean;
@@ -98,7 +113,10 @@ export function createRenderMessage(
       if (isPermanentFailure(cause)) return { kind: "rejected", cause };
       onTitleMissing(cause, requestId);
     }
-    return { kind: "ready", message: renderNotification(content, title) };
+    return {
+      kind: "ready",
+      message: renderNotification(content, title, outbidSettings),
+    };
   };
 }
 
@@ -109,6 +127,7 @@ const TITLE_LIMIT = 200;
 export function renderNotification(
   content: AuctionNotificationContent,
   title?: string,
+  outbidSettings = false,
 ): NotificationMessage {
   if (content.kind === "access-granted") {
     return {
@@ -127,6 +146,9 @@ export function renderNotification(
   return {
     text,
     button: { text: "К лоту", callback_data: traceLotCallback(content.lotId) },
+    ...(outbidSettings && content.kind === "lot-outbid"
+      ? { settings: { text: "Реже", callback_data: traceNotifyCallback() } }
+      : {}),
   };
 }
 
@@ -163,6 +185,18 @@ export function createNotificationApi(
 
 export type SendMessageApi = Pick<Api, "sendMessage">;
 
+// Клавиатура следа — один ряд: «К лоту» и у перебития ещё «Реже». Её же
+// собирает тест каталога экранов, а не свою копию.
+export function notificationMarkup(message: NotificationMessage) {
+  return {
+    inline_keyboard: [
+      message.settings === undefined
+        ? [message.button]
+        : [message.button, message.settings],
+    ],
+  };
+}
+
 export function createNotificationSender(
   api: SendMessageApi,
 ): NotificationSender<NotificationMessage> {
@@ -175,7 +209,7 @@ export function createNotificationSender(
         // экранов.
         await api.sendMessage(Number(telegramUserId), message.text, {
           ...screenMark("notification"),
-          reply_markup: { inline_keyboard: [[message.button]] },
+          reply_markup: notificationMarkup(message),
           link_preview_options: { is_disabled: true },
         });
         return { kind: "sent" };

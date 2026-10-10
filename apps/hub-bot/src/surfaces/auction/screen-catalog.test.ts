@@ -3,7 +3,7 @@ import { inspectCall, type ScreenEntry } from "../../../testkit/screen-lint.js";
 import type { AuctionScreenBody } from "../../auction-ui/index.js";
 import type { AuctionListPage } from "./auctions.js";
 import { markupOf, richMessageOf } from "./bot.js";
-import { renderNotification } from "./delivery/message.js";
+import { notificationMarkup, renderNotification } from "./delivery/message.js";
 import {
   type AuctionEntryScreen,
   type RenderedScreen,
@@ -322,6 +322,10 @@ const shown: readonly {
   presentation?: "plain";
 }[] = [
   { screen: { kind: "menu" } },
+  { screen: { kind: "menu", notify: true } },
+  { screen: { kind: "notify", current: "every" } },
+  { screen: { kind: "notify", current: "15" } },
+  { screen: { kind: "notify", current: "off" } },
   { screen: { kind: "faq" } },
   { screen: { kind: "faq" }, faq: urls },
   { screen: { kind: "details" } },
@@ -373,6 +377,13 @@ const shown: readonly {
     },
   },
   { screen: { kind: "unavailable", exit: { kind: "answer" } } },
+  {
+    screen: {
+      kind: "unavailable",
+      exit: { kind: "retry", data: "v1:entry:notify:15" },
+      subject: "notifications",
+    },
+  },
 ];
 
 // Вызов в той форме, в какой его собирает адаптер (`bot.ts`): rich-карточка —
@@ -421,12 +432,22 @@ const notifications = [
     },
     "Банка солёных грибов",
   ),
+  // «Реже» рядом с «К лоту» у бота с Notifications (PER-515).
+  renderNotification(
+    {
+      kind: "lot-outbid",
+      lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+      currentPrice: rub(500),
+    },
+    "Банка солёных грибов",
+    true,
+  ),
   renderNotification({ kind: "access-granted" }),
 ].map((message) => ({
   chat_id: 42,
   text: message.text,
   ...screenMark("notification"),
-  reply_markup: { inline_keyboard: [[message.button]] },
+  reply_markup: notificationMarkup(message),
   link_preview_options: { is_disabled: true },
 }));
 
@@ -489,10 +510,12 @@ describe("auction screens beyond the linter", () => {
 
   it("keeps the FAQ button in the menu only", () => {
     expect(
-      buttons
-        .filter(({ button }) => button.text === "Правила и FAQ")
-        .map(({ screen }) => screen),
-    ).toEqual(["menu"]);
+      new Set(
+        buttons
+          .filter(({ button }) => button.text === "Правила и FAQ")
+          .map(({ screen }) => screen),
+      ),
+    ).toEqual(new Set(["menu"]));
   });
 
   it("uses the dictionary for the menu and paging", () => {
