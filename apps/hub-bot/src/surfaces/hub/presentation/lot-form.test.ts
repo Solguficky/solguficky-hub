@@ -159,6 +159,7 @@ function fakeAuction(
     screenPorts() {
       return {
         auction: {
+          findLot: async () => undefined,
           async getLot({ lotId }) {
             const lot = lots.get(lotId);
             if (lot === undefined) throw new Error("lot not found");
@@ -409,8 +410,8 @@ describe("entries into the lot form", () => {
     const feed = last(calls);
     // Действия экрана стоят над лотами отдельными рядами и разрешённой парой.
     expect(labels(feed).slice(0, 2)).toEqual([
-      ["Добавить лот"],
-      ["Пульт", "Правила и FAQ"],
+      ["Добавить лот", "Пульт"],
+      ["Правила и FAQ"],
     ]);
     expect(dataOf(feed, "Добавить лот")).toBe(`v1:lot:new:${auctionToken}`);
 

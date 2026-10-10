@@ -43,7 +43,19 @@ export const auctionSurface: SurfaceDefinition = ({
         request_id: requestId,
         error: cause instanceof Error ? cause.message : String(cause),
       }),
+    // Карточка без кнопки избранного — деградация, а не отказ экрана.
+    onFavoritesRefused: (cause, requestId) =>
+      logger.warn("favorite lots unavailable", {
+        request_id: requestId,
+        error_category: "dependency_unavailable",
+        error: cause instanceof Error ? cause.message : String(cause),
+      }),
   });
+  if (auction.notificationsUrl === undefined) {
+    logger.info(
+      "NOTIFICATIONS_GRPC_URL is not set: favorite lots and outbid settings are off",
+    );
+  }
   const bot = createBot({
     token: config.token,
     environment: config.environment,

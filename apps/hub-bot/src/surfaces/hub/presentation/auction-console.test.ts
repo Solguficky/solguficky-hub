@@ -217,6 +217,7 @@ function fakeAuction(
     screenPorts() {
       return {
         auction: {
+          findLot: async () => undefined,
           getLot: notUsed,
           listAuctionLots: async () => ({
             lots: state.lots.map((each) => each.lot),
@@ -418,8 +419,8 @@ describe("entry into the auction console", () => {
     await admin.bot.handleUpdate(press(feedData));
     const feed = last(admin.calls);
     expect(labels(feed).slice(0, 2)).toEqual([
-      ["Добавить лот"],
-      ["Пульт", "Правила и FAQ"],
+      ["Добавить лот", "Пульт"],
+      ["Правила и FAQ"],
     ]);
     expect(dataOf(feed, "Пульт")).toBe(consoleData);
 
@@ -438,8 +439,8 @@ describe("entry into the auction console", () => {
       await bot.init();
       await bot.handleUpdate(press(feedData));
       expect(labels(last(calls)).slice(0, 2)).toEqual([
-        ["Добавить лот"],
-        ["Пульт", "Правила и FAQ"],
+        ["Добавить лот", "Пульт"],
+        ["Правила и FAQ"],
       ]);
       expect(auction.sent("getAuctionConsole")).toHaveLength(1);
     }
@@ -451,7 +452,8 @@ describe("entry into the auction console", () => {
     await bot.init();
     await bot.handleUpdate(press(feedData));
     const feed = last(calls);
-    expect(labels(feed)[0]).toEqual(["Пульт", "Правила и FAQ"]);
+    expect(labels(feed)[0]).toEqual(["Пульт"]);
+    expect(labels(feed)[1]).toEqual(["Правила и FAQ"]);
     expect(JSON.stringify(feed)).not.toContain("Добавить лот");
   });
 
@@ -461,8 +463,8 @@ describe("entry into the auction console", () => {
     await bot.init();
     await bot.handleUpdate(press(feedData));
     expect(labels(last(calls)).slice(0, 2)).toEqual([
-      ["Добавить лот"],
-      ["Пульт", "Правила и FAQ"],
+      ["Добавить лот", "Пульт"],
+      ["Правила и FAQ"],
     ]);
   });
 

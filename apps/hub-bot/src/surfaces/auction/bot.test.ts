@@ -7,6 +7,7 @@ import { inspectCall, reportViolations } from "../../../testkit/screen-lint.js";
 import {
   type EntryPort,
   encodeAuctionCallback,
+  type FavoritesPort,
   type LotHistoryEntryView,
   type LotImagePort,
   type LotView,
@@ -162,9 +163,23 @@ function portsWith(
     names?: Readonly<Record<string, string>>;
     // Аукционы по выборкам; по умолчанию аукцион ленты активен.
     auctions?: Partial<Record<AuctionListing, AuctionSummary[]>>;
+    // Избранное Notifications; нет — у процесса нет его адреса.
+    favorites?: FavoritesPort;
   } = {},
 ): PortsFactory {
+  const shownLot = (): LotView => ({
+    lotId,
+    auctionId,
+    version: 1,
+    card: { title: "Кружка", description: "" },
+    proxyEnabled: false,
+    status: { kind: "unsold" },
+    ...overrides.lot,
+  });
   return () => ({
+    ...(overrides.favorites === undefined
+      ? {}
+      : { favorites: overrides.favorites }),
     identity: {
       resolveIdentity: async () => ({
         viewer: { identityId: VIEWER_ID, rights: ["place-bids"] },
@@ -180,15 +195,8 @@ function portsWith(
         })),
     },
     auction: {
-      getLot: async () => ({
-        lotId,
-        auctionId,
-        version: 1,
-        card: { title: "Кружка", description: "" },
-        proxyEnabled: false,
-        status: { kind: "unsold" },
-        ...overrides.lot,
-      }),
+      getLot: async () => shownLot(),
+      findLot: async () => shownLot(),
       listAuctionLots: async () => ({ lots: [], nextPageToken: "" }),
       listLotHistory: async () => ({
         entries: overrides.history ?? [],
@@ -2079,5 +2087,143 @@ describe("happy hours", () => {
     );
     await idle.bot.handleUpdate(lotPress());
     expect(shown(idle.calls)).not.toContain("Счастливые часы");
+  });
+});
+
+// Избранное (PER-495): отметки живут в Notifications. Фейк держит их вне бота,
+// как сервис, и отвечает состоянием после команды: повтор отметки дубля не
+// создаёт.
+function notificationsFavorites() {
+  const marks: string[] = [];
+  const port: FavoritesPort = {
+    listFollowedLots: async () => [...marks],
+    followLot: async ({ lotId: marked }) => {
+      if (!marks.includes(marked)) marks.push(marked);
+      return { kind: "done", following: true };
+    },
+    unfollowLot: async ({ lotId: unmarked }) => {
+      const at = marks.indexOf(unmarked);
+      if (at >= 0) marks.splice(at, 1);
+      return { kind: "done", following: false };
+    },
+  };
+  return { marks, port };
+}
+
+function press(data: string): Update {
+  return lotPress({ data });
+}
+
+type SentScreen = { text: string; keyboard: SentButton[][] };
+
+// Последний экран, который бот показал: текст и клавиатура вызова Bot API.
+function lastScreen(calls: Array<{ method: string; payload: unknown }>) {
+  const sent = calls.filter(({ payload }) => keyboardOf(payload).length > 0);
+  const last = sent.at(-1)?.payload as
+    | { text?: string; rich_message?: { html?: string } }
+    | undefined;
+  return {
+    text: last?.text ?? last?.rich_message?.html ?? "",
+    keyboard: keyboardOf(last),
+  } satisfies SentScreen;
+}
+
+function buttonData(screen: SentScreen, label: string): string {
+  const data = screen.keyboard
+    .flat()
+    .find((button) => button.text === label)?.callback_data;
+  if (data === undefined) throw new Error(`no button ${label}`);
+  return data;
+}
+
+describe("favorite lots", () => {
+  it("marks a lot, lists it once after a restart and unmarks it", async () => {
+    const favorites = notificationsFavorites();
+    const ports = portsWith({
+      favorites: favorites.port,
+      lot: {
+        status: {
+          kind: "scheduled",
+          startingPrice: { minorUnits: 50_000, currency: "RUB" },
+        },
+      },
+    });
+    const first = makeBot(ports);
+
+    await first.bot.handleUpdate(lotPress());
+    const card = lastScreen(first.calls);
+    expect(card.keyboard.flat().map((b) => b.text)).toContain("В избранное");
+
+    await first.bot.handleUpdate(press(buttonData(card, "В избранное")));
+    expect(
+      lastScreen(first.calls)
+        .keyboard.flat()
+        .map((b) => b.text),
+    ).toContain("Убрать");
+    // Повторное нажатие той же кнопки со старого экрана дубля не создаёт.
+    await first.bot.handleUpdate(press(buttonData(card, "В избранное")));
+    expect(favorites.marks).toEqual([lotId]);
+
+    // Рестарт процесса: память бота пропала, отметка осталась в сервисе.
+    const second = makeBot(ports);
+    await second.bot.handleUpdate(press(entryCallback("menu")));
+    const menu = lastScreen(second.calls);
+    await second.bot.handleUpdate(press(buttonData(menu, "Избранное")));
+    const list = lastScreen(second.calls);
+    expect(list.text).toContain("<b>Избранное</b>");
+    expect(list.text.match(/Кружка/g)).toHaveLength(1);
+    expect(list.keyboard.flat().map((b) => b.text)).toEqual([
+      "Кружка · старт 500 ₽",
+      "‹ Меню",
+    ]);
+
+    await second.bot.handleUpdate(
+      press(buttonData(list, "Кружка · старт 500 ₽")),
+    );
+    await second.bot.handleUpdate(
+      press(buttonData(lastScreen(second.calls), "Убрать")),
+    );
+    expect(favorites.marks).toEqual([]);
+    await second.bot.handleUpdate(press(buttonData(menu, "Избранное")));
+    expect(lastScreen(second.calls).text).toContain(
+      "Лотов в избранном пока нет.",
+    );
+  });
+
+  // Без адреса Notifications избранного у бота нет вовсе: ни пункта меню, ни
+  // кнопки на карточке.
+  it("shows neither the menu entry nor the card button without Notifications", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+
+    await bot.handleUpdate(press(entryCallback("menu")));
+    expect(JSON.stringify(lastScreen(calls).keyboard)).not.toContain(
+      "Избранное",
+    );
+    await bot.handleUpdate(lotPress());
+    expect(JSON.stringify(lastScreen(calls).keyboard)).not.toContain(
+      "В избранное",
+    );
+  });
+
+  // Отметку подделанным нажатием участник сообщества не ставит: на любом
+  // действии ему отвечает переход в бот хаба (ADR-064, пункт 2).
+  it("answers a forged follow press of a community member with the hub transfer", async () => {
+    const favorites = notificationsFavorites();
+    const member = portsWith({ favorites: favorites.port });
+    const { bot, calls } = makeBot(() => ({
+      ...member("req"),
+      identity: {
+        resolveIdentity: async () => ({
+          viewer: { identityId: VIEWER_ID, rights: ["access-hub"] },
+          blocked: false,
+        }),
+      },
+    }));
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "follow", lotId, page: 0 })),
+    );
+    expect(favorites.marks).toEqual([]);
+    expect(JSON.stringify(calls)).toContain(deniedTexts["in-community"]);
   });
 });

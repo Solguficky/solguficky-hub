@@ -208,11 +208,11 @@ public class FavoriteLotTests
         refused.StatusCode.ShouldBe(StatusCode.FailedPrecondition);
     }
 
-    /// <summary>Без токена бота аукциона — UNAUTHENTICATED, в том числе с токеном бота хаба.</summary>
+    /// <summary>Без токена вызывающего или с чужим токеном — UNAUTHENTICATED.</summary>
     [Theory]
     [InlineData(null)]
-    [InlineData(SiloUnderTest.BotToken)]
-    public async Task When_CallerNotAuctionBot_Expect_Unauthenticated(string? token)
+    [InlineData("not-a-caller-token")]
+    public async Task When_CallerNotABot_Expect_Unauthenticated(string? token)
     {
         await using var service = await PreferencesUnderTest.Start();
 
@@ -221,6 +221,24 @@ public class FavoriteLotTests
                 cancellationToken: Cancellation).ResponseAsync);
 
         refused.StatusCode.ShouldBe(StatusCode.Unauthenticated);
+    }
+
+    /// <summary>
+    /// Избранное — у обоих ботов (PER-495): участник отмечает лоты в боте хаба,
+    /// и его токен допущен к списку так же, как токен бота аукциона.
+    /// </summary>
+    [Fact]
+    public async Task When_HubBotListsFollowedLots_Expect_OwnList()
+    {
+        await using var service = await PreferencesUnderTest.Start();
+        var identityId = Guid.CreateVersion7().ToString();
+
+        var listed = await service.ClientPresenting(SiloUnderTest.BotToken)
+            .ListFollowedLotsAsync(new ListFollowedLotsRequest { IdentityId = identityId },
+                cancellationToken: Cancellation);
+
+        listed.IdentityId.ShouldBe(identityId);
+        listed.LotIds.ShouldBeEmpty();
     }
 
     /// <summary>Путь из шины: факт лота заводит реплику, ставка — отметку лидеру.</summary>

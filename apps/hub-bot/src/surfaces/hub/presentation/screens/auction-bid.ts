@@ -247,6 +247,26 @@ export function commandResultScreen(
   };
 }
 
+// Notifications ещё не знает лот (PER-495): факт аукциона до него не дошёл,
+// и отметка не поставлена. Кадр исхода, как отказ команды: «К лоту» и «Меню».
+export function followRefusedScreen(
+  block: Extract<AuctionBlock, { kind: "follow-refused" }>,
+  keyboard: readonly (readonly AuctionButton[])[],
+): ShownScreen {
+  return {
+    id: "follow-refused",
+    text: outcomeText(
+      {
+        title: "Лот пока нельзя добавить в избранное",
+        detail: "Попробуй ещё раз через минуту.",
+      },
+      block.title,
+    ),
+    keyboard: toLotRow(new InlineKeyboard(), keyboard),
+    format: "HTML",
+  };
+}
+
 export function answerRefusedScreen(
   block: AnswerRefusedBlock,
   keyboard: readonly (readonly AuctionButton[])[],

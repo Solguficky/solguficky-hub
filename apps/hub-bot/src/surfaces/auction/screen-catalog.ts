@@ -75,6 +75,15 @@ export const screenCatalog = {
     parent: "menu",
     backName: "Уведомления",
   },
+  // Избранное (PER-495): свои отмеченные лоты, у закрытых — итог. Список
+  // аукционного дерева, открытый из меню: возврат — «‹ Меню».
+  favorites: {
+    class: "screen",
+    nav: "tree",
+    title: "Избранное",
+    parent: "menu",
+    backName: "Избранное",
+  },
   // Лента возвращает в тот список, где аукцион стоит сейчас.
   feed: {
     class: "screen",
@@ -87,8 +96,8 @@ export const screenCatalog = {
   // каталог не знает: кнопку по состоянию ставит аукционное дерево, и держат это
   // его contract cases.
   // Предел рядов под карточкой назвал лист ставки (PER-317): ставка по шагу,
-  // своя сумма, автоставка, «Обновить», «Ставки» и навигация — с рядом
-  // «Изменить лот» в хабе семь.
+  // своя сумма, автоставка, «Обновить», «Ставки», избранное (PER-495) и
+  // навигация — семь; в хабе к ним добавляется «Изменить лот».
   lot: {
     class: "screen",
     nav: "tree",
@@ -127,6 +136,12 @@ export const screenCatalog = {
   // ответа над ними «Ввести заново». Заголовок — сам исход, поэтому в записи
   // его нет.
   "command-result": { class: "screen", nav: "exit" },
+  // Notifications ещё не знает лот — тоже кадр исхода с «К лоту» и «Меню».
+  "follow-refused": {
+    class: "screen",
+    nav: "exit",
+    title: "Лот пока нельзя добавить в избранное",
+  },
   "answer-refused": { class: "screen", nav: "exit" },
   "bid-question": { class: "question", nav: "question" },
   "proxy-question": { class: "question", nav: "question" },

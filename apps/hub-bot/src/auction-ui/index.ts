@@ -45,6 +45,8 @@ export type {
   DisplayNameOutcome,
   DisplayNameRefusal,
   EntryPort,
+  FavoritesPort,
+  FollowOutcome,
   IdentityPort,
   LotCardView,
   LotHistoryEntryView,

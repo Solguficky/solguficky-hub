@@ -10,6 +10,7 @@ import type {
   CommandOutcome,
   DisplayNameChoice,
   DisplayNameRefusal,
+  FavoritesPort,
   LotView,
   Money,
   OperationIdPort,
@@ -31,6 +32,7 @@ import { showLot } from "./open-lot.js";
 export type CommandContext = {
   auction: AuctionPort;
   operations: OperationIdPort;
+  favorites?: FavoritesPort;
   viewer: Viewer;
   user: TelegramUser;
 };

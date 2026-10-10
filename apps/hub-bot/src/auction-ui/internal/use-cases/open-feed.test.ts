@@ -29,6 +29,7 @@ function lot(n: number, rubles?: number): LotView {
 
 function auctionOf(pages: Record<string, LotPage>): AuctionPort {
   return {
+    findLot: async () => undefined,
     getLot: async () => {
       throw new Error("not used");
     },

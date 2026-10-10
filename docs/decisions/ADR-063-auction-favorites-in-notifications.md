@@ -85,3 +85,11 @@
 - Другие ADR: [ADR-028](ADR-028-notifications-subscriptions-replica-and-delivery-boundary.md), [ADR-044](ADR-044-two-telegram-bots-and-shared-auction-screens.md), [ADR-056](ADR-056-service-calls-per-caller-token-and-closed-network.md), [ADR-059](ADR-059-auction-participant-display-name.md)
 - Бриф: [services/notifications.md](../services/notifications.md)
 - Каталог: [integration.md](../architecture/integration.md)
+
+## Дополнение 2026-10-11: избранное у обоих ботов
+
+Раздел дописан после принятия и меняет в пункте 1 решения клиента: не «бот аукциона», а оба бота. Выбор сделал владелец на чекпоинте плана [PER-495](https://linear.app/anticnvm/issue/per-495).
+
+Пункт 1 писался, пока аукцион был гостевым входом. После [ADR-064](ADR-064-two-bots-by-audience-circle-and-rights.md) и [ADR-065](ADR-065-circle-presets-and-verb-rights.md) круг решает аудиторию: участник сообщества торгует в боте хаба, у аукциона своей сходки, а гость — в боте аукциона. Избранное, которое ставит и читает только бот аукциона, получил бы один гость.
+
+**Решение: отметку, снятие и список зовут оба бота.** Отметка у человека одна, в каком бы боте он ни торговал. Notifications принимает три метода избранного от `hub-bot` и `auction-bot` по их токенам вызывающего ([ADR-056](ADR-056-service-calls-per-caller-token-and-closed-network.md)); контракт не меняется — запрос несёт тот же `identity_id`. Кнопка «В избранное» и «Убрать» — действие тела общего аукционного дерева: тело у двух ботов одно ([ADR-044](ADR-044-two-telegram-bots-and-shared-auction-screens.md)). Список — тоже тело дерева, а входы в него у каждого бота свои: в боте аукциона — пункт меню «Избранное», в боте хаба — кнопка в корне ленты аукциона сходки рядом с «Правила и FAQ», и возврат из списка ведёт в эту ленту. Бот, которому адрес Notifications не задан, обходится без избранного: ни кнопки на карточке, ни входа в список.

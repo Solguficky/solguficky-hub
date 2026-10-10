@@ -34,12 +34,16 @@ import {
   unansweredOn,
 } from "../../core/auction/commands.js";
 import { historyPageOf } from "../../core/auction/history.js";
-import { lotViewOf } from "../../core/auction/snapshot.js";
+import { lotOrMissing, lotViewOf } from "../../core/auction/snapshot.js";
 import {
   classifyRecipientFailure,
   type TelegramRecipientResolver,
 } from "../../core/delivery/index.js";
 import { rightsOf, wireQueue, wireViewer } from "../../core/identity/access.js";
+import {
+  createFavoritesPort,
+  type FavoritesRpc,
+} from "../../core/notifications/favorites.js";
 import {
   callTimeoutMs,
   presentServiceToken,
@@ -82,11 +86,13 @@ export type AuctionRpc = Pick<
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
 >;
-// Notifications боту аукциона нужен ради одной настройки (PER-515).
+// Notifications боту аукциона нужен ради настройки «перебили» (PER-515) и
+// избранного (PER-495).
 export type NotificationsRpc = Pick<
   Client<typeof NotificationsService>,
   "getOutbidPreference" | "setOutbidPreference"
->;
+> &
+  FavoritesRpc;
 
 // Порты пакета метаданных вызова не несут, поэтому они собираются на каждый
 // update: `request_id` края уезжает заголовком в каждый вызов цепочки, а
@@ -105,8 +111,11 @@ export type PortsOptions = {
   // Отказ `GetDisplayNames` пакет гасит: карточка остаётся без имени. Чтобы
   // деградация не была молчаливой, порт сообщает о ней до того, как бросить.
   onNamesRefused?: (cause: unknown, requestId: string) => void;
-  // Без клиента Notifications порта настройки «перебили» нет.
+  // Без клиента Notifications нет ни порта настройки «перебили», ни порта
+  // избранного (PER-495).
   notifications?: NotificationsRpc;
+  // Отказ списка избранного карточка гасит, как отказ имён.
+  onFavoritesRefused?: (cause: unknown, requestId: string) => void;
 };
 
 export function createPorts(
@@ -117,6 +126,7 @@ export function createPorts(
     newOperationId = createUuidV7,
     onNamesRefused,
     notifications,
+    onFavoritesRefused,
   }: PortsOptions = {},
 ): PortsFactory {
   return (requestId, deadlineAt) => {
@@ -180,6 +190,14 @@ export function createPorts(
             callOptions(timeoutMs),
           );
           return lotViewOf(snapshot);
+        },
+        findLot(request) {
+          return lotOrMissing(() =>
+            auction.getLot(
+              { viewer: wireViewer(request.viewer), lotId: request.lotId },
+              callOptions(timeoutMs),
+            ),
+          );
         },
         async listAuctionLots(request) {
           const page = await auction.listAuctionLots(
@@ -277,6 +295,15 @@ export function createPorts(
         },
       },
       operations: { newOperationId },
+      ...(notifications === undefined
+        ? {}
+        : {
+            favorites: createFavoritesPort(
+              notifications,
+              () => callOptions(timeoutMs),
+              (cause) => onFavoritesRefused?.(cause, requestId),
+            ),
+          }),
       catalog: {
         async listAuctions(request) {
           const page = await auction.listAuctions(
@@ -449,6 +476,7 @@ export function createClients(options: {
   serviceToken: string;
   tracing: Tracing;
   onNamesRefused?: (cause: unknown, requestId: string) => void;
+  onFavoritesRefused?: (cause: unknown, requestId: string) => void;
 }): Clients {
   const identitySession = new Http2SessionManager(options.identityUrl);
   const auctionSession = new Http2SessionManager(options.auctionUrl);
@@ -493,6 +521,9 @@ export function createClients(options: {
         ? {}
         : { onNamesRefused: options.onNamesRefused }),
       ...(notifications === undefined ? {} : { notifications }),
+      ...(options.onFavoritesRefused === undefined
+        ? {}
+        : { onFavoritesRefused: options.onFavoritesRefused }),
     }),
     delivery: createDeliveryPorts(identity, auction),
     outbidSettings: notifications !== undefined,
