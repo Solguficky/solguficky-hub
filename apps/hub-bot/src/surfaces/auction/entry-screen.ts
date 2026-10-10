@@ -573,7 +573,7 @@ function renderBody(
         : feed.lots
             .map((item) =>
               bullet(
-                `${escapeHtml(oneLine(item.title ?? untitled))} — ${priceLabel(item.status)}`,
+                `${escapeHtml(oneLine(item.title ?? untitled))} — ${priceLabel(item.status)}${item.activeWindow === undefined ? "" : ", счастливые часы"}`,
               ),
             )
             .join("\n"),
@@ -957,9 +957,7 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
           ...(block.nextPrice === undefined
             ? []
             : [`Следующая ставка: от ${money(block.nextPrice)}`]),
-          ...(block.fixedStep === undefined
-            ? []
-            : [`Шаг: ${money(block.fixedStep)}`]),
+          ...stepLines(block, options),
           ...(status.deadline === undefined
             ? []
             : [
@@ -995,6 +993,44 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
       return _exhaustive;
     }
   }
+}
+
+// Шаг лота в торгах (дизайн-код, «Карточка лота»). В окне «Счастливых часов»
+// — шаг окна до его конца и обычный шаг рядом, иначе строка «Шаг», когда шаг
+// один на все цены. Будущее окно — отдельной строкой: когда и какой шаг.
+function stepLines(block: LotBlock, options: RenderOptions): string[] {
+  const at = (instant: string) =>
+    readableMoment(instant, options.timeZone, options.now);
+  const active = block.activeWindow;
+  const current =
+    active === undefined
+      ? block.fixedStep === undefined
+        ? []
+        : [`Шаг: ${money(block.fixedStep)}`]
+      : [
+          `Счастливые часы: шаг ${money(active.step)} до ${at(active.until)}`,
+          ...(block.baseStep === undefined
+            ? []
+            : [`Обычный шаг: ${money(block.baseStep)}`]),
+        ];
+  const next = block.nextWindow;
+  if (next === undefined) return current;
+  // Окно внутри одного дня называет день один раз: «с 12 июня, сб, 18:00 до
+  // 21:00».
+  const until =
+    readableDay(next.from, options.timeZone, options.now) ===
+    readableDay(next.until, options.timeZone, options.now)
+      ? clockOf(next.until, options.timeZone)
+      : at(next.until);
+  return [
+    ...current,
+    `Счастливые часы: с ${at(next.from)} до ${until}, шаг ${money(next.step)}`,
+  ];
+}
+
+function clockOf(instant: string, timeZone: string): string {
+  const parts = dateParts(instant, timeZone);
+  return `${parts("hour")}:${parts("minute")}`;
 }
 
 // Свой лимит смотрящего: чужих Auction не отдаёт, и строка говорит, что этот

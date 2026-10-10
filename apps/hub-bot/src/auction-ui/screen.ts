@@ -7,6 +7,7 @@ import type {
   LotStatusView,
   Money,
   ProxyLimitRefusal,
+  StepWindowView,
 } from "./ports.js";
 
 // Каноническое тело аукционного экрана (ADR-044, «Один аукцион, две оболочки»).
@@ -20,6 +21,9 @@ export type FeedItem = {
   lotId: string;
   title?: string;
   status: LotStatusView;
+  // Окно «Счастливых часов», которое действует сейчас: строка лота его
+  // отмечает.
+  activeWindow?: StepWindowView;
 };
 
 // Строка хронологии: ставка, как её показывает экран. Лимита прокси здесь
@@ -52,6 +56,12 @@ export type AuctionBlock =
       card?: LotCardView;
       nextPrice?: Money;
       fixedStep?: Money;
+      // Обычный шаг при текущей цене и окна «Счастливых часов» (PER-505):
+      // действующее — с шагом в силе, будущее — только то, что снизит шаг
+      // при текущей цене.
+      baseStep?: Money;
+      activeWindow?: StepWindowView;
+      nextWindow?: StepWindowView;
       status: LotStatusView;
       // Имя участника из статуса: лидера в торгах или победителя проданного
       // лота. Нет — участника нет либо Auction имя не отдал; идентификатор
