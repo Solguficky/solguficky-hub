@@ -38,7 +38,7 @@
 | Best & Final (Vickrey) | скрытые максимумы, платит вторую цену + шаг; proxy=off принудительно | Второй срез |
 | Dutch | цена падает каждые X сек; первый «Забрать» побеждает | Второй срез |
 | Мульти-лоты (top-K) | K единиц, топ-K ставок побеждают | Третий срез |
-| Raffle | билеты, детерминированный seed жеребьёвки | Третий срез |
+| Raffle | розыгрыш среди участников: один бесплатный билет держателю права `auction`, одна жеребьёвка от seed сервиса и публичного маяка drand ([ADR-draft](../../decisions/ADR-draft-auction-raffle-commit-reveal-with-beacon.md)) | К2 [RFC-007](../../rfcs/RFC-007-auction-scope-and-format-options.md#к2--после-теста) |
 
 Глобальные настройки финала + overrides per-lot (`final_mode`, `proxy_bids_enabled`, `anti_snipe{N,K}`); freeze-окно: настройки лота нельзя менять после входа в `final_active`. Динамический шаг по ценовым порогам.
 
