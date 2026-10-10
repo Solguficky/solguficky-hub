@@ -2,8 +2,16 @@ import {
   LotPhase,
   type Money as WireMoney,
 } from "../../../gen/auction/v1/auction_pb.js";
-import type { LotSnapshot } from "../../../gen/auction/v1/auction_service_pb.js";
-import type { LotStatusView, LotView, Money } from "../../auction-ui/index.js";
+import type {
+  LotSnapshot,
+  LotStepWindow,
+} from "../../../gen/auction/v1/auction_service_pb.js";
+import type {
+  LotStatusView,
+  LotView,
+  Money,
+  StepWindowView,
+} from "../../auction-ui/index.js";
 
 // Перевод `auction.v1.LotSnapshot` в срез аукционного дерева — общий у обеих
 // поверхностей: дерево gRPC не знает (ADR-044), а адаптер у пакета один.
@@ -33,6 +41,15 @@ export function lotViewOf(snapshot: LotSnapshot): LotView {
       ? {}
       : { nextPrice: moneyOf(snapshot.nextPrice) }),
     ...(step?.case === "fixed" ? { fixedStep: moneyOf(step.value) } : {}),
+    ...(snapshot.baseStep === undefined
+      ? {}
+      : { baseStep: moneyOf(snapshot.baseStep) }),
+    ...(snapshot.activeWindow === undefined
+      ? {}
+      : { activeWindow: windowOf(snapshot.activeWindow) }),
+    ...(snapshot.nextWindow === undefined
+      ? {}
+      : { nextWindow: windowOf(snapshot.nextWindow) }),
     // Без условий торгов лот лимитов не принимает: им неоткуда взяться.
     proxyEnabled: snapshot.config?.proxyEnabled ?? false,
     ...(snapshot.viewerProxyLimit === undefined
@@ -88,6 +105,15 @@ function statusOf(status: LotSnapshot["status"]): LotStatusView {
       return _exhaustive;
     }
   }
+}
+
+// Окно без шага — дефект соседа: показать сниженный шаг без суммы нельзя.
+function windowOf(window: LotStepWindow): StepWindowView {
+  return {
+    from: window.from,
+    until: window.until,
+    step: required(window.step),
+  };
 }
 
 function required(money: WireMoney | undefined): Money {

@@ -1797,3 +1797,84 @@ describe("bid leaf delivery", () => {
     expect(calls).toEqual([]);
   });
 });
+
+// «Счастливые часы» (PER-505): сумма кнопки — порог снимка, который Auction уже
+// считает по шагу окна, а конец окна виден следующим чтением снимка без
+// рестарта бота: карточка его не кэширует.
+describe("happy hours", () => {
+  const shown = (calls: Array<{ payload: unknown }>) =>
+    JSON.stringify(calls.at(-1)?.payload).replace(/[  ]/g, " ");
+  const trading = {
+    kind: "trading" as const,
+    currentPrice: { minorUnits: 120_000, currency: "RUB" },
+    phase: "online" as const,
+  };
+  const rub = (rubles: number) => ({
+    minorUnits: rubles * 100,
+    currency: "RUB",
+  });
+
+  it("bids by the window step and shows the regular step after the window", async () => {
+    const overrides: { lot: Partial<LotView> } = {
+      lot: {
+        nextPrice: rub(1210),
+        fixedStep: rub(50),
+        baseStep: rub(50),
+        activeWindow: {
+          from: "2026-10-10T15:00:00Z",
+          until: "2026-10-10T18:00:00Z",
+          step: rub(10),
+        },
+        status: trading,
+      },
+    };
+    const { bot, calls } = makeBot(portsWith(overrides));
+    await bot.handleUpdate(lotPress());
+    expect(shown(calls)).toContain("По шагу (1 210 ₽)");
+    expect(shown(calls)).toContain("Счастливые часы: шаг 10 ₽ до");
+    // Окно кончилось: тот же процесс читает новый снимок по «Обновить».
+    overrides.lot = {
+      nextPrice: rub(1250),
+      fixedStep: rub(50),
+      baseStep: rub(50),
+      status: trading,
+    };
+    await bot.handleUpdate(lotPress());
+    expect(shown(calls)).toContain("По шагу (1 250 ₽)");
+    expect(shown(calls)).toContain("Шаг: 50 ₽");
+    expect(shown(calls)).not.toContain("Счастливые часы");
+  });
+
+  // Auction отдаёт будущее окно с объявленной суммой; окно, которое при
+  // текущей цене шаг не снизит, карточка не обещает.
+  it("announces a future window only when it lowers the step", async () => {
+    const window = {
+      from: "2026-10-11T12:00:00Z",
+      until: "2026-10-11T15:00:00Z",
+    };
+    const lowering = makeBot(
+      portsWith({
+        lot: {
+          baseStep: rub(50),
+          nextWindow: { ...window, step: rub(10) },
+          status: trading,
+        },
+      }),
+    );
+    await lowering.bot.handleUpdate(lotPress());
+    expect(shown(lowering.calls)).toContain(
+      "Счастливые часы: с 11 октября, вс, 15:00 до 18:00, шаг 10 ₽",
+    );
+    const idle = makeBot(
+      portsWith({
+        lot: {
+          baseStep: rub(50),
+          nextWindow: { ...window, step: rub(50) },
+          status: trading,
+        },
+      }),
+    );
+    await idle.bot.handleUpdate(lotPress());
+    expect(shown(idle.calls)).not.toContain("Счастливые часы");
+  });
+});

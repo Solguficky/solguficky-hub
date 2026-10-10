@@ -7,6 +7,7 @@ import type {
   AuctionPort,
   LotStatusView,
   LotView,
+  StepWindowView,
   Viewer,
 } from "../../ports.js";
 import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
@@ -38,6 +39,7 @@ export async function showLot(input: {
   page: number;
 }): Promise<AuctionScreenBody> {
   const { lot } = input;
+  const nextWindow = announcedWindow(lot);
   const participantId = participantOf(lot.status);
   const names = await namesOf({
     auction: input.auction,
@@ -88,6 +90,11 @@ export async function showLot(input: {
         ...(lot.card === undefined ? {} : { card: lot.card }),
         ...(lot.nextPrice === undefined ? {} : { nextPrice: lot.nextPrice }),
         ...(lot.fixedStep === undefined ? {} : { fixedStep: lot.fixedStep }),
+        ...(lot.baseStep === undefined ? {} : { baseStep: lot.baseStep }),
+        ...(lot.activeWindow === undefined
+          ? {}
+          : { activeWindow: lot.activeWindow }),
+        ...(nextWindow === undefined ? {} : { nextWindow }),
         status: lot.status,
         ...(participantName === undefined ? {} : { participantName }),
         ...(lot.viewerProxyLimit === undefined
@@ -111,6 +118,19 @@ export async function showLot(input: {
       ],
     ],
   };
+}
+
+// Будущее окно Auction отдаёт с объявленной суммой, не сверяя её с обычным
+// шагом (proto, `next_window`): в окне действует меньшая из двух. Окно, которое
+// при текущей цене шаг не снизит, карточка не обещает — так же Auction молчит о
+// действующем окне, которое шаг не снижает.
+function announcedWindow(lot: LotView): StepWindowView | undefined {
+  const { nextWindow, baseStep } = lot;
+  if (nextWindow === undefined) return undefined;
+  if (baseStep === undefined) return nextWindow;
+  return nextWindow.step.minorUnits < baseStep.minorUnits
+    ? nextWindow
+    : undefined;
 }
 
 // Чьё имя нужно экрану: лидера в торгах или победителя проданного лота. У

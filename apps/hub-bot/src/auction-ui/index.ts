@@ -58,6 +58,7 @@ export type {
   OperationIdPort,
   ProxyLimitRefusal,
   ResolvedIdentity,
+  StepWindowView,
   TelegramUser,
   TradingPhase,
   Viewer,
