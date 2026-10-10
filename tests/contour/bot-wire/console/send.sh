@@ -3,7 +3,7 @@
 # POST-ом. Код 0 — команда исполнена, 22 — пульт отверг её (ответ всё равно
 # напечатан), 7 — пульт не слушает: он поднимается `just contour-bot-console`.
 #
-#   sh tests/contour/bot-wire/console/send.sh alice press Ближайшие сходки
+#   sh tests/contour/bot-wire/console/send.sh alice press Архив
 #   sh tests/contour/bot-wire/console/send.sh            # справка и готовность
 set -eu
 

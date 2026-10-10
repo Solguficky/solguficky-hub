@@ -39,7 +39,8 @@ async function organizerConfirmingMaterial(scenario: string) {
     person: organizer,
   } = await organizerAtStart(wire, direct);
   const title = titleFor(scenario, telegramUserId);
-  await organizer.presses("Управление");
+  await organizer.says("/manage");
+  await organizer.presses("Сходки и объявления");
   await organizer.presses("Создать сходку");
   await fillsMeetupForm(organizer, title);
   await organizer.presses("Опубликовать");
@@ -79,7 +80,8 @@ describe("материалы сходки", () => {
       wire,
       direct,
     );
-    await organizer.presses("Управление");
+    await organizer.says("/manage");
+    await organizer.presses("Сходки и объявления");
     await organizer.presses("Создать сходку");
     await fillsMeetupForm(organizer, titleFor("постер", telegramUserId));
     await organizer.presses("Опубликовать");

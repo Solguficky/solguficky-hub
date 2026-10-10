@@ -19,13 +19,16 @@ function capturingLogger() {
 }
 
 describe("bot command menu", () => {
-  it("registers the menu and FAQ commands for private chats", async () => {
+  // Решение владельца 10 октября 2026 года: корня «Меню» нет, разделы
+  // открываются командами.
+  it("registers the section commands for private chats", async () => {
     const setMyCommands = vi.fn<Api["setMyCommands"]>().mockResolvedValue(true);
     const { logger, records } = capturingLogger();
     await registerCommands({ setMyCommands }, botCommands, logger);
     expect(setMyCommands).toHaveBeenCalledWith(
       [
-        { command: "menu", description: "Меню аукциона" },
+        { command: "auctions", description: "Аукционы" },
+        { command: "past", description: "Прошедшие" },
         { command: "faq", description: "Правила и FAQ" },
       ],
       { scope: { type: "all_private_chats" } },

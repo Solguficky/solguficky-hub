@@ -7,11 +7,11 @@ import { CommandError, parseCommand, photoKinds } from "./commands.js";
 
 describe("console command language", () => {
   it("takes the label and text tail verbatim, with spaces and punctuation", () => {
-    expect(parseCommand("alice@hub press  Ближайшие сходки ")).toEqual({
+    expect(parseCommand("alice@hub press  Архив ")).toEqual({
       kind: "press",
       who: "alice",
       bot: "hub",
-      label: "Ближайшие сходки",
+      label: "Архив",
     });
     expect(
       parseCommand("bob@auction say 12.06.2027 19:00, «Циферблат»\n"),
@@ -130,7 +130,7 @@ describe("console command language", () => {
     ["alice@hub dance", "действие"],
     ["alice@hub say", "текст"],
     ["alice@hub answer 0 да", "номер"],
-    ["alice@hub pick 0 Меню", "номер"],
+    ["alice@hub pick 0 Архив", "номер"],
     ["alice@hub pick 2", "подпись"],
     ["alice@hub old", "подпись"],
     ["alice@hub raw", "callback_data"],

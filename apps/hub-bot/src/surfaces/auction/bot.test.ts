@@ -292,13 +292,13 @@ describe("auction bot", () => {
         message: { message_id: 7, date: 0, chat: privateChat, text: "old" },
       },
     });
-    // Отметку ставит возврат «‹ Меню» под самим FAQ.
+    // Отметку ставит кнопка «Аукционы» под самим FAQ.
     await first.bot.handleUpdate(press("read"));
     expect(acknowledged).toBe(true);
     const restarted = makeBot(ports);
     await restarted.bot.handleUpdate(start);
     expect(restarted.calls[0]?.payload).toMatchObject({
-      text: expect.stringContaining("<b>Меню</b>"),
+      text: expect.stringContaining("<b>Аукционы</b>"),
     });
     await restarted.bot.handleUpdate(press("faq"));
     expect(restarted.calls.at(-1)?.payload).toMatchObject({
@@ -306,7 +306,9 @@ describe("auction bot", () => {
     });
   });
 
-  it("answers /start with the menu for a returning admitted participant", async () => {
+  // Решение владельца 10 октября 2026 года: корня «Меню» нет, `/start`
+  // ознакомившегося открывает «Аукционы» — корень без ряда навигации.
+  it("answers /start with the auctions for a returning admitted participant", async () => {
     const { bot, calls } = makeBot(publicPorts);
     await bot.handleUpdate(
       startUpdate({
@@ -322,20 +324,10 @@ describe("auction bot", () => {
     expect(calls[0]?.method).toBe("sendMessage");
     expect(calls[0]?.payload).toMatchObject({
       chat_id: 42,
-      text: expect.stringMatching(/^<b>Меню<\/b>/),
+      text: expect.stringMatching(/^<b>Аукционы<\/b>/),
       parse_mode: "HTML",
     });
-    expect(calls[0]?.payload).toMatchObject({
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "Аукционы", callback_data: expect.any(String) },
-            { text: "Прошедшие", callback_data: expect.any(String) },
-          ],
-          [{ text: "Правила и FAQ", callback_data: expect.any(String) }],
-        ],
-      },
-    });
+    expect(JSON.stringify(calls[0]?.payload)).not.toContain("‹ ");
   });
 
   it("answers /start with a channel or a foreign payload like a plain /start", async () => {
@@ -365,7 +357,8 @@ describe("auction bot", () => {
       "/start s_",
       "/start m_AZLzpLXGfY6fChssPU5fYA",
       "/start not a payload",
-      // `/menu` из кнопки меню клиента — тот же вход (PER-472).
+      // `/menu` — прежняя команда меню: открывает «Аукционы», как `/start`
+      // ознакомившегося (решение владельца 10 октября 2026 года).
       "/menu",
     ]) {
       expect(await answer(text)).toEqual(plain);
@@ -379,9 +372,6 @@ describe("auction bot", () => {
     ["/start s_", { sourceCode: "" }],
     ["/start m_AZLzpLXGfY6fChssPU5fYA", {}],
     ["/start", {}],
-    // `/menu` — вход без кода канала, даже с хвостом.
-    ["/menu", {}],
-    ["/menu s_tg_ads", {}],
   ])(
     "enters on %s with the auction queue and the first name",
     async (text, code) => {
@@ -485,12 +475,9 @@ describe("auction bot", () => {
       reply_markup: {
         inline_keyboard: [
           [{ text: "Ставки", callback_data: expect.any(String) }],
-          // Возврат тела и «Меню» — один последний ряд; у лота с итогом
+          // Возврат тела — последний ряд одной кнопкой; у лота с итогом
           // «Обновить» нет.
-          [
-            { text: "‹ Лоты", callback_data: expect.any(String) },
-            { text: "Меню", callback_data: entryCallback("menu") },
-          ],
+          [{ text: "‹ Лоты", callback_data: expect.any(String) }],
         ],
       },
     });
@@ -530,7 +517,6 @@ describe("auction bot", () => {
               callback_data: feedButton,
             },
           ],
-          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
         ],
       },
     });
@@ -538,10 +524,7 @@ describe("auction bot", () => {
     expect(calls.at(-1)?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: expect.arrayContaining([
-          [
-            { text: "‹ Аукционы", callback_data: entryCallback("auctions") },
-            { text: "Меню", callback_data: entryCallback("menu") },
-          ],
+          [{ text: "‹ Аукционы", callback_data: entryCallback("auctions") }],
         ]),
       },
     });
@@ -558,9 +541,7 @@ describe("auction bot", () => {
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("Активных аукционов сейчас нет."),
       reply_markup: {
-        inline_keyboard: [
-          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
-        ],
+        inline_keyboard: [],
       },
     });
     await bot.handleUpdate(lotPress({ data: entryCallback("past") }));
@@ -578,7 +559,6 @@ describe("auction bot", () => {
               }),
             },
           ],
-          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
         ],
       },
     });
@@ -590,10 +570,7 @@ describe("auction bot", () => {
     expect(calls.at(-1)?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: expect.arrayContaining([
-          [
-            { text: "‹ Прошедшие", callback_data: entryCallback("past") },
-            { text: "Меню", callback_data: entryCallback("menu") },
-          ],
+          [{ text: "‹ Прошедшие", callback_data: entryCallback("past") }],
         ]),
       },
     });
@@ -605,9 +582,7 @@ describe("auction bot", () => {
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("Прошедших аукционов пока нет."),
       reply_markup: {
-        inline_keyboard: [
-          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
-        ],
+        inline_keyboard: [],
       },
     });
   });
@@ -627,10 +602,7 @@ describe("auction bot", () => {
       parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: [
-          [
-            { text: "Повторить", callback_data: entryCallback("auctions") },
-            { text: "Меню", callback_data: entryCallback("menu") },
-          ],
+          [{ text: "Повторить", callback_data: entryCallback("auctions") }],
         ],
       },
     });
@@ -706,7 +678,7 @@ describe("auction bot", () => {
       payload: {
         reply_markup: {
           inline_keyboard: [
-            // «Меню» здесь нет: оно разрешило бы личность без заявки.
+            // Возврата здесь нет: он разрешил бы личность без заявки.
             [{ text: "Повторить", callback_data: startCallback("tg_ads") }],
           ],
         },
@@ -725,7 +697,7 @@ describe("auction bot", () => {
     });
   });
 
-  it("answers an unreadable button with a frame that leads to the menu", async () => {
+  it("answers an unreadable button with a frame that leads to the auctions", async () => {
     const { bot, calls } = makeBot(publicPorts);
     await bot.handleUpdate(lotPress({ data: "v9:auc:lot:x" }));
     expect(calls.at(-1)?.payload).toMatchObject({
@@ -733,11 +705,42 @@ describe("auction bot", () => {
       parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: [
-          [{ text: "Меню", callback_data: entryCallback("menu") }],
+          [{ text: "‹ Аукционы", callback_data: entryCallback("auctions") }],
         ],
       },
     });
   });
+
+  // Решение владельца 10 октября 2026 года: разделы открываются командами,
+  // `/menu` — прежняя команда — открывает «Аукционы». Заявки команда не
+  // ставит, а без отметки ознакомления человек видит FAQ.
+  it.each([
+    ["/auctions", "<b>Аукционы</b>"],
+    ["/menu", "<b>Аукционы</b>"],
+    ["/past", "<b>Прошедшие аукционы</b>"],
+  ])(
+    "answers %s with its list root without requesting access",
+    async (text, title) => {
+      const requestAccess = vi.fn<EntryPort["requestAccess"]>();
+      const { bot, calls } = makeBot(portsWith({ entry: requestAccess }));
+      await bot.handleUpdate(
+        startUpdate({
+          message_id: 1,
+          date: 0,
+          chat: privateChat,
+          from,
+          text,
+          entities: [{ type: "bot_command", offset: 0, length: text.length }],
+        }),
+      );
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toMatchObject({
+        method: "sendMessage",
+        payload: { text: expect.stringContaining(title) },
+      });
+      expect(requestAccess).not.toHaveBeenCalled();
+    },
+  );
 
   // `/faq` открывает FAQ новым сообщением с любого места и заявок не ставит.
   it("answers /faq with the FAQ screen without requesting access", async () => {
@@ -753,7 +756,7 @@ describe("auction bot", () => {
       },
     });
     expect(keyboardOf(calls[0]?.payload).at(-1)).toEqual([
-      { text: "‹ Меню", callback_data: entryCallback("read") },
+      { text: "Аукционы", callback_data: entryCallback("read") },
     ]);
     expect(requestAccess).not.toHaveBeenCalled();
   });
@@ -1202,10 +1205,7 @@ describe("auction bot", () => {
     expect(edit.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [
-          [
-            { text: "‹ Лот", callback_data: expect.any(String) },
-            { text: "Меню", callback_data: entryCallback("menu") },
-          ],
+          [{ text: "‹ Лот", callback_data: expect.any(String) }],
         ],
       },
     });
@@ -1616,12 +1616,7 @@ describe("bid leaf delivery", () => {
           chat: privateChat,
           text: "Аукцион сейчас недоступен.",
           reply_markup: {
-            inline_keyboard: [
-              [
-                { text: "Повторить", callback_data: data },
-                { text: "Меню", callback_data: entryCallback("menu") },
-              ],
-            ],
+            inline_keyboard: [[{ text: "Повторить", callback_data: data }]],
           },
         },
       },
@@ -1676,7 +1671,7 @@ describe("bid leaf delivery", () => {
     expect(sent).toMatch(/Сейчас можно от 1\s250\s₽\./);
   });
 
-  // PER-473: после «Да» — экран «принята» с «К лоту» и «Меню» одним рядом.
+  // PER-473: после «Да» — экран «принята» с выходом «К лоту».
   it("answers an accepted bid with its own screen and the lot button", async () => {
     const { bot, calls } = makeBot(trading);
     await bot.handleUpdate({
@@ -1710,7 +1705,6 @@ describe("bid leaf delivery", () => {
                 page: 0,
               }),
             },
-            { text: "Меню", callback_data: entryCallback("menu") },
           ],
         ],
       },
@@ -1754,7 +1748,6 @@ describe("bid leaf delivery", () => {
                   page: 0,
                 }),
               },
-              { text: "Меню", callback_data: entryCallback("menu") },
             ],
           ],
         },

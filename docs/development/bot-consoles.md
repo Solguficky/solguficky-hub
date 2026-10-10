@@ -99,7 +99,8 @@ sh $S people
 
 ```bash
 sh $S alice@hub say /start
-sh $S alice@hub press Управление
+sh $S alice@hub say /manage
+sh $S alice@hub press Сходки и объявления
 sh $S alice@hub press Создать сходку
 sh $S alice@hub say Настолки у Алисы         # название — единственный вопрос формы
 sh $S alice@hub press Дата и время           # дальше поля заполняются с черновика
@@ -116,8 +117,7 @@ sh $S alice@hub press ✔️ Да, опубликовать сходку  # пу
 ### Что видит участник
 
 ```bash
-sh $S bob@hub say /start
-sh $S bob@hub press Ближайшие сходки
+sh $S bob@hub say /start                             # допущенный /start открывает «Сходки»
 sh $S bob@hub pick 1 17 октября · Настолки у Алисы   # n-я из одинаковых подписей; press нажимает первую
 sh $S bob@hub link <meetupId>                        # как переход по ссылке из чата сообщества
 ```
@@ -127,10 +127,12 @@ sh $S bob@hub link <meetupId>                        # как переход п�
 ### Ответ на старый вопрос формы
 
 ```bash
-sh $S alice@hub press Управление
+sh $S alice@hub say /manage
+sh $S alice@hub press Сходки и объявления
 sh $S alice@hub press Создать сходку
-sh $S alice@hub say /menu                    # команда вместо ответа: вопрос остаётся висеть
-sh $S alice@hub press Управление
+sh $S alice@hub say /meetups                 # команда вместо ответа: вопрос остаётся висеть
+sh $S alice@hub say /manage
+sh $S alice@hub press Сходки и объявления
 sh $S alice@hub press Создать сходку
 sh $S alice@hub answer 1 Первый черновик     # ответ на первый вопрос в чате, а не на последний
 ```
@@ -156,7 +158,7 @@ sh $S alice@hub press Прикрепить
 ### Аукцион у сходки и лот с фото
 
 ```bash
-sh $S alice@hub press Ближайшие сходки
+sh $S alice@hub say /meetups
 sh $S alice@hub press 17 октября · Настолки у Алисы
 sh $S alice@hub press Включить аукцион       # ряд появляется на карточке, открытой из списка
 sh $S alice@hub press Лоты                   # лента: «Добавить лот», «Пульт», лоты
@@ -183,13 +185,12 @@ sh $S alice@hub press Открыть онлайн-неделю
 sh $S alice@hub press ✔️ Да, открыть неделю
 
 sh $S carol@auction say /start               # «Заявка на рассмотрении»
-sh $S alice@hub say /menu
-sh $S alice@hub press Управление
+sh $S alice@hub say /manage                  # «Управление» — команда; пункты лежат в группах
+sh $S alice@hub press Заявки и отказы
 sh $S alice@hub press Заявки
 sh $S alice@hub press ✔️ Допустить            # «Отказать» блокирует: /start и /faq отвечают «Доступ к аукциону закрыт»
-sh $S carol@auction say /start               # FAQ; первое «‹ Меню» ставит отметку ознакомления
-sh $S carol@auction press ‹ Меню
-sh $S carol@auction press Аукционы
+sh $S carol@auction say /start               # FAQ; «Аукционы» под ним ставит отметку ознакомления
+sh $S carol@auction press Аукционы           # и открывает список аукционов
 sh $S carol@auction pick 1 6 октября, вт · идут ставки · 1 лот
 sh $S carol@auction press Кружка солегуфика · 1 000 ₽
 sh $S carol@auction press По шагу (1 100 ₽)
@@ -210,9 +211,9 @@ sh $S carol@auction press ✔️ Да, включить автоставку
 
 ```bash
 sh $S slow meetups 1500              # запросы ботов к Meetups доходят на 1,5 с позже
-sh $S bob@hub press Ближайшие сходки # tookMs ≈ 1500, в api — sendChatAction, затем ответ на нажатие и правка
+sh $S bob@hub press Архив            # tookMs ≈ 1500, в api — sendChatAction, затем ответ на нажатие и правка
 sh $S slow auction 4000              # дольше дедлайна RPC: бот получает таймаут сам
-sh $S carol@auction press Обновить   # tookMs ≈ 3000, кадр «Аукцион сейчас недоступен» с «Повторить» и «Меню»
+sh $S carol@auction press Обновить   # tookMs ≈ 3000, кадр «Аукцион сейчас недоступен» с «Повторить» и «‹ Аукционы»
 sh $S slow auction 0                 # снять задержку
 sh $S down auction                   # соединения рвутся: отказ соединения, а не дедлайн
 sh $S carol@auction press Обновить   # тот же кадр за миллисекунды, в log — dependency_unavailable
@@ -274,12 +275,12 @@ sh $L say /start
 
 Номер экрана здесь — настоящий `message_id` в чате. Пульт при старте читает последние 30 сообщений бота, поэтому кнопки старых сообщений тоже нажимаются.
 
-### Проход по меню
+### Проход по разделам
 
 ```bash
-sh $L say /start
-sh $L press Ближайшие сходки
-sh $L press ‹ Меню
+sh $L say /start                         # допущенный /start открывает «Сходки»
+sh $L press Архив
+sh $L press ‹ Сходки
 sh $L look                               # перечитать чат из Telegram, ничего не делая
 ```
 

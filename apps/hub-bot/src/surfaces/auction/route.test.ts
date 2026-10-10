@@ -277,12 +277,12 @@ describe("FAQ entry", () => {
     expect(p.identity.resolveIdentity).not.toHaveBeenCalled();
   });
 
-  it("shows the menu to a returning participant without an auction id", async () => {
+  it("shows the auctions to a returning participant without an auction id", async () => {
     const p = ports(identity({ rights: GUEST }));
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
-    ).toEqual({
-      kind: "menu",
+    ).toMatchObject({
+      kind: "auctions",
     });
   });
 
@@ -297,7 +297,7 @@ describe("FAQ entry", () => {
             data: entryCallback("read"),
           })
         ).screen,
-      ).toEqual({ kind: "menu" });
+      ).toMatchObject({ kind: "auctions" });
     }
     expect(p.faq.acknowledge).toHaveBeenCalledTimes(2);
     expect(p.faq.acknowledge).toHaveBeenCalledWith({
@@ -306,13 +306,13 @@ describe("FAQ entry", () => {
     });
   });
 
-  // «Меню» под лотом, списком или кадром отказа отметку не ставит: человек,
-  // который FAQ не закрывал, видит FAQ, а не меню.
-  it("opens the menu without recording completion", async () => {
+  // Прежняя кнопка «Меню» отметку не ставит: человек, который FAQ не
+  // закрывал, видит FAQ, а не «Аукционы».
+  it("opens the auctions from a former menu button without recording completion", async () => {
     const p = ports(identity({ rights: GUEST }));
     const menu = () =>
       routeAuctionCallback({ ports: p, user, data: entryCallback("menu") });
-    expect((await menu()).screen).toEqual({ kind: "menu" });
+    expect((await menu()).screen).toMatchObject({ kind: "auctions" });
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
     expect((await menu()).screen).toEqual({ kind: "faq" });
     expect(p.faq.acknowledge).not.toHaveBeenCalled();
@@ -703,7 +703,7 @@ describe("routeAuctionStart", () => {
     });
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
-    ).toEqual({ kind: "menu" });
+    ).toMatchObject({ kind: "auctions" });
   });
 
   it("answers a declined application with a refusal of its own", async () => {
@@ -776,11 +776,11 @@ describe("entry retry", () => {
     expect(outcome.screen).toEqual({ kind: "denied", reason: "not-admitted" });
   });
 
-  it("opens the menu for an admitted person and FAQ before its completion", async () => {
+  it("opens the auctions for an admitted person and FAQ before its completion", async () => {
     const p = ports(identity({ rights: GUEST }));
     const retry = () =>
       routeAuctionCallback({ ports: p, user, data: startCallback() });
-    expect((await retry()).screen).toEqual({ kind: "menu" });
+    expect((await retry()).screen).toMatchObject({ kind: "auctions" });
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
     expect((await retry()).screen).toEqual({ kind: "faq" });
     expect(p.faq.acknowledge).not.toHaveBeenCalled();

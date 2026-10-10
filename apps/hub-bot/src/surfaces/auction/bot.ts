@@ -88,7 +88,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   const answerCommand = async (
     ctx: UpdateContext,
     input: {
-      operation: "start" | "faq";
+      operation: "start" | "faq" | "auctions" | "past";
       route: (ports: ReturnType<PortsFactory>) => Promise<RouteOutcome>;
     },
   ) => {
@@ -113,19 +113,27 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     }
   };
 
-  // `/menu` из кнопки меню клиента — тот же вход, что `/start` без кода канала
-  // (PER-472): допущенному — меню или FAQ, остальным — их кадр входа.
-  direct.command("menu", (ctx) =>
-    answerCommand(ctx, {
-      operation: "start",
-      route: (ports) =>
-        routeAuctionStart({
-          ports,
-          user: userOf(ctx.from),
-          firstName: ctx.from.first_name,
-        }),
-    }),
-  );
+  // Разделы из кнопки меню клиента: корень раздела новым сообщением (решение
+  // владельца 10 октября 2026 года). Вход команда не ставит — он остаётся за
+  // `/start`: допуск проверяется, как у нажатия, и без отметки FAQ человек
+  // видит FAQ. `/menu` — прежняя команда меню — открывает «Аукционы».
+  for (const [names, list] of [
+    [["auctions", "menu"], "auctions"],
+    [["past"], "past"],
+  ] as const) {
+    direct.command([...names], (ctx) =>
+      answerCommand(ctx, {
+        operation: list,
+        route: (ports) =>
+          routeAuctionCallback({
+            ports,
+            user: userOf(ctx.from),
+            firstName: ctx.from.first_name,
+            data: entryCallback(list),
+          }),
+      }),
+    );
+  }
 
   direct.command("start", (ctx) => {
     const sourceCode = sourceCodeOf(ctx.match);
@@ -311,7 +319,7 @@ function log(input: {
   logger: Logger;
   ctx: UpdateContext;
   outcome: RouteOutcome;
-  operation: "start" | "faq" | "callback" | "reply";
+  operation: "start" | "faq" | "auctions" | "past" | "callback" | "reply";
 }): void {
   const { logger, ctx, outcome, operation } = input;
   const fields: LogFields = {

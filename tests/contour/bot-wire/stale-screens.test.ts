@@ -44,7 +44,8 @@ async function memberLookingAtPublishedMeetup(scenario: string) {
     person: organizer,
   } = await organizerAtStart(wire, direct);
   const title = titleFor(scenario, telegramUserId);
-  await organizer.presses("Управление");
+  await organizer.says("/manage");
+  await organizer.presses("Сходки и объявления");
   await organizer.presses("Создать сходку");
   await fillsMeetupForm(organizer, title);
   await organizer.presses("Опубликовать");
@@ -54,7 +55,6 @@ async function memberLookingAtPublishedMeetup(scenario: string) {
 
   const { person: member } = await memberAllowedBy(wire, direct, adminId);
   await member.says("/start");
-  await member.presses("Ближайшие сходки");
   expect(member.buttons()).toContain(listedAs(title));
   return { adminId, meetupId, title, member };
 }
@@ -95,11 +95,11 @@ describe("кнопки на старых экранах", () => {
     // Кнопка, чей обычный экран — меню управления, а не список: иначе
     // исполненная как обычная она дала бы тот же экран, что и устаревшая.
     await organizer.pressesFromOlderRelease("Управление");
-    expect(organizer.sees()).toContain("Ближайшие сходки");
+    expect(organizer.sees()).toMatch(/^Сходки/);
     expect(organizer.buttons()).not.toContain("Создать сходку");
 
     // Процесс жив: следующее нажатие обрабатывается как обычно.
-    await organizer.presses("‹ Меню");
-    expect(organizer.buttons()).toContain("Ближайшие сходки");
+    await organizer.presses("Архив");
+    expect(organizer.buttons()).toContain("‹ Сходки");
   });
 });

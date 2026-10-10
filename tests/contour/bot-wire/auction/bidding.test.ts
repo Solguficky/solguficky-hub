@@ -104,12 +104,13 @@ describe("auction through both bots", () => {
     // Название лота своё на прогон: гость находит лот по нему, а не по цене,
     // которая в ленте может отставать от ставки.
     const lotTitle = titleFor("Кружка", freshTelegramUserId());
-    await admin.presses("Управление");
+    await admin.says("/manage");
+    await admin.presses("Сходки и объявления");
     await admin.presses("Создать сходку");
     await fillsMeetupForm(admin, title);
     await admin.presses("Опубликовать");
     await admin.presses("✔️ Да, опубликовать сходку");
-    // Сходку открывают по ссылке для чата: список Ближайших листается, а база
+    // Сходку открывают по ссылке для чата: список «Сходки» листается, а база
     // контура в режиме `just contour-up` живёт дольше прогона.
     const meetupId = meetupIdFromStartLink(admin.sees());
     await admin.presses("‹ Сходка");
@@ -188,8 +189,8 @@ describe("auction through both bots", () => {
       username: guestUsername,
     });
     await guest.says("/start");
-    await admin.says("/menu");
-    await admin.presses("Управление");
+    await admin.says("/manage");
+    await admin.presses("Заявки и отказы");
     // Заявка гостя лежит в очереди аукциона, отдельной от очереди сообщества
     // (дополнение ADR-064 к пункту 12).
     await admin.presses("Заявки в аукцион");
@@ -201,8 +202,9 @@ describe("auction through both bots", () => {
     }
     expect(plain(admin.sees())).toContain(guestUsername);
     await admin.presses("✔️ Допустить");
+    // Первый допущенный `/start` открывает FAQ, а его кнопка «Аукционы»
+    // ставит отметку и открывает список.
     await guest.says("/start");
-    await guest.presses("‹ Меню");
     await guest.presses("Аукционы");
     // Аукцион в боте аукциона адресуется только строкой списка, а строки
     // аукционов с одной датой неотличимы. Поэтому сценарий требует свежей

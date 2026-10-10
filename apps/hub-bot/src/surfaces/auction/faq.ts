@@ -1,9 +1,11 @@
 export type { FaqConfigResult, FaqContent } from "../../auction-faq.js";
 export { defaultFaq, readFaqContent } from "../../auction-faq.js";
 
-// `menu` — вход в меню с любого экрана. `read` — возврат «‹ Меню» под FAQ:
-// только он ставит отметку ознакомления (дизайн-код, «Дерево бота аукциона»).
-// `start` — повтор входа после сбоя `/start`.
+// `menu` — прежняя кнопка «Меню» в чатах: корня «Меню» больше нет, и она
+// открывает «Аукционы» (решение владельца 10 октября 2026 года). `read` —
+// кнопка «Аукционы» под FAQ: только она ставит отметку ознакомления
+// (дизайн-код, «Дерево бота аукциона»). `start` — повтор входа после сбоя
+// `/start`.
 export const ENTRY_ACTIONS = [
   "faq",
   "menu",
@@ -17,7 +19,7 @@ export const ENTRY_ACTIONS = [
 export type EntryAction = (typeof ENTRY_ACTIONS)[number];
 
 // Списки аукционов листаются: номер страницы едет хвостом `:<N>`. Первая
-// страница хвоста не несёт, поэтому кнопка меню — та же строка, что и до
+// страница хвоста не несёт, поэтому возврат в список — та же строка, что и до
 // листания.
 export type ListAction = Extract<EntryAction, "auctions" | "past">;
 export const MAX_LIST_PAGE = 999;

@@ -196,6 +196,10 @@ function writeReport(
 // прошлых нажатий: иначе обход крутится у главного экрана и не доходит до форм.
 const commands = [
   "/start",
+  "/meetups",
+  "/next",
+  "/settings",
+  "/manage",
   "/menu",
   "/help",
   "/nosuchcommand",

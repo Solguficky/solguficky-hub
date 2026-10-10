@@ -14,7 +14,7 @@
 // доходит — JSON символы не сериализует, — зато её видит трансформер test kit.
 export const screenTag: unique symbol = Symbol("screen");
 
-/** Разворачивается в параметры вызова: `{ ...screenMark("menu"), reply_markup }`. */
+/** Разворачивается в параметры вызова: `{ ...screenMark("faq"), reply_markup }`. */
 export function screenMark(id: ScreenId): { [screenTag]: ScreenId } {
   return { [screenTag]: id };
 }
@@ -23,19 +23,15 @@ export function screenMark(id: ScreenId): { [screenTag]: ScreenId } {
 export const auctionListParent = "auction-list";
 export const auctionLists = ["auctions", "past"] as const;
 
+// Корневого экрана «Меню» нет: «Аукционы», «Прошедшие» и FAQ — корни
+// разделов, их открывают команды, и ряда навигации у корня нет (решение
+// владельца 10 октября 2026 года).
 export const screenCatalog = {
-  menu: {
-    class: "screen",
-    nav: "root",
-    title: "Меню",
-    backName: "Меню",
-  },
-  // Отметку ознакомления ставит возврат «‹ Меню» под самим FAQ.
+  // Отметку ознакомления ставит кнопка «Аукционы» под самим FAQ.
   faq: {
     class: "screen",
-    nav: "tree",
+    nav: "root",
     title: "Правила и FAQ",
-    parent: "menu",
     backName: "FAQ",
   },
   // Состояния FAQ, а не узлы: ссылка на правила и адрес для вопросов не
@@ -54,16 +50,14 @@ export const screenCatalog = {
   },
   auctions: {
     class: "screen",
-    nav: "tree",
+    nav: "root",
     title: "Аукционы",
-    parent: "menu",
     backName: "Аукционы",
   },
   past: {
     class: "screen",
-    nav: "tree",
+    nav: "root",
     title: "Прошедшие аукционы",
-    parent: "menu",
     backName: "Прошедшие",
   },
   // Лента возвращает в тот список, где аукцион стоит сейчас.
@@ -97,7 +91,7 @@ export const screenCatalog = {
   // Лист ставки (PER-317): подтверждение без ряда навигации, вопросы с
   // `force_reply` и «Отменой», выбор имени под лотом. Ставка и автоставка —
   // траты денег: их «Да» красное (PER-473). Принятая команда — кадр исхода с
-  // «К лоту» и «Меню». Заголовок подтверждения — вопрос с суммой (PER-472), и
+  // «К лоту». Заголовок подтверждения — вопрос с суммой (PER-472), и
   // линтер сверяет его по началу: «Поставить 1 300 ₽?».
   "bid-confirm": {
     class: "screen",
@@ -114,8 +108,8 @@ export const screenCatalog = {
   "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
   "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
   // Отказ команды и непринятый ответ — тоже кадры исхода (PER-472): исход в
-  // заголовке, название лота в кавычках, «К лоту» и «Меню», у непринятого
-  // ответа над ними «Ввести заново». Заголовок — сам исход, поэтому в записи
+  // заголовке, название лота в кавычках, «К лоту», у непринятого ответа над
+  // ним «Ввести заново». Заголовок — сам исход, поэтому в записи
   // его нет.
   "command-result": { class: "screen", nav: "exit" },
   "answer-refused": { class: "screen", nav: "exit" },
@@ -133,8 +127,8 @@ export const screenCatalog = {
   // Переход участника сообщества в бот хаба (ADR-064, пункт 2): торгов здесь
   // у него нет, ссылки на экране тоже.
   "in-community": { class: "screen", nav: "none" },
-  // Кадры отказа несут выход: «Меню» у устаревшего экрана, «Повторить» и
-  // «Меню» у недоступного сервиса.
+  // Кадры отказа несут выход: «‹ Аукционы» у устаревшего экрана, «Повторить»
+  // и «‹ Аукционы» у недоступного сервиса.
   outdated: { class: "screen", nav: "exit" },
   unavailable: { class: "screen", nav: "exit" },
   // Уведомление из шины — след: клавиатура принадлежит самому сообщению, а

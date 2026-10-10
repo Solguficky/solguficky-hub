@@ -238,35 +238,39 @@ async function routeEntry(input: {
     if (action === "faq" || action === "details" || action === "question") {
       return { screen: { kind: action }, identityId };
     }
+    // Отметку ставит только кнопка «Аукционы» под FAQ: фиксируется действие,
+    // не доставка Telegram и не факт прочтения. Запись идемпотентна: таймаут
+    // безопасно повторить тем же действием. Дальше кнопка открывает список,
+    // как «Аукционы».
     if (action === "read") {
-      // Отметку ставит только возврат из FAQ: фиксируется действие, не
-      // доставка Telegram и не факт прочтения. Запись идемпотентна: таймаут
-      // безопасно повторить тем же действием.
       await input.ports.faq.acknowledge(viewer);
-      return { screen: { kind: "menu" }, identityId };
-    }
-    // «Меню» с любого другого экрана отметки не ставит: без неё человек
-    // видит FAQ, а не меню.
-    if (!(await input.ports.faq.acknowledged(viewer))) {
+    } else if (!(await input.ports.faq.acknowledged(viewer))) {
+      // Без отметки любой раздел, кроме FAQ, показывает FAQ.
       return { screen: { kind: "faq" }, identityId };
     }
-    if (
-      input.action.kind === "start" ||
-      action === "start" ||
-      action === "menu"
-    ) {
-      return { screen: { kind: "menu" }, identityId };
-    }
-    if (action === "auctions" || action === "past") {
+    const listScreen = async (list: ListAction): Promise<RouteOutcome> => {
       const auctions = await readAuctions({
         catalog: input.ports.catalog,
         viewer,
-        listing: listingOf[action],
+        listing: listingOf[list],
       });
       return {
-        screen: { kind: action, list: listPage(auctions, local?.page ?? 0) },
+        screen: { kind: list, list: listPage(auctions, local?.page ?? 0) },
         identityId,
       };
+    };
+    // Вход и прежняя кнопка «Меню» открывают корень основного раздела —
+    // «Аукционы»: корня «Меню» нет (решение владельца 10 октября 2026 года).
+    if (
+      input.action.kind === "start" ||
+      action === "start" ||
+      action === "menu" ||
+      action === "read"
+    ) {
+      return await listScreen("auctions");
+    }
+    if (action === "auctions" || action === "past") {
+      return await listScreen(action);
     }
     const { action: update } = input;
     const result = await tradeCallback({
