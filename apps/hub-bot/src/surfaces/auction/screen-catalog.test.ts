@@ -173,8 +173,10 @@ const confirm = (command: "bid" | "proxy"): AuctionScreenBody => ({
     },
   ],
   keyboard: [
-    [{ action: "confirm.yes", callbackData: "v1:auc:b:lot-1:op:fa:1" }],
-    [{ action: "confirm.no", callbackData: "v1:auc:lot:lot-1:1" }],
+    [
+      { action: "confirm.yes", callbackData: "v1:auc:b:lot-1:op:fa:1" },
+      { action: "confirm.no", callbackData: "v1:auc:lot:lot-1:1" },
+    ],
   ],
 });
 

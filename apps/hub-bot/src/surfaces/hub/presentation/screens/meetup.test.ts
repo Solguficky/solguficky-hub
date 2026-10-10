@@ -436,8 +436,8 @@ describe("materialsScreen", () => {
   it("opens a file by a button and marks a link, with removal for the organizer", () => {
     const screen = materialsScreen(meetup({ materials }), true, 0);
 
-    expect(rows(screen)[0]).toEqual(["Материал 1", "Убрать"]);
-    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "Убрать"]);
+    expect(rows(screen)[0]).toEqual(["Материал 1", "🗑 Убрать"]);
+    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "🗑 Убрать"]);
     expect(rows(screen).slice(-3)).toEqual([
       ["→"],
       ["Прикрепить материал"],

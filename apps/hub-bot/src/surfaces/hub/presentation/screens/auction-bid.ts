@@ -78,7 +78,7 @@ export function confirmScreen(
         : "Да, включить автоставку",
       yesData: dataOf(keyboard, "confirm.yes"),
       noData: dataOf(keyboard, "confirm.no"),
-      money: true,
+      irreversible: true,
     }),
     format: "HTML",
   };

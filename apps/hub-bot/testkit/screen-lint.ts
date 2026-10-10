@@ -1,3 +1,4 @@
+import { admitLabel, declineLabel } from "../src/core/pictograms.js";
 import type { Surface } from "../src/core/surface.js";
 import {
   screenCatalog as auctionCatalog,
@@ -50,7 +51,11 @@ void auctionShape;
 // PER-402, и отдельным рядом она вывела бы карточку за пять рядов. Материалы
 // и аукцион сходки — содержимое сходки одним рядом (PER-307): у организатора
 // ряд аукциона иначе стал бы шестым. «#» — число материалов в подписи.
+// Решение по заявке и очередь допуска — бинарные пары выбора одним рядом
+// (решение владельца 10 октября 2026 года).
 const hubNamedPairs: ReadonlySet<string> = new Set([
+  `${admitLabel}|${declineLabel}`,
+  `${admitLabel}|Закрыть`,
   "Изменить|Статус",
   "Отписаться|Уведомления сходки",
   "Материалы (#)|Лоты",

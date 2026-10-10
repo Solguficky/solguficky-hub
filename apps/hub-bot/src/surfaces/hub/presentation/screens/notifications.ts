@@ -8,9 +8,9 @@ import type {
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   escapeHtml,
+  notificationToggleLabel,
   screenText,
   toCard,
-  toggleLabel,
   toMenu,
   withNav,
 } from "./kit.js";
@@ -68,7 +68,7 @@ export function globalNotificationsScreen(
   for (const entry of ordered) {
     keyboard
       .text(
-        toggleLabel(categoryLabels[entry.category], entry.enabled),
+        notificationToggleLabel(categoryLabels[entry.category], entry.enabled),
         `v1:notify:gset:${entry.category}:${entry.enabled ? "0" : "1"}`,
       )
       .row();
@@ -99,7 +99,7 @@ export function meetupNotificationsScreen(settings: {
   for (const entry of settings.categories) {
     keyboard
       .text(
-        toggleLabel(categoryLabels[entry.category], entry.enabled),
+        notificationToggleLabel(categoryLabels[entry.category], entry.enabled),
         `v1:notify:set:${token}:${entry.category}:${entry.enabled ? "0" : "1"}`,
       )
       .row();

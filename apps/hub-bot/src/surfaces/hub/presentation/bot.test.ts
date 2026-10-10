@@ -1507,11 +1507,11 @@ describe("presentation adapter", () => {
             inline_keyboard: [
               [
                 {
-                  text: "Да, закрыть доступ",
+                  text: "✔️ Да, закрыть доступ",
                   callback_data: `v1:cm:by:${memberToken}:a0`,
                 },
+                { text: "✖️ Нет", callback_data: "v1:cm:a:0" },
               ],
-              [{ text: "Нет", callback_data: "v1:cm:a:0" }],
             ],
           },
         },
@@ -1531,7 +1531,7 @@ describe("presentation adapter", () => {
 
       expect(identity.block).not.toHaveBeenCalled();
       expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-        "Да, закрыть доступ",
+        "✔️ Да, закрыть доступ",
       );
     });
 
@@ -2017,11 +2017,11 @@ describe("presentation adapter", () => {
             inline_keyboard: [
               [
                 {
-                  text: "Да, пересмотреть",
+                  text: "✔️ Да, пересмотреть",
                   callback_data: `v1:cm:ry:${applicationToken}:0`,
                 },
+                { text: "✖️ Нет", callback_data: "v1:cm:r:0" },
               ],
-              [{ text: "Нет", callback_data: "v1:cm:r:0" }],
             ],
           },
         },
@@ -2722,14 +2722,12 @@ describe("presentation adapter", () => {
           inline_keyboard: [
             [
               {
-                text: "Да, отметить состоявшейся",
+                text: "✔️ Да, отметить состоявшейся",
                 callback_data:
                   "v1:manage:confirm-hold:AZLzpLXGfY6fChssPU5fYA:1",
               },
-            ],
-            [
               {
-                text: "Нет",
+                text: "✖️ Нет",
                 callback_data: "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
@@ -3037,15 +3035,13 @@ describe("presentation adapter", () => {
             [
               {
                 // Скрытие обратимо, поэтому кнопка не красится.
-                text: "Да, скрыть из списка",
+                text: "✔️ Да, скрыть из списка",
                 // Версия сходки на экране едет в «Да» (PER-472).
                 callback_data:
                   "v1:manage:confirm-unpublish:AZLzpLXGfY6fChssPU5fYA:1",
               },
-            ],
-            [
               {
-                text: "Нет",
+                text: "✖️ Нет",
                 callback_data: "v1:manage:status:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
@@ -3294,13 +3290,11 @@ describe("presentation adapter", () => {
           inline_keyboard: [
             [
               {
-                text: "Да, опубликовать",
+                text: "✔️ Да, опубликовать",
                 callback_data: "v1:manage:publish:AZLzpLXGfY6fChssPU5fYA",
               },
-            ],
-            [
               {
-                text: "Нет",
+                text: "✖️ Нет",
                 callback_data: "v1:view:AZLzpLXGfY6fChssPU5fYA",
               },
             ],
@@ -4888,7 +4882,7 @@ describe("confirmations", () => {
         | undefined
     )?.reply_markup?.inline_keyboard;
 
-  it("asks before removing a material with a plain verb answer", async () => {
+  it("asks before removing a material with a red verb answer", async () => {
     const meetup = {
       ...publishedMeetup(),
       materials: [
@@ -4921,11 +4915,12 @@ describe("confirmations", () => {
     expect(keyboardOf(calls.at(-1))).toEqual([
       [
         {
-          text: "Да, убрать материал",
+          text: "✔️ Да, убрать материал",
           callback_data: `v1:mm:cr:${token}:${materialToken}:1`,
+          style: "danger",
         },
+        { text: "✖️ Нет", callback_data: `v1:mm:list:${token}` },
       ],
-      [{ text: "Нет", callback_data: `v1:mm:list:${token}` }],
     ]);
   });
 
@@ -4958,7 +4953,7 @@ describe("confirmations", () => {
     expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
   });
 
-  it("asks before a broadcast with a plain answer and returns a refusal to the meetup", async () => {
+  it("asks before a broadcast with a red answer and returns a refusal to the meetup", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-card",
       meetup: publishedMeetup(),
@@ -4985,11 +4980,12 @@ describe("confirmations", () => {
     expect(keyboardOf(confirm)).toEqual([
       [
         {
-          text: "Да, отправить",
+          text: "✔️ Да, отправить",
           callback_data: expect.stringMatching(/^v1:bc:ms:/),
+          style: "danger",
         },
+        { text: "✖️ Нет", callback_data: `v1:bc:no:${token}` },
       ],
-      [{ text: "Нет", callback_data: `v1:bc:no:${token}` }],
     ]);
 
     await bot.handleUpdate(callbackUpdate(`v1:bc:no:${token}`));
@@ -5763,11 +5759,11 @@ describe("notification frames", () => {
       "Отличаются от общих: напоминание перед началом.",
     );
     expect(payload.reply_markup?.inline_keyboard[0]?.[0]).toEqual({
-      text: "Вкл · Изменения данных и статуса",
+      text: "🔔 Вкл · Изменения данных и статуса",
       callback_data: `v1:notify:set:${token}:changes:0`,
     });
     expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
-      text: "Вкл · Напоминание перед началом",
+      text: "🔔 Вкл · Напоминание перед началом",
       callback_data: `v1:notify:set:${token}:reminder:0`,
     });
     expect(payload.reply_markup?.inline_keyboard.at(-1)).toEqual([
@@ -5794,15 +5790,15 @@ describe("notification frames", () => {
     expect(payload.text).toContain("Приходят всем, без подписки");
     expect(payload.text).toContain("По сходкам, на которые ты подписан");
     expect(payload.reply_markup?.inline_keyboard[2]?.[0]).toEqual({
-      text: "Вкл · Изменения данных и статуса",
+      text: "🔔 Вкл · Изменения данных и статуса",
       callback_data: "v1:notify:gset:changes:0",
     });
     expect(payload.reply_markup?.inline_keyboard[0]?.[0]).toEqual({
-      text: "Вкл · Новые сходки",
+      text: "🔔 Вкл · Новые сходки",
       callback_data: "v1:notify:gset:published:0",
     });
     expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
-      text: "Выкл · Объявления сообщества",
+      text: "🔕 Выкл · Объявления сообщества",
       callback_data: "v1:notify:gset:announcement:1",
     });
   });
@@ -5824,11 +5820,11 @@ describe("notification frames", () => {
     const payload = screen(calls[1]);
     expect(payload.text).toContain("Только администратору: запросы доступа");
     expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
-      text: "Вкл · Запросы доступа",
+      text: "🔔 Вкл · Запросы доступа",
       callback_data: "v1:notify:gset:access:0",
     });
     expect(payload.reply_markup?.inline_keyboard[2]?.[0]).toEqual({
-      text: "Вкл · Изменения данных и статуса",
+      text: "🔔 Вкл · Изменения данных и статуса",
       callback_data: "v1:notify:gset:changes:0",
     });
   });
@@ -5875,7 +5871,7 @@ describe("notification frames", () => {
       screen(calls.findLast((call) => call.method !== "answerCallbackQuery"))
         .reply_markup?.inline_keyboard[0]?.[0],
     ).toEqual({
-      text: "Выкл · Запросы доступа",
+      text: "🔕 Выкл · Запросы доступа",
       callback_data: "v1:notify:gset:access:1",
     });
     await bot.handleUpdate(callbackUpdate("v1:notify:gset:access:1"));
@@ -7055,11 +7051,11 @@ describe("deferred publication frames", () => {
           inline_keyboard: [
             [
               {
-                text: "Да, отменить публикацию",
+                text: "✔️ Да, отменить публикацию",
                 callback_data: `v1:manage:confirm-unschedule:${token}:1`,
               },
+              { text: "✖️ Нет", callback_data: `v1:manage:status:${token}` },
             ],
-            [{ text: "Нет", callback_data: `v1:manage:status:${token}` }],
           ],
         },
       },
@@ -7136,14 +7132,12 @@ describe("past meetup date", () => {
           inline_keyboard: [
             [
               {
-                text: "Да, сохранить дату",
+                text: "✔️ Да, сохранить дату",
                 callback_data: `v1:manage:past:${token}:c:210920261930`,
               },
-            ],
-            [
               {
                 // «Нет» задаёт вопрос о дате заново.
-                text: "Нет",
+                text: "✖️ Нет",
                 callback_data: `v1:manage:past-retry:${token}:c`,
               },
             ],
@@ -8080,7 +8074,7 @@ describe("auction queue and moderation", () => {
       expect.anything(),
     );
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-      `"callback_data":"v1:aq:qa:${cursor}","style":"success"`,
+      `{"text":"✔️ Допустить","callback_data":"v1:aq:qa:${cursor}"}`,
     );
 
     await bot.handleUpdate(callbackUpdate(`v1:aq:qa:${cursor}`));

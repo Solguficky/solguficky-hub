@@ -70,7 +70,6 @@ export const screenCatalog = {
     title: "Ожидают допуска",
     parent: "community",
     refresh: true,
-    decision: true,
   },
   "community-admitted": {
     class: "screen",
@@ -125,7 +124,6 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     parent: "manage",
-    decision: true,
   },
   card: {
     class: "screen",
@@ -196,19 +194,21 @@ export const screenCatalog = {
     title: "Пульт",
     parent: "lots",
   },
-  // Открытие онлайн-недели: отменить его нельзя, поэтому — подтверждение.
-  // Цвета у него нет: неделю открывают штатно, денег оно не тратит (PER-473).
+  // Открытие онлайн-недели: отменить его нельзя, поэтому — подтверждение с
+  // красным «Да» (решение владельца 10 октября 2026 года).
   "week-confirm": {
     class: "screen",
     nav: "confirm",
     title: "Онлайн-неделя",
+    irreversible: true,
   },
-  // Удаление аукциона до торгов: черновик и сроки пропадают, поэтому —
-  // подтверждение. Цвета у него нет: денег оно не тратит.
+  // Удаление аукциона до торгов: черновик и сроки пропадают безвозвратно,
+  // поэтому — подтверждение с красным «Да».
   "discard-confirm": {
     class: "screen",
     nav: "confirm",
     title: "Удалить аукцион?",
+    irreversible: true,
   },
   // Хронология ставок лота (PER-309): тело — аукционное дерево, оболочка — хаб.
   bids: {
@@ -219,20 +219,19 @@ export const screenCatalog = {
   },
   // Лист ставки (PER-317): тело — аукционное дерево, тексты — оболочка хаба.
   // Подтверждение — без ряда навигации, выбор имени — под карточкой лота.
-  // Ставка и автоставка — траты денег: их «Да» красное, и только оно
-  // (PER-473). Принятая команда — кадр исхода с «К лоту» и «Меню». Заголовок
+  // Ставка и автоставка — траты денег: их «Да» красное (PER-473). Принятая команда — кадр исхода с «К лоту» и «Меню». Заголовок
   // подтверждения — вопрос с суммой (PER-472), линтер сверяет его по началу.
   "bid-confirm": {
     class: "screen",
     nav: "confirm",
     title: "Поставить",
-    money: true,
+    irreversible: true,
   },
   "proxy-confirm": {
     class: "screen",
     nav: "confirm",
     title: "Включить автоставку",
-    money: true,
+    irreversible: true,
   },
   "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
   "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
@@ -257,18 +256,37 @@ export const screenCatalog = {
     nav: "tree",
     parent: "hidden",
   },
+  // Подтверждения (решение владельца 10 октября 2026 года): «Да» красное
+  // только там, где после нажатия обратного действия нет или тратятся
+  // деньги, — признак `irreversible`. Скрытие сходки, снятие отложенной
+  // публикации, прошедшая дата, прикрепление материала и пересмотр отказа
+  // обратимы и цвета не несут.
   "state-confirm": { class: "screen", nav: "confirm" },
+  // Отмена сходки и отметка «состоялась»: в план сходка не возвращается.
+  "state-final-confirm": {
+    class: "screen",
+    nav: "confirm",
+    irreversible: true,
+  },
   "past-date-confirm": { class: "screen", nav: "confirm" },
   "publish-confirm": { class: "screen", nav: "confirm" },
   "material-confirm": { class: "screen", nav: "confirm" },
-  "material-remove-confirm": { class: "screen", nav: "confirm" },
-  "broadcast-confirm": { class: "screen", nav: "confirm" },
-  "community-close-confirm": { class: "screen", nav: "confirm" },
-  "reconsider-confirm": { class: "screen", nav: "confirm", decision: true },
+  "material-remove-confirm": {
+    class: "screen",
+    nav: "confirm",
+    irreversible: true,
+  },
+  "broadcast-confirm": { class: "screen", nav: "confirm", irreversible: true },
+  "community-close-confirm": {
+    class: "screen",
+    nav: "confirm",
+    irreversible: true,
+  },
+  "reconsider-confirm": { class: "screen", nav: "confirm" },
   "application-decline-confirm": {
     class: "screen",
     nav: "confirm",
-    decision: true,
+    irreversible: true,
   },
   "broadcast-result": { class: "screen", nav: "exit" },
   question: { class: "question", nav: "question" },

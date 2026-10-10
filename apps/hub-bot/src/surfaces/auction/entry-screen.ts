@@ -15,6 +15,7 @@ import {
   type Money,
 } from "../../auction-ui/index.js";
 import type { Presentation } from "../../core/config.js";
+import { confirmNoLabel, confirmYesLabel } from "../../core/pictograms.js";
 import type {
   AuctionListPage,
   AuctionStage,
@@ -1055,7 +1056,7 @@ function renderButton(
     case "confirm.yes":
       return { ...text(confirmLabel(blocks)), style: "danger" };
     case "confirm.no":
-      return text("Нет");
+      return text(confirmNoLabel);
     case "question.cancel":
       return text("Отмена");
     case "name.username": {
@@ -1082,13 +1083,13 @@ function renderButton(
   }
 }
 
-// «Да, …» называет действие и сумму (дизайн-код, «Клавиатура»).
+// «✔️ Да, …» называет действие и сумму (дизайн-код, «Клавиатура»).
 function confirmLabel(blocks: readonly AuctionBlock[]): string {
   const confirm = blocks.find((block) => block.kind === "confirm");
-  if (confirm?.kind !== "confirm") return "Да, подтвердить";
+  if (confirm?.kind !== "confirm") return confirmYesLabel("подтвердить");
   return confirm.command === "bid"
-    ? `Да, поставить ${money(confirm.amount)}`
-    : "Да, включить автоставку";
+    ? confirmYesLabel(`поставить ${money(confirm.amount)}`)
+    : confirmYesLabel("включить автоставку");
 }
 
 function priceLabel(status: LotStatusView): string {

@@ -1,4 +1,10 @@
 import { InlineKeyboard } from "grammy";
+import {
+  confirmNoLabel,
+  confirmYesPrefix,
+  marked,
+  pictogram,
+} from "../../../../core/pictograms.js";
 import type { CommunityDay } from "../../community-time.js";
 
 // Словарь и сборщики экранов по дизайн-коду (docs/design/bot/design-code.md).
@@ -9,7 +15,7 @@ import type { CommunityDay } from "../../community-time.js";
 export const menuLabel = "Меню";
 export const retryLabel = "Повторить";
 export const cancelLabel = "Отмена";
-export const noLabel = "Нет";
+export const noLabel = confirmNoLabel;
 
 export function escapeHtml(value: string): string {
   return value
@@ -130,30 +136,38 @@ export function menuOnly(keyboard = new InlineKeyboard()): InlineKeyboard {
 }
 
 /**
- * Клавиатура подтверждения: «Да, <глагол>» и «Нет» двумя рядами, без ряда
- * навигации. `money` — подтверждение траты денег (ставка и автоставка): только
- * его «Да» красится `danger` (PER-473); необратимость остальных называет текст.
- * `style` — цвет «Да» решения по заявке (PER-534).
- * Ссылка на источник, если она есть, идёт первой.
+ * Клавиатура подтверждения: `[✔️ Да, <глагол>] [✖️ Нет]` одним рядом, без ряда
+ * навигации (решение владельца 10 октября 2026 года). `yes` — слова «Да, …»
+ * без знака: знак ставит сборщик. `irreversible` — после «Да» обратного
+ * действия нет или тратятся деньги: только такое «Да» красится `danger`, и
+ * красится обязательно; обратимое подтверждение цвета не несёт.
+ * Ссылка на источник, если она есть, идёт первым рядом.
  */
 export function confirmKeyboard(confirm: {
   yes: string;
   yesData: string;
   noData: string;
-  money?: boolean;
-  // Цвет «Да» решения по заявке: отказ красный, пересмотр зелёный (PER-534).
-  style?: "danger" | "success";
+  irreversible?: boolean;
   lead?: { text: string; url: string };
 }): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   if (confirm.lead !== undefined) {
     keyboard.url(confirm.lead.text, confirm.lead.url).row();
   }
-  keyboard.text(confirm.yes, confirm.yesData);
+  keyboard.text(confirmYesLabel(confirm.yes), confirm.yesData);
   // Стиль grammY ставит на последнюю добавленную кнопку.
-  if (confirm.money === true || confirm.style === "danger") keyboard.danger();
-  else if (confirm.style === "success") keyboard.success();
-  return keyboard.row().text(noLabel, confirm.noData);
+  if (confirm.irreversible === true) keyboard.danger();
+  return keyboard.text(noLabel, confirm.noData);
+}
+
+/** Подпись «Да» подтверждения: «Да, …» со знаком словаря впереди. */
+export function confirmYesLabel(yes: string): string {
+  return yes.startsWith(confirmYesPrefix) ? yes : marked(pictogram.yes, yes);
+}
+
+/** Подпись кнопки, ведущей к удалению: «🗑 Убрать», «🗑 Удалить аукцион». */
+export function removeLabel(words: string): string {
+  return marked(pictogram.remove, words);
 }
 
 /** Сколько строк содержимого помещается на страницу списка. */
@@ -238,6 +252,20 @@ export function readableMoment(
 /** Подпись переключателя: состояние словом в начале. */
 export function toggleLabel(label: string, enabled: boolean): string {
   return `${enabled ? "Вкл" : "Выкл"} · ${label}`;
+}
+
+/**
+ * Подпись переключателя уведомлений: колокольчик словаря перед состоянием —
+ * «🔔 Вкл · Новые сходки», «🔕 Выкл · Объявления сообщества».
+ */
+export function notificationToggleLabel(
+  label: string,
+  enabled: boolean,
+): string {
+  return marked(
+    enabled ? pictogram.on : pictogram.off,
+    toggleLabel(label, enabled),
+  );
 }
 
 /** Подпись кнопки не длиннее того, что Telegram покажет без обрыва на байтах. */

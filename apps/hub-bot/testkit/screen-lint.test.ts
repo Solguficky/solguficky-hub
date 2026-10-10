@@ -54,7 +54,7 @@ const catalog: Record<string, ScreenEntry> = {
     refresh: true,
   },
   confirm: { class: "screen", nav: "confirm" },
-  bid: { class: "screen", nav: "confirm", title: "Ставка", money: true },
+  bid: { class: "screen", nav: "confirm", title: "Ставка", irreversible: true },
   question: { class: "question", nav: "question" },
   "date-presets": { class: "screen", nav: "choice" },
   refusal: { class: "screen", nav: "exit" },
@@ -214,47 +214,51 @@ describe("inspectCall", () => {
         screen("confirm", "<b>Отменить сходку?</b>", rows),
       );
 
-    expect(confirm([[key("Да, отменить сходку")], [key("Нет")]])).toEqual([]);
+    expect(confirm([[key("✔️ Да, отменить сходку"), key("✖️ Нет")]])).toEqual([]);
     expect(
       confirm([
         [{ text: "Открыть источник ↗", url: "https://t.me/c/1/2" }],
-        [key("Да, прикрепить")],
-        [key("Нет")],
+        [key("✔️ Да, прикрепить"), key("✖️ Нет")],
       ]),
     ).toEqual([]);
-    expect(confirm([[key("Да, продолжить")], [key("Нет")]])).toEqual([
+    expect(confirm([[key("✔️ Да, продолжить"), key("✖️ Нет")]])).toEqual([
       "vocabulary",
+    ]);
+    expect(confirm([[key("✔️ Да, отменить сходку")], [key("✖️ Нет")]])).toEqual([
+      "nav",
     ]);
     expect(confirm([[key("Отправить"), key("Не отправлять")]])).toEqual([
       "nav",
     ]);
   });
 
-  // PER-473: красное — только «Да» подтверждения траты денег, и там оно
-  // обязательно; необратимость остальных называет текст.
-  it("colours only the money confirmation, and only its answer as danger", () => {
+  // Решение владельца 10 октября 2026 года: красное — только «Да»
+  // необратимого подтверждения, и там оно обязательно.
+  it("colours only the irreversible confirmation, and only its answer as danger", () => {
     const styled = (rows: Key[][]) =>
       rulesOf(
         "editMessageText",
-        screen("confirm", "<b>Отменить сходку?</b>", rows),
+        screen("confirm", "<b>Скрыть сходку?</b>", rows),
       );
-    const paid = (rows: Key[][]) =>
+    const final = (rows: Key[][]) =>
       rulesOf("editMessageText", screen("bid", "<b>Ставка</b>", rows));
 
-    expect(
-      styled([[key("Да, отменить сходку", "danger")], [key("Нет")]]),
-    ).toEqual(["style"]);
-    expect(
-      styled([[key("Да, отменить сходку", "primary")], [key("Нет")]]),
-    ).toEqual(["style"]);
-    expect(
-      paid([[key("Да, поставить 1 300 ₽", "danger")], [key("Нет")]]),
-    ).toEqual([]);
-    expect(paid([[key("Да, поставить 1 300 ₽")], [key("Нет")]])).toEqual([
+    expect(styled([[key("✔️ Да, скрыть", "danger"), key("✖️ Нет")]])).toEqual([
+      "style",
+    ]);
+    expect(styled([[key("✔️ Да, скрыть", "primary"), key("✖️ Нет")]])).toEqual([
       "style",
     ]);
     expect(
-      paid([[key("Да, поставить 1 300 ₽", "danger")], [key("Нет", "danger")]]),
+      final([[key("✔️ Да, поставить 1 300 ₽", "danger"), key("✖️ Нет")]]),
+    ).toEqual([]);
+    expect(final([[key("✔️ Да, поставить 1 300 ₽"), key("✖️ Нет")]])).toEqual([
+      "style",
+    ]);
+    expect(
+      final([
+        [key("✔️ Да, поставить 1 300 ₽", "danger"), key("✖️ Нет", "danger")],
+      ]),
     ).toEqual(["style"]);
   });
 
@@ -271,7 +275,9 @@ describe("inspectCall", () => {
 
     expect(tree([[key("Место"), key("Описание")]])).toEqual(["rows"]);
     expect(tree([[key("Изменить"), key("Статус")]])).toEqual([]);
-    expect(tree([[key("Программа вечера"), key("Убрать")]])).toEqual([]);
+    expect(tree([[key("Программа вечера"), key("🗑 Убрать")]])).toEqual([]);
+    expect(tree([[key("✔️ Допустить"), key("✖️ Отказать")]])).toEqual([]);
+    expect(tree([[key("✔️ Допустить"), key("Закрыть")]])).toEqual([]);
     expect(tree([[key("←"), key("→")]])).toEqual([]);
   });
 

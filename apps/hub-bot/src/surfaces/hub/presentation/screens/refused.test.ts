@@ -147,14 +147,13 @@ describe("reconsider confirmation", () => {
     expect(screen.text).toBe(
       "<b>Пересмотреть отказ?</b>\n\nБлокировка @user1 снимется, и сразу откроется доступ к аукциону.",
     );
-    expect(rows(screen)).toEqual([["Да, пересмотреть"], ["Нет"]]);
-    expect(dataOf(screen, "Да, пересмотреть")).toBe(
+    expect(rows(screen)).toEqual([["✔️ Да, пересмотреть", "✖️ Нет"]]);
+    expect(dataOf(screen, "✔️ Да, пересмотреть")).toBe(
       `v1:cm:ry:${uuidToToken(id(1))}:2`,
     );
-    expect(dataOf(screen, "Нет")).toBe("v1:cm:r:2");
-    expect(screen.keyboard.inline_keyboard[0]?.[0]).toMatchObject({
-      style: "success",
-    });
+    expect(dataOf(screen, "✖️ Нет")).toBe("v1:cm:r:2");
+    // Пересмотр обратим: его «Да» цвета не несёт.
+    expect(screen.keyboard.inline_keyboard[0]?.[0]).not.toHaveProperty("style");
   });
 
   it("names admission by the closed application for a declined one", () => {

@@ -39,14 +39,8 @@ const catalog = {
     parent: "menu",
     waive: { nav: "PER-2: возврат подписан по-старому" },
   },
-  bid: { class: "screen", nav: "confirm", title: "Ставка", money: true },
-  open: { class: "screen", nav: "confirm", title: "Неделя" },
-  decline: {
-    class: "screen",
-    nav: "confirm",
-    title: "Отказать?",
-    decision: true,
-  },
+  bid: { class: "screen", nav: "confirm", title: "Ставка", irreversible: true },
+  hide: { class: "screen", nav: "confirm", title: "Скрыть" },
 } as const satisfies Catalog;
 
 const config: LintConfig = {
@@ -173,53 +167,66 @@ describe("inspectCall configuration", () => {
     ).toEqual(["style", "callback-data"]);
   });
 
-  // PER-473: цвет читается из каталога, а не из подписи.
-  it("paints only the money confirmation, and paints it always", () => {
+  // Решение владельца 10 октября 2026 года: цвет читается из каталога, а не
+  // из подписи; красное — только «Да» необратимого подтверждения.
+  it("paints only the irreversible confirmation, and paints it always", () => {
     const confirm = (id: string, title: string, yes: Key) =>
       rulesOf(
         "sendMessage",
-        call(id, `<b>${title}</b>`, [[yes], [key("Нет")]]),
+        call(id, `<b>${title}</b>`, [[yes, key("✖️ Нет")]]),
       );
     expect(
       confirm(
         "bid",
         "Ставка",
-        key("Да, поставить 1 300 ₽", { style: "danger" }),
+        key("✔️ Да, поставить 1 300 ₽", { style: "danger" }),
       ),
     ).toEqual([]);
-    expect(confirm("bid", "Ставка", key("Да, поставить 1 300 ₽"))).toEqual([
+    expect(confirm("bid", "Ставка", key("✔️ Да, поставить 1 300 ₽"))).toEqual([
       "style",
     ]);
     expect(
-      confirm("open", "Неделя", key("Да, открыть неделю", { style: "danger" })),
-    ).toEqual(["style"]);
-    expect(confirm("open", "Неделя", key("Да, открыть неделю"))).toEqual([]);
-  });
-
-  // PER-534: экран решения по заявке красит отказ красным, допуск зелёным, и
-  // только он.
-  it("paints the application decision, and paints it always", () => {
-    const decline = (id: string, title: string, yes: Key) =>
-      rulesOf(
-        "sendMessage",
-        call(id, `<b>${title}</b>`, [[yes], [key("Нет")]]),
-      );
-    expect(
-      decline("decline", "Отказать?", key("Да, отказать", { style: "danger" })),
-    ).toEqual([]);
-    expect(decline("decline", "Отказать?", key("Да, отказать"))).toEqual([
-      "style",
-    ]);
-    expect(
-      decline(
-        "decline",
-        "Отказать?",
-        key("Да, отказать", { style: "success" }),
-      ),
+      confirm("bid", "Ставка", key("✔️ Да, поставить", { style: "success" })),
     ).toEqual(["style", "style"]);
     expect(
-      decline("open", "Неделя", key("Да, отказать", { style: "danger" })),
+      confirm("hide", "Скрыть", key("✔️ Да, скрыть", { style: "danger" })),
     ).toEqual(["style"]);
+    expect(confirm("hide", "Скрыть", key("✔️ Да, скрыть"))).toEqual([]);
+  });
+
+  it("keeps the confirmation answers in one row", () => {
+    const rows = (keyboard: Key[][]) =>
+      rulesOf("sendMessage", call("hide", "<b>Скрыть</b>", keyboard));
+    expect(rows([[key("✔️ Да, скрыть"), key("✖️ Нет")]])).toEqual([]);
+    expect(rows([[key("✔️ Да, скрыть")], [key("✖️ Нет")]])).toEqual(["nav"]);
+    expect(rows([[key("Да, скрыть"), key("Нет")]])).toEqual(["nav"]);
+  });
+
+  it("keeps the admit choice in one row with its pair", () => {
+    const rows = (keyboard: Key[][]) =>
+      rulesOf("sendMessage", call("edit", "<b>Изменить</b>", keyboard));
+    expect(
+      rows([[key("✔️ Допустить")], [key("✖️ Отказать")], [key("‹ Меню")]]),
+    ).toEqual(["rows"]);
+  });
+
+  it("lets only dictionary emoji before their words", () => {
+    const shown = (text: string, label: string) =>
+      rulesOf(
+        "sendMessage",
+        call("edit", text, [[key(label)], [key("‹ Меню")]]),
+      );
+    expect(
+      shown(
+        "<b>Изменить</b>\n\n📅 Когда: 12 июня\n📍 Где: бар",
+        "🔔 Вкл · Новые",
+      ),
+    ).toEqual([]);
+    expect(shown("<b>Изменить</b>\n\n🎉 Готово", "Раз")).toEqual(["emoji"]);
+    expect(shown("<b>Изменить</b>", "🗑 Изменить")).toEqual(["emoji"]);
+    // Текст организатора без пробела за знаком не проверяется: так эмодзи
+    // бот не ставит.
+    expect(shown("<b>Изменить</b>\n\n🦉🦉🦉", "🎲🎲🎲")).toEqual([]);
   });
 
   // PER-472: тело экрана — пустая строка после заголовка, а над ним ничего:

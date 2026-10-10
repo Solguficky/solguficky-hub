@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { admitLabel } from "../../../../core/pictograms.js";
 import { applicationCode } from "../../application/hub-access.js";
 import type {
   AuctionModerator,
@@ -17,6 +18,7 @@ import {
   nextRow,
   pagedTitle,
   paginate,
+  removeLabel,
   screenText,
   toCommunity,
   toManage,
@@ -139,15 +141,15 @@ function pendingScreen(
     kind: "pending",
     ...(nextToken === undefined ? {} : { next: nextToken }),
   };
+  // Допуск и закрытие — бинарная пара выбора: одним рядом и без цвета
+  // (решение владельца 10 октября 2026 года). Закрытие красит своё «Да».
   const keyboard = new InlineKeyboard()
     .text(
-      "Допустить",
+      admitLabel,
       nextToken === undefined
         ? `v1:cm:ad:${token}`
         : `v1:cm:ad:${token}:${nextToken}`,
     )
-    .success()
-    .row()
     .text("Закрыть", `v1:cm:bq:${token}:${blockOriginData(origin)}`);
   if (nextToken !== undefined) {
     keyboard.row().text("Пропустить", `v1:cm:p:${nextToken}`);
@@ -205,7 +207,7 @@ function usernamesScreen(
   for (const username of page.items) {
     if (!removableUsernamePattern.test(username)) continue;
     nextRow(keyboard).text(
-      `Убрать @${username}`,
+      removeLabel(`Убрать @${username}`),
       `v1:cm:rm:${page.page}:${username}`,
     );
   }
@@ -341,6 +343,7 @@ export function closeAccessConfirmScreen(
       yes: "Да, закрыть доступ",
       yesData: `v1:cm:by:${token}:${blockOriginData(origin)}`,
       noData,
+      irreversible: true,
     }),
     format: "HTML",
   };

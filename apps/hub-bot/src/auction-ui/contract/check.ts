@@ -608,8 +608,6 @@ const confirmBody = (
         action: "confirm.yes",
         callbackData: commitCallback(command, amount, 2, opId),
       },
-    ],
-    [
       {
         action: "confirm.no",
         callbackData: lotCallback(CONTRACT_LOT.lotId, 2),

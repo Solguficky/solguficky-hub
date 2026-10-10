@@ -79,8 +79,8 @@ function confirmBody(
             page,
           }),
         },
+        { action: "confirm.no", callbackData: lotCallback(lot.lotId, page) },
       ],
-      [{ action: "confirm.no", callbackData: lotCallback(lot.lotId, page) }],
     ],
   };
 }

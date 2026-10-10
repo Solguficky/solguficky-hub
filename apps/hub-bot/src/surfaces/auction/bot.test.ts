@@ -1650,12 +1650,12 @@ describe("bid leaf delivery", () => {
         inline_keyboard: [
           [
             {
-              text: expect.stringMatching(/^Да, поставить 1\s300\s₽$/),
+              text: expect.stringMatching(/^✔️ Да, поставить 1\s300\s₽$/),
               style: "danger",
               callback_data: expect.stringMatching(/^v1:auc:b:/),
             },
+            { text: "✖️ Нет", callback_data: expect.any(String) },
           ],
-          [{ text: "Нет", callback_data: expect.any(String) }],
         ],
       },
     });
@@ -1670,7 +1670,7 @@ describe("bid leaf delivery", () => {
     const { bot, calls } = makeBot(trading);
     await bot.handleUpdate(answer({ text: "10" }));
     const sent = JSON.stringify(calls.map((call) => call.payload));
-    expect(sent).not.toContain("Да, поставить");
+    expect(sent).not.toContain("✔️ Да, поставить");
     // Отказ — свой экран исхода (PER-472), а не строка над карточкой.
     expect(sent).toMatch(/<b>Ставка ниже порога<\/b>/);
     expect(sent).toMatch(/Сейчас можно от 1\s250\s₽\./);

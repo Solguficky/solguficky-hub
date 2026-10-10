@@ -45,18 +45,8 @@ describe("application card", () => {
     );
     expect(screen.keyboard.inline_keyboard).toEqual([
       [
-        {
-          text: "Допустить",
-          callback_data: `v1:aq:qa:${cursor}`,
-          style: "success",
-        },
-      ],
-      [
-        {
-          text: "Отказать",
-          callback_data: `v1:aq:qd:${cursor}`,
-          style: "danger",
-        },
+        { text: "✔️ Допустить", callback_data: `v1:aq:qa:${cursor}` },
+        { text: "✖️ Отказать", callback_data: `v1:aq:qd:${cursor}` },
       ],
       [{ text: "Профиль ↗", url: "https://t.me/ivan_p" }],
       [{ text: "Пропустить", callback_data: `v1:aq:q:${cursor}` }],
@@ -97,8 +87,7 @@ describe("application card", () => {
     expect(screen.text).toContain("Иван П. · код c0de1234");
     expect(screen.text).not.toContain(card.identityId);
     expect(rows(screen.keyboard)).toEqual([
-      ["Допустить"],
-      ["Отказать"],
+      ["✔️ Допустить", "✖️ Отказать"],
       ["Пропустить"],
       ["‹ Управление", "Меню"],
     ]);
@@ -197,12 +186,12 @@ describe("decline confirmation", () => {
     expect(screen.keyboard.inline_keyboard).toEqual([
       [
         {
-          text: "Да, отказать",
+          text: "✔️ Да, отказать",
           callback_data: `v1:aq:qy:${cursor}`,
           style: "danger",
         },
+        { text: "✖️ Нет", callback_data: `v1:aq:qc:${cursor}` },
       ],
-      [{ text: "Нет", callback_data: `v1:aq:qc:${cursor}` }],
     ]);
   });
 

@@ -149,11 +149,11 @@ describe("auction through both bots", () => {
       admin.presses("‹ Пульт"),
     );
     await admin.presses("Открыть онлайн-неделю");
-    await eventually(admin, "Да, открыть неделю", async () => {
+    await eventually(admin, "✔️ Да, открыть неделю", async () => {
       await admin.presses("‹ Пульт");
       await admin.presses("Открыть онлайн-неделю");
     });
-    await admin.presses("Да, открыть неделю");
+    await admin.presses("✔️ Да, открыть неделю");
 
     // Участник ставит и включает автоставку в боте хаба: его права — хаб и
     // аукцион по кругу.
@@ -167,16 +167,16 @@ describe("auction through both bots", () => {
       member.presses("Обновить"),
     );
     await pressesAmount(member, "По шагу (1 100 ₽)");
-    await pressesAmount(member, "Да, поставить 1 100 ₽");
+    await pressesAmount(member, "✔️ Да, поставить 1 100 ₽");
     await member.presses("Взять псевдоним");
     await member.says("Сова");
-    await pressesAmount(member, "Да, поставить 1 100 ₽");
+    await pressesAmount(member, "✔️ Да, поставить 1 100 ₽");
     expect(plain(member.sees())).toContain("1 100 ₽");
     await member.presses("К лоту");
     await eventually(member, "Автоставка", () => member.presses("Обновить"));
     await member.presses("Автоставка");
     await member.says("3 000");
-    await member.presses("Да, включить автоставку");
+    await member.presses("✔️ Да, включить автоставку");
     expect(plain(member.sees())).toContain("3 000 ₽");
 
     // Гость подаёт заявку в боте аукциона, администратор допускает его в
@@ -199,7 +199,7 @@ describe("auction through both bots", () => {
       await admin.presses("Пропустить");
     }
     expect(plain(admin.sees())).toContain(guestUsername);
-    await admin.presses("Допустить");
+    await admin.presses("✔️ Допустить");
     await guest.says("/start");
     await guest.presses("‹ Меню");
     await guest.presses("Аукционы");
@@ -219,10 +219,10 @@ describe("auction through both bots", () => {
       guest.presses("Обновить"),
     );
     await pressesAmount(guest, "По шагу (1 200 ₽)");
-    await pressesAmount(guest, "Да, поставить 1 200 ₽");
+    await pressesAmount(guest, "✔️ Да, поставить 1 200 ₽");
     await guest.presses("Взять псевдоним");
     await guest.says("Филин");
-    await pressesAmount(guest, "Да, поставить 1 200 ₽");
+    await pressesAmount(guest, "✔️ Да, поставить 1 200 ₽");
     expect(plain(guest.sees())).toContain("Ставка 1 200 ₽ принята");
     // Автоставка участника отвечает гостю: на карточке цена уже на шаг выше.
     await guest.presses("К лоту");
@@ -232,7 +232,7 @@ describe("auction through both bots", () => {
     expect(plain(guest.sees())).toContain("1 300 ₽");
     await guest.presses("Автоставка");
     await guest.says("5 000");
-    await guest.presses("Да, включить автоставку");
+    await guest.presses("✔️ Да, включить автоставку");
     expect(plain(guest.sees())).toContain("5 000 ₽");
 
     // Гость без права аукциона — заявка ещё на рассмотрении — получает отказ

@@ -741,7 +741,7 @@ describe("week of the auction", () => {
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
       ["Сроки недели"],
-      ["Удалить аукцион"],
+      ["🗑 Удалить аукцион"],
       ["‹ Лоты", "Меню"],
     ]);
 
@@ -804,7 +804,7 @@ describe("week of the auction", () => {
       ["Сроки недели"],
       ["Вкл · Финал"],
       ["Открыть онлайн-неделю"],
-      ["Удалить аукцион"],
+      ["🗑 Удалить аукцион"],
       ["‹ Лоты", "Меню"],
     ]);
   });
@@ -945,11 +945,11 @@ describe("opening the online week", () => {
     expect(plain(confirm)).toContain(
       "Без цены и шага останутся без торгов: 1 лот.",
     );
-    expect(labels(confirm)).toEqual([["Да, открыть неделю"], ["Нет"]]);
-    expect(dataOf(confirm, "Нет")).toBe(consoleData);
+    expect(labels(confirm)).toEqual([["✔️ Да, открыть неделю", "✖️ Нет"]]);
+    expect(dataOf(confirm, "✖️ Нет")).toBe(consoleData);
     expect(auction.sent("startPrebidding")).toEqual([]);
 
-    const yes = dataOf(confirm, "Да, открыть неделю");
+    const yes = dataOf(confirm, "✔️ Да, открыть неделю");
     await bot.handleUpdate(press(yes));
 
     expect(auction.state.status).toBe("prebidding");
@@ -979,10 +979,10 @@ describe("opening the online week", () => {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
-    const firstYes = dataOf(last(calls), "Да, открыть неделю");
+    const firstYes = dataOf(last(calls), "✔️ Да, открыть неделю");
     // Второе подтверждение, полученное до открытия, несёт свой ключ.
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
-    const secondYes = dataOf(last(calls), "Да, открыть неделю");
+    const secondYes = dataOf(last(calls), "✔️ Да, открыть неделю");
     expect(secondYes).not.toBe(firstYes);
 
     await bot.handleUpdate(press(firstYes));
@@ -995,7 +995,7 @@ describe("opening the online week", () => {
     // Старая кнопка открытия на открытом аукционе подтверждения не даёт.
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
     expect(last(calls).text).toBe("<b>Неделя уже открыта</b>");
-    expect(labels(last(calls))).not.toContainEqual(["Да, открыть неделю"]);
+    expect(labels(last(calls))).not.toContainEqual(["✔️ Да, открыть неделю"]);
   });
 
   it("names an ended week on an outcome screen instead of a confirmation", async () => {
@@ -1016,7 +1016,7 @@ describe("opening the online week", () => {
     expect(last(calls).text).toBe(
       "<b>Конец недели уже прошёл</b>\n\nЗадай новые сроки.",
     );
-    expect(labels(last(calls))).not.toContainEqual(["Да, открыть неделю"]);
+    expect(labels(last(calls))).not.toContainEqual(["✔️ Да, открыть неделю"]);
   });
 
   it("names a registry without priced lots on an outcome screen instead of a confirmation", async () => {
@@ -1033,7 +1033,7 @@ describe("opening the online week", () => {
     expect(last(calls).text).toBe(
       "<b>Нет лотов с ценой и шагом</b>\n\nОткрывать нечего.",
     );
-    expect(labels(last(calls))).not.toContainEqual(["Да, открыть неделю"]);
+    expect(labels(last(calls))).not.toContainEqual(["✔️ Да, открыть неделю"]);
     expect(auction.sent("startPrebidding")).toEqual([]);
   });
 });
@@ -1121,18 +1121,18 @@ describe("discarding the auction", () => {
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
-    await bot.handleUpdate(press(dataOf(last(calls), "Удалить аукцион")));
+    await bot.handleUpdate(press(dataOf(last(calls), "🗑 Удалить аукцион")));
     const confirm = last(calls);
     expect(plain(confirm)).toContain("Удалить аукцион?");
     expect(plain(confirm)).toContain("Из аукциона уйдут: 1 лот.");
     expect(plain(confirm)).toContain(
       "Лоты и сроки пропадут. Включить аукцион у сходки можно заново.",
     );
-    expect(labels(confirm)).toEqual([["Да, удалить"], ["Нет"]]);
-    expect(dataOf(confirm, "Нет")).toBe(consoleData);
+    expect(labels(confirm)).toEqual([["✔️ Да, удалить", "✖️ Нет"]]);
+    expect(dataOf(confirm, "✖️ Нет")).toBe(consoleData);
     expect(auction.sent("discardAuction")).toEqual([]);
 
-    const yes = dataOf(confirm, "Да, удалить");
+    const yes = dataOf(confirm, "✔️ Да, удалить");
     await bot.handleUpdate(press(yes));
     expect(auction.state.discarded).toBe(true);
     expect(last(calls).text).toBe(
@@ -1155,7 +1155,7 @@ describe("discarding the auction", () => {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
-    expect(JSON.stringify(last(calls))).not.toContain("Удалить аукцион");
+    expect(JSON.stringify(last(calls))).not.toContain("🗑 Удалить аукцион");
 
     await bot.handleUpdate(press(`v1:ac:x:${auctionToken}`));
     expect(last(calls).text).toBe(

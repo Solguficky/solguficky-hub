@@ -140,7 +140,6 @@ export function reconsiderConfirmScreen(
       yes: "Да, пересмотреть",
       yesData: `${queueDomain(queue)}:ry:${uuidToToken(application.applicationId)}:${page}`,
       noData: refusedData(queue)(page),
-      style: "success",
     }),
     format: "HTML",
   };

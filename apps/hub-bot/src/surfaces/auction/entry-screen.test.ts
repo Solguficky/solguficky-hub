@@ -486,7 +486,7 @@ describe("proxy limit confirmation", () => {
     expect(screen.text).toMatch(/поднимет её не больше чем на 800\s₽/);
     expect(screen.text).toContain("Лимит видишь только ты.");
     expect(screen.keyboard[0]?.[0]).toMatchObject({
-      text: "Да, включить автоставку",
+      text: "✔️ Да, включить автоставку",
       style: "danger",
     });
   });

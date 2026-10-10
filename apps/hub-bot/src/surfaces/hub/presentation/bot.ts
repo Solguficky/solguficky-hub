@@ -3556,6 +3556,7 @@ function removeConfirmScreen(confirm: {
         confirm.version,
       ),
       noData: `v1:mm:list:${confirm.token}`,
+      irreversible: true,
     }),
     format: "HTML",
   };
@@ -3734,6 +3735,7 @@ async function sendBroadcastConfirmation(
           audience.kind === "meetup"
             ? `v1:bc:no:${uuidToToken(audience.meetupId)}`
             : "v1:bc:no",
+        irreversible: true,
       }),
     },
   );

@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
+import { marked, pictogram } from "../../../../core/pictograms.js";
 import type {
   MeetupAuctionView,
   MeetupAuthor,
@@ -27,6 +28,7 @@ import {
   paginate,
   readableDay,
   readableMoment,
+  removeLabel,
   screenText,
   toArchive,
   toCard,
@@ -273,8 +275,14 @@ function cardLines(
             : `Автор: @${escapeHtml(author.telegramUsername)}`,
         ]),
     "",
-    `Когда: ${meetup.schedule === undefined ? "дата не задана" : readableMoment(meetup.schedule, today)}`,
-    `Где: ${meetup.venue === "" ? "не указано" : escapeHtml(meetup.venue)}`,
+    marked(
+      pictogram.when,
+      `Когда: ${meetup.schedule === undefined ? "дата не задана" : readableMoment(meetup.schedule, today)}`,
+    ),
+    marked(
+      pictogram.where,
+      `Где: ${meetup.venue === "" ? "не указано" : escapeHtml(meetup.venue)}`,
+    ),
     "",
     meetup.description === ""
       ? "Описание пока не добавлено."
@@ -287,7 +295,7 @@ function materialLines(meetup: MeetupSnapshot): string[] {
   const hidden = meetup.materials.length - materialCardLimit;
   return [
     "",
-    "Материалы:",
+    marked(pictogram.materials, "Материалы:"),
     ...meetup.materials.slice(0, materialCardLimit).map((material, index) => {
       const label = escapeHtml(displayMaterialTitle(material, index + 1));
       return material.source.kind === "message-link"
@@ -540,9 +548,10 @@ export function editFieldsScreen(meetup: MeetupSnapshot): ShownScreen {
 }
 
 // Общая форма действий смены состояния: кадр подтверждения и повтор после
-// конфликта версий говорят об одном и том же действии одними словами. Цвета у
-// них нет: красным красится только трата денег, а необратимость конечной
-// стадии называет строка `irreversible` (PER-473).
+// конфликта версий говорят об одном и том же действии одними словами.
+// Необратимость конечной стадии называет строка `irreversible`, и такое «Да»
+// красное; скрытие и снятие отложенной публикации обратимы и цвета не несут
+// (решение владельца 10 октября 2026 года).
 export const stateActionCopy: Record<
   MeetupStateAction,
   {
@@ -657,7 +666,10 @@ export function stateConfirmScreen(confirm: {
   const copy = stateActionCopy[confirm.action];
   const token = uuidToToken(confirm.meetup.id);
   return {
-    id: "state-confirm",
+    // Обратимое и необратимое подтверждения — разные записи каталога: по ним
+    // линтер знает, обязан ли «Да» быть красным.
+    id:
+      copy.irreversible === undefined ? "state-confirm" : "state-final-confirm",
     text: [
       heading(copy.question),
       "",
@@ -672,6 +684,7 @@ export function stateConfirmScreen(confirm: {
         confirm.meetup.version,
       ),
       noData: confirm.back,
+      irreversible: copy.irreversible !== undefined,
     }),
     format: "HTML",
   };
@@ -696,7 +709,10 @@ export function materialsScreen(
       keyboard.text(buttonText(title), `v1:mm:file:${token}:${materialToken}`);
     }
     if (canManage) {
-      keyboard.text("Убрать", `v1:mm:rm:${token}:${materialToken}`);
+      keyboard.text(
+        removeLabel("Убрать"),
+        `v1:mm:rm:${token}:${materialToken}`,
+      );
     }
     keyboard.row();
   }

@@ -922,12 +922,12 @@ describe("bid leaf in the hub", () => {
         inline_keyboard: [
           [
             {
-              text: expect.stringMatching(/^Да, поставить 1\s300\s₽$/),
+              text: expect.stringMatching(/^✔️ Да, поставить 1\s300\s₽$/),
               style: "danger",
               callback_data: expect.stringMatching(/^v1:auc:b:/),
             },
+            { text: "✖️ Нет", callback_data: expect.any(String) },
           ],
-          [{ text: "Нет", callback_data: expect.any(String) }],
         ],
       },
     });
