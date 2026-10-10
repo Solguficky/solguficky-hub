@@ -11,15 +11,15 @@ open Xunit
 
 let private stored = Some(Meetup.toSnapshot Sample.published)
 
-/// Порт Identity, который записывает, о ком и о каких ролях его спросили.
+/// Порт Identity, который записывает, о ком и о каком праве его спросили.
 type private Identity(answer: Result<bool, IdentityFailure>) =
-    let asked = ResizeArray<PersonId * Set<GlobalRole>>()
+    let asked = ResizeArray<PersonId * AccessRight>()
 
     member _.Asked = List.ofSeq asked
 
-    member _.Ask: AskRoles =
-        fun person roles ->
-            asked.Add(person, roles)
+    member _.Ask: AskRight =
+        fun person right ->
+            asked.Add(person, right)
             Task.FromResult answer
 
 /// Загрузка, которая считает обращения: «до загрузки» проверяется тем, что их нет.
@@ -35,7 +35,7 @@ type private Store(found: MeetupSnapshot option) =
 
 let private deps (identity: Identity) (store: Store) : Deps =
     {
-        AskRoles = Some identity.Ask
+        AskRight = Some identity.Ask
         Load = store.Load
     }
 
@@ -64,20 +64,15 @@ let ``An administrator may act on behalf of an existing meetup`` () =
             && store.Loaded = [ Sample.meetupId ]
         @>
 
-/// Отношение «администратор сообщества» спрашивается у Identity ролью Administrator
-/// и только ею: вызывающий ролей не приносит, их называет правило Meetups.
+/// Отношение «администратор сообщества» спрашивается у Identity правом ManageMeetups
+/// и только им: вызывающий прав не приносит, их называет правило Meetups.
 [<Fact>]
-let ``The community administrator relation is asked of Identity as the administrator role`` () =
+let ``The community administrator relation is asked of Identity as the manage_meetups right`` () =
     let identity = Identity(Ok true)
 
     run (deps identity (Store stored)) |> ignore
 
-    test
-        <@
-            identity.Asked = [
-                Sample.authorId, Set.singleton Administrator
-            ]
-        @>
+    test <@ identity.Asked = [ Sample.authorId, ManageMeetups ] @>
 
 /// Неразличимость для постороннего проверяется не сравнением ответов, а тем, что
 /// загрузки нет вовсе: одинаковый путь исполнения одинаков и по времени.
@@ -135,7 +130,7 @@ let ``Without a configured Identity the right cannot be confirmed`` () =
     let result =
         run
             {
-                AskRoles = None
+                AskRight = None
                 Load = store.Load
             }
 

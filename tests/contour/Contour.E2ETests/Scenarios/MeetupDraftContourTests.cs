@@ -10,10 +10,10 @@ namespace Contour.E2ETests.Scenarios;
 /// Один дымовой сценарий уровня L2: две деплоимые единицы вместе, включая
 /// провод — транспорт, заголовки, кодирование Protobuf.
 ///
-/// Роль администратора берётся настоящей выдачей через Identity, а не
+/// Право вести сходки берётся настоящей выдачей набора через Identity, а не
 /// подставляется в <c>Viewer</c> на клиенте. Подстановка сделала бы Identity
 /// процессом, который просто запустился: сценарий остался бы зелёным при
-/// сломанном хранении ролей, то есть проверял бы один Meetups — L1 в костюме L2.
+/// сломанном хранении наборов, то есть проверял бы один Meetups — L1 в костюме L2.
 ///
 /// Доменных инвариантов здесь нет намеренно: стандарт запрещает проверять на L2
 /// то, что детерминированно проверяется на L0.
@@ -46,28 +46,30 @@ public sealed class MeetupDraftContourTests(ContourFixture contour)
 
         resolved.IdentityId.ShouldNotBeNullOrWhiteSpace();
         resolved.Blocked.ShouldBeFalse();
-        resolved.GlobalRoles.ShouldNotContain(GlobalRole.Admin);
+        resolved.Rights.ShouldNotContain(AccessRight.ManageMeetups);
 
-        var granted = await contour.IdentityClient.GrantAdminRoleAsync(
-            new GrantAdminRoleRequest { IdentityId = resolved.IdentityId },
+        var granted = await contour.IdentityClient.GrantPresetAsync(
+            new GrantPresetRequest { IdentityId = resolved.IdentityId, Preset = Preset.Admin },
             headers: contour.MaintainerCall(),
             deadline: Deadline(),
             cancellationToken: cancellationToken);
 
         granted.Changed.ShouldBeTrue();
 
-        // Повторный резолв, а не сборка Viewer руками: роли для команды берутся
-        // из ответа Identity, иначе выдача роли осталась бы непроверенной.
+        // Повторный резолв, а не сборка Viewer руками: права для команды
+        // берутся из ответа Identity, иначе выдача набора осталась бы
+        // непроверенной.
         var admin = await contour.IdentityClient.ResolveIdentityAsync(
             new ResolveIdentityRequest { TelegramUserId = telegramUserId },
             headers: contour.BotCall(),
             deadline: Deadline(),
             cancellationToken: cancellationToken);
 
-        admin.GlobalRoles.ShouldContain(GlobalRole.Admin);
+        admin.Presets.ShouldContain(Preset.Admin);
+        admin.Rights.ShouldContain(AccessRight.ManageMeetups);
 
         var viewer = new Viewer { IdentityId = admin.IdentityId };
-        viewer.GlobalRoles.AddRange(admin.GlobalRoles);
+        viewer.Rights.AddRange(admin.Rights);
 
         var meetupId = MeetupIdentifier(seed);
 

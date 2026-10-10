@@ -26,7 +26,7 @@ public class FactReplicaTests
 {
     private const string MeetupPublished = "events.meetups.meetup_published";
     private const string MeetupChanged = "events.meetups.meetup_changed";
-    private const string RoleGranted = "events.identity.role_granted";
+    private const string CircleChanged = "events.identity.circle_changed";
     private const string ProfileBlocked = "events.identity.profile_blocked";
 
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(30);
@@ -123,13 +123,14 @@ public class FactReplicaTests
             "INSERT INTO meetup_subscription (identity_id, meetup_id, subscribed_at) VALUES (@IdentityId, @MeetupId, now());",
             new { IdentityId = Guid.Parse(identityId), MeetupId = Guid.NewGuid() });
 
-        await nats.Publish(RoleGranted, EventFactory.Identity(identityId, version: 1));
+        await nats.Publish(CircleChanged, EventFactory.Identity(identityId, version: 1));
         await nats.Publish(ProfileBlocked, EventFactory.Identity(identityId, version: 2, blocked: true));
 
         var row = await Eventually(() => Identity(db, identityId), row => row is { version: 2 });
 
         row!.blocked.ShouldBeTrue();
-        row.role.ShouldBeNull();
+        row.circle.ShouldBeNull();
+        row.presets.ShouldBeEmpty();
         row.rights.ShouldBeEmpty();
         (await Scalar<long>(db, "SELECT count(*) FROM meetup_subscription;")).ShouldBe(1);
     }
@@ -148,21 +149,21 @@ public class FactReplicaTests
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
 
         var identityId = EventFactory.NewId();
-        await nats.Publish(RoleGranted, EventFactory.Identity(identityId, version: 1));
+        await nats.Publish(CircleChanged, EventFactory.Identity(identityId, version: 1));
         await nats.Publish(
             "events.identity.right_granted",
-            EventFactory.RightGrant(identityId, version: 2, GlobalRole.Member, AccessRight.ModerateAuction));
+            EventFactory.RightGrant(identityId, version: 2, Circle.Member, AccessRight.AdmitBidders));
 
         var granted = await Eventually(() => Identity(db, identityId), row => row is { version: 2 });
-        granted!.role.ShouldBe("member");
-        granted.rights.ShouldBe(["hub", "auction", "moderate_auction"], ignoreOrder: true);
+        granted!.circle.ShouldBe("member");
+        granted.rights.ShouldBe(["access_hub", "place_bids", "admit_bidders"], ignoreOrder: true);
 
         await nats.Publish(
             "events.identity.right_revoked",
-            EventFactory.RightRevoke(identityId, version: 3, GlobalRole.Member, AccessRight.ModerateAuction));
+            EventFactory.RightRevoke(identityId, version: 3, Circle.Member, AccessRight.AdmitBidders));
 
         var revoked = await Eventually(() => Identity(db, identityId), row => row is { version: 3 });
-        revoked!.rights.ShouldBe(["hub", "auction"], ignoreOrder: true);
+        revoked!.rights.ShouldBe(["access_hub", "place_bids"], ignoreOrder: true);
     }
 
     [Fact]
@@ -180,7 +181,7 @@ public class FactReplicaTests
             var telemetry = silo.Service<ReplicaTelemetry>();
 
             await nats.Publish(MeetupPublished, EventFactory.Meetup(meetupId, version: 3));
-            await nats.Publish(RoleGranted, EventFactory.Identity(identityId, version: 1));
+            await nats.Publish(CircleChanged, EventFactory.Identity(identityId, version: 1));
 
             await Eventually(() => Task.FromResult(telemetry.LastAppliedAt(ReplicaFeeds.IdentitySource)), at => at is not null);
             await Eventually(() => Task.FromResult(telemetry.LastAppliedAt(ReplicaFeeds.MeetupsSource)), at => at is not null);
@@ -352,7 +353,7 @@ public class FactReplicaTests
     {
         await using var connection = new NpgsqlConnection(db.ConnectionString);
         return await connection.QuerySingleOrDefaultAsync<IdentityRow>(
-            "SELECT version, role, rights, blocked FROM identity_replica WHERE identity_id = @Id;",
+            "SELECT version, circle, presets, rights, blocked FROM identity_replica WHERE identity_id = @Id;",
             new { Id = Guid.Parse(identityId) });
     }
 
@@ -384,7 +385,9 @@ public class FactReplicaTests
     {
         public long version { get; init; }
 
-        public string? role { get; init; }
+        public string? circle { get; init; }
+
+        public string[] presets { get; init; } = [];
 
         public string[] rights { get; init; } = [];
 

@@ -22,8 +22,7 @@ const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
 const opId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa";
 const admin: Person = {
   identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-  globalRoles: ["admin"],
-  rights: ["hub", "auction"],
+  rights: ["access-hub", "place-bids"],
 };
 const zone = "Europe/Moscow";
 // Часы бота в тестах: 6 октября 2026 года, 12:00 по Москве.

@@ -4,7 +4,7 @@ package auction.v1;
 
 import "auction/v1/auction.proto";
 import "auction/v1/auction_events.proto";
-import "identity/v1/roles.proto";
+import "identity/v1/access.proto";
 
 // Commands of a participant, commands of the lot catalog, the birth of an auction
 // at a meetup, the registry of its lots, the trading conditions of a lot, the
@@ -63,12 +63,12 @@ message Viewer {
   // so a request cannot act for someone else.
   string identity_id = 1;
 
-  // Platform-wide roles from Identity. Superseded by rights. The block mark is
-  // deliberately absent, as in meetups.v1.Viewer.
-  repeated identity.v1.GlobalRole global_roles = 2;
+  reserved 2;
+  reserved "global_roles";
 
   // Rights from Identity, copied as received from ResolveIdentityResponse.rights.
-  // An empty set means no rights.
+  // An empty set means no rights. The block mark is deliberately absent, as in
+  // meetups.v1.Viewer.
   repeated identity.v1.AccessRight rights = 3;
 }
 
@@ -611,8 +611,8 @@ message LotImage {
 }
 
 message DraftAuctionRequest {
-  // The administrator who enables the auction. Global roles grant no right here:
-  // the right is checked with the meetup.
+  // The administrator who enables the auction. Rights of the viewer grant
+  // nothing here: the right is checked with the meetup.
   Viewer viewer = 1;
 
   // Canonical lowercase UUIDv7 with hyphens: the meetup to enable the auction at.

@@ -64,26 +64,25 @@ function trading(lotId: string, title: string, price: number): LotView {
   };
 }
 
-// Права, как их выводит Identity: круг `admin` несёт право администрировать
-// аукцион, участник — только права хаба и аукциона. `rights` задаёт тест,
-// которому нужен администратор без каталога — мейнтейнер с управлением.
+// Права, как их выводит Identity (RFC-016): набор `admin` несёт право вести
+// сходки с пультом и каталогом лотов, участник — только права хаба и ставок.
+// `rights` задаёт тест, которому нужен держатель части прав набора.
 function identity(
-  globalRoles: readonly string[],
-  rights: readonly AccessRight[] = globalRoles.includes("admin")
+  holder: "admin" | "member",
+  rights: readonly AccessRight[] = holder === "admin"
     ? [
-        "hub",
-        "auction",
-        "manage-membership",
-        "moderate-auction",
-        "manage-auction",
+        "access-hub",
+        "place-bids",
+        "manage-members",
+        "admit-bidders",
+        "manage-meetups",
       ]
-    : ["hub", "auction"],
+    : ["access-hub", "place-bids"],
 ) {
   return {
     resolve: async () => ({
       kind: "resolved" as const,
       identityId,
-      globalRoles,
       rights,
       blocked: false,
     }),
@@ -245,13 +244,13 @@ function fakeAuction(
 
 // Новый бот над тем же Auction и той же историей чата: так выглядит рестарт.
 function harness(
-  roles: readonly string[],
+  holder: "admin" | "member",
   auction: ReturnType<typeof fakeAuction>,
   calls: RecordedCall[] = [],
   rights?: readonly AccessRight[],
 ) {
   return createHarness(
-    identity(roles, rights),
+    identity(holder, rights),
     createDispatcher(undefined, undefined, today, auction.port, auction.port, {
       auctions: auction.port,
       timeZone,
@@ -414,7 +413,7 @@ const unpriced: ConsoleLot = {
 describe("entry into the auction console", () => {
   it("shows the console under the lot entry to the administrator only", async () => {
     const auction = fakeAuction({ lots: [vase] });
-    const admin = harness(["admin", "public"], auction);
+    const admin = harness("admin", auction);
     await admin.bot.init();
     await admin.bot.handleUpdate(press(feedData));
     const feed = last(admin.calls);
@@ -424,7 +423,7 @@ describe("entry into the auction console", () => {
     ]);
     expect(dataOf(feed, "Пульт")).toBe(consoleData);
 
-    const member = harness(["member", "public"], auction);
+    const member = harness("member", auction);
     await member.bot.init();
     await member.bot.handleUpdate(press(feedData));
     expect(JSON.stringify(shown(member.calls))).not.toContain("Пульт");
@@ -435,7 +434,7 @@ describe("entry into the auction console", () => {
   it("shows the lot entry while the auction still accepts lots", async () => {
     for (const status of ["draft", "scheduled"] as const) {
       const auction = fakeAuction({ status, lots: [vase] });
-      const { bot, calls } = harness(["admin", "public"], auction);
+      const { bot, calls } = harness("admin", auction);
       await bot.init();
       await bot.handleUpdate(press(feedData));
       expect(labels(last(calls)).slice(0, 2)).toEqual([
@@ -448,7 +447,7 @@ describe("entry into the auction console", () => {
 
   it("hides the lot entry once the online week is open and keeps the console", async () => {
     const auction = fakeAuction({ status: "prebidding", lots: [vase] });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(feedData));
     const feed = last(calls);
@@ -458,7 +457,7 @@ describe("entry into the auction console", () => {
 
   it("keeps the lot entry when the console cannot be read", async () => {
     const auction = fakeAuction({ status: "prebidding", refuse: true });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(feedData));
     expect(labels(last(calls)).slice(0, 2)).toEqual([
@@ -467,27 +466,22 @@ describe("entry into the auction console", () => {
     ]);
   });
 
-  // Мейнтейнер с выданным управлением — администратор сходки для Meetups, но
-  // каталог лотов Auction пускает только по праву администрировать аукцион
-  // (ADR-064, дополнение 2026-10-08): входа в форму лота у него нет.
-  it("keeps the console and hides the lot entries from an administrator without the catalog right", async () => {
+  // Пульт и каталог лотов — одно право вести сходки (RFC-016): держатель
+  // управления составом без него не видит ни того, ни другого, и Auction его
+  // не спрашивают.
+  it("hides the console and the lot entries from a holder of other management rights", async () => {
     const auction = fakeAuction({ lots: [vase] });
-    const maintainer = [
-      "hub",
-      "auction",
-      "manage-membership",
-      "moderate-auction",
+    const moderator = [
+      "access-hub",
+      "place-bids",
+      "manage-members",
+      "admit-bidders",
     ] as const;
-    const { bot, calls } = harness(
-      ["admin", "public"],
-      auction,
-      [],
-      maintainer,
-    );
+    const { bot, calls } = harness("member", auction, [], moderator);
     await bot.init();
 
     await bot.handleUpdate(press(feedData));
-    expect(labels(last(calls))[0]).toEqual(["Пульт", "Правила и FAQ"]);
+    expect(JSON.stringify(last(calls))).not.toContain("Пульт");
     expect(JSON.stringify(last(calls))).not.toContain("Добавить лот");
     expect(auction.sent("getAuctionConsole")).toEqual([]);
 
@@ -498,7 +492,7 @@ describe("entry into the auction console", () => {
 
   it("does not read the console for a member's feed", async () => {
     const auction = fakeAuction({ lots: [vase] });
-    const { bot } = harness(["member", "public"], auction);
+    const { bot } = harness("member", auction);
     await bot.init();
     await bot.handleUpdate(press(feedData));
     expect(auction.sent("getAuctionConsole")).toEqual([]);
@@ -506,7 +500,7 @@ describe("entry into the auction console", () => {
 
   it("refuses an old console button of someone who is not an administrator before Auction is asked", async () => {
     const auction = fakeAuction({ lots: [vase] });
-    const { bot, calls, records } = harness(["member", "public"], auction);
+    const { bot, calls, records } = harness("member", auction);
     await bot.init();
 
     for (const data of [
@@ -528,7 +522,7 @@ describe("entry into the auction console", () => {
 
   it("shows the refusal of Auction to someone it does not take for the administrator of the meetup", async () => {
     const auction = fakeAuction({ refuse: true });
-    const { bot, calls, records } = harness(["admin", "public"], auction);
+    const { bot, calls, records } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(consoleData));
@@ -578,7 +572,7 @@ describe("auction console", () => {
       week: { ...week, final: true },
       lots: [fewerParticipants, moreParticipants, noGrowthB, noGrowthA],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
@@ -622,7 +616,7 @@ describe("auction console", () => {
       week: { ...week, final: true },
       lots,
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
     await bot.handleUpdate(press(dataOf(last(calls), "→")));
@@ -640,7 +634,7 @@ describe("auction console", () => {
       week: { ...week, final: true },
       lots: [vase, mug],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(consoleData));
@@ -673,7 +667,7 @@ describe("auction console", () => {
       week: { ...week, final: true },
       lots: [vase],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
@@ -712,7 +706,7 @@ describe("auction console", () => {
       lots: [vase],
       deadlinePassed: [vaseId],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
@@ -737,7 +731,7 @@ describe("week of the auction", () => {
     const auction = fakeAuction({ lots: [vase] });
     const calls: RecordedCall[] = [];
     const next = async (update: (history: RecordedCall[]) => Update) => {
-      const { bot } = harness(["admin", "public"], auction, calls);
+      const { bot } = harness("admin", auction, calls);
       await bot.init();
       await bot.handleUpdate(update(calls));
     };
@@ -817,7 +811,7 @@ describe("week of the auction", () => {
 
   it("shows an outcome screen with a retry when the answer is not text", async () => {
     const auction = fakeAuction();
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:ac:w:${auctionToken}`));
 
@@ -839,7 +833,7 @@ describe("week of the auction", () => {
       status: "scheduled",
       week: { ...week, final: false },
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(`v1:ac:w:${auctionToken}`));
@@ -863,7 +857,7 @@ describe("week of the auction", () => {
       status: "scheduled",
       week: { ...week, final: true },
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
@@ -892,7 +886,7 @@ describe("week of the auction", () => {
       status: "scheduled",
       week: { ...week, final: true },
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
@@ -912,7 +906,7 @@ describe("week of the auction", () => {
 
   it("shows an outcome screen with a retry when the end of the week has already come", async () => {
     const auction = fakeAuction();
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:ac:w:${auctionToken}`));
 
@@ -936,7 +930,7 @@ describe("opening the online week", () => {
       week: { ...week, final: true },
       lots: [priced, unpriced],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
@@ -982,7 +976,7 @@ describe("opening the online week", () => {
       week: { ...week, final: true },
       lots: [priced],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
     const firstYes = dataOf(last(calls), "Да, открыть неделю");
@@ -1014,7 +1008,7 @@ describe("opening the online week", () => {
       },
       lots: [priced],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
@@ -1031,7 +1025,7 @@ describe("opening the online week", () => {
       week: { ...week, final: true },
       lots: [unpriced],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
@@ -1051,7 +1045,7 @@ describe("final selection", () => {
       week: { ...week, final: false },
       lots: [vase, mug],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(consoleData));
@@ -1070,7 +1064,7 @@ describe("final selection", () => {
       lots: [vase],
       notApplicable: true,
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(
@@ -1101,7 +1095,7 @@ describe("final selection", () => {
       week: { ...week, final: true },
       lots: [held],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
 
     await bot.handleUpdate(press(consoleData));
@@ -1123,7 +1117,7 @@ describe("discarding the auction", () => {
       week: { ...week, final: true },
       lots: [priced],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
@@ -1158,7 +1152,7 @@ describe("discarding the auction", () => {
       week: { ...week, final: true },
       lots: [vase],
     });
-    const { bot, calls } = harness(["admin", "public"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
     expect(JSON.stringify(last(calls))).not.toContain("Удалить аукцион");
@@ -1172,7 +1166,7 @@ describe("discarding the auction", () => {
 
   it("refuses an old discard button of someone who is not an administrator before Auction is asked", async () => {
     const auction = fakeAuction({ lots: [vase] });
-    const { bot, calls } = harness(["member", "public"], auction);
+    const { bot, calls } = harness("member", auction);
     await bot.init();
 
     for (const data of [

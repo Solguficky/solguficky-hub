@@ -1,6 +1,6 @@
 package auction.contracts
 
-import identity.v1.roles.AccessRight
+import identity.v1.access.AccessRight
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
@@ -16,8 +16,8 @@ final class IdentityContractSpec extends AnyWordSpec with Matchers {
   "generated identity contract" should {
 
     "expose the rights the auction decides by" in {
-      AccessRight.ACCESS_RIGHT_AUCTION.value shouldBe 2
-      AccessRight.ACCESS_RIGHT_MANAGE_AUCTION.value shouldBe 5
+      AccessRight.ACCESS_RIGHT_PLACE_BIDS.value shouldBe 2
+      AccessRight.ACCESS_RIGHT_MANAGE_MEETUPS.value shouldBe 5
     }
 
     // Значение 0 объявлено в схеме, и проверка на нём тавтологична. Открытость

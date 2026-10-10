@@ -13,69 +13,35 @@ import (
 // queueMoment — момент заявки в форме контракта: UTC и ровно миллисекунды.
 const queueMoment = "2026-10-01T10:00:00.123Z"
 
-func TestApplicationRulesFollowCircleOrder(t *testing.T) {
+func TestApplicationRulesFollowQueues(t *testing.T) {
 	t.Parallel()
-	cases := map[string][]string{
-		roleGuest:      {roleGuest},
-		roleMember:     {roleGuest, roleMember},
-		roleAdmin:      {roleGuest, roleMember},
-		roleMaintainer: {roleGuest, roleMember},
-	}
-	for role, want := range cases {
-		if got := circlesWithin(role); !slices.Equal(got, want) {
-			t.Errorf("circlesWithin(%s) = %v, want %v", role, got, want)
-		}
-	}
-	for queue, want := range map[identityv1.ApplicationQueue]struct{ circle, right string }{
-		identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY: {roleMember, rightHub},
-		identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION:   {roleGuest, rightAuction},
+	for circle, want := range map[string][]string{
+		circleMember: {queueCommunity, queueAuction},
+		circleGuest:  {queueAuction},
 	} {
-		circle, ok := queueCircle(queue)
-		if !ok || circle != want.circle || circleQueue(circle) != queue || queueGrantedRight(circle) != want.right {
-			t.Errorf("queue %s: circle %q, right %q", queue, circle, queueGrantedRight(circle))
+		if got := grantedQueues(circle); !slices.Equal(got, want) {
+			t.Errorf("grantedQueues(%s) = %v, want %v", circle, got, want)
 		}
 	}
-	if _, ok := queueCircle(identityv1.ApplicationQueue_APPLICATION_QUEUE_UNSPECIFIED); ok {
-		t.Error("the unspecified queue has a circle")
+	for queue, want := range map[identityv1.ApplicationQueue]struct {
+		name, circle, right string
+		moderator           grantable
+	}{
+		identityv1.ApplicationQueue_APPLICATION_QUEUE_COMMUNITY: {queueCommunity, circleMember, rightAccessHub, grantMemberCircle},
+		identityv1.ApplicationQueue_APPLICATION_QUEUE_AUCTION:   {queueAuction, circleGuest, rightPlaceBids, grantPlaceBids},
+	} {
+		name, ok := queueName(queue)
+		if !ok || name != want.name || queueValue(name) != queue || queueCircle(name) != want.circle ||
+			queueGrantedRight(name) != want.right || queueGrantable(name) != want.moderator {
+			t.Errorf("queue %s: name %q, circle %q, right %q", queue, name, queueCircle(name), queueGrantedRight(name))
+		}
+	}
+	if _, ok := queueName(identityv1.ApplicationQueue_APPLICATION_QUEUE_UNSPECIFIED); ok {
+		t.Error("the unspecified queue has a name")
 	}
 	for _, outcome := range []string{outcomeAdmitted, outcomeDeclined, outcomeBlocked, outcomeClosedByGrant, outcomeClosedByBlock} {
 		if applicationOutcome(outcome) == identityv1.ApplicationOutcome_APPLICATION_OUTCOME_UNSPECIFIED {
 			t.Errorf("outcome %s has no contract value", outcome)
-		}
-	}
-}
-
-// Порядок кругов guest < member = maintainer < admin; круг maintainer держит
-// только мейнтейнер (решение владельца по PER-526).
-func TestHoldsFollowsCircleOrder(t *testing.T) {
-	t.Parallel()
-	circles := []string{roleGuest, roleMember, roleMaintainer, roleAdmin}
-	want := map[string][]string{
-		"":             {},
-		roleGuest:      {roleGuest},
-		roleMember:     {roleGuest, roleMember},
-		roleMaintainer: {roleGuest, roleMember, roleMaintainer},
-		roleAdmin:      {roleGuest, roleMember, roleAdmin},
-	}
-	for current, held := range want {
-		for _, circle := range circles {
-			if got := holds(current, circle); got != slices.Contains(held, circle) {
-				t.Errorf("holds(%q, %q) = %t", current, circle, got)
-			}
-		}
-	}
-}
-
-func TestCircleAfterRevokeStepsDown(t *testing.T) {
-	t.Parallel()
-	for role, want := range map[string]string{
-		roleAdmin:      roleMember,
-		roleMaintainer: roleMember,
-		roleMember:     roleGuest,
-		roleGuest:      "",
-	} {
-		if got := circleAfterRevoke(role); got != want {
-			t.Errorf("circleAfterRevoke(%q) = %q, want %q", role, got, want)
 		}
 	}
 }

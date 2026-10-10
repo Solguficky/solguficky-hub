@@ -9,10 +9,10 @@ import {
   handleAuctionUpdate,
 } from "./gateway.js";
 import type {
+  AccessRequestOutcome,
   AccessRight,
   LotView,
   ResolvedIdentity,
-  RoleRequestOutcome,
   Viewer,
 } from "./ports.js";
 
@@ -29,13 +29,13 @@ const VIEWER: Viewer = {
   identityId: "01929b7e-0000-7000-8000-000000000001",
   rights: [],
 };
-const MEMBER: AccessRight[] = ["hub", "auction"];
+const MEMBER: AccessRight[] = ["access-hub", "place-bids"];
 const ADMIN: AccessRight[] = [
-  "hub",
-  "auction",
-  "manage-membership",
-  "moderate-auction",
-  "manage-auction",
+  "access-hub",
+  "place-bids",
+  "manage-members",
+  "admit-bidders",
+  "manage-meetups",
 ];
 const LOT_BUTTON = encodeAuctionCallback({
   kind: "lot",
@@ -137,10 +137,10 @@ describe("handleAuctionUpdate gateway", () => {
   it.each<[AuctionSurface["kind"], AccessRight[]]>([
     ["hub", MEMBER],
     ["hub", ADMIN],
-    ["hub", ["hub"]],
-    ["auction", ["auction"]],
+    ["hub", ["access-hub"]],
+    ["auction", ["place-bids"]],
     // Право модерации не делает гостя участником: бот аукциона его пускает.
-    ["auction", ["auction", "moderate-auction"]],
+    ["auction", ["place-bids", "admit-bidders"]],
   ])("admits %s with %j without calling Identity", async (kind, rights) => {
     const { press, calls } = surfaceFor(kind, { rights, blocked: false });
     const result = await press(LOT_BUTTON);
@@ -150,11 +150,11 @@ describe("handleAuctionUpdate gateway", () => {
   });
 
   it.each<[AuctionSurface["kind"], AccessRight[]]>([
-    ["hub", ["auction"]],
-    ["hub", ["auction", "moderate-auction"]],
+    ["hub", ["place-bids"]],
+    ["hub", ["place-bids", "admit-bidders"]],
     ["hub", []],
     ["auction", []],
-    ["auction", ["moderate-auction"]],
+    ["auction", ["admit-bidders"]],
   ])("denies %s with %j before any Auction call", async (kind, rights) => {
     const { press, calls } = surfaceFor(kind, { rights, blocked: false });
     expect(await press(LOT_BUTTON)).toEqual({
@@ -169,7 +169,7 @@ describe("handleAuctionUpdate gateway", () => {
   it.each<[string, AccessRight[]]>([
     ["a member", MEMBER],
     ["an admin", ADMIN],
-    ["a hub right alone", ["hub"]],
+    ["a hub right alone", ["access-hub"]],
   ])("sends %s from the auction bot to the hub bot", async (_name, rights) => {
     const { press, calls } = surfaceFor("auction", { rights, blocked: false });
     expect(await press(LOT_BUTTON)).toEqual({
@@ -212,7 +212,7 @@ describe("handleAuctionUpdate gateway", () => {
   // Кнопка хаба не аукционное действие: её получает обратно приложение, даже
   // если аукцион этого человека не пускает или он заблокирован.
   it.each<[AuctionSurface["kind"], AccessRight[], boolean]>([
-    ["hub", ["auction"], false],
+    ["hub", ["place-bids"], false],
     ["hub", [], true],
     ["auction", [], false],
     ["auction", MEMBER, false],
@@ -270,12 +270,12 @@ describe("surface entry on /start", () => {
     expect(applicationQueue("auction")).toBe("auction");
   });
 
-  it.each<[AuctionSurface["kind"], AccessRight[], RoleRequestOutcome]>([
+  it.each<[AuctionSurface["kind"], AccessRight[], AccessRequestOutcome]>([
     ["hub", MEMBER, "already-held"],
     ["hub", ADMIN, "already-held"],
     ["hub", MEMBER, "granted-by-allowlist"],
-    ["auction", ["auction"], "already-held"],
-    ["auction", ["auction"], "granted-by-allowlist"],
+    ["auction", ["place-bids"], "already-held"],
+    ["auction", ["place-bids"], "granted-by-allowlist"],
   ])("enters %s with %j on %s", (kind, rights, outcome) => {
     expect(
       decideEntry(kind, { viewer: { ...VIEWER, rights }, outcome }),
@@ -285,11 +285,11 @@ describe("surface entry on /start", () => {
     });
   });
 
-  it.each<[RoleRequestOutcome, AccessRight[], AuctionDenial]>([
+  it.each<[AccessRequestOutcome, AccessRight[], AuctionDenial]>([
     ["pending", [], "not-admitted"],
     // Заявка в хаб не отнимает аукцион: право аукциона при ней остаётся.
-    ["pending", ["auction"], "not-admitted"],
-    ["declined", ["auction"], "declined"],
+    ["pending", ["place-bids"], "not-admitted"],
+    ["declined", ["place-bids"], "declined"],
     ["blocked", [], "blocked"],
   ])("denies the hub on %s with %j as %s", (outcome, rights, reason) => {
     expect(
@@ -303,11 +303,11 @@ describe("surface entry on /start", () => {
 
   // Участнику бот аукциона отвечает переходом при любом исходе очереди
   // аукциона, кроме блокировки и незнакомого исхода.
-  it.each<[RoleRequestOutcome, AccessRight[]]>([
+  it.each<[AccessRequestOutcome, AccessRight[]]>([
     ["already-held", MEMBER],
     ["already-held", ADMIN],
     ["granted-by-allowlist", MEMBER],
-    ["pending", ["hub"]],
+    ["pending", ["access-hub"]],
     ["declined", MEMBER],
   ])(
     "sends %s with %j from the auction bot to the hub bot",

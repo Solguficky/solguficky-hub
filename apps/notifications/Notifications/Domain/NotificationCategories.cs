@@ -37,9 +37,9 @@ public static class NotificationCategories
 {
     /// <summary>
     /// Права модерации очередей заявок: управление составом решает очередь
-    /// сообщества, модерация аукциона — очередь аукциона (ADR-064, пункт 12).
+    /// сообщества, допуск к торгам — очередь аукциона (ADR-064, пункт 12; RFC-016).
     /// </summary>
-    public static readonly IReadOnlyList<string> QueueModerators = ["manage_membership", "moderate_auction"];
+    public static readonly IReadOnlyList<string> QueueModerators = ["manage_members", "admit_bidders"];
 
     // Порядок объявления — порядок словаря в контракте, и он же порядок
     // категорий в глобальном снимке: снимок тотален по словарю, поэтому

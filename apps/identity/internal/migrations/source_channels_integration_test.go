@@ -25,9 +25,7 @@ func TestSourceChannelMigrationKeepsRecordedCodeAsUnknown(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := migrations.Apply(t.Context(), db); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
+	applyThrough(t, db, 16)
 
 	for id, wantUnknown := range map[string]bool{withCode: true, withoutCode: false} {
 		var unknown, noChannel bool
@@ -74,8 +72,8 @@ func TestSourceChannelSchemaRejectsWhatNoLinkCarries(t *testing.T) {
 
 	application := func(channel any, unknown bool) error {
 		_, err := db.ExecContext(t.Context(), `INSERT INTO identity_applications
-			(id, identity_id, requested_role, source_channel, source_unknown, created_at)
-			VALUES ($1, $2, 'guest', $3, $4, now())`, uuid.NewString(), identityID, channel, unknown)
+			(id, identity_id, queue, source_channel, source_unknown, created_at)
+			VALUES ($1, $2, 'auction', $3, $4, now())`, uuid.NewString(), identityID, channel, unknown)
 		return err
 	}
 	assertPgErrorCode(t, application(adsCode, true), "23514")

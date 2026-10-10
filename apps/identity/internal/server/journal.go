@@ -16,11 +16,12 @@ const (
 )
 
 const appendJournalSQL = `
-INSERT INTO identity_access_journal (id, identity_id, performed_by, action, role, reason, occurred_at)
-VALUES ($1, $2, $3, $4, $5, $6, now())`
+INSERT INTO identity_access_journal (id, identity_id, performed_by, action, circle, preset, reason, occurred_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, now())`
 
-// journalEntry — одно изменение роли или блокировки. Пустая роль означает
-// block/unblock: там роль не названа. Пустой performedBy означает системный
+// journalEntry — одно изменение круга, набора или блокировки. Выдача и отзыв
+// называют ровно одно из двух — круг или набор; block/unblock не называют
+// ничего. Пустой performedBy означает системный
 // переход: решение приняла система, а не человек. Пустой reason — решение без
 // предъявленного основания; непустой называет причину автоматической выдачи и
 // ведёт к записи, по которой она произошла.
@@ -28,7 +29,8 @@ type journalEntry struct {
 	identityID  string
 	performedBy uuid.NullUUID
 	action      string
-	role        string
+	circle      string
+	preset      string
 	reason      string
 }
 
@@ -37,16 +39,9 @@ func appendJournal(ctx context.Context, tx *sql.Tx, entry journalEntry) error {
 	if err != nil {
 		return err
 	}
-	var role any
-	if entry.role != "" {
-		role = entry.role
-	}
-	var reason any
-	if entry.reason != "" {
-		reason = entry.reason
-	}
 	_, err = tx.ExecContext(ctx, appendJournalSQL,
-		id.String(), entry.identityID, performedByValue(entry.performedBy), entry.action, role, reason)
+		id.String(), entry.identityID, performedByValue(entry.performedBy), entry.action,
+		nullableText(entry.circle), nullableText(entry.preset), nullableText(entry.reason))
 	return err
 }
 

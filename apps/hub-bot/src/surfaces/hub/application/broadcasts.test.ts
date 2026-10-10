@@ -9,8 +9,7 @@ import type { BroadcastRequest, Person } from "./types.js";
 
 const identity: Person = {
   identityId: "identity-id",
-  globalRoles: ["admin"],
-  rights: ["hub", "auction"],
+  rights: ["access-hub", "place-bids"],
 };
 
 function request(overrides: Partial<BroadcastRequest> = {}): BroadcastRequest {

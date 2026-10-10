@@ -1,7 +1,7 @@
 /// Адаптер порта Identity для `CheckMeetupAuthority` (ADR-051): один вызов
-/// `CheckGlobalRole` и сведение его ответа к словарю среза. Решения о праве он не
-/// принимает — какие роли спрашивать и что делать с ответом, решает срез.
-module Meetups.Transport.IdentityRoleClient
+/// `CheckAccessRight` и сведение его ответа к словарю среза. Решения о допуске он не
+/// принимает — какое право спрашивать и что делать с ответом, решает срез.
+module Meetups.Transport.IdentityRightClient
 
 open System
 open System.Threading.Tasks
@@ -29,15 +29,17 @@ type Send =
     Metadata
         -> DateTime
         -> Threading.CancellationToken
-        -> Identity.V1.CheckGlobalRoleRequest
-        -> Task<Identity.V1.CheckGlobalRoleResponse>
+        -> Identity.V1.CheckAccessRightRequest
+        -> Task<Identity.V1.CheckAccessRightResponse>
 
-let private role (value: GlobalRole) : Identity.V1.GlobalRole =
+let private right (value: AccessRight) : Identity.V1.AccessRight =
     match value with
-    | Maintainer -> Identity.V1.GlobalRole.Maintainer
-    | Administrator -> Identity.V1.GlobalRole.Admin
-    | Member -> Identity.V1.GlobalRole.Member
-    | Public -> Identity.V1.GlobalRole.Guest
+    | AccessHub -> Identity.V1.AccessRight.AccessHub
+    | PlaceBids -> Identity.V1.AccessRight.PlaceBids
+    | ManageMembers -> Identity.V1.AccessRight.ManageMembers
+    | AdmitBidders -> Identity.V1.AccessRight.AdmitBidders
+    | ManageMeetups -> Identity.V1.AccessRight.ManageMeetups
+    | GrantAdmins -> Identity.V1.AccessRight.GrantAdmins
 
 /// Сведение отказа Identity (ADR-051, п. 6). NOT_FOUND — неизвестный Identity
 /// человек — становится тем же «нет», что и `granted = false`: иначе посторонний
@@ -64,12 +66,11 @@ let metadata (serviceToken: string) (forwarded: Forwarded) : Metadata =
 
     headers
 
-let ask (send: Send) (serviceToken: string) (deadline: TimeSpan) (forwarded: Forwarded) : AskRoles =
-    fun (PersonId person) roles ->
+let ask (send: Send) (serviceToken: string) (deadline: TimeSpan) (forwarded: Forwarded) : AskRight =
+    fun (PersonId person) required ->
         task {
-            let request = Identity.V1.CheckGlobalRoleRequest(IdentityId = person.ToString "D")
-
-            request.AcceptedRoles.AddRange(roles |> Seq.map role)
+            let request =
+                Identity.V1.CheckAccessRightRequest(IdentityId = person.ToString "D", Right = right required)
 
             try
                 let due = min (DateTime.UtcNow + deadline) forwarded.Deadline
@@ -92,4 +93,4 @@ let connect (url: string) : Send =
     let client = Identity.V1.IdentityService.IdentityServiceClient channel
 
     fun headers deadline cancellation request ->
-        client.CheckGlobalRoleAsync(request, headers, Nullable deadline, cancellation).ResponseAsync
+        client.CheckAccessRightAsync(request, headers, Nullable deadline, cancellation).ResponseAsync

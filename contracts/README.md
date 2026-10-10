@@ -14,9 +14,9 @@ contracts/proto/
 │       └── auction_service.proto
 ├── identity/
 │   └── v1/
+│       ├── access.proto
 │       ├── identity_events.proto
-│       ├── identity_service.proto
-│       └── roles.proto
+│       └── identity_service.proto
 ├── meetups/
 │   └── v1/
 │       ├── meetups.proto
@@ -34,7 +34,7 @@ contracts/proto/
 
 Схемы прежнего аукциона удалены и контрактом не являются; `auction/v1` написан заново по словарю [ADR-047](../docs/decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md): публичные факты журналов лота и аукциона, команды участника и чтение состояния торгов. Первый NATS-контракт — `notifications/v1/notifications.proto`: адресный факт уведомления, который Notifications публикует каналам. Второй — `meetups/v1/meetups_events.proto`: исходящие факты журнала сходок. Третий — `identity/v1/identity_events.proto`: исходящие факты о доступе человека. Контракт Telegram Bot ещё не спроектирован.
 
-Файл домена делится по признаку «сервис, значения или исходящие факты», а не по транспорту: `meetups/v1/meetups.proto` и `identity/v1/roles.proto` несут только типы значений, `*_service.proto` — сам сервис и его запросы, а `*_events.proto` — то, что домен публикует наружу. Последние вынесены по той же причине, по которой вынесены значения: потребителю событий не нужен ни `MeetupsService` с его запросами, ни `IdentityService` с его операциями. Импорт через границу домена целится в файл значений: так `notifications/v1/notifications.proto` берёт расписание, жизненный цикл и видимость сходки, не зная `MeetupsService`. Внутри домена работает то же правило: `identity/v1/identity_events.proto` берёт `GlobalRole` из файла значений своего домена.
+Файл домена делится по признаку «сервис, значения или исходящие факты», а не по транспорту: `meetups/v1/meetups.proto` и `identity/v1/access.proto` несут только типы значений, `*_service.proto` — сам сервис и его запросы, а `*_events.proto` — то, что домен публикует наружу. Последние вынесены по той же причине, по которой вынесены значения: потребителю событий не нужен ни `MeetupsService` с его запросами, ни `IdentityService` с его операциями. Импорт через границу домена целится в файл значений: так `notifications/v1/notifications.proto` берёт расписание, жизненный цикл и видимость сходки, не зная `MeetupsService`. Внутри домена работает то же правило: `identity/v1/identity_events.proto` берёт `Circle`, `Preset` и `AccessRight` из файла значений своего домена.
 
 Потребителя это не освобождает от импортированного файла — фильтр `paths` отбирает, что генерируется, а не что резолвится, и срез из одного каталога `contracts/proto/notifications` даёт код с импортом на несгенерированный `meetups/v1/meetups_pb`. Но расширяется такой фильтр одним файлом значений, а не чужим сервисом с десятком его запросов и клиентской заглушкой.
 

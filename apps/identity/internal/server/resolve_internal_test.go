@@ -21,53 +21,61 @@ func TestResolveIdentityRejectsNonPositiveTelegramUserID(t *testing.T) {
 	}
 }
 
-func TestGlobalRoleMapsEveryDictionaryValue(t *testing.T) {
+func TestCircleMapsEveryDictionaryValue(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range []struct {
-		role string
-		want identityv1.GlobalRole
+		circle string
+		want   identityv1.Circle
 	}{
-		{roleMaintainer, identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER},
-		{roleAdmin, identityv1.GlobalRole_GLOBAL_ROLE_ADMIN},
-		{roleMember, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER},
-		{roleGuest, identityv1.GlobalRole_GLOBAL_ROLE_GUEST},
+		{circleMember, identityv1.Circle_CIRCLE_MEMBER},
+		{circleGuest, identityv1.Circle_CIRCLE_GUEST},
 	} {
-		got, ok := globalRole(tt.role)
+		got, ok := circleValue(tt.circle)
 		if !ok || got != tt.want {
-			t.Fatalf("globalRole(%q): got (%v, %t) want (%v, true)", tt.role, got, ok, tt.want)
+			t.Fatalf("circleValue(%q): got (%v, %t) want (%v, true)", tt.circle, got, ok, tt.want)
 		}
 	}
 }
 
-func TestGlobalRoleDropsUnknownValue(t *testing.T) {
+func TestCircleDropsUnknownValue(t *testing.T) {
 	t.Parallel()
 
-	for _, role := range []string{"owner", "administrator", "ADMIN", "community", ""} {
-		if got, ok := globalRole(role); ok {
-			t.Fatalf("globalRole(%q): got (%v, true) want drop", role, got)
+	for _, circle := range []string{"admin", "maintainer", "public", "MEMBER", ""} {
+		if got, ok := circleValue(circle); ok {
+			t.Fatalf("circleValue(%q): got (%v, true) want drop", circle, got)
 		}
 	}
 }
 
-// Номера значений — часть wire-контракта: админ остаётся единицей, новые роли
-// дописываются, а не вставляются. Тест падает на любом переиспользовании номера.
-func TestGlobalRoleWireNumbersAreStable(t *testing.T) {
+// Номера значений — часть wire-контракта: новые значения дописываются, а не
+// вставляются. Тест падает на любом переиспользовании номера.
+func TestAccessWireNumbersAreStable(t *testing.T) {
 	t.Parallel()
 
-	want := map[int32]string{
-		0: "GLOBAL_ROLE_UNSPECIFIED",
-		1: "GLOBAL_ROLE_ADMIN",
-		2: "GLOBAL_ROLE_MAINTAINER",
-		3: "GLOBAL_ROLE_MEMBER",
-		4: "GLOBAL_ROLE_GUEST",
-	}
-	if len(identityv1.GlobalRole_name) != len(want) {
-		t.Fatalf("GlobalRole_name: got %v want %v", identityv1.GlobalRole_name, want)
-	}
-	for number, name := range want {
-		if got := identityv1.GlobalRole_name[number]; got != name {
-			t.Fatalf("GlobalRole_name[%d]: got %q want %q", number, got, name)
+	for _, tt := range []struct {
+		names map[int32]string
+		want  map[int32]string
+	}{
+		{identityv1.Circle_name, map[int32]string{0: "CIRCLE_UNSPECIFIED", 1: "CIRCLE_MEMBER", 2: "CIRCLE_GUEST"}},
+		{identityv1.Preset_name, map[int32]string{0: "PRESET_UNSPECIFIED", 1: "PRESET_ADMIN", 2: "PRESET_MAINTAINER"}},
+		{identityv1.AccessRight_name, map[int32]string{
+			0: "ACCESS_RIGHT_UNSPECIFIED",
+			1: "ACCESS_RIGHT_ACCESS_HUB",
+			2: "ACCESS_RIGHT_PLACE_BIDS",
+			3: "ACCESS_RIGHT_MANAGE_MEMBERS",
+			4: "ACCESS_RIGHT_ADMIT_BIDDERS",
+			5: "ACCESS_RIGHT_MANAGE_MEETUPS",
+			6: "ACCESS_RIGHT_GRANT_ADMINS",
+		}},
+	} {
+		if len(tt.names) != len(tt.want) {
+			t.Fatalf("names: got %v want %v", tt.names, tt.want)
+		}
+		for number, name := range tt.want {
+			if got := tt.names[number]; got != name {
+				t.Fatalf("names[%d]: got %q want %q", number, got, name)
+			}
 		}
 	}
 }

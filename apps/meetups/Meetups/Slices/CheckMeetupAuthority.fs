@@ -2,12 +2,12 @@
 /// только о праве: сценарий вызывающей стороны — рассылка Notifications или что-то
 /// следующее — сюда не входит, поэтому ни в запросе, ни в ответе его нет (PER-224).
 ///
-/// Вызывающий приносит человека и набор отношений, но не роли: глобальную роль для
+/// Вызывающий приносит человека и набор отношений, но не права: право для
 /// отношения «администратор» Meetups спрашивает у Identity сам, на каждом запросе и
-/// без кэша (ADR-051). Роль, присланную вызывающим, пришлось бы принимать на веру.
+/// без кэша (ADR-051). Право, присланное вызывающим, пришлось бы принимать на веру.
 ///
 /// Решение по-прежнему принимается до загрузки: единственное отношение держится на
-/// глобальной роли, а не на записи сходки. Посторонний получает один и тот же отказ
+/// праве `manage_meetups`, а не на записи сходки. Посторонний получает один и тот же отказ
 /// для существующей, скрытой и отсутствующей сходки, а работа сервиса от
 /// существования не зависит, поэтому ответ неразличим и по времени. Различать
 /// «сходки нет» и «права нет» можно только тому, чьё право уже подтверждено:
@@ -37,8 +37,8 @@ type IdentityFailure =
     | Unavailable of string
     | Failed of string
 
-/// Держит ли человек хотя бы одну из ролей — вопрос `CheckGlobalRole`.
-type AskRoles = PersonId -> Set<GlobalRole> -> Task<Result<bool, IdentityFailure>>
+/// Держит ли человек право — вопрос `CheckAccessRight`.
+type AskRight = PersonId -> AccessRight -> Task<Result<bool, IdentityFailure>>
 
 /// То, что входящий вызов передаёт вызову Identity. `request_id` и `use_case`
 /// уходят заголовками: цепочка одна, и они рождены на краю, а не здесь (logging.md).
@@ -62,12 +62,12 @@ type Forwarded =
 [<RequireQualifiedAccess; NoComparison; NoEquality>]
 type Port =
     | Unconfigured
-    | Connected of (Forwarded -> AskRoles)
+    | Connected of (Forwarded -> AskRight)
 
 [<NoComparison; NoEquality>]
 type Deps =
     {
-        AskRoles: AskRoles option
+        AskRight: AskRight option
         Load: MeetupId -> Task<MeetupSnapshot option>
     }
 
@@ -79,14 +79,30 @@ type CheckMeetupAuthorityError =
     | IdentityFailed of string
     | NotFound
 
+/// Держит ли человек хотя бы одно из прав. `CheckAccessRight` спрашивает об одном
+/// праве, поэтому права спрашиваются по очереди до первого «да»; отказ Identity
+/// прерывает перебор, а не читается как «нет» (ADR-051, п. 6).
+let private holdsAny (ask: AskRight) (person: PersonId) (rights: Set<AccessRight>) =
+    let rec loop remaining =
+        task {
+            match remaining with
+            | [] -> return Ok false
+            | right :: rest ->
+                match! ask person right with
+                | Ok false -> return! loop rest
+                | outcome -> return outcome
+        }
+
+    loop (Set.toList rights)
+
 /// Ответ свежий на каждый вызов: кэша нет ни здесь, ни в контракте, потому что
 /// устаревшее разрешение равносильно пропущенной проверке (ADR-026).
 let execute (deps: Deps) (query: Query) : Task<Result<unit, CheckMeetupAuthorityError>> =
     task {
-        match deps.AskRoles with
+        match deps.AskRight with
         | None -> return Error(CheckMeetupAuthorityError.IdentityUnavailable "identity is not configured")
         | Some ask ->
-            match! ask query.Person (Access.globalRolesFor query.Accepted) with
+            match! holdsAny ask query.Person (Access.rightsFor query.Accepted) with
             | Error(IdentityFailure.Unavailable reason) ->
                 return Error(CheckMeetupAuthorityError.IdentityUnavailable reason)
             | Error(IdentityFailure.Failed reason) -> return Error(CheckMeetupAuthorityError.IdentityFailed reason)
@@ -106,7 +122,7 @@ module Composition =
 
     let buildDeps (services: IServiceProvider) (forwarded: Forwarded) : Deps =
         {
-            AskRoles =
+            AskRight =
                 match services.GetRequiredService<Port>() with
                 | Port.Unconfigured -> None
                 | Port.Connected connect -> Some(connect forwarded)
@@ -130,7 +146,7 @@ module Api =
         | CheckMeetupAuthorityError.IdentityUnavailable reason ->
             Status(StatusCode.Unavailable, $"the right cannot be confirmed now: {reason}")
         | CheckMeetupAuthorityError.IdentityFailed reason ->
-            Status(StatusCode.Internal, $"identity refused the role check: {reason}")
+            Status(StatusCode.Internal, $"identity refused the right check: {reason}")
         | CheckMeetupAuthorityError.NotFound -> Status(StatusCode.NotFound, "meetup not found")
 
     /// Разбор целиком до Identity: запрос, собранный неверно, в Identity не уходит, а

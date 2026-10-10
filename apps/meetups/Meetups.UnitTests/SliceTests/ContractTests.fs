@@ -16,9 +16,9 @@ let private minute hours minutes =
 
 let private canonical = "0199c0de-0000-7000-8000-0000000000f1"
 
-let private viewerWith (roles: Identity.V1.GlobalRole seq) =
+let private viewerWith (rights: Identity.V1.AccessRight seq) =
     let viewer = Meetups.V1.Viewer(IdentityId = canonical)
-    viewer.GlobalRoles.AddRange roles
+    viewer.Rights.AddRange rights
     viewer
 
 let private problem (result: Result<'a, Contract.InvalidRequest>) =
@@ -58,74 +58,84 @@ let ``Viewer should be refused when the identity is not a canonical UUIDv7`` () 
     test <@ problem (Contract.Inbound.viewer (Meetups.V1.Viewer())) = Some "viewer.identity_id" @>
 
 [<Fact>]
-let ``Viewer without roles should be an ordinary user`` () =
+let ``Viewer without rights should be an ordinary user`` () =
     let expected =
         {
             IdentityId = PersonId(Guid.Parse canonical)
-            Roles = Set.empty
+            Rights = Set.empty
         }
 
     test <@ Contract.Inbound.viewer (viewerWith []) = Ok expected @>
 
 [<Fact>]
-let ``Viewer with the admin role should carry it into the domain`` () =
-    let parsed = Contract.Inbound.viewer (viewerWith [ Identity.V1.GlobalRole.Admin ])
+let ``Viewer with the manage_meetups right should carry it into the domain`` () =
+    let parsed =
+        Contract.Inbound.viewer (
+            viewerWith
+                [
+                    Identity.V1.AccessRight.ManageMeetups
+                ]
+        )
 
     test
         <@
             parsed
-            |> Result.map (fun viewer -> Viewer.isAdministrator viewer) = Ok true
+            |> Result.map (fun viewer -> Viewer.canManageMeetups viewer) = Ok true
         @>
 
 [<Fact>]
-let ``Viewer with every known role should carry all of them into the domain`` () =
-    let roles =
+let ``Viewer with every known right should carry all of them into the domain`` () =
+    let rights =
         [
-            Identity.V1.GlobalRole.Maintainer
-            Identity.V1.GlobalRole.Admin
-            Identity.V1.GlobalRole.Member
-            Identity.V1.GlobalRole.Guest
+            Identity.V1.AccessRight.AccessHub
+            Identity.V1.AccessRight.PlaceBids
+            Identity.V1.AccessRight.ManageMembers
+            Identity.V1.AccessRight.AdmitBidders
+            Identity.V1.AccessRight.ManageMeetups
+            Identity.V1.AccessRight.GrantAdmins
         ]
 
-    let parsed = Contract.Inbound.viewer (viewerWith roles)
+    let parsed = Contract.Inbound.viewer (viewerWith rights)
 
-    let carried = parsed |> Result.map (fun viewer -> viewer.Roles)
+    let carried = parsed |> Result.map (fun viewer -> viewer.Rights)
 
     test
         <@
             carried = Ok(
                 Set.ofList
                     [
-                        Maintainer
-                        Administrator
-                        Member
-                        Public
+                        AccessHub
+                        PlaceBids
+                        ManageMembers
+                        AdmitBidders
+                        ManageMeetups
+                        GrantAdmins
                     ]
             )
         @>
 
-/// Схема объявляет UNSPECIFIED значением «роль неизвестна потребителю», поэтому
+/// Схема объявляет UNSPECIFIED значением «право неизвестно потребителю», поэтому
 /// неизвестное значение отбрасывается, а не отвергается: отказ превратил бы
-/// добавление роли в Identity в отказ обслуживания у Meetups.
+/// добавление права в Identity в отказ обслуживания у Meetups.
 [<Fact>]
-let ``Unknown role should be dropped instead of refusing the request`` () =
-    let roles =
+let ``Unknown right should be dropped instead of refusing the request`` () =
+    let rights =
         [
-            Identity.V1.GlobalRole.Unspecified
-            enum<Identity.V1.GlobalRole> 99
-            Identity.V1.GlobalRole.Admin
+            Identity.V1.AccessRight.Unspecified
+            enum<Identity.V1.AccessRight> 99
+            Identity.V1.AccessRight.ManageMeetups
         ]
 
-    let parsed = Contract.Inbound.viewer (viewerWith roles)
+    let parsed = Contract.Inbound.viewer (viewerWith rights)
 
-    test <@ parsed |> Result.map (fun viewer -> viewer.Roles) = Ok(Set.singleton Administrator) @>
+    test <@ parsed |> Result.map (fun viewer -> viewer.Rights) = Ok(Set.singleton ManageMeetups) @>
 
 [<Fact>]
-let ``Unknown role alone should not grant anything`` () =
+let ``Unknown right alone should not grant anything`` () =
     let parsed =
-        Contract.Inbound.viewer (viewerWith [ enum<Identity.V1.GlobalRole> 99 ])
+        Contract.Inbound.viewer (viewerWith [ enum<Identity.V1.AccessRight> 99 ])
 
-    test <@ parsed |> Result.map (fun viewer -> viewer.Roles) = Ok Set.empty @>
+    test <@ parsed |> Result.map (fun viewer -> viewer.Rights) = Ok Set.empty @>
 
 [<Fact>]
 let ``Snapshot of a draft should leave the first publication mark unset`` () =

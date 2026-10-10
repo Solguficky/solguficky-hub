@@ -28,7 +28,7 @@ describe("access matrix self-check", () => {
     expect(await checkAccessMatrix("auction", appOf("auction"))).toEqual([]);
   });
 
-  // Вход, каким он был до `RequestRole`: личность разрешена, заявки нет.
+  // Вход, каким он был до `RequestAccess`: личность разрешена, заявки нет.
   it("fails when /start resolves the identity instead of entering", async () => {
     const resolving: AccessMatrixApp =
       (ports) =>
@@ -46,8 +46,8 @@ describe("access matrix self-check", () => {
       appOf("hub")({
         ...ports,
         entry: {
-          requestRole: (request) =>
-            ports.entry.requestRole({ ...request, queue: "auction" }),
+          requestAccess: (request) =>
+            ports.entry.requestAccess({ ...request, queue: "auction" }),
         },
       })(input);
     expect(await kindsOf(wrongQueue, "hub: newcomer starts")).toEqual([
@@ -138,7 +138,7 @@ describe("access matrix self-check", () => {
             const resolved = await ports.identity.resolveIdentity(user);
             return {
               ...resolved,
-              viewer: { ...resolved.viewer, rights: ["auction"] },
+              viewer: { ...resolved.viewer, rights: ["place-bids"] },
             };
           },
         },

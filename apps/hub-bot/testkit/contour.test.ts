@@ -15,7 +15,7 @@ const snapshots = [
   { id: "a-archived", author, version: 4n },
   { id: "foreign", author: "another-author", version: 100n },
 ];
-const viewers: { identityId: string; globalRoles: number[] }[] = [];
+const viewers: { identityId: string; rights: number[] }[] = [];
 let server: http2.Http2Server;
 let direct: ReturnType<typeof openDirectClients>;
 
@@ -46,7 +46,7 @@ beforeAll(async () => {
             requireBot(context);
             return {};
           },
-          grantAdminRole(_request, context) {
+          grantPreset(_request, context) {
             requireToken(context, maintainerToken);
             return { changed: true };
           },
@@ -113,7 +113,7 @@ describe("direct contour clients", () => {
     });
     expect(viewers).toHaveLength(5);
     for (const viewer of viewers) {
-      expect(viewer).toMatchObject({ identityId: author, globalRoles: [] });
+      expect(viewer).toMatchObject({ identityId: author, rights: [] });
     }
   });
 

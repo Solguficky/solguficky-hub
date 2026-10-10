@@ -46,7 +46,7 @@ internal static class MeetupsSetup
             // `Host.build` падает на старте, а не на первом запросе. Значение
             // общее с ботом (CommunityTime).
             .WithEnvironment("MEETUPS_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
-            // Meetups и вызывающий (CheckGlobalRole в Identity), и вызываемый;
+            // Meetups и вызывающий (CheckAccessRight в Identity), и вызываемый;
             // вызывающие — по колонке Caller в integration.md (ADR-056).
             .WithServiceToken(context)
             .AcceptCallers(
@@ -54,7 +54,7 @@ internal static class MeetupsSetup
                 AppHostNames.Resources.HubBot,
                 AppHostNames.Resources.Notifications,
                 AppHostNames.Resources.Auction)
-            // Источник права для CheckMeetupAuthority: роль администратора Meetups
+            // Источник права для CheckMeetupAuthority: право вести сходки Meetups
             // спрашивает у Identity сам (ADR-051). Профиль без identity оставляет
             // переменную пустой, и метод честно отвечает UNAVAILABLE — остальные
             // операции Identity не нужны, поэтому профиль `meetups` его не поднимает.

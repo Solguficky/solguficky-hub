@@ -2,7 +2,7 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { HttpError, InputFile, type Transformer } from "grammy";
 import type { Update, UserFromGetMe } from "grammy/types";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AccessRight, GlobalRole } from "../../../gen/identity/v1/roles_pb.js";
+import { AccessRight } from "../../../gen/identity/v1/access_pb.js";
 import { inspectCall, reportViolations } from "../../../testkit/screen-lint.js";
 import {
   type EntryPort,
@@ -156,7 +156,7 @@ function portsWith(
   overrides: {
     lot?: Partial<LotView>;
     image?: LotImagePort["getLotImage"];
-    entry?: EntryPort["requestRole"];
+    entry?: EntryPort["requestAccess"];
     history?: readonly LotHistoryEntryView[];
     names?: Readonly<Record<string, string>>;
     // Аукционы по выборкам; по умолчанию аукцион ленты активен.
@@ -166,15 +166,15 @@ function portsWith(
   return () => ({
     identity: {
       resolveIdentity: async () => ({
-        viewer: { identityId: VIEWER_ID, rights: ["auction"] },
+        viewer: { identityId: VIEWER_ID, rights: ["place-bids"] },
         blocked: false,
       }),
     },
     entry: {
-      requestRole:
+      requestAccess:
         overrides.entry ??
         (async () => ({
-          viewer: { identityId: VIEWER_ID, rights: ["auction"] },
+          viewer: { identityId: VIEWER_ID, rights: ["place-bids"] },
           outcome: "already-held",
         })),
     },
@@ -385,11 +385,11 @@ describe("auction bot", () => {
   ])(
     "enters on %s with the auction queue and the first name",
     async (text, code) => {
-      const requestRole = vi.fn<EntryPort["requestRole"]>(async () => ({
+      const requestAccess = vi.fn<EntryPort["requestAccess"]>(async () => ({
         viewer: { identityId: VIEWER_ID, rights: [] },
         outcome: "pending",
       }));
-      const { bot, calls } = makeBot(portsWith({ entry: requestRole }));
+      const { bot, calls } = makeBot(portsWith({ entry: requestAccess }));
       await bot.handleUpdate(
         startUpdate({
           message_id: 1,
@@ -406,7 +406,7 @@ describe("auction bot", () => {
           ],
         }),
       );
-      expect(requestRole).toHaveBeenCalledExactlyOnceWith({
+      expect(requestAccess).toHaveBeenCalledExactlyOnceWith({
         user: { telegramUserId: 42 },
         queue: "auction",
         firstName: "Person",
@@ -684,13 +684,13 @@ describe("auction bot", () => {
   // `/start` при недоступном Identity: заявка не подана, и «Повторить»
   // повторяет вход с тем же кодом канала, а не открывает меню без заявки.
   it("retries the entry with the channel code after a failed /start", async () => {
-    const requestRole = vi
-      .fn<EntryPort["requestRole"]>(async () => ({
+    const requestAccess = vi
+      .fn<EntryPort["requestAccess"]>(async () => ({
         viewer: { identityId: VIEWER_ID, rights: [] },
         outcome: "pending",
       }))
       .mockRejectedValueOnce(new ConnectError("down", Code.Unavailable));
-    const { bot, calls } = makeBot(portsWith({ entry: requestRole }));
+    const { bot, calls } = makeBot(portsWith({ entry: requestAccess }));
     await bot.handleUpdate(
       startUpdate({
         message_id: 1,
@@ -713,7 +713,7 @@ describe("auction bot", () => {
       },
     });
     await bot.handleUpdate(lotPress({ data: startCallback("tg_ads") }));
-    expect(requestRole).toHaveBeenLastCalledWith({
+    expect(requestAccess).toHaveBeenLastCalledWith({
       user: { telegramUserId: 42 },
       queue: "auction",
       sourceCode: "tg_ads",
@@ -740,9 +740,9 @@ describe("auction bot", () => {
   });
 
   // `/faq` открывает FAQ новым сообщением с любого места и заявок не ставит.
-  it("answers /faq with the FAQ screen without requesting a role", async () => {
-    const requestRole = vi.fn<EntryPort["requestRole"]>();
-    const { bot, calls } = makeBot(portsWith({ entry: requestRole }));
+  it("answers /faq with the FAQ screen without requesting access", async () => {
+    const requestAccess = vi.fn<EntryPort["requestAccess"]>();
+    const { bot, calls } = makeBot(portsWith({ entry: requestAccess }));
     await bot.handleUpdate(faqUpdate());
     expect(calls).toHaveLength(1);
     expect(calls[0]).toMatchObject({
@@ -755,16 +755,16 @@ describe("auction bot", () => {
     expect(keyboardOf(calls[0]?.payload).at(-1)).toEqual([
       { text: "‹ Меню", callback_data: entryCallback("read") },
     ]);
-    expect(requestRole).not.toHaveBeenCalled();
+    expect(requestAccess).not.toHaveBeenCalled();
   });
 
   // Та же проверка доступа, что у `/start`: недопущенный получает свой кадр.
   it.each([
     [{ rights: [], blocked: false }, "not-admitted"],
-    [{ rights: ["auction"], blocked: true }, "blocked"],
+    [{ rights: ["place-bids"], blocked: true }, "blocked"],
     // Участнику сообщества бот аукциона и FAQ не открывает: только переход
     // в бот хаба (ADR-064, пункт 2).
-    [{ rights: ["hub", "auction"], blocked: false }, "in-community"],
+    [{ rights: ["access-hub", "place-bids"], blocked: false }, "in-community"],
   ] as const)(
     "refuses /faq to %j with the %s frame",
     async (person, reason) => {
@@ -1246,7 +1246,10 @@ describe("auction bot", () => {
         ...base,
         identity: {
           resolveIdentity: async () => ({
-            viewer: { identityId: VIEWER_ID, rights: ["hub", "auction"] },
+            viewer: {
+              identityId: VIEWER_ID,
+              rights: ["access-hub", "place-bids"],
+            },
             blocked: false,
           }),
         },
@@ -1347,8 +1350,7 @@ describe("waiting", () => {
     const identity = {
       resolveIdentity: rpcAfter(2_500, {
         identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-        globalRoles: [GlobalRole.GUEST],
-        rights: [AccessRight.AUCTION],
+        rights: [AccessRight.PLACE_BIDS],
         blocked: false,
       }),
     };
@@ -1461,9 +1463,12 @@ describe("waiting", () => {
       return {
         ...base,
         entry: {
-          requestRole: (request) =>
+          requestAccess: (request) =>
             new Promise((resolve) => {
-              setTimeout(() => resolve(base.entry.requestRole(request)), 1_500);
+              setTimeout(
+                () => resolve(base.entry.requestAccess(request)),
+                1_500,
+              );
             }),
         },
       };

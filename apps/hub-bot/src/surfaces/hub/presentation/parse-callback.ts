@@ -219,7 +219,7 @@ type PlainAction =
   | { kind: "manage-status"; token: string }
   // «Включить аукцион» на карточке сходки (PER-307). Кнопки входа в аукцион
   // здесь нет: она домена `auc`, и её пишет и разбирает аукционное дерево.
-  | { kind: "manage-auction"; token: string }
+  | { kind: "manage-meetups"; token: string }
   | { kind: "auction-faq"; auction: string }
   // Форма лота администратора (PER-319). Кнопки несут лот, а новый лот —
   // аукцион: сходку форма не называет, её знает Auction.
@@ -796,7 +796,7 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts.length === 4 && parts[2] === "status")
     return { kind: "manage-status", token: token.data };
   if (parts.length === 4 && parts[2] === "auction")
-    return { kind: "manage-auction", token: token.data };
+    return { kind: "manage-meetups", token: token.data };
   if (parts.length === 4 && parts[2] === "republish")
     return { kind: "manage-publish", token: token.data };
   if (parts.length === 4 && parts[2] === "unpublish")

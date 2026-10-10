@@ -1,12 +1,11 @@
 import { Code } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { BidSource } from "../../../gen/auction/v1/auction_pb.js";
-import { RoleRequestOutcome } from "../../../gen/identity/v1/identity_service_pb.js";
 import {
   AccessRight,
   ApplicationQueue,
-  GlobalRole,
-} from "../../../gen/identity/v1/roles_pb.js";
+} from "../../../gen/identity/v1/access_pb.js";
+import { AccessRequestOutcome } from "../../../gen/identity/v1/identity_service_pb.js";
 import { requestIdHeader } from "../../core/rpc-metadata.js";
 import {
   type AuctionRpc,
@@ -20,19 +19,17 @@ function rpcs() {
   const identity = {
     resolveIdentity: vi.fn(async () => ({
       identityId: "id-1",
-      globalRoles: [
-        GlobalRole.GUEST,
-        GlobalRole.UNSPECIFIED,
-        GlobalRole.MEMBER,
+      rights: [
+        AccessRight.ACCESS_HUB,
+        AccessRight.UNSPECIFIED,
+        AccessRight.PLACE_BIDS,
       ],
-      rights: [AccessRight.HUB, AccessRight.UNSPECIFIED, AccessRight.AUCTION],
       blocked: false,
     })),
-    requestRole: vi.fn(async () => ({
+    requestAccess: vi.fn(async () => ({
       identityId: "id-1",
-      globalRoles: [GlobalRole.GUEST, GlobalRole.UNSPECIFIED],
-      rights: [AccessRight.AUCTION],
-      outcome: RoleRequestOutcome.GRANTED_BY_ALLOWLIST,
+      rights: [AccessRight.PLACE_BIDS],
+      outcome: AccessRequestOutcome.GRANTED_BY_ALLOWLIST,
     })),
   };
   const snapshot = {
@@ -110,11 +107,11 @@ function rpcs() {
 // Смотрящий уходит в Auction с правами, как их вывел Identity, без ролей.
 const viewer = {
   identityId: "id-1",
-  rights: ["auction", "manage-auction"] as const,
+  rights: ["place-bids", "manage-meetups"] as const,
 };
 const wireViewer = {
   identityId: "id-1",
-  rights: [AccessRight.AUCTION, AccessRight.MANAGE_AUCTION],
+  rights: [AccessRight.PLACE_BIDS, AccessRight.MANAGE_MEETUPS],
 };
 const callOptions = {
   timeoutMs: 1_000,
@@ -147,7 +144,7 @@ describe("createPorts", () => {
       telegramUsername: "nick",
     });
     expect(resolved).toEqual({
-      viewer: { identityId: "id-1", rights: ["hub", "auction"] },
+      viewer: { identityId: "id-1", rights: ["access-hub", "place-bids"] },
       blocked: false,
     });
     expect(identity.resolveIdentity).toHaveBeenCalledWith(
@@ -158,17 +155,17 @@ describe("createPorts", () => {
 
   it("applies to the auction queue on /start and maps the answer", async () => {
     const { identity, ports } = rpcs();
-    const answer = await ports.entry.requestRole({
+    const answer = await ports.entry.requestAccess({
       user: { telegramUserId: 42, telegramUsername: "nick" },
       queue: "auction",
       sourceCode: "tg_ads",
       firstName: "Сова",
     });
     expect(answer).toEqual({
-      viewer: { identityId: "id-1", rights: ["auction"] },
+      viewer: { identityId: "id-1", rights: ["place-bids"] },
       outcome: "granted-by-allowlist",
     });
-    expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
+    expect(identity.requestAccess).toHaveBeenCalledExactlyOnceWith(
       {
         telegramUserId: 42n,
         telegramUsername: "nick",
@@ -187,13 +184,13 @@ describe("createPorts", () => {
     [undefined, {}],
   ])("sends the channel code %j as received", async (sourceCode, expected) => {
     const { identity, ports } = rpcs();
-    await ports.entry.requestRole({
+    await ports.entry.requestAccess({
       user: { telegramUserId: 42 },
       queue: "auction",
       ...(sourceCode === undefined ? {} : { sourceCode }),
       firstName: "Сова",
     });
-    expect(identity.requestRole).toHaveBeenCalledExactlyOnceWith(
+    expect(identity.requestAccess).toHaveBeenCalledExactlyOnceWith(
       {
         telegramUserId: 42n,
         queue: ApplicationQueue.AUCTION,
@@ -205,23 +202,22 @@ describe("createPorts", () => {
   });
 
   it.each([
-    [RoleRequestOutcome.ALREADY_HELD, "already-held"],
-    [RoleRequestOutcome.GRANTED_BY_ALLOWLIST, "granted-by-allowlist"],
-    [RoleRequestOutcome.PENDING, "pending"],
-    [RoleRequestOutcome.DECLINED, "declined"],
-    [RoleRequestOutcome.BLOCKED, "blocked"],
-    [RoleRequestOutcome.UNSPECIFIED, "unspecified"],
+    [AccessRequestOutcome.ALREADY_HELD, "already-held"],
+    [AccessRequestOutcome.GRANTED_BY_ALLOWLIST, "granted-by-allowlist"],
+    [AccessRequestOutcome.PENDING, "pending"],
+    [AccessRequestOutcome.DECLINED, "declined"],
+    [AccessRequestOutcome.BLOCKED, "blocked"],
+    [AccessRequestOutcome.UNSPECIFIED, "unspecified"],
     // Число, которого словарь ещё не знает, — отказ, а не допуск.
-    [99 as RoleRequestOutcome, "unspecified"],
+    [99 as AccessRequestOutcome, "unspecified"],
   ])("reads the outcome %s as %s", async (wire, outcome) => {
     const { identity, ports } = rpcs();
-    identity.requestRole.mockResolvedValue({
+    identity.requestAccess.mockResolvedValue({
       identityId: "id-1",
-      globalRoles: [],
       rights: [],
       outcome: wire,
     });
-    const answer = await ports.entry.requestRole({
+    const answer = await ports.entry.requestAccess({
       user: { telegramUserId: 42 },
       queue: "auction",
       firstName: "Сова",
@@ -372,9 +368,9 @@ describe("notification reads", () => {
       {} as AuctionRpc,
       1_000,
     );
-    expect(await reads.hasAuctionRight("id-1", "req-1")).toBe(false);
+    expect(await reads.holdsPlaceBids("id-1", "req-1")).toBe(false);
     expect(checkAccessRight).toHaveBeenCalledExactlyOnceWith(
-      { identityId: "id-1", right: AccessRight.AUCTION },
+      { identityId: "id-1", right: AccessRight.PLACE_BIDS },
       callOptions,
     );
   });
@@ -391,7 +387,7 @@ describe("notification reads", () => {
     expect(await reads.lotTitle("id-1", "lot-1", "req-1")).toBe("Кружка");
     expect(getLot).toHaveBeenCalledExactlyOnceWith(
       {
-        viewer: { identityId: "id-1", rights: [AccessRight.AUCTION] },
+        viewer: { identityId: "id-1", rights: [AccessRight.PLACE_BIDS] },
         lotId: "lot-1",
       },
       callOptions,

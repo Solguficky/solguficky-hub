@@ -35,14 +35,13 @@ func ExecBypassingShields(t *testing.T, db *sql.DB, query string, args ...any) {
 }
 
 // ExecAnnounced выполняет правку состояния доступа и пишет о ней событие той же
-// транзакцией, как это делает сервис. Повод и роль называет тест; согласие повода
-// со снимком проверяет схема.
+// транзакцией, как это делает сервис. Событие называет тест; согласие повода со
+// снимком проверяет схема.
 func ExecAnnounced(
 	t *testing.T,
 	db *sql.DB,
 	identityID string,
-	occasion outbox.Occasion,
-	role string,
+	event outbox.Event,
 	query string,
 	args ...any,
 ) {
@@ -55,7 +54,7 @@ func ExecAnnounced(
 	if _, err := tx.ExecContext(t.Context(), query, args...); err != nil {
 		t.Fatalf("announced exec: %v", err)
 	}
-	if err := outbox.Append(t.Context(), tx, identityID, occasion, role); err != nil {
+	if err := outbox.Append(t.Context(), tx, identityID, event); err != nil {
 		t.Fatalf("announce: %v", err)
 	}
 	if err := tx.Commit(); err != nil {

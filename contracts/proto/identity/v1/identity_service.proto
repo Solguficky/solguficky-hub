@@ -2,61 +2,65 @@ syntax = "proto3";
 
 package identity.v1;
 
-import "identity/v1/roles.proto";
+import "identity/v1/access.proto";
 
 // Resolves Telegram identities and exposes authenticated maintainer operations.
 service IdentityService {
   rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
   // Entry on /start: establishes the identity like ResolveIdentity and reports
-  // what became of the requested role.
-  rpc RequestRole(RequestRoleRequest) returns (RequestRoleResponse);
+  // what became of the request in the named queue.
+  rpc RequestAccess(RequestAccessRequest) returns (RequestAccessResponse);
   // Resolves an internal id back to the Telegram user id of that profile. It is
   // a separate operation and not a mode of ResolveIdentity: that one establishes
   // an identity and creates the profile at first contact, while this one must
   // answer NOT_FOUND for an id it does not know.
   rpc ResolveTelegramUserId(ResolveTelegramUserIdRequest) returns (ResolveTelegramUserIdResponse);
-  // Answers whether a known identity holds any of the roles the calling surface
-  // accepts, read from current state. The caller names the roles; Identity
-  // does not know which surface asks or what it guards.
-  rpc CheckGlobalRole(CheckGlobalRoleRequest) returns (CheckGlobalRoleResponse);
   // Answers whether a known identity holds the right now, read from current
-  // state: the right that comes with the circle or one granted apart from it.
+  // state: the right that comes with the circle or a preset, or one granted
+  // apart from them. Identity does not know which surface asks or what it
+  // guards.
   rpc CheckAccessRight(CheckAccessRightRequest) returns (CheckAccessRightResponse);
   // Resolves the author of a meetup to their Telegram username for the meetup
   // card.
   rpc ResolveOrganizerUsername(ResolveOrganizerUsernameRequest) returns (ResolveOrganizerUsernameResponse);
-  // Grants the global admin role to an existing identity. Requires maintainer authentication.
-  rpc GrantAdminRole(GrantAdminRoleRequest) returns (GrantAdminRoleResponse);
-  // Revokes the active global admin role. Requires maintainer authentication.
-  rpc RevokeAdminRole(RevokeAdminRoleRequest) returns (RevokeAdminRoleResponse);
-  // Grants the global maintainer role to an existing identity. Requires maintainer authentication.
-  rpc GrantMaintainerRole(GrantMaintainerRoleRequest) returns (GrantMaintainerRoleResponse);
-  // Revokes the active global maintainer role. Requires maintainer authentication.
-  rpc RevokeMaintainerRole(RevokeMaintainerRoleRequest) returns (RevokeMaintainerRoleResponse);
-  // Lists the people holding admin or maintainer, on behalf of a maintainer.
+  // Grants a preset to an existing identity. Requires maintainer
+  // authentication: the shared secret is the only way to grant
+  // PRESET_MAINTAINER. A person without the member circle gets it in the same
+  // call, because every right of a preset needs it.
+  rpc GrantPreset(GrantPresetRequest) returns (GrantPresetResponse);
+  // Revokes a preset. Requires maintainer authentication.
+  rpc RevokePreset(RevokePresetRequest) returns (RevokePresetResponse);
+  // Lists the people holding PRESET_ADMIN or PRESET_MAINTAINER, on behalf of a
+  // holder of ACCESS_RIGHT_GRANT_ADMINS.
   rpc ListAdministrators(ListAdministratorsRequest) returns (ListAdministratorsResponse);
-  // Grants admin, on behalf of a maintainer, to the profile with this username.
+  // Grants PRESET_ADMIN, on behalf of a holder of ACCESS_RIGHT_GRANT_ADMINS, to
+  // the member with this username. The holder may appoint themselves.
   rpc AppointAdministrator(AppointAdministratorRequest) returns (AppointAdministratorResponse);
-  // Revokes admin, on behalf of a maintainer.
+  // Revokes PRESET_ADMIN, on behalf of a holder of ACCESS_RIGHT_GRANT_ADMINS.
+  // Rights the person holds apart from the preset are untouched.
   rpc DismissAdministrator(DismissAdministratorRequest) returns (DismissAdministratorResponse);
   rpc ListCommunityMembers(ListCommunityMembersRequest) returns (ListCommunityMembersResponse);
   rpc AdmitCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   rpc BlockCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
-  // Demotes a hub member out of the member circle.
+  // Demotes a member to the guest circle, on behalf of a holder of
+  // ACCESS_RIGHT_MANAGE_MEMBERS: rights granted one by one are revoked and
+  // ACCESS_RIGHT_PLACE_BIDS is granted. A holder of a preset is refused with
+  // FAILED_PRECONDITION, as by BlockCommunityMember: the preset is revoked
+  // first by its own grantor.
   rpc DemoteCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
-  // Grants ACCESS_RIGHT_MODERATE_AUCTION to a member or a maintainer, who keeps
-  // their circle.
+  // Grants ACCESS_RIGHT_ADMIT_BIDDERS to a member, on behalf of a holder of
+  // ACCESS_RIGHT_MANAGE_MEMBERS.
   rpc GrantAuctionModeration(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
-  // Revokes the granted ACCESS_RIGHT_MODERATE_AUCTION. A right that comes with
-  // the circle itself is not revoked by it.
+  // Revokes the granted ACCESS_RIGHT_ADMIT_BIDDERS. A right that comes with a
+  // preset is not revoked by it.
   rpc RevokeAuctionModeration(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
-  // Lists the people holding ACCESS_RIGHT_MODERATE_AUCTION, on behalf of a
-  // holder of ACCESS_RIGHT_MANAGE_MEMBERSHIP.
+  // Lists the people holding ACCESS_RIGHT_ADMIT_BIDDERS, on behalf of a holder
+  // of ACCESS_RIGHT_MANAGE_MEMBERS.
   rpc ListAuctionModerators(ListAuctionModeratorsRequest) returns (ListAuctionModeratorsResponse);
-  // Revokes ACCESS_RIGHT_AUCTION granted to a guest, on behalf of a holder of
-  // ACCESS_RIGHT_MODERATE_AUCTION. The guest keeps the circle with whatever
+  // Revokes ACCESS_RIGHT_PLACE_BIDS granted to a guest, on behalf of a holder
+  // of ACCESS_RIGHT_ADMIT_BIDDERS. The guest keeps the circle with whatever
   // rights remain, and the revocation is recorded as a declined application in
-  // the auction queue: a later RequestRole there answers DECLINED until the
+  // the auction queue: a later RequestAccess there answers DECLINED until the
   // refusal is reconsidered. A right that comes with a circle is not revoked
   // by it.
   rpc RevokeAuctionRight(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
@@ -74,10 +78,14 @@ service IdentityService {
 }
 
 // The caller passes the identity established from the same Telegram update.
-// Identity applies authorization from these facts; the bot does not decide it.
+// Identity authorizes it by the rights it reads from its own current state;
+// the bot does not decide it.
 message IdentityActor {
+  // Rights are read by Identity, never taken from the caller.
+  reserved 2;
+  reserved "global_roles";
+
   string identity_id = 1;
-  repeated GlobalRole global_roles = 2;
 }
 
 message CommunityMember {
@@ -99,7 +107,7 @@ message ChangeCommunityMemberRequest {
 }
 message ChangeCommunityMemberResponse { bool changed = 1; }
 
-// A holder of ACCESS_RIGHT_MODERATE_AUCTION.
+// A holder of ACCESS_RIGHT_ADMIT_BIDDERS.
 message AuctionModerator {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
@@ -107,9 +115,9 @@ message AuctionModerator {
   optional string telegram_username = 2;
   // Telegram user id, for naming a moderator without a username.
   int64 telegram_user_id = 3;
-  // True when the right was granted apart from the circle, so that
-  // RevokeAuctionModeration takes it away. False when it comes with the
-  // administrator circle.
+  // True when the right was granted one by one, so that
+  // RevokeAuctionModeration takes it away. False when it comes only with
+  // PRESET_ADMIN.
   bool revocable = 4;
 }
 
@@ -202,10 +210,8 @@ message ApplicationCard {
   // Absent for applications created by data migration.
   optional string first_name = 5;
 
-  // Superseded by queue: GLOBAL_ROLE_MEMBER for the community queue,
-  // GLOBAL_ROLE_GUEST for the auction queue. The server keeps setting it until
-  // the field is removed.
-  GlobalRole requested_role = 6;
+  reserved 6;
+  reserved "requested_role";
 
   // Absent when the person came without a source code.
   ApplicationSource source = 7;
@@ -300,8 +306,8 @@ message RefusedApplication {
   // is no first_name: it is erased when the application is decided.
   optional string telegram_username = 4;
 
-  // Superseded by queue and still set, as in ApplicationCard.
-  GlobalRole requested_role = 5;
+  reserved 5;
+  reserved "requested_role";
 
   // Outcome is APPLICATION_OUTCOME_BLOCKED or APPLICATION_OUTCOME_DECLINED.
   ApplicationDecision decision = 6;
@@ -341,30 +347,33 @@ message ResolveIdentityRequest {
 }
 
 message ResolveIdentityResponse {
+  reserved 2, 4;
+  reserved "global_roles", "role";
+
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 
-  // Superseded by role and rights. Platform-wide roles; an empty set means an
-  // ordinary user. The server keeps setting it until the field is removed.
-  repeated GlobalRole global_roles = 2;
-
-  // True when the profile's block mark is on. It is not a role and is never
-  // derived from global_roles: blocking revokes active roles, so an empty set
-  // alone does not distinguish a blocked profile from one that never started.
+  // True when the profile's block mark is on. Blocking revokes the circle,
+  // presets and rights, so an empty state alone does not distinguish a blocked
+  // profile from one that never started.
   bool blocked = 3;
 
-  // The one active role-circle. GLOBAL_ROLE_UNSPECIFIED means no circle: a
-  // person never admitted, or a blocked one.
-  GlobalRole role = 4;
-
-  // Rights Identity derived from the circle and the separately granted rights,
-  // in no promised order. A surface admits by a right in this set and never by
-  // the role. Empty for a blocked profile. Domain permissions are not here; the
-  // owning domain applies them.
+  // Rights Identity derived from the circle, the presets and the rights granted
+  // one by one, in no promised order. A surface admits by a right in this set
+  // and never by the circle or a preset. Empty for a blocked profile. Domain
+  // permissions are not here; the owning domain applies them.
   repeated AccessRight rights = 5;
+
+  // The circle: which bot answers the person. CIRCLE_UNSPECIFIED means no
+  // circle: a person never admitted, or a blocked one.
+  Circle circle = 6;
+
+  // Presets the person holds, in no promised order, for showing them to
+  // people. Never read for admission.
+  repeated Preset presets = 7;
 }
 
-message RequestRoleRequest {
+message RequestAccessRequest {
   // Telegram user id taken from the /start update. The caller establishes it
   // at its own trusted boundary; this message carries no proof of that.
   int64 telegram_user_id = 1;
@@ -372,10 +381,8 @@ message RequestRoleRequest {
   // Username without the leading '@'. Absent when the account has none.
   optional string telegram_username = 2;
 
-  // Superseded by queue: GLOBAL_ROLE_MEMBER asks for the community queue,
-  // GLOBAL_ROLE_GUEST for the auction queue. Read only when queue is
-  // APPLICATION_QUEUE_UNSPECIFIED.
-  GlobalRole requested_role = 3;
+  reserved 3;
+  reserved "requested_role";
 
   // Channel code from the deep link payload "s_<code>", without the "s_"
   // prefix. Untrusted and passed as received; an empty code after "s_" is sent
@@ -386,51 +393,55 @@ message RequestRoleRequest {
   string first_name = 5;
 
   // The queue the calling surface applies to: the hub bot to the community
-  // queue, the auction bot to the auction queue.
+  // queue, the auction bot to the auction queue. Must not be
+  // APPLICATION_QUEUE_UNSPECIFIED.
   ApplicationQueue queue = 6;
 }
 
 // What became of the request in the named queue: of the circle the community
 // queue grants or of the right the auction queue grants. Only
 // GRANTED_BY_ALLOWLIST means the call itself granted it.
-enum RoleRequestOutcome {
+enum AccessRequestOutcome {
   // No value: an outcome unknown to the consumer. The consumer reads it as a
   // refusal.
-  ROLE_REQUEST_OUTCOME_UNSPECIFIED = 0;
+  ACCESS_REQUEST_OUTCOME_UNSPECIFIED = 0;
 
   // What the queue grants was held before the call, by the circle or as a
   // granted right.
-  ROLE_REQUEST_OUTCOME_ALREADY_HELD = 1;
+  ACCESS_REQUEST_OUTCOME_ALREADY_HELD = 1;
 
   // An allowed usernames entry was redeemed by this call and granted what the
   // queue grants.
-  ROLE_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST = 2;
+  ACCESS_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST = 2;
 
   // An application in the queue is open: created by this call or left by an
   // earlier one. The two are not distinguished.
-  ROLE_REQUEST_OUTCOME_PENDING = 3;
+  ACCESS_REQUEST_OUTCOME_PENDING = 3;
 
   // An earlier application in this queue was declined.
-  ROLE_REQUEST_OUTCOME_DECLINED = 4;
+  ACCESS_REQUEST_OUTCOME_DECLINED = 4;
 
   // The profile is blocked.
-  ROLE_REQUEST_OUTCOME_BLOCKED = 5;
+  ACCESS_REQUEST_OUTCOME_BLOCKED = 5;
 }
 
-message RequestRoleResponse {
+message RequestAccessResponse {
+  reserved 2, 4;
+  reserved "global_roles", "role";
+
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 
-  // Superseded by role and rights, as in ResolveIdentityResponse.
-  repeated GlobalRole global_roles = 2;
-
-  RoleRequestOutcome outcome = 3;
-
-  // The role-circle after the call, same meaning as in ResolveIdentityResponse.
-  GlobalRole role = 4;
+  AccessRequestOutcome outcome = 3;
 
   // Rights after the call, same meaning as in ResolveIdentityResponse.
   repeated AccessRight rights = 5;
+
+  // The circle after the call, same meaning as in ResolveIdentityResponse.
+  Circle circle = 6;
+
+  // Presets after the call, same meaning as in ResolveIdentityResponse.
+  repeated Preset presets = 7;
 }
 
 message ResolveTelegramUserIdRequest {
@@ -444,22 +455,6 @@ message ResolveTelegramUserIdResponse {
   // a zero here, so a channel cannot mistake "no such person" for a delivery
   // target.
   int64 telegram_user_id = 1;
-}
-
-message CheckGlobalRoleRequest {
-  // Canonical lowercase UUIDv7 string with hyphens of the person to check.
-  string identity_id = 1;
-
-  // Roles the calling surface accepts; holding any one of them grants. The set
-  // is matched as given: nested circles are not expanded, so a surface that
-  // accepts the member circle lists admin, maintainer and member itself. Must
-  // not be empty and must not contain GLOBAL_ROLE_UNSPECIFIED.
-  repeated GlobalRole accepted_roles = 2;
-}
-
-message CheckGlobalRoleResponse {
-  // True only when the identity holds an accepted role right now.
-  bool granted = 1;
 }
 
 message CheckAccessRightRequest {
@@ -493,60 +488,49 @@ message ResolveOrganizerUsernameResponse {
   optional string telegram_username = 1;
 }
 
-message GrantAdminRoleRequest {
+message GrantPresetRequest {
   // Canonical lowercase UUID string of an existing profile.
   string identity_id = 1;
+
+  // Must not be PRESET_UNSPECIFIED.
+  Preset preset = 2;
 }
 
-message GrantAdminRoleResponse {
-  // False when the role was already active.
+message GrantPresetResponse {
+  // False when the preset was already held.
   bool changed = 1;
 }
 
-message RevokeAdminRoleRequest {
+message RevokePresetRequest {
   // Canonical lowercase UUID string of an existing profile.
   string identity_id = 1;
+
+  // Must not be PRESET_UNSPECIFIED.
+  Preset preset = 2;
 }
 
-message RevokeAdminRoleResponse {
-  // False when there was no active role.
+message RevokePresetResponse {
+  // False when the preset was not held.
   bool changed = 1;
 }
 
-message GrantMaintainerRoleRequest {
-  // Canonical lowercase UUID string of an existing profile.
-  string identity_id = 1;
-}
-
-message GrantMaintainerRoleResponse {
-  // False when the role was already active.
-  bool changed = 1;
-}
-
-message RevokeMaintainerRoleRequest {
-  // Canonical lowercase UUID string of an existing profile.
-  string identity_id = 1;
-}
-
-message RevokeMaintainerRoleResponse {
-  // False when there was no active role.
-  bool changed = 1;
-}
-
-// In the administrator methods below actor.global_roles is ignored: only
-// actor.identity_id is read.
 message ListAdministratorsRequest { IdentityActor actor = 1; }
 
 message ListAdministratorsResponse { repeated Administrator administrators = 1; }
 
-// A person holding admin, maintainer or both.
+// A person holding PRESET_ADMIN, PRESET_MAINTAINER or both.
 message Administrator {
   string identity_id = 1;
   optional string telegram_username = 2;
   // Always positive.
   int64 telegram_user_id = 3;
-  // True when the person holds maintainer, with or without admin.
+  // True when the person holds PRESET_MAINTAINER, with or without
+  // PRESET_ADMIN.
   bool maintainer = 4;
+
+  // True when the person holds PRESET_ADMIN, so that DismissAdministrator
+  // takes it away.
+  bool admin = 5;
 }
 
 message AppointAdministratorRequest {
@@ -556,7 +540,7 @@ message AppointAdministratorRequest {
 }
 
 message AppointAdministratorResponse {
-  // False when the role was already active.
+  // False when the preset was already held.
   bool changed = 1;
   // The person the username resolved to.
   string identity_id = 2;
@@ -564,11 +548,11 @@ message AppointAdministratorResponse {
 
 message DismissAdministratorRequest {
   IdentityActor actor = 1;
-  // Canonical lowercase UUID string of the person losing admin.
+  // Canonical lowercase UUID string of the person losing PRESET_ADMIN.
   string identity_id = 2;
 }
 
 message DismissAdministratorResponse {
-  // False when there was no active role.
+  // False when the preset was not held.
   bool changed = 1;
 }

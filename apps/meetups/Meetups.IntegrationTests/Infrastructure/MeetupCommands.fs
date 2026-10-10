@@ -14,18 +14,18 @@ let otherAuthor = PersonId(Guid.Parse "0199c0de-0000-7000-8000-00000000000b")
 let now = DateTimeOffset(2026, 9, 7, 12, 0, 0, TimeSpan.Zero)
 
 /// Пишущие команды доступны администратору (ADR-031), поэтому вызов идёт от
-/// смотрящего с ролью, а не от голой личности: без роли срез откажет раньше, чем
+/// смотрящего с правом, а не от голой личности: без права срез откажет раньше, чем
 /// дойдёт до базы, и сценарий записи проверять станет нечего.
 let administrator =
     {
         IdentityId = author
-        Roles = Set.singleton Administrator
+        Rights = Set.singleton ManageMeetups
     }
 
 let otherAdministrator =
     {
         IdentityId = otherAuthor
-        Roles = Set.singleton Administrator
+        Rights = Set.singleton ManageMeetups
     }
 
 let attributes =

@@ -49,7 +49,8 @@ public class EffectivePreferenceTests
             .ShouldBeFalse();
     }
 
-    private static readonly string[] AdminRights = ["hub", "auction", "manage_membership", "moderate_auction"];
+    private static readonly string[] AdminRights =
+        ["access_hub", "place_bids", "admit_bidders", "manage_members", "manage_meetups"];
 
     [Fact]
     public void Global_NothingConfigured_CarriesEveryCategoryWithItsProductDefault()
@@ -72,15 +73,15 @@ public class EffectivePreferenceTests
         var snapshot = EffectivePreference.Global(
             Guid.NewGuid(),
             new Dictionary<NotificationCategory, bool> { [NotificationCategory.MeetupPublished] = false },
-            ["hub", "auction"]);
+            ["access_hub", "place_bids"]);
 
         Enabled(snapshot.Categories, NotificationCategory.MeetupPublished).ShouldBeFalse();
         Enabled(snapshot.Categories, NotificationCategory.MeetupChanged).ShouldBeTrue();
     }
 
     [Theory]
-    [InlineData("hub")]
-    [InlineData("auction")]
+    [InlineData("access_hub")]
+    [InlineData("place_bids")]
     [InlineData(null)]
     public void Global_PersonWithoutModerationRight_LeavesAccessRequestsOut(string? right)
     {
@@ -102,7 +103,7 @@ public class EffectivePreferenceTests
         var snapshot = EffectivePreference.Global(
             Guid.NewGuid(),
             new Dictionary<NotificationCategory, bool> { [NotificationCategory.AccessRequest] = false },
-            ["hub", "auction", "moderate_auction"]);
+            ["access_hub", "place_bids", "admit_bidders"]);
 
         Enabled(snapshot.Categories, NotificationCategory.AccessRequest).ShouldBeFalse();
     }

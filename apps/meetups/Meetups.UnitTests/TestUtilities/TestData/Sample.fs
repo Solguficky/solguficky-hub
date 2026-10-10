@@ -16,15 +16,15 @@ let meetupId = MeetupId(Guid.Parse "0199c0de-0000-7000-8000-0000000000f1")
 let administrator =
     {
         IdentityId = authorId
-        Roles = Set.singleton Administrator
+        Rights = Set.singleton ManageMeetups
     }
 
-/// Тот же человек, но без роли: автор отдельным правом не является, и на этом
+/// Тот же человек, но без права: автор отдельным правом не является, и на этом
 /// образце это видно без комментария.
 let ordinary =
     {
         IdentityId = authorId
-        Roles = Set.empty
+        Rights = Set.empty
     }
 
 /// Время приходит в домен значением, поэтому тесту достаточно двух моментов и он

@@ -73,7 +73,7 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
         {
             // Категория известна, но не этому человеку: это право, а не форма
             // запроса, поэтому PERMISSION_DENIED, а не INVALID_ARGUMENT.
-            throw Refused(StatusCode.PermissionDenied, "category is reserved to another role");
+            throw Refused(StatusCode.PermissionDenied, "category is reserved to holders of another right");
         }
     }
 

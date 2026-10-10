@@ -4,15 +4,15 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
+import { ApplicationQueue as WireQueue } from "../../../../gen/identity/v1/access_pb.js";
 import {
   ApplicationOutcome,
   type DecideApplicationResponse,
   IdentityService,
+  AccessRequestOutcome as WireAccessRequestOutcome,
   type ApplicationCard as WireApplicationCard,
   type RefusedApplication as WireRefusedApplication,
-  RoleRequestOutcome as WireRoleRequestOutcome,
 } from "../../../../gen/identity/v1/identity_service_pb.js";
-import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
 import { classifyRecipientFailure as classifyDeliveryRecipientFailure } from "../../../core/delivery/index.js";
 import { rightsOf, wireQueue } from "../../../core/identity/access.js";
 import {
@@ -24,6 +24,7 @@ import {
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import { communityLocalTime } from "../community-time.js";
 import type {
+  AccessRequester,
   ApplicationAdministrator,
   ApplicationCard,
   ApplicationDecision,
@@ -38,10 +39,9 @@ import type {
   ApplicationOutcome as Outcome,
   ReconsiderResult,
   RefusedApplication,
-  RequestRoleInput,
-  RequestRoleResult,
+  RequestAccessInput,
+  RequestAccessResult,
   ResolveIdentityInput,
-  RoleRequester,
   SourceChannelAdministrator,
   TelegramRecipientResolver,
   TelegramRecipientResult,
@@ -58,9 +58,9 @@ export type IdentityRpc = Pick<
   Client<typeof IdentityService>,
   "resolveIdentity"
 >;
-export type RoleRequestRpc = Pick<
+export type AccessRequestRpc = Pick<
   Client<typeof IdentityService>,
-  "requestRole"
+  "requestAccess"
 >;
 export type TelegramRecipientRpc = Pick<
   Client<typeof IdentityService>,
@@ -97,7 +97,7 @@ type ApplicationModeratorRpc = Pick<
 >;
 
 export type IdentityClient = IdentityResolver &
-  RoleRequester &
+  AccessRequester &
   TelegramRecipientResolver &
   OrganizerResolver &
   CommunityAdministrator &
@@ -126,7 +126,7 @@ export function createIdentityClient(
   });
   const client = createClient(IdentityService, transport);
   const resolver = createIdentityResolver(client, timeoutMs);
-  const requester = createRoleRequester(client, timeoutMs);
+  const requester = createAccessRequester(client, timeoutMs);
   const administrator = createCommunityAdministrator(client, timeoutMs);
   const applications = createApplicationAdministrator(client, {
     timeoutMs,
@@ -139,7 +139,7 @@ export function createIdentityClient(
   const organizers = createOrganizerResolver(client, timeoutMs);
   return {
     resolve: (input, meta) => resolver.resolve(input, meta),
-    requestRole: (input, meta) => requester.requestRole(input, meta),
+    requestAccess: (input, meta) => requester.requestAccess(input, meta),
     resolveTelegramUserId: (identityId, meta) =>
       recipients.resolveTelegramUserId(identityId, meta),
     resolveOrganizerUsername: (viewer, identityId, meta) =>
@@ -163,12 +163,8 @@ export function createCommunityAdministrator(
     timeoutMs: callTimeoutMs(meta, timeoutMs),
     ...callHeaders(meta),
   });
-  const actorMessage = (actor: {
-    identityId: string;
-    globalRoles: readonly string[];
-  }) => ({
+  const actorMessage = (actor: { identityId: string }) => ({
     identityId: actor.identityId,
-    globalRoles: actor.globalRoles.map(roleValue),
   });
   const change = async (call: () => Promise<{ changed: boolean }>) => {
     try {
@@ -251,12 +247,8 @@ export function createApplicationAdministrator(
     timeoutMs: callTimeoutMs(meta, timeoutMs),
     ...callHeaders(meta),
   });
-  const actorMessage = (actor: {
-    identityId: string;
-    globalRoles: readonly string[];
-  }) => ({
+  const actorMessage = (actor: { identityId: string }) => ({
     identityId: actor.identityId,
-    globalRoles: actor.globalRoles.map(roleValue),
   });
   return {
     async refusedApplications(actor, queue, meta) {
@@ -306,12 +298,8 @@ export function createAuctionModerationAdministrator(
     timeoutMs: callTimeoutMs(meta, timeoutMs),
     ...callHeaders(meta),
   });
-  const actorMessage = (actor: {
-    identityId: string;
-    globalRoles: readonly string[];
-  }) => ({
+  const actorMessage = (actor: { identityId: string }) => ({
     identityId: actor.identityId,
-    globalRoles: actor.globalRoles.map(roleValue),
   });
   return {
     async auctionModerators(actor, meta) {
@@ -379,12 +367,8 @@ export function createSourceChannelAdministrator(
     timeoutMs: callTimeoutMs(meta, timeoutMs),
     ...callHeaders(meta),
   });
-  const actorMessage = (actor: {
-    identityId: string;
-    globalRoles: readonly string[];
-  }) => ({
+  const actorMessage = (actor: { identityId: string }) => ({
     identityId: actor.identityId,
-    globalRoles: actor.globalRoles.map(roleValue),
   });
   return {
     async sourceChannels(actor, meta) {
@@ -419,7 +403,7 @@ function refusedOf(
   value: WireRefusedApplication,
   communityTimeZone: string,
 ): RefusedApplication | undefined {
-  const circle = circleOf(value.requestedRole);
+  const circle = circleOf(value.queue);
   const outcome =
     value.decision?.outcome === ApplicationOutcome.BLOCKED
       ? "blocked"
@@ -471,12 +455,8 @@ export function createApplicationModerator(
     timeoutMs: callTimeoutMs(meta, timeoutMs),
     ...callHeaders(meta),
   });
-  const actorMessage = (actor: {
-    identityId: string;
-    globalRoles: readonly string[];
-  }) => ({
+  const actorMessage = (actor: { identityId: string }) => ({
     identityId: actor.identityId,
-    globalRoles: actor.globalRoles.map(roleValue),
   });
   const decide = async (
     call: () => Promise<DecideApplicationResponse>,
@@ -551,16 +531,18 @@ export function createApplicationModerator(
   };
 }
 
-function circleOf(role: GlobalRole): "member" | "public" | undefined {
-  return role === GlobalRole.MEMBER
+// Круг, который выдаст заявка, — по её очереди: сообщество выдаёт участника,
+// аукцион — гостя. Незнакомая очередь карточку не даёт.
+function circleOf(queue: WireQueue): "member" | "public" | undefined {
+  return queue === WireQueue.COMMUNITY
     ? "member"
-    : role === GlobalRole.GUEST
+    : queue === WireQueue.AUCTION
       ? "public"
       : undefined;
 }
 
 function cardOf(value: WireApplicationCard): ApplicationCard | undefined {
-  const circle = circleOf(value.requestedRole);
+  const circle = circleOf(value.queue);
   const createdAtMs = Date.parse(value.createdAt);
   if (circle === undefined || Number.isNaN(createdAtMs)) return undefined;
   const label = value.source?.channelLabel;
@@ -636,21 +618,6 @@ function classifyAdminFailure(cause: unknown) {
   return { kind: "unavailable" as const, cause };
 }
 
-function roleValue(role: string): GlobalRole {
-  switch (role) {
-    case "admin":
-      return GlobalRole.ADMIN;
-    case "maintainer":
-      return GlobalRole.MAINTAINER;
-    case "member":
-      return GlobalRole.MEMBER;
-    case "public":
-      return GlobalRole.GUEST;
-    default:
-      return GlobalRole.UNSPECIFIED;
-  }
-}
-
 export function createIdentityResolver(
   rpc: IdentityRpc,
   timeoutMs = identityRpcTimeoutMs,
@@ -668,9 +635,6 @@ export function createIdentityResolver(
         return {
           kind: "resolved" as const,
           identityId: response.identityId,
-          globalRoles: response.globalRoles.flatMap(
-            (role) => roleName(role) ?? [],
-          ),
           rights: rightsOf(response.rights),
           blocked: response.blocked,
         };
@@ -681,17 +645,17 @@ export function createIdentityResolver(
   };
 }
 
-export function createRoleRequester(
-  rpc: RoleRequestRpc,
+export function createAccessRequester(
+  rpc: AccessRequestRpc,
   timeoutMs = identityRpcTimeoutMs,
-): RoleRequester {
+): AccessRequester {
   return {
-    async requestRole(
-      input: RequestRoleInput,
+    async requestAccess(
+      input: RequestAccessInput,
       meta?: RpcMetadata,
-    ): Promise<RequestRoleResult> {
+    ): Promise<RequestAccessResult> {
       try {
-        const response = await rpc.requestRole(
+        const response = await rpc.requestAccess(
           {
             telegramUserId: input.telegramUserId,
             ...(input.telegramUsername === undefined
@@ -710,11 +674,8 @@ export function createRoleRequester(
         return {
           kind: "answered",
           identityId: response.identityId,
-          globalRoles: response.globalRoles.flatMap(
-            (role) => roleName(role) ?? [],
-          ),
           rights: rightsOf(response.rights),
-          outcome: roleRequestOutcome(response.outcome),
+          outcome: accessRequestOutcome(response.outcome),
         };
       } catch (cause) {
         return classifyFailure(cause);
@@ -725,19 +686,19 @@ export function createRoleRequester(
 
 // Число, которого словарь ещё не знает, читается как `UNSPECIFIED`: по
 // контракту незнакомый исход — отказ, а не допуск.
-function roleRequestOutcome(
-  outcome: WireRoleRequestOutcome,
-): Extract<RequestRoleResult, { kind: "answered" }>["outcome"] {
+function accessRequestOutcome(
+  outcome: WireAccessRequestOutcome,
+): Extract<RequestAccessResult, { kind: "answered" }>["outcome"] {
   switch (outcome) {
-    case WireRoleRequestOutcome.ALREADY_HELD:
+    case WireAccessRequestOutcome.ALREADY_HELD:
       return "already-held";
-    case WireRoleRequestOutcome.GRANTED_BY_ALLOWLIST:
+    case WireAccessRequestOutcome.GRANTED_BY_ALLOWLIST:
       return "granted-by-allowlist";
-    case WireRoleRequestOutcome.PENDING:
+    case WireAccessRequestOutcome.PENDING:
       return "pending";
-    case WireRoleRequestOutcome.DECLINED:
+    case WireAccessRequestOutcome.DECLINED:
       return "declined";
-    case WireRoleRequestOutcome.BLOCKED:
+    case WireAccessRequestOutcome.BLOCKED:
       return "blocked";
     default:
       return "unspecified";
@@ -772,10 +733,7 @@ export function createOrganizerResolver(
       try {
         const response = await rpc.resolveOrganizerUsername(
           {
-            actor: {
-              identityId: viewer.identityId,
-              globalRoles: viewer.globalRoles.map(roleValue),
-            },
+            actor: { identityId: viewer.identityId },
             identityId,
           },
           { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
@@ -827,27 +785,4 @@ function classifyFailure(cause: unknown): IdentityFailure {
     return { kind: "rejected", code: Code[cause.code], cause };
   }
   return { kind: "unavailable", cause };
-}
-
-function roleName(role: GlobalRole): string | undefined {
-  switch (role) {
-    case GlobalRole.MAINTAINER:
-      return "maintainer";
-    case GlobalRole.ADMIN:
-      return "admin";
-    case GlobalRole.MEMBER:
-      return "member";
-    case GlobalRole.GUEST:
-      return "public";
-    case GlobalRole.UNSPECIFIED:
-      return "unspecified";
-    default:
-      // Новое значение словаря обязано получить имя: параметр типа never не
-      // соберётся. Число, которого словарь ещё не знает, игнорируется.
-      return ignoreUnknownRole(role);
-  }
-}
-
-function ignoreUnknownRole(_role: never): undefined {
-  return undefined;
 }

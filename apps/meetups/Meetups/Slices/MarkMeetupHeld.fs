@@ -114,8 +114,8 @@ module Api =
         match error with
         | MarkMeetupHeldError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | MarkMeetupHeldError.Forbidden NotAnAdministrator ->
-            Status(StatusCode.PermissionDenied, "an administrator role is required")
+        | MarkMeetupHeldError.Forbidden CannotManageMeetups ->
+            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
         | MarkMeetupHeldError.Domain MeetupNotFound
         | MarkMeetupHeldError.Domain DraftBelongsToAnotherAuthor -> Status(StatusCode.NotFound, "meetup not found")
         // Инварианты публикации и её момента решают другие срезы: пары невозможны,

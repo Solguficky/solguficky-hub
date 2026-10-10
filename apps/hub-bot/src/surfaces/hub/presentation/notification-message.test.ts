@@ -334,7 +334,7 @@ describe("access request", () => {
   it("names the hub request, leads to its queue and offers to stop requests", () => {
     const content: RenderableContent = {
       kind: "access-requested",
-      circle: "member",
+      queue: "community",
     };
     expect(renderNotification(content).text).toBe(
       "Новая заявка на доступ в сообщество",
@@ -348,13 +348,13 @@ describe("access request", () => {
     ]);
   });
 
-  // Очередь хаба допускает в member: аукционную заявку ведут в очередь
-  // аукциона, где допуск выдаёт право аукциона (PER-534). Категория у обоих
-  // кругов одна, и выключатель стоит под обоими.
+  // Очередь хаба допускает в участники: аукционную заявку ведут в очередь
+  // аукциона, где допуск выдаёт право ставить (PER-534). Категория у обеих
+  // очередей одна, и выключатель стоит под обеими.
   it("leads the auction request to the auction queue, not the hub one", () => {
     const content: RenderableContent = {
       kind: "access-requested",
-      circle: "public",
+      queue: "auction",
     };
     expect(renderNotification(content).text).toBe(
       "Новая заявка на участие в аукционе",
@@ -385,9 +385,12 @@ describe("access granted", () => {
   });
 });
 
-describe("role granted", () => {
+describe("preset granted", () => {
   it("names the administrator rights and leads to the start screen by a trace button", () => {
-    const content: RenderableContent = { kind: "role-granted", role: "admin" };
+    const content: RenderableContent = {
+      kind: "preset-granted",
+      preset: "admin",
+    };
     expect(renderNotification(content).text).toBe(
       "Тебе выданы права администратора сообщества. На стартовом экране появилось «Управление».",
     );

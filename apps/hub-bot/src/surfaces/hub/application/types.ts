@@ -13,12 +13,10 @@ import type {
 } from "../notifications/port.js";
 
 // Человек, каким его разрешил Identity. Допуск в хаб и пункты «Управления»
-// решают `rights`, они же уходят в Auction в смотрящем; роли едут транзитом
-// в Meetups, и по роли администратора бот показывает только пункты, которые
-// Meetups решает по ней.
+// решают `rights` (RFC-016); те же права уходят смотрящим в Meetups и Auction,
+// и сервис решает по ним сам.
 export type Person = {
   identityId: string;
-  globalRoles: readonly string[];
   rights: readonly AccessRight[];
 };
 // Как карточка называет автора (PER-404): самому автору — «вы», остальным —
@@ -35,7 +33,7 @@ export type MeetupAuctionView =
   | { kind: "open"; auctionId: string };
 // `source` — ссылка канала прихода `s_<код>` (ADR-060, пункт 17). Код —
 // недоверенный хвост без префикса: Identity сам решает, известен ли канал, и
-// до него код доносит операция входа `RequestRole`.
+// до него код доносит операция входа `RequestAccess`.
 export type DeepLink =
   | { kind: "meetup"; payload: string }
   | { kind: "source"; code: string }

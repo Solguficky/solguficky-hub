@@ -3,30 +3,29 @@ import { Code, ConnectError } from "@connectrpc/connect";
 import { Http2SessionManager } from "@connectrpc/connect-node";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  AccessRight,
+  ApplicationQueue,
+} from "../../../../gen/identity/v1/access_pb.js";
+import {
+  AccessRequestOutcome,
   ApplicationCardSchema,
   ApplicationOutcome,
   DecideApplicationResponseSchema,
   ListRefusedApplicationsResponseSchema,
   ReadApplicationQueueResponseSchema,
   RefusedApplicationSchema,
-  RequestRoleResponseSchema,
+  RequestAccessResponseSchema,
   ResolveIdentityResponseSchema,
-  RoleRequestOutcome,
 } from "../../../../gen/identity/v1/identity_service_pb.js";
-import {
-  AccessRight,
-  ApplicationQueue,
-  GlobalRole,
-} from "../../../../gen/identity/v1/roles_pb.js";
 import { noopTracing } from "../../../core/tracing.js";
 import {
+  createAccessRequester,
   createApplicationAdministrator,
   createApplicationModerator,
   createAuctionModerationAdministrator,
   createIdentityClient,
   createIdentityResolver,
   createOrganizerResolver,
-  createRoleRequester,
   createTelegramRecipientResolver,
   requestIdHeader,
   useCaseHeader,
@@ -107,8 +106,7 @@ describe("identity client", () => {
           seenTimeout = options?.timeoutMs;
           return create(ResolveIdentityResponseSchema, {
             identityId: "id-1",
-            globalRoles: [GlobalRole.ADMIN],
-            rights: [AccessRight.HUB, AccessRight.AUCTION],
+            rights: [AccessRight.ACCESS_HUB, AccessRight.PLACE_BIDS],
           });
         },
       },
@@ -119,42 +117,33 @@ describe("identity client", () => {
     ).resolves.toEqual({
       kind: "resolved",
       identityId: "id-1",
-      globalRoles: ["admin"],
-      rights: ["hub", "auction"],
+      rights: ["access-hub", "place-bids"],
       blocked: false,
     });
     expect(seenTimeout).toBe(75);
   });
 
-  it("maps every known global role to its canonical name", async () => {
+  it("resolves an identity without rights to an empty set", async () => {
     const identity = createIdentityResolver({
       resolveIdentity: async () =>
         create(ResolveIdentityResponseSchema, {
           identityId: "id-1",
-          globalRoles: [
-            GlobalRole.MAINTAINER,
-            GlobalRole.ADMIN,
-            GlobalRole.MEMBER,
-            GlobalRole.GUEST,
-          ],
         }),
     });
 
     await expect(identity.resolve({ telegramUserId: 1n })).resolves.toEqual({
       kind: "resolved",
       identityId: "id-1",
-      globalRoles: ["maintainer", "admin", "member", "public"],
       rights: [],
       blocked: false,
     });
   });
 
-  it("reads the blocked mark separately from the role set", async () => {
+  it("reads the blocked mark separately from the rights", async () => {
     const identity = createIdentityResolver({
       resolveIdentity: async () =>
         create(ResolveIdentityResponseSchema, {
           identityId: "id-1",
-          globalRoles: [GlobalRole.ADMIN],
           blocked: true,
         }),
     });
@@ -162,7 +151,6 @@ describe("identity client", () => {
     await expect(identity.resolve({ telegramUserId: 1n })).resolves.toEqual({
       kind: "resolved",
       identityId: "id-1",
-      globalRoles: ["admin"],
       rights: [],
       blocked: true,
     });
@@ -180,16 +168,15 @@ describe("identity client", () => {
     await expect(identity.resolve({ telegramUserId: 1n })).resolves.toEqual({
       kind: "resolved",
       identityId: "id-1",
-      globalRoles: [],
       rights: [],
       blocked: true,
     });
   });
 
-  // Поле 2 (global_roles) со значением 99 и поле 3 (blocked) = true: более новая
-  // Identity может прислать роль, которой этот клиент ещё не знает. Разбор не
-  // падает, роль игнорируется, отметка читается отдельно.
-  it("parses an unknown role value off the wire and ignores it", async () => {
+  // Поле 2 (снятое `global_roles`) со значением 99 и поле 3 (blocked) = true:
+  // сервер может прислать поле, которого этот клиент не знает. Разбор не
+  // падает, поле игнорируется, отметка читается отдельно.
+  it("parses an unknown field off the wire and ignores it", async () => {
     const response = fromBinary(
       ResolveIdentityResponseSchema,
       Uint8Array.of(0x10, 0x63, 0x18, 0x01),
@@ -201,7 +188,6 @@ describe("identity client", () => {
     await expect(identity.resolve({ telegramUserId: 1n })).resolves.toEqual({
       kind: "resolved",
       identityId: "",
-      globalRoles: [],
       rights: [],
       blocked: true,
     });
@@ -336,7 +322,6 @@ describe("organizer resolver", () => {
   const organizerId = "0192f0a0-0000-7000-8000-00000000a001";
   const viewer = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-    globalRoles: ["member"],
   };
 
   function failing(cause: unknown) {
@@ -359,7 +344,6 @@ describe("organizer resolver", () => {
       {
         actor: {
           identityId: viewer.identityId,
-          globalRoles: [GlobalRole.MEMBER],
         },
         identityId: organizerId,
       },
@@ -398,13 +382,12 @@ describe("organizer resolver", () => {
 describe("application administrator", () => {
   const actor = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-    globalRoles: ["admin"],
   };
   const applicationId = "0192f0a0-0000-7000-8000-00000000a001";
 
   function refusedRow(
     overrides: Partial<{
-      requestedRole: GlobalRole;
+      queue: ApplicationQueue;
       outcome: ApplicationOutcome;
       decidedAt: string;
     }> = {},
@@ -414,7 +397,7 @@ describe("application administrator", () => {
       identityId: "0192f0a0-0000-7000-8000-00000000b001",
       telegramUserId: 42n,
       telegramUsername: "refused",
-      requestedRole: overrides.requestedRole ?? GlobalRole.GUEST,
+      queue: overrides.queue ?? ApplicationQueue.AUCTION,
       decision: {
         outcome: overrides.outcome ?? ApplicationOutcome.BLOCKED,
         decidedBy: { identityId: actor.identityId, telegramUserId: 7n },
@@ -463,7 +446,7 @@ describe("application administrator", () => {
   it("reads a declined refusal of the hub circle", async () => {
     const result = await listing(
       refusedRow({
-        requestedRole: GlobalRole.MEMBER,
+        queue: ApplicationQueue.COMMUNITY,
         outcome: ApplicationOutcome.DECLINED,
       }),
     ).refusedApplications(actor, "community");
@@ -479,7 +462,7 @@ describe("application administrator", () => {
       "an outcome that is not a refusal",
       { outcome: ApplicationOutcome.ADMITTED },
     ],
-    ["a circle the surfaces never ask", { requestedRole: GlobalRole.ADMIN }],
+    ["a queue the surfaces never ask", { queue: ApplicationQueue.UNSPECIFIED }],
     ["a moment that is not RFC 3339", { decidedAt: "yesterday" }],
   ])("calls the whole list a contract violation on %s", async (_, row) => {
     await expect(
@@ -523,7 +506,6 @@ describe("application administrator", () => {
       {
         actor: {
           identityId: actor.identityId,
-          globalRoles: [GlobalRole.ADMIN],
         },
         applicationId,
       },
@@ -555,7 +537,6 @@ describe("application administrator", () => {
 describe("auction moderation administrator", () => {
   const actor = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-    globalRoles: ["admin"],
   };
   const memberId = "0192f0a0-0000-7000-8000-00000000b001";
 
@@ -622,7 +603,7 @@ describe("auction moderation administrator", () => {
       administrator.revokeAuctionModeration(actor, memberId),
     ).resolves.toEqual({ kind: "ok", value: false });
     const request = {
-      actor: { identityId: actor.identityId, globalRoles: [GlobalRole.ADMIN] },
+      actor: { identityId: actor.identityId },
       identityId: memberId,
     };
     expect(grantAuctionModeration).toHaveBeenCalledWith(
@@ -654,7 +635,6 @@ describe("auction moderation administrator", () => {
 describe("application moderator", () => {
   const actor = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-    globalRoles: ["admin"],
   };
   const applicationId = "0192f0a0-0000-7000-8000-00000000a001";
   const createdAt = "2026-10-02T11:05:00.123Z";
@@ -680,7 +660,7 @@ describe("application moderator", () => {
 
   function cardRow(
     overrides: Partial<{
-      requestedRole: GlobalRole;
+      queue: ApplicationQueue;
       createdAt: string;
       source: { channelLabel?: string } | undefined;
     }> = {},
@@ -690,7 +670,7 @@ describe("application moderator", () => {
       identityId: "0192f0a0-0000-7000-8000-00000000b001",
       telegramUserId: 42n,
       firstName: "Иван",
-      requestedRole: overrides.requestedRole ?? GlobalRole.GUEST,
+      queue: overrides.queue ?? ApplicationQueue.AUCTION,
       ...("source" in overrides
         ? overrides.source === undefined
           ? {}
@@ -730,7 +710,6 @@ describe("application moderator", () => {
       {
         actor: {
           identityId: actor.identityId,
-          globalRoles: [GlobalRole.ADMIN],
         },
         queue: ApplicationQueue.AUCTION,
         after: { createdAt, applicationId },
@@ -762,7 +741,7 @@ describe("application moderator", () => {
   });
 
   it.each([
-    ["a circle the surfaces never ask", { requestedRole: GlobalRole.ADMIN }],
+    ["a queue the surfaces never ask", { queue: ApplicationQueue.UNSPECIFIED }],
     ["a moment that is not RFC 3339", { createdAt: "yesterday" }],
   ])("calls a card with %s a contract violation", async (_, card) => {
     await expect(
@@ -819,7 +798,6 @@ describe("application moderator", () => {
       {
         actor: {
           identityId: actor.identityId,
-          globalRoles: [GlobalRole.ADMIN],
         },
         applicationId,
       },
@@ -884,22 +862,21 @@ describe("application moderator", () => {
   });
 });
 
-describe("role requester", () => {
-  const answer = (outcome: RoleRequestOutcome) =>
-    create(RequestRoleResponseSchema, {
+describe("access requester", () => {
+  const answer = (outcome: AccessRequestOutcome) =>
+    create(RequestAccessResponseSchema, {
       identityId: "id-1",
-      globalRoles: [GlobalRole.MEMBER, GlobalRole.GUEST],
-      rights: [AccessRight.HUB, AccessRight.AUCTION],
+      rights: [AccessRight.ACCESS_HUB, AccessRight.PLACE_BIDS],
       outcome,
     });
 
   it("applies to the queue with the channel code and the first name", async () => {
-    const requestRole = vi.fn(async () =>
-      answer(RoleRequestOutcome.GRANTED_BY_ALLOWLIST),
+    const requestAccess = vi.fn(async () =>
+      answer(AccessRequestOutcome.GRANTED_BY_ALLOWLIST),
     );
-    const identity = createRoleRequester({ requestRole }, 75);
+    const identity = createAccessRequester({ requestAccess }, 75);
     await expect(
-      identity.requestRole(
+      identity.requestAccess(
         {
           telegramUserId: 42n,
           telegramUsername: "alice",
@@ -912,11 +889,10 @@ describe("role requester", () => {
     ).resolves.toEqual({
       kind: "answered",
       identityId: "id-1",
-      globalRoles: ["member", "public"],
-      rights: ["hub", "auction"],
+      rights: ["access-hub", "place-bids"],
       outcome: "granted-by-allowlist",
     });
-    expect(requestRole).toHaveBeenCalledExactlyOnceWith(
+    expect(requestAccess).toHaveBeenCalledExactlyOnceWith(
       {
         telegramUserId: 42n,
         telegramUsername: "alice",
@@ -940,14 +916,16 @@ describe("role requester", () => {
     ["", { sourceCode: "" }],
     [undefined, {}],
   ])("sends the channel code %j as received", async (sourceCode, expected) => {
-    const requestRole = vi.fn(async () => answer(RoleRequestOutcome.PENDING));
-    await createRoleRequester({ requestRole }).requestRole({
+    const requestAccess = vi.fn(async () =>
+      answer(AccessRequestOutcome.PENDING),
+    );
+    await createAccessRequester({ requestAccess }).requestAccess({
       telegramUserId: 42n,
       queue: "auction",
       ...(sourceCode === undefined ? {} : { sourceCode }),
       firstName: "Сова",
     });
-    expect(requestRole).toHaveBeenCalledExactlyOnceWith(
+    expect(requestAccess).toHaveBeenCalledExactlyOnceWith(
       {
         telegramUserId: 42n,
         queue: ApplicationQueue.AUCTION,
@@ -959,20 +937,20 @@ describe("role requester", () => {
   });
 
   it.each([
-    [RoleRequestOutcome.ALREADY_HELD, "already-held"],
-    [RoleRequestOutcome.GRANTED_BY_ALLOWLIST, "granted-by-allowlist"],
-    [RoleRequestOutcome.PENDING, "pending"],
-    [RoleRequestOutcome.DECLINED, "declined"],
-    [RoleRequestOutcome.BLOCKED, "blocked"],
-    [RoleRequestOutcome.UNSPECIFIED, "unspecified"],
+    [AccessRequestOutcome.ALREADY_HELD, "already-held"],
+    [AccessRequestOutcome.GRANTED_BY_ALLOWLIST, "granted-by-allowlist"],
+    [AccessRequestOutcome.PENDING, "pending"],
+    [AccessRequestOutcome.DECLINED, "declined"],
+    [AccessRequestOutcome.BLOCKED, "blocked"],
+    [AccessRequestOutcome.UNSPECIFIED, "unspecified"],
     // Число, которого словарь ещё не знает, — отказ, а не допуск.
-    [99 as RoleRequestOutcome, "unspecified"],
+    [99 as AccessRequestOutcome, "unspecified"],
   ])("reads the outcome %s as %s", async (wire, outcome) => {
-    const identity = createRoleRequester({
-      requestRole: async () => answer(wire),
+    const identity = createAccessRequester({
+      requestAccess: async () => answer(wire),
     });
     await expect(
-      identity.requestRole({
+      identity.requestAccess({
         telegramUserId: 42n,
         queue: "community",
         firstName: "Сова",
@@ -982,9 +960,9 @@ describe("role requester", () => {
 
   it("tells an unavailable Identity from a rejected request", async () => {
     const failing = (cause: unknown) =>
-      createRoleRequester({
-        requestRole: () => Promise.reject(cause),
-      }).requestRole({
+      createAccessRequester({
+        requestAccess: () => Promise.reject(cause),
+      }).requestAccess({
         telegramUserId: 42n,
         queue: "community",
         firstName: "Сова",
@@ -993,18 +971,18 @@ describe("role requester", () => {
       failing(new ConnectError("connect", Code.Unavailable)),
     ).resolves.toMatchObject({ kind: "unavailable" });
     await expect(
-      failing(new ConnectError("requested_role", Code.InvalidArgument)),
+      failing(new ConnectError("queue", Code.InvalidArgument)),
     ).resolves.toMatchObject({ kind: "rejected", code: "InvalidArgument" });
   });
 
   it("does not call identity once the action budget is spent", async () => {
-    const requestRole = vi.fn();
+    const requestAccess = vi.fn();
     await expect(
-      createRoleRequester({ requestRole }).requestRole(
+      createAccessRequester({ requestAccess }).requestAccess(
         { telegramUserId: 42n, queue: "community", firstName: "Сова" },
         { deadlineAt: Date.now() - 1 },
       ),
     ).resolves.toMatchObject({ kind: "unavailable" });
-    expect(requestRole).not.toHaveBeenCalled();
+    expect(requestAccess).not.toHaveBeenCalled();
   });
 });

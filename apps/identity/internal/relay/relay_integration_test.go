@@ -248,7 +248,7 @@ func TestTickPublishesVersionsOfOneProfileInOrder(t *testing.T) {
 	t.Parallel()
 	db := migratedDB(t)
 	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab4031"
-	testdb.ExecAnnounced(t, db, identityID, outbox.ProfileRegistered, "",
+	testdb.ExecAnnounced(t, db, identityID, outbox.Event{Occasion: outbox.ProfileRegistered},
 		`INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9431)`, identityID)
 
 	early, err := db.BeginTx(t.Context(), nil)
@@ -260,13 +260,13 @@ func TestTickPublishesVersionsOfOneProfileInOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	testdb.ExecAnnounced(t, db, identityID, outbox.ProfileBlocked, "",
+	testdb.ExecAnnounced(t, db, identityID, outbox.Event{Occasion: outbox.ProfileBlocked},
 		`UPDATE profiles SET blocked = true WHERE id = $1`, identityID)
 
 	if _, err := early.ExecContext(t.Context(), `UPDATE profiles SET blocked = false WHERE id = $1`, identityID); err != nil {
 		t.Fatal(err)
 	}
-	if err := outbox.Append(t.Context(), early, identityID, outbox.ProfileUnblocked, ""); err != nil {
+	if err := outbox.Append(t.Context(), early, identityID, outbox.Event{Occasion: outbox.ProfileUnblocked}); err != nil {
 		t.Fatal(err)
 	}
 	if err := early.Commit(); err != nil {
@@ -320,7 +320,7 @@ func TestRelayDeliversOutboxToTheStream(t *testing.T) {
 		}
 	}
 	_, blocked := storedEvent(t, stream, 2)
-	if blocked.GetProfileBlocked() == nil || !blocked.GetState().GetBlocked() || len(blocked.GetState().GetGlobalRoles()) != 0 {
+	if blocked.GetProfileBlocked() == nil || !blocked.GetState().GetBlocked() || len(blocked.GetState().GetRights()) != 0 {
 		t.Fatalf("profile_blocked: %v", blocked)
 	}
 }
@@ -352,9 +352,9 @@ func migratedDB(t *testing.T) *sql.DB {
 func registerAndBlock(t *testing.T, db *sql.DB, n int) string {
 	t.Helper()
 	identityID := fmt.Sprintf("0198f2a4-7c1e-7d3a-9b21-4f8e12ab40%02d", n)
-	testdb.ExecAnnounced(t, db, identityID, outbox.ProfileRegistered, "",
+	testdb.ExecAnnounced(t, db, identityID, outbox.Event{Occasion: outbox.ProfileRegistered},
 		`INSERT INTO profiles (id, telegram_user_id) VALUES ($1, $2)`, identityID, 9400+n)
-	testdb.ExecAnnounced(t, db, identityID, outbox.ProfileBlocked, "",
+	testdb.ExecAnnounced(t, db, identityID, outbox.Event{Occasion: outbox.ProfileBlocked},
 		`UPDATE profiles SET blocked = true WHERE id = $1`, identityID)
 	return identityID
 }

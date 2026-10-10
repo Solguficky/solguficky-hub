@@ -16,8 +16,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Protobuf Include="..\..\..\contracts\proto\identity\v1\roles.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
-    <!-- Клиент, а не сервер: Meetups спрашивает у Identity глобальную роль для
+    <Protobuf Include="..\..\..\contracts\proto\identity\v1\access.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <!-- Клиент, а не сервер: Meetups спрашивает у Identity право для
          отношения «администратор» в CheckMeetupAuthority (ADR-051, п. 4). -->
     <Protobuf Include="..\..\..\contracts\proto\identity\v1\identity_service.proto" GrpcServices="Client" ProtoRoot="..\..\..\contracts\proto" />
     <Protobuf Include="..\..\..\contracts\proto\meetups\v1\meetups.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />

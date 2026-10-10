@@ -9,51 +9,59 @@ open Xunit
 let ``Command should be allowed for an administrator`` () = test <@ Access.actOnBehalf Sample.administrator = Ok() @>
 
 [<Fact>]
-let ``Command should be refused for a viewer without roles`` () =
-    test <@ Access.actOnBehalf Sample.ordinary = Error NotAnAdministrator @>
+let ``Command should be refused for a viewer without rights`` () =
+    test <@ Access.actOnBehalf Sample.ordinary = Error CannotManageMeetups @>
 
-/// ADR-031: автор не является отдельным правом — в срезе он всегда администратор.
+/// ADR-031: автор не является отдельным правом — права ведения сходок ему не заменяет.
 /// Без этой проверки правило легко испортить обратно, сверив личность со сходкой.
 [<Fact>]
-let ``Command should be refused for the author who lost the administrator role`` () =
+let ``Command should be refused for the author who lost the manage_meetups right`` () =
     let author = Sample.draft |> Meetup.toSnapshot |> _.Author
 
     test
         <@
             author = Sample.ordinary.IdentityId
-            && Access.actOnBehalf Sample.ordinary = Error NotAnAdministrator
+            && Access.actOnBehalf Sample.ordinary = Error CannotManageMeetups
         @>
 
 [<Fact>]
-let ``Administrator should be recognised among several roles`` () =
+let ``Manage meetups should be recognised among several rights`` () =
     let viewer =
         { Sample.ordinary with
-            Roles =
+            Rights =
                 Set.ofList
                     [
-                        Maintainer
-                        Administrator
-                        Member
-                        Public
+                        AccessHub
+                        PlaceBids
+                        ManageMembers
+                        AdmitBidders
+                        ManageMeetups
+                        GrantAdmins
                     ]
         }
 
-    test <@ Viewer.isAdministrator viewer @>
+    test <@ Viewer.canManageMeetups viewer @>
 
-/// Расширение словаря ролей не меняет доменных решений Meetups: новые роли
-/// приходят в домен, но правила на них появятся отдельным срезом.
+/// Сходки ведёт только `manage_meetups`: ни право хаба, ни управление составом,
+/// ни право назначать администраторов его не подразумевают (RFC-016).
 [<Fact>]
-let ``Command should be refused for a viewer holding only a new role`` () =
+let ``Command should be refused for a viewer holding only another right`` () =
     test
         <@
-            [ Maintainer; Member; Public ]
-            |> List.forall (fun role ->
+            [
+                AccessHub
+                PlaceBids
+                ManageMembers
+                AdmitBidders
+                GrantAdmins
+            ]
+            |> List.forall (fun right ->
                 let viewer =
                     { Sample.ordinary with
-                        Roles = Set.singleton role
+                        Rights = Set.singleton right
                     }
 
-                Access.actOnBehalf viewer = Error NotAnAdministrator
+                Access.actOnBehalf viewer = Error CannotManageMeetups
             )
         @>
 

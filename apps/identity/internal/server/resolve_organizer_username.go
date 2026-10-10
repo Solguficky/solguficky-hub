@@ -4,46 +4,35 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"slices"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-// Строка находится только у профиля с admin в проекции global_roles: у
-// администратора и у мейнтейнера с выданным управлением составом, как в
-// ответах разрешения личности. Заблокированный
-// ролей не держит (identity_roles_blocked_guard), а отметка блокировки
-// проверяется рядом как страховка поверх инварианта, как в CheckGlobalRole.
+// Строка находится только у держателя manage_meetups — того, кто сходки
+// заводит, — тем же выводом прав, что в ответах разрешения личности. У
+// заблокированного прав нет, а отметка проверяется рядом как страховка.
 const selectOrganizerUsernameSQL = `
 SELECT p.username
 FROM profiles p
 WHERE p.id = $1
   AND NOT p.blocked
-  AND 'admin' = ANY (identity_global_roles(p.id))`
-
-// memberCircle — роли проекции global_roles, которые принимает хаб: круг
-// member и всё, что выше по порядку кругов, перечислены плоско.
-var memberCircle = []identityv1.GlobalRole{
-	identityv1.GlobalRole_GLOBAL_ROLE_ADMIN,
-	identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER,
-	identityv1.GlobalRole_GLOBAL_ROLE_MEMBER,
-}
+  AND 'manage_meetups' = ANY (identity_access_rights(p.id))`
 
 // ResolveOrganizerUsername отдаёт ник автора сходки, чтобы карточка назвала
 // организатора (PER-404). Цель ника здесь — связь с организатором, и метод
-// ограничен ею структурно: он отвечает только про действующего администратора,
-// поэтому ник обычного участника через него не читается, а вместе с
-// ListCommunityMembers, который администраторов исключает, метод не даёт
-// больше, чем каждый из них по отдельности.
+// ограничен ею структурно: он отвечает только про действующего держателя
+// manage_meetups, поэтому ник обычного участника через него не читается, а
+// вместе с ListCommunityMembers, который держателей наборов исключает, метод
+// не даёт больше, чем каждый из них по отдельности.
 //
 // Видит ли зритель сходку, решает Meetups; Identity проверяет только, что
-// актор из круга хаба. Профиль отсутствующий и профиль без роли admin
+// актор держит access_hub. Профиль отсутствующий и профиль без manage_meetups
 // неразличимы — оба NOT_FOUND: отдельный код стал бы для любого участника
-// оракулом «этот человек существует, но не администратор».
+// оракулом «этот человек существует, но сходки не ведёт».
 func (s identityService) ResolveOrganizerUsername(ctx context.Context, req *identityv1.ResolveOrganizerUsernameRequest) (*identityv1.ResolveOrganizerUsernameResponse, error) {
-	if err := authorizeMemberCircle(req.GetActor()); err != nil {
+	if _, err := authorizeRight(ctx, s.db, req.GetActor(), rightAccessHub); err != nil {
 		return nil, err
 	}
 	identityID, err := canonicalIdentityID(req.GetIdentityId())
@@ -64,19 +53,4 @@ func (s identityService) ResolveOrganizerUsername(ctx context.Context, req *iden
 		response.TelegramUsername = &username.String
 	}
 	return response, nil
-}
-
-func authorizeMemberCircle(actor *identityv1.IdentityActor) error {
-	if actor == nil {
-		return status.Error(codes.PermissionDenied, "member circle required")
-	}
-	if _, err := canonicalIdentityID(actor.GetIdentityId()); err != nil {
-		return status.Error(codes.InvalidArgument, "actor identity_id must be a canonical UUID")
-	}
-	for _, role := range actor.GetGlobalRoles() {
-		if slices.Contains(memberCircle, role) {
-			return nil
-		}
-	}
-	return status.Error(codes.PermissionDenied, "member circle required")
 }

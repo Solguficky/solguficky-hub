@@ -13,67 +13,77 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func (s identityService) GrantAdminRole(ctx context.Context, req *identityv1.GrantAdminRoleRequest) (*identityv1.GrantAdminRoleResponse, error) {
-	changed, err := s.maintainerGrant(ctx, req.GetIdentityId(), roleAdmin)
-	if err != nil {
-		return nil, err
-	}
-	return &identityv1.GrantAdminRoleResponse{Changed: changed}, nil
-}
-
-func (s identityService) RevokeAdminRole(ctx context.Context, req *identityv1.RevokeAdminRoleRequest) (*identityv1.RevokeAdminRoleResponse, error) {
-	changed, err := s.maintainerRevoke(ctx, req.GetIdentityId(), roleAdmin)
-	if err != nil {
-		return nil, err
-	}
-	return &identityv1.RevokeAdminRoleResponse{Changed: changed}, nil
-}
-
-func (s identityService) GrantMaintainerRole(ctx context.Context, req *identityv1.GrantMaintainerRoleRequest) (*identityv1.GrantMaintainerRoleResponse, error) {
-	changed, err := s.maintainerGrant(ctx, req.GetIdentityId(), roleMaintainer)
-	if err != nil {
-		return nil, err
-	}
-	return &identityv1.GrantMaintainerRoleResponse{Changed: changed}, nil
-}
-
-func (s identityService) RevokeMaintainerRole(ctx context.Context, req *identityv1.RevokeMaintainerRoleRequest) (*identityv1.RevokeMaintainerRoleResponse, error) {
-	changed, err := s.maintainerRevoke(ctx, req.GetIdentityId(), roleMaintainer)
-	if err != nil {
-		return nil, err
-	}
-	return &identityv1.RevokeMaintainerRoleResponse{Changed: changed}, nil
-}
-
-func (s identityService) maintainerGrant(ctx context.Context, rawIdentityID, role string) (bool, error) {
+// GrantPreset и RevokePreset — операции общего секрета (ADR-037): только так
+// выдаётся набор maintainer (ADR о наборах, п. 6). Набор требует круг member, и
+// человек без него получает круг той же транзакцией: так bootstrap на пустой
+// базе даёт первому человеку member и maintainer (С-7).
+func (s identityService) GrantPreset(ctx context.Context, req *identityv1.GrantPresetRequest) (*identityv1.GrantPresetResponse, error) {
 	if err := s.authenticateMaintainer(ctx); err != nil {
-		return false, err
+		return nil, err
 	}
+	identityID, preset, err := presetTarget(req.GetIdentityId(), req.GetPreset())
+	if err != nil {
+		return nil, err
+	}
+	changed, err := s.inTx(ctx, "grant preset", func(tx *sql.Tx) (bool, error) {
+		if _, err := grantCircleTx(ctx, tx, identityID, circleMember, maintainerActor()); err != nil {
+			return false, err
+		}
+		return grantPresetTx(ctx, tx, identityID, preset, maintainerActor())
+	})
+	if err != nil {
+		return nil, accessStatus(err)
+	}
+	s.log.Info("preset granted", "service", ServiceName, "identity_id", identityID, "preset", preset, "changed", changed)
+	return &identityv1.GrantPresetResponse{Changed: changed}, nil
+}
+
+func (s identityService) RevokePreset(ctx context.Context, req *identityv1.RevokePresetRequest) (*identityv1.RevokePresetResponse, error) {
+	if err := s.authenticateMaintainer(ctx); err != nil {
+		return nil, err
+	}
+	identityID, preset, err := presetTarget(req.GetIdentityId(), req.GetPreset())
+	if err != nil {
+		return nil, err
+	}
+	changed, err := s.inTx(ctx, "revoke preset", func(tx *sql.Tx) (bool, error) {
+		return revokePresetTx(ctx, tx, identityID, preset, maintainerActor())
+	})
+	if err != nil {
+		return nil, accessStatus(err)
+	}
+	s.log.Info("preset revoked", "service", ServiceName, "identity_id", identityID, "preset", preset, "changed", changed)
+	return &identityv1.RevokePresetResponse{Changed: changed}, nil
+}
+
+func presetTarget(rawIdentityID string, value identityv1.Preset) (string, string, error) {
 	identityID, err := canonicalIdentityID(rawIdentityID)
 	if err != nil {
-		return false, err
+		return "", "", err
 	}
-	changed, err := s.grantRole(ctx, identityID, role, maintainerActor())
-	if err != nil {
-		return false, roleStatus(err)
+	preset, ok := presetName(value)
+	if !ok {
+		return "", "", status.Error(codes.InvalidArgument, "preset must be a known preset")
 	}
-	s.log.Info("role granted", "service", ServiceName, "identity_id", identityID, "role", role, "changed", changed)
-	return changed, nil
+	return identityID, preset, nil
 }
 
-func (s identityService) maintainerRevoke(ctx context.Context, rawIdentityID, role string) (bool, error) {
-	if err := s.authenticateMaintainer(ctx); err != nil {
-		return false, err
-	}
-	identityID, err := canonicalIdentityID(rawIdentityID)
+// inTx выполняет изменение одной транзакцией. Отказы ядра остаются как есть,
+// отказ хранилища прячется за internal.
+func (s identityService) inTx(ctx context.Context, op string, change func(tx *sql.Tx) (bool, error)) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
-		return false, err
+		return false, internal("begin transaction", err)
 	}
-	changed, err := s.revokeRole(ctx, identityID, role, maintainerActor())
+	defer func() { _ = tx.Rollback() }()
+
+	changed, err := change(tx)
 	if err != nil {
-		return false, roleStatus(err)
+		return false, accessStorageError(op, err)
 	}
-	s.log.Info("role revoked", "service", ServiceName, "identity_id", identityID, "role", role, "changed", changed)
+	if err := tx.Commit(); err != nil {
+		return false, internal("commit", err)
+	}
 	return changed, nil
 }
 

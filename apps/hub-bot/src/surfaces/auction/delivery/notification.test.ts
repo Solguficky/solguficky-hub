@@ -1,6 +1,10 @@
 import { create, type MessageInitShape, toBinary } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
-import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
+import {
+  ApplicationQueue,
+  Circle,
+  Preset,
+} from "../../../../gen/identity/v1/access_pb.js";
 import { NotificationSchema } from "../../../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
@@ -28,8 +32,8 @@ describe("decodeNotification", () => {
       fact({
         case: "circleChanged",
         value: {
-          previousCircle: GlobalRole.GUEST,
-          currentCircle: GlobalRole.MEMBER,
+          previousCircle: Circle.GUEST,
+          currentCircle: Circle.MEMBER,
         },
       }),
     );
@@ -111,7 +115,10 @@ describe("decodeNotification", () => {
   it("decodes an admission to the auction as its own branch", () => {
     expect(
       decodeNotification(
-        fact({ case: "accessGranted", value: { circle: GlobalRole.GUEST } }),
+        fact({
+          case: "accessGranted",
+          value: { queue: ApplicationQueue.AUCTION },
+        }),
       ),
     ).toMatchObject({
       kind: "ok",
@@ -120,14 +127,14 @@ describe("decodeNotification", () => {
   });
 
   // Права администратора сообщества доставляет бот хаба (PER-468).
-  it("leaves a granted role to the hub bot", () => {
+  it("leaves a granted preset to the hub bot", () => {
     expect(
       decodeNotification(
-        fact({ case: "roleGranted", value: { role: GlobalRole.ADMIN } }),
+        fact({ case: "presetGranted", value: { preset: Preset.ADMIN } }),
       ),
     ).toMatchObject({
       kind: "ok",
-      notification: { content: { kind: "foreign", type: "roleGranted" } },
+      notification: { content: { kind: "foreign", type: "presetGranted" } },
     });
   });
 
@@ -135,7 +142,10 @@ describe("decodeNotification", () => {
   it("leaves an admission to the hub to the hub bot", () => {
     expect(
       decodeNotification(
-        fact({ case: "accessGranted", value: { circle: GlobalRole.MEMBER } }),
+        fact({
+          case: "accessGranted",
+          value: { queue: ApplicationQueue.COMMUNITY },
+        }),
       ),
     ).toMatchObject({
       kind: "ok",
@@ -143,10 +153,13 @@ describe("decodeNotification", () => {
     });
   });
 
-  it("rejects an admission to a circle no surface asks for", () => {
+  it("rejects an admission without a queue", () => {
     expect(
       decodeNotification(
-        fact({ case: "accessGranted", value: { circle: GlobalRole.ADMIN } }),
+        fact({
+          case: "accessGranted",
+          value: { queue: ApplicationQueue.UNSPECIFIED },
+        }),
       ).kind,
     ).toBe("malformed");
   });

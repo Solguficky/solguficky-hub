@@ -1,6 +1,10 @@
 import { create, toBinary } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
-import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
+import {
+  ApplicationQueue,
+  Circle,
+  Preset,
+} from "../../../../gen/identity/v1/access_pb.js";
 import {
   MeetupLifecycle,
   MeetupVisibility,
@@ -17,7 +21,7 @@ import {
   type Notification,
   NotificationSchema,
   OrganizerMessageSchema,
-  RoleGrantedSchema,
+  PresetGrantedSchema,
 } from "../../../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
@@ -69,8 +73,8 @@ describe("decodeNotification", () => {
         message.type = {
           case: "circleChanged",
           value: create(CircleChangedSchema, {
-            previousCircle: GlobalRole.GUEST,
-            currentCircle: GlobalRole.MEMBER,
+            previousCircle: Circle.GUEST,
+            currentCircle: Circle.MEMBER,
           }),
         };
       }),
@@ -454,47 +458,48 @@ describe("decodeNotification", () => {
   });
 
   describe("access requests", () => {
-    const requested = (circle: GlobalRole): Uint8Array =>
+    const requested = (queue: ApplicationQueue): Uint8Array =>
       published((message) => {
         message.type = {
           case: "accessRequested",
-          value: create(AccessRequestedSchema, { circle }),
+          value: create(AccessRequestedSchema, { queue }),
         };
       });
 
     it.each([
-      [GlobalRole.MEMBER, "member"],
-      [GlobalRole.GUEST, "public"],
-    ] as const)("decodes a request for circle %s", (circle, expected) => {
-      expect(decodeNotification(requested(circle))).toMatchObject({
+      [ApplicationQueue.COMMUNITY, "community"],
+      [ApplicationQueue.AUCTION, "auction"],
+    ] as const)("decodes a request in queue %s", (queue, expected) => {
+      expect(decodeNotification(requested(queue))).toMatchObject({
         kind: "ok",
         notification: {
-          content: { kind: "access-requested", circle: expected },
+          content: { kind: "access-requested", queue: expected },
         },
       });
     });
 
-    // Заявку ставят только на круги поверхностей: другой круг — дефект
-    // издателя, а не повод звать администратора.
-    it.each([GlobalRole.ADMIN, GlobalRole.MAINTAINER, GlobalRole.UNSPECIFIED])(
-      "rejects a request for circle %s",
-      (circle) => {
-        expect(decodeNotification(requested(circle)).kind).toBe("malformed");
-      },
-    );
+    // Без очереди некуда вести модератора: это дефект издателя, а не повод
+    // звать администратора.
+    it("rejects a request without a queue", () => {
+      expect(
+        decodeNotification(requested(ApplicationQueue.UNSPECIFIED)).kind,
+      ).toBe("malformed");
+    });
   });
 
   describe("access grants", () => {
-    const granted = (circle: GlobalRole): Uint8Array =>
+    const granted = (queue: ApplicationQueue): Uint8Array =>
       published((message) => {
         message.type = {
           case: "accessGranted",
-          value: create(AccessGrantedSchema, { circle }),
+          value: create(AccessGrantedSchema, { queue }),
         };
       });
 
     it("decodes an admission to the hub as its own branch", () => {
-      expect(decodeNotification(granted(GlobalRole.MEMBER))).toMatchObject({
+      expect(
+        decodeNotification(granted(ApplicationQueue.COMMUNITY)),
+      ).toMatchObject({
         kind: "ok",
         notification: { content: { kind: "access-granted" } },
       });
@@ -503,42 +508,45 @@ describe("decodeNotification", () => {
     // Допуск в аукцион доставляет бот аукциона: для хаба это чужая ветка,
     // которую он подтверждает без журнала и без отказа.
     it("leaves an admission to the auction to the auction bot", () => {
-      expect(decodeNotification(granted(GlobalRole.GUEST))).toMatchObject({
+      expect(
+        decodeNotification(granted(ApplicationQueue.AUCTION)),
+      ).toMatchObject({
         kind: "ok",
         notification: { content: { kind: "foreign", type: "accessGranted" } },
       });
     });
 
-    it.each([GlobalRole.ADMIN, GlobalRole.UNSPECIFIED])(
-      "rejects an admission to circle %s",
-      (circle) => {
-        expect(decodeNotification(granted(circle)).kind).toBe("malformed");
-      },
-    );
+    it("rejects an admission without a queue", () => {
+      expect(
+        decodeNotification(granted(ApplicationQueue.UNSPECIFIED)).kind,
+      ).toBe("malformed");
+    });
   });
 
-  describe("role granted", () => {
-    const roleGranted = (role: GlobalRole): Uint8Array =>
+  describe("preset granted", () => {
+    const presetGranted = (preset: Preset): Uint8Array =>
       published((message) => {
         message.type = {
-          case: "roleGranted",
-          value: create(RoleGrantedSchema, { role }),
+          case: "presetGranted",
+          value: create(PresetGrantedSchema, { preset }),
         };
       });
 
-    it("decodes the administrator role as its own branch", () => {
-      expect(decodeNotification(roleGranted(GlobalRole.ADMIN))).toMatchObject({
+    it("decodes the administrator preset as its own branch", () => {
+      expect(decodeNotification(presetGranted(Preset.ADMIN))).toMatchObject({
         kind: "ok",
-        notification: { content: { kind: "role-granted", role: "admin" } },
+        notification: { content: { kind: "preset-granted", preset: "admin" } },
       });
     });
 
-    // Notifications шлёт ветку только для администратора: иная роль — дефект
-    // издателя, а не весть, которую можно показать.
-    it.each([GlobalRole.MEMBER, GlobalRole.GUEST, GlobalRole.UNSPECIFIED])(
-      "rejects a grant of role %s",
-      (role) => {
-        expect(decodeNotification(roleGranted(role)).kind).toBe("malformed");
+    // Notifications шлёт ветку только для набора администратора: иной набор —
+    // дефект издателя, а не весть, которую можно показать.
+    it.each([Preset.MAINTAINER, Preset.UNSPECIFIED])(
+      "rejects a grant of preset %s",
+      (preset) => {
+        expect(decodeNotification(presetGranted(preset)).kind).toBe(
+          "malformed",
+        );
       },
     );
   });

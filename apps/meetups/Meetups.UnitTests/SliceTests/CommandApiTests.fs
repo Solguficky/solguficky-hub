@@ -20,12 +20,17 @@ open Xunit
 
 let private meetupId = "0199c0de-0000-7000-8000-0000000000f1"
 
-let private viewerWith (roles: Identity.V1.GlobalRole seq) =
+let private viewerWith (rights: Identity.V1.AccessRight seq) =
     let viewer = Meetups.V1.Viewer(IdentityId = "0199c0de-0000-7000-8000-000000000001")
-    viewer.GlobalRoles.AddRange roles
+    viewer.Rights.AddRange rights
     viewer
 
-let private administrator () = viewerWith [ Identity.V1.GlobalRole.Admin ]
+let private administrator () =
+    viewerWith
+        [
+            Identity.V1.AccessRight.ManageMeetups
+        ]
+
 let private ordinary () = viewerWith []
 
 /// Отказ, а не молчание: заглушка, возвращающая пустоту, оставила бы пропущенную

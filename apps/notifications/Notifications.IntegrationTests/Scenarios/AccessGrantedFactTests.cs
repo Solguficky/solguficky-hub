@@ -19,7 +19,7 @@ namespace Notifications.IntegrationTests.Scenarios;
 public class AccessGrantedFactTests
 {
     private const string ApplicationAdmittedSubject = "events.identity.application_admitted";
-    private const string RoleGrantedSubject = "events.identity.role_granted";
+    private const string CircleChangedSubject = "events.identity.circle_changed";
     private const string ProfileBlockedSubject = "events.identity.profile_blocked";
 
     [Fact]
@@ -31,16 +31,16 @@ public class AccessGrantedFactTests
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var person = EventFactory.NewId();
 
-        await nats.Publish(RoleGrantedSubject, EventFactory.RoleGrant(person, 2, GlobalRole.Guest));
+        await nats.Publish(CircleChangedSubject, EventFactory.CircleChange(person, 2, Circle.Guest));
         await Eventually(() => CountRows(db, "identity_replica"), count => count == 1);
-        await nats.Publish(RoleGrantedSubject, EventFactory.RoleGrant(person, 3, GlobalRole.Member));
+        await nats.Publish(CircleChangedSubject, EventFactory.CircleChange(person, 3, Circle.Member));
 
         var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
         var fact = published.Single();
         fact.Subject.ShouldBe("events.notifications.notification_created.auction");
         fact.Fact.TypeCase.ShouldBe(Notification.TypeOneofCase.CircleChanged);
-        fact.Fact.CircleChanged.PreviousCircle.ShouldBe(GlobalRole.Guest);
-        fact.Fact.CircleChanged.CurrentCircle.ShouldBe(GlobalRole.Member);
+        fact.Fact.CircleChanged.PreviousCircle.ShouldBe(Circle.Guest);
+        fact.Fact.CircleChanged.CurrentCircle.ShouldBe(Circle.Member);
     }
 
     [Fact]
@@ -52,32 +52,28 @@ public class AccessGrantedFactTests
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var person = EventFactory.NewId();
 
-        await nats.Publish(RoleGrantedSubject, EventFactory.RoleGrant(person, 2, GlobalRole.Member));
+        await nats.Publish(CircleChangedSubject, EventFactory.CircleChange(person, 2, Circle.Member));
         await Eventually(() => CountRows(db, "identity_replica"), count => count == 1);
-        var demotion = EventFactory.Identity(person, 3);
-        demotion.State.Role = GlobalRole.Guest;
-        demotion.State.Rights.Clear();
-        demotion.State.Rights.Add(AccessRight.Auction);
-        demotion.RoleRevoked = new RoleRevoked { Role = GlobalRole.Member };
-        await nats.Publish("events.identity.role_revoked", demotion);
+        var demotion = EventFactory.CircleChange(person, 3, Circle.Guest, previous: Circle.Member);
+        await nats.Publish(CircleChangedSubject, demotion);
 
         var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
         var fact = published.Single();
         fact.Subject.ShouldBe("events.notifications.notification_created.hub");
         fact.Fact.TypeCase.ShouldBe(Notification.TypeOneofCase.CircleChanged);
-        fact.Fact.CircleChanged.PreviousCircle.ShouldBe(GlobalRole.Member);
-        fact.Fact.CircleChanged.CurrentCircle.ShouldBe(GlobalRole.Guest);
+        fact.Fact.CircleChanged.PreviousCircle.ShouldBe(Circle.Member);
+        fact.Fact.CircleChanged.CurrentCircle.ShouldBe(Circle.Guest);
     }
 
     [Theory]
-    [InlineData(GlobalRole.Member)]
-    [InlineData(GlobalRole.Guest)]
-    public async Task When_ApplicantAdmitted_Expect_OneFactToApplicantWithCircle(GlobalRole circle)
+    [InlineData(Circle.Member)]
+    [InlineData(Circle.Guest)]
+    public async Task When_ApplicantAdmitted_Expect_OneFactToApplicantWithQueue(Circle circle)
     {
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, AdminCircle);
+        await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
 
         var applicant = EventFactory.NewId();
@@ -87,14 +83,14 @@ public class AccessGrantedFactTests
         var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
 
         var (fact, messageId) = facts.Single();
-        facts.Single().Subject.ShouldBe(circle == GlobalRole.Member
+        facts.Single().Subject.ShouldBe(circle == Circle.Member
             ? "events.notifications.notification_created.hub"
             : "events.notifications.notification_created.auction");
         messageId.ShouldBe(fact.NotificationId);
         fact.RecipientId.ShouldBe(applicant);
         fact.Cause.IdentityEventId.ShouldBe(admission.EventId);
         fact.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessGranted);
-        fact.AccessGranted.Circle.ShouldBe(circle);
+        fact.AccessGranted.Queue.ShouldBe(circle == Circle.Member ? ApplicationQueue.Community : ApplicationQueue.Auction);
         fact.HasNotAfter.ShouldBeTrue();
         fact.HasRequestId.ShouldBeFalse();
     }
@@ -105,14 +101,14 @@ public class AccessGrantedFactTests
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
         await using var nats = await NatsUnderTest.Start();
-        await Person(db, AdminCircle);
+        await Person(db, AdminHolding);
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var applicant = EventFactory.NewId();
 
         await nats.Publish("events.identity.application_submitted",
-            EventFactory.Application(applicant, 2, GlobalRole.Member, held: GlobalRole.Guest));
+            EventFactory.Application(applicant, 2, Circle.Member, held: Circle.Guest));
         await Eventually(() => CountRows(db, "identity_replica"), count => count == 1);
-        await nats.Publish(ApplicationAdmittedSubject, EventFactory.Admission(applicant, 3, GlobalRole.Member));
+        await nats.Publish(ApplicationAdmittedSubject, EventFactory.Admission(applicant, 3, Circle.Member));
 
         var published = await Eventually(
             nats.PublishedFacts,
@@ -123,8 +119,8 @@ public class AccessGrantedFactTests
 
         access.Subject.ShouldBe("events.notifications.notification_created.hub");
         circle.Subject.ShouldBe("events.notifications.notification_created.auction");
-        circle.Fact.CircleChanged.PreviousCircle.ShouldBe(GlobalRole.Guest);
-        circle.Fact.CircleChanged.CurrentCircle.ShouldBe(GlobalRole.Member);
+        circle.Fact.CircleChanged.PreviousCircle.ShouldBe(Circle.Guest);
+        circle.Fact.CircleChanged.CurrentCircle.ShouldBe(Circle.Member);
     }
 
     [Fact]
@@ -136,7 +132,7 @@ public class AccessGrantedFactTests
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
-        var admission = EventFactory.Admission(EventFactory.NewId(), version: 4, GlobalRole.Guest);
+        var admission = EventFactory.Admission(EventFactory.NewId(), version: 4, Circle.Guest);
         await nats.Publish(ApplicationAdmittedSubject, admission);
         await Eventually(() => Granted(db), count => count == 1);
 
@@ -162,18 +158,18 @@ public class AccessGrantedFactTests
 
         var applicant = EventFactory.NewId();
         await nats.Publish(ProfileBlockedSubject, EventFactory.Identity(applicant, version: 5, blocked: true));
-        await nats.Publish(ApplicationAdmittedSubject, EventFactory.Admission(applicant, version: 4, GlobalRole.Member));
+        await nats.Publish(ApplicationAdmittedSubject, EventFactory.Admission(applicant, version: 4, Circle.Member));
 
         await Eventually(() => Task.FromResult(replica.Total(ReplicaFeeds.IdentitySource, "stale")), count => count == 1);
         (await Granted(db)).ShouldBe(0);
     }
 
     /// <summary>
-    /// Выдача роли сама по себе допуском по заявке не является: её дают и
-    /// белый список, и вложенность, и о них заявителю не пишут.
+    /// Смена круга сама по себе допуском по заявке не является: её дают и
+    /// белый список, и общий секрет, и о них заявителю не пишут.
     /// </summary>
     [Fact]
-    public async Task When_RoleGrantedWithoutAdmission_Expect_NoFact()
+    public async Task When_CircleChangedWithoutAdmission_Expect_NoFact()
     {
         using var db = new IsolatedDatabase();
         Migrations.Apply(db.ConnectionString);
@@ -181,7 +177,7 @@ public class AccessGrantedFactTests
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var replica = silo.Service<ReplicaTelemetry>();
 
-        await nats.Publish(RoleGrantedSubject, EventFactory.Identity(EventFactory.NewId(), version: 2));
+        await nats.Publish(CircleChangedSubject, EventFactory.Identity(EventFactory.NewId(), version: 2));
 
         await Eventually(() => Task.FromResult(replica.Total(ReplicaFeeds.IdentitySource, "applied")), count => count == 1);
         (await Granted(db)).ShouldBe(0);

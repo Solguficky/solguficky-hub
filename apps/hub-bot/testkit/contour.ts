@@ -5,8 +5,8 @@ import {
   Http2SessionManager,
 } from "@connectrpc/connect-node";
 import type { Update } from "grammy/types";
+import { AccessRight, Preset } from "../gen/identity/v1/access_pb.js";
 import { IdentityService } from "../gen/identity/v1/identity_service_pb.js";
-import { GlobalRole } from "../gen/identity/v1/roles_pb.js";
 import { MeetupVisibility } from "../gen/meetups/v1/meetups_pb.js";
 import { MeetupsService } from "../gen/meetups/v1/meetups_service_pb.js";
 import { presentServiceToken } from "../src/core/rpc-metadata.js";
@@ -88,7 +88,7 @@ export function readContourEnvironment(
 }
 
 /**
- * Прямые клиенты сервисов мимо бота: готовность, выдача роли и независимая
+ * Прямые клиенты сервисов мимо бота: готовность, выдача набора и независимая
  * проверка итога. Итог сценария читается отсюда, а не из ответа бота — иначе
  * провод проверял бы сам себя.
  */
@@ -165,8 +165,9 @@ export function openDirectClients(environment: ContourEnvironment) {
       );
     },
     /**
-     * Роль выдаётся настоящим `GrantAdminRole`, а не подставляется в запрос:
-     * иначе сценарий остался бы зелёным при сломанном хранении ролей.
+     * Набор `admin` выдаётся настоящим `GrantPreset`, а не подставляется в
+     * запрос: иначе сценарий остался бы зелёным при сломанном хранении наборов.
+     * Выдача общим секретом делает человека и участником (RFC-016).
      */
     async grantAdmin(telegramUserId: bigint): Promise<string> {
       const resolved = await identity.resolveIdentity(
@@ -174,28 +175,31 @@ export function openDirectClients(environment: ContourEnvironment) {
         asBot,
       );
       await asMaintainer((options) =>
-        identity.grantAdminRole({ identityId: resolved.identityId }, options),
+        identity.grantPreset(
+          { identityId: resolved.identityId, preset: Preset.ADMIN },
+          options,
+        ),
       );
       return resolved.identityId;
     },
     /**
-     * Отзыв роли настоящим `RevokeAdminRole`: экран, отрисованный
-     * администратору, остаётся у человека в чате и после отзыва.
+     * Снятие набора настоящим `RevokePreset`: экран, отрисованный
+     * администратору, остаётся у человека в чате и после снятия.
      */
     async revokeAdmin(identityId: string): Promise<void> {
       await asMaintainer((options) =>
-        identity.revokeAdminRole({ identityId }, options),
+        identity.revokePreset({ identityId, preset: Preset.ADMIN }, options),
       );
     },
     /**
      * Человек из сценария среза: ник заранее внесён администратором в
-     * whitelist, и роль `member` он получает на первом `/start` сам — тем же
+     * whitelist, и круг `member` он получает на первом `/start` сам — тем же
      * путём, что в продукте, а не выдачей в обход Identity.
      */
     async allowUsername(adminId: string, username: string): Promise<void> {
       await identity.addAllowedUsername(
         {
-          actor: { identityId: adminId, globalRoles: [GlobalRole.ADMIN] },
+          actor: { identityId: adminId },
           username,
         },
         asBot,
@@ -275,7 +279,7 @@ export function openDirectClients(environment: ContourEnvironment) {
      * проверяется здесь, а не по экрану.
      *
      * Таблицы журнала контур наружу не отдаёт, а RPC её не читает. Автор видит
-     * все свои сходки, включая скрытые и архивные, без роли администратора.
+     * все свои сходки, включая скрытые и архивные, без права вести сходки.
      * Берём оба viewer-aware списка, читаем снимки через `GetMeetup` и оставляем
      * только сходки автора. `ListMeetupStates` закрыт для всех (ADR-056).
      * Состояние и событие пишутся одной транзакцией
@@ -286,7 +290,7 @@ export function openDirectClients(environment: ContourEnvironment) {
      * такого события в модели Meetups сейчас нет.
      */
     async journalOf(authorId: string): Promise<AuthorJournal> {
-      const viewer = { identityId: authorId, globalRoles: [] };
+      const viewer = { identityId: authorId, rights: [] };
       const [current, archived] = await Promise.all([
         meetups.listVisibleMeetups({ viewer }),
         meetups.listArchivedMeetups({ viewer }),
@@ -319,8 +323,19 @@ export type AuthorJournal = {
   events: number;
 };
 
+// Смотрящий с правами набора `admin`, как их отдал бы Identity: Meetups читает
+// права из запроса и решает по `manage_meetups`.
 function asAdmin(identityId: string) {
-  return { identityId, globalRoles: [GlobalRole.ADMIN] };
+  return {
+    identityId,
+    rights: [
+      AccessRight.ACCESS_HUB,
+      AccessRight.PLACE_BIDS,
+      AccessRight.ADMIT_BIDDERS,
+      AccessRight.MANAGE_MEMBERS,
+      AccessRight.MANAGE_MEETUPS,
+    ],
+  };
 }
 
 // DEADLINE_EXCEEDED тоже не ответ: вызов не дождался сервиса, и засчитать его

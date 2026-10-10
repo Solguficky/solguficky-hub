@@ -9,7 +9,7 @@
 ```text
 Meetups/
   Domain/Ids.fs                       MeetupId и PersonId
-  Domain/Viewer.fs                    смотрящий: личность и общие роли
+  Domain/Viewer.fs                    смотрящий: личность и права из Identity
   Domain/Schedule.fs                  расписание, интервал, инвариант и ключ порядка
   Domain/MeetupMaterial.fs            источник и элемент коллекции материалов
   Domain/MeetupSnapshot.fs            оси состояния и снимок
@@ -79,7 +79,7 @@ Meetups/
 
 Межосевые предусловия в таблицу не входят: «отменённую сходку нельзя опубликовать» — условие команды поверх разрешённого перехода, того же рода, что обязательный заголовок, и решает его `decidePublish`. Порядок проверок там наблюдаем снаружи и потому зафиксирован: повтор, таблица, жизненный цикл, заголовок. Иначе отменённый черновик без заголовка отвечал бы «нужен заголовок» и прятал настоящую причину. Отклонённый переход отвечает `TransitionNotAllowed` — отдельным вариантом, а не общим с `TitleRequiredForPublication`: «из текущего состояния в запрошенное не попасть» и «переход разрешён, но данных не хватает» требуют от человека разных действий. На проводе оба дают `FAILED_PRECONDITION`, и от отказа по праву их отличает код, а друг от друга — деталь статуса.
 
-Право действовать — третий, отдельный отказ. Вариантом `DomainError` он не становится: инвариантом перехода состояния право не является, и состояние в решении о нём не участвует. Но и политикой границы он не остаётся — правило «пишущие команды доступны администратору» доменное ([ADR-031](../../docs/decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md)), поэтому живёт чистой функцией в `Domain/Access.fs` со своим типом `AccessDenied`. Файл стоит до `Domain/Meetup.fs`, чтобы политика читала состояние только снимком; там же живёт правило видимости чтения — `canView`, вторая чистая функция того же модуля. Срез спрашивает право первой строкой `execute`, до загрузки: иначе отказ обычному смотрящему зависел бы от того, существует ли сходка, и стал бы способом узнать про чужой черновик.
+Право действовать — третий, отдельный отказ. Вариантом `DomainError` он не становится: инвариантом перехода состояния право не является, и состояние в решении о нём не участвует. Но и политикой границы он не остаётся — правило «пишущие команды доступны держателю `manage_meetups`» доменное ([ADR-031](../../docs/decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md)), поэтому живёт чистой функцией в `Domain/Access.fs` со своим типом `AccessDenied`. Файл стоит до `Domain/Meetup.fs`, чтобы политика читала состояние только снимком; там же живёт правило видимости чтения — `canView`, вторая чистая функция того же модуля. Срез спрашивает право первой строкой `execute`, до загрузки: иначе отказ обычному смотрящему зависел бы от того, существует ли сходка, и стал бы способом узнать про чужой черновик.
 
 `rehydrate` восстанавливает состояние из снимка, `restore` превращает отсутствие строки в `Initial`. Обе живут в `Domain/Meetup.fs` вынужденно: представление приватно, и собрать запись снаружи нельзя. Вход `rehydrate` — снимок, то есть два определения, которые [ADR-031](../../docs/decisions/ADR-031-meetups-domain-vocabulary-and-event-form.md) развёл, сегодня связаны; первое же поле состояния, которого нет в снимке, потребует своего типа восстановления.
 
@@ -153,7 +153,7 @@ Dapper не знает `DateOnly` и `TimeOnly` как параметры, хо�
 
 По [ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md) каждый доменный вызов несёт `authorization: Bearer <token>`. Матрица `MethodAccess` повторяет колонку Caller [каталога](../../docs/architecture/integration.md#meetups-grpc): бот хаба вызывает четырнадцать пользовательских RPC, Notifications и Auction — только `CheckMeetupAuthority`; `ListMeetupStates` пока закрыт для всех. Нет токена, неизвестный токен или вызывающий не объявлен у метода — `UNAUTHENTICATED` до диспетчера. `PERMISSION_DENIED` остаётся отказом человеку по праву. Логгер стоит снаружи интерцептора допуска и пишет `caller` и `caller_refusal`, никогда значение секрета. Health и reflection токена не требуют, обхода на loopback нет.
 
-Четыре обязательных значения: `MEETUPS_CALLER_TOKEN_HUB_BOT`, `MEETUPS_CALLER_TOKEN_NOTIFICATIONS`, `MEETUPS_CALLER_TOKEN_AUCTION`, `MEETUPS_SERVICE_TOKEN`. Пустота или отсутствие значения, совпадение токенов вызывающих и совпадение собственного с одним из них останавливают запуск до миграций. AppHost генерирует и раздаёт значения сам; при `just meetups-run` их задаёт окружение. Identity-клиент предъявляет собственный токен на `CheckGlobalRole`, сохраняя срок, отмену и заголовки цепочки.
+Четыре обязательных значения: `MEETUPS_CALLER_TOKEN_HUB_BOT`, `MEETUPS_CALLER_TOKEN_NOTIFICATIONS`, `MEETUPS_CALLER_TOKEN_AUCTION`, `MEETUPS_SERVICE_TOKEN`. Пустота или отсутствие значения, совпадение токенов вызывающих и совпадение собственного с одним из них останавливают запуск до миграций. AppHost генерирует и раздаёт значения сам; при `just meetups-run` их задаёт окружение. Identity-клиент предъявляет собственный токен на `CheckAccessRight`, сохраняя срок, отмену и заголовки цепочки.
 
 Kestrel настроен на h2c: gRPC без TLS требует HTTP/2, а plaintext-endpoint без ALPN не умеет договариваться о версии. Отсюда два следствия:
 
@@ -217,7 +217,7 @@ just aspire meetups
 grpcurl -plaintext localhost:<порт> list
 ```
 
-Автотесты покрывают сам сервис; руками проверяется то, что Aspire собрал его работающим — привязка `MEETUPS_DATABASE_URL` и `MEETUPS_COMMUNITY_TIME_ZONE`, endpoint `grpc` и reflection. Минимальный сценарий: `list` показывает `meetups.v1.MeetupsService`; `CreateMeetupDraft` со смотрящим, у которого `"global_roles": ["GLOBAL_ROLE_ADMIN"]`, отвечает снимком с `version: 1`; после заполнения атрибутов и `PublishMeetup` оба запроса чтения возвращают тот же снимок, а `ListArchivedMeetups` остаётся пустым, пока сходка актуальна:
+Автотесты покрывают сам сервис; руками проверяется то, что Aspire собрал его работающим — привязка `MEETUPS_DATABASE_URL` и `MEETUPS_COMMUNITY_TIME_ZONE`, endpoint `grpc` и reflection. Минимальный сценарий: `list` показывает `meetups.v1.MeetupsService`; `CreateMeetupDraft` со смотрящим, у которого `"rights": ["ACCESS_RIGHT_MANAGE_MEETUPS"]`, отвечает снимком с `version: 1`; после заполнения атрибутов и `PublishMeetup` оба запроса чтения возвращают тот же снимок, а `ListArchivedMeetups` остаётся пустым, пока сходка актуальна:
 
 ```bash
 grpcurl -plaintext -H "authorization: Bearer $MEETUPS_CALLER_TOKEN_HUB_BOT" -d '{"viewer":{"identityId":"0199c0de-0000-7000-8000-00000000000a"}}' localhost:<порт> meetups.v1.MeetupsService/ListVisibleMeetups

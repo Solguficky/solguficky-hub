@@ -77,7 +77,7 @@ func registerInRequest(ctx context.Context, t *testing.T, db *sql.DB, identityID
 	if _, err := tx.ExecContext(ctx, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9501)`, identityID); err != nil {
 		t.Fatal(err)
 	}
-	if err := outbox.Append(ctx, tx, identityID, outbox.ProfileRegistered, ""); err != nil {
+	if err := outbox.Append(ctx, tx, identityID, outbox.Event{Occasion: outbox.ProfileRegistered}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {

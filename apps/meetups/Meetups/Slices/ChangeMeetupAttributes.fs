@@ -109,8 +109,8 @@ module Api =
         match error with
         | ChangeMeetupAttributesError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | ChangeMeetupAttributesError.Forbidden NotAnAdministrator ->
-            Status(StatusCode.PermissionDenied, "an administrator role is required")
+        | ChangeMeetupAttributesError.Forbidden CannotManageMeetups ->
+            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
         | ChangeMeetupAttributesError.Domain MeetupNotFound
         | ChangeMeetupAttributesError.Domain DraftBelongsToAnotherAuthor ->
             Status(StatusCode.NotFound, "meetup not found")

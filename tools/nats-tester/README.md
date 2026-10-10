@@ -8,7 +8,7 @@ CLI для ручной проверки сообщений на шине: пу�
 
 Инструмент оставлен и входит в гейты: `just nats-tester-check` гоняется в `just verify`, а джоба `nats-tester` в CI вдобавок перегенерирует классы закреплённым `protoc` и падает на расхождении со схемами. Сгенерированные классы коммитятся намеренно — установка без `protoc` и есть смысл ручного инструмента, — и это единственное такое исключение в репозитории: у Go, TypeScript, .NET и Scala генерация лежит в `.gitignore` или `obj/`. Плата за исключение — проверка: классы, которые не импортируются или разошлись со схемой, краснеют в гейте, а не при ручной отладке шины.
 
-Генерация сужена до схем, у которых бывает subject, и их импортов — `NATS_PROTO_FILES` в `nats_tester/proto_sources.py`: сейчас это `auction/v1/auction_events.proto`, `identity/v1/identity_events.proto`, `meetups/v1/meetups_events.proto` и `notifications/v1/notifications.proto`. Схемы `auction/v1/auction_service.proto`, `identity/v1/identity_service.proto`, `meetups/v1/meetups_service.proto` и `notifications/v1/notifications_service.proto` обслуживают gRPC: subject у них не бывает, и классов для них больше нет. `auction/v1/auction.proto`, `meetups/v1/meetups.proto` и `identity/v1/roles.proto` собираются как payload, потому что их импортируют схемы событий своих доменов: раскладка `contracts/proto/` намеренно не различает транспорт — это записано в [Protobuf standard](../../docs/standards/contracts/protobuf.md), а транспорт каждой операции живёт в [integration catalog](../../docs/architecture/integration.md).
+Генерация сужена до схем, у которых бывает subject, и их импортов — `NATS_PROTO_FILES` в `nats_tester/proto_sources.py`: сейчас это `auction/v1/auction_events.proto`, `identity/v1/identity_events.proto`, `meetups/v1/meetups_events.proto` и `notifications/v1/notifications.proto`. Схемы `auction/v1/auction_service.proto`, `identity/v1/identity_service.proto`, `meetups/v1/meetups_service.proto` и `notifications/v1/notifications_service.proto` обслуживают gRPC: subject у них не бывает, и классов для них больше нет. `auction/v1/auction.proto`, `meetups/v1/meetups.proto` и `identity/v1/access.proto` собираются как payload, потому что их импортируют схемы событий своих доменов: раскладка `contracts/proto/` намеренно не различает транспорт — это записано в [Protobuf standard](../../docs/standards/contracts/protobuf.md), а транспорт каждой операции живёт в [integration catalog](../../docs/architecture/integration.md).
 
 Новый тип сообщения добавляется по шагам ниже: схема в `contracts/proto/`, запись в `NATS_PROTO_FILES` и реестр, регенерация классов.
 
@@ -181,7 +181,7 @@ nats-tester/
 │   ├── proto_sources.py         # NATS_PROTO_FILES — схемы шины и замыкание импортов
 │   ├── registry.py              # EVENT_TYPES / COMMAND_TYPES — реестр subjects
 │   └── generated/               # Сгенерированные Protobuf-классы; коммитятся намеренно
-│       ├── identity/v1/roles_pb2.py              # импорт схемы событий Identity
+│       ├── identity/v1/access_pb2.py             # импорт схемы событий Identity
 │       ├── meetups/v1/meetups_pb2.py             # импорт схемы уведомления
 │       └── notifications/v1/notifications_pb2.py # subject записан в registry.py
 ├── generate_proto.py            # Генерация набора и удаление классов вне его

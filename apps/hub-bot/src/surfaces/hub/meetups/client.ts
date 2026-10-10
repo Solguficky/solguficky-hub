@@ -4,13 +4,13 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
-import { GlobalRole } from "../../../../gen/identity/v1/roles_pb.js";
 import {
   MeetupLifecycle,
   MeetupMaterialFileKind,
   MeetupVisibility,
 } from "../../../../gen/meetups/v1/meetups_pb.js";
 import { MeetupsService } from "../../../../gen/meetups/v1/meetups_service_pb.js";
+import { wireViewer } from "../../../core/identity/access.js";
 import {
   callHeaders,
   callTimeoutMs,
@@ -477,28 +477,10 @@ function calendarDate(value: {
   return { year: value.year, month: value.month, day: value.day };
 }
 
+// Права уходят в Meetups, как их вывел Identity (RFC-016): Meetups решает по
+// праву вести сходки, а бот ничего не пересчитывает.
 function viewer(person: Person) {
-  return {
-    identityId: person.identityId,
-    globalRoles: person.globalRoles.map(roleValue),
-  };
-}
-
-// Строка роли пришла из Identity. Неизвестное имя не превращается в разрешение:
-// Meetups отбрасывает UNSPECIFIED, как и любое значение вне своего словаря.
-function roleValue(role: string): GlobalRole {
-  switch (role) {
-    case "maintainer":
-      return GlobalRole.MAINTAINER;
-    case "admin":
-      return GlobalRole.ADMIN;
-    case "member":
-      return GlobalRole.MEMBER;
-    case "public":
-      return GlobalRole.GUEST;
-    default:
-      return GlobalRole.UNSPECIFIED;
-  }
+  return wireViewer(person);
 }
 
 function toSnapshot(

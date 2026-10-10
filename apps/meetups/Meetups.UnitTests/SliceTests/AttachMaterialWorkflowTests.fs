@@ -107,7 +107,7 @@ let ``Attaching the same material id again returns the snapshot without writing`
 let ``An ordinary viewer is refused before the meetup is loaded`` () =
     let denied = run Sample.ordinary Sample.otherMaterialId stub
 
-    test <@ denied = Error(AttachMaterialError.Forbidden NotAnAdministrator) @>
+    test <@ denied = Error(AttachMaterialError.Forbidden CannotManageMeetups) @>
 
 [<Fact>]
 let ``Attaching to a missing meetup is rejected without writing`` () =

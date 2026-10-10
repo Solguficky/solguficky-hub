@@ -113,8 +113,8 @@ module Api =
         match error with
         | RemoveMaterialError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | RemoveMaterialError.Forbidden NotAnAdministrator ->
-            Status(StatusCode.PermissionDenied, "an administrator role is required")
+        | RemoveMaterialError.Forbidden CannotManageMeetups ->
+            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
         | RemoveMaterialError.Domain MeetupNotFound
         | RemoveMaterialError.Domain DraftBelongsToAnotherAuthor -> Status(StatusCode.NotFound, "meetup not found")
         // Инварианты публикации и её момента решают другие срезы: пары невозможны,

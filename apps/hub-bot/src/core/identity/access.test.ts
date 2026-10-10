@@ -2,25 +2,27 @@ import { describe, expect, it } from "vitest";
 import {
   ApplicationQueue as WireQueue,
   AccessRight as WireRight,
-} from "../../../gen/identity/v1/roles_pb.js";
+} from "../../../gen/identity/v1/access_pb.js";
 import { rightsOf, wireQueue } from "./access.js";
 
 describe("identity access vocabulary", () => {
   it("names every right of the contract", () => {
     expect(
       rightsOf([
-        WireRight.HUB,
-        WireRight.AUCTION,
-        WireRight.MANAGE_MEMBERSHIP,
-        WireRight.MODERATE_AUCTION,
-        WireRight.MANAGE_AUCTION,
+        WireRight.ACCESS_HUB,
+        WireRight.PLACE_BIDS,
+        WireRight.MANAGE_MEMBERS,
+        WireRight.ADMIT_BIDDERS,
+        WireRight.MANAGE_MEETUPS,
+        WireRight.GRANT_ADMINS,
       ]),
     ).toEqual([
-      "hub",
-      "auction",
-      "manage-membership",
-      "moderate-auction",
-      "manage-auction",
+      "access-hub",
+      "place-bids",
+      "manage-members",
+      "admit-bidders",
+      "manage-meetups",
+      "grant-admins",
     ]);
   });
 

@@ -31,7 +31,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     // исключать некого.
     private const string AudienceSql = """
         SELECT person.identity_id AS IdentityId, COALESCE(preference.enabled, @Default) AS Enabled,
-               CASE WHEN person.role = 'guest' THEN 'auction' ELSE 'hub' END AS DeliverySurface
+               CASE WHEN person.circle = 'guest' THEN 'auction' ELSE 'hub' END AS DeliverySurface
         FROM identity_replica AS person
         LEFT JOIN notification_preference AS preference
             ON preference.identity_id = person.identity_id
@@ -110,6 +110,13 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             WHERE identity_id = @IdentityId AND NOT blocked AND @Right = ANY(rights));
         """;
 
+    // Человек всё ещё держит выданный набор по последнему слову реплики.
+    private const string StillHoldsPresetSql = """
+        SELECT EXISTS (
+            SELECT 1 FROM identity_replica
+            WHERE identity_id = @IdentityId AND NOT blocked AND @Preset = ANY(presets));
+        """;
+
     private const string InsertSql = """
         INSERT INTO notification (
             notification_id, recipient_id, type, cause_kind, cause_id, meetup_id, payload, request_id, created_at,
@@ -160,7 +167,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         """;
 
     // Снятие при закрытой заявке: допуск или блокировка уже решили то, о чём
-    // факт зовёт администратора. Круги закрытых заявок приходят параметром.
+    // факт зовёт модератора. Ключи очередей закрытых заявок приходят параметром.
     // Снимаются только заявки старше закрывающего события: запоздавшая выдача
     // не закрывает заявку, поданную после неё. Без SKIP LOCKED по той же
     // причине, что снятие при отмене.
@@ -334,8 +341,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     /// Разворачивает повод события Identity и пишет факты в транзакции
     /// <paramref name="work" /> — той же, где ключ события и снимок реплики.
     /// Новая заявка оповещает модераторов её очереди, допуск по заявке — самого
-    /// заявителя, выдача <c>admin</c> — самого человека, выдача роли или права и
-    /// блокировка снимают неотправленное о закрытых заявках. Возвращает <c>null</c>, если
+    /// заявителя, выдача набора <c>admin</c> — самого человека, смена круга,
+    /// выдача права и блокировка снимают неотправленное о закрытых заявках. Возвращает <c>null</c>, если
     /// событие поводом не является или снимать было нечего.
     /// </summary>
     /// <remarks>
@@ -346,12 +353,12 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     internal static async Task<ProducedFacts?> AddForIdentityEvent(
         UnitOfWork work,
         IdentityFact fact,
-        string? previousRole,
+        string? previousCircle,
         DateTimeOffset now,
         TimeSpan staleAfter,
         CancellationToken cancellationToken)
     {
-        var transition = GetCircleTransition(previousRole, fact.Role);
+        var transition = GetCircleTransition(previousCircle, fact.Circle);
         var circleChanged = transition is { } changed
             ? await AddCircleChanged(work, fact, changed, now, now + staleAfter, cancellationToken)
             : FactCount.None;
@@ -365,37 +372,31 @@ public sealed class NotificationStore(NpgsqlDataSource source)
                     Combine(requested, circleChanged));
 
             case IdentityOccasion.ApplicationAdmitted:
-                var granted = await AddAccessGranted(work, fact, AdmissionSurface(previousRole, fact), now,
+                var granted = await AddAccessGranted(work, fact, AdmissionSurface(previousCircle, fact), now,
                     now + staleAfter, cancellationToken);
                 return new ProducedFacts(
                     transition is null ? NotificationFacts.AccessGrantedType : NotificationFacts.CircleChangedType,
                     Combine(granted, circleChanged));
 
-            case IdentityOccasion.RoleGranted:
+            // Выдача admin — повод сама по себе (PER-468): человеку сообщают о
+            // назначении. Заявок она не закрывает: набор выдаётся только
+            // участнику, и его заявки закрыла смена круга раньше.
+            case IdentityOccasion.PresetGranted when fact.OccasionPreset == NotificationFacts.PresetGrantedPreset:
+                var presetGranted = await AddPresetGranted(work, fact, now, now + staleAfter, cancellationToken);
+                return new ProducedFacts(
+                    NotificationFacts.PresetGrantedType,
+                    Combine(presetGranted, circleChanged));
+
+            case IdentityOccasion.CircleChanged:
             case IdentityOccasion.RightGranted:
             case IdentityOccasion.ProfileBlocked:
                 var withdrawn = await WithdrawOnApplicationClosed(work, fact, now, cancellationToken);
-
-                // Выдача admin — повод сама по себе (PER-468): человеку сообщают
-                // о новой роли, а снятое о его заявках идёт в тот же отчёт, как
-                // снятое отменой у поводов Meetups.
-                if (fact is { Occasion: IdentityOccasion.RoleGranted, OccasionRole: NotificationFacts.RoleGrantedRole })
-                {
-                    var roleGranted = await AddRoleGranted(work, fact, now, now + staleAfter, cancellationToken);
-                    return new ProducedFacts(
-                        NotificationFacts.RoleGrantedType,
-                        Combine(roleGranted, circleChanged))
-                    {
-                        Withdrawn = withdrawn,
-                        WithdrawalReason = NotificationFacts.WithdrawnOnApplicationClosed,
-                    };
-                }
 
                 if (transition is not null)
                 {
                     return new ProducedFacts(NotificationFacts.CircleChangedType, circleChanged)
                     {
-                        Withdrawn = fact.Occasion == IdentityOccasion.RoleGranted ? withdrawn : null,
+                        Withdrawn = fact.Occasion == IdentityOccasion.CircleChanged ? withdrawn : null,
                         WithdrawalReason = NotificationFacts.WithdrawnOnApplicationClosed,
                     };
                 }
@@ -502,27 +503,25 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
     // Адресат — сам человек, аудитории и категории нет, как у допуска. Писать
     // ли, решает последнее слово реплики: запоздавшая выдача, вернувшаяся после
-    // Nak, когда роль уже отозвали или человека заблокировали, о роли, которой
-    // нет, не сообщает. Держит ли человек выданное, читается по праву, а не по
-    // кругу: мейнтейнеру admin выдаёт права управления, а круг оставляет
-    // прежним (ADR-064, пункт 7). Повтор события упирается в ключ повода
+    // Nak, когда набор уже сняли или человека заблокировали, о наборе, которого
+    // нет, не сообщает. Повтор события упирается в ключ повода
     // notification_cause_once_per_recipient.
-    private static async Task<FactCount> AddRoleGranted(
+    private static async Task<FactCount> AddPresetGranted(
         UnitOfWork work,
         IdentityFact fact,
         DateTimeOffset now,
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
-        if (!await work.Scalar(StillAdmittedSql, new { fact.IdentityId, Right = NotificationFacts.RoleGrantedRight }, cancellationToken))
+        if (!await work.Scalar(StillHoldsPresetSql, new { fact.IdentityId, Preset = NotificationFacts.PresetGrantedPreset }, cancellationToken))
         {
             return FactCount.None;
         }
 
         var created = await AddAddressed(
             work,
-            NotificationFacts.RoleGranted(Guid.CreateVersion7(now), fact, now, notAfter),
-            NotificationFacts.RoleGrantedType,
+            NotificationFacts.PresetGranted(Guid.CreateVersion7(now), fact, now, notAfter),
+            NotificationFacts.PresetGrantedType,
             NotificationFacts.IdentityEventCause,
             fact.EventId.ToString(),
             now,
@@ -539,15 +538,15 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        // Блокировка закрывает все заявки человека. Выдача роли — заявки на
-        // этот и более слабые круги (ADR-060, пункт 8): гость закрывает только
-        // заявку в аукцион, любой круг сильнее — обе. Выдача права закрывает
-        // заявку в очередь, которую оно решает (ADR-062, пункт 7 в редакции
-        // ADR-064): право аукциона — заявку в аукцион; права модерации не
-        // закрывают ничего.
+        // Блокировка закрывает все заявки человека. Смена круга закрывает
+        // заявки, которые закрывает его право (ADR-060, пункт 8): гость —
+        // только заявку в аукцион, участник — обе, потому что держит и право
+        // хаба, и право ставок. Выдача права закрывает заявку в очередь,
+        // которую оно решает (ADR-062, пункт 7 в редакции ADR-064): право
+        // ставок — заявку в аукцион; служебные права не закрывают ничего.
         string[] circles = fact switch
         {
-            { Occasion: IdentityOccasion.RoleGranted, OccasionRole: "guest" } => [AccessQueues.Circle(AccessQueue.Auction)],
+            { Occasion: IdentityOccasion.CircleChanged, Circle: "guest" } => [AccessQueues.Circle(AccessQueue.Auction)],
             { Occasion: IdentityOccasion.RightGranted } => Enum.GetValues<AccessQueue>()
                 .Where(queue => AccessQueues.AdmissionRight(queue) == fact.OccasionRight)
                 .Select(AccessQueues.Circle)
@@ -957,7 +956,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         CancellationToken cancellationToken)
     {
         const string sql = """
-            SELECT CASE WHEN role = 'guest' THEN 'auction' ELSE 'hub' END
+            SELECT CASE WHEN circle = 'guest' THEN 'auction' ELSE 'hub' END
             FROM identity_replica
             WHERE identity_id = @RecipientId;
             """;
@@ -974,7 +973,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         CancellationToken cancellationToken)
     {
         var notification = NotificationFacts.CircleChanged(
-            Guid.CreateVersion7(now), fact, transition.PreviousRole, transition.CurrentRole, now, notAfter);
+            Guid.CreateVersion7(now), fact, transition.PreviousCircle, transition.CurrentCircle, now, notAfter);
         var created = await AddAddressed(
             work,
             notification,
@@ -984,20 +983,20 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             now,
             notAfter,
             cancellationToken,
-            SurfaceForRole(transition.PreviousRole));
+            SurfaceForCircle(transition.PreviousCircle));
         return new FactCount(created, 0);
     }
 
-    private static string AdmissionSurface(string? previousRole, IdentityFact fact) =>
-        previousRole is null
+    private static string AdmissionSurface(string? previousCircle, IdentityFact fact) =>
+        previousCircle is null
             ? fact.OccasionQueue == AccessQueue.Auction ? NotificationSubjects.Auction : NotificationSubjects.Hub
-            : SurfaceForRole(fact.Role);
+            : SurfaceForCircle(fact.Circle);
 
-    private static string SurfaceForRole(string? role) =>
-        role == "guest" ? NotificationSubjects.Auction : NotificationSubjects.Hub;
+    private static string SurfaceForCircle(string? circle) =>
+        circle == "guest" ? NotificationSubjects.Auction : NotificationSubjects.Hub;
 
-    private static CircleTransition? GetCircleTransition(string? previousRole, string? currentRole) =>
-        (previousRole, currentRole) switch
+    private static CircleTransition? GetCircleTransition(string? previousCircle, string? currentCircle) =>
+        (previousCircle, currentCircle) switch
         {
             ("guest", "member") => new CircleTransition("guest", "member"),
             ("member", "guest") => new CircleTransition("member", "guest"),
@@ -1063,7 +1062,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         public string DeliverySurface { get; init; } = NotificationSubjects.Hub;
     }
 
-    private sealed record CircleTransition(string PreviousRole, string CurrentRole);
+    private sealed record CircleTransition(string PreviousCircle, string CurrentCircle);
 }
 
 /// <summary>Неотправленный факт в том виде, в каком его публикует релей.</summary>

@@ -17,7 +17,7 @@ import {
   SelectForFinalResponseSchema,
   StartPrebiddingResponseSchema,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
-import { AccessRight } from "../../../../gen/identity/v1/roles_pb.js";
+import { AccessRight } from "../../../../gen/identity/v1/access_pb.js";
 import { createAuctionAdapter } from "./client.js";
 
 // Перевод ответов Auction для оболочки сходки (PER-307). Транспорт и токен
@@ -26,16 +26,19 @@ import { createAuctionAdapter } from "./client.js";
 const meetupId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
 const auctionId = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
 const opId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa";
-// Роли администратора в Auction не едут: он получает права, и каталог лотов
-// открывает `manage_auction` (ADR-064, дополнение 2026-10-08).
+// В Auction едут только права администратора: каталог лотов открывает
+// `manage_meetups` (ADR-065).
 const admin = {
   identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-  globalRoles: ["admin"],
-  rights: ["hub", "auction", "manage-auction"] as const,
+  rights: ["access-hub", "place-bids", "manage-meetups"] as const,
 };
 const wireAdmin = {
   identityId: admin.identityId,
-  rights: [AccessRight.HUB, AccessRight.AUCTION, AccessRight.MANAGE_AUCTION],
+  rights: [
+    AccessRight.ACCESS_HUB,
+    AccessRight.PLACE_BIDS,
+    AccessRight.MANAGE_MEETUPS,
+  ],
 };
 
 const notUsed = () => Promise.reject(new Error("not used"));

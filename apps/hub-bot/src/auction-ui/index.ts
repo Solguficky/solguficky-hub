@@ -31,6 +31,9 @@ export {
   type SurfaceEntry,
 } from "./gateway.js";
 export type {
+  AccessRequest,
+  AccessRequestAnswer,
+  AccessRequestOutcome,
   AccessRight,
   ApplicationQueue,
   AuctionBotPorts,
@@ -55,9 +58,6 @@ export type {
   OperationIdPort,
   ProxyLimitRefusal,
   ResolvedIdentity,
-  RoleRequest,
-  RoleRequestAnswer,
-  RoleRequestOutcome,
   TelegramUser,
   TradingPhase,
   Viewer,

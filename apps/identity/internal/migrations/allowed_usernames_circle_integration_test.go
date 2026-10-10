@@ -5,7 +5,6 @@ package migrations_test
 import (
 	"testing"
 
-	"github.com/Solguficky/solguficky-hub/apps/identity/internal/migrations"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/testdb"
 )
 
@@ -21,9 +20,7 @@ func TestAllowedUsernamesCircleMigrationKeepsHubEntriesAndRequiresCircle(t *test
 		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3901', 'veteran')`); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrations.Apply(t.Context(), db); err != nil {
-		t.Fatalf("apply migrations: %v", err)
-	}
+	applyThrough(t, db, 16)
 
 	var circle string
 	if err := db.QueryRowContext(t.Context(),

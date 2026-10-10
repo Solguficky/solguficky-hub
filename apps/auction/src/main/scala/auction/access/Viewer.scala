@@ -1,31 +1,33 @@
 package auction.access
 
 /**
- * Права Identity — то, что человеку можно, а не круг, в котором он состоит (ADR-064, пункт 7).
+ * Права Identity — то, что человеку можно, а не круг, в котором он состоит, и не набор, которым право выдано (ADR-064,
+ * RFC-016).
  *
  * Доменная копия `identity.v1.AccessRight`: сгенерированный тип в домен не проходит. Права, которых сервис не знает,
  * отображение на границе отбрасывает: по контракту неизвестное право ничего не даёт.
  */
 enum AccessRight {
-  case Hub
-  case Auction
-  case ManageMembership
-  case ModerateAuction
-  case ManageAuction
+  case AccessHub
+  case PlaceBids
+  case ManageMembers
+  case AdmitBidders
+  case ManageMeetups
+  case GrantAdmins
 }
 
 /**
  * Смотрящий: тот, от чьего имени пришла операция, с правами, которые поверхность разрешила у Identity на этом же
- * действии (ADR-064). Решение о праве по ним принимает Auction как владелец ресурса; роль-круг Auction не читает.
+ * действии (ADR-064). Решение о праве по ним принимает Auction как владелец ресурса; круг и наборы Auction не читает.
  */
 final case class Viewer(rights: Set[AccessRight]) {
 
-  /** Администратор аукциона: каталог лотов. Право приходит с кругом `admin` (PER-528). */
-  def isAuctionAdministrator: Boolean = rights.contains(AccessRight.ManageAuction)
+  /** Ведущий каталога лотов: каталог общий на все аукционы и входит в право вести сходки (RFC-016, О-1). */
+  def managesLotCatalog: Boolean = rights.contains(AccessRight.ManageMeetups)
 
   /**
-   * Участник торгов: право аукциона. Его держат гость по допуску, участник сообщества и администратор по кругу, поэтому
-   * отдельного разворота кругов здесь нет.
+   * Участник торгов: право ставить. Его держат гость по допуску и участник сообщества по кругу, поэтому отдельного
+   * разворота кругов здесь нет.
    */
-  def isParticipant: Boolean = rights.contains(AccessRight.Auction)
+  def isParticipant: Boolean = rights.contains(AccessRight.PlaceBids)
 }

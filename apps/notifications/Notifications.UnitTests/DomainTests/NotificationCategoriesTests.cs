@@ -89,11 +89,11 @@ public class NotificationCategoriesTests
     }
 
     [Theory]
-    [InlineData(new[] { "hub", "auction", "manage_membership", "moderate_auction" }, true)]
-    [InlineData(new[] { "hub", "auction", "moderate_auction" }, true)]
-    [InlineData(new[] { "hub", "auction", "manage_membership" }, true)]
-    [InlineData(new[] { "hub", "auction" }, false)]
-    [InlineData(new[] { "auction" }, false)]
+    [InlineData(new[] { "access_hub", "place_bids", "manage_members", "admit_bidders" }, true)]
+    [InlineData(new[] { "access_hub", "place_bids", "admit_bidders" }, true)]
+    [InlineData(new[] { "access_hub", "place_bids", "manage_members" }, true)]
+    [InlineData(new[] { "access_hub", "place_bids" }, false)]
+    [InlineData(new[] { "place_bids" }, false)]
     [InlineData(new string[0], false)]
     public void IsVisibleTo_AccessRequests_OnlyToQueueModerators(string[] rights, bool visible)
     {

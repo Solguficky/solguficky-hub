@@ -56,10 +56,10 @@ func call(ctx context.Context, conn *grpc.ClientConn, method string) error {
 	switch method {
 	case identityv1.IdentityService_ResolveIdentity_FullMethodName:
 		return conn.Invoke(ctx, method, &identityv1.ResolveIdentityRequest{}, &identityv1.ResolveIdentityResponse{})
-	case identityv1.IdentityService_RequestRole_FullMethodName:
-		return conn.Invoke(ctx, method, &identityv1.RequestRoleRequest{}, &identityv1.RequestRoleResponse{})
+	case identityv1.IdentityService_RequestAccess_FullMethodName:
+		return conn.Invoke(ctx, method, &identityv1.RequestAccessRequest{}, &identityv1.RequestAccessResponse{})
 	}
-	return conn.Invoke(ctx, method, &identityv1.CheckGlobalRoleRequest{}, &identityv1.CheckGlobalRoleResponse{})
+	return conn.Invoke(ctx, method, &identityv1.CheckAccessRightRequest{}, &identityv1.CheckAccessRightResponse{})
 }
 
 // recordLeaksToken отвечает, попало ли значение какого-либо секрета в запись.
@@ -88,8 +88,8 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 	t.Parallel()
 
 	resolve := identityv1.IdentityService_ResolveIdentity_FullMethodName
-	checkRole := identityv1.IdentityService_CheckGlobalRole_FullMethodName
-	requestRole := identityv1.IdentityService_RequestRole_FullMethodName
+	checkRight := identityv1.IdentityService_CheckAccessRight_FullMethodName
+	requestAccess := identityv1.IdentityService_RequestAccess_FullMethodName
 	appoint := identityv1.IdentityService_AppointAdministrator_FullMethodName
 	dismiss := identityv1.IdentityService_DismissAdministrator_FullMethodName
 	listAdmins := identityv1.IdentityService_ListAdministrators_FullMethodName
@@ -107,9 +107,9 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 		{name: "unknown token", method: resolve, authorization: []string{"Bearer stranger"}, refusal: refusalUnknownToken},
 		{name: "maintainer secret", method: resolve, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
 		{name: "meetups on resolve", method: resolve, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
-		{name: "bot on check role", method: checkRole, authorization: []string{bearer(CallerHubBot)}, refusal: refusalNotDeclared, caller: CallerHubBot},
-		{name: "maintainer secret on request role", method: requestRole, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
-		{name: "meetups on request role", method: requestRole, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
+		{name: "bot on check right", method: checkRight, authorization: []string{bearer(CallerHubBot)}, refusal: refusalNotDeclared, caller: CallerHubBot},
+		{name: "maintainer secret on request access", method: requestAccess, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
+		{name: "meetups on request access", method: requestAccess, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
 		{name: "no header on appoint", method: appoint, refusal: refusalMissingToken},
 		{name: "auction bot on appoint", method: appoint, authorization: []string{bearer(CallerAuctionBot)}, refusal: refusalNotDeclared, caller: CallerAuctionBot},
 		{name: "maintainer secret on dismiss", method: dismiss, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
@@ -164,14 +164,14 @@ func TestCallerGateAdmitsDeclaredCaller(t *testing.T) {
 	}{
 		{identityv1.IdentityService_ResolveIdentity_FullMethodName, CallerHubBot},
 		{identityv1.IdentityService_ResolveIdentity_FullMethodName, CallerAuctionBot},
-		{identityv1.IdentityService_RequestRole_FullMethodName, CallerHubBot},
-		{identityv1.IdentityService_RequestRole_FullMethodName, CallerAuctionBot},
-		{identityv1.IdentityService_CheckGlobalRole_FullMethodName, CallerMeetups},
-		{identityv1.IdentityService_CheckGlobalRole_FullMethodName, CallerNotifications},
+		{identityv1.IdentityService_RequestAccess_FullMethodName, CallerHubBot},
+		{identityv1.IdentityService_RequestAccess_FullMethodName, CallerAuctionBot},
+		{identityv1.IdentityService_CheckAccessRight_FullMethodName, CallerMeetups},
+		{identityv1.IdentityService_CheckAccessRight_FullMethodName, CallerNotifications},
 		// Канал доставки бота аукциона (PER-328): получатель уведомления и его
-		// роль `public`, без которой Auction не отдаст лот для текста.
+		// право place_bids, без которого Auction не отдаст лот для текста.
 		{identityv1.IdentityService_ResolveTelegramUserId_FullMethodName, CallerAuctionBot},
-		{identityv1.IdentityService_CheckGlobalRole_FullMethodName, CallerAuctionBot},
+		{identityv1.IdentityService_CheckAccessRight_FullMethodName, CallerAuctionBot},
 	}
 	for _, tc := range tests {
 		t.Run(string(tc.caller)+tc.method, func(t *testing.T) {
@@ -205,16 +205,16 @@ func TestCallerTokenDoesNotOpenMaintainerMethods(t *testing.T) {
 
 	const id = "0192f8a0-0000-7000-8000-000000000001"
 	calls := map[string]func(identityv1.IdentityServiceClient, context.Context) error{
-		"GrantAdminRole": func(c identityv1.IdentityServiceClient, ctx context.Context) error {
-			_, err := c.GrantAdminRole(ctx, &identityv1.GrantAdminRoleRequest{IdentityId: id})
+		"GrantPreset admin": func(c identityv1.IdentityServiceClient, ctx context.Context) error {
+			_, err := c.GrantPreset(ctx, &identityv1.GrantPresetRequest{IdentityId: id, Preset: identityv1.Preset_PRESET_ADMIN})
 			return err
 		},
-		"GrantMaintainerRole": func(c identityv1.IdentityServiceClient, ctx context.Context) error {
-			_, err := c.GrantMaintainerRole(ctx, &identityv1.GrantMaintainerRoleRequest{IdentityId: id})
+		"GrantPreset maintainer": func(c identityv1.IdentityServiceClient, ctx context.Context) error {
+			_, err := c.GrantPreset(ctx, &identityv1.GrantPresetRequest{IdentityId: id, Preset: identityv1.Preset_PRESET_MAINTAINER})
 			return err
 		},
-		"RevokeMaintainerRole": func(c identityv1.IdentityServiceClient, ctx context.Context) error {
-			_, err := c.RevokeMaintainerRole(ctx, &identityv1.RevokeMaintainerRoleRequest{IdentityId: id})
+		"RevokePreset maintainer": func(c identityv1.IdentityServiceClient, ctx context.Context) error {
+			_, err := c.RevokePreset(ctx, &identityv1.RevokePresetRequest{IdentityId: id, Preset: identityv1.Preset_PRESET_MAINTAINER})
 			return err
 		},
 	}

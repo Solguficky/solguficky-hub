@@ -27,7 +27,7 @@ func TestPublishSpanLinksToRequestTrace(t *testing.T) {
 	defer outer.End()
 
 	_, span := r.startPublishSpan(outerCtx, outbox.Record{
-		EventID: "e1", Occasion: outbox.RoleGranted, TraceParent: requestTraceParent,
+		EventID: "e1", Occasion: outbox.CircleChanged, TraceParent: requestTraceParent,
 	})
 	span.End()
 
@@ -35,7 +35,7 @@ func TestPublishSpanLinksToRequestTrace(t *testing.T) {
 	if got.Parent().IsValid() {
 		t.Fatalf("parent: got %s, want a root span", got.Parent().SpanID())
 	}
-	if got.SpanKind() != trace.SpanKindProducer || got.Name() != "publish events.identity.role_granted" {
+	if got.SpanKind() != trace.SpanKindProducer || got.Name() != "publish events.identity.circle_changed" {
 		t.Fatalf("span: got %s %q", got.SpanKind(), got.Name())
 	}
 	links := got.Links()

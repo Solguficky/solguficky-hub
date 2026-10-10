@@ -14,45 +14,49 @@ public static class FactFixtures
     private static readonly TimeSpan Patience = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// Роль-круг и права человека в реплике. Права круга заданы так, как их
-    /// выводит Identity (ADR-064, пункт 7); выданные отдельно добавляет
+    /// Круг, наборы и права человека в реплике. Права круга и наборов заданы
+    /// так, как их выводит Identity (RFC-016); выданные записями добавляет
     /// <see cref="With" />.
     /// </summary>
-    public sealed record Circle(string Role, string[] Rights)
+    public sealed record Holding(string Circle, string[] Presets, string[] Rights)
     {
-        public Circle With(params string[] granted) => this with { Rights = [.. Rights, .. granted] };
+        public Holding With(params string[] granted) => this with { Rights = [.. Rights, .. granted] };
     }
 
-    public static readonly Circle AdminCircle = new("admin", ["hub", "auction", "manage_membership", "moderate_auction"]);
+    /// <summary>Администратор: участник с набором admin.</summary>
+    public static readonly Holding AdminHolding = new(
+        "member", ["admin"], ["access_hub", "place_bids", "admit_bidders", "manage_members", "manage_meetups"]);
 
-    public static readonly Circle MaintainerCircle = new("maintainer", ["hub", "auction"]);
+    /// <summary>Мейнтейнер без набора admin: назначать администраторов может, вести состав — нет.</summary>
+    public static readonly Holding MaintainerHolding = new("member", ["maintainer"], ["access_hub", "place_bids", "grant_admins"]);
 
-    public static readonly Circle MemberCircle = new("member", ["hub", "auction"]);
+    public static readonly Holding MemberHolding = new("member", [], ["access_hub", "place_bids"]);
 
-    /// <summary>Гость, допущенный к аукциону: право аукциона выдано записью.</summary>
-    public static readonly Circle GuestCircle = new("guest", ["auction"]);
+    /// <summary>Гость, допущенный к аукциону: право ставок выдано записью.</summary>
+    public static readonly Holding GuestHolding = new("guest", [], ["place_bids"]);
 
-    /// <summary>Человек в реплике Identity с этой ролью и правами.</summary>
-    public static Task<Guid> Person(IsolatedDatabase db, Circle circle) => Person(db, blocked: false, circle);
+    /// <summary>Человек в реплике Identity с этим кругом, наборами и правами.</summary>
+    public static Task<Guid> Person(IsolatedDatabase db, Holding holding) => Person(db, blocked: false, holding);
 
     /// <summary>
-    /// Заблокированный хранится так, как его пишет Identity: без роли и прав.
-    /// Круг здесь — тот, что у него был, и в реплику он не попадает.
+    /// Заблокированный хранится так, как его пишет Identity: без круга, наборов
+    /// и прав. Владение здесь — то, что у него было, и в реплику оно не попадает.
     /// </summary>
-    public static async Task<Guid> Person(IsolatedDatabase db, bool blocked, Circle circle)
+    public static async Task<Guid> Person(IsolatedDatabase db, bool blocked, Holding holding)
     {
         var id = Guid.CreateVersion7();
         await Execute(
             db,
             """
-            INSERT INTO identity_replica (identity_id, version, role, rights, blocked, occurred_at, applied_at)
-            VALUES (@Id, 1, @Role, @Rights, @Blocked, now(), now());
+            INSERT INTO identity_replica (identity_id, version, circle, presets, rights, blocked, occurred_at, applied_at)
+            VALUES (@Id, 1, @Circle, @Presets, @Rights, @Blocked, now(), now());
             """,
             new
             {
                 Id = id,
-                Role = blocked ? null : circle.Role,
-                Rights = blocked ? [] : circle.Rights,
+                Circle = blocked ? null : holding.Circle,
+                Presets = blocked ? [] : holding.Presets,
+                Rights = blocked ? [] : holding.Rights,
                 Blocked = blocked,
             });
 

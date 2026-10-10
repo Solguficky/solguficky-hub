@@ -60,16 +60,15 @@ function auctions() {
 // Роли ничего не решают: край зовёт Auction по праву хаба.
 const person = (rights: readonly AccessRight[]) => ({
   identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-  globalRoles: [],
   rights,
 });
-const MEMBER: readonly AccessRight[] = ["hub", "auction"];
+const MEMBER: readonly AccessRight[] = ["access-hub", "place-bids"];
 const ADMIN: readonly AccessRight[] = [
-  "hub",
-  "auction",
-  "manage-membership",
-  "moderate-auction",
-  "manage-auction",
+  "access-hub",
+  "place-bids",
+  "manage-members",
+  "admit-bidders",
+  "manage-meetups",
 ];
 
 describe("meetup auction", () => {
@@ -94,12 +93,12 @@ describe("meetup auction", () => {
     const dispatcher = createDispatcher(meetups(), undefined, undefined, port);
 
     const card = await dispatcher.execute({
-      identity: person(["auction"]),
+      identity: person(["place-bids"]),
       intent: "view-meetup",
       meetupId,
     });
     const enabled = await dispatcher.execute({
-      identity: person(["auction"]),
+      identity: person(["place-bids"]),
       intent: "enable-auction",
       meetupId,
       opId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa",

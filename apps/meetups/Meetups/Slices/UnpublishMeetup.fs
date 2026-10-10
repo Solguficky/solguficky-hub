@@ -115,8 +115,8 @@ module Api =
         match error with
         | UnpublishMeetupError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | UnpublishMeetupError.Forbidden NotAnAdministrator ->
-            Status(StatusCode.PermissionDenied, "an administrator role is required")
+        | UnpublishMeetupError.Forbidden CannotManageMeetups ->
+            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
         | UnpublishMeetupError.Domain MeetupNotFound
         | UnpublishMeetupError.Domain DraftBelongsToAnotherAuthor -> Status(StatusCode.NotFound, "meetup not found")
         // Инвариант публикации решает другой срез: пара невозможна, поэтому нарушение

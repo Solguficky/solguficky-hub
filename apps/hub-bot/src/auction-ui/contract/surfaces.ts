@@ -49,7 +49,7 @@ export const accessMatrixApp =
     if (action.kind === "start") {
       const entry = decideEntry(
         kind,
-        await ports.entry.requestRole({
+        await ports.entry.requestAccess({
           user: from,
           queue: applicationQueue(kind),
           ...(action.sourceCode === undefined

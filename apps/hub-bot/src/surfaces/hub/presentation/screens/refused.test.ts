@@ -141,7 +141,7 @@ describe("refused list", () => {
 });
 
 describe("reconsider confirmation", () => {
-  it("names lifting the block and granting the role", () => {
+  it("names lifting the block and granting access", () => {
     const screen = reconsiderConfirmScreen("community", refused(1), 2);
 
     expect(screen.text).toBe(

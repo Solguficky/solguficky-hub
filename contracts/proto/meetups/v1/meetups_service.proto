@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package meetups.v1;
 
-import "identity/v1/roles.proto";
+import "identity/v1/access.proto";
 import "meetups/v1/meetups.proto";
 
 service MeetupsService {
@@ -48,7 +48,8 @@ enum MeetupRelation {
   // No value: the field is unset or the relation is unknown to the receiver.
   MEETUP_RELATION_UNSPECIFIED = 0;
 
-  // Community administrator; the relation holds for every meetup.
+  // Holder of identity.v1.ACCESS_RIGHT_MANAGE_MEETUPS; the relation holds for
+  // every meetup.
   MEETUP_RELATION_COMMUNITY_ADMINISTRATOR = 1;
 }
 
@@ -74,14 +75,18 @@ message ListMeetupStatesResponse {
 }
 
 message Viewer {
+  reserved 2;
+  reserved "global_roles";
+
   // Canonical lowercase UUIDv7 with hyphens.
   string identity_id = 1;
 
-  // Platform-wide roles from Identity. Domain permissions are not precomputed
-  // here; Meetups applies them. An empty set means an ordinary user. The block
-  // mark is deliberately absent: Meetups decides access by roles and only the
-  // caller reads the mark from ResolveIdentityResponse to choose a refusal.
-  repeated identity.v1.GlobalRole global_roles = 2;
+  // Rights from Identity, copied as received from
+  // ResolveIdentityResponse.rights. Domain permissions are not precomputed
+  // here; Meetups applies them. An empty set means no rights. The block mark is
+  // deliberately absent: Meetups decides access by rights and only the caller
+  // reads the mark from ResolveIdentityResponse to choose a refusal.
+  repeated identity.v1.AccessRight rights = 3;
 }
 
 message CreateMeetupDraftRequest {

@@ -53,7 +53,7 @@ const user = {
 const identity: ResolvedIdentity = {
   viewer: {
     identityId: "01929b7e-0000-7000-8000-000000000001",
-    rights: ["auction"],
+    rights: ["place-bids"],
   },
   blocked: false,
 };

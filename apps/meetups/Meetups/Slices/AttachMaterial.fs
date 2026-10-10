@@ -123,8 +123,8 @@ module Api =
         match error with
         | AttachMaterialError.Malformed invalid ->
             Status(StatusCode.InvalidArgument, $"{invalid.Field} {invalid.Problem}")
-        | AttachMaterialError.Forbidden NotAnAdministrator ->
-            Status(StatusCode.PermissionDenied, "an administrator role is required")
+        | AttachMaterialError.Forbidden CannotManageMeetups ->
+            Status(StatusCode.PermissionDenied, "the manage_meetups right is required")
         | AttachMaterialError.Domain MeetupNotFound
         | AttachMaterialError.Domain DraftBelongsToAnotherAuthor -> Status(StatusCode.NotFound, "meetup not found")
         // Инварианты публикации и её момента решают другие срезы: пары невозможны,

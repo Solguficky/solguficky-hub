@@ -43,14 +43,14 @@ public class BroadcastTests
     {
         await using var env = await BroadcastsUnderTest.Start();
         var meetupId = await Meetup(env.Db, "Сходка у реки");
-        var author = await Person(env.Db, AdminCircle);
+        var author = await Person(env.Db, AdminHolding);
 
-        var byDefault = await Person(env.Db, MemberCircle);
-        var overriddenOn = await Person(env.Db, MemberCircle);
-        var offHere = await Person(env.Db, MemberCircle);
-        var offGlobally = await Person(env.Db, MemberCircle);
-        var blocked = await Person(env.Db, blocked: true, MemberCircle);
-        var notSubscribed = await Person(env.Db, MemberCircle);
+        var byDefault = await Person(env.Db, MemberHolding);
+        var overriddenOn = await Person(env.Db, MemberHolding);
+        var offHere = await Person(env.Db, MemberHolding);
+        var offGlobally = await Person(env.Db, MemberHolding);
+        var blocked = await Person(env.Db, blocked: true, MemberHolding);
+        var notSubscribed = await Person(env.Db, MemberHolding);
 
         foreach (var person in new[] { author, byDefault, overriddenOn, offHere, offGlobally, blocked })
         {
@@ -98,7 +98,7 @@ public class BroadcastTests
         await using var env = await BroadcastsUnderTest.Start();
         env.Owners.Meetups = Denied;
         var meetupId = await Meetup(env.Db);
-        var subscriber = await Person(env.Db, MemberCircle);
+        var subscriber = await Person(env.Db, MemberHolding);
         await Subscribe(env.Db, subscriber, meetupId);
         var id = NewId();
 
@@ -133,7 +133,7 @@ public class BroadcastTests
         env.Owners.Meetups = Unavailable;
         env.Owners.Identity = Unavailable;
         var meetupId = await Meetup(env.Db);
-        var author = await Person(env.Db, AdminCircle);
+        var author = await Person(env.Db, AdminHolding);
 
         var toMeetup = await Should.ThrowAsync<RpcException>(() =>
             env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(author, meetupId, NewId()), Plain).ResponseAsync);
@@ -154,14 +154,14 @@ public class BroadcastTests
     {
         await using var env = await BroadcastsUnderTest.Start();
         var meetupId = await Meetup(env.Db);
-        var author = await Person(env.Db, AdminCircle);
-        var early = await Person(env.Db, MemberCircle);
+        var author = await Person(env.Db, AdminHolding);
+        var early = await Person(env.Db, MemberHolding);
         await Subscribe(env.Db, early, meetupId);
         var id = NewId();
 
         var first = await env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(author, meetupId, id), Plain);
 
-        var late = await Person(env.Db, MemberCircle);
+        var late = await Person(env.Db, MemberHolding);
         await Subscribe(env.Db, late, meetupId);
         var repeated = await env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(author, meetupId, id), Chain(NewId()));
 
@@ -175,7 +175,7 @@ public class BroadcastTests
     {
         await using var env = await BroadcastsUnderTest.Start();
         var meetupId = await Meetup(env.Db);
-        var author = await Person(env.Db, AdminCircle);
+        var author = await Person(env.Db, AdminHolding);
         var id = NewId();
 
         await env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(author, meetupId, id), Plain);
@@ -198,7 +198,7 @@ public class BroadcastTests
     public async Task When_MeetupNotReplicatedYet_Expect_UnavailableThenRepeatSucceeds()
     {
         await using var env = await BroadcastsUnderTest.Start();
-        var author = await Person(env.Db, AdminCircle);
+        var author = await Person(env.Db, AdminHolding);
         var meetupId = NewId();
         var id = NewId();
 
@@ -223,13 +223,13 @@ public class BroadcastTests
     public async Task When_AdministratorAnnounces_Expect_OneFactPerHubMemberWithCategoryOn()
     {
         await using var env = await BroadcastsUnderTest.Start();
-        var author = await Person(env.Db, AdminCircle);
-        var administrator = await Person(env.Db, AdminCircle);
-        var member = await Person(env.Db, MemberCircle);
-        var maintainer = await Person(env.Db, MaintainerCircle);
-        var outer = await Person(env.Db, GuestCircle);
-        var blocked = await Person(env.Db, blocked: true, MemberCircle);
-        var off = await Person(env.Db, MemberCircle);
+        var author = await Person(env.Db, AdminHolding);
+        var administrator = await Person(env.Db, AdminHolding);
+        var member = await Person(env.Db, MemberHolding);
+        var maintainer = await Person(env.Db, MaintainerHolding);
+        var outer = await Person(env.Db, GuestHolding);
+        var blocked = await Person(env.Db, blocked: true, MemberHolding);
+        var off = await Person(env.Db, MemberHolding);
         await Preference(env.Db, off, null, "community_announcement", enabled: false);
         var id = NewId();
 
@@ -256,7 +256,7 @@ public class BroadcastTests
     {
         await using var env = await BroadcastsUnderTest.Start();
         env.Owners.Identity = Denied;
-        await Person(env.Db, MemberCircle);
+        await Person(env.Db, MemberHolding);
         var id = NewId();
 
         var refused = await Should.ThrowAsync<RpcException>(() =>
@@ -274,7 +274,7 @@ public class BroadcastTests
     public async Task When_BodyEmpty_Expect_InvalidArgumentBeforeOwnerIsAsked()
     {
         await using var env = await BroadcastsUnderTest.Start();
-        var author = await Person(env.Db, AdminCircle);
+        var author = await Person(env.Db, AdminHolding);
 
         var refused = await Should.ThrowAsync<RpcException>(() =>
             env.Client.BroadcastToCommunityAsync(ToCommunity(author, NewId(), body: ""), Plain).ResponseAsync);
@@ -292,7 +292,7 @@ public class BroadcastTests
     {
         await using var env = await BroadcastsUnderTest.StartWithoutOwners();
         var meetupId = await Meetup(env.Db);
-        var author = await Person(env.Db, AdminCircle);
+        var author = await Person(env.Db, AdminHolding);
 
         var toMeetup = await Should.ThrowAsync<RpcException>(() =>
             env.Client.BroadcastToMeetupSubscribersAsync(ToMeetup(author, meetupId, NewId()), Plain).ResponseAsync);

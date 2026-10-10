@@ -76,7 +76,7 @@ export function tradeCallback(input: {
 // проверки.
 //
 // `firstName` нужен одной кнопке — повтору входа под кадром «недоступно»
-// после `/start`: она зовёт тот же `RequestRole`, что и команда.
+// после `/start`: она зовёт тот же `RequestAccess`, что и команда.
 export async function routeAuctionCallback(input: {
   ports: EntryPorts;
   user: TelegramUser;
@@ -96,7 +96,7 @@ export async function routeAuctionCallback(input: {
 
 // Ответ на вопрос листа ставки (PER-317): шаг — `callback_data` кнопки
 // «Отмена» под вопросом, на который ответили. Проверка доступа та же, что у
-// нажатия: роль перепроверяется на каждом действии.
+// нажатия: права перепроверяются на каждом действии.
 export function routeAuctionReply(input: {
   ports: EntryPorts;
   user: TelegramUser;
@@ -115,7 +115,7 @@ export function routeAuctionReply(input: {
 }
 
 // `/start` — вход на поверхность (ADR-060): вместо разрешения личности бот
-// зовёт `RequestRole` в очередь аукциона, с кодом канала из payload `s_<код>` и
+// зовёт `RequestAccess` в очередь аукциона, с кодом канала из payload `s_<код>` и
 // именем для карточки модератора. Identity гасит белый список или ставит
 // заявку, а ответ по исходу выбирает политика пакета.
 export function routeAuctionStart(input: {
@@ -150,7 +150,7 @@ async function routeEntry(input: {
       ? parseEntryCallback(input.action.data)
       : undefined;
   // Вход — команда `/start` либо её повтор кнопкой после сбоя: оба зовут
-  // `RequestRole`, остальные действия разрешают личность и заявок не ставят.
+  // `RequestAccess`, остальные действия разрешают личность и заявок не ставят.
   const entering =
     input.action.kind === "start"
       ? input.action
@@ -183,7 +183,7 @@ async function routeEntry(input: {
     if (entering !== undefined) {
       const entry = decideEntry(
         "auction",
-        await input.ports.entry.requestRole({
+        await input.ports.entry.requestAccess({
           user: input.user,
           queue: applicationQueue("auction"),
           ...(entering.sourceCode === undefined
@@ -207,7 +207,7 @@ async function routeEntry(input: {
             identityId: entry.identityId,
             failure: {
               category: "invariant",
-              message: "identity answered an unknown role request outcome",
+              message: "identity answered an unknown access request outcome",
             },
           };
         default: {

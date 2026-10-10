@@ -55,9 +55,9 @@ public delegate Task<MeetupAuthority> AskMeetups(
     DateTime deadline,
     CancellationToken cancellationToken);
 
-/// <summary>Один вызов <c>CheckGlobalRole</c>.</summary>
-public delegate Task<CheckGlobalRoleResponse> AskIdentity(
-    CheckGlobalRoleRequest request,
+/// <summary>Один вызов <c>CheckAccessRight</c>.</summary>
+public delegate Task<CheckAccessRightResponse> AskIdentity(
+    CheckAccessRightRequest request,
     Metadata headers,
     DateTime deadline,
     CancellationToken cancellationToken);
@@ -102,7 +102,7 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
         }
 
         // Отношения, которые принимает рассылка по сходке. В MVP словарь Meetups
-        // несёт одно — администратор сообщества; организаторов конкретной
+        // несёт одно — держатель права вести сходки; организаторов конкретной
         // сходки нет (ADR-031), и выбирать пока не из чего.
         var request = new CheckMeetupAuthorityRequest
         {
@@ -129,12 +129,12 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
             return new AuthorityAnswer(AuthorityVerdict.Unavailable, "identity address is not configured");
         }
 
-        // Объявление сообществу принадлежит администратору. Identity набор ролей
-        // не разворачивает, поэтому принимаемая роль названа ровно одна.
-        var request = new CheckGlobalRoleRequest
+        // Объявление сообществу входит в право вести сходки (RFC-016, вопрос
+        // О-3): отдельного права на объявления нет.
+        var request = new CheckAccessRightRequest
         {
             IdentityId = authorId.ToString("D"),
-            AcceptedRoles = { GlobalRole.Admin },
+            Right = AccessRight.ManageMeetups,
         };
 
         try
@@ -142,7 +142,7 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
             var response = await identity(request, Headers(forwarded), Due(forwarded), forwarded.Cancellation);
             return response.Granted
                 ? AuthorityAnswer.Granted
-                : new AuthorityAnswer(AuthorityVerdict.Denied, "identity: role not held");
+                : new AuthorityAnswer(AuthorityVerdict.Denied, "identity: right not held");
         }
         catch (RpcException declined)
         {
@@ -236,6 +236,6 @@ public sealed class OwnerAuthority(AskMeetups? meetups, AskIdentity? identity, s
         var client = new IdentityService.IdentityServiceClient(GrpcChannel.ForAddress(url));
 
         return (request, headers, deadline, cancellationToken) =>
-            client.CheckGlobalRoleAsync(request, headers, deadline, cancellationToken).ResponseAsync;
+            client.CheckAccessRightAsync(request, headers, deadline, cancellationToken).ResponseAsync;
     }
 }

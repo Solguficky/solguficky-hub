@@ -75,18 +75,24 @@ const lot: LotView = {
   },
 };
 
-// Пускает право хаба, а в Auction уходят права, без ролей. По умолчанию права участника;
-// гостю тест передаёт их явно.
+// Пускает право хаба, а в Auction уходят права (RFC-016). По умолчанию права
+// участника, у набора `admin` — ещё право вести сходки; гостю тест передаёт
+// права явно.
+type Holder = "admin" | "member" | "guest";
+
 function identity(
-  globalRoles: readonly string[],
+  holder: Holder,
   blocked = false,
-  rights: readonly AccessRight[] = blocked ? [] : ["hub", "auction"],
+  rights: readonly AccessRight[] = blocked
+    ? []
+    : holder === "admin"
+      ? ["access-hub", "place-bids", "manage-meetups"]
+      : ["access-hub", "place-bids"],
 ) {
   return {
     resolve: async () => ({
       kind: "resolved" as const,
       identityId,
-      globalRoles,
       rights,
       blocked,
     }),
@@ -222,7 +228,7 @@ function fakeAuction(
 }
 
 function harness(
-  roles: readonly string[],
+  holder: Holder,
   auction: ReturnType<typeof fakeAuction>,
   options: Omit<HarnessOptions, "auction"> & {
     blocked?: boolean;
@@ -235,7 +241,7 @@ function harness(
   const { blocked, rights, snapshot, meetupsDown, presentation, ...rest } =
     options;
   return createHarness(
-    identity(roles, blocked, rights),
+    identity(holder, blocked, rights),
     createDispatcher(
       fakeMeetups(snapshot, meetupsDown),
       undefined,
@@ -311,7 +317,7 @@ function data(shown: Shown, text: string): string | undefined {
 describe("meetup card auction row", () => {
   it("lets a member open the auction of the meetup next to its materials", async () => {
     const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness(["member"], auction, {
+    const { bot, calls } = harness("member", auction, {
       snapshot: meetup(2),
     });
     await bot.init();
@@ -325,7 +331,7 @@ describe("meetup card auction row", () => {
 
   it("shows no auction entry at a meetup without an auction", async () => {
     const auction = fakeAuction();
-    const { bot, calls } = harness(["member"], auction);
+    const { bot, calls } = harness("member", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:view:${meetupToken}`));
 
@@ -338,7 +344,7 @@ describe("meetup card auction row", () => {
   // та же, что из списка: ряд аукциона на ней есть (PER-468, PER-472).
   it("keeps the auction row on the card opened from the publishing outcome", async () => {
     const auction = fakeAuction();
-    const { bot, calls } = harness(["admin"], auction, {
+    const { bot, calls } = harness("admin", auction, {
       snapshot: { ...meetup(), visibility: "hidden" },
     });
     await bot.init();
@@ -357,7 +363,7 @@ describe("meetup card auction row", () => {
 
   it("shows the lots entry on the card opened from the publishing outcome of a meetup with an auction", async () => {
     const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness(["admin"], auction, {
+    const { bot, calls } = harness("admin", auction, {
       snapshot: { ...meetup(), visibility: "hidden" },
     });
     await bot.init();
@@ -375,7 +381,7 @@ describe("meetup card auction row", () => {
 
   it("offers enabling to the administrator in the materials row", async () => {
     const auction = fakeAuction();
-    const { bot, calls } = harness(["admin"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:view:${meetupToken}`));
 
@@ -392,7 +398,7 @@ describe("meetup card auction row", () => {
     const auction = fakeAuction({
       lookup: () => ({ kind: "unavailable", cause: new Error("down") }),
     });
-    const { bot, calls } = harness(["admin"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:view:${meetupToken}`));
 
@@ -404,8 +410,8 @@ describe("meetup card auction row", () => {
 
   it("does not call Auction for a person without the hub right", async () => {
     const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness(["public"], auction, {
-      rights: ["auction"],
+    const { bot, calls } = harness("guest", auction, {
+      rights: ["place-bids"],
     });
     await bot.init();
     await bot.handleUpdate(press(`v1:view:${meetupToken}`));
@@ -419,7 +425,7 @@ describe("meetup card auction row", () => {
 
   it("does not call Auction for a blocked person", async () => {
     const auction = fakeAuction({ existing: true });
-    const { bot } = harness(["member"], auction, { blocked: true });
+    const { bot } = harness("member", auction, { blocked: true });
     await bot.init();
     await bot.handleUpdate(press(feedData));
 
@@ -430,7 +436,7 @@ describe("meetup card auction row", () => {
 describe("enabling the auction", () => {
   it("enables the auction and shows the outcome, with the card and its entry behind the way back", async () => {
     const auction = fakeAuction();
-    const { bot, calls, records } = harness(["admin"], auction);
+    const { bot, calls, records } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
 
@@ -448,7 +454,7 @@ describe("enabling the auction", () => {
 
   it("does not birth a second auction on a repeated press", async () => {
     const auction = fakeAuction();
-    const { bot, calls } = harness(["admin"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
     await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
@@ -465,7 +471,7 @@ describe("enabling the auction", () => {
     const auction = fakeAuction({
       enable: () => ({ kind: "not-administrator" }),
     });
-    const { bot, calls, records } = harness(["admin"], auction);
+    const { bot, calls, records } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
 
@@ -482,7 +488,7 @@ describe("enabling the auction", () => {
     const auction = fakeAuction({
       enable: () => ({ kind: "unavailable", cause: new Error("down") }),
     });
-    const { bot, calls } = harness(["admin"], auction);
+    const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
 
@@ -495,7 +501,7 @@ describe("enabling the auction", () => {
 describe("auction feed shell", () => {
   it("returns from the feed to the meetup it was opened from", async () => {
     const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness(["member"], auction);
+    const { bot, calls } = harness("member", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:view:${meetupToken}`));
     await bot.handleUpdate(press(feedData));
@@ -508,7 +514,7 @@ describe("auction feed shell", () => {
 
   it("keeps the way back to the meetup through a lot and back to the feed", async () => {
     const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness(["member"], auction, {
+    const { bot, calls } = harness("member", auction, {
       presentation: "plain",
     });
     await bot.init();
@@ -525,7 +531,7 @@ describe("auction feed shell", () => {
 
   it("shows the bids of a lot in journal order and returns to the lot", async () => {
     const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness(["member"], auction, {
+    const { bot, calls } = harness("member", auction, {
       presentation: "plain",
     });
     await bot.init();
@@ -554,7 +560,7 @@ describe("auction feed shell", () => {
   it("returns to the upcoming list when the process no longer knows the meetup", async () => {
     const auction = fakeAuction({ existing: true });
     // Рестарт: память процесса пуста, а кнопка ленты осталась в чате.
-    const { bot, calls } = harness(["member"], auction, {
+    const { bot, calls } = harness("member", auction, {
       auctionParents: createAuctionParents(),
     });
     await bot.init();
@@ -568,7 +574,7 @@ describe("auction feed shell", () => {
   it("remembers the meetup from enabling, not only from the card", async () => {
     const auction = fakeAuction();
     const parents = createAuctionParents();
-    const { bot } = harness(["admin"], auction, { auctionParents: parents });
+    const { bot } = harness("admin", auction, { auctionParents: parents });
     await bot.init();
     await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
 
@@ -580,7 +586,7 @@ describe("auction feed shell", () => {
     auction.listAuctionLots.mockRejectedValue(
       new ConnectError("down", Code.Unavailable),
     );
-    const { bot, calls, records } = harness(["member"], auction);
+    const { bot, calls, records } = harness("member", auction);
     await bot.init();
     await bot.handleUpdate(press(feedData));
 
@@ -614,7 +620,7 @@ describe("lot photo delivery", () => {
   it("uploads the photo into the rich card and reuses its file_id", async () => {
     const auction = fakeAuction({ existing: true });
     const photos = createLotPhotos();
-    const { bot, calls } = harness(["member"], auction, {
+    const { bot, calls } = harness("member", auction, {
       lotPhotos: photos,
       respond: (method) =>
         method === "editMessageText" ? richLot("big-file") : undefined,
@@ -644,7 +650,7 @@ describe("lot photo delivery", () => {
       existing: true,
       image: () => Promise.reject(new ConnectError("no", Code.NotFound)),
     });
-    const { bot, calls, records } = harness(["member"], auction);
+    const { bot, calls, records } = harness("member", auction);
     await bot.init();
     await bot.handleUpdate(press(lotData));
 
@@ -659,7 +665,7 @@ describe("lot photo delivery", () => {
   it("edits the card without a photo when Telegram refuses the upload and skips it next time", async () => {
     const auction = fakeAuction({ existing: true });
     const photos = createLotPhotos();
-    const { bot, calls } = harness(["member"], auction, {
+    const { bot, calls } = harness("member", auction, {
       lotPhotos: photos,
       respond: (method, payload) =>
         method === "editMessageText" &&
@@ -687,7 +693,7 @@ describe("lot photo delivery", () => {
 
   it("shows the lot card as an HTML message without a photo in plain presentation", async () => {
     const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness(["member"], auction, {
+    const { bot, calls } = harness("member", auction, {
       presentation: "plain",
     });
     await bot.init();
@@ -704,7 +710,7 @@ describe("review findings", () => {
   it("reports an enabled auction when the card cannot be read again", async () => {
     const auction = fakeAuction();
     const parents = createAuctionParents();
-    const { bot, calls, records } = harness(["admin"], auction, {
+    const { bot, calls, records } = harness("admin", auction, {
       meetupsDown: true,
       auctionParents: parents,
     });
@@ -730,7 +736,7 @@ describe("review findings", () => {
 
   it("opens a traced auction callback from a notification as a new screen", async () => {
     const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness(["member"], auction);
+    const { bot, calls } = harness("member", auction);
     await bot.init();
 
     await bot.handleUpdate(press(`v1:t:${lotData.slice("v1:".length)}`));
@@ -743,7 +749,7 @@ describe("review findings", () => {
 
   it("shows the blocking frame, not an outage, when Auction is not configured", async () => {
     const { bot, calls } = createHarness(
-      identity(["member"], true),
+      identity("member", true),
       createDispatcher(fakeMeetups()),
     );
     await bot.init();
@@ -758,7 +764,7 @@ describe("review findings", () => {
     auction.listAuctionLots.mockRejectedValue(
       new ConnectError("no", Code.NotFound),
     );
-    const { bot, calls } = harness(["member"], auction);
+    const { bot, calls } = harness("member", auction);
     await bot.init();
 
     await bot.handleUpdate(press(lotData));
@@ -771,7 +777,7 @@ describe("review findings", () => {
   it("does not mark the photo rejected on a transient Telegram failure", async () => {
     const auction = fakeAuction({ existing: true });
     const photos = createLotPhotos();
-    const { bot } = harness(["member"], auction, {
+    const { bot } = harness("member", auction, {
       lotPhotos: photos,
       respond: (method, payload) =>
         method === "editMessageText" &&
@@ -794,7 +800,7 @@ describe("review findings", () => {
     const auction = fakeAuction({ existing: true });
     const photos = createLotPhotos();
     photos.set({ lotId, version: "img-1" }, { kind: "file", fileId: "big" });
-    const { bot, calls } = harness(["member"], auction, {
+    const { bot, calls } = harness("member", auction, {
       lotPhotos: photos,
       respond: (method) =>
         method === "editMessageText"
@@ -865,7 +871,7 @@ describe("bid leaf in the hub", () => {
     }) as Update;
   const setup = async () => {
     const auction = fakeAuction({ existing: true, lot: trading });
-    const run = harness(["member", "public"], auction, {
+    const run = harness("member", auction, {
       presentation: "plain",
     });
     await run.bot.init();

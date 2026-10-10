@@ -17,79 +17,50 @@ import (
 
 const maintainerToken = "test-maintainer-secret"
 
-func TestMaintainerAdminRoleLifecycle(t *testing.T) {
-	t.Parallel()
-	db := migratedDB(t)
-	conn := newConnWithToken(t, db, maintainerToken)
-	client := identityv1.NewIdentityServiceClient(conn)
-	profile := resolve(t, client, 7001, nil)
-	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
-
-	first, err := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
-	if err != nil || !first.GetChanged() {
-		t.Fatalf("first grant: response=%v error=%v", first, err)
-	}
-	second, err := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
-	if err != nil || second.GetChanged() {
-		t.Fatalf("second grant: response=%v error=%v", second, err)
-	}
-	assertActiveRoleCount(t, db, profile.GetIdentityId(), 1)
-	assertRoleSet(t, resolve(t, client, 7001, nil).GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
-
-	revoked, err := client.RevokeAdminRole(authorized, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()})
-	if err != nil || !revoked.GetChanged() {
-		t.Fatalf("revoke: response=%v error=%v", revoked, err)
-	}
-	again, err := client.RevokeAdminRole(authorized, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()})
-	if err != nil || again.GetChanged() {
-		t.Fatalf("second revoke: response=%v error=%v", again, err)
-	}
-	// Снятый администратор остаётся участником: круг у человека один, и отзыв
-	// опускает его на круг ниже, а не оставляет без круга.
-	assertActiveRoleCount(t, db, profile.GetIdentityId(), 1)
-	if got := resolve(t, client, 7001, nil).GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_MEMBER {
-		t.Fatalf("role after revoke: got %v want member", got)
-	}
+func grantPreset(preset identityv1.Preset, identityID string) *identityv1.GrantPresetRequest {
+	return &identityv1.GrantPresetRequest{IdentityId: identityID, Preset: preset}
 }
 
-func TestMaintainerRoleLifecycleNeedsTheSecret(t *testing.T) {
+func revokePreset(preset identityv1.Preset, identityID string) *identityv1.RevokePresetRequest {
+	return &identityv1.RevokePresetRequest{IdentityId: identityID, Preset: preset}
+}
+
+// Bootstrap (С-7): общий секрет выдаёт набор человеку без круга, и тот же вызов
+// делает его участником — набор требует круг member.
+func TestMaintainerPresetLifecycle(t *testing.T) {
 	t.Parallel()
 	db := migratedDB(t)
 	client := identityv1.NewIdentityServiceClient(newConnWithToken(t, db, maintainerToken))
-	profile := resolve(t, client, 8101, nil).GetIdentityId()
-
-	_, err := client.GrantMaintainerRole(t.Context(), &identityv1.GrantMaintainerRoleRequest{IdentityId: profile})
-	if status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("grant without secret: got %v want %s", err, codes.Unauthenticated)
-	}
-	assertRoleCount(t, db, profile, 0)
-
+	profile := resolve(t, client, 7001, nil).GetIdentityId()
 	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
-	first, err := client.GrantMaintainerRole(authorized, &identityv1.GrantMaintainerRoleRequest{IdentityId: profile})
+
+	first, err := client.GrantPreset(authorized, grantPreset(identityv1.Preset_PRESET_MAINTAINER, profile))
 	if err != nil || !first.GetChanged() {
-		t.Fatalf("grant: response=%v error=%v", first, err)
+		t.Fatalf("first grant: response=%v error=%v", first, err)
 	}
-	again, err := client.GrantMaintainerRole(authorized, &identityv1.GrantMaintainerRoleRequest{IdentityId: profile})
-	if err != nil || again.GetChanged() {
-		t.Fatalf("second grant: response=%v error=%v", again, err)
+	second, err := client.GrantPreset(authorized, grantPreset(identityv1.Preset_PRESET_MAINTAINER, profile))
+	if err != nil || second.GetChanged() {
+		t.Fatalf("second grant: response=%v error=%v", second, err)
 	}
-	assertRoleSet(t, resolve(t, client, 8101, nil).GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
-	assertJournalCount(t, db, profile, 1)
+	resolved := resolve(t, client, 7001, nil)
+	if resolved.GetCircle() != identityv1.Circle_CIRCLE_MEMBER {
+		t.Fatalf("circle after bootstrap: got %v want member", resolved.GetCircle())
+	}
+	assertRightSet(t, resolved.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB,
+		identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS)
+	assertJournalCount(t, db, profile, 2)
 	assertSystemJournalActor(t, db, profile)
 
-	_, err = client.RevokeMaintainerRole(t.Context(), &identityv1.RevokeMaintainerRoleRequest{IdentityId: profile})
-	if status.Code(err) != codes.Unauthenticated {
-		t.Fatalf("revoke without secret: got %v want %s", err, codes.Unauthenticated)
-	}
-	revoked, err := client.RevokeMaintainerRole(authorized, &identityv1.RevokeMaintainerRoleRequest{IdentityId: profile})
+	revoked, err := client.RevokePreset(authorized, revokePreset(identityv1.Preset_PRESET_MAINTAINER, profile))
 	if err != nil || !revoked.GetChanged() {
 		t.Fatalf("revoke: response=%v error=%v", revoked, err)
 	}
-	// Отзыв maintainer оставляет участником: отзыв и выдача круга ниже — две
-	// строки журнала.
-	assertActiveRoleCount(t, db, profile, 1)
+	again, err := client.RevokePreset(authorized, revokePreset(identityv1.Preset_PRESET_MAINTAINER, profile))
+	if err != nil || again.GetChanged() {
+		t.Fatalf("second revoke: response=%v error=%v", again, err)
+	}
+	// Снятие набора круг не трогает: человек остаётся участником.
+	assertActiveCircleCount(t, db, profile, 1)
 	assertJournalCount(t, db, profile, 3)
 }
 
@@ -114,73 +85,70 @@ func TestMaintainerMethodsRejectMissingEmptyAndWrongCredentials(t *testing.T) {
 			if len(tc.credentials) > 0 {
 				ctx = metadata.AppendToOutgoingContext(ctx, tc.credentials...)
 			}
-			_, grantErr := client.GrantAdminRole(ctx, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
+			_, grantErr := client.GrantPreset(ctx, grantPreset(identityv1.Preset_PRESET_ADMIN, profile.GetIdentityId()))
 			if status.Code(grantErr) != codes.Unauthenticated {
 				t.Fatalf("grant code: got %v want %s", grantErr, codes.Unauthenticated)
 			}
-			_, revokeErr := client.RevokeAdminRole(ctx, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()})
+			_, revokeErr := client.RevokePreset(ctx, revokePreset(identityv1.Preset_PRESET_ADMIN, profile.GetIdentityId()))
 			if status.Code(revokeErr) != codes.Unauthenticated {
 				t.Fatalf("revoke code: got %v want %s", revokeErr, codes.Unauthenticated)
 			}
-			assertRoleCount(t, db, profile.GetIdentityId(), 0)
+			assertCircleCount(t, db, profile.GetIdentityId(), 0)
 		})
 	}
 }
 
-func TestGrantAdminRoleRejectsBlockedProfileDistinctFromMissing(t *testing.T) {
+func TestGrantPresetRejectsBlockedProfileDistinctFromMissingAndUnknownPreset(t *testing.T) {
 	t.Parallel()
 	db := migratedDB(t)
-	conn := newConnWithToken(t, db, maintainerToken)
-	client := identityv1.NewIdentityServiceClient(conn)
+	client := identityv1.NewIdentityServiceClient(newConnWithToken(t, db, maintainerToken))
 	profile := resolve(t, client, 7201, nil)
-	testdb.ExecAnnounced(t, db, profile.GetIdentityId(), outbox.ProfileBlocked, "",
+	testdb.ExecAnnounced(t, db, profile.GetIdentityId(), outbox.Event{Occasion: outbox.ProfileBlocked},
 		`UPDATE profiles SET blocked = true WHERE id = $1`, profile.GetIdentityId())
 	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
 
-	_, blockedErr := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
+	_, blockedErr := client.GrantPreset(authorized, grantPreset(identityv1.Preset_PRESET_ADMIN, profile.GetIdentityId()))
 	if status.Code(blockedErr) != codes.FailedPrecondition {
 		t.Fatalf("blocked grant code: got %v want %s", blockedErr, codes.FailedPrecondition)
 	}
-	_, missingErr := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: uuid.NewString()})
+	_, missingErr := client.GrantPreset(authorized, grantPreset(identityv1.Preset_PRESET_ADMIN, uuid.NewString()))
 	if status.Code(missingErr) != codes.NotFound {
 		t.Fatalf("missing grant code: got %v want %s", missingErr, codes.NotFound)
 	}
+	_, unknownErr := client.GrantPreset(authorized, grantPreset(identityv1.Preset_PRESET_UNSPECIFIED, profile.GetIdentityId()))
+	if status.Code(unknownErr) != codes.InvalidArgument {
+		t.Fatalf("unspecified preset code: got %v want %s", unknownErr, codes.InvalidArgument)
+	}
 
-	assertRoleCount(t, db, profile.GetIdentityId(), 0)
+	assertCircleCount(t, db, profile.GetIdentityId(), 0)
 	assertJournalCount(t, db, profile.GetIdentityId(), 0)
 }
 
-func TestMaintainerRoleChangesAreJournaled(t *testing.T) {
+// Набор admin секретом выдаётся участнику без смены круга: одна строка журнала
+// на набор, исполнитель — система.
+func TestGrantPresetToMemberIsJournaledOnce(t *testing.T) {
 	t.Parallel()
 	db := migratedDB(t)
-	conn := newConnWithToken(t, db, maintainerToken)
-	client := identityv1.NewIdentityServiceClient(conn)
-	profile := resolve(t, client, 7202, nil)
+	client := identityv1.NewIdentityServiceClient(newConnWithToken(t, db, maintainerToken))
+	profile := resolve(t, client, 7202, nil).GetIdentityId()
+	insertCircle(t, db, profile, "member")
 	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
 
-	granted, err := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
+	granted, err := client.GrantPreset(authorized, grantPreset(identityv1.Preset_PRESET_ADMIN, profile))
 	if err != nil || !granted.GetChanged() {
 		t.Fatalf("grant: response=%v error=%v", granted, err)
 	}
-	assertJournalCount(t, db, profile.GetIdentityId(), 1)
-	assertSystemJournalActor(t, db, profile.GetIdentityId())
+	assertJournalCount(t, db, profile, 1)
+	assertSystemJournalActor(t, db, profile)
 
-	again, err := client.GrantAdminRole(authorized, &identityv1.GrantAdminRoleRequest{IdentityId: profile.GetIdentityId()})
-	if err != nil || again.GetChanged() {
-		t.Fatalf("second grant: response=%v error=%v", again, err)
-	}
-	assertJournalCount(t, db, profile.GetIdentityId(), 1)
-
-	if _, err := client.RevokeAdminRole(authorized, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()}); err != nil {
+	if _, err := client.RevokePreset(authorized, revokePreset(identityv1.Preset_PRESET_ADMIN, profile)); err != nil {
 		t.Fatal(err)
 	}
-	// Отзыв admin и выдача member на его место.
-	assertJournalCount(t, db, profile.GetIdentityId(), 3)
-
-	if _, err := client.RevokeAdminRole(authorized, &identityv1.RevokeAdminRoleRequest{IdentityId: profile.GetIdentityId()}); err != nil {
+	if _, err := client.RevokePreset(authorized, revokePreset(identityv1.Preset_PRESET_ADMIN, profile)); err != nil {
 		t.Fatal(err)
 	}
-	assertJournalCount(t, db, profile.GetIdentityId(), 3)
+	assertJournalCount(t, db, profile, 2)
+	assertActiveCircleCount(t, db, profile, 1)
 }
 
 func assertJournalCount(t *testing.T, db *sql.DB, identityID string, want int) {

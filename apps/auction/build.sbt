@@ -138,7 +138,7 @@ lazy val auction = (project in file("."))
       schema.isFile &&
       schema.getName.endsWith(".proto") &&
       (path.contains("/proto/auction/") ||
-        path.endsWith("/proto/identity/v1/roles.proto") ||
+        path.endsWith("/proto/identity/v1/access.proto") ||
         path.endsWith("/proto/meetups/v1/meetups_service.proto") ||
         path.endsWith("/proto/meetups/v1/meetups.proto"))
     }),
@@ -149,8 +149,8 @@ lazy val auction = (project in file("."))
     // сам плагин pekko-grpc.
     pekkoGrpcGeneratedLanguages := Seq(PekkoGrpc.Scala),
     pekkoGrpcGeneratedSources := Seq(PekkoGrpc.Server, PekkoGrpc.Client),
-    // Плагин по умолчанию включает flat_package, и identity/v1/roles.proto
-    // переезжает из identity.v1.roles в identity.v1. Без флага Scala-пакет
+    // Плагин по умолчанию включает flat_package, и identity/v1/access.proto
+    // переезжает из identity.v1.access в identity.v1. Без флага Scala-пакет
     // выводится из файла так же, как до стабов и как записано в protobuf.md.
     pekkoGrpcCodeGeneratorSettings -= "flat_package",
     // Prefix в имени процесса не нужен: `just auction-run` запускает ровно

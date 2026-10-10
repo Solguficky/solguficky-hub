@@ -4,6 +4,7 @@ package server_test
 
 import (
 	"database/sql"
+	"strings"
 	"testing"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
@@ -15,8 +16,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// administratorFixture — база, клиент с maintainer-секретом и мейнтейнер с
-// профилем, от имени которого бот вызывает методы администраторов.
+// administratorFixture — база, клиент с maintainer-секретом и держатель набора
+// maintainer с профилем, от имени которого бот вызывает методы администраторов.
 type administratorFixture struct {
 	db         *sql.DB
 	client     identityv1.IdentityServiceClient
@@ -28,20 +29,27 @@ func newAdministratorFixture(t *testing.T) administratorFixture {
 	db := migratedDB(t)
 	client := identityv1.NewIdentityServiceClient(newConnWithToken(t, db, maintainerToken))
 	maintainer := resolve(t, client, 8000, new("keeper")).GetIdentityId()
-	insertRole(t, db, maintainer, "maintainer")
+	insertPreset(t, db, maintainer, "maintainer")
 	return administratorFixture{db: db, client: client, maintainer: maintainer}
 }
 
-// actorOf — актор запроса. Роли в снимке ничего не доказывают, поэтому фикстура их не
-// передаёт, а тест на ложный снимок передаёт явно.
-func actorOf(identityID string, roles ...identityv1.GlobalRole) *identityv1.IdentityActor {
-	return &identityv1.IdentityActor{IdentityId: identityID, GlobalRoles: roles}
+// actorOf — актор запроса: только идентификатор, право Identity читает сама.
+func actorOf(identityID string) *identityv1.IdentityActor {
+	return &identityv1.IdentityActor{IdentityId: identityID}
 }
 
-func TestAppointAdministratorByUsernameIsIdempotentAndNamesTheMaintainer(t *testing.T) {
+// member заводит участника с ником: набор выдаётся только участнику.
+func (f administratorFixture) member(t *testing.T, telegramUserID int64, username string) string {
+	t.Helper()
+	id := resolve(t, f.client, telegramUserID, new(username)).GetIdentityId()
+	insertCircle(t, f.db, id, "member")
+	return id
+}
+
+func TestAppointAdministratorByUsernameIsIdempotentAndNamesTheGrantor(t *testing.T) {
 	t.Parallel()
 	f := newAdministratorFixture(t)
-	target := resolve(t, f.client, 8201, new("Alice_Smith")).GetIdentityId()
+	target := f.member(t, 8201, "Alice_Smith")
 
 	first, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{
 		Actor: actorOf(f.maintainer), TelegramUsername: " @alice_smith",
@@ -56,18 +64,19 @@ func TestAppointAdministratorByUsernameIsIdempotentAndNamesTheMaintainer(t *test
 		t.Fatalf("second appoint: response=%v error=%v", again, err)
 	}
 
-	assertRoleSet(t, resolve(t, f.client, 8201, new("Alice_Smith")).GetGlobalRoles(),
-		identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
-	assertJournalCount(t, f.db, target, 1)
-	assertJournalActor(t, f.db, target, "grant", f.maintainer)
-	assertGrantedBy(t, f.db, target, "admin", f.maintainer)
+	assertRightSet(t, resolve(t, f.client, 8201, new("Alice_Smith")).GetRights(),
+		identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS,
+		identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERS,
+		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS)
+	assertPresetJournalActor(t, f.db, target, "grant", f.maintainer)
+	assertPresetGrantedBy(t, f.db, target, "admin", f.maintainer)
 }
 
-func TestDismissAdministratorIsIdempotentAndNamesTheMaintainer(t *testing.T) {
+func TestDismissAdministratorIsIdempotentAndNamesTheGrantor(t *testing.T) {
 	t.Parallel()
 	f := newAdministratorFixture(t)
 	target := resolve(t, f.client, 8301, new("bob")).GetIdentityId()
-	insertAdminRole(t, f.db, target)
+	insertPreset(t, f.db, target, "admin")
 
 	first, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{
 		Actor: actorOf(f.maintainer), IdentityId: target,
@@ -82,37 +91,36 @@ func TestDismissAdministratorIsIdempotentAndNamesTheMaintainer(t *testing.T) {
 		t.Fatalf("second dismiss: response=%v error=%v", again, err)
 	}
 
-	// Снятый администратор остаётся участником: отзыв admin и выдача member —
-	// две строки журнала от имени мейнтейнера.
-	assertActiveRoleCount(t, f.db, target, 1)
-	if got := resolve(t, f.client, 8301, new("bob")).GetRole(); got != identityv1.GlobalRole_GLOBAL_ROLE_MEMBER {
-		t.Fatalf("role after dismissal: got %v want member", got)
+	// Снятый администратор остаётся участником: круг набору не принадлежит.
+	assertActiveCircleCount(t, f.db, target, 1)
+	resolved := resolve(t, f.client, 8301, new("bob"))
+	if resolved.GetCircle() != identityv1.Circle_CIRCLE_MEMBER || len(resolved.GetPresets()) != 0 {
+		t.Fatalf("after dismissal: circle=%v presets=%v", resolved.GetCircle(), resolved.GetPresets())
 	}
-	assertJournalCount(t, f.db, target, 2)
-	assertJournalActor(t, f.db, target, "revoke", f.maintainer)
-	assertJournalActor(t, f.db, target, "grant", f.maintainer)
+	assertPresetJournalActor(t, f.db, target, "revoke", f.maintainer)
 }
 
-// Снимок ролей собирает бот: Identity ему не верит и читает право сам.
-func TestAdministratorMethodsIgnoreClaimedRoles(t *testing.T) {
+// Право выдавать admin — grant_admins, и только его: держатель набора admin
+// его не имеет (С-6), а неизвестный профиль — тем более. Отказ один и тот же,
+// что бы актор ни назвал.
+func TestAdministratorMethodsNeedGrantAdmins(t *testing.T) {
 	t.Parallel()
 	f := newAdministratorFixture(t)
 	admin := resolve(t, f.client, 8401, new("admin_only")).GetIdentityId()
-	insertAdminRole(t, f.db, admin)
-	target := resolve(t, f.client, 8402, new("carol")).GetIdentityId()
+	insertPreset(t, f.db, admin, "admin")
+	target := f.member(t, 8402, "carol")
 	other := resolve(t, f.client, 8403, new("dave")).GetIdentityId()
-	insertAdminRole(t, f.db, other)
-	claimed := actorOf(admin, identityv1.GlobalRole_GLOBAL_ROLE_ADMIN, identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER)
+	insertPreset(t, f.db, other, "admin")
 
 	for name, actor := range map[string]*identityv1.IdentityActor{
-		"admin claiming maintainer": claimed,
-		"unknown profile":           actorOf(uuid.NewString(), identityv1.GlobalRole_GLOBAL_ROLE_MAINTAINER),
+		"admin without grant_admins": actorOf(admin),
+		"unknown profile":            actorOf(uuid.NewString()),
 	} {
 		_, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actor, TelegramUsername: "carol"})
 		if status.Code(err) != codes.PermissionDenied {
 			t.Fatalf("%s appoint: got %v want %s", name, err, codes.PermissionDenied)
 		}
-		// Неизвестный ник не-мейнтейнеру отвечает тем же отказом: о профилях он не узнаёт.
+		// Неизвестный ник не держателю отвечает тем же отказом: о профилях он не узнаёт.
 		_, err = f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actor, TelegramUsername: "nobody_here"})
 		if status.Code(err) != codes.PermissionDenied {
 			t.Fatalf("%s appoint unknown: got %v want %s", name, err, codes.PermissionDenied)
@@ -137,34 +145,36 @@ func TestAdministratorMethodsIgnoreClaimedRoles(t *testing.T) {
 		t.Fatalf("no actor: got %v want %s", err, codes.PermissionDenied)
 	}
 
-	assertRoleCount(t, f.db, target, 0)
-	assertActiveRoleCount(t, f.db, other, 1)
+	assertActivePresets(t, f.db, target)
+	assertActivePresets(t, f.db, other, "admin")
 }
 
-// Заблокированный мейнтейнер права не имеет: роль под блокировкой — состояние,
+// Заблокированный держатель права не имеет: набор под блокировкой — состояние,
 // которое сервис сам не создаёт, поэтому фикстура обходит щит.
-func TestAppointAdministratorDeniesBlockedMaintainer(t *testing.T) {
+func TestAppointAdministratorDeniesBlockedGrantor(t *testing.T) {
 	t.Parallel()
 	f := newAdministratorFixture(t)
-	target := resolve(t, f.client, 8501, new("erin")).GetIdentityId()
+	target := f.member(t, 8501, "erin")
 	testdb.ExecBypassingShields(t, f.db, `UPDATE profiles SET blocked = true WHERE id = $1`, f.maintainer)
 
 	_, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "erin"})
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("appoint: got %v want %s", err, codes.PermissionDenied)
 	}
-	assertRoleCount(t, f.db, target, 0)
+	assertActivePresets(t, f.db, target)
 }
 
 // Снятый мейнтейнер больше ничего не выдаёт: право читается из текущего
-// состояния, а не из снимка. Тест последовательный и очередь двух
-// одновременных транзакций на строке профиля не проверяет.
-func TestAppointAdministratorDeniesRevokedMaintainer(t *testing.T) {
+// состояния. Тест последовательный и очередь двух одновременных транзакций на
+// строке профиля не проверяет.
+func TestAppointAdministratorDeniesRevokedGrantor(t *testing.T) {
 	t.Parallel()
 	f := newAdministratorFixture(t)
-	target := resolve(t, f.client, 8601, new("frank")).GetIdentityId()
+	target := f.member(t, 8601, "frank")
 	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
-	if _, err := f.client.RevokeMaintainerRole(authorized, &identityv1.RevokeMaintainerRoleRequest{IdentityId: f.maintainer}); err != nil {
+	if _, err := f.client.RevokePreset(authorized, &identityv1.RevokePresetRequest{
+		IdentityId: f.maintainer, Preset: identityv1.Preset_PRESET_MAINTAINER,
+	}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -172,47 +182,64 @@ func TestAppointAdministratorDeniesRevokedMaintainer(t *testing.T) {
 	if status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("appoint: got %v want %s", err, codes.PermissionDenied)
 	}
-	assertRoleCount(t, f.db, target, 0)
+	assertActivePresets(t, f.db, target)
 }
 
-func TestAdministratorMethodsLeaveMaintainersAndSelfAlone(t *testing.T) {
+// Себе можно (ADR о наборах, п. 7): мейнтейнер назначает себя администратором
+// и снимает с себя набор, а с другого мейнтейнера — его набор admin, не трогая
+// maintainer. Набор выдаётся только участнику (п. 9).
+func TestGrantorAppointsAndDismissesSelfAndPeers(t *testing.T) {
 	t.Parallel()
 	f := newAdministratorFixture(t)
-	peer := resolve(t, f.client, 8701, new("grace")).GetIdentityId()
-	insertRole(t, f.db, peer, "maintainer")
+	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
 
-	_, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: f.maintainer})
-	if status.Code(err) != codes.InvalidArgument {
-		t.Fatalf("dismiss self: got %v want %s", err, codes.InvalidArgument)
+	self, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "keeper"})
+	if err != nil || !self.GetChanged() || self.GetIdentityId() != f.maintainer {
+		t.Fatalf("appoint self: response=%v error=%v", self, err)
 	}
-	_, err = f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: peer})
-	if status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("dismiss maintainer: got %v want %s", err, codes.FailedPrecondition)
+	assertActivePresets(t, f.db, f.maintainer, "admin", "maintainer")
+	dismissed, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: f.maintainer})
+	if err != nil || !dismissed.GetChanged() {
+		t.Fatalf("dismiss self: response=%v error=%v", dismissed, err)
 	}
+	assertActivePresets(t, f.db, f.maintainer, "maintainer")
+
+	peer := resolve(t, f.client, 8701, new("grace")).GetIdentityId()
+	insertPreset(t, f.db, peer, "maintainer")
+	insertPreset(t, f.db, peer, "admin")
+	if _, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: peer}); err != nil {
+		t.Fatalf("dismiss peer: %v", err)
+	}
+	assertActivePresets(t, f.db, peer, "maintainer")
+
 	_, err = f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: uuid.NewString()})
 	if status.Code(err) != codes.NotFound {
 		t.Fatalf("dismiss unknown: got %v want %s", err, codes.NotFound)
 	}
-	plain := resolve(t, f.client, 8702, new("heidi")).GetIdentityId()
-	insertRole(t, f.db, plain, "maintainer")
-	_, err = f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "heidi"})
-	if status.Code(err) != codes.FailedPrecondition {
-		t.Fatalf("appoint maintainer: got %v want %s", err, codes.FailedPrecondition)
+	stranger := resolve(t, f.client, 8702, new("heidi")).GetIdentityId()
+	guest := resolve(t, f.client, 8703, new("ivy")).GetIdentityId()
+	insertCircle(t, f.db, guest, "guest")
+	for _, username := range []string{"heidi", "ivy"} {
+		_, err = f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: username})
+		if status.Code(err) != codes.FailedPrecondition {
+			t.Fatalf("appoint non-member %s: got %v want %s", username, err, codes.FailedPrecondition)
+		}
 	}
-
-	assertActiveRoleCount(t, f.db, f.maintainer, 1)
-	assertActiveRoleCount(t, f.db, peer, 1)
-	assertActiveRoleCount(t, f.db, plain, 1)
+	assertActivePresets(t, f.db, stranger)
+	assertActivePresets(t, f.db, guest)
+	if _, err := f.client.RevokePreset(authorized, &identityv1.RevokePresetRequest{IdentityId: peer, Preset: identityv1.Preset_PRESET_MAINTAINER}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestAppointAdministratorResolvesUsernameStrictly(t *testing.T) {
 	t.Parallel()
 	f := newAdministratorFixture(t)
 	// Ник перешёл к другому человеку, а прежний профиль ещё не обновился.
-	stale := resolve(t, f.client, 8801, new("ivan")).GetIdentityId()
-	fresh := resolve(t, f.client, 8802, new("Ivan")).GetIdentityId()
+	stale := f.member(t, 8801, "ivan")
+	fresh := f.member(t, 8802, "Ivan")
 	blocked := resolve(t, f.client, 8803, new("judy")).GetIdentityId()
-	testdb.ExecAnnounced(t, f.db, blocked, outbox.ProfileBlocked, "",
+	testdb.ExecAnnounced(t, f.db, blocked, outbox.Event{Occasion: outbox.ProfileBlocked},
 		`UPDATE profiles SET blocked = true WHERE id = $1`, blocked)
 
 	for name, tc := range map[string]struct {
@@ -229,47 +256,48 @@ func TestAppointAdministratorResolvesUsernameStrictly(t *testing.T) {
 			t.Fatalf("%s: got %v want %s", name, err, tc.code)
 		}
 	}
-	assertRoleCount(t, f.db, stale, 0)
-	assertRoleCount(t, f.db, fresh, 0)
+	assertActivePresets(t, f.db, stale)
+	assertActivePresets(t, f.db, fresh)
 
 	// Заблокированный носитель ника не мешает живому.
-	testdb.ExecAnnounced(t, f.db, stale, outbox.ProfileBlocked, "",
-		`UPDATE profiles SET blocked = true WHERE id = $1`, stale)
+	testdb.ExecBypassingShields(t, f.db, `UPDATE profiles SET blocked = true WHERE id = $1`, stale)
 	appointed, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "ivan"})
 	if err != nil || appointed.GetIdentityId() != fresh {
 		t.Fatalf("appoint live holder: response=%v error=%v", appointed, err)
 	}
 }
 
-func TestListAdministratorsMarksMaintainers(t *testing.T) {
+func TestListAdministratorsMarksPresets(t *testing.T) {
 	t.Parallel()
 	f := newAdministratorFixture(t)
 	admin := resolve(t, f.client, 8901, new("kim")).GetIdentityId()
-	insertAdminRole(t, f.db, admin)
+	insertPreset(t, f.db, admin, "admin")
 	resolve(t, f.client, 8902, new("lee"))
 
 	response, err := f.client.ListAdministrators(t.Context(), &identityv1.ListAdministratorsRequest{Actor: actorOf(f.maintainer)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[string]bool{}
+	type marks struct{ maintainer, admin bool }
+	got := map[string]marks{}
 	for _, a := range response.GetAdministrators() {
-		got[a.GetIdentityId()] = a.GetMaintainer()
+		got[a.GetIdentityId()] = marks{a.GetMaintainer(), a.GetAdmin()}
 		if a.GetTelegramUserId() <= 0 || a.GetTelegramUsername() == "" {
 			t.Fatalf("administrator without Telegram identity: %v", a)
 		}
 	}
-	want := map[string]bool{f.maintainer: true, admin: false}
-	if len(got) != len(want) || got[f.maintainer] != true || got[admin] != false {
+	want := map[string]marks{f.maintainer: {true, false}, admin: {false, true}}
+	if len(got) != len(want) || got[f.maintainer] != want[f.maintainer] || got[admin] != want[admin] {
 		t.Fatalf("administrators: got %v want %v", got, want)
 	}
 }
 
-func assertJournalActor(t *testing.T, db *sql.DB, identityID, action, actor string) {
+// assertPresetJournalActor сверяет исполнителя строки журнала о наборе.
+func assertPresetJournalActor(t *testing.T, db *sql.DB, identityID, action, actor string) {
 	t.Helper()
 	var performedBy sql.NullString
 	if err := db.QueryRowContext(t.Context(),
-		`SELECT performed_by FROM identity_access_journal WHERE identity_id = $1 AND action = $2`,
+		`SELECT performed_by FROM identity_access_journal WHERE identity_id = $1 AND action = $2 AND preset IS NOT NULL`,
 		identityID, action).Scan(&performedBy); err != nil {
 		t.Fatal(err)
 	}
@@ -278,15 +306,28 @@ func assertJournalActor(t *testing.T, db *sql.DB, identityID, action, actor stri
 	}
 }
 
-func assertGrantedBy(t *testing.T, db *sql.DB, identityID, role, actor string) {
+func assertPresetGrantedBy(t *testing.T, db *sql.DB, identityID, preset, actor string) {
 	t.Helper()
 	var grantedBy sql.NullString
 	if err := db.QueryRowContext(t.Context(),
-		`SELECT granted_by FROM identity_roles WHERE identity_id = $1 AND role = $2 AND revoked_at IS NULL`,
-		identityID, role).Scan(&grantedBy); err != nil {
+		`SELECT granted_by FROM identity_presets WHERE identity_id = $1 AND preset = $2 AND revoked_at IS NULL`,
+		identityID, preset).Scan(&grantedBy); err != nil {
 		t.Fatal(err)
 	}
 	if grantedBy.String != actor {
 		t.Fatalf("granted_by: got %v want %s", grantedBy, actor)
+	}
+}
+
+// assertActivePresets сверяет активные наборы человека в порядке имён.
+func assertActivePresets(t *testing.T, db *sql.DB, identityID string, want ...string) {
+	t.Helper()
+	var got string
+	if err := db.QueryRowContext(t.Context(),
+		`SELECT array_to_string(identity_active_presets($1), ',')`, identityID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if expected := strings.Join(want, ","); got != expected {
+		t.Fatalf("presets of %s: got %q want %q", identityID, got, expected)
 	}
 }

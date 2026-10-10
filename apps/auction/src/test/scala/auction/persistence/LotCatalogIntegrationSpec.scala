@@ -26,7 +26,7 @@ final class LotCatalogIntegrationSpec extends AnyWordSpec with Matchers with Sca
   implicit override val patienceConfig: PatienceConfig = PatienceConfig(timeout = Span(20, Seconds))
 
   private val admin = Viewer(AccessRight.values.toSet)
-  private val participant = Viewer(Set(AccessRight.Auction))
+  private val participant = Viewer(Set(AccessRight.PlaceBids))
 
   /** Изображение строки как его видит база, мимо сервиса: байты, тип и версия. */
   private final case class StoredImage(content: Seq[Byte], mediaType: String, version: String)

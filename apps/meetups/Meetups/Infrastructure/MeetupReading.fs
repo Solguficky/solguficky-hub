@@ -62,7 +62,7 @@ let private visibleToViewerSql =
     WHERE (
         visibility = 'visible'
         OR author = @viewer_id
-        OR @is_administrator
+        OR @can_manage_meetups
     )
     """
 
@@ -103,7 +103,7 @@ let read (source: NpgsqlDataSource) (viewer: Viewer) (scope: Scope) : Task<ReadR
         let parameters =
             {|
                 viewer_id = viewerId
-                is_administrator = Viewer.isAdministrator viewer
+                can_manage_meetups = Viewer.canManageMeetups viewer
             |}
 
         match scope with
@@ -122,7 +122,7 @@ let read (source: NpgsqlDataSource) (viewer: Viewer) (scope: Scope) : Task<ReadR
                     {|
                         id = id
                         viewer_id = viewerId
-                        is_administrator = Viewer.isAdministrator viewer
+                        can_manage_meetups = Viewer.canManageMeetups viewer
                     |}
                 )
 

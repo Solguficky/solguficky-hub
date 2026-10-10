@@ -68,6 +68,7 @@ import type {
 import { startExecuteRequest } from "../application/types.js";
 import { type AuctionScreens, viewerOf } from "../auction/port.js";
 import {
+  type AccessRequester,
   type ApplicationAdministrator,
   type ApplicationCursor,
   type ApplicationModerator,
@@ -82,7 +83,6 @@ import {
   type OrganizerResolver,
   type ReconsiderResult,
   type RefusedApplication,
-  type RoleRequester,
   type SourceChannel,
   type SourceChannelAdministrator,
   type TelegramRecipientResolver,
@@ -109,7 +109,7 @@ import {
   photoFileId,
 } from "./auction-route.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
-import { decideHubEntry, hubRoleRequest } from "./hub-entry.js";
+import { decideHubEntry, hubAccessRequest } from "./hub-entry.js";
 import { parseLotPhoto } from "./lot-photo-input.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
@@ -218,11 +218,10 @@ import {
   upcomingScreen,
 } from "./screens/meetup.js";
 import {
-  canManageAuction,
-  canManageMembership,
-  canModerateAuction,
+  canAdmitBidders,
+  canManageMeetups,
+  canManageMembers,
   canOpenManagement,
-  isAdministrator,
   manageScreen,
   menuScreen,
 } from "./screens/menu.js";
@@ -265,7 +264,7 @@ export type BotRuntime = {
   token: string;
   dispatcher: Dispatcher;
   identity: IdentityResolver &
-    RoleRequester &
+    AccessRequester &
     Partial<CommunityAdministrator> &
     Partial<ApplicationAdministrator> &
     Partial<SourceChannelAdministrator> &
@@ -334,8 +333,8 @@ const materialForbiddenText = "Это действие доступно орга
 // кто из них решал (PER-396). Смысл кадра прежний — действие не разрешено.
 const forbiddenText = "Это действие тебе недоступно.";
 // Категорию запросов доступа сервис показывает и даёт менять только
-// администратору. Нажатие из старого уведомления или экрана настроек после
-// потери роли получает `PERMISSION_DENIED`, и ответ называет причину, а не
+// модератору очереди. Нажатие из старого уведомления или экрана настроек после
+// потери права получает `PERMISSION_DENIED`, и ответ называет причину, а не
 // одно «недоступно».
 const accessRequestsForbiddenText =
   "Запросы доступа настраивает только администратор.";
@@ -780,7 +779,7 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      if (!identity.person.globalRoles.includes("admin")) {
+      if (!canManageMeetups(identity.person)) {
         await answered();
         await showRefusal(ctx, materialForbiddenText, menuOnly());
         outcome = materialForbiddenOutcome(identity.person, pending.meetupId);
@@ -896,7 +895,7 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      if (!identity.person.globalRoles.includes("admin")) {
+      if (!canManageMeetups(identity.person)) {
         await answered();
         await showRefusal(
           ctx,
@@ -969,7 +968,7 @@ async function handleMessage(
         outcome = identity.outcome;
         return;
       }
-      if (!canManageMembership(identity.person)) {
+      if (!canManageMembers(identity.person)) {
         await answered();
         await showRefusal(ctx, sourceChannelsForbiddenText, menuOnly());
         outcome = sourceChannelsForbiddenOutcome(identity.person);
@@ -1090,7 +1089,7 @@ async function handleMessage(
       }
       // Вопрос задаётся только администратору, но старый вопрос остаётся в
       // чате: отказ приходит до Auction, как у формы лота.
-      if (!isAdministrator(identity.person)) {
+      if (!canManageMeetups(identity.person)) {
         await answered();
         outcome = await refuseConsole(ctx, identity.person);
         return;
@@ -1145,7 +1144,7 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      if (!canManageAuction(identity.person)) {
+      if (!canManageMeetups(identity.person)) {
         await answered();
         outcome = await refuseLotForm(ctx, identity.person);
         return;
@@ -1195,7 +1194,7 @@ async function handleMessage(
       // в чате, и шаг его кнопки можно прислать и чужой. Отказ приходит до
       // Auction: иначе цена прошла бы разбор и человек получил бы второй
       // вопрос вместо отказа.
-      if (!canManageAuction(identity.person)) {
+      if (!canManageMeetups(identity.person)) {
         await answered();
         outcome = await refuseLotForm(ctx, identity.person);
         return;
@@ -1431,30 +1430,30 @@ async function handleMessage(
     const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
     useCase = deepLink?.kind === "meetup" ? "view_meetup" : "find_meetup";
     // `/start` и `/menu` — вход на поверхность (ADR-060): вместо разрешения
-    // личности бот зовёт `RequestRole` с кругом хаба, и Identity гасит белый
+    // личности бот зовёт `RequestAccess` с кругом хаба, и Identity гасит белый
     // список или ставит заявку. Личность по-прежнему разрешается один раз на
     // update.
-    const roleAnswer = await runtime.identity.requestRole(
-      hubRoleRequest(parsed, deepLink),
+    const accessAnswer = await runtime.identity.requestAccess(
+      hubAccessRequest(parsed, deepLink),
       rpcCall(ctx, useCase),
     );
-    if (roleAnswer.kind !== "answered") {
+    if (accessAnswer.kind !== "answered") {
       outcome = await replyFailClosed(
         ctx,
-        identityFailureOutcome(roleAnswer, useCase),
+        identityFailureOutcome(accessAnswer, useCase),
       );
       return;
     }
-    const entry = decideHubEntry(roleAnswer);
+    const entry = decideHubEntry(accessAnswer);
     if (entry.kind === "unknown-outcome") {
       outcome = await replyFailClosed(ctx, {
         level: "error",
-        message: "identity answered an unknown role request outcome",
+        message: "identity answered an unknown access request outcome",
         result: "error",
         use_case: useCase,
         identity_id: entry.identityId,
         error_category: "invariant",
-        error: "role_request_outcome_unspecified",
+        error: "access_request_outcome_unspecified",
       });
       return;
     }
@@ -1485,7 +1484,7 @@ async function handleMessage(
         result,
         false,
         runtime.presentation ?? "rich",
-        identity.globalRoles.includes("admin"),
+        canManageMeetups(identity),
       );
       outcome = screenBoundary(result, {
         ok: ["meetup-card"],
@@ -1745,7 +1744,7 @@ async function handleCallback(
       action.kind === "lot-form" ||
       action.kind === "lot-ask"
     ) {
-      outcome = canManageAuction(person)
+      outcome = canManageMeetups(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
         : await refuseLotForm(ctx, person);
       return;
@@ -1763,7 +1762,7 @@ async function handleCallback(
       action.kind === "console-discard-confirm" ||
       action.kind === "console-mark"
     ) {
-      outcome = isAdministrator(person)
+      outcome = canManageMeetups(person)
         ? await handleConsoleCallback(ctx, runtime, questions, person, action)
         : await refuseConsole(ctx, person);
       return;
@@ -1993,7 +1992,7 @@ async function handleCallback(
       action.kind === "remove-material"
     ) {
       const meetupId = tokenToUuid(action.token);
-      const canManageMaterials = person.globalRoles.includes("admin");
+      const canManageMaterials = canManageMeetups(person);
       if (
         action.kind !== "manage-materials" &&
         action.kind !== "decline-attach-material" &&
@@ -2156,7 +2155,7 @@ async function handleCallback(
             result.value,
             action.page,
             communityToday(ctx),
-            canManageMembership(person),
+            canManageMembers(person),
           ),
         );
       } else {
@@ -2174,7 +2173,7 @@ async function handleCallback(
               result.value,
               action.page,
               communityToday(ctx),
-              canManageMembership(person),
+              canManageMembers(person),
             ),
           );
         } else {
@@ -2540,7 +2539,7 @@ async function handleCallback(
         result,
         true,
         runtime.presentation ?? "rich",
-        person.globalRoles.includes("admin"),
+        canManageMeetups(person),
       );
       outcome = screenBoundary(result, {
         ok: ["meetup-card"],
@@ -2954,7 +2953,7 @@ async function handleCallback(
       // Кнопка входа есть только у администратора, но `callback_data` можно
       // прислать и без неё. Отказ приходит до набора текста, а окончательное
       // решение о праве всё равно принимает Notifications на отправке.
-      if (!person.globalRoles.includes("admin")) {
+      if (!canManageMeetups(person)) {
         await showRefusal(
           ctx,
           broadcastForbiddenText[audience.kind],
@@ -3306,7 +3305,7 @@ async function handleCallback(
           result,
           true,
           runtime.presentation ?? "rich",
-          person.globalRoles.includes("admin"),
+          canManageMeetups(person),
           note,
         );
       } else {
@@ -3376,7 +3375,7 @@ async function handleCallback(
       });
       return;
     }
-    if (action.kind === "manage-auction") {
+    if (action.kind === "manage-meetups") {
       outcome = await enableAuction(ctx, runtime, person, action.token);
       return;
     }
@@ -3412,7 +3411,7 @@ async function handleCallback(
 // равносильно устаревшему экрану: человек получает кадр конфликта по текущей
 // карточке и подтверждает её версию заново. Прежде кадра карточка отвечает
 // тем же, что ответил бы Meetups: достигнутая цель — успех, отмена — отказ по
-// состоянию, чужая роль — отказ по праву. Иначе кадр предлагал бы подтвердить
+// состоянию, нет права — отказ по праву. Иначе кадр предлагал бы подтвердить
 // заведомо невыполнимое или уже сделанное.
 async function unversionedConfirmation(
   runtime: BotRuntime,
@@ -3424,7 +3423,7 @@ async function unversionedConfirmation(
     kind: "material-attached" | "material-removed";
   },
 ): Promise<ExecuteResult> {
-  if (!person.globalRoles.includes("admin")) {
+  if (!canManageMeetups(person)) {
     return { kind: "dependency-rejected", reason: "forbidden" };
   }
   const current = await runtime.dispatcher.execute({
@@ -3856,17 +3855,15 @@ function managementRefusal(
     case "manage-menu":
       return canOpenManagement(person) ? undefined : managementForbiddenText;
     case "ask-allowed-username":
-      return canManageMembership(person) ? undefined : communityForbiddenText;
+      return canManageMembers(person) ? undefined : communityForbiddenText;
     case "source-channels":
     case "ask-source-channel":
-      return canManageMembership(person)
-        ? undefined
-        : sourceChannelsForbiddenText;
+      return canManageMembers(person) ? undefined : sourceChannelsForbiddenText;
     case "auction-moderators":
     case "moderator-candidates":
     case "grant-moderation":
     case "revoke-moderation":
-      return canManageMembership(person) ? undefined : moderatorsForbiddenText;
+      return canManageMembers(person) ? undefined : moderatorsForbiddenText;
     case "application-card":
     case "admit-application":
     case "ask-decline-application":
@@ -3887,8 +3884,8 @@ function managementRefusal(
 
 function queueAllowed(queue: ApplicationQueue, person: Person): boolean {
   return queue === "community"
-    ? canManageMembership(person)
-    : canModerateAuction(person);
+    ? canManageMembers(person)
+    : canAdmitBidders(person);
 }
 
 // Тексты отказа у каждой очереди свои: кто решает её заявки и отказанных.
@@ -4042,7 +4039,7 @@ async function renderRefused(
       result.value,
       page,
       communityToday(ctx),
-      canManageMembership(actor),
+      canManageMembers(actor),
     ),
   );
 }
@@ -4555,7 +4552,7 @@ async function enableAuction(
         result.card,
         true,
         runtime.presentation ?? "rich",
-        isAdministrator(person),
+        canManageMeetups(person),
         note,
       );
     }
@@ -4988,7 +4985,7 @@ async function showLotFailure(
   };
 }
 
-// Кнопка или ответ формы лота от человека без роли администратора.
+// Кнопка или ответ формы лота от человека без права вести сходки.
 async function refuseLotForm(
   ctx: UpdateContext,
   person: Person,
@@ -5303,7 +5300,7 @@ function askConsoleWeek(
   );
 }
 
-// Кнопка или ответ пульта от человека без роли администратора.
+// Кнопка или ответ пульта от человека без права вести сходки.
 async function refuseConsole(
   ctx: UpdateContext,
   person: Person,
@@ -5485,12 +5482,10 @@ async function handleAuctionCallback(
       return unexpectedOutcome(String(_exhaustive), undefined, useCase);
     }
   }
-  const canManage = isAdministrator(person);
-  const canEditLots = canManageAuction(person);
+  const canManage = canManageMeetups(person);
   // Статус нужен только ряду «Добавить лот»; читается он у пульта, который
   // Auction отдаёт администратору сходки.
-  const feedAuctionId =
-    canManage && canEditLots ? feedAuctionOf(result.body) : undefined;
+  const feedAuctionId = canManage ? feedAuctionOf(result.body) : undefined;
   const canAddLots =
     feedAuctionId === undefined
       ? undefined
@@ -5501,10 +5496,9 @@ async function handleAuctionCallback(
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: communityToday(ctx),
-    // Пульт видит администратор — по той же роли, что правку сходки и
-    // «Включить аукцион»; входы в форму лота — держатель права каталога.
+    // Пульт и входы в форму лота видит держатель права вести сходки — того
+    // же, что правка сходки и «Включить аукцион» (RFC-016).
     canManage,
-    canEditLots,
     ...(canAddLots === undefined ? {} : { canAddLots }),
   };
   const shown = auctionScreen(view);
@@ -6026,7 +6020,6 @@ async function resolvePerson(
     kind: "resolved",
     person: {
       identityId: resolved.identityId,
-      globalRoles: resolved.globalRoles,
       rights: resolved.rights,
     },
     blocked: resolved.blocked,
@@ -6959,7 +6952,7 @@ function callbackUseCase(
     | "manage-field"
     | "manage-draft"
     | "manage-status"
-    | "manage-auction"
+    | "manage-meetups"
     | "lot-new"
     | "lot-form"
     | "lot-ask"
@@ -7080,7 +7073,7 @@ function callbackUseCase(
     case "notify-subscription":
     case "notify-set-meetup":
       return "manage_notifications";
-    case "manage-auction":
+    case "manage-meetups":
       return "enable_auction";
     case "lot-new":
     case "lot-form":

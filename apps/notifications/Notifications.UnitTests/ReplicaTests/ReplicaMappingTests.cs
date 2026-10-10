@@ -196,73 +196,78 @@ public class ReplicaMappingTests
     }
 
     [Fact]
-    public void Identity_ValidEvent_CarriesRoleRightsAndBlockMark()
+    public void Identity_ValidEvent_CarriesCirclePresetsRightsAndBlockMark()
     {
-        var message = EventFactory.RoleGrant(IdentityId, version: 2, GlobalRole.Admin);
+        var message = EventFactory.PresetGrant(IdentityId, version: 2, Preset.Admin);
 
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
 
         fact.IdentityId.ShouldBe(Guid.Parse(IdentityId));
         fact.Version.ShouldBe(2);
         fact.Source.ShouldBe(ReplicaFeeds.IdentitySource);
-        fact.Role.ShouldBe("admin");
-        fact.Rights.ShouldBe(["auction", "hub", "manage_membership", "moderate_auction"]);
+        fact.Circle.ShouldBe("member");
+        fact.Presets.ShouldBe(["admin"]);
+        fact.Rights.ShouldBe(["access_hub", "admit_bidders", "manage_meetups", "manage_members", "place_bids"]);
         fact.Blocked.ShouldBeFalse();
     }
 
     [Fact]
-    public void Identity_Rights_TakenAsGivenNotDerivedFromRole()
+    public void Identity_Rights_TakenAsGivenNotDerivedFromCircle()
     {
-        // Право модерации аукциона у участника — выданное, а не круговое:
+        // Право допуска к торгам у участника — выданное, а не круговое:
         // реплика пишет набор из снимка, а не таблицу круга.
-        var message = EventFactory.RightGrant(IdentityId, version: 3, GlobalRole.Member, AccessRight.ModerateAuction);
+        var message = EventFactory.RightGrant(IdentityId, version: 3, Circle.Member, AccessRight.AdmitBidders);
 
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
 
-        fact.Role.ShouldBe("member");
-        fact.Rights.ShouldBe(["auction", "hub", "moderate_auction"]);
+        fact.Circle.ShouldBe("member");
+        fact.Presets.ShouldBeEmpty();
+        fact.Rights.ShouldBe(["access_hub", "admit_bidders", "place_bids"]);
     }
 
     [Fact]
-    public void Identity_GuestRole_IsStoredUnderContractName()
+    public void Identity_GuestCircle_IsStoredUnderContractName()
     {
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(
-            EventFactory.Admission(IdentityId, version: 2, GlobalRole.Guest))));
+            EventFactory.Admission(IdentityId, version: 2, Circle.Guest))));
 
-        fact.Role.ShouldBe("guest");
-        fact.Rights.ShouldBe(["auction"]);
+        fact.Circle.ShouldBe("guest");
+        fact.Rights.ShouldBe(["place_bids"]);
     }
 
     [Fact]
-    public void Identity_UnknownRight_GrantsNothing()
+    public void Identity_UnknownRightOrPreset_GrantsNothing()
     {
         // Незнакомое право контракт велит читать как «ничего не даёт»: событие
-        // с ним не яд, а знакомые права применяются как обычно.
-        var message = EventFactory.RoleGrant(IdentityId, version: 2, GlobalRole.Member);
+        // с ним не яд, а знакомые права применяются как обычно. Незнакомый
+        // набор тем более: допуск по нему не решается.
+        var message = EventFactory.CircleChange(IdentityId, version: 2, Circle.Member);
         message.State.Rights.Add((AccessRight)99);
         message.State.Rights.Add(AccessRight.Unspecified);
+        message.State.Presets.Add((Preset)99);
 
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
 
-        fact.Rights.ShouldBe(["auction", "hub"]);
+        fact.Rights.ShouldBe(["access_hub", "place_bids"]);
+        fact.Presets.ShouldBeEmpty();
     }
 
     [Fact]
-    public void Identity_Blocked_CarriesNoRoleAndNoRights()
+    public void Identity_Blocked_CarriesNoCircleAndNoRights()
     {
         var message = EventFactory.Identity(IdentityId, version: 5, blocked: true);
 
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
 
         fact.Blocked.ShouldBeTrue();
-        fact.Role.ShouldBeNull();
+        fact.Circle.ShouldBeNull();
         fact.Rights.ShouldBeEmpty();
     }
 
     [Theory]
-    [InlineData(GlobalRole.Member, AccessQueue.Community)]
-    [InlineData(GlobalRole.Guest, AccessQueue.Auction)]
-    public void Identity_ApplicationSubmitted_CarriesOccasionAndQueue(GlobalRole circle, AccessQueue expected)
+    [InlineData(Circle.Member, AccessQueue.Community)]
+    [InlineData(Circle.Guest, AccessQueue.Auction)]
+    public void Identity_ApplicationSubmitted_CarriesOccasionAndQueue(Circle circle, AccessQueue expected)
     {
         var message = EventFactory.Application(IdentityId, version: 2, circle);
 
@@ -274,38 +279,11 @@ public class ReplicaMappingTests
     }
 
     [Fact]
-    public void Identity_ApplicationQueue_WinsOverSupersededCircle()
-    {
-        // Очередь заменила круг заявки: при расхождении читается она.
-        var message = EventFactory.Application(IdentityId, version: 2, GlobalRole.Member);
-        message.ApplicationSubmitted.Queue = ApplicationQueue.Auction;
-
-        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
-
-        fact.OccasionQueue.ShouldBe(AccessQueue.Auction);
-    }
-
-    [Theory]
-    [InlineData(GlobalRole.Member, AccessQueue.Community)]
-    [InlineData(GlobalRole.Guest, AccessQueue.Auction)]
-    public void Identity_ApplicationWithoutQueue_ReadsQueueFromCircle(GlobalRole circle, AccessQueue expected)
-    {
-        // Событие, записанное до появления очереди, несёт только круг заявки.
-        var message = EventFactory.Application(IdentityId, version: 2, circle);
-        message.ApplicationSubmitted.Queue = ApplicationQueue.Unspecified;
-
-        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
-
-        fact.OccasionQueue.ShouldBe(expected);
-    }
-
-    [Fact]
     public void Identity_ApplicationToUnknownQueue_OnlyMovesReplica()
     {
-        // Незнакомая очередь — новая поверхность со своими модераторами: круг,
-        // который производитель ещё ставит, называет не её, и звать модераторов
-        // аукциона было бы ложью.
-        var message = EventFactory.Application(IdentityId, version: 2, GlobalRole.Guest);
+        // Незнакомая очередь — новая поверхность со своими модераторами: звать
+        // модераторов известной очереди было бы ложью.
+        var message = EventFactory.Application(IdentityId, version: 2, Circle.Guest);
         message.ApplicationSubmitted.Queue = (ApplicationQueue)99;
 
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
@@ -317,32 +295,29 @@ public class ReplicaMappingTests
     [Fact]
     public void Identity_AdmissionToUnknownQueue_OnlyMovesReplica()
     {
-        var message = EventFactory.Admission(IdentityId, version: 4, GlobalRole.Guest);
+        var message = EventFactory.Admission(IdentityId, version: 4, Circle.Guest);
         message.ApplicationAdmitted.Queue = (ApplicationQueue)99;
 
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
 
         fact.Occasion.ShouldBe(IdentityOccasion.Other);
-        fact.Role.ShouldBe("guest");
+        fact.Circle.ShouldBe("guest");
     }
 
-    [Theory]
-    [InlineData(GlobalRole.Admin)]
-    [InlineData(GlobalRole.Maintainer)]
-    [InlineData(GlobalRole.Unspecified)]
-    public void Identity_ApplicationWithoutQueueOrRequestableCircle_BecomesPoison(GlobalRole circle)
+    [Fact]
+    public void Identity_ApplicationWithoutQueue_BecomesPoison()
     {
         // Заявку ставят только в очередь: событие без неё испорчено, и
         // оповещать о нём модераторов было бы ложью.
-        var message = EventFactory.Application(IdentityId, version: 2, circle);
+        var message = EventFactory.Application(IdentityId, version: 2, Circle.Unspecified);
 
         ReplicaMapping.Identity(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
     }
 
     [Theory]
-    [InlineData(GlobalRole.Member, AccessQueue.Community)]
-    [InlineData(GlobalRole.Guest, AccessQueue.Auction)]
-    public void Identity_ApplicationAdmitted_CarriesOccasionAndQueue(GlobalRole circle, AccessQueue expected)
+    [InlineData(Circle.Member, AccessQueue.Community)]
+    [InlineData(Circle.Guest, AccessQueue.Auction)]
+    public void Identity_ApplicationAdmitted_CarriesOccasionAndQueue(Circle circle, AccessQueue expected)
     {
         var message = EventFactory.Admission(IdentityId, version: 4, circle);
 
@@ -352,48 +327,102 @@ public class ReplicaMappingTests
         fact.OccasionQueue.ShouldBe(expected);
     }
 
-    [Theory]
-    [InlineData(GlobalRole.Admin)]
-    [InlineData(GlobalRole.Unspecified)]
-    public void Identity_AdmissionWithoutQueueOrRequestableCircle_BecomesPoison(GlobalRole circle)
+    [Fact]
+    public void Identity_AdmissionWithoutQueue_BecomesPoison()
     {
         // Канал выбирается по очереди заявки: событие без неё ни один бот не
         // доставил бы.
-        var message = EventFactory.Admission(IdentityId, version: 4, circle);
+        var message = EventFactory.Admission(IdentityId, version: 4, Circle.Unspecified);
 
         ReplicaMapping.Identity(EventFactory.Bytes(message)).ShouldBeOfType<Decoded.Poison>();
     }
 
     [Fact]
-    public void Identity_RoleGranted_CarriesGrantedRole()
+    public void Identity_CircleChanged_CarriesOccasionAndCircle()
     {
-        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Identity(IdentityId, version: 2))));
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(
+            EventFactory.CircleChange(IdentityId, version: 2, Circle.Guest, previous: Circle.Member))));
 
-        fact.Occasion.ShouldBe(IdentityOccasion.RoleGranted);
-        fact.OccasionRole.ShouldBe("member");
+        fact.Occasion.ShouldBe(IdentityOccasion.CircleChanged);
+        fact.Circle.ShouldBe("guest");
+    }
+
+    [Theory]
+    [InlineData(Preset.Admin, "admin")]
+    [InlineData(Preset.Maintainer, "maintainer")]
+    public void Identity_PresetGranted_CarriesGrantedPreset(Preset preset, string expected)
+    {
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(
+            EventFactory.PresetGrant(IdentityId, version: 3, preset))));
+
+        fact.Occasion.ShouldBe(IdentityOccasion.PresetGranted);
+        fact.OccasionPreset.ShouldBe(expected);
+    }
+
+    [Fact]
+    public void Identity_GrantOfUnknownPreset_OnlyMovesReplica()
+    {
+        var message = EventFactory.PresetGrant(IdentityId, version: 3, Preset.Admin);
+        message.PresetGranted.Preset = (Preset)99;
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(IdentityOccasion.Other);
+        fact.OccasionPreset.ShouldBeNull();
+    }
+
+    [Fact]
+    public void Identity_PresetRevoked_OnlyMovesReplica()
+    {
+        // Снятие набора фактов не порождает: адресатов следующего повода
+        // решает уже обновлённая реплика, где у человека нет прав набора.
+        var message = EventFactory.CircleChange(IdentityId, version: 4, Circle.Member);
+        message.PresetRevoked = new PresetRevoked { Preset = Preset.Admin };
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(IdentityOccasion.Other);
+        fact.Presets.ShouldBeEmpty();
+        fact.Rights.ShouldBe(["access_hub", "place_bids"]);
+    }
+
+    [Fact]
+    public void Identity_SeveralPresets_AreAllKept()
+    {
+        // Мейнтейнер, назначивший себя администратором, держит оба набора;
+        // реплика пишет их оба и права обоих, как их отдал Identity.
+        var message = EventFactory.PresetGrant(IdentityId, version: 3, Preset.Admin);
+        message.State.Presets.Add(Preset.Maintainer);
+        message.State.Rights.Add(AccessRight.GrantAdmins);
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Presets.ShouldBe(["admin", "maintainer"]);
+        fact.Rights.ShouldContain("grant_admins");
+        fact.Rights.ShouldContain("manage_meetups");
     }
 
     [Fact]
     public void Identity_RightGranted_CarriesGrantedRight()
     {
-        var message = EventFactory.RightGrant(IdentityId, version: 3, GlobalRole.Guest, AccessRight.Auction);
+        var message = EventFactory.RightGrant(IdentityId, version: 3, Circle.Guest, AccessRight.PlaceBids);
 
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
 
         fact.Occasion.ShouldBe(IdentityOccasion.RightGranted);
-        fact.OccasionRight.ShouldBe("auction");
+        fact.OccasionRight.ShouldBe("place_bids");
     }
 
     [Fact]
     public void Identity_GrantOfUnknownRight_OnlyMovesReplica()
     {
-        var message = EventFactory.RightGrant(IdentityId, version: 3, GlobalRole.Member, (AccessRight)99);
+        var message = EventFactory.RightGrant(IdentityId, version: 3, Circle.Member, (AccessRight)99);
 
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
 
         fact.Occasion.ShouldBe(IdentityOccasion.Other);
         fact.OccasionRight.ShouldBeNull();
-        fact.Rights.ShouldBe(["auction", "hub"]);
+        fact.Rights.ShouldBe(["access_hub", "place_bids"]);
     }
 
     [Fact]
@@ -401,12 +430,12 @@ public class ReplicaMappingTests
     {
         // Отзыв права фактов не порождает и ничего не снимает: адресатов
         // следующего повода решает уже обновлённая реплика.
-        var message = EventFactory.RightRevoke(IdentityId, version: 4, GlobalRole.Member, AccessRight.ModerateAuction);
+        var message = EventFactory.RightRevoke(IdentityId, version: 4, Circle.Member, AccessRight.AdmitBidders);
 
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
 
         fact.Occasion.ShouldBe(IdentityOccasion.Other);
-        fact.Rights.ShouldBe(["auction", "hub"]);
+        fact.Rights.ShouldBe(["access_hub", "place_bids"]);
     }
 
     [Fact]
@@ -420,8 +449,8 @@ public class ReplicaMappingTests
         var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
 
         fact.Occasion.ShouldBe(IdentityOccasion.Other);
-        fact.OccasionRole.ShouldBeNull();
-        fact.Role.ShouldBe("member");
+        fact.OccasionPreset.ShouldBeNull();
+        fact.Circle.ShouldBe("member");
     }
 
     [Theory]
@@ -442,7 +471,7 @@ public class ReplicaMappingTests
         { "occurred at", m => m.OccurredAt = string.Empty },
         { "state", m => m.State = null },
         { "state id", m => m.State.Id = EventFactory.NewId() },
-        { "unknown role", m => m.State.Role = (GlobalRole)99 },
+        { "unknown circle", m => m.State.Circle = (Circle)99 },
     };
 
     [Fact]

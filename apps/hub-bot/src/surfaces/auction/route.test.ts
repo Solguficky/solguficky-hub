@@ -1,10 +1,10 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import {
+  type AccessRequestAnswer,
   type AccessRight,
   encodeAuctionCallback,
   type ResolvedIdentity,
-  type RoleRequestAnswer,
 } from "../../auction-ui/index.js";
 import {
   type AuctionCatalogPort,
@@ -40,8 +40,8 @@ function summary(index: number, stage: AuctionSummary["stage"]) {
 
 // Пускает право смотрящего; те же права уходят в Auction.
 const VIEWER_ID = "01926f3c-8b7a-7cde-8f00-00000000000a";
-const GUEST: readonly AccessRight[] = ["auction"];
-const MEMBER: readonly AccessRight[] = ["hub", "auction"];
+const GUEST: readonly AccessRight[] = ["place-bids"];
+const MEMBER: readonly AccessRight[] = ["access-hub", "place-bids"];
 
 function identity(
   overrides: { rights?: readonly AccessRight[]; blocked?: boolean } = {},
@@ -54,7 +54,7 @@ function identity(
 
 // Что вход ответил бы человеку с такой личностью: заблокированному —
 // `blocked`, с правом аукциона — что оно уже есть, остальным — заявку.
-function entered(resolved: ResolvedIdentity): RoleRequestAnswer {
+function entered(resolved: ResolvedIdentity): AccessRequestAnswer {
   const { rights } = resolved.viewer;
   return {
     viewer: {
@@ -63,7 +63,7 @@ function entered(resolved: ResolvedIdentity): RoleRequestAnswer {
     },
     outcome: resolved.blocked
       ? "blocked"
-      : rights.includes("auction")
+      : rights.includes("place-bids")
         ? "already-held"
         : "pending",
   };
@@ -81,7 +81,7 @@ function ports(
       }),
     },
     entry: {
-      requestRole: vi.fn(async () => {
+      requestAccess: vi.fn(async () => {
         if (resolved instanceof Error) throw resolved;
         return entered(resolved);
       }),
@@ -148,7 +148,7 @@ describe("FAQ entry", () => {
       reason: "not-admitted",
     });
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
-    vi.mocked(p.entry.requestRole).mockResolvedValue(
+    vi.mocked(p.entry.requestAccess).mockResolvedValue(
       entered(identity({ rights: GUEST })),
     );
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
@@ -225,7 +225,7 @@ describe("FAQ entry", () => {
   );
 
   it("sends a community member to the hub bot on /start and on a lot press", async () => {
-    const p = ports(identity({ rights: [...MEMBER, "manage-membership"] }));
+    const p = ports(identity({ rights: [...MEMBER, "manage-members"] }));
     expect(await routeAuctionStart({ ports: p, user, firstName })).toEqual({
       screen: { kind: "denied", reason: "in-community" },
       identityId: VIEWER_ID,
@@ -273,7 +273,7 @@ describe("FAQ entry", () => {
     expect(p.faq.acknowledge).not.toHaveBeenCalled();
     expect(p.auction.getLot).not.toHaveBeenCalled();
     // Вход заменяет разрешение личности: Identity спрошен один раз.
-    expect(p.entry.requestRole).toHaveBeenCalledTimes(1);
+    expect(p.entry.requestAccess).toHaveBeenCalledTimes(1);
     expect(p.identity.resolveIdentity).not.toHaveBeenCalled();
   });
 
@@ -302,7 +302,7 @@ describe("FAQ entry", () => {
     expect(p.faq.acknowledge).toHaveBeenCalledTimes(2);
     expect(p.faq.acknowledge).toHaveBeenCalledWith({
       identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-      rights: ["auction"],
+      rights: ["place-bids"],
     });
   });
 
@@ -425,7 +425,7 @@ describe("auction lists", () => {
     expect(p.catalog.listAuctions).toHaveBeenCalledWith({
       viewer: {
         identityId: admitted.viewer.identityId,
-        rights: ["auction"],
+        rights: ["place-bids"],
       },
       listing: "active",
       pageToken: "",
@@ -542,7 +542,7 @@ describe("routeAuctionCallback", () => {
     expect(outcome.identityId).toBe("01926f3c-8b7a-7cde-8f00-00000000000a");
     expect(outcome.viewer).toEqual({
       identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
-      rights: ["auction"],
+      rights: ["place-bids"],
     });
   });
 
@@ -661,7 +661,7 @@ describe("routeAuctionStart", () => {
       firstName,
       sourceCode: "chat",
     });
-    expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
+    expect(p.entry.requestAccess).toHaveBeenCalledExactlyOnceWith({
       user: { telegramUserId: 42, telegramUsername: "owl" },
       queue: "auction",
       sourceCode: "chat",
@@ -687,7 +687,7 @@ describe("routeAuctionStart", () => {
       firstName,
       ...(sourceCode === undefined ? {} : { sourceCode }),
     });
-    expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
+    expect(p.entry.requestAccess).toHaveBeenCalledExactlyOnceWith({
       user,
       queue: "auction",
       firstName,
@@ -697,7 +697,7 @@ describe("routeAuctionStart", () => {
 
   it("opens the entry for a person the allowlist has just admitted", async () => {
     const p = ports(identity({ rights: [] }));
-    vi.mocked(p.entry.requestRole).mockResolvedValue({
+    vi.mocked(p.entry.requestAccess).mockResolvedValue({
       ...entered(identity({ rights: GUEST })),
       outcome: "granted-by-allowlist",
     });
@@ -708,7 +708,7 @@ describe("routeAuctionStart", () => {
 
   it("answers a declined application with a refusal of its own", async () => {
     const p = ports(identity({ rights: [] }));
-    vi.mocked(p.entry.requestRole).mockResolvedValue({
+    vi.mocked(p.entry.requestAccess).mockResolvedValue({
       ...entered(identity({ rights: [] })),
       outcome: "declined",
     });
@@ -720,7 +720,7 @@ describe("routeAuctionStart", () => {
 
   it("fails closed on an outcome it does not know, whatever the rights", async () => {
     const p = ports(identity({ rights: GUEST }));
-    vi.mocked(p.entry.requestRole).mockResolvedValue({
+    vi.mocked(p.entry.requestAccess).mockResolvedValue({
       ...entered(identity({ rights: GUEST })),
       outcome: "unspecified",
     });
@@ -732,7 +732,7 @@ describe("routeAuctionStart", () => {
       identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
       failure: {
         category: "invariant",
-        message: "identity answered an unknown role request outcome",
+        message: "identity answered an unknown access request outcome",
       },
     });
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
@@ -759,14 +759,14 @@ describe("routeAuctionStart", () => {
 // «Повторить» под кадром «недоступно» после `/start` — тот же вход: без него
 // новичок после сбоя увидел бы «заявка на рассмотрении» без заявки.
 describe("entry retry", () => {
-  it("requests the role again with the channel code and the first name", async () => {
+  it("requests access again with the channel code and the first name", async () => {
     const p = ports(identity({ rights: [] }));
     const outcome = await routeAuctionCallback({
       ports: p,
       user,
       data: startCallback("chat"),
     });
-    expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
+    expect(p.entry.requestAccess).toHaveBeenCalledExactlyOnceWith({
       user,
       queue: "auction",
       sourceCode: "chat",
@@ -807,7 +807,7 @@ describe("entry retry", () => {
       user,
       data: failed.screen.exit.data,
     });
-    expect(p.entry.requestRole).toHaveBeenCalledExactlyOnceWith({
+    expect(p.entry.requestAccess).toHaveBeenCalledExactlyOnceWith({
       user,
       queue: "auction",
       sourceCode: "",

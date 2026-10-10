@@ -23,7 +23,7 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
     let client = AuthenticatedClient.bot host.Channel
     let authority = AuthenticatedClient.notifications host.Channel
 
-    /// Пустой набор ролей — обычный пользователь (integration.md).
+    /// Пустой набор прав — обычный пользователь (integration.md).
     let viewer = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000a")
 
     let id = "0199c0de-0000-7000-8000-000000000001"
@@ -96,15 +96,15 @@ type GrpcBoundaryTests(host: MeetupsHostFixture) =
 
         test <@ actual = Some StatusCode.InvalidArgument @>
 
-    /// Новые роли контракта и значение вне словаря не отвергают запрос по разбору:
+    /// Другие права контракта и значение вне словаря не отвергают запрос по разбору:
     /// перевод в домен их отбрасывает, а отказ приходит от правила по праву.
     [<Fact>]
-    member _.``Commands refuse a viewer carrying only new or unknown roles by right``() =
+    member _.``Commands refuse a viewer carrying only other or unknown rights by right``() =
         let newcomer = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000b")
-        newcomer.GlobalRoles.Add(Identity.V1.GlobalRole.Maintainer)
-        newcomer.GlobalRoles.Add(Identity.V1.GlobalRole.Member)
-        newcomer.GlobalRoles.Add(Identity.V1.GlobalRole.Guest)
-        newcomer.GlobalRoles.Add(enum<Identity.V1.GlobalRole> 99)
+        newcomer.Rights.Add(Identity.V1.AccessRight.AccessHub)
+        newcomer.Rights.Add(Identity.V1.AccessRight.ManageMembers)
+        newcomer.Rights.Add(Identity.V1.AccessRight.GrantAdmins)
+        newcomer.Rights.Add(enum<Identity.V1.AccessRight> 99)
 
         let actual =
             [

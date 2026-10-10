@@ -93,7 +93,7 @@ let ``Removing an absent material returns the snapshot without writing`` () =
 /// доказывает заодно, что до хранилища вызов не дошёл.
 [<Fact>]
 let ``An ordinary viewer is refused before the meetup is loaded`` () =
-    test <@ run Sample.ordinary stub = Error(RemoveMaterialError.Forbidden NotAnAdministrator) @>
+    test <@ run Sample.ordinary stub = Error(RemoveMaterialError.Forbidden CannotManageMeetups) @>
 
 [<Fact>]
 let ``Removing from a missing meetup is rejected without writing`` () =

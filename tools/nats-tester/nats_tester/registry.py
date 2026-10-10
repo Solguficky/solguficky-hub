@@ -6,7 +6,7 @@
 Схемы `identity/v1/identity_service.proto`, `meetups/v1/meetups_service.proto`,
 `notifications/v1/notifications_service.proto` и `auction/v1/auction_service.proto`
 обслуживают gRPC и в реестр не попадают: subject у них не бывает. Классы
-`meetups/v1/meetups.proto`, `identity/v1/roles.proto` и `auction/v1/auction.proto`
+`meetups/v1/meetups.proto`, `identity/v1/access.proto` и `auction/v1/auction.proto`
 собираются как payload: их импортируют схемы событий своих доменов, и без них
 те не импортируются.
 
@@ -36,14 +36,15 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.notifications.notification_created.hub': notifications_pb2.Notification,
     'events.notifications.notification_created.auction': notifications_pb2.Notification,
     'events.identity.profile_registered': identity_events_pb2.IdentityEvent,
-    'events.identity.role_granted': identity_events_pb2.IdentityEvent,
-    'events.identity.role_revoked': identity_events_pb2.IdentityEvent,
     'events.identity.profile_blocked': identity_events_pb2.IdentityEvent,
     'events.identity.profile_unblocked': identity_events_pb2.IdentityEvent,
     'events.identity.application_submitted': identity_events_pb2.IdentityEvent,
     'events.identity.application_admitted': identity_events_pb2.IdentityEvent,
     'events.identity.right_granted': identity_events_pb2.IdentityEvent,
     'events.identity.right_revoked': identity_events_pb2.IdentityEvent,
+    'events.identity.circle_changed': identity_events_pb2.IdentityEvent,
+    'events.identity.preset_granted': identity_events_pb2.IdentityEvent,
+    'events.identity.preset_revoked': identity_events_pb2.IdentityEvent,
     'events.meetups.meetup_created': meetups_events_pb2.MeetupEvent,
     'events.meetups.meetup_changed': meetups_events_pb2.MeetupEvent,
     'events.meetups.meetup_published': meetups_events_pb2.MeetupEvent,

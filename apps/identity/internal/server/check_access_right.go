@@ -12,16 +12,17 @@ import (
 
 // Одна выборка — один снимок READ COMMITTED: отметка блокировки и права
 // читаются согласованно, тем же выводом, что ответы и снимок outbox
-// (identity_access_rights, миграция 014).
+// (identity_access_rights, миграция 017).
 const checkAccessRightSQL = `
 SELECT p.blocked, $2 = ANY (identity_access_rights(p.id))
 FROM profiles p
 WHERE p.id = $1`
 
 // CheckAccessRight отвечает, держит ли человек сейчас право, которое требует
-// вызывающая поверхность (ADR-064, пункт 6: поверхность объявляет право, а не
-// роли). Ответ читается из текущего состояния, как у CheckGlobalRole:
-// устаревшее разрешение равносильно пропущенной проверке (ADR-026).
+// вызывающий (ADR о наборах: допуск решает право, а не круг или набор). Ответ
+// читается из текущего состояния: устаревшее разрешение равносильно
+// пропущенной проверке (ADR-026). Отметка блокировки читается рядом как
+// страховка поверх инварианта «у заблокированного нет прав».
 // Заблокированный — granted=false, а не код отказа: для проверки права
 // блокировка означает «права нет». Неизвестный профиль — NOT_FOUND.
 func (s identityService) CheckAccessRight(ctx context.Context, req *identityv1.CheckAccessRightRequest) (*identityv1.CheckAccessRightResponse, error) {
@@ -38,28 +39,9 @@ func (s identityService) CheckAccessRight(ctx context.Context, req *identityv1.C
 	err = s.db.QueryRowContext(ctx, checkAccessRightSQL, identityID, right).Scan(&blocked, &held)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return nil, roleStatus(errProfileNotFound)
+		return nil, accessStatus(errProfileNotFound)
 	case err != nil:
 		return nil, internal("check access right", err)
 	}
 	return &identityv1.CheckAccessRightResponse{Granted: held && !blocked}, nil
-}
-
-// rightName переводит право контракта в строку хранилища; UNSPECIFIED и
-// неизвестное значение строки не имеют.
-func rightName(right identityv1.AccessRight) (string, bool) {
-	switch right {
-	case identityv1.AccessRight_ACCESS_RIGHT_HUB:
-		return rightHub, true
-	case identityv1.AccessRight_ACCESS_RIGHT_AUCTION:
-		return rightAuction, true
-	case identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERSHIP:
-		return rightManageMembership, true
-	case identityv1.AccessRight_ACCESS_RIGHT_MODERATE_AUCTION:
-		return rightModerateAuction, true
-	case identityv1.AccessRight_ACCESS_RIGHT_MANAGE_AUCTION:
-		return rightManageAuction, true
-	default:
-		return "", false
-	}
 }

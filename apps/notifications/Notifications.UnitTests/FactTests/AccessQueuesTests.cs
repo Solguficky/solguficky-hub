@@ -11,23 +11,27 @@ namespace Notifications.UnitTests.FactTests;
 public sealed class AccessQueuesTests
 {
     [Theory]
-    [InlineData(AccessQueue.Community, "manage_membership")]
-    [InlineData(AccessQueue.Auction, "moderate_auction")]
+    [InlineData(AccessQueue.Community, "manage_members")]
+    [InlineData(AccessQueue.Auction, "admit_bidders")]
     public void ModeratorRight_Queue_IsTheRightThatDecidesIt(AccessQueue queue, string right) =>
         AccessQueues.ModeratorRight(queue).ShouldBe(right);
 
     [Theory]
-    [InlineData(AccessQueue.Community, "hub")]
-    [InlineData(AccessQueue.Auction, "auction")]
+    [InlineData(AccessQueue.Community, "access_hub")]
+    [InlineData(AccessQueue.Auction, "place_bids")]
     public void AdmissionRight_Queue_IsTheRightItsAdmissionGrants(AccessQueue queue, string right) =>
         AccessQueues.AdmissionRight(queue).ShouldBe(right);
 
     [Theory]
-    [InlineData(AccessQueue.Community, "member", Identity.V1.GlobalRole.Member)]
-    [InlineData(AccessQueue.Auction, "public", Identity.V1.GlobalRole.Guest)]
-    public void Circle_Queue_KeepsTheStoredAndContractCircle(AccessQueue queue, string stored, Identity.V1.GlobalRole contract)
+    [InlineData(AccessQueue.Community, "member", Identity.V1.ApplicationQueue.Community)]
+    [InlineData(AccessQueue.Auction, "public", Identity.V1.ApplicationQueue.Auction)]
+    public void Circle_Queue_KeepsTheStoredKeyAndContractQueue(AccessQueue queue, string stored, Identity.V1.ApplicationQueue contract)
     {
         AccessQueues.Circle(queue).ShouldBe(stored);
-        AccessQueues.ContractCircle(queue).ShouldBe(contract);
+        AccessQueues.ContractQueue(queue).ShouldBe(contract);
     }
+
+    [Fact]
+    public void ContractQueue_UnknownQueue_Throws() =>
+        Should.Throw<ArgumentOutOfRangeException>(() => AccessQueues.ContractQueue((AccessQueue)99));
 }

@@ -26,8 +26,10 @@ func TestChangeWithoutEventIsRejectedAtCommit(t *testing.T) {
 
 	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9301)`)
 
-	assertPgErrorCode(t, execMigration(t, db, `INSERT INTO identity_roles (id, identity_id, role, granted_at, granted_by)
-		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3802', $1, 'admin', now(), NULL)`, identityID), "ID006")
+	assertPgErrorCode(t, execMigration(t, db, `INSERT INTO identity_circles (id, identity_id, circle, granted_at, granted_by)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3802', $1, 'member', now(), NULL)`, identityID), "ID006")
+	assertPgErrorCode(t, execMigration(t, db, `INSERT INTO identity_presets (id, identity_id, preset, granted_at, granted_by)
+		VALUES ('0198f2a4-7c1e-7d3a-9b21-4f8e12ab3803', $1, 'admin', now(), NULL)`, identityID), "ID006")
 	assertPgErrorCode(t, execMigration(t, db,
 		`UPDATE profiles SET blocked = true WHERE id = $1`, identityID), "ID006")
 	assertPgErrorCode(t, execMigration(t, db,
@@ -46,7 +48,7 @@ func TestVersionBumpNeedsItsOwnEvent(t *testing.T) {
 
 	tx := beginTx(t, db)
 	defer func() { _ = tx.Rollback() }()
-	if err := outbox.Append(t.Context(), tx, identityID, outbox.ProfileBlocked, ""); err == nil {
+	if err := outbox.Append(t.Context(), tx, identityID, outbox.Event{Occasion: outbox.ProfileBlocked}); err == nil {
 		t.Fatal("profile_blocked on unblocked profile: got nil error, want snapshot check")
 	}
 	_ = tx.Rollback()
@@ -55,7 +57,7 @@ func TestVersionBumpNeedsItsOwnEvent(t *testing.T) {
 	defer func() { _ = tx.Rollback() }()
 	mustTxExec(t, tx, `UPDATE profiles SET version = version + 1 WHERE id = $1`, identityID)
 	mustTxExec(t, tx, `UPDATE profiles SET blocked = true WHERE id = $1`, identityID)
-	if err := outbox.Append(t.Context(), tx, identityID, outbox.ProfileBlocked, ""); err != nil {
+	if err := outbox.Append(t.Context(), tx, identityID, outbox.Event{Occasion: outbox.ProfileBlocked}); err != nil {
 		t.Fatal(err)
 	}
 	assertPgErrorCode(t, tx.Commit(), "ID006")
@@ -77,7 +79,7 @@ func TestVersionMovesByOneAndOutboxFollowsIt(t *testing.T) {
 
 	// Строка outbox с номером, который профиль ещё не занял, отвергается сразу.
 	assertPgErrorCode(t, execMigration(t, db, insertOutboxSQL,
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3822", identityID, 2, "profile_unblocked", nil, "{}", false), "ID007")
+		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3822", identityID, 2, profileUnblocked, false), "ID007")
 }
 
 func TestOutboxVersionIsUniquePerProfile(t *testing.T) {
@@ -90,52 +92,52 @@ func TestOutboxVersionIsUniquePerProfile(t *testing.T) {
 	// номером проходит проверку шага и упирается в уникальность.
 	var pgErr *pgconn.PgError
 	err := execMigration(t, db, insertOutboxSQL,
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3832", identityID, 1, "profile_unblocked", nil, "{}", false)
+		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3832", identityID, 1, profileUnblocked, false)
 	if !errors.As(err, &pgErr) || pgErr.Code != "23505" || pgErr.ConstraintName != "identity_outbox_identity_version" {
 		t.Fatalf("duplicate version: got %v want unique violation on identity_outbox_identity_version", err)
 	}
 }
 
-// Согласие повода со снимком держит схема: блокировка приходит без ролей, выдача
-// — с выданной ролью, отзыв — без отозванной, регистрация — первой и незаблокированной.
+// Согласие повода со снимком держит схема: блокировка приходит без круга,
+// наборов и прав, выдача — с выданным, снятие — без снятого, регистрация —
+// первой и незаблокированной, а поле повода есть только у своего повода.
 func TestOutboxSnapshotMustMatchOccasion(t *testing.T) {
 	t.Parallel()
 	db := migratedOutboxDB(t)
 	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3841"
 	registerProfile(t, db, identityID, `INSERT INTO profiles (id, telegram_user_id) VALUES ($1, 9341)`)
 
-	cases := []struct {
-		name     string
-		occasion string
-		role     any
-		roles    string
-		blocked  bool
-	}{
-		{"blocked with roles", "profile_blocked", nil, "{member}", true},
-		{"blocked without mark", "profile_blocked", nil, "{}", false},
-		{"granted role absent", "role_granted", adminRole, "{member}", false},
-		{"granted to blocked", "role_granted", adminRole, "{admin}", true},
-		{"revoked role present", "role_revoked", adminRole, "{admin}", false},
-		{"unblocked with mark", "profile_unblocked", nil, "{}", true},
-		{"registered twice", "profile_registered", nil, "{}", false},
-		{"role on block", "profile_blocked", "admin", "{}", true},
-		{"no role on grant", "role_granted", nil, "{}", false},
-		{"unknown occasion", "profile_renamed", nil, "{}", false},
-		{"unknown snapshot role", "profile_unblocked", nil, "{owner}", false},
-		{"application without circle", applicationSubmitted, nil, "{}", false},
-		{"application for admin", applicationSubmitted, adminRole, "{}", false},
-		{"application while blocked", applicationSubmitted, publicRole, "{}", true},
-		{"application for held circle", applicationSubmitted, "member", "{member,public}", false},
-		{"admission without circle", applicationAdmitted, nil, "{public}", false},
-		{"admission for admin", applicationAdmitted, adminRole, "{admin}", false},
-		{"admission without granted circle", applicationAdmitted, publicRole, "{}", false},
-		{"admission of blocked", applicationAdmitted, publicRole, "{public}", true},
+	rejected := []outboxRow{
+		{name: "blocked with circle", occasion: profileBlocked, blocked: true, circle: circleMember},
+		{name: "blocked with preset", occasion: profileBlocked, blocked: true, presets: "{admin}"},
+		{name: "blocked with rights", occasion: profileBlocked, blocked: true, rights: "{place_bids}"},
+		{name: "blocked without mark", occasion: profileBlocked},
+		{name: "unblocked with mark", occasion: profileUnblocked, blocked: true},
+		{name: "registered twice", occasion: "profile_registered"},
+		{name: "retired occasion", occasion: "role_granted", circle: circleMember},
+		{name: "unknown occasion", occasion: "profile_renamed"},
+		{name: "retired circle", occasion: circleChanged, circle: adminRole},
+		{name: "circle change to nothing", occasion: circleChanged},
+		{name: "circle unchanged", occasion: circleChanged, circle: circleMember, previous: circleMember},
+		{name: "circle change of blocked", occasion: circleChanged, circle: circleMember, blocked: true},
+		{name: "previous circle elsewhere", occasion: profileUnblocked, previous: guestRole},
+		{name: "preset grant absent", occasion: "preset_granted", circle: circleMember, preset: adminRole},
+		{name: "preset grant without preset", occasion: "preset_granted", circle: circleMember, presets: "{admin}"},
+		{name: "unknown preset", occasion: "preset_granted", circle: circleMember, preset: "owner", presets: "{owner}"},
+		{name: "revoked preset present", occasion: "preset_revoked", circle: circleMember, preset: adminRole, presets: "{admin}"},
+		{name: "preset on unblock", occasion: profileUnblocked, preset: adminRole},
+		{name: "unknown snapshot right", occasion: profileUnblocked, rights: "{hub}"},
+		{name: "application without queue", occasion: applicationSubmitted},
+		{name: "application for circle", occasion: applicationSubmitted, queue: circleMember},
+		{name: "application while blocked", occasion: applicationSubmitted, queue: auctionQueue, blocked: true},
+		{name: "admission of blocked", occasion: applicationAdmitted, queue: auctionQueue, blocked: true},
+		{name: "queue on unblock", occasion: profileUnblocked, queue: auctionQueue},
+		{name: "global roles on new row", occasion: profileUnblocked, globalRoles: "{member}"},
 	}
-	for _, tc := range cases {
+	for _, tc := range rejected {
 		tx := beginTx(t, db)
 		mustTxExec(t, tx, `UPDATE profiles SET version = version + 1 WHERE id = $1`, identityID)
-		_, err := tx.ExecContext(t.Context(), insertOutboxSQL,
-			"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3842", identityID, 2, tc.occasion, tc.role, tc.roles, tc.blocked)
+		_, err := insertOutboxRow(t, tx, identityID, 2, tc)
 		_ = tx.Rollback()
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) || pgErr.Code != "23514" {
@@ -144,9 +146,9 @@ func TestOutboxSnapshotMustMatchOccasion(t *testing.T) {
 	}
 }
 
-// Заявка на круг занимает версию и оставляет снимок прежним: у человека с
-// аукционом заявка в хаб проходит, роль события — запрошенный круг.
-func TestOutboxAcceptsApplicationForCircleNotHeld(t *testing.T) {
+// Заявка в очередь занимает версию и оставляет снимок прежним: у гостя с
+// place_bids заявка в сообщество проходит.
+func TestOutboxAcceptsApplicationForQueueNotHeld(t *testing.T) {
 	t.Parallel()
 	db := migratedOutboxDB(t)
 	const identityID = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3871"
@@ -154,8 +156,11 @@ func TestOutboxAcceptsApplicationForCircleNotHeld(t *testing.T) {
 
 	tx := beginTx(t, db)
 	mustTxExec(t, tx, `UPDATE profiles SET version = version + 1 WHERE id = $1`, identityID)
-	mustTxExec(t, tx, insertOutboxSQL,
-		"0198f2a4-7c1e-7d3a-9b21-4f8e12ab3872", identityID, 2, applicationSubmitted, "member", "{public}", false)
+	if _, err := insertOutboxRow(t, tx, identityID, 2, outboxRow{
+		occasion: applicationSubmitted, queue: "community", circle: guestRole, rights: "{place_bids}",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := tx.Commit(); err != nil {
 		t.Fatalf("commit application event: %v", err)
 	}
@@ -206,11 +211,48 @@ const (
 	maintainerRole       = "maintainer"
 	applicationSubmitted = "application_submitted"
 	applicationAdmitted  = "application_admitted"
+	auctionQueue         = "auction"
+	placeBids            = "place_bids"
+	profileUnblocked     = "profile_unblocked"
+	profileBlocked       = "profile_blocked"
+	circleChanged        = "circle_changed"
 )
 
 const insertOutboxSQL = `
-INSERT INTO identity_outbox (event_id, identity_id, version, occasion, role, global_roles, blocked, occurred_at)
-VALUES ($1, $2, $3, $4, $5, $6::text[], $7, now())`
+INSERT INTO identity_outbox (event_id, identity_id, version, occasion, blocked, occurred_at, rights, presets)
+VALUES ($1, $2, $3, $4, $5, now(), '{}', '{}')`
+
+// outboxRow — строка outbox, собранная тестом мимо outbox.Append: так
+// проверяются ограничения, которые продукт сам нарушить не может.
+type outboxRow struct {
+	name, occasion                         string
+	blocked                                bool
+	circle, previous, preset, right, queue string
+	rights, presets, globalRoles           string
+}
+
+func insertOutboxRow(t *testing.T, tx *sql.Tx, identityID string, version int64, row outboxRow) (sql.Result, error) {
+	t.Helper()
+	text := func(value string) any {
+		if value == "" {
+			return nil
+		}
+		return value
+	}
+	array := func(value string) string {
+		if value == "" {
+			return "{}"
+		}
+		return value
+	}
+	return tx.ExecContext(t.Context(), `
+INSERT INTO identity_outbox
+    (event_id, identity_id, version, occasion, blocked, occurred_at, circle, previous_circle,
+     preset, access_right, queue, rights, presets, global_roles)
+VALUES (gen_random_uuid(), $1, $2, $3, $4, now(), $5, $6, $7, $8, $9, $10::text[], $11::text[], $12::text[])`,
+		identityID, version, row.occasion, row.blocked, text(row.circle), text(row.previous),
+		text(row.preset), text(row.right), text(row.queue), array(row.rights), array(row.presets), text(row.globalRoles))
+}
 
 func migratedOutboxDB(t *testing.T) *sql.DB {
 	t.Helper()

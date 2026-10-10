@@ -11,11 +11,10 @@ import (
 func TestCommunityAdministrationIsAuthorizedAndIdempotent(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9501)
+	adminID := seedAdmin(t, svc, db, 9501)
 	targetID := seedProfile(t, db, 9502)
 	actor := &identityv1.IdentityActor{
-		IdentityId:  adminID,
-		GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_ADMIN},
+		IdentityId: adminID,
 	}
 
 	first, err := svc.AdmitCommunityMember(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: actor, IdentityId: targetID})
@@ -28,10 +27,10 @@ func TestCommunityAdministrationIsAuthorizedAndIdempotent(t *testing.T) {
 	}
 
 	resolved := resolveDirect(t, svc, 9502, "target")
-	assertRoleSetInternal(t, resolved.GetGlobalRoles(), identityv1.GlobalRole_GLOBAL_ROLE_MEMBER, identityv1.GlobalRole_GLOBAL_ROLE_GUEST)
+	assertRightSet(t, resolved.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS)
 	// Допуск без заявки — тоже решение администратора: сообщение получает и
 	// тот, кто ждал на экране без строки заявки, а повтор второго не даёт.
-	assertAdmissions(t, db, targetID, roleMember)
+	assertAdmissions(t, db, targetID, queueCommunity)
 
 	blocked, err := svc.BlockCommunityMember(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: actor, IdentityId: targetID})
 	if err != nil || !blocked.GetChanged() {
@@ -41,17 +40,17 @@ func TestCommunityAdministrationIsAuthorizedAndIdempotent(t *testing.T) {
 	if err != nil || repeatedBlock.GetChanged() {
 		t.Fatalf("repeated block: changed=%t error=%v", repeatedBlock.GetChanged(), err)
 	}
-	if got := resolveDirect(t, svc, 9502, "target"); !got.GetBlocked() || len(got.GetGlobalRoles()) != 0 {
-		t.Fatalf("resolved after block: blocked=%t roles=%v", got.GetBlocked(), got.GetGlobalRoles())
+	if got := resolveDirect(t, svc, 9502, "target"); !got.GetBlocked() || len(got.GetRights()) != 0 {
+		t.Fatalf("resolved after block: blocked=%t rights=%v", got.GetBlocked(), got.GetRights())
 	}
 }
 
 func TestCommunityMembersCarryTelegramUserID(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9521)
+	adminID := seedAdmin(t, svc, db, 9521)
 	targetID := seedProfile(t, db, 9522)
-	actor := &identityv1.IdentityActor{IdentityId: adminID, GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_ADMIN}}
+	actor := &identityv1.IdentityActor{IdentityId: adminID}
 
 	list, err := svc.ListCommunityMembers(t.Context(), &identityv1.ListCommunityMembersRequest{Actor: actor})
 	if err != nil {
@@ -71,8 +70,8 @@ func TestCommunityMembersCarryTelegramUserID(t *testing.T) {
 func TestAllowedUsernameAdministrationListsOnlyCurrentEntries(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
-	adminID := seedProfile(t, db, 9511)
-	actor := &identityv1.IdentityActor{IdentityId: adminID, GlobalRoles: []identityv1.GlobalRole{identityv1.GlobalRole_GLOBAL_ROLE_ADMIN}}
+	adminID := seedAdmin(t, svc, db, 9511)
+	actor := &identityv1.IdentityActor{IdentityId: adminID}
 
 	added, err := svc.AddAllowedUsername(t.Context(), &identityv1.ChangeAllowedUsernameRequest{Actor: actor, Username: "@Alice"})
 	if err != nil || !added.GetChanged() {
