@@ -238,12 +238,16 @@ function displayMaterialTitle(material: MeetupMaterial, index: number): string {
 
 /**
  * Строки карточки без заголовка и материалов: статус, автор, когда, где и
- * описание. Текст уже экранирован.
+ * описание. Текст уже экранирован. Видимость — «видна» или «скрыта» — в
+ * статусе видит только тот, кто управляет сходкой: остальным скрытая сходка
+ * не показывается вовсе, а «видна» ничего им не говорит (решение владельца
+ * 10 октября 2026 года).
  */
 function cardLines(
   meetup: MeetupSnapshot,
   author: MeetupAuthor | undefined,
   today: CommunityDay,
+  manageable: boolean,
 ): string[] {
   const lifecycle =
     meetup.lifecycle === "cancelled"
@@ -253,7 +257,7 @@ function cardLines(
         : "запланирована";
   const visibility = meetup.visibility === "hidden" ? "скрыта" : "видна";
   return [
-    `Статус: ${lifecycle}, ${visibility}`,
+    manageable ? `Статус: ${lifecycle}, ${visibility}` : `Статус: ${lifecycle}`,
     // Назначенный момент стоит сразу под статусом: «скрыта» без него читается
     // как «черновик забыт», а с ним — как «ждёт публикации».
     ...(meetup.publishAt === undefined
@@ -417,7 +421,7 @@ export function cardScreen(view: CardView): ShownScreen {
   }
   const title = escapeHtml(meetupTitleLabel(meetup.title));
   const body = [
-    ...cardLines(meetup, view.author, today),
+    ...cardLines(meetup, view.author, today, manageable),
     ...materialLines(meetup),
   ];
   // Подсказка о подписке стоит под карточкой.
@@ -449,7 +453,10 @@ function cardText(parts: {
   body: readonly string[];
   hint?: string | undefined;
   presentation: "rich" | "plain";
-  /** Готовый блок постеров богатой карточки: стоит сразу под её телом. */
+  /**
+   * Готовый блок постеров богатой карточки: стоит первым, над заголовком
+   * (решение владельца 10 октября 2026 года).
+   */
   posters?: string | undefined;
 }): string {
   const { title, body, presentation } = parts;
@@ -461,7 +468,7 @@ function cardText(parts: {
         : escapeHtml(text);
   const card =
     presentation === "rich"
-      ? `<h1>${title}</h1><p>${body.join("<br>")}</p>${parts.posters ?? ""}`
+      ? `${parts.posters ?? ""}<h1>${title}</h1><p>${body.join("<br>")}</p>`
       : `<b>${title}</b>\n\n${body.join("\n")}`;
   return [card, paragraph(parts.hint)]
     .filter((part) => part !== undefined)
@@ -500,7 +507,8 @@ export function draftScreen(view: {
     id: "draft",
     text: cardText({
       title: escapeHtml(meetupTitleLabel(meetup.title)),
-      body: cardLines(meetup, undefined, today),
+      // Черновик видит только организатор.
+      body: cardLines(meetup, undefined, today, true),
       presentation,
     }),
     keyboard: withNav(keyboard, toHidden),
@@ -631,7 +639,8 @@ export function statusScreen(
       heading("Статус"),
       "",
       escapeHtml(meetupTitleLabel(meetup.title)),
-      ...cardLines(meetup, author, today),
+      // Экран «Статус» открывает только тот, кто управляет сходкой.
+      ...cardLines(meetup, author, today, true),
     ].join("\n"),
     keyboard: withNav(keyboard, toCard(token)),
     format: "HTML",

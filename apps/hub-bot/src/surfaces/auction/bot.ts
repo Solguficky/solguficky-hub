@@ -479,14 +479,15 @@ type Photo =
 // Идентификатор фото внутри rich-сообщения: им `<img>` ссылается на `media`.
 const photoId = "lot";
 
-// Содержимое rich-сообщения: фото — последним блоком под текстом карточки.
+// Содержимое rich-сообщения: фото — первым блоком, над заголовком карточки
+// (решение владельца 10 октября 2026 года, «Показ фото лота»).
 export function richMessageOf(
   screen: RenderedScreen,
   photo: Photo | undefined,
 ): InputRichMessage {
   if (photo === undefined) return { html: screen.text };
   return {
-    html: `${screen.text}<img src="tg://photo?id=${photoId}"/>`,
+    html: `<img src="tg://photo?id=${photoId}"/>${screen.text}`,
     media: [
       {
         id: photoId,

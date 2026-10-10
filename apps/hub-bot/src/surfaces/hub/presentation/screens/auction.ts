@@ -284,14 +284,16 @@ function lotScreen(
     lot.card?.image === undefined
       ? undefined
       : { lotId: lot.lotId, version: lot.card.image.version };
+  // Фото — первым блоком, над заголовком (решение владельца 10 октября 2026
+  // года, «Показ фото лота»).
   const text = rich
     ? [
+        photo === undefined ? "" : `<img src="tg://photo?id=${photo.id}"/>`,
         `<h1>${escapeHtml(title)}</h1>`,
         ...groups.map(
           (lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`,
         ),
         ...richParagraphs(description),
-        photo === undefined ? "" : `<img src="tg://photo?id=${photo.id}"/>`,
       ].join("")
     : plainLot(title, description, groups);
   return {

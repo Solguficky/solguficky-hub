@@ -843,11 +843,12 @@ describe("auction bot", () => {
     const card = calls[0]?.payload as {
       rich_message: { html: string; media: { media: { media: unknown } }[] };
     };
-    // Описание длиннее предела подписи к фото приходит целиком, фото — под ним.
+    // Описание длиннее предела подписи к фото приходит целиком, фото — над
+    // заголовком (решение владельца 10 октября 2026 года).
     expect(description.length).toBeGreaterThan(1024);
     expect(card.rich_message.html).toContain(description.trim());
     expect(card.rich_message.html).toMatch(
-      /<img src="tg:\/\/photo\?id=lot"\/>$/,
+      /^<img src="tg:\/\/photo\?id=lot"\/><h1>/,
     );
     expect(card.rich_message.media[0]?.media.media).toBeInstanceOf(InputFile);
     expect(photos.get({ lotId, version: "img-1" })).toEqual({

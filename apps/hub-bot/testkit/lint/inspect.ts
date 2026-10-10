@@ -405,9 +405,13 @@ function textOf(call: Carried): string | undefined {
         : undefined;
 }
 
+// Фото карточки над заголовком rich-экрана: одно фото или карусель фото.
+const leadingPhotoBlock =
+  /^(?:<img src="tg:\/\/photo\?id=[^"]*"\/>|<tg-slideshow>(?:<img src="tg:\/\/photo\?id=[^"]*"\/>)+<\/tg-slideshow>)/;
+
 // Тело экрана (дизайн-код, «Формат»): заголовок первой строкой, после него
-// пустая строка. Над заголовком ничего нет: исход действия — свой экран, а не
-// заметка над карточкой (PER-472). Кадр отказа держит жирное предложение и
+// пустая строка. Над заголовком ничего нет, кроме фото карточки: исход
+// действия — свой экран, а не заметка над карточкой (PER-472). Кадр отказа держит жирное предложение и
 // остальной текст в одной строке, и правило его не задевает. Чем заполнено тело, линтер не читает: это
 // держат тесты каталога бота.
 function bodyProblem(call: Carried): string | undefined {
@@ -420,9 +424,12 @@ function bodyProblem(call: Carried): string | undefined {
     if (after !== "" && !after.startsWith("<")) {
       return `после заголовка rich-экрана текст вне блока: «${after.slice(0, 20)}»`;
     }
-    return at === 0
+    // Единственное, что стоит над заголовком, — фото карточки: одно `<img>`
+    // или карусель (решение владельца 10 октября 2026 года).
+    const above = html.slice(0, at).replace(leadingPhotoBlock, "");
+    return above === ""
       ? undefined
-      : `над заголовком rich-экрана текст: «${html.slice(0, Math.min(at, 40))}»`;
+      : `над заголовком rich-экрана текст: «${above.slice(0, 40)}»`;
   }
   const lines = textOf(call)?.split("\n");
   if (lines === undefined) return undefined;

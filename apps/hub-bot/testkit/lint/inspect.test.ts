@@ -261,6 +261,31 @@ describe("inspectCall configuration", () => {
     expect(rich("<h1>Изменить</h1>Название: Сходка")).toEqual(["body"]);
   });
 
+  // Решение владельца 10 октября 2026 года: фото карточки стоит над
+  // заголовком — одно фото или карусель, и больше ничего.
+  it("lets only the card photo stand before the rich title", () => {
+    const rich = (html: string) =>
+      rulesOf("sendRichMessage", {
+        chat_id: 42,
+        rich_message: { html },
+        reply_markup: { inline_keyboard: [[key("‹ Меню")]] },
+        [tag]: "edit",
+      });
+    const photo = '<img src="tg://photo?id=p1"/>';
+    expect(rich(`${photo}<h1>Изменить</h1><p>Тело</p>`)).toEqual([]);
+    expect(
+      rich(
+        `<tg-slideshow>${photo}<img src="tg://photo?id=p2"/></tg-slideshow><h1>Изменить</h1>`,
+      ),
+    ).toEqual([]);
+    expect(rich(`${photo}<p>Сохранено.</p><h1>Изменить</h1>`)).toEqual([
+      "body",
+    ]);
+    expect(rich(`<p>Сохранено.</p>${photo}<h1>Изменить</h1>`)).toEqual([
+      "body",
+    ]);
+  });
+
   it("finds the caption of an edited photo inside its media", () => {
     expect(
       rulesOf("editMessageMedia", {

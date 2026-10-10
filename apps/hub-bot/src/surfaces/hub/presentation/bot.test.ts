@@ -3720,7 +3720,7 @@ describe("presentation adapter", () => {
       method: "sendRichMessage",
       payload: {
         rich_message: {
-          html: expect.stringContaining("Статус: запланирована, видна"),
+          html: expect.stringContaining("Статус: запланирована<br>"),
         },
       },
     });
@@ -3781,7 +3781,7 @@ describe("presentation adapter", () => {
       method: "sendRichMessage",
       payload: {
         rich_message: {
-          html: expect.stringContaining("Статус: запланирована, видна"),
+          html: expect.stringContaining("Статус: запланирована<br>"),
         },
       },
     });
@@ -5487,9 +5487,10 @@ describe("notification frames", () => {
     );
   });
 
-  // Подписку нажали в карточке — карточка и возвращается, с обновлённой
-  // кнопкой, а не подменяется кадром настроек.
-  it("answers a subscription press with the card, not the settings frame", async () => {
+  // Подписка — экран исхода (PER-472, решение владельца 10 октября 2026
+  // года): исход в заголовке, сходка в кавычках, «Настроить уведомления» над
+  // выходом к сходке. Сообщение правится на месте, нового нет.
+  it("answers a subscription press with an outcome screen", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-card",
       meetup,
@@ -5504,11 +5505,43 @@ describe("notification frames", () => {
         subscribed: true,
       }),
     );
-    const data = (screen(calls[1]).reply_markup?.inline_keyboard ?? [])
-      .flat()
-      .map((button) => button.callback_data);
-    expect(data).toContain(`v1:notify:sub:${token}:0`);
-    expect(data).toContain(`v1:notify:settings:${token}`);
+    expect(calls[1]?.method).toBe("editMessageText");
+    const shown = screen(calls[1]);
+    expect(shown.text).toBe("<b>Подписка включена</b>\n\n«Настолки у Лёши»");
+    expect(shown.reply_markup?.inline_keyboard).toEqual([
+      [
+        {
+          text: "Настроить уведомления",
+          callback_data: `v1:notify:settings:${token}`,
+        },
+      ],
+      [
+        { text: "‹ Сходка", callback_data: `v1:view:${token}` },
+        { text: "Меню", callback_data: "v1:nav:start" },
+      ],
+    ]);
+  });
+
+  // Отписка устроена так же, без продолжения: настраивать больше нечего.
+  it("answers an unsubscription press with an outcome screen", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "meetup-card",
+      meetup,
+      subscribed: false,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:notify:sub:${token}:0`));
+    const shown = screen(calls[1]);
+    expect(shown.text).toBe(
+      "<b>Подписка выключена</b>\n\n«Настолки у Лёши»\n\nУведомления по этой сходке больше не придут.",
+    );
+    expect(shown.reply_markup?.inline_keyboard).toEqual([
+      [
+        { text: "‹ Сходка", callback_data: `v1:view:${token}` },
+        { text: "Меню", callback_data: "v1:nav:start" },
+      ],
+    ]);
   });
 
   // Из одной кнопки не видно, что даёт подписка (PER-402): ответ на неё
@@ -5600,23 +5633,25 @@ describe("notification frames", () => {
       expect(html).toContain("Включить их можно в «Уведомлениях сходки».");
     });
 
-    // Пропуск категории в ответе неотличим от «выключено»: заметка тогда не
-    // говорит ничего, а не «ничего не приходит».
+    // Пропуск категории в ответе неотличим от «выключено»: пояснения тогда
+    // нет вовсе, а не «ничего не приходит».
     it.each([
       ["an empty", []],
       ["an incomplete", [{ category: "changes" as const, enabled: true }]],
-    ])("adds no note for %s category snapshot", async (_name, categories) => {
-      const html = await subscribe({
-        kind: "meetup-card",
-        meetup,
-        subscribed: true,
-        categories,
-      });
-      expect(html).toContain("Настолки у Лёши");
-      expect(html).not.toContain("Подписка включена");
-    });
+    ])(
+      "explains nothing for %s category snapshot",
+      async (_name, categories) => {
+        const html = await subscribe({
+          kind: "meetup-card",
+          meetup,
+          subscribed: true,
+          categories,
+        });
+        expect(html).toBe("<b>Подписка включена</b>\n\n«Настолки у Лёши»");
+      },
+    );
 
-    it("adds no note on unsubscribing or on a plain card view", async () => {
+    it("explains no categories on unsubscribing or on a plain card view", async () => {
       const everything = allCategories({
         changes: true,
         material: true,
@@ -5631,8 +5666,8 @@ describe("notification frames", () => {
         },
         `v1:notify:sub:${token}:0`,
       );
-      expect(unsubscribed).toContain("Настолки у Лёши");
-      expect(unsubscribed).not.toContain("Подписка включена");
+      expect(unsubscribed).toContain("<b>Подписка выключена</b>");
+      expect(unsubscribed).not.toContain("будут приходить");
       // Категории в результате есть, но заметка — ответ на нажатие, а не
       // свойство карточки: просмотр её не показывает.
       const viewed = await subscribe(

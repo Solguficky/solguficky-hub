@@ -3279,8 +3279,9 @@ async function handleCallback(
       });
       return;
     }
-    // Подписка меняет карточку, а не открывает кадр настроек: действие живёт в
-    // P-04, и человек обязан остаться там же с обновлённой кнопкой.
+    // Подписка и отписка отвечают экраном исхода (PER-472, решение владельца
+    // 10 октября 2026 года): исход не стоит над карточкой, а карточку человек
+    // открывает возвратом «‹ Сходка» и видит на ней обновлённую кнопку.
     if (action.kind === "notify-subscription") {
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
@@ -3290,23 +3291,28 @@ async function handleCallback(
         subscribed: action.subscribed,
         ...rpcCall(ctx, useCase),
       });
-      if (result.kind === "meetup-card" || result.kind === "meetup-not-found") {
-        // Заметка разовая: она отвечает на нажатие и при следующем открытии
-        // карточки не повторяется, чтобы подписанному не читать её каждый раз.
-        // Поэтому решение принимает этот обработчик, а не рендер карточки.
-        const note =
-          result.kind === "meetup-card" &&
-          result.subscribed === true &&
-          result.categories !== undefined
-            ? subscriptionNote(result.categories)
-            : undefined;
+      if (result.kind === "meetup-card") {
+        // Пояснение разовое: оно отвечает на нажатие и при следующем открытии
+        // карточки не повторяется, чтобы подписанному не читать его каждый
+        // раз. Поэтому его собирает этот обработчик, а не рендер карточки.
+        await showScreen(
+          ctx,
+          subscriptionOutcomeScreen(
+            action.token,
+            result.meetup.title,
+            action.subscribed,
+            action.subscribed && result.categories !== undefined
+              ? subscriptionExplanation(result.categories)
+              : undefined,
+          ),
+        );
+      } else if (result.kind === "meetup-not-found") {
         await renderMeetupCard(
           ctx,
           result,
           true,
           runtime.presentation ?? "rich",
           canManageMeetups(person),
-          note,
         );
       } else {
         await renderNotificationFailure(ctx, result, `v1:view:${action.token}`);
@@ -4430,13 +4436,46 @@ const meetupCategoryOrder: readonly MeetupCategory[] = [
   "organizer",
 ];
 
+// Экран исхода подписки (дизайн-код, «Уведомления»): исход в заголовке,
+// название сходки в кавычках, у подписки — пояснение, что будет приходить, и
+// «Настроить уведомления» над выходом: настройки сходки — продолжение начатого.
+// Выход — «‹ Сходка» и «Меню»; возврат из настроек ведёт к карточке, как
+// всегда.
+function subscriptionOutcomeScreen(
+  token: string,
+  title: string,
+  subscribed: boolean,
+  explanation: string | undefined,
+): ShownScreen {
+  const keyboard = new InlineKeyboard();
+  if (subscribed) {
+    keyboard.text("Настроить уведомления", `v1:notify:settings:${token}`);
+  }
+  return {
+    id: "outcome",
+    text: outcomeText(
+      [
+        subscribed ? "Подписка включена." : "Подписка выключена.",
+        subscribed
+          ? explanation
+          : "Уведомления по этой сходке больше не придут.",
+      ]
+        .filter((part) => part !== undefined)
+        .join(" "),
+      meetupTitleLabel(title),
+    ),
+    keyboard: withNav(keyboard, toCard(token)),
+    format: "HTML",
+  };
+}
+
 // Перечень строится по действующим значениям, а не по умолчаниям продукта:
 // человек, который раньше включил напоминание или выключил материалы, иначе
 // прочёл бы неправду. Напоминание названо отдельно, потому что по умолчанию
 // оно выключено и без подсказки его не найти. Снимок без какой-то категории
-// заметки не даёт: пропуск неотличим от «выключено», и «ничего не приходит»
+// пояснения не даёт: пропуск неотличим от «выключено», и «ничего не приходит»
 // на пустом ответе было бы выдумкой.
-function subscriptionNote(
+function subscriptionExplanation(
   categories: readonly CategoryState<MeetupCategory>[],
 ): string | undefined {
   const known = meetupCategoryOrder
@@ -4449,11 +4488,9 @@ function subscriptionNote(
     .filter((state) => state.enabled)
     .map((state) => categoryLabels[state.category].toLowerCase());
   if (enabled.length === 0) {
-    return "Подписка включена. По этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомлениях сходки».";
+    return "По этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомлениях сходки».";
   }
-  const lines = [
-    `Подписка включена. По этой сходке будут приходить: ${enabled.join(", ")}.`,
-  ];
+  const lines = [`По этой сходке будут приходить: ${enabled.join(", ")}.`];
   if (known.some((state) => state.category === "reminder" && !state.enabled)) {
     lines.push(
       "Напоминание перед началом выключено, включить его можно в «Уведомлениях сходки».",

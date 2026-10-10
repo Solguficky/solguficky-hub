@@ -52,6 +52,31 @@ const rows = (screen: {
     row.map((button) => button.text),
   );
 
+// Решение владельца 10 октября 2026 года: «видна» или «скрыта» в статусе
+// видит только тот, кто управляет сходкой.
+describe("card status", () => {
+  const statusOf = (manageable: boolean, visibility: "visible" | "hidden") =>
+    cardScreen({
+      meetup: meetup({ visibility }),
+      manageable,
+      subscribed: true,
+      presentation: "plain",
+      today,
+    })
+      .text.split("\n")
+      .find((line) => line.startsWith("Статус:"));
+
+  it("shows visibility to whoever manages the meetup", () => {
+    expect(statusOf(true, "visible")).toBe("Статус: запланирована, видна");
+    expect(statusOf(true, "hidden")).toBe("Статус: запланирована, скрыта");
+  });
+
+  it("shows only the lifecycle to everyone else", () => {
+    expect(statusOf(false, "visible")).toBe("Статус: запланирована");
+    expect(statusOf(false, "hidden")).toBe("Статус: запланирована");
+  });
+});
+
 describe("card posters", () => {
   const photo = (index: number) => ({
     id: `0199c0de-0000-7000-8000-00000000000${index}`,
@@ -75,6 +100,8 @@ describe("card posters", () => {
       ...overrides,
     });
 
+  // Решение владельца 10 октября 2026 года: фото — первым блоком, над
+  // заголовком.
   it("shows several photos as a slideshow in the collection order", () => {
     const screen = cardOf([
       photo(1),
@@ -95,9 +122,11 @@ describe("card posters", () => {
       { id: "p1", fileId: "photo-1" },
       { id: "p2", fileId: "photo-2" },
     ]);
-    expect(screen.text).toContain(
-      '</p><tg-slideshow><img src="tg://photo?id=p1"/><img src="tg://photo?id=p2"/></tg-slideshow>',
-    );
+    expect(
+      screen.text.startsWith(
+        '<tg-slideshow><img src="tg://photo?id=p1"/><img src="tg://photo?id=p2"/></tg-slideshow><h1>',
+      ),
+    ).toBe(true);
     expect(screen.text).not.toContain("pdf");
   });
 
@@ -105,7 +134,9 @@ describe("card posters", () => {
     const screen = cardOf([photo(1)]);
 
     expect(screen.media).toEqual([{ id: "p1", fileId: "photo-1" }]);
-    expect(screen.text).toContain('<img src="tg://photo?id=p1"/>');
+    expect(screen.text.startsWith('<img src="tg://photo?id=p1"/><h1>')).toBe(
+      true,
+    );
     expect(screen.text).not.toContain("tg-slideshow");
   });
 

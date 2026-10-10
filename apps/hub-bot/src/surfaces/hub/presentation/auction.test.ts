@@ -629,7 +629,10 @@ describe("lot photo delivery", () => {
     await bot.handleUpdate(press(lotData));
 
     const card = lastScreen(calls);
-    expect(card.rich_message?.html).toContain('<img src="tg://photo?id=lot"/>');
+    // Фото — первым блоком, над заголовком (решение владельца 10 октября 2026).
+    expect(card.rich_message?.html).toMatch(
+      /^<img src="tg:\/\/photo\?id=lot"\/><h1>/,
+    );
     expect(card.rich_message?.media?.[0]?.media.media).toBeInstanceOf(
       InputFile,
     );
