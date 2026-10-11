@@ -14,9 +14,9 @@ namespace AppHost.UnitTests;
 
 /// <summary>
 /// Бот аукциона (ADR-044) на настоящем setup узла: свой токен и ни одной
-/// переменной бота хаба, адреса Identity и Auction, один токен вызывающего с
-/// обоими вызываемыми, maintainer-секрета нет. Identity и Auction заменены
-/// дешёвыми узлами с тем же endpoint.
+/// переменной бота хаба, адреса Identity, Auction и Notifications, один токен
+/// вызывающего со всеми вызываемыми, maintainer-секрета нет. Identity, Auction
+/// и Notifications заменены дешёвыми узлами с тем же endpoint.
 ///
 /// Модель настоящего AppHost здесь намеренно не собирается: в CI модели
 /// профиля <c>auction-bot</c> в одном процессе с остальными наборами
@@ -28,12 +28,13 @@ public class AuctionBotWiringTests
     private const string AuctionBot = AppHostNames.Resources.AuctionBot;
     private const string Identity = AppHostNames.Resources.Identity;
     private const string Auction = AppHostNames.Resources.Auction;
+    private const string Notifications = AppHostNames.Resources.Notifications;
     private const string Nats = AppHostNames.Resources.Nats;
 
     private static readonly DistributedApplicationExecutionContext RunMode = new(DistributedApplicationOperation.Run);
 
     [Fact]
-    public void AuctionBotProfile_OwnsTheBotWithIdentityAndAuction()
+    public void AuctionBotProfile_OwnsTheBotWithItsCallees()
     {
         // Настоящий appsettings.json AppHost лежит в выходном каталоге теста.
         var configuration = new ConfigurationBuilder()
@@ -44,7 +45,8 @@ public class AuctionBotWiringTests
 
         var profile = ProfileResolver.Resolve(configuration);
 
-        profile.Services.Order(StringComparer.Ordinal).ShouldBe([Auction, AuctionBot, Identity]);
+        // Notifications — избранные лоты бота аукциона (PER-495).
+        profile.Services.Order(StringComparer.Ordinal).ShouldBe([Auction, AuctionBot, Identity, Notifications]);
         profile.Infrastructure.Order(StringComparer.Ordinal).ShouldBe(["nats", "postgres"]);
     }
 
@@ -99,6 +101,7 @@ public class AuctionBotWiringTests
                 "BOT_SURFACE",
                 "BOT_TOKEN",
                 "IDENTITY_GRPC_URL",
+                "NOTIFICATIONS_GRPC_URL",
             ]);
         // Поверхность аукциона пакета ботов (ADR-064, п. 18): переменные общие
         // с ботом хаба, а значения — свои.
@@ -108,11 +111,26 @@ public class AuctionBotWiringTests
         environment["BOT_COMMUNITY_TIME_ZONE"].ShouldBe("Europe/Moscow");
         ((EndpointReference)environment["IDENTITY_GRPC_URL"]).Resource.Name.ShouldBe(Identity);
         ((EndpointReference)environment["AUCTION_GRPC_URL"]).Resource.Name.ShouldBe(Auction);
+        ((EndpointReference)environment["NOTIFICATIONS_GRPC_URL"]).Resource.Name.ShouldBe(Notifications);
         environment["BOT_NATS_URL"].ShouldNotBeNull();
     }
 
+    /// <summary>
+    /// Профиль <c>auction-bot</c> Notifications не поднимает: бот живёт без
+    /// настройки «перебили», а не ходит на чужой адрес (PER-515).
+    /// </summary>
     [Fact]
-    public void AuctionBot_WaitsForIdentityAndAuction()
+    public async Task AuctionBot_WithoutNotifications_GetsNoNotificationsAddress()
+    {
+        var (bot, _) = Materialize("prod", withNotifications: false);
+        var environment = await EnvironmentAsync(bot);
+
+        environment.ShouldNotContainKey("NOTIFICATIONS_GRPC_URL");
+        bot.Annotations.OfType<WaitAnnotation>().Select(wait => wait.Resource.Name).ShouldNotContain(Notifications);
+    }
+
+    [Fact]
+    public void AuctionBot_WaitsForItsCallees()
     {
         var (bot, _) = Materialize("prod");
 
@@ -120,6 +138,7 @@ public class AuctionBotWiringTests
 
         awaited.ShouldContain(Identity);
         awaited.ShouldContain(Auction);
+        awaited.ShouldContain(Notifications);
         // Шину бот ждёт вместе с топологией: durable и bucket журнала заводит
         // AppHost, а бот без них не стартует (PER-328).
         awaited.ShouldContain(Nats);
@@ -162,7 +181,7 @@ public class AuctionBotWiringTests
     }
 
     private static (IResource Bot, ServiceGraphContext Context) Materialize(
-        string telegramEnvironment, string? staleAuctionId = null)
+        string telegramEnvironment, string? staleAuctionId = null, bool withNotifications = true)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -174,6 +193,8 @@ public class AuctionBotWiringTests
             ["Topology:Profiles:auction-bot:Services:0"] = Identity,
             ["Topology:Profiles:auction-bot:Services:1"] = Auction,
             ["Topology:Profiles:auction-bot:Services:2"] = AuctionBot,
+            // Notifications владеет и свой профиль, как в appsettings.json AppHost.
+            ["Topology:Profiles:notifications:Services:0"] = Notifications,
             ["Topology:Profiles:auction-bot:Infrastructure:0"] = Nats,
             ["telegram-environment"] = telegramEnvironment,
             ["Parameters:auction-bot-token"] = "111:auction",
@@ -182,8 +203,16 @@ public class AuctionBotWiringTests
             ["Parameters:hub-bot-test-token"] = "333:hub-test",
             ["AuctionBot:AuctionId"] = staleAuctionId,
         });
+        if (withNotifications)
+        {
+            builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["Topology:Profiles:auction-bot:Services:3"] = Notifications,
+            });
+        }
 
-        var profile = new ProfileConfig { Name = "auction-bot", Services = [Identity, Auction, AuctionBot], Infrastructure = [Nats] };
+        string[] services = withNotifications ? [Identity, Auction, Notifications, AuctionBot] : [Identity, Auction, AuctionBot];
+        var profile = new ProfileConfig { Name = "auction-bot", Services = [.. services], Infrastructure = [Nats] };
         var graph = new ServiceGraph(builder, profile);
         ServiceGraphContext? captured = null;
 
@@ -192,7 +221,10 @@ public class AuctionBotWiringTests
         graph.AddInfrastructure(Nats, context => context.Builder.AddConnectionString(Nats), LocalOnly);
         graph.AddService(Identity, [], context => CheapGrpcNode(context, Identity), LocalOnly);
         graph.AddService(Auction, [], context => CheapGrpcNode(context, Auction), LocalOnly);
-        graph.AddService(AuctionBot, [Nats, Identity, Auction], context =>
+        // Узел в графе есть всегда, а владеет им профиль или нет — как
+        // Notifications в настоящих профилях auction-bot и hub-auction.
+        graph.AddService(Notifications, [], context => CheapGrpcNode(context, Notifications), LocalOnly);
+        graph.AddService(AuctionBot, [Nats, Identity, Auction, Notifications], context =>
         {
             captured = context;
             return AuctionBotSetup.Configure(context);

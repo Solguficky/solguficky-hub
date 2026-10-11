@@ -7,11 +7,13 @@ import {
   commitCommand,
   confirmCommand,
 } from "./internal/use-cases/commands.js";
+import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
 import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
 import type {
   AuctionPort,
+  FavoritesPort,
   OperationIdPort,
   TelegramUser,
   Viewer,
@@ -26,15 +28,19 @@ import type { AuctionScreenBody } from "./screen.js";
 export function dispatchAuctionIntent(input: {
   auction: AuctionPort;
   operations: OperationIdPort;
+  favorites?: FavoritesPort;
   viewer: Viewer;
   user: TelegramUser;
   intent: AuctionIntent;
   answer?: { text?: string };
 }): Promise<AuctionScreenBody> {
   const { intent } = input;
+  const favorites =
+    input.favorites === undefined ? {} : { favorites: input.favorites };
   const context = {
     auction: input.auction,
     operations: input.operations,
+    ...favorites,
     viewer: input.viewer,
     user: input.user,
   };
@@ -49,6 +55,7 @@ export function dispatchAuctionIntent(input: {
     case "lot":
       return openLot({
         auction: input.auction,
+        ...favorites,
         viewer: input.viewer,
         lotId: intent.lotId,
         page: intent.page,
@@ -73,6 +80,26 @@ export function dispatchAuctionIntent(input: {
         : answerQuestion(context, intent, input.answer.text);
     case "username":
       return chooseUsername(context, intent);
+    case "follow":
+    case "unfollow":
+      return toggleFollow({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        lotId: intent.lotId,
+        page: intent.page,
+        follow: intent.kind === "follow",
+      });
+    case "favorites":
+      return openFavorites({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        page: intent.page,
+        ...(intent.auctionId === undefined
+          ? {}
+          : { auctionId: intent.auctionId }),
+      });
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;

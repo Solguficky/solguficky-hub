@@ -10,6 +10,7 @@ import {
 import {
   type AccessRight,
   encodeAuctionCallback,
+  type FavoritesPort,
   type LotView,
 } from "../../../auction-ui/index.js";
 import { createDispatcher } from "../application/dispatcher.js";
@@ -174,6 +175,7 @@ function fakeAuction(
       return {
         auction: {
           getLot,
+          findLot: getLot,
           listAuctionLots,
           // Ставка соперника и ответ прокси лидера одной командой: момент один.
           listLotHistory: async () => ({
@@ -596,6 +598,70 @@ describe("auction feed shell", () => {
       use_case: "view_auction",
       error_category: "dependency_unavailable",
     });
+  });
+});
+
+// Избранное (PER-495): участник отмечает лоты в боте хаба — у человека одна
+// отметка в Notifications, в каком бы боте он ни торговал.
+describe("favorite lots in the hub", () => {
+  function notificationsFavorites() {
+    const marks: string[] = [];
+    const port: FavoritesPort = {
+      listFollowedLots: async () => [...marks],
+      followLot: async ({ lotId: marked }) => {
+        if (!marks.includes(marked)) marks.push(marked);
+        return { kind: "done", following: true };
+      },
+      unfollowLot: async ({ lotId: unmarked }) => {
+        const at = marks.indexOf(unmarked);
+        if (at >= 0) marks.splice(at, 1);
+        return { kind: "done", following: false };
+      },
+    };
+    return { marks, port };
+  }
+
+  it("marks a lot from its card and lists it from the feed root with the way back to the feed", async () => {
+    const favorites = notificationsFavorites();
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+      favorites: () => favorites.port,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
+    await bot.handleUpdate(press(feedData));
+    const feed = lastScreen(calls);
+    expect(labels(feed)[0]).toEqual(["Избранное", "Правила и FAQ"]);
+
+    await bot.handleUpdate(press(lotData));
+    const follow = data(lastScreen(calls), "В избранное");
+    if (follow === undefined) throw new Error("no follow button on the card");
+    await bot.handleUpdate(press(follow));
+    expect(favorites.marks).toEqual([lotId]);
+    expect(data(lastScreen(calls), "Убрать")).toBeDefined();
+
+    const open = data(feed, "Избранное");
+    if (open === undefined) throw new Error("no favorites in the feed root");
+    await bot.handleUpdate(press(open));
+    const list = lastScreen(calls);
+    expect(list.text).toMatch(/^<b>Избранное<\/b>/);
+    expect(labels(list).at(-1)).toEqual(["‹ Лоты"]);
+    expect(data(list, "‹ Лоты")).toBe(feedData);
+  });
+
+  it("keeps the feed root and the card without favorites when Notifications is not configured", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(feedData));
+    expect(labels(lastScreen(calls))[0]).toEqual(["Правила и FAQ"]);
+    await bot.handleUpdate(press(lotData));
+    expect(JSON.stringify(labels(lastScreen(calls)))).not.toContain(
+      "В избранное",
+    );
   });
 });
 

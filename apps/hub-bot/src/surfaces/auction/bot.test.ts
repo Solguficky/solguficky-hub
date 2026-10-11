@@ -7,6 +7,7 @@ import { inspectCall, reportViolations } from "../../../testkit/screen-lint.js";
 import {
   type EntryPort,
   encodeAuctionCallback,
+  type FavoritesPort,
   type LotHistoryEntryView,
   type LotImagePort,
   type LotView,
@@ -21,9 +22,11 @@ import {
   type IdentityRpc,
   type PortsFactory,
 } from "./clients.js";
-import { traceLotCallback } from "./delivery/message.js";
+import { traceLotCallback, traceNotifyCallback } from "./delivery/message.js";
 import { deniedTexts } from "./entry-screen.js";
-import { entryCallback, startCallback } from "./faq.js";
+import { entryCallback, notifyCallback, startCallback } from "./faq.js";
+import { commandsFor } from "./menu-commands.js";
+import type { OutbidFrequency, OutbidPreferencePort } from "./outbid.js";
 import { createPhotoCache, type PhotoCache } from "./photo-cache.js";
 import {
   actionBudgetMs,
@@ -161,9 +164,23 @@ function portsWith(
     names?: Readonly<Record<string, string>>;
     // Аукционы по выборкам; по умолчанию аукцион ленты активен.
     auctions?: Partial<Record<AuctionListing, AuctionSummary[]>>;
+    // Избранное Notifications; нет — у процесса нет его адреса.
+    favorites?: FavoritesPort;
   } = {},
 ): PortsFactory {
+  const shownLot = (): LotView => ({
+    lotId,
+    auctionId,
+    version: 1,
+    card: { title: "Кружка", description: "" },
+    proxyEnabled: false,
+    status: { kind: "unsold" },
+    ...overrides.lot,
+  });
   return () => ({
+    ...(overrides.favorites === undefined
+      ? {}
+      : { favorites: overrides.favorites }),
     identity: {
       resolveIdentity: async () => ({
         viewer: { identityId: VIEWER_ID, rights: ["place-bids"] },
@@ -179,15 +196,8 @@ function portsWith(
         })),
     },
     auction: {
-      getLot: async () => ({
-        lotId,
-        auctionId,
-        version: 1,
-        card: { title: "Кружка", description: "" },
-        proxyEnabled: false,
-        status: { kind: "unsold" },
-        ...overrides.lot,
-      }),
+      getLot: async () => shownLot(),
+      findLot: async () => shownLot(),
       listAuctionLots: async () => ({ lots: [], nextPageToken: "" }),
       listLotHistory: async () => ({
         entries: overrides.history ?? [],
@@ -235,13 +245,17 @@ function startUpdate(message: NonNullable<Update["message"]>): Update {
 }
 
 function faqUpdate(): Update {
+  return commandUpdate("/faq");
+}
+
+function commandUpdate(text: string): Update {
   return startUpdate({
     message_id: 1,
     date: 0,
     chat: privateChat,
     from,
-    text: "/faq",
-    entities: [{ type: "bot_command", offset: 0, length: 4 }],
+    text,
+    entities: [{ type: "bot_command", offset: 0, length: text.length }],
   });
 }
 
@@ -1789,5 +1803,426 @@ describe("bid leaf delivery", () => {
       },
     } as Update);
     expect(calls).toEqual([]);
+  });
+});
+
+// Настройка «перебили» (PER-515): пункт меню, выбор с подтверждением,
+// отказ Notifications и «Реже» под уведомлением.
+describe("outbid frequency", () => {
+  // Хранилище Notifications вне бота: оно переживает пересоздание бота, как
+  // база сервиса переживает рестарт процесса.
+  function withOutbid(
+    store: { frequency: OutbidFrequency | undefined },
+    port: Partial<OutbidPreferencePort> = {},
+  ): PortsFactory & { chosen: OutbidFrequency[] } {
+    const chosen: OutbidFrequency[] = [];
+    const ports: PortsFactory = (requestId) => ({
+      ...publicPorts(requestId),
+      outbid: {
+        get: async () => store.frequency,
+        set: async (_viewer, frequency) => {
+          chosen.push(frequency);
+          store.frequency = frequency;
+          return frequency;
+        },
+        ...port,
+      },
+    });
+    return Object.assign(ports, { chosen });
+  }
+
+  // Корня «Меню» нет: настройку открывает команда `/notifications` новым
+  // сообщением (решение владельца 10 октября 2026 года).
+  it("opens the settings by the command as a root without a way back", async () => {
+    const { bot, calls } = makeBot(withOutbid({ frequency: "every" }));
+    await bot.handleUpdate(commandUpdate("/notifications"));
+    expect(calls.at(-1)?.method).toBe("sendMessage");
+    const rows = keyboardOf(calls.at(-1)?.payload);
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("<b>Уведомления</b>"),
+    });
+    expect(rows).toHaveLength(5);
+    expect(rows.flat().map((button) => button.text)).not.toContain("‹ Меню");
+  });
+
+  it("answers the settings command as outdated without Notifications", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+    await bot.handleUpdate(commandUpdate("/notifications"));
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Этот экран устарел."),
+    });
+  });
+
+  it("shows the current frequency and all five choices", async () => {
+    const { bot, calls } = makeBot(withOutbid({ frequency: "15" }));
+    await bot.handleUpdate(lotPress({ data: notifyCallback() }));
+    expect(calls.at(-1)?.method).toBe("editMessageText");
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Сейчас: не чаще раза в 15 минут по лоту."),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "О каждом перебитии",
+              callback_data: notifyCallback("every"),
+            },
+          ],
+          [
+            {
+              text: "Не чаще раза в 5 минут",
+              callback_data: notifyCallback("5"),
+            },
+          ],
+          [
+            {
+              text: "Не чаще раза в 15 минут",
+              callback_data: notifyCallback("15"),
+            },
+          ],
+          [{ text: "Не чаще раза в час", callback_data: notifyCallback("60") }],
+          [{ text: "Не присылать", callback_data: notifyCallback("off") }],
+        ],
+      },
+    });
+  });
+
+  // Подтверждение — ответ на нажатие, и уходит он раньше правки экрана:
+  // показ ответил бы на нажатие сам, без текста.
+  it("stores the chosen frequency and confirms it with a toast", async () => {
+    const ports = withOutbid({ frequency: "every" });
+    const { bot, calls } = makeBot(ports);
+    await bot.handleUpdate(lotPress({ data: notifyCallback("off") }));
+    expect(ports.chosen).toEqual(["off"]);
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[0]?.payload).toMatchObject({ text: "Теперь: не присылаю." });
+    expect(calls[1]?.payload).toMatchObject({
+      text: expect.stringContaining("Сейчас: не присылаю."),
+    });
+  });
+
+  // Критерий PER-515: выбор переживает рестарт бота — бот его не помнит, а
+  // читает у Notifications.
+  it("shows the stored choice after the bot restarts", async () => {
+    const store: { frequency: OutbidFrequency | undefined } = {
+      frequency: "every",
+    };
+    await makeBot(withOutbid(store)).bot.handleUpdate(
+      lotPress({ data: notifyCallback("60") }),
+    );
+    const restarted = makeBot(withOutbid(store));
+    await restarted.bot.handleUpdate(lotPress({ data: notifyCallback() }));
+    expect(restarted.calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Сейчас: не чаще раза в час по лоту."),
+    });
+  });
+
+  // Критерий PER-515: недоступный Notifications — отказ, а не молчаливое
+  // сохранение; повтор несёт тот же выбор.
+  it("refuses without a toast when Notifications is down", async () => {
+    const ports = withOutbid(
+      { frequency: "every" },
+      { set: () => Promise.reject(new ConnectError("down", Code.Unavailable)) },
+    );
+    const { bot, calls } = makeBot(ports);
+    await bot.handleUpdate(lotPress({ data: notifyCallback("off") }));
+    expect(calls.map((call) => call.method)).toEqual([
+      "answerCallbackQuery",
+      "editMessageText",
+    ]);
+    expect(calls[0]?.payload).not.toHaveProperty("text");
+    expect(calls[1]?.payload).toMatchObject({
+      text: "<b>Настройка уведомлений сейчас недоступна.</b> Попробуй ещё раз через минуту.",
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: "Повторить", callback_data: notifyCallback("off") },
+            { text: "‹ Аукционы", callback_data: entryCallback("auctions") },
+          ],
+        ],
+      },
+    });
+  });
+
+  it("refuses an answer outside the contract instead of guessing a default", async () => {
+    const lines: string[] = [];
+    const logger = createLogger("info", {
+      service: "auction-bot",
+      out: (line) => lines.push(line),
+    });
+    const { bot, calls } = makeBot(withOutbid({ frequency: undefined }), {
+      logger,
+    });
+    await bot.handleUpdate(lotPress({ data: notifyCallback() }));
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Настройка уведомлений сейчас недоступна."),
+    });
+    expect(JSON.parse(lines.at(-1) ?? "{}")).toMatchObject({
+      result: "error",
+      error_category: "invariant",
+    });
+  });
+
+  // «Реже» под перебитием открывает экран новым сообщением: уведомление
+  // остаётся в истории целым.
+  it("opens the settings from the outbid notification as a new message", async () => {
+    const { bot, calls } = makeBot(withOutbid({ frequency: "every" }));
+    await bot.handleUpdate(lotPress({ data: traceNotifyCallback() }));
+    expect(calls.map((call) => call.method)).not.toContain("editMessageText");
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: { text: expect.stringContaining("<b>Уведомления</b>") },
+    });
+  });
+
+  // Участник сообщества настройки здесь не получает: его перебития приходят
+  // в бот хаба (ADR-064), и Notifications не зовётся.
+  it("sends a community member to the hub bot without touching Notifications", async () => {
+    const ports = withOutbid({ frequency: "every" });
+    const member: PortsFactory = (requestId) => ({
+      ...ports(requestId),
+      identity: {
+        resolveIdentity: async () => ({
+          viewer: {
+            identityId: VIEWER_ID,
+            rights: ["access-hub", "place-bids"],
+          },
+          blocked: false,
+        }),
+      },
+    });
+    const { bot, calls } = makeBot(member);
+    await bot.handleUpdate(lotPress({ data: notifyCallback("off") }));
+    expect(ports.chosen).toEqual([]);
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: deniedTexts["in-community"],
+    });
+  });
+
+  it("treats the settings button as outdated in a bot without Notifications", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+    await bot.handleUpdate(lotPress({ data: notifyCallback("off") }));
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Этот экран устарел."),
+    });
+  });
+});
+
+// «Счастливые часы» (PER-505): сумма кнопки — порог снимка, который Auction уже
+// считает по шагу окна, а конец окна виден следующим чтением снимка без
+// рестарта бота: карточка его не кэширует.
+describe("happy hours", () => {
+  const shown = (calls: Array<{ payload: unknown }>) =>
+    JSON.stringify(calls.at(-1)?.payload).replace(/[  ]/g, " ");
+  const trading = {
+    kind: "trading" as const,
+    currentPrice: { minorUnits: 120_000, currency: "RUB" },
+    phase: "online" as const,
+  };
+  const rub = (rubles: number) => ({
+    minorUnits: rubles * 100,
+    currency: "RUB",
+  });
+
+  it("bids by the window step and shows the regular step after the window", async () => {
+    const overrides: { lot: Partial<LotView> } = {
+      lot: {
+        nextPrice: rub(1210),
+        fixedStep: rub(50),
+        baseStep: rub(50),
+        activeWindow: {
+          from: "2026-10-10T15:00:00Z",
+          until: "2026-10-10T18:00:00Z",
+          step: rub(10),
+        },
+        status: trading,
+      },
+    };
+    const { bot, calls } = makeBot(portsWith(overrides));
+    await bot.handleUpdate(lotPress());
+    expect(shown(calls)).toContain("По шагу (1 210 ₽)");
+    expect(shown(calls)).toContain("Счастливые часы: шаг 10 ₽ до");
+    // Окно кончилось: тот же процесс читает новый снимок по «Обновить».
+    overrides.lot = {
+      nextPrice: rub(1250),
+      fixedStep: rub(50),
+      baseStep: rub(50),
+      status: trading,
+    };
+    await bot.handleUpdate(lotPress());
+    expect(shown(calls)).toContain("По шагу (1 250 ₽)");
+    expect(shown(calls)).toContain("Шаг: 50 ₽");
+    expect(shown(calls)).not.toContain("Счастливые часы");
+  });
+
+  // Auction отдаёт будущее окно с объявленной суммой; окно, которое при
+  // текущей цене шаг не снизит, карточка не обещает.
+  it("announces a future window only when it lowers the step", async () => {
+    const window = {
+      from: "2026-10-11T12:00:00Z",
+      until: "2026-10-11T15:00:00Z",
+    };
+    const lowering = makeBot(
+      portsWith({
+        lot: {
+          baseStep: rub(50),
+          nextWindow: { ...window, step: rub(10) },
+          status: trading,
+        },
+      }),
+    );
+    await lowering.bot.handleUpdate(lotPress());
+    expect(shown(lowering.calls)).toContain(
+      "Счастливые часы: с 11 октября, вс, 15:00 до 18:00, шаг 10 ₽",
+    );
+    const idle = makeBot(
+      portsWith({
+        lot: {
+          baseStep: rub(50),
+          nextWindow: { ...window, step: rub(50) },
+          status: trading,
+        },
+      }),
+    );
+    await idle.bot.handleUpdate(lotPress());
+    expect(shown(idle.calls)).not.toContain("Счастливые часы");
+  });
+});
+
+// Избранное (PER-495): отметки живут в Notifications. Фейк держит их вне бота,
+// как сервис, и отвечает состоянием после команды: повтор отметки дубля не
+// создаёт.
+function notificationsFavorites() {
+  const marks: string[] = [];
+  const port: FavoritesPort = {
+    listFollowedLots: async () => [...marks],
+    followLot: async ({ lotId: marked }) => {
+      if (!marks.includes(marked)) marks.push(marked);
+      return { kind: "done", following: true };
+    },
+    unfollowLot: async ({ lotId: unmarked }) => {
+      const at = marks.indexOf(unmarked);
+      if (at >= 0) marks.splice(at, 1);
+      return { kind: "done", following: false };
+    },
+  };
+  return { marks, port };
+}
+
+function press(data: string): Update {
+  return lotPress({ data });
+}
+
+type SentScreen = { text: string; keyboard: SentButton[][] };
+
+// Последний экран, который бот показал: текст и клавиатура вызова Bot API.
+function lastScreen(calls: Array<{ method: string; payload: unknown }>) {
+  const sent = calls.filter(({ payload }) => keyboardOf(payload).length > 0);
+  const last = sent.at(-1)?.payload as
+    | { text?: string; rich_message?: { html?: string } }
+    | undefined;
+  return {
+    text: last?.text ?? last?.rich_message?.html ?? "",
+    keyboard: keyboardOf(last),
+  } satisfies SentScreen;
+}
+
+function buttonData(screen: SentScreen, label: string): string {
+  const data = screen.keyboard
+    .flat()
+    .find((button) => button.text === label)?.callback_data;
+  if (data === undefined) throw new Error(`no button ${label}`);
+  return data;
+}
+
+describe("favorite lots", () => {
+  it("marks a lot, lists it once after a restart and unmarks it", async () => {
+    const favorites = notificationsFavorites();
+    const ports = portsWith({
+      favorites: favorites.port,
+      lot: {
+        status: {
+          kind: "scheduled",
+          startingPrice: { minorUnits: 50_000, currency: "RUB" },
+        },
+      },
+    });
+    const first = makeBot(ports);
+
+    await first.bot.handleUpdate(lotPress());
+    const card = lastScreen(first.calls);
+    expect(card.keyboard.flat().map((b) => b.text)).toContain("В избранное");
+
+    await first.bot.handleUpdate(press(buttonData(card, "В избранное")));
+    expect(
+      lastScreen(first.calls)
+        .keyboard.flat()
+        .map((b) => b.text),
+    ).toContain("Убрать");
+    // Повторное нажатие той же кнопки со старого экрана дубля не создаёт.
+    await first.bot.handleUpdate(press(buttonData(card, "В избранное")));
+    expect(favorites.marks).toEqual([lotId]);
+
+    // Рестарт процесса: память бота пропала, отметка осталась в сервисе.
+    const second = makeBot(ports);
+    await second.bot.handleUpdate(commandUpdate("/favorites"));
+    const list = lastScreen(second.calls);
+    expect(list.text).toContain("<b>Избранное</b>");
+    expect(list.text.match(/Кружка/g)).toHaveLength(1);
+    // Избранное, открытое командой, — корень: возврата у него нет.
+    expect(list.keyboard.flat().map((b) => b.text)).toEqual([
+      "Кружка · старт 500 ₽",
+    ]);
+
+    await second.bot.handleUpdate(
+      press(buttonData(list, "Кружка · старт 500 ₽")),
+    );
+    await second.bot.handleUpdate(
+      press(buttonData(lastScreen(second.calls), "Убрать")),
+    );
+    expect(favorites.marks).toEqual([]);
+    await second.bot.handleUpdate(commandUpdate("/favorites"));
+    // Пустой корень кнопок не несёт: его текст — в последнем вызове.
+    expect(second.calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Лотов в избранном пока нет."),
+    });
+  });
+
+  // Без адреса Notifications избранного у бота нет вовсе: ни команды в меню
+  // клиента, ни кнопки на карточке.
+  it("lists neither the command nor the card button without Notifications", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+
+    expect(commandsFor(false).map((entry) => entry.command)).not.toContain(
+      "favorites",
+    );
+    await bot.handleUpdate(lotPress());
+    expect(JSON.stringify(lastScreen(calls).keyboard)).not.toContain(
+      "В избранное",
+    );
+  });
+
+  // Отметку подделанным нажатием участник сообщества не ставит: на любом
+  // действии ему отвечает переход в бот хаба (ADR-064, пункт 2).
+  it("answers a forged follow press of a community member with the hub transfer", async () => {
+    const favorites = notificationsFavorites();
+    const member = portsWith({ favorites: favorites.port });
+    const { bot, calls } = makeBot(() => ({
+      ...member("req"),
+      identity: {
+        resolveIdentity: async () => ({
+          viewer: { identityId: VIEWER_ID, rights: ["access-hub"] },
+          blocked: false,
+        }),
+      },
+    }));
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "follow", lotId, page: 0 })),
+    );
+    expect(favorites.marks).toEqual([]);
+    expect(JSON.stringify(calls)).toContain(deniedTexts["in-community"]);
   });
 });

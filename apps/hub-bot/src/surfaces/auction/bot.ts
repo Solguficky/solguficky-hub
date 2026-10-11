@@ -1,6 +1,7 @@
 import { type Bot, GrammyError, HttpError, InputFile } from "grammy";
 import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
 import {
+  encodeAuctionCallback,
   isAuctionQuestion,
   type LotImagePort,
   type Viewer,
@@ -19,7 +20,7 @@ import {
   renderEntryScreen,
   retryLabel,
 } from "./entry-screen.js";
-import { entryCallback, type FaqContent } from "./faq.js";
+import { entryCallback, type FaqContent, notifyCallback } from "./faq.js";
 import {
   createPhotoCache,
   type ImageKey,
@@ -38,6 +39,15 @@ import {
 import { screenMark } from "./screen-catalog.js";
 import { sourceCodeOf } from "./start-payload.js";
 import { startWaiting } from "./waiting.js";
+
+// Операция команды в логе: имя раздела, который она открывает.
+type CommandOperation =
+  | "start"
+  | "faq"
+  | "auctions"
+  | "past"
+  | "favorites"
+  | "notifications";
 
 export type BotOptions = {
   token: string;
@@ -88,7 +98,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   const answerCommand = async (
     ctx: UpdateContext,
     input: {
-      operation: "start" | "faq" | "auctions" | "past";
+      operation: CommandOperation;
       route: (ports: ReturnType<PortsFactory>) => Promise<RouteOutcome>;
     },
   ) => {
@@ -117,19 +127,28 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   // владельца 10 октября 2026 года). Вход команда не ставит — он остаётся за
   // `/start`: допуск проверяется, как у нажатия, и без отметки FAQ человек
   // видит FAQ. `/menu` — прежняя команда меню — открывает «Аукционы».
-  for (const [names, list] of [
-    [["auctions", "menu"], "auctions"],
-    [["past"], "past"],
+  // «Избранное» и «Уведомления» идут маршрутом своих кнопок: у бота без
+  // Notifications их нет в меню клиента, а набранная руками команда получает
+  // кадр устаревшего экрана, как кнопка из сборки с Notifications.
+  for (const [names, operation, data] of [
+    [["auctions", "menu"], "auctions", entryCallback("auctions")],
+    [["past"], "past", entryCallback("past")],
+    [
+      ["favorites"],
+      "favorites",
+      encodeAuctionCallback({ kind: "favorites", page: 0 }),
+    ],
+    [["notifications"], "notifications", notifyCallback()],
   ] as const) {
     direct.command([...names], (ctx) =>
       answerCommand(ctx, {
-        operation: list,
+        operation,
         route: (ports) =>
           routeAuctionCallback({
             ports,
             user: userOf(ctx.from),
             firstName: ctx.from.first_name,
-            data: entryCallback(list),
+            data,
           }),
       }),
     );
@@ -191,6 +210,9 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         data,
       });
       const screen = render(outcome.screen);
+      // Подтверждение выбора уходит ответом на нажатие до показа экрана:
+      // показ ответил бы на нажатие сам, без текста.
+      if (outcome.toast !== undefined) await waiting.answer(outcome.toast);
       const delivery = {
         screen,
         photos,
@@ -319,7 +341,7 @@ function log(input: {
   logger: Logger;
   ctx: UpdateContext;
   outcome: RouteOutcome;
-  operation: "start" | "faq" | "auctions" | "past" | "callback" | "reply";
+  operation: CommandOperation | "callback" | "reply";
 }): void {
   const { logger, ctx, outcome, operation } = input;
   const fields: LogFields = {

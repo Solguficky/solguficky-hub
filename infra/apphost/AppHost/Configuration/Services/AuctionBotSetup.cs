@@ -63,12 +63,16 @@ internal static class AuctionBotSetup
             .WithEnvironment("BOT_SURFACE", "auction")
             .WithEnvironment("BOT_TOKEN", token)
             // Не путать с токеном Bot API выше: этим бот доказывает себя
-            // Identity и Auction (ADR-056).
+            // Identity, Auction и Notifications (ADR-056).
             .WithServiceToken(context, HubBotSetup.BotServiceTokenVariable)
             .WithEnvironment("BOT_ENVIRONMENT", environment.Value)
             .WithEnvironment("BOT_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
             .BindEndpoint(context, AppHostNames.Resources.Identity, AppHostNames.Endpoints.Grpc, "IDENTITY_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Auction, AppHostNames.Endpoints.Grpc, "AUCTION_GRPC_URL")
+            // Настройка «перебили» (PER-515) и избранные лоты (PER-495, ADR-063).
+            // Без узла Notifications привязки нет, и бот живёт без настройки и
+            // без избранного.
+            .BindEndpoint(context, AppHostNames.Resources.Notifications, AppHostNames.Endpoints.Grpc, "NOTIFICATIONS_GRPC_URL")
             // Второй вход бота — адресные факты аукциона из шины (PER-328).
             // WaitFor(nats) внутри BindConnection ждёт и применения топологии:
             // durable и bucket журнала заводит AppHost, а бот без них не стартует.

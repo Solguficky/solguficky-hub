@@ -19,7 +19,11 @@ public static class MethodAccess
 
     private static readonly IReadOnlySet<Caller> Bot = new HashSet<Caller> { Caller.HubBot };
 
+    // Избранное — у обоих ботов (PER-495): участник торгует в боте хаба, гость
+    // — в боте аукциона, а отметка у человека одна.
     private static readonly IReadOnlySet<Caller> AuctionBot = new HashSet<Caller> { Caller.AuctionBot };
+
+    private static readonly IReadOnlySet<Caller> BothBots = new HashSet<Caller> { Caller.HubBot, Caller.AuctionBot };
 
     public static readonly IReadOnlyDictionary<string, IReadOnlySet<Caller>> ByMethod =
         new Dictionary<string, IReadOnlySet<Caller>>(StringComparer.Ordinal)
@@ -30,13 +34,13 @@ public static class MethodAccess
             ["SetMeetupCategoryPreference"] = Bot,
             ["GetGlobalNotificationPreferences"] = Bot,
             ["GetMeetupNotificationPreferences"] = Bot,
-            ["GetOutbidPreference"] = Bot,
-            ["SetOutbidPreference"] = Bot,
+            ["GetOutbidPreference"] = AuctionBot,
+            ["SetOutbidPreference"] = AuctionBot,
             ["BroadcastToMeetupSubscribers"] = Bot,
             ["BroadcastToCommunity"] = Bot,
-            ["FollowLot"] = AuctionBot,
-            ["UnfollowLot"] = AuctionBot,
-            ["ListFollowedLots"] = AuctionBot,
+            ["FollowLot"] = BothBots,
+            ["UnfollowLot"] = BothBots,
+            ["ListFollowedLots"] = BothBots,
         };
 
     /// <summary>Все вызывающие, которых объявил хотя бы один метод: таблица токенов обязана знать каждого.</summary>

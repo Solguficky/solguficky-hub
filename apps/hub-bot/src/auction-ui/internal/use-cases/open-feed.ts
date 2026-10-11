@@ -54,6 +54,9 @@ export async function openFeed(input: {
           lotId: lot.lotId,
           ...(lot.card === undefined ? {} : { title: lot.card.title }),
           status: lot.status,
+          ...(lot.activeWindow === undefined
+            ? {}
+            : { activeWindow: lot.activeWindow }),
         })),
       },
     ],

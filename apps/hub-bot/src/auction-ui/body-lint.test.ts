@@ -69,6 +69,7 @@ const surface: AuctionSurface = {
       },
     },
     auction: {
+      findLot: async () => undefined,
       async getLot({ lotId }) {
         const lot = lots.find((candidate) => candidate.lotId === lotId);
         if (lot === undefined) throw new Error(`no lot ${lotId}`);

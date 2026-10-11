@@ -213,6 +213,16 @@ describe("auction contract self-check", () => {
       "proxy: answer the limit",
       "proxy: accepted",
       "proxy: refused below the current price",
+      "lot: in favorites",
+      "lot: not in favorites",
+      "lot: closed, not in favorites",
+      "lot: favorites unavailable",
+      "follow: marked",
+      "follow: lot not known yet",
+      "unfollow",
+      "favorites: from the menu",
+      "favorites: from the feed",
+      "favorites: empty",
     ]);
   });
 });

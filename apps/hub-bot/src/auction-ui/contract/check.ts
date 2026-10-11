@@ -15,6 +15,7 @@ import type {
   BidRefusal,
   CommandOutcome,
   DisplayNameOutcome,
+  FollowOutcome,
   LotHistoryEntryView,
   LotHistoryPage,
   LotPage,
@@ -58,6 +59,11 @@ export type PortCall =
     }
   | {
       port: "auction";
+      method: "findLot";
+      request: Parameters<AuctionMethods["findLot"]>[0];
+    }
+  | {
+      port: "auction";
       method: "listAuctionLots";
       request: Parameters<AuctionMethods["listAuctionLots"]>[0];
     }
@@ -85,6 +91,13 @@ export type PortCall =
       port: "auction";
       method: "chooseDisplayName";
       request: Parameters<AuctionMethods["chooseDisplayName"]>[0];
+    }
+  // Избранное (PER-495): отметки живут в Notifications, а не в Auction.
+  | { port: "favorites"; method: "listFollowedLots"; request: Viewer }
+  | {
+      port: "favorites";
+      method: "followLot" | "unfollowLot";
+      request: { viewer: Viewer; lotId: string };
     };
 
 // Снимок Auction, над которым идёт намерение: шпион отвечает только им.
@@ -106,6 +119,12 @@ export type ContractAuction = {
   displayNames?: readonly DisplayNameOutcome[];
   // Лоты после принятой команды: следующее чтение лота отдаёт их.
   after?: readonly LotView[];
+  // Свои отметки избранного по порядку отметки (PER-495). Нет — порта
+  // избранного у приложения нет, как у процесса без адреса Notifications;
+  // `unavailable` — Notifications отказывает.
+  followed?: readonly string[] | "unavailable";
+  // Ответы отметки и снятия по порядку вызовов.
+  follows?: readonly FollowOutcome[];
 };
 
 export type AuctionContractCase = {
@@ -185,6 +204,11 @@ export function contractIdentity(
 // Ожидаемый вызов только сравнивается и печатается, поэтому тип вызова порта
 // за подстановкой не сохраняется.
 function withViewer(call: PortCall, viewer: Viewer): unknown {
+  if (call.port === "favorites") {
+    return call.method === "listFollowedLots"
+      ? { ...call, request: viewer }
+      : { ...call, request: { ...call.request, viewer } };
+  }
   if (call.port !== "auction" || !("viewer" in call.request)) return call;
   return { ...call, request: { ...call.request, viewer } };
 }
@@ -1138,6 +1162,282 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
 
 // Таблица аукционных намерений. Строку добавляет лист, который вводит
 // намерение, — вместе с юзкейсом.
+// Избранное (PER-495). Карточка спрашивает свои отметки после имён и ставит
+// кнопку над возвратом; у закрытого лота без отметки «В избранное» нет.
+// Команда сначала читает лот — отметку ставит тот, кому лот виден, — и
+// отвечает состоянием после неё: карточка его показывает, не перечитывая
+// список.
+const listFollowedCall: PortCall = {
+  port: "favorites",
+  method: "listFollowedLots",
+  request: CONTRACT_VIEWER,
+};
+
+const followCall = (
+  method: "followLot" | "unfollowLot",
+  lotId: string,
+): PortCall => ({
+  port: "favorites",
+  method,
+  request: { viewer: CONTRACT_VIEWER, lotId },
+});
+
+const findLotCall = (lotId: string): PortCall => ({
+  port: "auction",
+  method: "findLot",
+  request: { viewer: CONTRACT_VIEWER, lotId },
+});
+
+const followRow = (lotId: string, page: number, following: boolean) => [
+  following
+    ? {
+        action: "lot.unfollow" as const,
+        callbackData: callback({ kind: "unfollow", lotId, page }),
+      }
+    : {
+        action: "lot.follow" as const,
+        callbackData: callback({ kind: "follow", lotId, page }),
+      },
+];
+
+const SOLD_BLOCK = {
+  kind: "lot" as const,
+  lotId: SOLD_LOT.lotId,
+  auctionId: CONTRACT_AUCTION_ID,
+  version: 9,
+  card: { title: "Плакат", description: "" },
+  status: { kind: "sold" as const, winnerId: WINNER_ID, price: rub(3000) },
+  participantName: "Сыч*",
+};
+
+const SCHEDULED_BLOCK = {
+  kind: "lot" as const,
+  lotId: SCHEDULED_LOT.lotId,
+  auctionId: CONTRACT_AUCTION_ID,
+  version: 2,
+  card: { title: "Носки", description: "" },
+  status: { kind: "scheduled" as const, startingPrice: rub(500) },
+};
+
+// Запланированный лот с кнопкой избранного: «Обновить», избранное, возврат.
+const scheduledWithFollow = (following: boolean): AuctionScreenBody => ({
+  blocks: [{ ...SCHEDULED_BLOCK, following }],
+  keyboard: [
+    refreshRow(SCHEDULED_LOT.lotId, 0),
+    followRow(SCHEDULED_LOT.lotId, 0, following),
+    backRow(0),
+  ],
+});
+
+// Проданный лот: «Ставки», «Убрать», только пока отмечен, и возврат.
+const soldWithFollow = (following: boolean): AuctionScreenBody => {
+  const [history, back] = settledKeyboard(SOLD_LOT.lotId, 0);
+  return {
+    blocks: [{ ...SOLD_BLOCK, following }],
+    keyboard: [
+      ...(history === undefined ? [] : [history]),
+      ...(following ? [followRow(SOLD_LOT.lotId, 0, true)] : []),
+      ...(back === undefined ? [] : [back]),
+    ],
+  };
+};
+
+const favoritesCallback = (page: number, auctionId?: string) =>
+  callback({
+    kind: "favorites",
+    page,
+    ...(auctionId === undefined ? {} : { auctionId }),
+  });
+
+const openFavoriteRow = (lot: LotView) => [
+  {
+    action: "favorites.open-lot" as const,
+    lotId: lot.lotId,
+    callbackData: lotCallback(lot.lotId, 0),
+  },
+];
+
+const FAVORITE_ITEMS = [
+  { lotId: UNSOLD_LOT.lotId, title: "Значок", status: UNSOLD_LOT.status },
+  { lotId: SOLD_LOT.lotId, title: "Плакат", status: SOLD_LOT.status },
+];
+
+const FAVORITE_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "lot: in favorites",
+    callbackData: lotCallback(SOLD_LOT.lotId, 0),
+    auction: { ...AUCTION, followed: [SOLD_LOT.lotId] },
+    auctionCalls: [
+      getLotCall(SOLD_LOT.lotId),
+      namesCall(WINNER_ID),
+      listFollowedCall,
+    ],
+    body: soldWithFollow(true),
+  },
+  {
+    intent: "lot: not in favorites",
+    callbackData: lotCallback(SCHEDULED_LOT.lotId, 0),
+    auction: { ...AUCTION, followed: [UNSOLD_LOT.lotId] },
+    auctionCalls: [getLotCall(SCHEDULED_LOT.lotId), listFollowedCall],
+    body: scheduledWithFollow(false),
+  },
+  // За закрытым лотом следить уже не за чем: «В избранное» под ним нет.
+  {
+    intent: "lot: closed, not in favorites",
+    callbackData: lotCallback(SOLD_LOT.lotId, 0),
+    auction: { ...AUCTION, followed: [] },
+    auctionCalls: [
+      getLotCall(SOLD_LOT.lotId),
+      namesCall(WINNER_ID),
+      listFollowedCall,
+    ],
+    body: soldWithFollow(false),
+  },
+  // Notifications не ответил: карточка остаётся, без кнопки избранного.
+  {
+    intent: "lot: favorites unavailable",
+    callbackData: lotCallback(SOLD_LOT.lotId, 0),
+    auction: { ...AUCTION, followed: "unavailable" },
+    auctionCalls: [
+      getLotCall(SOLD_LOT.lotId),
+      namesCall(WINNER_ID),
+      listFollowedCall,
+    ],
+    body: {
+      blocks: [SOLD_BLOCK],
+      keyboard: settledKeyboard(SOLD_LOT.lotId, 0),
+    },
+  },
+  {
+    intent: "follow: marked",
+    callbackData: callback({
+      kind: "follow",
+      lotId: SCHEDULED_LOT.lotId,
+      page: 0,
+    }),
+    auction: {
+      ...AUCTION,
+      followed: [],
+      follows: [{ kind: "done", following: true }],
+    },
+    auctionCalls: [
+      getLotCall(SCHEDULED_LOT.lotId),
+      followCall("followLot", SCHEDULED_LOT.lotId),
+    ],
+    body: scheduledWithFollow(true),
+  },
+  // Notifications ещё не знает лот: кадр исхода с «К лоту».
+  {
+    intent: "follow: lot not known yet",
+    callbackData: callback({
+      kind: "follow",
+      lotId: SCHEDULED_LOT.lotId,
+      page: 0,
+    }),
+    auction: { ...AUCTION, followed: [], follows: [{ kind: "not-ready" }] },
+    auctionCalls: [
+      getLotCall(SCHEDULED_LOT.lotId),
+      followCall("followLot", SCHEDULED_LOT.lotId),
+    ],
+    body: {
+      blocks: [
+        {
+          kind: "follow-refused",
+          lotId: SCHEDULED_LOT.lotId,
+          auctionId: CONTRACT_AUCTION_ID,
+          title: "Носки",
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "result.lot",
+            callbackData: lotCallback(SCHEDULED_LOT.lotId, 0),
+          },
+        ],
+      ],
+    },
+  },
+  // Снятая отметка закрытого лота: кнопки больше нет, вернуть её нечем.
+  {
+    intent: "unfollow",
+    callbackData: callback({
+      kind: "unfollow",
+      lotId: SOLD_LOT.lotId,
+      page: 0,
+    }),
+    auction: {
+      ...AUCTION,
+      followed: [SOLD_LOT.lotId],
+      follows: [{ kind: "done", following: false }],
+    },
+    auctionCalls: [
+      getLotCall(SOLD_LOT.lotId),
+      followCall("unfollowLot", SOLD_LOT.lotId),
+      namesCall(WINNER_ID),
+    ],
+    body: soldWithFollow(false),
+  },
+  // Список из команды бота аукциона: возврата у тела нет, это корень.
+  // Лот, которого Auction не знает, выпадает до нарезки страниц.
+  {
+    intent: "favorites: from the menu",
+    callbackData: favoritesCallback(0),
+    auction: {
+      ...AUCTION,
+      followed: [UNSOLD_LOT.lotId, EMPTY_AUCTION_ID, SOLD_LOT.lotId],
+    },
+    auctionCalls: [
+      listFollowedCall,
+      findLotCall(UNSOLD_LOT.lotId),
+      findLotCall(EMPTY_AUCTION_ID),
+      findLotCall(SOLD_LOT.lotId),
+    ],
+    body: {
+      blocks: [
+        { kind: "favorites", page: 0, pageCount: 1, lots: FAVORITE_ITEMS },
+      ],
+      keyboard: [openFavoriteRow(UNSOLD_LOT), openFavoriteRow(SOLD_LOT)],
+    },
+  },
+  // Список из корня ленты хаба: возврат — в эту ленту.
+  {
+    intent: "favorites: from the feed",
+    callbackData: favoritesCallback(0, CONTRACT_AUCTION_ID),
+    auction: { ...AUCTION, followed: [UNSOLD_LOT.lotId, SOLD_LOT.lotId] },
+    auctionCalls: [
+      listFollowedCall,
+      findLotCall(UNSOLD_LOT.lotId),
+      findLotCall(SOLD_LOT.lotId),
+    ],
+    body: {
+      blocks: [
+        { kind: "favorites", page: 0, pageCount: 1, lots: FAVORITE_ITEMS },
+      ],
+      keyboard: [
+        openFavoriteRow(UNSOLD_LOT),
+        openFavoriteRow(SOLD_LOT),
+        [
+          {
+            action: "favorites.back",
+            callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
+          },
+        ],
+      ],
+    },
+  },
+  {
+    intent: "favorites: empty",
+    callbackData: favoritesCallback(3),
+    auction: { ...AUCTION, followed: [] },
+    auctionCalls: [listFollowedCall],
+    body: {
+      blocks: [{ kind: "favorites", page: 0, pageCount: 1, lots: [] }],
+      keyboard: [],
+    },
+  },
+];
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   {
     intent: "feed",
@@ -1413,6 +1713,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     },
   },
   ...COMMAND_CASES,
+  ...FAVORITE_CASES,
 ];
 
 export function spyPorts(
@@ -1424,6 +1725,12 @@ export function spyPorts(
   const bids = [...(snapshot.bids ?? [])];
   const limits = [...(snapshot.limits ?? [])];
   const displayNames = [...(snapshot.displayNames ?? [])];
+  const follows = [...(snapshot.follows ?? [])];
+  const { followed } = snapshot;
+  const followCommand = (outcome: FollowOutcome | undefined) => {
+    if (outcome === undefined) throw new Error("follow is not expected");
+    return outcome;
+  };
   const opIds: string[] = [...CONTRACT_OP_IDS];
   let changed = false;
   const settled = <T extends { kind: string }>(outcome: T | undefined): T => {
@@ -1448,6 +1755,11 @@ export function spyPorts(
         const lot = lots.find((each) => each.lotId === request.lotId);
         if (lot === undefined) throw new Error("lot is not in the snapshot");
         return lot;
+      },
+      // Лота нет в снимке — Auction его не знает: ответ, а не сбой.
+      async findLot(request) {
+        calls.push({ port: "auction", method: "findLot", request });
+        return snapshot.lots.find((each) => each.lotId === request.lotId);
       },
       async listAuctionLots(request) {
         calls.push({ port: "auction", method: "listAuctionLots", request });
@@ -1494,6 +1806,31 @@ export function spyPorts(
         return opId;
       },
     },
+    ...(followed === undefined
+      ? {}
+      : {
+          favorites: {
+            async listFollowedLots(viewer) {
+              calls.push({
+                port: "favorites",
+                method: "listFollowedLots",
+                request: viewer,
+              });
+              if (followed === "unavailable") {
+                throw new Error("favorites unavailable");
+              }
+              return followed;
+            },
+            async followLot(request) {
+              calls.push({ port: "favorites", method: "followLot", request });
+              return followCommand(follows.shift());
+            },
+            async unfollowLot(request) {
+              calls.push({ port: "favorites", method: "unfollowLot", request });
+              return followCommand(follows.shift());
+            },
+          },
+        }),
   };
 }
 
@@ -1557,7 +1894,8 @@ export async function checkAuctionContractCase(
       }),
     );
   }
-  const auctionCalls = calls.filter((call) => call.port === "auction");
+  // Вызовы соседей, кроме Identity: Auction и Notifications в одном порядке.
+  const auctionCalls = calls.filter((call) => call.port !== "identity");
   const viewer = contractViewer(surface);
   const expectedAuctionCalls = contractCase.auctionCalls.map((call) =>
     withViewer(call, viewer),

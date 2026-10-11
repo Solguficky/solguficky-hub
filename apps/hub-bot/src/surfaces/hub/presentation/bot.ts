@@ -14,6 +14,7 @@ import {
   type AuctionScreenBody,
   type AuctionUpdate,
   encodeAuctionCallback,
+  type FavoritesPort,
   isAuctionQuestion,
   type LotImagePort,
   parseAuctionCallback,
@@ -293,6 +294,9 @@ export type BotRuntime = {
   // Экраны аукциона сходки (PER-307): порты аукционного дерева поверх клиента
   // Auction. Нет — кнопки домена `auc` отвечают кадром недоступности.
   auction?: AuctionScreens;
+  // Избранные лоты у Notifications (PER-495): порт дерева на каждый update.
+  // Нет — карточка лота без кнопки избранного, а лента без «Избранного».
+  favorites?: (meta?: RpcMetadata) => FavoritesPort;
   // Пояс, в котором человек читает дедлайн лота; тот же, что у Meetups.
   communityTimeZone?: string;
   faq?: FaqContent;
@@ -5709,6 +5713,9 @@ async function handleAuctionCallback(
         identity: { resolveIdentity: () => Promise.resolve(resolved) },
         auction: ports.auction,
         operations: ports.operations,
+        ...(runtime.favorites === undefined
+          ? {}
+          : { favorites: runtime.favorites(rpcCall(ctx, useCase)) }),
       },
       identity: resolved,
       user: {
@@ -5729,7 +5736,10 @@ async function handleAuctionCallback(
       cause instanceof ConnectError &&
       cause.code === Code.NotFound &&
       parsed.ok &&
-      (parsed.intent.kind === "lot" || parsed.intent.kind === "history");
+      (parsed.intent.kind === "lot" ||
+        parsed.intent.kind === "history" ||
+        parsed.intent.kind === "follow" ||
+        parsed.intent.kind === "unfollow");
     // Сбой на ответе вопроса оставляет вопрос открытым: повтор — тот же
     // ответ ещё раз, а «Повторить» с шагом вопроса сработало бы как «Отмена».
     await showRefusal(
@@ -5805,6 +5815,7 @@ async function handleAuctionCallback(
     // же, что правка сходки и «Включить аукцион» (RFC-016).
     canManage,
     ...(canAddLots === undefined ? {} : { canAddLots }),
+    favorites: runtime.favorites !== undefined,
   };
   const shown = auctionScreen(view);
   if (shown.asks === true) {

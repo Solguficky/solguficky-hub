@@ -134,6 +134,9 @@ export async function handleAuctionUpdate(
   const body = await dispatchAuctionIntent({
     auction: surface.ports.auction,
     operations: surface.ports.operations,
+    ...(surface.ports.favorites === undefined
+      ? {}
+      : { favorites: surface.ports.favorites }),
     viewer: identity.viewer,
     user,
     intent: parsed.intent,

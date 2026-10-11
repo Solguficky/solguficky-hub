@@ -1,4 +1,4 @@
-import type { Client } from "@connectrpc/connect";
+import type { CallOptions, Client } from "@connectrpc/connect";
 import { createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
@@ -13,6 +13,10 @@ import {
   IdentityService,
   AccessRequestOutcome as WireOutcome,
 } from "../../../gen/identity/v1/identity_service_pb.js";
+import {
+  NotificationsService,
+  OutbidFrequency as WireFrequency,
+} from "../../../gen/notifications/v1/notifications_service_pb.js";
 import type {
   AccessRequest,
   AccessRequestAnswer,
@@ -30,12 +34,16 @@ import {
   unansweredOn,
 } from "../../core/auction/commands.js";
 import { historyPageOf } from "../../core/auction/history.js";
-import { lotViewOf } from "../../core/auction/snapshot.js";
+import { lotOrMissing, lotViewOf } from "../../core/auction/snapshot.js";
 import {
   classifyRecipientFailure,
   type TelegramRecipientResolver,
 } from "../../core/delivery/index.js";
 import { rightsOf, wireQueue, wireViewer } from "../../core/identity/access.js";
+import {
+  createFavoritesPort,
+  type FavoritesRpc,
+} from "../../core/notifications/favorites.js";
 import {
   callTimeoutMs,
   presentServiceToken,
@@ -45,6 +53,7 @@ import { type Tracing, traceRpc } from "../../core/tracing.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
 import type { NotificationReads } from "./delivery/message.js";
 import type { EntryPorts } from "./entry-ports.js";
+import type { OutbidFrequency, OutbidPreferencePort } from "./outbid.js";
 import { auctionSummaryOf } from "./snapshot.js";
 
 export const rpcTimeoutMs = 3_000;
@@ -77,6 +86,13 @@ export type AuctionRpc = Pick<
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
 >;
+// Notifications боту аукциона нужен ради настройки «перебили» (PER-515) и
+// избранного (PER-495).
+export type NotificationsRpc = Pick<
+  Client<typeof NotificationsService>,
+  "getOutbidPreference" | "setOutbidPreference"
+> &
+  FavoritesRpc;
 
 // Порты пакета метаданных вызова не несут, поэтому они собираются на каждый
 // update: `request_id` края уезжает заголовком в каждый вызов цепочки, а
@@ -95,6 +111,11 @@ export type PortsOptions = {
   // Отказ `GetDisplayNames` пакет гасит: карточка остаётся без имени. Чтобы
   // деградация не была молчаливой, порт сообщает о ней до того, как бросить.
   onNamesRefused?: (cause: unknown, requestId: string) => void;
+  // Без клиента Notifications нет ни порта настройки «перебили», ни порта
+  // избранного (PER-495).
+  notifications?: NotificationsRpc;
+  // Отказ списка избранного карточка гасит, как отказ имён.
+  onFavoritesRefused?: (cause: unknown, requestId: string) => void;
 };
 
 export function createPorts(
@@ -104,6 +125,8 @@ export function createPorts(
     timeoutMs = rpcTimeoutMs,
     newOperationId = createUuidV7,
     onNamesRefused,
+    notifications,
+    onFavoritesRefused,
   }: PortsOptions = {},
 ): PortsFactory {
   return (requestId, deadlineAt) => {
@@ -167,6 +190,14 @@ export function createPorts(
             callOptions(timeoutMs),
           );
           return lotViewOf(snapshot);
+        },
+        findLot(request) {
+          return lotOrMissing(() =>
+            auction.getLot(
+              { viewer: wireViewer(request.viewer), lotId: request.lotId },
+              callOptions(timeoutMs),
+            ),
+          );
         },
         async listAuctionLots(request) {
           const page = await auction.listAuctionLots(
@@ -264,6 +295,15 @@ export function createPorts(
         },
       },
       operations: { newOperationId },
+      ...(notifications === undefined
+        ? {}
+        : {
+            favorites: createFavoritesPort(
+              notifications,
+              () => callOptions(timeoutMs),
+              (cause) => onFavoritesRefused?.(cause, requestId),
+            ),
+          }),
       catalog: {
         async listAuctions(request) {
           const page = await auction.listAuctions(
@@ -313,8 +353,53 @@ export function createPorts(
             throw new Error("Auction did not acknowledge FAQ completion");
         },
       },
+      ...(notifications === undefined
+        ? {}
+        : {
+            outbid: outbidPort(notifications, () => callOptions(timeoutMs)),
+          }),
     };
   };
+}
+
+// Настройка лежит на личности, а не на смотрящем: права в Notifications не
+// уезжают (notifications.v1 — «Platform roles are deliberately absent»).
+function outbidPort(
+  rpc: NotificationsRpc,
+  options: () => CallOptions,
+): OutbidPreferencePort {
+  return {
+    async get(viewer) {
+      const response = await rpc.getOutbidPreference(
+        { identityId: viewer.identityId },
+        options(),
+      );
+      return frequencyOf(response.frequency);
+    },
+    async set(viewer, frequency) {
+      const response = await rpc.setOutbidPreference(
+        { identityId: viewer.identityId, frequency: wireFrequency[frequency] },
+        options(),
+      );
+      return frequencyOf(response.frequency);
+    },
+  };
+}
+
+const wireFrequency: Record<OutbidFrequency, WireFrequency> = {
+  every: WireFrequency.EVERY,
+  "5": WireFrequency.AT_MOST_EVERY_5_MINUTES,
+  "15": WireFrequency.AT_MOST_EVERY_15_MINUTES,
+  "60": WireFrequency.AT_MOST_EVERY_60_MINUTES,
+  off: WireFrequency.OFF,
+};
+
+// `UNSPECIFIED` и число, которого словарь ещё не знает, — ответ вне контракта:
+// сервер отдаёт умолчание `EVERY` сам, и бот его не додумывает.
+function frequencyOf(wire: WireFrequency): OutbidFrequency | undefined {
+  return (Object.keys(wireFrequency) as OutbidFrequency[]).find(
+    (frequency) => wireFrequency[frequency] === wire,
+  );
 }
 
 // Канал доставки (PER-328): получатель уведомления, его право `auction` и
@@ -379,18 +464,26 @@ export function createDeliveryPorts(
 export type Clients = {
   ports: PortsFactory;
   delivery: DeliveryPorts;
+  // Есть ли у бота настройка «перебили»: по ней под перебитием стоит «Реже».
+  outbidSettings: boolean;
   close(): void;
 };
 
 export function createClients(options: {
   identityUrl: string;
   auctionUrl: string;
+  notificationsUrl?: string;
   serviceToken: string;
   tracing: Tracing;
   onNamesRefused?: (cause: unknown, requestId: string) => void;
+  onFavoritesRefused?: (cause: unknown, requestId: string) => void;
 }): Clients {
   const identitySession = new Http2SessionManager(options.identityUrl);
   const auctionSession = new Http2SessionManager(options.auctionUrl);
+  const notificationsSession =
+    options.notificationsUrl === undefined
+      ? undefined
+      : new Http2SessionManager(options.notificationsUrl);
   const interceptors = [
     presentServiceToken(options.serviceToken),
     traceRpc(options.tracing),
@@ -411,18 +504,33 @@ export function createClients(options: {
       interceptors,
     }),
   );
+  const notifications =
+    options.notificationsUrl === undefined || notificationsSession === undefined
+      ? undefined
+      : createClient(
+          NotificationsService,
+          createGrpcTransport({
+            baseUrl: options.notificationsUrl,
+            sessionManager: notificationsSession,
+            interceptors,
+          }),
+        );
   return {
-    ports: createPorts(
-      identity,
-      auction,
-      options.onNamesRefused === undefined
+    ports: createPorts(identity, auction, {
+      ...(options.onNamesRefused === undefined
         ? {}
-        : { onNamesRefused: options.onNamesRefused },
-    ),
+        : { onNamesRefused: options.onNamesRefused }),
+      ...(notifications === undefined ? {} : { notifications }),
+      ...(options.onFavoritesRefused === undefined
+        ? {}
+        : { onFavoritesRefused: options.onFavoritesRefused }),
+    }),
     delivery: createDeliveryPorts(identity, auction),
+    outbidSettings: notifications !== undefined,
     close() {
       identitySession.abort();
       auctionSession.abort();
+      notificationsSession?.abort();
     },
   };
 }

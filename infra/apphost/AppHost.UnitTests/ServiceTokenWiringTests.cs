@@ -30,7 +30,7 @@ public class ServiceTokenWiringTests
     {
         [Identity] = [HubBot, AuctionBot, Meetups, Notifications],
         [Meetups] = [HubBot, Notifications, Auction],
-        [Notifications] = [HubBot],
+        [Notifications] = [HubBot, AuctionBot],
     };
 
     private static readonly string[] Hub = ["--profile", "hub"];

@@ -87,6 +87,7 @@ function ports(
       }),
     },
     auction: {
+      findLot: async () => undefined,
       getLot: vi.fn(async () => ({
         lotId,
         auctionId,

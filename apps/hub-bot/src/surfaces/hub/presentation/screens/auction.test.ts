@@ -159,6 +159,7 @@ describe("feed and history in the hub shell", () => {
       ...view([]),
       canManage: true,
       canAddLots: true,
+      favorites: true,
       body: {
         blocks: [
           {
@@ -189,10 +190,12 @@ describe("feed and history in the hub shell", () => {
       row.map((button) => button.text),
     );
 
+    // «Избранное» (PER-495) встаёт в пару с «Правила и FAQ», а «Пульт» — с
+    // «Добавить лот»: третий ряд действий вывел бы полную страницу за предел.
     expect(rows).toHaveLength(12);
     expect(rows.slice(0, 2)).toEqual([
-      ["Добавить лот"],
-      ["Пульт", "Правила и FAQ"],
+      ["Добавить лот", "Пульт"],
+      ["Избранное", "Правила и FAQ"],
     ]);
   });
 
@@ -419,5 +422,94 @@ describe("bid sheet in the hub shell", () => {
     expect(
       screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
     ).toEqual([["Ввести заново"], ["К лоту"]]);
+  });
+});
+
+// «Счастливые часы» (PER-505): те же строки, что у бота аукциона
+// (`src/surfaces/auction/entry-screen.test.ts`).
+describe("happy hours in the hub shell", () => {
+  const trading = {
+    kind: "trading" as const,
+    currentPrice: rub(1200),
+    phase: "online" as const,
+  };
+  const facts = (overrides: Partial<Extract<AuctionBlock, { kind: "lot" }>>) =>
+    plain(
+      auctionScreen(view([lot({ status: trading, ...overrides })])).screen.text,
+    );
+
+  it("shows the window step until its end next to the regular step", () => {
+    expect(
+      facts({
+        nextPrice: rub(1210),
+        fixedStep: rub(50),
+        baseStep: rub(50),
+        activeWindow: {
+          from: "2026-10-10T15:00:00Z",
+          until: "2026-10-10T18:00:00Z",
+          step: rub(10),
+        },
+      }),
+    ).toContain(
+      "Следующая ставка: от 1 210 ₽<br>Счастливые часы: шаг 10 ₽ до 10 октября, сб, 21:00<br>Обычный шаг: 50 ₽",
+    );
+  });
+
+  it("names the day of a future window once when it fits in a day", () => {
+    expect(
+      facts({
+        fixedStep: rub(50),
+        baseStep: rub(50),
+        nextWindow: {
+          from: "2026-10-11T12:00:00Z",
+          until: "2026-10-11T15:00:00Z",
+          step: rub(10),
+        },
+      }),
+    ).toContain(
+      "Шаг: 50 ₽<br>Счастливые часы: с 11 октября, вс, 15:00 до 18:00, шаг 10 ₽",
+    );
+  });
+
+  it("names both days of a future window across midnight", () => {
+    expect(
+      facts({
+        nextWindow: {
+          from: "2026-10-11T20:00:00Z",
+          until: "2026-10-11T22:00:00Z",
+          step: rub(10),
+        },
+      }),
+    ).toContain(
+      "Счастливые часы: с 11 октября, вс, 23:00 до 12 октября, пн, 01:00, шаг 10 ₽",
+    );
+  });
+
+  it("marks a lot of the feed whose window is in force", () => {
+    const feed = view([
+      {
+        kind: "feed",
+        auctionId: "auc-1",
+        page: 0,
+        pageCount: 1,
+        lots: [
+          {
+            lotId: "a",
+            title: "Кружка",
+            status: trading,
+            activeWindow: {
+              from: "2026-10-10T15:00:00Z",
+              until: "2026-10-10T18:00:00Z",
+              step: rub(10),
+            },
+          },
+        ],
+      },
+    ]);
+    const { screen } = auctionScreen({
+      ...feed,
+      body: { ...feed.body, keyboard: [] },
+    });
+    expect(plain(screen.text)).toContain("• Кружка — 1 200 ₽, счастливые часы");
   });
 });

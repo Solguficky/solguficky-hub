@@ -695,3 +695,114 @@ describe("auction lists", () => {
     expect(screen.keyboard).toEqual([]);
   });
 });
+
+// «Счастливые часы» (PER-505): окно сниженного шага в ленте и карточке. Те же
+// строки ждёт оболочка хаба в `screens/auction.test.ts`.
+describe("happy hours", () => {
+  const trading = {
+    kind: "trading" as const,
+    currentPrice: rub(1200),
+    phase: "online" as const,
+  };
+  const facts = (block: Partial<Extract<AuctionBlock, { kind: "lot" }>>) =>
+    plain(visible(lotScreen({ status: trading, ...block }).text));
+
+  it("shows the window step until its end next to the regular step", () => {
+    const text = facts({
+      nextPrice: rub(1210),
+      fixedStep: rub(50),
+      baseStep: rub(50),
+      activeWindow: {
+        from: "2026-10-10T15:00:00Z",
+        until: "2026-10-10T18:00:00Z",
+        step: rub(10),
+      },
+    });
+    // «Шаг: 50 ₽» не повторяется: обычный шаг назван своей строкой.
+    expect(text).toContain(
+      "Следующая ставка: от 1 210 ₽\nСчастливые часы: шаг 10 ₽ до 10 октября, сб, 21:00\nОбычный шаг: 50 ₽\n",
+    );
+    expect(text).not.toContain("\nШаг:");
+  });
+
+  it("shows the regular step once the snapshot has no window", () => {
+    const text = facts({
+      nextPrice: rub(1250),
+      fixedStep: rub(50),
+      baseStep: rub(50),
+    });
+    expect(text).toContain("Следующая ставка: от 1 250 ₽\nШаг: 50 ₽\n");
+    expect(text).not.toContain("Счастливые часы");
+  });
+
+  it("names the day of a future window once when it fits in a day", () => {
+    const text = facts({
+      fixedStep: rub(50),
+      baseStep: rub(50),
+      nextWindow: {
+        from: "2026-10-11T12:00:00Z",
+        until: "2026-10-11T15:00:00Z",
+        step: rub(10),
+      },
+    });
+    expect(text).toContain(
+      "Шаг: 50 ₽\nСчастливые часы: с 11 октября, вс, 15:00 до 18:00, шаг 10 ₽",
+    );
+  });
+
+  it("names both days of a future window across midnight", () => {
+    const text = facts({
+      nextWindow: {
+        from: "2026-10-11T20:00:00Z",
+        until: "2026-10-11T22:00:00Z",
+        step: rub(10),
+      },
+    });
+    expect(text).toContain(
+      "Счастливые часы: с 11 октября, вс, 23:00 до 12 октября, пн, 01:00, шаг 10 ₽",
+    );
+  });
+
+  it("marks a lot of the feed whose window is in force", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "feed",
+              auctionId: "auc-1",
+              page: 0,
+              pageCount: 1,
+              lots: [
+                {
+                  lotId: "a",
+                  title: "Кружка",
+                  status: trading,
+                  activeWindow: {
+                    from: "2026-10-10T15:00:00Z",
+                    until: "2026-10-10T18:00:00Z",
+                    step: rub(10),
+                  },
+                },
+                { lotId: "b", title: "Ваза", status: trading },
+              ],
+            },
+          ],
+          keyboard: [
+            [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
+            [{ action: "feed.open-lot", lotId: "b", callbackData: "cb" }],
+          ],
+        },
+      },
+      options,
+    );
+    // Кнопка остаётся короткой: отметка — в строке тела.
+    expect(plain(screen.text)).toBe(
+      "<b>Лоты</b>\n\n• Кружка — 1 200 ₽, счастливые часы\n• Ваза — 1 200 ₽",
+    );
+    expect(screen.keyboard.map((row) => row.map((b) => plain(b.text)))).toEqual(
+      [["Кружка · 1 200 ₽"], ["Ваза · 1 200 ₽"], ["‹ Аукционы"]],
+    );
+  });
+});

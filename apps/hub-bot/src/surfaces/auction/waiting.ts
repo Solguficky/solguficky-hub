@@ -21,6 +21,12 @@ export type Waiting = {
   begin(): void;
   /** Конец обработки: ответ на нажатие, если его ещё не было, и остановка таймеров. */
   finish(): Promise<void>;
+  /**
+   * Ответ на нажатие всплывающим текстом — подтверждение выбора (PER-515).
+   * Зовётся до показа экрана: показ отвечает на нажатие сам, и текст после
+   * него уже не уйдёт. Не бросает — отказ читается из `answerError`.
+   */
+  answer(text: string): Promise<void>;
   /** Отказ ответа на нажатие: действие он не отменяет, его пишет запись границы. */
   readonly answerError: string | undefined;
 };
@@ -57,19 +63,21 @@ export function startWaiting(ctx: Context): Waiting {
   let finished = false;
   let typing: NodeJS.Timeout | undefined;
 
-  // Один раз и без текста: всплывающего текста у бота аукциона нет. Не
-  // бросает — отказ ответа доставку экрана не отменяет. Повторный вызов ждёт
-  // первый: ответ сторожа, ещё летящий к `finish`, свой отказ не теряет.
+  // Один раз; текст — только у подтверждения выбора. Не бросает — отказ
+  // ответа доставку экрана не отменяет. Повторный вызов ждёт первый: ответ
+  // сторожа, ещё летящий к `finish`, свой отказ не теряет.
   let answering: Promise<void> | undefined;
-  const answer = (): Promise<void> => {
+  const answer = (text?: string): Promise<void> => {
     if (answered) return answering ?? Promise.resolve();
     answered = true;
-    answering = ctx.answerCallbackQuery().then(
-      () => undefined,
-      (cause: unknown) => {
-        answerError = cause instanceof Error ? cause.message : String(cause);
-      },
-    );
+    answering = ctx
+      .answerCallbackQuery(text === undefined ? {} : { text })
+      .then(
+        () => undefined,
+        (cause: unknown) => {
+          answerError = cause instanceof Error ? cause.message : String(cause);
+        },
+      );
     return answering;
   };
 
@@ -127,6 +135,7 @@ export function startWaiting(ctx: Context): Waiting {
       );
       typing.unref();
     },
+    answer: (text: string) => answer(text),
     async finish() {
       finished = true;
       stopTyping();

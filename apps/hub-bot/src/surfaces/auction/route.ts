@@ -13,8 +13,13 @@ import {
 } from "../../auction-ui/index.js";
 import { type AuctionListing, listPage, readAuctions } from "./auctions.js";
 import type { EntryPorts } from "./entry-ports.js";
-import type { AuctionEntryScreen, UnavailableExit } from "./entry-screen.js";
+import {
+  type AuctionEntryScreen,
+  outbidToast,
+  type UnavailableExit,
+} from "./entry-screen.js";
 import { type ListAction, parseEntryCallback, startCallback } from "./faq.js";
+import type { OutbidFrequency } from "./outbid.js";
 
 // Отказ зависимости для записи в лог: класс по словарю logging.md и код gRPC.
 // Человеку ни то ни другое не показывается.
@@ -32,6 +37,8 @@ export type RouteOutcome = {
   // Смотрящий торгового экрана: от его имени край берёт байты изображения.
   viewer?: Viewer;
   failure?: RouteFailure;
+  // Всплывающий ответ на нажатие: подтверждение выбранного режима (PER-515).
+  toast?: string;
 };
 
 // Торговое нажатие через шлюз пакета поверхности `auction` с уже
@@ -248,6 +255,14 @@ async function routeEntry(input: {
       // Без отметки любой раздел, кроме FAQ, показывает FAQ.
       return { screen: { kind: "faq" }, identityId };
     }
+    if (local?.action === "notify") {
+      return await outbidSettings({
+        ports: input.ports,
+        viewer,
+        exit,
+        ...(local.choose === undefined ? {} : { choose: local.choose }),
+      });
+    }
     const listScreen = async (list: ListAction): Promise<RouteOutcome> => {
       const auctions = await readAuctions({
         catalog: input.ports.catalog,
@@ -327,6 +342,52 @@ async function routeEntry(input: {
   } catch (cause) {
     return { screen: unavailable, identityId, failure: classify(cause) };
   }
+}
+
+// Экран частоты «перебили» и выбор на нём (PER-515). Выбор — целевое
+// значение: экран и подтверждение показывают то, что ответил Notifications, а
+// не то, что нажато. Notifications недоступен — кадр отказа с повтором того
+// же действия и без подтверждения. Выбор, который сервис успел записать до
+// таймаута, этим не отменяется: повтор целевым значением его не меняет.
+async function outbidSettings(input: {
+  ports: EntryPorts;
+  viewer: Viewer;
+  exit: UnavailableExit;
+  choose?: OutbidFrequency;
+}): Promise<RouteOutcome> {
+  const { outbid } = input.ports;
+  const identityId = input.viewer.identityId;
+  // Кнопка из сборки с Notifications в сборке без него: экран устарел.
+  if (outbid === undefined) return { screen: { kind: "outdated" }, identityId };
+  const unavailable = {
+    kind: "unavailable",
+    exit: input.exit,
+    subject: "notifications",
+  } as const;
+  let current: OutbidFrequency | undefined;
+  try {
+    current =
+      input.choose === undefined
+        ? await outbid.get(input.viewer)
+        : await outbid.set(input.viewer, input.choose);
+  } catch (cause) {
+    return { screen: unavailable, identityId, failure: classify(cause) };
+  }
+  if (current === undefined) {
+    return {
+      screen: unavailable,
+      identityId,
+      failure: {
+        category: "invariant",
+        message: "notifications answered an unknown outbid frequency",
+      },
+    };
+  }
+  return {
+    screen: { kind: "notify", current },
+    identityId,
+    ...(input.choose === undefined ? {} : { toast: outbidToast(current) }),
+  };
 }
 
 const listingOf: Record<ListAction, AuctionListing> = {

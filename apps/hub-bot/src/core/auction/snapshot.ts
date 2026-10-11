@@ -1,9 +1,18 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import {
   LotPhase,
   type Money as WireMoney,
 } from "../../../gen/auction/v1/auction_pb.js";
-import type { LotSnapshot } from "../../../gen/auction/v1/auction_service_pb.js";
-import type { LotStatusView, LotView, Money } from "../../auction-ui/index.js";
+import type {
+  LotSnapshot,
+  LotStepWindow,
+} from "../../../gen/auction/v1/auction_service_pb.js";
+import type {
+  LotStatusView,
+  LotView,
+  Money,
+  StepWindowView,
+} from "../../auction-ui/index.js";
 
 // Перевод `auction.v1.LotSnapshot` в срез аукционного дерева — общий у обеих
 // поверхностей: дерево gRPC не знает (ADR-044), а адаптер у пакета один.
@@ -12,6 +21,21 @@ import type { LotStatusView, LotView, Money } from "../../auction-ui/index.js";
 // схема не выражает: `status` выставлен всегда, а сумма помещается в
 // безопасное целое. Нарушение — дефект соседа: перевод бросает, и человек
 // видит «недоступно», а не карточку с нулём вместо цены.
+// `FindLot` порта дерева: NOT_FOUND у `GetLot` — «лота нет или он не виден»,
+// ответ, а не сбой. Прочие отказы бросаются как есть.
+export async function lotOrMissing(
+  read: () => Promise<LotSnapshot>,
+): Promise<LotView | undefined> {
+  try {
+    return lotViewOf(await read());
+  } catch (cause) {
+    if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+      return undefined;
+    }
+    throw cause;
+  }
+}
+
 export function lotViewOf(snapshot: LotSnapshot): LotView {
   const step = snapshot.config?.stepPolicy?.policy;
   return {
@@ -33,6 +57,15 @@ export function lotViewOf(snapshot: LotSnapshot): LotView {
       ? {}
       : { nextPrice: moneyOf(snapshot.nextPrice) }),
     ...(step?.case === "fixed" ? { fixedStep: moneyOf(step.value) } : {}),
+    ...(snapshot.baseStep === undefined
+      ? {}
+      : { baseStep: moneyOf(snapshot.baseStep) }),
+    ...(snapshot.activeWindow === undefined
+      ? {}
+      : { activeWindow: windowOf(snapshot.activeWindow) }),
+    ...(snapshot.nextWindow === undefined
+      ? {}
+      : { nextWindow: windowOf(snapshot.nextWindow) }),
     // Без условий торгов лот лимитов не принимает: им неоткуда взяться.
     proxyEnabled: snapshot.config?.proxyEnabled ?? false,
     ...(snapshot.viewerProxyLimit === undefined
@@ -88,6 +121,15 @@ function statusOf(status: LotSnapshot["status"]): LotStatusView {
       return _exhaustive;
     }
   }
+}
+
+// Окно без шага — дефект соседа: показать сниженный шаг без суммы нельзя.
+function windowOf(window: LotStepWindow): StepWindowView {
+  return {
+    from: window.from,
+    until: window.until,
+    step: required(window.step),
+  };
 }
 
 function required(money: WireMoney | undefined): Money {

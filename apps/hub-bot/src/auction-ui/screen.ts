@@ -7,6 +7,7 @@ import type {
   LotStatusView,
   Money,
   ProxyLimitRefusal,
+  StepWindowView,
 } from "./ports.js";
 
 // Каноническое тело аукционного экрана (ADR-044, «Один аукцион, две оболочки»).
@@ -20,6 +21,9 @@ export type FeedItem = {
   lotId: string;
   title?: string;
   status: LotStatusView;
+  // Окно «Счастливых часов», которое действует сейчас: строка лота его
+  // отмечает.
+  activeWindow?: StepWindowView;
 };
 
 // Строка хронологии: ставка, как её показывает экран. Лимита прокси здесь
@@ -52,6 +56,12 @@ export type AuctionBlock =
       card?: LotCardView;
       nextPrice?: Money;
       fixedStep?: Money;
+      // Обычный шаг при текущей цене и окна «Счастливых часов» (PER-505):
+      // действующее — с шагом в силе, будущее — только то, что снизит шаг
+      // при текущей цене.
+      baseStep?: Money;
+      activeWindow?: StepWindowView;
+      nextWindow?: StepWindowView;
       status: LotStatusView;
       // Имя участника из статуса: лидера в торгах или победителя проданного
       // лота. Нет — участника нет либо Auction имя не отдал; идентификатор
@@ -59,6 +69,26 @@ export type AuctionBlock =
       participantName?: string;
       // Свой прокси-лимит смотрящего; других лимитов экран не знает.
       viewerProxyLimit?: Money;
+      // Лот в своём избранном (ADR-063). Нет — Notifications не настроен
+      // или не ответил, и кнопки избранного на карточке тоже нет.
+      following?: boolean;
+    }
+  | {
+      // Свои избранные лоты по порядку отметки (PER-495): цена, дедлайн и
+      // итог — из снимка Auction, закрытые лоты остаются с итогом.
+      kind: "favorites";
+      // Нумерация с нуля; пустой список — одна страница без лотов.
+      page: number;
+      pageCount: number;
+      lots: readonly FeedItem[];
+    }
+  | {
+      // Notifications ещё не знает лот: отметка не поставлена, и это свой
+      // экран исхода с «К лоту», как отказ команды (PER-472).
+      kind: "follow-refused";
+      lotId: string;
+      auctionId: string;
+      title?: string;
     }
   | {
       // Отказ команды или неизвестный исход — свой экран, а не строка над
@@ -160,6 +190,7 @@ export type AnswerRefusal =
 // текстом у кнопки нет; лот кнопки ленты рендерер находит в блоке по `lotId`.
 export type AuctionButton =
   | { action: "feed.open-lot"; lotId: string; callbackData: string }
+  | { action: "favorites.open-lot"; lotId: string; callbackData: string }
   // «По шагу» с порогом в подписи: сумма — та, что уедет в подтверждение.
   | { action: "lot.bid-step"; amount: Money; callbackData: string }
   | {
@@ -182,7 +213,12 @@ export type AuctionButton =
         | "answer.retry"
         | "history.prev"
         | "history.next"
-        | "history.back";
+        | "history.back"
+        | "lot.follow"
+        | "lot.unfollow"
+        | "favorites.prev"
+        | "favorites.next"
+        | "favorites.back";
       callbackData: string;
     };
 

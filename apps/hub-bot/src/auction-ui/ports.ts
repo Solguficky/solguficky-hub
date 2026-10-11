@@ -122,6 +122,13 @@ export type LotStatusView =
 
 export type TradingPhase = "online" | "live";
 
+// Окно сниженного шага — полуинтервал `[from, until)`, моменты RFC 3339 в UTC.
+export type StepWindowView = {
+  from: string;
+  until: string;
+  step: Money;
+};
+
 // Срез `auction.v1.LotSnapshot`, который нужен экранам. Поля добавляют листья,
 // которые их показывают.
 export type LotView = {
@@ -135,6 +142,14 @@ export type LotView = {
   // Шаг, когда он один на все цены. Сетку шагов край не вычисляет: правило
   // шага принадлежит Auction, а `nextPrice` уже несёт его результат.
   fixedStep?: Money;
+  // Обычный шаг при текущей цене, без окна; есть только у лота в торгах.
+  baseStep?: Money;
+  // Окно «Счастливых часов», которое действует сейчас и снижает шаг, с шагом
+  // в силе. Auction считает его на момент ответа, поэтому после конца окна
+  // следующее чтение его уже не несёт.
+  activeWindow?: StepWindowView;
+  // Ближайшее окно, которое ещё не началось, с объявленной суммой шага.
+  nextWindow?: StepWindowView;
   // Принимает ли лот прокси-лимиты. У лота без условий торгов — нет.
   proxyEnabled: boolean;
   // Свой лимит смотрящего. Чужих лимитов Auction не отдаёт вовсе.
@@ -178,6 +193,14 @@ export type LotHistoryPage = {
 
 export interface AuctionPort {
   getLot(request: { viewer: Viewer; lotId: string }): Promise<LotView>;
+  // Лот или `undefined`, если Auction его не знает или смотрящему не видно:
+  // NOT_FOUND здесь ответ, а не сбой. Списку избранного (PER-495) он отличает
+  // лот удалённого аукциона, отметка на который живёт в Notifications, от
+  // отказа соседа. Прочие отказы метод бросает, как `getLot`.
+  findLot(request: {
+    viewer: Viewer;
+    lotId: string;
+  }): Promise<LotView | undefined>;
   listAuctionLots(request: {
     viewer: Viewer;
     auctionId: string;
@@ -278,8 +301,30 @@ export interface LotImagePort {
   getLotImage(request: { viewer: Viewer; lotId: string }): Promise<LotImage>;
 }
 
+// Избранные лоты (ADR-063): отметка «человек следит за лотом» живёт в
+// Notifications, а цену, дедлайн и итог экран берёт у Auction. Отметка своя:
+// смотрящий отмечает и читает только себя. Ответ команды — состояние после
+// неё, поэтому повтор не создаёт дубля. `not-ready` — Notifications ещё не
+// знает лот: факт `AUCTION_EVENTS` не дошёл, и повтор решает человек.
+export type FollowOutcome =
+  | { kind: "done"; following: boolean }
+  | { kind: "not-ready" };
+
+export interface FavoritesPort {
+  // Свои отметки по возрастанию момента отметки, закрытые лоты включительно.
+  listFollowedLots(viewer: Viewer): Promise<readonly string[]>;
+  followLot(request: { viewer: Viewer; lotId: string }): Promise<FollowOutcome>;
+  unfollowLot(request: {
+    viewer: Viewer;
+    lotId: string;
+  }): Promise<FollowOutcome>;
+}
+
+// `favorites` нет — у процесса нет адреса Notifications: карточка обходится
+// без кнопки избранного, а список отказывает как недоступный сосед.
 export type AuctionBotPorts = {
   identity: IdentityPort;
   auction: AuctionPort;
   operations: OperationIdPort;
+  favorites?: FavoritesPort;
 };

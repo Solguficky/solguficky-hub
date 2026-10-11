@@ -61,7 +61,8 @@ const hubNamedPairs: ReadonlySet<string> = new Set([
   "Отписаться|Уведомления сходки",
   "Материалы (#)|Лоты",
   "Материалы (#)|Включить аукцион",
-  "Пульт|Правила и FAQ",
+  "Добавить лот|Пульт",
+  "Избранное|Правила и FAQ",
 ]);
 
 type Catalog = Readonly<Record<string, ScreenEntry>>;

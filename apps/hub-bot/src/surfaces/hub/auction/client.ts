@@ -13,7 +13,7 @@ import {
   unansweredOn,
 } from "../../../core/auction/commands.js";
 import { historyPageOf } from "../../../core/auction/history.js";
-import { lotViewOf } from "../../../core/auction/snapshot.js";
+import { lotOrMissing, lotViewOf } from "../../../core/auction/snapshot.js";
 import { wireViewer } from "../../../core/identity/access.js";
 import {
   callHeaders,
@@ -340,6 +340,14 @@ export function createAuctionAdapter(
               options(meta),
             );
             return lotViewOf(snapshot);
+          },
+          findLot(request) {
+            return lotOrMissing(() =>
+              rpc.getLot(
+                { viewer: wireViewer(request.viewer), lotId: request.lotId },
+                options(meta),
+              ),
+            );
           },
           async listAuctionLots(request) {
             const page = await rpc.listAuctionLots(
