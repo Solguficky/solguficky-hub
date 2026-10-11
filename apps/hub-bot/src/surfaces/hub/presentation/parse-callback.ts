@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { ApplicationQueue } from "../../../auction-ui/index.js";
 import type {
+  CloseQuote,
   ConsoleSort,
   FormField,
   LotTextField,
@@ -69,11 +70,11 @@ const PageSchema = z
   .string()
   .regex(/^\d{1,4}$/)
   .transform(Number);
-// Номер лота в составе финала с нуля: финал — семь-восемь лотов, двух цифр
-// хватает с запасом, а ведущие нули — не номер.
+// Номер лота в составе финала с нуля: финал — семь-восемь лотов, а трёх цифр
+// хватает любому реестру. Ведущие нули — не номер.
 const PositionSchema = z
   .string()
-  .regex(/^(0|[1-9]\d?)$/)
+  .regex(/^(0|[1-9]\d{0,2})$/)
   .transform(Number);
 const ConsoleSortSchema = z.enum(["bd", "ba", "pd", "pa", "gd", "ga"]);
 export const defaultConsoleSort: ConsoleSort = {
@@ -277,6 +278,7 @@ type PlainAction =
       auction: string;
       position: number;
       op: string;
+      quote: CloseQuote;
     }
   // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
   | { kind: "manage-publish"; token: string; origin: PublishOrigin }
@@ -528,14 +530,33 @@ export function consoleCloseData(auction: string, position: number): string {
   return `v1:ac:c:${auction}:${position}`;
 }
 
-/** «Да» подтверждения закрытия: аукцион, номер лота и ключ, до 58 байт. */
+/**
+ * «Да» подтверждения закрытия: аукцион, номер лота, ключ и названное — цена
+ * в минорных единицах по основанию 36 либо `x`, закрытие без продажи. Цена
+ * до девяти миллионов рублей — шесть знаков, и с трёхзначным номером строка
+ * укладывается в 64 байта.
+ */
 export function consoleCloseConfirmData(
   auction: string,
   position: number,
   op: string,
+  quote: CloseQuote,
 ): string {
-  return `v1:ac:k:${auction}:${position}:${op}`;
+  const named =
+    quote.kind === "sale" ? quote.minorUnits.toString(36) : noSaleQuote;
+  return `v1:ac:k:${auction}:${position}:${op}:${named}`;
 }
+
+const noSaleQuote = "x";
+const QuoteSchema = z
+  .string()
+  .regex(/^(x|0|[1-9a-z][0-9a-z]{0,6})$/)
+  .transform(
+    (raw): CloseQuote =>
+      raw === noSaleQuote
+        ? { kind: "no-sale" }
+        : { kind: "sale", minorUnits: Number.parseInt(raw, 36) },
+  );
 
 /** Кнопка FAQ из корня ленты аукциона сходки. */
 export function auctionFaqData(auction: string): string {
@@ -955,7 +976,7 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // `v1:ac:y:<аукцион>:<ключ>`, `v1:ac:x:<аукцион>`, `v1:ac:z:<аукцион>:<ключ>`
 // и `v1:ac:<s|d>:<аукцион>:<лот>:<страница>`. Финал (PER-337):
 // `v1:ac:g:<аукцион>`, `v1:ac:n:<аукцион>`, `v1:ac:<a|c>:<аукцион>:<номер>` и
-// `v1:ac:k:<аукцион>:<номер>:<ключ>`.
+// `v1:ac:k:<аукцион>:<номер>:<ключ>:<названное>`.
 function parseConsole(parts: readonly string[]): CallbackAction {
   const auction = TokenSchema.safeParse(parts[3]);
   if (!auction.success) return { kind: "malformed" };
@@ -1029,12 +1050,17 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     case "k": {
       const position = PositionSchema.safeParse(parts[4]);
       const op = TokenSchema.safeParse(parts[5]);
-      return parts.length === 6 && position.success && op.success
+      const quote = QuoteSchema.safeParse(parts[6]);
+      return parts.length === 7 &&
+        position.success &&
+        op.success &&
+        quote.success
         ? {
             kind: "console-close-confirm",
             auction: auction.data,
             position: position.data,
             op: op.data,
+            quote: quote.data,
           }
         : { kind: "malformed" };
     }

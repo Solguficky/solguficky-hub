@@ -7,6 +7,7 @@ import type {
   CloseLotResult,
   ConsoleReadResult,
   DiscardAuctionResult,
+  DisplayNamesResult,
   FinalBidsResult,
   FinalistResult,
   FinalLotCommand,
@@ -59,6 +60,7 @@ function fake(answers: {
   ask?: AdvanceAskResult;
   close?: CloseLotResult;
   bids?: FinalBidsResult;
+  names?: DisplayNamesResult;
 }) {
   const scheduled: AuctionWeekConfig[] = [];
   const asks: Money[] = [];
@@ -92,6 +94,7 @@ function fake(answers: {
       return answers.close ?? { kind: "ok", closure: { kind: "unsold" } };
     },
     recentBids: async () => answers.bids ?? { kind: "ok", bids: [], names: {} },
+    displayNames: async () => answers.names ?? { kind: "ok", names: {} },
   };
   return {
     run: createAuctionConsole(port, zone, () => now),
@@ -466,6 +469,9 @@ describe("auction discard", () => {
 describe("final of the auctioneer", () => {
   const call = { identity: admin, auctionId };
   const second = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3e";
+  const freshOpId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34bb";
+  const sale = { kind: "sale" as const, minorUnits: 100_000 };
+  const noSale = { kind: "no-sale" as const };
   const leaderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ee";
   const rub = (rubles: number): Money => ({
     minorUnits: rubles * 100,
@@ -708,7 +714,7 @@ describe("final of the auctioneer", () => {
         kind: "ok",
         closure: { kind: "sold", winnerId: leaderId, price: rub(1_000) },
       },
-      bids: { kind: "ok", bids: [], names: { [leaderId]: "Бэтмен" } },
+      names: { kind: "ok", names: { [leaderId]: "Бэтмен" } },
     });
 
     const result = await run({
@@ -716,6 +722,8 @@ describe("final of the auctioneer", () => {
       intent: "close-final-lot",
       position: 0,
       opId,
+      quote: sale,
+      freshOpId,
     });
 
     expect(closes).toEqual([{ auctionId, lotId, opId }]);
@@ -733,10 +741,18 @@ describe("final of the auctioneer", () => {
         kind: "ok",
         closure: { kind: "sold", winnerId: leaderId, price: rub(1_000) },
       },
+      names: { kind: "unavailable", cause: new Error("names down") },
     });
 
     await expect(
-      run({ ...call, intent: "close-final-lot", position: 0, opId }),
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: sale,
+        freshOpId,
+      }),
     ).resolves.toEqual({
       kind: "final-lot-closed",
       auctionId,
@@ -749,7 +765,14 @@ describe("final of the auctioneer", () => {
     const { run } = running(final([live(), held], lotId));
 
     await expect(
-      run({ ...call, intent: "close-final-lot", position: 0, opId }),
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
     ).resolves.toEqual({
       kind: "final-lot-closed",
       auctionId,
@@ -764,15 +787,130 @@ describe("final of the auctioneer", () => {
     });
 
     await expect(
-      run({ ...call, intent: "close-final-lot", position: 0, opId }),
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
     ).resolves.toMatchObject({ note: "final-lot-closed" });
+  });
+
+  it("trades the active lot while the lagging read still holds it", async () => {
+    const opened = entry(second, {
+      kind: "trading",
+      currentPrice: rub(700),
+      phase: "live",
+    });
+    const accepted = running(final([live(), held]), {
+      nextLot: { kind: "ok", lotId: second },
+    });
+    const lagging = running(final([live(), held], second));
+
+    await expect(
+      accepted.run({ ...call, intent: "start-final-lot", opId }),
+    ).resolves.toMatchObject({
+      console: { lineup: { activeLotId: second }, lots: [live(), opened] },
+    });
+    await expect(
+      lagging.run({
+        ...call,
+        intent: "prepare-final-close",
+        position: 1,
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "final-close-confirm",
+      auctionId,
+      position: 1,
+      opId,
+      title: "Ваза",
+    });
+  });
+
+  it("keeps the console and its commands when the latest bids cannot be read", async () => {
+    const { run } = running(final([live(leaderId), held], lotId), {
+      bids: { kind: "unavailable", cause: new Error("history down") },
+    });
+
+    const result = await run({ ...call, intent: "view-auction-console" });
+
+    expect(result).toMatchObject({ kind: "auction-console" });
+    expect(result).not.toHaveProperty("console.trading");
+    await expect(
+      run({ ...call, intent: "prepare-final-close", position: 0, opId }),
+    ).resolves.toMatchObject({
+      kind: "final-close-confirm",
+      price: rub(1_000),
+    });
+  });
+
+  it("confirms again instead of selling when a bid came after the confirmation", async () => {
+    const { run, closes } = running(final([live(leaderId), held], lotId), {
+      names: { kind: "ok", names: { [leaderId]: "Бэтмен" } },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
+    ).resolves.toEqual({
+      kind: "final-close-confirm",
+      auctionId,
+      position: 0,
+      opId: freshOpId,
+      title: "Картина",
+      price: rub(1_000),
+      changed: true,
+    });
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: { kind: "sale", minorUnits: 90_000 },
+        freshOpId,
+      }),
+    ).resolves.toMatchObject({ kind: "final-close-confirm", changed: true });
+    expect(closes).toEqual([]);
+  });
+
+  it("names a finished final for a repeated sale of the last lot", async () => {
+    const { run, closes } = running(view("finished", { lots: [held] }));
+
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
+    ).resolves.toMatchObject({ note: "final-finished" });
+    expect(closes).toEqual([]);
   });
 
   it("names a position outside the lineup as a lot not in the auction", async () => {
     const { run, closes } = running(final([live(), held], lotId));
 
     await expect(
-      run({ ...call, intent: "close-final-lot", position: 5, opId }),
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 5,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
     ).resolves.toMatchObject({ note: "lot-not-in-auction" });
     expect(closes).toEqual([]);
   });
@@ -805,7 +943,14 @@ describe("final of the auctioneer", () => {
       }),
     ).resolves.toEqual(refused);
     await expect(
-      run({ ...call, intent: "close-final-lot", position: 0, opId }),
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
     ).resolves.toEqual(refused);
   });
 });

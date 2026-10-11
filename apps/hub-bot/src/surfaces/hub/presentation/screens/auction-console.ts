@@ -99,6 +99,7 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "final-lot-closed": "Торги по лоту уже закрыты.",
   "deadline-not-reached":
     "Лот торгуется онлайн до своего дедлайна. Закрыть его раньше нельзя.",
+  "final-finished": "Финал завершён. Все лоты закрыты, итоги — в пульте.",
 };
 
 /** Всплывающий текст принятого переключателя финала (кадр P-08). */
@@ -579,6 +580,7 @@ export function closeConfirmScreen(confirm: {
   title?: string | undefined;
   price?: LotAmount | undefined;
   leaderName?: string | undefined;
+  changed?: true | undefined;
 }): ShownScreen {
   const auction = uuidToToken(confirm.auctionId);
   const title = truncate(confirm.title ?? untitled, titleLimit);
@@ -590,6 +592,11 @@ export function closeConfirmScreen(confirm: {
     id: "final-close-confirm",
     text: screenText(
       `Закрыть лот «${escapeHtml(title)}»?`,
+      confirm.changed === true
+        ? escapeHtml(
+            "Лот изменился, пока было открыто подтверждение. Проверь заново.",
+          )
+        : undefined,
       escapeHtml(
         confirm.price === undefined
           ? "Ставок нет: лот закроется без продажи."
@@ -603,6 +610,9 @@ export function closeConfirmScreen(confirm: {
         auction,
         confirm.position,
         uuidToToken(confirm.opId),
+        confirm.price === undefined
+          ? { kind: "no-sale" }
+          : { kind: "sale", minorUnits: confirm.price.minorUnits },
       ),
       noData: consoleViewData(auction),
       irreversible: true,

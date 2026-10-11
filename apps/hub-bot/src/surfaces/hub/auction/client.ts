@@ -411,21 +411,38 @@ export function createAuctionAdapter(
         return auctionMissing(cause) ?? toFailure(cause);
       }
     },
+    async displayNames(person, read, meta) {
+      try {
+        const response = await rpc.getDisplayNames(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: read.auctionId,
+            participantIds: [...read.participantIds],
+          },
+          options(meta),
+        );
+        return {
+          kind: "ok",
+          names: Object.fromEntries(
+            Object.entries(response.names).map(([id, name]) => [id, name.text]),
+          ),
+        };
+      } catch (cause) {
+        onNamesRefused?.(cause, meta);
+        return toFailure(cause);
+      }
+    },
     // Хронология идёт по возрастанию, поэтому последние ставки — хвост
     // последней страницы. Страниц не больше `historyPageLimit`: пульт
-    // ведущего ждать конца длинной недели не вправе, и хвост тогда — хвост
-    // прочитанного. Отказ имён пульт не роняет: ставки остаются без имён.
+    // ведущего ждать конца длинной хронологии не вправе, и недочитанная
+    // ставок не даёт вовсе. Отказ имён пульт не роняет: ставки остаются без
+    // имён.
     async recentBids(person, read, meta) {
       const viewer = wireViewer(viewerOf(person));
       let bids: { amount: Money; participantId: string }[] = [];
       try {
         let pageToken = "";
-        // Без ставок — только имена: хронологию читать незачем.
-        for (
-          let page = 0;
-          read.limit > 0 && page < historyPageLimit;
-          page += 1
-        ) {
+        for (let page = 0; page < historyPageLimit; page += 1) {
           const history = historyPageOf(
             await rpc.listLotHistory(
               { viewer, lotId: read.lotId, pageToken },
@@ -442,6 +459,9 @@ export function createAuctionAdapter(
           pageToken = history.nextPageToken;
           if (pageToken === "") break;
         }
+        // Хвост не дочитан: прочитанное — не последние ставки, и выдавать
+        // его за последние нельзя.
+        if (pageToken !== "") bids = [];
       } catch (cause) {
         return toFailure(cause);
       }

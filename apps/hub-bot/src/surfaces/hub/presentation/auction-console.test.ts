@@ -326,6 +326,9 @@ function fakeAuction(
         names: options.names ?? {},
       };
     },
+    async displayNames() {
+      return { kind: "ok" as const, names: options.names ?? {} };
+    },
     screenPorts() {
       return {
         auction: {
@@ -1463,6 +1466,37 @@ describe("final of the auctioneer", () => {
     expect(spaced(last(calls).text ?? "")).toBe(sold);
   });
 
+  it("confirms the sale again instead of closing when the hall bid after the confirmation", async () => {
+    const auction = frozen();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:g:${auctionToken}`));
+    await bot.handleUpdate(press(`v1:ac:n:${auctionToken}`));
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Продать")));
+    const yes = dataOf(last(calls), "✔️ Да, продать");
+
+    // Зал перебил, пока подтверждение было открыто.
+    auction.state.lots = auction.state.lots.map((each) =>
+      each.lot.lotId === vaseId && each.lot.status.kind === "trading"
+        ? {
+            ...each,
+            lot: {
+              ...each.lot,
+              status: { ...each.lot.status, currentPrice: rub(130_000) },
+            },
+          }
+        : each,
+    );
+    await bot.handleUpdate(press(yes));
+
+    expect(auction.sent("closeLot")).toEqual([]);
+    expect(plain(last(calls))).toContain(
+      "Лот изменился, пока было открыто подтверждение. Проверь заново.\n\nПродажа за 1 300 ₽, покупатель — Бэтмен.",
+    );
+    expect(dataOf(last(calls), "✔️ Да, продать")).not.toBe(yes);
+  });
+
   it("closes a lot without bids without a sale", async () => {
     const auction = fakeAuction({
       status: "final",
@@ -1511,7 +1545,7 @@ describe("final of the auctioneer", () => {
       `v1:ac:n:${auctionToken}`,
       `v1:ac:a:${auctionToken}:0`,
       `v1:ac:c:${auctionToken}:0`,
-      `v1:ac:k:${auctionToken}:0:${auctionToken}`,
+      `v1:ac:k:${auctionToken}:0:${auctionToken}:x`,
     ]) {
       await bot.handleUpdate(press(data));
       expect(last(calls).text).toContain("Это действие тебе недоступно.");

@@ -920,6 +920,28 @@ describe("auction adapter in the final", () => {
     ).resolves.toEqual({ kind: "lot-not-open" });
   });
 
+  it("reads display names and reports a refusal of the names", async () => {
+    const refused = vi.fn();
+    const named = adapter({
+      getDisplayNames: async () => ({ names: { a: { text: "Аня" } } }),
+    });
+    const failing = createAuctionAdapter(
+      {
+        getDisplayNames: () =>
+          Promise.reject(new ConnectError("no", Code.Unavailable)),
+      } as never,
+      { onNamesRefused: refused },
+    );
+
+    await expect(
+      named.displayNames(admin, { auctionId, participantIds: ["a"] }),
+    ).resolves.toEqual({ kind: "ok", names: { a: "Аня" } });
+    await expect(
+      failing.displayNames(admin, { auctionId, participantIds: ["a"] }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    expect(refused).toHaveBeenCalledOnce();
+  });
+
   it("reads the latest bids across the pages, newest first, with their names", async () => {
     const bid = (rubles: number, participantId: string) => ({
       sequence: BigInt(rubles),

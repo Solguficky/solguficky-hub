@@ -408,7 +408,8 @@ export type ConsoleNote =
   | "another-lot-active"
   | "lineup-exhausted"
   | "final-lot-closed"
-  | "deadline-not-reached";
+  | "deadline-not-reached"
+  | "final-finished";
 
 // Почему вопрос о сроках недели задан заново.
 export type WeekAskError =
@@ -478,11 +479,21 @@ export type AuctionConsoleRequest =
       position: number;
       opId: string;
     })
+  // `quote` — что назвало подтверждение: продажа по цене в минорных единицах
+  // либо закрытие без продажи. `freshOpId` — ключ нового подтверждения, если
+  // лот с тех пор изменился.
   | (AuctionConsoleCall & {
       intent: "close-final-lot";
       position: number;
       opId: string;
+      quote: CloseQuote;
+      freshOpId: string;
     });
+
+// Что подтверждение закрытия назвало человеку (PER-337).
+export type CloseQuote =
+  | { kind: "sale"; minorUnits: number }
+  | { kind: "no-sale" };
 
 // Кому уходит рассылка, решает повод, а не автор: подписчикам одной сходки или
 // кругу сообщества, который разворачивает Notifications. Списка получателей
@@ -696,6 +707,9 @@ export type ExecuteResult =
       title?: string;
       price?: LotAmount;
       leaderName?: string;
+      // Подтверждение задано заново: цена или лидер изменились после
+      // прежнего, и закрывать по нему бот не стал.
+      changed?: true;
     }
   // Отказ пульту целиком: не администратор сходки либо аукциона нет.
   | {

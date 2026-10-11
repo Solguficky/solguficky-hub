@@ -11,10 +11,12 @@ import { parseRubles } from "./lot-form.js";
 import type {
   AuctionConsoleRequest,
   AuctionConsoleView,
+  CloseQuote,
   ConsoleAuctionStatus,
   ConsoleLot,
   ConsoleNote,
   ExecuteResult,
+  LotAmount,
   WeekAskError,
 } from "./types.js";
 
@@ -97,6 +99,48 @@ export function activeLot(console: AuctionConsoleView): ConsoleLot | undefined {
   return active === undefined
     ? undefined
     : console.lots.find((each) => each.lot.lotId === active);
+}
+
+/**
+ * Активный лот финала торгуется, даже если чтение ещё держит его удержанным:
+ * статус аукциона Auction читает у самого аукциона, а лоты — из отстающей read
+ * model. Без этого только что открытый лот показал бы «Открыть следующий лот».
+ */
+function liveActive(console: AuctionConsoleView): AuctionConsoleView {
+  const active = console.lineup?.activeLotId;
+  if (active === undefined) return console;
+  return {
+    ...console,
+    lots: console.lots.map((each) => {
+      const status = each.lot.status;
+      if (each.lot.lotId !== active || status.kind !== "held") return each;
+      return {
+        ...each,
+        lot: {
+          ...each.lot,
+          status: {
+            kind: "trading",
+            currentPrice: status.currentPrice,
+            ...(status.leaderId === undefined
+              ? {}
+              : { leaderId: status.leaderId }),
+            phase: "live",
+          },
+        },
+      };
+    }),
+  };
+}
+
+/** Названное подтверждением совпадает с лотом сейчас. */
+function quoted(
+  quote: CloseQuote,
+  status: { currentPrice: LotAmount; leaderId?: string },
+): boolean {
+  return status.leaderId === undefined
+    ? quote.kind === "no-sale"
+    : quote.kind === "sale" &&
+        quote.minorUnits === status.currentPrice.minorUnits;
 }
 
 function titled(entry: ConsoleLot): { title?: string } {
@@ -227,7 +271,7 @@ export function createAuctionConsole(
           : { priceGrowth: statistic.priceGrowth }),
       });
     }
-    const console: AuctionConsoleView = { ...found.console, lots };
+    const console = liveActive({ ...found.console, lots });
     const active = activeLot(console);
     if (active === undefined) return { kind: "ok", console };
     const leaderId =
@@ -244,7 +288,9 @@ export function createAuctionConsole(
       },
       rpcMeta(request),
     );
-    if (bids.kind !== "ok") return { kind: "refused", result: failed(bids) };
+    // Ставки — подсказка ведущему, а не условие команды: без них пульт
+    // показывает цену и лидера без имени, и «Продать» остаётся доступным.
+    if (bids.kind !== "ok") return { kind: "ok", console };
     const leaderName =
       leaderId === undefined ? undefined : bids.names[leaderId];
     return {
@@ -595,16 +641,20 @@ export function createAuctionConsole(
     const { console } = current;
     const lotId = console.lineup?.order[request.position];
     const entry = console.lots.find((each) => each.lot.lotId === lotId);
-    return entry === undefined
-      ? {
-          kind: "refused",
-          result: {
-            kind: "auction-console",
-            console,
-            note: "lot-not-in-auction",
-          },
-        }
-      : { kind: "ok", console, entry };
+    if (entry !== undefined) return { kind: "ok", console, entry };
+    // Закрытие последнего лота завершает аукцион, а `Finished` состава не
+    // несёт: повтор «Да» после потерянного ответа узнаёт итог по пульту.
+    return {
+      kind: "refused",
+      result: {
+        kind: "auction-console",
+        console,
+        note:
+          console.status === "finished"
+            ? "final-finished"
+            : "lot-not-in-auction",
+      },
+    };
   }
 
   // Начать финал. Повтор — тот же ответ: финал уже идёт, и пульт его
@@ -663,10 +713,10 @@ export function createAuctionConsole(
         return after(request, undefined, (console) =>
           console.lineup === undefined
             ? console
-            : {
+            : liveActive({
                 ...console,
                 lineup: { ...console.lineup, activeLotId: started.lotId },
-              },
+              }),
         );
       case "not-in-final":
         return after(request, "not-in-final");
@@ -747,6 +797,10 @@ export function createAuctionConsole(
       rpcMeta(request),
     );
     switch (advanced.kind) {
+      // Ответ ask пуст, а чтение отстаёт: пульт показывает объявленную цену
+      // следующей. Прокси, которому она по карману, берёт её той же
+      // транзакцией (RFC-011, О-6.B) — новую цену и лидера покажет
+      // «Обновить», когда чтение догонит.
       case "ok":
         return after(request, undefined, (each) => ({
           ...each,
@@ -827,14 +881,9 @@ export function createAuctionConsole(
     if (closed.kind === "unsold") {
       return { ...outcome, closure: { kind: "unsold" } };
     }
-    const names = await consoles.recentBids(
+    const names = await consoles.displayNames(
       request.identity,
-      {
-        auctionId: request.auctionId,
-        lotId: entry.lot.lotId,
-        limit: 0,
-        extraIds: [closed.winnerId],
-      },
+      { auctionId: request.auctionId, participantIds: [closed.winnerId] },
       rpcMeta(request),
     );
     const buyerName =
@@ -858,6 +907,22 @@ export function createAuctionConsole(
     const found = await positioned(request);
     if (found.kind === "refused") return found.result;
     const lotId = found.entry.lot.lotId;
+    // `CloseLot` ожидаемой цены не несёт: продаёт лидеру по цене на момент
+    // решения. Ставка зала после подтверждения сменила бы покупателя или цену
+    // молча, поэтому бот сверяет названное со свежим чтением и при
+    // расхождении подтверждает заново. Окно между чтением и командой
+    // остаётся: закрыть его может только поле контракта.
+    const status = found.entry.lot.status;
+    if (status.kind === "trading" && !quoted(request.quote, status)) {
+      const fresh = await prepareClose({
+        ...request,
+        intent: "prepare-final-close",
+        opId: request.freshOpId,
+      });
+      return fresh.kind === "final-close-confirm"
+        ? { ...fresh, changed: true }
+        : fresh;
+    }
     const closed = await consoles.closeLot(
       request.identity,
       { auctionId: request.auctionId, lotId, opId: request.opId },

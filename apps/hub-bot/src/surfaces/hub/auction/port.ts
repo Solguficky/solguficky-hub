@@ -280,6 +280,10 @@ export type FinalLotCommand = {
   opId: string;
 };
 
+export type DisplayNamesResult =
+  | { kind: "ok"; names: Readonly<Record<string, string>> }
+  | AuctionFailure;
+
 // Последние ставки лота, новые первыми, и имена их авторов и лидера, как их
 // ставит Auction (ADR-059). Имени нет — Auction его не назвал.
 export type FinalBidsResult =
@@ -350,6 +354,12 @@ export type AuctionConsoles = {
     close: FinalLotCommand,
     meta?: RpcMetadata,
   ): Promise<CloseLotResult>;
+  // Имена участников в аукционе, как их ставит Auction (ADR-059).
+  displayNames(
+    person: Person,
+    read: { auctionId: string; participantIds: readonly string[] },
+    meta?: RpcMetadata,
+  ): Promise<DisplayNamesResult>;
   // `limit` последних ставок лота и имена их авторов и `extraIds` — лидера.
   recentBids(
     person: Person,

@@ -5646,6 +5646,9 @@ async function handleConsoleCallback(
           intent: "close-final-lot",
           position: action.position,
           opId: tokenToUuid(action.op),
+          quote: action.quote,
+          // Ключ нового подтверждения, если лот изменился после прежнего.
+          freshOpId: createUuidV7(),
         }),
       );
     default: {
@@ -5763,7 +5766,7 @@ async function renderConsoleResult(
       return handled(
         result.error === undefined
           ? "final ask requested"
-          : `final ask asked again: ${result.error}`,
+          : "final ask asked again",
       );
     case "final-close-confirm":
       await showScreen(ctx, closeConfirmScreen(result));

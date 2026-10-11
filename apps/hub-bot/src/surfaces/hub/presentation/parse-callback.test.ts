@@ -1094,8 +1094,27 @@ describe("auction console callbacks", () => {
         { kind: "console-close", auction, position: 99 },
       ],
       [
-        consoleCloseConfirmData(auction, 99, op),
-        { kind: "console-close-confirm", auction, position: 99, op },
+        consoleCloseConfirmData(auction, 999, op, {
+          kind: "sale",
+          minorUnits: 999_999_900,
+        }),
+        {
+          kind: "console-close-confirm",
+          auction,
+          position: 999,
+          op,
+          quote: { kind: "sale", minorUnits: 999_999_900 },
+        },
+      ],
+      [
+        consoleCloseConfirmData(auction, 0, op, { kind: "no-sale" }),
+        {
+          kind: "console-close-confirm",
+          auction,
+          position: 0,
+          op,
+          quote: { kind: "no-sale" },
+        },
       ],
       [
         consoleMarkData({
@@ -1162,11 +1181,14 @@ describe("auction console callbacks", () => {
       `v1:ac:g:${auction}:1`,
       `v1:ac:n:${auction}:1`,
       `v1:ac:a:${auction}`,
-      `v1:ac:a:${auction}:100`,
+      `v1:ac:a:${auction}:1000`,
       `v1:ac:a:${auction}:01`,
       `v1:ac:c:${auction}:-1`,
       `v1:ac:k:${auction}:0`,
       `v1:ac:k:${auction}:0:short`,
+      `v1:ac:k:${auction}:0:${op}`,
+      `v1:ac:k:${auction}:0:${op}:X`,
+      `v1:ac:k:${auction}:0:${op}:0abc`,
       `v1:ac:k:${auction}:x:${op}`,
     ]) {
       expect(parseCallback(data)).toEqual({ kind: "malformed" });
