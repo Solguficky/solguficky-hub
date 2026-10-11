@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory
 
 import java.sql.Connection
 import java.sql.DriverManager
+import java.sql.SQLException
 import java.util.UUID
 import scala.concurrent.duration.FiniteDuration
 import scala.jdk.CollectionConverters.*
@@ -94,6 +95,10 @@ final class PgChangeListener(
     while (running) {
       // Драйвер отвечает `null`, когда за время ожидания сигналов не было.
       val notifications: Array[PGNotification] = pg.getNotifications(wait.toMillis.toInt)
+      // Тихо оборванное соединение (полуоткрытый TCP) драйвер не замечает и продолжает отвечать «сигналов нет».
+      // Пустое ожидание поэтому кончается проверкой соединения запросом к базе: мёртвое уходит на переподключение.
+      if (notifications == null && !connection.isValid(wait.toSeconds.toInt.max(1)))
+        throw new SQLException("auction change listener connection is not valid")
       Option(notifications).toList.flatten.foreach { notification =>
         Try(UUID.fromString(notification.getParameter)).toOption match {
           case Some(auctionId) => registry.changed(auctionId)

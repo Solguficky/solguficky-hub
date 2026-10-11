@@ -8,6 +8,7 @@ import auction.catalog.LotCatalogStore
 import auction.catalog.LotId
 import auction.catalog.LotTitle
 import auction.catalog.NewCard
+import auction.watch.AuctionChanges
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.persistence.jdbc.db.SlickExtension
 import slick.jdbc.JdbcBackend.Database
@@ -38,6 +39,15 @@ final class SlickLotCatalogStore(database: Database)(using ExecutionContext) ext
       .headOption
       .map(_.map((title, description, version) => card(lotId, title, description, version)))
 
+  /**
+   * Карточка входит в снимки потока `WatchAuction`, а проекции read model её не пишут: аукцион лота, которого read
+   * model уже знает, объявляется сигналом той же транзакции, что запись карточки. Лот без строки `lot_view` в поток ещё
+   * не попал, и объявлять нечего.
+   */
+  private def announce(lotId: LotId): DBIO[Unit] =
+    sql"""SELECT pg_notify(${AuctionChanges.Channel}, auction_id::text) FROM lot_view
+          WHERE lot_id = ${lotId.value.toString}::uuid""".as[String].map(_ => ())
+
   def insertIfAbsent(created: NewCard): Future[Option[LotCard]] = {
     val image = created.image
     database.run(
@@ -47,7 +57,7 @@ final class SlickLotCatalogStore(database: Database)(using ExecutionContext) ext
           _.mediaType.value
         )}, ${image.map(_.version.value)})
              ON CONFLICT (lot_id) DO NOTHING""".flatMap {
-        case 1 => DBIO.successful(None)
+        case 1 => announce(created.lotId).map(_ => None)
         // Конфликт вставки значит, что строка есть. Если её уже нет, ответ «вставлено» соврал бы: ничего не записано.
         case _ =>
           select(created.lotId).flatMap {
@@ -81,7 +91,13 @@ final class SlickLotCatalogStore(database: Database)(using ExecutionContext) ext
               WHERE lot_id = $lotId::uuid RETURNING image_version"""
     }
     database
-      .run(updated.as[Option[String]].headOption)
+      .run(
+        updated
+          .as[Option[String]]
+          .headOption
+          .flatMap(version => announce(edit.lotId).map(_ => version))
+          .transactionally
+      )
       .map(_.map(version => LotCard(edit.lotId, edit.title, edit.description, version.map(ImageVersion(_)))))
   }
 

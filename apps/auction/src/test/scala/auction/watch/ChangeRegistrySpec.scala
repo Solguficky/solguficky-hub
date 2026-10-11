@@ -47,14 +47,14 @@ final class ChangeRegistrySpec
 
   "a change registry" should {
 
-    "give a subscriber a reason to read at once, before any change" in {
+    "gives a subscriber a reason to read at once, before any change" in {
       val registry = ChangeRegistry()
       val queue = subscribe(registry, auction)
       queue.pull().futureValue shouldBe Some(())
       queue.cancel()
     }
 
-    "wake only the subscribers of the changed auction" in {
+    "wakes only the subscribers of the changed auction" in {
       val registry = ChangeRegistry()
       val watching = subscribe(registry, auction)
       val elsewhere = subscribe(registry, other)
@@ -70,7 +70,7 @@ final class ChangeRegistrySpec
       elsewhere.cancel()
     }
 
-    "merge changes a subscriber has not taken yet instead of queueing one reason per change" in {
+    "merges changes a subscriber has not taken yet instead of queueing one reason per change" in {
       val registry = ChangeRegistry()
       val queue = subscribe(registry, auction)
       queue.pull().futureValue shouldBe Some(())
@@ -82,7 +82,7 @@ final class ChangeRegistrySpec
       queue.cancel()
     }
 
-    "wake every subscriber when the listener may have missed signals" in {
+    "wakes every subscriber when the listener may have missed signals" in {
       val registry = ChangeRegistry()
       val first = subscribe(registry, auction)
       val second = subscribe(registry, other)
@@ -97,7 +97,7 @@ final class ChangeRegistrySpec
       second.cancel()
     }
 
-    "forget a subscriber that cancelled" in {
+    "forgets a subscriber that cancelled" in {
       val registry = ChangeRegistry()
       val queue = subscribe(registry, auction)
       queue.pull().futureValue shouldBe Some(())
@@ -107,6 +107,19 @@ final class ChangeRegistrySpec
 
       eventually(registry.subscriptions(auction) shouldBe 0)
       registry.changed(auction)
+    }
+
+    "completes every subscription when the node stops" in {
+      val registry = ChangeRegistry()
+      val first = subscribe(registry, auction)
+      val second = subscribe(registry, other)
+      first.pull().futureValue shouldBe Some(())
+      second.pull().futureValue shouldBe Some(())
+
+      registry.close()
+
+      first.pull().futureValue shouldBe None
+      second.pull().futureValue shouldBe None
     }
   }
 }

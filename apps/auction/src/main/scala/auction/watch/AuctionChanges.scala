@@ -59,7 +59,16 @@ final class ChangeRegistry extends AuctionChanges {
     Source
       .queue[Unit](1)
       .mapMaterializedValue { queue =>
-        subscribers.computeIfAbsent(auctionId, _ => ConcurrentHashMap.newKeySet()).add(queue)
+        // Добавление — внутри `compute`, атомарно с отпиской последнего подписчика: иначе очередь могла бы попасть в
+        // множество, которое `remove` уже снял с ключа, и больше не получить ни одного повода.
+        subscribers.compute(
+          auctionId,
+          (_, queues) => {
+            val alive = Option(queues).getOrElse(ConcurrentHashMap.newKeySet[BoundedSourceQueue[Unit]]())
+            alive.add(queue)
+            alive
+          }
+        )
         queue.offer(())
         queue
       }
@@ -73,6 +82,13 @@ final class ChangeRegistry extends AuctionChanges {
 
   def everything(): Unit =
     subscribers.forEach((_, queues) => queues.forEach(_.offer(())))
+
+  /**
+   * Завершает все подписки: узел останавливается, и поводов больше не будет. Поток подписчика заканчивается штатно, и
+   * клиент переподключается к живому узлу, а не висит на останавливающемся.
+   */
+  def close(): Unit =
+    subscribers.forEach((_, queues) => queues.forEach(_.complete()))
 
   /** Число подписок аукциона — для тестов: отписка обязана убирать очередь. */
   def subscriptions(auctionId: UUID): Int = Option(subscribers.get(auctionId)).fold(0)(_.size)

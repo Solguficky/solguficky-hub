@@ -496,7 +496,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   "the auction stream at the grpc boundary" should {
 
-    "refuse a malformed request and a viewer without the right to bid before the read model" in {
+    "refuses a malformed request and a viewer without the right to bid before the read model" in {
       val hubOnly = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_ACCESS_HUB))
       statusOfNext(watching(service(Unreachable).watchAuction(watch.withAuctionId("auction")))) shouldBe
         Status.Code.INVALID_ARGUMENT
@@ -506,12 +506,12 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         Status.Code.PERMISSION_DENIED
     }
 
-    "answer an auction the read model does not know with not found" in {
+    "answers an auction the read model does not know with not found" in {
       val unknown = service(Unreachable, watchViews = _ => Future.successful(None))
       statusOfNext(watching(unknown.watchAuction(watch))) shouldBe Status.Code.NOT_FOUND
     }
 
-    "send the state at subscription and then only the states that changed" in {
+    "sends the state at subscription and then only the states that changed" in {
       val registry = ChangeRegistry()
       @volatile var current: Option[AuctionWatchView] = Some(AuctionWatchView(watchedIn(AuctionState.Draft), Nil))
       val stream = watching(
@@ -524,14 +524,24 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       current = Some(AuctionWatchView(watchedIn(AuctionState.Scheduled(AuctionFixtures.config())), Nil))
       registry.changed(watchedAuction)
       stream.pull().futureValue.map(_.getAuction.status.isScheduled) shouldBe Some(true)
+      stream.cancel()
+    }
 
-      // Аукцион, удалённый посреди потока, заканчивает поток тем же статусом, что неизвестный.
+    "ends the stream with not found when the auction is discarded mid-stream" in {
+      val registry = ChangeRegistry()
+      @volatile var current: Option[AuctionWatchView] = Some(AuctionWatchView(watchedIn(AuctionState.Draft), Nil))
+      val stream = watching(
+        service(Unreachable, watchViews = _ => Future.successful(current), changes = registry).watchAuction(watch)
+      )
+      stream.pull().futureValue.map(_.getAuction.status.isDraft) shouldBe Some(true)
+
       current = None
       registry.changed(watchedAuction)
+
       statusOfNext(stream) shouldBe Status.Code.NOT_FOUND
     }
 
-    "close the stream after the message with the finished auction" in {
+    "closes the stream after the message with the finished auction" in {
       val finished =
         AuctionWatchView(watchedIn(AuctionState.Finished(AuctionFixtures.config(), LotFixtures.op(9))), Nil)
       val stream =
@@ -540,7 +550,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       stream.pull().futureValue shouldBe None
     }
 
-    "carry the lineup in its order and the active lot without anyone's proxy limit" in {
+    "carries the lineup in its order and the active lot without anyone's proxy limit" in {
       val first = LotId(UUID.fromString("01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e01"))
       val second = LotId(UUID.fromString("01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e02"))
       val watcher = ParticipantId(UUID.fromString(identity))

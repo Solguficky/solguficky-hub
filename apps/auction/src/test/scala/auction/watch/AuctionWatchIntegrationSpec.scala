@@ -3,7 +3,11 @@ package auction.watch
 import auction.AuctionNode
 import auction.aggregate.*
 import auction.aggregate.AuctionFixtures.configInput
+import auction.catalog.CardEdit
+import auction.catalog.ImageChange
 import auction.catalog.LotId
+import auction.catalog.LotTitle
+import auction.catalog.NewCard
 import auction.entity.Initiator
 import auction.entity.LotEntity
 import auction.entity.LotGateway
@@ -25,6 +29,7 @@ import auction.lot.PlaceBid
 import auction.lot.ScheduleLotRejected
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
+import auction.persistence.SlickLotCatalogStore
 import auction.telemetry.ProjectionMetrics
 import auction.testkit.PostgresFixture
 import auction.v1.auction_service as wire
@@ -123,86 +128,79 @@ final class AuctionWatchIntegrationSpec
 
   "the change listener" should {
 
-    "pass on a committed signal, drop a rolled back one and make everyone reread after a lost connection" in {
-      val database = freshDatabase()
-      JournalSchema.migrate(database)
-      val kit = ActorTestKit(s"auction-listener-${UUID.randomUUID()}", nodeConfig(database))
-      given ActorSystem[?] = kit.system
-      val registry = ChangeRegistry()
-      val listener = PgChangeListener(database, registry, 200.millis, 200.millis).start()
+    "passes on a committed signal and drops a rolled back one" in onListener { (database, queue) =>
+      val auction = queue.auction
+      signal(database, auction, commit = false)
+      queue.next(1.second) shouldBe None
+
+      signal(database, auction, commit = true)
+      queue.next(2.seconds) shouldBe Some(())
+    }
+
+    "passes on the auction of a lot whose card was edited" in onListener { (database, queue) =>
+      val lot = LotId(newId())
+      withConnection(database) { connection =>
+        Using.resource(
+          connection.prepareStatement(
+            "INSERT INTO lot_view (lot_id, auction_id, version, state) VALUES (?, ?, 1, '{}'::jsonb)"
+          )
+        ) { statement =>
+          statement.setObject(1, lot.value)
+          statement.setObject(2, queue.auction)
+          statement.executeUpdate()
+        }
+      }
+      val kit = ActorTestKit(s"auction-catalog-${UUID.randomUUID()}", nodeConfig(database))
       try {
-        val auction = newId()
-        val queue = Reader(registry.subscribe(auction).runWith(Sink.queue[Unit]()))
-        queue.next(5.seconds) shouldBe Some(())
-        // Подключение слушателя само даёт повод всем: дождаться его, чтобы дальше считать только сигналы теста.
-        eventually(listening(database) shouldBe true)
-        queue.next(500.millis)
-
-        signal(database, auction, commit = false)
-        queue.next(1.second) shouldBe None
-
-        signal(database, auction, commit = true)
+        val store = SlickLotCatalogStore(kit.system)
+        val title = LotTitle("Солегуф").fold(refusal => fail(s"title refused: $refusal"), valid => valid)
+        store.insertIfAbsent(NewCard(lot, title, "описание", None)).futureValue shouldBe None
         queue.next(2.seconds) shouldBe Some(())
 
-        terminateListener(database)
-        queue.next(10.seconds) shouldBe Some(())
-        queue.cancel()
-      } finally {
-        listener.close()
-        kit.shutdownTestKit()
-      }
+        store.update(CardEdit(lot, title, "новое описание", ImageChange.Keep)).futureValue should not be empty
+        queue.next(2.seconds) shouldBe Some(())
+      } finally kit.shutdownTestKit()
+    }
+
+    "makes every subscriber reread after its connection is lost" in onListener { (database, queue) =>
+      terminateListener(database)
+      queue.next(10.seconds) shouldBe Some(())
     }
   }
 
   "the auction stream" should {
 
-    "show a bid on the active lot of the final within a second and give a reconnecting watcher the same state" in {
+    "shows a bid on the active lot of the final within a second while another watcher reads nothing" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
       withNode(database) { node =>
-        val (auction, finalist) = liveFinal(node)
-        val request = wire.WatchAuctionRequest(Some(watcher), auction.value.toString)
-
-        val first = node.watch(request)
-        val inFinal = eventually {
-          val message = first.pull().futureValue.getOrElse(fail("the stream ended"))
-          message.activeLot.map(_.id) shouldBe Some(finalist.value.toString)
-          message
-        }
-        inFinal.getAuction.status.isInFinal shouldBe true
-        inFinal.lineup.map(_.id) shouldBe Seq(finalist.value.toString)
-        val price = inFinal.getActiveLot.getNextPrice
-
+        val (request, inFinal) = watchingFinal(node)
+        val first = Reader(inFinal.queue)
+        val price = inFinal.message.getActiveLot.getNextPrice
         // Подвешенный подписчик: подключён, но ничего не читает. Ставки его не ждут.
         val idle = node.watch(request)
 
-        val accepted = node.lots
-          .placeBid(
-            finalist.value,
-            PlaceBid(participant(2), Money(price.minorUnits, CurrencyCode(price.currency)), newOp(), BidSource.Bot),
-            Initiator.Participant(participant(2))
-          )
-          .futureValue
-        accepted.isRight shouldBe true
+        bid(node, inFinal.lot, price, participant(2))
         val acceptedAt = System.nanoTime()
-        val raised = Reader(first).next(1.second).getOrElse(fail("the new price did not arrive within a second"))
+        val raised = first.next(1.second).getOrElse(fail("the new price did not arrive within a second"))
+
         (System.nanoTime() - acceptedAt).nanos should be <= 1.second
         raised.getActiveLot.getTrading.getCurrentPrice shouldBe price
-
-        // Отключение подписчика ставок не трогает.
         first.cancel()
         idle.cancel()
-        val next = raised.getActiveLot.getNextPrice
-        node.lots
-          .placeBid(
-            finalist.value,
-            PlaceBid(participant(3), Money(next.minorUnits, CurrencyCode(next.currency)), newOp(), BidSource.Bot),
-            Initiator.Participant(participant(3))
-          )
-          .futureValue
-          .isRight shouldBe true
+      }
+    }
 
-        // Переподключение отдаёт снимок, равный read model: той же цене, что читает GetLot.
+    "gives a watcher who reconnects after leaving the snapshot of the read model" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      withNode(database) { node =>
+        val (request, inFinal) = watchingFinal(node)
+        val price = inFinal.message.getActiveLot.getNextPrice
+        // Ушедший подписчик ставок не трогает: ставка после отключения принимается.
+        inFinal.queue.cancel()
+        bid(node, inFinal.lot, price, participant(3))
+
         eventually {
           val again = node.watch(request)
           val snapshot = again.pull().futureValue.getOrElse(fail("the stream ended"))
@@ -210,16 +208,16 @@ final class AuctionWatchIntegrationSpec
           val lot = node.client
             .getLot()
             .addHeader("authorization", s"Bearer $hubToken")
-            .invoke(wire.GetLotRequest(Some(watcher), finalist.value.toString))
+            .invoke(wire.GetLotRequest(Some(watcher), inFinal.lot.value.toString))
             .futureValue
-          snapshot.getActiveLot.getTrading.getCurrentPrice shouldBe next
+          snapshot.getActiveLot.getTrading.getCurrentPrice shouldBe price
           snapshot.getActiveLot.version shouldBe lot.version
           snapshot.getActiveLot.getTrading shouldBe lot.getTrading
         }
       }
     }
 
-    "answer an auction that was never drafted with not found" in {
+    "answers an auction that was never drafted with not found" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
       withNode(database) { node =>
@@ -232,6 +230,66 @@ final class AuctionWatchIntegrationSpec
       }
     }
   }
+
+  /**
+   * Подписка на аукцион, чей слушатель уже подключён: повод от подключения забран, дальше идут только сигналы теста.
+   */
+  private final class Subscription(val auction: UUID, reader: Reader[Unit]) {
+    def next(within: FiniteDuration): Option[Unit] = reader.next(within)
+  }
+
+  private def onListener(test: (DatabaseSettings, Subscription) => Unit): Unit = {
+    val database = freshDatabase()
+    JournalSchema.migrate(database)
+    val kit = ActorTestKit(s"auction-listener-${UUID.randomUUID()}", nodeConfig(database))
+    given ActorSystem[?] = kit.system
+    val registry = ChangeRegistry()
+    val listener = PgChangeListener(database, registry, 200.millis, 200.millis).start()
+    try {
+      val auction = newId()
+      val queue = registry.subscribe(auction).runWith(Sink.queue[Unit]())
+      val reader = Reader(queue)
+      reader.next(5.seconds) shouldBe Some(())
+      eventually(listening(database) shouldBe true)
+      reader.next(500.millis)
+      try test(database, Subscription(auction, reader))
+      finally queue.cancel()
+    } finally {
+      listener.close()
+      kit.shutdownTestKit()
+    }
+  }
+
+  /** Первое сообщение живого финала с активным лотом и поток, который его отдал. */
+  private final case class InFinal(
+      lot: LotId,
+      message: wire.AuctionWatch,
+      queue: SinkQueueWithCancel[wire.AuctionWatch]
+  )
+
+  private def watchingFinal(node: Node): (wire.WatchAuctionRequest, InFinal) = {
+    val (auction, finalist) = liveFinal(node)
+    val request = wire.WatchAuctionRequest(Some(watcher), auction.value.toString)
+    val queue = node.watch(request)
+    val message = eventually {
+      val next = queue.pull().futureValue.getOrElse(fail("the stream ended"))
+      next.activeLot.map(_.id) shouldBe Some(finalist.value.toString)
+      next
+    }
+    message.getAuction.status.isInFinal shouldBe true
+    message.lineup.map(_.id) shouldBe Seq(finalist.value.toString)
+    (request, InFinal(finalist, message, queue))
+  }
+
+  private def bid(node: Node, lot: LotId, price: _root_.auction.v1.auction.Money, who: ParticipantId): Unit =
+    node.lots
+      .placeBid(
+        lot.value,
+        PlaceBid(who, Money(price.minorUnits, CurrencyCode(price.currency)), newOp(), BidSource.Bot),
+        Initiator.Participant(who)
+      )
+      .futureValue
+      .isRight shouldBe true
 
   private final case class Node(
       commands: AuctionCommands,

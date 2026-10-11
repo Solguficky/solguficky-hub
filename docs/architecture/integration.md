@@ -371,7 +371,7 @@ Identity публикует события о регистрации, смене
 |---|---|
 | обязательное поле отсутствует, `oneof` пуст, валюта или идентификатор не в канонической форме | `INVALID_ARGUMENT` |
 | права смотрящего не дают права на операцию: у `PlaceBid` в наборе нет `ACCESS_RIGHT_PLACE_BIDS` | `PERMISSION_DENIED` |
-| лот или аукцион не найдены: у ставки — лот, у которого нет `LotDrafted`; у `AddLot`, `RemoveLot`, `ScheduleLot`, `ScheduleAuction`, `StartPrebidding`, `DiscardAuction`, `SelectForFinal`, `DeselectForFinal` и команд финала — аукцион, у которого нет `AuctionDrafted` или который удалён до торгов; у `GetAuctionConsole` и `WatchAuction` — аукцион, у которого нет `AuctionDrafted` | `NOT_FOUND` |
+| лот или аукцион не найдены: у ставки — лот, у которого нет `LotDrafted`; у `AddLot`, `RemoveLot`, `ScheduleLot`, `ScheduleAuction`, `StartPrebidding`, `DiscardAuction`, `SelectForFinal`, `DeselectForFinal` и команд финала — аукцион, у которого нет `AuctionDrafted` или который удалён до торгов; у `GetAuctionConsole` и `WatchAuction` — аукцион, у которого нет `AuctionDrafted`; у `WatchAuction` — и аукцион, удалённый до торгов посреди потока: поток заканчивается этим статусом | `NOT_FOUND` |
 | право администратора сходки сейчас не подтвердить: Meetups ответил `UNAVAILABLE` или не ответил | `UNAVAILABLE` |
 | `AddLot` называет лот, который уже родился в другом аукционе: такой `lot_id` край прислать не должен, реестр не меняется | `FAILED_PRECONDITION` |
 | `op_id` уже занят принятой командой другого участника или другого вида: у `PlaceBid`, `SetProxyLimit`, `WithdrawProxyLimit`, `ScheduleLot`, `SelectForFinal`, `DeselectForFinal` и команд финала. Честный край такой `op_id` прислать не может, поэтому это сбой клиента, а не отказ торгов | `ALREADY_EXISTS` |

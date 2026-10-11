@@ -277,7 +277,8 @@ object AuctionNode {
 
   /**
    * Источник изменений для потока `WatchAuction` (PER-335): слушатель канала, в который пишут проекции read model,
-   * своим соединением к базе из `auction.database`. Останавливается вместе с узлом, до остановки проекций.
+   * своим соединением к базе из `auction.database`. Останавливается вместе с узлом, до остановки проекций, и завершает
+   * открытые потоки.
    */
   def listenChanges(system: ActorSystem[?]): AuctionChanges = {
     val config = system.settings.config
@@ -294,6 +295,7 @@ object AuctionNode {
     CoordinatedShutdown(system).addTask(CoordinatedShutdown.PhaseServiceStop, "auction-change-listener") { () =>
       Future {
         listener.close()
+        registry.close()
         Done
       }(using system.executionContext)
     }
