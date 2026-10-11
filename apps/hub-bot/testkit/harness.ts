@@ -192,6 +192,7 @@ export type HarnessOptions = Partial<
     | "auctionBotUsername"
     | "files"
     | "favorites"
+    | "proxyExplainer"
   >
 > & {
   respond?: Respond;

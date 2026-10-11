@@ -205,3 +205,49 @@ describe("bid leaf commands", () => {
     expect(calls).toEqual([]);
   });
 });
+
+// Пример пояснения автоставки (PER-517) не обещает того, чего Auction не
+// сделает: не лидеру автоставка сразу ставит порог `nextPrice`, лидеру —
+// ничего, и пример называет его цену.
+describe("proxy explainer example", () => {
+  const ask = (ports: ReturnType<typeof spyPorts>) =>
+    press(
+      ports,
+      encodeAuctionCallback({
+        kind: "ask",
+        question: "proxy",
+        lotId: CONTRACT_LOT.lotId,
+        page: 0,
+      }),
+    );
+  const exampleOf = (result: Awaited<ReturnType<typeof ask>>) => {
+    if (result.kind !== "screen") throw new Error("no screen");
+    const block = result.body.blocks[0];
+    if (block?.kind !== "question") throw new Error("no question");
+    return block.explainer?.example;
+  };
+
+  it("names the threshold as the first bid of someone who does not lead", async () => {
+    const example = exampleOf(await ask(spyPorts([], AUCTION)));
+
+    expect(example?.firstBid).toEqual(CONTRACT_LOT.nextPrice);
+  });
+
+  it("names no first bid for the leader", async () => {
+    const { status } = CONTRACT_LOT;
+    if (status.kind !== "trading") throw new Error("lot is not trading");
+    const leading = {
+      ...CONTRACT_LOT,
+      status: {
+        ...status,
+        leaderId: contractIdentity("auction").viewer.identityId,
+      },
+    };
+    const example = exampleOf(
+      await ask(spyPorts([], { ...AUCTION, lots: [leading] })),
+    );
+
+    expect(example).toBeDefined();
+    expect(example?.firstBid).toBeUndefined();
+  });
+});

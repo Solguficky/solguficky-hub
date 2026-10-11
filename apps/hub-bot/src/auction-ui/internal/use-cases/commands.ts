@@ -247,7 +247,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   const { context, lot, intent, amount } = settled;
   switch (outcome.kind) {
     case "accepted":
-      if (intent.command === "proxy") await markExplainerSeen(context);
+      if (intent.command === "proxy") markExplainerSeen(context);
       return acceptedBody(lot, intent, amount, outcome.lotVersion);
     case "unanswered":
       // Команда могла пройти: что вышло, покажет карточка за «К лоту» — она
@@ -427,15 +427,14 @@ type QuestionIntent = {
   explain?: boolean;
 };
 
-// Первая принятая автоставка снимает пояснение с вопроса лимита. Отказ
-// Notifications команду не отменяет и экран не роняет: пояснение покажется
-// ещё раз, а адаптер о сбое уже сообщил.
-async function markExplainerSeen(context: CommandContext): Promise<void> {
-  try {
-    await context.proxyExplainer?.markSeen(context.viewer);
-  } catch {
+// Первая принятая автоставка снимает пояснение с вопроса лимита. Экран
+// принятой команды отметку не ждёт: зависший Notifications его бы задержал.
+// Отказ команду не отменяет: пояснение покажется ещё раз, а адаптер о сбое
+// уже сообщил.
+function markExplainerSeen(context: CommandContext): void {
+  context.proxyExplainer?.markSeen(context.viewer).catch(() => {
     // Принятая автоставка важнее отметки.
-  }
+  });
 }
 
 // Пояснение показывается до первой принятой автоставки. Не знает бот, видел
@@ -457,24 +456,34 @@ async function explainerShown(
 }
 
 // Пример на текущем лоте: цена сейчас, шаг в силе — сниженный окном, если
-// оно идёт, — и лимит на три шага выше. Нет цены или шага — примера нет.
+// оно идёт, — и лимит на три шага выше. Не лидеру автоставка сразу ставит
+// порог `nextPrice`, который посчитал Auction; лидеру — ничего. Нет цены,
+// шага или, у не лидера, порога — примера нет.
 const EXAMPLE_STEPS = 3;
 
-function proxyExample(lot: LotView): ProxyExample | undefined {
+function proxyExample(lot: LotView, viewer: Viewer): ProxyExample | undefined {
   const { status } = lot;
   if (status.kind !== "trading") return undefined;
   const step = lot.activeWindow?.step ?? lot.baseStep ?? lot.fixedStep;
   if (step === undefined || step.minorUnits <= 0) return undefined;
   const { currentPrice } = status;
   if (step.currency !== currentPrice.currency) return undefined;
-  return {
-    currentPrice,
-    step,
-    limit: {
-      minorUnits: currentPrice.minorUnits + EXAMPLE_STEPS * step.minorUnits,
-      currency: currentPrice.currency,
-    },
+  const limit = {
+    minorUnits: currentPrice.minorUnits + EXAMPLE_STEPS * step.minorUnits,
+    currency: currentPrice.currency,
   };
+  if (status.leaderId === viewer.identityId) {
+    return { currentPrice, step, limit };
+  }
+  const firstBid = lot.nextPrice;
+  if (
+    firstBid === undefined ||
+    firstBid.currency !== currentPrice.currency ||
+    firstBid.minorUnits > limit.minorUnits
+  ) {
+    return undefined;
+  }
+  return { currentPrice, step, limit, firstBid };
 }
 
 // Вопрос с `force_reply`. Шаг и адресат едут в «Отмене»: ответ вернёт их в
@@ -500,7 +509,7 @@ function questionBody(
         auctionId: lot.auctionId,
         ...titled(lot),
         ...(current === undefined ? {} : { current }),
-        ...(explained ? { explainer: explainerOf(lot) } : {}),
+        ...(explained ? { explainer: explainerOf(lot, context.viewer) } : {}),
       },
     ],
     keyboard: [
@@ -537,8 +546,8 @@ function questionBody(
   };
 }
 
-function explainerOf(lot: LotView): { example?: ProxyExample } {
-  const example = proxyExample(lot);
+function explainerOf(lot: LotView, viewer: Viewer): { example?: ProxyExample } {
+  const example = proxyExample(lot, viewer);
   return example === undefined ? {} : { example };
 }
 

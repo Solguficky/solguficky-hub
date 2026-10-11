@@ -231,10 +231,12 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         // Удалить не дали — вопрос правится в экран на месте.
         await deliver(ctx, { ...delivery, keepCurrent: deleted });
       } else {
-        let replaced = false;
+        // Удалить не дали — прежний вопрос остаётся живым: его «Отмена» несёт
+        // шаг, и ответ на него по-прежнему принимается.
         if (replacing && pressed !== undefined) {
-          questions.forget(ctx.chat.id, pressed);
-          replaced = await deleteMessage(ctx, pressed);
+          if (await deleteMessage(ctx, pressed)) {
+            questions.forget(ctx.chat.id, pressed);
+          }
         }
         await dropQuestions(ctx, questions);
         if (screen.asks === true) {
@@ -247,7 +249,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
             (await deleteMessage(ctx, pressed));
           await ask(ctx, questions, screen, {
             clearPressed:
-              !spent && !replaced && !isTraceCallback(ctx.callbackQuery.data),
+              !spent && !replacing && !isTraceCallback(ctx.callbackQuery.data),
           });
         } else {
           await deliver(ctx, {

@@ -978,6 +978,42 @@ describe("bid leaf in the hub", () => {
     });
   });
 
+  // Пояснение видено (PER-517): вопрос лимита уходит в Telegram с «Как это
+  // работает» над «Отменой», и линтер экранов проверяет его на отправке.
+  it("asks the limit with how it works once the explainer was seen", async () => {
+    const auction = fakeAuction({ existing: true, lot: trading });
+    const marks: string[] = [];
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+      proxyExplainer: () => ({
+        seen: async () => true,
+        markSeen: async (viewer) => {
+          marks.push(viewer.identityId);
+        },
+      }),
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({
+          kind: "ask",
+          question: "proxy",
+          lotId,
+          page: 0,
+        }),
+      ),
+    );
+    const asked = calls.find((call) => call.method === "sendMessage");
+    expect(asked?.payload).toMatchObject({
+      text: expect.not.stringContaining("Подскажу"),
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [[{ text: "Как это работает" }], [{ text: "Отмена" }]],
+      },
+    });
+    expect(marks).toEqual([]);
+  });
+
   // «Как это работает» (PER-517) задаёт вопрос лимита заново: нажатый вопрос
   // удаляется, как по «Отмене», а новый с пояснением приходит следом.
   it("replaces the limit question with an explained one on how it works", async () => {

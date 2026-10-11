@@ -1577,7 +1577,10 @@ async function handleCallback(
         if (pressedId !== undefined) {
           questions.delete(questionKey(ctx.chat?.id, pressedId));
         }
-        ctx.pressedGone = await deletePressed(ctx);
+        const deleted = await deletePressed(ctx);
+        // Вопрос под «Как это работает», который Telegram удалить не дал,
+        // остаётся живым: клавиатура с шагом в «Отмене» с него не снимается.
+        ctx.pressedGone = deleted || replacesAuctionQuestion(data);
         ctx.fresh = ctx.pressedGone;
       }
       await dropOpenQuestions(ctx, questions, pressedId);

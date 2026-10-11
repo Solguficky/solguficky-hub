@@ -32,7 +32,7 @@ service NotificationsService {
   rpc ListFollowedLots(ListFollowedLotsRequest) returns (FollowedLots);
 
   // Whether the person has already seen the explanation of an automatic bid
-  // limit: the bot shows it until the first accepted limit.
+  // limit.
   rpc GetProxyExplainer(GetProxyExplainerRequest) returns (ProxyExplainer);
   rpc MarkProxyExplainerSeen(MarkProxyExplainerSeenRequest) returns (ProxyExplainer);
 

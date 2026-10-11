@@ -191,9 +191,10 @@ export function questionScreen(
 const explainLabel = "Как это работает";
 
 // Пояснение автоставки голосом помощника (PER-517, RFC-007): платишь цену, а
-// не лимит. Пример — на этом лоте: цена сейчас, шаг и лимит на три шага выше;
-// чужая ставка забирает первый шаг, бот отвечает вторым и не идёт выше
-// лимита. Текст тот же, что у бота аукциона.
+// не лимит. Пример — на этом лоте: цена сейчас, шаг и лимит на три шага выше.
+// Не лидеру бот сразу ставит порог, который посчитал Auction, лидеру — ничего;
+// ответов по шагам пример не расписывает: у ступенчатого лота шаг на
+// следующей цене другой. Текст тот же, что у бота аукциона.
 function proxyExplainer(
   explainer: NonNullable<QuestionBlock["explainer"]>,
   money: (amount: Money) => string,
@@ -203,14 +204,12 @@ function proxyExplainer(
   ];
   const { example } = explainer;
   if (example !== undefined) {
-    const after = (steps: number) =>
-      money({
-        minorUnits:
-          example.currentPrice.minorUnits + steps * example.step.minorUnits,
-        currency: example.currentPrice.currency,
-      });
+    const price = money(example.currentPrice);
+    const limit = money(example.limit);
     lines.push(
-      `Например: цена сейчас ${money(example.currentPrice)}, шаг ${money(example.step)}, твой лимит ${money(example.limit)}. Кто-то ставит ${after(1)} — бот отвечает ${after(2)} за тебя, и так до ${money(example.limit)}, не выше. Заплатишь цену, на которой торги остановятся.`,
+      example.firstBid === undefined
+        ? `Например: цена сейчас ${price} — твоя, шаг ${money(example.step)}, твой лимит ${limit}. Бот будет отвечать на чужие ставки, но не выше ${limit}. Никто не перебьёт — заплатишь ${price}, а не ${limit}.`
+        : `Например: цена сейчас ${price}, шаг ${money(example.step)}, твой лимит ${limit}. Бот сразу поставит за тебя ${money(example.firstBid)} и будет отвечать на чужие ставки, но не выше ${limit}. Никто не перебьёт — заплатишь ${money(example.firstBid)}, а не ${limit}.`,
     );
   }
   return lines.join("\n");
