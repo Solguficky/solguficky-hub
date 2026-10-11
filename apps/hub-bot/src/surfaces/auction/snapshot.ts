@@ -12,22 +12,42 @@ export function auctionSummaryOf(snapshot: AuctionSnapshot): AuctionSummary {
   if (!CANONICAL_UUID.test(snapshot.id)) {
     throw new Error("auction id is not a canonical UUID");
   }
-  const opensAt = snapshot.config?.onlinePhase?.opensAt;
-  // День начала строка показывает и по нему сортирует: битая дата уронила бы
-  // отрисовку уже после маршрута, и человек остался бы без ответа.
-  if (
-    opensAt !== undefined &&
-    opensAt !== "" &&
-    Number.isNaN(Date.parse(opensAt))
-  ) {
-    throw new Error("auction online phase start is not an instant");
-  }
+  const opensAt = instantOf(
+    snapshot.config?.onlinePhase?.opensAt,
+    "auction online phase start is not an instant",
+  );
+  // Отсчёт до финала идёт от общего дедлайна лотов, и только у аукциона с
+  // финалом (PER-518): `final_blocks = 0` — настоящее «финала нет», а конец
+  // фазы без `closes_lots` дедлайном лотов не становится.
+  const config = snapshot.config;
+  const closesAt =
+    config !== undefined &&
+    config.finalBlocks > 0 &&
+    config.onlinePhase?.closesLots === true
+      ? instantOf(
+          config.onlinePhase.closesAt,
+          "auction online phase end is not an instant",
+        )
+      : undefined;
   return {
     auctionId: snapshot.id,
     stage: stageOf(snapshot.status),
-    ...(opensAt === undefined || opensAt === "" ? {} : { opensAt }),
+    ...(opensAt === undefined ? {} : { opensAt }),
+    ...(closesAt === undefined ? {} : { closesAt }),
     lotCount: snapshot.lotIds.length,
   };
+}
+
+// Дни начала и финала строка показывает, а по началу ещё и сортирует: битая
+// дата уронила бы отрисовку уже после маршрута, и человек остался бы без
+// ответа.
+function instantOf(
+  value: string | undefined,
+  refusal: string,
+): string | undefined {
+  if (value === undefined || value === "") return undefined;
+  if (Number.isNaN(Date.parse(value))) throw new Error(refusal);
+  return value;
 }
 
 function stageOf(status: AuctionSnapshot["status"]): AuctionStage {

@@ -763,6 +763,49 @@ describe("auction bot", () => {
     },
   );
 
+  // Отсчёт до финала (PER-518): `/menu` открывает «Аукционы», и строка
+  // активного аукциона несёт его хвостом, а кнопка — нет. Экран идёт через
+  // линтер харнесса.
+  it("counts down to the finale in the active auction row", async () => {
+    vi.useFakeTimers({
+      toFake: ["Date"],
+      now: new Date("2026-10-07T12:00:00Z"),
+    });
+    try {
+      const { bot, calls } = makeBot(
+        portsWith({
+          auctions: {
+            active: [{ ...activeAuction, closesAt: "2026-10-09T21:00:00Z" }],
+          },
+        }),
+      );
+      await bot.handleUpdate(
+        startUpdate({
+          message_id: 1,
+          date: 0,
+          chat: privateChat,
+          from,
+          text: "/menu",
+          entities: [{ type: "bot_command", offset: 0, length: 5 }],
+        }),
+      );
+      expect(calls[0]?.payload).toMatchObject({
+        text: "<b>Аукционы</b>\n\n• 10 октября, сб — идут ставки, 3 лота, до финала 3 дня",
+        reply_markup: {
+          inline_keyboard: [
+            [
+              expect.objectContaining({
+                text: "10 октября, сб · идут ставки · 3 лота",
+              }),
+            ],
+          ],
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // `/faq` открывает FAQ новым сообщением с любого места и заявок не ставит.
   it("answers /faq with the FAQ screen without requesting access", async () => {
     const requestAccess = vi.fn<EntryPort["requestAccess"]>();

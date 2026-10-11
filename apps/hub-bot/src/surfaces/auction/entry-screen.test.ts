@@ -749,6 +749,51 @@ describe("auction lists", () => {
     ]);
   });
 
+  // Отсчёт до финала (PER-518): день финала — день общего дедлайна в поясе
+  // сообщества; `now` — 7 октября, 15:00 по Москве.
+  it.each([
+    ["2026-10-09T21:00:00Z", ", до финала 3 дня"],
+    ["2026-10-07T21:00:00Z", ", до финала 1 день"],
+    ["2026-10-12T00:00:00Z", ", до финала 5 дней"],
+    ["2026-10-18T00:00:00Z", ", до финала 11 дней"],
+    ["2026-10-28T00:00:00Z", ", до финала 21 день"],
+    // 20:59 UTC — ещё 7 октября по Москве: финал сегодня.
+    ["2026-10-07T20:59:00Z", ", финал сегодня"],
+    ["2026-10-06T21:00:00Z", ", финал сегодня"],
+    // Вчерашний по Москве дедлайн строку убирает.
+    ["2026-10-06T20:59:00Z", ""],
+  ])("counts down to a finale at %s", (closesAt, tail) => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auctions",
+        list: { page: 0, pageCount: 1, auctions: [auction({ closesAt })] },
+      },
+      options,
+    );
+    expect(screen.text).toBe(
+      `<b>Аукционы</b>\n\n• 10 октября, сб — идут ставки, 5 лотов${tail}`,
+    );
+    // Кнопка остаётся короткой, как у «счастливых часов».
+    expect(screen.keyboard[0]?.[0]?.text).toBe(
+      "10 октября, сб · идут ставки · 5 лотов",
+    );
+  });
+
+  it("has no countdown without a deadline or for a finished auction", () => {
+    const line = (summary: AuctionSummary) =>
+      renderEntryScreen(
+        {
+          kind: "auctions",
+          list: { page: 0, pageCount: 1, auctions: [summary] },
+        },
+        options,
+      ).text;
+    expect(line(auction({}))).not.toContain("финал");
+    expect(
+      line(auction({ stage: "finished", closesAt: "2026-10-09T21:00:00Z" })),
+    ).not.toContain("финал");
+  });
+
   it("says in text that there are no active auctions", () => {
     const screen = renderEntryScreen(
       { kind: "auctions", list: { page: 0, pageCount: 1, auctions: [] } },
