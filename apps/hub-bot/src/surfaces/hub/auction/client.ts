@@ -12,6 +12,7 @@ import {
   limitOutcomeOf,
   unansweredOn,
 } from "../../../core/auction/commands.js";
+import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
 import { lotOrMissing, lotViewOf } from "../../../core/auction/snapshot.js";
 import { wireViewer } from "../../../core/identity/access.js";
@@ -87,6 +88,8 @@ export type AuctionAdapterOptions = {
   onNamesRefused?: (cause: unknown, meta: RpcMetadata | undefined) => void;
   // Источник `op_id` команд участника; тесты подменяют его.
   newOperationId?: () => string;
+  // Пауза дочитывания лота до версии команды (PER-470); тесты подменяют её.
+  pause?: Pause;
 };
 
 export function createAuctionClient(
@@ -121,6 +124,7 @@ export function createAuctionAdapter(
     timeoutMs = 3_000,
     onNamesRefused,
     newOperationId = createUuidV7,
+    pause,
   }: AuctionAdapterOptions = {},
 ): MeetupAuctions & AuctionScreens & LotAdministration & AuctionConsoles {
   // Дедлайн вызова — меньшее из своего и остатка бюджета действия: бюджет
@@ -334,12 +338,21 @@ export function createAuctionAdapter(
     screenPorts(meta): AuctionScreenPorts {
       return {
         auction: {
-          async getLot(request) {
-            const snapshot = await rpc.getLot(
-              { viewer: wireViewer(request.viewer), lotId: request.lotId },
-              options(meta),
+          getLot(request) {
+            return readLotAtLeast(
+              async () =>
+                lotViewOf(
+                  await rpc.getLot(
+                    {
+                      viewer: wireViewer(request.viewer),
+                      lotId: request.lotId,
+                    },
+                    options(meta),
+                  ),
+                ),
+              request.atLeastVersion,
+              pause,
             );
-            return lotViewOf(snapshot);
           },
           findLot(request) {
             return lotOrMissing(() =>

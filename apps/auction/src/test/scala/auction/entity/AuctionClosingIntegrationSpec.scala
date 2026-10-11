@@ -144,7 +144,7 @@ final class AuctionClosingIntegrationSpec
       case other => fail(s"the lot is not trading: $other")
     }
     lotRef(node, lot)
-      .ask[Either[PlaceBidRejected, Envelope]](
+      .ask[Either[PlaceBidRejected, LotEntity.Recorded]](
         LotEntity.Bid(PlaceBid(who, price, newOp(), BidSource.Bot), Initiator.Participant(who), _)
       )
       .futureValue

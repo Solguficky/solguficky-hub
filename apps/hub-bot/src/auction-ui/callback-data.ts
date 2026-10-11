@@ -39,6 +39,10 @@ const MAX_BYTES = 64;
 //   несёт Telegram id того, кому вопрос задан.
 // - `username` — выбрать ник своим именем в аукционе. Команда, ради которой
 //   выбирается имя, едет в кнопке, чтобы после выбора вернуться к ней.
+//
+// Кнопка лота после принятой команды несёт третий аргумент — версию лота из
+// ответа Auction в base36 (PER-470): карточка дочитывает лот до неё, потому что
+// чтение отстаёт от команды. У остальных кнопок лота хвоста нет.
 export type AuctionCommand = "bid" | "proxy";
 
 // Команда, отложенная до выбора имени: её вид и сумма.
@@ -48,7 +52,7 @@ export type AuctionQuestion = "bid" | "proxy" | "alias";
 
 export type AuctionIntent =
   | { kind: "feed"; auctionId: string; page: number }
-  | { kind: "lot"; lotId: string; page: number }
+  | { kind: "lot"; lotId: string; page: number; atLeastVersion?: number }
   | { kind: "history"; lotId: string; page: number; historyPage: number }
   | {
       kind: "confirm";
@@ -167,6 +171,23 @@ function amountOf(raw: string | undefined): number | undefined {
   return raw !== undefined && AMOUNT.test(raw) ? parseInt(raw, 36) : undefined;
 }
 
+// Версия лота — положительное целое в пределах безопасного в base36 без
+// ведущих нулей: у версии одно написание.
+const VERSION_ARGUMENT = /^[1-9a-z][0-9a-z]{0,10}$/;
+
+function versionArgument(version: number): string {
+  if (!Number.isSafeInteger(version) || version < 1) {
+    throw new RangeError(`lot version out of range: ${version}`);
+  }
+  return version.toString(36);
+}
+
+function versionOf(raw: string): number | undefined {
+  if (!VERSION_ARGUMENT.test(raw)) return undefined;
+  const value = parseInt(raw, 36);
+  return Number.isSafeInteger(value) ? value : undefined;
+}
+
 const COMMAND_CODE: Record<AuctionCommand, string> = { bid: "b", proxy: "x" };
 
 function commandOf(code: string | undefined): AuctionCommand | undefined {
@@ -224,7 +245,14 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
     case "feed":
       return `${prefix}:feed:${uuidToToken(intent.auctionId)}:${pageArgument(intent.page)}`;
     case "lot":
-      return `${prefix}:lot:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
+      return [
+        `${prefix}:lot`,
+        uuidToToken(intent.lotId),
+        pageArgument(intent.page),
+        ...(intent.atLeastVersion === undefined
+          ? []
+          : [versionArgument(intent.atLeastVersion)]),
+      ].join(":");
     case "history":
       return `${prefix}:hist:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}:${pageArgument(intent.historyPage)}`;
     case "confirm":
@@ -298,7 +326,11 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   // аргумент — не та строка, а не страница, которую можно молча отбросить.
   const [token, rawPage, ...rest] = args;
   const extra = action === "hist" ? 1 : 0;
-  if (token === undefined || rest.length !== extra) return refuse("malformed");
+  // Лот — с версией или без: хвост версии необязателен.
+  const allowed = action === "lot" && rest.length === 1 ? 1 : extra;
+  if (token === undefined || rest.length !== allowed) {
+    return refuse("malformed");
+  }
   const id = tokenToUuid(token);
   // Кнопка лота без страницы — форма PER-305: она ведёт на ту же карточку, а
   // возврат — на первую страницу ленты.
@@ -307,8 +339,17 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   switch (action) {
     case "feed":
       return { ok: true, intent: { kind: "feed", auctionId: id, page } };
-    case "lot":
-      return { ok: true, intent: { kind: "lot", lotId: id, page } };
+    case "lot": {
+      if (rest[0] === undefined) {
+        return { ok: true, intent: { kind: "lot", lotId: id, page } };
+      }
+      const atLeastVersion = versionOf(rest[0]);
+      if (atLeastVersion === undefined) return refuse("malformed");
+      return {
+        ok: true,
+        intent: { kind: "lot", lotId: id, page, atLeastVersion },
+      };
+    }
     case "fo":
       return { ok: true, intent: { kind: "follow", lotId: id, page } };
     case "uf":

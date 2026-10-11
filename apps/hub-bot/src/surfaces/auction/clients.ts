@@ -33,6 +33,7 @@ import {
   limitOutcomeOf,
   unansweredOn,
 } from "../../core/auction/commands.js";
+import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
 import { lotOrMissing, lotViewOf } from "../../core/auction/snapshot.js";
 import {
@@ -116,6 +117,8 @@ export type PortsOptions = {
   notifications?: NotificationsRpc;
   // Отказ списка избранного карточка гасит, как отказ имён.
   onFavoritesRefused?: (cause: unknown, requestId: string) => void;
+  // Пауза дочитывания лота до версии команды (PER-470); тесты подменяют её.
+  pause?: Pause;
 };
 
 export function createPorts(
@@ -127,6 +130,7 @@ export function createPorts(
     onNamesRefused,
     notifications,
     onFavoritesRefused,
+    pause,
   }: PortsOptions = {},
 ): PortsFactory {
   return (requestId, deadlineAt) => {
@@ -184,12 +188,22 @@ export function createPorts(
         },
       },
       auction: {
-        async getLot(request: { viewer: Viewer; lotId: string }) {
-          const snapshot = await auction.getLot(
-            { viewer: wireViewer(request.viewer), lotId: request.lotId },
-            callOptions(timeoutMs),
+        getLot(request: {
+          viewer: Viewer;
+          lotId: string;
+          atLeastVersion?: number;
+        }) {
+          return readLotAtLeast(
+            async () =>
+              lotViewOf(
+                await auction.getLot(
+                  { viewer: wireViewer(request.viewer), lotId: request.lotId },
+                  callOptions(timeoutMs),
+                ),
+              ),
+            request.atLeastVersion,
+            pause,
           );
-          return lotViewOf(snapshot);
         },
         findLot(request) {
           return lotOrMissing(() =>

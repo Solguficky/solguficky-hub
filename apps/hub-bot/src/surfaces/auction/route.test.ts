@@ -98,8 +98,14 @@ function ports(
       listAuctionLots: vi.fn(async () => ({ lots: [], nextPageToken: "" })),
       listLotHistory: vi.fn(async () => ({ entries: [], nextPageToken: "" })),
       getDisplayNames: vi.fn(async () => ({})),
-      placeBid: vi.fn(async () => ({ kind: "accepted" as const })),
-      setProxyLimit: vi.fn(async () => ({ kind: "accepted" as const })),
+      placeBid: vi.fn(async () => ({
+        kind: "accepted" as const,
+        lotVersion: 0,
+      })),
+      setProxyLimit: vi.fn(async () => ({
+        kind: "accepted" as const,
+        lotVersion: 0,
+      })),
       chooseDisplayName: vi.fn(async () => ({
         kind: "accepted" as const,
         name: "@owl",

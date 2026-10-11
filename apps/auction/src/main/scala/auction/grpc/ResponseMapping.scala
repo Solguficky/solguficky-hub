@@ -13,6 +13,7 @@ import auction.aggregate.SchedulingRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.LotCard
 import auction.contract.AuctionValues
+import auction.entity.LotEntity
 import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.MarkForFinalRejected
@@ -45,9 +46,9 @@ import io.grpc.Status
  */
 object ResponseMapping {
 
-  def placeBid(outcome: Either[PlaceBidRejected, Envelope]): Either[Status, wire.PlaceBidResponse] =
+  def placeBid(outcome: Either[PlaceBidRejected, LotEntity.Recorded]): Either[Status, wire.PlaceBidResponse] =
     outcome match {
-      case Right(envelope) => Right(accepted(envelope))
+      case Right(recorded) => Right(accepted(recorded))
       case Left(PlaceBidRejected.LotNotFound) => Left(Status.NOT_FOUND.withDescription("lot not found"))
       case Left(PlaceBidRejected.OpIdTaken) => Left(opIdTaken)
       case Left(rejected) => Right(wire.PlaceBidResponse().withRefused(wire.PlaceBidRefusal(refusal(rejected))))
@@ -95,14 +96,17 @@ object ResponseMapping {
   }
 
   /**
-   * Принятый лимит ответа не несёт: выросла ли за ним цена, видно в состоянии лота (контракт). Конверт другого события
-   * — дефект ядра, а не отказ.
+   * Принятый лимит несёт только версию лота: выросла ли за ним цена, видно в состоянии лота начиная с неё (контракт).
+   * Конверт другого события — дефект ядра, а не отказ.
    */
-  def setProxyLimit(outcome: Either[SetProxyLimitRejected, Envelope]): Either[Status, wire.SetProxyLimitResponse] =
+  def setProxyLimit(
+      outcome: Either[SetProxyLimitRejected, LotEntity.Recorded]
+  ): Either[Status, wire.SetProxyLimitResponse] =
     outcome match {
-      case Right(envelope) =>
+      case Right(LotEntity.Recorded(envelope, lotVersion)) =>
         envelope.event match {
-          case _: LotEvent.ProxyLimitSet => Right(wire.SetProxyLimitResponse().withAccepted(wire.ProxyLimitAccepted()))
+          case _: LotEvent.ProxyLimitSet =>
+            Right(wire.SetProxyLimitResponse().withAccepted(wire.ProxyLimitAccepted(lotVersion)))
           case other =>
             throw new IllegalStateException(s"lot answered a proxy limit with ${other.getClass.getSimpleName}")
         }
@@ -185,12 +189,13 @@ object ResponseMapping {
     }
 
   /**
-   * Ответ на принятую ставку — её `bid_id`. Повтор того же `op_id` приносит исходный конверт и тот же `bid_id`. Конверт
-   * другого события на команду ставки — дефект ядра, а не отказ.
+   * Ответ на принятую ставку — её `bid_id` и версия лота, с которой ставку видно в чтении. Повтор того же `op_id`
+   * приносит исходный конверт и тот же `bid_id`. Конверт другого события на команду ставки — дефект ядра, а не отказ.
    */
-  private def accepted(envelope: Envelope): wire.PlaceBidResponse =
-    envelope.event match {
-      case bid: LotEvent.BidPlaced => wire.PlaceBidResponse().withAccepted(wire.BidAccepted(bid.bidId.value.toString))
+  private def accepted(recorded: LotEntity.Recorded): wire.PlaceBidResponse =
+    recorded.envelope.event match {
+      case bid: LotEvent.BidPlaced =>
+        wire.PlaceBidResponse().withAccepted(wire.BidAccepted(bid.bidId.value.toString, recorded.lotVersion))
       case other =>
         throw new IllegalStateException(s"lot answered a bid with ${other.getClass.getSimpleName}")
     }

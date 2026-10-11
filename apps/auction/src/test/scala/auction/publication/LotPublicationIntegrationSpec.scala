@@ -103,16 +103,16 @@ final class LotPublicationIntegrationSpec
     id
   }
 
-  private def bidOn(node: Node, id: UUID, who: Int, amount: Long): Either[PlaceBidRejected, Envelope] =
+  private def bidOn(node: Node, id: UUID, who: Int, amount: Long): Either[PlaceBidRejected, LotEntity.Recorded] =
     lot(node, id)
-      .ask[Either[PlaceBidRejected, Envelope]](
+      .ask[Either[PlaceBidRejected, LotEntity.Recorded]](
         LotEntity.Bid(PlaceBid(participant(who), money(amount), OpId(ids()), BidSource.Bot), Initiator.Scheduler, _)
       )
       .futureValue
 
-  private def limitOn(node: Node, id: UUID, who: Int, max: Long): Either[SetProxyLimitRejected, Envelope] =
+  private def limitOn(node: Node, id: UUID, who: Int, max: Long): Either[SetProxyLimitRejected, LotEntity.Recorded] =
     lot(node, id)
-      .ask[Either[SetProxyLimitRejected, Envelope]](
+      .ask[Either[SetProxyLimitRejected, LotEntity.Recorded]](
         LotEntity.SetLimit(SetProxyLimit(participant(who), money(max), OpId(ids())), Initiator.Scheduler, _)
       )
       .futureValue

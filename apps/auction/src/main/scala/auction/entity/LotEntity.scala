@@ -46,9 +46,19 @@ object LotEntity {
 
   /**
    * Протокол entity. Ответ на принятую команду — первый конверт её транзакции, на повтор того же `op_id` — тот же
-   * конверт из окна `seen`: повтор получает исходный ответ (П-06, Т-14), и вызывающий их не различает.
+   * конверт из окна `seen`: повтор получает исходный ответ (П-06, Т-14), и вызывающий их не различает. Ставка и
+   * прокси-лимит отвечают ещё и версией лота — `Recorded`.
    */
   sealed trait Command
+
+  /**
+   * Ответ ставки и прокси-лимита: первый конверт транзакции и номер, начиная с которого чтение лота показывает команду
+   * целиком (PER-470). Проекция применяет события по одному, поэтому номер первого конверта не годится: на нём чтение
+   * ещё не знает ответа прокси и продления. На принятую команду номер — последнее событие её транзакции; на повтор —
+   * текущий номер лота: окно `seen` хранит только первый конверт, а транзакция пишется одним `AtomicWrite` и к повтору
+   * уже в журнале целиком, поэтому номер не меньше её последнего события.
+   */
+  final case class Recorded(envelope: Envelope, lotVersion: Long)
 
   final case class Draft(command: DraftLot, initiator: Initiator, replyTo: ActorRef[Either[DraftLotRejected, Envelope]])
       extends Command
@@ -63,13 +73,13 @@ object LotEntity {
   final case class Open(command: OpenLot, initiator: Initiator, replyTo: ActorRef[Either[OpenLotRejected, Envelope]])
       extends Command
 
-  final case class Bid(command: PlaceBid, initiator: Initiator, replyTo: ActorRef[Either[PlaceBidRejected, Envelope]])
+  final case class Bid(command: PlaceBid, initiator: Initiator, replyTo: ActorRef[Either[PlaceBidRejected, Recorded]])
       extends Command
 
   final case class SetLimit(
       command: SetProxyLimit,
       initiator: Initiator,
-      replyTo: ActorRef[Either[SetProxyLimitRejected, Envelope]]
+      replyTo: ActorRef[Either[SetProxyLimitRejected, Recorded]]
   ) extends Command
 
   final case class WithdrawLimit(
@@ -143,26 +153,27 @@ object LotEntity {
     val now = clock.instant()
     command match {
       case Draft(draft, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, draft), draft.opId, initiator, replyTo, now, newId)
+        record(state, Lot.decide(lot, draft), draft.opId, initiator, replyTo, now, newId)
       case Plan(schedule, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, schedule), schedule.opId, initiator, replyTo, now, newId)
+        record(state, Lot.decide(lot, schedule), schedule.opId, initiator, replyTo, now, newId)
       case Open(open, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, open), open.opId, initiator, replyTo, now, newId)
+        record(state, Lot.decide(lot, open), open.opId, initiator, replyTo, now, newId)
       case Bid(bid, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, bid, BidId(newId()), BidId(newId()), now), bid.opId, initiator, replyTo, now, newId)
+        val decision = Lot.decide(lot, bid, BidId(newId()), BidId(newId()), now)
+        recordWith(state, decision, bid.opId, initiator, replyTo, now, newId)(Recorded(_, _))
       case SetLimit(limit, initiator, replyTo) =>
         val decision = Lot.decide(lot, limit, state.sequence + 1, BidId(newId()), now)
-        record(lot, decision, limit.opId, initiator, replyTo, now, newId)
+        recordWith(state, decision, limit.opId, initiator, replyTo, now, newId)(Recorded(_, _))
       case WithdrawLimit(withdrawal, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, withdrawal), withdrawal.opId, initiator, replyTo, now, newId)
+        record(state, Lot.decide(lot, withdrawal), withdrawal.opId, initiator, replyTo, now, newId)
       case Close(close, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, close, now), close.opId, initiator, replyTo, now, newId)
+        record(state, Lot.decide(lot, close, now), close.opId, initiator, replyTo, now, newId)
       case MarkFinal(mark, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, mark, now), mark.opId, initiator, replyTo, now, newId)
+        record(state, Lot.decide(lot, mark, now), mark.opId, initiator, replyTo, now, newId)
       case UnmarkFinal(unmark, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, unmark, now), unmark.opId, initiator, replyTo, now, newId)
+        record(state, Lot.decide(lot, unmark, now), unmark.opId, initiator, replyTo, now, newId)
       case Resume(resume, initiator, replyTo) =>
-        record(lot, Lot.decide(lot, resume), resume.opId, initiator, replyTo, now, newId)
+        record(state, Lot.decide(lot, resume), resume.opId, initiator, replyTo, now, newId)
       case Get(replyTo) =>
         Effect.reply(replyTo)(lot)
     }
@@ -174,7 +185,7 @@ object LotEntity {
    * первым, производные за ним. У каждого события свой `event_id`. Отказ событий не пишет.
    */
   private def record[R](
-      lot: Lot,
+      state: State,
       decision: Either[R, Decision],
       opId: OpId,
       initiator: Initiator,
@@ -182,19 +193,34 @@ object LotEntity {
       now: Instant,
       newId: () => UUID
   ): Effect[StoredLotEvent, State] =
+    recordWith(state, decision, opId, initiator, replyTo, now, newId)((envelope, _) => envelope)
+
+  /**
+   * То же с ответом, собранным из первого конверта и номера лота, с которого команда видна целиком: `written.sequence`
+   * после записи, текущий `state.sequence` на повтор (`Recorded`).
+   */
+  private def recordWith[R, A](
+      state: State,
+      decision: Either[R, Decision],
+      opId: OpId,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[R, A]],
+      now: Instant,
+      newId: () => UUID
+  )(reply: (Envelope, Long) => A): Effect[StoredLotEvent, State] =
     decision match {
       case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
-      case Right(Decision.Repeated(original)) => Effect.reply(replyTo)(Right(original))
+      case Right(Decision.Repeated(original)) => Effect.reply(replyTo)(Right(reply(original, state.sequence)))
       case Right(Decision.Accepted(event, derived)) =>
         val auction = Lot
-          .auctionOf(lot, event)
+          .auctionOf(state.lot, event)
           .getOrElse(
             throw new IllegalStateException(s"lot accepted ${event.getClass.getSimpleName} without an auction")
           )
         val transaction = Transaction(newId(), opId, auction, now, initiator)
         Effect
           .persist((event :: derived).map(LotJournal.store(newId(), transaction, _)))
-          .thenReply(replyTo)(written => Right(firstOf(written.lot, opId)))
+          .thenReply(replyTo)(written => Right(reply(firstOf(written.lot, opId), written.sequence)))
     }
 
   /** Первый конверт записанной транзакции: `apply` кладёт его в окно `seen`, поэтому после записи он там есть. */

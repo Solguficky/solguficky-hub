@@ -41,8 +41,13 @@ function readLot(context: CommandContext, lotId: string): Promise<LotView> {
   return context.auction.getLot({ viewer: context.viewer, lotId });
 }
 
-const lotCallback = (lotId: string, page: number) =>
-  encodeAuctionCallback({ kind: "lot", lotId, page });
+const lotCallback = (lotId: string, page: number, atLeastVersion?: number) =>
+  encodeAuctionCallback({
+    kind: "lot",
+    lotId,
+    page,
+    ...(atLeastVersion === undefined ? {} : { atLeastVersion }),
+  });
 
 const titled = (lot: LotView) =>
   lot.card === undefined ? {} : { title: lot.card.title };
@@ -218,6 +223,8 @@ export async function commitCommand(
 
 // Ответ Auction на команду — экран. Принятая, отказ и неизвестный исход — свои
 // экраны с «К лоту»: лот они не перечитывают, карточку перечитывает кнопка.
+// У принятой кнопка несёт версию из ответа, и карточка дочитывает лот до неё:
+// чтение Auction отстаёт от команды (PER-470).
 // Имя не выбрано — экран выбора имени, а не отказ.
 async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   settled: {
@@ -237,7 +244,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   const { context, lot, intent, amount } = settled;
   switch (outcome.kind) {
     case "accepted":
-      return acceptedBody(lot, intent, amount);
+      return acceptedBody(lot, intent, amount, outcome.lotVersion);
     case "unanswered":
       // Команда могла пройти: что вышло, покажет карточка за «К лоту» — она
       // читает лот заново.
@@ -262,10 +269,12 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   }
 }
 
+// Версия 0 — Auction её не назвал: кнопка прежняя, карточка читает один раз.
 function acceptedBody(
   lot: LotView,
   intent: { command: AuctionCommand; lotId: string; page: number },
   amount: Money,
+  lotVersion: number,
 ): AuctionScreenBody {
   return {
     blocks: [
@@ -282,7 +291,11 @@ function acceptedBody(
       [
         {
           action: "accepted.lot",
-          callbackData: lotCallback(lot.lotId, intent.page),
+          callbackData: lotCallback(
+            lot.lotId,
+            intent.page,
+            lotVersion > 0 ? lotVersion : undefined,
+          ),
         },
       ],
     ],

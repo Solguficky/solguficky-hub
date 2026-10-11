@@ -204,8 +204,8 @@ function portsWith(
         nextPageToken: "",
       }),
       getDisplayNames: async () => overrides.names ?? {},
-      placeBid: async () => ({ kind: "accepted" }),
-      setProxyLimit: async () => ({ kind: "accepted" }),
+      placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
+      setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
       chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
     },
     operations: {

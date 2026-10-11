@@ -82,10 +82,13 @@ describe("participant command answers", () => {
     expect(
       bidOutcomeOf(
         create(PlaceBidResponseSchema, {
-          outcome: { case: "accepted", value: { bidId: "b-1" } },
+          outcome: {
+            case: "accepted",
+            value: { bidId: "b-1", lotVersion: 7n },
+          },
         }),
       ),
-    ).toEqual({ kind: "accepted" });
+    ).toEqual({ kind: "accepted", lotVersion: 7 });
     expect(
       limitOutcomeOf(
         create(SetProxyLimitResponseSchema, {

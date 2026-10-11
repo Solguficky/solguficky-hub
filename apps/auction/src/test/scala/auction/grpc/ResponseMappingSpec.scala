@@ -13,6 +13,7 @@ import auction.catalog.LotId
 import auction.catalog.LotTitle
 import auction.lot.BidOrigin
 import auction.lot.BidSource
+import auction.entity.LotEntity
 import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.LotFixtures.*
@@ -38,10 +39,11 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
 
   "response mapping" should {
 
-    "answers an accepted bid with the id of the placed bid" in {
+    "answers an accepted bid with the id of the placed bid and the version the read shows it from" in {
       val placed = LotEvent.BidPlaced(bid(7), participant(1), money(150), None, BidOrigin.Manual(BidSource.Bot))
-      val response = ResponseMapping.placeBid(Right(Envelope(4, op(1), placed))).value
+      val response = ResponseMapping.placeBid(Right(LotEntity.Recorded(Envelope(4, op(1), placed), 6))).value
       response.getAccepted.bidId shouldBe bid(7).value.toString
+      response.getAccepted.lotVersion shouldBe 6L
     }
 
     "carries the minimum price in a below-minimum refusal" in {
@@ -79,9 +81,10 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       ResponseMapping.placeBid(Left(PlaceBidRejected.LotNotFound)).left.value.getCode shouldBe Status.Code.NOT_FOUND
     }
 
-    "answers an accepted proxy limit and its withdrawal without data and every refusal as a value" in {
+    "answers an accepted proxy limit with the version only, its withdrawal without data and every refusal as a value" in {
       val set = LotEvent.ProxyLimitSet(participant(1), money(200))
-      ResponseMapping.setProxyLimit(Right(Envelope(5, op(1), set))).value.outcome.isAccepted shouldBe true
+      ResponseMapping.setProxyLimit(Right(LotEntity.Recorded(Envelope(5, op(1), set), 6))).value.getAccepted shouldBe
+        wire.ProxyLimitAccepted(lotVersion = 6)
       val withdrawn = LotEvent.ProxyLimitWithdrawn(participant(1))
       ResponseMapping.withdrawProxyLimit(Right(Envelope(6, op(2), withdrawn))).value.outcome.isAccepted shouldBe true
       def limitRefused(rejected: SetProxyLimitRejected) =

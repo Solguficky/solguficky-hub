@@ -29,6 +29,46 @@ describe("auction callback_data", () => {
     });
   });
 
+  // «К лоту» после принятой команды несёт версию лота в base36 (PER-470).
+  it("encodes a lot with the version to read it at and parses it back", () => {
+    const raw = encodeAuctionCallback({
+      kind: "lot",
+      lotId: LOT_ID,
+      page: 3,
+      atLeastVersion: 1295,
+    });
+    expect(raw).toBe(`v1:auc:lot:${LOT_TOKEN}:3:zz`);
+    expect(parseAuctionCallback(raw)).toEqual({
+      ok: true,
+      intent: { kind: "lot", lotId: LOT_ID, page: 3, atLeastVersion: 1295 },
+    });
+  });
+
+  it("fits the largest version with the largest page into 64 bytes", () => {
+    const raw = encodeAuctionCallback({
+      kind: "lot",
+      lotId: LOT_ID,
+      page: MAX_FEED_PAGE,
+      atLeastVersion: Number.MAX_SAFE_INTEGER,
+    });
+    expect(Buffer.byteLength(raw, "utf8")).toBeLessThanOrEqual(64);
+    expect(parseAuctionCallback(raw)).toMatchObject({ ok: true });
+  });
+
+  it("refuses a lot version that is not one canonical positive number", () => {
+    for (const tail of ["0", "0a", "-1", "Z", "1:2", "zzzzzzzzzzzz"]) {
+      expect(reasonOf(`v1:auc:lot:${LOT_TOKEN}:3:${tail}`)).toBe("malformed");
+    }
+    expect(() =>
+      encodeAuctionCallback({
+        kind: "lot",
+        lotId: LOT_ID,
+        page: 0,
+        atLeastVersion: 0,
+      }),
+    ).toThrow(RangeError);
+  });
+
   it("encodes a feed page and parses it back", () => {
     const raw = encodeAuctionCallback({
       kind: "feed",
@@ -156,7 +196,8 @@ describe("auction callback_data", () => {
     ["unknown action", `v1:auc:bid:${LOT_TOKEN}`],
     ["missing argument", "v1:auc:lot"],
     ["empty argument", "v1:auc:lot:"],
-    ["extra argument", `v1:auc:lot:${LOT_TOKEN}:1:1`],
+    // Третий аргумент лота — версия (PER-470); четвёртого у него нет.
+    ["extra argument", `v1:auc:lot:${LOT_TOKEN}:1:1:1`],
     ["feed without page", `v1:auc:feed:${AUCTION_TOKEN}`],
     ["history without its page", `v1:auc:hist:${LOT_TOKEN}:3`],
     ["history with an extra argument", `v1:auc:hist:${LOT_TOKEN}:3:1:1`],

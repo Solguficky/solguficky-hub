@@ -192,7 +192,14 @@ export type LotHistoryPage = {
 };
 
 export interface AuctionPort {
-  getLot(request: { viewer: Viewer; lotId: string }): Promise<LotView>;
+  // `atLeastVersion` — версия из ответа принятой команды (PER-470): адаптер
+  // дочитывает лот до неё в своём бюджете, а не догнав — отдаёт последний
+  // прочитанный снимок, а не отказ. Без неё — одно чтение.
+  getLot(request: {
+    viewer: Viewer;
+    lotId: string;
+    atLeastVersion?: number;
+  }): Promise<LotView>;
   // Лот или `undefined`, если Auction его не знает или смотрящему не видно:
   // NOT_FOUND здесь ответ, а не сбой. Списку избранного (PER-495) он отличает
   // лот удалённого аукциона, отметка на который живёт в Notifications, от
@@ -266,8 +273,11 @@ export type ProxyLimitRefusal =
 // истёк или связь оборвалась. Только его пакет повторяет, и тем же `op_id`:
 // принятую команду Auction узнаёт по нему и второй раз не исполняет. Прочие
 // сбои транспорта порт бросает.
+//
+// `lotVersion` принятой команды — версия `LotView`, с которой чтение показывает
+// её целиком; 0 — Auction её не назвал.
 export type CommandOutcome<Refusal> =
-  | { kind: "accepted" }
+  | { kind: "accepted"; lotVersion: number }
   | { kind: "refused"; refusal: Refusal }
   | { kind: "unanswered" };
 

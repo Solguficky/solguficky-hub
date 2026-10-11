@@ -33,6 +33,7 @@ import auction.catalog.NewCard
 import auction.entity.AuctionAnswer
 import auction.entity.AuctionGateway
 import auction.entity.Initiator
+import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.contract.LotValues
 import auction.lot.AuctionId
@@ -120,14 +121,18 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
     def auctionOf(lotId: UUID): Future[Option[AuctionId]] = fail("the lot was reached")
 
-    def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator): Future[Either[PlaceBidRejected, Envelope]] =
+    def placeBid(
+        lotId: UUID,
+        command: PlaceBid,
+        initiator: Initiator
+    ): Future[Either[PlaceBidRejected, LotEntity.Recorded]] =
       fail("the lot was reached")
 
     def setProxyLimit(
         lotId: UUID,
         command: SetProxyLimit,
         initiator: Initiator
-    ): Future[Either[SetProxyLimitRejected, Envelope]] = fail("the lot was reached")
+    ): Future[Either[SetProxyLimitRejected, LotEntity.Recorded]] = fail("the lot was reached")
 
     def withdrawProxyLimit(
         lotId: UUID,
@@ -200,7 +205,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def find(auction: AuctionId, participants: Set[ParticipantId]) = touched
   }
 
-  private val accepted: Envelope = Envelope(4, LotFixtures.op(1), manual(bid(7), 1, 150, None))
+  private val accepted: LotEntity.Recorded =
+    LotEntity.Recorded(Envelope(4, LotFixtures.op(1), manual(bid(7), 1, 150, None)), lotVersion = 5)
 
   private object UntouchableStore extends LotCatalogStore {
     private def touched = fail("the catalog store was touched")
@@ -209,13 +215,13 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def find(lotId: LotId): Future[Option[LotCard]] = touched
   }
 
-  private def answering(outcome: Future[Either[PlaceBidRejected, Envelope]]): LotGateway =
+  private def answering(outcome: Future[Either[PlaceBidRejected, LotEntity.Recorded]]): LotGateway =
     new Born {
       override def placeBid(
           lotId: UUID,
           command: PlaceBid,
           initiator: Initiator
-      ): Future[Either[PlaceBidRejected, Envelope]] = outcome
+      ): Future[Either[PlaceBidRejected, LotEntity.Recorded]] = outcome
     }
 
   private object UntouchableFaq extends FaqAcknowledgements {
@@ -737,7 +743,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
 
     "freezes the name after an accepted proxy limit and leaves it free after a refused one" in {
-      def limiting(outcome: Either[SetProxyLimitRejected, Envelope]) = new Born {
+      def limiting(outcome: Either[SetProxyLimitRejected, LotEntity.Recorded]) = new Born {
         override def setProxyLimit(lotId: UUID, command: SetProxyLimit, initiator: Initiator) =
           Future.successful(outcome)
       }
@@ -748,11 +754,11 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       refusedNames.freezes shouldBe 0
       val set = Envelope(5, LotFixtures.op(2), LotEvent.ProxyLimitSet(participant(1), money(200)))
       val acceptedNames = Names(named)
-      service(limiting(Right(set)), names = acceptedNames)
+      service(limiting(Right(LotEntity.Recorded(set, lotVersion = 6))), names = acceptedNames)
         .setProxyLimit(validLimit)
         .futureValue
-        .outcome
-        .isAccepted shouldBe true
+        .getAccepted
+        .lotVersion shouldBe 6L
       acceptedNames.frozen shouldBe Set(ViewerId)
     }
 
