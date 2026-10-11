@@ -334,8 +334,8 @@ Identity публикует события о регистрации, смене
 | `AuctionService.DiscardAuction` | то же | Только Hub Bot: «Удалить аукцион» в пульте администратора, пока онлайн-неделя не открыта ([ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-09-удаление-аукциона-до-торгов)) | Auction |
 | `AuctionService.SelectForFinal` | то же | Только Hub Bot: отметка лота для финала в пульте администратора ([PER-320](https://linear.app/anticnvm/issue/per-320)) | Auction |
 | `AuctionService.DeselectForFinal` | то же | то же | Auction |
-| `AuctionService.FreezeFinalLineup` | то же | Только Hub Bot: заморозка состава финала в пульте администратора ([PER-334](https://linear.app/anticnvm/issue/per-334)); клиента пока нет | Auction |
-| `AuctionService.StartFinal` | то же | Только Hub Bot: пульт ведущего ([PER-337](https://linear.app/anticnvm/issue/per-337)); клиента пока нет | Auction |
+| `AuctionService.FreezeFinalLineup` | то же | Только Hub Bot: заморозка состава финала в пульте администратора ([PER-334](https://linear.app/anticnvm/issue/per-334)) | Auction |
+| `AuctionService.StartFinal` | то же | Только Hub Bot: пульт ведущего ([PER-337](https://linear.app/anticnvm/issue/per-337)) | Auction |
 | `AuctionService.StartNextLot` | то же | то же | Auction |
 | `AuctionService.AdvanceAsk` | то же | Только Hub Bot: пульт ведущего ([PER-337](https://linear.app/anticnvm/issue/per-337)); отвечает `UNIMPLEMENTED` до [PER-293](https://linear.app/anticnvm/issue/per-293) | Auction |
 | `AuctionService.CloseLot` | то же | то же | Auction |
