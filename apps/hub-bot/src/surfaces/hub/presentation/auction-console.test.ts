@@ -23,6 +23,7 @@ import type {
   ConsoleReadResult,
   FinalistResult,
   LotAdministration,
+  LotClosure,
   MeetupAuctions,
 } from "../auction/port.js";
 import type { IdentityResolver } from "../identity/port.js";
@@ -107,6 +108,10 @@ function fakeAuction(
     notApplicable?: true;
     // У аукциона открыт розыгрыш (ADR-066): лента ставит его кнопку.
     raffle?: true;
+    // Финал (PER-337): замороженный состав, ставки активного лота и имена.
+    lineup?: readonly string[];
+    bids?: readonly { amount: Money; participantId: string }[];
+    names?: Readonly<Record<string, string>>;
   } = {},
 ) {
   const state: {
@@ -115,10 +120,24 @@ function fakeAuction(
     lots: ConsoleLot[];
     startedBy?: string;
     discarded?: true;
+    lineup?: { order: readonly string[]; activeLotId?: string };
+    // Закрытия по ключу: повтор ключа получает исходный ответ, как в сервисе.
+    closures: Map<string, LotClosure>;
   } = {
     status: options.status ?? "draft",
     ...(options.week === undefined ? {} : { week: options.week }),
     lots: [...(options.lots ?? [])],
+    ...(options.lineup === undefined
+      ? {}
+      : { lineup: { order: options.lineup } }),
+    closures: new Map(),
+  };
+  const lotOf = (lotId: string) =>
+    state.lots.find((each) => each.lot.lotId === lotId);
+  const replaceLot = (lotId: string, lot: LotView) => {
+    state.lots = state.lots.map((each) =>
+      each.lot.lotId === lotId ? { ...each, lot } : each,
+    );
   };
   const commands: Command[] = [];
   const notUsed = async (): Promise<never> => {
@@ -167,6 +186,7 @@ function fakeAuction(
           auctionId,
           status: state.status,
           ...(state.week === undefined ? {} : { week: state.week }),
+          ...(state.lineup === undefined ? {} : { lineup: state.lineup }),
           lots: state.lots,
         },
       };
@@ -216,6 +236,99 @@ function fakeAuction(
     },
     selectForFinal: mark(true),
     deselectForFinal: mark(false),
+    async startFinal(_person, start) {
+      commands.push({ method: "startFinal", args: start });
+      if (state.status !== "lineup-frozen") {
+        return { kind: "lineup-not-frozen" };
+      }
+      state.status = "final";
+      return { kind: "ok" };
+    },
+    async startNextLot(_person, start) {
+      commands.push({ method: "startNextLot", args: start });
+      if (state.status !== "final" || state.lineup === undefined) {
+        return { kind: "not-in-final" };
+      }
+      const active = state.lineup.activeLotId;
+      if (active !== undefined) {
+        return { kind: "another-lot-active", lotId: active };
+      }
+      const next = state.lineup.order.find(
+        (lotId) => lotOf(lotId)?.lot.status.kind === "held",
+      );
+      const lot = next === undefined ? undefined : lotOf(next)?.lot;
+      if (next === undefined || lot?.status.kind !== "held") {
+        return { kind: "lineup-exhausted" };
+      }
+      replaceLot(next, {
+        ...lot,
+        nextPrice: rub(lot.status.currentPrice.minorUnits + 10_000),
+        status: {
+          kind: "trading",
+          currentPrice: lot.status.currentPrice,
+          ...(lot.status.leaderId === undefined
+            ? {}
+            : { leaderId: lot.status.leaderId }),
+          phase: "live",
+        },
+      });
+      state.lineup = { ...state.lineup, activeLotId: next };
+      return { kind: "ok", lotId: next };
+    },
+    async advanceAsk(_person, ask) {
+      commands.push({ method: "advanceAsk", args: ask });
+      const lot = lotOf(ask.lotId)?.lot;
+      if (lot?.status.kind !== "trading") return { kind: "lot-not-open" };
+      if (ask.newAsk.minorUnits <= lot.status.currentPrice.minorUnits) {
+        return {
+          kind: "ask-below-current-price",
+          mustExceed: lot.status.currentPrice,
+        };
+      }
+      replaceLot(ask.lotId, { ...lot, nextPrice: ask.newAsk });
+      return { kind: "ok" };
+    },
+    async closeLot(_person, close) {
+      commands.push({ method: "closeLot", args: close });
+      const replayed = state.closures.get(close.opId);
+      if (replayed !== undefined) return { kind: "ok", closure: replayed };
+      const lot = lotOf(close.lotId)?.lot;
+      if (lot?.status.kind !== "trading") return { kind: "lot-not-open" };
+      const closure: LotClosure =
+        lot.status.leaderId === undefined
+          ? { kind: "unsold" }
+          : {
+              kind: "sold",
+              winnerId: lot.status.leaderId,
+              price: lot.status.currentPrice,
+            };
+      state.closures.set(close.opId, closure);
+      replaceLot(close.lotId, {
+        ...lot,
+        status:
+          closure.kind === "sold"
+            ? {
+                kind: "sold",
+                winnerId: closure.winnerId,
+                price: closure.price,
+              }
+            : { kind: "unsold" },
+      });
+      if (state.lineup !== undefined) {
+        state.lineup = { order: state.lineup.order };
+      }
+      return { kind: "ok", closure };
+    },
+    async recentBids() {
+      return {
+        kind: "ok" as const,
+        bids: options.bids ?? [],
+        names: options.names ?? {},
+      };
+    },
+    async displayNames() {
+      return { kind: "ok" as const, names: options.names ?? {} };
+    },
     screenPorts() {
       return {
         auction: {
@@ -1206,6 +1319,233 @@ describe("discarding the auction", () => {
     for (const data of [
       `v1:ac:x:${auctionToken}`,
       `v1:ac:z:${auctionToken}:${uuidToToken(vaseId)}`,
+    ]) {
+      await bot.handleUpdate(press(data));
+      expect(last(calls).text).toContain("Это действие тебе недоступно.");
+    }
+    expect(auction.commands).toEqual([]);
+  });
+});
+
+describe("final of the auctioneer", () => {
+  const leaderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ee";
+  const finalist = (
+    lotId: string,
+    title: string,
+    price: number,
+    leader?: string,
+  ): ConsoleLot => ({
+    lot: {
+      ...trading(lotId, title, price),
+      status: {
+        kind: "held",
+        currentPrice: rub(price),
+        ...(leader === undefined ? {} : { leaderId: leader }),
+      },
+    },
+    bidCount: 2,
+    uniqueParticipantCount: 1,
+    markedForFinal: true,
+    overdue: false,
+  });
+  const frozen = () =>
+    fakeAuction({
+      status: "lineup-frozen",
+      week: { ...week, final: true },
+      lots: [
+        finalist(vaseId, "Ваза", 120_000, leaderId),
+        finalist(mugId, "Кружка", 50_000),
+      ],
+      lineup: [vaseId, mugId],
+      bids: [
+        { amount: rub(120_000), participantId: leaderId },
+        { amount: rub(110_000), participantId: "someone" },
+      ],
+      names: { [leaderId]: "Бэтмен" },
+    });
+
+  it("runs a lot from its opening to the sale over restarts of the bot", async () => {
+    const auction = frozen();
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(consoleData));
+    expect(plain(last(calls))).toContain(
+      "Состав финала объявлен.\n\n1. Ваза — 1 200 ₽\n2. Кружка — 500 ₽",
+    );
+    expect(labels(last(calls))).toEqual([
+      ["Начать финал"],
+      ["Обновить"],
+      ["‹ Лоты"],
+    ]);
+
+    await next((history) => press(dataOf(last(history), "Начать финал")));
+    expect(last(calls).text).toBe("<b>Финал начат</b>\n\nОткрой первый лот.");
+    await next((history) => press(dataOf(last(history), "‹ Пульт")));
+    expect(plain(last(calls))).toContain("Сейчас лот не открыт.");
+
+    await next((history) =>
+      press(dataOf(last(history), "Открыть следующий лот")),
+    );
+    const panel = last(calls);
+    expect(plain(panel)).toContain("1. Ваза — 1 200 ₽ · торгуется");
+    expect(plain(panel)).toContain(
+      "Сейчас: Ваза.\nЦена: 1 200 ₽, следующая: 1 300 ₽.\nЛидер: Бэтмен.\nПоследние ставки:\n1 200 ₽ — Бэтмен\n1 100 ₽",
+    );
+    expect(labels(panel)).toEqual([
+      ["Поднять цену"],
+      ["Продать"],
+      ["Обновить"],
+      ["‹ Лоты"],
+    ]);
+
+    // Ask не выше текущей цены Auction отвергает, и бот называет порог.
+    await next((history) => press(dataOf(last(history), "Поднять цену")));
+    const asked = question(calls).payload;
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:fa:${auctionToken}:0:42`);
+    expect(spaced(asked.text ?? "")).toContain(
+      "Лот: Ваза\nСейчас следующая цена: 1 300 ₽",
+    );
+    await next((history) => answer(history, { text: "1000" }));
+    expect(spaced(last(calls).text ?? "")).toBe(
+      "<b>Новая цена должна быть выше 1 200 ₽</b>",
+    );
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+    await next((history) => press(dataOf(last(history), "Ввести заново")));
+    await next((history) => answer(history, { text: "1 500" }));
+    expect(auction.sent("advanceAsk").map((each) => each.args)).toEqual([
+      {
+        auctionId,
+        lotId: vaseId,
+        opId: expect.any(String),
+        newAsk: rub(100_000),
+      },
+      {
+        auctionId,
+        lotId: vaseId,
+        opId: expect.any(String),
+        newAsk: rub(150_000),
+      },
+    ]);
+    expect(plain(last(calls))).toContain("Цена: 1 200 ₽, следующая: 1 500 ₽.");
+
+    await next((history) => press(dataOf(last(history), "Продать")));
+    const confirm = last(calls);
+    expect(plain(confirm)).toBe(
+      "Закрыть лот «Ваза»?\n\nПродажа за 1 200 ₽, покупатель — Бэтмен.\n\nОтменить закрытие нельзя: торги по лоту закончатся.",
+    );
+    expect(labels(confirm)).toEqual([["✔️ Да, продать", "✖️ Нет"]]);
+    expect(dataOf(confirm, "✖️ Нет")).toBe(consoleData);
+    expect(auction.sent("closeLot")).toEqual([]);
+
+    // Продажа — свой экран исхода; пульт ведущего за «‹ Пульт».
+    const sold =
+      "<b>Лот продан</b>\n\n«Ваза»\n\nЦена: 1 200 ₽, покупатель — Бэтмен.";
+    const yes = dataOf(confirm, "✔️ Да, продать");
+    await next(() => press(yes));
+    expect(spaced(last(calls).text ?? "")).toBe(sold);
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+    await next((history) => press(dataOf(last(history), "‹ Пульт")));
+    expect(plain(last(calls))).toContain("1. Ваза — продан за 1 200 ₽");
+    expect(labels(last(calls))).toEqual([
+      ["Открыть следующий лот"],
+      ["Обновить"],
+      ["‹ Лоты"],
+    ]);
+
+    // Повторное «Да» несёт тот же ключ: Auction отвечает исходной продажей,
+    // и второй продажи нет.
+    await next(() => press(yes));
+    const [first, second] = auction.sent("closeLot");
+    expect(second?.args).toEqual(first?.args);
+    expect(auction.state.closures.size).toBe(1);
+    expect(spaced(last(calls).text ?? "")).toBe(sold);
+  });
+
+  it("confirms the sale again instead of closing when the hall bid after the confirmation", async () => {
+    const auction = frozen();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:g:${auctionToken}`));
+    await bot.handleUpdate(press(`v1:ac:n:${auctionToken}`));
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Продать")));
+    const yes = dataOf(last(calls), "✔️ Да, продать");
+
+    // Зал перебил, пока подтверждение было открыто.
+    auction.state.lots = auction.state.lots.map((each) =>
+      each.lot.lotId === vaseId && each.lot.status.kind === "trading"
+        ? {
+            ...each,
+            lot: {
+              ...each.lot,
+              status: { ...each.lot.status, currentPrice: rub(130_000) },
+            },
+          }
+        : each,
+    );
+    await bot.handleUpdate(press(yes));
+
+    expect(auction.sent("closeLot")).toEqual([]);
+    expect(plain(last(calls))).toContain(
+      "Лот изменился, пока было открыто подтверждение. Проверь заново.\n\nПродажа за 1 300 ₽, покупатель — Бэтмен.",
+    );
+    expect(dataOf(last(calls), "✔️ Да, продать")).not.toBe(yes);
+  });
+
+  it("closes a lot without bids without a sale", async () => {
+    const auction = fakeAuction({
+      status: "final",
+      lots: [finalist(mugId, "Кружка", 50_000)],
+      lineup: [mugId],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Открыть следующий лот")));
+    expect(plain(last(calls))).toContain("Ставок нет.");
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Закрыть без продажи")));
+    expect(plain(last(calls))).toContain(
+      "Ставок нет: лот закроется без продажи.",
+    );
+    await bot.handleUpdate(press(dataOf(last(calls), "✔️ Да, закрыть")));
+
+    expect(last(calls).text).toBe(
+      "<b>Лот закрыт без продажи</b>\n\n«Кружка»\n\nСтавок не было.",
+    );
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    expect(plain(last(calls))).toContain("1. Кружка — не продан");
+  });
+
+  it("names a lot still trading instead of opening a second one", async () => {
+    const auction = frozen();
+    auction.state.status = "final";
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:n:${auctionToken}`));
+    await bot.handleUpdate(press(`v1:ac:n:${auctionToken}`));
+
+    expect(last(calls).text).toBe(
+      "<b>Лот ещё торгуется</b>\n\nЗакрой его, прежде чем открыть следующий.",
+    );
+  });
+
+  it("refuses the final buttons of someone who is not an administrator before Auction is asked", async () => {
+    const auction = frozen();
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+
+    for (const data of [
+      `v1:ac:g:${auctionToken}`,
+      `v1:ac:n:${auctionToken}`,
+      `v1:ac:a:${auctionToken}:0`,
+      `v1:ac:c:${auctionToken}:0`,
+      `v1:ac:k:${auctionToken}:0:${auctionToken}:x`,
     ]) {
       await bot.handleUpdate(press(data));
       expect(last(calls).text).toContain("Это действие тебе недоступно.");

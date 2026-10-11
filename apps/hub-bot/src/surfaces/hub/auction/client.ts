@@ -32,10 +32,12 @@ import { createUuidV7 } from "../../../core/uuid-v7.js";
 import { consoleOf } from "./console.js";
 import {
   type AddLotResult,
+  type AdvanceAskResult,
   type AuctionConsoles,
   type AuctionFailure,
   type AuctionScreenPorts,
   type AuctionScreens,
+  type CloseLotResult,
   type ConsoleReadResult,
   type DiscardAuctionResult,
   type EnableAuctionResult,
@@ -47,6 +49,8 @@ import {
   type MeetupAuctions,
   type ScheduleAuctionResult,
   type ScheduleLotResult,
+  type StartFinalResult,
+  type StartNextLotResult,
   type StartPrebiddingResult,
   viewerOf,
 } from "./port.js";
@@ -81,7 +85,14 @@ type AuctionRpc = Pick<
   | "discardAuction"
   | "selectForFinal"
   | "deselectForFinal"
+  | "startFinal"
+  | "startNextLot"
+  | "advanceAsk"
+  | "closeLot"
 >;
+
+// Сколько страниц хронологии пульт ведущего читает в поисках последних ставок.
+const historyPageLimit = 20;
 
 export type AuctionClient = MeetupAuctions &
   AuctionScreens &
@@ -347,6 +358,136 @@ export function createAuctionAdapter(
         return finalistResult(response.outcome, "deselect");
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Финал ведущего (PER-337). `NOT_FOUND` — аукциона нет, как у пульта.
+    async startFinal(person, start, meta) {
+      try {
+        const response = await rpc.startFinal(
+          { viewer: wireViewer(viewerOf(person)), ...start },
+          options(meta),
+        );
+        return startFinalResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async startNextLot(person, start, meta) {
+      try {
+        const response = await rpc.startNextLot(
+          { viewer: wireViewer(viewerOf(person)), ...start },
+          options(meta),
+        );
+        return startNextLotResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async advanceAsk(person, ask, meta) {
+      try {
+        const response = await rpc.advanceAsk(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: ask.auctionId,
+            lotId: ask.lotId,
+            opId: ask.opId,
+            newAsk: wireMoney(ask.newAsk),
+          },
+          options(meta),
+        );
+        return advanceAskResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async closeLot(person, close, meta) {
+      try {
+        const response = await rpc.closeLot(
+          { viewer: wireViewer(viewerOf(person)), ...close },
+          options(meta),
+        );
+        return closeLotResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async displayNames(person, read, meta) {
+      try {
+        const response = await rpc.getDisplayNames(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: read.auctionId,
+            participantIds: [...read.participantIds],
+          },
+          options(meta),
+        );
+        return {
+          kind: "ok",
+          names: Object.fromEntries(
+            Object.entries(response.names).map(([id, name]) => [id, name.text]),
+          ),
+        };
+      } catch (cause) {
+        onNamesRefused?.(cause, meta);
+        return toFailure(cause);
+      }
+    },
+    // Хронология идёт по возрастанию, поэтому последние ставки — хвост
+    // последней страницы. Страниц не больше `historyPageLimit`: пульт
+    // ведущего ждать конца длинной хронологии не вправе, и недочитанная
+    // ставок не даёт вовсе. Отказ имён пульт не роняет: ставки остаются без
+    // имён.
+    async recentBids(person, read, meta) {
+      const viewer = wireViewer(viewerOf(person));
+      let bids: { amount: Money; participantId: string }[] = [];
+      try {
+        let pageToken = "";
+        for (let page = 0; page < historyPageLimit; page += 1) {
+          const history = historyPageOf(
+            await rpc.listLotHistory(
+              { viewer, lotId: read.lotId, pageToken },
+              options(meta),
+            ),
+          );
+          bids = [
+            ...bids,
+            ...history.entries.map((entry) => ({
+              amount: entry.amount,
+              participantId: entry.participantId,
+            })),
+          ].slice(-read.limit);
+          pageToken = history.nextPageToken;
+          if (pageToken === "") break;
+        }
+        // Хвост не дочитан: прочитанное — не последние ставки, и выдавать
+        // его за последние нельзя.
+        if (pageToken !== "") bids = [];
+      } catch (cause) {
+        return toFailure(cause);
+      }
+      const latest = bids.reverse();
+      const ids = [
+        ...new Set([
+          ...latest.map((bid) => bid.participantId),
+          ...read.extraIds,
+        ]),
+      ];
+      if (ids.length === 0) return { kind: "ok", bids: latest, names: {} };
+      try {
+        const response = await rpc.getDisplayNames(
+          { viewer, auctionId: read.auctionId, participantIds: ids },
+          options(meta),
+        );
+        return {
+          kind: "ok",
+          bids: latest,
+          names: Object.fromEntries(
+            Object.entries(response.names).map(([id, name]) => [id, name.text]),
+          ),
+        };
+      } catch (cause) {
+        onNamesRefused?.(cause, meta);
+        return { kind: "ok", bids: latest, names: {} };
       }
     },
     screenPorts(meta): AuctionScreenPorts {
@@ -937,6 +1078,181 @@ function finalistResult(
     }
     case undefined:
       return defect(`${command} for final response without an outcome`);
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function startFinalResult(
+  outcome: Awaited<ReturnType<AuctionRpc["startFinal"]>>["outcome"],
+): StartFinalResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "lineupNotFrozen":
+          return { kind: "lineup-not-frozen" };
+        case undefined:
+          return defect("start final refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("start final response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function startNextLotResult(
+  outcome: Awaited<ReturnType<AuctionRpc["startNextLot"]>>["outcome"],
+): StartNextLotResult {
+  switch (outcome.case) {
+    case "accepted":
+      return outcome.value.lotId === ""
+        ? defect("final lot activation without a lot")
+        : { kind: "ok", lotId: outcome.value.lotId };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "notInFinal":
+          return { kind: "not-in-final" };
+        case "anotherLotActive":
+          return reason.value.lotId === ""
+            ? defect("another lot active without a lot")
+            : { kind: "another-lot-active", lotId: reason.value.lotId };
+        case "lineupExhausted":
+          return { kind: "lineup-exhausted" };
+        case undefined:
+          return defect("start next lot refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("start next lot response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function advanceAskResult(
+  outcome: Awaited<ReturnType<AuctionRpc["advanceAsk"]>>["outcome"],
+): AdvanceAskResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "lotNotInAuction":
+          return { kind: "lot-not-in-auction" };
+        case "lotNotOpen":
+          return { kind: "lot-not-open" };
+        case "askBelowCurrentPrice": {
+          const mustExceed = reason.value.mustExceed;
+          return mustExceed === undefined
+            ? defect("ask below current price without an amount")
+            : {
+                kind: "ask-below-current-price",
+                mustExceed: moneyOf(mustExceed),
+              };
+        }
+        case "currencyMismatch":
+          return { kind: "currency-mismatch" };
+        case undefined:
+          return defect("advance ask refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("advance ask response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function closeLotResult(
+  outcome: Awaited<ReturnType<AuctionRpc["closeLot"]>>["outcome"],
+): CloseLotResult {
+  switch (outcome.case) {
+    case "accepted": {
+      const result = outcome.value.result;
+      switch (result.case) {
+        case "sold": {
+          const price = result.value.price;
+          return price === undefined || result.value.winnerId === ""
+            ? defect("lot sale without a winner or price")
+            : {
+                kind: "ok",
+                closure: {
+                  kind: "sold",
+                  winnerId: result.value.winnerId,
+                  price: moneyOf(price),
+                },
+              };
+        }
+        case "unsold":
+          return { kind: "ok", closure: { kind: "unsold" } };
+        case undefined:
+          return defect("lot closure without a result");
+        default: {
+          const _exhaustive: never = result;
+          return _exhaustive;
+        }
+      }
+    }
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "lotNotInAuction":
+          return { kind: "lot-not-in-auction" };
+        case "lotNotOpen":
+          return { kind: "lot-not-open" };
+        case "deadlineNotReached":
+          return { kind: "deadline-not-reached" };
+        case undefined:
+          return defect("close lot refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("close lot response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

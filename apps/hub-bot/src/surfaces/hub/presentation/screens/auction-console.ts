@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import type { LotStatusView } from "../../../../auction-ui/index.js";
+import { activeLot } from "../../application/auction-console.js";
 import { formatLocalMoment } from "../../application/meetup-form.js";
 import type {
   AuctionConsoleView,
@@ -8,17 +9,24 @@ import type {
   ConsoleNote,
   ConsoleSort,
   ConsoleSortMetric,
+  FinalAskError,
+  LotAmount,
   WeekAskError,
 } from "../../application/types.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
+  consoleAskData,
+  consoleCloseConfirmData,
+  consoleCloseData,
   consoleConfirmData,
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
   consoleMarkData,
+  consoleNextLotData,
   consoleOpenData,
+  consoleStartFinalData,
   consoleViewData,
   consoleWeekData,
   defaultConsoleSort,
@@ -82,6 +90,16 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-ended": "Конец недели уже прошёл. Задай новые сроки.",
   "no-lots-to-open": "Нет лотов с ценой и шагом. Открывать нечего.",
   "discard-too-late": "Онлайн-неделя уже открыта. Удалить аукцион нельзя.",
+  "final-started": "Финал начат. Открой первый лот.",
+  "lineup-not-frozen": "Состав финала ещё не объявлен. Начать финал нельзя.",
+  "not-in-final": "Финал не идёт. Открывать лоты нельзя.",
+  "another-lot-active":
+    "Лот ещё торгуется. Закрой его, прежде чем открыть следующий.",
+  "lineup-exhausted": "Все лоты финала проведены.",
+  "final-lot-closed": "Торги по лоту уже закрыты.",
+  "deadline-not-reached":
+    "Лот торгуется онлайн до своего дедлайна. Закрыть его раньше нельзя.",
+  "final-finished": "Финал завершён. Все лоты закрыты, итоги — в пульте.",
 };
 
 /** Всплывающий текст принятого переключателя финала (кадр P-08). */
@@ -135,6 +153,94 @@ function statusLines(view: ConsoleScreenView): string[] {
       return _exhaustive;
     }
   }
+}
+
+// Финал ведущего (PER-337): у замороженного состава и в финале пульт
+// показывает состав в порядке выхода, а не реестр, и торги текущего лота.
+function inFinal(console: AuctionConsoleView): boolean {
+  return console.status === "lineup-frozen" || console.status === "final";
+}
+
+function lineupLines(console: AuctionConsoleView): string[] {
+  const active = console.lineup?.activeLotId;
+  return (console.lineup?.order ?? []).map((lotId, index) => {
+    const entry = console.lots.find((each) => each.lot.lotId === lotId);
+    const title = entry === undefined ? untitled : titleOf(entry);
+    const price =
+      entry === undefined ? "" : ` — ${priceLabel(entry.lot.status)}`;
+    const now = lotId === active ? " · торгуется" : "";
+    return `${index + 1}. ${title}${price}${now}`;
+  });
+}
+
+function tradingLines(console: AuctionConsoleView): string[] {
+  const entry = activeLot(console);
+  if (entry === undefined) {
+    return console.status === "final" ? ["Сейчас лот не открыт."] : [];
+  }
+  const status = entry.lot.status;
+  if (status.kind !== "trading") return [`Сейчас: ${titleOf(entry)}.`];
+  const trading =
+    console.trading?.lotId === entry.lot.lotId ? console.trading : undefined;
+  return [
+    `Сейчас: ${titleOf(entry)}.`,
+    entry.lot.nextPrice === undefined
+      ? `Цена: ${money(status.currentPrice)}.`
+      : `Цена: ${money(status.currentPrice)}, следующая: ${money(entry.lot.nextPrice)}.`,
+    status.leaderId === undefined
+      ? "Ставок нет."
+      : `Лидер: ${trading?.leaderName ?? "имя не получено"}.`,
+    ...(trading === undefined || trading.bids.length === 0
+      ? []
+      : [
+          "Последние ставки:",
+          ...trading.bids.map(
+            (bid) =>
+              `${money(bid.amount)}${bid.name === undefined ? "" : ` — ${bid.name}`}`,
+          ),
+        ]),
+  ];
+}
+
+function finalScreen(view: ConsoleScreenView): ShownScreen {
+  const { console } = view;
+  const auction = uuidToToken(console.auctionId);
+  const keyboard = new InlineKeyboard();
+  const order = console.lineup?.order ?? [];
+  const entry = activeLot(console);
+  const position = entry === undefined ? -1 : order.indexOf(entry.lot.lotId);
+  if (console.status === "lineup-frozen") {
+    keyboard.text("Начать финал", consoleStartFinalData(auction));
+  } else if (
+    entry !== undefined &&
+    position >= 0 &&
+    entry.lot.status.kind === "trading"
+  ) {
+    keyboard
+      .text("Поднять цену", consoleAskData(auction, position))
+      .row()
+      .text(
+        entry.lot.status.leaderId === undefined
+          ? "Закрыть без продажи"
+          : "Продать",
+        consoleCloseData(auction, position),
+      );
+  } else {
+    keyboard.text("Открыть следующий лот", consoleNextLotData(auction));
+  }
+  nextRow(keyboard).text("Обновить", consoleViewData(auction));
+  const trading = tradingLines(console);
+  return {
+    id: "auction-console",
+    text: screenText(
+      "Пульт",
+      statusLines(view).map(escapeHtml).join("\n"),
+      lineupLines(console).map(escapeHtml).join("\n"),
+      trading.length === 0 ? undefined : trading.map(escapeHtml).join("\n"),
+    ),
+    keyboard: withNav(keyboard, toLots(console.auctionId)),
+    format: "HTML",
+  };
 }
 
 function priceLabel(status: LotStatusView): string {
@@ -299,6 +405,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       format: "HTML",
     };
   }
+  if (inFinal(console)) return finalScreen(view);
   // Реестр Auction отдаёт без порядка; пульт держит порядок заведения —
   // идентификатор лота UUIDv7.
   const lots = [...console.lots].sort((a, b) => compareLots(a, b, view.sort));
@@ -458,6 +565,131 @@ export function discardConfirmScreen(confirm: {
     }),
     format: "HTML",
   };
+}
+
+/**
+ * Подтверждение закрытия лота финала: продажа лидеру по текущей цене либо,
+ * без ставок, закрытие без продажи. Ключ закрытия рождён здесь и едет в «Да»:
+ * повторное нажатие той же кнопки Auction примет как повтор, и второй
+ * продажи не будет.
+ */
+export function closeConfirmScreen(confirm: {
+  auctionId: string;
+  position: number;
+  opId: string;
+  title?: string | undefined;
+  price?: LotAmount | undefined;
+  leaderName?: string | undefined;
+  changed?: true | undefined;
+}): ShownScreen {
+  const auction = uuidToToken(confirm.auctionId);
+  const title = truncate(confirm.title ?? untitled, titleLimit);
+  const buyer =
+    confirm.leaderName === undefined
+      ? ""
+      : `, покупатель — ${confirm.leaderName}`;
+  return {
+    id: "final-close-confirm",
+    text: screenText(
+      `Закрыть лот «${escapeHtml(title)}»?`,
+      confirm.changed === true
+        ? escapeHtml(
+            "Лот изменился, пока было открыто подтверждение. Проверь заново.",
+          )
+        : undefined,
+      escapeHtml(
+        confirm.price === undefined
+          ? "Ставок нет: лот закроется без продажи."
+          : `Продажа за ${money(confirm.price)}${buyer}.`,
+      ),
+      escapeHtml("Отменить закрытие нельзя: торги по лоту закончатся."),
+    ),
+    keyboard: confirmKeyboard({
+      yes: confirm.price === undefined ? "Да, закрыть" : "Да, продать",
+      yesData: consoleCloseConfirmData(
+        auction,
+        confirm.position,
+        uuidToToken(confirm.opId),
+        confirm.price === undefined
+          ? { kind: "no-sale" }
+          : { kind: "sale", minorUnits: confirm.price.minorUnits },
+      ),
+      noData: consoleViewData(auction),
+      irreversible: true,
+    }),
+    format: "HTML",
+  };
+}
+
+/**
+ * Исход закрытия лота финала — свой экран (решение владельца 11 октября 2026
+ * года): продажа необратима, и ведущий видит её итог явно, а не строкой
+ * состава. Возврат — пульт ведущего.
+ */
+export function closedScreen(closed: {
+  auctionId: string;
+  title?: string | undefined;
+  closure:
+    | { kind: "sold"; price: LotAmount; buyerName?: string | undefined }
+    | { kind: "unsold" };
+}): ShownScreen {
+  const { closure } = closed;
+  const buyer =
+    closure.kind === "sold" && closure.buyerName !== undefined
+      ? `, покупатель — ${closure.buyerName}`
+      : "";
+  return {
+    id: "outcome",
+    text: outcomeText(
+      closure.kind === "sold"
+        ? `Лот продан. Цена: ${money(closure.price)}${buyer}.`
+        : "Лот закрыт без продажи. Ставок не было.",
+      truncate(closed.title ?? untitled, titleLimit),
+    ),
+    keyboard: withNav(new InlineKeyboard(), {
+      name: "Пульт",
+      data: consoleViewData(uuidToToken(closed.auctionId)),
+    }),
+    format: "HTML",
+  };
+}
+
+/** Причина отказа ответу о следующей цене: заголовок экрана исхода. */
+export function finalAskErrorText(
+  error: FinalAskError,
+  mustExceed?: LotAmount,
+): string {
+  switch (error) {
+    case "amount-format":
+      return "Нужно целое число рублей. Только цифры, без копеек.";
+    case "amount-range":
+      return "Сумма — от 1 до 9 999 999 рублей.";
+    case "ask-below-current-price":
+      return mustExceed === undefined
+        ? "Новая цена должна быть выше текущей."
+        : `Новая цена должна быть выше ${money(mustExceed)}.`;
+    default: {
+      const _exhaustive: never = error;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Вопрос о следующей цене лота финала: лот, текущая следующая цена и образец.
+ * Ставка зала после ответа принимается ровно на эту цену (ADR-049).
+ */
+export function finalAskText(ask: {
+  title?: string | undefined;
+  nextPrice?: LotAmount | undefined;
+}): string {
+  return [
+    `Лот: ${truncate(ask.title ?? untitled, titleLimit)}`,
+    ...(ask.nextPrice === undefined
+      ? []
+      : [`Сейчас следующая цена: ${money(ask.nextPrice)}`]),
+    "Новая следующая цена в целых рублях, выше текущей. Например: 5000",
+  ].join("\n");
 }
 
 export const auctionDiscardedText =

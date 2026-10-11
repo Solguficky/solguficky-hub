@@ -3,12 +3,17 @@ import { maxLotRubles } from "../application/lot-form.js";
 import {
   auctionFaqData,
   cardCursorData,
+  consoleAskData,
+  consoleCloseConfirmData,
+  consoleCloseData,
   consoleConfirmData,
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
   consoleMarkData,
+  consoleNextLotData,
   consoleOpenData,
+  consoleStartFinalData,
   consoleViewData,
   consoleWeekData,
   lotAskData,
@@ -1076,6 +1081,42 @@ describe("auction console callbacks", () => {
         },
       ],
       [
+        consoleStartFinalData(auction),
+        { kind: "console-start-final", auction },
+      ],
+      [consoleNextLotData(auction), { kind: "console-next-lot", auction }],
+      [
+        consoleAskData(auction, 0),
+        { kind: "console-ask", auction, position: 0 },
+      ],
+      [
+        consoleCloseData(auction, 99),
+        { kind: "console-close", auction, position: 99 },
+      ],
+      [
+        consoleCloseConfirmData(auction, 999, op, {
+          kind: "sale",
+          minorUnits: 999_999_900,
+        }),
+        {
+          kind: "console-close-confirm",
+          auction,
+          position: 999,
+          op,
+          quote: { kind: "sale", minorUnits: 999_999_900 },
+        },
+      ],
+      [
+        consoleCloseConfirmData(auction, 0, op, { kind: "no-sale" }),
+        {
+          kind: "console-close-confirm",
+          auction,
+          position: 0,
+          op,
+          quote: { kind: "no-sale" },
+        },
+      ],
+      [
         consoleMarkData({
           auction,
           lot,
@@ -1108,6 +1149,18 @@ describe("auction console callbacks", () => {
     expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
   });
 
+  it("carries the auction and the lineup position of the final ask question in its cancel button", () => {
+    const askedBy = 9007199254740991;
+    const step: QuestionStep = { kind: "final-ask", auction, position: 99 };
+    const asked = `v1:q:fa:${auction}:99:${askedBy}`;
+    expect(questionData(step, askedBy)).toBe(asked);
+    expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+    expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+    expect(parseCallback(`v1:q:fa:${auction}:01:${askedBy}`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
   it("rejects a console callback with a broken token, state or shape", () => {
     for (const data of [
       "v1:ac:v",
@@ -1125,6 +1178,18 @@ describe("auction console callbacks", () => {
       `v1:ac:z:${auction}`,
       `v1:ac:z:${auction}:short`,
       `v1:ac:q:${auction}`,
+      `v1:ac:g:${auction}:1`,
+      `v1:ac:n:${auction}:1`,
+      `v1:ac:a:${auction}`,
+      `v1:ac:a:${auction}:1000`,
+      `v1:ac:a:${auction}:01`,
+      `v1:ac:c:${auction}:-1`,
+      `v1:ac:k:${auction}:0`,
+      `v1:ac:k:${auction}:0:short`,
+      `v1:ac:k:${auction}:0:${op}`,
+      `v1:ac:k:${auction}:0:${op}:X`,
+      `v1:ac:k:${auction}:0:${op}:0abc`,
+      `v1:ac:k:${auction}:x:${op}`,
     ]) {
       expect(parseCallback(data)).toEqual({ kind: "malformed" });
     }

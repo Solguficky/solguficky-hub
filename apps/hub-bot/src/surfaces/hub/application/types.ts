@@ -342,16 +342,39 @@ export type ConsoleSort = {
   direction: ConsoleSortDirection;
 };
 
-// `week` нет у черновика: сроков у него ещё не задавали.
+// Замороженный состав финала (PER-337): лоты в порядке выхода и лот, который
+// ведущий торгует сейчас. Активного лота нет между лотами и до первого.
+export type FinalLineup = {
+  order: readonly string[];
+  activeLotId?: string;
+};
+
+// `week` нет у черновика: сроков у него ещё не задавали. `lineup` есть, только
+// пока состав заморожен или идёт финал.
 export type AuctionConsoleSnapshot = {
   auctionId: string;
   status: ConsoleAuctionStatus;
   week?: AuctionWeek;
+  lineup?: FinalLineup;
   lots: readonly ConsoleLotSnapshot[];
+};
+
+// Ставка текущего лота финала на пульте ведущего: сумма и имя, которое ставит
+// Auction. Имени нет, когда Auction его не назвал.
+export type FinalBid = { amount: LotAmount; name?: string };
+
+// Торги текущего лота финала: последние ставки, новые первыми, и имя лидера.
+// `lotId` — лот, чьи это ставки: принятая команда может сменить активный лот.
+export type FinalTrading = {
+  lotId: string;
+  bids: readonly FinalBid[];
+  leaderName?: string;
 };
 
 export type AuctionConsoleView = Omit<AuctionConsoleSnapshot, "lots"> & {
   lots: readonly ConsoleLot[];
+  // Есть, только пока в финале торгуется лот.
+  trading?: FinalTrading;
 };
 
 // Строка исхода команды пульта: принятая команда и именованный отказ Auction,
@@ -377,7 +400,16 @@ export type ConsoleNote =
   | "week-ended"
   | "no-lots-to-open"
   // Удалить аукцион можно только до открытия недели.
-  | "discard-too-late";
+  | "discard-too-late"
+  // Финал ведущего (PER-337): принятые команды и отказы Auction.
+  | "final-started"
+  | "lineup-not-frozen"
+  | "not-in-final"
+  | "another-lot-active"
+  | "lineup-exhausted"
+  | "final-lot-closed"
+  | "deadline-not-reached"
+  | "final-finished";
 
 // Почему вопрос о сроках недели задан заново.
 export type WeekAskError =
@@ -385,6 +417,12 @@ export type WeekAskError =
   | "week-moment"
   | "week-order"
   | "week-ended";
+
+// Почему вопрос о следующей цене лота финала задан заново.
+export type FinalAskError =
+  | "amount-format"
+  | "amount-range"
+  | "ask-below-current-price";
 
 type AuctionConsoleCall = LotFormCall & { auctionId: string };
 
@@ -420,7 +458,42 @@ export type AuctionConsoleRequest =
       lotId: string;
       selected: boolean;
       opId: string;
+    })
+  // Финал ведущего (PER-337). Лот финала кнопка называет номером в
+  // замороженном составе: токен лота рядом с аукционом и ключом в 64 байта не
+  // помещается, а порядок после заморозки не меняется.
+  | (AuctionConsoleCall & { intent: "start-auction-final"; opId: string })
+  | (AuctionConsoleCall & { intent: "start-final-lot"; opId: string })
+  // Вопрос о следующей цене лота: вопрос называет текущую.
+  | (AuctionConsoleCall & { intent: "ask-final-price"; position: number })
+  // Цена приходит строкой, как её написал человек: разбор — дело юзкейса.
+  | (AuctionConsoleCall & {
+      intent: "advance-final-ask";
+      position: number;
+      value: string;
+      opId: string;
+    })
+  // Подтверждение закрытия лота; ключ уедет в «Да».
+  | (AuctionConsoleCall & {
+      intent: "prepare-final-close";
+      position: number;
+      opId: string;
+    })
+  // `quote` — что назвало подтверждение: продажа по цене в минорных единицах
+  // либо закрытие без продажи. `freshOpId` — ключ нового подтверждения, если
+  // лот с тех пор изменился.
+  | (AuctionConsoleCall & {
+      intent: "close-final-lot";
+      position: number;
+      opId: string;
+      quote: CloseQuote;
+      freshOpId: string;
     });
+
+// Что подтверждение закрытия назвало человеку (PER-337).
+export type CloseQuote =
+  | { kind: "sale"; minorUnits: number }
+  | { kind: "no-sale" };
 
 // Кому уходит рассылка, решает повод, а не автор: подписчикам одной сходки или
 // кругу сообщества, который разворачивает Notifications. Списка получателей
@@ -603,6 +676,41 @@ export type ExecuteResult =
     }
   // Аукцион удалён: у сходки снова «Включить аукцион».
   | { kind: "auction-discarded"; auctionId: string }
+  // Вопрос о следующей цене лота финала: первый либо тот же заново, с
+  // причиной. `mustExceed` — порог, который назвал отказ Auction.
+  | {
+      kind: "final-ask";
+      auctionId: string;
+      position: number;
+      title?: string;
+      nextPrice?: LotAmount;
+      error?: FinalAskError;
+      mustExceed?: LotAmount;
+    }
+  // Лот финала закрыт: продан покупателю за цену либо закрыт без продажи.
+  // Имени покупателя нет, когда Auction его не назвал.
+  | {
+      kind: "final-lot-closed";
+      auctionId: string;
+      title?: string;
+      closure:
+        | { kind: "sold"; price: LotAmount; buyerName?: string }
+        | { kind: "unsold" };
+    }
+  // Подтверждение закрытия лота финала: продажа лидеру по текущей цене либо
+  // закрытие без продажи, если ставок нет. `opId` уедет в «Да».
+  | {
+      kind: "final-close-confirm";
+      auctionId: string;
+      position: number;
+      opId: string;
+      title?: string;
+      price?: LotAmount;
+      leaderName?: string;
+      // Подтверждение задано заново: цена или лидер изменились после
+      // прежнего, и закрывать по нему бот не стал.
+      changed?: true;
+    }
   // Отказ пульту целиком: не администратор сходки либо аукциона нет.
   | {
       kind: "auction-console-refused";

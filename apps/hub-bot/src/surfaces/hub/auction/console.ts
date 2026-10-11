@@ -9,6 +9,7 @@ import type {
   AuctionWeek,
   ConsoleAuctionStatus,
   ConsoleLotSnapshot,
+  FinalLineup,
 } from "../application/types.js";
 
 // Перевод `auction.v1.AuctionConsole` в пульт хаба (PER-320). Как и перевод
@@ -19,12 +20,31 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
   const auction = console.auction;
   if (auction === undefined) throw new Error("auction console without auction");
   const week = weekOf(auction);
+  const lineup = lineupOf(auction.status);
   return {
     auctionId: auction.id,
     status: statusOf(auction.status),
     ...(week === undefined ? {} : { week }),
+    ...(lineup === undefined ? {} : { lineup }),
     lots: console.lots.map(consoleLotOf),
   };
+}
+
+// Состав финала есть у замороженного состава и у идущего финала, и он
+// никогда не пуст. Пустая строка активного лота — поле выставлено пустым, а
+// «между лотами» контракт выражает отсутствием поля.
+function lineupOf(status: AuctionSnapshot["status"]): FinalLineup | undefined {
+  if (status.case !== "lineupFrozen" && status.case !== "inFinal") {
+    return undefined;
+  }
+  if (status.value.order.length === 0) {
+    throw new Error("final lineup is empty");
+  }
+  const order = [...status.value.order];
+  if (status.case === "lineupFrozen") return { order };
+  const active = status.value.activeLotId;
+  if (active === "") throw new Error("final active lot is empty");
+  return active === undefined ? { order } : { order, activeLotId: active };
 }
 
 function weekOf(auction: AuctionSnapshot): AuctionWeek | undefined {

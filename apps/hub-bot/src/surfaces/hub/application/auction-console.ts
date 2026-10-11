@@ -3,20 +3,26 @@ import type {
   AuctionConsoles,
   AuctionFailure,
   ConsoleReadResult,
+  LotClosure,
   LotStatisticsReadResult,
 } from "../auction/port.js";
 import { communityInstant } from "../community-time.js";
+import { parseRubles } from "./lot-form.js";
 import type {
   AuctionConsoleRequest,
   AuctionConsoleView,
+  CloseQuote,
   ConsoleAuctionStatus,
+  ConsoleLot,
   ConsoleNote,
   ExecuteResult,
+  LotAmount,
   WeekAskError,
 } from "./types.js";
 
 // Пульт аукциона администратора (PER-320): сроки онлайн-недели и финал,
-// открытие недели и отметка лотов для финала. Своего состояния у пульта нет:
+// открытие недели и отметка лотов для финала; в финале он же — пульт ведущего
+// (PER-337). Своего состояния у пульта нет:
 // каждый шаг читает пульт у Auction заново. Право здесь не решается — его
 // проверяет Auction у Meetups на каждой команде и чтении, а край только не
 // показывает вход тому, кто не администратор.
@@ -82,6 +88,64 @@ export function parseWeek(
     return { kind: "rejected", error: "week-ended" };
   }
   return { kind: "ok", opensAt, closesAt };
+}
+
+// Сколько последних ставок текущего лота видит ведущий.
+const recentBidLimit = 5;
+
+/** Лот, который ведущий торгует сейчас, если он есть в реестре. */
+export function activeLot(console: AuctionConsoleView): ConsoleLot | undefined {
+  const active = console.lineup?.activeLotId;
+  return active === undefined
+    ? undefined
+    : console.lots.find((each) => each.lot.lotId === active);
+}
+
+/**
+ * Активный лот финала торгуется, даже если чтение ещё держит его удержанным:
+ * статус аукциона Auction читает у самого аукциона, а лоты — из отстающей read
+ * model. Без этого только что открытый лот показал бы «Открыть следующий лот».
+ */
+function liveActive(console: AuctionConsoleView): AuctionConsoleView {
+  const active = console.lineup?.activeLotId;
+  if (active === undefined) return console;
+  return {
+    ...console,
+    lots: console.lots.map((each) => {
+      const status = each.lot.status;
+      if (each.lot.lotId !== active || status.kind !== "held") return each;
+      return {
+        ...each,
+        lot: {
+          ...each.lot,
+          status: {
+            kind: "trading",
+            currentPrice: status.currentPrice,
+            ...(status.leaderId === undefined
+              ? {}
+              : { leaderId: status.leaderId }),
+            phase: "live",
+          },
+        },
+      };
+    }),
+  };
+}
+
+/** Названное подтверждением совпадает с лотом сейчас. */
+function quoted(
+  quote: CloseQuote,
+  status: { currentPrice: LotAmount; leaderId?: string },
+): boolean {
+  return status.leaderId === undefined
+    ? quote.kind === "no-sale"
+    : quote.kind === "sale" &&
+        quote.minorUnits === status.currentPrice.minorUnits;
+}
+
+function titled(entry: ConsoleLot): { title?: string } {
+  const title = entry.lot.card?.title;
+  return title === undefined ? {} : { title };
 }
 
 /** Конец недели наступил по часам бота: открывать такую неделю нельзя. */
@@ -207,7 +271,44 @@ export function createAuctionConsole(
           : { priceGrowth: statistic.priceGrowth }),
       });
     }
-    return { kind: "ok", console: { ...found.console, lots } };
+    const console = liveActive({ ...found.console, lots });
+    const active = activeLot(console);
+    if (active === undefined) return { kind: "ok", console };
+    const leaderId =
+      active.lot.status.kind === "trading"
+        ? active.lot.status.leaderId
+        : undefined;
+    const bids = await consoles.recentBids(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        lotId: active.lot.lotId,
+        limit: recentBidLimit,
+        extraIds: leaderId === undefined ? [] : [leaderId],
+      },
+      rpcMeta(request),
+    );
+    // Ставки — подсказка ведущему, а не условие команды: без них пульт
+    // показывает цену и лидера без имени, и «Продать» остаётся доступным.
+    if (bids.kind !== "ok") return { kind: "ok", console };
+    const leaderName =
+      leaderId === undefined ? undefined : bids.names[leaderId];
+    return {
+      kind: "ok",
+      console: {
+        ...console,
+        trading: {
+          lotId: active.lot.lotId,
+          bids: bids.bids.map((bid) => {
+            const name = bids.names[bid.participantId];
+            return name === undefined
+              ? { amount: bid.amount }
+              : { amount: bid.amount, name };
+          }),
+          ...(leaderName === undefined ? {} : { leaderName }),
+        },
+      },
+    };
   }
 
   // Пульт после команды: чтение Auction с исходом первой строкой. Статус и
@@ -526,10 +627,342 @@ export function createAuctionConsole(
     };
   }
 
+  // Финал ведущего (PER-337). Лот финала называет номер в замороженном
+  // составе; номер вне состава — кнопка от другого аукциона или подделка.
+  type Positioned =
+    | { kind: "ok"; console: AuctionConsoleView; entry: ConsoleLot }
+    | { kind: "refused"; result: ExecuteResult };
+
+  async function positioned(
+    request: AuctionConsoleRequest & { position: number },
+  ): Promise<Positioned> {
+    const current = await read(request);
+    if (current.kind === "refused") return current;
+    const { console } = current;
+    const lotId = console.lineup?.order[request.position];
+    const entry = console.lots.find((each) => each.lot.lotId === lotId);
+    if (entry !== undefined) return { kind: "ok", console, entry };
+    // Закрытие последнего лота завершает аукцион, а `Finished` состава не
+    // несёт: повтор «Да» после потерянного ответа узнаёт итог по пульту.
+    return {
+      kind: "refused",
+      result: {
+        kind: "auction-console",
+        console,
+        note:
+          console.status === "finished"
+            ? "final-finished"
+            : "lot-not-in-auction",
+      },
+    };
+  }
+
+  // Начать финал. Повтор — тот же ответ: финал уже идёт, и пульт его
+  // показывает; новый ключ на идущем финале Auction называет «состав не
+  // заморожен», и пульт отличает это по статусу.
+  async function startFinal(
+    request: Extract<AuctionConsoleRequest, { intent: "start-auction-final" }>,
+  ): Promise<ExecuteResult> {
+    const started = await consoles.startFinal(
+      request.identity,
+      { auctionId: request.auctionId, opId: request.opId },
+      rpcMeta(request),
+    );
+    switch (started.kind) {
+      case "ok":
+        return after(request, "final-started", (console) =>
+          console.status === "lineup-frozen"
+            ? { ...console, status: "final" }
+            : console,
+        );
+      case "lineup-not-frozen": {
+        const current = await read(request);
+        if (current.kind === "refused") return current.result;
+        return {
+          kind: "auction-console",
+          console: current.console,
+          note:
+            current.console.status === "final" ||
+            current.console.status === "finished"
+              ? "final-started"
+              : "lineup-not-frozen",
+        };
+      }
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(started);
+    }
+  }
+
+  // Открыть следующий лот состава. Пока лот торгуется, следующего Auction не
+  // открывает: пульт называет это строкой, а не открывает второй.
+  async function startNextLot(
+    request: Extract<AuctionConsoleRequest, { intent: "start-final-lot" }>,
+  ): Promise<ExecuteResult> {
+    const started = await consoles.startNextLot(
+      request.identity,
+      { auctionId: request.auctionId, opId: request.opId },
+      rpcMeta(request),
+    );
+    switch (started.kind) {
+      case "ok":
+        return after(request, undefined, (console) =>
+          console.lineup === undefined
+            ? console
+            : liveActive({
+                ...console,
+                lineup: { ...console.lineup, activeLotId: started.lotId },
+              }),
+        );
+      case "not-in-final":
+        return after(request, "not-in-final");
+      case "another-lot-active":
+        return after(request, "another-lot-active");
+      case "lineup-exhausted":
+        return after(request, "lineup-exhausted");
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(started);
+    }
+  }
+
+  // «Поднять цену»: вопрос называет лот и его следующую цену.
+  async function askPrice(
+    request: Extract<AuctionConsoleRequest, { intent: "ask-final-price" }>,
+  ): Promise<ExecuteResult> {
+    const found = await positioned(request);
+    if (found.kind === "refused") return found.result;
+    const { entry } = found;
+    if (entry.lot.status.kind !== "trading") {
+      return {
+        kind: "auction-console",
+        console: found.console,
+        note: "final-lot-closed",
+      };
+    }
+    return {
+      kind: "final-ask",
+      auctionId: request.auctionId,
+      position: request.position,
+      ...titled(entry),
+      ...(entry.lot.nextPrice === undefined
+        ? {}
+        : { nextPrice: entry.lot.nextPrice }),
+    };
+  }
+
+  // Новая следующая цена лота. Цену ниже текущей решает Auction и отвечает
+  // порогом, который вопрос называет заново; бот её не предугадывает.
+  async function advanceAsk(
+    request: Extract<AuctionConsoleRequest, { intent: "advance-final-ask" }>,
+  ): Promise<ExecuteResult> {
+    const found = await positioned(request);
+    if (found.kind === "refused") return found.result;
+    const { console, entry } = found;
+    const status = entry.lot.status;
+    if (status.kind !== "trading") {
+      return { kind: "auction-console", console, note: "final-lot-closed" };
+    }
+    const asked = {
+      kind: "final-ask" as const,
+      auctionId: request.auctionId,
+      position: request.position,
+      ...titled(entry),
+      ...(entry.lot.nextPrice === undefined
+        ? {}
+        : { nextPrice: entry.lot.nextPrice }),
+    };
+    const amount = parseRubles(request.value);
+    if (amount.kind === "rejected") return { ...asked, error: amount.reason };
+    const newAsk = {
+      minorUnits: amount.rubles * 100,
+      currency: status.currentPrice.currency,
+    };
+    const advanced = await consoles.advanceAsk(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        lotId: entry.lot.lotId,
+        opId: request.opId,
+        newAsk,
+      },
+      rpcMeta(request),
+    );
+    switch (advanced.kind) {
+      // Ответ ask пуст, а чтение отстаёт: пульт показывает объявленную цену
+      // следующей. Прокси, которому она по карману, берёт её той же
+      // транзакцией (RFC-011, О-6.B) — новую цену и лидера покажет
+      // «Обновить», когда чтение догонит.
+      case "ok":
+        return after(request, undefined, (each) => ({
+          ...each,
+          lots: each.lots.map((lot) =>
+            lot.lot.lotId === entry.lot.lotId
+              ? { ...lot, lot: { ...lot.lot, nextPrice: newAsk } }
+              : lot,
+          ),
+        }));
+      case "ask-below-current-price":
+        return {
+          ...asked,
+          error: "ask-below-current-price",
+          mustExceed: advanced.mustExceed,
+        };
+      case "lot-not-open":
+        return after(request, "final-lot-closed");
+      case "lot-not-in-auction":
+        return after(request, "lot-not-in-auction");
+      case "currency-mismatch":
+        // Валюта взята у самого лота: расхождение — дефект соседа.
+        return failed({
+          kind: "invalid",
+          cause: new Error("ask in the currency of the lot refused"),
+        });
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(advanced);
+    }
+  }
+
+  // «Продать»: подтверждение называет лот, цену и лидера, а без ставок —
+  // закрытие без продажи. Ключ закрытия рождён краем и уедет в «Да».
+  async function prepareClose(
+    request: Extract<AuctionConsoleRequest, { intent: "prepare-final-close" }>,
+  ): Promise<ExecuteResult> {
+    const found = await positioned(request);
+    if (found.kind === "refused") return found.result;
+    const { console, entry } = found;
+    const status = entry.lot.status;
+    if (status.kind !== "trading") {
+      return { kind: "auction-console", console, note: "final-lot-closed" };
+    }
+    const leaderName =
+      console.trading?.lotId === entry.lot.lotId
+        ? console.trading.leaderName
+        : undefined;
+    return {
+      kind: "final-close-confirm",
+      auctionId: request.auctionId,
+      position: request.position,
+      opId: request.opId,
+      ...titled(entry),
+      ...(status.leaderId === undefined ? {} : { price: status.currentPrice }),
+      ...(leaderName === undefined ? {} : { leaderName }),
+    };
+  }
+
+  // Исход закрытия — свой экран (решение владельца 11 октября 2026 года):
+  // продажа необратима и подтверждается явно. Имя покупателя спрашивается
+  // отдельно: повтор той же кнопки приходит, когда лот уже не активен и
+  // торгов пульт не держит. Без имени исход остаётся исходом: продажа
+  // состоялась, и сбой чтения имён её не отменяет.
+  async function closure(
+    request: Extract<AuctionConsoleRequest, { intent: "close-final-lot" }>,
+    entry: ConsoleLot,
+    closed: LotClosure,
+  ): Promise<ExecuteResult> {
+    const outcome = {
+      kind: "final-lot-closed" as const,
+      auctionId: request.auctionId,
+      ...titled(entry),
+    };
+    if (closed.kind === "unsold") {
+      return { ...outcome, closure: { kind: "unsold" } };
+    }
+    const names = await consoles.displayNames(
+      request.identity,
+      { auctionId: request.auctionId, participantIds: [closed.winnerId] },
+      rpcMeta(request),
+    );
+    const buyerName =
+      names.kind === "ok" ? names.names[closed.winnerId] : undefined;
+    return {
+      ...outcome,
+      closure: {
+        kind: "sold",
+        price: closed.price,
+        ...(buyerName === undefined ? {} : { buyerName }),
+      },
+    };
+  }
+
+  // Закрытие лота. Повтор той же кнопки Auction отвечает исходным закрытием,
+  // поэтому второе нажатие второй продажи не создаёт; лот, закрытый другим
+  // ключом, — «уже закрыт».
+  async function closeLot(
+    request: Extract<AuctionConsoleRequest, { intent: "close-final-lot" }>,
+  ): Promise<ExecuteResult> {
+    const found = await positioned(request);
+    if (found.kind === "refused") return found.result;
+    const lotId = found.entry.lot.lotId;
+    // `CloseLot` ожидаемой цены не несёт: продаёт лидеру по цене на момент
+    // решения. Ставка зала после подтверждения сменила бы покупателя или цену
+    // молча, поэтому бот сверяет названное со свежим чтением и при
+    // расхождении подтверждает заново. Окно между чтением и командой
+    // остаётся: закрыть его может только поле контракта.
+    const status = found.entry.lot.status;
+    if (status.kind === "trading" && !quoted(request.quote, status)) {
+      const fresh = await prepareClose({
+        ...request,
+        intent: "prepare-final-close",
+        opId: request.freshOpId,
+      });
+      return fresh.kind === "final-close-confirm"
+        ? { ...fresh, changed: true }
+        : fresh;
+    }
+    const closed = await consoles.closeLot(
+      request.identity,
+      { auctionId: request.auctionId, lotId, opId: request.opId },
+      rpcMeta(request),
+    );
+    switch (closed.kind) {
+      case "ok":
+        return closure(request, found.entry, closed.closure);
+      case "lot-not-open":
+        return after(request, "final-lot-closed");
+      case "deadline-not-reached":
+        return after(request, "deadline-not-reached");
+      case "lot-not-in-auction":
+        return after(request, "lot-not-in-auction");
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(closed);
+    }
+  }
+
   return async function auctionConsole(
     request: AuctionConsoleRequest,
   ): Promise<ExecuteResult> {
     switch (request.intent) {
+      case "start-auction-final":
+        return startFinal(request);
+      case "start-final-lot":
+        return startNextLot(request);
+      case "ask-final-price":
+        return askPrice(request);
+      case "advance-final-ask":
+        return advanceAsk(request);
+      case "prepare-final-close":
+        return prepareClose(request);
+      case "close-final-lot":
+        return closeLot(request);
       case "view-auction-console":
         return after(request, undefined);
       case "ask-auction-week":

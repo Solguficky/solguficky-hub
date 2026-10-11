@@ -223,6 +223,77 @@ export type AuctionWeekConfig = {
 
 export type FinalistMark = { auctionId: string; lotId: string; opId: string };
 
+// Финал ведущего (PER-337; контракт — PER-475). Ведущий — администратор
+// сходки, право решает Auction у Meetups. Ключ команды рождает край: повтор
+// того же `opId` Auction отвечает исходным ответом, поэтому второе нажатие
+// «Да, продать» не создаёт второй продажи.
+
+export type StartFinalResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "lineup-not-frozen" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+export type StartNextLotResult =
+  | { kind: "ok"; lotId: string }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "not-in-final" }
+  | { kind: "another-lot-active"; lotId: string }
+  | { kind: "lineup-exhausted" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// `ask-below-current-price` несёт порог, который ask обязан превысить, как
+// Auction его назвал в момент решения.
+export type AdvanceAskResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "lot-not-in-auction" }
+  | { kind: "lot-not-open" }
+  | { kind: "ask-below-current-price"; mustExceed: Money }
+  | { kind: "currency-mismatch" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// Закрытие лота: продажа лидеру либо закрытие без ставок.
+export type LotClosure =
+  | { kind: "sold"; winnerId: string; price: Money }
+  | { kind: "unsold" };
+
+export type CloseLotResult =
+  | { kind: "ok"; closure: LotClosure }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "lot-not-in-auction" }
+  | { kind: "lot-not-open" }
+  | { kind: "deadline-not-reached" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+export type FinalLotCommand = {
+  auctionId: string;
+  lotId: string;
+  opId: string;
+};
+
+export type DisplayNamesResult =
+  | { kind: "ok"; names: Readonly<Record<string, string>> }
+  | AuctionFailure;
+
+// Последние ставки лота, новые первыми, и имена их авторов и лидера, как их
+// ставит Auction (ADR-059). Имени нет — Auction его не назвал.
+export type FinalBidsResult =
+  | {
+      kind: "ok";
+      bids: readonly { amount: Money; participantId: string }[];
+      names: Readonly<Record<string, string>>;
+    }
+  | AuctionFailure;
+
 export type AuctionConsoles = {
   getAuctionConsole(
     person: Person,
@@ -263,6 +334,43 @@ export type AuctionConsoles = {
     mark: FinalistMark,
     meta?: RpcMetadata,
   ): Promise<FinalistResult>;
+  startFinal(
+    person: Person,
+    start: { auctionId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<StartFinalResult>;
+  startNextLot(
+    person: Person,
+    start: { auctionId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<StartNextLotResult>;
+  advanceAsk(
+    person: Person,
+    ask: FinalLotCommand & { newAsk: Money },
+    meta?: RpcMetadata,
+  ): Promise<AdvanceAskResult>;
+  closeLot(
+    person: Person,
+    close: FinalLotCommand,
+    meta?: RpcMetadata,
+  ): Promise<CloseLotResult>;
+  // Имена участников в аукционе, как их ставит Auction (ADR-059).
+  displayNames(
+    person: Person,
+    read: { auctionId: string; participantIds: readonly string[] },
+    meta?: RpcMetadata,
+  ): Promise<DisplayNamesResult>;
+  // `limit` последних ставок лота и имена их авторов и `extraIds` — лидера.
+  recentBids(
+    person: Person,
+    read: {
+      auctionId: string;
+      lotId: string;
+      limit: number;
+      extraIds: readonly string[];
+    },
+    meta?: RpcMetadata,
+  ): Promise<FinalBidsResult>;
 };
 
 // Порты пакета метаданных вызова не несут, поэтому собираются на каждый

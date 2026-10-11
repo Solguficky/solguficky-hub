@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
+import type { Money } from "../../../auction-ui/index.js";
 import type {
+  AdvanceAskResult,
   AuctionConsoles,
   AuctionWeekConfig,
+  CloseLotResult,
   ConsoleReadResult,
   DiscardAuctionResult,
+  DisplayNamesResult,
+  FinalBidsResult,
   FinalistResult,
+  FinalLotCommand,
   LotStatisticsReadResult,
   ScheduleAuctionResult,
+  StartFinalResult,
+  StartNextLotResult,
   StartPrebiddingResult,
 } from "../auction/port.js";
 import { createAuctionConsole, parseWeek } from "./auction-console.js";
@@ -47,8 +55,16 @@ function fake(answers: {
   start?: StartPrebiddingResult;
   mark?: FinalistResult;
   discard?: DiscardAuctionResult;
+  startFinal?: StartFinalResult;
+  nextLot?: StartNextLotResult;
+  ask?: AdvanceAskResult;
+  close?: CloseLotResult;
+  bids?: FinalBidsResult;
+  names?: DisplayNamesResult;
 }) {
   const scheduled: AuctionWeekConfig[] = [];
+  const asks: Money[] = [];
+  const closes: FinalLotCommand[] = [];
   const port: AuctionConsoles = {
     getAuctionConsole: async () =>
       answers.read ?? { kind: "ok", console: view("draft") },
@@ -66,8 +82,26 @@ function fake(answers: {
     discardAuction: async () => answers.discard ?? { kind: "ok" },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },
+    startFinal: async () => answers.startFinal ?? { kind: "ok" },
+    startNextLot: async () =>
+      answers.nextLot ?? { kind: "ok", lotId: "not configured" },
+    advanceAsk: async (_person, ask) => {
+      asks.push(ask.newAsk);
+      return answers.ask ?? { kind: "ok" };
+    },
+    closeLot: async (_person, close) => {
+      closes.push(close);
+      return answers.close ?? { kind: "ok", closure: { kind: "unsold" } };
+    },
+    recentBids: async () => answers.bids ?? { kind: "ok", bids: [], names: {} },
+    displayNames: async () => answers.names ?? { kind: "ok", names: {} },
   };
-  return { run: createAuctionConsole(port, zone, () => now), scheduled };
+  return {
+    run: createAuctionConsole(port, zone, () => now),
+    scheduled,
+    asks,
+    closes,
+  };
 }
 
 describe("parseWeek", () => {
@@ -429,5 +463,494 @@ describe("auction discard", () => {
       kind: "auction-console-refused",
       reason: "auction-not-found",
     });
+  });
+});
+
+describe("final of the auctioneer", () => {
+  const call = { identity: admin, auctionId };
+  const second = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3e";
+  const freshOpId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34bb";
+  const sale = { kind: "sale" as const, minorUnits: 100_000 };
+  const noSale = { kind: "no-sale" as const };
+  const leaderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ee";
+  const rub = (rubles: number): Money => ({
+    minorUnits: rubles * 100,
+    currency: "RUB",
+  });
+  const entry = (
+    id: string,
+    status: ConsoleLot["lot"]["status"],
+    nextPrice?: Money,
+  ): ConsoleLot => ({
+    lot: {
+      lotId: id,
+      auctionId,
+      version: 3,
+      proxyEnabled: false,
+      card: { title: id === lotId ? "Картина" : "Ваза", description: "" },
+      ...(nextPrice === undefined ? {} : { nextPrice }),
+      status,
+    },
+    bidCount: 2,
+    uniqueParticipantCount: 2,
+    markedForFinal: true,
+    overdue: false,
+  });
+  const live = (leader?: string) =>
+    entry(
+      lotId,
+      {
+        kind: "trading",
+        currentPrice: rub(1_000),
+        ...(leader === undefined ? {} : { leaderId: leader }),
+        phase: "live",
+      },
+      rub(1_100),
+    );
+  const held = entry(second, { kind: "held", currentPrice: rub(700) });
+  const final = (lots: readonly ConsoleLot[], active?: string) =>
+    view("final", {
+      lineup: {
+        order: [lotId, second],
+        ...(active === undefined ? {} : { activeLotId: active }),
+      },
+      lots,
+    });
+  const statisticsOf = (console: AuctionConsoleView) => ({
+    kind: "ok" as const,
+    lots: console.lots.map((each) => ({
+      lotId: each.lot.lotId,
+      bidCount: each.bidCount,
+      uniqueParticipantCount: each.uniqueParticipantCount,
+    })),
+  });
+  const running = (
+    console: AuctionConsoleView,
+    answers: Parameters<typeof fake>[0] = {},
+  ) =>
+    fake({
+      read: { kind: "ok", console },
+      statistics: statisticsOf(console),
+      ...answers,
+    });
+
+  it("shows the price, the leader and the latest bids of the active lot", async () => {
+    const console = final([live(leaderId), held], lotId);
+    const { run } = running(console, {
+      bids: {
+        kind: "ok",
+        bids: [
+          { amount: rub(1_000), participantId: leaderId },
+          { amount: rub(900), participantId: "someone else" },
+        ],
+        names: { [leaderId]: "Бэтмен" },
+      },
+    });
+
+    await expect(
+      run({ ...call, intent: "view-auction-console" }),
+    ).resolves.toEqual({
+      kind: "auction-console",
+      console: {
+        ...console,
+        trading: {
+          lotId,
+          bids: [{ amount: rub(1_000), name: "Бэтмен" }, { amount: rub(900) }],
+          leaderName: "Бэтмен",
+        },
+      },
+    });
+  });
+
+  it("starts the final and names a repeated start by the state", async () => {
+    const frozen = view("lineup-frozen", {
+      lineup: { order: [lotId, second] },
+      lots: [held],
+    });
+    const accepted = running(frozen);
+    const repeated = running(final([held]), {
+      startFinal: { kind: "lineup-not-frozen" },
+    });
+    const early = running(view("break"), {
+      startFinal: { kind: "lineup-not-frozen" },
+    });
+
+    await expect(
+      accepted.run({ ...call, intent: "start-auction-final", opId }),
+    ).resolves.toMatchObject({
+      console: { status: "final" },
+      note: "final-started",
+    });
+    await expect(
+      repeated.run({ ...call, intent: "start-auction-final", opId }),
+    ).resolves.toMatchObject({ note: "final-started" });
+    await expect(
+      early.run({ ...call, intent: "start-auction-final", opId }),
+    ).resolves.toMatchObject({ note: "lineup-not-frozen" });
+  });
+
+  it("opens the next lot over a lagging read and names a lot still trading", async () => {
+    const accepted = running(final([live(), held]), {
+      nextLot: { kind: "ok", lotId },
+    });
+    const busy = running(final([live(), held], lotId), {
+      nextLot: { kind: "another-lot-active", lotId },
+    });
+
+    await expect(
+      accepted.run({ ...call, intent: "start-final-lot", opId }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      console: { lineup: { activeLotId: lotId } },
+    });
+    await expect(
+      busy.run({ ...call, intent: "start-final-lot", opId }),
+    ).resolves.toMatchObject({ note: "another-lot-active" });
+  });
+
+  it("asks the next price with the lot and its current next price", async () => {
+    const { run } = running(final([live(), held], lotId));
+
+    await expect(
+      run({ ...call, intent: "ask-final-price", position: 0 }),
+    ).resolves.toEqual({
+      kind: "final-ask",
+      auctionId,
+      position: 0,
+      title: "Картина",
+      nextPrice: rub(1_100),
+    });
+  });
+
+  it("raises the ask in the currency of the lot and shows it at once", async () => {
+    const { run, asks } = running(final([live(), held], lotId));
+
+    const result = await run({
+      ...call,
+      intent: "advance-final-ask",
+      position: 0,
+      value: "1 500",
+      opId,
+    });
+
+    expect(asks).toEqual([rub(1_500)]);
+    expect(result).toMatchObject({
+      kind: "auction-console",
+      console: { lots: [{ lot: { nextPrice: rub(1_500) } }, held] },
+    });
+    expect(result).not.toHaveProperty("note");
+  });
+
+  it("asks again with the threshold Auction named for an ask below the current price", async () => {
+    const { run } = running(final([live(), held], lotId), {
+      ask: { kind: "ask-below-current-price", mustExceed: rub(1_000) },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "advance-final-ask",
+        position: 0,
+        value: "900",
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "final-ask",
+      auctionId,
+      position: 0,
+      title: "Картина",
+      nextPrice: rub(1_100),
+      error: "ask-below-current-price",
+      mustExceed: rub(1_000),
+    });
+  });
+
+  it("asks again without Auction for an amount that is not whole rubles", async () => {
+    const { run, asks } = running(final([live(), held], lotId));
+
+    await expect(
+      run({
+        ...call,
+        intent: "advance-final-ask",
+        position: 0,
+        value: "1500,50",
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "final-ask", error: "amount-format" });
+    expect(asks).toEqual([]);
+  });
+
+  it("confirms a sale to the leader at the current price and a close without bids", async () => {
+    const sale = running(final([live(leaderId), held], lotId), {
+      bids: { kind: "ok", bids: [], names: { [leaderId]: "Бэтмен" } },
+    });
+    const empty = running(final([live(), held], lotId));
+
+    await expect(
+      sale.run({ ...call, intent: "prepare-final-close", position: 0, opId }),
+    ).resolves.toEqual({
+      kind: "final-close-confirm",
+      auctionId,
+      position: 0,
+      opId,
+      title: "Картина",
+      price: rub(1_000),
+      leaderName: "Бэтмен",
+    });
+    await expect(
+      empty.run({ ...call, intent: "prepare-final-close", position: 0, opId }),
+    ).resolves.toEqual({
+      kind: "final-close-confirm",
+      auctionId,
+      position: 0,
+      opId,
+      title: "Картина",
+    });
+  });
+
+  it("sells the lot with the key of the confirmation and names the buyer", async () => {
+    const { run, closes } = running(final([live(leaderId), held], lotId), {
+      close: {
+        kind: "ok",
+        closure: { kind: "sold", winnerId: leaderId, price: rub(1_000) },
+      },
+      names: { kind: "ok", names: { [leaderId]: "Бэтмен" } },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "close-final-lot",
+      position: 0,
+      opId,
+      quote: sale,
+      freshOpId,
+    });
+
+    expect(closes).toEqual([{ auctionId, lotId, opId }]);
+    expect(result).toEqual({
+      kind: "final-lot-closed",
+      auctionId,
+      title: "Картина",
+      closure: { kind: "sold", price: rub(1_000), buyerName: "Бэтмен" },
+    });
+  });
+
+  it("keeps the sale when the name of the buyer cannot be read", async () => {
+    const { run } = running(final([live(leaderId), held], lotId), {
+      close: {
+        kind: "ok",
+        closure: { kind: "sold", winnerId: leaderId, price: rub(1_000) },
+      },
+      names: { kind: "unavailable", cause: new Error("names down") },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: sale,
+        freshOpId,
+      }),
+    ).resolves.toEqual({
+      kind: "final-lot-closed",
+      auctionId,
+      title: "Картина",
+      closure: { kind: "sold", price: rub(1_000) },
+    });
+  });
+
+  it("closes a lot without bids without a sale", async () => {
+    const { run } = running(final([live(), held], lotId));
+
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
+    ).resolves.toEqual({
+      kind: "final-lot-closed",
+      auctionId,
+      title: "Картина",
+      closure: { kind: "unsold" },
+    });
+  });
+
+  it("names a lot closed by another key instead of a second sale", async () => {
+    const { run } = running(final([live(), held]), {
+      close: { kind: "lot-not-open" },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
+    ).resolves.toMatchObject({ note: "final-lot-closed" });
+  });
+
+  it("trades the active lot while the lagging read still holds it", async () => {
+    const opened = entry(second, {
+      kind: "trading",
+      currentPrice: rub(700),
+      phase: "live",
+    });
+    const accepted = running(final([live(), held]), {
+      nextLot: { kind: "ok", lotId: second },
+    });
+    const lagging = running(final([live(), held], second));
+
+    await expect(
+      accepted.run({ ...call, intent: "start-final-lot", opId }),
+    ).resolves.toMatchObject({
+      console: { lineup: { activeLotId: second }, lots: [live(), opened] },
+    });
+    await expect(
+      lagging.run({
+        ...call,
+        intent: "prepare-final-close",
+        position: 1,
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "final-close-confirm",
+      auctionId,
+      position: 1,
+      opId,
+      title: "Ваза",
+    });
+  });
+
+  it("keeps the console and its commands when the latest bids cannot be read", async () => {
+    const { run } = running(final([live(leaderId), held], lotId), {
+      bids: { kind: "unavailable", cause: new Error("history down") },
+    });
+
+    const result = await run({ ...call, intent: "view-auction-console" });
+
+    expect(result).toMatchObject({ kind: "auction-console" });
+    expect(result).not.toHaveProperty("console.trading");
+    await expect(
+      run({ ...call, intent: "prepare-final-close", position: 0, opId }),
+    ).resolves.toMatchObject({
+      kind: "final-close-confirm",
+      price: rub(1_000),
+    });
+  });
+
+  it("confirms again instead of selling when a bid came after the confirmation", async () => {
+    const { run, closes } = running(final([live(leaderId), held], lotId), {
+      names: { kind: "ok", names: { [leaderId]: "Бэтмен" } },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
+    ).resolves.toEqual({
+      kind: "final-close-confirm",
+      auctionId,
+      position: 0,
+      opId: freshOpId,
+      title: "Картина",
+      price: rub(1_000),
+      changed: true,
+    });
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: { kind: "sale", minorUnits: 90_000 },
+        freshOpId,
+      }),
+    ).resolves.toMatchObject({ kind: "final-close-confirm", changed: true });
+    expect(closes).toEqual([]);
+  });
+
+  it("names a finished final for a repeated sale of the last lot", async () => {
+    const { run, closes } = running(view("finished", { lots: [held] }));
+
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
+    ).resolves.toMatchObject({ note: "final-finished" });
+    expect(closes).toEqual([]);
+  });
+
+  it("names a position outside the lineup as a lot not in the auction", async () => {
+    const { run, closes } = running(final([live(), held], lotId));
+
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 5,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
+    ).resolves.toMatchObject({ note: "lot-not-in-auction" });
+    expect(closes).toEqual([]);
+  });
+
+  it("refuses the final commands as the console when Auction does not take the person for the administrator", async () => {
+    const { run } = running(final([live(), held], lotId), {
+      startFinal: { kind: "not-administrator" },
+      nextLot: { kind: "not-administrator" },
+      ask: { kind: "not-administrator" },
+      close: { kind: "not-administrator" },
+    });
+    const refused = {
+      kind: "auction-console-refused",
+      reason: "not-administrator",
+    };
+
+    await expect(
+      run({ ...call, intent: "start-auction-final", opId }),
+    ).resolves.toEqual(refused);
+    await expect(
+      run({ ...call, intent: "start-final-lot", opId }),
+    ).resolves.toEqual(refused);
+    await expect(
+      run({
+        ...call,
+        intent: "advance-final-ask",
+        position: 0,
+        value: "1500",
+        opId,
+      }),
+    ).resolves.toEqual(refused);
+    await expect(
+      run({
+        ...call,
+        intent: "close-final-lot",
+        position: 0,
+        opId,
+        quote: noSale,
+        freshOpId,
+      }),
+    ).resolves.toEqual(refused);
   });
 });
