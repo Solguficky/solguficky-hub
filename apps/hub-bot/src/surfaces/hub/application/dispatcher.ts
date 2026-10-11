@@ -236,6 +236,12 @@ export function createDispatcher(
         case "mark-auction-finalist":
         case "prepare-auction-discard":
         case "discard-auction":
+        case "start-auction-final":
+        case "start-final-lot":
+        case "ask-final-price":
+        case "advance-final-ask":
+        case "prepare-final-close":
+        case "close-final-lot":
           return auctionConsole === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : auctionConsole(request);

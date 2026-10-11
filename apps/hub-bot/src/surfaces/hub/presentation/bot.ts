@@ -59,7 +59,9 @@ import type {
   ConsoleSort,
   ExecuteRequest,
   ExecuteResult,
+  FinalAskError,
   FormField,
+  LotAmount,
   LotAskError,
   LotFormView,
   LotQuestion,
@@ -136,6 +138,7 @@ import {
   auctionFaqData,
   type CallbackAction,
   type CardCursor,
+  consoleAskData,
   consoleViewData,
   consoleWeekData,
   defaultConsoleSort,
@@ -165,9 +168,13 @@ import {
 } from "./screens/auction.js";
 import {
   auctionDiscardedText,
+  closeConfirmScreen,
+  closedScreen,
   consoleMissingText,
   consoleScreen,
   discardConfirmScreen,
+  finalAskErrorText,
+  finalAskText,
   finalToast,
   weekAskErrorText,
   weekConfirmScreen,
@@ -523,6 +530,15 @@ type PendingConsoleWeek = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о следующей цене лота финала (PER-337). Шаг — аукцион и номер лота в
+// составе — лежит в кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingFinalAsk = {
+  kind: "final-ask";
+  auctionId: string;
+  position: number;
+  telegramUserId: number;
+  expiresAt: number;
+};
 type PendingInput = HubPendingInput | PendingAuction;
 type HubPendingInput =
   | PendingQuestion
@@ -534,7 +550,8 @@ type HubPendingInput =
   | PendingMaterialTitle
   | PendingBroadcastBody
   | PendingLot
-  | PendingConsoleWeek;
+  | PendingConsoleWeek
+  | PendingFinalAsk;
 
 type UpdateContext = ShellContext & {
   // Ожидание этого update: ответ на нажатие, индикатор и бюджет сервисов.
@@ -1136,6 +1153,62 @@ async function handleMessage(
     }
     if (
       replyId !== undefined &&
+      pending?.kind === "final-ask" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "manage_auction";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign final ask answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      if (!canManageMeetups(identity.person)) {
+        await answered();
+        outcome = await refuseConsole(ctx, identity.person);
+        return;
+      }
+      // Ключ команды рождается на каждый ответ: в кнопку вопроса он не
+      // помещается. Повтор ответа — новая цена того же лота, а не вторая
+      // продажа: ask продажи не создаёт.
+      const result = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "advance-final-ask",
+        auctionId: pending.auctionId,
+        position: pending.position,
+        value: ctx.message.text,
+        opId: createUuidV7(),
+        ...rpcCall(ctx, useCase),
+      });
+      outcome = await renderConsoleResult(ctx, runtime, result, {
+        person: identity.person,
+        questions,
+        replyId,
+      });
+      if (result.kind !== "final-ask") await answered(result);
+      return;
+    }
+    if (
+      replyId !== undefined &&
       pending?.kind === "lot" &&
       pending.question.kind === "image"
     ) {
@@ -1367,7 +1440,8 @@ async function handleMessage(
         pending.kind === "channel-label" ||
         pending.kind === "publish-moment" ||
         pending.kind === "lot" ||
-        pending.kind === "console-week") &&
+        pending.kind === "console-week" ||
+        pending.kind === "final-ask") &&
       ctx.message?.text === undefined
     ) {
       useCase =
@@ -1377,7 +1451,7 @@ async function handleMessage(
           ? "manage_community"
           : pending.kind === "lot"
             ? "manage_lot"
-            : pending.kind === "console-week"
+            : pending.kind === "console-week" || pending.kind === "final-ask"
               ? "manage_auction"
               : pending.kind === "meetup" && pending.mode === "create"
                 ? "create_meetup"
@@ -1748,7 +1822,12 @@ async function handleCallback(
       action.kind === "console-confirm" ||
       action.kind === "console-discard" ||
       action.kind === "console-discard-confirm" ||
-      action.kind === "console-mark"
+      action.kind === "console-mark" ||
+      action.kind === "console-start-final" ||
+      action.kind === "console-next-lot" ||
+      action.kind === "console-ask" ||
+      action.kind === "console-close" ||
+      action.kind === "console-close-confirm"
     ) {
       outcome = canManageMeetups(person)
         ? await handleConsoleCallback(ctx, runtime, questions, person, action)
@@ -5424,7 +5503,12 @@ async function handleConsoleCallback(
         | "console-confirm"
         | "console-discard"
         | "console-discard-confirm"
-        | "console-mark";
+        | "console-mark"
+        | "console-start-final"
+        | "console-next-lot"
+        | "console-ask"
+        | "console-close"
+        | "console-close-confirm";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -5517,6 +5601,52 @@ async function handleConsoleCallback(
         }),
         action.page,
         action.sort,
+      );
+    // Финал ведущего (PER-337). Ключ начала финала и следующего лота
+    // рождается на нажатие: повтор с новым ключом Auction называет отказом
+    // словами состояния. Ключ закрытия рождается на подтверждении и едет в
+    // «Да»: второе нажатие того же «Да» — повтор, а не вторая продажа.
+    case "console-start-final":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "start-auction-final",
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-next-lot":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "start-final-lot",
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-ask":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-final-price",
+          position: action.position,
+        }),
+      );
+    case "console-close":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-final-close",
+          position: action.position,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-close-confirm":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "close-final-lot",
+          position: action.position,
+          opId: tokenToUuid(action.op),
+        }),
       );
     default: {
       const _exhaustive: never = action;
@@ -5620,6 +5750,29 @@ async function renderConsoleResult(
           ? "auction week requested"
           : "auction week asked again",
       );
+    case "final-ask":
+      await askFinalPrice(ctx, context.questions, {
+        auctionId: result.auctionId,
+        position: result.position,
+        title: result.title,
+        nextPrice: result.nextPrice,
+        error: result.error,
+        mustExceed: result.mustExceed,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "final ask requested"
+          : `final ask asked again: ${result.error}`,
+      );
+    case "final-close-confirm":
+      await showScreen(ctx, closeConfirmScreen(result));
+      return handled("final lot close confirmation sent");
+    case "final-lot-closed":
+      await showScreen(ctx, closedScreen(result));
+      return handled(
+        result.closure.kind === "sold" ? "final lot sold" : "final lot unsold",
+      );
     case "auction-console-refused":
       await showRefusal(
         ctx,
@@ -5700,6 +5853,38 @@ function askConsoleWeek(
     weekQuestionText(ask.timeZone, ask.week),
     ask.replaces,
   );
+}
+
+function askFinalPrice(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    position: number;
+    title?: string | undefined;
+    nextPrice?: LotAmount | undefined;
+    error?: FinalAskError | undefined;
+    mustExceed?: LotAmount | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "final-ask",
+    auctionId: ask.auctionId,
+    position: ask.position,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      finalAskErrorText(ask.error, ask.mustExceed),
+      ask.replaces,
+    );
+  }
+  return askQuestion(ctx, questions, pending, finalAskText(ask), ask.replaces);
 }
 
 // Кнопка или ответ пульта от человека без права вести сходки.
@@ -6798,6 +6983,12 @@ function stepOf(pending: PendingBody): QuestionStep {
       return lotStepOf(pending.question);
     case "console-week":
       return { kind: "console-week", auction: uuidToToken(pending.auctionId) };
+    case "final-ask":
+      return {
+        kind: "final-ask",
+        auction: uuidToToken(pending.auctionId),
+        position: pending.position,
+      };
     default: {
       const _exhaustive: never = pending;
       return _exhaustive;
@@ -6929,6 +7120,14 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "final-ask":
+      return {
+        kind: "final-ask",
+        auctionId: tokenToUuid(step.auction),
+        position: step.position,
+        telegramUserId,
+        expiresAt,
+      };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -6978,7 +7177,8 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "lot-image":
       return { kind: "lot-form", lot: step.lot };
     case "console-week":
-      // Вопрос о сроках задан с пульта аукциона.
+    case "final-ask":
+      // Вопросы о сроках и о цене заданы с пульта аукциона.
       return {
         kind: "console-view",
         auction: step.auction,
@@ -7124,6 +7324,8 @@ function reopenData(step: QuestionStep): string {
       return lotAskData(step.lot, "image");
     case "console-week":
       return consoleWeekData(step.auction);
+    case "final-ask":
+      return consoleAskData(step.auction, step.position);
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -7160,6 +7362,7 @@ function answerParent(step: QuestionStep): Parent {
     case "lot-image":
       return toLot(tokenToUuid(step.lot));
     case "console-week":
+    case "final-ask":
       return { name: "Пульт", data: consoleViewData(step.auction) };
     default: {
       const _exhaustive: never = step;
@@ -7383,6 +7586,11 @@ function callbackUseCase(
     | "console-discard"
     | "console-discard-confirm"
     | "console-mark"
+    | "console-start-final"
+    | "console-next-lot"
+    | "console-ask"
+    | "console-close"
+    | "console-close-confirm"
     | "manage-publish"
     | "manage-confirm-publish"
     | "manage-unpublish"
@@ -7511,6 +7719,11 @@ function callbackUseCase(
     case "console-discard":
     case "console-discard-confirm":
     case "console-mark":
+    case "console-start-final":
+    case "console-next-lot":
+    case "console-ask":
+    case "console-close":
+    case "console-close-confirm":
       return "manage_auction";
     case "home":
     case "help":

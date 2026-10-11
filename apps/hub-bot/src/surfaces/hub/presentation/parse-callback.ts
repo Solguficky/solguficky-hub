@@ -69,6 +69,12 @@ const PageSchema = z
   .string()
   .regex(/^\d{1,4}$/)
   .transform(Number);
+// Номер лота в составе финала с нуля: финал — семь-восемь лотов, двух цифр
+// хватает с запасом, а ведущие нули — не номер.
+const PositionSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d?)$/)
+  .transform(Number);
 const ConsoleSortSchema = z.enum(["bd", "ba", "pd", "pa", "gd", "ga"]);
 export const defaultConsoleSort: ConsoleSort = {
   metric: "bids",
@@ -259,6 +265,19 @@ type PlainAction =
       page: number;
       sort: ConsoleSort;
     }
+  // Финал ведущего (PER-337). Лот финала — номер в замороженном составе с
+  // нуля: токен лота рядом с аукционом и ключом в 64 байта не помещается.
+  | { kind: "console-start-final"; auction: string }
+  | { kind: "console-next-lot"; auction: string }
+  | { kind: "console-ask"; auction: string; position: number }
+  | { kind: "console-close"; auction: string; position: number }
+  // «Да» подтверждения закрытия: ключ рождён, когда подтверждение показано.
+  | {
+      kind: "console-close-confirm";
+      auction: string;
+      position: number;
+      op: string;
+    }
   // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
   | { kind: "manage-publish"; token: string; origin: PublishOrigin }
   | { kind: "manage-confirm-publish"; token: string; version: number }
@@ -392,7 +411,9 @@ export type QuestionStep =
   | { kind: "lot-image"; lot: string }
   // Сроки онлайн-недели на пульте (PER-320): аукцион, а финал и текущие сроки
   // ответ читает у Auction заново.
-  | { kind: "console-week"; auction: string };
+  | { kind: "console-week"; auction: string }
+  // Следующая цена лота финала (PER-337): аукцион и номер лота в составе.
+  | { kind: "final-ask"; auction: string; position: number };
 
 /** Ряд экрана правки лота: текст карточки, фото либо цена с шагом, парой. */
 export type LotFormField = LotTextField | "image" | "price";
@@ -487,6 +508,35 @@ export function consoleMarkData(mark: {
     : `${base}:${consoleSortToken(mark.sort)}`;
 }
 
+/** «Начать финал». */
+export function consoleStartFinalData(auction: string): string {
+  return `v1:ac:g:${auction}`;
+}
+
+/** «Открыть следующий лот» финала. */
+export function consoleNextLotData(auction: string): string {
+  return `v1:ac:n:${auction}`;
+}
+
+/** «Поднять цену» лота финала с номером `position` в составе. */
+export function consoleAskData(auction: string, position: number): string {
+  return `v1:ac:a:${auction}:${position}`;
+}
+
+/** «Продать»: подтверждение закрытия, а не команда. */
+export function consoleCloseData(auction: string, position: number): string {
+  return `v1:ac:c:${auction}:${position}`;
+}
+
+/** «Да» подтверждения закрытия: аукцион, номер лота и ключ, до 58 байт. */
+export function consoleCloseConfirmData(
+  auction: string,
+  position: number,
+  op: string,
+): string {
+  return `v1:ac:k:${auction}:${position}:${op}`;
+}
+
 /** Кнопка FAQ из корня ленты аукциона сходки. */
 export function auctionFaqData(auction: string): string {
   return `v1:faq:${auction}`;
@@ -515,6 +565,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:li:${step.lot}`;
     case "console-week":
       return `v1:q:aw:${step.auction}`;
+    case "final-ask":
+      return `v1:q:fa:${step.auction}:${step.position}`;
     case "field":
       return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.field}`;
     case "publish-moment":
@@ -901,7 +953,9 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // Кнопки пульта аукциона (PER-320): `v1:ac:v:<аукцион>[:<страница>]`,
 // `v1:ac:w:<аукцион>`, `v1:ac:f:<аукцион>:<0|1>`, `v1:ac:o:<аукцион>`,
 // `v1:ac:y:<аукцион>:<ключ>`, `v1:ac:x:<аукцион>`, `v1:ac:z:<аукцион>:<ключ>`
-// и `v1:ac:<s|d>:<аукцион>:<лот>:<страница>`.
+// и `v1:ac:<s|d>:<аукцион>:<лот>:<страница>`. Финал (PER-337):
+// `v1:ac:g:<аукцион>`, `v1:ac:n:<аукцион>`, `v1:ac:<a|c>:<аукцион>:<номер>` и
+// `v1:ac:k:<аукцион>:<номер>:<ключ>`.
 function parseConsole(parts: readonly string[]): CallbackAction {
   const auction = TokenSchema.safeParse(parts[3]);
   if (!auction.success) return { kind: "malformed" };
@@ -949,6 +1003,37 @@ function parseConsole(parts: readonly string[]): CallbackAction {
         ? {
             kind: "console-discard-confirm",
             auction: auction.data,
+            op: op.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "g":
+      return parts.length === 4
+        ? { kind: "console-start-final", auction: auction.data }
+        : { kind: "malformed" };
+    case "n":
+      return parts.length === 4
+        ? { kind: "console-next-lot", auction: auction.data }
+        : { kind: "malformed" };
+    case "a":
+    case "c": {
+      const position = PositionSchema.safeParse(parts[4]);
+      return parts.length === 5 && position.success
+        ? {
+            kind: parts[2] === "a" ? "console-ask" : "console-close",
+            auction: auction.data,
+            position: position.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "k": {
+      const position = PositionSchema.safeParse(parts[4]);
+      const op = TokenSchema.safeParse(parts[5]);
+      return parts.length === 6 && position.success && op.success
+        ? {
+            kind: "console-close-confirm",
+            auction: auction.data,
+            position: position.data,
             op: op.data,
           }
         : { kind: "malformed" };
@@ -1040,6 +1125,12 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
     const price = RublesSchema.safeParse(parts[4]);
     return price.success
       ? { kind: "lot-step", lot: token.data, price: price.data }
+      : undefined;
+  }
+  if (parts[2] === "fa") {
+    const position = PositionSchema.safeParse(parts[4]);
+    return position.success
+      ? { kind: "final-ask", auction: token.data, position: position.data }
       : undefined;
   }
   if (parts[2] === "ms") {

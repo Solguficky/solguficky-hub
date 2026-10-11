@@ -1,9 +1,12 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
+import { BidSource } from "../../../../gen/auction/v1/auction_pb.js";
 import {
   AddLotResponseSchema,
+  AdvanceAskResponseSchema,
   AuctionSnapshotSchema,
+  CloseLotResponseSchema,
   CreateLotCardResponseSchema,
   DiscardAuctionResponseSchema,
   DraftAuctionResponseSchema,
@@ -11,10 +14,13 @@ import {
   GetAuctionConsoleResponseSchema,
   GetAuctionLotStatisticsResponseSchema,
   GetMeetupAuctionResponseSchema,
+  ListLotHistoryResponseSchema,
   LotSnapshotSchema,
   ScheduleAuctionResponseSchema,
   ScheduleLotResponseSchema,
   SelectForFinalResponseSchema,
+  StartFinalResponseSchema,
+  StartNextLotResponseSchema,
   StartPrebiddingResponseSchema,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
 import { AccessRight } from "../../../../gen/identity/v1/access_pb.js";
@@ -60,6 +66,12 @@ function adapter(rpc: {
   discardAuction?: Call;
   selectForFinal?: Call;
   deselectForFinal?: Call;
+  startFinal?: Call;
+  startNextLot?: Call;
+  advanceAsk?: Call;
+  closeLot?: Call;
+  listLotHistory?: Call;
+  getDisplayNames?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -70,8 +82,8 @@ function adapter(rpc: {
     scheduleLot: (rpc.scheduleLot ?? notUsed) as never,
     getLot: (rpc.getLot ?? notUsed) as never,
     listAuctionLots: notUsed,
-    listLotHistory: notUsed,
-    getDisplayNames: notUsed,
+    listLotHistory: (rpc.listLotHistory ?? notUsed) as never,
+    getDisplayNames: (rpc.getDisplayNames ?? notUsed) as never,
     placeBid: notUsed,
     setProxyLimit: notUsed,
     chooseDisplayName: notUsed,
@@ -86,6 +98,10 @@ function adapter(rpc: {
     discardAuction: (rpc.discardAuction ?? notUsed) as never,
     selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
     deselectForFinal: (rpc.deselectForFinal ?? notUsed) as never,
+    startFinal: (rpc.startFinal ?? notUsed) as never,
+    startNextLot: (rpc.startNextLot ?? notUsed) as never,
+    advanceAsk: (rpc.advanceAsk ?? notUsed) as never,
+    closeLot: (rpc.closeLot ?? notUsed) as never,
   });
 }
 
@@ -705,5 +721,269 @@ describe("auction console adapter", () => {
     await expect(
       missing.discardAuction(admin, { auctionId, opId }),
     ).resolves.toEqual({ kind: "auction-not-found" });
+  });
+});
+
+// Финал ведущего (PER-337): перевод ответов команд финала и чтение последних
+// ставок текущего лота.
+describe("auction adapter in the final", () => {
+  const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
+  const second = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3e";
+  const rub = (rubles: number) => ({
+    minorUnits: BigInt(rubles * 100),
+    currency: "RUB",
+  });
+
+  it("reads the frozen lineup and the active lot of the final", async () => {
+    const console = (status: unknown) =>
+      adapter({
+        getAuctionConsole: async () =>
+          create(GetAuctionConsoleResponseSchema, {
+            outcome: {
+              case: "console",
+              value: {
+                auction: create(AuctionSnapshotSchema, {
+                  id: auctionId,
+                  status: status as never,
+                }),
+              },
+            },
+          }),
+      }).getAuctionConsole(admin, auctionId);
+
+    await expect(
+      console({ case: "lineupFrozen", value: { order: [lotId, second] } }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      console: { status: "lineup-frozen", lineup: { order: [lotId, second] } },
+    });
+    await expect(
+      console({
+        case: "inFinal",
+        value: { order: [lotId, second], activeLotId: second },
+      }),
+    ).resolves.toMatchObject({
+      console: {
+        status: "final",
+        lineup: { order: [lotId, second], activeLotId: second },
+      },
+    });
+    await expect(
+      console({ case: "inFinal", value: { order: [lotId, second] } }),
+    ).resolves.toMatchObject({
+      console: { lineup: { order: [lotId, second] } },
+    });
+    await expect(
+      console({ case: "inFinal", value: { order: [] } }),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  it("reads a started final, the next lot and a lot still trading", async () => {
+    const accepted = adapter({
+      startFinal: async () =>
+        create(StartFinalResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        }),
+      startNextLot: async () =>
+        create(StartNextLotResponseSchema, {
+          outcome: { case: "accepted", value: { lotId } },
+        }),
+    });
+    const busy = adapter({
+      startFinal: async () =>
+        create(StartFinalResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "lineupNotFrozen", value: {} } },
+          },
+        }),
+      startNextLot: async () =>
+        create(StartNextLotResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: {
+              reason: { case: "anotherLotActive", value: { lotId: second } },
+            },
+          },
+        }),
+    });
+
+    await expect(
+      accepted.startFinal(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    await expect(
+      accepted.startNextLot(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok", lotId });
+    await expect(busy.startFinal(admin, { auctionId, opId })).resolves.toEqual({
+      kind: "lineup-not-frozen",
+    });
+    await expect(
+      busy.startNextLot(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "another-lot-active", lotId: second });
+  });
+
+  it("sends the new ask and reads the threshold of an ask below the current price", async () => {
+    const sent: unknown[] = [];
+    const below = adapter({
+      advanceAsk: async (request: unknown) => {
+        sent.push(request);
+        return create(AdvanceAskResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: {
+              reason: {
+                case: "askBelowCurrentPrice",
+                value: { mustExceed: rub(1_000) },
+              },
+            },
+          },
+        });
+      },
+    });
+
+    await expect(
+      below.advanceAsk(admin, {
+        auctionId,
+        lotId,
+        opId,
+        newAsk: { minorUnits: 90_000, currency: "RUB" },
+      }),
+    ).resolves.toEqual({
+      kind: "ask-below-current-price",
+      mustExceed: { minorUnits: 100_000, currency: "RUB" },
+    });
+    expect(sent).toMatchObject([
+      {
+        viewer: wireAdmin,
+        auctionId,
+        lotId,
+        opId,
+        newAsk: { minorUnits: 90_000n, currency: "RUB" },
+      },
+    ]);
+  });
+
+  it("reads a sale, a close without bids and a lot already closed", async () => {
+    const sent: unknown[] = [];
+    const winnerId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ee";
+    const sold = adapter({
+      closeLot: async (request: unknown) => {
+        sent.push(request);
+        return create(CloseLotResponseSchema, {
+          outcome: {
+            case: "accepted",
+            value: {
+              result: {
+                case: "sold",
+                value: { winnerId, price: rub(1_000), bidId: lotId },
+              },
+            },
+          },
+        });
+      },
+    });
+    const unsold = adapter({
+      closeLot: async () =>
+        create(CloseLotResponseSchema, {
+          outcome: {
+            case: "accepted",
+            value: { result: { case: "unsold", value: 1 } },
+          },
+        }),
+    });
+    const closed = adapter({
+      closeLot: async () =>
+        create(CloseLotResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "lotNotOpen", value: {} } },
+          },
+        }),
+    });
+
+    await expect(
+      sold.closeLot(admin, { auctionId, lotId, opId }),
+    ).resolves.toEqual({
+      kind: "ok",
+      closure: {
+        kind: "sold",
+        winnerId,
+        price: { minorUnits: 100_000, currency: "RUB" },
+      },
+    });
+    expect(sent).toMatchObject([{ auctionId, lotId, opId }]);
+    await expect(
+      unsold.closeLot(admin, { auctionId, lotId, opId }),
+    ).resolves.toEqual({ kind: "ok", closure: { kind: "unsold" } });
+    await expect(
+      closed.closeLot(admin, { auctionId, lotId, opId }),
+    ).resolves.toEqual({ kind: "lot-not-open" });
+  });
+
+  it("reads the latest bids across the pages, newest first, with their names", async () => {
+    const bid = (rubles: number, participantId: string) => ({
+      sequence: BigInt(rubles),
+      occurredAt: "2026-10-27T18:00:00Z",
+      kind: {
+        case: "bid" as const,
+        value: {
+          bidId: lotId,
+          participantId,
+          amount: rub(rubles),
+          origin: {
+            case: "manual" as const,
+            value: { source: BidSource.BOT },
+          },
+        },
+      },
+    });
+    const pages: Record<string, unknown> = {
+      "": create(ListLotHistoryResponseSchema, {
+        entries: [bid(100, "a"), bid(200, "b"), bid(300, "a")],
+        nextPageToken: "next",
+      }),
+      next: create(ListLotHistoryResponseSchema, {
+        entries: [bid(400, "c")],
+        nextPageToken: "",
+      }),
+    };
+    const asked: unknown[] = [];
+    const read = adapter({
+      listLotHistory: async (request) =>
+        pages[(request as { pageToken: string }).pageToken],
+      getDisplayNames: async (request) => {
+        asked.push(request);
+        return { names: { a: { text: "Аня" }, c: { text: "Света" } } };
+      },
+    });
+    const nameless = adapter({
+      listLotHistory: async (request) =>
+        pages[(request as { pageToken: string }).pageToken],
+      getDisplayNames: () =>
+        Promise.reject(new ConnectError("no", Code.Unavailable)),
+    });
+    const request = {
+      auctionId,
+      lotId,
+      limit: 3,
+      extraIds: ["c"],
+    };
+
+    await expect(read.recentBids(admin, request)).resolves.toEqual({
+      kind: "ok",
+      bids: [
+        { amount: { minorUnits: 40_000, currency: "RUB" }, participantId: "c" },
+        { amount: { minorUnits: 30_000, currency: "RUB" }, participantId: "a" },
+        { amount: { minorUnits: 20_000, currency: "RUB" }, participantId: "b" },
+      ],
+      names: { a: "Аня", c: "Света" },
+    });
+    expect(asked).toMatchObject([
+      { auctionId, participantIds: ["c", "a", "b"] },
+    ]);
+    await expect(nameless.recentBids(admin, request)).resolves.toMatchObject({
+      kind: "ok",
+      names: {},
+    });
   });
 });
