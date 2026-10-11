@@ -206,6 +206,14 @@ type PlainAction =
   | { kind: "moderator-candidates"; page: number }
   | { kind: "grant-moderation"; token: string; page: number }
   | { kind: "revoke-moderation"; token: string }
+  // Администраторы (PER-521): список, вопрос о нике, «Да» назначения с ником и
+  // его «Нет», подтверждение снятия и его «Да» с токеном человека.
+  | { kind: "administrators" }
+  | { kind: "ask-appoint-administrator" }
+  | { kind: "confirm-appoint-administrator"; username: string }
+  | { kind: "decline-appoint-administrator" }
+  | { kind: "ask-dismiss-administrator"; token: string }
+  | { kind: "dismiss-administrator"; token: string }
   // Отказанные: токен — заявки, а не человека; страница — куда вернуть список.
   // Очередь называет домен кнопки: `cm` — сообщество, `aq` — аукцион.
   | { kind: "refused-applications"; queue: ApplicationQueue; page: number }
@@ -427,6 +435,8 @@ export type QuestionStep =
   | { kind: "material-title"; token: string }
   | { kind: "broadcast"; token?: string }
   | { kind: "username" }
+  // Ник назначаемого администратора (PER-521).
+  | { kind: "administrator" }
   // Код канала в 64 байта рядом с префиксом не помещается, поэтому подпись,
   // как название материала, принимается только по карте вопросов в памяти.
   | { kind: "channel-code" }
@@ -677,6 +687,8 @@ function stepData(step: QuestionStep): string {
       return step.token === undefined ? "v1:q:bc" : `v1:q:bm:${step.token}`;
     case "username":
       return "v1:q:nick";
+    case "administrator":
+      return "v1:q:an";
     case "channel-code":
       return "v1:q:cc";
     case "channel-label":
@@ -844,6 +856,9 @@ export function parseCallback(raw: unknown): CallbackAction {
   }
   if (parts[1] === "cm") {
     return parseCommunity(parts);
+  }
+  if (parts[1] === "ad") {
+    return parseAdministrators(parts);
   }
   if (parts[1] === "aq") {
     return parseApplicationQueue(parts, "auction");
@@ -1236,6 +1251,7 @@ function parseAskedQuestion(
 function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
   if (parts.length === 3 && parts[2] === "bc") return { kind: "broadcast" };
   if (parts.length === 3 && parts[2] === "nick") return { kind: "username" };
+  if (parts.length === 3 && parts[2] === "an") return { kind: "administrator" };
   if (parts.length === 3 && parts[2] === "cc") return { kind: "channel-code" };
   if (parts.length === 3 && parts[2] === "cl") return { kind: "channel-label" };
   const token = TokenSchema.safeParse(parts[3]);
@@ -1357,6 +1373,41 @@ function parseBlockOrigin(raw: string | undefined): BlockOrigin | undefined {
     return page.success ? { kind: "admitted", page: page.data } : undefined;
   }
   return undefined;
+}
+
+// Администраторы (PER-521): `l` — список, `n` — вопрос о нике, `ay` — «Да»
+// назначения с ником, `an` — его «Нет», `dq` и `dy` — подтверждение снятия и
+// его «Да» с токеном человека.
+function parseAdministrators(parts: readonly string[]): CallbackAction {
+  const malformed = { kind: "malformed" } as const;
+  const [, , verb, first, ...rest] = parts;
+  if (rest.length > 0) return malformed;
+  switch (verb) {
+    case "l":
+      return first === undefined ? { kind: "administrators" } : malformed;
+    case "n":
+      return first === undefined
+        ? { kind: "ask-appoint-administrator" }
+        : malformed;
+    case "an":
+      return first === undefined
+        ? { kind: "decline-appoint-administrator" }
+        : malformed;
+    case "ay":
+      return first !== undefined && removableUsernamePattern.test(first)
+        ? { kind: "confirm-appoint-administrator", username: first }
+        : malformed;
+    case "dq":
+    case "dy": {
+      const token = TokenSchema.safeParse(first);
+      if (!token.success) return malformed;
+      return verb === "dq"
+        ? { kind: "ask-dismiss-administrator", token: token.data }
+        : { kind: "dismiss-administrator", token: token.data };
+    }
+    default:
+      return malformed;
+  }
 }
 
 // Подэкраны состава: `p` — очередь, `a` — допущенные, `u` — ники, `ad` —

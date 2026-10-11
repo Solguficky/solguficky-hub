@@ -10,7 +10,10 @@ import {
   AccessRequestOutcome,
   ApplicationCardSchema,
   ApplicationOutcome,
+  AppointAdministratorResponseSchema,
   DecideApplicationResponseSchema,
+  DismissAdministratorResponseSchema,
+  ListAdministratorsResponseSchema,
   ListRefusedApplicationsResponseSchema,
   ReadApplicationQueueResponseSchema,
   RefusedApplicationSchema,
@@ -20,6 +23,7 @@ import {
 import { noopTracing } from "../../../core/tracing.js";
 import {
   createAccessRequester,
+  createAdministratorManager,
   createApplicationAdministrator,
   createApplicationModerator,
   createAuctionModerationAdministrator,
@@ -629,6 +633,208 @@ describe("auction moderation administrator", () => {
     await expect(
       administrator.grantAuctionModeration(actor, memberId),
     ).resolves.toMatchObject({ kind });
+  });
+});
+
+describe("administrator manager", () => {
+  const actor = {
+    identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+  };
+  const memberId = "0192f0a0-0000-7000-8000-00000000c001";
+
+  function manager(
+    overrides: Partial<Parameters<typeof createAdministratorManager>[0]> = {},
+  ) {
+    return createAdministratorManager({
+      listAdministrators: vi.fn(),
+      appointAdministrator: vi.fn(),
+      dismissAdministrator: vi.fn(),
+      ...overrides,
+    });
+  }
+
+  it("maps the holders with both preset marks", async () => {
+    const administrators = manager({
+      listAdministrators: vi.fn().mockResolvedValue(
+        create(ListAdministratorsResponseSchema, {
+          outcome: {
+            case: "listed",
+            value: {
+              administrators: [
+                {
+                  identityId: actor.identityId,
+                  telegramUsername: "keeper",
+                  telegramUserId: 7n,
+                  maintainer: true,
+                  admin: false,
+                },
+                {
+                  identityId: memberId,
+                  telegramUserId: 42n,
+                  maintainer: false,
+                  admin: true,
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    });
+
+    await expect(administrators.administrators(actor)).resolves.toEqual({
+      kind: "ok",
+      value: [
+        {
+          identityId: actor.identityId,
+          telegramUsername: "keeper",
+          telegramUserId: 7n,
+          maintainer: true,
+          admin: false,
+        },
+        {
+          identityId: memberId,
+          telegramUserId: 42n,
+          maintainer: false,
+          admin: true,
+        },
+      ],
+    });
+  });
+
+  it("reads a refused list as forbidden", async () => {
+    const administrators = manager({
+      listAdministrators: vi.fn().mockResolvedValue(
+        create(ListAdministratorsResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "notAdminGrantor", value: {} } },
+          },
+        }),
+      ),
+    });
+
+    await expect(administrators.administrators(actor)).resolves.toEqual({
+      kind: "forbidden",
+    });
+  });
+
+  it("sends the actor and the username and reads the appointment", async () => {
+    const appointAdministrator = vi.fn().mockResolvedValue(
+      create(AppointAdministratorResponseSchema, {
+        outcome: {
+          case: "appointed",
+          value: { identityId: memberId, changed: true },
+        },
+      }),
+    );
+    const administrators = manager({ appointAdministrator });
+
+    await expect(
+      administrators.appointAdministrator(actor, "@alice"),
+    ).resolves.toEqual({
+      kind: "ok",
+      value: { identityId: memberId, changed: true },
+    });
+    expect(appointAdministrator).toHaveBeenCalledWith(
+      { actor: { identityId: actor.identityId }, telegramUsername: "@alice" },
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    ["notAdminGrantor", "forbidden"],
+    ["usernameUnknown", "username-unknown"],
+    ["identityNotMember", "not-member"],
+    ["identityBlocked", "blocked"],
+    ["usernameUnresolved", "username-unresolved"],
+  ] as const)("maps the appointment refusal %s to %s", async (reason, kind) => {
+    const administrators = manager({
+      appointAdministrator: vi.fn().mockResolvedValue(
+        create(AppointAdministratorResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: reason, value: {} } },
+          },
+        }),
+      ),
+    });
+
+    await expect(
+      administrators.appointAdministrator(actor, "alice"),
+    ).resolves.toEqual({ kind });
+  });
+
+  it("reads an empty outcome as an answer it does not know", async () => {
+    const administrators = manager({
+      appointAdministrator: vi
+        .fn()
+        .mockResolvedValue(create(AppointAdministratorResponseSchema, {})),
+      dismissAdministrator: vi
+        .fn()
+        .mockResolvedValue(create(DismissAdministratorResponseSchema, {})),
+    });
+
+    await expect(
+      administrators.appointAdministrator(actor, "alice"),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+    await expect(
+      administrators.dismissAdministrator(actor, memberId),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  it.each([
+    [Code.InvalidArgument, "invalid"],
+    [Code.Unavailable, "unavailable"],
+  ])("maps the appointment status %s to %s", async (code, kind) => {
+    const administrators = manager({
+      appointAdministrator: () =>
+        Promise.reject(new ConnectError("refused", code)),
+    });
+
+    await expect(
+      administrators.appointAdministrator(actor, "alice"),
+    ).resolves.toMatchObject({ kind });
+  });
+
+  it("reads the dismissal and its refusals", async () => {
+    const dismissAdministrator = vi
+      .fn()
+      .mockResolvedValueOnce(
+        create(DismissAdministratorResponseSchema, {
+          outcome: { case: "dismissed", value: { changed: false } },
+        }),
+      )
+      .mockResolvedValueOnce(
+        create(DismissAdministratorResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "identityUnknown", value: {} } },
+          },
+        }),
+      )
+      .mockResolvedValueOnce(
+        create(DismissAdministratorResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "notAdminGrantor", value: {} } },
+          },
+        }),
+      );
+    const administrators = manager({ dismissAdministrator });
+
+    await expect(
+      administrators.dismissAdministrator(actor, memberId),
+    ).resolves.toEqual({ kind: "ok", value: false });
+    await expect(
+      administrators.dismissAdministrator(actor, memberId),
+    ).resolves.toEqual({ kind: "identity-unknown" });
+    await expect(
+      administrators.dismissAdministrator(actor, memberId),
+    ).resolves.toEqual({ kind: "forbidden" });
+    expect(dismissAdministrator).toHaveBeenCalledWith(
+      { actor: { identityId: actor.identityId }, identityId: memberId },
+      expect.anything(),
+    );
   });
 });
 

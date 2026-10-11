@@ -25,6 +25,8 @@ import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import { communityLocalTime } from "../community-time.js";
 import type {
   AccessRequester,
+  Administrator,
+  AdministratorManager,
   ApplicationAdministrator,
   ApplicationCard,
   ApplicationDecision,
@@ -91,6 +93,10 @@ type AuctionModerationRpc = Pick<
   Client<typeof IdentityService>,
   "listAuctionModerators" | "grantAuctionModeration" | "revokeAuctionModeration"
 >;
+type AdministratorRpc = Pick<
+  Client<typeof IdentityService>,
+  "listAdministrators" | "appointAdministrator" | "dismissAdministrator"
+>;
 type ApplicationModeratorRpc = Pick<
   Client<typeof IdentityService>,
   "readApplicationQueue" | "admitApplication" | "declineApplication"
@@ -104,7 +110,8 @@ export type IdentityClient = IdentityResolver &
   ApplicationAdministrator &
   SourceChannelAdministrator &
   ApplicationModerator &
-  AuctionModerationAdministrator & {
+  AuctionModerationAdministrator &
+  AdministratorManager & {
     close(): void;
   };
 
@@ -135,6 +142,7 @@ export function createIdentityClient(
   const sourceChannels = createSourceChannelAdministrator(client, timeoutMs);
   const moderator = createApplicationModerator(client, timeoutMs);
   const moderation = createAuctionModerationAdministrator(client, timeoutMs);
+  const administrators = createAdministratorManager(client, timeoutMs);
   const recipients = createTelegramRecipientResolver(client, timeoutMs);
   const organizers = createOrganizerResolver(client, timeoutMs);
   return {
@@ -149,6 +157,7 @@ export function createIdentityClient(
     ...sourceChannels,
     ...moderator,
     ...moderation,
+    ...administrators,
     close() {
       sessionManager.abort();
     },
@@ -352,6 +361,127 @@ export function createAuctionModerationAdministrator(
         return { kind: "ok", value: response.changed };
       } catch (cause) {
         return classifyAdminFailure(cause);
+      }
+    },
+  };
+}
+
+// Назначение и снятие набора admin (ADR-065, пункты 6 и 7). Отказы Identity
+// отдаёт значением ответа (PER-521), и каждый переводится в свой вид. Пустой
+// `oneof` и незнакомая причина — ответ, которого бот не понимает: это не
+// отказ по делу, а рассинхрон с Identity, поэтому — недоступность с причиной.
+export function createAdministratorManager(
+  rpc: AdministratorRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): AdministratorManager {
+  const options = (meta?: RpcMetadata) => ({
+    timeoutMs: callTimeoutMs(meta, timeoutMs),
+    ...callHeaders(meta),
+  });
+  const actorMessage = (actor: { identityId: string }) => ({
+    identityId: actor.identityId,
+  });
+  const unknownAnswer = (method: string) => ({
+    kind: "unavailable" as const,
+    cause: new Error(`${method} answered an outcome the bot does not know`),
+  });
+  return {
+    async administrators(actor, meta) {
+      let response: Awaited<ReturnType<AdministratorRpc["listAdministrators"]>>;
+      try {
+        response = await rpc.listAdministrators(
+          { actor: actorMessage(actor) },
+          options(meta),
+        );
+      } catch (cause) {
+        return classifyAdminFailure(cause);
+      }
+      const outcome = response.outcome;
+      if (outcome.case === "refused") {
+        return outcome.value.reason.case === "notAdminGrantor"
+          ? { kind: "forbidden" }
+          : unknownAnswer("ListAdministrators");
+      }
+      if (outcome.case !== "listed") return unknownAnswer("ListAdministrators");
+      const administrators: Administrator[] = outcome.value.administrators.map(
+        (administrator) => ({
+          identityId: administrator.identityId,
+          telegramUserId: administrator.telegramUserId,
+          ...(administrator.telegramUsername === undefined
+            ? {}
+            : { telegramUsername: administrator.telegramUsername }),
+          maintainer: administrator.maintainer,
+          admin: administrator.admin,
+        }),
+      );
+      return { kind: "ok", value: administrators };
+    },
+    async appointAdministrator(actor, telegramUsername, meta) {
+      let response: Awaited<
+        ReturnType<AdministratorRpc["appointAdministrator"]>
+      >;
+      try {
+        response = await rpc.appointAdministrator(
+          { actor: actorMessage(actor), telegramUsername },
+          options(meta),
+        );
+      } catch (cause) {
+        return classifyAdminFailure(cause);
+      }
+      const outcome = response.outcome;
+      if (outcome.case === "appointed") {
+        return {
+          kind: "ok",
+          value: {
+            identityId: outcome.value.identityId,
+            changed: outcome.value.changed,
+          },
+        };
+      }
+      if (outcome.case !== "refused") {
+        return unknownAnswer("AppointAdministrator");
+      }
+      switch (outcome.value.reason.case) {
+        case "notAdminGrantor":
+          return { kind: "forbidden" };
+        case "usernameUnknown":
+          return { kind: "username-unknown" };
+        case "identityNotMember":
+          return { kind: "not-member" };
+        case "identityBlocked":
+          return { kind: "blocked" };
+        case "usernameUnresolved":
+          return { kind: "username-unresolved" };
+        default:
+          return unknownAnswer("AppointAdministrator");
+      }
+    },
+    async dismissAdministrator(actor, identityId, meta) {
+      let response: Awaited<
+        ReturnType<AdministratorRpc["dismissAdministrator"]>
+      >;
+      try {
+        response = await rpc.dismissAdministrator(
+          { actor: actorMessage(actor), identityId },
+          options(meta),
+        );
+      } catch (cause) {
+        return classifyAdminFailure(cause);
+      }
+      const outcome = response.outcome;
+      if (outcome.case === "dismissed") {
+        return { kind: "ok", value: outcome.value.changed };
+      }
+      if (outcome.case !== "refused") {
+        return unknownAnswer("DismissAdministrator");
+      }
+      switch (outcome.value.reason.case) {
+        case "notAdminGrantor":
+          return { kind: "forbidden" };
+        case "identityUnknown":
+          return { kind: "identity-unknown" };
+        default:
+          return unknownAnswer("DismissAdministrator");
       }
     },
   };

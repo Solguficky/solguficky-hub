@@ -109,6 +109,16 @@ export const screenCatalog = {
     backName: "Состав",
     refresh: true,
   },
+  // Держатели наборов admin и maintainer (PER-521): пункт группы «Участники»,
+  // который видит держатель права назначать администраторов.
+  administrators: {
+    class: "screen",
+    nav: "tree",
+    title: "Администраторы",
+    parent: manageMembersParent,
+    backName: "Администраторы",
+    refresh: true,
+  },
   "community-pending": {
     class: "screen",
     nav: "tree",
@@ -400,6 +410,18 @@ export const screenCatalog = {
     irreversible: true,
   },
   "reconsider-confirm": { class: "screen", nav: "confirm" },
+  // Назначение уведомляет человека, снятие подтверждает задача (PER-521);
+  // оба обратимы, поэтому «Да» цвета не несёт.
+  "administrator-appoint-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Назначить администратором?",
+  },
+  "administrator-dismiss-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Снять администратора?",
+  },
   "application-decline-confirm": {
     class: "screen",
     nav: "confirm",

@@ -154,7 +154,7 @@ bin/stage db <база>                                      # туннель н
 
 ## Администратор
 
-Набор `maintainer` на stage выдаёт служебный `GrantPreset` Identity с `"preset": "PRESET_MAINTAINER"` и токеном `IDENTITY_MAINTAINER_TOKEN` из файла секретов хоста; снимает — `RevokePreset` ([ADR-065](../decisions/ADR-065-circle-presets-and-verb-rights.md)). Человеку без круга `member` выдача даёт его той же операцией. Тем же путём выдаётся и `PRESET_ADMIN`, но обычный путь другой: мейнтейнер назначает администратором себя и других вызовом `AppointAdministrator` от своего имени (`actor.identity_id`), без секрета. Экрана «Администраторы» в боте хаба ещё нет ([PER-521](https://linear.app/anticnvm/issue/per-521)), поэтому и этот вызов идёт через `grpcurl`. Последовательность:
+Набор `maintainer` на stage выдаёт служебный `GrantPreset` Identity с `"preset": "PRESET_MAINTAINER"` и токеном `IDENTITY_MAINTAINER_TOKEN` из файла секретов хоста; снимает — `RevokePreset` ([ADR-065](../decisions/ADR-065-circle-presets-and-verb-rights.md)). Человеку без круга `member` выдача даёт его той же операцией. Тем же путём выдаётся и `PRESET_ADMIN`, но обычный путь другой: мейнтейнер назначает администратором себя и других экраном «Управление → Администраторы» в боте хаба, без секрета ([PER-521](https://linear.app/anticnvm/issue/per-521)): бот зовёт `AppointAdministrator` от его имени. Служебным endpoint'ом через `grpcurl` выдаётся только `maintainer`. Последовательность:
 
 1. Человек шлёт `/start` боту хаба на stage: так появляется его профиль.
 2. `identity_id` профиля берётся из таблицы `profiles` базы `identity` по нику.

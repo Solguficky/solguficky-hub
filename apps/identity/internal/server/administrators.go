@@ -57,8 +57,20 @@ type targetArgumentError struct{ err error }
 
 func (e targetArgumentError) Error() string { return e.err.Error() }
 
+// Ожидаемый отказ методы администраторов отдают значением ответа, а не статусом
+// gRPC: модель отказа типизирована и отделена от модели успеха (PER-521).
+// Статус остаётся у неразборчивого запроса и у сбоя самого сервиса.
+
 func (s identityService) ListAdministrators(ctx context.Context, req *identityv1.ListAdministratorsRequest) (*identityv1.ListAdministratorsResponse, error) {
+	refused := &identityv1.ListAdministratorsResponse{Outcome: &identityv1.ListAdministratorsResponse_Refused{
+		Refused: &identityv1.ListAdministratorsRefusal{Reason: &identityv1.ListAdministratorsRefusal_NotAdminGrantor{
+			NotAdminGrantor: &identityv1.NotAdminGrantor{},
+		}},
+	}}
 	actorID, err := administratorActor(req.GetActor())
+	if errors.Is(err, errNotAdminGrantor) {
+		return refused, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -67,14 +79,14 @@ func (s identityService) ListAdministrators(ctx context.Context, req *identityv1
 		return nil, internal("check grant_admins", err)
 	}
 	if !grantor {
-		return nil, administratorStatus(errNotAdminGrantor)
+		return refused, nil
 	}
 	rows, err := s.db.QueryContext(ctx, listAdministratorsSQL)
 	if err != nil {
 		return nil, internal("list administrators", err)
 	}
 	defer func() { _ = rows.Close() }()
-	response := &identityv1.ListAdministratorsResponse{}
+	list := &identityv1.AdministratorList{}
 	for rows.Next() {
 		var id string
 		var username sql.NullString
@@ -92,36 +104,80 @@ func (s identityService) ListAdministrators(ctx context.Context, req *identityv1
 		if username.Valid {
 			administrator.TelegramUsername = &username.String
 		}
-		response.Administrators = append(response.Administrators, administrator)
+		list.Administrators = append(list.Administrators, administrator)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, internal("iterate administrators", err)
 	}
-	return response, nil
+	return &identityv1.ListAdministratorsResponse{Outcome: &identityv1.ListAdministratorsResponse_Listed{Listed: list}}, nil
 }
 
 func (s identityService) AppointAdministrator(ctx context.Context, req *identityv1.AppointAdministratorRequest) (*identityv1.AppointAdministratorResponse, error) {
 	actorID, err := administratorActor(req.GetActor())
-	if err != nil {
-		return nil, err
+	if err == nil {
+		var identityID string
+		var changed bool
+		identityID, changed, err = s.appointAdministrator(ctx, actorID, req.GetTelegramUsername())
+		if err == nil {
+			return &identityv1.AppointAdministratorResponse{Outcome: &identityv1.AppointAdministratorResponse_Appointed{
+				Appointed: &identityv1.AdministratorAppointed{IdentityId: identityID, Changed: changed},
+			}}, nil
+		}
 	}
-	identityID, changed, err := s.appointAdministrator(ctx, actorID, req.GetTelegramUsername())
-	if err != nil {
+	refusal := appointRefusal(err)
+	if refusal == nil {
 		return nil, administratorStatus(err)
 	}
-	return &identityv1.AppointAdministratorResponse{Changed: changed, IdentityId: identityID}, nil
+	return &identityv1.AppointAdministratorResponse{Outcome: &identityv1.AppointAdministratorResponse_Refused{Refused: refusal}}, nil
 }
 
 func (s identityService) DismissAdministrator(ctx context.Context, req *identityv1.DismissAdministratorRequest) (*identityv1.DismissAdministratorResponse, error) {
 	actorID, err := administratorActor(req.GetActor())
-	if err != nil {
-		return nil, err
+	if err == nil {
+		var changed bool
+		changed, err = s.dismissAdministrator(ctx, actorID, req.GetIdentityId())
+		if err == nil {
+			return &identityv1.DismissAdministratorResponse{Outcome: &identityv1.DismissAdministratorResponse_Dismissed{
+				Dismissed: &identityv1.AdministratorDismissed{Changed: changed},
+			}}, nil
+		}
 	}
-	changed, err := s.dismissAdministrator(ctx, actorID, req.GetIdentityId())
-	if err != nil {
+	refusal := dismissRefusal(err)
+	if refusal == nil {
 		return nil, administratorStatus(err)
 	}
-	return &identityv1.DismissAdministratorResponse{Changed: changed}, nil
+	return &identityv1.DismissAdministratorResponse{Outcome: &identityv1.DismissAdministratorResponse_Refused{Refused: refusal}}, nil
+}
+
+// appointRefusal называет ожидаемый отказ назначения; nil — отказ не доменный и
+// уходит статусом: неразборчивый ник или сбой сервиса.
+func appointRefusal(err error) *identityv1.AppointAdministratorRefusal {
+	switch {
+	case errors.Is(err, errNotAdminGrantor):
+		return &identityv1.AppointAdministratorRefusal{Reason: &identityv1.AppointAdministratorRefusal_NotAdminGrantor{NotAdminGrantor: &identityv1.NotAdminGrantor{}}}
+	case errors.Is(err, errProfileNotFound):
+		return &identityv1.AppointAdministratorRefusal{Reason: &identityv1.AppointAdministratorRefusal_UsernameUnknown{UsernameUnknown: &identityv1.UsernameUnknown{}}}
+	case errors.Is(err, errNotMember):
+		return &identityv1.AppointAdministratorRefusal{Reason: &identityv1.AppointAdministratorRefusal_IdentityNotMember{IdentityNotMember: &identityv1.IdentityNotMember{}}}
+	case errors.Is(err, errProfileBlocked):
+		return &identityv1.AppointAdministratorRefusal{Reason: &identityv1.AppointAdministratorRefusal_IdentityBlocked{IdentityBlocked: &identityv1.IdentityBlocked{}}}
+	case errors.Is(err, errUsernameAmbiguous), errors.Is(err, errUsernameMoved):
+		return &identityv1.AppointAdministratorRefusal{Reason: &identityv1.AppointAdministratorRefusal_UsernameUnresolved{UsernameUnresolved: &identityv1.UsernameUnresolved{}}}
+	default:
+		return nil
+	}
+}
+
+// dismissRefusal называет ожидаемый отказ снятия; nil — статус.
+func dismissRefusal(err error) *identityv1.DismissAdministratorRefusal {
+	switch {
+	case errors.Is(err, errNotAdminGrantor):
+		return &identityv1.DismissAdministratorRefusal{Reason: &identityv1.DismissAdministratorRefusal_NotAdminGrantor{NotAdminGrantor: &identityv1.NotAdminGrantor{}}}
+	case errors.Is(err, errProfileNotFound):
+		return &identityv1.DismissAdministratorRefusal{Reason: &identityv1.DismissAdministratorRefusal_IdentityUnknown{IdentityUnknown: &identityv1.IdentityUnknown{}}}
+	default:
+		return nil
+	}
 }
 
 // appointAdministrator разбирает ник, проверяет право актора и выдаёт набор
@@ -307,7 +363,7 @@ func isTargetRefusal(err error) bool {
 // administratorActor разбирает identity_id актора; право читается отдельно.
 func administratorActor(actor *identityv1.IdentityActor) (string, error) {
 	if actor == nil {
-		return "", status.Error(codes.PermissionDenied, errNotAdminGrantor.Error())
+		return "", errNotAdminGrantor
 	}
 	id, err := uuid.Parse(actor.GetIdentityId())
 	if err != nil || id.String() != actor.GetIdentityId() {
@@ -316,12 +372,10 @@ func administratorActor(actor *identityv1.IdentityActor) (string, error) {
 	return id.String(), nil
 }
 
+// administratorStatus — статус того, что отказом-значением не стало:
+// неразборчивого запроса и сбоя сервиса.
 func administratorStatus(err error) error {
 	switch {
-	case errors.Is(err, errNotAdminGrantor):
-		return status.Error(codes.PermissionDenied, err.Error())
-	case errors.Is(err, errUsernameAmbiguous), errors.Is(err, errUsernameMoved):
-		return status.Error(codes.FailedPrecondition, err.Error())
 	case errors.As(err, new(targetArgumentError)):
 		return status.Error(codes.InvalidArgument, err.Error())
 	default:

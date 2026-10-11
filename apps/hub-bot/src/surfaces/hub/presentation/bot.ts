@@ -78,6 +78,8 @@ import { type AuctionScreens, viewerOf } from "../auction/port.js";
 import { type CommunityDay, isBeforeDay } from "../community-time.js";
 import {
   type AccessRequester,
+  type Administrator,
+  type AdministratorManager,
   type ApplicationAdministrator,
   type ApplicationCursor,
   type ApplicationModerator,
@@ -159,6 +161,18 @@ import {
 } from "./parse-callback.js";
 import { parseUpdate, type SectionCommand } from "./parse-update.js";
 import { RepliedKeyboardSchema } from "./schemas.js";
+import {
+  administratorOutcomeScreen,
+  administratorsScreen,
+  appointConfirmScreen,
+  appointOutcome,
+  appointPrompt,
+  appointRetryScreen,
+  appointUsername,
+  dismissConfirmScreen,
+  dismissOutcome,
+  toAdministrators,
+} from "./screens/administrators.js";
 import {
   applicationCardScreen,
   applicationQueueEndScreen,
@@ -243,6 +257,7 @@ import {
 } from "./screens/meetup.js";
 import {
   canAdmitBidders,
+  canGrantAdmins,
   canManageMeetups,
   canManageMembers,
   canOpenManagement,
@@ -300,6 +315,7 @@ export type BotRuntime = {
     Partial<SourceChannelAdministrator> &
     Partial<ApplicationModerator> &
     Partial<AuctionModerationAdministrator> &
+    Partial<AdministratorManager> &
     Partial<OrganizerResolver> &
     Partial<TelegramRecipientResolver>;
   logger: Logger;
@@ -385,6 +401,8 @@ const refusedForbiddenText =
 const auctionQueueForbiddenText = "Заявки в аукцион решает модератор аукциона.";
 const moderatorsForbiddenText =
   "Выдавать модерацию аукциона может тот, кто управляет составом.";
+const administratorsForbiddenText =
+  "Назначать и снимать администраторов может только мейнтейнер.";
 const channelSavedListFailedText =
   "Канал заведён, но список не загрузился. Открой каналы ещё раз через минуту.";
 const sourceChannelsForbiddenText =
@@ -463,6 +481,12 @@ type PendingQuestion = {
 };
 type PendingUsername = {
   kind: "allowed-username";
+  telegramUserId: number;
+  expiresAt: number;
+};
+// Ник назначаемого администратора (PER-521): шаг целиком в кнопке вопроса.
+type PendingAdministrator = {
+  kind: "administrator-username";
   telegramUserId: number;
   expiresAt: number;
 };
@@ -562,6 +586,7 @@ type HubPendingInput =
   | PendingQuestion
   | PendingPublishMoment
   | PendingUsername
+  | PendingAdministrator
   | PendingChannelCode
   | PendingChannelLabel
   | PendingMaterialInput
@@ -1343,6 +1368,91 @@ async function handleMessage(
       if (result.kind !== "lot-ask") await answered(result);
       return;
     }
+    // Ник назначаемого администратора (PER-521): Identity здесь не зовётся —
+    // ник проверяется по форме и уходит в «Да» подтверждения, а назначение
+    // делает нажатие. Без права вопрос не задаётся, но старый остаётся в чате.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "administrator-username" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "manage_community";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign form answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      if (!canGrantAdmins(identity.person)) {
+        await answered();
+        await showRefusal(
+          ctx,
+          administratorsForbiddenText,
+          exitToMeetups(),
+          "new",
+        );
+        outcome = {
+          level: "warn",
+          message: "management rejected",
+          result: "error",
+          use_case: useCase,
+          identity_id: identity.person.identityId,
+          error_category: "authorization",
+          error: "management_forbidden",
+        };
+        return;
+      }
+      const username = appointUsername(ctx.message.text);
+      if (username === undefined) {
+        await refuseAnswer(
+          ctx,
+          questions,
+          bodyOf(pending),
+          "Это не похоже на ник Telegram. Ник присылают с @ или без.",
+          replyId,
+        );
+        outcome = {
+          level: "info",
+          message: "administrator username rejected",
+          result: "ok",
+          use_case: useCase,
+          identity_id: identity.person.identityId,
+        };
+        return;
+      }
+      await answered();
+      await showScreen(ctx, {
+        ...appointConfirmScreen(username),
+        delivery: "new",
+      });
+      outcome = {
+        level: "info",
+        message: "administrator appointment asked",
+        result: "ok",
+        use_case: useCase,
+        identity_id: identity.person.identityId,
+      };
+      return;
+    }
     if (
       replyId !== undefined &&
       pending !== undefined &&
@@ -1469,6 +1579,7 @@ async function handleMessage(
       pending !== undefined &&
       (pending.kind === "meetup" ||
         pending.kind === "allowed-username" ||
+        pending.kind === "administrator-username" ||
         pending.kind === "channel-code" ||
         pending.kind === "channel-label" ||
         pending.kind === "publish-moment" ||
@@ -1480,6 +1591,7 @@ async function handleMessage(
     ) {
       useCase =
         pending.kind === "allowed-username" ||
+        pending.kind === "administrator-username" ||
         pending.kind === "channel-code" ||
         pending.kind === "channel-label"
           ? "manage_community"
@@ -2399,6 +2511,146 @@ async function handleCallback(
           ? {
               level: "info",
               message: "auction moderation not granted",
+              result: "ok",
+              use_case: "manage_community",
+              identity_id: person.identityId,
+            }
+          : adminOutcome(result, person.identityId);
+      return;
+    }
+    if (action.kind === "administrators") {
+      const result = await renderAdministrators(ctx, runtime, person);
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    if (action.kind === "ask-appoint-administrator") {
+      await askQuestion(
+        ctx,
+        questions,
+        { kind: "administrator-username", telegramUserId: ctx.from?.id ?? 0 },
+        appointPrompt,
+      );
+      outcome = {
+        level: "info",
+        message: "administrator username requested",
+        result: "ok",
+        use_case: "manage_community",
+        identity_id: person.identityId,
+      };
+      return;
+    }
+    if (action.kind === "decline-appoint-administrator") {
+      // «Нет» под только что присланным ником — исход с «Ввести заново»:
+      // ник жил только в кнопке «Да» (дизайн-код, «Вопросы»).
+      await showScreen(
+        ctx,
+        appointRetryScreen("Не назначено. Никому ничего не выдано."),
+      );
+      outcome = {
+        level: "info",
+        message: "administrator appointment declined",
+        result: "ok",
+        use_case: "manage_community",
+        identity_id: person.identityId,
+      };
+      return;
+    }
+    if (action.kind === "confirm-appoint-administrator") {
+      const result =
+        runtime.identity.appointAdministrator === undefined
+          ? {
+              kind: "unavailable" as const,
+              cause: new Error("administrators are not configured"),
+            }
+          : await runtime.identity.appointAdministrator(
+              person,
+              action.username,
+              rpcCall(ctx, "manage_community"),
+            );
+      // `invalid` — Identity не разобрал запрос, который бот уже проверил:
+      // это не ошибка ника, а рассинхрон, и человек видит сбой.
+      if (
+        result.kind === "forbidden" ||
+        result.kind === "unavailable" ||
+        result.kind === "invalid"
+      ) {
+        await refuseAdministrators(ctx, result);
+        outcome = adminOutcome(result, person.identityId);
+        return;
+      }
+      const shown = appointOutcome(result);
+      const subject = `@${action.username}`;
+      await showScreen(
+        ctx,
+        shown.retry
+          ? appointRetryScreen(shown.text, subject)
+          : administratorOutcomeScreen(shown.text, subject),
+      );
+      // Отказ по цели — штатный ответ Identity, а не сбой: метрика отказов на
+      // нём не растёт.
+      outcome = {
+        level: "info",
+        message:
+          result.kind === "ok"
+            ? "administrator appointed"
+            : `administrator not appointed: ${result.kind}`,
+        result: "ok",
+        use_case: "manage_community",
+        identity_id: person.identityId,
+      };
+      return;
+    }
+    if (action.kind === "ask-dismiss-administrator") {
+      const list = await readAdministrators(ctx, runtime, person);
+      if (list.kind !== "ok") {
+        await refuseAdministrators(ctx, list);
+        outcome = adminOutcome(list, person.identityId);
+        return;
+      }
+      const identityId = tokenToUuid(action.token);
+      const target = list.value.find(
+        (administrator) =>
+          administrator.identityId === identityId && administrator.admin,
+      );
+      // Набор сняли, пока экран был открыт: спрашивать не о чем.
+      await showScreen(
+        ctx,
+        target === undefined
+          ? administratorOutcomeScreen(
+              "Уже не администратор. Список изменился, пока экран был открыт.",
+            )
+          : dismissConfirmScreen(target, person.identityId),
+      );
+      outcome = adminOutcome(list, person.identityId);
+      return;
+    }
+    if (action.kind === "dismiss-administrator") {
+      const result =
+        runtime.identity.dismissAdministrator === undefined
+          ? {
+              kind: "unavailable" as const,
+              cause: new Error("administrators are not configured"),
+            }
+          : await runtime.identity.dismissAdministrator(
+              person,
+              tokenToUuid(action.token),
+              rpcCall(ctx, "manage_community"),
+            );
+      if (
+        result.kind === "forbidden" ||
+        result.kind === "unavailable" ||
+        result.kind === "invalid"
+      ) {
+        await refuseAdministrators(ctx, result);
+        outcome = adminOutcome(result, person.identityId);
+        return;
+      }
+      await showScreen(ctx, administratorOutcomeScreen(dismissOutcome(result)));
+      outcome =
+        result.kind === "identity-unknown"
+          ? {
+              level: "info",
+              message: "administrator not dismissed: identity-unknown",
               result: "ok",
               use_case: "manage_community",
               identity_id: person.identityId,
@@ -4106,6 +4358,11 @@ function managementRefusal(
         : managementForbiddenText;
     case "ask-allowed-username":
       return canManageMembers(person) ? undefined : communityForbiddenText;
+    // Вопрос о нике Identity не спрашивает, поэтому без права он не задаётся.
+    // Список, назначение и снятие бот пропускает: право решает Identity и
+    // отвечает отказом значением (PER-521).
+    case "ask-appoint-administrator":
+      return canGrantAdmins(person) ? undefined : administratorsForbiddenText;
     case "source-channels":
     case "ask-source-channel":
       return canManageMembers(person) ? undefined : sourceChannelsForbiddenText;
@@ -4235,6 +4492,57 @@ async function renderModerators(
     ),
   );
   return community;
+}
+
+// Держатели наборов читаются заново на каждый показ: состав меняет и другой
+// мейнтейнер, и общий секрет.
+function readAdministrators(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+): Promise<IdentityAdminResult<readonly Administrator[]>> {
+  return runtime.identity.administrators === undefined
+    ? Promise.resolve({
+        kind: "unavailable" as const,
+        cause: new Error("administrators are not configured"),
+      })
+    : runtime.identity.administrators(actor, rpcCall(ctx, "manage_community"));
+}
+
+async function renderAdministrators(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+): Promise<IdentityAdminResult<unknown>> {
+  const result = await readAdministrators(ctx, runtime, actor);
+  if (result.kind !== "ok") {
+    await refuseAdministrators(ctx, result);
+    return result;
+  }
+  await showScreen(
+    ctx,
+    administratorsScreen(
+      result.value,
+      actor.identityId,
+      manageItemParent(actor, "members"),
+    ),
+  );
+  return result;
+}
+
+// Отказ Identity по праву уводит из раздела: экран без права ничего не даёт.
+// Сбой и неразобранный запрос возвращают в список — его можно открыть заново.
+function refuseAdministrators(
+  ctx: UpdateContext,
+  result: { kind: "forbidden" } | { kind: "invalid" } | { kind: "unavailable" },
+): Promise<void> {
+  return result.kind === "forbidden"
+    ? showRefusal(ctx, administratorsForbiddenText, exitToMeetups())
+    : showRefusal(
+        ctx,
+        unavailableText,
+        withNav(new InlineKeyboard(), toAdministrators),
+      );
 }
 
 function readRefused(
@@ -7210,6 +7518,8 @@ function stepOf(pending: PendingBody): QuestionStep {
         : { kind: "broadcast" };
     case "allowed-username":
       return { kind: "username" };
+    case "administrator-username":
+      return { kind: "administrator" };
     case "channel-code":
       return { kind: "channel-code" };
     case "channel-label":
@@ -7338,6 +7648,8 @@ function pendingOf(
       };
     case "username":
       return { kind: "allowed-username", telegramUserId, expiresAt };
+    case "administrator":
+      return { kind: "administrator-username", telegramUserId, expiresAt };
     case "channel-code":
       return { kind: "channel-code", telegramUserId, expiresAt };
     case "channel-label":
@@ -7412,6 +7724,8 @@ function cancelTarget(step: QuestionStep): ScreenAction {
         : { kind: "view-meetup", token: step.token };
     case "username":
       return { kind: "community-usernames", page: 0 };
+    case "administrator":
+      return { kind: "administrators" };
     case "channel-code":
     case "channel-label":
       return { kind: "source-channels", page: 0 };
@@ -7560,6 +7874,8 @@ function reopenData(step: QuestionStep): string {
       return step.token === undefined ? "v1:bc:c" : `v1:bc:m:${step.token}`;
     case "username":
       return "v1:community:allow";
+    case "administrator":
+      return "v1:ad:n";
     case "channel-code":
     case "channel-label":
       return "v1:sc:a";
@@ -7603,6 +7919,8 @@ function answerParent(step: QuestionStep): Parent {
       return step.token === undefined ? toManage : toCard(step.token);
     case "username":
       return { name: "Ники", data: "v1:cm:u" };
+    case "administrator":
+      return toAdministrators;
     case "channel-code":
     case "channel-label":
       return toSourceChannels;
@@ -7818,6 +8136,12 @@ function callbackUseCase(
     | "moderator-candidates"
     | "grant-moderation"
     | "revoke-moderation"
+    | "administrators"
+    | "ask-appoint-administrator"
+    | "confirm-appoint-administrator"
+    | "decline-appoint-administrator"
+    | "ask-dismiss-administrator"
+    | "dismiss-administrator"
     | "source-channels"
     | "ask-source-channel"
     | "application-card"
@@ -7958,6 +8282,12 @@ function callbackUseCase(
     case "moderator-candidates":
     case "grant-moderation":
     case "revoke-moderation":
+    case "administrators":
+    case "ask-appoint-administrator":
+    case "confirm-appoint-administrator":
+    case "decline-appoint-administrator":
+    case "ask-dismiss-administrator":
+    case "dismiss-administrator":
       return "manage_community";
     case "settings":
     case "notify-global":

@@ -516,7 +516,25 @@ message RevokePresetResponse {
 
 message ListAdministratorsRequest { IdentityActor actor = 1; }
 
-message ListAdministratorsResponse { repeated Administrator administrators = 1; }
+message ListAdministratorsResponse {
+  reserved 1;
+  reserved "administrators";
+
+  // Exactly one is set.
+  oneof outcome {
+    AdministratorList listed = 2;
+    ListAdministratorsRefusal refused = 3;
+  }
+}
+
+message AdministratorList { repeated Administrator administrators = 1; }
+
+message ListAdministratorsRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotAdminGrantor not_admin_grantor = 1;
+  }
+}
 
 // A person holding PRESET_ADMIN, PRESET_MAINTAINER or both.
 message Administrator {
@@ -540,10 +558,32 @@ message AppointAdministratorRequest {
 }
 
 message AppointAdministratorResponse {
-  // False when the preset was already held.
-  bool changed = 1;
+  reserved 1, 2;
+  reserved "changed", "identity_id";
+
+  // Exactly one is set.
+  oneof outcome {
+    AdministratorAppointed appointed = 3;
+    AppointAdministratorRefusal refused = 4;
+  }
+}
+
+message AdministratorAppointed {
   // The person the username resolved to.
-  string identity_id = 2;
+  string identity_id = 1;
+  // False when the preset was already held.
+  bool changed = 2;
+}
+
+message AppointAdministratorRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotAdminGrantor not_admin_grantor = 1;
+    UsernameUnknown username_unknown = 2;
+    IdentityNotMember identity_not_member = 3;
+    IdentityBlocked identity_blocked = 4;
+    UsernameUnresolved username_unresolved = 5;
+  }
 }
 
 message DismissAdministratorRequest {
@@ -553,6 +593,44 @@ message DismissAdministratorRequest {
 }
 
 message DismissAdministratorResponse {
+  reserved 1;
+  reserved "changed";
+
+  // Exactly one is set.
+  oneof outcome {
+    AdministratorDismissed dismissed = 2;
+    DismissAdministratorRefusal refused = 3;
+  }
+}
+
+message AdministratorDismissed {
   // False when the preset was not held.
   bool changed = 1;
 }
+
+message DismissAdministratorRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotAdminGrantor not_admin_grantor = 1;
+    IdentityUnknown identity_unknown = 2;
+  }
+}
+
+// The actor may not grant PRESET_ADMIN. Carries no cause: the causes are not
+// told apart.
+message NotAdminGrantor {}
+
+// No profile carries the username.
+message UsernameUnknown {}
+
+// The person is not in CIRCLE_MEMBER.
+message IdentityNotMember {}
+
+// The person's profile is blocked.
+message IdentityBlocked {}
+
+// The username does not name exactly one person. Carries no candidates.
+message UsernameUnresolved {}
+
+// No profile has this identity_id.
+message IdentityUnknown {}

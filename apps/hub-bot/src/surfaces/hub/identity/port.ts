@@ -300,6 +300,52 @@ export type AuctionModerationAdministrator = {
   ): Promise<IdentityAdminResult<boolean>>;
 };
 
+// Держатель набора admin, maintainer или обоих (ADR-065). `admin` — набор
+// снимается из бота; один `maintainer` снимается только общим секретом.
+export type Administrator = {
+  identityId: string;
+  telegramUserId: bigint;
+  telegramUsername?: string;
+  maintainer: boolean;
+  admin: boolean;
+};
+
+// Отказы методов администраторов — значения ответа Identity, а не статусы
+// (PER-521): каждый назван своим видом. `forbidden` — у актора нет права
+// grant_admins; о цели он тогда ничего не узнаёт. `invalid` — Identity не
+// разобрал запрос: ник не ник Telegram или идентификатор не канонический.
+export type AppointAdministratorResult =
+  | { kind: "ok"; value: { identityId: string; changed: boolean } }
+  | { kind: "forbidden" }
+  | { kind: "username-unknown" }
+  | { kind: "not-member" }
+  | { kind: "blocked" }
+  | { kind: "username-unresolved" }
+  | { kind: "invalid" }
+  | { kind: "unavailable"; cause: unknown };
+export type DismissAdministratorResult =
+  | IdentityAdminResult<boolean>
+  | { kind: "identity-unknown" };
+
+// Назначение и снятие набора admin — у держателя права grant_admins (ADR-065,
+// пункты 6 и 7); право Identity читает сам.
+export type AdministratorManager = {
+  administrators(
+    actor: IdentityActor,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<readonly Administrator[]>>;
+  appointAdministrator(
+    actor: IdentityActor,
+    telegramUsername: string,
+    meta?: RpcMetadata,
+  ): Promise<AppointAdministratorResult>;
+  dismissAdministrator(
+    actor: IdentityActor,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<DismissAdministratorResult>;
+};
+
 // Канал прихода (ADR-060, пункт 18): код из payload `s_<код>` без префикса и
 // подпись, которую модератор видит на карточке заявки.
 export type SourceChannel = { code: string; label: string };

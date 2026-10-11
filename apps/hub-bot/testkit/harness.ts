@@ -10,6 +10,7 @@ import type { Dispatcher } from "../src/surfaces/hub/application/dispatcher.js";
 import { createDispatcher } from "../src/surfaces/hub/application/dispatcher.js";
 import type {
   AccessRequester,
+  AdministratorManager,
   ApplicationAdministrator,
   ApplicationModerator,
   CommunityAdministrator,
@@ -249,7 +250,8 @@ export function createHarness(
     Partial<CommunityAdministrator> &
     Partial<ApplicationAdministrator> &
     Partial<SourceChannelAdministrator> &
-    Partial<ApplicationModerator>,
+    Partial<ApplicationModerator> &
+    Partial<AdministratorManager>,
   dispatcher: Dispatcher = createDispatcher(),
   calls: RecordedCall[] = [],
   tracing: Tracing = noopTracing(),
