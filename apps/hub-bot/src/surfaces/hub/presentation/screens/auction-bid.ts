@@ -148,6 +148,9 @@ export function questionScreen(
       case "proxy":
         return screenText(
           "Автоставка",
+          block.explainer === undefined
+            ? undefined
+            : proxyExplainer(block.explainer, money),
           [
             "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
             ...current(""),
@@ -168,15 +171,48 @@ export function questionScreen(
       }
     }
   })();
+  // «Как это работает» — над «Отменой»: выход из вопроса остаётся последним
+  // рядом (дизайн-код, «Вопросы»).
+  const explain = keyboard
+    .flat()
+    .find((button) => button.action === "question.explain");
+  const rows = new InlineKeyboard();
+  if (explain !== undefined) {
+    rows.text(explainLabel, explain.callbackData).row();
+  }
   return {
     id: "question",
     text,
-    keyboard: new InlineKeyboard().text(
-      cancelLabel,
-      dataOf(keyboard, "question.cancel"),
-    ),
+    keyboard: rows.text(cancelLabel, dataOf(keyboard, "question.cancel")),
     format: "HTML",
   };
+}
+
+const explainLabel = "Как это работает";
+
+// Пояснение автоставки голосом помощника (PER-517, RFC-007): платишь цену, а
+// не лимит. Пример — на этом лоте: цена сейчас, шаг и лимит на три шага выше.
+// Не лидеру бот сразу ставит порог, который посчитал Auction, лидеру — ничего;
+// ответов по шагам пример не расписывает: у ступенчатого лота шаг на
+// следующей цене другой. Текст тот же, что у бота аукциона.
+function proxyExplainer(
+  explainer: NonNullable<QuestionBlock["explainer"]>,
+  money: (amount: Money) => string,
+): string {
+  const lines = [
+    "Подскажу: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
+  ];
+  const { example } = explainer;
+  if (example !== undefined) {
+    const price = money(example.currentPrice);
+    const limit = money(example.limit);
+    lines.push(
+      example.firstBid === undefined
+        ? `Например: цена сейчас ${price} — твоя, шаг ${money(example.step)}, твой лимит ${limit}. Бот будет отвечать на чужие ставки, но не выше ${limit}. Никто не перебьёт — заплатишь ${price}, а не ${limit}.`
+        : `Например: цена сейчас ${price}, шаг ${money(example.step)}, твой лимит ${limit}. Бот сразу поставит за тебя ${money(example.firstBid)} и будет отвечать на чужие ставки, но не выше ${limit}. Никто не перебьёт — заплатишь ${money(example.firstBid)}, а не ${limit}.`,
+    );
+  }
+  return lines.join("\n");
 }
 
 export function nameChoiceScreen(

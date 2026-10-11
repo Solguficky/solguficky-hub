@@ -137,6 +137,9 @@ export async function handleAuctionUpdate(
     ...(surface.ports.favorites === undefined
       ? {}
       : { favorites: surface.ports.favorites }),
+    ...(surface.ports.proxyExplainer === undefined
+      ? {}
+      : { proxyExplainer: surface.ports.proxyExplainer }),
     viewer: identity.viewer,
     user,
     intent: parsed.intent,

@@ -143,6 +143,32 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
         return Map(identityId, stored);
     }
 
+    public override async Task<ProxyExplainer> GetProxyExplainer(
+        GetProxyExplainerRequest request,
+        ServerCallContext context)
+    {
+        var identityId = RequestValidation.IdentityId(request.IdentityId);
+
+        var seen = await operations.ReadProxyExplainer(identityId, context.CancellationToken);
+
+        return new ProxyExplainer { IdentityId = identityId.ToString("D"), Seen = seen };
+    }
+
+    /// <summary>
+    /// Отметка «пояснение автоставки видено» (PER-517). Повтор отказом не
+    /// является: ответ — состояние после команды.
+    /// </summary>
+    public override async Task<ProxyExplainer> MarkProxyExplainerSeen(
+        MarkProxyExplainerSeenRequest request,
+        ServerCallContext context)
+    {
+        var identityId = RequestValidation.IdentityId(request.IdentityId);
+
+        var seen = await operations.MarkProxyExplainerSeen(identityId, context.CancellationToken);
+
+        return new ProxyExplainer { IdentityId = identityId.ToString("D"), Seen = seen };
+    }
+
     /// <summary>
     /// Отметка лота избранным (ADR-063). Лот, которого реплика ещё не знает,
     /// отметку не получает: это отставание реплики от Auction или чужой

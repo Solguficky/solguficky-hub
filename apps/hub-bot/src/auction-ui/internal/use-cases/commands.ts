@@ -14,6 +14,7 @@ import type {
   LotView,
   Money,
   OperationIdPort,
+  ProxyExplainerPort,
   ProxyLimitRefusal,
   TelegramUser,
   Viewer,
@@ -23,6 +24,7 @@ import type {
   AuctionButton,
   AuctionScreenBody,
   CommandResult,
+  ProxyExample,
 } from "../../screen.js";
 import { parseAmount } from "./amount.js";
 import { showLot } from "./open-lot.js";
@@ -33,6 +35,7 @@ export type CommandContext = {
   auction: AuctionPort;
   operations: OperationIdPort;
   favorites?: FavoritesPort;
+  proxyExplainer?: ProxyExplainerPort;
   viewer: Viewer;
   user: TelegramUser;
 };
@@ -244,6 +247,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   const { context, lot, intent, amount } = settled;
   switch (outcome.kind) {
     case "accepted":
+      if (intent.command === "proxy") markExplainerSeen(context);
       return acceptedBody(lot, intent, amount, outcome.lotVersion);
     case "unanswered":
       // Команда могла пройти: что вышло, покажет карточка за «К лоту» — она
@@ -419,7 +423,68 @@ type QuestionIntent = {
   lotId: string;
   page: number;
   pending?: PendingCommand;
+  // «Как это работает» (PER-517): пояснение автоставки без оглядки на отметку.
+  explain?: boolean;
 };
+
+// Первая принятая автоставка снимает пояснение с вопроса лимита. Экран
+// принятой команды отметку не ждёт: зависший Notifications его бы задержал.
+// Отказ команду не отменяет: пояснение покажется ещё раз, а адаптер о сбое
+// уже сообщил.
+function markExplainerSeen(context: CommandContext): void {
+  context.proxyExplainer?.markSeen(context.viewer).catch(() => {
+    // Принятая автоставка важнее отметки.
+  });
+}
+
+// Пояснение показывается до первой принятой автоставки. Не знает бот, видел
+// ли его человек, — нет Notifications или он не ответил, — пояснение
+// показывается: лишний абзац дешевле перепутанных цены и лимита.
+async function explainerShown(
+  context: CommandContext,
+  intent: QuestionIntent,
+): Promise<boolean> {
+  if (intent.question !== "proxy") return false;
+  if (intent.explain === true || context.proxyExplainer === undefined) {
+    return true;
+  }
+  try {
+    return !(await context.proxyExplainer.seen(context.viewer));
+  } catch {
+    return true;
+  }
+}
+
+// Пример на текущем лоте: цена сейчас, шаг в силе — сниженный окном, если
+// оно идёт, — и лимит на три шага выше. Не лидеру автоставка сразу ставит
+// порог `nextPrice`, который посчитал Auction; лидеру — ничего. Нет цены,
+// шага или, у не лидера, порога — примера нет.
+const EXAMPLE_STEPS = 3;
+
+function proxyExample(lot: LotView, viewer: Viewer): ProxyExample | undefined {
+  const { status } = lot;
+  if (status.kind !== "trading") return undefined;
+  const step = lot.activeWindow?.step ?? lot.baseStep ?? lot.fixedStep;
+  if (step === undefined || step.minorUnits <= 0) return undefined;
+  const { currentPrice } = status;
+  if (step.currency !== currentPrice.currency) return undefined;
+  const limit = {
+    minorUnits: currentPrice.minorUnits + EXAMPLE_STEPS * step.minorUnits,
+    currency: currentPrice.currency,
+  };
+  if (status.leaderId === viewer.identityId) {
+    return { currentPrice, step, limit };
+  }
+  const firstBid = lot.nextPrice;
+  if (
+    firstBid === undefined ||
+    firstBid.currency !== currentPrice.currency ||
+    firstBid.minorUnits > limit.minorUnits
+  ) {
+    return undefined;
+  }
+  return { currentPrice, step, limit, firstBid };
+}
 
 // Вопрос с `force_reply`. Шаг и адресат едут в «Отмене»: ответ вернёт их в
 // `reply_to_message`, и вопрос переживёт рестарт процесса.
@@ -427,6 +492,7 @@ function questionBody(
   context: CommandContext,
   lot: LotView,
   intent: QuestionIntent,
+  explained: boolean,
 ): AuctionScreenBody {
   const current =
     intent.question === "bid"
@@ -443,9 +509,24 @@ function questionBody(
         auctionId: lot.auctionId,
         ...titled(lot),
         ...(current === undefined ? {} : { current }),
+        ...(explained ? { explainer: explainerOf(lot, context.viewer) } : {}),
       },
     ],
     keyboard: [
+      ...(intent.question === "proxy" && !explained
+        ? [
+            [
+              {
+                action: "question.explain" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "explain",
+                  lotId: lot.lotId,
+                  page: intent.page,
+                }),
+              },
+            ],
+          ]
+        : []),
       [
         {
           action: "question.cancel",
@@ -465,11 +546,20 @@ function questionBody(
   };
 }
 
+function explainerOf(lot: LotView, viewer: Viewer): { example?: ProxyExample } {
+  const example = proxyExample(lot, viewer);
+  return example === undefined ? {} : { example };
+}
+
 export async function askQuestion(
   context: CommandContext,
   intent: QuestionIntent,
 ): Promise<AuctionScreenBody> {
-  return questionBody(context, await readLot(context, intent.lotId), intent);
+  const [lot, explained] = await Promise.all([
+    readLot(context, intent.lotId),
+    explainerShown(context, intent),
+  ]);
+  return questionBody(context, lot, intent, explained);
 }
 
 // «Отмена» под вопросом: экран, с которого вопрос задан, — выбор имени у

@@ -37,6 +37,8 @@ const MAX_BYTES = 64;
 // - `ask` — кнопка, задающая вопрос; `question` — шаг вопроса в его «Отмене»:
 //   он же возвращается в `reply_to_message` ответа (дизайн-код, «Вопросы») и
 //   несёт Telegram id того, кому вопрос задан.
+// - `explain` — «Как это работает» под вопросом лимита (PER-517): тот же
+//   вопрос заново, с пояснением автоставки.
 // - `username` — выбрать ник своим именем в аукционе. Команда, ради которой
 //   выбирается имя, едет в кнопке, чтобы после выбора вернуться к ней.
 //
@@ -85,6 +87,7 @@ export type AuctionIntent =
       pending?: PendingCommand;
     }
   | { kind: "username"; lotId: string; page: number; pending: PendingCommand }
+  | { kind: "explain"; lotId: string; page: number }
   // Избранное (PER-495): отметка и снятие с карточки возвращают на ту же
   // карточку, поэтому несут страницу ленты, как кнопка лота.
   | { kind: "follow"; lotId: string; page: number }
@@ -280,6 +283,8 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
       ].join(":");
     case "username":
       return `${prefix}:nu:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}:${pendingArgument(intent.pending)}`;
+    case "explain":
+      return `${prefix}:xe:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
     case "follow":
       return `${prefix}:fo:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
     case "unfollow":
@@ -354,6 +359,8 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
       return { ok: true, intent: { kind: "follow", lotId: id, page } };
     case "uf":
       return { ok: true, intent: { kind: "unfollow", lotId: id, page } };
+    case "xe":
+      return { ok: true, intent: { kind: "explain", lotId: id, page } };
     case "hist": {
       const historyPage = pageOf(rest[0]);
       if (historyPage === undefined) return refuse("malformed");
@@ -373,6 +380,14 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
 export function isAuctionQuestion(raw: unknown): boolean {
   const parsed = parseAuctionCallback(raw);
   return parsed.ok && parsed.intent.kind === "question";
+}
+
+// Кнопка под вопросом, которая задаёт его заново: нажатый вопрос удаляется,
+// как по «Отмене», а новый приходит следом (PER-517). Шагом вопроса она не
+// является: ответ ищет шаг по `isAuctionQuestion`.
+export function replacesAuctionQuestion(raw: unknown): boolean {
+  const parsed = parseAuctionCallback(raw);
+  return parsed.ok && parsed.intent.kind === "explain";
 }
 
 function accept(intent: AuctionIntent): ParsedAuctionCallback {

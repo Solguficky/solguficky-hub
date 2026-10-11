@@ -111,6 +111,16 @@ export const hubSurface: SurfaceDefinition = ({
                 error: cause instanceof Error ? cause.message : String(cause),
               }),
             ),
+          proxyExplainer: (meta) =>
+            notifications.proxyExplainer(meta, (cause) =>
+              logger.warn("proxy explainer mark unavailable", {
+                ...(meta?.requestId === undefined
+                  ? {}
+                  : { request_id: meta.requestId }),
+                error_category: "dependency_unavailable",
+                error: cause instanceof Error ? cause.message : String(cause),
+              }),
+            ),
         }),
   });
   const sender = createNotificationSender(

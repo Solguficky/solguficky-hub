@@ -4,6 +4,7 @@ import {
   encodeAuctionCallback,
   isAuctionQuestion,
   type LotImagePort,
+  replacesAuctionQuestion,
   type Viewer,
 } from "../../auction-ui/index.js";
 import { createBotShell, type ShellContext } from "../../core/bot/shell.js";
@@ -200,6 +201,9 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     // «Отмена» под вопросом: вопрос удаляется, экран приходит новым
     // сообщением (дизайн-код, «Доставка»).
     const cancelling = isAuctionQuestion(data);
+    // «Как это работает» под вопросом лимита задаёт его заново: нажатый вопрос
+    // удаляется, как по «Отмене», а новый приходит следом (PER-517).
+    const replacing = replacesAuctionQuestion(data);
     try {
       const ports = options.ports(ctx.requestId, waiting.deadlineAt);
       waiting.begin();
@@ -227,6 +231,13 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         // Удалить не дали — вопрос правится в экран на месте.
         await deliver(ctx, { ...delivery, keepCurrent: deleted });
       } else {
+        // Удалить не дали — прежний вопрос остаётся живым: его «Отмена» несёт
+        // шаг, и ответ на него по-прежнему принимается.
+        if (replacing && pressed !== undefined) {
+          if (await deleteMessage(ctx, pressed)) {
+            questions.forget(ctx.chat.id, pressed);
+          }
+        }
         await dropQuestions(ctx, questions);
         if (screen.asks === true) {
           // Повтор под кадром отказа задал вопрос: кадр своё отслужил и
@@ -237,7 +248,8 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
             pressedLabel(ctx) === retryLabel &&
             (await deleteMessage(ctx, pressed));
           await ask(ctx, questions, screen, {
-            clearPressed: !spent && !isTraceCallback(ctx.callbackQuery.data),
+            clearPressed:
+              !spent && !replacing && !isTraceCallback(ctx.callbackQuery.data),
           });
         } else {
           await deliver(ctx, {
@@ -266,12 +278,15 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   direct.on("message", async (ctx) => {
     const replied = ctx.message.reply_to_message;
     if (replied === undefined || replied.from?.id !== ctx.me.id) return;
-    const data = replied.reply_markup?.inline_keyboard[0]?.[0];
-    if (
-      data === undefined ||
-      !("callback_data" in data) ||
-      !isAuctionQuestion(data.callback_data)
-    ) {
+    // Шаг лежит в «Отмене»; над ней может стоять «Как это работает», поэтому
+    // кнопка ищется по всей клавиатуре, как у бота хаба.
+    const data = replied.reply_markup?.inline_keyboard
+      .flat()
+      .find(
+        (button) =>
+          "callback_data" in button && isAuctionQuestion(button.callback_data),
+      );
+    if (data === undefined || !("callback_data" in data)) {
       return;
     }
     const waiting = startWaiting(ctx);

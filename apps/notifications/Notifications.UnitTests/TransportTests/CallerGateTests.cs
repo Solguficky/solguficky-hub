@@ -136,14 +136,17 @@ public class CallerGateTests
     }
 
     /// <summary>
-    /// Колонка Caller каталога: избранные лоты принимают оба бота (PER-495),
-    /// настройку перебитий — только бот аукциона (PER-515), остальные методы —
-    /// только бот хаба.
+    /// Колонка Caller каталога: избранные лоты и пояснение автоставки принимают
+    /// оба бота (PER-495, PER-517), настройку перебитий — только бот аукциона
+    /// (PER-515), остальные методы — только бот хаба.
     /// </summary>
     [Fact]
     public void ByMethod_EveryContractMethod_AcceptsItsBots()
     {
-        string[] favorites = ["FollowLot", "UnfollowLot", "ListFollowedLots"];
+        string[] favorites =
+        [
+            "FollowLot", "UnfollowLot", "ListFollowedLots", "GetProxyExplainer", "MarkProxyExplainerSeen",
+        ];
         string[] auction = ["GetOutbidPreference", "SetOutbidPreference"];
         foreach (var method in NotificationsService.Descriptor.Methods)
         {

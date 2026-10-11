@@ -718,6 +718,9 @@ function questionText(
     case "proxy":
       return screenText(
         "Автоставка",
+        block.explainer === undefined
+          ? undefined
+          : proxyExplainer(block.explainer),
         [
           "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
           ...current(""),
@@ -751,6 +754,32 @@ function nameChoiceText(
         : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
     ].join("\n"),
   );
+}
+
+// Пояснение автоставки голосом помощника (PER-517, RFC-007): платишь цену, а
+// не лимит. Пример — на этом лоте: цена сейчас, шаг и лимит на три шага выше.
+// Не лидеру бот сразу ставит порог, который посчитал Auction, лидеру — ничего;
+// ответов по шагам пример не расписывает: у ступенчатого лота шаг на
+// следующей цене другой. Текст тот же, что у бота хаба.
+function proxyExplainer(
+  explainer: NonNullable<
+    Extract<AuctionBlock, { kind: "question" }>["explainer"]
+  >,
+): string {
+  const lines = [
+    "Подскажу: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
+  ];
+  const { example } = explainer;
+  if (example !== undefined) {
+    const price = money(example.currentPrice);
+    const limit = money(example.limit);
+    lines.push(
+      example.firstBid === undefined
+        ? `Например: цена сейчас ${price} — твоя, шаг ${money(example.step)}, твой лимит ${limit}. Бот будет отвечать на чужие ставки, но не выше ${limit}. Никто не перебьёт — заплатишь ${price}, а не ${limit}.`
+        : `Например: цена сейчас ${price}, шаг ${money(example.step)}, твой лимит ${limit}. Бот сразу поставит за тебя ${money(example.firstBid)} и будет отвечать на чужие ставки, но не выше ${limit}. Никто не перебьёт — заплатишь ${money(example.firstBid)}, а не ${limit}.`,
+    );
+  }
+  return lines.join("\n");
 }
 
 // Автоставка объясняется разницей цены и лимита (RFC-007): на столько бот
@@ -1189,6 +1218,8 @@ function renderButton(
       return text(confirmNoLabel);
     case "question.cancel":
       return text("Отмена");
+    case "question.explain":
+      return text("Как это работает");
     case "name.username": {
       const choice = blocks.find((block) => block.kind === "name-choice");
       return text(

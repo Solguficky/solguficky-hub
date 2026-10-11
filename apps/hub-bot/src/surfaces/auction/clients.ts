@@ -46,6 +46,10 @@ import {
   type FavoritesRpc,
 } from "../../core/notifications/favorites.js";
 import {
+  createProxyExplainerPort,
+  type ProxyExplainerRpc,
+} from "../../core/notifications/proxy-explainer.js";
+import {
   callTimeoutMs,
   presentServiceToken,
   requestIdHeader,
@@ -87,13 +91,14 @@ export type AuctionRpc = Pick<
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
 >;
-// Notifications боту аукциона нужен ради настройки «перебили» (PER-515) и
-// избранного (PER-495).
+// Notifications боту аукциона нужен ради настройки «перебили» (PER-515),
+// избранного (PER-495) и пояснения автоставки (PER-517).
 export type NotificationsRpc = Pick<
   Client<typeof NotificationsService>,
   "getOutbidPreference" | "setOutbidPreference"
 > &
-  FavoritesRpc;
+  FavoritesRpc &
+  ProxyExplainerRpc;
 
 // Порты пакета метаданных вызова не несут, поэтому они собираются на каждый
 // update: `request_id` края уезжает заголовком в каждый вызов цепочки, а
@@ -119,6 +124,8 @@ export type PortsOptions = {
   onFavoritesRefused?: (cause: unknown, requestId: string) => void;
   // Пауза дочитывания лота до версии команды (PER-470); тесты подменяют её.
   pause?: Pause;
+  // Отказ отметки пояснения автоставки вопрос лимита гасит так же.
+  onProxyExplainerRefused?: (cause: unknown, requestId: string) => void;
 };
 
 export function createPorts(
@@ -131,6 +138,7 @@ export function createPorts(
     notifications,
     onFavoritesRefused,
     pause,
+    onProxyExplainerRefused,
   }: PortsOptions = {},
 ): PortsFactory {
   return (requestId, deadlineAt) => {
@@ -317,6 +325,11 @@ export function createPorts(
               () => callOptions(timeoutMs),
               (cause) => onFavoritesRefused?.(cause, requestId),
             ),
+            proxyExplainer: createProxyExplainerPort(
+              notifications,
+              () => callOptions(timeoutMs),
+              (cause) => onProxyExplainerRefused?.(cause, requestId),
+            ),
           }),
       catalog: {
         async listAuctions(request) {
@@ -491,6 +504,7 @@ export function createClients(options: {
   tracing: Tracing;
   onNamesRefused?: (cause: unknown, requestId: string) => void;
   onFavoritesRefused?: (cause: unknown, requestId: string) => void;
+  onProxyExplainerRefused?: (cause: unknown, requestId: string) => void;
 }): Clients {
   const identitySession = new Http2SessionManager(options.identityUrl);
   const auctionSession = new Http2SessionManager(options.auctionUrl);
@@ -538,6 +552,9 @@ export function createClients(options: {
       ...(options.onFavoritesRefused === undefined
         ? {}
         : { onFavoritesRefused: options.onFavoritesRefused }),
+      ...(options.onProxyExplainerRefused === undefined
+        ? {}
+        : { onProxyExplainerRefused: options.onProxyExplainerRefused }),
     }),
     delivery: createDeliveryPorts(identity, auction),
     outbidSettings: notifications !== undefined,

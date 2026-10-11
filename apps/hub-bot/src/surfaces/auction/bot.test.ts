@@ -11,6 +11,7 @@ import {
   type LotHistoryEntryView,
   type LotImagePort,
   type LotView,
+  type ProxyExplainerPort,
 } from "../../auction-ui/index.js";
 import { createLogger, type Logger } from "../../core/logging.js";
 import { noopTracing } from "../../core/tracing.js";
@@ -166,6 +167,9 @@ function portsWith(
     auctions?: Partial<Record<AuctionListing, AuctionSummary[]>>;
     // Избранное Notifications; нет — у процесса нет его адреса.
     favorites?: FavoritesPort;
+    // Отметка пояснения автоставки (PER-517); нет — у процесса нет адреса
+    // Notifications.
+    proxyExplainer?: ProxyExplainerPort;
   } = {},
 ): PortsFactory {
   const shownLot = (): LotView => ({
@@ -181,6 +185,9 @@ function portsWith(
     ...(overrides.favorites === undefined
       ? {}
       : { favorites: overrides.favorites }),
+    ...(overrides.proxyExplainer === undefined
+      ? {}
+      : { proxyExplainer: overrides.proxyExplainer }),
     identity: {
       resolveIdentity: async () => ({
         viewer: { identityId: VIEWER_ID, rights: ["place-bids"] },
@@ -1646,6 +1653,163 @@ describe("bid leaf delivery", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "sendMessage",
       payload: { text: expect.stringContaining("<b>Своя сумма</b>") },
+    });
+  });
+
+  // Пояснение видено (PER-517): вопрос лимита уходит в Telegram с «Как это
+  // работает» над «Отменой», и линтер экранов проверяет его на отправке.
+  it("asks the limit with how it works once the explainer was seen", async () => {
+    const { bot, calls } = makeBot(
+      portsWith({
+        lot: {
+          nextPrice: { minorUnits: 125_000, currency: "RUB" },
+          proxyEnabled: true,
+          status: {
+            kind: "trading",
+            currentPrice: { minorUnits: 120_000, currency: "RUB" },
+            phase: "online",
+          },
+        },
+        proxyExplainer: {
+          seen: async () => true,
+          markSeen: async () => {},
+        },
+      }),
+    );
+    await bot.handleUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "cb",
+        from,
+        chat_instance: "ci",
+        data: encodeAuctionCallback({
+          kind: "ask",
+          question: "proxy",
+          lotId,
+          page: 0,
+        }),
+        message: { message_id: 7, date: 0, chat: privateChat, text: "card" },
+      },
+    } as Update);
+    const sent = calls.find((call) => call.method === "sendMessage");
+    expect(sent?.payload).toMatchObject({
+      text: expect.not.stringContaining("Подскажу"),
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [[{ text: "Как это работает" }], [{ text: "Отмена" }]],
+      },
+    });
+  });
+
+  // «Как это работает» (PER-517) задаёт вопрос лимита заново: нажатый вопрос
+  // удаляется, как по «Отмене», а новый с пояснением приходит следом.
+  it("replaces the limit question with an explained one on how it works", async () => {
+    const { bot, calls } = makeBot(trading);
+    await bot.handleUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "cb",
+        from,
+        chat_instance: "ci",
+        data: encodeAuctionCallback({ kind: "explain", lotId, page: 0 }),
+        message: {
+          message_id: 9,
+          date: 0,
+          chat: privateChat,
+          text: "Автоставка",
+        },
+      },
+    } as Update);
+    expect(calls.map((call) => call.method)).not.toContain(
+      "editMessageReplyMarkup",
+    );
+    expect(calls.find((call) => call.method === "deleteMessage")).toMatchObject(
+      { payload: { chat_id: 42, message_id: 9 } },
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining("Подскажу: платишь цену, а не лимит."),
+        reply_markup: { force_reply: true },
+      },
+    });
+  });
+
+  // Telegram не дал удалить вопрос — он остаётся живым: «Отмена» с шагом с
+  // него не снимается, и ответ на него по-прежнему принимается.
+  it("keeps an undeletable limit question answerable on how it works", async () => {
+    const { bot, calls } = makeBot(trading, {
+      refuse: { deleteMessage: "Bad Request: message can't be deleted" },
+    });
+    await bot.handleUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "cb",
+        from,
+        chat_instance: "ci",
+        data: encodeAuctionCallback({ kind: "explain", lotId, page: 0 }),
+        message: {
+          message_id: 9,
+          date: 0,
+          chat: privateChat,
+          text: "Автоставка",
+        },
+      },
+    } as Update);
+    expect(calls.map((call) => call.method)).not.toContain(
+      "editMessageReplyMarkup",
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: { reply_markup: { force_reply: true } },
+    });
+  });
+
+  // Шаг вопроса лежит в «Отмене», а над ней может стоять «Как это работает»:
+  // ответ находит шаг по всей клавиатуре.
+  it("takes an answer to the limit question under how it works", async () => {
+    const { bot, calls } = makeBot(trading);
+    const limitStep = encodeAuctionCallback({
+      kind: "question",
+      question: "proxy",
+      lotId,
+      page: 0,
+      addressee: from.id,
+    });
+    await bot.handleUpdate({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: "2 000",
+        reply_to_message: {
+          ...questionMessage,
+          text: "Автоставка",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Как это работает",
+                  callback_data: encodeAuctionCallback({
+                    kind: "explain",
+                    lotId,
+                    page: 0,
+                  }),
+                },
+              ],
+              [{ text: "Отмена", callback_data: limitStep }],
+            ],
+          },
+        },
+      },
+    } as Update);
+    const sent = calls.find((call) => call.method === "sendMessage");
+    expect(sent?.payload).toMatchObject({
+      text: expect.stringMatching(
+        /^<b>Включить автоставку до 2\s000\s₽\?<\/b>/,
+      ),
     });
   });
 

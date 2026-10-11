@@ -15,6 +15,7 @@ import type {
   AuctionPort,
   FavoritesPort,
   OperationIdPort,
+  ProxyExplainerPort,
   TelegramUser,
   Viewer,
 } from "./ports.js";
@@ -29,6 +30,7 @@ export function dispatchAuctionIntent(input: {
   auction: AuctionPort;
   operations: OperationIdPort;
   favorites?: FavoritesPort;
+  proxyExplainer?: ProxyExplainerPort;
   viewer: Viewer;
   user: TelegramUser;
   intent: AuctionIntent;
@@ -41,6 +43,9 @@ export function dispatchAuctionIntent(input: {
     auction: input.auction,
     operations: input.operations,
     ...favorites,
+    ...(input.proxyExplainer === undefined
+      ? {}
+      : { proxyExplainer: input.proxyExplainer }),
     viewer: input.viewer,
     user: input.user,
   };
@@ -77,6 +82,13 @@ export function dispatchAuctionIntent(input: {
       return commitCommand(context, intent);
     case "ask":
       return askQuestion(context, intent);
+    case "explain":
+      return askQuestion(context, {
+        question: "proxy",
+        lotId: intent.lotId,
+        page: intent.page,
+        explain: true,
+      });
     case "question":
       return input.answer === undefined
         ? cancelQuestion(context, intent)

@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import {
   AuctionCallbackError,
   encodeAuctionCallback,
+  isAuctionQuestion,
   MAX_FEED_PAGE,
   parseAuctionCallback,
+  replacesAuctionQuestion,
 } from "./callback-data.js";
 
 const LOT_ID = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
@@ -127,6 +129,26 @@ describe("auction callback_data", () => {
       expect(encodeAuctionCallback(intent)).toBe(raw);
       expect(parseAuctionCallback(raw)).toEqual({ ok: true, intent });
       expect(Buffer.byteLength(raw, "utf8")).toBeLessThanOrEqual(64);
+    }
+  });
+
+  // «Как это работает» (PER-517) задаёт вопрос лимита заново: шагом вопроса
+  // она не является, иначе ответ нашёл бы её вместо «Отмены».
+  it("encodes how it works under the limit question and parses it back", () => {
+    const intent = { kind: "explain" as const, lotId: LOT_ID, page: 4 };
+    const raw = `v1:auc:xe:${LOT_TOKEN}:4`;
+
+    expect(encodeAuctionCallback(intent)).toBe(raw);
+    expect(parseAuctionCallback(raw)).toEqual({ ok: true, intent });
+    expect(replacesAuctionQuestion(raw)).toBe(true);
+    expect(isAuctionQuestion(raw)).toBe(false);
+    expect(replacesAuctionQuestion(`v1:auc:lot:${LOT_TOKEN}:4`)).toBe(false);
+    for (const malformed of [
+      `v1:auc:xe:${LOT_TOKEN}`,
+      `v1:auc:xe:${LOT_TOKEN}:4:1`,
+      "v1:auc:xe:not-a-token:4",
+    ]) {
+      expect(reasonOf(malformed)).toBe("malformed");
     }
   });
 
