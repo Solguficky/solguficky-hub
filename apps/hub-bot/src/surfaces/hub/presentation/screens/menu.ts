@@ -23,7 +23,8 @@ import type { ShownScreen } from "./show.js";
 // (RFC-016): вход, который ведёт в отказ, хуже его отсутствия. Круг и набор
 // пунктов не решают. Сходки, скрытые сходки, объявление и аукцион у сходки с
 // каталогом лотов — праву вести сходки; очередь сообщества, состав и каналы —
-// праву управлять составом; очередь аукциона — праву допускать к торгам.
+// праву управлять составом; очередь аукциона — праву допускать к торгам;
+// администраторы — праву назначать администраторов (PER-521).
 type Viewer = { rights: readonly AccessRight[] };
 
 export function canManageMeetups(person: Viewer): boolean {
@@ -36,6 +37,14 @@ export function canManageMembers(person: Viewer): boolean {
 
 export function canAdmitBidders(person: Viewer): boolean {
   return person.rights.includes("admit-bidders");
+}
+
+/**
+ * Назначать и снимать администраторов: у мейнтейнера это право есть и без
+ * набора admin, и «Управление» тогда показывает ему один этот пункт.
+ */
+export function canGrantAdmins(person: Viewer): boolean {
+  return person.rights.includes("grant-admins");
 }
 
 /** «Управление» видно, если в нём есть хотя бы один пункт для человека. */
@@ -123,13 +132,17 @@ function groupItems(
           : []),
       ];
     case "members":
-      // Место под будущий пункт «Администраторы» (PER-521).
-      return canManageMembers(person)
-        ? [
-            ["Состав сообщества", "v1:community:list"],
-            ["Каналы прихода", "v1:sc:l"],
-          ]
-        : [];
+      return [
+        ...(canManageMembers(person)
+          ? ([
+              ["Состав сообщества", "v1:community:list"],
+              ["Каналы прихода", "v1:sc:l"],
+            ] satisfies Item[])
+          : []),
+        ...(canGrantAdmins(person)
+          ? ([["Администраторы", "v1:ad:l"]] satisfies Item[])
+          : []),
+      ];
     default: {
       const _exhaustive: never = group;
       return _exhaustive;
