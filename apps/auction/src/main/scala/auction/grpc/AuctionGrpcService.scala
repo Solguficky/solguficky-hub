@@ -24,7 +24,9 @@ import auction.raffle.Register
 import auction.v1.auction_service as wire
 import io.grpc.Status
 import net.logstash.logback.argument.StructuredArguments
+import org.apache.pekko.NotUsed
 import org.apache.pekko.grpc.GrpcServiceException
+import org.apache.pekko.stream.scaladsl.Source
 import org.slf4j.LoggerFactory
 
 import java.time.Clock
@@ -78,7 +80,12 @@ final class AuctionGrpcService(
       raffleNames
     )
 
+  // Ставка зала: контракт есть (PER-475), право ведущего и участник зала — поведение PER-293.
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
+    if (in.source.isBidSourceFloor) unimplemented
+    else placeBotBid(in)
+
+  private def placeBotBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
     RequestMapping.placeBid(in) match {
       case Left(error) => invalid(error)
       case Right(command) if !command.acting.viewer.isParticipant =>
@@ -574,6 +581,21 @@ final class AuctionGrpcService(
       RaffleView.of(raffle, participant, clock.instant(), known).map(RaffleMapping.raffle(auction.value, _))
     )
   }
+
+  // Финал: контракт есть (PER-475). Перерыв, заморозку и очередь лотов приносит PER-334, ask и закрытие ведущим — PER-293,
+  // поток — PER-335.
+  def freezeFinalLineup(in: wire.FreezeFinalLineupRequest): Future[wire.FreezeFinalLineupResponse] = unimplemented
+
+  def startFinal(in: wire.StartFinalRequest): Future[wire.StartFinalResponse] = unimplemented
+
+  def startNextLot(in: wire.StartNextLotRequest): Future[wire.StartNextLotResponse] = unimplemented
+
+  def advanceAsk(in: wire.AdvanceAskRequest): Future[wire.AdvanceAskResponse] = unimplemented
+
+  def closeLot(in: wire.CloseLotRequest): Future[wire.CloseLotResponse] = unimplemented
+
+  def watchAuction(in: wire.WatchAuctionRequest): Source[wire.AuctionWatch, NotUsed] =
+    Source.failed(new GrpcServiceException(Status.UNIMPLEMENTED))
 
   // Счета: контракт есть (PER-308), выставление, статусы и чтения приносит лист счёта (PER-338).
   def markInvoicePaid(in: wire.MarkInvoicePaidRequest): Future[wire.MarkInvoicePaidResponse] = unimplemented

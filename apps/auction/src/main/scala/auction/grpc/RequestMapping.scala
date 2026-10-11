@@ -27,6 +27,7 @@ import auction.naming.NameChoice
 import auction.naming.TelegramUsername
 import auction.v1.auction.AuctionConfig as AuctionConfigMessage
 import auction.v1.auction.AuctionStepWindow as AuctionStepWindowMessage
+import auction.v1.auction.BidSource as BidSourceMessage
 import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
 import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.Money as MoneyMessage
@@ -177,7 +178,20 @@ object RequestMapping {
       lotId <- uuidV7("lot_id", request.lotId)
       amount <- money("amount", request.amount)
       opId <- uuidV7("op_id", request.opId)
+      _ <- botBid(request)
     } yield BidCommand(lotId, PlaceBid(acting.participant, amount, OpId(opId), BidSource.Bot), acting)
+
+  /**
+   * Ставка из бота: канал не задан или `BOT`, и участника зала у неё нет. Ставку зала сюда граница не пускает — она
+   * отвечает `UNIMPLEMENTED` до поведения ([PER-293](https://linear.app/anticnvm/issue/per-293)); неизвестный канал —
+   * битая форма, а не ставка из бота.
+   */
+  private def botBid(request: PlaceBidRequest): Either[FormError, Unit] =
+    request.source match {
+      case BidSourceMessage.BID_SOURCE_UNSPECIFIED | BidSourceMessage.BID_SOURCE_BOT =>
+        Either.cond(request.participantId.isEmpty, (), FormError("participant_id"))
+      case _ => Left(FormError("source"))
+    }
 
   def setProxyLimit(request: SetProxyLimitRequest): Either[FormError, LimitCommand] =
     for {

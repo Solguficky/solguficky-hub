@@ -1335,6 +1335,20 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       statusOf(auction.listMyInvoices(wire.ListMyInvoicesRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.listAuctionInvoices(wire.ListAuctionInvoicesRequest())) shouldBe Status.Code.UNIMPLEMENTED
     }
+
+    "answers UNIMPLEMENTED on the commands of the final until their slices" in {
+      val auction = service(Unreachable)
+      statusOf(auction.freezeFinalLineup(wire.FreezeFinalLineupRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.startFinal(wire.StartFinalRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.startNextLot(wire.StartNextLotRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.advanceAsk(wire.AdvanceAskRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.closeLot(wire.CloseLotRequest())) shouldBe Status.Code.UNIMPLEMENTED
+    }
+
+    "answers UNIMPLEMENTED on a floor bid before its form and without reaching the lot" in {
+      val floor = wire.PlaceBidRequest(source = BidSourceMessage.BID_SOURCE_FLOOR, participantId = identity)
+      statusOf(service(Unreachable).placeBid(floor)) shouldBe Status.Code.UNIMPLEMENTED
+    }
   }
 
   private def bidRecord(sequence: Long, amount: Long, origin: String, source: Option[String], at: Instant) =
