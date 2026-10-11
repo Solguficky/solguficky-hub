@@ -165,6 +165,68 @@ def classify(cause: Throwable): Trailers =
 
 Первая ветка закрывает ловушку с разбором тела: не допущенному вызову всё равно, на чём он упал, — ответ `UNAUTHENTICATED`. Ответы 404 и 415 через обработчик не проходят вовсе, поэтому код для записи граница выводит из HTTP-статуса, а не оставляет умолчанием `OK`.
 
+### Поток ответа: отказ приходит после заголовков
+
+У gRPC четыре вида методов: один запрос — один ответ (unary), поток ответов (server-streaming), поток запросов и поток в обе стороны. До `WatchAuction` у Auction были только unary. Server-streaming в `.proto` пишется словом `stream` перед типом ответа:
+
+```proto
+rpc WatchAuction(WatchAuctionRequest) returns (stream AuctionWatch);
+```
+
+Сгенерированный трейт возвращает для такого метода не `Future`, а `Source` — описание потока из Pekko Streams, которое само ничего не делает, пока его не запустят. Аналог в .NET — `IAsyncEnumerable<T>` в отличие от `Task<T>`: перечисление начинается, когда его начали читать, а не когда метод вернул результат. Заглушка в `AuctionGrpcService.scala`:
+
+```scala
+def watchAuction(in: wire.WatchAuctionRequest): Source[wire.AuctionWatch, NotUsed] =
+  Source.failed(new GrpcServiceException(Status.UNIMPLEMENTED))
+```
+
+Разница видна в сгенерированном обработчике рядом с unary-методом (`target/scala-3.3.7/pekko-grpc/main/auction/v1/auction_service/AuctionServiceHandler.scala`):
+
+```scala
+case "CloseLot" =>
+  GrpcMarshalling.unmarshal(request.entity)(CloseLotRequestSerializer, mat, reader)
+    .flatMap(implementation.closeLot(_))
+    .map(e => GrpcMarshalling.marshal(e, eHandler)(CloseLotResponseSerializer, writer, system))
+
+case "WatchAuction" =>
+  GrpcMarshalling.unmarshal(request.entity)(WatchAuctionRequestSerializer, mat, reader)
+    .map(implementation.watchAuction(_))
+    .map(e => GrpcMarshalling.marshalStream(e, eHandler)(AuctionWatchSerializer, writer, system))
+```
+
+У unary стоит `flatMap`: `Future` ответа ждёт `Future` сервиса, и отказ сервиса — неудачный `Future` — проходит через `eHandler` **до** того, как появится `HttpResponse`. У потока стоит `map`: сервис отдал `Source`, и ответ готов сразу — HTTP 200 с телом из кусков (`HttpEntity.Chunked`). Сам `Source` запустит HTTP-слой, когда начнёт отдавать тело; отказ случится тогда, `eHandler` превратит его в трейлеры, и они уйдут последним куском тела.
+
+Отсюда дефект, который поймал первый же тест границы на поток. Граница писала запись в `.map` по готовому `HttpResponse` — для потока это момент до отказа, и держатель исхода ещё пуст:
+
+```
+"[OK]" was not equal to "[UNIMPLEMENTED]" (GrpcBoundarySpec.scala:246)
+"[OK]" was not equal to "[UNAUTHENTICATED]" (GrpcBoundarySpec.scala:253)
+```
+
+Клиент при этом статус получал правильный — тот же тест это утверждал строкой выше. Ломалась только запись.
+
+Починка: для потокового метода запись уходит, когда кончилось тело. `watchTermination` — оператор Pekko Streams, который пропускает элементы как есть и отдаёт `Future`, завершающийся вместе с потоком — нормально, отказом или отменой снизу:
+
+```scala
+case chunked: HttpEntity.Chunked =>
+  val recorded = new AtomicBoolean(false)
+  val watched = chunked.chunks.watchTermination() { (materialized, finished) =>
+    finished.onComplete(_ => if (recorded.compareAndSet(false, true)) record())
+    materialized
+  }
+  response.withEntity(chunked.copy(chunks = watched))
+```
+
+Три детали:
+
+- **Куски, а не байты.** Наблюдение вешается на `chunks`, а не на `dataBytes`: последний кусок несёт трейлеры, а `dataBytes` — только данные. Что теряет трейлер именно преобразование байтов, не проверялось — проверь сам, заменив `chunks.watchTermination` на `transformDataBytes(Flow[ByteString].watchTermination()(…))` и прогнав `just auction-test`: тест отказа потока проверяет статус у клиента. С `chunks` клиент получает `UNIMPLEMENTED` из трейлера — это тест утверждает.
+- **Защёлка.** `Source` — описание, и запустить его можно дважды; каждый запуск вызвал бы `record` заново. HTTP-сервер запускает тело один раз, но правило «одна запись на вызов» держится кодом, а не поведением сервера.
+- **Какие методы потоковые, знает дескриптор.** Список берётся из `AuctionService.descriptor` по `isServerStreaming`, а не перечисляется руками: новый поток попадёт в него сам.
+
+Закрытие потока клиентом — бот отписался — исключения не порождает: `eHandler` не зовётся, держатель остаётся `OK`, и запись — `OK`. Это честно для сервиса: поток он не ронял. Пометить такую запись `CANCELLED` пробовали, и промежуточный прогон показал цену: `"grpc_code":"CANCELLED","error_category":"unexpected"`. Категорию выбирает `OperationFrame.errorCategory`, и `CANCELLED` попадает в ветку по умолчанию — то есть каждая отписка увеличила бы счётчик отказов `solguficky.failures`. Отдельной категории для закрытой подписки в словаре [logging.md](../../standards/observability/logging.md) нет; решать её — вместе с первым настоящим потоком.
+
+Чего этот приём не закрывает: если соединение оборвалось между готовым ответом и запуском тела, `watchTermination` не материализуется, и записи о вызове нет вовсе. И `duration_us` у потока меряет жизнь подписки, а не обработку вызова. Оба вопроса оставлены первому настоящему потоку.
+
 ## Урок
 
 - **Запись о запросе ставится там, где ответ уже существует, но причина ещё не потеряна.** Это узкое место: снаружи запечатывания причины нет, внутри маршрута нет ответа. Правило переносится на любой транспорт с обработчиком отказов по умолчанию.
@@ -173,6 +235,7 @@ def classify(cause: Throwable): Trailers =
 - **Зелёный прогон отдельного теста не заменяет зелёный гейт.** Порядок сьютов — часть входных данных, и гонка инициализации проявляется только на полном прогоне.
 - **Проверка перед сгенерированным кодом наследует всё, что этот код делает до вызова сервиса.** Обёртка решила «не пускать» — но разбор тела, согласование протокола и поиск метода всё равно случаются, и каждый может кончиться своим исходом. Новая проверка проходится по этим исходам отдельно: битое тело, неизвестный метод, чужой формат. На PER-323 все три нашлись ревью, а не тестами автора.
 - **Код ответа узнаётся там, где отказ ещё исключение.** В gRPC он уходит в трейлерах, и на успешном ответе обёртка его не видит вовсе. Тот же приём, что у HTTP: своя функция-обработчик, держатель на запрос, одна запись.
+- **У потока ответ и исход разнесены во времени.** Готовый ответ ещё ничего не говорит об исходе: заголовки ушли, а отказ придёт последним куском. Запись, которую ставят по ответу, у потока надо переносить на конец тела. Это верно для любого транспорта с потоковым телом — SSE, chunked HTTP, gRPC-streaming. Проверка — тест с отказом потока, а не с отказом unary-метода: на unary дефект не виден.
 
 ## Почему так, а не иначе
 
@@ -188,6 +251,9 @@ def classify(cause: Throwable): Trailers =
 | Отказ не допущенному вызову собрать вручную как `HttpResponse` | Кадрирование, трейлеры и согласование протокола пришлось бы повторить; подмена реализации оставляет их сгенерированному коду |
 | Штатный `defaultMapper` | Вторая запись об отказе и сообщение исключения в журнале; код ответа для своей записи взять неоткуда |
 | Читать `grpc-status` из заголовков ответа | Есть только у ответа из одних трейлеров; у успешного его там нет, и умолчание «нет заголовка — OK» верно ровно до первого ответа 415 |
+| Поток: писать запись по готовому ответу, как у unary | Ответ потока готов до отказа, и запись — `OK` при любом исходе. Клиент видит верный статус, журнал — нет |
+| Поток: наблюдать `dataBytes` вместо кусков | В `dataBytes` нет последнего куска с трейлерами; потеряет ли его пересборка тела — не проверено, а `chunks` его заведомо сохраняют |
+| Поток, закрытый клиентом, писать `CANCELLED` | `CANCELLED` уходит в категорию `unexpected`, и каждая отписка бота становится отказом в счётчике `solguficky.failures` |
 
 ## Схема
 
@@ -251,6 +317,34 @@ sequenceDiagram
     B-->>C: ответ
 ```
 
+Поток ответа — запись переезжает в конец тела:
+
+```mermaid
+sequenceDiagram
+    participant C as Бот
+    participant B as GrpcBoundary
+    participant G as AuctionServiceHandler
+    participant S as watchAuction
+    participant E as свой eHandler
+
+    C->>B: POST .../WatchAuction
+    B->>G: запрос
+    G->>S: сообщение
+    S-->>G: Source (ещё не запущен)
+    G-->>B: 200, тело из кусков
+    B->>B: обернуть куски в watchTermination
+    B-->>C: заголовки 200
+    Note over B,C: HTTP-слой запускает тело
+    alt сервис отказал
+        S-->>E: GrpcServiceException
+        E-->>G: трейлеры с кодом
+        G-->>C: последний кусок с трейлерами
+    else клиент закрыл поток
+        C-->>G: отмена, eHandler не зовётся
+    end
+    B->>B: тело кончилось: код из держателя, одна запись
+```
+
 ## Первоисточники
 
 - [Pekko HTTP: Routing DSL](https://pekko.apache.org/docs/pekko-http/current/routing-dsl/index.html) — сюда за тем, что `Route` это функция и чем директива отличается от маршрута.
@@ -261,6 +355,8 @@ sequenceDiagram
 - [Pekko gRPC: сервер](https://pekko.apache.org/docs/pekko-grpc/current/server/walkthrough.html) — что генерируется, как обработчик привязывается к `Http().newServerAt` и что нужен HTTP/2.
 - [Pekko gRPC: детали сервера, обработка ошибок](https://pekko.apache.org/docs/pekko-grpc/current/server/details.html) — параметр `eHandler` и штатное отображение исключений в статус.
 - [gRPC over HTTP/2](https://github.com/grpc/grpc/blob/master/doc/PROTOCOL-HTTP2.md) — где лежит статус: трейлеры в конце ответа и «Trailers-Only» для ответа без тела.
+- [gRPC: виды RPC](https://grpc.io/docs/what-is-grpc/core-concepts/#rpc-life-cycle) — unary, server-streaming и остальные, и где у каждого кончается вызов.
+- [Pekko Streams: `watchTermination`](https://pekko.apache.org/docs/pekko/current/stream/operators/Source-or-Flow/watchTermination.html) — что оператор пропускает элементы как есть и когда завершается его `Future`.
 - Скилл `.skillshare/skills/akka-streams/SKILL.md` — оттуда взята формулировка «сначала проверь, нужен ли здесь поток»; к самой границе он не применялся, потоков в ней нет.
 
 ## Проверь себя
@@ -271,4 +367,7 @@ sequenceDiagram
 - **Что делает штатный `defaultMapper` с неизвестным исключением?** `javap -c -p -cp <pekko-grpc-runtime_3-1.2.0.jar> 'org.apache.pekko.grpc.scaladsl.GrpcExceptionHandler$$anon$1'`: в ветке по умолчанию — `LoggingAdapter.error` со строкой `Unhandled error: [{}]` и `Throwable.getMessage`, затем поле `INTERNAL`. Проверено.
 - **Видит ли обёртка `HttpResponse` код успешного ответа?** Нет: временный зонд в `GrpcBoundarySpec` послал верный `PlaceBid` от допущенного вызывающего и напечатал `PROBE headers=None status=200` — `grpc-status` в заголовках нет, он уходит трейлером в конце потока. У отказа он в заголовках есть: это утверждают тесты на битое тело в том же сьюте.
 - **Что получит не допущенный клиент с битым телом?** `UNAUTHENTICATED` без стека в записи: тест `answers UNAUTHENTICATED to a malformed body without a token rather than an unexpected failure` в `GrpcBoundarySpec`, `just auction-test`. Без первой ветки `classify` исход был бы `INVALID_ARGUMENT`: тот же разбор у допущенного вызывающего кончается `InvalidProtocolBufferException`, это утверждает соседний тест. Мутацией не проверялось — проверь сам, убрав ветку и прогнав `just auction-test`.
+- **Что запишет граница, если запись потока поставить по ответу, как у unary?** `OK` при любом отказе. Проверено: до починки тесты `records a stream that the service refused with its status and caller` и `answers UNAUTHENTICATED to a stream without a token` в `GrpcBoundarySpec` падали с `"[OK]" was not equal to "[UNIMPLEMENTED]"`. Повторить — вернуть в `GrpcBoundary` запись в `.map` для всех методов и прогнать `just auction-test`.
+- **Тело потокового ответа — `HttpEntity.Chunked`?** Да, косвенно: для тела другой формы `afterBody` пишет запись сразу, и тест отказа потока снова получил бы `OK`. Тест зелёный — значит, ветка `Chunked` сработала.
+- **Что запишет граница, когда бот сам закрыл поток?** `OK`, одну запись: тест `records a stream the client closed once, when its body ends` берёт первое сообщение и закрывает поток. Что дала бы пометка `CANCELLED` — `error_category=unexpected`, это напечатал промежуточный прогон `just auction-test`, а ветка видна в `OperationFrame.errorCategory`.
 - **Воспроизводится ли гонка SLF4J?** Убрать `Test / parallelExecution := false` из `build.sbt` и прогнать `just auction-verify` несколько раз: отказ появляется не на каждом прогоне, и это и есть признак гонки.
