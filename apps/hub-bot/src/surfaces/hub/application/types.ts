@@ -1,4 +1,5 @@
 import type { AccessRight, LotView } from "../../../auction-ui/index.js";
+import type { OutbidFrequency } from "../../../core/notifications/outbid.js";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
@@ -461,6 +462,22 @@ export type NotificationRequest =
       useCase?: string;
       deadlineAt?: number;
     }
+  // Частота «перебили» (PER-552): режим целиком, а не переключатель.
+  | {
+      identity: Person;
+      intent: "view-outbid-frequency";
+      requestId?: string;
+      useCase?: string;
+      deadlineAt?: number;
+    }
+  | {
+      identity: Person;
+      intent: "set-outbid-frequency";
+      frequency: OutbidFrequency;
+      requestId?: string;
+      useCase?: string;
+      deadlineAt?: number;
+    }
   | {
       identity: Person;
       intent: "view-meetup-notifications";
@@ -618,6 +635,7 @@ export type ExecuteResult =
       kind: "global-notification-settings";
       categories: readonly CategoryState<NotificationCategory>[];
     }
+  | { kind: "outbid-frequency"; frequency: OutbidFrequency }
   | { kind: "meetup-not-found" }
   // `error` — текст для человека. `rejected` — отказ Meetups, из-за которого
   // вопрос задан заново: он идёт в запись границы, а не в ответ (PER-397).

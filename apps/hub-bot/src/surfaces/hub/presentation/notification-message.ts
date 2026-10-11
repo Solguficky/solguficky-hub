@@ -146,15 +146,19 @@ export function renderNotification(
         : content.kind === "lot-proxy-raised"
           ? `Твоя автоставка на лот подняла цену до ${notificationMoney(price)}: лидируешь ты.`
           : `Лот твой за ${notificationMoney(price)}.`;
-    return {
-      text,
-      keyboard: new InlineKeyboard().text(
-        "К лоту",
-        traceCallback(
-          `v1:${encodeAuctionCallback({ kind: "lot", lotId: content.lotId, page: 0 }).slice(3)}`,
-        ),
+    const keyboard = new InlineKeyboard().text(
+      "К лоту",
+      traceCallback(
+        `v1:${encodeAuctionCallback({ kind: "lot", lotId: content.lotId, page: 0 }).slice(3)}`,
       ),
-    };
+    );
+    // Под перебитием одним рядом с «К лоту» — «Реже», вход в частоту (PER-552,
+    // как у бота аукциона): экран придёт новым сообщением, а уведомление
+    // останется в истории. Ответ автоставки и покупка от частоты не зависят.
+    if (content.kind === "lot-outbid") {
+      keyboard.text("Реже", traceCallback("v1:notify:outbid"));
+    }
+    return { text, keyboard };
   }
   if (content.kind === "community-announcement") {
     return {

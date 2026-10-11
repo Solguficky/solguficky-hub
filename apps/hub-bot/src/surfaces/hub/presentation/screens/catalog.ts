@@ -52,6 +52,15 @@ export const screenCatalog = {
     nav: "tree",
     title: "Уведомления",
     parent: "settings",
+    backName: "Уведомления",
+  },
+  // Частота «перебили» (PER-552): пять режимов, как у бота аукциона, но узел
+  // дерева под «Уведомлениями», а не корень команды.
+  "notify-outbid": {
+    class: "screen",
+    nav: "tree",
+    title: "Перебитые ставки",
+    parent: "notify-global",
   },
   help: {
     class: "screen",

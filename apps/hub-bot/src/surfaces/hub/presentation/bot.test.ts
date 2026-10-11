@@ -6180,6 +6180,181 @@ describe("notification frames", () => {
     ).toContain("Запросы доступа настраивает только администратор.");
   });
 
+  describe("outbid frequency", () => {
+    // Бот с аукционом: только ему «Уведомления» ведут в частоту «перебили».
+    const withAuction = {
+      auction: {} as NonNullable<
+        NonNullable<Parameters<typeof createHarness>[6]>["auction"]
+      >,
+    };
+    const harness = (execute: Dispatcher["execute"], auction = true) =>
+      createHarness(
+        resolvedIdentity(),
+        { execute },
+        [],
+        undefined,
+        undefined,
+        undefined,
+        auction ? withAuction : {},
+      );
+
+    it("leads from the notifications frame to the frequency in a bot with auctions", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "global-notification-settings",
+        categories: [{ category: "published", enabled: true }],
+      });
+      for (const auction of [true, false]) {
+        const { bot, calls } = harness(execute, auction);
+        await bot.init();
+        await bot.handleUpdate(callbackUpdate("v1:notify:global"));
+        const rows = screen(calls[1]).reply_markup?.inline_keyboard ?? [];
+        const entry = {
+          text: "Перебитые ставки",
+          callback_data: "v1:notify:outbid",
+        };
+        if (auction) {
+          // Вход — последний ряд содержимого, над возвратом в «Настройки».
+          expect(rows.at(-2)).toEqual([entry]);
+        } else {
+          expect(rows.flat()).not.toContainEqual(entry);
+        }
+      }
+    });
+
+    it("shows the five modes and names the current one in the body", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "outbid-frequency",
+        frequency: "off",
+      });
+      const { bot, calls } = harness(execute);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:notify:outbid"));
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({ intent: "view-outbid-frequency" }),
+      );
+      const payload = screen(calls[1]);
+      expect(payload.text).toContain("<b>Перебитые ставки</b>");
+      expect(payload.text).toContain("Сейчас: не присылаю.");
+      expect(payload.reply_markup?.inline_keyboard).toEqual([
+        [
+          {
+            text: "О каждом перебитии",
+            callback_data: "v1:notify:outbid:every",
+          },
+        ],
+        [
+          {
+            text: "Не чаще раза в 5 минут",
+            callback_data: "v1:notify:outbid:5",
+          },
+        ],
+        [
+          {
+            text: "Не чаще раза в 15 минут",
+            callback_data: "v1:notify:outbid:15",
+          },
+        ],
+        [{ text: "Не чаще раза в час", callback_data: "v1:notify:outbid:60" }],
+        [{ text: "Не присылать", callback_data: "v1:notify:outbid:off" }],
+        [{ text: "‹ Уведомления", callback_data: "v1:notify:global" }],
+      ]);
+    });
+
+    it("confirms a choice with what Notifications stored", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "outbid-frequency",
+        frequency: "15",
+      });
+      const { bot, calls } = harness(execute);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:notify:outbid:15"));
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-outbid-frequency",
+          frequency: "15",
+        }),
+      );
+      expect(calls[0]?.method).toBe("answerCallbackQuery");
+      expect(calls[0]?.payload).toMatchObject({
+        text: "Теперь: не чаще раза в 15 минут по лоту.",
+      });
+      expect(screen(calls[1]).text).toContain(
+        "Сейчас: не чаще раза в 15 минут по лоту.",
+      );
+    });
+
+    it("refuses with a retry of the same choice when Notifications is down", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "dependency-rejected",
+        reason: "unavailable",
+      });
+      const { bot, calls } = harness(execute);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:notify:outbid:off"));
+      const answered = calls.filter(
+        (call) => call.method === "answerCallbackQuery",
+      );
+      // Подтверждения нет: выбор не сохранён.
+      expect(JSON.stringify(answered)).not.toContain("Теперь:");
+      const refusal = screen(
+        calls.findLast((call) => call.method !== "answerCallbackQuery"),
+      );
+      expect(refusal.text).toContain("Не получилось загрузить данные");
+      expect(
+        (refusal.reply_markup?.inline_keyboard ?? [])
+          .flat()
+          .map((button) => button.callback_data),
+      ).toContain("v1:notify:outbid:off");
+    });
+
+    // «Реже» под перебитием — след: экран приходит новым сообщением, а
+    // уведомление остаётся как было.
+    it("opens the frequency from «Реже» as a new message", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "outbid-frequency",
+        frequency: "every",
+      });
+      const { bot, calls } = harness(execute);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:t:notify:outbid"));
+      const methods = calls.map((call) => call.method);
+      expect(methods).toContain("sendMessage");
+      expect(methods).not.toContain("editMessageText");
+      expect(
+        screen(calls.find((call) => call.method === "sendMessage")).text,
+      ).toContain("Сейчас: о каждом перебитии.");
+    });
+
+    // Отвергнутый выбор — устаревший экран: повтор перечитывает его, а не
+    // шлёт тот же режим ещё раз.
+    it("retries a refused choice by reading the frequency again", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "dependency-rejected",
+        reason: "invalid",
+        cause: new Error("bad frequency"),
+      });
+      const { bot, calls } = harness(execute);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:notify:outbid:off"));
+      const refusal = screen(
+        calls.findLast((call) => call.method !== "answerCallbackQuery"),
+      );
+      const data = (refusal.reply_markup?.inline_keyboard ?? [])
+        .flat()
+        .map((button) => button.callback_data);
+      expect(data).toContain("v1:notify:outbid");
+      expect(data).not.toContain("v1:notify:outbid:off");
+    });
+
+    it("treats an unknown mode in a button as malformed", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>();
+      const { bot } = harness(execute);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:notify:outbid:30"));
+      expect(execute).not.toHaveBeenCalled();
+    });
+  });
+
   describe("disabling a category from a notification", () => {
     const notification = {
       text: "Новая сходка: Настолки у Лёши\n12.08.2026 19:00",

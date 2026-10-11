@@ -45,6 +45,8 @@ function notificationsStub(overrides: Partial<Notifications>): Notifications {
     setSubscription: vi.fn(),
     setGlobalCategory: vi.fn(),
     setMeetupCategory: vi.fn(),
+    getOutbidFrequency: vi.fn(),
+    setOutbidFrequency: vi.fn(),
     broadcastToMeetupSubscribers: vi.fn(),
     broadcastToCommunity: vi.fn(),
     ...overrides,
@@ -281,5 +283,93 @@ describe("global notification settings", () => {
       true,
       undefined,
     );
+  });
+});
+
+describe("outbid frequency", () => {
+  it("shows the mode Notifications holds for the person", async () => {
+    const getOutbidFrequency = vi
+      .fn()
+      .mockResolvedValue({ kind: "ok", frequency: "off" });
+    const notifications = notificationsStub({ getOutbidFrequency });
+    const settings = createNotificationSettings(meetupsStub(), notifications);
+
+    const result = await settings({
+      identity,
+      intent: "view-outbid-frequency",
+    });
+
+    expect(getOutbidFrequency).toHaveBeenCalledWith(
+      identity.identityId,
+      undefined,
+    );
+    expect(result).toEqual({ kind: "outbid-frequency", frequency: "off" });
+  });
+
+  // Экран рисует ответ сервиса, а не нажатую кнопку.
+  it("answers a choice with what Notifications stored", async () => {
+    const setOutbidFrequency = vi
+      .fn()
+      .mockResolvedValue({ kind: "ok", frequency: "15" });
+    const settings = createNotificationSettings(
+      meetupsStub(),
+      notificationsStub({ setOutbidFrequency }),
+    );
+
+    const result = await settings({
+      identity,
+      intent: "set-outbid-frequency",
+      frequency: "15",
+    });
+
+    expect(setOutbidFrequency).toHaveBeenCalledWith(
+      identity.identityId,
+      "15",
+      undefined,
+    );
+    expect(result).toEqual({ kind: "outbid-frequency", frequency: "15" });
+  });
+
+  it("rejects a mode outside the dictionary with its value", async () => {
+    const settings = createNotificationSettings(
+      meetupsStub(),
+      notificationsStub({
+        getOutbidFrequency: vi
+          .fn()
+          .mockResolvedValue({ kind: "unknown", value: 7 }),
+      }),
+    );
+
+    const result = await settings({
+      identity,
+      intent: "view-outbid-frequency",
+    });
+
+    expect(result).toEqual({
+      kind: "rejected",
+      reason: "notifications answered an unknown outbid frequency 7",
+    });
+  });
+
+  it("reports an unavailable Notifications instead of a stored choice", async () => {
+    const settings = createNotificationSettings(
+      meetupsStub(),
+      notificationsStub({
+        setOutbidFrequency: vi
+          .fn()
+          .mockResolvedValue({ kind: "unavailable", cause: new Error("down") }),
+      }),
+    );
+
+    const result = await settings({
+      identity,
+      intent: "set-outbid-frequency",
+      frequency: "off",
+    });
+
+    expect(result).toEqual({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
   });
 });

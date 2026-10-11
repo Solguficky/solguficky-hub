@@ -93,6 +93,27 @@ describe("renderNotification", () => {
     expect(button).toMatchObject({
       callback_data: expect.stringMatching(/^v1:t:auc:lot:/),
     });
+    // «Реже» — одним рядом с «К лоту», след ведёт в частоту «перебили».
+    expect(rendered.keyboard?.inline_keyboard).toHaveLength(1);
+    expect(rendered.keyboard?.inline_keyboard[0]?.[1]).toEqual({
+      text: "Реже",
+      callback_data: "v1:t:notify:outbid",
+    });
+  });
+
+  it.each([
+    {
+      kind: "lot-proxy-raised" as const,
+      lotId,
+      currentPrice: { minorUnits: 150_000, currency: "RUB" },
+    },
+    {
+      kind: "lot-purchased" as const,
+      lotId,
+      price: { minorUnits: 150_000, currency: "RUB" },
+    },
+  ])("keeps $kind to the lot button alone", (content) => {
+    expect(buttons(content)).toHaveLength(1);
   });
 
   it("names the meetup, when and where, with two buttons", () => {

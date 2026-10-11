@@ -3,8 +3,8 @@ import type {
   EntryPort,
   Viewer,
 } from "../../auction-ui/index.js";
+import type { OutbidPreferencePort } from "../../core/notifications/outbid.js";
 import type { AuctionCatalogPort } from "./auctions.js";
-import type { OutbidPreferencePort } from "./outbid.js";
 
 // FAQ и списки аукционов — локальные намерения оболочки: аукционное дерево торгов о
 // них не знает. Вход `entry` зовёт `/start` вместо разрешения личности

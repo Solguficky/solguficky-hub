@@ -136,49 +136,45 @@ public class CallerGateTests
     }
 
     /// <summary>
-    /// Колонка Caller каталога: избранные лоты и пояснение автоставки принимают
-    /// оба бота (PER-495, PER-517), настройку перебитий — только бот аукциона
-    /// (PER-515), остальные методы — только бот хаба.
+    /// Колонка Caller каталога: избранные лоты, пояснение автоставки и настройку
+    /// перебитий принимают оба бота (PER-495, PER-517, PER-552), остальные
+    /// методы — только бот хаба.
     /// </summary>
     [Fact]
     public void ByMethod_EveryContractMethod_AcceptsItsBots()
     {
-        string[] favorites =
+        string[] bothBots =
         [
             "FollowLot", "UnfollowLot", "ListFollowedLots", "GetProxyExplainer", "MarkProxyExplainerSeen",
+            "GetOutbidPreference", "SetOutbidPreference",
         ];
-        string[] auction = ["GetOutbidPreference", "SetOutbidPreference"];
         foreach (var method in NotificationsService.Descriptor.Methods)
         {
-            var expected = favorites.Contains(method.Name)
+            var expected = bothBots.Contains(method.Name)
                 ? new[] { Caller.HubBot, Caller.AuctionBot }
-                : auction.Contains(method.Name)
-                    ? new[] { Caller.AuctionBot }
-                    : new[] { Caller.HubBot };
+                : new[] { Caller.HubBot };
             MethodAccess.ByMethod[method.Name].ShouldBe(expected, ignoreOrder: true);
         }
     }
 
-    /// <summary>Бот аукциона со своим токеном к методам хаба не допущен, и наоборот.</summary>
-    [Theory]
-    [InlineData("/notifications.v1.NotificationsService/SetOutbidPreference", false)]
-    [InlineData(Community, true)]
-    public void Decide_OtherBotsMethod_RefusesAsNotDeclared(string path, bool auctionBot)
+    /// <summary>Бот аукциона со своим токеном к методам хаба не допущен.</summary>
+    [Fact]
+    public void Decide_AuctionBotOnHubMethod_RefusesAsNotDeclared()
     {
-        var (token, caller) = auctionBot ? (AuctionBotToken, Caller.AuctionBot) : (BotToken, Caller.HubBot);
+        var decision = CallerGate.Decide(BotOnly(), Community, $"Bearer {AuctionBotToken}");
 
-        var decision = CallerGate.Decide(BotOnly(), path, $"Bearer {token}");
-
-        decision.ShouldBe(GateDecision.Refuse(CallerRefusal.NotDeclared, caller));
+        decision.ShouldBe(GateDecision.Refuse(CallerRefusal.NotDeclared, Caller.AuctionBot));
     }
 
-    /// <summary>Отметка у человека одна, в каком бы боте он ни торговал.</summary>
+    /// <summary>Отметка и настройка у человека одни, в каком бы боте он ни торговал.</summary>
     [Theory]
     [InlineData("/notifications.v1.NotificationsService/FollowLot", true)]
     [InlineData("/notifications.v1.NotificationsService/UnfollowLot", false)]
     [InlineData("/notifications.v1.NotificationsService/ListFollowedLots", true)]
     [InlineData("/notifications.v1.NotificationsService/ListFollowedLots", false)]
-    public void Decide_EitherBotOnFavorites_Admits(string path, bool auctionBot)
+    [InlineData("/notifications.v1.NotificationsService/GetOutbidPreference", true)]
+    [InlineData("/notifications.v1.NotificationsService/SetOutbidPreference", false)]
+    public void Decide_EitherBotOnSharedMethod_Admits(string path, bool auctionBot)
     {
         var (token, caller) = auctionBot ? (AuctionBotToken, Caller.AuctionBot) : (BotToken, Caller.HubBot);
 
