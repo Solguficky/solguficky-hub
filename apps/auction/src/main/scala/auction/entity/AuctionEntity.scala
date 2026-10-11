@@ -429,7 +429,7 @@ object AuctionEntity {
                   "lot of the final refused to resume",
                   StructuredArguments.keyValue("auction_id", auctionId),
                   StructuredArguments.keyValue("lot_id", lot.value.toString),
-                  StructuredArguments.keyValue("error_category", "invariant_violation"),
+                  StructuredArguments.keyValue("error_category", "unexpected"),
                   StructuredArguments.keyValue("error", rejected.toString)
                 )
               }

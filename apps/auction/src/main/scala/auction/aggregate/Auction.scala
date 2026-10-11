@@ -504,8 +504,9 @@ object Auction {
     }
 
   /**
-   * Общий дедлайн: из `Prebidding` в `Settling`, когда часы entity дошли до `closesAt`. Аукцион без `closesAt` общего
-   * дедлайна не знает — его лоты закрывает человек, и в `Settling` он не уходит.
+   * Общий дедлайн: из `Prebidding` в `Settling`, когда часы entity дошли до `closesAt`. Это тот же момент, который лоты
+   * получают дедлайном (`lotDeadline`): аукцион, чьи лоты дедлайна не получают, общего дедлайна не знает — их закрывает
+   * человек, и ожидание закрытия по часам застряло бы навсегда. В `Settling` такой аукцион не уходит.
    */
   def decide(auction: Auction, command: EndPrebidding): Either[EndPrebiddingRejected, AuctionDecision] =
     auction.seen.get(command.opId) match {
@@ -608,14 +609,14 @@ object Auction {
       case NextLot.Resume(_) => Left(StartNextLotRejected.AnotherLotActive(lot))
     }
 
-  /** Общий дедлайн онлайн-торгов — конец онлайн-этапа; в `Prebidding` его ждёт таймер entity. */
+  /** Общий дедлайн онлайн-торгов — дедлайн, который получают лоты; в `Prebidding` его ждёт таймер entity. */
   def prebiddingDeadline(auction: Auction): Option[Instant] =
     auction.state match {
       case AuctionState.Prebidding(config, _) => prebiddingDeadline(config)
       case _ => None
     }
 
-  private def prebiddingDeadline(config: AuctionConfig): Option[Instant] = config.onlinePhase.flatMap(_.closesAt)
+  private def prebiddingDeadline(config: AuctionConfig): Option[Instant] = config.lotDeadline
 
   private def planned(
       auction: Auction,

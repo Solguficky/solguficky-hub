@@ -369,6 +369,23 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         Left(EndPrebiddingRejected.DeadlineNotReached)
     }
 
+    // Конец недели задан, а лоты дедлайна не получают: их закрывает человек, и ждать их по часам нельзя.
+    "never settles an auction whose week ends but whose lots get no deadline" in {
+      val openEnded =
+        configInput(onlinePhase = Some(week.copy(closesLots = false)), closingPolicy = ClosingPolicy.ByAuctioneer)
+      val auction = Auction.replay(
+        Auction.initial,
+        List(
+          AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup)),
+          AuctionEnvelope(2, op(2), AuctionEvent.AuctionScheduled(config(openEnded))),
+          AuctionEnvelope(3, op(3), AuctionEvent.PrebiddingStarted)
+        )
+      )
+      Auction.prebiddingDeadline(auction) shouldBe None
+      Auction.decide(auction, EndPrebidding(op(6), closesAt.plusSeconds(1))) shouldBe
+        Left(EndPrebiddingRejected.DeadlineNotReached)
+    }
+
     "goes to the break with held lots and finishes at once without them" in {
       Auction.decide(settling, EndSettling(Set(lot), op(7))) shouldBe
         Right(AuctionDecision.Accepted(AuctionEvent.PrebiddingEnded(finished = false)))
