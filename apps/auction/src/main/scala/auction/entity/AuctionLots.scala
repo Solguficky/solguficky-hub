@@ -1,5 +1,6 @@
 package auction.entity
 
+import auction.aggregate.Closure
 import auction.catalog.LotId
 import auction.lot.CloseLot
 import auction.lot.CloseLotRejected
@@ -11,6 +12,8 @@ import auction.lot.MarkForFinal
 import auction.lot.MarkForFinalRejected
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.ResumeLot
+import auction.lot.ResumeLotRejected
 import auction.lot.ScheduleLot
 import auction.lot.ScheduleLotRejected
 import auction.lot.UnmarkForFinal
@@ -41,7 +44,11 @@ trait AuctionLots {
   /** Подтверждение открытия несёт дедлайн из `LotOpened` лота: по нему аукцион взводит таймер закрытия. */
   def open(lot: LotId, command: OpenLot): Future[Either[OpenLotRejected, Option[Instant]]]
 
-  def close(lot: LotId, command: CloseLot): Future[Either[CloseLotRejected, Unit]]
+  /** Подтверждение закрытия различает продажу или закрытие без продажи и удержание отмеченного лота для финала. */
+  def close(lot: LotId, command: CloseLot): Future[Either[CloseLotRejected, Closure]]
+
+  /** Возврат удержанного лота в торги финала (П-09); подтверждение — только его `LotResumed`. */
+  def resume(lot: LotId, command: ResumeLot): Future[Either[ResumeLotRejected, Unit]]
 
   /**
    * Условия торгов лоту реестра — `ScheduleLot`, который идёт через аукцион (ADR-047). Инициатор — администратор,
@@ -76,10 +83,16 @@ object AuctionLots {
           .ask[Either[OpenLotRejected, Envelope]](LotEntity.Open(command, Initiator.Scheduler, _))
           .flatMap(answer => Future.fromTry(confirmation(answer)))(using ExecutionContext.parasitic)
 
-      def close(lot: LotId, command: CloseLot): Future[Either[CloseLotRejected, Unit]] =
+      def close(lot: LotId, command: CloseLot): Future[Either[CloseLotRejected, Closure]] =
         entity(lot)
           .ask[Either[CloseLotRejected, Envelope]](LotEntity.Close(command, Initiator.Scheduler, _))
           .flatMap(answer => Future.fromTry(closure(answer)))(using ExecutionContext.parasitic)
+
+      // Возвращает лот в финал аукцион, а не человек: ведущий нажал «следующий лот», но команду лоту решает аукцион.
+      def resume(lot: LotId, command: ResumeLot): Future[Either[ResumeLotRejected, Unit]] =
+        entity(lot)
+          .ask[Either[ResumeLotRejected, Envelope]](LotEntity.Resume(command, Initiator.Scheduler, _))
+          .flatMap(answer => Future.fromTry(resumption(answer)))(using ExecutionContext.parasitic)
 
       // Принятый ответ лота — всегда конверт `LotScheduled`: чужой `op_id` лот отклоняет сам (`OpIdTaken`).
       def schedule(lot: LotId, command: ScheduleLot, initiator: Initiator): Future[Either[ScheduleLotRejected, Unit]] =
@@ -116,12 +129,25 @@ object AuctionLots {
         Failure(new IllegalStateException(s"lot answered OpenLot with ${other.event.getClass.getSimpleName}"))
     }
 
-  /** Закрытие подтверждает только конверт `LotSold` или `LotUnsold` — по той же причине, что и открытие. */
-  def closure(answer: Either[CloseLotRejected, Envelope]): Try[Either[CloseLotRejected, Unit]] =
+  /**
+   * Закрытие подтверждает только конверт `LotSold`, `LotUnsold` или `LotHeldForFinal` — по той же причине, что и
+   * открытие. Удержанный лот закрытием не продан, но конца онлайн-торгов он больше не держит.
+   */
+  def closure(answer: Either[CloseLotRejected, Envelope]): Try[Either[CloseLotRejected, Closure]] =
     answer match {
       case Left(rejected) => Success(Left(rejected))
-      case Right(Envelope(_, _, _: LotEvent.LotSold | _: LotEvent.LotUnsold)) => Success(Right(()))
+      case Right(Envelope(_, _, _: LotEvent.LotSold | _: LotEvent.LotUnsold)) => Success(Right(Closure.Closed))
+      case Right(Envelope(_, _, _: LotEvent.LotHeldForFinal)) => Success(Right(Closure.Held))
       case Right(other) =>
         Failure(new IllegalStateException(s"lot answered CloseLot with ${other.event.getClass.getSimpleName}"))
+    }
+
+  /** Возврат в торги подтверждает только конверт `LotResumed` — по той же причине, что и открытие. */
+  def resumption(answer: Either[ResumeLotRejected, Envelope]): Try[Either[ResumeLotRejected, Unit]] =
+    answer match {
+      case Left(rejected) => Success(Left(rejected))
+      case Right(Envelope(_, _, LotEvent.LotResumed)) => Success(Right(()))
+      case Right(other) =>
+        Failure(new IllegalStateException(s"lot answered ResumeLot with ${other.event.getClass.getSimpleName}"))
     }
 }

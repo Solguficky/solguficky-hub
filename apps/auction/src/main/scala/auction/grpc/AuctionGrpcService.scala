@@ -582,14 +582,46 @@ final class AuctionGrpcService(
     )
   }
 
-  // Финал: контракт есть (PER-475). Перерыв, заморозку и очередь лотов приносит PER-334, ask и закрытие ведущим — PER-293,
-  // поток — PER-335.
-  def freezeFinalLineup(in: wire.FreezeFinalLineupRequest): Future[wire.FreezeFinalLineupResponse] = unimplemented
+  /**
+   * Заморозка состава финала (RFC-011): право у Meetups, фазу и удержанных решает аукцион по ответам лотов, а не по
+   * read model.
+   */
+  def freezeFinalLineup(in: wire.FreezeFinalLineupRequest): Future[wire.FreezeFinalLineupResponse] =
+    RequestMapping.freezeFinalLineup(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .freezeFinalLineup(command.auctionId, command.order, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.freezeFinalLineup(outcome).fold(refuse, Future.successful))
+    }
 
-  def startFinal(in: wire.StartFinalRequest): Future[wire.StartFinalResponse] = unimplemented
+  /** Старт финала ведущим — только после заморозки состава (И-19). */
+  def startFinal(in: wire.StartFinalRequest): Future[wire.StartFinalResponse] =
+    RequestMapping.startFinal(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .startFinal(command.auctionId, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.startFinal(outcome).fold(refuse, Future.successful))
+    }
 
-  def startNextLot(in: wire.StartNextLotRequest): Future[wire.StartNextLotResponse] = unimplemented
+  /**
+   * Следующий лот финала. Ответ приходит после того, как лот вернулся в торги и аукцион записал его активацию (И-14),
+   * поэтому один срок ожидания накрывает оба перехода, как у `scheduleLot`.
+   */
+  def startNextLot(in: wire.StartNextLotRequest): Future[wire.StartNextLotResponse] =
+    RequestMapping.startNextLot(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .startNextLot(command.auctionId, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.startNextLot(outcome).fold(refuse, Future.successful))
+    }
 
+  // Финал: ask и закрытие лота ведущим приносит PER-293, поток — PER-335.
   def advanceAsk(in: wire.AdvanceAskRequest): Future[wire.AdvanceAskResponse] = unimplemented
 
   def closeLot(in: wire.CloseLotRequest): Future[wire.CloseLotResponse] = unimplemented

@@ -26,10 +26,10 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
     LotView.replay(None, lotId, numbered).fold(defect => fail(defect.toString), done => done)
   }
 
-  private def facts(events: LotEvent*): List[(AppliedEvent, Option[LotFact])] =
+  private def facts(events: LotEvent*): List[(AppliedEvent, Option[Fact])] =
     applied(events*).map(step => step -> LotFacts.fact(step))
 
-  private def message(fact: Option[LotFact]): bus.LotEvent =
+  private def message(fact: Option[Fact]): bus.LotEvent =
     bus.LotEvent.parseFrom(fact.getOrElse(fail("expected a published fact")).payload)
 
   "lot facts" should {

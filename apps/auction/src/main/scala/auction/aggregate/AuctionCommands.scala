@@ -108,6 +108,36 @@ enum FinalChoiceRefusal[+R] {
 }
 
 /**
+ * Отказ заморозки состава: проверка до агрегата или решение агрегата. `LineupUnknown` — аукцион ещё переспрашивает лоты
+ * после рестарта, и повтор позже пройдёт.
+ */
+enum LineupRefusal {
+  case Denied(denial: Denial)
+  case NotInBreak
+  case LineupUnknown
+  case LineupEmpty
+  case LineupMismatch(held: Set[LotId])
+}
+
+/** Отказ старта финала: проверка до агрегата или решение агрегата. */
+enum FinalStartRefusal {
+  case Denied(denial: Denial)
+  case LineupNotFrozen
+}
+
+/**
+ * Отказ следующего лота финала: проверка до агрегата или решение агрегата. `OpIdTaken` — под этим `op_id` записана
+ * другая команда аукциона.
+ */
+enum NextLotRefusal {
+  case Denied(denial: Denial)
+  case NotInFinal
+  case AnotherLotActive(lot: LotId)
+  case LineupExhausted
+  case OpIdTaken
+}
+
+/**
  * Команды администратора аукциону (ADR-047, дополнение 2026-10-03). Порядок фиксирован:
  *
  *   1. повтор того же `op_id` получает исходный ответ раньше проверки права; 2. у всех команд, кроме рождения, аукцион
@@ -131,6 +161,9 @@ enum FinalChoiceRefusal[+R] {
  *
  * Отметка для финала и её снятие идут тем же путём, что `ScheduleLot` (ADR-047, дополнение 2026-10-06): решает entity
  * аукциона, событие пишет лот, повтор `op_id` узнаёт лот, а `op_id` из окна аукциона — `OpIdTaken` лота.
+ *
+ * Команды финала (PER-334) — команды самого аукциона, как открытие торгов: событие пишет он, и повтор `op_id` получает
+ * исходный ответ из его окна. Повтор `StartNextLot` отвечает лотом исходной активации, не спрашивая Meetups.
  */
 final class AuctionCommands(
     auctions: AuctionGateway,
@@ -304,6 +337,66 @@ final class AuctionCommands(
       auctions.deselectForFinal(auctionId, DeselectForFinal(lot, opId), Initiator.Operator(person))
     }
 
+  /** Заморозка состава финала: удержанные лоты в порядке выхода (RFC-011). */
+  def freezeFinalLineup(
+      auctionId: AuctionId,
+      order: List[LotId],
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[LineupRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Right(()))
+      case Inspection.Absent => Future.successful(Left(LineupRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, LineupRefusal.Denied(_)) {
+          auctions.freezeFinalLineup(auctionId, FreezeFinalLineup(order, opId), Initiator.Operator(person)).map {
+            case Right(_) => Right(())
+            case Left(FreezeFinalLineupRejected.AuctionNotFound) => Left(LineupRefusal.Denied(Denial.AuctionNotFound))
+            case Left(FreezeFinalLineupRejected.NotInBreak) => Left(LineupRefusal.NotInBreak)
+            case Left(FreezeFinalLineupRejected.LineupUnknown) => Left(LineupRefusal.LineupUnknown)
+            case Left(FreezeFinalLineupRejected.LineupEmpty) => Left(LineupRefusal.LineupEmpty)
+            case Left(FreezeFinalLineupRejected.LineupMismatch(held)) => Left(LineupRefusal.LineupMismatch(held))
+          }
+        }
+    }
+
+  /** Старт финала ведущим: только после заморозки состава (И-19). */
+  def startFinal(auctionId: AuctionId, opId: OpId, person: ParticipantId): Future[Either[FinalStartRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Right(()))
+      case Inspection.Absent => Future.successful(Left(FinalStartRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, FinalStartRefusal.Denied(_)) {
+          auctions.startFinal(auctionId, StartFinal(opId), Initiator.Operator(person)).map {
+            case Right(_) => Right(())
+            case Left(StartFinalRejected.AuctionNotFound) => Left(FinalStartRefusal.Denied(Denial.AuctionNotFound))
+            case Left(StartFinalRejected.LineupNotFrozen) => Left(FinalStartRefusal.LineupNotFrozen)
+          }
+        }
+    }
+
+  /** Следующий лот финала: ответ — лот, который вернулся в торги. */
+  def startNextLot(auctionId: AuctionId, opId: OpId, person: ParticipantId): Future[Either[NextLotRefusal, LotId]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(original) =>
+        original.event match {
+          case AuctionEvent.FinalLotActivated(lot) => Future.successful(Right(lot))
+          case _ => Future.successful(Left(NextLotRefusal.OpIdTaken))
+        }
+      case Inspection.Absent => Future.successful(Left(NextLotRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, NextLotRefusal.Denied(_)) {
+          auctions.startNextLot(auctionId, StartNextLot(opId), Initiator.Operator(person)).map {
+            case Right(lot) => Right(lot)
+            case Left(StartNextLotRejected.AuctionNotFound) => Left(NextLotRefusal.Denied(Denial.AuctionNotFound))
+            case Left(StartNextLotRejected.NotInFinal) => Left(NextLotRefusal.NotInFinal)
+            case Left(StartNextLotRejected.AnotherLotActive(lot)) => Left(NextLotRefusal.AnotherLotActive(lot))
+            case Left(StartNextLotRejected.LineupExhausted) => Left(NextLotRefusal.LineupExhausted)
+            case Left(StartNextLotRejected.OpIdTaken) => Left(NextLotRefusal.OpIdTaken)
+          }
+        }
+    }
+
   /**
    * Право на чтение пульта администратора (PER-320): тот же вопрос Meetups, что у команд, но без записи и без окна
    * `seen` — чтению нечего повторять.
@@ -372,7 +465,9 @@ final class AuctionCommands(
     event match {
       case AuctionEvent.AuctionDrafted(_) => true
       case AuctionEvent.LotAdded(_) | AuctionEvent.LotRemoved(_) | AuctionEvent.AuctionScheduled(_) |
-          AuctionEvent.PrebiddingStarted | AuctionEvent.AuctionDiscarded =>
+          AuctionEvent.PrebiddingStarted | AuctionEvent.AuctionDiscarded | AuctionEvent.PrebiddingDeadlineReached |
+          AuctionEvent.PrebiddingEnded(_) | AuctionEvent.FinalLineupFrozen(_) | AuctionEvent.FinalStarted |
+          AuctionEvent.FinalLotActivated(_) =>
         false
     }
 }

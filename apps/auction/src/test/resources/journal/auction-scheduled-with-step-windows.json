@@ -67,6 +67,9 @@
           ]
         }
       ]
-    }
+    },
+    "prebiddingEnded": null,
+    "finalLineupFrozen": null,
+    "finalLotActivated": null
   }
 }

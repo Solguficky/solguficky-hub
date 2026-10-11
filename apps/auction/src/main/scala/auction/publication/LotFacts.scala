@@ -11,11 +11,6 @@ import auction.projection.LotViewRow
 import auction.v1.auction as model
 import auction.v1.auction_events as bus
 
-import java.util.UUID
-
-/** Факт к публикации: ключ дедупликации, subject и тело `auction.v1.LotEvent`. */
-final case class LotFact(eventId: UUID, subject: String, payload: Array[Byte])
-
 /**
  * Отображение строки журнала лота в публичный факт на шине (integration.md, «Auction NATS»).
  *
@@ -30,7 +25,7 @@ object LotFacts {
 
   val SubjectPrefix: String = "events.auction."
 
-  def fact(applied: AppliedEvent): Option[LotFact] =
+  def fact(applied: AppliedEvent): Option[Fact] =
     occasion(
       LotJournal.envelope(applied.sequence, applied.stored).event,
       LotJournal.restoreInitiator(applied.stored.actor)
@@ -43,7 +38,7 @@ object LotFacts {
         state = Some(state(applied.row)),
         occasion = occasion
       )
-      LotFact(applied.stored.eventId, SubjectPrefix + name, message.toByteArray)
+      Fact(applied.stored.eventId, SubjectPrefix + name, message.toByteArray)
     }
 
   /**

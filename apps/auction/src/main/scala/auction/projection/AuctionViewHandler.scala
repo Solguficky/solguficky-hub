@@ -48,6 +48,11 @@ object AuctionViewHandler {
       case "Draft" => "draft"
       case "Scheduled" => "scheduled"
       case "Prebidding" => "prebidding"
+      case "Settling" => "settling"
+      case "Break" => "on_break"
+      case "LineupFrozen" => "lineup_frozen"
+      case "Final" => "in_final"
+      case "Finished" => "finished"
       case "Initial" => Discarded
       case other => throw new IllegalStateException(s"auction view of state $other has no status")
     }

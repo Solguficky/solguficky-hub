@@ -4,6 +4,9 @@ import auction.aggregate.AuctionState
 import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
 import auction.aggregate.DiscardRefusal
+import auction.aggregate.FinalStartRefusal
+import auction.aggregate.LineupRefusal
+import auction.aggregate.NextLotRefusal
 import auction.aggregate.Drafted
 import auction.aggregate.FinalChoiceRefusal
 import auction.aggregate.LotSchedulingRefusal
@@ -12,6 +15,7 @@ import auction.aggregate.RemovalRefusal
 import auction.aggregate.SchedulingRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.LotCard
+import auction.catalog.LotId
 import auction.contract.AuctionValues
 import auction.entity.LotEntity
 import auction.lot.Envelope
@@ -430,6 +434,71 @@ object ResponseMapping {
     wire.DiscardAuctionResponse().withRefused(wire.DiscardAuctionRefusal(reason))
 
   /**
+   * Заморозка состава (RFC-011). `LineupMismatch` несёт удержанных на момент решения — пульт пересобирает порядок без
+   * отдельного чтения. `LineupUnknown` — аукцион ещё переспрашивает лоты после рестарта: `UNAVAILABLE`, повтор с тем же
+   * `op_id` пройдёт.
+   */
+  def freezeFinalLineup(outcome: Either[LineupRefusal, Unit]): Either[Status, wire.FreezeFinalLineupResponse] = {
+    import wire.FreezeFinalLineupRefusal.Reason
+    def refused(reason: Reason) = Right(
+      wire.FreezeFinalLineupResponse().withRefused(wire.FreezeFinalLineupRefusal(reason))
+    )
+    outcome match {
+      case Right(()) => Right(wire.FreezeFinalLineupResponse().withAccepted(wire.FinalLineupFreezeAccepted()))
+      case Left(LineupRefusal.NotInBreak) => refused(Reason.NotInBreak(wire.NotInBreak()))
+      case Left(LineupRefusal.LineupEmpty) => refused(Reason.LineupEmpty(wire.LineupEmpty()))
+      case Left(LineupRefusal.LineupMismatch(held)) =>
+        refused(Reason.LineupMismatch(wire.LineupMismatch(held.toList.map(_.value).sorted.map(_.toString))))
+      case Left(LineupRefusal.LineupUnknown) => Left(lineupUnknown)
+      case Left(LineupRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(LineupRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(LineupRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(LineupRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(LineupRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"lineup freeze answered $denial")
+    }
+  }
+
+  def startFinal(outcome: Either[FinalStartRefusal, Unit]): Either[Status, wire.StartFinalResponse] = {
+    import wire.StartFinalRefusal.Reason
+    def refused(reason: Reason) = Right(wire.StartFinalResponse().withRefused(wire.StartFinalRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.StartFinalResponse().withAccepted(wire.FinalStartAccepted()))
+      case Left(FinalStartRefusal.LineupNotFrozen) => refused(Reason.LineupNotFrozen(wire.LineupNotFrozen()))
+      case Left(FinalStartRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(FinalStartRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(FinalStartRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(FinalStartRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(FinalStartRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"final start answered $denial")
+    }
+  }
+
+  /** Следующий лот финала: ответ — вернувшийся в торги лот; повтор того же `op_id` — тот же лот. */
+  def startNextLot(outcome: Either[NextLotRefusal, LotId]): Either[Status, wire.StartNextLotResponse] = {
+    import wire.StartNextLotRefusal.Reason
+    def refused(reason: Reason) = Right(wire.StartNextLotResponse().withRefused(wire.StartNextLotRefusal(reason)))
+    outcome match {
+      case Right(lot) => Right(wire.StartNextLotResponse().withAccepted(wire.FinalLotActivation(lot.value.toString)))
+      case Left(NextLotRefusal.NotInFinal) => refused(Reason.NotInFinal(wire.NotInFinal()))
+      case Left(NextLotRefusal.AnotherLotActive(lot)) =>
+        refused(Reason.AnotherLotActive(wire.AnotherLotActive(lot.value.toString)))
+      case Left(NextLotRefusal.LineupExhausted) => refused(Reason.LineupExhausted(wire.LineupExhausted()))
+      case Left(NextLotRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(NextLotRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(NextLotRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(NextLotRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(NextLotRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(NextLotRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"next lot of the final answered $denial")
+    }
+  }
+
+  /**
    * Отметка для финала (ADR-047, дополнение 2026-10-06). Отказы аукциона и лота — значения ответа: `DeadlinePassed`
    * администратор видит на пульте как отказ, а не как сбой. Лот реестра без журнала, как у `scheduleLot`, — дефект.
    */
@@ -534,6 +603,16 @@ object ResponseMapping {
         (wire.AuctionSnapshot.Status.Scheduled(AuctionStateMessage.Scheduled()), Some(config))
       case AuctionState.Prebidding(config, _) =>
         (wire.AuctionSnapshot.Status.Prebidding(AuctionStateMessage.Prebidding()), Some(config))
+      case AuctionState.Settling(config, _) =>
+        (wire.AuctionSnapshot.Status.Settling(AuctionStateMessage.Settling()), Some(config))
+      case AuctionState.Break(config, _) =>
+        (wire.AuctionSnapshot.Status.OnBreak(AuctionStateMessage.Break()), Some(config))
+      case AuctionState.LineupFrozen(config, _, order) =>
+        (wire.AuctionSnapshot.Status.LineupFrozen(AuctionValues.lineupFrozen(order)), Some(config))
+      case AuctionState.Final(config, _, order, activated) =>
+        (wire.AuctionSnapshot.Status.InFinal(AuctionValues.inFinal(order, activated)), Some(config))
+      case AuctionState.Finished(config, _) =>
+        (wire.AuctionSnapshot.Status.Finished(AuctionStateMessage.Finished()), Some(config))
       case AuctionState.Initial =>
         throw new IllegalStateException(s"auction view ${view.auctionId} holds an unborn auction")
     }
@@ -549,6 +628,8 @@ object ResponseMapping {
     wire.RemoveLotResponse().withRefused(wire.RemoveLotRefusal(reason))
 
   private def unavailable: Status = Status.UNAVAILABLE.withDescription("meetup authority is unavailable")
+
+  private def lineupUnknown: Status = Status.UNAVAILABLE.withDescription("auction is still asking its lots")
 
   private def auctionNotFound: Status = Status.NOT_FOUND.withDescription("auction not found")
 

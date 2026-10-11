@@ -1,6 +1,7 @@
 package auction.entity
 
 import auction.aggregate.*
+import auction.catalog.LotId
 import auction.lot.AuctionId
 import auction.lot.MarkForFinalRejected
 import auction.lot.OpId
@@ -70,6 +71,26 @@ trait AuctionGateway {
       command: DeselectForFinal,
       initiator: Initiator
   ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
+
+  /** Заморозка состава финала в перерыве. */
+  def freezeFinalLineup(
+      auctionId: AuctionId,
+      command: FreezeFinalLineup,
+      initiator: Initiator
+  ): Future[Either[FreezeFinalLineupRejected, AuctionAnswer]]
+
+  def startFinal(
+      auctionId: AuctionId,
+      command: StartFinal,
+      initiator: Initiator
+  ): Future[Either[StartFinalRejected, AuctionAnswer]]
+
+  /** Следующий лот финала. Ответ — лот, вернувшийся в торги, после записи его активации. */
+  def startNextLot(
+      auctionId: AuctionId,
+      command: StartNextLot,
+      initiator: Initiator
+  ): Future[Either[StartNextLotRejected, LotId]]
 }
 
 object AuctionGateway {
@@ -148,5 +169,26 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]] =
         entity(auctionId).ask(AuctionEntity.Deselect(command, initiator, _))
+
+      def freezeFinalLineup(
+          auctionId: AuctionId,
+          command: FreezeFinalLineup,
+          initiator: Initiator
+      ): Future[Either[FreezeFinalLineupRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Freeze(command, initiator, _))
+
+      def startFinal(
+          auctionId: AuctionId,
+          command: StartFinal,
+          initiator: Initiator
+      ): Future[Either[StartFinalRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.BeginFinal(command, initiator, _))
+
+      def startNextLot(
+          auctionId: AuctionId,
+          command: StartNextLot,
+          initiator: Initiator
+      ): Future[Either[StartNextLotRejected, LotId]] =
+        entity(auctionId).ask(AuctionEntity.Next(command, initiator, _))
     }
 }

@@ -14,6 +14,9 @@
     },
     "lotAdded": null,
     "lotRemoved": null,
-    "auctionScheduled": null
+    "auctionScheduled": null,
+    "prebiddingEnded": null,
+    "finalLineupFrozen": null,
+    "finalLotActivated": null
   }
 }

@@ -7,6 +7,7 @@ import auction.lot.LotState
 import auction.lot.MarkForFinalRejected
 import auction.lot.OpId
 import auction.lot.OpenLotRejected
+import auction.lot.ResumeLotRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.UnmarkForFinalRejected
 import net.logstash.logback.argument.StructuredArguments
@@ -73,6 +74,14 @@ enum AuctionAnswer {
  * `ScheduleLot`, отметку для финала и её снятие entity передаёт лоту, ничего не записав: условия торгов и отметка живут
  * в журнале лота, а аукцион только решает, можно ли сейчас их менять ([[Auction.decide]]), и для условий подставляет
  * незаданное.
+ *
+ * Перерыв и финал (PER-334, RFC-011). Общий дедлайн — таймер этой инкарнации на `closesAt`, взводится после открытия
+ * торгов и после recovery в `Prebidding`; сработав, он пишет `PrebiddingDeadlineReached`. Конец ожидания лотов
+ * `PrebiddingEnded` entity пишет, когда [[LotRoster]] отдаёт инструкцию `Settle`: тем же сообщением себе, потому что
+ * записать событие можно только в обработке команды. У обоих шагов человека нет, и `op_id` — UUIDv5 от `op_id` открытия
+ * ([[LotRoster.stepOpId]]): второй таймер после рестарта упирается в окно `seen`. Заморозка состава берёт удержанных у
+ * знания о лотах, а не у журнала (ADR-047, дополнение 2026-10-06). Следующий лот финала entity возвращает в торги
+ * командой `ResumeLot` и пишет `FinalLotActivated` только после ответа лота (И-14); ответ вызывающему — после записи.
  */
 object AuctionEntity {
 
@@ -151,6 +160,29 @@ object AuctionEntity {
       replyTo: ActorRef[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
   ) extends Command
 
+  /** Заморозка состава финала; удержанных entity берёт у своего знания о лотах. */
+  final case class Freeze(
+      command: FreezeFinalLineup,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[FreezeFinalLineupRejected, AuctionAnswer]]
+  ) extends Command
+
+  final case class BeginFinal(
+      command: StartFinal,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[StartFinalRejected, AuctionAnswer]]
+  ) extends Command
+
+  /**
+   * Следующий лот финала. Ответ — лот, который вернулся в торги, и приходит после записи `FinalLotActivated`; лот не
+   * ответил — ответа нет, и повтор с тем же `op_id` дописывает активацию.
+   */
+  final case class Next(
+      command: StartNextLot,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[StartNextLotRejected, LotId]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Auction]) extends Command
 
   /** Что аукцион сейчас знает о лотах реестра. Ничего не пишет и лотов не спрашивает. */
@@ -167,7 +199,22 @@ object AuctionEntity {
   private[entity] final case class DeadlineDue(lot: LotId) extends Command
 
   /** Ответ лота на `CloseLot`; неудача — ответа нет. */
-  private[entity] final case class LotClosed(lot: LotId, answer: Try[Either[CloseLotRejected, Unit]]) extends Command
+  private[entity] final case class LotClosed(lot: LotId, answer: Try[Either[CloseLotRejected, Closure]]) extends Command
+
+  /** Наступил общий дедлайн онлайн-торгов по часам аукциона. */
+  private[entity] case object PrebiddingDue extends Command
+
+  /** Лоты больше не держат конец онлайн-торгов; `held` — удержанные по ответам. */
+  private[entity] final case class Settled(held: Set[LotId]) extends Command
+
+  /** Ответ лота финала на `ResumeLot` вместе с командой, которая его вернула; неудача — ответа нет. */
+  private[entity] final case class LotReturned(
+      command: StartNextLot,
+      lot: LotId,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[StartNextLotRejected, LotId]],
+      answer: Try[Either[ResumeLotRejected, Unit]]
+  ) extends Command
 
   /** Переспросить лоты, не ответившие на вопрос или команду. */
   private[entity] case object Recheck extends Command
@@ -178,6 +225,8 @@ object AuctionEntity {
   private final case class DeadlineKey(lot: LotId)
 
   private case object RecheckKey
+
+  private case object PrebiddingKey
 
   /** Ответ лота на `ScheduleLot` вместе с тем, кому его отдать; неудача — ответа нет. */
   private[entity] final case class LotPlanned(
@@ -233,8 +282,16 @@ object AuctionEntity {
               val delay = Duration.between(clock.instant(), deadline).toScala.max(Duration.ZERO.toScala)
               timers.startSingleTimer(DeadlineKey(lot), DeadlineDue(lot), delay)
             case LotInstruction.Close(lot, command) => context.pipeToSelf(lots.close(lot, command))(LotClosed(lot, _))
+            case LotInstruction.Settle(held) => context.self ! Settled(held)
           }
         }
+
+        // Общий дедлайн, истёкший за время простоя, даёт нулевую задержку, как дедлайн лота.
+        def armPrebidding(auction: Auction): Unit =
+          Auction.prebiddingDeadline(auction).foreach { closesAt =>
+            val delay = Duration.between(clock.instant(), closesAt).toScala.max(Duration.ZERO.toScala)
+            timers.startSingleTimer(PrebiddingKey, PrebiddingDue, delay)
+          }
 
         timers.startTimerWithFixedDelay(RecheckKey, Recheck, recheckEvery)
 
@@ -275,6 +332,7 @@ object AuctionEntity {
                     replyTo ! Right(answer)
                     follow(LotRoster.started(auction, roster, decision))
                     openRaffle(auction)
+                    armPrebidding(auction)
                   }
               }
             case Roster(replyTo) => Effect.reply(replyTo)(roster)
@@ -282,21 +340,100 @@ object AuctionEntity {
               Effect.none.thenRun(after => follow(LotRoster.observed(after.auction, roster, lot, lotState)))
             case LotObserved(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
             case LotAnswered(lot, Success(answer)) =>
-              Effect.none.thenRun(_ => follow(LotRoster.opened(roster, lot, answer)))
+              Effect.none.thenRun(after => follow(LotRoster.opened(after.auction, roster, lot, answer)))
             case LotAnswered(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
             case DeadlineDue(lot) => Effect.none.thenRun(after => follow(LotRoster.due(after.auction, roster, lot)))
             case LotClosed(lot, Success(answer)) =>
-              Effect.none.thenRun(_ => follow(LotRoster.closed(roster, lot, answer)))
+              Effect.none.thenRun(after => follow(LotRoster.closed(after.auction, roster, lot, answer)))
             case LotClosed(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
             case Recheck =>
               Effect.none.thenRun { after =>
                 after.auction.state match {
                   case AuctionState.Initial => shard.foreach(_ ! ClusterSharding.Passivate(context.self))
-                  case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _) =>
+                  case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _) |
+                      AuctionState.Settling(_, _) | AuctionState.Break(_, _) | AuctionState.LineupFrozen(_, _, _) |
+                      AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) =>
                     follow(LotRoster.recheck(after.auction, roster))
                     openRaffle(after.auction)
                 }
               }
+            case PrebiddingDue =>
+              state.auction.state.started match {
+                case None => Effect.none
+                case Some((_, startedBy)) =>
+                  val end = EndPrebidding(LotRoster.stepOpId(startedBy, "prebidding-deadline"), clock.instant())
+                  Auction.decide(state.auction, end) match {
+                    // Таймер сработал раньше часов: взводится снова по тому же `closesAt`.
+                    case Left(EndPrebiddingRejected.DeadlineNotReached) =>
+                      Effect.none.thenRun(after => armPrebidding(after.auction))
+                    case Left(EndPrebiddingRejected.NotInPrebidding) => Effect.none
+                    case Right(decision) =>
+                      record(state.auction, decision, end.opId, Initiator.Scheduler, clock, newId) { (auction, _) =>
+                        follow(LotRoster.settling(auction, (roster, Nil)))
+                      }
+                  }
+              }
+            case Settled(held) =>
+              state.auction.state.started match {
+                case None => Effect.none
+                case Some((_, startedBy)) =>
+                  val end = EndSettling(held, LotRoster.stepOpId(startedBy, "prebidding-ended"))
+                  Auction.decide(state.auction, end) match {
+                    case Left(EndSettlingRejected.NotSettling) => Effect.none
+                    case Right(decision) =>
+                      record(state.auction, decision, end.opId, Initiator.Scheduler, clock, newId)((_, _) => ())
+                  }
+              }
+            case Freeze(freeze, initiator, replyTo) =>
+              val decision = Auction.decide(state.auction, freeze, LotRoster.lineup(state.auction, roster))
+              answered(state.auction, decision, freeze.opId, initiator, replyTo, clock, newId)
+            case BeginFinal(begin, initiator, replyTo) =>
+              answered(
+                state.auction,
+                Auction.decide(state.auction, begin),
+                begin.opId,
+                initiator,
+                replyTo,
+                clock,
+                newId
+              )
+            case Next(next, initiator, replyTo) =>
+              (Auction.decide(state.auction, next), state.auction.state.started) match {
+                case (Left(rejected), _) => Effect.reply(replyTo)(Left(rejected))
+                case (Right(NextLot.Repeated(original)), _) => Effect.reply(replyTo)(activated(original))
+                case (Right(NextLot.Resume(lot)), Some((_, startedBy))) =>
+                  Effect.none.thenRun { _ =>
+                    context.pipeToSelf(lots.resume(lot, LotRoster.resumeOf(startedBy, lot)))(
+                      LotReturned(next, lot, initiator, replyTo, _)
+                    )
+                  }
+                case (Right(NextLot.Resume(_)), None) =>
+                  throw new IllegalStateException(s"auction $auctionId chose a lot of the final before trading started")
+              }
+            case LotReturned(next, lot, initiator, replyTo, Success(Right(()))) =>
+              Auction.activate(state.auction, next, lot) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(decision) =>
+                  record(state.auction, decision, next.opId, initiator, clock, newId) { (_, answer) =>
+                    answer match {
+                      case AuctionAnswer.Written(envelope) => replyTo ! activated(envelope)
+                      case AuctionAnswer.Unchanged => replyTo ! Right(lot)
+                    }
+                  }
+              }
+            // Отказ лота значит, что он не удержан: снят или уже закрыт. Конец лота финала приходит с закрытием лота
+            // ведущим, а до него такой ответ — расхождение аукциона с лотом, и вызывающий ответа не получает.
+            case LotReturned(_, lot, _, _, Success(Left(rejected))) =>
+              Effect.none.thenRun { _ =>
+                context.log.warn(
+                  "lot of the final refused to resume",
+                  StructuredArguments.keyValue("auction_id", auctionId),
+                  StructuredArguments.keyValue("lot_id", lot.value.toString),
+                  StructuredArguments.keyValue("error_category", "unexpected"),
+                  StructuredArguments.keyValue("error", rejected.toString)
+                )
+              }
+            case LotReturned(_, lot, _, _, Failure(failure)) => Effect.none.thenRun(_ => logUnanswered(lot, failure))
             case RaffleAnswered(Success(_)) =>
               raffleOpened = true
               Effect.none
@@ -379,6 +516,7 @@ object AuctionEntity {
           .receiveSignal { case (state, RecoveryCompleted) =>
             follow(LotRoster.survey(state.auction))
             openRaffle(state.auction)
+            armPrebidding(state.auction)
           }
       }
     }
@@ -420,6 +558,13 @@ object AuctionEntity {
       case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
       case Right(accepted) =>
         record(auction, accepted, opId, initiator, clock, newId)((_, answer) => replyTo ! Right(answer))
+    }
+
+  /** Ответ на повтор `StartNextLot`: лот исходной активации; `op_id` под другим событием — чужая команда. */
+  private def activated(original: AuctionEnvelope): Either[StartNextLotRejected, LotId] =
+    original.event match {
+      case AuctionEvent.FinalLotActivated(lot) => Right(lot)
+      case _ => Left(StartNextLotRejected.OpIdTaken)
     }
 
   private def firstOf(auction: Auction, opId: OpId): AuctionEnvelope =

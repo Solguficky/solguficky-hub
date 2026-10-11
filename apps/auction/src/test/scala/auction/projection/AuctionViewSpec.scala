@@ -43,6 +43,30 @@ final class AuctionViewSpec extends AnyWordSpec with Matchers {
       }
     }
 
+    "gives the row the status of the break and the final, each of them active, and finished as past" in {
+      val tail = List(
+        AuctionEvent.PrebiddingDeadlineReached,
+        AuctionEvent.PrebiddingEnded(finished = false),
+        AuctionEvent.FinalLineupFrozen(List(lot)),
+        AuctionEvent.FinalStarted
+      ).zipWithIndex.map((event, index) => (index + 5).toLong -> stored(event, index + 5))
+      def statusAfter(events: List[(Long, StoredAuctionEvent)]): String =
+        AuctionView.fold(None, auctionId, events) match {
+          case Right(Some(row)) => AuctionViewHandler.status(row.stored)
+          case other => fail(s"expected a row, got $other")
+        }
+      List(1 -> "settling", 2 -> "on_break", 3 -> "lineup_frozen", 4 -> "in_final").foreach { (events, status) =>
+        statusAfter(journal ++ tail.take(events)) shouldBe status
+        AuctionViews.statuses(AuctionListing.Active) should contain(status)
+      }
+      val finished = journal ++ List(
+        5L -> stored(AuctionEvent.PrebiddingDeadlineReached, 5),
+        6L -> stored(AuctionEvent.PrebiddingEnded(finished = true), 6)
+      )
+      statusAfter(finished) shouldBe "finished"
+      AuctionViews.statuses(AuctionListing.Finished) shouldBe List("finished")
+    }
+
     "lists an auction as active from scheduling on and never as a draft" in {
       val active = AuctionViews.statuses(AuctionListing.Active)
       active should contain allOf (

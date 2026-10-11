@@ -55,7 +55,7 @@ final class LotPublicationHandler(rows: LotRows, gap: LotJournalGap)
    * Ключ `event_id` уникален: повтор того же события до строки не доходит — его отсекает версия, — и нарушение
    * уникальности здесь дефект, а не повтор.
    */
-  private def enqueue(connection: Connection, fact: LotFact): Unit =
+  private def enqueue(connection: Connection, fact: Fact): Unit =
     Using.resource(
       connection.prepareStatement("INSERT INTO lot_outbox (event_id, subject, payload) VALUES (?, ?, ?)")
     ) { statement =>

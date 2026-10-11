@@ -23,7 +23,7 @@ import scala.util.control.NonFatal
  * Исключение означает, что ack не получен, и строка остаётся в outbox.
  */
 trait FactPublisher {
-  def publish(fact: LotFact): Boolean
+  def publish(fact: Fact): Boolean
 }
 
 /** Отказ публикации одного факта; тик на нём остановился, чтобы следующие не обогнали его. */

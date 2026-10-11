@@ -25,30 +25,35 @@ import scala.concurrent.Await
 import scala.concurrent.duration.FiniteDuration
 
 /**
- * Проекция журнала аукционов в read model — та же форма, что [[LotProjection]]: экземпляр на тег [[AuctionTags]] под
- * `ShardedDaemonProcess`, offset и запись обработчика одной транзакцией `JdbcProjection.exactlyOnce`.
+ * Проекции журнала аукционов — та же форма, что [[LotProjection]]: экземпляр на тег [[AuctionTags]] под
+ * `ShardedDaemonProcess`, offset и запись обработчика одной транзакцией `JdbcProjection.exactlyOnce`. Их две: read
+ * model `auction-view` и публикация фактов `auction-publication` (PER-334), каждая со своим offset.
  */
 object AuctionProjection {
 
   val Name: String = "auction-view"
 
+  val PublicationName: String = "auction-publication"
+
   type Envelope = EventEnvelope[StoredAuctionEvent]
 
   def init(
       system: ActorSystem[?],
+      name: String,
       metrics: ProjectionMetrics,
       handler: () => JdbcHandler[Envelope, JdbcSession]
   ): Unit =
     ShardedDaemonProcess(system).init[ProjectionBehavior.Command](
-      Name,
+      name,
       AuctionTags.Count,
-      index => ProjectionBehavior(projection(system, AuctionTags.all(index), metrics, handler)),
+      index => ProjectionBehavior(projection(system, name, AuctionTags.all(index), metrics, handler)),
       ShardedDaemonProcessSettings(system),
       Some(ProjectionBehavior.Stop)
     )
 
   def projection(
       system: ActorSystem[?],
+      name: String,
       tag: String,
       metrics: ProjectionMetrics,
       handler: () => JdbcHandler[Envelope, JdbcSession]
@@ -56,7 +61,7 @@ object AuctionProjection {
     val source = journal(system)
     JdbcProjection
       .exactlyOnce(
-        ProjectionId(Name, tag),
+        ProjectionId(name, tag),
         EventSourcedProvider.eventsByTag[StoredAuctionEvent](system, JdbcReadJournal.Identifier, tag),
         () => new PooledJdbcSession(source.source),
         handler
@@ -65,13 +70,13 @@ object AuctionProjection {
   }
 
   /** Отставание каждого тега для `events_behind` — тот же запрос, что у [[LotProjection.backlog]]. */
-  def backlog(system: ActorSystem[?], timeout: FiniteDuration): () => Map[String, Long] = {
+  def backlog(system: ActorSystem[?], name: String, timeout: FiniteDuration): () => Map[String, Long] = {
     val database = journal(system)
     val tags = AuctionTags.all
     () => {
       val behind =
         sql"""SELECT t.tag, COUNT(*) FROM event_tag t
-              LEFT JOIN pekko_projection_offset_store o ON o.projection_name = $Name AND o.projection_key = t.tag
+              LEFT JOIN pekko_projection_offset_store o ON o.projection_name = $name AND o.projection_key = t.tag
               WHERE t.tag = ANY(${tags.mkString("{", ",", "}")}::varchar[])
                 AND t.event_id > COALESCE(o.current_offset::bigint, 0)
               GROUP BY t.tag""".as[(String, Long)]

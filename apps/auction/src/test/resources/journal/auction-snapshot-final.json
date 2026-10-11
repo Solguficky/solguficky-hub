@@ -1,0 +1,218 @@
+{
+  "sequence": 9,
+  "state": "Final",
+  "meetupId": "0190f2a0-0000-7000-8000-00000000000a",
+  "lots": [
+    "0190f2a0-0000-7000-8000-00000000000b"
+  ],
+  "seen": [
+    {
+      "sequence": 1,
+      "opId": "00000000-0000-0003-0000-000000000001",
+      "event": {
+        "kind": "AuctionDrafted",
+        "auctionDrafted": {
+          "meetupId": "0190f2a0-0000-7000-8000-00000000000a"
+        },
+        "lotAdded": null,
+        "lotRemoved": null,
+        "auctionScheduled": null,
+        "prebiddingEnded": null,
+        "finalLineupFrozen": null,
+        "finalLotActivated": null
+      }
+    },
+    {
+      "sequence": 2,
+      "opId": "00000000-0000-0003-0000-000000000002",
+      "event": {
+        "kind": "LotAdded",
+        "auctionDrafted": null,
+        "lotAdded": {
+          "lotId": "0190f2a0-0000-7000-8000-00000000000b"
+        },
+        "lotRemoved": null,
+        "auctionScheduled": null,
+        "prebiddingEnded": null,
+        "finalLineupFrozen": null,
+        "finalLotActivated": null
+      }
+    },
+    {
+      "sequence": 3,
+      "opId": "00000000-0000-0003-0000-000000000003",
+      "event": {
+        "kind": "AuctionScheduled",
+        "auctionDrafted": null,
+        "lotAdded": null,
+        "lotRemoved": null,
+        "auctionScheduled": {
+          "onlinePhase": {
+            "opensAt": "2026-10-01T18:00:00Z",
+            "closesAt": "2026-10-08T21:00:00Z",
+            "closesLots": true,
+            "raffleClosesAt": null
+          },
+          "finalBlocks": 1,
+          "closingPolicy": {
+            "kind": "Mixed",
+            "mixed": {
+              "onlineByDeadline": true
+            }
+          },
+          "lotDefaults": {
+            "currency": "RUB",
+            "stepPolicy": {
+              "fixed": {
+                "minorUnits": 10,
+                "currency": "RUB"
+              },
+              "tiers": []
+            },
+            "antiSnipe": {
+              "window": "PT2M",
+              "extension": "PT2M",
+              "maxExtensions": 3
+            },
+            "proxyEnabled": true
+          },
+          "stepWindows": null
+        },
+        "prebiddingEnded": null,
+        "finalLineupFrozen": null,
+        "finalLotActivated": null
+      }
+    },
+    {
+      "sequence": 4,
+      "opId": "00000000-0000-0003-0000-000000000004",
+      "event": {
+        "kind": "PrebiddingStarted",
+        "auctionDrafted": null,
+        "lotAdded": null,
+        "lotRemoved": null,
+        "auctionScheduled": null,
+        "prebiddingEnded": null,
+        "finalLineupFrozen": null,
+        "finalLotActivated": null
+      }
+    },
+    {
+      "sequence": 5,
+      "opId": "00000000-0000-0003-0000-000000000005",
+      "event": {
+        "kind": "PrebiddingDeadlineReached",
+        "auctionDrafted": null,
+        "lotAdded": null,
+        "lotRemoved": null,
+        "auctionScheduled": null,
+        "prebiddingEnded": null,
+        "finalLineupFrozen": null,
+        "finalLotActivated": null
+      }
+    },
+    {
+      "sequence": 6,
+      "opId": "00000000-0000-0003-0000-000000000006",
+      "event": {
+        "kind": "PrebiddingEnded",
+        "auctionDrafted": null,
+        "lotAdded": null,
+        "lotRemoved": null,
+        "auctionScheduled": null,
+        "prebiddingEnded": {
+          "finished": false
+        },
+        "finalLineupFrozen": null,
+        "finalLotActivated": null
+      }
+    },
+    {
+      "sequence": 7,
+      "opId": "00000000-0000-0003-0000-000000000007",
+      "event": {
+        "kind": "FinalLineupFrozen",
+        "auctionDrafted": null,
+        "lotAdded": null,
+        "lotRemoved": null,
+        "auctionScheduled": null,
+        "prebiddingEnded": null,
+        "finalLineupFrozen": {
+          "order": [
+            "0190f2a0-0000-7000-8000-00000000000b"
+          ]
+        },
+        "finalLotActivated": null
+      }
+    },
+    {
+      "sequence": 8,
+      "opId": "00000000-0000-0003-0000-000000000008",
+      "event": {
+        "kind": "FinalStarted",
+        "auctionDrafted": null,
+        "lotAdded": null,
+        "lotRemoved": null,
+        "auctionScheduled": null,
+        "prebiddingEnded": null,
+        "finalLineupFrozen": null,
+        "finalLotActivated": null
+      }
+    },
+    {
+      "sequence": 9,
+      "opId": "00000000-0000-0003-0000-000000000009",
+      "event": {
+        "kind": "FinalLotActivated",
+        "auctionDrafted": null,
+        "lotAdded": null,
+        "lotRemoved": null,
+        "auctionScheduled": null,
+        "prebiddingEnded": null,
+        "finalLineupFrozen": null,
+        "finalLotActivated": {
+          "lotId": "0190f2a0-0000-7000-8000-00000000000b"
+        }
+      }
+    }
+  ],
+  "config": {
+    "onlinePhase": {
+      "opensAt": "2026-10-01T18:00:00Z",
+      "closesAt": "2026-10-08T21:00:00Z",
+      "closesLots": true,
+      "raffleClosesAt": null
+    },
+    "finalBlocks": 1,
+    "closingPolicy": {
+      "kind": "Mixed",
+      "mixed": {
+        "onlineByDeadline": true
+      }
+    },
+    "lotDefaults": {
+      "currency": "RUB",
+      "stepPolicy": {
+        "fixed": {
+          "minorUnits": 10,
+          "currency": "RUB"
+        },
+        "tiers": []
+      },
+      "antiSnipe": {
+        "window": "PT2M",
+        "extension": "PT2M",
+        "maxExtensions": 3
+      },
+      "proxyEnabled": true
+    },
+    "stepWindows": null
+  },
+  "startedBy": "00000000-0000-0003-0000-000000000004",
+  "order": [
+    "0190f2a0-0000-7000-8000-00000000000b"
+  ],
+  "activated": [
+    "0190f2a0-0000-7000-8000-00000000000b"
+  ]
+}

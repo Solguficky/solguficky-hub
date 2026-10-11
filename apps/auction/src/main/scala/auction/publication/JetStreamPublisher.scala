@@ -31,7 +31,7 @@ final class JetStreamPublisher(url: String, ackTimeout: FiniteDuration) extends 
 
   private val jetStreamOptions = JetStreamOptions.builder().requestTimeout(ackTimeout.toJava).build()
 
-  override def publish(fact: LotFact): Boolean = synchronized {
+  override def publish(fact: Fact): Boolean = synchronized {
     jetStream()
       .publish(
         fact.subject,

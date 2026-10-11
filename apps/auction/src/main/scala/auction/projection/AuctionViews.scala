@@ -29,8 +29,7 @@ trait AuctionViews {
 object AuctionViews {
 
   /**
-   * Статусы выборки — значения `auction_view.status`. Активные — от `scheduled` до `in_final`, прошедшие — `finished`;
-   * проекция пишет `draft`, `scheduled` и `prebidding`, остальные статусы приносит перерыв и финал (PER-334).
+   * Статусы выборки — значения `auction_view.status`. Активные — от `scheduled` до `in_final`, прошедшие — `finished`.
    */
   def statuses(listing: AuctionListing): List[String] =
     listing match {

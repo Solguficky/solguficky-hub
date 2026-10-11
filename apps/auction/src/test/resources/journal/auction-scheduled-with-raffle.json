@@ -43,6 +43,9 @@
         "proxyEnabled": true
       },
       "stepWindows": null
-    }
+    },
+    "prebiddingEnded": null,
+    "finalLineupFrozen": null,
+    "finalLotActivated": null
   }
 }
