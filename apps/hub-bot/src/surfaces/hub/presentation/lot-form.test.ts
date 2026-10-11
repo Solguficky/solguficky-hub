@@ -459,6 +459,7 @@ describe("entries into the lot form", () => {
     for (const data of [
       `v1:lot:new:${auctionToken}`,
       `v1:lot:form:${uuidToToken(existingLot)}`,
+      `v1:lot:view:${uuidToToken(existingLot)}`,
       `v1:lot:ask:${uuidToToken(existingLot)}:price`,
     ]) {
       await member.bot.handleUpdate(press(data));
@@ -547,6 +548,7 @@ describe("lot form", () => {
       ["Описание"],
       ["Фото"],
       ["Цена и шаг"],
+      ["Глазами участника"],
       ["‹ Лот"],
     ]);
     // Лот виден в ленте аукциона сходки, пока без цены.
@@ -729,6 +731,7 @@ describe("lot form", () => {
       ["Название"],
       ["Описание"],
       ["Фото"],
+      ["Глазами участника"],
       ["‹ Лот"],
     ]);
     expect(form.text).toContain(
@@ -1127,5 +1130,98 @@ describe("lot form photo question", () => {
 
     expect(auction.methods()).toEqual(["editLotCard"]);
     expect(last(calls).text).toContain("<b>Фото сохранено</b>");
+  });
+});
+
+// Лот глазами участника (PER-512): карточка той же вёрсткой и с тем же фото,
+// что у участника, без кнопок ставки, с пометкой и возвратом в форму.
+describe("lot preview", () => {
+  const lot = uuidToToken(existingLot);
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+  const mark = "Предпросмотр: так лот видят участники.";
+  const trading: LotView = {
+    ...scheduled,
+    card: {
+      title: "Кружка с совой",
+      description: "Ручная роспись.\n\nОбъём 300 мл.",
+      image: { version: "img-1" },
+    },
+    proxyEnabled: true,
+    nextPrice: rub(60_000),
+    status: {
+      kind: "trading",
+      currentPrice: rub(50_000),
+      phase: "online",
+      deadline: "2026-10-27T00:00:00Z",
+    },
+  };
+
+  type Card = {
+    text?: string;
+    rich_message?: {
+      html?: string;
+      media?: { id: string; media: { media: unknown } }[];
+    };
+    reply_markup?: {
+      inline_keyboard: { text: string; callback_data?: string }[][];
+    };
+  };
+  const lastCard = (calls: readonly RecordedCall[]) =>
+    calls.at(-1)?.payload as Card;
+
+  it.each(["rich", "plain"] as const)(
+    "shows the administrator the card a member sees, marked and without a way to bid (%s)",
+    async (presentation) => {
+      const auction = fakeAuction({ lots: [trading] });
+      auction.images.set(existingLot, { content: jpeg, version: "img-1" });
+      const member = harness("member", auction, [], { presentation });
+      await member.bot.init();
+      await member.bot.handleUpdate(press(lotData(existingLot)));
+      const card = lastCard(member.calls);
+      // Карточка участника на этом лоте предлагает ставку.
+      expect(JSON.stringify(card.reply_markup)).toContain("v1:auc:");
+
+      const admin = harness("admin", auction, [], { presentation });
+      await admin.bot.init();
+      await admin.bot.handleUpdate(press(`v1:lot:form:${lot}`));
+      await admin.bot.handleUpdate(
+        press(dataOf(last(admin.calls), "Глазами участника")),
+      );
+      const preview = lastCard(admin.calls);
+
+      if (presentation === "rich") {
+        expect(preview.rich_message?.html).toBe(
+          `${card.rich_message?.html}<p>${mark}</p>`,
+        );
+        expect(card.rich_message?.media?.[0]?.media.media).toBeInstanceOf(
+          InputFile,
+        );
+        expect(preview.rich_message?.media?.[0]?.media.media).toEqual(
+          card.rich_message?.media?.[0]?.media.media,
+        );
+      } else {
+        expect(preview.text).toBe(`${card.text}\n\n${mark}`);
+      }
+      // Ни ставки, ни других кнопок аукциона: только возврат в форму.
+      expect(preview.reply_markup?.inline_keyboard).toEqual([
+        [{ text: "‹ Изменить лот", callback_data: `v1:lot:form:${lot}` }],
+      ]);
+      expect(auction.commands).toEqual([]);
+    },
+  );
+
+  it("returns from the preview to the form of the lot", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:lot:view:${lot}`));
+    const preview = last(calls);
+    expect(preview.text).toContain("<b>Кружка с совой</b>");
+    expect(preview.text?.endsWith(mark)).toBe(true);
+    expect(labels(preview)).toEqual([["‹ Изменить лот"]]);
+
+    await bot.handleUpdate(press(dataOf(preview, "‹ Изменить лот")));
+    expect(last(calls).text).toContain("<b>Изменить лот</b>");
   });
 });

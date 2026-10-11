@@ -78,6 +78,12 @@ export type AuctionView = {
    * стоит «Избранное». Кнопку избранного на карточке ставит тело дерева.
    */
   favorites?: boolean;
+  /**
+   * Предпросмотр лота глазами участника (PER-512): возврат с карточки. Тело
+   * приходит из `previewLot` без кнопок; карточка рисуется той же вёрсткой,
+   * что у участника, с пометкой последним абзацем и без «Изменить лот».
+   */
+  preview?: Parent;
 };
 
 // Входы в форму лота — ряды оболочки хаба, а не тела: у бота аукциона формы
@@ -98,6 +104,10 @@ export type AuctionShown = {
   image?: ImageKey;
   asks?: true;
 };
+
+// Пометка предпросмотра — последним абзацем: над заголовком у карточки только
+// фото (дизайн-код, «Форма лота»).
+export const lotPreviewMark = "Предпросмотр: так лот видят участники.";
 
 // Идентификатор фото в rich-сообщении: на него ссылается `tg://photo?id=`.
 export const lotPhotoId = "lot";
@@ -281,8 +291,12 @@ function lotScreen(
   lot: Extract<AuctionBlock, { kind: "lot" }>,
 ): AuctionShown {
   const keyboard = new InlineKeyboard();
-  let back: Parent | undefined;
+  const { preview } = view;
+  let back: Parent | undefined = preview;
   for (const row of view.body.keyboard) {
+    if (preview !== undefined) {
+      throw new Error("lot preview body with buttons");
+    }
     // Возврат с лота — кнопка тела, а рядом навигации её ставит оболочка.
     const content = row.filter((button) => {
       if (button.action !== "lot.back") return true;
@@ -298,7 +312,7 @@ function lotScreen(
   if (back === undefined) {
     throw new Error("lot body without a way back to the feed");
   }
-  if (view.canManage === true) {
+  if (view.canManage === true && preview === undefined) {
     nextRow(keyboard).text(editLotLabel, lotFormData(uuidToToken(lot.lotId)));
   }
   const title = truncate(lot.card?.title ?? untitled, titleLimit);
@@ -309,6 +323,7 @@ function lotScreen(
   // Карточка лота (дизайн-код, «Карточка лота»): группа статуса, группа цены
   // и лидера, описание — группы через пустую строку, в rich — блоками.
   const groups = statusGroups(lot, view);
+  const mark = preview === undefined ? [] : [lotPreviewMark];
   const rich = view.presentation === "rich";
   const photo = rich ? view.photo : undefined;
   const image =
@@ -325,11 +340,12 @@ function lotScreen(
           (lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`,
         ),
         ...richParagraphs(description),
+        ...mark.map((line) => `<p>${escapeHtml(line)}</p>`),
       ].join("")
-    : plainLot(title, description, groups);
+    : plainLot(title, description, groups, mark);
   return {
     screen: {
-      id: "lot",
+      id: preview === undefined ? "lot" : "lot-preview",
       text,
       keyboard: withNav(keyboard, back),
       format: rich ? "rich" : "HTML",
@@ -352,16 +368,20 @@ function richParagraphs(description: string | undefined): string[] {
     .map((lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`);
 }
 
+// `footer` — абзацы после описания: пометка предпросмотра. Предел текста
+// держит и их, поэтому у предела они отнимают место у описания.
 function plainLot(
   title: string,
   description: string | undefined,
   groups: readonly (readonly string[])[],
+  footer: readonly string[] = [],
 ): string {
   const join = (shown: string | undefined) =>
     screenText(
       title,
       ...groups.map((lines) => lines.map(escapeHtml).join("\n")),
       shown === undefined ? undefined : escapeHtml(shown),
+      ...footer.map(escapeHtml),
     );
   const full = join(description);
   if (full.length <= plainTextLimit || description === undefined) return full;

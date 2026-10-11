@@ -271,6 +271,9 @@ export type LotFormRequest =
       opId: string;
     })
   | (LotFormCall & { intent: "view-lot-form"; lotId: string })
+  // Предпросмотр лота глазами участника (PER-512): снимок целиком, его тело
+  // строит аукционное дерево.
+  | (LotFormCall & { intent: "view-lot-preview"; lotId: string })
   | (LotFormCall & {
       intent: "set-lot-text";
       lotId: string;
@@ -545,6 +548,8 @@ export type ExecuteResult =
       lot: LotFormView;
       saved?: "created" | "text" | "terms" | "image";
     }
+  // Предпросмотр лота (PER-512): снимок, прочитанный правом администратора.
+  | { kind: "lot-preview"; lot: LotView }
   // Вопрос формы лота: следующий шаг либо тот же заново, с причиной отказа.
   // Лота нет у нового лота и там, где его не читали.
   | {

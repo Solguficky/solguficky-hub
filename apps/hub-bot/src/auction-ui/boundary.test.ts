@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -12,7 +13,9 @@ import {
 // Граница аукционного дерева (ADR-044, «Доступ как обязательный шлюз»; шлюз в
 // силе по ADR-064): бот входит в дерево только через `index.ts` — шлюз, порты,
 // тело экрана, `callback_data` — и через `contract/index.ts` из тестов.
-// Диспетчер и сырые юзкейсы проверку доступа не делают и снаружи не видны.
+// Диспетчер и сырые юзкейсы проверку доступа не делают и снаружи не видны;
+// `index.ts` отдаёт из них только `previewLot` (PER-512) — тело без кнопок по
+// снимку, который вызывающий прочитал своим правом.
 // Раньше это держали `exports` пакета; внутри одного приложения их нет.
 
 const tree = path.join(app, "src", "auction-ui");
@@ -35,6 +38,24 @@ describe("auction tree boundary", () => {
       )
       .map(shown);
     expect(crossings).toEqual([]);
+  });
+
+  // Из сырых юзкейсов и диспетчера `index.ts` отдаёт ровно `previewLot`
+  // (PER-512): тело без кнопок по снимку, прочитанному правом вызывающего.
+  // Любой другой реэкспорт открыл бы юзкейс мимо шлюза.
+  it("exports nothing from the raw use cases but the lot preview", () => {
+    const index = readFileSync(entry, "utf8");
+    const exported = [
+      ...index.matchAll(
+        /export\s*(?:type\s*)?\{([^}]*)\}\s*from\s*"\.\/(?:internal\/|dispatcher)[^"]*"/g,
+      ),
+    ].flatMap((match) =>
+      (match[1] ?? "")
+        .split(",")
+        .map((name) => name.trim())
+        .filter((name) => name !== ""),
+    );
+    expect(exported).toEqual(["previewLot"]);
   });
 
   // `contract/` зовёт vitest и в сборку не входит (`tsconfig.build.json`).

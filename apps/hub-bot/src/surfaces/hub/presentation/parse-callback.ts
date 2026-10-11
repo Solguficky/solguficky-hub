@@ -237,6 +237,8 @@ type PlainAction =
   | { kind: "lot-new"; auction: string }
   | { kind: "lot-form"; lot: string }
   | { kind: "lot-ask"; lot: string; field: LotFormField }
+  // «Глазами участника» на экране правки (PER-512): карточка лота без кнопок.
+  | { kind: "lot-view"; lot: string }
   // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
   // финала — ещё лот и страницу пульта, на которую вернуться.
   | { kind: "console-view"; auction: string; page: number; sort: ConsoleSort }
@@ -413,6 +415,11 @@ export function lotNewData(auction: string): string {
 /** Данные кнопки входа на экран правки лота; аргумент — токен лота. */
 export function lotFormData(lot: string): string {
   return `v1:lot:form:${lot}`;
+}
+
+/** Данные кнопки «Глазами участника» на экране правки; аргумент — токен лота. */
+export function lotPreviewData(lot: string): string {
+  return `v1:lot:view:${lot}`;
 }
 
 /** Данные кнопки ряда на экране правки лота. */
@@ -868,8 +875,8 @@ export function parseCallback(raw: unknown): CallbackAction {
   return { kind: "malformed" };
 }
 
-// Кнопки формы лота: `v1:lot:new:<аукцион>`, `v1:lot:form:<лот>` и
-// `v1:lot:ask:<лот>:<поле>`.
+// Кнопки формы лота: `v1:lot:new:<аукцион>`, `v1:lot:form:<лот>`,
+// `v1:lot:view:<лот>` и `v1:lot:ask:<лот>:<поле>`.
 function parseLot(parts: readonly string[]): CallbackAction {
   const token = TokenSchema.safeParse(parts[3]);
   if (!token.success) return { kind: "malformed" };
@@ -878,6 +885,9 @@ function parseLot(parts: readonly string[]): CallbackAction {
   }
   if (parts.length === 4 && parts[2] === "form") {
     return { kind: "lot-form", lot: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "view") {
+    return { kind: "lot-view", lot: token.data };
   }
   if (parts.length === 5 && parts[2] === "ask") {
     const field = LotFormFieldSchema.safeParse(parts[4]);

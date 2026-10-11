@@ -9,7 +9,7 @@ import type {
   LotTermsView,
 } from "../../application/types.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { lotAskData, lotFormData } from "../parse-callback.js";
+import { lotAskData, lotFormData, lotPreviewData } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
 import {
   escapeHtml,
@@ -112,6 +112,9 @@ export function lotFormScreen(lot: LotFormView): ShownScreen {
   if (lot.terms.kind !== "closed") {
     keyboard.row().text("Цена и шаг", lotAskData(token, "price"));
   }
+  // Предпросмотр (PER-512) — и после старта торгов: участник видит ту же
+  // карточку, только с ценой.
+  keyboard.row().text("Глазами участника", lotPreviewData(token));
   return {
     id: "lot-form",
     text: screenText(

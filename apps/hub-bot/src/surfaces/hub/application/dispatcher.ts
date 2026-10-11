@@ -219,6 +219,7 @@ export function createDispatcher(
             : materials(request);
         case "create-lot":
         case "view-lot-form":
+        case "view-lot-preview":
         case "set-lot-text":
         case "check-lot-price":
         case "set-lot-terms":
