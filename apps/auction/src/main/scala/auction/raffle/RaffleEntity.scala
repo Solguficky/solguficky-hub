@@ -137,10 +137,18 @@ object RaffleEntity {
           context.log.warn(message, fields*)
         }
 
+        /**
+         * Розыгрыш, которому больше нечего делать без человека, просит шард его забыть: иначе шардинг помнил бы каждый
+         * прошедший розыгрыш, и рестарт процесса поднимал бы их все. Чтение поднимет такой розыгрыш снова из журнала.
+         */
+        def forget(): Unit = shard.foreach(_ ! ClusterSharding.Passivate(context.self))
+
         /** Что делать дальше по состоянию; зовётся после recovery и после каждой записи. */
         def follow(raffle: Raffle): Unit =
           raffle.state match {
-            case RaffleState.Initial | RaffleState.NotHeld(_) => ()
+            case RaffleState.Initial => ()
+            case RaffleState.NotHeld(_) => forget()
+            case RaffleState.Fixed(_, tickets) if tickets.isEmpty => forget()
             case RaffleState.Open(terms, _) => arm(CloseKey, CloseDue, terms.closesAt)
             case RaffleState.Fixed(terms, tickets) =>
               if (!namesRecorded) context.self ! RecordNames
@@ -219,7 +227,11 @@ object RaffleEntity {
               screening = false
               // Сбоя опроса быть не должно: каждый вопрос сам превращает отказ в «нет ответа». Если он всё же случился,
               // правило то же — неотвеченный остаётся в пуле.
-              val answers = result.getOrElse(Map.empty)
+              // Ответы, пришедшие с времени раунда маяка, пул не меняют: процесс мог лежать в момент закрытия.
+              val answers = state.raffle.state match {
+                case RaffleState.Open(terms, _) if Raffle.answeredTooLate(terms, clock.instant()) => Map.empty
+                case _ => result.getOrElse(Map.empty)
+              }
               Raffle.decide(state.raffle, FixPool(Raffle.excluded(answers)), clock.instant()) match {
                 case Left(_) => Effect.none
                 case Right(event) =>
@@ -282,9 +294,11 @@ object RaffleEntity {
                     follow(after.raffle)
                   }
               }
+            // Значения пока нет или зеркала не договорились — штатное ожидание, без записи на каждом тике. Запись — только
+            // на сбое самого опроса.
             case BeaconRead(result) =>
               Effect.none.thenRun { _ =>
-                warn("raffle draw awaits the beacon round", result.failed.toOption)
+                result.failed.foreach(failure => warn("raffle beacon poll failed", Some(failure)))
                 timers.startSingleTimer(BeaconKey, PollBeacon, settings.retryEvery)
               }
             case ExpireNames =>
@@ -295,7 +309,7 @@ object RaffleEntity {
                   Effect.none.thenRun(_ => context.pipeToSelf(expiry)(NamesExpiring(_)))
                 case _ => Effect.none
               }
-            case NamesExpiring(Success(())) => Effect.none
+            case NamesExpiring(Success(())) => Effect.none.thenRun(_ => forget())
             case NamesExpiring(Failure(failure)) =>
               expiring = false
               Effect.none.thenRun { _ =>

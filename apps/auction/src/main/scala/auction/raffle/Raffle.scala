@@ -171,6 +171,13 @@ object Raffle {
   def excluded(answers: Map[ParticipantId, Option[Boolean]]): Set[ParticipantId] =
     answers.collect { case (participant, Some(false)) => participant }.toSet
 
+  /**
+   * Пришли ли ответы Identity слишком поздно, чтобы менять пул: с времени раунда маяка его значение может быть
+   * опубликовано, и исключение по ответу после него давало бы выбрать исход. Тогда пул фиксируется без исключений — то
+   * же правило, что при молчании Identity.
+   */
+  def answeredTooLate(terms: RaffleTerms, now: Instant): Boolean = !now.isBefore(Quicknet.roundAt(terms.round))
+
   /** Номер билета участника в зафиксированном пуле, с единицы. */
   def ticketOf(tickets: Vector[ParticipantId], participant: ParticipantId): Option[Int] =
     Option(tickets.indexOf(participant)).filter(_ >= 0).map(_ + 1)
@@ -206,7 +213,9 @@ object Raffle {
   /** Действующие регистрации, если регистрация открыта по времени. */
   private def openAt(raffle: Raffle, now: Instant): Either[RegistrationRejected, Vector[ParticipantId]] =
     raffle.state match {
-      case RaffleState.Initial | RaffleState.NotHeld(_) => Left(RegistrationRejected.RaffleNotFound)
+      case RaffleState.Initial => Left(RegistrationRejected.RaffleNotFound)
+      // Непроведённый розыгрыш есть, и чтение его показывает: регистрация в нём закрыта, а не отсутствует.
+      case RaffleState.NotHeld(_) => Left(RegistrationRejected.RegistrationClosed)
       case RaffleState.Open(terms, entries) =>
         if (now.isBefore(terms.closesAt)) Right(entries) else Left(RegistrationRejected.RegistrationClosed)
       case RaffleState.Fixed(_, _) | RaffleState.Drawn(_, _, _, _) => Left(RegistrationRejected.RegistrationClosed)

@@ -38,7 +38,7 @@ final class RaffleJournalSpec extends AnyWordSpec with Matchers with BeforeAndAf
 
   "raffle journal" should {
 
-    "keep the stored form of every raffle event equal to its golden file and read it back" in {
+    "keeps the stored form of every raffle event equal to its golden file and reads it back" in {
       keepsGolden("raffle-opened", stored(RaffleEvent.RaffleOpened(closesAt, seed, round)))
       keepsGolden("raffle-not-held", stored(RaffleEvent.RaffleNotHeld(closesAt)))
       keepsGolden("raffle-registered", stored(RaffleEvent.Registered(person(1))))
@@ -47,7 +47,7 @@ final class RaffleJournalSpec extends AnyWordSpec with Matchers with BeforeAndAf
       keepsGolden("raffle-drawn", stored(RaffleEvent.RaffleDrawn(randomness, closesAt.plusSeconds(62))))
     }
 
-    "keep the stored form of a drawn raffle snapshot and restore the same raffle" in {
+    "keeps the stored form of a drawn raffle snapshot and restores the same raffle" in {
       val raffle = Raffle.replay(
         Raffle.initial,
         List(
@@ -61,7 +61,7 @@ final class RaffleJournalSpec extends AnyWordSpec with Matchers with BeforeAndAf
       RaffleJournal.restoreRaffle(RaffleJournal.storeRaffle(raffle, sequence = 4)) shouldBe raffle
     }
 
-    "refuse a row whose sections do not match its kind" in {
+    "refuses a row whose sections do not match its kind" in {
       val broken = stored(RaffleEvent.Registered(person(1))).event.copy(kind = "PoolFixed")
       an[auction.entity.JournalCorrupted] should be thrownBy RaffleJournal.restoreEvent(broken)
     }

@@ -209,11 +209,12 @@ final class AuctionEntitySpec
       lots: Lots,
       snapshotEvery: Int = AuctionEntity.DefaultSnapshotEvery,
       recheckEvery: FiniteDuration = AuctionEntity.DefaultRecheckEvery,
-      shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None
+      shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None,
+      raffle: AuctionRaffle = AuctionRaffle.none
   ): Kit =
     EventSourcedBehaviorTestKit(
       kit.system,
-      AuctionEntity("auction-1", time, sequentialIds(), lots, snapshotEvery, recheckEvery, shard),
+      AuctionEntity("auction-1", time, sequentialIds(), lots, snapshotEvery, recheckEvery, shard, raffle),
       serialization
     )
 
@@ -290,6 +291,48 @@ final class AuctionEntitySpec
   }
 
   "auction entity" should {
+
+    "opens the raffle after the start of prebidding, asks again until it answers and again after a restart" in {
+      val closesAt = AuctionFixtures.opensAt.plusSeconds(3600)
+      val opened = new java.util.concurrent.ConcurrentLinkedQueue[(String, java.time.Instant)]()
+      val failures = new java.util.concurrent.atomic.AtomicInteger(1)
+      val raffle: AuctionRaffle = (auctionId, at) => {
+        opened.add(auctionId -> at)
+        if (failures.getAndDecrement() > 0) Future.failed(new RuntimeException("raffle did not answer"))
+        else Future.successful(org.apache.pekko.Done)
+      }
+      entity = entityOf(lots, recheckEvery = 50.millis, raffle = raffle)
+      draft(1)
+      add(2)
+      schedule(3, configInput(Some(AuctionFixtures.week.copy(raffleClosesAt = Some(closesAt))))).reply.isRight shouldBe
+        true
+      opened shouldBe empty
+      start(4).reply.isRight shouldBe true
+      eventually(opened.size should be >= 2)
+      Thread.sleep(200)
+      val settled = opened.size
+      Thread.sleep(200)
+      opened.size shouldBe settled
+      entity.restart()
+      eventually(opened.size shouldBe settled + 1)
+      opened.toArray.toSet shouldBe Set("auction-1" -> closesAt)
+    }
+
+    "does not open a raffle for an auction scheduled without one" in {
+      val opened = new java.util.concurrent.atomic.AtomicInteger(0)
+      entity = entityOf(
+        lots,
+        recheckEvery = 50.millis,
+        raffle = (_, _) => {
+          opened.incrementAndGet()
+          Future.successful(org.apache.pekko.Done)
+        }
+      )
+      scheduledWith(lot)
+      start(4).reply.isRight shouldBe true
+      Thread.sleep(200)
+      opened.get shouldBe 0
+    }
 
     "records the birth once and answers a repeated op_id with the original envelope" in {
       val born = draft(1)

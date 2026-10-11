@@ -46,11 +46,11 @@ final class RaffleBoundarySpec extends AnyWordSpec with Matchers {
 
   "the raffle package" should {
 
-    "exist where the check looks for it" in {
+    "exists where the check looks for it" in {
       files.map(_.getFileName.toString) should contain allOf ("Raffle.scala", "RaffleEntity.scala")
     }
 
-    "refer to nothing of the service beyond the identifiers and the journal base types" in {
+    "refers to nothing of the service beyond the identifiers and the journal base types" in {
       val violations = for {
         file <- files
         text = new String(Files.readAllBytes(file), StandardCharsets.UTF_8)

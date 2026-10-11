@@ -103,7 +103,7 @@ final class RaffleEntitySpec extends AnyWordSpec with Matchers with BeforeAndAft
 
   "the raffle entity" should {
 
-    "open, take registrations, fix the pool without those who lost the right and draw from the beacon" in {
+    "opens, takes registrations, fixes the pool without those who lost the right and draws from the beacon" in {
       val clock = new MovableClock(closesAt.minusSeconds(3600))
       val tickets = new Tickets
       val access: RaffleAccess = participant => Future.successful(participant != person(2))
@@ -148,7 +148,7 @@ final class RaffleEntitySpec extends AnyWordSpec with Matchers with BeforeAndAft
       eventually(tickets.expiry.get shouldBe Some(drawnAt.plus(java.time.Duration.ofDays(30))))
     }
 
-    "keep a candidate in the pool when Identity does not answer before the window ends" in {
+    "keeps a candidate in the pool when Identity does not answer before the window ends" in {
       val clock = new MovableClock(closesAt.minusSeconds(60))
       val raffle = entity(
         clock,
@@ -168,15 +168,30 @@ final class RaffleEntitySpec extends AnyWordSpec with Matchers with BeforeAndAft
       }
     }
 
-    "not hold a raffle opened no earlier than closing and answer registrations that it has none" in {
+    "does not hold a raffle opened no earlier than closing and answers registrations that it is closed" in {
       val clock = new MovableClock(closesAt)
       val raffle = entity(clock, _ => Future.successful(true), _ => Future.successful(None), new Tickets)
       raffle.runCommand[Done](RaffleEntity.Open(OpenRaffle(closesAt), _))
       raffle.getState().raffle.state shouldBe RaffleState.NotHeld(closesAt)
-      register(raffle, 1, 1).reply shouldBe Left(RegistrationRejected.RaffleNotFound)
+      register(raffle, 1, 1).reply shouldBe Left(RegistrationRejected.RegistrationClosed)
     }
 
-    "fix an empty pool without asking the beacon" in {
+    "keeps every candidate when the closing comes after the beacon round, whatever Identity would answer" in {
+      val clock = new MovableClock(closesAt.minusSeconds(60))
+      val raffle = entity(clock, _ => Future.successful(false), _ => Future.successful(None), new Tickets)
+      raffle.runCommand[Done](RaffleEntity.Open(OpenRaffle(closesAt), _))
+      register(raffle, 1, 1)
+      clock.now = Quicknet.roundAt(Quicknet.roundFor(closesAt)).plusSeconds(5)
+      raffle.runCommand(RaffleEntity.CloseDue)
+      eventually {
+        raffle.getState().raffle.state match {
+          case RaffleState.Fixed(_, fixed) => fixed shouldBe Vector(person(1))
+          case other => fail(s"unexpected $other")
+        }
+      }
+    }
+
+    "fixes an empty pool without asking the beacon" in {
       val clock = new MovableClock(closesAt.minusSeconds(60))
       val raffle = entity(
         clock,

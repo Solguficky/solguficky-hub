@@ -38,6 +38,7 @@ import auction.raffle.RaffleEntity
 import auction.raffle.RaffleGateway
 import auction.raffle.RaffleTickets
 import auction.raffle.Seed
+import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.Done
 import org.apache.pekko.actor.CoordinatedShutdown
 import org.apache.pekko.http.scaladsl.model.HttpRequest
@@ -172,9 +173,16 @@ object AuctionNode {
     import system.executionContext
     system.scheduler.scheduleWithFixedDelay(every, every) { () =>
       tickets.eraseExpired(clock.instant()).onComplete {
-        case Success(erased) if erased > 0 => logger.info("raffle ticket names erased after retention: {}", erased)
+        case Success(erased) if erased > 0 =>
+          logger.info("raffle ticket names erased after retention", StructuredArguments.keyValue("erased", erased))
         case Success(_) => ()
-        case Failure(cause) => logger.warn("raffle ticket name erasure failed: {}", cause.getClass.getName)
+        // Ожидаемый отказ зависимости: база недоступна. Следующий тик повторит стирание.
+        case Failure(cause) =>
+          logger.warn(
+            "raffle ticket name erasure failed",
+            StructuredArguments.keyValue("error_category", "dependency_unavailable"),
+            StructuredArguments.keyValue("error", cause.getClass.getName)
+          )
       }
     }
     ()

@@ -30,11 +30,13 @@ object BeaconSettings {
   /** Пустой список или адрес не `http(s)://host` — отказ старта: розыгрыш не смог бы пройти никогда. */
   def fromConfig(config: Config): Either[String, BeaconSettings] = {
     val section = "auction.raffle.beacon"
-    val raw = config.getString(s"$section.mirrors").split(',').map(_.trim).filter(_.nonEmpty).toList
+    // Повторённый адрес голосовал бы дважды и обходил согласие двух зеркал, поэтому считаются разные адреса.
+    val raw =
+      config.getString(s"$section.mirrors").split(',').map(_.trim.stripSuffix("/")).filter(_.nonEmpty).toList.distinct
     val parsed = raw.map(value =>
       Try(URI.create(value)).toOption.filter(uri => uri.getHost != null && Set("http", "https")(uri.getScheme))
     )
-    if (raw.sizeIs < 2) Left("auction raffle beacon needs at least two mirrors: AUCTION_RAFFLE_BEACON_URLS")
+    if (raw.sizeIs < 2) Left("auction raffle beacon needs at least two distinct mirrors: AUCTION_RAFFLE_BEACON_URLS")
     else if (parsed.exists(_.isEmpty))
       Left("auction raffle beacon mirror is not an http(s) URL: AUCTION_RAFFLE_BEACON_URLS")
     else Right(BeaconSettings(parsed.flatten, config.getDuration(s"$section.request-timeout").toScala))

@@ -1296,11 +1296,8 @@ message RaffleCancellationRefusal {
   }
 }
 
-// The auction has no raffle: it was scheduled without raffle_closes_at, or its
-// prebidding has not started yet.
 message RaffleNotFound {}
 
-// Registration closed at closes_at: the pool no longer changes.
 message RaffleRegistrationClosed {}
 
 message GetRaffleRequest {

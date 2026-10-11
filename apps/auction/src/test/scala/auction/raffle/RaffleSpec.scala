@@ -47,11 +47,11 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
 
   "opening" should {
 
-    "publish the commitment of the seed and the first beacon round after closing plus a minute" in {
+    "publishes the commitment of the seed and the first beacon round after closing plus a minute" in {
       open.state shouldBe RaffleState.Open(RaffleTerms(closesAt, seed, Quicknet.roundFor(closesAt)), Vector.empty)
     }
 
-    "not open registration and not create a seed when it comes no earlier than closing" in {
+    "does not open registration and does not create a seed when it comes no earlier than closing" in {
       var seeded = false
       def seedOnce = { seeded = true; seed }
       Raffle.decide(Raffle.initial, OpenRaffle(closesAt), closesAt, seedOnce) shouldBe
@@ -59,14 +59,14 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
       seeded shouldBe false
     }
 
-    "not change the announced terms on a repeated opening" in {
+    "does not change the announced terms on a repeated opening" in {
       Raffle.decide(open, OpenRaffle(closesAt.plusSeconds(3600)), before, seed) shouldBe RaffleDecision.Unchanged
     }
   }
 
   "registration" should {
 
-    "give a participant one ticket however many times they register" in {
+    "gives a participant one ticket however many times they register" in {
       val once = register(open, 1, 2)
       Raffle.decide(once, Register(person(1), op(3)), before) shouldBe Right(RaffleDecision.Unchanged)
       Raffle.decide(once, Register(person(1), op(2)), before) match {
@@ -79,27 +79,35 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
       }
     }
 
-    "be refused by time at closing even while the state is still open" in {
+    "is refused by time at closing even while the state is still open" in {
       Raffle.decide(open, Register(person(1), op(2)), closesAt) shouldBe
         Left(RegistrationRejected.RegistrationClosed)
       Raffle.decide(open, CancelRegistration(person(1), op(2)), closesAt) shouldBe
         Left(RegistrationRejected.RegistrationClosed)
     }
 
-    "be refused without a raffle and after the pool is fixed" in {
+    "is refused without a raffle and after the pool is fixed" in {
       Raffle.decide(Raffle.initial, Register(person(1), op(2)), before) shouldBe
         Left(RegistrationRejected.RaffleNotFound)
       Raffle.decide(fixed(open), Register(person(1), op(2)), closesAt.plusSeconds(1)) shouldBe
         Left(RegistrationRejected.RegistrationClosed)
     }
 
-    "refuse an op_id that another command took" in {
+    "is refused as closed in a raffle that was not held" in {
+      val notHeld = Raffle.decide(Raffle.initial, OpenRaffle(closesAt), closesAt, seed) match {
+        case RaffleDecision.Accepted(event) => step(Raffle.initial, op(1), event)
+        case other => fail(s"unexpected $other")
+      }
+      Raffle.decide(notHeld, Register(person(1), op(2)), before) shouldBe Left(RegistrationRejected.RegistrationClosed)
+    }
+
+    "refuses an op_id that another command took" in {
       val once = register(open, 1, 2)
       Raffle.decide(once, CancelRegistration(person(1), op(2)), before) shouldBe Left(RegistrationRejected.OpIdTaken)
       Raffle.decide(once, Register(person(2), op(2)), before) shouldBe Left(RegistrationRejected.OpIdTaken)
     }
 
-    "let a participant cancel and register again at the end of the queue" in {
+    "lets a participant cancel and register again at the end of the queue" in {
       val three = register(register(register(open, 1, 2), 2, 3), 3, 4)
       val cancelled = accepted(three, op(5), Raffle.decide(three, CancelRegistration(person(1), op(5)), before))
       val again = register(cancelled, 1, 6)
@@ -109,11 +117,11 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
       }
     }
 
-    "accept a cancellation without a registration without an event" in {
+    "accepts a cancellation without a registration without an event" in {
       Raffle.decide(open, CancelRegistration(person(1), op(2)), before) shouldBe Right(RaffleDecision.Unchanged)
     }
 
-    "keep a late repeat of a registration after its cancellation from registering again" in {
+    "keeps a late repeat of a registration after its cancellation from registering again" in {
       val once = register(open, 1, 2)
       val cancelled = accepted(once, op(3), Raffle.decide(once, CancelRegistration(person(1), op(3)), before))
       Raffle.decide(cancelled, Register(person(1), op(2)), before) match {
@@ -125,7 +133,7 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
 
   "fixing the pool" should {
 
-    "number the remaining registrations 1..N in registration order without gaps" in {
+    "numbers the remaining registrations 1..N in registration order without gaps" in {
       val pool = register(register(register(open, 1, 2), 2, 3), 3, 4)
       fixed(pool, excluded = Set(person(2))).state match {
         case RaffleState.Fixed(_, tickets) =>
@@ -136,13 +144,19 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
       }
     }
 
-    "wait for closing and happen once" in {
+    "waits for closing and happens once" in {
       Raffle.decide(open, FixPool(Set.empty), before) shouldBe Left(FixPoolRejected.NotClosedYet)
       Raffle.decide(fixed(open), FixPool(Set.empty), closesAt) shouldBe Left(FixPoolRejected.AlreadyFixed)
       Raffle.decide(Raffle.initial, FixPool(Set.empty), closesAt) shouldBe Left(FixPoolRejected.NotOpen)
     }
 
-    "exclude only those Identity answered without the right and keep the unanswered" in {
+    "treats answers from the time of the beacon round on as too late to change the pool" in {
+      val terms = RaffleTerms(closesAt, seed, Quicknet.roundFor(closesAt))
+      Raffle.answeredTooLate(terms, closesAt.plusSeconds(30)) shouldBe false
+      Raffle.answeredTooLate(terms, Quicknet.roundAt(terms.round)) shouldBe true
+    }
+
+    "excludes only those Identity answered without the right and keeps the unanswered" in {
       Raffle.excluded(Map(person(1) -> Some(false), person(2) -> None, person(3) -> Some(true))) shouldBe
         Set(person(1))
     }
@@ -150,7 +164,7 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
 
   "the draw" should {
 
-    "take place once on a non-empty pool and refuse a second draw" in {
+    "takes place once on a non-empty pool and refuses a second draw" in {
       val pool = fixed(register(open, 1, 2))
       val drawn = Raffle.decide(pool, DrawWinner(randomness, closesAt.plusSeconds(61))) match {
         case Right(event) => step(pool, op(91), event)
@@ -159,7 +173,7 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
       Raffle.decide(drawn, DrawWinner(randomness, closesAt.plusSeconds(62))) shouldBe Left(DrawRejected.AlreadyDrawn)
     }
 
-    "not take place on an empty pool and not before the pool is fixed" in {
+    "does not take place on an empty pool and not before the pool is fixed" in {
       Raffle.decide(fixed(open), DrawWinner(randomness, closesAt)) shouldBe Left(DrawRejected.NoTickets)
       Raffle.decide(open, DrawWinner(randomness, closesAt)) shouldBe Left(DrawRejected.NotAwaitingBeacon)
     }

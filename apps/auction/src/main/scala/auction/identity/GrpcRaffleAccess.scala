@@ -59,7 +59,6 @@ final class GrpcRaffleAccess(client: IdentityServiceClient, token: String)(using
     client
       .checkAccessRight()
       .addHeader("authorization", s"Bearer $token")
-      .addHeader("x-use-case", "auction.raffle.close")
       .invoke(CheckAccessRightRequest(participant.value.toString, AccessRight.ACCESS_RIGHT_PLACE_BIDS))
       .map(_.granted)
 }

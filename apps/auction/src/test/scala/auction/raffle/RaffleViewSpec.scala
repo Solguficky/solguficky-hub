@@ -26,7 +26,7 @@ final class RaffleViewSpec extends AnyWordSpec with Matchers {
 
   "the raffle view" should {
 
-    "show the commitment and the round, but never the seed, until the draw" in {
+    "shows the commitment and the round, but never the seed, until the draw" in {
       val open = view(RaffleState.Open(terms, Vector(person(1)))).get
       open.status shouldBe RaffleStatus.Open
       open.registered shouldBe true
@@ -39,7 +39,7 @@ final class RaffleViewSpec extends AnyWordSpec with Matchers {
       awaiting.toString should not include seed.hex
     }
 
-    "after the draw reveal the seed, the randomness, V and the winning ticket with the names of the pool" in {
+    "reveals after the draw the seed, the randomness, V and the winning ticket with the names of the pool" in {
       val tickets = Vector(person(2), person(1))
       val drawn = view(RaffleState.Drawn(terms, tickets, randomness, closesAt.plusSeconds(61)), names = Map(1 -> "a*"))
       drawn.get.status shouldBe RaffleStatus.Drawn
@@ -53,7 +53,7 @@ final class RaffleViewSpec extends AnyWordSpec with Matchers {
       )
     }
 
-    "reveal the seed without a draw when the pool is empty and show nothing without a raffle" in {
+    "reveals the seed without a draw when the pool is empty and shows nothing without a raffle" in {
       val empty = view(RaffleState.Fixed(terms, Vector.empty)).get
       empty.status shouldBe RaffleStatus.NoTickets
       empty.reveal shouldBe Some(RaffleReveal(seed, None))

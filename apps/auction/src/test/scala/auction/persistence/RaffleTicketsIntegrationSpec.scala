@@ -40,7 +40,7 @@ final class RaffleTicketsIntegrationSpec extends AnyWordSpec with Matchers with 
 
   "raffle tickets" should {
 
-    "record the names of the pool as the history shows them and keep the first snapshot on a repeat" in {
+    "records the names of the pool as the history shows them and keeps the first snapshot on a repeat" in {
       withTickets { (names, tickets) =>
         val auction = AuctionId(UUID.randomUUID())
         val first = ParticipantId(UUID.randomUUID())
@@ -57,7 +57,7 @@ final class RaffleTicketsIntegrationSpec extends AnyWordSpec with Matchers with 
       }
     }
 
-    "erase names after their retention and leave the names of a raffle not yet due" in {
+    "erases names after their retention and leaves the names of a raffle not yet due" in {
       withTickets { (names, tickets) =>
         val due = AuctionId(UUID.randomUUID())
         val later = AuctionId(UUID.randomUUID())

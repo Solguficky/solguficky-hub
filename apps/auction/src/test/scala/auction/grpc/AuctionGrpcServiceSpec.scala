@@ -83,6 +83,16 @@ import identity.v1.access.AccessRight as AccessRightMessage
 import io.grpc.Status
 import org.apache.pekko.grpc.GrpcServiceException
 import org.apache.pekko.pattern.AskTimeoutException
+import auction.raffle.CancelRegistration
+import auction.raffle.Draw
+import auction.raffle.Raffle
+import auction.raffle.RaffleGateway
+import auction.raffle.RaffleState
+import auction.raffle.RaffleTerms
+import auction.raffle.Randomness
+import auction.raffle.Register
+import auction.raffle.RegistrationRejected
+import auction.raffle.Seed
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -274,7 +284,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       auctions: AuctionCommands = AuctionCommands(new Auctions, Unreachable, NoMeetups),
       auctionViews: AuctionViews = UntouchableAuctionViews,
       names: DisplayNameStore = Names(named),
-      clock: Clock = Clock.systemUTC()
+      clock: Clock = Clock.systemUTC(),
+      raffles: RaffleGateway = AuctionGrpcService.NoRaffles,
+      raffleNames: AuctionId => Future[Map[Int, String]] = _ => Future.successful(Map.empty)
   ) =
     AuctionGrpcService(
       lots,
@@ -285,7 +297,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       auctionViews,
       DisplayNameCommands(names),
       clock = clock,
-      overdueGrace = Duration.ofMinutes(2)
+      overdueGrace = Duration.ofMinutes(2),
+      raffles = raffles,
+      raffleNames = raffleNames
     )
 
   /** Аукцион сходки в онлайн-торгах с лотами в реестре — то, что пульт читает у entity. */
@@ -326,6 +340,96 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       case refused: GrpcServiceException => refused.status.getCode
       case other => fail(s"expected a status, got $other")
     }
+
+  /** Розыгрыш в памяти: отвечает тем, что задал тест, и помнит команды, которые до него дошли. */
+  private final class Raffles(raffle: Raffle, refusal: Option[RegistrationRejected] = None) extends RaffleGateway {
+    var reached: Vector[Any] = Vector.empty
+    private def answer(command: Any) = {
+      reached :+= command
+      Future.successful(refusal.toLeft(raffle))
+    }
+    def register(auction: AuctionId, command: Register) = answer(command)
+    def cancel(auction: AuctionId, command: CancelRegistration) = answer(command)
+    def get(auction: AuctionId) = Future.successful(raffle)
+  }
+
+  private val raffleSeed = Seed.fromHex("46fb9863b7178feb348aa621d658c5b41b848e398494830bac4837e0b0f539ae").get
+  private val raffleTerms = RaffleTerms(Instant.parse("2099-10-28T18:00:00Z"), raffleSeed, 42L)
+  private def raffleAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
+  private val raffleOp = "01890a5d-ac98-7c2b-9f3a-0d1b2c3d4e07"
+  private def registration = wire.RegisterForRaffleRequest(Some(viewer), raffleAuction, raffleOp)
+
+  "the raffle at the grpc boundary" should {
+
+    "refuses a viewer without the right to bid and a participant without a chosen name before the raffle" in {
+      val raffles = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector.empty), Map.empty))
+      val hubOnly = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_ACCESS_HUB))
+      statusOf(service(Unreachable, raffles = raffles).registerForRaffle(registration.withViewer(hubOnly))) shouldBe
+        Status.Code.PERMISSION_DENIED
+      statusOf(
+        service(Unreachable, raffles = raffles).getRaffle(wire.GetRaffleRequest(Some(hubOnly), raffleAuction))
+      ) shouldBe
+        Status.Code.PERMISSION_DENIED
+      service(Unreachable, names = Names(), raffles = raffles)
+        .registerForRaffle(registration)
+        .futureValue
+        .getRefused
+        .reason
+        .isDisplayNameNotChosen shouldBe true
+      raffles.reached shouldBe empty
+    }
+
+    "accepts a registration with the commitment and the round and without the seed" in {
+      val raffles = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector(ViewerId)), Map.empty))
+      val accepted = service(Unreachable, raffles = raffles).registerForRaffle(registration).futureValue.getAccepted
+      accepted.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_OPEN
+      accepted.registered shouldBe true
+      accepted.commitment shouldBe raffleSeed.commitment
+      accepted.beaconRound shouldBe 42L
+      accepted.reveal shouldBe None
+      accepted.toProtoString should not include raffleSeed.hex
+      raffles.reached shouldBe Vector(Register(ViewerId, OpId(UUID.fromString(raffleOp))))
+    }
+
+    "answers a closed registration and a foreign op_id the way the contract names them" in {
+      val closed = Raffles(Raffle(RaffleState.Initial, Map.empty), Some(RegistrationRejected.RegistrationClosed))
+      service(Unreachable, raffles = closed)
+        .cancelRaffleRegistration(
+          wire.CancelRaffleRegistrationRequest(Some(viewer), raffleAuction, "01890a5d-ac98-7c2b-9f3a-0d1b2c3d4e08")
+        )
+        .futureValue
+        .getRefused
+        .reason
+        .isRegistrationClosed shouldBe true
+      val taken = Raffles(Raffle(RaffleState.Initial, Map.empty), Some(RegistrationRejected.OpIdTaken))
+      statusOf(
+        service(Unreachable, raffles = taken).registerForRaffle(registration)
+      ) shouldBe Status.Code.ALREADY_EXISTS
+    }
+
+    "reveals a drawn raffle with the ticket names of the snapshot and answers no raffle with an empty response" in {
+      val randomness =
+        Randomness.fromHex("d7941e7b5bcaf8742bfc7136d38c5ab8274286629ffe43081dbda1f05d798300").get
+      val drawn = Raffle(
+        RaffleState
+          .Drawn(raffleTerms, Vector(ParticipantId(UUID.fromString(lot)), ViewerId), randomness, Instant.EPOCH),
+        Map.empty
+      )
+      val read = service(Unreachable, raffles = Raffles(drawn), raffleNames = _ => Future.successful(Map(1 -> "Кот*")))
+        .getRaffle(wire.GetRaffleRequest(Some(viewer), raffleAuction))
+        .futureValue
+        .getRaffle
+      read.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_DRAWN
+      read.tickets shouldBe Seq(wire.RaffleTicket(1, Some("Кот*")), wire.RaffleTicket(2, None))
+      read.myTicket shouldBe Some(2)
+      read.getReveal.seed shouldBe raffleSeed.hex
+      read.getReveal.winningTicket shouldBe Some(Draw.winner(raffleSeed, 2, randomness))
+      service(Unreachable, raffles = Raffles(Raffle.initial))
+        .getRaffle(wire.GetRaffleRequest(Some(viewer), raffleAuction))
+        .futureValue
+        .raffle shouldBe None
+    }
+  }
 
   "auction grpc service" should {
 

@@ -66,14 +66,16 @@ object PoolScreening {
       delay: FiniteDuration => Future[Unit]
   )(using ExecutionContext): Future[Map[ParticipantId, Option[Boolean]]] = {
     def attempt(participant: ParticipantId): Future[Option[Boolean]] =
-      Future
-        .delegate(access.holdsRight(participant))
-        .map(Option(_))
-        .recoverWith { case NonFatal(_) =>
-          if (clock.instant().plusNanos(retryEvery.toNanos).isBefore(until))
-            delay(retryEvery).flatMap(_ => attempt(participant))
-          else Future.successful(None)
-        }
+      if (!clock.instant().isBefore(until)) Future.successful(None)
+      else
+        Future
+          .delegate(access.holdsRight(participant))
+          .map(Option(_))
+          .recoverWith { case NonFatal(_) =>
+            if (clock.instant().plusNanos(retryEvery.toNanos).isBefore(until))
+              delay(retryEvery).flatMap(_ => attempt(participant))
+            else Future.successful(None)
+          }
     Future.traverse(candidates)(participant => attempt(participant).map(participant -> _)).map(_.toMap)
   }
 }
