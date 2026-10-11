@@ -453,6 +453,7 @@ describe("auction console adapter", () => {
     opId,
     opensAt: "2026-10-20T15:00:00Z",
     closesAt: "2026-10-26T21:00:00Z",
+    windows: [],
   };
 
   it.each([
@@ -492,6 +493,7 @@ describe("auction console adapter", () => {
         },
         finalBlocks,
         closingPolicy: { policy },
+        stepWindows: [],
       });
       expect(sent.config).not.toHaveProperty("lotDefaults");
     },
@@ -526,6 +528,127 @@ describe("auction console adapter", () => {
         final: true,
       }),
     ).resolves.toMatchObject({ kind: "invalid" });
+    await expect(
+      refusing("stepWindowWithoutClosesAt").scheduleAuction(admin, {
+        ...week,
+        final: true,
+      }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  it("sends the happy hours windows with the week and reads their refusals by window", async () => {
+    const window = {
+      from: "2026-10-21T15:00:00Z",
+      until: "2026-10-21T18:00:00Z",
+      step: { minorUnits: 5_000, currency: "RUB" },
+      lotIds: [lotId],
+    };
+    const scheduleAuction = vi.fn(async (_request: unknown) =>
+      create(ScheduleAuctionResponseSchema, {
+        outcome: { case: "accepted", value: {} },
+      }),
+    );
+    await adapter({ scheduleAuction }).scheduleAuction(admin, {
+      ...week,
+      final: true,
+      windows: [window],
+    });
+    const sent = scheduleAuction.mock.calls[0]?.[0] as {
+      config: { stepWindows: unknown };
+    };
+    expect(sent.config.stepWindows).toEqual([
+      { ...window, step: { minorUnits: 5_000n, currency: "RUB" } },
+    ]);
+
+    const refusing = (reason: { case: string; value: object }) =>
+      adapter({
+        scheduleAuction: async () =>
+          create(ScheduleAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: {
+                reason: {
+                  case: "configInvalid",
+                  value: { reason: reason as never },
+                },
+              },
+            },
+          }),
+      }).scheduleAuction(admin, { ...week, final: true, windows: [window] });
+    await expect(
+      refusing({
+        case: "stepWindowOutsideOnlinePhase",
+        value: { windowIndex: 0 },
+      }),
+    ).resolves.toEqual({ kind: "window-outside-week", window: 0 });
+    await expect(
+      refusing({
+        case: "stepWindowsOverlap",
+        value: { firstIndex: 0, secondIndex: 2 },
+      }),
+    ).resolves.toEqual({ kind: "windows-overlap", first: 0, second: 2 });
+    await expect(
+      refusing({ case: "stepWindowStepInvalid", value: { windowIndex: 1 } }),
+    ).resolves.toEqual({ kind: "window-step-invalid", window: 1 });
+    await expect(
+      refusing({ case: "stepWindowLotsEmpty", value: { windowIndex: 1 } }),
+    ).resolves.toEqual({ kind: "window-lots-empty", window: 1 });
+  });
+
+  it("reads the happy hours windows of the console and takes a window without a step for a defect", async () => {
+    const reading = (step: object | undefined) =>
+      adapter({
+        getAuctionConsole: async () =>
+          create(GetAuctionConsoleResponseSchema, {
+            outcome: {
+              case: "console",
+              value: {
+                auction: {
+                  id: auctionId,
+                  config: {
+                    onlinePhase: {
+                      opensAt: week.opensAt,
+                      closesAt: week.closesAt,
+                      closesLots: true,
+                    },
+                    stepWindows: [
+                      {
+                        from: "2026-10-21T15:00:00Z",
+                        until: "2026-10-21T18:00:00Z",
+                        ...(step === undefined ? {} : { step }),
+                        lotIds: [lotId],
+                      },
+                    ],
+                  },
+                  status: { case: "scheduled", value: {} },
+                },
+                lots: [],
+              },
+            },
+          }),
+      }).getAuctionConsole(admin, auctionId);
+
+    await expect(
+      reading({ minorUnits: 5_000n, currency: "RUB" }),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      console: {
+        week: {
+          windows: [
+            {
+              from: "2026-10-21T15:00:00Z",
+              until: "2026-10-21T18:00:00Z",
+              step: { minorUnits: 5_000, currency: "RUB" },
+              lotIds: [lotId],
+            },
+          ],
+        },
+      },
+    });
+    // Дефект перевода человек видит как «недоступно», а не пульт с выдумкой.
+    await expect(reading(undefined)).resolves.toMatchObject({
+      kind: "unavailable",
+    });
   });
 
   it("reads the console: state, week, lots with their bids, the final mark and the overdue flag", async () => {
@@ -577,7 +700,12 @@ describe("auction console adapter", () => {
       console: {
         auctionId,
         status: "prebidding",
-        week: { opensAt: week.opensAt, closesAt: week.closesAt, final: true },
+        week: {
+          opensAt: week.opensAt,
+          closesAt: week.closesAt,
+          final: true,
+          windows: [],
+        },
         lots: [
           {
             lot: expect.objectContaining({

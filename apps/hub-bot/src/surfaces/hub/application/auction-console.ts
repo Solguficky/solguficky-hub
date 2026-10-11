@@ -5,19 +5,24 @@ import type {
   ConsoleReadResult,
   LotClosure,
   LotStatisticsReadResult,
+  ScheduleAuctionResult,
 } from "../auction/port.js";
 import { communityInstant } from "../community-time.js";
-import { parseRubles } from "./lot-form.js";
+import { lotCurrency, parseRubles } from "./lot-form.js";
 import type {
   AuctionConsoleRequest,
   AuctionConsoleView,
+  AuctionWeek,
   CloseQuote,
   ConsoleAuctionStatus,
   ConsoleLot,
   ConsoleNote,
   ExecuteResult,
   LotAmount,
+  StepWindow,
   WeekAskError,
+  WindowAskError,
+  WindowRef,
 } from "./types.js";
 
 // Пульт аукциона администратора (PER-320): сроки онлайн-недели и финал,
@@ -89,6 +94,65 @@ export function parseWeek(
   }
   return { kind: "ok", opensAt, closesAt };
 }
+
+export type WindowResult =
+  | { kind: "ok"; from: string; until: string; step: LotAmount }
+  | { kind: "rejected"; error: WindowAskError };
+
+const windowErrorOf: Record<WeekAskError, WindowAskError> = {
+  "week-format": "window-format",
+  "week-moment": "window-moment",
+  "week-order": "window-order",
+  "week-ended": "window-ended",
+  // Разбор сроков этот отказ не даёт: его называет Auction.
+  "week-cuts-window": "window-outside-week",
+};
+
+/**
+ * Окно «Счастливых часов» (PER-504) одним ответом: сроки в виде сроков недели
+ * и шаг в окне целыми рублями через запятую — `ДД.ММ.ГГГГ ЧЧ:ММ —
+ * ДД.ММ.ГГГГ ЧЧ:ММ, 50`. Сроки разбирает то же правило, что сроки недели;
+ * лежит ли окно внутри недели, решает Auction.
+ */
+export function parseWindow(
+  raw: string,
+  timeZone: string,
+  now: Date,
+): WindowResult {
+  const comma = raw.lastIndexOf(",");
+  if (comma === -1) return { kind: "rejected", error: "window-format" };
+  const interval = parseWeek(raw.slice(0, comma), timeZone, now);
+  if (interval.kind === "rejected") {
+    return { kind: "rejected", error: windowErrorOf[interval.error] };
+  }
+  const step = parseRubles(raw.slice(comma + 1));
+  if (step.kind === "rejected") return { kind: "rejected", error: step.reason };
+  return {
+    kind: "ok",
+    from: interval.opensAt,
+    until: interval.closesAt,
+    step: { minorUnits: step.rubles * 100, currency: lotCurrency },
+  };
+}
+
+/**
+ * Отпечаток окна для кнопки пульта: пять знаков base36 от сроков и шага
+ * (FNV-1a). Номер окна в кнопке сдвигается, когда другое окно удалили, и
+ * отпечаток отличает прежнее окно от того, что встало на его место.
+ */
+export function windowPrint(window: StepWindow): string {
+  const source = `${window.from}|${window.until}|${window.step.minorUnits}|${window.step.currency}`;
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return (hash % 36 ** 5).toString(36).padStart(5, "0");
+}
+
+// Сколько окон держит пульт: ряд на окно, «Добавить окно» и выход
+// укладываются в двенадцать рядов экрана, а строки окон — в одно сообщение.
+export const windowLimit = 8;
 
 // Сколько последних ставок текущего лота видит ведущий.
 const recentBidLimit = 5;
@@ -175,9 +239,28 @@ export function acceptsLots(status: ConsoleAuctionStatus): boolean {
   return status === "draft" || status === "scheduled";
 }
 
-// Сроки и финал меняются, пока онлайн-неделя не открыта.
+// Сроки, финал и окна меняются, пока онлайн-неделя не открыта.
 function editable(console: AuctionConsoleView): boolean {
   return acceptsLots(console.status);
+}
+
+/** Окно по кнопке: номер и отпечаток совпали с прочитанной конфигурацией. */
+function windowAt(
+  console: AuctionConsoleView,
+  ref: WindowRef,
+): StepWindow | undefined {
+  const window = console.week?.windows[ref.index];
+  return window !== undefined && windowPrint(window) === ref.print
+    ? window
+    : undefined;
+}
+
+// Конфигурацию Auction уже принимал: отказ в ней теперь — дефект соседа.
+function storedRefused(scheduled: ScheduleAuctionResult): ExecuteResult {
+  return failed({
+    kind: "invalid",
+    cause: new Error(`stored auction configuration refused: ${scheduled.kind}`),
+  });
 }
 
 export function createAuctionConsole(
@@ -350,6 +433,8 @@ export function createAuctionConsole(
     const week = parseWeek(request.value, timeZone, now());
     if (week.kind === "rejected") return { ...asked, error: week.error };
     const final = console.week?.final ?? defaultFinal;
+    // Окна едут с новыми сроками: без них Auction стёр бы их молча.
+    const windows = console.week?.windows ?? [];
     const scheduled = await consoles.scheduleAuction(
       request.identity,
       {
@@ -358,6 +443,7 @@ export function createAuctionConsole(
         opensAt: week.opensAt,
         closesAt: week.closesAt,
         final,
+        windows,
       },
       rpcMeta(request),
     );
@@ -368,12 +454,29 @@ export function createAuctionConsole(
           console: {
             ...console,
             status: "scheduled",
-            week: { opensAt: week.opensAt, closesAt: week.closesAt, final },
+            week: {
+              opensAt: week.opensAt,
+              closesAt: week.closesAt,
+              final,
+              windows,
+            },
           },
           note: "week-saved",
         };
       case "closes-not-after-opens":
         return { ...asked, error: "week-order" };
+      // Окно, которое не помещается в новые сроки, бот не выбрасывает сам:
+      // человек решает, сдвинуть сроки или удалить окно.
+      case "window-outside-week":
+        return {
+          ...asked,
+          error: "week-cuts-window",
+          window: scheduled.window + 1,
+        };
+      case "windows-overlap":
+      case "window-step-invalid":
+      case "window-lots-empty":
+        return storedRefused(scheduled);
       case "already-started":
         return after(request, "week-frozen");
       case "not-administrator":
@@ -416,6 +519,7 @@ export function createAuctionConsole(
         opensAt: week.opensAt,
         closesAt: week.closesAt,
         final: request.final,
+        windows: week.windows,
       },
       rpcMeta(request),
     );
@@ -424,12 +528,13 @@ export function createAuctionConsole(
         return toggled({ ...console, week: { ...week, final: request.final } });
       case "already-started":
         return after(request, "week-frozen");
+      // Сроки и окна прочитаны у самого Auction, и он их уже принимал.
       case "closes-not-after-opens":
-        // Сроки прочитаны у самого Auction, и он их уже принимал.
-        return failed({
-          kind: "invalid",
-          cause: new Error("stored auction week refused as invalid"),
-        });
+      case "window-outside-week":
+      case "windows-overlap":
+      case "window-step-invalid":
+      case "window-lots-empty":
+        return storedRefused(scheduled);
       case "not-administrator":
       case "meetup-not-found":
         return notAdministrator;
@@ -947,6 +1052,279 @@ export function createAuctionConsole(
     }
   }
 
+  // «Счастливые часы» (PER-504). Окна живут только в конфигурации Auction:
+  // каждая команда читает её заново, меняет окна и отдаёт целиком той же
+  // `ScheduleAuction`, что сроки и финал. Двое администраторов, нажавших
+  // одновременно, — последний выигрывает, как у переключателя финала:
+  // закрыть это может только версия в контракте.
+  type ScheduledWeek = AuctionWeek & { opensAt: string; closesAt: string };
+  type Editable =
+    | { kind: "ok"; console: AuctionConsoleView; week: ScheduledWeek }
+    | { kind: "refused"; result: ExecuteResult };
+
+  async function editableWeek(
+    request: AuctionConsoleRequest,
+  ): Promise<Editable> {
+    const current = await read(request);
+    if (current.kind === "refused") return current;
+    const { console } = current;
+    if (!editable(console)) {
+      return {
+        kind: "refused",
+        result: { kind: "auction-console", console, note: "week-frozen" },
+      };
+    }
+    const week = console.week;
+    if (week?.opensAt === undefined || week.closesAt === undefined) {
+      return {
+        kind: "refused",
+        result: { kind: "auction-console", console, note: "week-needed" },
+      };
+    }
+    return {
+      kind: "ok",
+      console,
+      week: { ...week, opensAt: week.opensAt, closesAt: week.closesAt },
+    };
+  }
+
+  function withWindows(
+    console: AuctionConsoleView,
+    week: AuctionWeek,
+    windows: readonly StepWindow[],
+  ): AuctionConsoleView {
+    return { ...console, week: { ...week, windows } };
+  }
+
+  function scheduleWindows(
+    request: AuctionConsoleRequest & { opId: string },
+    week: ScheduledWeek,
+    windows: readonly StepWindow[],
+  ): Promise<ScheduleAuctionResult> {
+    return consoles.scheduleAuction(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        opId: request.opId,
+        opensAt: week.opensAt,
+        closesAt: week.closesAt,
+        final: week.final,
+        windows,
+      },
+      rpcMeta(request),
+    );
+  }
+
+  // Исходы, общие у всех команд над окнами: отказы конфигурации каждая
+  // команда разбирает сама до этой функции.
+  function windowsRefused(
+    request: AuctionConsoleRequest,
+    scheduled: ScheduleAuctionResult,
+  ): Promise<ExecuteResult> | ExecuteResult {
+    switch (scheduled.kind) {
+      case "already-started":
+        return after(request, "week-frozen");
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      case "ok":
+      case "closes-not-after-opens":
+      case "window-outside-week":
+      case "windows-overlap":
+      case "window-step-invalid":
+      case "window-lots-empty":
+        return storedRefused(scheduled);
+      default:
+        return failed(scheduled);
+    }
+  }
+
+  // «Добавить окно»: вопрос называет сроки недели, поэтому пульт читается до
+  // него. Окну нужны лоты: без реестра вопрос не задаётся.
+  async function askWindow(
+    request: Extract<AuctionConsoleRequest, { intent: "ask-step-window" }>,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    if (found.console.lots.length === 0) {
+      return {
+        kind: "step-windows",
+        console: found.console,
+        note: { kind: "no-lots" },
+      };
+    }
+    if (found.week.windows.length >= windowLimit) {
+      return {
+        kind: "step-windows",
+        console: found.console,
+        note: { kind: "limit" },
+      };
+    }
+    return {
+      kind: "step-window-ask",
+      auctionId: request.auctionId,
+      week: found.week,
+    };
+  }
+
+  // Новое окно рождается со всеми лотами реестра (решение владельца
+  // 11 октября 2026 года): «все» — это выбор всех, а лишние организатор
+  // снимает на экране окна. Пустого окна Auction не принимает.
+  async function addWindow(
+    request: Extract<AuctionConsoleRequest, { intent: "add-step-window" }>,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    const { console, week } = found;
+    const asked = {
+      kind: "step-window-ask" as const,
+      auctionId: request.auctionId,
+      week,
+    };
+    const parsed = parseWindow(request.value, timeZone, now());
+    if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
+    if (console.lots.length === 0) {
+      return { kind: "step-windows", console, note: { kind: "no-lots" } };
+    }
+    if (week.windows.length >= windowLimit) {
+      return { kind: "step-windows", console, note: { kind: "limit" } };
+    }
+    const index = week.windows.length;
+    const windows = [
+      ...week.windows,
+      {
+        from: parsed.from,
+        until: parsed.until,
+        step: parsed.step,
+        lotIds: console.lots.map((each) => each.lot.lotId),
+      },
+    ];
+    const scheduled = await scheduleWindows(request, week, windows);
+    switch (scheduled.kind) {
+      case "ok":
+        return {
+          kind: "step-windows",
+          console: withWindows(console, week, windows),
+          note: { kind: "saved", window: index + 1 },
+        };
+      case "window-outside-week":
+        return scheduled.window === index
+          ? { ...asked, error: "window-outside-week" }
+          : storedRefused(scheduled);
+      case "window-step-invalid":
+        return scheduled.window === index
+          ? { ...asked, error: "window-step" }
+          : storedRefused(scheduled);
+      case "windows-overlap":
+        // Новое окно последнее в списке: с ним пересеклось первое из пары.
+        return scheduled.second === index
+          ? { ...asked, error: "window-overlap", window: scheduled.first + 1 }
+          : storedRefused(scheduled);
+      default:
+        return windowsRefused(request, scheduled);
+    }
+  }
+
+  async function viewWindow(
+    request: Extract<AuctionConsoleRequest, { intent: "view-step-window" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    if (windowAt(console, request.window) === undefined) {
+      return { kind: "step-windows", console, note: { kind: "changed" } };
+    }
+    return {
+      kind: "step-window",
+      console,
+      index: request.window.index,
+      at: { page: request.page },
+    };
+  }
+
+  // Лот в окне и вне его. Кнопка несёт целевое состояние: лот уже такой —
+  // команды нет, а ответ тот же.
+  async function setWindowLot(
+    request: Extract<AuctionConsoleRequest, { intent: "set-step-window-lot" }>,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    const { console, week } = found;
+    const { index } = request.window;
+    const window = windowAt(console, request.window);
+    if (window === undefined) {
+      return { kind: "step-windows", console, note: { kind: "changed" } };
+    }
+    if (!console.lots.some((each) => each.lot.lotId === request.lotId)) {
+      return { kind: "auction-console", console, note: "lot-not-in-auction" };
+    }
+    const shown = (each: AuctionConsoleView): ExecuteResult => ({
+      kind: "step-window",
+      console: each,
+      index,
+      at: { lotId: request.lotId },
+      toggled: { selected: request.selected },
+    });
+    if (window.lotIds.includes(request.lotId) === request.selected) {
+      return shown(console);
+    }
+    const lotIds = request.selected
+      ? [...window.lotIds, request.lotId]
+      : window.lotIds.filter((lotId) => lotId !== request.lotId);
+    if (lotIds.length === 0) {
+      return {
+        kind: "step-windows",
+        console,
+        note: { kind: "last-lot", window: index + 1 },
+      };
+    }
+    const windows = week.windows.map((each, at) =>
+      at === index ? { ...each, lotIds } : each,
+    );
+    const scheduled = await scheduleWindows(request, week, windows);
+    switch (scheduled.kind) {
+      case "ok":
+        return shown(withWindows(console, week, windows));
+      case "windows-overlap": {
+        // Лот добавлен в окно, которое пересекается с другим окном этого
+        // лота: человек выбирает, в каком из двух лоту быть.
+        const other =
+          scheduled.first === index ? scheduled.second : scheduled.first;
+        return {
+          kind: "step-windows",
+          console,
+          note: { kind: "overlap", window: index + 1, other: other + 1 },
+        };
+      }
+      default:
+        return windowsRefused(request, scheduled);
+    }
+  }
+
+  // Удаление окна — без подтверждения: окно задаётся заново одним ответом.
+  async function removeWindow(
+    request: Extract<AuctionConsoleRequest, { intent: "remove-step-window" }>,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    const { console, week } = found;
+    const { index } = request.window;
+    if (windowAt(console, request.window) === undefined) {
+      return { kind: "step-windows", console, note: { kind: "changed" } };
+    }
+    const windows = week.windows.filter((_, at) => at !== index);
+    const scheduled = await scheduleWindows(request, week, windows);
+    return scheduled.kind === "ok"
+      ? {
+          kind: "step-windows",
+          console: withWindows(console, week, windows),
+          note: { kind: "removed", window: index + 1 },
+        }
+      : windowsRefused(request, scheduled);
+  }
+
   return async function auctionConsole(
     request: AuctionConsoleRequest,
   ): Promise<ExecuteResult> {
@@ -981,6 +1359,22 @@ export function createAuctionConsole(
         return prepareDiscard(request);
       case "discard-auction":
         return discard(request);
+      case "view-step-windows": {
+        const current = await read(request);
+        return current.kind === "refused"
+          ? current.result
+          : { kind: "step-windows", console: current.console };
+      }
+      case "view-step-window":
+        return viewWindow(request);
+      case "ask-step-window":
+        return askWindow(request);
+      case "add-step-window":
+        return addWindow(request);
+      case "set-step-window-lot":
+        return setWindowLot(request);
+      case "remove-step-window":
+        return removeWindow(request);
       default: {
         const _exhaustive: never = request;
         return _exhaustive;

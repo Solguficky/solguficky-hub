@@ -7,7 +7,11 @@ import type {
   Viewer,
 } from "../../../auction-ui/index.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
-import type { AuctionConsoleSnapshot, Person } from "../application/types.js";
+import type {
+  AuctionConsoleSnapshot,
+  Person,
+  StepWindow,
+} from "../application/types.js";
 
 // Аукцион у сходки (ADR-047, дополнение 2026-10-03; PER-307). Бот хаба зовёт
 // Auction в двух ролях. Оболочка сходки — эти два метода: аукцион сходки на
@@ -164,13 +168,19 @@ export type LotStatisticsReadResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
-// Из отказов конфигурации человек может вызвать только «конец не позже
-// начала»: остальные бот не собирает, и они — дефект.
+// Из отказов конфигурации человек может вызвать «конец не позже начала» и
+// отказы окон «Счастливых часов» (PER-504): окно вне недели, пересечение двух
+// окон по общему лоту, шаг окна и окно без лотов. Остальные бот не собирает,
+// и они — дефект. Окна названы номером в конфигурации с нуля.
 export type ScheduleAuctionResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
   | { kind: "closes-not-after-opens" }
+  | { kind: "window-outside-week"; window: number }
+  | { kind: "windows-overlap"; first: number; second: number }
+  | { kind: "window-step-invalid"; window: number }
+  | { kind: "window-lots-empty"; window: number }
   | { kind: "already-started" }
   | { kind: "auction-not-found" }
   | AuctionFailure;
@@ -210,15 +220,17 @@ export type FinalistResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
-// Сроки недели целиком: Auction заменяет конфигурацию, а не правит её.
-// `lot_defaults` бот не шлёт — их подставляет Auction; правило закрытия
-// выводится из финала.
+// Сроки недели целиком: Auction заменяет конфигурацию, а не правит её, поэтому
+// окна «Счастливых часов» едут в каждой команде — без них правка сроков или
+// финала стёрла бы окна молча. `lot_defaults` бот не шлёт — их подставляет
+// Auction; правило закрытия выводится из финала.
 export type AuctionWeekConfig = {
   auctionId: string;
   opId: string;
   opensAt: string;
   closesAt: string;
   final: boolean;
+  windows: readonly StepWindow[];
 };
 
 export type FinalistMark = { auctionId: string; lotId: string; opId: string };

@@ -329,7 +329,7 @@ Identity публикует события о регистрации, смене
 | `AuctionService.AddLot` | то же | Hub Bot и Auction Bot; сегодня зовёт только форма лота администратора в боте хаба ([PER-319](https://linear.app/anticnvm/issue/per-319)) | Auction |
 | `AuctionService.RemoveLot` | то же | Hub Bot и Auction Bot; клиента пока нет | Auction |
 | `AuctionService.ScheduleLot` | то же | Только Hub Bot: цена и шаг в форме лота администратора ([PER-319](https://linear.app/anticnvm/issue/per-319)) | Auction |
-| `AuctionService.ScheduleAuction` | то же | Только Hub Bot: сроки недели и финал в пульте администратора ([PER-320](https://linear.app/anticnvm/issue/per-320)) | Auction |
+| `AuctionService.ScheduleAuction` | то же | Только Hub Bot: сроки недели, финал ([PER-320](https://linear.app/anticnvm/issue/per-320)) и окна «Счастливых часов» ([PER-504](https://linear.app/anticnvm/issue/per-504)) в пульте администратора; окна едут в каждой команде, потому что конфигурацию Auction заменяет целиком | Auction |
 | `AuctionService.StartPrebidding` | то же | Только Hub Bot: открытие онлайн-недели в пульте администратора ([PER-320](https://linear.app/anticnvm/issue/per-320)) | Auction |
 | `AuctionService.DiscardAuction` | то же | Только Hub Bot: «Удалить аукцион» в пульте администратора, пока онлайн-неделя не открыта ([ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-09-удаление-аукциона-до-торгов)) | Auction |
 | `AuctionService.SelectForFinal` | то же | Только Hub Bot: отметка лота для финала в пульте администратора ([PER-320](https://linear.app/anticnvm/issue/per-320)) | Auction |

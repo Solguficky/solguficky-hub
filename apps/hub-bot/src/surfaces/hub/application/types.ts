@@ -320,6 +320,20 @@ export type AuctionWeek = {
   opensAt?: string;
   closesAt?: string;
   final: boolean;
+  // Окна «Счастливых часов» (PER-504) в порядке конфигурации: номер окна —
+  // его позиция, ею же Auction называет окно в отказе.
+  windows: readonly StepWindow[];
+};
+
+// Окно сниженного шага (ADR-047, дополнение 2026-10-08): полуоткрытый
+// интервал `[from, until)` онлайн-недели, шаг в нём и лоты, которые назвал
+// организатор. Лоты окна — не обязательно лоты реестра: Auction их против
+// реестра не сверяет.
+export type StepWindow = {
+  from: string;
+  until: string;
+  step: LotAmount;
+  lotIds: readonly string[];
 };
 
 // Лот на пульте: снимок, число ставок, отметка «в финал» и просрочка — торги
@@ -412,12 +426,48 @@ export type ConsoleNote =
   | "deadline-not-reached"
   | "final-finished";
 
-// Почему вопрос о сроках недели задан заново.
+// Почему вопрос о сроках недели задан заново. `week-cuts-window` — окно
+// «Счастливых часов» не помещается в новые сроки; номер окна едет рядом.
 export type WeekAskError =
   | "week-format"
   | "week-moment"
   | "week-order"
-  | "week-ended";
+  | "week-ended"
+  | "week-cuts-window";
+
+// Почему вопрос об окне «Счастливых часов» задан заново (PER-504). Сроки окна
+// разбираются тем же правилом, что сроки недели; остальное решает Auction.
+export type WindowAskError =
+  | "window-format"
+  | "window-moment"
+  | "window-order"
+  | "window-ended"
+  | "amount-format"
+  | "amount-range"
+  | "window-outside-week"
+  | "window-overlap"
+  | "window-step";
+
+// Окно в кнопке пульта: номер в конфигурации и отпечаток его сроков и шага.
+// Номер сдвигается, когда другое окно удалили; отпечаток ловит это, и кнопка
+// со старого экрана не правит чужое окно.
+export type WindowRef = { index: number; print: string };
+
+// Исход команды над окнами: свой экран с возвратом к «Счастливым часам».
+// `window` — номер окна для человека, с единицы.
+export type WindowNote =
+  | { kind: "saved"; window: number }
+  | { kind: "removed"; window: number }
+  // Окна изменились с тех пор, как экран показан: кнопка устарела.
+  | { kind: "changed" }
+  // Окно без лотов Auction не принимает: снять последний лот нельзя.
+  | { kind: "last-lot"; window: number }
+  // Лотов в реестре нет: окну нечего назвать.
+  | { kind: "no-lots" }
+  // Окон уже столько, сколько держит пульт.
+  | { kind: "limit" }
+  // Лот окна уже стоит в другом окне, которое пересекается с этим по времени.
+  | { kind: "overlap"; window: number; other: number };
 
 // Почему вопрос о следующей цене лота финала задан заново.
 export type FinalAskError =
@@ -458,6 +508,35 @@ export type AuctionConsoleRequest =
       intent: "mark-auction-finalist";
       lotId: string;
       selected: boolean;
+      opId: string;
+    })
+  // «Счастливые часы» (PER-504): список окон, окно с его лотами, вопрос о
+  // новом окне и команды. Каждая команда читает конфигурацию заново и отдаёт
+  // её Auction целиком: своего состояния у пульта нет.
+  | (AuctionConsoleCall & { intent: "view-step-windows" })
+  | (AuctionConsoleCall & {
+      intent: "view-step-window";
+      window: WindowRef;
+      page: number;
+    })
+  | (AuctionConsoleCall & { intent: "ask-step-window" })
+  // Окно приходит строкой, как его написал человек: разбор — дело юзкейса.
+  | (AuctionConsoleCall & {
+      intent: "add-step-window";
+      value: string;
+      opId: string;
+    })
+  // Кнопка несёт целевое состояние лота в окне, а не переворот.
+  | (AuctionConsoleCall & {
+      intent: "set-step-window-lot";
+      window: WindowRef;
+      lotId: string;
+      selected: boolean;
+      opId: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "remove-step-window";
+      window: WindowRef;
       opId: string;
     })
   // Финал ведущего (PER-337). Лот финала кнопка называет номером в
@@ -667,12 +746,39 @@ export type ExecuteResult =
       // Переключатель финала принят: исход — всплывающий текст, а не строка.
       toggled?: true;
     }
-  // Вопрос о сроках недели: первый либо тот же заново, с причиной.
+  // Вопрос о сроках недели: первый либо тот же заново, с причиной. `window` —
+  // номер окна с единицы при `week-cuts-window`.
   | {
       kind: "auction-week-ask";
       auctionId: string;
       week?: AuctionWeek;
       error?: WeekAskError;
+      window?: number;
+    }
+  // «Счастливые часы» (PER-504): список окон либо исход команды над ними.
+  | {
+      kind: "step-windows";
+      console: AuctionConsoleView;
+      note?: WindowNote;
+    }
+  // Окно и лоты реестра с отметкой «в окне»: страница списка либо лот, чью
+  // страницу показать. `toggled` — принят переключатель лота: исход —
+  // всплывающий текст, а не экран.
+  | {
+      kind: "step-window";
+      console: AuctionConsoleView;
+      index: number;
+      at: { page: number } | { lotId: string };
+      toggled?: { selected: boolean };
+    }
+  // Вопрос о новом окне: первый либо тот же заново, с причиной. `window` —
+  // номер окна с единицы, с которым новое пересеклось.
+  | {
+      kind: "step-window-ask";
+      auctionId: string;
+      week?: AuctionWeek;
+      error?: WindowAskError;
+      window?: number;
     }
   // Подтверждение открытия недели: сколько лотов откроется и сколько
   // останется без торгов — без цены и шага. `opId` уедет в «Да».

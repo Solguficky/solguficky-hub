@@ -52,6 +52,7 @@ const rub = (minorUnits: number): Money => ({ minorUnits, currency: "RUB" });
 const week = {
   opensAt: "2026-10-20T15:00:00Z",
   closesAt: "2026-10-26T21:00:00Z",
+  windows: [],
 };
 
 function trading(lotId: string, title: string, price: number): LotView {
@@ -206,11 +207,21 @@ function fakeAuction(
       if (state.status !== "draft" && state.status !== "scheduled") {
         return { kind: "already-started" };
       }
+      // Окно «Счастливых часов» лежит внутри недели — как в сервисе.
+      const outside = config.windows.findIndex(
+        (window) =>
+          Date.parse(window.from) < Date.parse(config.opensAt) ||
+          Date.parse(window.until) > Date.parse(config.closesAt),
+      );
+      if (outside !== -1) {
+        return { kind: "window-outside-week", window: outside };
+      }
       state.status = "scheduled";
       state.week = {
         opensAt: config.opensAt,
         closesAt: config.closesAt,
         final: config.final,
+        windows: config.windows,
       };
       return { kind: "ok" };
     },
@@ -956,6 +967,7 @@ describe("week of the auction", () => {
       ["Ставки", "Люди", "Рост"],
       ["Сроки недели"],
       ["Вкл · Финал"],
+      ["Счастливые часы"],
       ["Открыть онлайн-неделю"],
       ["🗑 Удалить аукцион"],
       ["‹ Лоты"],
@@ -1152,6 +1164,7 @@ describe("opening the online week", () => {
         opensAt: "2026-09-28T15:00:00Z",
         closesAt: "2026-10-05T21:00:00Z",
         final: true,
+        windows: [],
       },
       lots: [priced],
     });
@@ -1551,5 +1564,183 @@ describe("final of the auctioneer", () => {
       expect(last(calls).text).toContain("Это действие тебе недоступно.");
     }
     expect(auction.commands).toEqual([]);
+  });
+});
+
+describe("happy hours", () => {
+  const evening = {
+    from: "2026-10-21T15:00:00Z",
+    until: "2026-10-21T18:00:00Z",
+    step: rub(5_000),
+  };
+
+  it("adds a window with every lot, takes a lot out, keeps the last one and survives a restart at every step", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced, unpriced],
+    });
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(consoleData));
+    await next((history) => press(dataOf(last(history), "Счастливые часы")));
+    expect(plain(last(calls))).toContain("Окон пока нет.");
+    expect(labels(last(calls))).toEqual([["Добавить окно"], ["‹ Пульт"]]);
+
+    await next((history) => press(dataOf(last(history), "Добавить окно")));
+    const asked = question(calls).payload;
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:ah:${auctionToken}:42`);
+    expect(asked.text).toContain("Неделя: 20.10.2026 18:00 — 27.10.2026 00:00");
+    expect(asked.text).toContain(
+      "Например: 21.10.2026 18:00 — 21.10.2026 21:00, 50",
+    );
+
+    // Окно вне недели отклоняет Auction; пульт называет сроки недели.
+    await next((history) =>
+      answer(history, { text: "28.10.2026 18:00 — 28.10.2026 21:00, 50" }),
+    );
+    expect(last(calls).text).toBe(
+      "<b>Окно должно лежать внутри онлайн-недели: 20.10.2026 18:00 — 27.10.2026 00:00</b>",
+    );
+    expect(labels(last(calls))).toEqual([
+      ["Ввести заново"],
+      ["‹ Счастливые часы"],
+    ]);
+    await next((history) => press(dataOf(last(history), "Ввести заново")));
+    await next((history) =>
+      answer(history, { text: "21.10.2026 18:00 — 21.10.2026 21:00, 50" }),
+    );
+
+    expect(auction.sent("scheduleAuction").at(-1)?.args).toEqual({
+      auctionId,
+      opId: expect.any(String),
+      ...week,
+      final: true,
+      windows: [{ ...evening, lotIds: [vaseId, mugId] }],
+    });
+    expect(last(calls).text).toBe(
+      "<b>Окно 1 сохранено</b>\n\nВ нём все лоты аукциона — лишние сними на экране окна.",
+    );
+    await next((history) => press(dataOf(last(history), "‹ Счастливые часы")));
+    expect(plain(last(calls))).toContain(
+      "1. с 21 октября, ср, 18:00 до 21 октября, ср, 21:00, шаг 50 ₽ · лотов 2 из 2",
+    );
+    expect(labels(last(calls))).toEqual([
+      ["Окно 1"],
+      ["Добавить окно"],
+      ["‹ Пульт"],
+    ]);
+
+    await next((history) => press(dataOf(last(history), "Окно 1")));
+    expect(labels(last(calls))).toEqual([
+      ["Вкл · Ваза"],
+      ["Вкл · Кружка"],
+      ["🗑 Удалить окно"],
+      ["‹ Счастливые часы"],
+    ]);
+    await next((history) => press(dataOf(last(history), "Вкл · Кружка")));
+    expect(toasts(calls).at(-1)).toBe("Лот убран из окна.");
+    expect(auction.state.week?.windows).toEqual([
+      { ...evening, lotIds: [vaseId] },
+    ]);
+    expect(labels(last(calls))).toEqual([
+      ["Вкл · Ваза"],
+      ["Выкл · Кружка"],
+      ["🗑 Удалить окно"],
+      ["‹ Счастливые часы"],
+    ]);
+
+    const commands = auction.sent("scheduleAuction").length;
+    await next((history) => press(dataOf(last(history), "Вкл · Ваза")));
+    expect(last(calls).text).toBe(
+      "<b>Это последний лот окна 1</b>\n\nОкна без лотов не бывает — удали окно целиком.",
+    );
+    expect(auction.sent("scheduleAuction")).toHaveLength(commands);
+
+    await next(() => press(consoleData));
+    expect(plain(last(calls))).toContain("Счастливые часы: 1 окно.");
+  });
+
+  it("names the window that new dates cut off and keeps it", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: {
+        ...week,
+        final: true,
+        windows: [{ ...evening, lotIds: [vaseId] }],
+      },
+      lots: [priced],
+    });
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(consoleData));
+    await next((history) => press(dataOf(last(history), "Сроки недели")));
+    await next((history) =>
+      answer(history, { text: "20.10.2026 18:00 — 21.10.2026 19:00" }),
+    );
+
+    expect(auction.sent("scheduleAuction").at(-1)?.args).toMatchObject({
+      windows: [{ ...evening, lotIds: [vaseId] }],
+    });
+    expect(last(calls).text).toBe(
+      "<b>Окно 1 счастливых часов не помещается в новые сроки</b>\n\nУдали его или задай сроки шире.",
+    );
+    expect(auction.state.week?.closesAt).toBe(week.closesAt);
+  });
+
+  it("removes a window from its screen", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: {
+        ...week,
+        final: true,
+        windows: [{ ...evening, lotIds: [vaseId] }],
+      },
+      lots: [priced],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Окно 1")));
+    await bot.handleUpdate(press(dataOf(last(calls), "🗑 Удалить окно")));
+
+    expect(last(calls).text).toBe("<b>Окно 1 удалено</b>");
+    expect(auction.state.week?.windows).toEqual([]);
+  });
+
+  it("shows the windows of an opened week without changing them", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: {
+        ...week,
+        final: true,
+        windows: [{ ...evening, lotIds: [vaseId] }],
+      },
+      lots: [vase, mug],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+    expect(plain(last(calls))).toContain("Счастливые часы: 1 окно.");
+    await bot.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
+    expect(plain(last(calls))).toContain("лотов 1 из 2");
+    expect(labels(last(calls))).toEqual([["Окно 1"], ["‹ Пульт"]]);
+    // Окно открывается только для чтения: переключателей и удаления нет.
+    await bot.handleUpdate(press(dataOf(last(calls), "Окно 1")));
+    expect(plain(last(calls))).toContain("• Ваза");
+    expect(labels(last(calls))).toEqual([["‹ Счастливые часы"]]);
   });
 });

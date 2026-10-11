@@ -17,8 +17,19 @@ import type {
   StartNextLotResult,
   StartPrebiddingResult,
 } from "../auction/port.js";
-import { createAuctionConsole, parseWeek } from "./auction-console.js";
-import type { AuctionConsoleView, ConsoleLot, Person } from "./types.js";
+import {
+  createAuctionConsole,
+  parseWeek,
+  parseWindow,
+  windowLimit,
+  windowPrint,
+} from "./auction-console.js";
+import type {
+  AuctionConsoleView,
+  ConsoleLot,
+  Person,
+  StepWindow,
+} from "./types.js";
 
 // Юзкейсы пульта аукциона (PER-320) без Telegram: разбор сроков недели и
 // перевод ответов Auction в пульт с исходом. Auction подменён ответами по
@@ -39,6 +50,7 @@ const noLotStatistics: LotStatisticsReadResult = { kind: "ok", lots: [] };
 const week = {
   opensAt: "2026-10-20T15:00:00Z",
   closesAt: "2026-10-26T21:00:00Z",
+  windows: [],
 };
 
 function view(
@@ -111,7 +123,11 @@ describe("parseWeek", () => {
     "20.10.2026 18:00–27.10.2026 00:00",
     "  20.10.2026 18:00 27.10.2026 00:00 ",
   ])("reads «%s» in community time", (raw) => {
-    expect(parseWeek(raw, zone, now)).toEqual({ kind: "ok", ...week });
+    expect(parseWeek(raw, zone, now)).toEqual({
+      kind: "ok",
+      opensAt: week.opensAt,
+      closesAt: week.closesAt,
+    });
   });
 
   it.each([
@@ -363,6 +379,7 @@ describe("auction week start", () => {
           opensAt: week.opensAt,
           closesAt: "2026-10-06T08:00:00Z",
           final: true,
+          windows: [],
         },
         lots: [priced],
       }),
@@ -952,5 +969,366 @@ describe("final of the auctioneer", () => {
         freshOpId,
       }),
     ).resolves.toEqual(refused);
+  });
+});
+
+describe("parseWindow", () => {
+  it("reads the span in community time and the step in whole rubles", () => {
+    expect(
+      parseWindow("21.10.2026 18:00 — 21.10.2026 21:00, 50", zone, now),
+    ).toEqual({
+      kind: "ok",
+      from: "2026-10-21T15:00:00Z",
+      until: "2026-10-21T18:00:00Z",
+      step: { minorUnits: 5_000, currency: "RUB" },
+    });
+  });
+
+  it.each([
+    ["21.10.2026 18:00 — 21.10.2026 21:00", "window-format"],
+    ["21.10.2026 21:00 — 21.10.2026 18:00, 50", "window-order"],
+    ["05.10.2026 18:00 — 05.10.2026 21:00, 50", "window-ended"],
+    ["21.10.2026 18:00 — 21.10.2026 21:00, 50.5", "amount-format"],
+    ["21.10.2026 18:00 — 21.10.2026 21:00, 0", "amount-range"],
+  ])("refuses «%s» as %s", (raw, error) => {
+    expect(parseWindow(raw, zone, now)).toEqual({ kind: "rejected", error });
+  });
+});
+
+describe("happy hours", () => {
+  const call = { identity: admin, auctionId };
+  const second = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d";
+  const entry = (id: string): ConsoleLot => ({
+    lot: {
+      lotId: id,
+      auctionId,
+      version: 1,
+      proxyEnabled: false,
+      status: { kind: "draft" },
+    },
+    bidCount: 0,
+    uniqueParticipantCount: 0,
+    markedForFinal: false,
+    overdue: false,
+  });
+  const lots = [entry(lotId), entry(second)];
+  const statistics: LotStatisticsReadResult = {
+    kind: "ok",
+    lots: lots.map((each) => ({
+      lotId: each.lot.lotId,
+      bidCount: 0,
+      uniqueParticipantCount: 0,
+    })),
+  };
+  const evening: StepWindow = {
+    from: "2026-10-21T15:00:00Z",
+    until: "2026-10-21T18:00:00Z",
+    step: { minorUnits: 5_000, currency: "RUB" },
+    lotIds: [lotId, second],
+  };
+  const night: StepWindow = {
+    ...evening,
+    from: "2026-10-22T15:00:00Z",
+    until: "2026-10-22T18:00:00Z",
+  };
+  const scheduledWith = (windows: readonly StepWindow[]) =>
+    view("scheduled", { week: { ...week, final: true, windows }, lots });
+  const ref = (window: StepWindow, index: number) => ({
+    index,
+    print: windowPrint(window),
+  });
+
+  it("prints a window by its span and step, not by its lots", () => {
+    expect(windowPrint(evening)).toMatch(/^[0-9a-z]{5}$/);
+    expect(windowPrint({ ...evening, lotIds: [lotId] })).toBe(
+      windowPrint(evening),
+    );
+    expect(windowPrint(night)).not.toBe(windowPrint(evening));
+  });
+
+  it("keeps the windows when the dates and the final change", async () => {
+    const { run, scheduled } = fake({
+      read: { kind: "ok", console: scheduledWith([evening]) },
+      statistics,
+    });
+
+    await run({
+      ...call,
+      intent: "schedule-auction-week",
+      value: "20.10.2026 18:00 — 28.10.2026 00:00",
+      opId,
+    });
+    await run({ ...call, intent: "set-auction-final", final: false, opId });
+
+    expect(scheduled.map((config) => config.windows)).toEqual([
+      [evening],
+      [evening],
+    ]);
+  });
+
+  it("asks the dates again naming the window the new dates cut off", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: scheduledWith([evening, night]) },
+      statistics,
+      schedule: { kind: "window-outside-week", window: 1 },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "schedule-auction-week",
+        value: "20.10.2026 18:00 — 22.10.2026 00:00",
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-week-ask",
+      error: "week-cuts-window",
+      window: 2,
+    });
+  });
+
+  it("adds a window with every lot of the registry", async () => {
+    const { run, scheduled } = fake({
+      read: { kind: "ok", console: scheduledWith([]) },
+      statistics,
+    });
+
+    const result = await run({
+      ...call,
+      intent: "add-step-window",
+      value: "21.10.2026 18:00 — 21.10.2026 21:00, 50",
+      opId,
+    });
+
+    expect(scheduled).toEqual([
+      { auctionId, opId, ...week, final: true, windows: [evening] },
+    ]);
+    expect(result).toEqual({
+      kind: "step-windows",
+      console: scheduledWith([evening]),
+      note: { kind: "saved", window: 1 },
+    });
+  });
+
+  it.each([
+    [
+      { kind: "window-outside-week", window: 1 } as const,
+      { error: "window-outside-week" },
+    ],
+    [
+      { kind: "windows-overlap", first: 0, second: 1 } as const,
+      { error: "window-overlap", window: 1 },
+    ],
+    [
+      { kind: "window-step-invalid", window: 1 } as const,
+      { error: "window-step" },
+    ],
+  ])(
+    "asks the window again when Auction refuses it: %o",
+    async (refusal, asked) => {
+      const { run } = fake({
+        read: { kind: "ok", console: scheduledWith([evening]) },
+        statistics,
+        schedule: refusal,
+      });
+
+      await expect(
+        run({
+          ...call,
+          intent: "add-step-window",
+          value: "21.10.2026 19:00 — 21.10.2026 22:00, 50",
+          opId,
+        }),
+      ).resolves.toEqual({
+        kind: "step-window-ask",
+        auctionId,
+        week: { ...week, final: true, windows: [evening] },
+        ...asked,
+      });
+    },
+  );
+
+  it("refuses a window over the limit of the console without a command", async () => {
+    const full = Array.from({ length: windowLimit }, (_, day) => ({
+      ...evening,
+      from: `2026-10-2${day}T15:00:00Z`,
+      until: `2026-10-2${day}T16:00:00Z`,
+    }));
+    const { run, scheduled } = fake({
+      read: { kind: "ok", console: scheduledWith(full) },
+      statistics,
+    });
+
+    await expect(
+      run({ ...call, intent: "ask-step-window" }),
+    ).resolves.toMatchObject({ note: { kind: "limit" } });
+    await expect(
+      run({
+        ...call,
+        intent: "add-step-window",
+        value: "26.10.2026 18:00 — 26.10.2026 21:00, 50",
+        opId,
+      }),
+    ).resolves.toMatchObject({ note: { kind: "limit" } });
+    expect(scheduled).toEqual([]);
+  });
+
+  it("does not ask for a window without lots or without dates", async () => {
+    const empty = fake({
+      read: {
+        kind: "ok",
+        console: view("scheduled", {
+          week: { ...week, final: true, windows: [] },
+        }),
+      },
+      statistics: noLotStatistics,
+    });
+    const draft = fake({ statistics: noLotStatistics });
+
+    await expect(
+      empty.run({ ...call, intent: "ask-step-window" }),
+    ).resolves.toMatchObject({ note: { kind: "no-lots" } });
+    await expect(
+      draft.run({ ...call, intent: "ask-step-window" }),
+    ).resolves.toMatchObject({ kind: "auction-console", note: "week-needed" });
+  });
+
+  it("takes a lot out of the window and shows its page with a toast", async () => {
+    const { run, scheduled } = fake({
+      read: { kind: "ok", console: scheduledWith([evening]) },
+      statistics,
+    });
+
+    const result = await run({
+      ...call,
+      intent: "set-step-window-lot",
+      window: ref(evening, 0),
+      lotId: second,
+      selected: false,
+      opId,
+    });
+
+    expect(scheduled.map((config) => config.windows)).toEqual([
+      [{ ...evening, lotIds: [lotId] }],
+    ]);
+    expect(result).toEqual({
+      kind: "step-window",
+      console: scheduledWith([{ ...evening, lotIds: [lotId] }]),
+      index: 0,
+      at: { lotId: second },
+      toggled: { selected: false },
+    });
+  });
+
+  it("keeps the last lot of a window and a lot already in its target state without a command", async () => {
+    const single = { ...evening, lotIds: [lotId] };
+    const { run, scheduled } = fake({
+      read: { kind: "ok", console: scheduledWith([single]) },
+      statistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "set-step-window-lot",
+        window: ref(single, 0),
+        lotId,
+        selected: false,
+        opId,
+      }),
+    ).resolves.toMatchObject({ note: { kind: "last-lot", window: 1 } });
+    await expect(
+      run({
+        ...call,
+        intent: "set-step-window-lot",
+        window: ref(single, 0),
+        lotId,
+        selected: true,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "step-window",
+      toggled: { selected: true },
+    });
+    expect(scheduled).toEqual([]);
+  });
+
+  it("names the overlapping window when a lot joins a window that crosses another", async () => {
+    const crossing = { ...night, from: evening.from, lotIds: [lotId] };
+    const { run } = fake({
+      read: {
+        kind: "ok",
+        console: scheduledWith([{ ...evening, lotIds: [second] }, crossing]),
+      },
+      statistics,
+      schedule: { kind: "windows-overlap", first: 0, second: 1 },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "set-step-window-lot",
+        window: ref(evening, 0),
+        lotId,
+        selected: true,
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "step-windows",
+      note: { kind: "overlap", window: 1, other: 2 },
+    });
+  });
+
+  it("removes a window and refuses a button whose window has moved", async () => {
+    const { run, scheduled } = fake({
+      read: { kind: "ok", console: scheduledWith([evening, night]) },
+      statistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "remove-step-window",
+        window: ref(evening, 0),
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "step-windows",
+      console: scheduledWith([night]),
+      note: { kind: "removed", window: 1 },
+    });
+    // Кнопка «Окно 2» со старого экрана, где вторым было вечернее окно.
+    await expect(
+      run({
+        ...call,
+        intent: "remove-step-window",
+        window: ref(evening, 1),
+        opId,
+      }),
+    ).resolves.toMatchObject({ note: { kind: "changed" } });
+    expect(scheduled.map((config) => config.windows)).toEqual([[night]]);
+  });
+
+  it("does not change the windows of an opened week", async () => {
+    const { run, scheduled } = fake({
+      read: {
+        kind: "ok",
+        console: view("prebidding", {
+          week: { ...week, final: true, windows: [evening] },
+          lots,
+        }),
+      },
+      statistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "remove-step-window",
+        window: ref(evening, 0),
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "auction-console", note: "week-frozen" });
+    expect(scheduled).toEqual([]);
   });
 });
