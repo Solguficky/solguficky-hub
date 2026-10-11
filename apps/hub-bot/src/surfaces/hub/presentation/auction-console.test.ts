@@ -105,6 +105,8 @@ function fakeAuction(
     deadlinePassed?: readonly string[];
     // Отбирать некуда: у аукциона в сервисе нет финала.
     notApplicable?: true;
+    // У аукциона открыт розыгрыш (ADR-066): лента ставит его кнопку.
+    raffle?: true;
   } = {},
 ) {
   const state: {
@@ -228,6 +230,20 @@ function fakeAuction(
           placeBid: notUsed,
           setProxyLimit: notUsed,
           chooseDisplayName: notUsed,
+          getRaffle: async () =>
+            options.raffle === true
+              ? {
+                  auctionId,
+                  status: "open" as const,
+                  closesAt: "2026-10-29T18:00:00Z",
+                  commitment: "ab".repeat(32),
+                  beaconRound: 12_345_678,
+                  registered: false,
+                  tickets: [],
+                }
+              : undefined,
+          registerForRaffle: notUsed,
+          cancelRaffleRegistration: notUsed,
         },
         operations: { newOperationId: () => "unused" },
         image: { getLotImage: notUsed },
@@ -444,6 +460,31 @@ describe("entry into the auction console", () => {
       ]);
       expect(auction.sent("getAuctionConsole")).toHaveLength(1);
     }
+  });
+
+  // Розыгрыш открыт с онлайн-недели, когда «Добавить лот» уже нет: у
+  // администратора он встаёт парой к «Пульту», у участника — своим рядом.
+  it("pairs the raffle with the console once the online week is open", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      lots: [vase],
+      raffle: true,
+    });
+    const admin = harness("admin", auction);
+    await admin.bot.init();
+    await admin.bot.handleUpdate(press(feedData));
+    expect(labels(last(admin.calls)).slice(0, 2)).toEqual([
+      ["Пульт", "Розыгрыш"],
+      ["Правила и FAQ"],
+    ]);
+
+    const member = harness("member", auction);
+    await member.bot.init();
+    await member.bot.handleUpdate(press(feedData));
+    expect(labels(last(member.calls)).slice(0, 2)).toEqual([
+      ["Розыгрыш"],
+      ["Правила и FAQ"],
+    ]);
   });
 
   it("hides the lot entry once the online week is open and keeps the console", async () => {

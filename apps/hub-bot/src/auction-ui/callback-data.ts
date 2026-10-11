@@ -94,7 +94,27 @@ export type AuctionIntent =
   | { kind: "unfollow"; lotId: string; page: number }
   // Список избранного. `auctionId` — лента, из корня которой список открыт:
   // туда ведёт возврат. Нет — список открыт из меню оболочки.
-  | { kind: "favorites"; page: number; auctionId?: string };
+  | { kind: "favorites"; page: number; auctionId?: string }
+  // Розыгрыш среди участников (ADR-066): экран, регистрация и её отмена, а
+  // для регистрации без имени — выбор имени, как у ставки: ник, вопрос
+  // псевдонима и его шаг с адресатом. `op_id` команды рождается на нажатии:
+  // повторная регистрация возвращает ту же, второго билета не бывает.
+  | { kind: "raffle"; auctionId: string }
+  | { kind: "raffle-register"; auctionId: string }
+  | { kind: "raffle-cancel"; auctionId: string }
+  | { kind: "raffle-username"; auctionId: string }
+  | { kind: "raffle-ask-alias"; auctionId: string }
+  | { kind: "raffle-question"; auctionId: string; addressee: number };
+
+const RAFFLE_ACTION = {
+  raffle: "rf",
+  "raffle-register": "rr",
+  "raffle-cancel": "rc",
+  "raffle-username": "ru",
+  "raffle-ask-alias": "ra",
+} as const;
+
+type RaffleKind = keyof typeof RAFFLE_ACTION;
 
 // Страница — десятичное число без ведущих нулей: у одной кнопки одно
 // написание, как у токена. Тысяча страниц по восемь лотов — с запасом выше
@@ -298,6 +318,14 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
           ? []
           : [uuidToToken(intent.auctionId)]),
       ].join(":");
+    case "raffle":
+    case "raffle-register":
+    case "raffle-cancel":
+    case "raffle-username":
+    case "raffle-ask-alias":
+      return `${prefix}:${RAFFLE_ACTION[intent.kind]}:${uuidToToken(intent.auctionId)}`;
+    case "raffle-question":
+      return `${prefix}:rq:${uuidToToken(intent.auctionId)}:${addresseeArgument(intent.addressee)}`;
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;
@@ -327,6 +355,8 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   const command = commandAction(action, args);
   if (command !== undefined) return command;
   if (action === "fav") return favoritesAction(args);
+  const raffle = raffleAction(action, args);
+  if (raffle !== undefined) return raffle;
   // Аргументов у действия ровно столько, сколько пишет его кодировщик: лишний
   // аргумент — не та строка, а не страница, которую можно молча отбросить.
   const [token, rawPage, ...rest] = args;
@@ -379,7 +409,11 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
 // доставить нажатие по правилу вопросов, не разбирая строку само.
 export function isAuctionQuestion(raw: unknown): boolean {
   const parsed = parseAuctionCallback(raw);
-  return parsed.ok && parsed.intent.kind === "question";
+  return (
+    parsed.ok &&
+    (parsed.intent.kind === "question" ||
+      parsed.intent.kind === "raffle-question")
+  );
 }
 
 // Кнопка под вопросом, которая задаёт его заново: нажатый вопрос удаляется,
@@ -392,6 +426,30 @@ export function replacesAuctionQuestion(raw: unknown): boolean {
 
 function accept(intent: AuctionIntent): ParsedAuctionCallback {
   return { ok: true, intent };
+}
+
+// Действия розыгрыша: токен аукциона и, у шага вопроса, адресат. `undefined` —
+// действие не отсюда.
+function raffleAction(
+  action: string,
+  args: readonly string[],
+): ParsedAuctionCallback | undefined {
+  const kind = (Object.keys(RAFFLE_ACTION) as RaffleKind[]).find(
+    (each) => RAFFLE_ACTION[each] === action,
+  );
+  if (kind === undefined && action !== "rq") return undefined;
+  const [token, rawAddressee, ...rest] = args;
+  const auctionId = token === undefined ? undefined : tokenToUuid(token);
+  if (auctionId === undefined || rest.length !== 0) return refuse("malformed");
+  if (kind !== undefined) {
+    return rawAddressee === undefined
+      ? accept({ kind, auctionId })
+      : refuse("malformed");
+  }
+  const addressee = addresseeOf(rawAddressee);
+  return addressee === undefined
+    ? refuse("malformed")
+    : accept({ kind: "raffle-question", auctionId, addressee });
 }
 
 // Список избранного: страница и, у списка из ленты, токен её аукциона.

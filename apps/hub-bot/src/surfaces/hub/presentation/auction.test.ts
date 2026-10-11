@@ -12,6 +12,7 @@ import {
   encodeAuctionCallback,
   type FavoritesPort,
   type LotView,
+  type RaffleView,
 } from "../../../auction-ui/index.js";
 import { createDispatcher } from "../application/dispatcher.js";
 import type {
@@ -138,9 +139,14 @@ function fakeAuction(
     image?: () => Promise<{ content: Uint8Array; version: string }>;
     // Лот ленты и карточки; по умолчанию — запланированный.
     lot?: LotView;
+    // Розыгрыш аукциона (ADR-066): регистрация меняет отметку.
+    raffle?: RaffleView;
   } = {},
 ) {
   const shownLot = options.lot ?? lot;
+  const raffle: { current: RaffleView | undefined } = {
+    current: options.raffle,
+  };
   const auctions = new Map<string, string>(
     options.existing === true ? [[meetupId, auctionId]] : [],
   );
@@ -205,6 +211,15 @@ function fakeAuction(
           placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
           setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
           chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
+          getRaffle: async () => raffle.current,
+          registerForRaffle: async () => {
+            if (raffle.current === undefined) throw new Error("no raffle");
+            raffle.current = { ...raffle.current, registered: true };
+            return { kind: "accepted", raffle: raffle.current };
+          },
+          cancelRaffleRegistration: async () => {
+            throw new Error("not used");
+          },
         },
         operations: {
           newOperationId: () => "0198f2a4-7c1e-7d3a-9b21-00000000c001",
@@ -226,6 +241,7 @@ function fakeAuction(
     getLotImage,
     listAuctionLots,
     getLot,
+    raffle,
   };
 }
 
@@ -1135,5 +1151,72 @@ describe("bid leaf in the hub", () => {
       methods.indexOf("sendMessage"),
     );
     expect(methods).not.toContain("editMessageText");
+  });
+});
+
+describe("raffle among the participants", () => {
+  const openRaffle: RaffleView = {
+    auctionId,
+    status: "open",
+    closesAt: "2026-10-29T18:00:00Z",
+    commitment: "ab".repeat(32),
+    beaconRound: 12_345_678,
+    registered: false,
+    tickets: [],
+  };
+
+  it("registers from the meetup feed and shows the result with the recomputation", async () => {
+    const auction = fakeAuction({ existing: true, raffle: openRaffle });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(press(feedData));
+    const raffleData = data(lastScreen(calls), "Розыгрыш");
+    expect(raffleData).toBeDefined();
+    await bot.handleUpdate(press(raffleData ?? ""));
+    const before = lastScreen(calls);
+    expect(before.text).toContain("<b>Розыгрыш среди участников</b>");
+    expect(labels(before)).toEqual([["Зарегистрироваться"], ["‹ Лоты"]]);
+
+    await bot.handleUpdate(press(data(before, "Зарегистрироваться") ?? ""));
+    const registered = lastScreen(calls);
+    expect(registered.text).toContain("Ты зарегистрирован.");
+    expect(registered.text).toContain("ab".repeat(32));
+    expect(labels(registered)).toEqual([["Отменить регистрацию"], ["‹ Лоты"]]);
+
+    auction.raffle.current = {
+      ...openRaffle,
+      status: "drawn",
+      registered: true,
+      tickets: [{ number: 1, displayName: "@owl" }],
+      myTicket: 1,
+      reveal: {
+        seed: "cd".repeat(32),
+        randomness: "ef".repeat(32),
+        value: "12".repeat(32),
+        winningTicket: 1,
+      },
+    };
+    await bot.handleUpdate(press(raffleData ?? ""));
+    const result = lastScreen(calls);
+    expect(result.text).toContain("Выиграл билет №1 — @owl.");
+    expect(result.text).toContain("Это твой билет.");
+    expect(result.text).toContain("cd".repeat(32));
+    expect(result.text).toContain("Как проверить итог");
+    expect(labels(result)).toEqual([["‹ Лоты"]]);
+  });
+
+  it("offers no registration outside the registration window", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      raffle: { ...openRaffle, status: "not-held" },
+    });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "raffle", auctionId })),
+    );
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("Розыгрыш не проводится");
+    expect(labels(screen)).toEqual([["‹ Лоты"]]);
   });
 });

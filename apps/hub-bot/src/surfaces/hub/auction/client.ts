@@ -14,6 +14,11 @@ import {
 } from "../../../core/auction/commands.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
+import {
+  cancellationOutcomeOf,
+  raffleOf,
+  registrationOutcomeOf,
+} from "../../../core/auction/raffle.js";
 import { lotOrMissing, lotViewOf } from "../../../core/auction/snapshot.js";
 import { wireViewer } from "../../../core/identity/access.js";
 import {
@@ -65,6 +70,9 @@ type AuctionRpc = Pick<
   | "placeBid"
   | "setProxyLimit"
   | "chooseDisplayName"
+  | "getRaffle"
+  | "registerForRaffle"
+  | "cancelRaffleRegistration"
   | "getLotImage"
   | "getAuctionConsole"
   | "getAuctionLotStatistics"
@@ -453,6 +461,45 @@ export function createAuctionAdapter(
                       : { case: "alias", value: choice.alias },
                 },
                 options(meta),
+              ),
+            );
+          },
+          // Розыгрыш среди участников (ADR-066): команды — как у ставки.
+          async getRaffle(request) {
+            const { raffle } = await rpc.getRaffle(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              options(meta),
+            );
+            return raffle === undefined ? undefined : raffleOf(raffle);
+          },
+          registerForRaffle(request) {
+            return unansweredOn(async () =>
+              registrationOutcomeOf(
+                await rpc.registerForRaffle(
+                  {
+                    viewer: wireViewer(request.viewer),
+                    auctionId: request.auctionId,
+                    opId: request.opId,
+                  },
+                  options(meta),
+                ),
+              ),
+            );
+          },
+          cancelRaffleRegistration(request) {
+            return unansweredOn(async () =>
+              cancellationOutcomeOf(
+                await rpc.cancelRaffleRegistration(
+                  {
+                    viewer: wireViewer(request.viewer),
+                    auctionId: request.auctionId,
+                    opId: request.opId,
+                  },
+                  options(meta),
+                ),
               ),
             );
           },

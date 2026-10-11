@@ -242,7 +242,80 @@ export interface AuctionPort {
     auctionId: string;
     choice: DisplayNameChoice;
   }): Promise<DisplayNameOutcome>;
+  // Розыгрыш среди участников (ADR-066): `undefined` — у аукциона его нет или
+  // он ещё не открыт — регистрация открывается вместе с онлайн-торгами.
+  getRaffle(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<RaffleView | undefined>;
+  registerForRaffle(request: {
+    viewer: Viewer;
+    auctionId: string;
+    opId: string;
+  }): Promise<RaffleOutcome<RaffleRegistrationRefusal>>;
+  cancelRaffleRegistration(request: {
+    viewer: Viewer;
+    auctionId: string;
+    opId: string;
+  }): Promise<RaffleOutcome<RaffleCancellationRefusal>>;
 }
+
+// Где розыгрыш (`auction.v1.RaffleStatus`). `closing` — момент закрытия прошёл,
+// а пул ещё фиксируется; `not-held` — онлайн-торги открылись не раньше момента
+// закрытия, и регистрация не открывалась.
+export type RaffleStatusView =
+  | "open"
+  | "closing"
+  | "awaiting-beacon"
+  | "drawn"
+  | "no-tickets"
+  | "not-held";
+
+// Билет пула. Имени нет — его стёрли через 30 дней после жеребьёвки; номер
+// остаётся.
+export type RaffleTicketView = { number: number; displayName?: string };
+
+// Что нужно для пересчёта без доступа к сервису (ADR-066, «Пересчёт
+// участником»). У пула без билетов есть только seed.
+export type RaffleRevealView = {
+  seed: string;
+  randomness?: string;
+  value?: string;
+  winningTicket?: number;
+};
+
+// Розыгрыш, как его видит смотрящий: `registered` и `myTicket` — о нём.
+export type RaffleView = {
+  auctionId: string;
+  status: RaffleStatusView;
+  // Момент RFC 3339 в UTC: когда закрывается регистрация.
+  closesAt: string;
+  // SHA-256 seed строчным hex и раунд маяка drand; нет у непроведённого.
+  commitment?: string;
+  beaconRound?: number;
+  registered: boolean;
+  // Билеты 1…N по порядку регистрации; пусто, пока пул не зафиксирован.
+  tickets: readonly RaffleTicketView[];
+  myTicket?: number;
+  reveal?: RaffleRevealView;
+};
+
+export type RaffleRegistrationRefusal =
+  | "raffle-not-found"
+  | "registration-closed"
+  | "display-name-not-chosen";
+
+export type RaffleCancellationRefusal =
+  | "raffle-not-found"
+  | "registration-closed";
+
+// Исход команды розыгрыша: принятая отвечает розыгрышем после неё, поэтому
+// экран не перечитывает его. `unanswered` повторяется тем же `op_id`, как у
+// ставки.
+export type RaffleOutcome<Refusal> =
+  | { kind: "accepted"; raffle: RaffleView }
+  | { kind: "refused"; refusal: Refusal }
+  | { kind: "unanswered" };
 
 // Источник `op_id`: канонический UUIDv7 в нижнем регистре с дефисами. Портом,
 // а не вызовом внутри пакета, чтобы contract suite видел ключ команды.

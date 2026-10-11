@@ -35,6 +35,11 @@ import {
 } from "../../core/auction/commands.js";
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
+import {
+  cancellationOutcomeOf,
+  raffleOf,
+  registrationOutcomeOf,
+} from "../../core/auction/raffle.js";
 import { lotOrMissing, lotViewOf } from "../../core/auction/snapshot.js";
 import {
   classifyRecipientFailure,
@@ -86,6 +91,9 @@ export type AuctionRpc = Pick<
   | "placeBid"
   | "setProxyLimit"
   | "chooseDisplayName"
+  | "getRaffle"
+  | "registerForRaffle"
+  | "cancelRaffleRegistration"
   | "getLotImage"
   | "listAuctions"
   | "getFaqAcknowledgement"
@@ -312,6 +320,45 @@ export function createPorts(
                     : { case: "alias", value: choice.alias },
               },
               callOptions(timeoutMs),
+            ),
+          );
+        },
+        // Розыгрыш среди участников (ADR-066): команды — как у ставки.
+        async getRaffle(request) {
+          const { raffle } = await auction.getRaffle(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return raffle === undefined ? undefined : raffleOf(raffle);
+        },
+        registerForRaffle(request) {
+          return unansweredOn(async () =>
+            registrationOutcomeOf(
+              await auction.registerForRaffle(
+                {
+                  viewer: wireViewer(request.viewer),
+                  auctionId: request.auctionId,
+                  opId: request.opId,
+                },
+                callOptions(timeoutMs),
+              ),
+            ),
+          );
+        },
+        cancelRaffleRegistration(request) {
+          return unansweredOn(async () =>
+            cancellationOutcomeOf(
+              await auction.cancelRaffleRegistration(
+                {
+                  viewer: wireViewer(request.viewer),
+                  auctionId: request.auctionId,
+                  opId: request.opId,
+                },
+                callOptions(timeoutMs),
+              ),
             ),
           );
         },

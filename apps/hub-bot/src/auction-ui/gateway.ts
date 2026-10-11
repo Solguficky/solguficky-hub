@@ -120,10 +120,11 @@ export async function handleAuctionUpdate(
   const { input, user } = update;
   // Ответом служит только вопрос, и только тому, кому он задан: после
   // рестарта адресата помнит шаг, а не процесс (дизайн-код, «Вопросы»).
+  const { intent } = parsed;
   if (
     input.kind === "reply" &&
-    (parsed.intent.kind !== "question" ||
-      parsed.intent.addressee !== user.telegramUserId)
+    ((intent.kind !== "question" && intent.kind !== "raffle-question") ||
+      intent.addressee !== user.telegramUserId)
   ) {
     return {
       kind: "unreadable",

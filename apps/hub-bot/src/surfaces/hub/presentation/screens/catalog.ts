@@ -304,6 +304,23 @@ export const screenCatalog = {
     title: "Имя в аукционе",
     parent: "lot",
   },
+  // Розыгрыш среди участников (ADR-066): тело — аукционное дерево, вход —
+  // «Розыгрыш» в корне ленты, у администратора парой к «Пульту». Выбор имени
+  // перед регистрацией возвращает в розыгрыш; вопрос псевдонима и непринятый
+  // ответ — общие записи `question` и `answer-refused`.
+  raffle: {
+    class: "screen",
+    nav: "tree",
+    title: "Розыгрыш среди участников",
+    parent: "lots",
+    backName: "Розыгрыш",
+  },
+  "raffle-name-choice": {
+    class: "screen",
+    nav: "tree",
+    title: "Имя в аукционе",
+    parent: "raffle",
+  },
   "notify-meetup": {
     class: "screen",
     nav: "tree",

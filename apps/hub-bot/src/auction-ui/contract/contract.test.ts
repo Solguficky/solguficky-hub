@@ -232,6 +232,23 @@ describe("auction contract self-check", () => {
       "favorites: from the menu",
       "favorites: from the feed",
       "favorites: empty",
+      "feed: with a raffle",
+      "feed: raffle unavailable",
+      "raffle: open",
+      "raffle: registered",
+      "raffle: drawn",
+      "raffle: absent",
+      "raffle: register",
+      "raffle: register unanswered",
+      "raffle: register after closing",
+      "raffle: register without a name",
+      "raffle: cancel",
+      "raffle: username",
+      "raffle: ask alias",
+      "raffle: alias question cancelled",
+      "raffle: alias answered",
+      "raffle: alias taken",
+      "raffle: alias not text",
     ]);
   });
 });

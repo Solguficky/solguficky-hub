@@ -11,6 +11,15 @@ import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
 import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
+import {
+  answerRaffleQuestion,
+  askRaffleAlias,
+  cancelRaffleQuestion,
+  cancelRaffleRegistration,
+  chooseRaffleUsername,
+  openRaffle,
+  registerForRaffle,
+} from "./internal/use-cases/raffle.js";
 import type {
   AuctionPort,
   FavoritesPort,
@@ -115,6 +124,20 @@ export function dispatchAuctionIntent(input: {
           ? {}
           : { auctionId: intent.auctionId }),
       });
+    case "raffle":
+      return openRaffle(context, intent.auctionId);
+    case "raffle-register":
+      return registerForRaffle(context, intent.auctionId);
+    case "raffle-cancel":
+      return cancelRaffleRegistration(context, intent.auctionId);
+    case "raffle-username":
+      return chooseRaffleUsername(context, intent.auctionId);
+    case "raffle-ask-alias":
+      return Promise.resolve(askRaffleAlias(context, intent.auctionId));
+    case "raffle-question":
+      return input.answer === undefined
+        ? Promise.resolve(cancelRaffleQuestion(context, intent.auctionId))
+        : answerRaffleQuestion(context, intent.auctionId, input.answer.text);
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;

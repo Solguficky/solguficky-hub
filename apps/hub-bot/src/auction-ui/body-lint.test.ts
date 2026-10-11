@@ -107,6 +107,15 @@ const surface: AuctionSurface = {
       async chooseDisplayName() {
         return { kind: "accepted", name: "@owl_fan" };
       },
+      async getRaffle() {
+        return undefined;
+      },
+      async registerForRaffle() {
+        throw new Error("not used");
+      },
+      async cancelRaffleRegistration() {
+        throw new Error("not used");
+      },
     },
     operations: {
       newOperationId() {

@@ -11,6 +11,7 @@ import {
   confirmKeyboard,
   escapeHtml,
   nextRow,
+  type Parent,
   screenText,
   withNav,
 } from "./kit.js";
@@ -215,9 +216,12 @@ function proxyExplainer(
   return lines.join("\n");
 }
 
+// Выбор имени перед ставкой; розыгрыш (ADR-066, п. 3) показывает тот же экран
+// своей записью каталога и с возвратом в розыгрыш.
 export function nameChoiceScreen(
-  block: NameChoiceBlock,
+  block: Pick<NameChoiceBlock, "username">,
   keyboard: readonly (readonly AuctionButton[])[],
+  target?: { id: "raffle-name-choice"; back: Parent },
 ): ShownScreen {
   const rows = new InlineKeyboard();
   for (const button of keyboard.flat()) {
@@ -238,12 +242,12 @@ export function nameChoiceScreen(
     ].join("\n"),
   );
   return {
-    id: "name-choice",
+    id: target?.id ?? "name-choice",
     text,
-    keyboard: withNav(rows, {
-      name: "Лот",
-      data: dataOf(keyboard, "name.back"),
-    }),
+    keyboard: withNav(
+      rows,
+      target?.back ?? { name: "Лот", data: dataOf(keyboard, "name.back") },
+    ),
     format: "HTML",
   };
 }
