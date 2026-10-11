@@ -549,6 +549,12 @@ export function createLotForm(lots: LotAdministration) {
           ? current.result
           : { kind: "lot-form", lot: current.lot };
       }
+      case "view-lot-preview": {
+        const current = await read(request);
+        return current.kind === "refused"
+          ? current.result
+          : { kind: "lot-preview", lot: current.raw };
+      }
       case "set-lot-text":
         return setText(request);
       case "check-lot-price":

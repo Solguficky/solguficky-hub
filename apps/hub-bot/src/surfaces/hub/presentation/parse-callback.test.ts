@@ -14,6 +14,7 @@ import {
   lotAskData,
   lotFormData,
   lotNewData,
+  lotPreviewData,
   parseCallback,
   type QuestionStep,
   questionData,
@@ -939,6 +940,7 @@ describe("lot form callbacks", () => {
     const cases = [
       [lotNewData(auction), { kind: "lot-new", auction }],
       [lotFormData(lot), { kind: "lot-form", lot }],
+      [lotPreviewData(lot), { kind: "lot-view", lot }],
       [lotAskData(lot, "title"), { kind: "lot-ask", lot, field: "title" }],
       [
         lotAskData(lot, "description"),
@@ -982,6 +984,7 @@ describe("lot form callbacks", () => {
       "v1:lot:new:short",
       `v1:lot:new:${auction}:extra`,
       `v1:lot:form:${lot}:extra`,
+      `v1:lot:view:${lot}:extra`,
       `v1:lot:ask:${lot}`,
       `v1:lot:ask:${lot}:step`,
       `v1:lot:drop:${lot}`,

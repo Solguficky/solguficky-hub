@@ -18,6 +18,7 @@ import {
   isAuctionQuestion,
   type LotImagePort,
   parseAuctionCallback,
+  previewLot,
   type Viewer,
 } from "../../../auction-ui/index.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
@@ -137,6 +138,7 @@ import {
   consoleWeekData,
   defaultConsoleSort,
   lotAskData,
+  lotFormData,
   lotNewData,
   type NotifiedMeetupCategory,
   type PublishOrigin,
@@ -1708,6 +1710,20 @@ async function handleCallback(
     ) {
       outcome = canManageMeetups(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
+        : await refuseLotForm(ctx, person);
+      return;
+    }
+    // Лот глазами участника (PER-512) — экран формы и тот же отказ без права:
+    // поддельная кнопка не открывает лот до Auction.
+    if (action.kind === "lot-view") {
+      outcome = canManageMeetups(person)
+        ? await handleLotPreviewCallback(
+            ctx,
+            runtime,
+            lotPhotos,
+            person,
+            action.lot,
+          )
         : await refuseLotForm(ctx, person);
       return;
     }
@@ -4983,6 +4999,72 @@ async function handleLotFormCallback(
   return sent("lot field requested");
 }
 
+// Лот глазами участника (PER-512): снимок читается правом администратора, как
+// у формы, тело — `previewLot` аукционного дерева, а вёрстка и фото — та же
+// доставка, что у карточки участника. Возврат — в форму.
+async function handleLotPreviewCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  lotPhotos: LotPhotos,
+  person: Person,
+  token: string,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_lot";
+  // Без клиента Auction карточку нарисовать нечем: отказ до чтения лота и
+  // без «Повторить», который не помог бы.
+  if (runtime.auction === undefined) {
+    return showLotFailure(
+      ctx,
+      { kind: "rejected", reason: "auction-not-configured" },
+      { person },
+    );
+  }
+  const lotId = tokenToUuid(token);
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-lot-preview",
+    lotId,
+    ...rpcCall(ctx, useCase),
+  });
+  if (result.kind !== "lot-preview") {
+    return showLotFailure(ctx, result, {
+      person,
+      retry: ctx.callbackQuery?.data,
+    });
+  }
+  const ports = runtime.auction.screenPorts(rpcCall(ctx, useCase));
+  const viewer = viewerOf(person);
+  const body = await previewLot({
+    auction: ports.auction,
+    viewer,
+    lot: result.lot,
+  });
+  const photoNote = await deliverAuctionScreen(ctx, {
+    view: {
+      body,
+      feedParent: toMeetups,
+      presentation: runtime.presentation ?? "rich",
+      timeZone: runtime.communityTimeZone ?? "UTC",
+      today: communityToday(ctx),
+      preview: { name: "Изменить лот", data: lotFormData(token) },
+    },
+    lotPhotos,
+    image: ports.image,
+    viewer,
+    logger: runtime.logger,
+  });
+  return {
+    level: "info",
+    message:
+      photoNote === undefined
+        ? "lot preview sent"
+        : `lot preview sent; ${photoNote}`,
+    result: "ok",
+    use_case: useCase,
+    identity_id: person.identityId,
+  };
+}
+
 // `replaces` — номер прежнего вопроса: его закрывает новый, когда уже ушёл.
 function askLotQuestion(
   ctx: UpdateContext,
@@ -7276,6 +7358,7 @@ function callbackUseCase(
     | "manage-meetups"
     | "lot-new"
     | "lot-form"
+    | "lot-view"
     | "lot-ask"
     | "console-view"
     | "console-week"
@@ -7402,6 +7485,7 @@ function callbackUseCase(
       return "enable_auction";
     case "lot-new":
     case "lot-form":
+    case "lot-view":
     case "lot-ask":
       return "manage_lot";
     case "console-view":

@@ -11,11 +11,16 @@ import type {
   StepWindowView,
   Viewer,
 } from "../../ports.js";
-import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
+import type {
+  AuctionBlock,
+  AuctionButton,
+  AuctionScreenBody,
+} from "../../screen.js";
 import { namesOf } from "./names.js";
 
 // Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
-// Войти в него можно только через `handleAuctionUpdate`, после шлюза.
+// Войти в него можно только через `handleAuctionUpdate`, после шлюза. Из этого
+// модуля наружу уходит только `previewLot` — см. его комментарий.
 //
 // `page` — страница ленты, с которой открыли карточку: на неё ведёт «Назад».
 export async function openLot(input: {
@@ -50,16 +55,7 @@ export async function showLot(input: {
   following?: boolean;
 }): Promise<AuctionScreenBody> {
   const { lot } = input;
-  const nextWindow = announcedWindow(lot);
-  const participantId = participantOf(lot.status);
-  const names = await namesOf({
-    auction: input.auction,
-    viewer: input.viewer,
-    auctionId: lot.auctionId,
-    participantIds: participantId === undefined ? [] : [participantId],
-  });
-  const participantName =
-    participantId === undefined ? undefined : names[participantId];
+  const participantName = await participantNameOf(input);
   const following =
     input.following ?? (await followingOf(input.favorites, input.viewer, lot));
   // Хронология открывается на последней странице — со свежими ставками:
@@ -96,20 +92,7 @@ export async function showLot(input: {
   return {
     blocks: [
       {
-        kind: "lot",
-        lotId: lot.lotId,
-        auctionId: lot.auctionId,
-        version: lot.version,
-        ...(lot.card === undefined ? {} : { card: lot.card }),
-        ...(lot.nextPrice === undefined ? {} : { nextPrice: lot.nextPrice }),
-        ...(lot.fixedStep === undefined ? {} : { fixedStep: lot.fixedStep }),
-        ...(lot.baseStep === undefined ? {} : { baseStep: lot.baseStep }),
-        ...(lot.activeWindow === undefined
-          ? {}
-          : { activeWindow: lot.activeWindow }),
-        ...(nextWindow === undefined ? {} : { nextWindow }),
-        status: lot.status,
-        ...(participantName === undefined ? {} : { participantName }),
+        ...lotBlock(lot, participantName),
         ...(lot.viewerProxyLimit === undefined
           ? {}
           : { viewerProxyLimit: lot.viewerProxyLimit }),
@@ -133,6 +116,62 @@ export async function showLot(input: {
       ],
     ],
   };
+}
+
+// Карточка глазами участника для организатора (PER-512): тот же блок, что у
+// `showLot`, без кнопок вовсе — ставки, избранного, «Обновить» и возврата;
+// возврат ставит оболочка. Смотрящий — нейтральный участник: своего лимита
+// и отметки у него нет, поэтому блок их не несёт, а избранное не читается.
+// Команд юзкейс не шлёт, а снимок читает и проверяет на право вызывающий.
+export async function previewLot(input: {
+  auction: AuctionPort;
+  viewer: Viewer;
+  lot: LotView;
+}): Promise<AuctionScreenBody> {
+  const participantName = await participantNameOf(input);
+  return { blocks: [lotBlock(input.lot, participantName)], keyboard: [] };
+}
+
+// Блок карточки без состояния смотрящего — общий у карточки и предпросмотра:
+// расхождение двух экранов по тексту здесь невозможно по устройству.
+function lotBlock(
+  lot: LotView,
+  participantName: string | undefined,
+): Extract<AuctionBlock, { kind: "lot" }> {
+  const nextWindow = announcedWindow(lot);
+  return {
+    kind: "lot",
+    lotId: lot.lotId,
+    auctionId: lot.auctionId,
+    version: lot.version,
+    ...(lot.card === undefined ? {} : { card: lot.card }),
+    ...(lot.nextPrice === undefined ? {} : { nextPrice: lot.nextPrice }),
+    ...(lot.fixedStep === undefined ? {} : { fixedStep: lot.fixedStep }),
+    ...(lot.baseStep === undefined ? {} : { baseStep: lot.baseStep }),
+    ...(lot.activeWindow === undefined
+      ? {}
+      : { activeWindow: lot.activeWindow }),
+    ...(nextWindow === undefined ? {} : { nextWindow }),
+    status: lot.status,
+    ...(participantName === undefined ? {} : { participantName }),
+  };
+}
+
+async function participantNameOf(input: {
+  auction: AuctionPort;
+  viewer: Viewer;
+  lot: LotView;
+}): Promise<string | undefined> {
+  const { lot } = input;
+  const participantId = participantOf(lot.status);
+  if (participantId === undefined) return undefined;
+  const names = await namesOf({
+    auction: input.auction,
+    viewer: input.viewer,
+    auctionId: lot.auctionId,
+    participantIds: [participantId],
+  });
+  return names[participantId];
 }
 
 // Будущее окно Auction отдаёт с объявленной суммой, не сверяя её с обычным

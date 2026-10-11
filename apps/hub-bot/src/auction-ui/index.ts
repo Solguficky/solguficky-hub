@@ -3,6 +3,10 @@
 // на поверхность решает `decideEntry` (ADR-044, «Доступ как обязательный
 // шлюз»). Других входов у дерева нет, кроме `contract/index.ts` для тестов:
 // это держит boundary.test.ts.
+//
+// Исключение — `previewLot` (PER-512): тело карточки по снимку, который уже
+// прочитал и проверил на право вызывающий. Команд он не шлёт и кнопок не
+// ставит, поэтому шлюз ему не нужен.
 
 export {
   AUCTION_CALLBACK_DOMAIN,
@@ -30,6 +34,7 @@ export {
   handleAuctionUpdate,
   type SurfaceEntry,
 } from "./gateway.js";
+export { previewLot } from "./internal/use-cases/open-lot.js";
 export type {
   AccessRequest,
   AccessRequestAnswer,
