@@ -54,13 +54,13 @@ func TestAppointAdministratorByUsernameIsIdempotentAndNamesTheGrantor(t *testing
 	first, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{
 		Actor: actorOf(f.maintainer), TelegramUsername: " @alice_smith",
 	})
-	if err != nil || !first.GetChanged() || first.GetIdentityId() != target {
+	if err != nil || !first.GetAppointed().GetChanged() || first.GetAppointed().GetIdentityId() != target {
 		t.Fatalf("appoint: response=%v error=%v", first, err)
 	}
 	again, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{
 		Actor: actorOf(f.maintainer), TelegramUsername: "alice_smith",
 	})
-	if err != nil || again.GetChanged() || again.GetIdentityId() != target {
+	if err != nil || again.GetAppointed() == nil || again.GetAppointed().GetChanged() || again.GetAppointed().GetIdentityId() != target {
 		t.Fatalf("second appoint: response=%v error=%v", again, err)
 	}
 
@@ -81,13 +81,13 @@ func TestDismissAdministratorIsIdempotentAndNamesTheGrantor(t *testing.T) {
 	first, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{
 		Actor: actorOf(f.maintainer), IdentityId: target,
 	})
-	if err != nil || !first.GetChanged() {
+	if err != nil || !first.GetDismissed().GetChanged() {
 		t.Fatalf("dismiss: response=%v error=%v", first, err)
 	}
 	again, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{
 		Actor: actorOf(f.maintainer), IdentityId: target,
 	})
-	if err != nil || again.GetChanged() {
+	if err != nil || again.GetDismissed() == nil || again.GetDismissed().GetChanged() {
 		t.Fatalf("second dismiss: response=%v error=%v", again, err)
 	}
 
@@ -102,7 +102,7 @@ func TestDismissAdministratorIsIdempotentAndNamesTheGrantor(t *testing.T) {
 
 // Право выдавать admin — grant_admins, и только его: держатель набора admin
 // его не имеет (С-6), а неизвестный профиль — тем более. Отказ один и тот же,
-// что бы актор ни назвал.
+// что бы актор ни назвал, и это значение ответа, а не статус.
 func TestAdministratorMethodsNeedGrantAdmins(t *testing.T) {
 	t.Parallel()
 	f := newAdministratorFixture(t)
@@ -115,38 +115,50 @@ func TestAdministratorMethodsNeedGrantAdmins(t *testing.T) {
 	for name, actor := range map[string]*identityv1.IdentityActor{
 		"admin without grant_admins": actorOf(admin),
 		"unknown profile":            actorOf(uuid.NewString()),
+		"no actor":                   nil,
 	} {
-		_, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actor, TelegramUsername: "carol"})
-		if status.Code(err) != codes.PermissionDenied {
-			t.Fatalf("%s appoint: got %v want %s", name, err, codes.PermissionDenied)
-		}
-		// Неизвестный ник не держателю отвечает тем же отказом: о профилях он не узнаёт.
-		_, err = f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actor, TelegramUsername: "nobody_here"})
-		if status.Code(err) != codes.PermissionDenied {
-			t.Fatalf("%s appoint unknown: got %v want %s", name, err, codes.PermissionDenied)
-		}
-		_, err = f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actor, TelegramUsername: "not a nick"})
-		if status.Code(err) != codes.PermissionDenied {
-			t.Fatalf("%s appoint malformed: got %v want %s", name, err, codes.PermissionDenied)
-		}
-		for target, id := range map[string]string{"other": other, "self": actor.GetIdentityId(), "malformed": "0192F8A0-0000-7000-8000-000000000001"} {
-			_, err = f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actor, IdentityId: id})
-			if status.Code(err) != codes.PermissionDenied {
-				t.Fatalf("%s dismiss %s: got %v want %s", name, target, err, codes.PermissionDenied)
+		// Неизвестный и неразборчивый ник не держателю отвечают тем же отказом:
+		// о профилях он не узнаёт.
+		for _, username := range []string{"carol", "nobody_here", "not a nick"} {
+			response, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actor, TelegramUsername: username})
+			if err != nil || response.GetRefused().GetNotAdminGrantor() == nil {
+				t.Fatalf("%s appoint %q: response=%v error=%v", name, username, response, err)
 			}
 		}
-		_, err = f.client.ListAdministrators(t.Context(), &identityv1.ListAdministratorsRequest{Actor: actor})
-		if status.Code(err) != codes.PermissionDenied {
-			t.Fatalf("%s list: got %v want %s", name, err, codes.PermissionDenied)
+		for target, id := range map[string]string{"other": other, "self": actor.GetIdentityId(), "malformed": "0192F8A0-0000-7000-8000-000000000001"} {
+			response, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actor, IdentityId: id})
+			if err != nil || response.GetRefused().GetNotAdminGrantor() == nil {
+				t.Fatalf("%s dismiss %s: response=%v error=%v", name, target, response, err)
+			}
 		}
-	}
-	_, err := f.client.ListAdministrators(t.Context(), &identityv1.ListAdministratorsRequest{})
-	if status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("no actor: got %v want %s", err, codes.PermissionDenied)
+		response, err := f.client.ListAdministrators(t.Context(), &identityv1.ListAdministratorsRequest{Actor: actor})
+		if err != nil || response.GetRefused().GetNotAdminGrantor() == nil {
+			t.Fatalf("%s list: response=%v error=%v", name, response, err)
+		}
 	}
 
 	assertActivePresets(t, f.db, target)
 	assertActivePresets(t, f.db, other, "admin")
+}
+
+// Неразборчивый актор — ошибка вызывающего, а не отказ: статус.
+func TestAdministratorMethodsRejectMalformedActor(t *testing.T) {
+	t.Parallel()
+	f := newAdministratorFixture(t)
+	actor := actorOf("0192F8A0-0000-7000-8000-000000000001")
+
+	_, err := f.client.ListAdministrators(t.Context(), &identityv1.ListAdministratorsRequest{Actor: actor})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("list: got %v want %s", err, codes.InvalidArgument)
+	}
+	_, err = f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actor, TelegramUsername: "carol"})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("appoint: got %v want %s", err, codes.InvalidArgument)
+	}
+	_, err = f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actor, IdentityId: f.maintainer})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("dismiss: got %v want %s", err, codes.InvalidArgument)
+	}
 }
 
 // Заблокированный держатель права не имеет: набор под блокировкой — состояние,
@@ -157,9 +169,9 @@ func TestAppointAdministratorDeniesBlockedGrantor(t *testing.T) {
 	target := f.member(t, 8501, "erin")
 	testdb.ExecBypassingShields(t, f.db, `UPDATE profiles SET blocked = true WHERE id = $1`, f.maintainer)
 
-	_, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "erin"})
-	if status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("appoint: got %v want %s", err, codes.PermissionDenied)
+	response, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "erin"})
+	if err != nil || response.GetRefused().GetNotAdminGrantor() == nil {
+		t.Fatalf("appoint: response=%v error=%v", response, err)
 	}
 	assertActivePresets(t, f.db, target)
 }
@@ -178,9 +190,9 @@ func TestAppointAdministratorDeniesRevokedGrantor(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "frank"})
-	if status.Code(err) != codes.PermissionDenied {
-		t.Fatalf("appoint: got %v want %s", err, codes.PermissionDenied)
+	response, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "frank"})
+	if err != nil || response.GetRefused().GetNotAdminGrantor() == nil {
+		t.Fatalf("appoint: response=%v error=%v", response, err)
 	}
 	assertActivePresets(t, f.db, target)
 }
@@ -194,12 +206,12 @@ func TestGrantorAppointsAndDismissesSelfAndPeers(t *testing.T) {
 	authorized := metadata.AppendToOutgoingContext(t.Context(), "authorization", "Bearer "+maintainerToken)
 
 	self, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "keeper"})
-	if err != nil || !self.GetChanged() || self.GetIdentityId() != f.maintainer {
+	if err != nil || !self.GetAppointed().GetChanged() || self.GetAppointed().GetIdentityId() != f.maintainer {
 		t.Fatalf("appoint self: response=%v error=%v", self, err)
 	}
 	assertActivePresets(t, f.db, f.maintainer, "admin", "maintainer")
 	dismissed, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: f.maintainer})
-	if err != nil || !dismissed.GetChanged() {
+	if err != nil || !dismissed.GetDismissed().GetChanged() {
 		t.Fatalf("dismiss self: response=%v error=%v", dismissed, err)
 	}
 	assertActivePresets(t, f.db, f.maintainer, "maintainer")
@@ -207,22 +219,22 @@ func TestGrantorAppointsAndDismissesSelfAndPeers(t *testing.T) {
 	peer := resolve(t, f.client, 8701, new("grace")).GetIdentityId()
 	insertPreset(t, f.db, peer, "maintainer")
 	insertPreset(t, f.db, peer, "admin")
-	if _, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: peer}); err != nil {
-		t.Fatalf("dismiss peer: %v", err)
+	if response, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: peer}); err != nil || !response.GetDismissed().GetChanged() {
+		t.Fatalf("dismiss peer: response=%v error=%v", response, err)
 	}
 	assertActivePresets(t, f.db, peer, "maintainer")
 
-	_, err = f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: uuid.NewString()})
-	if status.Code(err) != codes.NotFound {
-		t.Fatalf("dismiss unknown: got %v want %s", err, codes.NotFound)
+	unknown, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: uuid.NewString()})
+	if err != nil || unknown.GetRefused().GetIdentityUnknown() == nil {
+		t.Fatalf("dismiss unknown: response=%v error=%v", unknown, err)
 	}
 	stranger := resolve(t, f.client, 8702, new("heidi")).GetIdentityId()
 	guest := resolve(t, f.client, 8703, new("ivy")).GetIdentityId()
 	insertCircle(t, f.db, guest, "guest")
 	for _, username := range []string{"heidi", "ivy"} {
-		_, err = f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: username})
-		if status.Code(err) != codes.FailedPrecondition {
-			t.Fatalf("appoint non-member %s: got %v want %s", username, err, codes.FailedPrecondition)
+		response, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: username})
+		if err != nil || response.GetRefused().GetIdentityNotMember() == nil {
+			t.Fatalf("appoint non-member %s: response=%v error=%v", username, response, err)
 		}
 	}
 	assertActivePresets(t, f.db, stranger)
@@ -244,17 +256,21 @@ func TestAppointAdministratorResolvesUsernameStrictly(t *testing.T) {
 
 	for name, tc := range map[string]struct {
 		username string
-		code     codes.Code
+		refused  func(*identityv1.AppointAdministratorRefusal) bool
 	}{
-		"unknown":   {"nobody_here", codes.NotFound},
-		"ambiguous": {"ivan", codes.FailedPrecondition},
-		"blocked":   {"judy", codes.FailedPrecondition},
-		"malformed": {"not a nick", codes.InvalidArgument},
+		"unknown":   {"nobody_here", func(r *identityv1.AppointAdministratorRefusal) bool { return r.GetUsernameUnknown() != nil }},
+		"ambiguous": {"ivan", func(r *identityv1.AppointAdministratorRefusal) bool { return r.GetUsernameUnresolved() != nil }},
+		"blocked":   {"judy", func(r *identityv1.AppointAdministratorRefusal) bool { return r.GetIdentityBlocked() != nil }},
 	} {
-		_, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: tc.username})
-		if status.Code(err) != tc.code {
-			t.Fatalf("%s: got %v want %s", name, err, tc.code)
+		response, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: tc.username})
+		if err != nil || !tc.refused(response.GetRefused()) {
+			t.Fatalf("%s: response=%v error=%v", name, response, err)
 		}
+	}
+	// Неразборчивый ник у держателя права — ошибка запроса, а не отказ.
+	_, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "not a nick"})
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("malformed: got %v want %s", err, codes.InvalidArgument)
 	}
 	assertActivePresets(t, f.db, stale)
 	assertActivePresets(t, f.db, fresh)
@@ -262,7 +278,7 @@ func TestAppointAdministratorResolvesUsernameStrictly(t *testing.T) {
 	// Заблокированный носитель ника не мешает живому.
 	testdb.ExecBypassingShields(t, f.db, `UPDATE profiles SET blocked = true WHERE id = $1`, stale)
 	appointed, err := f.client.AppointAdministrator(t.Context(), &identityv1.AppointAdministratorRequest{Actor: actorOf(f.maintainer), TelegramUsername: "ivan"})
-	if err != nil || appointed.GetIdentityId() != fresh {
+	if err != nil || appointed.GetAppointed().GetIdentityId() != fresh {
 		t.Fatalf("appoint live holder: response=%v error=%v", appointed, err)
 	}
 }
@@ -280,7 +296,7 @@ func TestListAdministratorsMarksPresets(t *testing.T) {
 	}
 	type marks struct{ maintainer, admin bool }
 	got := map[string]marks{}
-	for _, a := range response.GetAdministrators() {
+	for _, a := range response.GetListed().GetAdministrators() {
 		got[a.GetIdentityId()] = marks{a.GetMaintainer(), a.GetAdmin()}
 		if a.GetTelegramUserId() <= 0 || a.GetTelegramUsername() == "" {
 			t.Fatalf("administrator without Telegram identity: %v", a)

@@ -31,7 +31,7 @@ service IdentityService {
   // Revokes a preset. Requires maintainer authentication.
   rpc RevokePreset(RevokePresetRequest) returns (RevokePresetResponse);
   // Lists the people holding PRESET_ADMIN or PRESET_MAINTAINER, on behalf of a
-  // holder of ACCESS_RIGHT_GRANT_ADMINS.
+  // holder of ACCESS_RIGHT_GRANT_ADMINS. Refusals are values of the response.
   rpc ListAdministrators(ListAdministratorsRequest) returns (ListAdministratorsResponse);
   // Grants PRESET_ADMIN, on behalf of a holder of ACCESS_RIGHT_GRANT_ADMINS, to
   // the member with this username. The holder may appoint themselves.
@@ -514,9 +514,32 @@ message RevokePresetResponse {
   bool changed = 1;
 }
 
+// The administrator methods answer an expected refusal as a value, not as a
+// gRPC status: the refusal model is typed and kept apart from the success
+// model (PER-521). A status stays for a malformed request and for failures of
+// the service itself.
+
 message ListAdministratorsRequest { IdentityActor actor = 1; }
 
-message ListAdministratorsResponse { repeated Administrator administrators = 1; }
+message ListAdministratorsResponse {
+  reserved 1;
+  reserved "administrators";
+
+  // Exactly one is set.
+  oneof outcome {
+    AdministratorList listed = 2;
+    ListAdministratorsRefusal refused = 3;
+  }
+}
+
+message AdministratorList { repeated Administrator administrators = 1; }
+
+message ListAdministratorsRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotAdminGrantor not_admin_grantor = 1;
+  }
+}
 
 // A person holding PRESET_ADMIN, PRESET_MAINTAINER or both.
 message Administrator {
@@ -540,10 +563,34 @@ message AppointAdministratorRequest {
 }
 
 message AppointAdministratorResponse {
-  // False when the preset was already held.
-  bool changed = 1;
+  reserved 1, 2;
+  reserved "changed", "identity_id";
+
+  // Exactly one is set.
+  oneof outcome {
+    AdministratorAppointed appointed = 3;
+    AppointAdministratorRefusal refused = 4;
+  }
+}
+
+message AdministratorAppointed {
   // The person the username resolved to.
-  string identity_id = 2;
+  string identity_id = 1;
+  // False when the preset was already held.
+  bool changed = 2;
+}
+
+// Every refusal about the person named comes after the right check: a caller
+// without ACCESS_RIGHT_GRANT_ADMINS gets NotAdminGrantor whatever it named.
+message AppointAdministratorRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotAdminGrantor not_admin_grantor = 1;
+    UsernameUnknown username_unknown = 2;
+    IdentityNotMember identity_not_member = 3;
+    IdentityBlocked identity_blocked = 4;
+    UsernameUnresolved username_unresolved = 5;
+  }
 }
 
 message DismissAdministratorRequest {
@@ -553,6 +600,46 @@ message DismissAdministratorRequest {
 }
 
 message DismissAdministratorResponse {
+  reserved 1;
+  reserved "changed";
+
+  // Exactly one is set.
+  oneof outcome {
+    AdministratorDismissed dismissed = 2;
+    DismissAdministratorRefusal refused = 3;
+  }
+}
+
+message AdministratorDismissed {
   // False when the preset was not held.
   bool changed = 1;
 }
+
+message DismissAdministratorRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotAdminGrantor not_admin_grantor = 1;
+    IdentityUnknown identity_unknown = 2;
+  }
+}
+
+// The actor does not hold ACCESS_RIGHT_GRANT_ADMINS, is blocked, has no
+// profile or was not named. The causes are not told apart: a caller without
+// the right learns nothing about profiles.
+message NotAdminGrantor {}
+
+// No profile carries the username: the person has never written to a bot.
+message UsernameUnknown {}
+
+// The person is not in CIRCLE_MEMBER: a preset is granted to members only.
+message IdentityNotMember {}
+
+// The person's profile is blocked.
+message IdentityBlocked {}
+
+// The username cannot be pinned to one person: several live profiles carry it,
+// or it changed hands while the request ran. A grant never goes to a guess.
+message UsernameUnresolved {}
+
+// No profile has this identity_id.
+message IdentityUnknown {}
