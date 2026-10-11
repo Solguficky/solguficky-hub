@@ -1649,6 +1649,88 @@ describe("bid leaf delivery", () => {
     });
   });
 
+  // «Как это работает» (PER-517) задаёт вопрос лимита заново: нажатый вопрос
+  // удаляется, как по «Отмене», а новый с пояснением приходит следом.
+  it("replaces the limit question with an explained one on how it works", async () => {
+    const { bot, calls } = makeBot(trading);
+    await bot.handleUpdate({
+      update_id: 3,
+      callback_query: {
+        id: "cb",
+        from,
+        chat_instance: "ci",
+        data: encodeAuctionCallback({ kind: "explain", lotId, page: 0 }),
+        message: {
+          message_id: 9,
+          date: 0,
+          chat: privateChat,
+          text: "Автоставка",
+        },
+      },
+    } as Update);
+    expect(calls.map((call) => call.method)).not.toContain(
+      "editMessageReplyMarkup",
+    );
+    expect(calls.find((call) => call.method === "deleteMessage")).toMatchObject(
+      { payload: { chat_id: 42, message_id: 9 } },
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining("Подскажу: платишь цену, а не лимит."),
+        reply_markup: { force_reply: true },
+      },
+    });
+  });
+
+  // Шаг вопроса лежит в «Отмене», а над ней может стоять «Как это работает»:
+  // ответ находит шаг по всей клавиатуре.
+  it("takes an answer to the limit question under how it works", async () => {
+    const { bot, calls } = makeBot(trading);
+    const limitStep = encodeAuctionCallback({
+      kind: "question",
+      question: "proxy",
+      lotId,
+      page: 0,
+      addressee: from.id,
+    });
+    await bot.handleUpdate({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: "2 000",
+        reply_to_message: {
+          ...questionMessage,
+          text: "Автоставка",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Как это работает",
+                  callback_data: encodeAuctionCallback({
+                    kind: "explain",
+                    lotId,
+                    page: 0,
+                  }),
+                },
+              ],
+              [{ text: "Отмена", callback_data: limitStep }],
+            ],
+          },
+        },
+      },
+    } as Update);
+    const sent = calls.find((call) => call.method === "sendMessage");
+    expect(sent?.payload).toMatchObject({
+      text: expect.stringMatching(
+        /^<b>Включить автоставку до 2\s000\s₽\?<\/b>/,
+      ),
+    });
+  });
+
   it("confirms the typed amount and closes the question", async () => {
     const { bot, calls } = makeBot(trading);
     await bot.handleUpdate(answer({ text: "1 300" }));

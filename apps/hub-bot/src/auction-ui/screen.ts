@@ -142,6 +142,10 @@ export type AuctionBlock =
       auctionId: string;
       title?: string;
       current?: Money;
+      // Пояснение автоставки голосом помощника (PER-517) — только у вопроса
+      // лимита до первой принятой автоставки или по «Как это работает».
+      // `example` — пример на этом лоте; нет — у лота нет цены или шага.
+      explainer?: { example?: ProxyExample };
     }
   | {
       // Первая ставка в аукционе: имя видно всем участникам, и без ника его
@@ -164,6 +168,15 @@ export type AuctionBlock =
       // По возрастанию `sequence`: порядок журнала, а не часов.
       entries: readonly HistoryItem[];
     };
+
+// Пример автоставки на текущем лоте: цена сейчас, шаг и лимит на три шага
+// выше — до него бот и поднимет цену. Считается из снимка лота, не
+// выдумывается.
+export type ProxyExample = {
+  currentPrice: Money;
+  step: Money;
+  limit: Money;
+};
 
 // Исход команды участника после «Да» или после ответа, отвергнутого до «Да».
 // Отказ называет цену сам: оболочка пишет его заголовком экрана исхода.
@@ -205,6 +218,7 @@ export type AuctionButton =
         | "confirm.yes"
         | "confirm.no"
         | "question.cancel"
+        | "question.explain"
         | "name.username"
         | "name.alias"
         | "name.back"

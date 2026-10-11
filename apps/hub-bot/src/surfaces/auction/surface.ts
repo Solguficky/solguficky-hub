@@ -50,6 +50,13 @@ export const auctionSurface: SurfaceDefinition = ({
         error_category: "dependency_unavailable",
         error: cause instanceof Error ? cause.message : String(cause),
       }),
+    // Без отметки вопрос лимита объясняет автоставку ещё раз.
+    onProxyExplainerRefused: (cause, requestId) =>
+      logger.warn("proxy explainer mark unavailable", {
+        request_id: requestId,
+        error_category: "dependency_unavailable",
+        error: cause instanceof Error ? cause.message : String(cause),
+      }),
   });
   if (auction.notificationsUrl === undefined) {
     logger.info(

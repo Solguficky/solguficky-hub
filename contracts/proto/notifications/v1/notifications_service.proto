@@ -31,6 +31,11 @@ service NotificationsService {
   rpc UnfollowLot(UnfollowLotRequest) returns (LotFollowing);
   rpc ListFollowedLots(ListFollowedLotsRequest) returns (FollowedLots);
 
+  // Whether the person has already seen the explanation of an automatic bid
+  // limit: the bot shows it until the first accepted limit.
+  rpc GetProxyExplainer(GetProxyExplainerRequest) returns (ProxyExplainer);
+  rpc MarkProxyExplainerSeen(MarkProxyExplainerSeenRequest) returns (ProxyExplainer);
+
   // Two separate operations rather than one with an optional meetup id. They
   // share the acceptance message because one mechanism executes both.
   rpc BroadcastToMeetupSubscribers(BroadcastToMeetupSubscribersRequest) returns (BroadcastAccepted);
@@ -218,6 +223,25 @@ message FollowedLots {
 
   // Canonical lowercase UUIDv7 strings with hyphens.
   repeated string lot_ids = 2;
+}
+
+message GetProxyExplainerRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+}
+
+// Carries no moment and no lot: only whether the explanation was seen.
+message MarkProxyExplainerSeenRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+}
+
+// Server-produced state. A person who was never marked gets seen = false.
+message ProxyExplainer {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  bool seen = 2;
 }
 
 message BroadcastToMeetupSubscribersRequest {

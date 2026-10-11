@@ -541,6 +541,52 @@ describe("bid sheet screens", () => {
     expect(screen.asks).toBe(true);
   });
 
+  // Пояснение автоставки (PER-517) — абзацем над тем, что прислать: пример
+  // считается из цены и шага лота, а не написан в тексте.
+  it("explains the limit on this lot before asking it", () => {
+    const screen = body({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      current: rub(1250),
+      explainer: {
+        example: {
+          currentPrice: rub(1200),
+          step: rub(50),
+          limit: rub(1350),
+        },
+      },
+    });
+    expect(plain(screen.text)).toBe(
+      [
+        "<b>Автоставка</b>",
+        "",
+        "Подскажу: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
+        "Например: цена сейчас 1 200 ₽, шаг 50 ₽, твой лимит 1 350 ₽. Кто-то ставит 1 250 ₽ — бот отвечает 1 300 ₽ за тебя, и так до 1 350 ₽, не выше. Заплатишь цену, на которой торги остановятся.",
+        "",
+        "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
+        "Сейчас: 1 250 ₽",
+        "Например: 3 000",
+      ].join("\n"),
+    );
+    expect(screen.asks).toBe(true);
+  });
+
+  it("explains the limit without an example when the lot has no step", () => {
+    const screen = body({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      explainer: {},
+    });
+    expect(plain(screen.text)).toContain(
+      "\n\nПодскажу: платишь цену, а не лимит.",
+    );
+    expect(screen.text).not.toContain("Например: цена сейчас");
+  });
+
   // Непринятый ответ — свой экран (PER-472): причина в заголовке, над
   // «К лоту» — «Ввести заново».
   it("shows a refused answer as its own screen with a retry", () => {

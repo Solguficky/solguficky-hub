@@ -718,6 +718,9 @@ function questionText(
     case "proxy":
       return screenText(
         "Автоставка",
+        block.explainer === undefined
+          ? undefined
+          : proxyExplainer(block.explainer),
         [
           "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
           ...current(""),
@@ -751,6 +754,33 @@ function nameChoiceText(
         : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
     ].join("\n"),
   );
+}
+
+// Пояснение автоставки голосом помощника (PER-517, RFC-007): платишь цену, а
+// не лимит. Пример — на этом лоте: цена сейчас, шаг и лимит на три шага выше;
+// чужая ставка забирает первый шаг, бот отвечает вторым и не идёт выше
+// лимита. Текст тот же, что у бота хаба.
+function proxyExplainer(
+  explainer: NonNullable<
+    Extract<AuctionBlock, { kind: "question" }>["explainer"]
+  >,
+): string {
+  const lines = [
+    "Подскажу: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
+  ];
+  const { example } = explainer;
+  if (example !== undefined) {
+    const after = (steps: number) =>
+      money({
+        minorUnits:
+          example.currentPrice.minorUnits + steps * example.step.minorUnits,
+        currency: example.currentPrice.currency,
+      });
+    lines.push(
+      `Например: цена сейчас ${money(example.currentPrice)}, шаг ${money(example.step)}, твой лимит ${money(example.limit)}. Кто-то ставит ${after(1)} — бот отвечает ${after(2)} за тебя, и так до ${money(example.limit)}, не выше. Заплатишь цену, на которой торги остановятся.`,
+    );
+  }
+  return lines.join("\n");
 }
 
 // Автоставка объясняется разницей цены и лимита (RFC-007): на столько бот
@@ -1189,6 +1219,8 @@ function renderButton(
       return text(confirmNoLabel);
     case "question.cancel":
       return text("Отмена");
+    case "question.explain":
+      return text("Как это работает");
     case "name.username": {
       const choice = blocks.find((block) => block.kind === "name-choice");
       return text(

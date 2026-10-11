@@ -330,11 +330,21 @@ export interface FavoritesPort {
   }): Promise<FollowOutcome>;
 }
 
+// Пояснение автоставки (PER-517): вопрос лимита объясняет разницу цены и
+// лимита, пока у человека нет ни одной принятой автоставки. Отметка живёт в
+// Notifications и одна у человека в обоих ботах; лимиты туда не уезжают.
+export interface ProxyExplainerPort {
+  seen(viewer: Viewer): Promise<boolean>;
+  markSeen(viewer: Viewer): Promise<void>;
+}
+
 // `favorites` нет — у процесса нет адреса Notifications: карточка обходится
-// без кнопки избранного, а список отказывает как недоступный сосед.
+// без кнопки избранного, а список отказывает как недоступный сосед. Нет
+// `proxyExplainer` — вопрос лимита объясняет автоставку каждый раз.
 export type AuctionBotPorts = {
   identity: IdentityPort;
   auction: AuctionPort;
   operations: OperationIdPort;
   favorites?: FavoritesPort;
+  proxyExplainer?: ProxyExplainerPort;
 };

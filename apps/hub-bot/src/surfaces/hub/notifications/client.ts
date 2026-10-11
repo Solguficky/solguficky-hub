@@ -8,8 +8,12 @@ import {
   NotificationsService,
   NotificationCategory as WireCategory,
 } from "../../../../gen/notifications/v1/notifications_service_pb.js";
-import type { FavoritesPort } from "../../../auction-ui/index.js";
+import type {
+  FavoritesPort,
+  ProxyExplainerPort,
+} from "../../../auction-ui/index.js";
 import { createFavoritesPort } from "../../../core/notifications/favorites.js";
+import { createProxyExplainerPort } from "../../../core/notifications/proxy-explainer.js";
 import {
   callHeaders,
   callTimeoutMs,
@@ -50,6 +54,11 @@ export type NotificationsClient = Notifications & {
     meta?: RpcMetadata,
     onListRefused?: (cause: unknown) => void,
   ): FavoritesPort;
+  // Пояснение автоставки (PER-517) на том же соединении.
+  proxyExplainer(
+    meta?: RpcMetadata,
+    onRefused?: (cause: unknown) => void,
+  ): ProxyExplainerPort;
   close(): void;
 };
 
@@ -78,6 +87,15 @@ export function createNotificationsClient(
           ...callHeaders(meta),
         }),
         onListRefused,
+      ),
+    proxyExplainer: (meta, onRefused) =>
+      createProxyExplainerPort(
+        rpc,
+        () => ({
+          timeoutMs: callTimeoutMs(meta, timeoutMs),
+          ...callHeaders(meta),
+        }),
+        onRefused,
       ),
     close: () => sessionManager.abort(),
   };

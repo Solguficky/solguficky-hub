@@ -26,7 +26,11 @@ import type {
   TelegramUser,
   Viewer,
 } from "../ports.js";
-import type { AuctionScreenBody, CommandResult } from "../screen.js";
+import type {
+  AuctionScreenBody,
+  CommandResult,
+  ProxyExample,
+} from "../screen.js";
 
 // Ядро contract suite из ADR-044, «Проверка общего поведения». Оно чистое и от
 // раннера не зависит: возвращает нарушения значением, поэтому самопроверка
@@ -98,7 +102,9 @@ export type PortCall =
       port: "favorites";
       method: "followLot" | "unfollowLot";
       request: { viewer: Viewer; lotId: string };
-    };
+    }
+  // Пояснение автоставки (PER-517): отметка живёт в Notifications.
+  | { port: "proxyExplainer"; method: "seen" | "markSeen"; request: Viewer };
 
 // Снимок Auction, над которым идёт намерение: шпион отвечает только им.
 // Запрос того, чего в снимке нет, падает — так suite ловит приложение, которое
@@ -128,6 +134,10 @@ export type ContractAuction = {
   followed?: readonly string[] | "unavailable";
   // Ответы отметки и снятия по порядку вызовов.
   follows?: readonly FollowOutcome[];
+  // Видел ли человек пояснение автоставки (PER-517). Нет — порта у
+  // приложения нет, как у процесса без адреса Notifications; `unavailable` —
+  // Notifications отказывает и чтению, и отметке.
+  explainer?: { seen: boolean } | "unavailable";
 };
 
 export type AuctionContractCase = {
@@ -207,6 +217,7 @@ export function contractIdentity(
 // Ожидаемый вызов только сравнивается и печатается, поэтому тип вызова порта
 // за подстановкой не сохраняется.
 function withViewer(call: PortCall, viewer: Viewer): unknown {
+  if (call.port === "proxyExplainer") return { ...call, request: viewer };
   if (call.port === "favorites") {
     return call.method === "listFollowedLots"
       ? { ...call, request: viewer }
@@ -668,11 +679,15 @@ const confirmBody = (
   ],
 });
 
+// Вопрос лимита с пояснением автоставки (PER-517) или с кнопкой «Как это
+// работает», если пояснение человек уже видел.
 const questionBody = (
   question: "bid" | "proxy" | "alias",
   extra: {
     current?: Money;
     pending?: { command: "bid" | "proxy"; amount: number };
+    explainer?: { example?: ProxyExample };
+    explainButton?: boolean;
   } = {},
 ): AuctionScreenBody => ({
   blocks: [
@@ -683,9 +698,24 @@ const questionBody = (
       auctionId: CONTRACT_AUCTION_ID,
       title: "Кружка с совой",
       ...(extra.current === undefined ? {} : { current: extra.current }),
+      ...(extra.explainer === undefined ? {} : { explainer: extra.explainer }),
     },
   ],
   keyboard: [
+    ...(extra.explainButton === true
+      ? [
+          [
+            {
+              action: "question.explain" as const,
+              callbackData: callback({
+                kind: "explain",
+                lotId: CONTRACT_LOT.lotId,
+                page: 2,
+              }),
+            },
+          ],
+        ]
+      : []),
     [
       {
         action: "question.cancel",
@@ -894,6 +924,28 @@ const chooseCall = (
 });
 
 const LOT_CALL = getLotCall(CONTRACT_LOT.lotId);
+
+// Пояснение автоставки (PER-517): чтение и отметка — у Notifications.
+const explainerCall = (method: "seen" | "markSeen"): PortCall => ({
+  port: "proxyExplainer",
+  method,
+  request: CONTRACT_VIEWER,
+});
+
+const askLimitCallback = callback({
+  kind: "ask",
+  question: "proxy",
+  lotId: CONTRACT_LOT.lotId,
+  page: 2,
+});
+
+// Пример на лоте контракта: цена 1 200 ₽, единый шаг 50 ₽ и лимит на три
+// шага выше.
+const CONTRACT_EXAMPLE: ProxyExample = {
+  currentPrice: rub(1200),
+  step: rub(50),
+  limit: rub(1350),
+};
 
 // Намерения листа ставки (PER-317): ставка и лимит от кнопки до карточки.
 const COMMAND_CASES: readonly AuctionContractCase[] = [
@@ -1160,17 +1212,59 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
       ],
     },
   },
+  // Без Notifications бот не знает, видел ли человек пояснение, и
+  // показывает его: пример — на цене и шаге этого лота.
   {
     intent: "proxy: ask the limit",
+    callbackData: askLimitCallback,
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL],
+    body: questionBody("proxy", {
+      current: rub(1250),
+      explainer: { example: CONTRACT_EXAMPLE },
+    }),
+  },
+  {
+    intent: "proxy: ask the limit before the first one",
+    callbackData: askLimitCallback,
+    auction: { ...AUCTION, explainer: { seen: false } },
+    auctionCalls: [LOT_CALL, explainerCall("seen")],
+    body: questionBody("proxy", {
+      current: rub(1250),
+      explainer: { example: CONTRACT_EXAMPLE },
+    }),
+  },
+  {
+    intent: "proxy: ask the limit again",
+    callbackData: askLimitCallback,
+    auction: { ...AUCTION, explainer: { seen: true } },
+    auctionCalls: [LOT_CALL, explainerCall("seen")],
+    body: questionBody("proxy", { current: rub(1250), explainButton: true }),
+  },
+  {
+    intent: "proxy: ask the limit, mark unavailable",
+    callbackData: askLimitCallback,
+    auction: { ...AUCTION, explainer: "unavailable" },
+    auctionCalls: [LOT_CALL, explainerCall("seen")],
+    body: questionBody("proxy", {
+      current: rub(1250),
+      explainer: { example: CONTRACT_EXAMPLE },
+    }),
+  },
+  // «Как это работает» объясняет без оглядки на отметку и её не читает.
+  {
+    intent: "proxy: how it works",
     callbackData: callback({
-      kind: "ask",
-      question: "proxy",
+      kind: "explain",
       lotId: CONTRACT_LOT.lotId,
       page: 2,
     }),
-    auction: AUCTION,
+    auction: { ...AUCTION, explainer: { seen: true } },
     auctionCalls: [LOT_CALL],
-    body: questionBody("proxy", { current: rub(1250) }),
+    body: questionBody("proxy", {
+      current: rub(1250),
+      explainer: { example: CONTRACT_EXAMPLE },
+    }),
   },
   {
     intent: "proxy: answer the limit",
@@ -1185,6 +1279,30 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     callbackData: commitCallback("proxy", 200000),
     auction: { ...AUCTION, limits: [{ kind: "accepted", lotVersion: 5 }] },
     auctionCalls: [LOT_CALL, limitCall(200000)],
+    body: acceptedBody("proxy", 200000, 5),
+  },
+  // Первая принятая автоставка снимает пояснение; отказ отметки экран не
+  // роняет.
+  {
+    intent: "proxy: accepted, explainer marked",
+    callbackData: commitCallback("proxy", 200000),
+    auction: {
+      ...AUCTION,
+      limits: [{ kind: "accepted", lotVersion: 5 }],
+      explainer: { seen: false },
+    },
+    auctionCalls: [LOT_CALL, limitCall(200000), explainerCall("markSeen")],
+    body: acceptedBody("proxy", 200000, 5),
+  },
+  {
+    intent: "proxy: accepted, mark unavailable",
+    callbackData: commitCallback("proxy", 200000),
+    auction: {
+      ...AUCTION,
+      limits: [{ kind: "accepted", lotVersion: 5 }],
+      explainer: "unavailable",
+    },
+    auctionCalls: [LOT_CALL, limitCall(200000), explainerCall("markSeen")],
     body: acceptedBody("proxy", 200000, 5),
   },
   {
@@ -1819,7 +1937,7 @@ export function spyPorts(
   const limits = [...(snapshot.limits ?? [])];
   const displayNames = [...(snapshot.displayNames ?? [])];
   const follows = [...(snapshot.follows ?? [])];
-  const { followed } = snapshot;
+  const { followed, explainer } = snapshot;
   const followCommand = (outcome: FollowOutcome | undefined) => {
     if (outcome === undefined) throw new Error("follow is not expected");
     return outcome;
@@ -1926,6 +2044,33 @@ export function spyPorts(
             async unfollowLot(request) {
               calls.push({ port: "favorites", method: "unfollowLot", request });
               return followCommand(follows.shift());
+            },
+          },
+        }),
+    ...(explainer === undefined
+      ? {}
+      : {
+          proxyExplainer: {
+            async seen(viewer) {
+              calls.push({
+                port: "proxyExplainer",
+                method: "seen",
+                request: viewer,
+              });
+              if (explainer === "unavailable") {
+                throw new Error("proxy explainer unavailable");
+              }
+              return explainer.seen;
+            },
+            async markSeen(viewer) {
+              calls.push({
+                port: "proxyExplainer",
+                method: "markSeen",
+                request: viewer,
+              });
+              if (explainer === "unavailable") {
+                throw new Error("proxy explainer unavailable");
+              }
             },
           },
         }),

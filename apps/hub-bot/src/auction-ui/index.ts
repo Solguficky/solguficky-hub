@@ -22,6 +22,7 @@ export {
   type ParsedAuctionCallback,
   type PendingCommand,
   parseAuctionCallback,
+  replacesAuctionQuestion,
 } from "./callback-data.js";
 export {
   type AuctionDenial,
@@ -63,6 +64,7 @@ export type {
   LotView,
   Money,
   OperationIdPort,
+  ProxyExplainerPort,
   ProxyLimitRefusal,
   ResolvedIdentity,
   StepWindowView,
@@ -78,4 +80,5 @@ export type {
   CommandResult,
   FeedItem,
   HistoryItem,
+  ProxyExample,
 } from "./screen.js";

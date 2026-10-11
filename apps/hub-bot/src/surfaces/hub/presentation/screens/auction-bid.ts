@@ -148,6 +148,9 @@ export function questionScreen(
       case "proxy":
         return screenText(
           "Автоставка",
+          block.explainer === undefined
+            ? undefined
+            : proxyExplainer(block.explainer, money),
           [
             "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
             ...current(""),
@@ -168,15 +171,49 @@ export function questionScreen(
       }
     }
   })();
+  // «Как это работает» — над «Отменой»: выход из вопроса остаётся последним
+  // рядом (дизайн-код, «Вопросы»).
+  const explain = keyboard
+    .flat()
+    .find((button) => button.action === "question.explain");
+  const rows = new InlineKeyboard();
+  if (explain !== undefined) {
+    rows.text(explainLabel, explain.callbackData).row();
+  }
   return {
     id: "question",
     text,
-    keyboard: new InlineKeyboard().text(
-      cancelLabel,
-      dataOf(keyboard, "question.cancel"),
-    ),
+    keyboard: rows.text(cancelLabel, dataOf(keyboard, "question.cancel")),
     format: "HTML",
   };
+}
+
+const explainLabel = "Как это работает";
+
+// Пояснение автоставки голосом помощника (PER-517, RFC-007): платишь цену, а
+// не лимит. Пример — на этом лоте: цена сейчас, шаг и лимит на три шага выше;
+// чужая ставка забирает первый шаг, бот отвечает вторым и не идёт выше
+// лимита. Текст тот же, что у бота аукциона.
+function proxyExplainer(
+  explainer: NonNullable<QuestionBlock["explainer"]>,
+  money: (amount: Money) => string,
+): string {
+  const lines = [
+    "Подскажу: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
+  ];
+  const { example } = explainer;
+  if (example !== undefined) {
+    const after = (steps: number) =>
+      money({
+        minorUnits:
+          example.currentPrice.minorUnits + steps * example.step.minorUnits,
+        currency: example.currentPrice.currency,
+      });
+    lines.push(
+      `Например: цена сейчас ${money(example.currentPrice)}, шаг ${money(example.step)}, твой лимит ${money(example.limit)}. Кто-то ставит ${after(1)} — бот отвечает ${after(2)} за тебя, и так до ${money(example.limit)}, не выше. Заплатишь цену, на которой торги остановятся.`,
+    );
+  }
+  return lines.join("\n");
 }
 
 export function nameChoiceScreen(

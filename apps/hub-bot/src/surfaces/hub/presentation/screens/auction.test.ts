@@ -363,6 +363,65 @@ describe("bid sheet in the hub shell", () => {
     expect(asks).toBe(true);
   });
 
+  // Пояснение автоставки (PER-517) — тем же текстом, что у бота аукциона.
+  it("explains the limit on this lot before asking it", () => {
+    const { screen, asks } = sheet({
+      kind: "question",
+      question: "proxy",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      current: rub(1250),
+      explainer: {
+        example: {
+          currentPrice: rub(1200),
+          step: rub(50),
+          limit: rub(1350),
+        },
+      },
+    });
+    expect(plain(screen.text)).toBe(
+      [
+        "<b>Автоставка</b>",
+        "",
+        "Подскажу: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
+        "Например: цена сейчас 1 200 ₽, шаг 50 ₽, твой лимит 1 350 ₽. Кто-то ставит 1 250 ₽ — бот отвечает 1 300 ₽ за тебя, и так до 1 350 ₽, не выше. Заплатишь цену, на которой торги остановятся.",
+        "",
+        "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
+        "Сейчас: 1 250 ₽",
+        "Например: 3 000",
+      ].join("\n"),
+    );
+    expect(asks).toBe(true);
+  });
+
+  // Пояснение видено — над «Отменой» встаёт «Как это работает».
+  it("offers how it works above the cancel once the explainer was seen", () => {
+    const { screen } = auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "question",
+            question: "proxy",
+            lotId: "lot-1",
+            auctionId: "auc-1",
+            current: rub(1250),
+          },
+        ],
+        keyboard: [
+          [{ action: "question.explain", callbackData: "v1:auc:xe:lot-1:1" }],
+          [{ action: "question.cancel", callbackData: "v1:auc:qx:lot-1:1:42" }],
+        ],
+      },
+    });
+    expect(screen.text).not.toContain("Подскажу");
+    expect(
+      screen.keyboard?.inline_keyboard.map((row) =>
+        row.map((button) => button.text),
+      ),
+    ).toEqual([["Как это работает"], ["Отмена"]]);
+  });
+
   // Отказ команды — свой экран исхода (PER-472), тексты — как у бота
   // аукциона.
   it("shows a refused command as its own outcome screen", () => {

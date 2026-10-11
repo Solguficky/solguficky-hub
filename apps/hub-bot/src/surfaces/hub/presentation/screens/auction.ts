@@ -266,6 +266,7 @@ function feedLabel(
     case "confirm.yes":
     case "confirm.no":
     case "question.cancel":
+    case "question.explain":
     case "name.username":
     case "name.alias":
     case "name.back":
@@ -420,6 +421,7 @@ function lotLabel(button: AuctionButton): string {
     case "confirm.yes":
     case "confirm.no":
     case "question.cancel":
+    case "question.explain":
     case "name.username":
     case "name.alias":
     case "name.back":
@@ -574,6 +576,7 @@ function historyLabel(button: AuctionButton): string {
     case "confirm.yes":
     case "confirm.no":
     case "question.cancel":
+    case "question.explain":
     case "name.username":
     case "name.alias":
     case "name.back":

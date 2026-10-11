@@ -978,6 +978,30 @@ describe("bid leaf in the hub", () => {
     });
   });
 
+  // «Как это работает» (PER-517) задаёт вопрос лимита заново: нажатый вопрос
+  // удаляется, как по «Отмене», а новый с пояснением приходит следом.
+  it("replaces the limit question with an explained one on how it works", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "explain", lotId, page: 0 }), {
+        text: "Автоставка",
+      }),
+    );
+    expect(calls.map((call) => call.method)).not.toContain(
+      "editMessageReplyMarkup",
+    );
+    expect(calls.find((call) => call.method === "deleteMessage")).toMatchObject(
+      { payload: { chat_id: 42, message_id: 9 } },
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining("Подскажу: платишь цену, а не лимит."),
+        reply_markup: { force_reply: true },
+      },
+    });
+  });
+
   it("confirms the typed amount and takes the cancel off the question", async () => {
     const { bot, calls } = await setup();
     await bot.handleUpdate(answer({ text: "1 300" }));

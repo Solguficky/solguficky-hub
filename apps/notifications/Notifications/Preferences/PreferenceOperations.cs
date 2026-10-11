@@ -166,6 +166,31 @@ public sealed class PreferenceOperations(
         return stored ?? OutbidFrequencies.Default;
     }
 
+    /// <summary>Видел ли человек пояснение автоставки (PER-517).</summary>
+    public async Task<bool> ReadProxyExplainer(Guid identityId, CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+
+        var seen = await ProxyExplainerStore.Seen(work, identityId, cancellationToken);
+
+        await work.Commit(cancellationToken);
+
+        return seen;
+    }
+
+    /// <summary>Отмечает пояснение автоставки виденным; повтор ничего не меняет.</summary>
+    public async Task<bool> MarkProxyExplainerSeen(Guid identityId, CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+
+        await ProxyExplainerStore.Mark(work, identityId, DateTimeOffset.UtcNow, cancellationToken);
+        var seen = await ProxyExplainerStore.Seen(work, identityId, cancellationToken);
+
+        await work.Commit(cancellationToken);
+
+        return seen;
+    }
+
     /// <summary>
     /// Общая форма всех операций у сходки: команда и снимок после неё одной
     /// транзакцией. Чистое чтение передаёт пустую команду.

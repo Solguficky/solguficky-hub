@@ -17,8 +17,10 @@ import {
   type FavoritesPort,
   isAuctionQuestion,
   type LotImagePort,
+  type ProxyExplainerPort,
   parseAuctionCallback,
   previewLot,
+  replacesAuctionQuestion,
   type Viewer,
 } from "../../../auction-ui/index.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
@@ -299,6 +301,9 @@ export type BotRuntime = {
   // Избранные лоты у Notifications (PER-495): порт дерева на каждый update.
   // Нет — карточка лота без кнопки избранного, а лента без «Избранного».
   favorites?: (meta?: RpcMetadata) => FavoritesPort;
+  // Отметка «пояснение автоставки видено» у Notifications (PER-517). Нет —
+  // вопрос лимита объясняет автоставку каждый раз.
+  proxyExplainer?: (meta?: RpcMetadata) => ProxyExplainerPort;
   // Пояс, в котором человек читает дедлайн лота; тот же, что у Meetups.
   communityTimeZone?: string;
   faq?: FaqContent;
@@ -1566,7 +1571,9 @@ async function handleCallback(
       const pressedId = ctx.callbackQuery?.message?.message_id;
       // «Отмена» под вопросом листа ставки: вопрос удаляется, экран приходит
       // новым сообщением; не дал Telegram удалить — правится на месте.
-      if (isAuctionQuestion(data)) {
+      // «Как это работает» под вопросом лимита задаёт его заново тем же
+      // путём: нажатый вопрос удаляется, новый приходит следом (PER-517).
+      if (isAuctionQuestion(data) || replacesAuctionQuestion(data)) {
         if (pressedId !== undefined) {
           questions.delete(questionKey(ctx.chat?.id, pressedId));
         }
@@ -5799,6 +5806,11 @@ async function handleAuctionCallback(
         ...(runtime.favorites === undefined
           ? {}
           : { favorites: runtime.favorites(rpcCall(ctx, useCase)) }),
+        ...(runtime.proxyExplainer === undefined
+          ? {}
+          : {
+              proxyExplainer: runtime.proxyExplainer(rpcCall(ctx, useCase)),
+            }),
       },
       identity: resolved,
       user: {

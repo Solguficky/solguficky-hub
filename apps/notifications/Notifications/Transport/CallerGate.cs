@@ -41,6 +41,8 @@ public static class MethodAccess
             ["FollowLot"] = BothBots,
             ["UnfollowLot"] = BothBots,
             ["ListFollowedLots"] = BothBots,
+            ["GetProxyExplainer"] = BothBots,
+            ["MarkProxyExplainerSeen"] = BothBots,
         };
 
     /// <summary>Все вызывающие, которых объявил хотя бы один метод: таблица токенов обязана знать каждого.</summary>
