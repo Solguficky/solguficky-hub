@@ -2,6 +2,7 @@ import { InlineKeyboard } from "grammy";
 import type {
   Administrator,
   AppointAdministratorResult,
+  DismissAdministratorResult,
 } from "../../identity/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import { removableUsernamePattern } from "../parse-callback.js";
@@ -52,6 +53,34 @@ function administratorLabel(administrator: Administrator): string {
     : `@${administrator.telegramUsername}`;
 }
 
+// Ник и Telegram id: так человек назван однозначно, даже если ник перешёл к
+// другому, а прежний профиль его ещё носит.
+function fullLabel(administrator: Administrator): string {
+  return administrator.telegramUsername === undefined
+    ? administratorLabel(administrator)
+    : `@${administrator.telegramUsername} · id ${administrator.telegramUserId}`;
+}
+
+// Подписи списка: ник, а у совпавших ников — ещё и id, иначе кнопки «Снять»
+// у двух людей не различить.
+function listLabels(
+  administrators: readonly Administrator[],
+): Map<string, string> {
+  const counts = new Map<string, number>();
+  for (const administrator of administrators) {
+    const label = administratorLabel(administrator).toLowerCase();
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+  return new Map(
+    administrators.map((administrator) => [
+      administrator.identityId,
+      (counts.get(administratorLabel(administrator).toLowerCase()) ?? 0) > 1
+        ? fullLabel(administrator)
+        : administratorLabel(administrator),
+    ]),
+  );
+}
+
 function presetsLabel(administrator: Administrator): string {
   return [
     administrator.maintainer ? "мейнтейнер" : undefined,
@@ -70,11 +99,14 @@ export function administratorsScreen(
   viewerId: string,
   parent: Parent,
 ): ShownScreen {
+  const labels = listLabels(administrators);
+  const labelOf = (administrator: Administrator) =>
+    labels.get(administrator.identityId) ?? administratorLabel(administrator);
   const keyboard = new InlineKeyboard();
   for (const administrator of administrators) {
     if (!administrator.admin) continue;
     nextRow(keyboard).text(
-      `Снять ${administratorLabel(administrator)}`,
+      `Снять ${labelOf(administrator)}`,
       `v1:ad:dq:${uuidToToken(administrator.identityId)}`,
     );
   }
@@ -89,7 +121,7 @@ export function administratorsScreen(
         : administrators
             .map((administrator) =>
               bullet(
-                `${escapeHtml(administratorLabel(administrator))}${administrator.identityId === viewerId ? " (ты)" : ""} · ${presetsLabel(administrator)}`,
+                `${escapeHtml(labelOf(administrator))}${administrator.identityId === viewerId ? " (ты)" : ""} · ${presetsLabel(administrator)}`,
               ),
             )
             .join("\n"),
@@ -127,7 +159,7 @@ export function dismissConfirmScreen(
     id: "administrator-dismiss-confirm",
     text: screenText(
       "Снять администратора?",
-      `«${escapeHtml(administratorLabel(administrator))}»`,
+      `«${escapeHtml(fullLabel(administrator))}»`,
       administrator.identityId === viewerId
         ? "Это ты: права администратора уйдут у тебя. Записи останутся, назначить снова можно по нику."
         : "Права администратора уйдут: заявки, состав и сходки. Записи человека останутся, назначить снова можно по нику.",
@@ -171,13 +203,13 @@ export function appointRetryScreen(
 }
 
 /**
- * Текст исхода назначения. `forbidden` и `unavailable` сюда не входят: у них
- * свои кадры отказа и сбоя.
+ * Текст исхода назначения. `forbidden`, `unavailable` и `invalid` сюда не
+ * входят: у них свои кадры отказа и сбоя.
  */
 export function appointOutcome(
   result: Exclude<
     AppointAdministratorResult,
-    { kind: "forbidden" } | { kind: "unavailable" }
+    { kind: "forbidden" } | { kind: "unavailable" } | { kind: "invalid" }
   >,
 ): { text: string; retry: boolean } {
   switch (result.kind) {
@@ -208,14 +240,24 @@ export function appointOutcome(
         text: "Ник не определяет человека. Этот ник сейчас у нескольких профилей: попроси человека написать боту и попробуй снова.",
         retry: true,
       };
-    case "invalid":
-      return {
-        text: "Это не ник Telegram. Ник присылают с @ или без.",
-        retry: true,
-      };
     default: {
       const _exhaustive: never = result;
       return _exhaustive;
     }
   }
+}
+
+/** Текст исхода снятия; отказ по праву и сбой — свои кадры. */
+export function dismissOutcome(
+  result: Extract<
+    DismissAdministratorResult,
+    { kind: "ok" } | { kind: "identity-unknown" }
+  >,
+): string {
+  if (result.kind === "identity-unknown") {
+    return "Профиль не найден. Снимать не с кого.";
+  }
+  return result.value
+    ? "Администратор снят. Права набора ушли, записи человека остались."
+    : "Уже не администратор. Ничего не изменилось.";
 }

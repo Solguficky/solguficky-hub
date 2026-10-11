@@ -199,7 +199,7 @@ func TestAppointAdministratorDeniesRevokedGrantor(t *testing.T) {
 
 // Себе можно (ADR о наборах, п. 7): мейнтейнер назначает себя администратором
 // и снимает с себя набор, а с другого мейнтейнера — его набор admin, не трогая
-// maintainer. Набор выдаётся только участнику (п. 9).
+// maintainer.
 func TestGrantorAppointsAndDismissesSelfAndPeers(t *testing.T) {
 	t.Parallel()
 	f := newAdministratorFixture(t)
@@ -224,6 +224,17 @@ func TestGrantorAppointsAndDismissesSelfAndPeers(t *testing.T) {
 	}
 	assertActivePresets(t, f.db, peer, "maintainer")
 
+	if _, err := f.client.RevokePreset(authorized, &identityv1.RevokePresetRequest{IdentityId: peer, Preset: identityv1.Preset_PRESET_MAINTAINER}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Набор выдаётся только участнику (п. 9), а снять можно только у известного
+// профиля: оба отказа — значения ответа, и наборы не меняются.
+func TestAdministratorMethodsRefuseNonMembersAndUnknownProfiles(t *testing.T) {
+	t.Parallel()
+	f := newAdministratorFixture(t)
+
 	unknown, err := f.client.DismissAdministrator(t.Context(), &identityv1.DismissAdministratorRequest{Actor: actorOf(f.maintainer), IdentityId: uuid.NewString()})
 	if err != nil || unknown.GetRefused().GetIdentityUnknown() == nil {
 		t.Fatalf("dismiss unknown: response=%v error=%v", unknown, err)
@@ -239,9 +250,6 @@ func TestGrantorAppointsAndDismissesSelfAndPeers(t *testing.T) {
 	}
 	assertActivePresets(t, f.db, stranger)
 	assertActivePresets(t, f.db, guest)
-	if _, err := f.client.RevokePreset(authorized, &identityv1.RevokePresetRequest{IdentityId: peer, Preset: identityv1.Preset_PRESET_MAINTAINER}); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestAppointAdministratorResolvesUsernameStrictly(t *testing.T) {

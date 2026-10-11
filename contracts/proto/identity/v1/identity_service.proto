@@ -31,7 +31,7 @@ service IdentityService {
   // Revokes a preset. Requires maintainer authentication.
   rpc RevokePreset(RevokePresetRequest) returns (RevokePresetResponse);
   // Lists the people holding PRESET_ADMIN or PRESET_MAINTAINER, on behalf of a
-  // holder of ACCESS_RIGHT_GRANT_ADMINS. Refusals are values of the response.
+  // holder of ACCESS_RIGHT_GRANT_ADMINS.
   rpc ListAdministrators(ListAdministratorsRequest) returns (ListAdministratorsResponse);
   // Grants PRESET_ADMIN, on behalf of a holder of ACCESS_RIGHT_GRANT_ADMINS, to
   // the member with this username. The holder may appoint themselves.
@@ -514,11 +514,6 @@ message RevokePresetResponse {
   bool changed = 1;
 }
 
-// The administrator methods answer an expected refusal as a value, not as a
-// gRPC status: the refusal model is typed and kept apart from the success
-// model (PER-521). A status stays for a malformed request and for failures of
-// the service itself.
-
 message ListAdministratorsRequest { IdentityActor actor = 1; }
 
 message ListAdministratorsResponse {
@@ -580,8 +575,6 @@ message AdministratorAppointed {
   bool changed = 2;
 }
 
-// Every refusal about the person named comes after the right check: a caller
-// without ACCESS_RIGHT_GRANT_ADMINS gets NotAdminGrantor whatever it named.
 message AppointAdministratorRefusal {
   // Exactly one is set.
   oneof reason {
@@ -623,22 +616,20 @@ message DismissAdministratorRefusal {
   }
 }
 
-// The actor does not hold ACCESS_RIGHT_GRANT_ADMINS, is blocked, has no
-// profile or was not named. The causes are not told apart: a caller without
-// the right learns nothing about profiles.
+// The actor may not grant PRESET_ADMIN. Carries no cause: the causes are not
+// told apart.
 message NotAdminGrantor {}
 
-// No profile carries the username: the person has never written to a bot.
+// No profile carries the username.
 message UsernameUnknown {}
 
-// The person is not in CIRCLE_MEMBER: a preset is granted to members only.
+// The person is not in CIRCLE_MEMBER.
 message IdentityNotMember {}
 
 // The person's profile is blocked.
 message IdentityBlocked {}
 
-// The username cannot be pinned to one person: several live profiles carry it,
-// or it changed hands while the request ran. A grant never goes to a guess.
+// The username does not name exactly one person. Carries no candidates.
 message UsernameUnresolved {}
 
 // No profile has this identity_id.

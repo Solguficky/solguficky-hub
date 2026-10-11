@@ -300,6 +300,28 @@ describe("administrators in the hub bot", () => {
     ]);
   });
 
+  it("tells apart two administrators who still carry the same nick", async () => {
+    const harness = await started(MAINTAINER_RIGHTS);
+    harness.people.push({
+      identityId: "0192f0a0-0000-7000-8000-00000000c004",
+      telegramUserId: 46n,
+      telegramUsername: "Peer",
+      circle: "member",
+      maintainer: false,
+      admin: true,
+    });
+
+    await harness.bot.handleUpdate(press("v1:ad:l"));
+
+    expect(labels(last(harness.calls))).toEqual([
+      "Снять @peer · id 44",
+      "Снять @Peer · id 46",
+      "Назначить",
+      "Обновить",
+      "‹ Управление",
+    ]);
+  });
+
   it("appoints the maintainer to admin through the confirmation", async () => {
     const harness = await started(MAINTAINER_RIGHTS);
 
@@ -349,6 +371,22 @@ describe("administrators in the hub bot", () => {
       "‹ Администраторы",
     ]);
     expect(harness.people.filter((person) => person.admin)).toHaveLength(1);
+  });
+
+  it("shows a request Identity could not read as a failure, not a bad nick", async () => {
+    const viewer = { rights: MAINTAINER_RIGHTS };
+    const fake = fakeIdentity(viewer);
+    const { bot, calls } = createHarness({
+      ...fake.identity,
+      appointAdministrator: async () => ({ kind: "invalid" }),
+    });
+    await bot.init();
+
+    await bot.handleUpdate(press("v1:ad:ay:alice"));
+
+    expect(plain(last(calls))).not.toContain("ник Telegram");
+    expect(plain(last(calls))).toContain("Не получилось загрузить данные");
+    expect(labels(last(calls))).toEqual(["‹ Администраторы"]);
   });
 
   it("asks again when the answer is not a username", async () => {

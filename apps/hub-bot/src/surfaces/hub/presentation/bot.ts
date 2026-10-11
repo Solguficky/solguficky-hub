@@ -170,6 +170,7 @@ import {
   appointRetryScreen,
   appointUsername,
   dismissConfirmScreen,
+  dismissOutcome,
   toAdministrators,
 } from "./screens/administrators.js";
 import {
@@ -2566,7 +2567,13 @@ async function handleCallback(
               action.username,
               rpcCall(ctx, "manage_community"),
             );
-      if (result.kind === "forbidden" || result.kind === "unavailable") {
+      // `invalid` — Identity не разобрал запрос, который бот уже проверил:
+      // это не ошибка ника, а рассинхрон, и человек видит сбой.
+      if (
+        result.kind === "forbidden" ||
+        result.kind === "unavailable" ||
+        result.kind === "invalid"
+      ) {
         await refuseAdministrators(ctx, result);
         outcome = adminOutcome(result, person.identityId);
         return;
@@ -2629,23 +2636,16 @@ async function handleCallback(
               tokenToUuid(action.token),
               rpcCall(ctx, "manage_community"),
             );
-      if (result.kind === "forbidden" || result.kind === "unavailable") {
+      if (
+        result.kind === "forbidden" ||
+        result.kind === "unavailable" ||
+        result.kind === "invalid"
+      ) {
         await refuseAdministrators(ctx, result);
         outcome = adminOutcome(result, person.identityId);
         return;
       }
-      await showScreen(
-        ctx,
-        administratorOutcomeScreen(
-          result.kind === "identity-unknown"
-            ? "Профиль не найден. Снимать не с кого."
-            : result.kind === "invalid"
-              ? "Не снято. Запрос не принят, открой список заново."
-              : result.value
-                ? "Администратор снят. Права набора ушли, записи человека остались."
-                : "Уже не администратор. Ничего не изменилось.",
-        ),
-      );
+      await showScreen(ctx, administratorOutcomeScreen(dismissOutcome(result)));
       outcome =
         result.kind === "identity-unknown"
           ? {
