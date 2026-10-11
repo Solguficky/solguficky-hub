@@ -37,6 +37,13 @@ const auction: AuctionPort = {
   listAuctionLots: async () => {
     throw new Error("not used");
   },
+  getRaffle: async () => undefined,
+  registerForRaffle: async () => {
+    throw new Error("not used");
+  },
+  cancelRaffleRegistration: async () => {
+    throw new Error("not used");
+  },
 };
 
 const favorites: FavoritesPort = {

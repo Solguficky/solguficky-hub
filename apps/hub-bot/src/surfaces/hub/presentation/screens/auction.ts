@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { raffleButtonLabel } from "../../../../auction-raffle.js";
 import {
   type AuctionBlock,
   type AuctionButton,
@@ -30,6 +31,12 @@ import {
   questionScreen,
   quoted,
 } from "./auction-bid.js";
+import {
+  raffleAnswerRefusedScreen,
+  raffleNameChoiceScreen,
+  raffleQuestionScreen,
+  raffleScreen,
+} from "./auction-raffle.js";
 import {
   bullet,
   buttonText,
@@ -147,6 +154,22 @@ export function auctionScreen(view: AuctionView): AuctionShown {
         };
       case "follow-refused":
         return { screen: followRefusedScreen(block, view.body.keyboard) };
+      // Розыгрыш среди участников (ADR-066).
+      case "raffle":
+        return { screen: raffleScreen(block, view.body.keyboard, view) };
+      case "raffle-name-choice":
+        return {
+          screen: raffleNameChoiceScreen(block, view.body.keyboard),
+        };
+      case "raffle-question":
+        return {
+          screen: raffleQuestionScreen(view.body.keyboard),
+          asks: true,
+        };
+      case "raffle-answer-refused":
+        return {
+          screen: raffleAnswerRefusedScreen(block, view.body.keyboard),
+        };
       default:
         break;
     }
@@ -193,11 +216,25 @@ function feedScreen(
   // остаётся. Короткие действия идут разрешёнными парами: так полная
   // страница из восьми лотов держит предел рядов.
   const auction = uuidToToken(feed.auctionId);
+  // «Розыгрыш» ставит тело, пока розыгрыш есть (ADR-066). Auction открывает
+  // его вместе с онлайн-неделей, после которой лоты не принимаются, поэтому
+  // при розыгрыше «Добавить лот» нет, даже если пульт не прочитан, а у
+  // администратора кнопка встаёт парой к «Пульту»: так полная страница держит
+  // предел рядов.
+  const raffle = view.body.keyboard
+    .flat()
+    .find((button) => button.action === "feed.raffle");
   if (view.canManage === true) {
-    if (view.canAddLots !== false) {
+    if (view.canAddLots !== false && raffle === undefined) {
       keyboard.text(addLotLabel, lotNewData(auction));
     }
-    keyboard.text(consoleLabel, consoleViewData(auction)).row();
+    keyboard.text(consoleLabel, consoleViewData(auction));
+    if (raffle !== undefined) {
+      keyboard.text(raffleButtonLabel, raffle.callbackData);
+    }
+    keyboard.row();
+  } else if (raffle !== undefined) {
+    keyboard.text(raffleButtonLabel, raffle.callbackData).row();
   }
   // Избранное (PER-495) — свои отмеченные лоты из любых аукционов; возврат
   // из списка ведёт в эту ленту.
@@ -213,8 +250,10 @@ function feedScreen(
   }
   keyboard.text("Правила и FAQ", auctionFaqData(auction)).row();
   for (const row of view.body.keyboard) {
+    const content = row.filter((button) => button.action !== "feed.raffle");
+    if (content.length === 0) continue;
     nextRow(keyboard);
-    for (const button of row) {
+    for (const button of content) {
       keyboard.text(feedLabel(button, items), button.callbackData);
     }
   }
@@ -279,6 +318,11 @@ function feedLabel(
     case "favorites.prev":
     case "favorites.next":
     case "favorites.back":
+    case "feed.raffle":
+    case "raffle.register":
+    case "raffle.cancel":
+    case "raffle.back":
+    case "raffle.return":
       throw new Error(`action ${button.action} in a feed body`);
     default: {
       const _exhaustive: never = button;
@@ -428,6 +472,11 @@ function lotLabel(button: AuctionButton): string {
     case "accepted.lot":
     case "result.lot":
     case "answer.retry":
+    case "feed.raffle":
+    case "raffle.register":
+    case "raffle.cancel":
+    case "raffle.back":
+    case "raffle.return":
       throw new Error(`action ${button.action} in a lot body`);
     default: {
       const _exhaustive: never = button;
@@ -589,6 +638,11 @@ function historyLabel(button: AuctionButton): string {
     case "favorites.prev":
     case "favorites.next":
     case "favorites.back":
+    case "feed.raffle":
+    case "raffle.register":
+    case "raffle.cancel":
+    case "raffle.back":
+    case "raffle.return":
       throw new Error(`action ${button.action} in a history body`);
     default: {
       const _exhaustive: never = button;

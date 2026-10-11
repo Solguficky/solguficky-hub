@@ -132,6 +132,10 @@ export function inspectCall(
     .filter(([rule]) => !waived(entry, rule))
     .map(([rule, detail]) => at(tag, rule, detail));
   if (entry.legacy !== true) return found;
+  // Запретные слова розыгрыша не снимает и пометка `legacy`: инвариант
+  // обязателен для любого экрана (RFC-007, инвариант 8).
+  const forbidden = found.filter(({ rule }) => rule === "forbidden-word");
+  if (forbidden.length > 0) return forbidden;
   return found.length === 0
     ? [
         at(
@@ -377,8 +381,28 @@ function checkRules(
     const sign = strayPictogram(line);
     if (sign !== undefined) found.push(["emoji", `строка «${line}»: ${sign}`]);
   }
+  for (const text of [
+    ...buttons.map((button) => button.text),
+    ...textLines(call),
+  ]) {
+    const word = forbiddenWord.exec(text)?.[0];
+    if (word !== undefined) {
+      found.push([
+        "forbidden-word",
+        `«${word}» в «${text}»: язык аукциона — «розыгрыш среди участников»`,
+      ]);
+    }
+  }
   return found;
 }
+
+// Слова, которые превращают розыгрыш среди участников в азартную механику
+// (RFC-007, инвариант 8; ADR-066): ни один экран обоих ботов их не несёт.
+// Основа слова ловит и его формы: «шансы», «крутки», «донаты». Правило не
+// снимается исключением: инвариант обязателен всегда. Линтер видит тексты
+// шаблонов с данными тестов, поэтому название лота организатора его не
+// задевает.
+const forbiddenWord = /(?<!\p{L})(?:гач|крутк|шанс|донат)\p{L}*/iu;
 
 // Знак в начале подписи или строки — «<эмодзи> <слово>» — слово бота, и
 // эмодзи в нём только из закрытого словаря и только перед своим словом

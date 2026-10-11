@@ -369,6 +369,42 @@ describe("inspectCall", () => {
     ).toEqual(["vocabulary"]);
   });
 
+  // RFC-007, инвариант 8: язык — «розыгрыш среди участников». Основа слова
+  // ловит формы в тексте и в подписи; слово внутри другого слова — нет.
+  it("flags the words a raffle among the participants never uses", () => {
+    for (const [text, label] of [
+      ["<b>Архив</b>\n\nПовысь шансы на приз.", "‹ Сходки"],
+      ["<b>Архив</b>\n\nТвои крутки.", "‹ Сходки"],
+      ["<b>Архив</b>", "Гача"],
+      ["<b>Архив</b>\n\nДонаты организатору.", "‹ Сходки"],
+    ] as const) {
+      expect(
+        rulesOf(
+          "editMessageText",
+          screen("archive", text, [[key(label)], [key("‹ Сходки")]]),
+        ),
+        text,
+      ).toContain("forbidden-word");
+    }
+    // Пометка `legacy` снимает остальные правила, но не это.
+    expect(
+      rulesOf(
+        "editMessageText",
+        screen("old", "Повысь шансы", [[key("Назад")]]),
+      ),
+    ).toEqual(["forbidden-word"]);
+    expect(
+      rulesOf(
+        "editMessageText",
+        screen(
+          "archive",
+          "<b>Архив</b>\n\nРозыгрыш среди участников: один билет за регистрацию. Ставки не влияют.",
+          [[key("‹ Сходки")]],
+        ),
+      ),
+    ).toEqual([]);
+  });
+
   it("requires a way out of a refusal and none under a no-access frame", () => {
     const refusal = (rows: Key[][]) =>
       rulesOf(

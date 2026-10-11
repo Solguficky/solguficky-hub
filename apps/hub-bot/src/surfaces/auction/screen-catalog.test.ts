@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { inspectCall, type ScreenEntry } from "../../../testkit/screen-lint.js";
-import type { AuctionScreenBody } from "../../auction-ui/index.js";
+import type {
+  AuctionScreenBody,
+  RaffleStatusView,
+  RaffleView,
+} from "../../auction-ui/index.js";
 import type { AuctionListPage } from "./auctions.js";
 import { markupOf, richMessageOf } from "./bot.js";
 import { notificationMarkup, renderNotification } from "./delivery/message.js";
@@ -403,6 +407,113 @@ const urls = {
   questionUrl: "https://t.me/organizer",
 };
 
+// Розыгрыш среди участников (ADR-066) во всех статусах: кнопка регистрации
+// или отмены — только в окне регистрации.
+const raffleOf = (
+  status: RaffleStatusView,
+  extra: Partial<RaffleView> = {},
+): RaffleView => ({
+  auctionId: "auc-1",
+  status,
+  closesAt: "2026-10-29T18:00:00Z",
+  commitment: "ab".repeat(32),
+  beaconRound: 12_345_678,
+  registered: false,
+  tickets: [],
+  ...extra,
+});
+
+const pool = {
+  tickets: [
+    { number: 1, displayName: "@owl_fan" },
+    { number: 2, displayName: "Сова <*>" },
+    { number: 3 },
+  ],
+  myTicket: 1,
+};
+
+const raffles: readonly (RaffleView | undefined)[] = [
+  undefined,
+  raffleOf("open"),
+  raffleOf("open", { registered: true }),
+  raffleOf("closing", { registered: true }),
+  raffleOf("awaiting-beacon", { registered: true, ...pool }),
+  raffleOf("drawn", {
+    registered: true,
+    ...pool,
+    reveal: {
+      seed: "cd".repeat(32),
+      randomness: "ef".repeat(32),
+      value: "12".repeat(32),
+      winningTicket: 2,
+    },
+  }),
+  raffleOf("no-tickets", { reveal: { seed: "cd".repeat(32) } }),
+  raffleOf("not-held", {}),
+];
+
+const raffleBody = (raffle: RaffleView | undefined): AuctionScreenBody => ({
+  blocks: [
+    { kind: "raffle", auctionId: "auc-1", ...(raffle ? { raffle } : {}) },
+  ],
+  keyboard: [
+    ...(raffle?.status === "open"
+      ? [
+          [
+            raffle.registered
+              ? {
+                  action: "raffle.cancel" as const,
+                  callbackData: "v1:auc:rc:a",
+                }
+              : {
+                  action: "raffle.register" as const,
+                  callbackData: "v1:auc:rr:a",
+                },
+          ],
+        ]
+      : []),
+    [{ action: "raffle.back", callbackData: "v1:auc:feed:auc-1:0" }],
+  ],
+});
+
+const feedWithRaffle: AuctionScreenBody = {
+  ...feed,
+  keyboard: [
+    [{ action: "feed.raffle", callbackData: "v1:auc:rf:a" }],
+    ...feed.keyboard,
+  ],
+};
+
+const raffleNameChoice: AuctionScreenBody = {
+  blocks: [
+    { kind: "raffle-name-choice", auctionId: "auc-1", username: "owl_fan" },
+  ],
+  keyboard: [
+    [{ action: "name.username", callbackData: "v1:auc:ru:a" }],
+    [{ action: "name.alias", callbackData: "v1:auc:ra:a" }],
+    [{ action: "raffle.return", callbackData: "v1:auc:rf:a" }],
+  ],
+};
+
+const raffleQuestion: AuctionScreenBody = {
+  blocks: [{ kind: "raffle-question", auctionId: "auc-1" }],
+  keyboard: [[{ action: "question.cancel", callbackData: "v1:auc:rq:a:42" }]],
+};
+
+const raffleAnswerRefused: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "raffle-answer-refused",
+      auctionId: "auc-1",
+      refusal: "alias-taken",
+    },
+  ],
+  keyboard: [
+    [{ action: "answer.retry", callbackData: "v1:auc:ra:a" }],
+    [{ action: "raffle.return", callbackData: "v1:auc:rf:a" }],
+  ],
+};
+
 // Каждый вид каждого экрана, который оболочка умеет отдать.
 const shown: readonly {
   screen: AuctionEntryScreen;
@@ -449,6 +560,13 @@ const shown: readonly {
   { screen: { kind: "auction", body: question("alias", true) } },
   { screen: { kind: "auction", body: nameChoice(true) } },
   { screen: { kind: "auction", body: nameChoice(false) } },
+  { screen: { kind: "auction", body: feedWithRaffle, parent: "auctions" } },
+  ...raffles.map((raffle) => ({
+    screen: { kind: "auction" as const, body: raffleBody(raffle) },
+  })),
+  { screen: { kind: "auction", body: raffleNameChoice } },
+  { screen: { kind: "auction", body: raffleQuestion } },
+  { screen: { kind: "auction", body: raffleAnswerRefused } },
   { screen: { kind: "denied", reason: "blocked" } },
   { screen: { kind: "denied", reason: "not-admitted" } },
   { screen: { kind: "denied", reason: "declined" } },
@@ -587,9 +705,10 @@ describe("auction screens beyond the linter", () => {
   const buttons = rendered.flatMap((screen) =>
     screen.keyboard.flat().map((button) => ({ screen: screen.id, button })),
   );
-  // Видимый текст: теги сняты. Остаток `<` — неэкранированный знак.
+  // Видимый текст: теги сняты — и моноширинный блок и ссылка на раунд drand
+  // у розыгрыша. Остаток `<` — неэкранированный знак.
   const visible = (screen: RenderedScreen) =>
-    screen.text.replace(/<\/?(b|h1|p|br)>/g, "");
+    screen.text.replace(/<\/?(b|h1|p|br|code)>|<a href="[^"<>]*">|<\/a>/g, "");
 
   it("marks every link button, and only a link button, with the sign", () => {
     expect(
@@ -635,7 +754,7 @@ describe("auction screens beyond the linter", () => {
   it("leaves no raw markup character of a lot title or organizer text", () => {
     expect(
       rendered
-        .filter((screen) => /<|&(?!(amp|lt|gt);)/.test(visible(screen)))
+        .filter((screen) => /<|&(?!(amp|lt|gt|quot);)/.test(visible(screen)))
         .map((screen) => `${screen.id}: ${visible(screen)}`),
     ).toEqual([]);
   });
@@ -665,11 +784,14 @@ describe("auction screens beyond the linter", () => {
       const lines = screen.text
         .split("\n")
         .filter((line) => line.startsWith("• "));
+      // Навигация, листание и действие ленты «Розыгрыш» (ADR-066) — не
+      // содержимое списка.
       const content = screen.keyboard
         .flat()
         .filter(
           (button) =>
-            "callback_data" in button && !/^(‹ |←$|→$)/.test(button.text),
+            "callback_data" in button &&
+            !/^(‹ |←$|→$|Розыгрыш$)/.test(button.text),
         );
       expect(lines.length, screen.text).toBe(content.length);
     }

@@ -25,7 +25,12 @@ export async function openFeed(input: {
   auctionId: string;
   page: number;
 }): Promise<AuctionScreenBody> {
+  // Розыгрыш читается параллельно страницам ленты: иначе долгая лента съела
+  // бы бюджет действия, и кнопка пропала бы при живом розыгрыше. Отказа
+  // `hasRaffle` не бросает.
+  const raffleRead = hasRaffle(input);
   const lots = sortForFeed(await loadFeed(input));
+  const raffle = await raffleRead;
   const pageCount = Math.max(1, Math.ceil(lots.length / FEED_PAGE_SIZE));
   const page = Math.min(input.page, pageCount - 1);
   const shown = lots.slice(page * FEED_PAGE_SIZE, (page + 1) * FEED_PAGE_SIZE);
@@ -61,6 +66,21 @@ export async function openFeed(input: {
       },
     ],
     keyboard: [
+      // Действие ленты стоит первым рядом, над лотами (дизайн-код,
+      // «Клавиатура»).
+      ...(raffle
+        ? [
+            [
+              {
+                action: "feed.raffle" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "raffle",
+                  auctionId: input.auctionId,
+                }),
+              },
+            ],
+          ]
+        : []),
       ...shown.map((lot) => [
         {
           action: "feed.open-lot" as const,
@@ -75,6 +95,26 @@ export async function openFeed(input: {
       ...(paging.length > 0 ? [paging] : []),
     ],
   };
+}
+
+// Кнопка «Розыгрыш» стоит, только пока розыгрыш есть: Auction отдаёт его с
+// открытия онлайн-торгов (ADR-066). Отказ чтения убирает кнопку, а не роняет
+// ленту — как отказ имён на карточке.
+async function hasRaffle(input: {
+  auction: AuctionPort;
+  viewer: Viewer;
+  auctionId: string;
+}): Promise<boolean> {
+  try {
+    return (
+      (await input.auction.getRaffle({
+        viewer: input.viewer,
+        auctionId: input.auctionId,
+      })) !== undefined
+    );
+  } catch {
+    return false;
+  }
 }
 
 function loadFeed(input: {

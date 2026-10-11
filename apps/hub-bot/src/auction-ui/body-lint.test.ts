@@ -107,6 +107,22 @@ const surface: AuctionSurface = {
       async chooseDisplayName() {
         return { kind: "accepted", name: "@owl_fan" };
       },
+      // Розыгрыш открыт: его ряд в ленте считается в пределе рядов тела.
+      async getRaffle() {
+        return {
+          auctionId,
+          status: "open" as const,
+          closesAt: "2026-10-29T18:00:00Z",
+          registered: false,
+          tickets: [],
+        };
+      },
+      async registerForRaffle() {
+        throw new Error("not used");
+      },
+      async cancelRaffleRegistration() {
+        throw new Error("not used");
+      },
     },
     operations: {
       newOperationId() {

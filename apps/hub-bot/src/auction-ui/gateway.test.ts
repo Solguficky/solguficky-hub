@@ -91,6 +91,16 @@ function surfaceFor(
           calls.auction += 1;
           return { kind: "accepted", name: "@owl" };
         },
+        async getRaffle() {
+          calls.auction += 1;
+          return undefined;
+        },
+        async registerForRaffle() {
+          throw new Error("not used");
+        },
+        async cancelRaffleRegistration() {
+          throw new Error("not used");
+        },
       },
       operations: {
         newOperationId() {

@@ -1,5 +1,14 @@
 import { renderFaqText } from "../../auction-faq.js";
 import {
+  cancelRegistrationLabel,
+  raffleBackName,
+  raffleButtonLabel,
+  raffleNameChoiceText,
+  raffleParagraphs,
+  raffleTitle,
+  registerLabel,
+} from "../../auction-raffle.js";
+import {
   type AnswerRefusal,
   type AuctionBlock,
   type AuctionButton,
@@ -524,7 +533,7 @@ function renderBody(
     row.map((button) => renderButton(button, items, body.blocks)),
   );
   const id = screenOf(body.blocks);
-  const leaf = renderLeaf(body.blocks);
+  const leaf = renderLeaf(body.blocks, options);
   if (leaf !== undefined) return { id, keyboard, ...leaf };
   const lot = body.blocks.find(
     (block): block is LotBlock => block.kind === "lot",
@@ -599,7 +608,14 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "result":
         return "command-result";
       case "answer-refused":
+      case "raffle-answer-refused":
         return "answer-refused";
+      case "raffle":
+        return "raffle";
+      case "raffle-name-choice":
+        return "raffle-name-choice";
+      case "raffle-question":
+        return "alias-question";
       case "feed":
         break;
       default: {
@@ -624,6 +640,7 @@ type FavoritesBlock = Extract<AuctionBlock, { kind: "favorites" }>;
 // принадлежат оболочке; слова — те же, что у бота хаба, словарь один.
 function renderLeaf(
   blocks: readonly AuctionBlock[],
+  options: RenderOptions,
 ): Pick<RenderedScreen, "text" | "format" | "asks"> | undefined {
   for (const block of blocks) {
     switch (block.kind) {
@@ -657,6 +674,33 @@ function renderLeaf(
         return { format: "html", text: questionText(block), asks: true };
       case "name-choice":
         return { format: "html", text: nameChoiceText(block) };
+      case "raffle-name-choice":
+        return {
+          format: "html",
+          text: screenText(
+            "Имя в аукционе",
+            raffleNameChoiceText(block.username),
+          ),
+        };
+      // Розыгрыш среди участников (ADR-066): тексты общие с хабом.
+      case "raffle":
+        return {
+          format: "html",
+          text: screenText(
+            raffleTitle,
+            ...raffleParagraphs(block.raffle, {
+              moment: (instant) =>
+                readableMoment(instant, options.timeZone, options.now),
+            }),
+          ),
+        };
+      case "raffle-question":
+        return { format: "html", text: aliasQuestionText(), asks: true };
+      case "raffle-answer-refused":
+        return {
+          format: "html",
+          text: outcomeText(answerRefusals[block.refusal], undefined),
+        };
       default:
         break;
     }
@@ -728,13 +772,7 @@ function questionText(
         ].join("\n"),
       );
     case "alias":
-      return screenText(
-        "Псевдоним",
-        [
-          "Пришли псевдоним до 32 символов. Участники увидят его со звёздочкой.",
-          "Например: Сова",
-        ].join("\n"),
-      );
+      return aliasQuestionText();
     default: {
       const _exhaustive: never = block.question;
       return _exhaustive;
@@ -742,9 +780,17 @@ function questionText(
   }
 }
 
-function nameChoiceText(
-  block: Extract<AuctionBlock, { kind: "name-choice" }>,
-): string {
+function aliasQuestionText(): string {
+  return screenText(
+    "Псевдоним",
+    [
+      "Пришли псевдоним до 32 символов. Участники увидят его со звёздочкой.",
+      "Например: Сова",
+    ].join("\n"),
+  );
+}
+
+function nameChoiceText(block: { username?: string }): string {
   return screenText(
     "Имя в аукционе",
     [
@@ -1221,9 +1267,14 @@ function renderButton(
     case "question.explain":
       return text("Как это работает");
     case "name.username": {
-      const choice = blocks.find((block) => block.kind === "name-choice");
+      const choice = blocks.find(
+        (block) =>
+          block.kind === "name-choice" || block.kind === "raffle-name-choice",
+      );
       return text(
-        choice?.kind === "name-choice" && choice.username !== undefined
+        (choice?.kind === "name-choice" ||
+          choice?.kind === "raffle-name-choice") &&
+          choice.username !== undefined
           ? `Ник @${choice.username}`
           : "Ник",
       );
@@ -1237,6 +1288,16 @@ function renderButton(
       return text("К лоту");
     case "answer.retry":
       return text("Ввести заново");
+    case "feed.raffle":
+      return text(raffleButtonLabel);
+    case "raffle.register":
+      return text(registerLabel);
+    case "raffle.cancel":
+      return text(cancelRegistrationLabel);
+    case "raffle.back":
+      return text("‹ Лоты");
+    case "raffle.return":
+      return text(`‹ ${raffleBackName}`);
     default: {
       const _exhaustive: never = button;
       return _exhaustive;

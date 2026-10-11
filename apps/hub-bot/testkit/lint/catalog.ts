@@ -43,6 +43,7 @@ export type RuleName =
   | "style"
   | "vocabulary"
   | "emoji"
+  | "forbidden-word"
   | "callback-data";
 
 /**

@@ -185,6 +185,13 @@ function fakeAuction(
           placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
           setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
           chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
+          getRaffle: async () => undefined,
+          registerForRaffle: async () => {
+            throw new Error("not used");
+          },
+          cancelRaffleRegistration: async () => {
+            throw new Error("not used");
+          },
         },
         operations: {
           newOperationId: () => "0198f2a4-7c1e-7d3a-9b21-00000000c001",

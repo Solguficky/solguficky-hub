@@ -48,6 +48,13 @@ function auctionOf(pages: Record<string, LotPage>): AuctionPort {
     chooseDisplayName: async () => {
       throw new Error("not used");
     },
+    getRaffle: async () => undefined,
+    registerForRaffle: async () => {
+      throw new Error("not used");
+    },
+    cancelRaffleRegistration: async () => {
+      throw new Error("not used");
+    },
     async listAuctionLots({ pageToken }) {
       const page = pages[pageToken];
       if (page === undefined) throw new Error(`no page ${pageToken}`);

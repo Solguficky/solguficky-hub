@@ -165,6 +165,46 @@ describe("auction callback_data", () => {
     }
   });
 
+  it("encodes the raffle actions and parses them back", () => {
+    const cases = [
+      [{ kind: "raffle" as const, auctionId: AUCTION_ID }, "rf"],
+      [{ kind: "raffle-register" as const, auctionId: AUCTION_ID }, "rr"],
+      [{ kind: "raffle-cancel" as const, auctionId: AUCTION_ID }, "rc"],
+      [{ kind: "raffle-username" as const, auctionId: AUCTION_ID }, "ru"],
+      [{ kind: "raffle-ask-alias" as const, auctionId: AUCTION_ID }, "ra"],
+    ] as const;
+    for (const [intent, action] of cases) {
+      const raw = `v1:auc:${action}:${AUCTION_TOKEN}`;
+      expect(encodeAuctionCallback(intent)).toBe(raw);
+      expect(parseAuctionCallback(raw)).toEqual({ ok: true, intent });
+    }
+    // Шаг вопроса несёт адресата: Telegram id в 52 битах — самая длинная
+    // кнопка розыгрыша.
+    const question = {
+      kind: "raffle-question" as const,
+      auctionId: AUCTION_ID,
+      addressee: Number.MAX_SAFE_INTEGER,
+    };
+    const raw = encodeAuctionCallback(question);
+    expect(raw).toBe(`v1:auc:rq:${AUCTION_TOKEN}:${Number.MAX_SAFE_INTEGER}`);
+    expect(parseAuctionCallback(raw)).toEqual({ ok: true, intent: question });
+    expect(isAuctionQuestion(raw)).toBe(true);
+    expect(Buffer.byteLength(raw, "utf8")).toBeLessThanOrEqual(64);
+  });
+
+  it("refuses a raffle button that no encoder writes", () => {
+    for (const raw of [
+      "v1:auc:rf",
+      "v1:auc:rf:not-a-token",
+      `v1:auc:rf:${AUCTION_TOKEN}:1`,
+      `v1:auc:rq:${AUCTION_TOKEN}`,
+      `v1:auc:rq:${AUCTION_TOKEN}:0`,
+      `v1:auc:rq:${AUCTION_TOKEN}:42:1`,
+    ]) {
+      expect(reasonOf(raw)).toBe("malformed");
+    }
+  });
+
   // Самая длинная кнопка пакета обязана пройти лимит Telegram.
   it("keeps the longest button within 64 bytes", () => {
     const raw = encodeAuctionCallback({

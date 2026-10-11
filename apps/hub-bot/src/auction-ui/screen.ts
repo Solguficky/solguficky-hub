@@ -7,6 +7,7 @@ import type {
   LotStatusView,
   Money,
   ProxyLimitRefusal,
+  RaffleView,
   StepWindowView,
 } from "./ports.js";
 
@@ -167,6 +168,31 @@ export type AuctionBlock =
       pageCount: number;
       // По возрастанию `sequence`: порядок журнала, а не часов.
       entries: readonly HistoryItem[];
+    }
+  | {
+      // Розыгрыш среди участников (ADR-066, п. 11): что показать, решает
+      // статус. Нет `raffle` — у аукциона розыгрыша нет: кнопка устарела.
+      kind: "raffle";
+      auctionId: string;
+      raffle?: RaffleView;
+    }
+  | {
+      // Выбор имени перед регистрацией (ADR-066, п. 3): тот же экран, что
+      // перед первой ставкой, но возврат — в розыгрыш.
+      kind: "raffle-name-choice";
+      auctionId: string;
+      username?: string;
+    }
+  | {
+      // Вопрос псевдонима из розыгрыша.
+      kind: "raffle-question";
+      auctionId: string;
+    }
+  | {
+      // Непринятый псевдоним из розыгрыша — свой экран исхода, как у лота.
+      kind: "raffle-answer-refused";
+      auctionId: string;
+      refusal: "not-text" | DisplayNameRefusal;
     };
 
 // Пример автоставки на текущем лоте: цена сейчас, шаг и лимит на три шага
@@ -236,7 +262,14 @@ export type AuctionButton =
         | "lot.unfollow"
         | "favorites.prev"
         | "favorites.next"
-        | "favorites.back";
+        | "favorites.back"
+        // Розыгрыш: вход из ленты, регистрация и отмена, возврат в ленту и,
+        // с выбора имени и исхода, — в розыгрыш.
+        | "feed.raffle"
+        | "raffle.register"
+        | "raffle.cancel"
+        | "raffle.back"
+        | "raffle.return";
       callbackData: string;
     };
 

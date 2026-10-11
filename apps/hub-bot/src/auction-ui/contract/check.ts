@@ -22,6 +22,10 @@ import type {
   LotView,
   Money,
   ProxyLimitRefusal,
+  RaffleCancellationRefusal,
+  RaffleOutcome,
+  RaffleRegistrationRefusal,
+  RaffleView,
   ResolvedIdentity,
   TelegramUser,
   Viewer,
@@ -96,6 +100,16 @@ export type PortCall =
       method: "chooseDisplayName";
       request: Parameters<AuctionMethods["chooseDisplayName"]>[0];
     }
+  | {
+      port: "auction";
+      method: "getRaffle";
+      request: Parameters<AuctionMethods["getRaffle"]>[0];
+    }
+  | {
+      port: "auction";
+      method: "registerForRaffle" | "cancelRaffleRegistration";
+      request: Parameters<AuctionMethods["registerForRaffle"]>[0];
+    }
   // Избранное (PER-495): отметки живут в Notifications, а не в Auction.
   | { port: "favorites"; method: "listFollowedLots"; request: Viewer }
   | {
@@ -138,6 +152,12 @@ export type ContractAuction = {
   // приложения нет, как у процесса без адреса Notifications; `unavailable` —
   // Notifications отказывает и чтению, и отметке.
   explainer?: { seen: boolean } | "unavailable";
+  // Розыгрыш аукциона (ADR-066). Нет — у аукциона розыгрыша нет;
+  // `unavailable` — `GetRaffle` отказывает.
+  raffle?: RaffleView | "unavailable";
+  // Ответы регистрации и её отмены по порядку вызовов.
+  registrations?: readonly RaffleOutcome<RaffleRegistrationRefusal>[];
+  cancellations?: readonly RaffleOutcome<RaffleCancellationRefusal>[];
 };
 
 export type AuctionContractCase = {
@@ -379,6 +399,19 @@ const listCalls = (auctionId: string, tokens: readonly string[]): PortCall[] =>
     method: "listAuctionLots",
     request: { viewer: CONTRACT_VIEWER, auctionId, pageToken },
   }));
+
+const raffleCall = (auctionId: string): PortCall => ({
+  port: "auction",
+  method: "getRaffle",
+  request: { viewer: CONTRACT_VIEWER, auctionId },
+});
+
+// Лента: розыгрыш — по нему тело ставит «Розыгрыш» — читается параллельно
+// страницам лотов и стартует первым.
+const feedCalls = (
+  auctionId: string,
+  tokens: readonly string[],
+): PortCall[] => [raffleCall(auctionId), ...listCalls(auctionId, tokens)];
 
 const getLotCall = (lotId: string, atLeastVersion?: number): PortCall => ({
   port: "auction",
@@ -1631,12 +1664,399 @@ const TRADING_LOT_BODY: AuctionScreenBody = {
   ],
 };
 
+// Розыгрыш среди участников (ADR-066). Кнопка регистрации или отмены есть
+// только в окне регистрации; принятая команда отвечает розыгрышем после неё,
+// отказ и неизвестный исход перечитывают его. Без имени — выбор имени с
+// возвратом в розыгрыш, а принятое имя сразу ведёт к регистрации.
+const OPEN_RAFFLE: RaffleView = {
+  auctionId: CONTRACT_AUCTION_ID,
+  status: "open",
+  closesAt: "2026-10-29T18:00:00Z",
+  commitment: "ab".repeat(32),
+  beaconRound: 12_345_678,
+  registered: false,
+  tickets: [],
+};
+
+const REGISTERED_RAFFLE: RaffleView = { ...OPEN_RAFFLE, registered: true };
+
+const CLOSING_RAFFLE: RaffleView = { ...REGISTERED_RAFFLE, status: "closing" };
+
+const DRAWN_RAFFLE: RaffleView = {
+  ...REGISTERED_RAFFLE,
+  status: "drawn",
+  tickets: [
+    { number: 1, displayName: "@owl_fan" },
+    { number: 2, displayName: "Сова*" },
+  ],
+  myTicket: 1,
+  reveal: {
+    seed: "cd".repeat(32),
+    randomness: "ef".repeat(32),
+    value: "12".repeat(32),
+    winningTicket: 2,
+  },
+};
+
+const raffleCallback = (auctionId = CONTRACT_AUCTION_ID) =>
+  callback({ kind: "raffle", auctionId });
+
+const raffleCommandCall = (
+  method: "registerForRaffle" | "cancelRaffleRegistration",
+  opId: string,
+): PortCall => ({
+  port: "auction",
+  method,
+  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID, opId },
+});
+
+const raffleNameCall = (
+  choice: Parameters<AuctionMethods["chooseDisplayName"]>[0]["choice"],
+): PortCall => ({
+  port: "auction",
+  method: "chooseDisplayName",
+  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID, choice },
+});
+
+const toFeedRow = [
+  {
+    action: "raffle.back" as const,
+    callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
+  },
+];
+
+const toRaffleRow = [
+  { action: "raffle.return" as const, callbackData: raffleCallback() },
+];
+
+const raffleScreen = (raffle: RaffleView | undefined): AuctionScreenBody => {
+  const action =
+    raffle?.status !== "open"
+      ? []
+      : raffle.registered
+        ? [
+            [
+              {
+                action: "raffle.cancel" as const,
+                callbackData: callback({
+                  kind: "raffle-cancel",
+                  auctionId: CONTRACT_AUCTION_ID,
+                }),
+              },
+            ],
+          ]
+        : [
+            [
+              {
+                action: "raffle.register" as const,
+                callbackData: callback({
+                  kind: "raffle-register",
+                  auctionId: CONTRACT_AUCTION_ID,
+                }),
+              },
+            ],
+          ];
+  return {
+    blocks: [
+      {
+        kind: "raffle",
+        auctionId: CONTRACT_AUCTION_ID,
+        ...(raffle === undefined ? {} : { raffle }),
+      },
+    ],
+    keyboard: [...action, toFeedRow],
+  };
+};
+
+const askAliasButton = (action: "name.alias" | "answer.retry") => ({
+  action,
+  callbackData: callback({
+    kind: "raffle-ask-alias",
+    auctionId: CONTRACT_AUCTION_ID,
+  }),
+});
+
+const RAFFLE_NAME_CHOICE: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "raffle-name-choice",
+      auctionId: CONTRACT_AUCTION_ID,
+      username: "owl_fan",
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "name.username",
+        callbackData: callback({
+          kind: "raffle-username",
+          auctionId: CONTRACT_AUCTION_ID,
+        }),
+      },
+    ],
+    [askAliasButton("name.alias")],
+    toRaffleRow,
+  ],
+};
+
+const raffleQuestionCallback = callback({
+  kind: "raffle-question",
+  auctionId: CONTRACT_AUCTION_ID,
+  addressee: CONTRACT_USER.telegramUserId,
+});
+
+const accepted = (raffle: RaffleView) => ({
+  kind: "accepted" as const,
+  raffle,
+});
+
+const RAFFLE_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "feed: with a raffle",
+    callbackData: feedCallback(EMPTY_AUCTION_ID, 0),
+    auction: { ...EMPTY_AUCTION, raffle: OPEN_RAFFLE },
+    auctionCalls: feedCalls(EMPTY_AUCTION_ID, [""]),
+    body: {
+      blocks: [
+        {
+          kind: "feed",
+          auctionId: EMPTY_AUCTION_ID,
+          page: 0,
+          pageCount: 1,
+          lots: [],
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "feed.raffle",
+            callbackData: raffleCallback(EMPTY_AUCTION_ID),
+          },
+        ],
+      ],
+    },
+  },
+  // Отказ чтения розыгрыша убирает кнопку, а не роняет ленту.
+  {
+    intent: "feed: raffle unavailable",
+    callbackData: feedCallback(EMPTY_AUCTION_ID, 0),
+    auction: { ...EMPTY_AUCTION, raffle: "unavailable" },
+    auctionCalls: feedCalls(EMPTY_AUCTION_ID, [""]),
+    body: {
+      blocks: [
+        {
+          kind: "feed",
+          auctionId: EMPTY_AUCTION_ID,
+          page: 0,
+          pageCount: 1,
+          lots: [],
+        },
+      ],
+      keyboard: [],
+    },
+  },
+  {
+    intent: "raffle: open",
+    callbackData: raffleCallback(),
+    auction: { ...AUCTION, raffle: OPEN_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleScreen(OPEN_RAFFLE),
+  },
+  {
+    intent: "raffle: registered",
+    callbackData: raffleCallback(),
+    auction: { ...AUCTION, raffle: REGISTERED_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleScreen(REGISTERED_RAFFLE),
+  },
+  // Вне окна регистрации кнопки нет: что с розыгрышем, говорит текст.
+  {
+    intent: "raffle: drawn",
+    callbackData: raffleCallback(),
+    auction: { ...AUCTION, raffle: DRAWN_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleScreen(DRAWN_RAFFLE),
+  },
+  {
+    intent: "raffle: absent",
+    callbackData: raffleCallback(),
+    auction: AUCTION,
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleScreen(undefined),
+  },
+  {
+    intent: "raffle: register",
+    callbackData: callback({
+      kind: "raffle-register",
+      auctionId: CONTRACT_AUCTION_ID,
+    }),
+    auction: { ...AUCTION, registrations: [accepted(REGISTERED_RAFFLE)] },
+    auctionCalls: [raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0])],
+    body: raffleScreen(REGISTERED_RAFFLE),
+  },
+  // Ответа не было: один повтор тем же `op_id`, затем розыгрыш перечитан.
+  {
+    intent: "raffle: register unanswered",
+    callbackData: callback({
+      kind: "raffle-register",
+      auctionId: CONTRACT_AUCTION_ID,
+    }),
+    auction: {
+      ...AUCTION,
+      raffle: REGISTERED_RAFFLE,
+      registrations: [{ kind: "unanswered" }, { kind: "unanswered" }],
+    },
+    auctionCalls: [
+      raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0]),
+      raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0]),
+      raffleCall(CONTRACT_AUCTION_ID),
+    ],
+    body: raffleScreen(REGISTERED_RAFFLE),
+  },
+  {
+    intent: "raffle: register after closing",
+    callbackData: callback({
+      kind: "raffle-register",
+      auctionId: CONTRACT_AUCTION_ID,
+    }),
+    auction: {
+      ...AUCTION,
+      raffle: CLOSING_RAFFLE,
+      registrations: [{ kind: "refused", refusal: "registration-closed" }],
+    },
+    auctionCalls: [
+      raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0]),
+      raffleCall(CONTRACT_AUCTION_ID),
+    ],
+    body: raffleScreen(CLOSING_RAFFLE),
+  },
+  {
+    intent: "raffle: register without a name",
+    callbackData: callback({
+      kind: "raffle-register",
+      auctionId: CONTRACT_AUCTION_ID,
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      registrations: [{ kind: "refused", refusal: "display-name-not-chosen" }],
+    },
+    auctionCalls: [raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0])],
+    body: RAFFLE_NAME_CHOICE,
+  },
+  {
+    intent: "raffle: cancel",
+    callbackData: callback({
+      kind: "raffle-cancel",
+      auctionId: CONTRACT_AUCTION_ID,
+    }),
+    auction: { ...AUCTION, cancellations: [accepted(OPEN_RAFFLE)] },
+    auctionCalls: [
+      raffleCommandCall("cancelRaffleRegistration", CONTRACT_OP_IDS[0]),
+    ],
+    body: raffleScreen(OPEN_RAFFLE),
+  },
+  {
+    intent: "raffle: username",
+    callbackData: callback({
+      kind: "raffle-username",
+      auctionId: CONTRACT_AUCTION_ID,
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+      registrations: [accepted(REGISTERED_RAFFLE)],
+    },
+    auctionCalls: [
+      raffleNameCall({ kind: "username", username: "owl_fan" }),
+      raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0]),
+    ],
+    body: raffleScreen(REGISTERED_RAFFLE),
+  },
+  {
+    intent: "raffle: ask alias",
+    callbackData: callback({
+      kind: "raffle-ask-alias",
+      auctionId: CONTRACT_AUCTION_ID,
+    }),
+    auction: AUCTION,
+    auctionCalls: [],
+    body: {
+      blocks: [{ kind: "raffle-question", auctionId: CONTRACT_AUCTION_ID }],
+      keyboard: [
+        [{ action: "question.cancel", callbackData: raffleQuestionCallback }],
+      ],
+    },
+  },
+  {
+    intent: "raffle: alias question cancelled",
+    callbackData: raffleQuestionCallback,
+    from: USER_WITH_USERNAME,
+    auction: AUCTION,
+    auctionCalls: [],
+    body: RAFFLE_NAME_CHOICE,
+  },
+  {
+    intent: "raffle: alias answered",
+    callbackData: raffleQuestionCallback,
+    reply: { text: "Сова" },
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "accepted", name: "Сова*" }],
+      registrations: [accepted(REGISTERED_RAFFLE)],
+    },
+    auctionCalls: [
+      raffleNameCall({ kind: "alias", alias: "Сова" }),
+      raffleCommandCall("registerForRaffle", CONTRACT_OP_IDS[0]),
+    ],
+    body: raffleScreen(REGISTERED_RAFFLE),
+  },
+  {
+    intent: "raffle: alias taken",
+    callbackData: raffleQuestionCallback,
+    reply: { text: "Сова" },
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "refused", refusal: "alias-taken" }],
+    },
+    auctionCalls: [raffleNameCall({ kind: "alias", alias: "Сова" })],
+    body: {
+      blocks: [
+        {
+          kind: "raffle-answer-refused",
+          auctionId: CONTRACT_AUCTION_ID,
+          refusal: "alias-taken",
+        },
+      ],
+      keyboard: [[askAliasButton("answer.retry")], toRaffleRow],
+    },
+  },
+  {
+    intent: "raffle: alias not text",
+    callbackData: raffleQuestionCallback,
+    reply: {},
+    auction: AUCTION,
+    auctionCalls: [],
+    body: {
+      blocks: [
+        {
+          kind: "raffle-answer-refused",
+          auctionId: CONTRACT_AUCTION_ID,
+          refusal: "not-text",
+        },
+      ],
+      keyboard: [[askAliasButton("answer.retry")], toRaffleRow],
+    },
+  },
+];
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   {
     intent: "feed",
     callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
     auction: AUCTION,
-    auctionCalls: listCalls(CONTRACT_AUCTION_ID, ["", "p2"]),
+    auctionCalls: feedCalls(CONTRACT_AUCTION_ID, ["", "p2"]),
     body: FEED_BODY,
   },
   // Кнопка страницы, которой больше нет: лоты сняли, пока сообщение висело.
@@ -1644,14 +2064,14 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     intent: "feed: stale page",
     callbackData: feedCallback(CONTRACT_AUCTION_ID, 7),
     auction: AUCTION,
-    auctionCalls: listCalls(CONTRACT_AUCTION_ID, ["", "p2"]),
+    auctionCalls: feedCalls(CONTRACT_AUCTION_ID, ["", "p2"]),
     body: FEED_BODY,
   },
   {
     intent: "feed: empty",
     callbackData: feedCallback(EMPTY_AUCTION_ID, 0),
     auction: EMPTY_AUCTION,
-    auctionCalls: listCalls(EMPTY_AUCTION_ID, [""]),
+    auctionCalls: feedCalls(EMPTY_AUCTION_ID, [""]),
     body: {
       blocks: [
         {
@@ -1927,6 +2347,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   },
   ...COMMAND_CASES,
   ...FAVORITE_CASES,
+  ...RAFFLE_CASES,
 ];
 
 export function spyPorts(
@@ -1939,6 +2360,8 @@ export function spyPorts(
   const limits = [...(snapshot.limits ?? [])];
   const displayNames = [...(snapshot.displayNames ?? [])];
   const follows = [...(snapshot.follows ?? [])];
+  const registrations = [...(snapshot.registrations ?? [])];
+  const cancellations = [...(snapshot.cancellations ?? [])];
   const { followed, explainer } = snapshot;
   const followCommand = (outcome: FollowOutcome | undefined) => {
     if (outcome === undefined) throw new Error("follow is not expected");
@@ -2015,6 +2438,25 @@ export function spyPorts(
       async chooseDisplayName(request) {
         calls.push({ port: "auction", method: "chooseDisplayName", request });
         return settled(displayNames.shift());
+      },
+      async getRaffle(request) {
+        calls.push({ port: "auction", method: "getRaffle", request });
+        if (snapshot.raffle === "unavailable") {
+          throw new Error("raffle unavailable");
+        }
+        return snapshot.raffle;
+      },
+      async registerForRaffle(request) {
+        calls.push({ port: "auction", method: "registerForRaffle", request });
+        return settled(registrations.shift());
+      },
+      async cancelRaffleRegistration(request) {
+        calls.push({
+          port: "auction",
+          method: "cancelRaffleRegistration",
+          request,
+        });
+        return settled(cancellations.shift());
       },
     },
     operations: {

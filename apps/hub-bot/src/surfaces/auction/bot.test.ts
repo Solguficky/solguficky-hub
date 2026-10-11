@@ -12,6 +12,7 @@ import {
   type LotImagePort,
   type LotView,
   type ProxyExplainerPort,
+  type RaffleView,
 } from "../../auction-ui/index.js";
 import { createLogger, type Logger } from "../../core/logging.js";
 import { noopTracing } from "../../core/tracing.js";
@@ -214,6 +215,13 @@ function portsWith(
       placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
       setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
       chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
+      getRaffle: async () => undefined,
+      registerForRaffle: async () => {
+        throw new Error("not used");
+      },
+      cancelRaffleRegistration: async () => {
+        throw new Error("not used");
+      },
     },
     operations: {
       newOperationId: () => "01929b7e-5c1d-7a3f-8e4b-00000000c001",
@@ -2388,5 +2396,143 @@ describe("favorite lots", () => {
     );
     expect(favorites.marks).toEqual([]);
     expect(JSON.stringify(calls)).toContain(deniedTexts["in-community"]);
+  });
+});
+
+// Розыгрыш среди участников (ADR-066) — служба с состоянием вместо Auction:
+// регистрация меняет отметку, жеребьёвку тест проводит сам.
+function raffleService(initial: RaffleView) {
+  let raffle: RaffleView | undefined = initial;
+  const service = {
+    get current() {
+      return raffle;
+    },
+    set(next: RaffleView | undefined) {
+      raffle = next;
+    },
+    registrations: [] as string[],
+    methods: {
+      getRaffle: async () => raffle,
+      registerForRaffle: async (request: { opId: string }) => {
+        service.registrations.push(request.opId);
+        if (raffle === undefined || raffle.status !== "open") {
+          return {
+            kind: "refused" as const,
+            refusal: "registration-closed" as const,
+          };
+        }
+        raffle = { ...raffle, registered: true };
+        return { kind: "accepted" as const, raffle };
+      },
+      cancelRaffleRegistration: async () => {
+        if (raffle === undefined) throw new Error("no raffle");
+        raffle = { ...raffle, registered: false };
+        return { kind: "accepted" as const, raffle };
+      },
+    },
+  };
+  return service;
+}
+
+function withRaffle(
+  factory: PortsFactory,
+  service: ReturnType<typeof raffleService>,
+): PortsFactory {
+  return (requestId, deadlineAt) => {
+    const ports = factory(requestId, deadlineAt);
+    return { ...ports, auction: { ...ports.auction, ...service.methods } };
+  };
+}
+
+const openRaffle: RaffleView = {
+  auctionId,
+  status: "open",
+  closesAt: "2026-10-29T18:00:00Z",
+  commitment: "ab".repeat(32),
+  beaconRound: 12_345_678,
+  registered: false,
+  tickets: [],
+};
+
+describe("raffle among the participants", () => {
+  it("registers from the feed, shows the commitment and then the result", async () => {
+    const service = raffleService(openRaffle);
+    const { bot, calls } = makeBot(withRaffle(publicPorts, service));
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "feed", auctionId, page: 0 })),
+    );
+    const feed = lastScreen(calls);
+    await bot.handleUpdate(press(buttonData(feed, "Розыгрыш")));
+    const before = lastScreen(calls);
+    expect(before.text).toContain("<b>Розыгрыш среди участников</b>");
+    expect(before.text).toContain("Ты пока не зарегистрирован.");
+    expect(before.keyboard.flat().map((b) => b.text)).toEqual([
+      "Зарегистрироваться",
+      "‹ Лоты",
+    ]);
+
+    await bot.handleUpdate(press(buttonData(before, "Зарегистрироваться")));
+    const registered = lastScreen(calls);
+    expect(registered.text).toContain("Ты зарегистрирован.");
+    expect(registered.text).toContain("ab".repeat(32));
+    expect(registered.text).toContain("12345678");
+    expect(registered.keyboard.flat().map((b) => b.text)).toEqual([
+      "Отменить регистрацию",
+      "‹ Лоты",
+    ]);
+    expect(service.registrations).toHaveLength(1);
+
+    // Жеребьёвка прошла: пул зафиксирован, seed раскрыт.
+    service.set({
+      ...openRaffle,
+      status: "drawn",
+      registered: true,
+      tickets: [
+        { number: 1, displayName: "@owl" },
+        { number: 2, displayName: "Сова*" },
+      ],
+      myTicket: 1,
+      reveal: {
+        seed: "cd".repeat(32),
+        randomness: "ef".repeat(32),
+        value: "12".repeat(32),
+        winningTicket: 2,
+      },
+    });
+    await bot.handleUpdate(press(buttonData(registered, "‹ Лоты")));
+    await bot.handleUpdate(press(buttonData(lastScreen(calls), "Розыгрыш")));
+    const result = lastScreen(calls);
+    expect(result.text).toContain("Выиграл билет №2 — Сова*");
+    expect(result.text).toContain("cd".repeat(32));
+    expect(result.text).toContain("Как проверить итог");
+    expect(result.text).toContain("python3 -c");
+    expect(result.keyboard.flat().map((b) => b.text)).toEqual(["‹ Лоты"]);
+  });
+
+  // Вне окна регистрации кнопки нет — есть объяснение.
+  it("offers no registration once registration has closed", async () => {
+    const service = raffleService({ ...openRaffle, status: "closing" });
+    const { bot, calls } = makeBot(withRaffle(publicPorts, service));
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "raffle", auctionId })),
+    );
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("Регистрация закрыта");
+    expect(screen.keyboard.flat().map((b) => b.text)).toEqual(["‹ Лоты"]);
+  });
+
+  it("shows no raffle button on the feed of an auction without a raffle", async () => {
+    const { bot, calls } = makeBot(publicPorts);
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "feed", auctionId, page: 0 })),
+    );
+    expect(
+      lastScreen(calls)
+        .keyboard.flat()
+        .map((b) => b.text),
+    ).not.toContain("Розыгрыш");
   });
 });

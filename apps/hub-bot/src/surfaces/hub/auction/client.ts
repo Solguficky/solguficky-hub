@@ -14,6 +14,11 @@ import {
 } from "../../../core/auction/commands.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
+import {
+  cancellationOutcomeOf,
+  raffleOf,
+  registrationOutcomeOf,
+} from "../../../core/auction/raffle.js";
 import { lotOrMissing, lotViewOf } from "../../../core/auction/snapshot.js";
 import { wireViewer } from "../../../core/identity/access.js";
 import {
@@ -65,6 +70,9 @@ type AuctionRpc = Pick<
   | "placeBid"
   | "setProxyLimit"
   | "chooseDisplayName"
+  | "getRaffle"
+  | "registerForRaffle"
+  | "cancelRaffleRegistration"
   | "getLotImage"
   | "getAuctionConsole"
   | "getAuctionLotStatistics"
@@ -90,6 +98,8 @@ export type AuctionAdapterOptions = {
   newOperationId?: () => string;
   // Пауза дочитывания лота до версии команды (PER-470); тесты подменяют её.
   pause?: Pause;
+  // Отказ `GetRaffle` лента гасит: кнопка «Розыгрыш» пропадает (PER-500).
+  onRaffleRefused?: (cause: unknown, meta: RpcMetadata | undefined) => void;
 };
 
 export function createAuctionClient(
@@ -99,7 +109,9 @@ export function createAuctionClient(
     serviceToken,
     timeoutMs = 3_000,
     onNamesRefused,
-  }: RpcClientOptions & Pick<AuctionAdapterOptions, "onNamesRefused">,
+    onRaffleRefused,
+  }: RpcClientOptions &
+    Pick<AuctionAdapterOptions, "onNamesRefused" | "onRaffleRefused">,
 ): AuctionClient {
   const sessionManager = new Http2SessionManager(baseUrl);
   const rpc = createClient(
@@ -114,6 +126,7 @@ export function createAuctionClient(
   const client = createAuctionAdapter(rpc, {
     timeoutMs,
     ...(onNamesRefused === undefined ? {} : { onNamesRefused }),
+    ...(onRaffleRefused === undefined ? {} : { onRaffleRefused }),
   });
   return { ...client, close: () => sessionManager.abort() };
 }
@@ -125,6 +138,7 @@ export function createAuctionAdapter(
     onNamesRefused,
     newOperationId = createUuidV7,
     pause,
+    onRaffleRefused,
   }: AuctionAdapterOptions = {},
 ): MeetupAuctions & AuctionScreens & LotAdministration & AuctionConsoles {
   // Дедлайн вызова — меньшее из своего и остатка бюджета действия: бюджет
@@ -453,6 +467,50 @@ export function createAuctionAdapter(
                       : { case: "alias", value: choice.alias },
                 },
                 options(meta),
+              ),
+            );
+          },
+          // Розыгрыш среди участников (ADR-066): команды — как у ставки.
+          async getRaffle(request) {
+            try {
+              const { raffle } = await rpc.getRaffle(
+                {
+                  viewer: wireViewer(request.viewer),
+                  auctionId: request.auctionId,
+                },
+                options(meta),
+              );
+              return raffle === undefined ? undefined : raffleOf(raffle);
+            } catch (cause) {
+              onRaffleRefused?.(cause, meta);
+              throw cause;
+            }
+          },
+          registerForRaffle(request) {
+            return unansweredOn(async () =>
+              registrationOutcomeOf(
+                await rpc.registerForRaffle(
+                  {
+                    viewer: wireViewer(request.viewer),
+                    auctionId: request.auctionId,
+                    opId: request.opId,
+                  },
+                  options(meta),
+                ),
+              ),
+            );
+          },
+          cancelRaffleRegistration(request) {
+            return unansweredOn(async () =>
+              cancellationOutcomeOf(
+                await rpc.cancelRaffleRegistration(
+                  {
+                    viewer: wireViewer(request.viewer),
+                    auctionId: request.auctionId,
+                    opId: request.opId,
+                  },
+                  options(meta),
+                ),
               ),
             );
           },
