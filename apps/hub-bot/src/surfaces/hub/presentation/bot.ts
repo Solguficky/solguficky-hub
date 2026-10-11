@@ -5238,7 +5238,8 @@ async function showLotFailure(
         ? exitToMeetups()
         : result.reason === "lot-not-found"
           ? // Чтения Auction отстают от команды: лот, который форма только что
-            // завела, они могут ещё не знать. Нажатие можно повторить.
+            // завела, они могут не знать и после окна ожидания юзкейса
+            // (PER-471). Нажатие можно повторить.
             context.retry === undefined
             ? exitToMeetups()
             : exitRetry(context.retry)

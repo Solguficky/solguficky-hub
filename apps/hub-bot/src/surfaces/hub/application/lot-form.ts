@@ -4,6 +4,7 @@ import type {
   AuctionFailure,
   LotAdministration,
   LotCardResult,
+  LotReadResult,
 } from "../auction/port.js";
 import type {
   ExecuteResult,
@@ -26,6 +27,16 @@ export const lotCurrency = "RUB";
 
 /** Верхняя граница суммы в рублях: семь цифр помещаются в кнопку вопроса. */
 export const maxLotRubles = 9_999_999;
+
+/** Сколько форма ждёт лот, которого read model Auction ещё не знает. */
+export const lotReadWindowMs = 1_500;
+/** Шаг повторного чтения: чаще проекция лот всё равно не покажет. */
+const lotReadStepMs = 250;
+/**
+ * Остаток бюджета действия, который перечитывание не трогает: после чтения
+ * идёт команда — правка карточки или условия, — и ей нужно время на ответ.
+ */
+const lotCommandReserveMs = 1_000;
 
 export type RublesResult =
   | { kind: "ok"; rubles: number }
@@ -102,14 +113,47 @@ export function createLotForm(lots: LotAdministration) {
     | { kind: "ok"; raw: LotView; lot: LotFormView }
     | { kind: "refused"; result: ExecuteResult };
 
+  // Read model Auction отстаёт от команды на сотни миллисекунд, а нажатие поля
+  // и ответ на вопрос приходят сразу после «Лот добавлен» (PER-471). Поэтому
+  // `not-found` читается заново, пока не выйдет окно или бюджет действия:
+  // лот, которого правда нет, получает тот же отказ, только позже. У шага с
+  // командой после чтения остаток бюджета под неё перечитывание не трогает —
+  // ни ожиданием, ни медленным ответом повторного чтения: иначе найденный лот
+  // упёрся бы в дедлайн на правке.
+  async function readVisible(
+    request: LotFormRequest & { lotId: string },
+  ): Promise<LotReadResult> {
+    const meta = rpcMeta(request);
+    const commandFollows =
+      request.intent !== "view-lot-form" &&
+      request.intent !== "check-lot-price";
+    const readsUntil =
+      meta?.deadlineAt === undefined
+        ? undefined
+        : meta.deadlineAt - (commandFollows ? lotCommandReserveMs : 0);
+    const until = Math.min(
+      Date.now() + lotReadWindowMs,
+      readsUntil ?? Number.POSITIVE_INFINITY,
+    );
+    const again =
+      readsUntil === undefined ? meta : { ...meta, deadlineAt: readsUntil };
+    let found = await lots.getLot(request.identity, request.lotId, meta);
+    // Повтор начинается, только если после ожидания чтению остаётся хотя бы
+    // шаг: вызов без остатка бюджета отказал бы таймаутом, а не `not-found`.
+    while (
+      found.kind === "not-found" &&
+      Date.now() + 2 * lotReadStepMs <= until
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, lotReadStepMs));
+      found = await lots.getLot(request.identity, request.lotId, again);
+    }
+    return found;
+  }
+
   async function read(
     request: LotFormRequest & { lotId: string },
   ): Promise<Read> {
-    const found = await lots.getLot(
-      request.identity,
-      request.lotId,
-      rpcMeta(request),
-    );
+    const found = await readVisible(request);
     switch (found.kind) {
       case "ok":
         return { kind: "ok", raw: found.lot, lot: viewOf(found.lot) };
