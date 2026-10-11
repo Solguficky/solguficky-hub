@@ -43,6 +43,7 @@ import auction.v1.auction_service.DeselectForFinalRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.DraftAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
+import auction.v1.auction_service.FreezeFinalLineupRequest
 import auction.v1.auction_service.GetAuctionConsoleRequest
 import auction.v1.auction_service.GetAuctionLotStatisticsRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
@@ -59,6 +60,8 @@ import auction.v1.auction_service.ScheduleAuctionRequest
 import auction.v1.auction_service.SelectForFinalRequest
 import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
+import auction.v1.auction_service.StartFinalRequest
+import auction.v1.auction_service.StartNextLotRequest
 import auction.v1.auction_service.StartPrebiddingRequest
 import auction.v1.auction_service.WithdrawProxyLimitRequest
 import auction.v1.auction_service.Viewer as ViewerMessage
@@ -126,6 +129,15 @@ final case class PrebiddingCommand(auctionId: AuctionId, opId: OpId, acting: Act
 
 /** Удаление аукциона до торгов. */
 final case class DiscardCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
+
+/**
+ * Заморозка состава финала: `order` — лоты в порядке выхода, как их прислал пульт. Дубли и пустой список — не форма
+ * запроса, а решение домена (`LineupMismatch`, `LineupEmpty`).
+ */
+final case class LineupCommand(auctionId: AuctionId, order: List[LotId], opId: OpId, acting: Acting)
+
+/** Команда ведущего финала без аргументов: старт финала или следующий лот очереди. */
+final case class FinalCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 
 /** Регистрация в розыгрыше аукциона или её отмена: участник — смотрящий (ADR-066). */
 final case class RaffleCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
@@ -378,6 +390,31 @@ object RequestMapping {
       auction <- meetupAuction(request.auctionId)
       opId <- uuidV7("op_id", request.opId)
     } yield DiscardCommand(auction, OpId(opId), acting)
+
+  def freezeFinalLineup(request: FreezeFinalLineupRequest): Either[FormError, LineupCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      order <- request.lotIds
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, raw) =>
+          acc.flatMap(lots => uuidV7("lot_ids", raw).map(LotId(_) :: lots))
+        }
+        .map(_.reverse)
+    } yield LineupCommand(auction, order, OpId(opId), acting)
+
+  def startFinal(request: StartFinalRequest): Either[FormError, FinalCommand] =
+    finalCommand(request.viewer, request.auctionId, request.opId)
+
+  def startNextLot(request: StartNextLotRequest): Either[FormError, FinalCommand] =
+    finalCommand(request.viewer, request.auctionId, request.opId)
+
+  private def finalCommand(viewer: Option[ViewerMessage], auctionId: String, opId: String) =
+    for {
+      acting <- acting(viewer)
+      auction <- meetupAuction(auctionId)
+      op <- uuidV7("op_id", opId)
+    } yield FinalCommand(auction, OpId(op), acting)
 
   def registerForRaffle(request: RegisterForRaffleRequest): Either[FormError, RaffleCommand] =
     raffleCommand(request.viewer, request.auctionId, request.opId)

@@ -6,8 +6,14 @@ import java.sql.Connection
 import java.util.UUID
 import scala.util.Using
 
+/**
+ * Факт к публикации: ключ дедупликации, subject и тело — `auction.v1.LotEvent` факта лота или `auction.v1.AuctionEvent`
+ * факта аукциона. Outbox у обоих один, и релей их не различает: тип сообщения называет subject.
+ */
+final case class Fact(eventId: UUID, subject: String, payload: Array[Byte])
+
 /** Неопубликованный факт в порядке записи: `position` растёт с каждой строкой. */
-final case class PendingFact(position: Long, fact: LotFact)
+final case class PendingFact(position: Long, fact: Fact)
 
 /**
  * Таблица `lot_outbox` со стороны релея. Строку пишет проекция публикации, а релей читает её в порядке записи и удаляет
@@ -30,7 +36,7 @@ final class LotOutbox(connect: () => Connection) {
             .continually(rows)
             .takeWhile(_.next())
             .map { row =>
-              PendingFact(row.getLong(1), LotFact(row.getObject(2, classOf[UUID]), row.getString(3), row.getBytes(4)))
+              PendingFact(row.getLong(1), Fact(row.getObject(2, classOf[UUID]), row.getString(3), row.getBytes(4)))
             }
             .toVector
         }

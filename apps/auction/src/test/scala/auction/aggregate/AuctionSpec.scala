@@ -293,5 +293,170 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       Auction.decide(started, DeselectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.LotNotInAuction)
       Auction.decide(Auction.initial, SelectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.AuctionNotFound)
     }
+    "refuses a mark when the lots of the auction get no deadline (Т-45)" in {
+      val ledByPerson = configInput(
+        onlinePhase = Some(week.copy(closesLots = false)),
+        closingPolicy = ClosingPolicy.ByAuctioneer
+      )
+      val auction = Auction.replay(
+        Auction.initial,
+        List(
+          AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup)),
+          AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(lot)),
+          AuctionEnvelope(3, op(3), AuctionEvent.AuctionScheduled(config(ledByPerson))),
+          AuctionEnvelope(4, op(4), AuctionEvent.PrebiddingStarted)
+        )
+      )
+      Auction.decide(auction, SelectForFinal(lot, op(10))) shouldBe Left(FinalChoiceRejected.SelectionNotApplicable)
+    }
+
+    "refuses a choice once the common deadline passed: the auction is no longer in prebidding" in {
+      val settling = Auction.apply(trading, AuctionEnvelope(10, op(10), AuctionEvent.PrebiddingDeadlineReached))
+      Auction.decide(settling, SelectForFinal(lot, op(11))) shouldBe Left(FinalChoiceRejected.NotInPrebidding)
+      Auction.decide(settling, DeselectForFinal(lot, op(11))) shouldBe Left(FinalChoiceRejected.NotInPrebidding)
+    }
+  }
+
+  "break and final of an auction" should {
+
+    val other = LotId(new UUID(5L, 2L))
+
+    /** Аукцион с двумя лотами в реестре в онлайн-торгах: события 1…5, старт — `op(5)`. */
+    def trading: Auction =
+      Auction.replay(
+        Auction.initial,
+        List(
+          AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup)),
+          AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(lot)),
+          AuctionEnvelope(3, op(3), AuctionEvent.LotAdded(other)),
+          AuctionEnvelope(4, op(4), AuctionEvent.AuctionScheduled(config())),
+          AuctionEnvelope(5, op(5), AuctionEvent.PrebiddingStarted)
+        )
+      )
+
+    def settling: Auction = applied(trading, Auction.decide(trading, EndPrebidding(op(6), closesAt)).toOption.get, 6, 6)
+
+    def onBreak: Auction =
+      applied(settling, Auction.decide(settling, EndSettling(Set(lot), op(7))).toOption.get, 7, 7)
+
+    def frozen: Auction =
+      applied(onBreak, Auction.decide(onBreak, FreezeFinalLineup(List(lot), op(8)), Some(Set(lot))).toOption.get, 8, 8)
+
+    def inFinal: Auction = applied(frozen, Auction.decide(frozen, StartFinal(op(9))).toOption.get, 9, 9)
+
+    "waits for the common deadline of the config and then settles" in {
+      Auction.decide(trading, EndPrebidding(op(6), closesAt.minusMillis(1))) shouldBe
+        Left(EndPrebiddingRejected.DeadlineNotReached)
+      Auction.decide(trading, EndPrebidding(op(6), closesAt)) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.PrebiddingDeadlineReached))
+      settling.state shouldBe AuctionState.Settling(config(), op(5))
+      Auction.decide(settling, EndPrebidding(op(16), closesAt)) shouldBe Left(EndPrebiddingRejected.NotInPrebidding)
+      Auction.prebiddingDeadline(trading) shouldBe Some(closesAt)
+      Auction.prebiddingDeadline(settling) shouldBe None
+    }
+
+    "never settles an auction whose lots a person closes: it has no common deadline" in {
+      val ledByPerson = Auction.replay(
+        Auction.initial,
+        List(
+          AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup)),
+          AuctionEnvelope(2, op(2), AuctionEvent.AuctionScheduled(config(byAuctioneer))),
+          AuctionEnvelope(3, op(3), AuctionEvent.PrebiddingStarted)
+        )
+      )
+      Auction.prebiddingDeadline(ledByPerson) shouldBe None
+      Auction.decide(ledByPerson, EndPrebidding(op(6), closesAt.plusSeconds(86400))) shouldBe
+        Left(EndPrebiddingRejected.DeadlineNotReached)
+    }
+
+    "goes to the break with held lots and finishes at once without them" in {
+      Auction.decide(settling, EndSettling(Set(lot), op(7))) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.PrebiddingEnded(finished = false)))
+      onBreak.state shouldBe AuctionState.Break(config(), op(5))
+      val none = Auction.decide(settling, EndSettling(Set.empty, op(7)))
+      none shouldBe Right(AuctionDecision.Accepted(AuctionEvent.PrebiddingEnded(finished = true)))
+      applied(settling, none.toOption.get, 7, 7).state shouldBe AuctionState.Finished(config(), op(5))
+      Auction.decide(onBreak, EndSettling(Set(lot), op(17))) shouldBe Left(EndSettlingRejected.NotSettling)
+      Auction.decide(onBreak, EndSettling(Set(lot), op(7))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(7, op(7), AuctionEvent.PrebiddingEnded(finished = false))))
+    }
+
+    "freezes exactly the held lots in the order the organizer gave" in {
+      val order = List(other, lot)
+      val both = applied(settling, Auction.decide(settling, EndSettling(Set(lot, other), op(7))).toOption.get, 7, 7)
+      Auction.decide(both, FreezeFinalLineup(order, op(8)), Some(Set(lot, other))) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.FinalLineupFrozen(order)))
+      frozen.state shouldBe AuctionState.LineupFrozen(config(), op(5), List(lot))
+    }
+
+    "refuses a lineup with a lot that did not confirm its hold (Т-47)" in {
+      Auction.decide(onBreak, FreezeFinalLineup(List(lot, other), op(8)), Some(Set(lot))) shouldBe
+        Left(FreezeFinalLineupRejected.LineupMismatch(Set(lot)))
+      Auction.decide(onBreak, FreezeFinalLineup(List(lot, lot), op(8)), Some(Set(lot))) shouldBe
+        Left(FreezeFinalLineupRejected.LineupMismatch(Set(lot)))
+      Auction.decide(onBreak, FreezeFinalLineup(Nil, op(8)), Some(Set(lot))) shouldBe
+        Left(FreezeFinalLineupRejected.LineupMismatch(Set(lot)))
+    }
+
+    "refuses a lineup outside the break, with no held lot, and while the lots are still being asked" in {
+      Auction.decide(settling, FreezeFinalLineup(List(lot), op(8)), Some(Set(lot))) shouldBe
+        Left(FreezeFinalLineupRejected.NotInBreak)
+      Auction.decide(frozen, FreezeFinalLineup(List(lot), op(18)), Some(Set(lot))) shouldBe
+        Left(FreezeFinalLineupRejected.NotInBreak)
+      Auction.decide(onBreak, FreezeFinalLineup(Nil, op(8)), Some(Set.empty)) shouldBe
+        Left(FreezeFinalLineupRejected.LineupEmpty)
+      Auction.decide(onBreak, FreezeFinalLineup(List(lot), op(8)), None) shouldBe
+        Left(FreezeFinalLineupRejected.LineupUnknown)
+      Auction.decide(Auction.initial, FreezeFinalLineup(List(lot), op(8)), None) shouldBe
+        Left(FreezeFinalLineupRejected.AuctionNotFound)
+    }
+
+    "refuses to start the final before the lineup is frozen and stays in the break (Т-46)" in {
+      Auction.decide(onBreak, StartFinal(op(9))) shouldBe Left(StartFinalRejected.LineupNotFrozen)
+      Auction.decide(settling, StartFinal(op(9))) shouldBe Left(StartFinalRejected.LineupNotFrozen)
+      Auction.decide(inFinal, StartFinal(op(19))) shouldBe Left(StartFinalRejected.LineupNotFrozen)
+      Auction.decide(frozen, StartFinal(op(9))) shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalStarted))
+      inFinal.state shouldBe AuctionState.Final(config(), op(5), List(lot), Nil)
+    }
+
+    "returns the lots of the lineup to trading one by one in its order" in {
+      val order = List(other, lot)
+      val both = applied(settling, Auction.decide(settling, EndSettling(Set(lot, other), op(7))).toOption.get, 7, 7)
+      val lineup = Auction.apply(both, AuctionEnvelope(8, op(8), AuctionEvent.FinalLineupFrozen(order)))
+      val running = Auction.apply(lineup, AuctionEnvelope(9, op(9), AuctionEvent.FinalStarted))
+      Auction.decide(running, StartNextLot(op(10))) shouldBe Right(NextLot.Resume(other))
+      Auction.activate(running, StartNextLot(op(10)), other) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.FinalLotActivated(other)))
+      val first = Auction.apply(running, AuctionEnvelope(10, op(10), AuctionEvent.FinalLotActivated(other)))
+      first.state shouldBe AuctionState.Final(config(), op(5), order, List(other))
+      // Активный лот завершает закрытие ведущим; до него следующего лота нет.
+      Auction.decide(first, StartNextLot(op(11))) shouldBe Left(StartNextLotRejected.AnotherLotActive(other))
+      Auction.decide(first, StartNextLot(op(10))) shouldBe
+        Right(NextLot.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.FinalLotActivated(other))))
+    }
+
+    "records one activation for two commands that chose the same lot before either was written" in {
+      Auction.decide(inFinal, StartNextLot(op(10))) shouldBe Right(NextLot.Resume(lot))
+      Auction.decide(inFinal, StartNextLot(op(11))) shouldBe Right(NextLot.Resume(lot))
+      val first = applied(inFinal, Auction.activate(inFinal, StartNextLot(op(10)), lot).toOption.get, 10, 10)
+      Auction.activate(first, StartNextLot(op(11)), lot) shouldBe Left(StartNextLotRejected.AnotherLotActive(lot))
+    }
+
+    "refuses the next lot outside the final" in {
+      List(onBreak, frozen).foreach { auction =>
+        Auction.decide(auction, StartNextLot(op(10))) shouldBe Left(StartNextLotRejected.NotInFinal)
+      }
+      Auction.decide(Auction.initial, StartNextLot(op(10))) shouldBe Left(StartNextLotRejected.AuctionNotFound)
+    }
+
+    "freezes the registry and refuses scheduling and discarding in every state after the start" in {
+      List(settling, onBreak, frozen, inFinal).foreach { auction =>
+        Auction.decide(auction, AddLot(lot, op(20))) shouldBe Left(AddLotRejected.LotsFrozen)
+        Auction.decide(auction, ScheduleAuction(configInput(), op(20))) shouldBe
+          Left(ScheduleAuctionRejected.AuctionAlreadyStarted)
+        Auction.decide(auction, DiscardAuction(op(20))) shouldBe Left(DiscardAuctionRejected.AuctionAlreadyStarted)
+        Auction.decide(auction, StartPrebidding(op(20))) shouldBe Left(StartPrebiddingRejected.AuctionNotScheduled)
+      }
+    }
   }
 }

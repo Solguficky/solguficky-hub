@@ -42,6 +42,14 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
 
   private val prebidding = Auction.replay(Auction.initial, List(drafted, added, scheduled, started))
 
+  private val deadline = AuctionEnvelope(5, op(5), AuctionEvent.PrebiddingDeadlineReached)
+  private val ended = AuctionEnvelope(6, op(6), AuctionEvent.PrebiddingEnded(finished = false))
+  private val frozen = AuctionEnvelope(7, op(7), AuctionEvent.FinalLineupFrozen(List(lot)))
+  private val finalStarted = AuctionEnvelope(8, op(8), AuctionEvent.FinalStarted)
+  private val activated = AuctionEnvelope(9, op(9), AuctionEvent.FinalLotActivated(lot))
+
+  private val inFinal = Auction.replay(prebidding, List(deadline, ended, frozen, finalStarted, activated))
+
   /** Строка прежней формы: байты эталона под manifest и сериализатором нынешнего класса. */
   private def legacy(name: String, current: AnyRef): AnyRef =
     read(kit.system, write(kit.system, current).copy(bytes = golden(s"legacy/$name")))
@@ -77,6 +85,44 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       keepsGolden("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
       AuctionJournal.restoreAuction(AuctionJournal.storeAuction(prebidding, sequence = 4)) shouldBe prebidding
       prebidding.state shouldBe AuctionState.Prebidding(config(), op(4))
+    }
+
+    "keeps the stored form of the events of the break and the final equal to their golden files" in {
+      keepsGolden("prebidding-deadline-reached", stored(deadline.event, 5))
+      keepsGolden("prebidding-ended", stored(ended.event, 6))
+      keepsGolden("final-lineup-frozen", stored(frozen.event, 7))
+      keepsGolden("final-started", stored(finalStarted.event, 8))
+      keepsGolden("final-lot-activated", stored(activated.event, 9))
+    }
+
+    "keeps the stored form of a snapshot in the final with its lineup and the lots returned to trading" in {
+      keepsGolden("auction-snapshot-final", AuctionJournal.storeAuction(inFinal, sequence = 9))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(inFinal, sequence = 9)) shouldBe inFinal
+      inFinal.state shouldBe AuctionState.Final(config(), op(4), List(lot), List(lot))
+    }
+
+    "restores every state of the break and the final from its snapshot" in {
+      val states = List(deadline, ended, frozen, finalStarted).scanLeft(prebidding)(Auction.apply)
+      val finished = Auction.apply(
+        Auction.apply(prebidding, deadline),
+        AuctionEnvelope(6, op(6), AuctionEvent.PrebiddingEnded(finished = true))
+      )
+      finished.state shouldBe AuctionState.Finished(config(), op(4))
+      (states :+ finished).foreach { auction =>
+        AuctionJournal.restoreAuction(AuctionJournal.storeAuction(auction, sequence = 9)) shouldBe auction
+      }
+    }
+
+    "refuses a lineup with a repeated lot as a corrupted row" in {
+      val twice = stored(frozen.event, 7)
+      val corrupted =
+        twice.copy(event = twice.event.copy(finalLineupFrozen = Some(StoredLineup(List(lot.value, lot.value)))))
+      a[JournalCorrupted] should be thrownBy AuctionJournal.envelope(7, corrupted)
+    }
+
+    "reads a snapshot in prebidding written before the break existed into the same auction" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]) shouldBe prebidding
     }
 
     "reads rows and a snapshot written before scheduling existed into the same events and auction" in {
@@ -124,7 +170,13 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
         scheduled.event,
         ledByPerson,
         started.event,
-        AuctionEvent.AuctionDiscarded
+        AuctionEvent.AuctionDiscarded,
+        deadline.event,
+        ended.event,
+        AuctionEvent.PrebiddingEnded(finished = true),
+        frozen.event,
+        finalStarted.event,
+        activated.event
       ).foreach { event =>
         AuctionJournal.envelope(4, stored(event, 4)) shouldBe AuctionEnvelope(4, op(4), event)
       }

@@ -14,6 +14,9 @@
     "lotRemoved": {
       "lotId": "0190f2a0-0000-7000-8000-00000000000b"
     },
-    "auctionScheduled": null
+    "auctionScheduled": null,
+    "prebiddingEnded": null,
+    "finalLineupFrozen": null,
+    "finalLotActivated": null
   }
 }

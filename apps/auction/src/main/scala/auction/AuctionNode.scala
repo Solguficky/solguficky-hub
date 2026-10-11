@@ -20,6 +20,7 @@ import auction.projection.AuctionProjection
 import auction.projection.AuctionViewHandler
 import auction.projection.LotProjection
 import auction.projection.LotViewHandler
+import auction.publication.AuctionPublicationHandler
 import auction.publication.JetStreamPublisher
 import auction.publication.LotOutbox
 import auction.publication.LotPublicationHandler
@@ -195,8 +196,11 @@ object AuctionNode {
   def startProjection(system: ActorSystem[?], metrics: ProjectionMetrics, backlogTimeout: FiniteDuration): Unit = {
     LotProjection.init(system, LotProjection.Name, metrics, () => LotViewHandler(system))
     metrics.watchBacklog(LotProjection.Name, LotProjection.backlog(system, LotProjection.Name, backlogTimeout))
-    AuctionProjection.init(system, metrics, () => AuctionViewHandler(system))
-    metrics.watchBacklog(AuctionProjection.Name, AuctionProjection.backlog(system, backlogTimeout))
+    AuctionProjection.init(system, AuctionProjection.Name, metrics, () => AuctionViewHandler(system))
+    metrics.watchBacklog(
+      AuctionProjection.Name,
+      AuctionProjection.backlog(system, AuctionProjection.Name, backlogTimeout)
+    )
   }
 
   /**
@@ -213,9 +217,10 @@ object AuctionNode {
     metrics.watchOverdue(LotProjection.overdue(system, clock, grace, timeout))
 
   /**
-   * Публикация фактов лота в шину (integration.md, «Auction NATS»): своя проекция журнала со своим offset пишет outbox,
-   * а релей выносит его в JetStream. Проекция работает и без адреса шины — факты ждут в outbox; релей стартует, только
-   * когда адрес задан. Отставание видно дважды: `events_behind` проекции и очередь outbox.
+   * Публикация фактов лота и аукциона в шину (integration.md, «Auction NATS»): по своей проекции журнала лотов и
+   * журнала аукционов, каждая со своим offset, пишут общий outbox, а релей выносит его в JetStream. Проекция работает и
+   * без адреса шины — факты ждут в outbox; релей стартует, только когда адрес задан. Отставание видно дважды:
+   * `events_behind` проекции и очередь outbox.
    */
   def startPublication(
       system: ActorSystem[?],
@@ -228,6 +233,11 @@ object AuctionNode {
     metrics.watchBacklog(
       LotProjection.PublicationName,
       LotProjection.backlog(system, LotProjection.PublicationName, backlogTimeout)
+    )
+    AuctionProjection.init(system, AuctionProjection.PublicationName, metrics, () => AuctionPublicationHandler(system))
+    metrics.watchBacklog(
+      AuctionProjection.PublicationName,
+      AuctionProjection.backlog(system, AuctionProjection.PublicationName, backlogTimeout)
     )
     val pool = SlickExtension(system).database(system.settings.config.getConfig("jdbc-journal")).database.source
     val outbox = LotOutbox(() => pool.createConnection())

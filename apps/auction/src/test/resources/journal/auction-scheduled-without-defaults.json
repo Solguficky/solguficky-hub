@@ -28,6 +28,9 @@
       },
       "lotDefaults": null,
       "stepWindows": null
-    }
+    },
+    "prebiddingEnded": null,
+    "finalLineupFrozen": null,
+    "finalLotActivated": null
   }
 }

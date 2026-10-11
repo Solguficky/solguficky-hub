@@ -1,5 +1,6 @@
 package auction.entity
 
+import auction.aggregate.Closure
 import auction.entity.JournalFixtures.lotScheduled
 import auction.entity.JournalFixtures.opened
 import auction.lot.CloseLotRejected
@@ -11,6 +12,7 @@ import auction.lot.LotFixtures.money
 import auction.lot.LotFixtures.op
 import auction.lot.LotFixtures.participant
 import auction.lot.OpenLotRejected
+import auction.lot.ResumeLotRejected
 import auction.lot.UnsoldReason
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -40,9 +42,20 @@ final class AuctionLotsSpec extends AnyWordSpec with Matchers {
 
     "takes the envelope of a sold or an unsold lot as the confirmation" in {
       val sold = LotEvent.LotSold(participant(2), money(500), bid(1), deadline)
-      AuctionLots.closure(Right(Envelope(5, op(9), sold))) shouldBe Success(Right(()))
+      AuctionLots.closure(Right(Envelope(5, op(9), sold))) shouldBe Success(Right(Closure.Closed))
       AuctionLots.closure(Right(Envelope(5, op(9), LotEvent.LotUnsold(UnsoldReason.NoBids)))) shouldBe
-        Success(Right(()))
+        Success(Right(Closure.Closed))
+    }
+
+    "takes the envelope of a lot held for the final as the confirmation of the hold" in {
+      AuctionLots.closure(Right(Envelope(5, op(9), LotEvent.LotHeldForFinal(deadline)))) shouldBe
+        Success(Right(Closure.Held))
+    }
+
+    "takes only the envelope of a resumed lot as the confirmation of the return to the final" in {
+      AuctionLots.resumption(Right(Envelope(7, op(9), LotEvent.LotResumed))) shouldBe Success(Right(()))
+      AuctionLots.resumption(Left(ResumeLotRejected.LotNotHeld)) shouldBe Success(Left(ResumeLotRejected.LotNotHeld))
+      AuctionLots.resumption(Right(Envelope(3, op(9), opened))).isFailure shouldBe true
     }
 
     "passes a refusal of the lot through as a refusal" in {

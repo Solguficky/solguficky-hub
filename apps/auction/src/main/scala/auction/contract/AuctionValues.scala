@@ -2,7 +2,9 @@ package auction.contract
 
 import auction.aggregate.AuctionConfig
 import auction.aggregate.ClosingPolicy
+import auction.catalog.LotId
 import auction.v1.auction as model
+import auction.v1.auction_events.AuctionState as AuctionStateMessage
 
 /** Значения аукциона в типах `auction.proto` — как [[LotValues]] у лота. */
 object AuctionValues {
@@ -29,6 +31,17 @@ object AuctionValues {
         )
       }
     )
+
+  /** Замороженный состав финала: лоты в порядке выхода. */
+  def lineupFrozen(order: List[LotId]): AuctionStateMessage.LineupFrozen =
+    AuctionStateMessage.LineupFrozen(order.map(_.value.toString))
+
+  /**
+   * Идущий финал: состав и активный лот — последний возвращённый в торги. Завершения лота финала аукцион ещё не знает:
+   * его приносит закрытие лота ведущим, поэтому возвращённый лот остаётся активным.
+   */
+  def inFinal(order: List[LotId], activated: List[LotId]): AuctionStateMessage.Final =
+    AuctionStateMessage.Final(order.map(_.value.toString), activated.lastOption.map(_.value.toString))
 
   private def closingPolicy(policy: ClosingPolicy): model.ClosingPolicy =
     policy match {

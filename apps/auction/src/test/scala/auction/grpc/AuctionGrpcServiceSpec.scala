@@ -13,6 +13,8 @@ import auction.aggregate.DeselectForFinal
 import auction.aggregate.DiscardAuction
 import auction.aggregate.DraftAuction
 import auction.aggregate.FinalChoiceRejected
+import auction.aggregate.FreezeFinalLineup
+import auction.aggregate.FreezeFinalLineupRejected
 import auction.aggregate.Inspection
 import auction.aggregate.MeetupAuthority
 import auction.aggregate.MeetupId
@@ -22,6 +24,10 @@ import auction.aggregate.ScheduleAuction
 import auction.aggregate.ScheduleAuctionLot
 import auction.aggregate.ScheduleAuctionLotRejected
 import auction.aggregate.SelectForFinal
+import auction.aggregate.StartFinal
+import auction.aggregate.StartFinalRejected
+import auction.aggregate.StartNextLot
+import auction.aggregate.StartNextLotRejected
 import auction.aggregate.StartPrebidding
 import auction.catalog.CardEdit
 import auction.catalog.LotCard
@@ -273,9 +279,27 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         command: DeselectForFinal,
         initiator: Initiator
     ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]] = fail("the auction was reached")
+    def freezeFinalLineup(
+        auctionId: AuctionId,
+        command: FreezeFinalLineup,
+        initiator: Initiator
+    ): Future[Either[FreezeFinalLineupRejected, AuctionAnswer]] = fail("the auction was reached")
+    def startFinal(
+        auctionId: AuctionId,
+        command: StartFinal,
+        initiator: Initiator
+    ): Future[Either[StartFinalRejected, AuctionAnswer]] = fail("the auction was reached")
+    def startNextLot(
+        auctionId: AuctionId,
+        command: StartNextLot,
+        initiator: Initiator
+    ): Future[Either[StartNextLotRejected, LotId]] = fail("the auction was reached")
   }
 
   private val NoMeetups: MeetupAuthority = (_, _, _) => fail("meetups was asked")
+
+  /** Аукцион сходки запросов `meetupId`: команды финала называют его каноническим UUIDv5. */
+  private val meetupAuctionId = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
 
   private object UntouchableAuctionViews extends AuctionViews {
     def byMeetup(meetup: MeetupId): Future[Option[AuctionSnapshotView]] = fail("the auction read model was touched")
@@ -1342,13 +1366,74 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       statusOf(auction.listAuctionInvoices(wire.ListAuctionInvoicesRequest())) shouldBe Status.Code.UNIMPLEMENTED
     }
 
-    "answers UNIMPLEMENTED on the commands of the final until their slices" in {
+    "answers UNIMPLEMENTED on the ask and the closing of the auctioneer until their slice" in {
       val auction = service(Unreachable)
-      statusOf(auction.freezeFinalLineup(wire.FreezeFinalLineupRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.startFinal(wire.StartFinalRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.startNextLot(wire.StartNextLotRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.advanceAsk(wire.AdvanceAskRequest())) shouldBe Status.Code.UNIMPLEMENTED
       statusOf(auction.closeLot(wire.CloseLotRequest())) shouldBe Status.Code.UNIMPLEMENTED
+    }
+
+    "answers INVALID_ARGUMENT on the commands of the final without a viewer, before the auction" in {
+      val auction = service(Unreachable)
+      statusOf(auction.freezeFinalLineup(wire.FreezeFinalLineupRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.startFinal(wire.StartFinalRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.startNextLot(wire.StartNextLotRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+      val malformed = wire.FreezeFinalLineupRequest(Some(viewer), meetupAuctionId, op, List("not-a-lot"))
+      statusOf(auction.freezeFinalLineup(malformed)) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers the commands of the final with their values: the lineup, the start and the lot of the final" in {
+      val finalLot = LotId(UUID.fromString(lot))
+      val running = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId)), registryOpen = false))
+        override def freezeFinalLineup(auctionId: AuctionId, command: FreezeFinalLineup, initiator: Initiator) =
+          Future.successful(
+            if (command.order == List(finalLot)) Right(AuctionAnswer.Unchanged)
+            else Left(FreezeFinalLineupRejected.LineupMismatch(Set(finalLot)))
+          )
+        override def startFinal(auctionId: AuctionId, command: StartFinal, initiator: Initiator) =
+          Future.successful(Left(StartFinalRejected.LineupNotFrozen))
+        override def startNextLot(auctionId: AuctionId, command: StartNextLot, initiator: Initiator) =
+          Future.successful(Right(finalLot))
+      }
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val auction = service(Unreachable, auctions = AuctionCommands(running, Unreachable, granted))
+      auction
+        .freezeFinalLineup(wire.FreezeFinalLineupRequest(Some(viewer), meetupAuctionId, op, List(lot)))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      auction
+        .freezeFinalLineup(wire.FreezeFinalLineupRequest(Some(viewer), meetupAuctionId, op, Nil))
+        .futureValue
+        .getRefused
+        .getLineupMismatch
+        .heldLotIds shouldBe List(lot)
+      auction
+        .startFinal(wire.StartFinalRequest(Some(viewer), meetupAuctionId, op))
+        .futureValue
+        .getRefused
+        .reason
+        .isLineupNotFrozen shouldBe true
+      auction
+        .startNextLot(wire.StartNextLotRequest(Some(viewer), meetupAuctionId, op))
+        .futureValue
+        .getAccepted
+        .lotId shouldBe lot
+    }
+
+    "answers UNAVAILABLE on a lineup the auction does not know yet, so that the console repeats it" in {
+      val asking = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId)), registryOpen = false))
+        override def freezeFinalLineup(auctionId: AuctionId, command: FreezeFinalLineup, initiator: Initiator) =
+          Future.successful(Left(FreezeFinalLineupRejected.LineupUnknown))
+      }
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      statusOf(
+        service(Unreachable, auctions = AuctionCommands(asking, Unreachable, granted))
+          .freezeFinalLineup(wire.FreezeFinalLineupRequest(Some(viewer), meetupAuctionId, op, List(lot)))
+      ) shouldBe Status.Code.UNAVAILABLE
     }
 
     "answers UNIMPLEMENTED on a floor bid before its form and without reaching the lot" in {
