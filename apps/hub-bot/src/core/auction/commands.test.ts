@@ -67,6 +67,17 @@ describe("participant command answers", () => {
     ).toThrow();
   });
 
+  // Бот ставит только от имени смотрящего: отказ ставки зала — дефект соседа.
+  it("throws on a floor bid refusal reason", () => {
+    for (const reason of [
+      { case: "notMeetupAdministrator", value: {} },
+      { case: "meetupNotFound", value: {} },
+      { case: "participantCannotBid", value: {} },
+    ] as PlaceBidRefusal["reason"][]) {
+      expect(() => refusedBid(reason)).toThrow(/floor bid refusal/);
+    }
+  });
+
   it("reads an accepted bid and a refused limit", () => {
     expect(
       bidOutcomeOf(

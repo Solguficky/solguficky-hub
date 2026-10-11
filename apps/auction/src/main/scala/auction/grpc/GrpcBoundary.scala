@@ -7,18 +7,23 @@ import auction.v1.auction_service.AuctionService
 import auction.v1.auction_service.AuctionServiceHandler
 import io.grpc.Status
 import net.logstash.logback.argument.StructuredArguments
+import org.apache.pekko.NotUsed
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.grpc.GrpcServiceException
 import org.apache.pekko.grpc.Trailers
+import org.apache.pekko.http.scaladsl.model.HttpEntity
 import org.apache.pekko.http.scaladsl.model.HttpRequest
 import org.apache.pekko.http.scaladsl.model.HttpResponse
+import org.apache.pekko.stream.scaladsl.Source
 import org.slf4j.LoggerFactory
 
 import com.google.protobuf.InvalidProtocolBufferException
 
 import java.util.concurrent.CompletionException
 import java.util.concurrent.ExecutionException
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.jdk.CollectionConverters.*
 import scala.util.control.NonFatal
@@ -31,7 +36,8 @@ import scala.util.control.NonFatal
  * ответа — остаётся за сгенерированным кодом, а до [[AuctionGrpcService]] и домена такой вызов не доходит.
  *
  * Код ответа граница узнаёт из своего же обработчика исключений: сервис отвечает отказом через неудачное `Future`, и
- * обработчик видит его раньше, чем уходит ответ. Нет исключения — `OK`. Штатный обработчик pekko-grpc сам пишет
+ * обработчик видит его раньше, чем уходит ответ. Нет исключения — `OK`. У потока ответа отказ приходит после
+ * заголовков, поэтому его запись уходит в конце тела, а не с ответом. Штатный обработчик pekko-grpc сам пишет
  * неожиданный отказ в журнал, поэтому он заменён: у записи об отказе один автор.
  */
 object GrpcBoundary {
@@ -74,11 +80,46 @@ object GrpcBoundary {
       }
 
       AuctionServiceHandler(target, _ => capturing(outcome, admitted))(system)(request).map { response =>
-        write(request, method, decision, outcome.get(), response, startedAtNanos)
-        response
+        def record(): Unit = write(request, method, decision, outcome.get(), response, startedAtNanos)
+        if (method.exists(streaming)) afterBody(response)(record)
+        else {
+          record()
+          response
+        }
       }
     }
   }
+
+  /** Методы с потоком ответа: их итог известен только в конце тела. */
+  private val streaming: Set[String] =
+    AuctionService.descriptor
+      .findServiceByName("AuctionService")
+      .getMethods
+      .asScala
+      .filter(_.isServerStreaming)
+      .map(_.getName)
+      .toSet
+
+  /**
+   * Ответ, запись о котором уходит, когда кончилось тело. Унарный ответ сервис решает до заголовков, а поток отвечает
+   * `200` сразу и отказывает позже — трейлером в последнем куске, и обработчик исключений узнаёт статус только тогда.
+   * Куски передаются как есть, поэтому трейлер доходит до клиента нетронутым. Поток, который закрыл клиент, сервис не
+   * ронял, и его запись — `OK`: отдельной категории закрытой подписки в словаре отказов нет (PER-335). Запись одна,
+   * сколько бы раз тело ни запускали. Тело другой формы граница не ждёт.
+   */
+  private def afterBody(response: HttpResponse)(record: () => Unit)(using ExecutionContext): HttpResponse =
+    response.entity match {
+      case chunked: HttpEntity.Chunked =>
+        val recorded = new AtomicBoolean(false)
+        val watched = chunked.chunks.watchTermination() { (materialized, finished) =>
+          finished.onComplete(_ => if (recorded.compareAndSet(false, true)) record())
+          materialized
+        }
+        response.withEntity(chunked.copy(chunks = watched))
+      case _ =>
+        record()
+        response
+    }
 
   /**
    * Отображение отказа в трейлеры и в итог для записи.
@@ -183,6 +224,13 @@ object GrpcBoundary {
     def discardAuction(in: wire.DiscardAuctionRequest): Future[wire.DiscardAuctionResponse] = refuse
     def selectForFinal(in: wire.SelectForFinalRequest): Future[wire.SelectForFinalResponse] = refuse
     def deselectForFinal(in: wire.DeselectForFinalRequest): Future[wire.DeselectForFinalResponse] = refuse
+    def freezeFinalLineup(in: wire.FreezeFinalLineupRequest): Future[wire.FreezeFinalLineupResponse] = refuse
+    def startFinal(in: wire.StartFinalRequest): Future[wire.StartFinalResponse] = refuse
+    def startNextLot(in: wire.StartNextLotRequest): Future[wire.StartNextLotResponse] = refuse
+    def advanceAsk(in: wire.AdvanceAskRequest): Future[wire.AdvanceAskResponse] = refuse
+    def closeLot(in: wire.CloseLotRequest): Future[wire.CloseLotResponse] = refuse
+    def watchAuction(in: wire.WatchAuctionRequest): Source[wire.AuctionWatch, NotUsed] =
+      Source.failed(new GrpcServiceException(Status.UNAUTHENTICATED))
     def getAuctionConsole(in: wire.GetAuctionConsoleRequest): Future[wire.GetAuctionConsoleResponse] = refuse
     def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest): Future[wire.GetAuctionLotStatisticsResponse] =
       refuse

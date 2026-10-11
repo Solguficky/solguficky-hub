@@ -56,6 +56,12 @@ export function bidOutcomeOf(
           return refused({ kind: "currency-mismatch" });
         case "displayNameNotChosen":
           return refused({ kind: "display-name-not-chosen" });
+        // Отказы ставки зала: бот ставит от имени смотрящего и источника не
+        // передаёт, поэтому такой отказ — дефект соседа, а не исход ставки.
+        case "notMeetupAdministrator":
+        case "meetupNotFound":
+        case "participantCannotBid":
+          throw new Error(`floor bid refusal on a bot bid: ${reason.case}`);
         case undefined:
           throw new Error("bid refusal without a reason");
         default: {

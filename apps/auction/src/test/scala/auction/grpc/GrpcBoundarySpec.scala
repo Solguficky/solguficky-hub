@@ -20,11 +20,14 @@ import org.apache.pekko.http.scaladsl.model.HttpRequest
 import org.apache.pekko.http.scaladsl.model.HttpResponse
 import org.apache.pekko.http.scaladsl.model.MediaType
 import org.apache.pekko.http.scaladsl.model.headers.RawHeader
+import org.apache.pekko.stream.scaladsl.Sink
+import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.util.ByteString
 
 import java.nio.ByteBuffer
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.BeforeAndAfterEach
+import org.scalatest.concurrent.Eventually
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.time.Seconds
@@ -44,6 +47,7 @@ final class GrpcBoundarySpec
     extends AnyWordSpec
     with Matchers
     with ScalaFutures
+    with Eventually
     with BeforeAndAfterAll
     with BeforeAndAfterEach {
 
@@ -75,6 +79,14 @@ final class GrpcBoundarySpec
     def withdrawProxyLimit(in: wire.WithdrawProxyLimitRequest) = unused
     def selectForFinal(in: wire.SelectForFinalRequest) = unused
     def deselectForFinal(in: wire.DeselectForFinalRequest) = unused
+    def freezeFinalLineup(in: wire.FreezeFinalLineupRequest) = unused
+    def startFinal(in: wire.StartFinalRequest) = unused
+    def startNextLot(in: wire.StartNextLotRequest) = unused
+    def advanceAsk(in: wire.AdvanceAskRequest) = unused
+    def closeLot(in: wire.CloseLotRequest) = unused
+    def watchAuction(in: wire.WatchAuctionRequest) =
+      if (in.auctionId == "open") Source.single(wire.AuctionWatch()).concat(Source.never)
+      else Source.failed(new GrpcServiceException(Status.UNIMPLEMENTED))
     def getAuctionConsole(in: wire.GetAuctionConsoleRequest) = unused
     def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest) = unused
     def createLotCard(in: wire.CreateLotCardRequest) = unused
@@ -223,6 +235,54 @@ final class GrpcBoundarySpec
       written("operation") shouldBe "auction.v1.AuctionService/GetAuctionLotStatistics"
       written("grpc_code") shouldBe "UNIMPLEMENTED"
       written("caller") shouldBe "hub-bot"
+    }
+
+    "records a stream that the service refused with its status and caller" in {
+      statusOf(
+        client
+          .watchAuction()
+          .addHeader("authorization", "Bearer auction")
+          .invoke(wire.WatchAuctionRequest())
+          .runWith(Sink.seq)
+      ) shouldBe Status.Code.UNIMPLEMENTED
+      eventually {
+        val written = record
+        written("operation") shouldBe "auction.v1.AuctionService/WatchAuction"
+        written("grpc_code") shouldBe "UNIMPLEMENTED"
+        written("caller") shouldBe "auction-bot"
+      }
+    }
+
+    "records a stream the client closed once, when its body ends" in {
+      client
+        .watchAuction()
+        .addHeader("authorization", "Bearer hub")
+        .invoke(wire.WatchAuctionRequest(auctionId = "open"))
+        .take(1)
+        .runWith(Sink.seq)
+        .futureValue should have size 1
+      eventually {
+        val written = record
+        written("operation") shouldBe "auction.v1.AuctionService/WatchAuction"
+        written("grpc_code") shouldBe "OK"
+        written("caller") shouldBe "hub-bot"
+      }
+    }
+
+    "answers UNAUTHENTICATED to a stream without a token" in {
+      statusOf(client.watchAuction().invoke(wire.WatchAuctionRequest()).runWith(Sink.seq)) shouldBe
+        Status.Code.UNAUTHENTICATED
+      eventually(record("grpc_code") shouldBe "UNAUTHENTICATED")
+    }
+
+    "refuses the commands of the final to the auction bot before reaching the service" in {
+      statusOf(
+        client
+          .startFinal()
+          .addHeader("authorization", "Bearer auction")
+          .invoke(wire.StartFinalRequest())
+      ) shouldBe Status.Code.UNAUTHENTICATED
+      record("caller_refusal") shouldBe "not_declared"
     }
 
     "refuses lot statistics to the auction bot before reaching the service" in {

@@ -17,6 +17,7 @@ import auction.lot.StepPolicyInput
 import auction.v1.auction.AntiSnipe as AntiSnipeMessage
 import auction.v1.auction.AuctionConfig as AuctionConfigMessage
 import auction.v1.auction.AuctionStepWindow as AuctionStepWindowMessage
+import auction.v1.auction.BidSource as BidSourceMessage
 import auction.v1.auction.ClosingPolicy as ClosingPolicyMessage
 import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.MixedClosing
@@ -81,6 +82,24 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
       RequestMapping.placeBid(validBid.clearAmount).left.value shouldBe FormError("amount")
       RequestMapping.placeBid(validBid.withAmount(MoneyMessage(150, "rub"))).left.value shouldBe FormError("amount")
       RequestMapping.placeBid(validBid.withAmount(MoneyMessage(150, ""))).left.value shouldBe FormError("amount")
+    }
+
+    "maps a bid with the bot named as its source like a bid without a source" in {
+      RequestMapping.placeBid(validBid.withSource(BidSourceMessage.BID_SOURCE_BOT)).value.bid.source shouldBe
+        BidSource.Bot
+    }
+
+    "names participant_id as the invalid field when a bid from the bot names a participant" in {
+      RequestMapping.placeBid(validBid.withParticipantId(identity)).left.value shouldBe FormError("participant_id")
+      RequestMapping
+        .placeBid(validBid.withSource(BidSourceMessage.BID_SOURCE_BOT).withParticipantId(identity))
+        .left
+        .value shouldBe FormError("participant_id")
+    }
+
+    "names source as the invalid field when the channel of the bid is unknown" in {
+      RequestMapping.placeBid(validBid.withSource(BidSourceMessage.Unrecognized(7))).left.value shouldBe
+        FormError("source")
     }
 
     "drops an unspecified or unknown right instead of rejecting the viewer" in {

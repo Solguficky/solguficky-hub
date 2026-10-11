@@ -9,11 +9,11 @@ import "identity/v1/access.proto";
 // Commands of a participant, commands of the lot catalog, the birth of an auction
 // at a meetup, the registry of its lots, the trading conditions of a lot, the
 // scheduling of an auction and the start of its prebidding, the selection of lots
-// for the final, reads of a lot, of its history, of its image, of the display
-// names of participants and of auctions, the console and lot statistics of the
-// meetup administrator, the raffle among participants,
-// and the invoices of sold lots: the commands of the organizer and of the winner
-// and their reads.
+// for the final, the commands of the live final and its stream, reads of a lot,
+// of its history, of its image, of the display names of participants and of
+// auctions, the console and lot statistics of the meetup administrator, the
+// raffle among participants, and the invoices of sold lots: the commands of the
+// organizer and of the winner and their reads.
 //
 // A named refusal is a value of the response, not a gRPC status: a command
 // response carries exactly one of accepted or refused, and a refusal carries the
@@ -21,8 +21,9 @@ import "identity/v1/access.proto";
 // replayed and which conditions still answer with a status are documented in
 // docs/architecture/integration.md, section "Auction gRPC".
 //
-// Trading commands of the auctioneer and the commands that run an auction after
-// prebidding has started are deliberately absent.
+// The steps the auction takes by itself - the end of prebidding and the closing
+// of a lot at its deadline - are deliberately absent, and so is the withdrawal of
+// a lot.
 service AuctionService {
   rpc PlaceBid(PlaceBidRequest) returns (PlaceBidResponse);
   rpc SetProxyLimit(SetProxyLimitRequest) returns (SetProxyLimitResponse);
@@ -46,6 +47,12 @@ service AuctionService {
   rpc DiscardAuction(DiscardAuctionRequest) returns (DiscardAuctionResponse);
   rpc SelectForFinal(SelectForFinalRequest) returns (SelectForFinalResponse);
   rpc DeselectForFinal(DeselectForFinalRequest) returns (DeselectForFinalResponse);
+  rpc FreezeFinalLineup(FreezeFinalLineupRequest) returns (FreezeFinalLineupResponse);
+  rpc StartFinal(StartFinalRequest) returns (StartFinalResponse);
+  rpc StartNextLot(StartNextLotRequest) returns (StartNextLotResponse);
+  rpc AdvanceAsk(AdvanceAskRequest) returns (AdvanceAskResponse);
+  rpc CloseLot(CloseLotRequest) returns (CloseLotResponse);
+  rpc WatchAuction(WatchAuctionRequest) returns (stream AuctionWatch);
   rpc GetAuctionConsole(GetAuctionConsoleRequest) returns (GetAuctionConsoleResponse);
   rpc GetAuctionLotStatistics(GetAuctionLotStatisticsRequest) returns (GetAuctionLotStatisticsResponse);
   rpc GetMeetupAuction(GetMeetupAuctionRequest) returns (GetMeetupAuctionResponse);
@@ -62,8 +69,9 @@ service AuctionService {
 
 message Viewer {
   // Canonical lowercase UUIDv7 with hyphens: the platform identity from Identity.
-  // It is the participant of a command; there is no separate participant field,
-  // so a request cannot act for someone else.
+  // It is the participant of a command. The one exception is a floor bid, which
+  // names its participant in PlaceBidRequest.participant_id; no other request can
+  // act for someone else.
   string identity_id = 1;
 
   reserved 2;
@@ -88,6 +96,15 @@ message PlaceBidRequest {
   // Caller-generated canonical lowercase UUIDv7 with hyphens: the idempotency key,
   // checked by the domain.
   string op_id = 4;
+
+  // Unset means BID_SOURCE_BOT: the viewer bids for itself. BID_SOURCE_FLOOR is a
+  // bid from the room that the auctioneer enters for participant_id; the viewer is
+  // then the auctioneer, not the bidder.
+  BidSource source = 5;
+
+  // Canonical lowercase UUIDv7 with hyphens: the platform identity of the bidder
+  // in the room. Set exactly when source is BID_SOURCE_FLOOR and empty otherwise.
+  string participant_id = 6;
 }
 
 message PlaceBidResponse {
@@ -113,8 +130,16 @@ message PlaceBidRefusal {
     BidderIsLeader bidder_is_leader = 5;
     CurrencyMismatch currency_mismatch = 6;
     DisplayNameNotChosen display_name_not_chosen = 7;
+
+    // Floor bids only: a bid from the bot never carries these.
+    NotMeetupAdministrator not_meetup_administrator = 8;
+    MeetupNotFound meetup_not_found = 9;
+    ParticipantCannotBid participant_cannot_bid = 10;
   }
 }
+
+// The participant named by a floor bid does not hold place_bids.
+message ParticipantCannotBid {}
 
 message SetProxyLimitRequest {
   Viewer viewer = 1;
@@ -1069,6 +1094,260 @@ message DeadlinePassed {}
 
 // The auction has no final, or its lots get no deadline to be held at.
 message SelectionNotApplicable {}
+
+message FreezeFinalLineupRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the held lots in the order they go
+  // in the final. Every held finalist appears exactly once.
+  repeated string lot_ids = 4;
+}
+
+message FreezeFinalLineupResponse {
+  // Exactly one is set.
+  oneof outcome {
+    FinalLineupFreezeAccepted accepted = 1;
+    FreezeFinalLineupRefusal refused = 2;
+  }
+}
+
+// Carries nothing: the frozen order is visible in the auction snapshot.
+message FinalLineupFreezeAccepted {}
+
+message FreezeFinalLineupRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    NotInBreak not_in_break = 3;
+    LineupEmpty lineup_empty = 4;
+    LineupMismatch lineup_mismatch = 5;
+  }
+}
+
+// The auction is not in the break between prebidding and the final.
+message NotInBreak {}
+
+// No lot is held for the final, so there is no lineup to freeze.
+message LineupEmpty {}
+
+// The requested order is not the set of held finalists.
+message LineupMismatch {
+  // Canonical lowercase UUIDv7 with hyphens: the held finalists at the moment
+  // the command was decided, in no particular order.
+  repeated string held_lot_ids = 1;
+}
+
+message StartFinalRequest {
+  // The auctioneer: the administrator of the meetup of the auction, checked with
+  // the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message StartFinalResponse {
+  // Exactly one is set.
+  oneof outcome {
+    FinalStartAccepted accepted = 1;
+    StartFinalRefusal refused = 2;
+  }
+}
+
+// Carries nothing: no lot is active yet.
+message FinalStartAccepted {}
+
+message StartFinalRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    LineupNotFrozen lineup_not_frozen = 3;
+  }
+}
+
+// The lineup of the final is not frozen.
+message LineupNotFrozen {}
+
+message StartNextLotRequest {
+  // The auctioneer: the administrator of the meetup of the auction, checked with
+  // the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message StartNextLotResponse {
+  // Exactly one is set.
+  oneof outcome {
+    FinalLotActivation accepted = 1;
+    StartNextLotRefusal refused = 2;
+  }
+}
+
+message FinalLotActivation {
+  // Canonical lowercase UUIDv7 with hyphens: the lot of the lineup that is now
+  // active. A replay with the same op_id returns the same lot.
+  string lot_id = 1;
+}
+
+message StartNextLotRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    NotInFinal not_in_final = 3;
+    AnotherLotActive another_lot_active = 4;
+    LineupExhausted lineup_exhausted = 5;
+  }
+}
+
+// The live final is not running.
+message NotInFinal {}
+
+// A lot of the final is still trading.
+message AnotherLotActive {
+  // Canonical lowercase UUIDv7 with hyphens: the active lot.
+  string lot_id = 1;
+}
+
+// Every lot of the lineup is done.
+message LineupExhausted {}
+
+message AdvanceAskRequest {
+  // The auctioneer: the administrator of the meetup of the auction, checked with
+  // the meetup. The auctioneer is not carried by the bus fact.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: a lot in the registry of the auction.
+  string lot_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+
+  // The next price the auctioneer announces.
+  Money new_ask = 5;
+}
+
+message AdvanceAskResponse {
+  // Exactly one is set.
+  oneof outcome {
+    AskAdvanceAccepted accepted = 1;
+    AdvanceAskRefusal refused = 2;
+  }
+}
+
+// Carries nothing: the ask is visible in the state of the lot.
+message AskAdvanceAccepted {}
+
+message AdvanceAskRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    LotNotInAuction lot_not_in_auction = 3;
+    LotNotOpen lot_not_open = 4;
+    AskBelowCurrentPrice ask_below_current_price = 5;
+    CurrencyMismatch currency_mismatch = 6;
+  }
+}
+
+message AskBelowCurrentPrice {
+  // The amount a new ask must exceed, at the moment the ask was decided.
+  Money must_exceed = 1;
+}
+
+message CloseLotRequest {
+  // The auctioneer: the administrator of the meetup of the auction, checked with
+  // the meetup. The closing reason is deliberately absent: a caller closes a lot
+  // only by the decision of the auctioneer, and the auction closes lots at their
+  // deadline by itself.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens: a lot in the registry of the auction.
+  string lot_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message CloseLotResponse {
+  // Exactly one is set.
+  oneof outcome {
+    LotClosure accepted = 1;
+    CloseLotRefusal refused = 2;
+  }
+}
+
+// How the lot ended. Exactly one is set.
+message LotClosure {
+  oneof result {
+    LotSale sold = 1;
+    UnsoldReason unsold = 2;
+  }
+}
+
+message CloseLotRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    LotNotInAuction lot_not_in_auction = 3;
+    LotNotOpen lot_not_open = 4;
+    DeadlineNotReached deadline_not_reached = 5;
+  }
+}
+
+// The lot trades online until its deadline and is not closed before it.
+message DeadlineNotReached {}
+
+message WatchAuctionRequest {
+  // Who watches. The stream is the same for every viewer: nothing in it depends
+  // on who asks.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+}
+
+// The state of an auction and of its final after a change. Every message is the
+// whole state, not a difference: the first one is the state at the moment of
+// subscribing, and each next one follows a change. A client that reconnects
+// loses no state, only the intermediate steps between two messages; the bids in
+// between are read with ListLotHistory.
+message AuctionWatch {
+  AuctionSnapshot auction = 1;
+
+  // The active lot of the live final. Unset when no lot is active - before the
+  // final, between lots and after it.
+  LotSnapshot active_lot = 2;
+
+  // The lots of the frozen lineup in its order, the active one included. Empty
+  // until the lineup is frozen. In this stream LotSnapshot.viewer_proxy_limit is
+  // never set: the proxy limit of a viewer is read with GetLot.
+  repeated LotSnapshot lineup = 3;
+}
 
 message GetAuctionConsoleRequest {
   // The administrator of the meetup of the auction, checked with the meetup.
