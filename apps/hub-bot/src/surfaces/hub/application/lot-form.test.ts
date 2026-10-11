@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LotView } from "../../../auction-ui/index.js";
 import type {
   AddLotResult,
@@ -8,7 +8,7 @@ import type {
   ScheduleLotResult,
 } from "../auction/port.js";
 import { createDispatcher } from "./dispatcher.js";
-import { parseRubles } from "./lot-form.js";
+import { lotReadWindowMs, parseRubles } from "./lot-form.js";
 import type { NewLotId } from "./types.js";
 
 // Форма лота администратора (PER-319) через диспетчер: что уходит в Auction на
@@ -42,9 +42,14 @@ function fakeLots(
     add?: AddLotResult;
     schedule?: ScheduleLotResult;
     read?: LotReadResult;
+    // Ответы первых чтений по порядку; дальше — `read`.
+    reads?: LotReadResult[];
   } = {},
 ) {
+  const reads = [...(answers.reads ?? [])];
   const calls: { method: keyof LotAdministration; args: unknown }[] = [];
+  // Бюджет каждого чтения: повторное чтение формы его сужает.
+  const readDeadlines: (number | undefined)[] = [];
   const port: LotAdministration = {
     async createLotCard(_person, card) {
       calls.push({ method: "createLotCard", args: card });
@@ -62,9 +67,10 @@ function fakeLots(
       calls.push({ method: "scheduleLot", args: terms });
       return answers.schedule ?? { kind: "ok" };
     },
-    async getLot(_person, id) {
+    async getLot(_person, id, meta) {
       calls.push({ method: "getLot", args: id });
-      return answers.read ?? { kind: "ok", lot: drafted };
+      readDeadlines.push(meta?.deadlineAt);
+      return reads.shift() ?? answers.read ?? { kind: "ok", lot: drafted };
     },
   };
   const dispatcher = createDispatcher(
@@ -74,7 +80,12 @@ function fakeLots(
     undefined,
     port,
   );
-  return { dispatcher, calls, methods: () => calls.map((call) => call.method) };
+  return {
+    dispatcher,
+    calls,
+    readDeadlines,
+    methods: () => calls.map((call) => call.method),
+  };
 }
 
 describe("rubles of the lot form", () => {
@@ -336,12 +347,139 @@ describe("lot form", () => {
     ).resolves.toMatchObject({ lot: { terms: { kind: "closed" } } });
   });
 
-  it("answers a lot Auction does not know with a refusal", async () => {
-    const { dispatcher } = fakeLots({ read: { kind: "not-found" } });
+  describe("lot form reading a lot the read model of Auction does not know yet", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
 
-    await expect(
-      dispatcher.execute({ identity: admin, intent: "view-lot-form", lotId }),
-    ).resolves.toEqual({ kind: "lot-refused", reason: "lot-not-found", lotId });
+    it("reads a just created lot again until Auction knows it", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, methods } = fakeLots({
+        reads: [{ kind: "not-found" }, { kind: "not-found" }],
+      });
+
+      const result = dispatcher.execute({
+        identity: admin,
+        intent: "view-lot-form",
+        lotId,
+      });
+      await vi.advanceTimersByTimeAsync(lotReadWindowMs);
+
+      await expect(result).resolves.toMatchObject({
+        kind: "lot-form",
+        lot: { lotId, title: "Ваза" },
+      });
+      expect(methods()).toEqual(["getLot", "getLot", "getLot"]);
+    });
+
+    it("saves the photo of a lot the first read did not find yet", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, calls } = fakeLots({
+        reads: [{ kind: "not-found" }],
+      });
+
+      const result = dispatcher.execute({
+        identity: admin,
+        intent: "set-lot-image",
+        lotId,
+        image: new Uint8Array([1, 2, 3]),
+      });
+      await vi.advanceTimersByTimeAsync(lotReadWindowMs);
+
+      await expect(result).resolves.toMatchObject({
+        kind: "lot-form",
+        saved: "image",
+      });
+      expect(calls.map((call) => call.method)).toEqual([
+        "getLot",
+        "getLot",
+        "editLotCard",
+      ]);
+    });
+
+    it("answers a lot Auction does not know with a refusal once the window is over", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, methods } = fakeLots({ read: { kind: "not-found" } });
+      const startedAt = Date.now();
+
+      const result = dispatcher.execute({
+        identity: admin,
+        intent: "view-lot-form",
+        lotId,
+      });
+      await vi.advanceTimersByTimeAsync(lotReadWindowMs);
+
+      await expect(result).resolves.toEqual({
+        kind: "lot-refused",
+        reason: "lot-not-found",
+        lotId,
+      });
+      expect(Date.now() - startedAt).toBeLessThanOrEqual(lotReadWindowMs);
+      expect(methods().length).toBeGreaterThan(1);
+    });
+
+    it("keeps the last second of the action budget for the command after the read", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, methods, readDeadlines } = fakeLots({
+        read: { kind: "not-found" },
+      });
+      const deadlineAt = Date.now() + 2_000;
+
+      const result = dispatcher.execute({
+        identity: admin,
+        intent: "set-lot-image",
+        lotId,
+        image: new Uint8Array([1, 2, 3]),
+        deadlineAt,
+      });
+      await vi.advanceTimersByTimeAsync(lotReadWindowMs);
+
+      await expect(result).resolves.toMatchObject({
+        reason: "lot-not-found",
+      });
+      // Повторы идут, пока до запаса команды остаётся шаг и чтение, и каждое
+      // повторное чтение само не заходит в запас.
+      expect(methods()).toEqual(["getLot", "getLot", "getLot", "getLot"]);
+      expect(readDeadlines).toEqual([
+        deadlineAt,
+        deadlineAt - 1_000,
+        deadlineAt - 1_000,
+        deadlineAt - 1_000,
+      ]);
+    });
+
+    it("reads a lot to show the form up to the action budget, with no command to leave time for", async () => {
+      vi.useFakeTimers();
+      const { dispatcher, methods, readDeadlines } = fakeLots({
+        read: { kind: "not-found" },
+      });
+      const deadlineAt = Date.now() + 1_300;
+
+      const result = dispatcher.execute({
+        identity: admin,
+        intent: "view-lot-form",
+        lotId,
+        deadlineAt,
+      });
+      await vi.advanceTimersByTimeAsync(lotReadWindowMs);
+
+      await expect(result).resolves.toMatchObject({
+        reason: "lot-not-found",
+      });
+      expect(methods()).toHaveLength(5);
+      expect(new Set(readDeadlines)).toEqual(new Set([deadlineAt]));
+    });
+
+    it("does not read again a lot Auction refused for another reason", async () => {
+      const { dispatcher, methods } = fakeLots({
+        read: { kind: "unavailable", cause: new Error("down") },
+      });
+
+      await expect(
+        dispatcher.execute({ identity: admin, intent: "view-lot-form", lotId }),
+      ).resolves.toMatchObject({ kind: "dependency-rejected" });
+      expect(methods()).toEqual(["getLot"]);
+    });
   });
 
   it("replaces one text of the card and resends the other as it is stored", async () => {

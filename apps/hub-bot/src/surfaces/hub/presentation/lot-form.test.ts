@@ -1,6 +1,6 @@
 import { InputFile } from "grammy";
 import type { Update } from "grammy/types";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createHarness,
   type RecordedCall,
@@ -12,6 +12,7 @@ import {
   type Money,
 } from "../../../auction-ui/index.js";
 import { createDispatcher } from "../application/dispatcher.js";
+import { lotReadWindowMs } from "../application/lot-form.js";
 import type {
   AddLotResult,
   AuctionScreens,
@@ -22,6 +23,7 @@ import type {
 import type { IdentityResolver } from "../identity/port.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import { newLotIdOf } from "./new-lot-id.js";
+import { type LotFormField, lotAskData } from "./parse-callback.js";
 import type { FileDownload, TelegramFiles } from "./telegram-files.js";
 
 // Форма лота администратора в боте хаба (PER-319): входы в ленте и под
@@ -73,8 +75,11 @@ function fakeAuction(
     schedule?: () => ScheduleLotResult | undefined;
     // Предел изображения Auction в байтах; по умолчанию — 1 МиБ, как у него.
     imageLimit?: number;
+    // Сколько первых чтений после `AddLot` read model ещё не знает лот.
+    readLag?: number;
   } = {},
 ) {
+  const lagging = new Map<string, number>();
   const imageLimit = options.imageLimit ?? 1024 * 1024;
   // Байты изображений по лоту: их отдаёт `GetLotImage` экрана лота.
   const images = new Map<string, { content: Uint8Array; version: string }>();
@@ -137,6 +142,7 @@ function fakeAuction(
         proxyEnabled: false,
         status: { kind: "draft" },
       });
+      lagging.set(added.lotId, options.readLag ?? 0);
       return { kind: "ok" };
     },
     async scheduleLot(_person, terms) {
@@ -153,6 +159,11 @@ function fakeAuction(
       return { kind: "ok" };
     },
     async getLot(_person, lotId) {
+      const behind = lagging.get(lotId) ?? 0;
+      if (behind > 0) {
+        lagging.set(lotId, behind - 1);
+        return { kind: "not-found" };
+      }
       const lot = lots.get(lotId);
       return lot === undefined ? { kind: "not-found" } : { kind: "ok", lot };
     },
@@ -471,6 +482,10 @@ describe("entries into the lot form", () => {
 });
 
 describe("lot form", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("asks only the title, adds the lot to the auction and opens its form with the rest left to fill", async () => {
     const auction = fakeAuction();
     const { bot, calls } = harness("admin", auction);
@@ -831,7 +846,11 @@ describe("lot form", () => {
     await bot.init();
     const pressed = `v1:lot:form:${uuidToToken(existingLot)}`;
 
-    await bot.handleUpdate(press(pressed));
+    // Отказ приходит, когда выходит окно ожидания read model (PER-471).
+    vi.useFakeTimers();
+    const handled = bot.handleUpdate(press(pressed));
+    await vi.advanceTimersByTimeAsync(lotReadWindowMs);
+    await handled;
 
     expect(last(calls).text).toContain("Лот не найден или больше недоступен.");
     // Чтения Auction отстают от команды: только что заведённый лот появится.
@@ -843,6 +862,36 @@ describe("lot form", () => {
       error: "lot_not_found",
     });
   });
+
+  // Read model Auction отстаёт от команды: нажатие сразу после «Лот добавлен»
+  // читает лот, которого она ещё не знает (PER-471).
+  it.each([
+    ["image", "Пришли фото лота"],
+    ["description", "Сейчас: нет"],
+    ["price", "Стартовая цена в рублях"],
+  ] as const satisfies readonly (readonly [LotFormField, string])[])(
+    "asks the %s of a just added lot the read model does not know yet",
+    async (field, asked) => {
+      const auction = fakeAuction({ readLag: 1 });
+      const { bot, calls, records } = harness("admin", auction);
+      await bot.init();
+      await bot.handleUpdate(press(`v1:lot:new:${auctionToken}`));
+      const step = dataOf(question(calls).payload, "Отмена");
+      const lotId = newLotIdOf(step.split(":")[4] ?? "");
+      await bot.handleUpdate(answer(calls, "Ваза синяя"));
+      expect(last(calls).text).toContain("<b>Лот добавлен</b>");
+
+      vi.useFakeTimers();
+      const handled = bot.handleUpdate(
+        press(lotAskData(uuidToToken(lotId), field)),
+      );
+      await vi.advanceTimersByTimeAsync(lotReadWindowMs);
+      await handled;
+
+      expect(question(calls).payload.text).toContain(asked);
+      expect(records.at(-1)?.fields).toMatchObject({ result: "ok" });
+    },
+  );
 });
 
 // Фото лота (PER-452): ответ фотографией на вопрос формы, скачивание у
