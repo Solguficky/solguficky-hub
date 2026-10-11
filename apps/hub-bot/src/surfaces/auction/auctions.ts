@@ -26,6 +26,10 @@ export type AuctionSummary = {
   stage: AuctionStage;
   // Начало онлайн-фазы, RFC 3339. Нет — формат без онлайн-фазы.
   opensAt?: string;
+  // Общий дедлайн лотов, RFC 3339: по его дню строка считает «до финала»
+  // (PER-518). Нет — у аукциона нет финала или фаза кончается командой, и
+  // отсчёта нет.
+  closesAt?: string;
   lotCount: number;
 };
 

@@ -445,12 +445,54 @@ export function auctionLabel(
 }
 
 // Строка аукциона в теле списка: те же поля, день отделён от остального «—».
+// Отсчёт до финала стоит хвостом только здесь, кнопка остаётся короткой
+// (дизайн-код, «Списки аукционов и лента лотов»).
 export function auctionLine(
   auction: AuctionSummary,
   timeZone: string,
   now?: Date,
 ): string {
-  return `${auctionDay(auction, timeZone, now)} — ${stageLabels[auction.stage]}, ${lotCount(auction.lotCount)}`;
+  const finale = finaleCountdown(auction, timeZone, now);
+  return `${auctionDay(auction, timeZone, now)} — ${stageLabels[auction.stage]}, ${lotCount(auction.lotCount)}${finale === undefined ? "" : `, ${finale}`}`;
+}
+
+// Отсчёт до финала (PER-518): день финала — день общего дедлайна лотов в поясе
+// сообщества, как «00:00 дня финала» у пульта. До него — «до финала N дней», в
+// сам день — «финал сегодня», после — ничего. Без дедлайна и у завершённого
+// аукциона отсчёта нет.
+function finaleCountdown(
+  auction: AuctionSummary,
+  timeZone: string,
+  now?: Date,
+): string | undefined {
+  if (auction.closesAt === undefined || auction.stage === "finished") {
+    return undefined;
+  }
+  const days =
+    communityDayNumber(new Date(auction.closesAt), timeZone) -
+    communityDayNumber(now ?? new Date(), timeZone);
+  if (days < 0) return undefined;
+  if (days === 0) return "финал сегодня";
+  return `до финала ${days} ${plural(days, ["день", "дня", "дней"])}`;
+}
+
+// Номер дня сообщества от эпохи: разница двух номеров — число календарных
+// суток в поясе, и перевод часов её не сдвигает.
+function communityDayNumber(at: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+  }).formatToParts(at);
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((each) => each.type === type)?.value);
+  const day = Date.UTC(part("year"), part("month") - 1, part("day"));
+  // Непонятный ответ `Intl` — отказ, а не молча пропавший отсчёт.
+  if (Number.isNaN(day)) {
+    throw new Error(`cannot read the community day in ${timeZone}`);
+  }
+  return day / 86_400_000;
 }
 
 function auctionDay(
@@ -474,17 +516,20 @@ const stageLabels: Record<AuctionStage, string> = {
 };
 
 function lotCount(count: number): string {
+  return `${count} ${plural(count, ["лот", "лота", "лотов"])}`;
+}
+
+// Форма слова при числе: «1 лот», «3 лота», «5 лотов», «11 лотов».
+function plural(
+  count: number,
+  [one, few, many]: readonly [string, string, string],
+): string {
   const tens = count % 100;
   const ones = count % 10;
-  const word =
-    tens >= 11 && tens <= 14
-      ? "лотов"
-      : ones === 1
-        ? "лот"
-        : ones >= 2 && ones <= 4
-          ? "лота"
-          : "лотов";
-  return `${count} ${word}`;
+  if (tens >= 11 && tens <= 14) return many;
+  if (ones === 1) return one;
+  if (ones >= 2 && ones <= 4) return few;
+  return many;
 }
 
 // День для чтения по дизайн-коду, без времени: «12 октября, сб»; чужой год
