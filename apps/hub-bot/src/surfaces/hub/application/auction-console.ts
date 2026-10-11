@@ -136,7 +136,7 @@ export function parseWindow(
 }
 
 /**
- * Отпечаток окна для кнопки пульта: четыре знака base36 от сроков и шага
+ * Отпечаток окна для кнопки пульта: пять знаков base36 от сроков и шага
  * (FNV-1a). Номер окна в кнопке сдвигается, когда другое окно удалили, и
  * отпечаток отличает прежнее окно от того, что встало на его место.
  */
@@ -147,8 +147,12 @@ export function windowPrint(window: StepWindow): string {
     hash ^= source.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
-  return (hash % 36 ** 4).toString(36).padStart(4, "0");
+  return (hash % 36 ** 5).toString(36).padStart(5, "0");
 }
+
+// Сколько окон держит пульт: ряд на окно, «Добавить окно» и выход
+// укладываются в двенадцать рядов экрана, а строки окон — в одно сообщение.
+export const windowLimit = 8;
 
 // Сколько последних ставок текущего лота видит ведущий.
 const recentBidLimit = 5;
@@ -1151,6 +1155,13 @@ export function createAuctionConsole(
         note: { kind: "no-lots" },
       };
     }
+    if (found.week.windows.length >= windowLimit) {
+      return {
+        kind: "step-windows",
+        console: found.console,
+        note: { kind: "limit" },
+      };
+    }
     return {
       kind: "step-window-ask",
       auctionId: request.auctionId,
@@ -1176,6 +1187,9 @@ export function createAuctionConsole(
     if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
     if (console.lots.length === 0) {
       return { kind: "step-windows", console, note: { kind: "no-lots" } };
+    }
+    if (week.windows.length >= windowLimit) {
+      return { kind: "step-windows", console, note: { kind: "limit" } };
     }
     const index = week.windows.length;
     const windows = [

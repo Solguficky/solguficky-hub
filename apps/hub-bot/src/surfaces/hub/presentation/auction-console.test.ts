@@ -10,7 +10,6 @@ import {
   type LotView,
   type Money,
 } from "../../../auction-ui/index.js";
-import { windowPrint } from "../application/auction-console.js";
 import { createDispatcher } from "../application/dispatcher.js";
 import type {
   AuctionConsoleView,
@@ -1738,18 +1737,10 @@ describe("happy hours", () => {
     expect(plain(last(calls))).toContain("Счастливые часы: 1 окно.");
     await bot.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
     expect(plain(last(calls))).toContain("лотов 1 из 2");
-    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
-    // Кнопка окна со старого экрана открывает его только для чтения.
-    const window = consoleWindowDataFor(0, { ...evening, lotIds: [vaseId] });
-    await bot.handleUpdate(press(window));
+    expect(labels(last(calls))).toEqual([["Окно 1"], ["‹ Пульт"]]);
+    // Окно открывается только для чтения: переключателей и удаления нет.
+    await bot.handleUpdate(press(dataOf(last(calls), "Окно 1")));
     expect(plain(last(calls))).toContain("• Ваза");
     expect(labels(last(calls))).toEqual([["‹ Счастливые часы"]]);
   });
 });
-
-function consoleWindowDataFor(
-  index: number,
-  window: { from: string; until: string; step: Money; lotIds: string[] },
-): string {
-  return `v1:ac:hw:${auctionToken}:${index}:${windowPrint(window)}`;
-}

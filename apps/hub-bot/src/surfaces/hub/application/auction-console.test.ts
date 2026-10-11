@@ -21,6 +21,7 @@ import {
   createAuctionConsole,
   parseWeek,
   parseWindow,
+  windowLimit,
   windowPrint,
 } from "./auction-console.js";
 import type {
@@ -1038,7 +1039,7 @@ describe("happy hours", () => {
   });
 
   it("prints a window by its span and step, not by its lots", () => {
-    expect(windowPrint(evening)).toMatch(/^[0-9a-z]{4}$/);
+    expect(windowPrint(evening)).toMatch(/^[0-9a-z]{5}$/);
     expect(windowPrint({ ...evening, lotIds: [lotId] })).toBe(
       windowPrint(evening),
     );
@@ -1146,6 +1147,31 @@ describe("happy hours", () => {
       });
     },
   );
+
+  it("refuses a window over the limit of the console without a command", async () => {
+    const full = Array.from({ length: windowLimit }, (_, day) => ({
+      ...evening,
+      from: `2026-10-2${day}T15:00:00Z`,
+      until: `2026-10-2${day}T16:00:00Z`,
+    }));
+    const { run, scheduled } = fake({
+      read: { kind: "ok", console: scheduledWith(full) },
+      statistics,
+    });
+
+    await expect(
+      run({ ...call, intent: "ask-step-window" }),
+    ).resolves.toMatchObject({ note: { kind: "limit" } });
+    await expect(
+      run({
+        ...call,
+        intent: "add-step-window",
+        value: "26.10.2026 18:00 — 26.10.2026 21:00, 50",
+        opId,
+      }),
+    ).resolves.toMatchObject({ note: { kind: "limit" } });
+    expect(scheduled).toEqual([]);
+  });
 
   it("does not ask for a window without lots or without dates", async () => {
     const empty = fake({

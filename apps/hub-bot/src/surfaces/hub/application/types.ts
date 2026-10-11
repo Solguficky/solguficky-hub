@@ -464,6 +464,8 @@ export type WindowNote =
   | { kind: "last-lot"; window: number }
   // Лотов в реестре нет: окну нечего назвать.
   | { kind: "no-lots" }
+  // Окон уже столько, сколько держит пульт.
+  | { kind: "limit" }
   // Лот окна уже стоит в другом окне, которое пересекается с этим по времени.
   | { kind: "overlap"; window: number; other: number };
 

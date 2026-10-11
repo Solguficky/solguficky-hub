@@ -83,12 +83,12 @@ const PositionSchema = z
   .regex(/^(0|[1-9]\d{0,2})$/)
   .transform(Number);
 // Окно «Счастливых часов» в кнопке пульта (PER-504): номер в конфигурации с
-// нуля — двух цифр хватает, — и отпечаток его сроков и шага.
+// нуля — двух цифр хватает с запасом, — и отпечаток его сроков и шага.
 const WindowIndexSchema = z
   .string()
   .regex(/^(0|[1-9]\d?)$/)
   .transform(Number);
-const WindowPrintSchema = z.string().regex(/^[0-9a-z]{4}$/);
+const WindowPrintSchema = z.string().regex(/^[0-9a-z]{5}$/);
 const ConsoleSortSchema = z.enum(["bd", "ba", "pd", "pa", "gd", "ga"]);
 export const defaultConsoleSort: ConsoleSort = {
   metric: "bids",
@@ -484,7 +484,7 @@ export function lotAskData(lot: string, field: LotFormField): string {
 }
 
 // Кнопки пульта аукциона: `v1:ac:<действие>:<аукцион>[:…]`. Самая длинная —
-// лот в окне «Счастливых часов» с номером окна и отпечатком, до 62 байт.
+// лот в окне «Счастливых часов» с номером окна и отпечатком, до 63 байт.
 
 /** Пульт аукциона на странице `page`; первая страница — без номера. */
 export function consoleViewData(
@@ -565,7 +565,7 @@ export function consoleWindowAskData(auction: string): string {
 
 /**
  * Лот в окне (`hs`) и вне его (`hd`): целевое состояние, а не переворот. Самая
- * длинная кнопка пульта — 62 байта при двузначном номере окна.
+ * длинная кнопка пульта — 63 байта при двузначном номере окна.
  */
 export function consoleWindowLotData(mark: {
   auction: string;

@@ -1,6 +1,11 @@
 import { InlineKeyboard } from "grammy";
 import type { LotStatusView } from "../../../../auction-ui/index.js";
-import { activeLot, windowPrint } from "../../application/auction-console.js";
+import {
+  acceptsLots,
+  activeLot,
+  windowLimit,
+  windowPrint,
+} from "../../application/auction-console.js";
 import { formatLocalMoment } from "../../application/meetup-form.js";
 import type {
   AuctionConsoleView,
@@ -820,6 +825,8 @@ export function windowNoteText(note: WindowNote): string {
       return `Это последний лот окна ${note.window}. Окна без лотов не бывает — удали окно целиком.`;
     case "no-lots":
       return "Лотов пока нет. Окну нужны лоты — сначала добавь их.";
+    case "limit":
+      return `Окон уже ${windowLimit}. Удали лишнее окно, чтобы добавить новое.`;
     case "overlap":
       return `Лот уже в окне ${note.other}, а оно пересекается с окном ${note.window} по времени. Сначала убери лот из окна ${note.other}.`;
     default: {
@@ -851,17 +858,16 @@ export function windowsScreen(view: WindowsScreenView): ShownScreen {
     };
   }
   const windows = windowsOf(console);
-  const editable = console.status === "draft" || console.status === "scheduled";
+  const editable = acceptsLots(console.status);
   const keyboard = new InlineKeyboard();
-  if (editable) {
-    windows.forEach((window, index) => {
-      // Номер окна не длиннее двух цифр: столько несёт кнопка.
-      if (index > 99) return;
-      nextRow(keyboard).text(
-        `Окно ${index + 1}`,
-        consoleWindowData(auction, refOf(window, index)),
-      );
-    });
+  // Окно открывается и после открытия недели — только для просмотра его лотов.
+  windows.slice(0, windowLimit).forEach((window, index) => {
+    nextRow(keyboard).text(
+      `Окно ${index + 1}`,
+      consoleWindowData(auction, refOf(window, index)),
+    );
+  });
+  if (editable && windows.length < windowLimit) {
     nextRow(keyboard).text("Добавить окно", consoleWindowAskData(auction));
   }
   return {
@@ -922,7 +928,7 @@ export function windowScreen(view: {
           ) / pageSize,
         );
   const inWindow = new Set(window.lotIds);
-  const editable = console.status === "draft" || console.status === "scheduled";
+  const editable = acceptsLots(console.status);
   const keyboard = new InlineKeyboard();
   let lines: string;
   let title: string;

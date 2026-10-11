@@ -1024,7 +1024,7 @@ describe("auction console callbacks", () => {
 
   it("parses every button of the happy hours within the byte budget", () => {
     // Худший случай: двузначный номер окна и четырёхзначная страница.
-    const window = { index: 99, print: "z0a9" };
+    const window = { index: 99, print: "z0a9q" };
     const cases = [
       [consoleWindowsData(auction), { kind: "console-windows", auction }],
       [consoleWindowAskData(auction), { kind: "console-window-ask", auction }],
@@ -1064,11 +1064,11 @@ describe("auction console callbacks", () => {
   });
 
   it.each([
-    `v1:ac:hw:${"2u8Fx81oUEiwPctIYOjccw"}:100:z0a9`,
-    `v1:ac:hw:${"2u8Fx81oUEiwPctIYOjccw"}:01:z0a9`,
-    `v1:ac:hw:${"2u8Fx81oUEiwPctIYOjccw"}:1:Z0A9`,
+    `v1:ac:hw:${"2u8Fx81oUEiwPctIYOjccw"}:100:z0a9q`,
+    `v1:ac:hw:${"2u8Fx81oUEiwPctIYOjccw"}:01:z0a9q`,
+    `v1:ac:hw:${"2u8Fx81oUEiwPctIYOjccw"}:1:Z0A9Q`,
     `v1:ac:hx:${"2u8Fx81oUEiwPctIYOjccw"}:1`,
-    `v1:ac:hs:${"2u8Fx81oUEiwPctIYOjccw"}:1:z0a9`,
+    `v1:ac:hs:${"2u8Fx81oUEiwPctIYOjccw"}:1:z0a9q`,
     `v1:ac:h:${"2u8Fx81oUEiwPctIYOjccw"}:1`,
   ])("refuses a malformed happy hours button %s", (data) => {
     expect(parseCallback(data)).toEqual({ kind: "malformed" });
