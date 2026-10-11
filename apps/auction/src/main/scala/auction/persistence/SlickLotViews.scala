@@ -58,6 +58,15 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
             WHERE v.lot_id = ${lotId.toString}::uuid""".as[LotSnapshotView].headOption
     )
 
+  /** Лоты по идентификаторам в любом порядке; лот, которого read model не знает, не отдаётся. */
+  private[persistence] def lotsAction(lotIds: List[UUID]): DBIO[Vector[LotSnapshotView]] = {
+    val ids = lotIds.map(_.toString).mkString("{", ",", "}")
+    sql"""SELECT v.lot_id::text, v.auction_id::text, v.version, v.state::text, c.title, c.description,
+                 c.image_version, #$BidCountSql
+          FROM lot_view v LEFT JOIN lot_catalog c ON c.lot_id = v.lot_id
+          WHERE v.lot_id = ANY($ids::uuid[])""".as[LotSnapshotView]
+  }
+
   def page(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]] = {
     // Нулевой UUID меньше любого UUIDv7, поэтому первая страница — тот же запрос без второй ветки.
     val from = after.getOrElse(new UUID(0L, 0L)).toString

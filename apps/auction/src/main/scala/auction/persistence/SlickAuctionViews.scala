@@ -32,6 +32,12 @@ final class SlickAuctionViews(database: Database, json: AuctionViewJson)(using E
               AND status <> ${AuctionViewHandler.Discarded}""".as[AuctionSnapshotView].headOption
     )
 
+  /** Аукцион по идентификатору; удалённый до торгов не отдаётся, как в `byMeetup`. */
+  private[persistence] def byIdAction(auctionId: UUID): DBIO[Option[AuctionSnapshotView]] =
+    sql"""SELECT auction_id::text, state::text FROM auction_view
+          WHERE auction_id = ${auctionId.toString}::uuid
+            AND status <> ${AuctionViewHandler.Discarded}""".as[AuctionSnapshotView].headOption
+
   def page(listing: AuctionListing, after: Option[UUID], limit: Int): Future[List[AuctionSnapshotView]] = {
     val statuses = AuctionViews.statuses(listing).mkString("{", ",", "}")
     val from = after.getOrElse(new UUID(0L, 0L)).toString

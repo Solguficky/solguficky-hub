@@ -176,7 +176,18 @@ object Main {
     Http()
       .newServerAt(grpcConfig.host, grpcConfig.port)
       .withSettings(AuctionNode.grpcServerSettings(system))
-      .bind(AuctionNode.grpc(system, sharding, callers, askTimeout, GrpcMeetupAuthority(meetups), clock, overdueGrace))
+      .bind(
+        AuctionNode.grpc(
+          system,
+          sharding,
+          callers,
+          askTimeout,
+          GrpcMeetupAuthority(meetups),
+          AuctionNode.listenChanges(system),
+          clock,
+          overdueGrace
+        )
+      )
       .onComplete(bound("grpc", system))
   }
 

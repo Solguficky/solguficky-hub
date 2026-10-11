@@ -3,6 +3,7 @@ package auction.projection
 import auction.entity.StoredLot
 import auction.entity.StoredLotEvent
 import auction.entity.StoredMoney
+import auction.watch.AuctionChanges
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.projection.eventsourced.EventEnvelope
@@ -48,6 +49,9 @@ object LotViewJson {
  * идемпотентен и без offset. Факты статистики — участники лота и стартовая цена (PER-481) — пишутся той же транзакцией
  * и только из применённых событий, поэтому повтор не меняет и их. Пропуск номера в потоке тега дочитывается из журнала
  * лота ([[LotJournalGap]]).
+ *
+ * Записанная строка объявляет свой аукцион сигналом той же транзакции ([[AuctionChanges.announce]]): потоки
+ * `WatchAuction` перечитывают его после коммита.
  */
 final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
     extends JdbcHandler[EventEnvelope[StoredLotEvent], JdbcSession] {
@@ -60,7 +64,10 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
       LotView.fold(before, lotId, events) match {
         case Left(defect) => throw new LotViewDefectException(defect)
         case Right(folded) =>
-          folded.row.foreach(rows.write(connection, before.fold(0L)(_.version), _))
+          folded.row.foreach { row =>
+            rows.write(connection, before.fold(0L)(_.version), row)
+            AuctionChanges.announce(connection, row.auctionId)
+          }
           folded.bids.foreach(record(connection, _))
           folded.participants.distinct.foreach(addParticipant(connection, lotId, _))
           folded.startingPrice.foreach(recordStartingPrice(connection, lotId, _))

@@ -173,7 +173,7 @@ def classify(cause: Throwable): Trailers =
 rpc WatchAuction(WatchAuctionRequest) returns (stream AuctionWatch);
 ```
 
-Сгенерированный трейт возвращает для такого метода не `Future`, а `Source` — описание потока из Pekko Streams, которое само ничего не делает, пока его не запустят. Аналог в .NET — `IAsyncEnumerable<T>` в отличие от `Task<T>`: перечисление начинается, когда его начали читать, а не когда метод вернул результат. Заглушка в `AuctionGrpcService.scala`:
+Сгенерированный трейт возвращает для такого метода не `Future`, а `Source` — описание потока из Pekko Streams, которое само ничего не делает, пока его не запустят. Аналог в .NET — `IAsyncEnumerable<T>` в отличие от `Task<T>`: перечисление начинается, когда его начали читать, а не когда метод вернул результат. Заглушка, которая стояла в `AuctionGrpcService.scala` до потока [PER-335](https://linear.app/anticnvm/issue/per-335):
 
 ```scala
 def watchAuction(in: wire.WatchAuctionRequest): Source[wire.AuctionWatch, NotUsed] =

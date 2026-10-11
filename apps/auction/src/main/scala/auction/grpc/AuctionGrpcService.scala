@@ -14,6 +14,7 @@ import auction.naming.NameNotChosen
 import auction.onboarding.FaqAcknowledgements
 import auction.projection.AuctionSnapshotView
 import auction.projection.AuctionViews
+import auction.projection.AuctionWatchViews
 import auction.projection.LotViews
 import auction.raffle.CancelRegistration
 import auction.raffle.Raffle
@@ -22,10 +23,12 @@ import auction.raffle.RaffleState
 import auction.raffle.RaffleView
 import auction.raffle.Register
 import auction.v1.auction_service as wire
+import auction.watch.AuctionChanges
 import io.grpc.Status
 import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.NotUsed
 import org.apache.pekko.grpc.GrpcServiceException
+import org.apache.pekko.stream.scaladsl.Flow
 import org.apache.pekko.stream.scaladsl.Source
 import org.slf4j.LoggerFactory
 
@@ -56,7 +59,9 @@ final class AuctionGrpcService(
     clock: Clock = Clock.systemUTC(),
     overdueGrace: Duration = AuctionGrpcService.DefaultOverdueGrace,
     raffles: RaffleGateway = AuctionGrpcService.NoRaffles,
-    raffleNames: AuctionId => Future[Map[Int, String]] = _ => Future.successful(Map.empty)
+    raffleNames: AuctionId => Future[Map[Int, String]] = _ => Future.successful(Map.empty),
+    watchViews: AuctionWatchViews = AuctionGrpcService.NoWatch,
+    changes: AuctionChanges = AuctionGrpcService.NoChanges
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -77,7 +82,9 @@ final class AuctionGrpcService(
       clock,
       overdueGrace,
       raffles,
-      raffleNames
+      raffleNames,
+      watchViews,
+      changes
     )
 
   // Ставка зала: контракт есть (PER-475), право ведущего и участник зала — поведение PER-293.
@@ -621,13 +628,37 @@ final class AuctionGrpcService(
           .flatMap(outcome => ResponseMapping.startNextLot(outcome).fold(refuse, Future.successful))
     }
 
-  // Финал: ask и закрытие лота ведущим приносит PER-293, поток — PER-335.
+  // Финал: ask и закрытие лота ведущим приносит PER-293.
   def advanceAsk(in: wire.AdvanceAskRequest): Future[wire.AdvanceAskResponse] = unimplemented
 
   def closeLot(in: wire.CloseLotRequest): Future[wire.CloseLotResponse] = unimplemented
 
+  /**
+   * Поток аукциона (PER-335): каждое сообщение — состояние целиком из read model, первое — при подписке, следующие —
+   * после коммита проекции, тронувшего аукцион или лот в нём. Право — то же, что у чтения лота: поток несёт снимки
+   * лотов. Аукциона нет в read model — `NOT_FOUND`, и сразу, и когда его удалили посреди потока. После сообщения, где
+   * аукцион завершён, поток закрывается: изменений у него больше не будет.
+   *
+   * Чтение идёт по одному на подписчика и только по его спросу: медленный клиент получает свежее состояние, а не
+   * очередь, и ставки не ждут ни его, ни поток. Повод, после которого состояние не изменилось, сообщения не даёт.
+   */
   def watchAuction(in: wire.WatchAuctionRequest): Source[wire.AuctionWatch, NotUsed] =
-    Source.failed(new GrpcServiceException(Status.UNIMPLEMENTED))
+    RequestMapping.watchAuction(in) match {
+      case Left(error) => Source.failed(new GrpcServiceException(invalidStatus(error)))
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        Source.failed(new GrpcServiceException(Status.PERMISSION_DENIED.withDescription("viewer has no auction right")))
+      case Right(query) =>
+        val auctionId = query.auctionId.value
+        changes
+          .subscribe(auctionId)
+          .mapAsync(1)(_ => watchViews.read(auctionId))
+          .map {
+            case Some(view) => WatchMapping.watch(view, clock.instant())
+            case None => throw new GrpcServiceException(Status.NOT_FOUND.withDescription("auction not found"))
+          }
+          .via(AuctionGrpcService.changed)
+          .takeWhile(message => !message.getAuction.status.isFinished, inclusive = true)
+    }
 
   // Счета: контракт есть (PER-308), выставление, статусы и чтения приносит лист счёта (PER-338).
   def markInvoicePaid(in: wire.MarkInvoicePaidRequest): Future[wire.MarkInvoicePaidResponse] = unimplemented
@@ -650,8 +681,10 @@ final class AuctionGrpcService(
     refuse(Status.DEADLINE_EXCEEDED.withDescription("entity did not answer in time"))
   }
 
-  private def invalid[T](error: FormError): Future[T] =
-    refuse(Status.INVALID_ARGUMENT.withDescription(s"invalid ${error.field}"))
+  private def invalid[T](error: FormError): Future[T] = refuse(invalidStatus(error))
+
+  private def invalidStatus(error: FormError): Status =
+    Status.INVALID_ARGUMENT.withDescription(s"invalid ${error.field}")
 
   private def unimplemented[T]: Future[T] = refuse(Status.UNIMPLEMENTED)
 
@@ -670,6 +703,21 @@ object AuctionGrpcService {
     def cancel(auction: AuctionId, command: CancelRegistration) = none
     def get(auction: AuctionId) = none
   }
+
+  /** Потока в узле нет: тесты границы, которым он не нужен. Аукциона для потока не существует. */
+  val NoWatch: AuctionWatchViews = _ => Future.successful(None)
+
+  /** Изменений нет: поток читает состояние один раз, при подписке. */
+  val NoChanges: AuctionChanges = _ => Source.single(())
+
+  /** Сообщение потока проходит, только если отличается от предыдущего отправленного. */
+  private def changed[T]: Flow[T, T, NotUsed] =
+    Flow[T]
+      .statefulMap(() => Option.empty[T])(
+        (last, next) => if (last.contains(next)) (last, None) else (Some(next), Some(next)),
+        _ => None
+      )
+      .collect { case Some(next) => next }
 
   /** Попыток заморозки имени после принятой ставки; подряд, без паузы: у сервиса нет планировщика. */
   val FreezeAttempts: Int = 3
