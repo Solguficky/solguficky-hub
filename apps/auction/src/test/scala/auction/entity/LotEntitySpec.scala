@@ -281,13 +281,18 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
     }
 
     "answer a bid that a proxy answers inside the window with the version of the extension, the last event (PER-470)" in {
-      entity = EventSourcedBehaviorTestKit(kit.system, LotEntity("lot-proxy-window", clock, sequentialIds()), serialization)
+      // Лимит ставится задолго до дедлайна, без продления; ставка — за минуту до него, в окне.
+      val time = MovingClock(decidedAt)
+      val closesAt = decidedAt.plus(Duration.ofMinutes(10))
+      entity =
+        EventSourcedBehaviorTestKit(kit.system, LotEntity("lot-proxy-window", time, sequentialIds()), serialization)
       draft(opN = 1)
       plan(scheduleLot(opN = 2))
       entity.runCommand[Either[OpenLotRejected, Envelope]](
-        LotEntity.Open(openLot(opN = 3, deadline = Some(decidedAt.plus(Duration.ofMinutes(1)))), Initiator.Scheduler, _)
+        LotEntity.Open(openLot(opN = 3, deadline = Some(closesAt)), Initiator.Scheduler, _)
       )
-      limitOf(who = 2, max = 300, opN = 4)
+      limitOf(who = 2, max = 300, opN = 4).events.map(_.event.kind) shouldBe List("ProxyLimitSet", "BidPlaced")
+      time.now = closesAt.minus(Duration.ofMinutes(1))
 
       val placed = bidOf(who = 1, amount = 150, opN = 5)
 
