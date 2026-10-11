@@ -386,6 +386,13 @@ describe("inspectCall", () => {
         text,
       ).toContain("forbidden-word");
     }
+    // Пометка `legacy` снимает остальные правила, но не это.
+    expect(
+      rulesOf(
+        "editMessageText",
+        screen("old", "Повысь шансы", [[key("Назад")]]),
+      ),
+    ).toEqual(["forbidden-word"]);
     expect(
       rulesOf(
         "editMessageText",

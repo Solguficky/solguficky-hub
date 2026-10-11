@@ -134,6 +134,8 @@ export type PortsOptions = {
   pause?: Pause;
   // Отказ отметки пояснения автоставки вопрос лимита гасит так же.
   onProxyExplainerRefused?: (cause: unknown, requestId: string) => void;
+  // Отказ `GetRaffle` лента гасит: кнопка «Розыгрыш» пропадает (PER-500).
+  onRaffleRefused?: (cause: unknown, requestId: string) => void;
 };
 
 export function createPorts(
@@ -147,6 +149,7 @@ export function createPorts(
     onFavoritesRefused,
     pause,
     onProxyExplainerRefused,
+    onRaffleRefused,
   }: PortsOptions = {},
 ): PortsFactory {
   return (requestId, deadlineAt) => {
@@ -325,14 +328,19 @@ export function createPorts(
         },
         // Розыгрыш среди участников (ADR-066): команды — как у ставки.
         async getRaffle(request) {
-          const { raffle } = await auction.getRaffle(
-            {
-              viewer: wireViewer(request.viewer),
-              auctionId: request.auctionId,
-            },
-            callOptions(timeoutMs),
-          );
-          return raffle === undefined ? undefined : raffleOf(raffle);
+          try {
+            const { raffle } = await auction.getRaffle(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              callOptions(timeoutMs),
+            );
+            return raffle === undefined ? undefined : raffleOf(raffle);
+          } catch (cause) {
+            onRaffleRefused?.(cause, requestId);
+            throw cause;
+          }
         },
         registerForRaffle(request) {
           return unansweredOn(async () =>
@@ -552,6 +560,7 @@ export function createClients(options: {
   onNamesRefused?: (cause: unknown, requestId: string) => void;
   onFavoritesRefused?: (cause: unknown, requestId: string) => void;
   onProxyExplainerRefused?: (cause: unknown, requestId: string) => void;
+  onRaffleRefused?: (cause: unknown, requestId: string) => void;
 }): Clients {
   const identitySession = new Http2SessionManager(options.identityUrl);
   const auctionSession = new Http2SessionManager(options.auctionUrl);
@@ -602,6 +611,9 @@ export function createClients(options: {
       ...(options.onProxyExplainerRefused === undefined
         ? {}
         : { onProxyExplainerRefused: options.onProxyExplainerRefused }),
+      ...(options.onRaffleRefused === undefined
+        ? {}
+        : { onRaffleRefused: options.onRaffleRefused }),
     }),
     delivery: createDeliveryPorts(identity, auction),
     outbidSettings: notifications !== undefined,

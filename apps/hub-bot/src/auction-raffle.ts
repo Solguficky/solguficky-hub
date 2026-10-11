@@ -50,7 +50,7 @@ export function raffleParagraphs(
       return [
         `Регистрация закрыта ${closesAt}: билеты получают номера.`,
         raffle.registered
-          ? "Ты зарегистрирован: номер появится через минуту."
+          ? "Ты зарегистрирован: номер билета появится, когда пул зафиксируют."
           : "Ты не зарегистрирован.",
         commitmentLines(raffle),
       ];
@@ -68,7 +68,7 @@ export function raffleParagraphs(
         poolLine(raffle),
         ticketList(raffle),
         revealLines(raffle),
-        recomputeSteps(raffle),
+        raffle.reveal === undefined ? "" : recomputeSteps(raffle),
       ];
     case "no-tickets":
       return [
@@ -105,14 +105,24 @@ function commitmentLines(raffle: RaffleView): string {
   ].join("\n");
 }
 
+// Поля пула — строки «ключ: значение» без точки (дизайн-код, «Формат»).
 function poolLine(raffle: RaffleView): string {
-  const count = raffle.tickets.length;
   return [
-    `Билетов: ${count}.`,
+    `Билетов: ${raffle.tickets.length}`,
     raffle.myTicket === undefined
-      ? "Твоего билета в пуле нет."
-      : `Твой номер: ${raffle.myTicket}.`,
-  ].join(" ");
+      ? "Твой билет: нет"
+      : `Твой билет: №${raffle.myTicket}`,
+  ].join("\n");
+}
+
+/** Текст выбора имени перед регистрацией: тот же экран, что перед ставкой. */
+export function raffleNameChoiceText(username: string | undefined): string {
+  return [
+    "Имя видно всем участникам аукциона в списке розыгрыша и рядом с твоими ставками. После первой ставки его не поменять.",
+    username === undefined
+      ? "Ника в Telegram у тебя нет: возьми псевдоним."
+      : `Зарегистрируйся под ником @${escapeHtml(username)} или возьми псевдоним.`,
+  ].join("\n");
 }
 
 function ticketName(ticket: { number: number; displayName?: string }): string {

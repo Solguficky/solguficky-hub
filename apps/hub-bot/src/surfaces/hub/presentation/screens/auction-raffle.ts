@@ -2,6 +2,7 @@ import { InlineKeyboard } from "grammy";
 import {
   cancelRegistrationLabel,
   raffleBackName,
+  raffleNameChoiceText,
   raffleParagraphs,
   raffleTitle,
   registerLabel,
@@ -82,6 +83,7 @@ export function raffleNameChoiceScreen(
   return nameChoiceScreen(block, keyboard, {
     id: "raffle-name-choice",
     back: toRaffle(keyboard),
+    body: raffleNameChoiceText(block.username),
   });
 }
 

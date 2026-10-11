@@ -216,25 +216,24 @@ function feedScreen(
   // остаётся. Короткие действия идут разрешёнными парами: так полная
   // страница из восьми лотов держит предел рядов.
   const auction = uuidToToken(feed.auctionId);
-  // «Розыгрыш» ставит тело, пока розыгрыш есть (ADR-066). Розыгрыш открыт с
-  // онлайн-недели, когда «Добавить лот» уже нет, и у администратора кнопка
-  // встаёт парой к «Пульту»: так полная страница держит предел рядов.
+  // «Розыгрыш» ставит тело, пока розыгрыш есть (ADR-066). Auction открывает
+  // его вместе с онлайн-неделей, после которой лоты не принимаются, поэтому
+  // при розыгрыше «Добавить лот» нет, даже если пульт не прочитан, а у
+  // администратора кнопка встаёт парой к «Пульту»: так полная страница держит
+  // предел рядов.
   const raffle = view.body.keyboard
     .flat()
     .find((button) => button.action === "feed.raffle");
-  let raffleShown = false;
   if (view.canManage === true) {
-    if (view.canAddLots !== false) {
+    if (view.canAddLots !== false && raffle === undefined) {
       keyboard.text(addLotLabel, lotNewData(auction));
     }
     keyboard.text(consoleLabel, consoleViewData(auction));
-    if (view.canAddLots === false && raffle !== undefined) {
+    if (raffle !== undefined) {
       keyboard.text(raffleButtonLabel, raffle.callbackData);
-      raffleShown = true;
     }
     keyboard.row();
-  }
-  if (raffle !== undefined && !raffleShown) {
+  } else if (raffle !== undefined) {
     keyboard.text(raffleButtonLabel, raffle.callbackData).row();
   }
   // Избранное (PER-495) — свои отмеченные лоты из любых аукционов; возврат

@@ -3,6 +3,7 @@ import {
   cancelRegistrationLabel,
   raffleBackName,
   raffleButtonLabel,
+  raffleNameChoiceText,
   raffleParagraphs,
   raffleTitle,
   registerLabel,
@@ -672,8 +673,15 @@ function renderLeaf(
       case "question":
         return { format: "html", text: questionText(block), asks: true };
       case "name-choice":
-      case "raffle-name-choice":
         return { format: "html", text: nameChoiceText(block) };
+      case "raffle-name-choice":
+        return {
+          format: "html",
+          text: screenText(
+            "Имя в аукционе",
+            raffleNameChoiceText(block.username),
+          ),
+        };
       // Розыгрыш среди участников (ADR-066): тексты общие с хабом.
       case "raffle":
         return {

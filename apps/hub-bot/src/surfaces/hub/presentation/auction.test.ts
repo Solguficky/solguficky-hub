@@ -141,12 +141,16 @@ function fakeAuction(
     lot?: LotView;
     // Розыгрыш аукциона (ADR-066): регистрация меняет отметку.
     raffle?: RaffleView;
+    // Имя в аукционе ещё не выбрано: регистрация ждёт выбора имени, а
+    // псевдоним — этот отказ, если он задан.
+    nameless?: { aliasRefusal?: "alias-taken" };
   } = {},
 ) {
   const shownLot = options.lot ?? lot;
   const raffle: { current: RaffleView | undefined } = {
     current: options.raffle,
   };
+  let named = options.nameless === undefined;
   const auctions = new Map<string, string>(
     options.existing === true ? [[meetupId, auctionId]] : [],
   );
@@ -210,10 +214,18 @@ function fakeAuction(
           getDisplayNames: async () => ({}),
           placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
           setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
-          chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
+          chooseDisplayName: async () => {
+            const refusal = options.nameless?.aliasRefusal;
+            if (refusal !== undefined) return { kind: "refused", refusal };
+            named = true;
+            return { kind: "accepted", name: "@owl" };
+          },
           getRaffle: async () => raffle.current,
           registerForRaffle: async () => {
             if (raffle.current === undefined) throw new Error("no raffle");
+            if (!named) {
+              return { kind: "refused", refusal: "display-name-not-chosen" };
+            }
             raffle.current = { ...raffle.current, registered: true };
             return { kind: "accepted", raffle: raffle.current };
           },
@@ -1218,5 +1230,148 @@ describe("raffle among the participants", () => {
     const screen = lastScreen(calls);
     expect(screen.text).toContain("Розыгрыш не проводится");
     expect(labels(screen)).toEqual([["‹ Лоты"]]);
+  });
+});
+
+describe("raffle screens in the hub", () => {
+  const base: RaffleView = {
+    auctionId,
+    status: "open",
+    closesAt: "2026-10-29T18:00:00Z",
+    commitment: "ab".repeat(32),
+    beaconRound: 12_345_678,
+    registered: false,
+    tickets: [],
+  };
+  const pool = {
+    registered: true,
+    tickets: [{ number: 1, displayName: "@owl" }, { number: 2 }],
+    myTicket: 1,
+  };
+  const raffleData = encodeAuctionCallback({ kind: "raffle", auctionId });
+
+  // Каждый статус уходит в Telegram и проходит линтер экранов хаба.
+  it.each([
+    [{ ...base, status: "closing" as const }, "Регистрация закрыта"],
+    [
+      { ...base, ...pool, status: "awaiting-beacon" as const },
+      "Жеребьёвка ждёт значение маяка drand",
+    ],
+    [
+      {
+        ...base,
+        ...pool,
+        status: "drawn" as const,
+        reveal: {
+          seed: "cd".repeat(32),
+          randomness: "ef".repeat(32),
+          value: "12".repeat(32),
+          winningTicket: 2,
+        },
+      },
+      "Выиграл билет №2.",
+    ],
+    [
+      {
+        ...base,
+        status: "no-tickets" as const,
+        reveal: { seed: "cd".repeat(32) },
+      },
+      "Розыгрыш не состоялся",
+    ],
+  ])("shows the raffle in status %#", async (raffle, text) => {
+    const auction = fakeAuction({ existing: true, raffle });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(press(raffleData));
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain(text);
+    expect(labels(screen)).toEqual([["‹ Лоты"]]);
+  });
+
+  it("chooses a name before the registration and returns to the raffle", async () => {
+    const auction = fakeAuction({ existing: true, raffle: base, nameless: {} });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "raffle-register", auctionId })),
+    );
+    const choice = lastScreen(calls);
+    expect(choice.text).toContain("<b>Имя в аукционе</b>");
+    expect(choice.text).toContain("в списке розыгрыша");
+    expect(labels(choice)).toEqual([["Взять псевдоним"], ["‹ Розыгрыш"]]);
+
+    await bot.handleUpdate(press(data(choice, "Взять псевдоним") ?? ""));
+    const asked = calls.filter((call) => call.method === "sendMessage").at(-1)
+      ?.payload as Shown | undefined;
+    expect(asked?.text).toContain("Псевдоним");
+    const step = asked?.reply_markup?.inline_keyboard[0]?.[0]?.callback_data;
+    expect(step).toBe(
+      encodeAuctionCallback({
+        kind: "raffle-question",
+        auctionId,
+        addressee: 42,
+      }),
+    );
+
+    await bot.handleUpdate({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text: "Сова",
+        reply_to_message: {
+          message_id: 9,
+          date: 0,
+          chat: { id: 42, type: "private", first_name: "tester" },
+          from: { id: 1, is_bot: true, first_name: "hub" },
+          text: "Псевдоним",
+          reply_markup: {
+            inline_keyboard: [[{ text: "Отмена", callback_data: step ?? "" }]],
+          },
+        },
+      },
+    } as Update);
+    expect(lastScreen(calls).text).toContain("Ты зарегистрирован.");
+  });
+
+  it("refuses a taken alias with a retry and the way back to the raffle", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      raffle: base,
+      nameless: { aliasRefusal: "alias-taken" },
+    });
+    const { bot, calls } = harness("member", auction);
+    const step = encodeAuctionCallback({
+      kind: "raffle-question",
+      auctionId,
+      addressee: 42,
+    });
+
+    await bot.handleUpdate({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text: "Сова",
+        reply_to_message: {
+          message_id: 9,
+          date: 0,
+          chat: { id: 42, type: "private", first_name: "tester" },
+          from: { id: 1, is_bot: true, first_name: "hub" },
+          text: "Псевдоним",
+          reply_markup: {
+            inline_keyboard: [[{ text: "Отмена", callback_data: step }]],
+          },
+        },
+      },
+    } as Update);
+    const refused = lastScreen(calls);
+    expect(refused.text).toContain("Этот псевдоним уже занят");
+    expect(labels(refused)).toEqual([["Ввести заново"], ["‹ Розыгрыш"]]);
   });
 });

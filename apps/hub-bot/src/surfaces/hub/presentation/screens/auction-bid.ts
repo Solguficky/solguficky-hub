@@ -221,7 +221,7 @@ function proxyExplainer(
 export function nameChoiceScreen(
   block: Pick<NameChoiceBlock, "username">,
   keyboard: readonly (readonly AuctionButton[])[],
-  target?: { id: "raffle-name-choice"; back: Parent },
+  target?: { id: "raffle-name-choice"; back: Parent; body: string },
 ): ShownScreen {
   const rows = new InlineKeyboard();
   for (const button of keyboard.flat()) {
@@ -234,12 +234,13 @@ export function nameChoiceScreen(
   }
   const text = screenText(
     "Имя в аукционе",
-    [
-      "Имя видно всем участникам аукциона рядом с твоими ставками. После первой ставки его не поменять.",
-      block.username === undefined
-        ? "Ника в Telegram у тебя нет: возьми псевдоним."
-        : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
-    ].join("\n"),
+    target?.body ??
+      [
+        "Имя видно всем участникам аукциона рядом с твоими ставками. После первой ставки его не поменять.",
+        block.username === undefined
+          ? "Ника в Telegram у тебя нет: возьми псевдоним."
+          : `Ставь под ником @${escapeHtml(block.username)} или возьми псевдоним.`,
+      ].join("\n"),
   );
   return {
     id: target?.id ?? "name-choice",

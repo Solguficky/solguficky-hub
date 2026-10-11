@@ -25,8 +25,12 @@ export async function openFeed(input: {
   auctionId: string;
   page: number;
 }): Promise<AuctionScreenBody> {
+  // Розыгрыш читается параллельно страницам ленты: иначе долгая лента съела
+  // бы бюджет действия, и кнопка пропала бы при живом розыгрыше. Отказа
+  // `hasRaffle` не бросает.
+  const raffleRead = hasRaffle(input);
   const lots = sortForFeed(await loadFeed(input));
-  const raffle = await hasRaffle(input);
+  const raffle = await raffleRead;
   const pageCount = Math.max(1, Math.ceil(lots.length / FEED_PAGE_SIZE));
   const page = Math.min(input.page, pageCount - 1);
   const shown = lots.slice(page * FEED_PAGE_SIZE, (page + 1) * FEED_PAGE_SIZE);

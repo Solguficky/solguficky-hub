@@ -57,6 +57,13 @@ export const auctionSurface: SurfaceDefinition = ({
         error_category: "dependency_unavailable",
         error: cause instanceof Error ? cause.message : String(cause),
       }),
+    // Лента без кнопки «Розыгрыш» — деградация, а не отказ экрана.
+    onRaffleRefused: (cause, requestId) =>
+      logger.warn("raffle unavailable", {
+        request_id: requestId,
+        error_category: "dependency_unavailable",
+        error: cause instanceof Error ? cause.message : String(cause),
+      }),
   });
   if (auction.notificationsUrl === undefined) {
     logger.info(

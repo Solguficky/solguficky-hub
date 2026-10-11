@@ -406,11 +406,12 @@ const raffleCall = (auctionId: string): PortCall => ({
   request: { viewer: CONTRACT_VIEWER, auctionId },
 });
 
-// Лента: страницы лотов, затем розыгрыш — по нему тело ставит «Розыгрыш».
+// Лента: розыгрыш — по нему тело ставит «Розыгрыш» — читается параллельно
+// страницам лотов и стартует первым.
 const feedCalls = (
   auctionId: string,
   tokens: readonly string[],
-): PortCall[] => [...listCalls(auctionId, tokens), raffleCall(auctionId)];
+): PortCall[] => [raffleCall(auctionId), ...listCalls(auctionId, tokens)];
 
 const getLotCall = (lotId: string, atLeastVersion?: number): PortCall => ({
   port: "auction",

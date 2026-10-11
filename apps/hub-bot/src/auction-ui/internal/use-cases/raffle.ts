@@ -6,12 +6,13 @@ import type {
   RaffleView,
 } from "../../ports.js";
 import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
-import type { CommandContext } from "./commands.js";
+import { type CommandContext, withOneRetry } from "./commands.js";
 
 // Сырые юзкейсы розыгрыша среди участников (ADR-066). Доступ проверил шлюз, а
 // право `place_bids` Auction проверяет на каждом вызове. Подтверждения у
 // регистрации и отмены нет: до закрытия регистрация обратима с того же экрана
-// и наружу ничего не выходит (дизайн-код, «Клавиатура»).
+// и наружу ничего не выходит — список билетов виден только после закрытия
+// (дизайн-код, «Клавиатура»).
 
 const raffleCallback = (auctionId: string) =>
   encodeAuctionCallback({ kind: "raffle", auctionId });
@@ -78,14 +79,6 @@ export async function openRaffle(
     auctionId,
     await context.auction.getRaffle({ viewer: context.viewer, auctionId }),
   );
-}
-
-// Повтор только там, где ответа не было вовсе, — и ровно один, тем же `op_id`.
-async function withOneRetry<Refusal>(
-  call: () => Promise<RaffleOutcome<Refusal>>,
-): Promise<RaffleOutcome<Refusal>> {
-  const first = await call();
-  return first.kind === "unanswered" ? call() : first;
 }
 
 export async function registerForRaffle(
@@ -266,7 +259,9 @@ async function chooseName(
     auctionId,
     choice,
   });
-  if (outcome.kind === "refused") {
+  // Имя, которое уже не поменять, уже выбрано — например ставкой, сделанной,
+  // пока экран выбора висел: регистрации оно не мешает.
+  if (outcome.kind === "refused" && outcome.refusal !== "name-frozen") {
     return answerRefusedBody(auctionId, outcome.refusal);
   }
   return registerForRaffle(context, auctionId);

@@ -132,6 +132,10 @@ export function inspectCall(
     .filter(([rule]) => !waived(entry, rule))
     .map(([rule, detail]) => at(tag, rule, detail));
   if (entry.legacy !== true) return found;
+  // Запретные слова розыгрыша не снимает и пометка `legacy`: инвариант
+  // обязателен для любого экрана (RFC-007, инвариант 8).
+  const forbidden = found.filter(({ rule }) => rule === "forbidden-word");
+  if (forbidden.length > 0) return forbidden;
   return found.length === 0
     ? [
         at(

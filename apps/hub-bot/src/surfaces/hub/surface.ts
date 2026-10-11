@@ -60,6 +60,15 @@ export const hubSurface: SurfaceDefinition = ({
                 : { request_id: meta.requestId }),
               error: cause instanceof Error ? cause.message : String(cause),
             }),
+          // Лента без кнопки «Розыгрыш» — деградация, а не отказ экрана.
+          onRaffleRefused: (cause, meta) =>
+            logger.warn("raffle unavailable", {
+              ...(meta?.requestId === undefined
+                ? {}
+                : { request_id: meta.requestId }),
+              error_category: "dependency_unavailable",
+              error: cause instanceof Error ? cause.message : String(cause),
+            }),
         });
   if (auction === undefined) {
     logger.info("AUCTION_GRPC_URL is not set: meetup auctions are off");

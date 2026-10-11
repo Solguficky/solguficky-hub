@@ -172,9 +172,10 @@ export async function confirmCommand(
 
 // Повтор только там, где ответа не было вовсе, — и ровно один, тем же
 // `op_id` (RFC-011, П-06). Именованный отказ окончателен и не повторяется.
-async function withOneRetry<Refusal>(
-  call: () => Promise<CommandOutcome<Refusal>>,
-): Promise<CommandOutcome<Refusal>> {
+// Тем же правилом идут команды розыгрыша (`raffle.ts`).
+export async function withOneRetry<Outcome extends { kind: string }>(
+  call: () => Promise<Outcome>,
+): Promise<Outcome> {
   const first = await call();
   return first.kind === "unanswered" ? call() : first;
 }
