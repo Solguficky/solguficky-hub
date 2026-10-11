@@ -13,8 +13,10 @@ import auction.grpc.AuctionGrpcService
 import auction.grpc.CallerTable
 import auction.grpc.GrpcBoundary
 import auction.naming.DisplayNameCommands
+import auction.persistence.DatabaseSettings
 import auction.persistence.JournalDatabase
 import auction.persistence.SlickAuctionViews
+import auction.persistence.SlickAuctionWatchViews
 import auction.persistence.SlickLotViews
 import auction.projection.AuctionProjection
 import auction.projection.AuctionViewHandler
@@ -39,6 +41,9 @@ import auction.raffle.RaffleEntity
 import auction.raffle.RaffleGateway
 import auction.raffle.RaffleTickets
 import auction.raffle.Seed
+import auction.watch.AuctionChanges
+import auction.watch.ChangeRegistry
+import auction.watch.PgChangeListener
 import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.Done
 import org.apache.pekko.actor.CoordinatedShutdown
@@ -62,6 +67,7 @@ import java.time.Clock
 import java.util.UUID
 import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
+import scala.jdk.DurationConverters.*
 import scala.util.Failure
 import scala.util.Success
 
@@ -270,6 +276,31 @@ object AuctionNode {
   }
 
   /**
+   * Источник изменений для потока `WatchAuction` (PER-335): слушатель канала, в который пишут проекции read model,
+   * своим соединением к базе из `auction.database`. Останавливается вместе с узлом, до остановки проекций.
+   */
+  def listenChanges(system: ActorSystem[?]): AuctionChanges = {
+    val config = system.settings.config
+    val database = DatabaseSettings
+      .fromConfig(config)
+      .fold(reason => throw new IllegalStateException(reason), settings => settings)
+    val registry = ChangeRegistry()
+    val listener = PgChangeListener(
+      database,
+      registry,
+      config.getDuration("auction.watch.listener-wait").toScala,
+      config.getDuration("auction.watch.reconnect-after").toScala
+    ).start()
+    CoordinatedShutdown(system).addTask(CoordinatedShutdown.PhaseServiceStop, "auction-change-listener") { () =>
+      Future {
+        listener.close()
+        Done
+      }(using system.executionContext)
+    }
+    registry
+  }
+
+  /**
    * gRPC-граница узла: сервис поверх шардинга лотов и аукционов, каталога, имён участников, read model и права у
    * Meetups, обёрнутый проверкой вызывающего и записью операции. Entity лота и аукциона к этому моменту уже
    * зарегистрированы в `sharding`.
@@ -280,6 +311,7 @@ object AuctionNode {
       callers: CallerTable,
       askTimeout: FiniteDuration,
       authority: MeetupAuthority,
+      changes: AuctionChanges,
       clock: Clock = Clock.systemUTC(),
       overdueGrace: java.time.Duration = AuctionGrpcService.DefaultOverdueGrace
   ): HttpRequest => Future[HttpResponse] = {
@@ -299,7 +331,9 @@ object AuctionNode {
       clock = clock,
       overdueGrace = overdueGrace,
       raffles = RaffleGateway.sharded(sharding, askTimeout),
-      raffleNames = raffleTickets.names
+      raffleNames = raffleTickets.names,
+      watchViews = SlickAuctionWatchViews(system),
+      changes = changes
     )
     GrpcBoundary(callers, correlation => service.within(correlation))
   }

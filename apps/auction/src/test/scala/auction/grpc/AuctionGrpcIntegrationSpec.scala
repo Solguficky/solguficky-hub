@@ -167,7 +167,9 @@ final class AuctionGrpcIntegrationSpec
       val binding = Http()
         .newServerAt("127.0.0.1", 0)
         .withSettings(AuctionNode.grpcServerSettings(kit.system))
-        .bind(AuctionNode.grpc(kit.system, sharding, callers, 10.seconds, authority))
+        .bind(
+          AuctionNode.grpc(kit.system, sharding, callers, 10.seconds, authority, AuctionNode.listenChanges(kit.system))
+        )
         .futureValue
       val client = wire.AuctionServiceClient(
         GrpcClientSettings.connectToServiceAt("127.0.0.1", binding.localAddress.getPort).withTls(false)

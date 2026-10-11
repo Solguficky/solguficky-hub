@@ -26,7 +26,20 @@ import java.time.Instant
  */
 object SnapshotMapping {
 
-  def snapshot(view: LotSnapshotView, viewer: ParticipantId, at: Instant): wire.LotSnapshot = {
+  def snapshot(view: LotSnapshotView, viewer: ParticipantId, at: Instant): wire.LotSnapshot =
+    of(view, at, own(_, viewer))
+
+  /**
+   * Снимок без смотрящего — для потока `WatchAuction`: поток одинаков у всех, и `viewer_proxy_limit` в нём не задаётся.
+   */
+  def unviewed(view: LotSnapshotView, at: Instant): wire.LotSnapshot =
+    of(view, at, _ => None)
+
+  private def of(
+      view: LotSnapshotView,
+      at: Instant,
+      limit: Map[ParticipantId, ProxyLimit] => Option[model.Money]
+  ): wire.LotSnapshot = {
     val base = wire.LotSnapshot(
       id = view.lotId.toString,
       auctionId = view.auctionId.toString,
@@ -48,7 +61,7 @@ object SnapshotMapping {
           .withNextPrice(LotValues.money(Lot.minRequired(trading, at)))
           .withBaseStep(LotValues.money(Lot.baseStep(trading, trading.currentPrice)))
           .copy(
-            viewerProxyLimit = own(trading.proxyLimits, viewer),
+            viewerProxyLimit = limit(trading.proxyLimits),
             activeWindow = Lot.activeWindow(trading, at).flatMap(active(trading, _, at)),
             nextWindow = Lot.nextWindow(trading, at).map(window)
           )
@@ -56,7 +69,7 @@ object SnapshotMapping {
       case LotState.Held(held) =>
         base
           .withConfig(LotValues.config(held.config))
-          .copy(viewerProxyLimit = own(held.proxyLimits, viewer))
+          .copy(viewerProxyLimit = limit(held.proxyLimits))
           .withHeld(LotValues.held(held))
       case LotState.Sold(sale) => base.withSold(LotValues.sale(sale))
       case LotState.Unsold(reason) => base.withUnsold(LotValues.unsold(reason))

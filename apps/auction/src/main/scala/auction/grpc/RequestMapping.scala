@@ -60,6 +60,7 @@ import auction.v1.auction_service.ScheduleAuctionRequest
 import auction.v1.auction_service.SelectForFinalRequest
 import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
+import auction.v1.auction_service.WatchAuctionRequest
 import auction.v1.auction_service.StartFinalRequest
 import auction.v1.auction_service.StartNextLotRequest
 import auction.v1.auction_service.StartPrebiddingRequest
@@ -150,6 +151,9 @@ final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
 
 /** Чтение пульта администратора: аукцион сходки и тот, кто смотрит. */
 final case class ConsoleQuery(auctionId: AuctionId, acting: Acting)
+
+/** Подписка на поток аукциона сходки: аукцион и тот, кто смотрит. */
+final case class WatchQuery(auctionId: AuctionId, acting: Acting)
 
 /** Страница аукционов выборки: после `after` по возрастанию `auction_id`, не больше `limit`. */
 final case class AuctionsQuery(listing: AuctionListing, after: Option[UUID], limit: Int, acting: Acting)
@@ -523,6 +527,12 @@ object RequestMapping {
   /** Аукцион сходки — только UUIDv5: у тестового аукциона из настройки бота журнала аукциона нет. */
   private def meetupAuction(value: String): Either[FormError, AuctionId] =
     canonicalUuidV5(value).map(AuctionId(_)).toRight(FormError("auction_id"))
+
+  def watchAuction(request: WatchAuctionRequest): Either[FormError, WatchQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield WatchQuery(auction, acting)
 
   def getMeetupAuction(request: GetMeetupAuctionRequest): Either[FormError, MeetupAuctionQuery] =
     for {

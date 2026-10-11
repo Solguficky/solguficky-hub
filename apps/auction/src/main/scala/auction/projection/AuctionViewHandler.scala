@@ -2,6 +2,7 @@ package auction.projection
 
 import auction.entity.StoredAuction
 import auction.entity.StoredAuctionEvent
+import auction.watch.AuctionChanges
 import com.fasterxml.jackson.databind.ObjectMapper
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.persistence.typed.PersistenceId
@@ -61,7 +62,8 @@ object AuctionViewHandler {
 /**
  * Обработчик проекции аукциона: строка `auction_view` и реестр `auction_lot` одной транзакцией `JdbcSession` вместе с
  * offset (ADR-045). Реестр пишется разностью до и после события: лот, добавленный в реестр, — новая строка, снятый —
- * удалённая. Пишет только соединение сессии, как у лота.
+ * удалённая. Пишет только соединение сессии, как у лота, и тем же соединением объявляет аукцион потокам `WatchAuction`
+ * ([[AuctionChanges.announce]]).
  */
 final class AuctionViewHandler(json: AuctionViewJson, serialization: Serialization)
     extends JdbcHandler[EventEnvelope[StoredAuctionEvent], JdbcSession] {
@@ -85,6 +87,7 @@ final class AuctionViewHandler(json: AuctionViewJson, serialization: Serializati
           val previous = before.fold(Set.empty[UUID])(_.lots)
           (after.lots -- previous).foreach(insertLot(connection, auctionId, _))
           (previous -- after.lots).foreach(deleteLot(connection, auctionId, _))
+          AuctionChanges.announce(connection, auctionId)
         case Right(_) => ()
       }
     }

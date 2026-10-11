@@ -53,6 +53,7 @@ import auction.lot.OpId
 import auction.lot.LotFixtures
 import auction.lot.LotFixtures.*
 import auction.lot.ParticipantId
+import auction.lot.Phase
 import auction.lot.PlaceBid
 import auction.lot.PlaceBidRejected
 import auction.lot.CurrencyCode
@@ -73,6 +74,8 @@ import auction.onboarding.FaqAcknowledgements
 import auction.projection.AuctionListing
 import auction.projection.AuctionSnapshotView
 import auction.projection.AuctionViews
+import auction.projection.AuctionWatchView
+import auction.projection.AuctionWatchViews
 import auction.projection.LotImageView
 import auction.projection.BidRecord
 import auction.projection.LotSnapshotView
@@ -88,7 +91,12 @@ import ch.qos.logback.core.read.ListAppender
 import com.google.protobuf.ByteString
 import identity.v1.access.AccessRight as AccessRightMessage
 import io.grpc.Status
+import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.grpc.GrpcServiceException
+import org.apache.pekko.stream.Materializer
+import org.apache.pekko.stream.scaladsl.Sink
+import org.apache.pekko.stream.scaladsl.SinkQueueWithCancel
+import org.apache.pekko.stream.scaladsl.Source
 import org.apache.pekko.pattern.AskTimeoutException
 import auction.raffle.CancelRegistration
 import auction.raffle.Draw
@@ -100,6 +108,9 @@ import auction.raffle.Randomness
 import auction.raffle.Register
 import auction.raffle.RegistrationRejected
 import auction.raffle.Seed
+import auction.watch.AuctionChanges
+import auction.watch.ChangeRegistry
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.ScalaFutures
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
@@ -114,7 +125,7 @@ import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 import scala.jdk.CollectionConverters.*
 
-final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaFutures {
+final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaFutures with BeforeAndAfterAll {
 
   import RequestMappingSpec.*
 
@@ -316,7 +327,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       names: DisplayNameStore = Names(named),
       clock: Clock = Clock.systemUTC(),
       raffles: RaffleGateway = AuctionGrpcService.NoRaffles,
-      raffleNames: AuctionId => Future[Map[Int, String]] = _ => Future.successful(Map.empty)
+      raffleNames: AuctionId => Future[Map[Int, String]] = _ => Future.successful(Map.empty),
+      watchViews: AuctionWatchViews = _ => fail("the watch read model was touched"),
+      changes: AuctionChanges = AuctionGrpcService.NoChanges
   ) =
     AuctionGrpcService(
       lots,
@@ -329,7 +342,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       clock = clock,
       overdueGrace = Duration.ofMinutes(2),
       raffles = raffles,
-      raffleNames = raffleNames
+      raffleNames = raffleNames,
+      watchViews = watchViews,
+      changes = changes
     )
 
   /** Аукцион сходки в онлайн-торгах с лотами в реестре — то, что пульт читает у entity. */
@@ -458,6 +473,96 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .getRaffle(wire.GetRaffleRequest(Some(viewer), raffleAuction))
         .futureValue
         .raffle shouldBe None
+    }
+  }
+
+  /** Потоки — единственное, чему в сьюте нужна система: остальное здесь — `Future` без материализации. */
+  private lazy val streams = ActorTestKit("auction-grpc-service-streams")
+
+  override protected def afterAll(): Unit = streams.shutdownTestKit()
+
+  /** Поток, который тест тянет сам: следующее сообщение читается только по `pull`. */
+  private def watching(source: Source[wire.AuctionWatch, ?]): SinkQueueWithCancel[wire.AuctionWatch] =
+    source.runWith(Sink.queue[wire.AuctionWatch]())(using Materializer(streams.system))
+
+  private def statusOfNext(queue: SinkQueueWithCancel[wire.AuctionWatch]): Status.Code = statusOf(queue.pull())
+
+  private val watchedAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+
+  private def watchedIn(state: AuctionState, lots: Set[LotId] = Set.empty): AuctionSnapshotView =
+    AuctionSnapshotView(watchedAuction, Auction(state, Some(MeetupId(UUID.fromString(meetupId))), lots, Map.empty))
+
+  private def watch = wire.WatchAuctionRequest(Some(viewer), watchedAuction.toString)
+
+  "the auction stream at the grpc boundary" should {
+
+    "refuse a malformed request and a viewer without the right to bid before the read model" in {
+      val hubOnly = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_ACCESS_HUB))
+      statusOfNext(watching(service(Unreachable).watchAuction(watch.withAuctionId("auction")))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOfNext(watching(service(Unreachable).watchAuction(watch.clearViewer))) shouldBe
+        Status.Code.INVALID_ARGUMENT
+      statusOfNext(watching(service(Unreachable).watchAuction(watch.withViewer(hubOnly)))) shouldBe
+        Status.Code.PERMISSION_DENIED
+    }
+
+    "answer an auction the read model does not know with not found" in {
+      val unknown = service(Unreachable, watchViews = _ => Future.successful(None))
+      statusOfNext(watching(unknown.watchAuction(watch))) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "send the state at subscription and then only the states that changed" in {
+      val registry = ChangeRegistry()
+      @volatile var current: Option[AuctionWatchView] = Some(AuctionWatchView(watchedIn(AuctionState.Draft), Nil))
+      val stream = watching(
+        service(Unreachable, watchViews = _ => Future.successful(current), changes = registry).watchAuction(watch)
+      )
+      stream.pull().futureValue.map(_.getAuction.status.isDraft) shouldBe Some(true)
+
+      // Повод без изменения сообщения не даёт: следующее сообщение — уже новое состояние, а не повтор черновика.
+      registry.changed(watchedAuction)
+      current = Some(AuctionWatchView(watchedIn(AuctionState.Scheduled(AuctionFixtures.config())), Nil))
+      registry.changed(watchedAuction)
+      stream.pull().futureValue.map(_.getAuction.status.isScheduled) shouldBe Some(true)
+
+      // Аукцион, удалённый посреди потока, заканчивает поток тем же статусом, что неизвестный.
+      current = None
+      registry.changed(watchedAuction)
+      statusOfNext(stream) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "close the stream after the message with the finished auction" in {
+      val finished =
+        AuctionWatchView(watchedIn(AuctionState.Finished(AuctionFixtures.config(), LotFixtures.op(9))), Nil)
+      val stream =
+        watching(service(Unreachable, watchViews = _ => Future.successful(Some(finished))).watchAuction(watch))
+      stream.pull().futureValue.map(_.getAuction.status.isFinished) shouldBe Some(true)
+      stream.pull().futureValue shouldBe None
+    }
+
+    "carry the lineup in its order and the active lot without anyone's proxy limit" in {
+      val first = LotId(UUID.fromString("01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e01"))
+      val second = LotId(UUID.fromString("01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e02"))
+      val watcher = ParticipantId(UUID.fromString(identity))
+      val live = trading(price = 700, phase = Phase.Live, closesAt = None, limits = Map(watcher -> limit(900, 3)))
+      val state = AuctionState.Final(AuctionFixtures.config(), LotFixtures.op(9), List(second, first), List(second))
+      val view = AuctionWatchView(
+        watchedIn(state, Set(first, second)),
+        List(
+          LotSnapshotView(second.value, watchedAuction, 7, live, None, bidCount = 5),
+          LotSnapshotView(first.value, watchedAuction, 4, held(price = 300, leader = participant(2)), None)
+        )
+      )
+      val message = watching(service(Unreachable, watchViews = _ => Future.successful(Some(view))).watchAuction(watch))
+        .pull()
+        .futureValue
+        .getOrElse(fail("the stream sent nothing"))
+      message.getAuction.status.isInFinal shouldBe true
+      message.lineup.map(_.id) shouldBe Seq(second.value.toString, first.value.toString)
+      message.getActiveLot.id shouldBe second.value.toString
+      message.getActiveLot.getTrading.getCurrentPrice.minorUnits shouldBe 700
+      message.getActiveLot.viewerProxyLimit shouldBe None
+      message.lineup.flatMap(_.viewerProxyLimit) shouldBe empty
     }
   }
 
