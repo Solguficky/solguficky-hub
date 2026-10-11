@@ -11,15 +11,14 @@ import {
   type TelegramUser,
   type Viewer,
 } from "../../auction-ui/index.js";
+import {
+  type OutbidFrequency,
+  outbidToast,
+} from "../../core/notifications/outbid.js";
 import { type AuctionListing, listPage, readAuctions } from "./auctions.js";
 import type { EntryPorts } from "./entry-ports.js";
-import {
-  type AuctionEntryScreen,
-  outbidToast,
-  type UnavailableExit,
-} from "./entry-screen.js";
+import type { AuctionEntryScreen, UnavailableExit } from "./entry-screen.js";
 import { type ListAction, parseEntryCallback, startCallback } from "./faq.js";
-import type { OutbidFrequency } from "./outbid.js";
 
 // Отказ зависимости для записи в лог: класс по словарю logging.md и код gRPC.
 // Человеку ни то ни другое не показывается.

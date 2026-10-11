@@ -19,10 +19,9 @@ public static class MethodAccess
 
     private static readonly IReadOnlySet<Caller> Bot = new HashSet<Caller> { Caller.HubBot };
 
-    // Избранное — у обоих ботов (PER-495): участник торгует в боте хаба, гость
-    // — в боте аукциона, а отметка у человека одна.
-    private static readonly IReadOnlySet<Caller> AuctionBot = new HashSet<Caller> { Caller.AuctionBot };
-
+    // Избранное (PER-495), пояснение автоставки (PER-517) и частота перебитий
+    // (PER-552) — у обоих ботов: участник торгует в боте хаба, гость — в боте
+    // аукциона, а отметка и настройка у человека одни.
     private static readonly IReadOnlySet<Caller> BothBots = new HashSet<Caller> { Caller.HubBot, Caller.AuctionBot };
 
     public static readonly IReadOnlyDictionary<string, IReadOnlySet<Caller>> ByMethod =
@@ -34,8 +33,8 @@ public static class MethodAccess
             ["SetMeetupCategoryPreference"] = Bot,
             ["GetGlobalNotificationPreferences"] = Bot,
             ["GetMeetupNotificationPreferences"] = Bot,
-            ["GetOutbidPreference"] = AuctionBot,
-            ["SetOutbidPreference"] = AuctionBot,
+            ["GetOutbidPreference"] = BothBots,
+            ["SetOutbidPreference"] = BothBots,
             ["BroadcastToMeetupSubscribers"] = Bot,
             ["BroadcastToCommunity"] = Bot,
             ["FollowLot"] = BothBots,

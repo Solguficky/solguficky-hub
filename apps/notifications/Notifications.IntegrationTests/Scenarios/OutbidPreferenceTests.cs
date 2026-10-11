@@ -9,7 +9,8 @@ namespace Notifications.IntegrationTests.Scenarios;
 
 /// <summary>
 /// Чтение и запись настройки перебитий через настоящую границу сервиса
-/// (PER-514). Вызывающий — бот аукциона: экран настройки живёт в нём (PER-515).
+/// (PER-514). Вызывающие — оба бота: экран настройки есть у бота аукциона
+/// (PER-515) и у бота хаба (PER-552).
 /// </summary>
 public class OutbidPreferenceTests
 {
@@ -64,24 +65,33 @@ public class OutbidPreferenceTests
             .Frequency.ShouldBe(OutbidFrequency.Every);
     }
 
-    /// <summary>Бот хаба экрана настройки не держит, и метод ему закрыт (ADR-056).</summary>
+    /// <summary>
+    /// Настройка у человека одна (PER-552): гость выбрал «не присылать» в боте
+    /// аукциона, получил право хаба — и бот хаба читает тот же выбор и меняет его.
+    /// </summary>
     [Fact]
-    public async Task When_HubBotSetsFrequency_Expect_UnauthenticatedAndNothingStored()
+    public async Task When_GuestChoseInAuctionBot_Expect_HubBotReadsAndChangesIt()
     {
         await using var service = await PreferencesUnderTest.Start();
+        var auctionBot = service.ClientPresenting(SiloUnderTest.AuctionBotToken);
         var identityId = Guid.CreateVersion7().ToString("D");
+        await auctionBot.SetOutbidPreferenceAsync(new SetOutbidPreferenceRequest
+        {
+            IdentityId = identityId,
+            Frequency = OutbidFrequency.Off,
+        });
 
-        var declined = await Should.ThrowAsync<RpcException>(async () =>
-            await service.Client.SetOutbidPreferenceAsync(new SetOutbidPreferenceRequest
-            {
-                IdentityId = identityId,
-                Frequency = OutbidFrequency.Off,
-            }));
+        var seen = await service.Client.GetOutbidPreferenceAsync(new GetOutbidPreferenceRequest { IdentityId = identityId });
+        var changed = await service.Client.SetOutbidPreferenceAsync(new SetOutbidPreferenceRequest
+        {
+            IdentityId = identityId,
+            Frequency = OutbidFrequency.AtMostEvery15Minutes,
+        });
 
-        declined.StatusCode.ShouldBe(StatusCode.Unauthenticated);
-        (await service.ClientPresenting(SiloUnderTest.AuctionBotToken)
-                .GetOutbidPreferenceAsync(new GetOutbidPreferenceRequest { IdentityId = identityId }))
-            .Frequency.ShouldBe(OutbidFrequency.Every);
+        seen.Frequency.ShouldBe(OutbidFrequency.Off);
+        changed.Frequency.ShouldBe(OutbidFrequency.AtMostEvery15Minutes);
+        (await auctionBot.GetOutbidPreferenceAsync(new GetOutbidPreferenceRequest { IdentityId = identityId }))
+            .Frequency.ShouldBe(OutbidFrequency.AtMostEvery15Minutes);
     }
 
     /// <summary>

@@ -67,6 +67,20 @@ export function createNotificationSettings(
         }
       : rejection(result);
 
+  const outbidFrame = (
+    result: Awaited<ReturnType<Notifications["getOutbidFrequency"]>>,
+  ): ExecuteResult =>
+    result.kind === "ok"
+      ? { kind: "outbid-frequency", frequency: result.frequency }
+      : result.kind === "unknown"
+        ? // Ответ вне контракта — дефект соседа, а не его недоступность: граница
+          // пишет его ошибкой с причиной, человеку уходит кадр сбоя.
+          {
+            kind: "rejected",
+            reason: `notifications answered an unknown outbid frequency ${result.value}`,
+          }
+        : rejection(result);
+
   return async (request) => {
     const meta = rpcMeta(request);
     const identityId = request.identity.identityId;
@@ -81,6 +95,20 @@ export function createNotificationSettings(
             identityId,
             request.category,
             request.enabled,
+            meta,
+          ),
+        );
+      // Экран и подтверждение показывают то, что ответил Notifications, а не
+      // то, что нажато: выбор уходит целевым значением.
+      case "view-outbid-frequency":
+        return outbidFrame(
+          await notifications.getOutbidFrequency(identityId, meta),
+        );
+      case "set-outbid-frequency":
+        return outbidFrame(
+          await notifications.setOutbidFrequency(
+            identityId,
+            request.frequency,
             meta,
           ),
         );

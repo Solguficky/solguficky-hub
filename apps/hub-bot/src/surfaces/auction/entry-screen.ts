@@ -24,6 +24,12 @@ import {
   type Money,
 } from "../../auction-ui/index.js";
 import type { Presentation } from "../../core/config.js";
+import {
+  OUTBID_FREQUENCIES,
+  type OutbidFrequency,
+  outbidExplanation,
+  outbidLabels,
+} from "../../core/notifications/outbid.js";
 import { confirmNoLabel, confirmYesLabel } from "../../core/pictograms.js";
 import type {
   AuctionListPage,
@@ -38,11 +44,6 @@ import {
   listCallback,
   notifyCallback,
 } from "./faq.js";
-import {
-  OUTBID_FREQUENCIES,
-  type OutbidFrequency,
-  outbidLabels,
-} from "./outbid.js";
 import type { ScreenId } from "./screen-catalog.js";
 
 // Оболочка бота аукциона (ADR-044, «Один аукцион, две оболочки»). Экран здесь
@@ -160,11 +161,6 @@ const toAuctions = {
   callback_data: entryCallback("auctions"),
 };
 const notifyTitle = "Уведомления";
-
-/** Подтверждение выбора всплывающим текстом: что теперь будет приходить. */
-export function outbidToast(current: OutbidFrequency): string {
-  return `Теперь: ${outbidLabels[current].state}.`;
-}
 const favoritesTitle = "Избранное";
 const linkSign = " ↗";
 
@@ -248,7 +244,7 @@ export function renderEntryScreen(
         format: "html",
         text: screenText(
           notifyTitle,
-          "Как часто писать, что твою ставку перебили. О покупке лота и ответе автоставки пишу всегда.",
+          outbidExplanation,
           `Сейчас: ${outbidLabels[screen.current].state}.`,
         ),
         keyboard: OUTBID_FREQUENCIES.map((frequency) => [

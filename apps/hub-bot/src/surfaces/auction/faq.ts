@@ -1,4 +1,7 @@
-import { OUTBID_FREQUENCIES, type OutbidFrequency } from "./outbid.js";
+import {
+  OUTBID_FREQUENCIES,
+  type OutbidFrequency,
+} from "../../core/notifications/outbid.js";
 
 export type { FaqConfigResult, FaqContent } from "../../auction-faq.js";
 export { defaultFaq, readFaqContent } from "../../auction-faq.js";

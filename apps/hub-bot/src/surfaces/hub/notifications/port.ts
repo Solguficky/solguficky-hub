@@ -1,3 +1,4 @@
+import type { OutbidFrequency } from "../../../core/notifications/outbid.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 
 // Категории, которые сходка может нести. Отдельный тип, а не фильтр по списку:
@@ -45,6 +46,15 @@ export type GlobalPreferencesResult =
 
 export type MeetupPreferencesResult =
   | { kind: "ok"; preferences: MeetupPreferences }
+  | NotificationFailure;
+
+// Частота «перебили» (PER-552) лежит на личности, как у бота аукциона:
+// настройка у человека одна, в каком бы боте он её ни менял.
+// `unknown` — значение вне словаря бота (`UNSPECIFIED` или режим новее
+// бота): ответ вне контракта, а не недоступность сервиса.
+export type OutbidFrequencyResult =
+  | { kind: "ok"; frequency: OutbidFrequency }
+  | { kind: "unknown"; value: number }
   | NotificationFailure;
 
 // Приём, а не доставка: `BroadcastAccepted` не несёт ни числа получателей, ни
@@ -95,6 +105,15 @@ export type Notifications = {
     enabled: boolean,
     meta?: RpcMetadata,
   ): Promise<MeetupPreferencesResult>;
+  getOutbidFrequency(
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<OutbidFrequencyResult>;
+  setOutbidFrequency(
+    identityId: string,
+    frequency: OutbidFrequency,
+    meta?: RpcMetadata,
+  ): Promise<OutbidFrequencyResult>;
   broadcastToMeetupSubscribers(
     broadcast: Broadcast & { meetupId: string },
     meta?: RpcMetadata,

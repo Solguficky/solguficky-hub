@@ -1,6 +1,9 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
-import { NotificationCategory as WireCategory } from "../../../../gen/notifications/v1/notifications_service_pb.js";
+import {
+  NotificationCategory as WireCategory,
+  OutbidFrequency as WireOutbidFrequency,
+} from "../../../../gen/notifications/v1/notifications_service_pb.js";
 import { createNotificationsAdapter } from "./client.js";
 
 type Rpc = Parameters<typeof createNotificationsAdapter>[0];
@@ -233,5 +236,52 @@ describe("notifications client", () => {
     });
 
     expect(result.kind).toBe(kind);
+  });
+});
+
+describe("outbid frequency", () => {
+  it("sends the chosen mode and answers with the stored one", async () => {
+    const setOutbidPreference = vi.fn().mockResolvedValue({
+      frequency: WireOutbidFrequency.AT_MOST_EVERY_60_MINUTES,
+    });
+    const notifications = adapter({ setOutbidPreference });
+
+    const result = await notifications.setOutbidFrequency("identity-id", "60");
+
+    expect(setOutbidPreference).toHaveBeenCalledWith(
+      {
+        identityId: "identity-id",
+        frequency: WireOutbidFrequency.AT_MOST_EVERY_60_MINUTES,
+      },
+      expect.anything(),
+    );
+    expect(result).toEqual({ kind: "ok", frequency: "60" });
+  });
+
+  // Умолчание `EVERY` отдаёт сервер, и бот его не додумывает: незнакомое
+  // значение — ответ вне контракта, а не недоступность.
+  it("reports a mode outside the dictionary as unknown", async () => {
+    const notifications = adapter({
+      getOutbidPreference: vi
+        .fn()
+        .mockResolvedValue({ frequency: WireOutbidFrequency.UNSPECIFIED }),
+    });
+
+    expect(await notifications.getOutbidFrequency("identity-id")).toEqual({
+      kind: "unknown",
+      value: WireOutbidFrequency.UNSPECIFIED,
+    });
+  });
+
+  it("reports an unreachable Notifications as unavailable", async () => {
+    const notifications = adapter({
+      getOutbidPreference: vi
+        .fn()
+        .mockRejectedValue(new ConnectError("down", Code.Unavailable)),
+    });
+
+    expect(await notifications.getOutbidFrequency("identity-id")).toMatchObject(
+      { kind: "unavailable" },
+    );
   });
 });

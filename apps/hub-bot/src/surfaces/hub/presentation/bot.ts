@@ -32,6 +32,7 @@ import {
 import { countFailure, type FailureCategory } from "../../../core/failures.js";
 import type { LogFields, Logger } from "../../../core/logging.js";
 import { registerChatCommands } from "../../../core/menu-commands.js";
+import { outbidToast } from "../../../core/notifications/outbid.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type { Tracing } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
@@ -249,6 +250,7 @@ import {
   categoryLabels,
   globalNotificationsScreen,
   meetupNotificationsScreen,
+  outbidFrequencyScreen,
   toggleToast,
 } from "./screens/notifications.js";
 import { reconsiderConfirmScreen, refusedScreen } from "./screens/refused.js";
@@ -3319,11 +3321,61 @@ async function handleCallback(
         result,
         "v1:notify:global",
         categoryForbiddenText(action.category),
+        runtime.auction !== undefined,
       );
       outcome = screenBoundary(result, {
         ok: ["global-notification-settings"],
         okMessage: "global notification settings sent",
         rejectedMessage: "global notification settings rejected",
+        useCase,
+      });
+      return;
+    }
+    // Частота «перебили» (PER-552). Выбор — целевое значение, и экран с
+    // подтверждением показывают то, что ответил Notifications. Подтверждение
+    // уходит до показа экрана: показ ответил бы на нажатие сам. «Реже» под
+    // перебитием открывает тот же экран новым сообщением (`v1:t:`), а повтор
+    // после сбоя — уже на месте, без следа.
+    if (
+      action.kind === "notify-outbid" ||
+      action.kind === "notify-set-outbid"
+    ) {
+      const result = await runtime.dispatcher.execute(
+        action.kind === "notify-outbid"
+          ? {
+              identity: person,
+              intent: "view-outbid-frequency",
+              ...rpcCall(ctx, useCase),
+            }
+          : {
+              identity: person,
+              intent: "set-outbid-frequency",
+              frequency: action.frequency,
+              ...rpcCall(ctx, useCase),
+            },
+      );
+      if (result.kind === "outbid-frequency") {
+        if (action.kind === "notify-set-outbid") {
+          await waiting.answer(outbidToast(result.frequency));
+        }
+        await showScreen(ctx, outbidFrequencyScreen(result.frequency));
+      } else {
+        // Отвергнутый выбор не повторяется: экран устарел, и повтор
+        // перечитывает его, а не шлёт тот же режим.
+        const stale =
+          result.kind === "dependency-rejected" && result.reason === "invalid";
+        await renderNotificationFailure(
+          ctx,
+          result,
+          action.kind === "notify-outbid" || stale
+            ? "v1:notify:outbid"
+            : `v1:notify:outbid:${action.frequency}`,
+        );
+      }
+      outcome = screenBoundary(result, {
+        ok: ["outbid-frequency"],
+        okMessage: "outbid frequency sent",
+        rejectedMessage: "outbid frequency rejected",
         useCase,
       });
       return;
@@ -4583,7 +4635,13 @@ async function openNavScreen(
         intent: "view-global-notifications",
         ...rpcCall(ctx, useCase),
       });
-      await renderNotificationSettings(ctx, result, "v1:notify:global");
+      await renderNotificationSettings(
+        ctx,
+        result,
+        "v1:notify:global",
+        forbiddenText,
+        runtime.auction !== undefined,
+      );
       return screenBoundary(result, {
         ok: ["global-notification-settings"],
         okMessage: "global notification settings sent",
@@ -6365,9 +6423,10 @@ async function renderNotificationSettings(
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   retry: string,
   forbidden: string = forbiddenText,
+  outbid = false,
 ): Promise<void> {
   if (result.kind === "global-notification-settings") {
-    await showScreen(ctx, globalNotificationsScreen(result.categories));
+    await showScreen(ctx, globalNotificationsScreen(result.categories, outbid));
     return;
   }
   if (result.kind === "meetup-notification-settings") {
@@ -7602,6 +7661,8 @@ function callbackUseCase(
     | "manage-confirm-cancel"
     | "notify-global"
     | "notify-set-global"
+    | "notify-outbid"
+    | "notify-set-outbid"
     | "notify-disable-global"
     | "notify-disable-meetup"
     | "notify-settings"
@@ -7701,6 +7762,8 @@ function callbackUseCase(
     case "settings":
     case "notify-global":
     case "notify-set-global":
+    case "notify-outbid":
+    case "notify-set-outbid":
     case "notify-disable-global":
     case "notify-disable-meetup":
     case "notify-settings":

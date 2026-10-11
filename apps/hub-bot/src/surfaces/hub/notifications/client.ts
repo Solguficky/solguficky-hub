@@ -7,12 +7,17 @@ import {
 import {
   NotificationsService,
   NotificationCategory as WireCategory,
+  type OutbidFrequency as WireOutbidFrequency,
 } from "../../../../gen/notifications/v1/notifications_service_pb.js";
 import type {
   FavoritesPort,
   ProxyExplainerPort,
 } from "../../../auction-ui/index.js";
 import { createFavoritesPort } from "../../../core/notifications/favorites.js";
+import {
+  outbidFrequencyOf,
+  outbidFrequencyToWire,
+} from "../../../core/notifications/outbid.js";
 import { createProxyExplainerPort } from "../../../core/notifications/proxy-explainer.js";
 import {
   callHeaders,
@@ -32,6 +37,7 @@ import type {
   NotificationCategory,
   NotificationFailure,
   Notifications,
+  OutbidFrequencyResult,
 } from "./port.js";
 
 type NotificationsRpc = Pick<
@@ -42,6 +48,8 @@ type NotificationsRpc = Pick<
   | "setMeetupCategoryPreference"
   | "getGlobalNotificationPreferences"
   | "getMeetupNotificationPreferences"
+  | "getOutbidPreference"
+  | "setOutbidPreference"
   | "broadcastToMeetupSubscribers"
   | "broadcastToCommunity"
 >;
@@ -145,7 +153,31 @@ export function createNotificationsAdapter(
       return toFailure(cause);
     }
   };
+  // Значение вне словаря — `UNSPECIFIED` или число новее бота — ответ вне
+  // контракта: сервер отдаёт умолчание `EVERY` сам, и бот его не додумывает.
+  const outbid = async (
+    operation: () => Promise<{ frequency: WireOutbidFrequency }>,
+  ): Promise<OutbidFrequencyResult> => {
+    try {
+      const response = await operation();
+      const frequency = outbidFrequencyOf(response.frequency);
+      return frequency === undefined
+        ? { kind: "unknown", value: response.frequency }
+        : { kind: "ok", frequency };
+    } catch (cause) {
+      return toFailure(cause);
+    }
+  };
   return {
+    getOutbidFrequency: (identityId, meta) =>
+      outbid(() => rpc.getOutbidPreference({ identityId }, options(meta))),
+    setOutbidFrequency: (identityId, frequency, meta) =>
+      outbid(() =>
+        rpc.setOutbidPreference(
+          { identityId, frequency: outbidFrequencyToWire(frequency) },
+          options(meta),
+        ),
+      ),
     broadcastToMeetupSubscribers: (
       { identityId, meetupId, broadcastId, body },
       meta,

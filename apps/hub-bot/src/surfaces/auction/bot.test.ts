@@ -15,6 +15,10 @@ import {
   type RaffleView,
 } from "../../auction-ui/index.js";
 import { createLogger, type Logger } from "../../core/logging.js";
+import type {
+  OutbidFrequency,
+  OutbidPreferencePort,
+} from "../../core/notifications/outbid.js";
 import { noopTracing } from "../../core/tracing.js";
 import type { AuctionListing, AuctionSummary } from "./auctions.js";
 import { createBot } from "./bot.js";
@@ -28,7 +32,6 @@ import { traceLotCallback, traceNotifyCallback } from "./delivery/message.js";
 import { deniedTexts } from "./entry-screen.js";
 import { entryCallback, notifyCallback, startCallback } from "./faq.js";
 import { commandsFor } from "./menu-commands.js";
-import type { OutbidFrequency, OutbidPreferencePort } from "./outbid.js";
 import { createPhotoCache, type PhotoCache } from "./photo-cache.js";
 import {
   actionBudgetMs,

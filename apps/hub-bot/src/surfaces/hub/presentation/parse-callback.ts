@@ -1,5 +1,9 @@
 import { z } from "zod";
 import type { ApplicationQueue } from "../../../auction-ui/index.js";
+import {
+  OUTBID_FREQUENCIES,
+  type OutbidFrequency,
+} from "../../../core/notifications/outbid.js";
 import type {
   CloseQuote,
   ConsoleSort,
@@ -38,6 +42,7 @@ const NotifiedMeetupCategorySchema = z.enum([
 export type NotifiedMeetupCategory = z.infer<
   typeof NotifiedMeetupCategorySchema
 >;
+const OutbidFrequencySchema = z.enum(OUTBID_FREQUENCIES);
 const GlobalCategorySchema = z.enum([
   "published",
   "changes",
@@ -350,6 +355,9 @@ type PlainAction =
   // возвращает к ней; у объявления сообществу токена нет.
   | { kind: "cancel-broadcast"; token?: string }
   | { kind: "notify-global" }
+  // Частота «перебили» (PER-552): экран и выбор режима целевым значением.
+  | { kind: "notify-outbid" }
+  | { kind: "notify-set-outbid"; frequency: OutbidFrequency }
   | {
       kind: "notify-set-global";
       category: NotificationCategory;
@@ -1437,6 +1445,15 @@ function parseBroadcast(parts: readonly string[]): CallbackAction {
 }
 
 function parseNotify(parts: readonly string[]): CallbackAction {
+  if (parts.length === 3 && parts[2] === "outbid") {
+    return { kind: "notify-outbid" };
+  }
+  if (parts.length === 4 && parts[2] === "outbid") {
+    const frequency = OutbidFrequencySchema.safeParse(parts[3]);
+    return frequency.success
+      ? { kind: "notify-set-outbid", frequency: frequency.data }
+      : { kind: "malformed" };
+  }
   if (parts.length === 5 && parts[2] === "gset") {
     const category = GlobalCategorySchema.safeParse(parts[3]);
     const state = TargetStateSchema.safeParse(parts[4]);

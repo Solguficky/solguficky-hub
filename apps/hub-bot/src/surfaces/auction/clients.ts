@@ -13,10 +13,7 @@ import {
   IdentityService,
   AccessRequestOutcome as WireOutcome,
 } from "../../../gen/identity/v1/identity_service_pb.js";
-import {
-  NotificationsService,
-  OutbidFrequency as WireFrequency,
-} from "../../../gen/notifications/v1/notifications_service_pb.js";
+import { NotificationsService } from "../../../gen/notifications/v1/notifications_service_pb.js";
 import type {
   AccessRequest,
   AccessRequestAnswer,
@@ -51,6 +48,10 @@ import {
   type FavoritesRpc,
 } from "../../core/notifications/favorites.js";
 import {
+  createOutbidPreferencePort,
+  type OutbidPreferenceRpc,
+} from "../../core/notifications/outbid.js";
+import {
   createProxyExplainerPort,
   type ProxyExplainerRpc,
 } from "../../core/notifications/proxy-explainer.js";
@@ -63,7 +64,6 @@ import { type Tracing, traceRpc } from "../../core/tracing.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
 import type { NotificationReads } from "./delivery/message.js";
 import type { EntryPorts } from "./entry-ports.js";
-import type { OutbidFrequency, OutbidPreferencePort } from "./outbid.js";
 import { auctionSummaryOf } from "./snapshot.js";
 
 export const rpcTimeoutMs = 3_000;
@@ -101,10 +101,7 @@ export type AuctionRpc = Pick<
 >;
 // Notifications боту аукциона нужен ради настройки «перебили» (PER-515),
 // избранного (PER-495) и пояснения автоставки (PER-517).
-export type NotificationsRpc = Pick<
-  Client<typeof NotificationsService>,
-  "getOutbidPreference" | "setOutbidPreference"
-> &
+export type NotificationsRpc = OutbidPreferenceRpc &
   FavoritesRpc &
   ProxyExplainerRpc;
 
@@ -438,50 +435,12 @@ export function createPorts(
       ...(notifications === undefined
         ? {}
         : {
-            outbid: outbidPort(notifications, () => callOptions(timeoutMs)),
+            outbid: createOutbidPreferencePort(notifications, () =>
+              callOptions(timeoutMs),
+            ),
           }),
     };
   };
-}
-
-// Настройка лежит на личности, а не на смотрящем: права в Notifications не
-// уезжают (notifications.v1 — «Platform roles are deliberately absent»).
-function outbidPort(
-  rpc: NotificationsRpc,
-  options: () => CallOptions,
-): OutbidPreferencePort {
-  return {
-    async get(viewer) {
-      const response = await rpc.getOutbidPreference(
-        { identityId: viewer.identityId },
-        options(),
-      );
-      return frequencyOf(response.frequency);
-    },
-    async set(viewer, frequency) {
-      const response = await rpc.setOutbidPreference(
-        { identityId: viewer.identityId, frequency: wireFrequency[frequency] },
-        options(),
-      );
-      return frequencyOf(response.frequency);
-    },
-  };
-}
-
-const wireFrequency: Record<OutbidFrequency, WireFrequency> = {
-  every: WireFrequency.EVERY,
-  "5": WireFrequency.AT_MOST_EVERY_5_MINUTES,
-  "15": WireFrequency.AT_MOST_EVERY_15_MINUTES,
-  "60": WireFrequency.AT_MOST_EVERY_60_MINUTES,
-  off: WireFrequency.OFF,
-};
-
-// `UNSPECIFIED` и число, которого словарь ещё не знает, — ответ вне контракта:
-// сервер отдаёт умолчание `EVERY` сам, и бот его не додумывает.
-function frequencyOf(wire: WireFrequency): OutbidFrequency | undefined {
-  return (Object.keys(wireFrequency) as OutbidFrequency[]).find(
-    (frequency) => wireFrequency[frequency] === wire,
-  );
 }
 
 // Канал доставки (PER-328): получатель уведомления, его право `auction` и
