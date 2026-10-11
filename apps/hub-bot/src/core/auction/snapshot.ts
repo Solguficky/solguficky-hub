@@ -1,3 +1,4 @@
+import { Code, ConnectError } from "@connectrpc/connect";
 import {
   LotPhase,
   type Money as WireMoney,
@@ -20,6 +21,21 @@ import type {
 // схема не выражает: `status` выставлен всегда, а сумма помещается в
 // безопасное целое. Нарушение — дефект соседа: перевод бросает, и человек
 // видит «недоступно», а не карточку с нулём вместо цены.
+// `FindLot` порта дерева: NOT_FOUND у `GetLot` — «лота нет или он не виден»,
+// ответ, а не сбой. Прочие отказы бросаются как есть.
+export async function lotOrMissing(
+  read: () => Promise<LotSnapshot>,
+): Promise<LotView | undefined> {
+  try {
+    return lotViewOf(await read());
+  } catch (cause) {
+    if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+      return undefined;
+    }
+    throw cause;
+  }
+}
+
 export function lotViewOf(snapshot: LotSnapshot): LotView {
   const step = snapshot.config?.stepPolicy?.policy;
   return {

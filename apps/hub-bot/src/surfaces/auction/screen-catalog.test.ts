@@ -107,6 +107,92 @@ const lot = (image: boolean): AuctionScreenBody => ({
   ],
 });
 
+// Карточка с кнопкой избранного (PER-495): полный лист ставки, «Обновить»,
+// «Ставки», избранное и навигация — семь рядов, предел карточки.
+const withFollow = (following: boolean): AuctionScreenBody => {
+  const body = lot(false);
+  const back = body.keyboard.at(-1) ?? [];
+  return {
+    blocks: body.blocks.map((block) =>
+      block.kind === "lot" ? { ...block, following } : block,
+    ),
+    keyboard: [
+      ...body.keyboard.slice(0, -1),
+      [
+        following
+          ? { action: "lot.unfollow", callbackData: "v1:auc:uf:lot-1:1" }
+          : { action: "lot.follow", callbackData: "v1:auc:fo:lot-1:1" },
+      ],
+      back,
+    ],
+  };
+};
+
+// Избранное: средняя страница с листанием — лот в торгах с дедлайном и
+// проданный с итогом, — и пустой список.
+const favorites = (filled: boolean): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "favorites",
+      page: filled ? 1 : 0,
+      pageCount: filled ? 3 : 1,
+      lots: filled
+        ? [
+            {
+              lotId: "lot-1",
+              title: "Банка <солёных> грибов",
+              status: {
+                kind: "trading",
+                currentPrice: rub(500),
+                phase: "online",
+                deadline: "2026-10-12T16:00:00Z",
+              },
+            },
+            {
+              lotId: "lot-2",
+              title: "Кружка",
+              status: { kind: "sold", winnerId: "w-1", price: rub(3000) },
+            },
+          ]
+        : [],
+    },
+  ],
+  keyboard: filled
+    ? [
+        [
+          {
+            action: "favorites.open-lot",
+            lotId: "lot-1",
+            callbackData: "v1:auc:lot:lot-1:0",
+          },
+        ],
+        [
+          {
+            action: "favorites.open-lot",
+            lotId: "lot-2",
+            callbackData: "v1:auc:lot:lot-2:0",
+          },
+        ],
+        [
+          { action: "favorites.prev", callbackData: "v1:auc:fav:0" },
+          { action: "favorites.next", callbackData: "v1:auc:fav:2" },
+        ],
+      ]
+    : [],
+});
+
+const followRefused: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "follow-refused",
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      title: "Кружка <с совой>",
+    },
+  ],
+  keyboard: [[{ action: "result.lot", callbackData: "v1:auc:lot:lot-1:1" }]],
+};
+
 // Хронология с обеими кнопками листания и пустая — первая и единственная
 // страница. Возврат тела оболочка ставит в один ряд с «Меню».
 const history = (entries: boolean): AuctionScreenBody => ({
@@ -326,6 +412,8 @@ const shown: readonly {
   { screen: { kind: "notify", current: "every" } },
   { screen: { kind: "notify", current: "15" } },
   { screen: { kind: "notify", current: "off" } },
+  { screen: { kind: "menu", favorites: true } },
+  { screen: { kind: "menu", favorites: true, notify: true } },
   { screen: { kind: "faq" } },
   { screen: { kind: "faq" }, faq: urls },
   { screen: { kind: "details" } },
@@ -340,6 +428,11 @@ const shown: readonly {
   { screen: { kind: "auction", body: lot(false) } },
   { screen: { kind: "auction", body: lot(true) } },
   { screen: { kind: "auction", body: lot(true) }, presentation: "plain" },
+  { screen: { kind: "auction", body: withFollow(false) } },
+  { screen: { kind: "auction", body: withFollow(true) } },
+  { screen: { kind: "auction", body: favorites(true) } },
+  { screen: { kind: "auction", body: favorites(false) } },
+  { screen: { kind: "auction", body: followRefused } },
   { screen: { kind: "auction", body: soldLot } },
   { screen: { kind: "auction", body: soldLot }, presentation: "plain" },
   { screen: { kind: "auction", body: history(true) } },

@@ -1,13 +1,14 @@
 import { InlineKeyboard } from "grammy";
-import type {
-  AuctionBlock,
-  AuctionButton,
-  AuctionScreenBody,
-  BidOriginView,
-  FeedItem,
-  HistoryItem,
-  LotStatusView,
-  Money,
+import {
+  type AuctionBlock,
+  type AuctionButton,
+  type AuctionScreenBody,
+  type BidOriginView,
+  encodeAuctionCallback,
+  type FeedItem,
+  type HistoryItem,
+  type LotStatusView,
+  type Money,
 } from "../../../../auction-ui/index.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
@@ -23,6 +24,7 @@ import {
   answerRefusedScreen,
   commandResultScreen,
   confirmScreen,
+  followRefusedScreen,
   nameChoiceScreen,
   oneLine,
   questionScreen,
@@ -71,6 +73,11 @@ export type AuctionView = {
    * после вопроса.
    */
   canAddLots?: boolean;
+  /**
+   * У процесса есть клиент избранного Notifications (PER-495): в корне ленты
+   * стоит «Избранное». Кнопку избранного на карточке ставит тело дерева.
+   */
+  favorites?: boolean;
 };
 
 // Входы в форму лота — ряды оболочки хаба, а не тела: у бота аукциона формы
@@ -79,6 +86,7 @@ const addLotLabel = "Добавить лот";
 const editLotLabel = "Изменить лот";
 // Пульт аукциона (PER-320) — тоже ряд оболочки хаба под «Добавить лот».
 const consoleLabel = "Пульт";
+const favoritesLabel = "Избранное";
 
 /**
  * Изображение карточки лота: байты и `file_id` достаёт адаптер, экрану хватает
@@ -127,6 +135,8 @@ export function auctionScreen(view: AuctionView): AuctionShown {
         return {
           screen: answerRefusedScreen(block, view.body.keyboard, money),
         };
+      case "follow-refused":
+        return { screen: followRefusedScreen(block, view.body.keyboard) };
       default:
         break;
     }
@@ -141,6 +151,13 @@ export function auctionScreen(view: AuctionView): AuctionShown {
       block.kind === "history",
   );
   if (history !== undefined) return { screen: historyScreen(view, history) };
+  const favorites = view.body.blocks.find(
+    (block): block is Extract<AuctionBlock, { kind: "favorites" }> =>
+      block.kind === "favorites",
+  );
+  if (favorites !== undefined) {
+    return { screen: favoritesScreen(view, favorites) };
+  }
   const feed = view.body.blocks.find(
     (block): block is Extract<AuctionBlock, { kind: "feed" }> =>
       block.kind === "feed",
@@ -161,22 +178,30 @@ function feedScreen(
     feed.lots.map((item) => [item.lotId, item]),
   );
   const keyboard = new InlineKeyboard();
-  // Действие экрана стоит первым рядом, над лотами и листанием. После старта
-  // онлайн-недели добавлять лот нельзя, и ряда нет; «Пульт» остаётся.
+  // Действия экрана стоят первыми рядами, над лотами и листанием. После
+  // старта онлайн-недели добавлять лот нельзя, и «Добавить лот» нет; «Пульт»
+  // остаётся. Короткие действия идут разрешёнными парами: так полная
+  // страница из восьми лотов держит предел рядов.
   const auction = uuidToToken(feed.auctionId);
-  if (view.canManage === true && view.canAddLots !== false) {
-    keyboard.text(addLotLabel, lotNewData(auction)).row();
-  }
   if (view.canManage === true) {
-    // У администратора объединяем два коротких действия в разрешённую пару:
-    // это сохраняет предел рядов на полной странице из восьми лотов.
-    keyboard
-      .text(consoleLabel, consoleViewData(auction))
-      .text("Правила и FAQ", auctionFaqData(auction))
-      .row();
-  } else {
-    keyboard.text("Правила и FAQ", auctionFaqData(auction)).row();
+    if (view.canAddLots !== false) {
+      keyboard.text(addLotLabel, lotNewData(auction));
+    }
+    keyboard.text(consoleLabel, consoleViewData(auction)).row();
   }
+  // Избранное (PER-495) — свои отмеченные лоты из любых аукционов; возврат
+  // из списка ведёт в эту ленту.
+  if (view.favorites === true) {
+    keyboard.text(
+      favoritesLabel,
+      encodeAuctionCallback({
+        kind: "favorites",
+        page: 0,
+        auctionId: feed.auctionId,
+      }),
+    );
+  }
+  keyboard.text("Правила и FAQ", auctionFaqData(auction)).row();
   for (const row of view.body.keyboard) {
     nextRow(keyboard);
     for (const button of row) {
@@ -237,6 +262,12 @@ function feedLabel(
     case "accepted.lot":
     case "result.lot":
     case "answer.retry":
+    case "lot.follow":
+    case "lot.unfollow":
+    case "favorites.open-lot":
+    case "favorites.prev":
+    case "favorites.next":
+    case "favorites.back":
       throw new Error(`action ${button.action} in a feed body`);
     default: {
       const _exhaustive: never = button;
@@ -349,6 +380,14 @@ function lotLabel(button: AuctionButton): string {
       return "Своя сумма";
     case "lot.proxy":
       return "Автоставка";
+    case "lot.follow":
+      return "В избранное";
+    case "lot.unfollow":
+      return "Убрать";
+    case "favorites.open-lot":
+    case "favorites.prev":
+    case "favorites.next":
+    case "favorites.back":
     case "feed.open-lot":
     case "feed.prev":
     case "feed.next":
@@ -370,6 +409,83 @@ function lotLabel(button: AuctionButton): string {
       const _exhaustive: never = button;
       return _exhaustive;
     }
+  }
+}
+
+// Избранное (PER-495): свои отмеченные лоты по порядку отметки — строка в
+// теле и кнопка на лот, листание и возврат тела в ленту, из корня которой
+// список открыт; в один ряд с «Меню» его ставит оболочка.
+function favoritesScreen(
+  view: AuctionView,
+  favorites: Extract<AuctionBlock, { kind: "favorites" }>,
+): ShownScreen {
+  const items = new Map<string, FeedItem>(
+    favorites.lots.map((item) => [item.lotId, item]),
+  );
+  const keyboard = new InlineKeyboard();
+  let back: Parent | undefined;
+  for (const row of view.body.keyboard) {
+    const content = row.filter((button) => {
+      if (button.action !== "favorites.back") return true;
+      back = { name: "Лоты", data: button.callbackData };
+      return false;
+    });
+    if (content.length === 0) continue;
+    nextRow(keyboard);
+    for (const button of content) {
+      keyboard.text(favoritesLabelOf(button, items), button.callbackData);
+    }
+  }
+  if (back === undefined) {
+    throw new Error("favorites body without a way back to the feed");
+  }
+  return {
+    id: "favorites",
+    text: screenText(
+      pagedTitle(favoritesLabel, { items: favorites.lots, ...favorites }),
+      favorites.lots.length === 0
+        ? "Лотов в избранном пока нет. Отметь лот кнопкой «В избранное» на его карточке."
+        : favorites.lots
+            .map((item) =>
+              bullet(
+                `${escapeHtml(truncate(oneLine(item.title ?? untitled), titleLimit))} — ${favoriteState(item.status, view)}`,
+              ),
+            )
+            .join("\n"),
+    ),
+    keyboard: withNav(keyboard, back),
+    format: "HTML",
+  };
+}
+
+// Цена и до какого момента идут торги: дедлайн есть только у онлайн-торгов.
+// Закрытый лот называет итог.
+function favoriteState(status: LotStatusView, view: AuctionView): string {
+  return status.kind === "trading" && status.deadline !== undefined
+    ? `${priceLabel(status)}, торги до ${readableMoment(
+        communityLocalTime(status.deadline, view.timeZone),
+        view.today,
+      )}`
+    : priceLabel(status);
+}
+
+function favoritesLabelOf(
+  button: AuctionButton,
+  items: ReadonlyMap<string, FeedItem>,
+): string {
+  switch (button.action) {
+    case "favorites.open-lot": {
+      const item = items.get(button.lotId);
+      return item === undefined
+        ? untitled
+        : buttonText(`${item.title ?? untitled} · ${priceLabel(item.status)}`);
+    }
+    case "favorites.prev":
+      return "←";
+    case "favorites.next":
+      return "→";
+    default:
+      throw new Error(`action ${button.action} in a favorites body`);
   }
 }
 
@@ -442,6 +558,12 @@ function historyLabel(button: AuctionButton): string {
     case "accepted.lot":
     case "result.lot":
     case "answer.retry":
+    case "lot.follow":
+    case "lot.unfollow":
+    case "favorites.open-lot":
+    case "favorites.prev":
+    case "favorites.next":
+    case "favorites.back":
       throw new Error(`action ${button.action} in a history body`);
     default: {
       const _exhaustive: never = button;

@@ -7,10 +7,10 @@ import { type FaqContent, readFaqContent } from "./faq.js";
 export type AuctionConfig = {
   auctionUrl: string;
   faq: FaqContent;
-  // Настройка «перебили» (PER-515) — расширение, а не опора бота: без адреса
-  // Notifications нет ни пункта меню «Уведомления», ни «Реже» под
-  // перебитием. Профиль `auction-bot` Notifications не поднимает, и
-  // перебитий без него тоже нет.
+  // Настройка «перебили» (PER-515) и избранные лоты (PER-495) — расширение,
+  // а не опора бота: без адреса Notifications нет ни пункта меню
+  // «Уведомления», ни «Реже» под перебитием, ни кнопки избранного на карточке
+  // и пункта «Избранное».
   notificationsUrl?: string;
 };
 

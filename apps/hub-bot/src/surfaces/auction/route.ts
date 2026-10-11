@@ -340,11 +340,14 @@ async function routeEntry(input: {
   }
 }
 
-// Пункт «Уведомления» стоит в меню, только когда у бота есть Notifications.
+// Пункты «Избранное» и «Уведомления» стоят в меню, только когда у бота есть
+// Notifications: без него список и настройка отказали бы на каждом нажатии.
 function menuOf(ports: EntryPorts): AuctionEntryScreen {
-  return ports.outbid === undefined
-    ? { kind: "menu" }
-    : { kind: "menu", notify: true };
+  return {
+    kind: "menu",
+    ...(ports.favorites === undefined ? {} : { favorites: true }),
+    ...(ports.outbid === undefined ? {} : { notify: true }),
+  };
 }
 
 // Экран частоты «перебили» и выбор на нём (PER-515). Выбор — целевое

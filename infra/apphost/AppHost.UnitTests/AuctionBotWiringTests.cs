@@ -34,7 +34,7 @@ public class AuctionBotWiringTests
     private static readonly DistributedApplicationExecutionContext RunMode = new(DistributedApplicationOperation.Run);
 
     [Fact]
-    public void AuctionBotProfile_OwnsTheBotWithIdentityAndAuction()
+    public void AuctionBotProfile_OwnsTheBotWithItsCallees()
     {
         // Настоящий appsettings.json AppHost лежит в выходном каталоге теста.
         var configuration = new ConfigurationBuilder()
@@ -45,7 +45,8 @@ public class AuctionBotWiringTests
 
         var profile = ProfileResolver.Resolve(configuration);
 
-        profile.Services.Order(StringComparer.Ordinal).ShouldBe([Auction, AuctionBot, Identity]);
+        // Notifications — избранные лоты бота аукциона (PER-495).
+        profile.Services.Order(StringComparer.Ordinal).ShouldBe([Auction, AuctionBot, Identity, Notifications]);
         profile.Infrastructure.Order(StringComparer.Ordinal).ShouldBe(["nats", "postgres"]);
     }
 
@@ -129,7 +130,7 @@ public class AuctionBotWiringTests
     }
 
     [Fact]
-    public void AuctionBot_WaitsForIdentityAndAuction()
+    public void AuctionBot_WaitsForItsCallees()
     {
         var (bot, _) = Materialize("prod");
 

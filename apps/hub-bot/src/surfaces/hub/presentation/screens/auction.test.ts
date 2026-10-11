@@ -159,6 +159,7 @@ describe("feed and history in the hub shell", () => {
       ...view([]),
       canManage: true,
       canAddLots: true,
+      favorites: true,
       body: {
         blocks: [
           {
@@ -189,10 +190,12 @@ describe("feed and history in the hub shell", () => {
       row.map((button) => button.text),
     );
 
+    // «Избранное» (PER-495) встаёт в пару с «Правила и FAQ», а «Пульт» — с
+    // «Добавить лот»: третий ряд действий вывел бы полную страницу за предел.
     expect(rows).toHaveLength(12);
     expect(rows.slice(0, 2)).toEqual([
-      ["Добавить лот"],
-      ["Пульт", "Правила и FAQ"],
+      ["Добавить лот", "Пульт"],
+      ["Избранное", "Правила и FAQ"],
     ]);
   });
 

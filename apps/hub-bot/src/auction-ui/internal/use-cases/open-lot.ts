@@ -5,6 +5,7 @@ import {
 } from "../../callback-data.js";
 import type {
   AuctionPort,
+  FavoritesPort,
   LotStatusView,
   LotView,
   StepWindowView,
@@ -19,6 +20,7 @@ import { namesOf } from "./names.js";
 // `page` — страница ленты, с которой открыли карточку: на неё ведёт «Назад».
 export async function openLot(input: {
   auction: AuctionPort;
+  favorites?: FavoritesPort;
   viewer: Viewer;
   lotId: string;
   page: number;
@@ -32,11 +34,16 @@ export async function openLot(input: {
 
 // Карточка по уже прочитанному снимку. Исход команды участника карточка не
 // несёт: он — свой экран (PER-472).
+//
+// `following` — состояние отметки, которое уже известно из ответа команды
+// избранного: тогда список отметок карточка не перечитывает.
 export async function showLot(input: {
   auction: AuctionPort;
+  favorites?: FavoritesPort;
   viewer: Viewer;
   lot: LotView;
   page: number;
+  following?: boolean;
 }): Promise<AuctionScreenBody> {
   const { lot } = input;
   const nextWindow = announcedWindow(lot);
@@ -49,6 +56,8 @@ export async function showLot(input: {
   });
   const participantName =
     participantId === undefined ? undefined : names[participantId];
+  const following =
+    input.following ?? (await followingOf(input.favorites, input.viewer, lot));
   // Хронология открывается на последней странице — со свежими ставками:
   // страницу за пределом юзкейс хронологии прижимает к последней.
   const history: AuctionButton[][] = hasTraded(lot.status)
@@ -100,12 +109,14 @@ export async function showLot(input: {
         ...(lot.viewerProxyLimit === undefined
           ? {}
           : { viewerProxyLimit: lot.viewerProxyLimit }),
+        ...(following === undefined ? {} : { following }),
       },
     ],
     keyboard: [
       ...bidRows(lot, input.page),
       ...refresh,
       ...history,
+      ...followRows(lot, input.page, following),
       [
         {
           action: "lot.back",
@@ -133,6 +144,58 @@ function announcedWindow(lot: LotView): StepWindowView | undefined {
     : undefined;
 }
 
+// Отмечен ли лот. Отказ Notifications карточку не роняет: цена и ставка
+// важнее отметки, и карточка остаётся без кнопки избранного — так же, как без
+// имени лидера, когда Auction его не отдал.
+async function followingOf(
+  favorites: FavoritesPort | undefined,
+  viewer: Viewer,
+  lot: LotView,
+): Promise<boolean | undefined> {
+  if (favorites === undefined) return undefined;
+  try {
+    return (await favorites.listFollowedLots(viewer)).includes(lot.lotId);
+  } catch {
+    return undefined;
+  }
+}
+
+// Кнопка избранного стоит над возвратом: это действие экрана, а не
+// навигация. Состояния нет — нет и кнопки. У закрытого лота «В избранное»
+// нет: следить за ним уже не за чем, а Notifications вычищает его реплику
+// через 30 дней, и поздняя отметка отказывала бы вечным «попробуй позже».
+// Отмеченный закрытый лот снимается «Убрать», как любой.
+function followRows(
+  lot: LotView,
+  page: number,
+  following: boolean | undefined,
+): AuctionButton[][] {
+  if (following === undefined) return [];
+  if (!following && isClosed(lot.status)) return [];
+  const { lotId } = lot;
+  return [
+    [
+      following
+        ? {
+            action: "lot.unfollow",
+            callbackData: encodeAuctionCallback({
+              kind: "unfollow",
+              lotId,
+              page,
+            }),
+          }
+        : {
+            action: "lot.follow",
+            callbackData: encodeAuctionCallback({
+              kind: "follow",
+              lotId,
+              page,
+            }),
+          },
+    ],
+  ];
+}
+
 // Чьё имя нужно экрану: лидера в торгах или победителя проданного лота. У
 // закрытого без продажи и снятого лота участника нет, и Auction за именем не
 // зовут.
@@ -153,6 +216,14 @@ function participantOf(status: LotStatusView): string | undefined {
       return _exhaustive;
     }
   }
+}
+
+function isClosed(status: LotStatusView): boolean {
+  return (
+    status.kind === "sold" ||
+    status.kind === "unsold" ||
+    status.kind === "withdrawn"
+  );
 }
 
 // «Обновить» стоит, пока у лота нет итога (дизайн-код, «Навигация»): у

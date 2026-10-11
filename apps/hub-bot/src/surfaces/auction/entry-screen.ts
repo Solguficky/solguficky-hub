@@ -48,7 +48,9 @@ import type { ScreenId } from "./screen-catalog.js";
 // Notifications (PER-515).
 export type AuctionEntryScreen =
   | { kind: "faq" }
-  | { kind: "menu"; notify?: true }
+  // `favorites` и `notify` — у бота есть Notifications, и в меню стоят
+  // «Избранное» (PER-495) и «Уведомления» (PER-515).
+  | { kind: "menu"; favorites?: true; notify?: true }
   | { kind: "notify"; current: OutbidFrequency }
   | { kind: "auctions"; list: AuctionListPage }
   | { kind: "past"; list: AuctionListPage }
@@ -149,6 +151,7 @@ const notifyTitle = "Уведомления";
 export function outbidToast(current: OutbidFrequency): string {
   return `Теперь: ${outbidLabels[current].state}.`;
 }
+const favoritesTitle = "Избранное";
 // Вход в меню с любого экрана. Отметку ознакомления с FAQ ставит не он, а
 // возврат под самим FAQ.
 const menuButton = { text: "Меню", callback_data: entryCallback("menu") };
@@ -227,12 +230,26 @@ export function renderEntryScreen(
         id: "menu",
         format: "html",
         text: screenText("Меню", context),
-        // Два списка — пара одним рядом, как разделы меню хаба.
+        // Два списка — пара одним рядом, как разделы меню хаба. Избранное —
+        // список аукционного дерева: его кнопка — домена `auc`.
         keyboard: [
           [
             { text: "Аукционы", callback_data: entryCallback("auctions") },
             { text: "Прошедшие", callback_data: entryCallback("past") },
           ],
+          ...(screen.favorites === true
+            ? [
+                [
+                  {
+                    text: favoritesTitle,
+                    callback_data: encodeAuctionCallback({
+                      kind: "favorites",
+                      page: 0,
+                    }),
+                  },
+                ],
+              ]
+            : []),
           ...(screen.notify === true
             ? [[{ text: notifyTitle, callback_data: notifyCallback() }]]
             : []),
@@ -280,6 +297,20 @@ export function renderEntryScreen(
       const body = renderBody(screen.body, options);
       // Подтверждение и вопрос несут только свои ряды: «Да» и «Нет», «Отмена».
       if (body.asks === true || isConfirm(body.id)) return body;
+      // Избранное в этом боте открывается из меню: возврата у тела нет, и
+      // ряд «‹ Меню» ставит оболочка, как под списками аукционов.
+      if (
+        body.id === "favorites" &&
+        !screen.body.keyboard.flat().some((b) => b.action === "favorites.back")
+      ) {
+        return {
+          ...body,
+          keyboard: [
+            ...body.keyboard,
+            [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+          ],
+        };
+      }
       // Родителя ленты тело не знает: возврат в её список ставит оболочка.
       if (body.id === "feed") {
         const parent = screen.parent ?? "auctions";
@@ -532,7 +563,7 @@ function renderBody(
 ): RenderedScreen {
   const items = new Map<string, FeedItem>();
   for (const block of body.blocks) {
-    if (block.kind === "feed") {
+    if (block.kind === "feed" || block.kind === "favorites") {
       for (const item of block.lots) items.set(item.lotId, item);
     }
   }
@@ -553,6 +584,12 @@ function renderBody(
   );
   if (id === "history" && history !== undefined) {
     return { id, keyboard, ...renderHistory(history, options) };
+  }
+  const favorites = body.blocks.find(
+    (block): block is FavoritesBlock => block.kind === "favorites",
+  );
+  if (id === "favorites" && favorites !== undefined) {
+    return { id, keyboard, ...renderFavorites(favorites, options) };
   }
   const feed = body.blocks.find(
     (block): block is FeedBlock => block.kind === "feed",
@@ -593,6 +630,11 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "history":
         screen = "history";
         break;
+      case "favorites":
+        screen = "favorites";
+        break;
+      case "follow-refused":
+        return "follow-refused";
       case "confirm":
         return block.command === "bid" ? "bid-confirm" : "proxy-confirm";
       case "accepted":
@@ -623,6 +665,7 @@ function isConfirm(id: ScreenId): boolean {
 }
 type HistoryBlock = Extract<AuctionBlock, { kind: "history" }>;
 type FeedBlock = Extract<AuctionBlock, { kind: "feed" }>;
+type FavoritesBlock = Extract<AuctionBlock, { kind: "favorites" }>;
 
 // Экраны листа ставки (PER-317): подтверждение, исход, вопрос и выбор имени. Тексты
 // принадлежат оболочке; слова — те же, что у бота хаба, словарь один.
@@ -644,6 +687,18 @@ function renderLeaf(
         return {
           format: "html",
           text: outcomeText(answerRefusals[block.refusal], block.title),
+        };
+      // Notifications ещё не знает лот: факт аукциона не дошёл до него.
+      case "follow-refused":
+        return {
+          format: "html",
+          text: outcomeText(
+            {
+              title: "Лот пока нельзя добавить в избранное",
+              detail: "Попробуй ещё раз через минуту.",
+            },
+            block.title,
+          ),
         };
       case "question":
         return { format: "html", text: questionText(block), asks: true };
@@ -858,6 +913,37 @@ function renderHistory(
             .join("\n"),
     ),
   };
+}
+
+// Избранное (PER-495): свои отмеченные лоты по порядку отметки. Строка —
+// название и цена, у лота в торгах — ещё и дедлайн; закрытый лот остаётся в
+// списке со своим итогом. Пустой список говорит, как его пополнить.
+function renderFavorites(
+  block: FavoritesBlock,
+  options: RenderOptions,
+): Pick<RenderedScreen, "text" | "format"> {
+  return {
+    format: "html",
+    text: screenText(
+      paged(favoritesTitle, block),
+      block.lots.length === 0
+        ? "Лотов в избранном пока нет. Отметь лот кнопкой «В избранное» на его карточке."
+        : block.lots
+            .map((item) =>
+              bullet(
+                `${escapeHtml(oneLine(item.title ?? untitled))} — ${favoriteState(item.status, options)}`,
+              ),
+            )
+            .join("\n"),
+    ),
+  };
+}
+
+// Цена и до какого момента идут торги: дедлайн есть только у онлайн-торгов.
+function favoriteState(status: LotStatusView, options: RenderOptions): string {
+  return status.kind === "trading" && status.deadline !== undefined
+    ? `${priceLabel(status)}, торги до ${readableMoment(status.deadline, options.timeZone, options.now)}`
+    : priceLabel(status);
 }
 
 // Строка ставки: когда, кто, сколько и как. Имени нет — Auction его не отдал,
@@ -1103,7 +1189,8 @@ function renderButton(
     callback_data: button.callbackData,
   });
   switch (button.action) {
-    case "feed.open-lot": {
+    case "feed.open-lot":
+    case "favorites.open-lot": {
       const item = items.get(button.lotId);
       return text(
         item === undefined
@@ -1127,6 +1214,16 @@ function renderButton(
       return text("→");
     case "history.back":
       return text("‹ Лот");
+    case "lot.follow":
+      return text("В избранное");
+    case "lot.unfollow":
+      return text("Убрать");
+    case "favorites.prev":
+      return text("←");
+    case "favorites.next":
+      return text("→");
+    case "favorites.back":
+      return text("‹ Лоты");
     case "lot.bid-step":
       return text(`По шагу (${money(button.amount)})`);
     case "lot.bid-custom":

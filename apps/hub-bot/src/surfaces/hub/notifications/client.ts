@@ -8,6 +8,8 @@ import {
   NotificationsService,
   NotificationCategory as WireCategory,
 } from "../../../../gen/notifications/v1/notifications_service_pb.js";
+import type { FavoritesPort } from "../../../auction-ui/index.js";
+import { createFavoritesPort } from "../../../core/notifications/favorites.js";
 import {
   callHeaders,
   callTimeoutMs,
@@ -40,7 +42,16 @@ type NotificationsRpc = Pick<
   | "broadcastToCommunity"
 >;
 
-export type NotificationsClient = Notifications & { close(): void };
+// Избранные лоты (PER-495) — порт аукционного дерева на том же соединении:
+// участник отмечает лоты в боте хаба. Собирается на каждый update, чтобы
+// `request_id` и бюджет действия уехали в вызов.
+export type NotificationsClient = Notifications & {
+  favorites(
+    meta?: RpcMetadata,
+    onListRefused?: (cause: unknown) => void,
+  ): FavoritesPort;
+  close(): void;
+};
 
 export function createNotificationsClient(
   baseUrl: string,
@@ -57,7 +68,19 @@ export function createNotificationsClient(
     }),
   );
   const client = createNotificationsAdapter(rpc, timeoutMs);
-  return { ...client, close: () => sessionManager.abort() };
+  return {
+    ...client,
+    favorites: (meta, onListRefused) =>
+      createFavoritesPort(
+        rpc,
+        () => ({
+          timeoutMs: callTimeoutMs(meta, timeoutMs),
+          ...callHeaders(meta),
+        }),
+        onListRefused,
+      ),
+    close: () => sessionManager.abort(),
+  };
 }
 
 export function createNotificationsAdapter(

@@ -62,6 +62,7 @@ function surfaceFor(
         },
       },
       auction: {
+        findLot: async () => undefined,
         async getLot() {
           calls.auction += 1;
           return LOT;

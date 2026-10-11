@@ -65,6 +65,44 @@ describe("auction callback_data", () => {
     });
   });
 
+  // Избранное (PER-495): отметка и снятие несут страницу ленты, как кнопка
+  // лота, а список — свою страницу и ленту, в которую ведёт возврат.
+  it("encodes following, unfollowing and the favorites list and parses them back", () => {
+    const cases = [
+      [
+        { kind: "follow" as const, lotId: LOT_ID, page: 3 },
+        `v1:auc:fo:${LOT_TOKEN}:3`,
+      ],
+      [
+        { kind: "unfollow" as const, lotId: LOT_ID, page: 0 },
+        `v1:auc:uf:${LOT_TOKEN}:0`,
+      ],
+      [{ kind: "favorites" as const, page: 2 }, "v1:auc:fav:2"],
+      [
+        { kind: "favorites" as const, page: 0, auctionId: AUCTION_ID },
+        `v1:auc:fav:0:${AUCTION_TOKEN}`,
+      ],
+    ] as const;
+    for (const [intent, raw] of cases) {
+      expect(encodeAuctionCallback(intent)).toBe(raw);
+      expect(parseAuctionCallback(raw)).toEqual({ ok: true, intent });
+      expect(Buffer.byteLength(raw, "utf8")).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it("refuses a favorites button that no encoder writes", () => {
+    for (const raw of [
+      "v1:auc:fav",
+      "v1:auc:fav:01",
+      `v1:auc:fav:0:${AUCTION_TOKEN}:1`,
+      "v1:auc:fav:0:not-a-token",
+      `v1:auc:fo:${LOT_TOKEN}`,
+      `v1:auc:uf:${LOT_TOKEN}:1:2`,
+    ]) {
+      expect(reasonOf(raw)).toBe("malformed");
+    }
+  });
+
   // Самая длинная кнопка пакета обязана пройти лимит Telegram.
   it("keeps the longest button within 64 bytes", () => {
     const raw = encodeAuctionCallback({

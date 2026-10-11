@@ -69,9 +69,9 @@ internal static class AuctionBotSetup
             .WithEnvironment("BOT_COMMUNITY_TIME_ZONE", CommunityTime.Zone)
             .BindEndpoint(context, AppHostNames.Resources.Identity, AppHostNames.Endpoints.Grpc, "IDENTITY_GRPC_URL")
             .BindEndpoint(context, AppHostNames.Resources.Auction, AppHostNames.Endpoints.Grpc, "AUCTION_GRPC_URL")
-            // Настройка «перебили» (PER-515). Профиль auction-bot Notifications
-            // не поднимает: тогда привязки нет, и бот живёт без настройки —
-            // как и без самих перебитий, которые рождает Notifications.
+            // Настройка «перебили» (PER-515) и избранные лоты (PER-495, ADR-063).
+            // Без узла Notifications привязки нет, и бот живёт без настройки и
+            // без избранного.
             .BindEndpoint(context, AppHostNames.Resources.Notifications, AppHostNames.Endpoints.Grpc, "NOTIFICATIONS_GRPC_URL")
             // Второй вход бота — адресные факты аукциона из шины (PER-328).
             // WaitFor(nats) внутри BindConnection ждёт и применения топологии:

@@ -80,7 +80,14 @@ export type AuctionIntent =
       addressee: number;
       pending?: PendingCommand;
     }
-  | { kind: "username"; lotId: string; page: number; pending: PendingCommand };
+  | { kind: "username"; lotId: string; page: number; pending: PendingCommand }
+  // Избранное (PER-495): отметка и снятие с карточки возвращают на ту же
+  // карточку, поэтому несут страницу ленты, как кнопка лота.
+  | { kind: "follow"; lotId: string; page: number }
+  | { kind: "unfollow"; lotId: string; page: number }
+  // Список избранного. `auctionId` — лента, из корня которой список открыт:
+  // туда ведёт возврат. Нет — список открыт из меню оболочки.
+  | { kind: "favorites"; page: number; auctionId?: string };
 
 // Страница — десятичное число без ведущих нулей: у одной кнопки одно
 // написание, как у токена. Тысяча страниц по восемь лотов — с запасом выше
@@ -245,6 +252,19 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
       ].join(":");
     case "username":
       return `${prefix}:nu:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}:${pendingArgument(intent.pending)}`;
+    case "follow":
+      return `${prefix}:fo:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
+    case "unfollow":
+      return `${prefix}:uf:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
+    // Страница стоит первой: у списка из меню аукциона хвоста нет.
+    case "favorites":
+      return [
+        `${prefix}:fav`,
+        pageArgument(intent.page),
+        ...(intent.auctionId === undefined
+          ? []
+          : [uuidToToken(intent.auctionId)]),
+      ].join(":");
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;
@@ -273,6 +293,7 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   if (action === undefined) return refuse("malformed");
   const command = commandAction(action, args);
   if (command !== undefined) return command;
+  if (action === "fav") return favoritesAction(args);
   // Аргументов у действия ровно столько, сколько пишет его кодировщик: лишний
   // аргумент — не та строка, а не страница, которую можно молча отбросить.
   const [token, rawPage, ...rest] = args;
@@ -288,6 +309,10 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
       return { ok: true, intent: { kind: "feed", auctionId: id, page } };
     case "lot":
       return { ok: true, intent: { kind: "lot", lotId: id, page } };
+    case "fo":
+      return { ok: true, intent: { kind: "follow", lotId: id, page } };
+    case "uf":
+      return { ok: true, intent: { kind: "unfollow", lotId: id, page } };
     case "hist": {
       const historyPage = pageOf(rest[0]);
       if (historyPage === undefined) return refuse("malformed");
@@ -311,6 +336,26 @@ export function isAuctionQuestion(raw: unknown): boolean {
 
 function accept(intent: AuctionIntent): ParsedAuctionCallback {
   return { ok: true, intent };
+}
+
+// Список избранного: страница и, у списка из ленты, токен её аукциона.
+function favoritesAction(args: readonly string[]): ParsedAuctionCallback {
+  const [rawPage, rawAuction, ...rest] = args;
+  const page = pageOf(rawPage);
+  const auctionId =
+    rawAuction === undefined ? undefined : tokenToUuid(rawAuction);
+  if (
+    page === undefined ||
+    rest.length !== 0 ||
+    (rawAuction !== undefined && auctionId === undefined)
+  ) {
+    return refuse("malformed");
+  }
+  return accept({
+    kind: "favorites",
+    page,
+    ...(auctionId === undefined ? {} : { auctionId }),
+  });
 }
 
 // Действия листа ставки. `undefined` — действие не отсюда: его разбирают

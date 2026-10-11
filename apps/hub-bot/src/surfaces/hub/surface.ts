@@ -95,7 +95,23 @@ export const hubSurface: SurfaceDefinition = ({
       ? {}
       : { auctionBotUsername: hub.auctionBotUsername }),
     communityTimeZone,
-    ...(auction === undefined ? {} : { auction }),
+    ...(auction === undefined
+      ? {}
+      : {
+          auction,
+          // Избранное — лоты аукциона: без Auction его нечем показать.
+          // Отказ списка карточка гасит, и запись на warn делает это видимым.
+          favorites: (meta) =>
+            notifications.favorites(meta, (cause) =>
+              logger.warn("favorite lots unavailable", {
+                ...(meta?.requestId === undefined
+                  ? {}
+                  : { request_id: meta.requestId }),
+                error_category: "dependency_unavailable",
+                error: cause instanceof Error ? cause.message : String(cause),
+              }),
+            ),
+        }),
   });
   const sender = createNotificationSender(
     createNotificationApi(token, environment),
