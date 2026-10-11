@@ -16,6 +16,7 @@ var CallerTokens = map[Caller]string{
 	CallerAuctionBot:    "auction-bot-token",
 	CallerMeetups:       "meetups-token",
 	CallerNotifications: "notifications-token",
+	CallerAuction:       "auction-token",
 }
 
 // NewTestCallers — таблица по CallerTokens; maintainerToken участвует в

@@ -114,6 +114,11 @@ internal static class AuctionSetup
             // администратора аукциону отвечают UNAVAILABLE, а остальное работает.
             .WithServiceToken(context)
             .BindEndpoint(context, AppHostNames.Resources.Meetups, AppHostNames.Endpoints.Grpc, "AUCTION_MEETUPS_GRPC_URL")
+            // Тем же токеном Auction спрашивает у Identity право place_bids
+            // кандидатов розыгрыша при закрытии регистрации (CheckAccessRight,
+            // ADR-066, PER-499). Профиль без identity оставляет адрес пустым — bind
+            // молчит, и пул фиксируется без исключений.
+            .BindEndpoint(context, AppHostNames.Resources.Identity, AppHostNames.Endpoints.Grpc, "AUCTION_IDENTITY_GRPC_URL")
             // Метрики проекции уходят по OTLP (ADR-053): исполняемый файл получает
             // OTEL-переменные только так. Без OTEL_EXPORTER_OTLP_ENDPOINT сервис
             // экспорт метрик выключает сам.

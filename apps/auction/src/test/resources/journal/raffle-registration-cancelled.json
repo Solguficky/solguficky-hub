@@ -1,0 +1,16 @@
+{
+  "eventId": "0190f2a0-0000-7000-8000-000000000001",
+  "opId": "0190f2a0-0000-7000-8000-000000000002",
+  "occurredAt": "2026-10-01T09:00:00Z",
+  "event": {
+    "kind": "RegistrationCancelled",
+    "raffleOpened": null,
+    "raffleNotHeld": null,
+    "registered": null,
+    "registrationCancelled": {
+      "participantId": "0190f2a0-0000-7000-8000-000000000065"
+    },
+    "poolFixed": null,
+    "raffleDrawn": null
+  }
+}

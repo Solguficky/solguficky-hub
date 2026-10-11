@@ -89,6 +89,26 @@ final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckD
           Left(ConfigInvalid.ClosesAtNotAfterOpensAt)
     }
 
+    "accepts a raffle closing strictly inside the online phase and names it" in {
+      val raffle = opensAt.plusSeconds(3600)
+      val config = AuctionConfig.parse(configInput(Some(week.copy(raffleClosesAt = Some(raffle)))))
+      config.map(_.raffleClosesAt) shouldBe Right(Some(raffle))
+    }
+
+    "refuses a raffle closing that is not after opensAt" in {
+      for (closes <- List(opensAt, opensAt.minusSeconds(1)))
+        AuctionConfig.parse(configInput(Some(week.copy(raffleClosesAt = Some(closes))))) shouldBe
+          Left(ConfigInvalid.RaffleClosesAtNotAfterOpensAt)
+    }
+
+    "refuses a raffle closing that is not before closesAt and accepts any later one without closesAt" in {
+      for (closes <- List(closesAt, closesAt.plusSeconds(1)))
+        AuctionConfig.parse(configInput(Some(week.copy(raffleClosesAt = Some(closes))))) shouldBe
+          Left(ConfigInvalid.RaffleClosesAtNotBeforeClosesAt)
+      val open = Some(week.copy(closesAt = None, closesLots = false, raffleClosesAt = Some(closesAt.plusSeconds(1))))
+      AuctionConfig.parse(configInput(open, closingPolicy = ClosingPolicy.ByAuctioneer)).isRight shouldBe true
+    }
+
     "refuses a number of final blocks outside zero and one" in {
       for (blocks <- List(-1, 2))
         AuctionConfig.parse(configInput(finalBlocks = blocks)) shouldBe Left(ConfigInvalid.FinalBlocksOutOfRange)

@@ -25,6 +25,7 @@ const (
 	CallerAuctionBot    Caller = "auction-bot"
 	CallerMeetups       Caller = "meetups"
 	CallerNotifications Caller = "notifications"
+	CallerAuction       Caller = "auction"
 )
 
 // TokenVariable — переменная, из которой Identity читает токен вызывающего:
@@ -40,7 +41,7 @@ var methodAccess = map[string][]Caller{
 	identityv1.IdentityService_ResolveIdentity_FullMethodName:          {CallerHubBot, CallerAuctionBot},
 	identityv1.IdentityService_RequestAccess_FullMethodName:            {CallerHubBot, CallerAuctionBot},
 	identityv1.IdentityService_ResolveTelegramUserId_FullMethodName:    {CallerHubBot, CallerAuctionBot},
-	identityv1.IdentityService_CheckAccessRight_FullMethodName:         {CallerMeetups, CallerNotifications, CallerAuctionBot},
+	identityv1.IdentityService_CheckAccessRight_FullMethodName:         {CallerMeetups, CallerNotifications, CallerAuctionBot, CallerAuction},
 	identityv1.IdentityService_ResolveOrganizerUsername_FullMethodName: {CallerHubBot},
 	identityv1.IdentityService_ListCommunityMembers_FullMethodName:     {CallerHubBot},
 	identityv1.IdentityService_AdmitCommunityMember_FullMethodName:     {CallerHubBot},

@@ -15,6 +15,12 @@ import auction.onboarding.FaqAcknowledgements
 import auction.projection.AuctionSnapshotView
 import auction.projection.AuctionViews
 import auction.projection.LotViews
+import auction.raffle.CancelRegistration
+import auction.raffle.Raffle
+import auction.raffle.RaffleGateway
+import auction.raffle.RaffleState
+import auction.raffle.RaffleView
+import auction.raffle.Register
 import auction.v1.auction_service as wire
 import io.grpc.Status
 import net.logstash.logback.argument.StructuredArguments
@@ -46,7 +52,9 @@ final class AuctionGrpcService(
     names: DisplayNameCommands,
     correlation: Correlation = Correlation.none,
     clock: Clock = Clock.systemUTC(),
-    overdueGrace: Duration = AuctionGrpcService.DefaultOverdueGrace
+    overdueGrace: Duration = AuctionGrpcService.DefaultOverdueGrace,
+    raffles: RaffleGateway = AuctionGrpcService.NoRaffles,
+    raffleNames: AuctionId => Future[Map[Int, String]] = _ => Future.successful(Map.empty)
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -65,7 +73,9 @@ final class AuctionGrpcService(
       names,
       correlation,
       clock,
-      overdueGrace
+      overdueGrace,
+      raffles,
+      raffleNames
     )
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
@@ -487,6 +497,84 @@ final class AuctionGrpcService(
         }
     }
 
+  /**
+   * Регистрация в розыгрыше (ADR-066, пп. 2–4): право `place_bids` смотрящего, затем имя в аукционе — тем же правилом,
+   * что перед ставкой, но без заморозки: регистрация не ставка, — затем розыгрыш. Торгов граница здесь не спрашивает.
+   */
+  def registerForRaffle(in: wire.RegisterForRaffleRequest): Future[wire.RegisterForRaffleResponse] =
+    RequestMapping.registerForRaffle(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) if !command.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(command) =>
+        val participant = command.acting.participant
+        names.requireChosen(command.auctionId, participant).flatMap {
+          case Left(NameNotChosen) => Future.successful(RaffleMapping.displayNameNotChosen)
+          case Right(_) =>
+            raffles
+              .register(command.auctionId, Register(participant, command.opId))
+              .recoverWith(awaited)
+              .flatMap(outcome => viewed(command.auctionId, participant, outcome))
+              .flatMap(outcome => RaffleMapping.register(outcome).fold(refuse, Future.successful))
+        }
+    }
+
+  def cancelRaffleRegistration(
+      in: wire.CancelRaffleRegistrationRequest
+  ): Future[wire.CancelRaffleRegistrationResponse] =
+    RequestMapping.cancelRaffleRegistration(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) if !command.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(command) =>
+        val participant = command.acting.participant
+        raffles
+          .cancel(command.auctionId, CancelRegistration(participant, command.opId))
+          .recoverWith(awaited)
+          .flatMap(outcome => viewed(command.auctionId, participant, outcome))
+          .flatMap(outcome => RaffleMapping.cancel(outcome).fold(refuse, Future.successful))
+    }
+
+  /** Розыгрыш смотрящего: из entity, а не из read model, — отметка «ты зарегистрирован» видна сразу после команды. */
+  def getRaffle(in: wire.GetRaffleRequest): Future[wire.GetRaffleResponse] =
+    RequestMapping.getRaffle(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(query) =>
+        raffles
+          .get(query.auctionId)
+          .recoverWith(awaited)
+          .flatMap(raffle => view(query.auctionId, query.acting.participant, raffle))
+          .map(found => wire.GetRaffleResponse(found))
+    }
+
+  private def viewed[R](
+      auction: AuctionId,
+      participant: ParticipantId,
+      outcome: Either[R, Raffle]
+  ): Future[Either[R, wire.Raffle]] =
+    outcome match {
+      case Left(rejected) => Future.successful(Left(rejected))
+      case Right(raffle) =>
+        view(auction, participant, raffle).flatMap {
+          case Some(found) => Future.successful(Right(found))
+          case None => refuse(Status.INTERNAL.withDescription("raffle answered a command without a raffle"))
+        }
+    }
+
+  /** Имена снимка читаются только у зафиксированного пула: до него списка билетов нет. */
+  private def view(auction: AuctionId, participant: ParticipantId, raffle: Raffle): Future[Option[wire.Raffle]] = {
+    val names = raffle.state match {
+      case RaffleState.Fixed(_, _) | RaffleState.Drawn(_, _, _, _) =>
+        raffleNames(auction)
+      case _ => Future.successful(Map.empty[Int, String])
+    }
+    names.map(known =>
+      RaffleView.of(raffle, participant, clock.instant(), known).map(RaffleMapping.raffle(auction.value, _))
+    )
+  }
+
   // Счета: контракт есть (PER-308), выставление, статусы и чтения приносит лист счёта (PER-338).
   def markInvoicePaid(in: wire.MarkInvoicePaidRequest): Future[wire.MarkInvoicePaidResponse] = unimplemented
 
@@ -520,6 +608,14 @@ object AuctionGrpcService {
 
   /** Допуск просрочки по умолчанию; узел передаёт `auction.deadlines.overdue-grace` — тот же, что у метрики. */
   val DefaultOverdueGrace: Duration = Duration.ofMinutes(1)
+
+  /** Розыгрыша в узле нет: тесты границы, которым он не нужен. Любой вызов — ответа нет. */
+  val NoRaffles: RaffleGateway = new RaffleGateway {
+    private def none[T]: Future[T] = Future.failed(new IllegalStateException("raffles are not wired in this node"))
+    def register(auction: AuctionId, command: Register) = none
+    def cancel(auction: AuctionId, command: CancelRegistration) = none
+    def get(auction: AuctionId) = none
+  }
 
   /** Попыток заморозки имени после принятой ставки; подряд, без паузы: у сервиса нет планировщика. */
   val FreezeAttempts: Int = 3

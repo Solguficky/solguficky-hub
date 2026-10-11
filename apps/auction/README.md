@@ -46,7 +46,9 @@ just aspire auction
 | `AUCTION_CALLER_TOKEN_HUB_BOT` | нет, обязательна | токен бота хаба как вызывающего ([ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)) |
 | `AUCTION_CALLER_TOKEN_AUCTION_BOT` | нет, обязательна | токен бота аукциона как вызывающего; значение отличается от токена бота хаба |
 | `AUCTION_MEETUPS_GRPC_URL` | нет | адрес gRPC Meetups, `http://<хост>:<порт>`, для проверки права администратора сходки; без него команды администратора аукциону отвечают `UNAVAILABLE` |
-| `AUCTION_SERVICE_TOKEN` | нет, обязательна при адресе Meetups | собственный токен Auction как вызывающего Meetups; не совпадает ни с одним токеном вызывающих |
+| `AUCTION_IDENTITY_GRPC_URL` | нет | адрес gRPC Identity, `http://<хост>:<порт>`, для проверки права `place_bids` кандидатов розыгрыша при закрытии регистрации (ADR-066); тот же собственный токен `AUCTION_SERVICE_TOKEN`; без адреса пул фиксируется без исключений |
+| `AUCTION_RAFFLE_BEACON_URLS` | нет | зеркала маяка drand через запятую, не меньше двух разных; по умолчанию четыре публичных зеркала `quicknet`; значение раунда принимается при согласии двух |
+| `AUCTION_SERVICE_TOKEN` | нет, обязательна при адресе Meetups или Identity | собственный токен Auction как вызывающего Meetups и Identity; не совпадает ни с одним токеном вызывающих |
 | `AUCTION_DATABASE_JDBC_URL` | нет, обязательна | JDBC URL базы Auction без учётных данных, `jdbc:postgresql://<хост>:<порт>/auction` |
 | `AUCTION_DATABASE_USER` | нет, обязательна | пользователь базы |
 | `AUCTION_DATABASE_PASSWORD` | нет, обязательна | пароль базы |

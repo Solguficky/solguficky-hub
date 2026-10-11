@@ -128,9 +128,10 @@ lazy val auction = (project in file("."))
     // принятый за вход, доезжает до protoc и валит его сообщением
     // «Input file is a directory».
     //
-    // Из identity берётся только файл значений: его импортирует схема сервиса
-    // аукциона. Весь каталог дал бы ещё и серверный трейт IdentityService —
-    // сервиса, которого аукцион не обслуживает. Из meetups — сервис и его
+    // Из identity — файл значений, его импортирует схема сервиса аукциона, и
+    // сервис: при закрытии регистрации в розыгрыше аукцион спрашивает право
+    // CheckAccessRight (ADR-066, PER-499). Схема событий Identity ему не нужна.
+    // Из meetups — сервис и его
     // сообщения: аукцион спрашивает право администратора CheckMeetupAuthority
     // (ADR-047, ADR-051); схема событий Meetups ему не нужна.
     Compile / PB.generate / includeFilter := new SimpleFileFilter(schema => {
@@ -139,12 +140,14 @@ lazy val auction = (project in file("."))
       schema.getName.endsWith(".proto") &&
       (path.contains("/proto/auction/") ||
         path.endsWith("/proto/identity/v1/access.proto") ||
+        path.endsWith("/proto/identity/v1/identity_service.proto") ||
         path.endsWith("/proto/meetups/v1/meetups_service.proto") ||
         path.endsWith("/proto/meetups/v1/meetups.proto"))
     }),
-    // Сервер AuctionService и клиент MeetupsService. Выбор сторон у плагина
-    // общий на все схемы, поэтому рядом рождаются и неиспользуемые половины —
-    // трейт сервера Meetups и клиент самого аукциона; второй нужен L1-тестам
+    // Сервер AuctionService и клиенты MeetupsService и IdentityService. Выбор
+    // сторон у плагина общий на все схемы, поэтому рядом рождаются и
+    // неиспользуемые половины — трейты серверов Meetups и Identity и клиент
+    // самого аукциона; второй нужен L1-тестам
     // gRPC-границы, которые ходят в сервер так же, как бот. Цели ScalaPB задаёт
     // сам плагин pekko-grpc.
     pekkoGrpcGeneratedLanguages := Seq(PekkoGrpc.Scala),

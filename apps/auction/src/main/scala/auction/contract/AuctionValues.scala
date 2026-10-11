@@ -13,7 +13,8 @@ object AuctionValues {
         model.OnlinePhase(
           opensAt = LotValues.instant(phase.opensAt),
           closesAt = phase.closesAt.map(LotValues.instant),
-          closesLots = phase.closesLots
+          closesLots = phase.closesLots,
+          raffleClosesAt = phase.raffleClosesAt.map(LotValues.instant)
         )
       },
       finalBlocks = config.finalBlocks,
