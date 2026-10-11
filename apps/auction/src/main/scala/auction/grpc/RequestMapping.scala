@@ -33,6 +33,9 @@ import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
+import auction.v1.auction_service.CancelRaffleRegistrationRequest
+import auction.v1.auction_service.GetRaffleRequest
+import auction.v1.auction_service.RegisterForRaffleRequest
 import auction.v1.auction_service.ChooseDisplayNameRequest
 import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.DeselectForFinalRequest
@@ -122,6 +125,12 @@ final case class PrebiddingCommand(auctionId: AuctionId, opId: OpId, acting: Act
 
 /** Удаление аукциона до торгов. */
 final case class DiscardCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
+
+/** Регистрация в розыгрыше аукциона или её отмена: участник — смотрящий (ADR-066). */
+final case class RaffleCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
+
+/** Чтение розыгрыша аукциона смотрящим. */
+final case class RaffleQuery(auctionId: AuctionId, acting: Acting)
 
 /** Чтение аукциона сходки. */
 final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
@@ -356,12 +365,32 @@ object RequestMapping {
       opId <- uuidV7("op_id", request.opId)
     } yield DiscardCommand(auction, OpId(opId), acting)
 
+  def registerForRaffle(request: RegisterForRaffleRequest): Either[FormError, RaffleCommand] =
+    raffleCommand(request.viewer, request.auctionId, request.opId)
+
+  def cancelRaffleRegistration(request: CancelRaffleRegistrationRequest): Either[FormError, RaffleCommand] =
+    raffleCommand(request.viewer, request.auctionId, request.opId)
+
+  def getRaffle(request: GetRaffleRequest): Either[FormError, RaffleQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield RaffleQuery(auction, acting)
+
+  /** Розыгрыш есть только у аукциона сходки: его открывает журнал аукциона, а у тестового аукциона журнала нет. */
+  private def raffleCommand(viewer: Option[ViewerMessage], auctionId: String, opId: String) =
+    for {
+      acting <- acting(viewer)
+      auction <- meetupAuction(auctionId)
+      op <- uuidV7("op_id", opId)
+    } yield RaffleCommand(auction, OpId(op), acting)
+
   /**
    * Конфигурация без проверки ADR-047: форма требует заданных `oneof` и сообщений, моментов в RFC 3339 и
    * неотрицательных секунд анти-снайпа. Противоречие значений между собой — `closesAt` не после `opensAt`, дедлайн без
    * `closesAt`, число блоков финала, окна сниженного шага вне недели, с общим лотом, с неположительной суммой или без
-   * лотов — отказ домена `ConfigInvalid`, а не нарушение формы. Форма окна — моменты, сумма и канонические UUIDv7
-   * лотов.
+   * лотов, закрытие регистрации в розыгрыше вне онлайн-этапа — отказ домена `ConfigInvalid`, а не нарушение формы.
+   * Форма окна — моменты, сумма и канонические UUIDv7 лотов.
    */
   private def auctionConfig(config: AuctionConfigMessage): Either[FormError, AuctionConfigInput] =
     for {
@@ -374,7 +403,11 @@ object RequestMapping {
               case None => Right(None)
               case Some(raw) => instant("config.online_phase.closes_at", raw).map(Some(_))
             }
-          } yield Some(OnlinePhase(opensAt, closesAt, phase.closesLots))
+            raffleClosesAt <- phase.raffleClosesAt match {
+              case None => Right(None)
+              case Some(raw) => instant("config.online_phase.raffle_closes_at", raw).map(Some(_))
+            }
+          } yield Some(OnlinePhase(opensAt, closesAt, phase.closesLots, raffleClosesAt))
       }
       closing <- config.closingPolicy.map(_.policy) match {
         case Some(ClosingPolicyMessage.Policy.ByAuctioneer(_)) => Right(ClosingPolicy.ByAuctioneer)

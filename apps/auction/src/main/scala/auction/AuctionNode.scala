@@ -6,6 +6,7 @@ import auction.catalog.LotCatalogCommands
 import auction.entity.AuctionEntity
 import auction.entity.AuctionGateway
 import auction.entity.AuctionLots
+import auction.entity.AuctionRaffle
 import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.grpc.AuctionGrpcService
@@ -30,6 +31,14 @@ import auction.telemetry.PublicationMetrics
 import auction.persistence.SlickDisplayNameStore
 import auction.persistence.SlickLotCatalogStore
 import auction.persistence.SlickFaqAcknowledgements
+import auction.persistence.SlickRaffleTickets
+import auction.raffle.Beacon
+import auction.raffle.RaffleAccess
+import auction.raffle.RaffleEntity
+import auction.raffle.RaffleGateway
+import auction.raffle.RaffleTickets
+import auction.raffle.Seed
+import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.Done
 import org.apache.pekko.actor.CoordinatedShutdown
 import org.apache.pekko.http.scaladsl.model.HttpRequest
@@ -47,10 +56,13 @@ import org.apache.pekko.cluster.typed.Join
 import org.apache.pekko.persistence.jdbc.db.SlickExtension
 import org.slf4j.LoggerFactory
 
+import java.security.SecureRandom
 import java.time.Clock
 import java.util.UUID
 import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
+import scala.util.Failure
+import scala.util.Success
 
 /**
  * Узел Auction в одноузловом кластере (ADR-045).
@@ -96,18 +108,84 @@ object AuctionNode {
       sharding: ClusterSharding,
       clock: Clock,
       newId: () => UUID,
-      askTimeout: FiniteDuration
+      askTimeout: FiniteDuration,
+      raffle: AuctionRaffle = AuctionRaffle.none
   ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] = {
     val lots = AuctionLots.sharded(sharding, askTimeout)
-    val remembered = ClusterShardingSettings(system)
-      .withRememberEntities(true)
-      .withRememberEntitiesStoreMode(ClusterShardingSettings.RememberEntitiesStoreModeEventSourced)
     sharding.init(
       Entity(AuctionEntity.TypeKey) { context =>
-        AuctionEntity(context.entityId, clock, newId, lots, shard = Some(context.shard))
+        AuctionEntity(context.entityId, clock, newId, lots, shard = Some(context.shard), raffle = raffle)
       }
-        .withSettings(remembered)
+        .withSettings(remembered(system))
     )
+  }
+
+  /** Запоминание entity в журнале — у аукциона и у розыгрыша: их таймеры обязаны пережить рестарт процесса. */
+  private def remembered(system: ActorSystem[?]): ClusterShardingSettings =
+    ClusterShardingSettings(system)
+      .withRememberEntities(true)
+      .withRememberEntitiesStoreMode(ClusterShardingSettings.RememberEntitiesStoreModeEventSourced)
+
+  /**
+   * Регистрирует entity розыгрыша (ADR-066); идентификатор entity — идентификатор аукциона. Регистрируется раньше
+   * аукциона: открывает её аукцион после старта торгов. Розыгрыш шардинг помнит по той же причине, что аукцион: таймеры
+   * закрытия регистрации и опроса маяка живут в entity. Seed — 32 байта `SecureRandom` (п. 6).
+   */
+  def registerRaffles(
+      system: ActorSystem[?],
+      sharding: ClusterSharding,
+      clock: Clock,
+      newId: () => UUID,
+      access: RaffleAccess,
+      beacon: Beacon,
+      tickets: RaffleTickets,
+      settings: RaffleEntity.Settings
+  ): ActorRef[ShardingEnvelope[RaffleEntity.Command]] = {
+    val generator = new SecureRandom()
+    sharding.init(
+      Entity(RaffleEntity.TypeKey) { context =>
+        RaffleEntity(
+          context.entityId,
+          clock,
+          newId,
+          () => Seed.random(generator),
+          access,
+          beacon,
+          tickets,
+          settings,
+          shard = Some(context.shard)
+        )
+      }
+        .withSettings(remembered(system))
+    )
+  }
+
+  /**
+   * Стирание имён списка билетов с истёкшим сроком хранения (ADR-066, п. 12) таймером узла. Номера, N и итог остаются в
+   * журнале розыгрыша; стирается только строка имени.
+   */
+  def eraseRaffleNames(
+      system: ActorSystem[?],
+      tickets: SlickRaffleTickets,
+      clock: Clock,
+      every: FiniteDuration
+  ): Unit = {
+    import system.executionContext
+    system.scheduler.scheduleWithFixedDelay(every, every) { () =>
+      tickets.eraseExpired(clock.instant()).onComplete {
+        case Success(erased) if erased > 0 =>
+          logger.info("raffle ticket names erased after retention", StructuredArguments.keyValue("erased", erased))
+        case Success(_) => ()
+        // Ожидаемый отказ зависимости: база недоступна. Следующий тик повторит стирание.
+        case Failure(cause) =>
+          logger.warn(
+            "raffle ticket name erasure failed",
+            StructuredArguments.keyValue("error_category", "dependency_unavailable"),
+            StructuredArguments.keyValue("error", cause.getClass.getName)
+          )
+      }
+    }
+    ()
   }
 
   /**
@@ -198,6 +276,8 @@ object AuctionNode {
     given ActorSystem[?] = system
     import system.executionContext
     val lots = LotGateway.sharded(sharding, askTimeout)
+    val names = DisplayNameCommands(SlickDisplayNameStore(system))
+    val raffleTickets = SlickRaffleTickets(system, names)
     val service = AuctionGrpcService(
       lots,
       LotCatalogCommands(SlickLotCatalogStore(system)),
@@ -205,9 +285,11 @@ object AuctionNode {
       SlickLotViews(system),
       AuctionCommands(AuctionGateway.sharded(sharding, askTimeout), lots, authority),
       SlickAuctionViews(system),
-      DisplayNameCommands(SlickDisplayNameStore(system)),
+      names,
       clock = clock,
-      overdueGrace = overdueGrace
+      overdueGrace = overdueGrace,
+      raffles = RaffleGateway.sharded(sharding, askTimeout),
+      raffleNames = raffleTickets.names
     )
     GrpcBoundary(callers, correlation => service.within(correlation))
   }

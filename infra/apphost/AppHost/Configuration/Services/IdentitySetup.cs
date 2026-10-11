@@ -87,7 +87,8 @@ internal static class IdentitySetup
                 AppHostNames.Resources.HubBot,
                 AppHostNames.Resources.AuctionBot,
                 AppHostNames.Resources.Meetups,
-                AppHostNames.Resources.Notifications)
+                AppHostNames.Resources.Notifications,
+                AppHostNames.Resources.Auction)
             // Проект .NET получает OTLP-переменные сам, исполняемый файл — только
             // так. Без них логи Identity не попадают в Structured logs, и фильтр
             // по request_id теряет звено цепочки.

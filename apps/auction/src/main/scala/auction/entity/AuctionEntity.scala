@@ -10,6 +10,7 @@ import auction.lot.OpenLotRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.UnmarkForFinalRejected
 import net.logstash.logback.argument.StructuredArguments
+import org.apache.pekko.Done
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.Behavior
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
@@ -63,6 +64,11 @@ enum AuctionAnswer {
  * пассивации и остановкой, проходит без шарда, и запланированный аукцион мог бы войти в торги и тут же забыться вместе
  * с таймерами. Из `Initial` до торгов — рождение, реестр, планирование и старт, каждое с ответом, в одно такое окно они
  * не помещаются, а `Draft` и `Scheduled` — настоящие аукционы сходок, и их число ограничено сходками.
+ *
+ * Розыгрыш среди участников (ADR-066) entity открывает, но не ведёт: если у конфигурации есть момент закрытия
+ * регистрации, после записи `PrebiddingStarted` она шлёт открытие entity розыгрыша и повторяет его на тике переспроса и
+ * после recovery, пока не получит ответ. Знание «розыгрыш открыт» несохраняемо, как знание о лотах: открытие
+ * идемпотентно, и лишний повтор ничего не меняет.
  *
  * `ScheduleLot`, отметку для финала и её снятие entity передаёт лоту, ничего не записав: условия торгов и отметка живут
  * в журнале лота, а аукцион только решает, можно ли сейчас их менять ([[Auction.decide]]), и для условий подставляет
@@ -166,6 +172,9 @@ object AuctionEntity {
   /** Переспросить лоты, не ответившие на вопрос или команду. */
   private[entity] case object Recheck extends Command
 
+  /** Ответ розыгрыша на открытие; неудача — ответа нет, и открытие повторится на тике переспроса. */
+  private[entity] final case class RaffleAnswered(answer: Try[Done]) extends Command
+
   private final case class DeadlineKey(lot: LotId)
 
   private case object RecheckKey
@@ -191,6 +200,8 @@ object AuctionEntity {
    *   лоты реестра: вопрос о состоянии, `OpenLot` и `CloseLot`
    * @param clock
    *   серверное время конверта и отсчёт задержки таймера до дедлайна лота
+   * @param raffle
+   *   розыгрыш аукциона: открытие регистрации после старта торгов
    */
   def apply(
       auctionId: String,
@@ -199,7 +210,8 @@ object AuctionEntity {
       lots: AuctionLots,
       snapshotEvery: Int = DefaultSnapshotEvery,
       recheckEvery: FiniteDuration = DefaultRecheckEvery,
-      shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None
+      shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None,
+      raffle: AuctionRaffle = AuctionRaffle.none
   ): Behavior[Command] =
     Behaviors.withTimers[Command] { timers =>
       Behaviors.setup { context =>
@@ -226,6 +238,18 @@ object AuctionEntity {
 
         timers.startTimerWithFixedDelay(RecheckKey, Recheck, recheckEvery)
 
+        // Открыт ли розыгрыш в этой инкарнации; рестарт начинает с `false` и спрашивает снова.
+        var raffleOpened = false
+
+        def openRaffle(auction: Auction): Unit =
+          auction.state match {
+            case AuctionState.Prebidding(config, _) if !raffleOpened =>
+              config.raffleClosesAt.foreach { closesAt =>
+                context.pipeToSelf(raffle.open(auctionId, closesAt))(RaffleAnswered(_))
+              }
+            case _ => ()
+          }
+
         // Ожидаемый отказ зависимости: лот не ответил в срок. Сообщение исключения в запись не идёт — только его класс.
         def logUnanswered(lot: LotId, failure: Throwable): Unit =
           context.log.warn(
@@ -250,6 +274,7 @@ object AuctionEntity {
                   record(state.auction, decision, start.opId, initiator, clock, newId) { (auction, answer) =>
                     replyTo ! Right(answer)
                     follow(LotRoster.started(auction, roster, decision))
+                    openRaffle(auction)
                   }
               }
             case Roster(replyTo) => Effect.reply(replyTo)(roster)
@@ -269,7 +294,20 @@ object AuctionEntity {
                   case AuctionState.Initial => shard.foreach(_ ! ClusterSharding.Passivate(context.self))
                   case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _) =>
                     follow(LotRoster.recheck(after.auction, roster))
+                    openRaffle(after.auction)
                 }
+              }
+            case RaffleAnswered(Success(_)) =>
+              raffleOpened = true
+              Effect.none
+            case RaffleAnswered(Failure(failure)) =>
+              Effect.none.thenRun { _ =>
+                context.log.warn(
+                  "raffle did not answer the auction",
+                  StructuredArguments.keyValue("auction_id", auctionId),
+                  StructuredArguments.keyValue("error_category", "dependency_unavailable"),
+                  StructuredArguments.keyValue("error", failure.getClass.getName)
+                )
               }
             case PlanLot(plan, initiator, replyTo) =>
               Auction.decide(state.auction, plan) match {
@@ -338,7 +376,10 @@ object AuctionEntity {
         ).snapshotAdapter(AuctionJournal.snapshotAdapter)
           .withRetention(RetentionCriteria.snapshotEvery(snapshotEvery, keepNSnapshots = 2))
           .withTagger(_ => tag)
-          .receiveSignal { case (state, RecoveryCompleted) => follow(LotRoster.survey(state.auction)) }
+          .receiveSignal { case (state, RecoveryCompleted) =>
+            follow(LotRoster.survey(state.auction))
+            openRaffle(state.auction)
+          }
       }
     }
 

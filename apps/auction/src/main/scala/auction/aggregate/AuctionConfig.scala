@@ -12,9 +12,15 @@ import java.time.Instant
 
 /**
  * Онлайн-этап аукциона двумя моментами (RFC-011, «Формат как конфигурация»). `closesAt` — конец этапа и единственный
- * источник дедлайна лота; пуст, когда этап заканчивается командой, а не по времени.
+ * источник дедлайна лота; пуст, когда этап заканчивается командой, а не по времени. `raffleClosesAt` — момент закрытия
+ * регистрации в розыгрыше среди участников (ADR-066, п. 5); пуст — аукцион без розыгрыша.
  */
-final case class OnlinePhase(opensAt: Instant, closesAt: Option[Instant], closesLots: Boolean)
+final case class OnlinePhase(
+    opensAt: Instant,
+    closesAt: Option[Instant],
+    closesLots: Boolean,
+    raffleClosesAt: Option[Instant] = None
+)
 
 /** Кто закрывает лоты. У `Mixed` параметр — только онлайн-сторона: финал закрывает ведущий. */
 enum ClosingPolicy {
@@ -50,6 +56,9 @@ final case class AuctionConfigInput(
  * край показал, какое окно неверно: окно без онлайн-этапа или без `closesAt`; окно вне `opensAt ≤ from < until ≤
  * closesAt`; два окна с общим лотом и пересекающимися интервалами; сумма не положительна или не в валюте лотов; пустой
  * набор лотов.
+ *
+ * Момент закрытия регистрации в розыгрыше (ADR-066, п. 5) строго позже начала онлайн-этапа и, если у этапа есть конец,
+ * строго раньше него. День недели сервис не проверяет: это выбор организаторов.
  */
 enum ConfigInvalid {
   case ClosesAtMissing
@@ -61,6 +70,8 @@ enum ConfigInvalid {
   case StepWindowsOverlap(first: Int, second: Int)
   case StepWindowStepInvalid(window: Int)
   case StepWindowLotsEmpty(window: Int)
+  case RaffleClosesAtNotAfterOpensAt
+  case RaffleClosesAtNotBeforeClosesAt
 }
 
 /**
@@ -85,6 +96,9 @@ final case class AuctionConfig private (
 
   /** Дедлайн, который лот получает во входе `OpenLot`: `closesAt`, если конец онлайн-этапа закрывает лоты. */
   def lotDeadline: Option[Instant] = onlinePhase.filter(_.closesLots).flatMap(_.closesAt)
+
+  /** Момент закрытия регистрации в розыгрыше; пусто — аукцион проводится без розыгрыша. */
+  def raffleClosesAt: Option[Instant] = onlinePhase.flatMap(_.raffleClosesAt)
 
   /**
    * Окна, которые лот получает во входе `OpenLot`: те, в чьих лотах он есть, без самого множества и по возрастанию
@@ -119,6 +133,10 @@ object AuctionConfig {
     if (needsDeadline && closesAt.isEmpty) Left(ConfigInvalid.ClosesAtMissing)
     else if (onlinePhase.exists(phase => phase.closesAt.exists(!_.isAfter(phase.opensAt))))
       Left(ConfigInvalid.ClosesAtNotAfterOpensAt)
+    else if (onlinePhase.exists(phase => phase.raffleClosesAt.exists(!_.isAfter(phase.opensAt))))
+      Left(ConfigInvalid.RaffleClosesAtNotAfterOpensAt)
+    else if (onlinePhase.exists(phase => phase.raffleClosesAt.exists(t => phase.closesAt.exists(!t.isBefore(_)))))
+      Left(ConfigInvalid.RaffleClosesAtNotBeforeClosesAt)
     else if (finalBlocks < 0 || finalBlocks > MaxFinalBlocks) Left(ConfigInvalid.FinalBlocksOutOfRange)
     else
       windowsInvalid(onlinePhase, lotDefaults.map(_.currency), stepWindows)

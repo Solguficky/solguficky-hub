@@ -376,6 +376,10 @@ object ResponseMapping {
         wire.ConfigInvalid.Reason.StepWindowStepInvalid(wire.StepWindowStepInvalid(window))
       case ConfigInvalid.StepWindowLotsEmpty(window) =>
         wire.ConfigInvalid.Reason.StepWindowLotsEmpty(wire.StepWindowLotsEmpty(window))
+      case ConfigInvalid.RaffleClosesAtNotAfterOpensAt =>
+        wire.ConfigInvalid.Reason.RaffleClosesAtNotAfterOpensAt(wire.RaffleClosesAtNotAfterOpensAt())
+      case ConfigInvalid.RaffleClosesAtNotBeforeClosesAt =>
+        wire.ConfigInvalid.Reason.RaffleClosesAtNotBeforeClosesAt(wire.RaffleClosesAtNotBeforeClosesAt())
     }
     wire.ConfigInvalid(named)
   }
