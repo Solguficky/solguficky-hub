@@ -4,7 +4,10 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
-import { AuctionService } from "../../../../gen/auction/v1/auction_service_pb.js";
+import {
+  AuctionService,
+  type ConfigInvalid,
+} from "../../../../gen/auction/v1/auction_service_pb.js";
 import type { Money } from "../../../auction-ui/index.js";
 import {
   bidOutcomeOf,
@@ -295,6 +298,8 @@ export function createAuctionAdapter(
             opId: week.opId,
             // Неделя закрывает лоты общим дедлайном; финал — один блок либо
             // ни одного. `lot_defaults` не шлются: их подставляет Auction.
+            // Окна «Счастливых часов» едут всегда: конфигурацию Auction
+            // заменяет целиком.
             config: {
               onlinePhase: {
                 opensAt: week.opensAt,
@@ -307,6 +312,12 @@ export function createAuctionAdapter(
                   ? { case: "mixed", value: { onlineByDeadline: true } }
                   : { case: "byDeadline", value: {} },
               },
+              stepWindows: week.windows.map((window) => ({
+                from: window.from,
+                until: window.until,
+                step: wireMoney(window.step),
+                lotIds: [...window.lotIds],
+              })),
             },
           },
           options(meta),
@@ -928,6 +939,32 @@ function moneyOf(value: { minorUnits: bigint; currency: string }): Money {
   return { minorUnits, currency: value.currency };
 }
 
+// Конфигурацию собирает бот: конец позже начала и окна «Счастливых часов»
+// задаёт человек, а остальные отказы — дефект сборки, а не ответ человеку.
+// Окно без `closes_at` бот не соберёт: сроки недели он шлёт всегда.
+function configRefusal(reason: ConfigInvalid["reason"]): ScheduleAuctionResult {
+  switch (reason.case) {
+    case "closesAtNotAfterOpensAt":
+      return { kind: "closes-not-after-opens" };
+    case "stepWindowOutsideOnlinePhase":
+      return { kind: "window-outside-week", window: reason.value.windowIndex };
+    case "stepWindowsOverlap":
+      return {
+        kind: "windows-overlap",
+        first: reason.value.firstIndex,
+        second: reason.value.secondIndex,
+      };
+    case "stepWindowStepInvalid":
+      return { kind: "window-step-invalid", window: reason.value.windowIndex };
+    case "stepWindowLotsEmpty":
+      return { kind: "window-lots-empty", window: reason.value.windowIndex };
+    default:
+      return defect(
+        `schedule auction refused the configuration: ${reason.case ?? "no reason"}`,
+      );
+  }
+}
+
 function scheduleAuctionResult(
   outcome: Awaited<ReturnType<AuctionRpc["scheduleAuction"]>>["outcome"],
 ): ScheduleAuctionResult {
@@ -942,16 +979,8 @@ function scheduleAuctionResult(
           return { kind: "meetup-not-found" };
         case "auctionAlreadyStarted":
           return { kind: "already-started" };
-        case "configInvalid": {
-          // Конфигурацию собирает бот: конец позже начала задаёт человек, а
-          // остальные отказы — дефект сборки, а не ответ человеку.
-          const invalid = outcome.value.reason.value.reason.case;
-          return invalid === "closesAtNotAfterOpensAt"
-            ? { kind: "closes-not-after-opens" }
-            : defect(
-                `schedule auction refused the configuration: ${invalid ?? "no reason"}`,
-              );
-        }
+        case "configInvalid":
+          return configRefusal(outcome.value.reason.value.reason);
         case undefined:
           return defect("schedule auction refusal without a reason");
         default: {

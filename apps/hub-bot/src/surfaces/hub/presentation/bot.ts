@@ -72,6 +72,7 @@ import type {
   Person,
   PublishMomentRetry,
   WeekAskError,
+  WindowAskError,
 } from "../application/types.js";
 import { type AuctionScreens, viewerOf } from "../auction/port.js";
 import { type CommunityDay, isBeforeDay } from "../community-time.js";
@@ -142,6 +143,8 @@ import {
   consoleAskData,
   consoleViewData,
   consoleWeekData,
+  consoleWindowAskData,
+  consoleWindowsData,
   defaultConsoleSort,
   lotAskData,
   lotFormData,
@@ -177,9 +180,14 @@ import {
   finalAskErrorText,
   finalAskText,
   finalToast,
-  weekAskErrorText,
+  weekAskError,
   weekConfirmScreen,
   weekQuestionText,
+  windowAskErrorText,
+  windowLotToast,
+  windowQuestionText,
+  windowScreen,
+  windowsScreen,
 } from "./screens/auction-console.js";
 import { auctionFaqScreen } from "./screens/auction-faq.js";
 import type { ScreenId } from "./screens/catalog.js";
@@ -532,6 +540,14 @@ type PendingConsoleWeek = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о новом окне «Счастливых часов» (PER-504). Шаг — аукцион — лежит в
+// кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsoleWindow = {
+  kind: "console-window";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о следующей цене лота финала (PER-337). Шаг — аукцион и номер лота в
 // составе — лежит в кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingFinalAsk = {
@@ -553,6 +569,7 @@ type HubPendingInput =
   | PendingBroadcastBody
   | PendingLot
   | PendingConsoleWeek
+  | PendingConsoleWindow
   | PendingFinalAsk;
 
 type UpdateContext = ShellContext & {
@@ -1099,14 +1116,18 @@ async function handleMessage(
     }
     if (
       replyId !== undefined &&
-      pending?.kind === "console-week" &&
+      (pending?.kind === "console-week" ||
+        pending?.kind === "console-window") &&
       ctx.message?.text !== undefined
     ) {
       useCase = "manage_auction";
       if (ctx.from?.id !== pending.telegramUserId) {
         outcome = {
           level: "info",
-          message: "foreign auction week answer ignored",
+          message:
+            pending.kind === "console-week"
+              ? "foreign auction week answer ignored"
+              : "foreign step window answer ignored",
           result: "ok",
           use_case: useCase,
         };
@@ -1137,9 +1158,14 @@ async function handleMessage(
       }
       // Ключ команды рождается на каждый ответ: в кнопку вопроса он не
       // помещается, а сроки Auction заменяет целиком, и повтор даёт тот же итог.
+      // Повтор ответа об окне добавил бы второе такое же окно, но оно
+      // пересекается с первым по всем лотам, и Auction его отклонит.
       const result = await runtime.dispatcher.execute({
         identity: identity.person,
-        intent: "schedule-auction-week",
+        intent:
+          pending.kind === "console-week"
+            ? "schedule-auction-week"
+            : "add-step-window",
         auctionId: pending.auctionId,
         value: ctx.message.text,
         opId: createUuidV7(),
@@ -1150,7 +1176,12 @@ async function handleMessage(
         questions,
         replyId,
       });
-      if (result.kind !== "auction-week-ask") await answered(result);
+      if (
+        result.kind !== "auction-week-ask" &&
+        result.kind !== "step-window-ask"
+      ) {
+        await answered(result);
+      }
       return;
     }
     if (
@@ -1443,6 +1474,7 @@ async function handleMessage(
         pending.kind === "publish-moment" ||
         pending.kind === "lot" ||
         pending.kind === "console-week" ||
+        pending.kind === "console-window" ||
         pending.kind === "final-ask") &&
       ctx.message?.text === undefined
     ) {
@@ -1453,7 +1485,9 @@ async function handleMessage(
           ? "manage_community"
           : pending.kind === "lot"
             ? "manage_lot"
-            : pending.kind === "console-week" || pending.kind === "final-ask"
+            : pending.kind === "console-week" ||
+                pending.kind === "console-window" ||
+                pending.kind === "final-ask"
               ? "manage_auction"
               : pending.kind === "meetup" && pending.mode === "create"
                 ? "create_meetup"
@@ -1829,7 +1863,12 @@ async function handleCallback(
       action.kind === "console-next-lot" ||
       action.kind === "console-ask" ||
       action.kind === "console-close" ||
-      action.kind === "console-close-confirm"
+      action.kind === "console-close-confirm" ||
+      action.kind === "console-windows" ||
+      action.kind === "console-window" ||
+      action.kind === "console-window-ask" ||
+      action.kind === "console-window-lot" ||
+      action.kind === "console-window-remove"
     ) {
       outcome = canManageMeetups(person)
         ? await handleConsoleCallback(ctx, runtime, questions, person, action)
@@ -5566,7 +5605,12 @@ async function handleConsoleCallback(
         | "console-next-lot"
         | "console-ask"
         | "console-close"
-        | "console-close-confirm";
+        | "console-close-confirm"
+        | "console-windows"
+        | "console-window"
+        | "console-window-ask"
+        | "console-window-lot"
+        | "console-window-remove";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -5697,6 +5741,52 @@ async function handleConsoleCallback(
           opId: createUuidV7(),
         }),
       );
+    // «Счастливые часы» (PER-504). Ключ команды рождается на нажатие: окна
+    // Auction заменяет вместе с конфигурацией, а кнопка лота несёт целевое
+    // состояние, и повтор даёт тот же итог.
+    case "console-windows":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-step-windows",
+        }),
+      );
+    case "console-window":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-step-window",
+          window: action.window,
+          page: action.page,
+        }),
+      );
+    case "console-window-ask":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-step-window",
+        }),
+      );
+    case "console-window-lot":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "set-step-window-lot",
+          window: action.window,
+          lotId: tokenToUuid(action.lot),
+          selected: action.selected,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-window-remove":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "remove-step-window",
+          window: action.window,
+          opId: createUuidV7(),
+        }),
+      );
     case "console-close-confirm":
       return render(
         await runtime.dispatcher.execute({
@@ -5804,12 +5894,58 @@ async function renderConsoleResult(
         timeZone,
         week: result.week,
         error: result.error,
+        window: result.window,
         replaces: context.replyId,
       });
       return handled(
         result.error === undefined
           ? "auction week requested"
           : "auction week asked again",
+      );
+    case "step-windows":
+      await showScreen(
+        ctx,
+        windowsScreen({
+          console: result.console,
+          note: result.note,
+          timeZone,
+          today: communityToday(ctx),
+        }),
+      );
+      return handled(
+        result.note === undefined
+          ? "step windows sent"
+          : `step windows sent: ${result.note.kind}`,
+      );
+    case "step-window":
+      // Переключатель лота подтверждает себя всплывающим текстом, как финал.
+      if (result.toggled !== undefined) {
+        await ctx.waiting?.answer(windowLotToast(result.toggled.selected));
+      }
+      await showScreen(
+        ctx,
+        windowScreen({
+          console: result.console,
+          index: result.index,
+          at: result.at,
+          timeZone,
+          today: communityToday(ctx),
+        }),
+      );
+      return handled("step window sent");
+    case "step-window-ask":
+      await askConsoleWindow(ctx, context.questions, {
+        auctionId: result.auctionId,
+        timeZone,
+        week: result.week,
+        error: result.error,
+        window: result.window,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "step window requested"
+          : "step window asked again",
       );
     case "final-ask":
       await askFinalPrice(ctx, context.questions, {
@@ -5889,6 +6025,7 @@ function askConsoleWeek(
     timeZone: string;
     week?: AuctionWeek | undefined;
     error?: WeekAskError | undefined;
+    window?: number | undefined;
     replaces?: number | undefined;
   },
 ): Promise<void> {
@@ -5903,7 +6040,7 @@ function askConsoleWeek(
       ctx,
       questions,
       pending,
-      weekAskErrorText[ask.error],
+      weekAskError(ask.error, ask.window),
       ask.replaces,
     );
   }
@@ -5912,6 +6049,42 @@ function askConsoleWeek(
     questions,
     pending,
     weekQuestionText(ask.timeZone, ask.week),
+    ask.replaces,
+  );
+}
+
+function askConsoleWindow(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    timeZone: string;
+    week?: AuctionWeek | undefined;
+    error?: WindowAskError | undefined;
+    window?: number | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-window",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      windowAskErrorText(ask.error, ask),
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    windowQuestionText(ask.timeZone, ask.week),
     ask.replaces,
   );
 }
@@ -7045,6 +7218,11 @@ function stepOf(pending: PendingBody): QuestionStep {
       return lotStepOf(pending.question);
     case "console-week":
       return { kind: "console-week", auction: uuidToToken(pending.auctionId) };
+    case "console-window":
+      return {
+        kind: "console-window",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "final-ask":
       return {
         kind: "final-ask",
@@ -7182,6 +7360,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-window":
+      return {
+        kind: "console-window",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     case "final-ask":
       return {
         kind: "final-ask",
@@ -7247,6 +7432,9 @@ function cancelTarget(step: QuestionStep): ScreenAction {
         page: 0,
         sort: defaultConsoleSort,
       };
+    case "console-window":
+      // Вопрос о новом окне задан со «Счастливых часов».
+      return { kind: "console-windows", auction: step.auction };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -7386,6 +7574,8 @@ function reopenData(step: QuestionStep): string {
       return lotAskData(step.lot, "image");
     case "console-week":
       return consoleWeekData(step.auction);
+    case "console-window":
+      return consoleWindowAskData(step.auction);
     case "final-ask":
       return consoleAskData(step.auction, step.position);
     default: {
@@ -7426,6 +7616,11 @@ function answerParent(step: QuestionStep): Parent {
     case "console-week":
     case "final-ask":
       return { name: "Пульт", data: consoleViewData(step.auction) };
+    case "console-window":
+      return {
+        name: "Счастливые часы",
+        data: consoleWindowsData(step.auction),
+      };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -7653,6 +7848,11 @@ function callbackUseCase(
     | "console-ask"
     | "console-close"
     | "console-close-confirm"
+    | "console-windows"
+    | "console-window"
+    | "console-window-ask"
+    | "console-window-lot"
+    | "console-window-remove"
     | "manage-publish"
     | "manage-confirm-publish"
     | "manage-unpublish"
@@ -7790,6 +7990,11 @@ function callbackUseCase(
     case "console-ask":
     case "console-close":
     case "console-close-confirm":
+    case "console-windows":
+    case "console-window":
+    case "console-window-ask":
+    case "console-window-lot":
+    case "console-window-remove":
       return "manage_auction";
     case "home":
     case "help":

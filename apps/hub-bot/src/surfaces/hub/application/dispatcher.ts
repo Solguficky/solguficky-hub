@@ -244,6 +244,12 @@ export function createDispatcher(
         case "advance-final-ask":
         case "prepare-final-close":
         case "close-final-lot":
+        case "view-step-windows":
+        case "view-step-window":
+        case "ask-step-window":
+        case "add-step-window":
+        case "set-step-window-lot":
+        case "remove-step-window":
           return auctionConsole === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : auctionConsole(request);

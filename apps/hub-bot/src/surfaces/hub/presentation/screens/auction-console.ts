@@ -1,6 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import type { LotStatusView } from "../../../../auction-ui/index.js";
-import { activeLot } from "../../application/auction-console.js";
+import { activeLot, windowPrint } from "../../application/auction-console.js";
 import { formatLocalMoment } from "../../application/meetup-form.js";
 import type {
   AuctionConsoleView,
@@ -11,7 +11,11 @@ import type {
   ConsoleSortMetric,
   FinalAskError,
   LotAmount,
+  StepWindow,
   WeekAskError,
+  WindowAskError,
+  WindowNote,
+  WindowRef,
 } from "../../application/types.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
@@ -29,6 +33,11 @@ import {
   consoleStartFinalData,
   consoleViewData,
   consoleWeekData,
+  consoleWindowAskData,
+  consoleWindowData,
+  consoleWindowLotData,
+  consoleWindowRemoveData,
+  consoleWindowsData,
   defaultConsoleSort,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
@@ -39,6 +48,7 @@ import {
   nextRow,
   outcomeText,
   pagedTitle,
+  pageSize,
   paginate,
   readableMoment,
   removeLabel,
@@ -74,7 +84,8 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-already-open": "Неделя уже открыта.",
   "week-not-scheduled":
     "Сначала задай сроки недели. Без них неделю не открыть.",
-  "week-frozen": "Онлайн-неделя уже открыта. Сроки и финал больше не меняются.",
+  "week-frozen":
+    "Онлайн-неделя уже открыта. Сроки, финал и счастливые часы больше не меняются.",
   "week-needed": "Сначала задай сроки недели.",
   marked: "Лот отмечен для финала.",
   unmarked: "Отметка финала снята.",
@@ -115,6 +126,13 @@ function finalLine(week: AuctionWeek): string {
   return week.final ? "Финал: есть." : "Финал: нет.";
 }
 
+// Окна видны в снимке пульта строкой (PER-504); сами окна — на своём экране.
+function windowsLines(week: AuctionWeek): string[] {
+  return week.windows.length === 0
+    ? []
+    : [`Счастливые часы: ${windowsLabel(week.windows.length)}.`];
+}
+
 function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
   if (week.opensAt === undefined || week.closesAt === undefined) {
     return "Сроки недели заданы не полностью.";
@@ -130,13 +148,13 @@ function statusLines(view: ConsoleScreenView): string[] {
     case "scheduled":
       return week === undefined
         ? ["Сроки недели не заданы."]
-        : [weekLine(week, view), finalLine(week)];
+        : [weekLine(week, view), finalLine(week), ...windowsLines(week)];
     case "prebidding":
       return [
         week?.closesAt === undefined
           ? "Идут онлайн-торги."
           : `Идут онлайн-торги до ${moment(week.closesAt, view)}.`,
-        ...(week === undefined ? [] : [finalLine(week)]),
+        ...(week === undefined ? [] : [finalLine(week), ...windowsLines(week)]),
       ];
     case "settling":
       return ["Общий дедлайн прошёл: аукцион ждёт закрытия лотов."];
@@ -275,6 +293,11 @@ export function bidsLabel(count: number): string {
 /** «1 лот», «3 лота», «12 лотов». */
 function lotsLabel(count: number): string {
   return counted(count, ["лот", "лота", "лотов"]);
+}
+
+/** «1 окно», «3 окна», «5 окон». */
+function windowsLabel(count: number): string {
+  return counted(count, ["окно", "окна", "окон"]);
 }
 
 function counted(
@@ -439,7 +462,14 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       toggleLabel("Финал", week.final),
       consoleFinalData(auction, !week.final),
     );
+    nextRow(keyboard).text("Счастливые часы", consoleWindowsData(auction));
     nextRow(keyboard).text("Открыть онлайн-неделю", consoleOpenData(auction));
+  } else if (
+    console.status === "prebidding" &&
+    (week?.windows.length ?? 0) > 0
+  ) {
+    // После открытия окна только видны: править их уже нельзя.
+    nextRow(keyboard).text("Счастливые часы", consoleWindowsData(auction));
   }
   if (editable) {
     nextRow(keyboard).text(
@@ -703,7 +733,16 @@ export const weekAskErrorText: Record<WeekAskError, string> = {
     "Такого времени нет по времени сообщества: в этот час переводили часы.",
   "week-order": "Конец недели должен быть позже начала.",
   "week-ended": "Конец недели уже прошёл.",
+  "week-cuts-window":
+    "Окно счастливых часов не помещается в новые сроки. Удали его или задай сроки шире.",
 };
+
+/** Причина отказа ответу о сроках с номером окна, которое сроки отрезали. */
+export function weekAskError(error: WeekAskError, window?: number): string {
+  return error === "week-cuts-window" && window !== undefined
+    ? `Окно ${window} счастливых часов не помещается в новые сроки. Удали его или задай сроки шире.`
+    : weekAskErrorText[error];
+}
 
 export const weekPrompt =
   "Сроки онлайн-недели по времени сообщества: начало и конец через тире. Конец — общий дедлайн лотов, например 00:00 дня финала.\nНапример: 20.10.2026 18:00 — 27.10.2026 00:00";
@@ -720,6 +759,291 @@ export function weekQuestionText(timeZone: string, week?: AuctionWeek): string {
       ? []
       : [`Сейчас: ${local(week.opensAt)} — ${local(week.closesAt)}`]),
     weekPrompt,
+  ].join("\n");
+}
+
+// «Счастливые часы» (PER-504): окна сниженного шага онлайн-недели. Окно
+// задаётся до открытия недели одним ответом и рождается со всеми лотами
+// реестра; лишние организатор снимает на экране окна (решение владельца
+// 11 октября 2026 года).
+
+const toWindows = (auction: string) => ({
+  name: "Счастливые часы",
+  data: consoleWindowsData(auction),
+});
+
+export type WindowsScreenView = {
+  console: AuctionConsoleView;
+  note?: WindowNote | undefined;
+  timeZone: string;
+  today: CommunityDay;
+};
+
+function windowsOf(console: AuctionConsoleView): readonly StepWindow[] {
+  return console.week?.windows ?? [];
+}
+
+function refOf(window: StepWindow, index: number): WindowRef {
+  return { index, print: windowPrint(window) };
+}
+
+function spanLine(
+  window: StepWindow,
+  view: { timeZone: string; today: CommunityDay },
+): string {
+  const local = (instant: string) =>
+    readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+  return `с ${local(window.from)} до ${local(window.until)}, шаг ${money(window.step)}`;
+}
+
+// Лоты окна, которых нет в реестре, Auction принимает молча (ADR-047,
+// дополнение 2026-10-08, «Открыто»): пульт — единственное место, где они видны.
+function lotsOfWindow(window: StepWindow, console: AuctionConsoleView): string {
+  const registry = new Set(console.lots.map((each) => each.lot.lotId));
+  const inRegistry = window.lotIds.filter((lotId) => registry.has(lotId));
+  const outside = window.lotIds.length - inRegistry.length;
+  return [
+    `лотов ${inRegistry.length} из ${console.lots.length}`,
+    ...(outside === 0 ? [] : [`не в реестре: ${outside}`]),
+  ].join(" · ");
+}
+
+export function windowNoteText(note: WindowNote): string {
+  switch (note.kind) {
+    case "saved":
+      return `Окно ${note.window} сохранено. В нём все лоты аукциона — лишние сними на экране окна.`;
+    case "removed":
+      return `Окно ${note.window} удалено.`;
+    case "changed":
+      return "Окна изменились, пока был открыт экран. Проверь заново.";
+    case "last-lot":
+      return `Это последний лот окна ${note.window}. Окна без лотов не бывает — удали окно целиком.`;
+    case "no-lots":
+      return "Лотов пока нет. Окну нужны лоты — сначала добавь их.";
+    case "overlap":
+      return `Лот уже в окне ${note.other}, а оно пересекается с окном ${note.window} по времени. Сначала убери лот из окна ${note.other}.`;
+    default: {
+      const _exhaustive: never = note;
+      return _exhaustive;
+    }
+  }
+}
+
+/** Всплывающий текст принятого переключателя лота в окне. */
+export function windowLotToast(selected: boolean): string {
+  return selected ? "Лот добавлен в окно." : "Лот убран из окна.";
+}
+
+/**
+ * «Счастливые часы»: окна строками с номером, сроками, шагом и числом лотов.
+ * Пока неделя не открыта — кнопка на каждое окно и «Добавить окно»; после —
+ * только список.
+ */
+export function windowsScreen(view: WindowsScreenView): ShownScreen {
+  const { console } = view;
+  const auction = uuidToToken(console.auctionId);
+  if (view.note !== undefined) {
+    return {
+      id: "outcome",
+      text: outcomeText(windowNoteText(view.note)),
+      keyboard: withNav(new InlineKeyboard(), toWindows(auction)),
+      format: "HTML",
+    };
+  }
+  const windows = windowsOf(console);
+  const editable = console.status === "draft" || console.status === "scheduled";
+  const keyboard = new InlineKeyboard();
+  if (editable) {
+    windows.forEach((window, index) => {
+      // Номер окна не длиннее двух цифр: столько несёт кнопка.
+      if (index > 99) return;
+      nextRow(keyboard).text(
+        `Окно ${index + 1}`,
+        consoleWindowData(auction, refOf(window, index)),
+      );
+    });
+    nextRow(keyboard).text("Добавить окно", consoleWindowAskData(auction));
+  }
+  return {
+    id: "step-windows",
+    text: screenText(
+      "Счастливые часы",
+      escapeHtml(
+        "В окне ставка на выбранных лотах растёт на меньший шаг. Окна задаются до открытия недели.",
+      ),
+      windows.length === 0
+        ? "Окон пока нет."
+        : windows
+            .map((window, index) =>
+              escapeHtml(
+                `${index + 1}. ${spanLine(window, view)} · ${lotsOfWindow(window, console)}`,
+              ),
+            )
+            .join("\n"),
+    ),
+    keyboard: withNav(keyboard, {
+      name: "Пульт",
+      data: consoleViewData(auction),
+    }),
+    format: "HTML",
+  };
+}
+
+/**
+ * Окно: сроки и шаг, затем лоты реестра в порядке заведения переключателями
+ * «в окне — нет». Страницу задаёт кнопка листания либо лот, который только
+ * что переключили. После открытия недели — только список лотов окна.
+ */
+export function windowScreen(view: {
+  console: AuctionConsoleView;
+  index: number;
+  at: { page: number } | { lotId: string };
+  timeZone: string;
+  today: CommunityDay;
+}): ShownScreen {
+  const { console, index } = view;
+  const auction = uuidToToken(console.auctionId);
+  const window = windowsOf(console)[index];
+  if (window === undefined) {
+    return windowsScreen({ ...view, note: { kind: "changed" } });
+  }
+  const ref = refOf(window, index);
+  const lots = [...console.lots].sort((a, b) =>
+    a.lot.lotId.localeCompare(b.lot.lotId),
+  );
+  const at = view.at;
+  const requested =
+    "page" in at
+      ? at.page
+      : Math.floor(
+          Math.max(
+            lots.findIndex((each) => each.lot.lotId === at.lotId),
+            0,
+          ) / pageSize,
+        );
+  const inWindow = new Set(window.lotIds);
+  const editable = console.status === "draft" || console.status === "scheduled";
+  const keyboard = new InlineKeyboard();
+  let lines: string;
+  let title: string;
+  if (editable) {
+    const page = paginate(lots, requested);
+    title = pagedTitle(`Окно ${index + 1}`, page);
+    for (const entry of page.items) {
+      const selected = inWindow.has(entry.lot.lotId);
+      nextRow(keyboard).text(
+        buttonText(toggleLabel(titleOf(entry), selected)),
+        consoleWindowLotData({
+          auction,
+          window: ref,
+          lot: uuidToToken(entry.lot.lotId),
+          selected: !selected,
+        }),
+      );
+    }
+    withPager(keyboard, page, (target) =>
+      consoleWindowData(auction, ref, target),
+    );
+    nextRow(keyboard).text(
+      removeLabel("Удалить окно"),
+      consoleWindowRemoveData(auction, ref),
+    );
+    lines =
+      lots.length === 0
+        ? "Лотов пока нет."
+        : escapeHtml("Вкл — лот в окне, Выкл — шаг у лота обычный.");
+  } else {
+    const shown = lots.filter((entry) => inWindow.has(entry.lot.lotId));
+    const page = paginate(shown, requested);
+    title = pagedTitle(`Окно ${index + 1}`, page);
+    withPager(keyboard, page, (target) =>
+      consoleWindowData(auction, ref, target),
+    );
+    lines =
+      shown.length === 0
+        ? "Лотов реестра в окне нет."
+        : page.items
+            .map((entry) => escapeHtml(`• ${titleOf(entry)}`))
+            .join("\n");
+  }
+  return {
+    id: "step-window",
+    text: screenText(
+      title,
+      escapeHtml(
+        `${spanLine(window, view)}. ${lotsOfWindow(window, console)}.`,
+      ),
+      lines,
+    ),
+    keyboard: withNav(keyboard, toWindows(auction)),
+    format: "HTML",
+  };
+}
+
+/** Причина отказа ответу об окне: заголовок экрана исхода. */
+export function windowAskErrorText(
+  error: WindowAskError,
+  context: {
+    timeZone: string;
+    week?: AuctionWeek | undefined;
+    window?: number | undefined;
+  },
+): string {
+  switch (error) {
+    case "window-format":
+      return "Не получилось разобрать окно. Нужны начало, конец и шаг: ДД.ММ.ГГГГ ЧЧ:ММ — ДД.ММ.ГГГГ ЧЧ:ММ, 50.";
+    case "window-moment":
+      return weekAskErrorText["week-moment"];
+    case "window-order":
+      return "Конец окна должен быть позже начала.";
+    case "window-ended":
+      return "Конец окна уже прошёл.";
+    case "amount-format":
+      return "Шаг — целое число рублей. Только цифры, без копеек.";
+    case "amount-range":
+      return "Шаг — от 1 до 9 999 999 рублей.";
+    case "window-outside-week": {
+      const span = weekSpan(context.timeZone, context.week);
+      return span === undefined
+        ? "Окно должно лежать внутри онлайн-недели."
+        : `Окно должно лежать внутри онлайн-недели: ${span}.`;
+    }
+    case "window-overlap":
+      return context.window === undefined
+        ? "Окно пересекается с другим окном, а лоты у них общие. Сдвинь время."
+        : `Окно пересекается с окном ${context.window}, а лоты у них общие. Сдвинь время или удали окно ${context.window}.`;
+    case "window-step":
+      return "Шаг окна не принят: он должен быть больше нуля.";
+    default: {
+      const _exhaustive: never = error;
+      return _exhaustive;
+    }
+  }
+}
+
+function weekSpan(timeZone: string, week?: AuctionWeek): string | undefined {
+  const local = (instant: string) =>
+    formatLocalMoment(communityLocalTime(instant, timeZone));
+  return week?.opensAt === undefined || week.closesAt === undefined
+    ? undefined
+    : `${local(week.opensAt)} — ${local(week.closesAt)}`;
+}
+
+export const windowPrompt =
+  "Окно по времени сообщества: начало и конец через тире, затем шаг в целых рублях через запятую. Окно — внутри недели, шаг — меньше обычного.\nНапример: 21.10.2026 18:00 — 21.10.2026 21:00, 50";
+
+/**
+ * Вопрос о новом окне (дизайн-код, «Вопросы»): сроки недели в том же виде, в
+ * каком вводят окно, и образец.
+ */
+export function windowQuestionText(
+  timeZone: string,
+  week?: AuctionWeek,
+): string {
+  const span = weekSpan(timeZone, week);
+  return [
+    ...(span === undefined ? [] : [`Неделя: ${span}`]),
+    windowPrompt,
   ].join("\n");
 }
 

@@ -16,6 +16,11 @@ import {
   consoleStartFinalData,
   consoleViewData,
   consoleWeekData,
+  consoleWindowAskData,
+  consoleWindowData,
+  consoleWindowLotData,
+  consoleWindowRemoveData,
+  consoleWindowsData,
   lotAskData,
   lotFormData,
   lotNewData,
@@ -1016,6 +1021,58 @@ describe("auction console callbacks", () => {
   const lot = "AZKbflwdej-OSy1snwobPA";
   const op = "AZnypHwefTqbIU-OEqs0qg";
   const defaultSort = { metric: "bids", direction: "descending" };
+
+  it("parses every button of the happy hours within the byte budget", () => {
+    // Худший случай: двузначный номер окна и четырёхзначная страница.
+    const window = { index: 99, print: "z0a9" };
+    const cases = [
+      [consoleWindowsData(auction), { kind: "console-windows", auction }],
+      [consoleWindowAskData(auction), { kind: "console-window-ask", auction }],
+      [
+        consoleWindowData(auction, window),
+        { kind: "console-window", auction, window, page: 0 },
+      ],
+      [
+        consoleWindowData(auction, window, 9999),
+        { kind: "console-window", auction, window, page: 9999 },
+      ],
+      [
+        consoleWindowLotData({ auction, window, lot, selected: true }),
+        { kind: "console-window-lot", auction, window, lot, selected: true },
+      ],
+      [
+        consoleWindowLotData({ auction, window, lot, selected: false }),
+        { kind: "console-window-lot", auction, window, lot, selected: false },
+      ],
+      [
+        consoleWindowRemoveData(auction, window),
+        { kind: "console-window-remove", auction, window },
+      ],
+    ] as const;
+
+    for (const [data, action] of cases) {
+      expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    expect(
+      parseCallback(questionData({ kind: "console-window", auction }, 42)),
+    ).toEqual({
+      kind: "question",
+      step: { kind: "console-window", auction },
+      askedBy: 42,
+    });
+  });
+
+  it.each([
+    `v1:ac:hw:${"2u8Fx81oUEiwPctIYOjccw"}:100:z0a9`,
+    `v1:ac:hw:${"2u8Fx81oUEiwPctIYOjccw"}:01:z0a9`,
+    `v1:ac:hw:${"2u8Fx81oUEiwPctIYOjccw"}:1:Z0A9`,
+    `v1:ac:hx:${"2u8Fx81oUEiwPctIYOjccw"}:1`,
+    `v1:ac:hs:${"2u8Fx81oUEiwPctIYOjccw"}:1:z0a9`,
+    `v1:ac:h:${"2u8Fx81oUEiwPctIYOjccw"}:1`,
+  ])("refuses a malformed happy hours button %s", (data) => {
+    expect(parseCallback(data)).toEqual({ kind: "malformed" });
+  });
 
   it("parses every button of the console within the byte budget", () => {
     const cases = [

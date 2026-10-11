@@ -9,6 +9,7 @@ import type {
   ConsoleSort,
   FormField,
   LotTextField,
+  WindowRef,
 } from "../application/types.js";
 import type { CommunityDay } from "../community-time.js";
 import type {
@@ -81,6 +82,13 @@ const PositionSchema = z
   .string()
   .regex(/^(0|[1-9]\d{0,2})$/)
   .transform(Number);
+// Окно «Счастливых часов» в кнопке пульта (PER-504): номер в конфигурации с
+// нуля — двух цифр хватает, — и отпечаток его сроков и шага.
+const WindowIndexSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d?)$/)
+  .transform(Number);
+const WindowPrintSchema = z.string().regex(/^[0-9a-z]{4}$/);
 const ConsoleSortSchema = z.enum(["bd", "ba", "pd", "pa", "gd", "ga"]);
 export const defaultConsoleSort: ConsoleSort = {
   metric: "bids",
@@ -271,6 +279,20 @@ type PlainAction =
       page: number;
       sort: ConsoleSort;
     }
+  // «Счастливые часы» (PER-504): список окон, окно на странице лотов, вопрос
+  // о новом окне, лот в окне и вне его, удаление окна. Окно кнопка называет
+  // номером и отпечатком; лот окна — без страницы, её экран выводит из лота.
+  | { kind: "console-windows"; auction: string }
+  | { kind: "console-window"; auction: string; window: WindowRef; page: number }
+  | { kind: "console-window-ask"; auction: string }
+  | {
+      kind: "console-window-lot";
+      auction: string;
+      window: WindowRef;
+      lot: string;
+      selected: boolean;
+    }
+  | { kind: "console-window-remove"; auction: string; window: WindowRef }
   // Финал ведущего (PER-337). Лот финала — номер в замороженном составе с
   // нуля: токен лота рядом с аукционом и ключом в 64 байта не помещается.
   | { kind: "console-start-final"; auction: string }
@@ -422,6 +444,9 @@ export type QuestionStep =
   // Сроки онлайн-недели на пульте (PER-320): аукцион, а финал и текущие сроки
   // ответ читает у Auction заново.
   | { kind: "console-week"; auction: string }
+  // Новое окно «Счастливых часов» (PER-504): аукцион, а сроки недели и окна
+  // ответ читает у Auction заново.
+  | { kind: "console-window"; auction: string }
   // Следующая цена лота финала (PER-337): аукцион и номер лота в составе.
   | { kind: "final-ask"; auction: string; position: number };
 
@@ -459,7 +484,7 @@ export function lotAskData(lot: string, field: LotFormField): string {
 }
 
 // Кнопки пульта аукциона: `v1:ac:<действие>:<аукцион>[:…]`. Самая длинная —
-// отметка финала с лотом и страницей, до 59 байт.
+// лот в окне «Счастливых часов» с номером окна и отпечатком, до 62 байт.
 
 /** Пульт аукциона на странице `page`; первая страница — без номера. */
 export function consoleViewData(
@@ -516,6 +541,47 @@ export function consoleMarkData(mark: {
     (mark.sort.metric === "bids" && mark.sort.direction === "descending")
     ? base
     : `${base}:${consoleSortToken(mark.sort)}`;
+}
+
+/** «Счастливые часы» на пульте: список окон. */
+export function consoleWindowsData(auction: string): string {
+  return `v1:ac:h:${auction}`;
+}
+
+/** Окно на странице лотов `page`; первая страница — без номера. */
+export function consoleWindowData(
+  auction: string,
+  window: WindowRef,
+  page = 0,
+): string {
+  const base = `v1:ac:hw:${auction}:${window.index}:${window.print}`;
+  return page === 0 ? base : `${base}:${page}`;
+}
+
+/** «Добавить окно»: вопрос о сроках и шаге. */
+export function consoleWindowAskData(auction: string): string {
+  return `v1:ac:ha:${auction}`;
+}
+
+/**
+ * Лот в окне (`hs`) и вне его (`hd`): целевое состояние, а не переворот. Самая
+ * длинная кнопка пульта — 62 байта при двузначном номере окна.
+ */
+export function consoleWindowLotData(mark: {
+  auction: string;
+  window: WindowRef;
+  lot: string;
+  selected: boolean;
+}): string {
+  return `v1:ac:${mark.selected ? "hs" : "hd"}:${mark.auction}:${mark.window.index}:${mark.window.print}:${mark.lot}`;
+}
+
+/** «Удалить окно». */
+export function consoleWindowRemoveData(
+  auction: string,
+  window: WindowRef,
+): string {
+  return `v1:ac:hx:${auction}:${window.index}:${window.print}`;
 }
 
 /** «Начать финал». */
@@ -594,6 +660,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:li:${step.lot}`;
     case "console-week":
       return `v1:q:aw:${step.auction}`;
+    case "console-window":
+      return `v1:q:ah:${step.auction}`;
     case "final-ask":
       return `v1:q:fa:${step.auction}:${step.position}`;
     case "field":
@@ -984,11 +1052,59 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // `v1:ac:y:<аукцион>:<ключ>`, `v1:ac:x:<аукцион>`, `v1:ac:z:<аукцион>:<ключ>`
 // и `v1:ac:<s|d>:<аукцион>:<лот>:<страница>`. Финал (PER-337):
 // `v1:ac:g:<аукцион>`, `v1:ac:n:<аукцион>`, `v1:ac:<a|c>:<аукцион>:<номер>` и
-// `v1:ac:k:<аукцион>:<номер>:<ключ>:<названное>`.
+// `v1:ac:k:<аукцион>:<номер>:<ключ>:<названное>`. «Счастливые часы»
+// (PER-504): `v1:ac:h:<аукцион>`, `v1:ac:ha:<аукцион>`,
+// `v1:ac:hw:<аукцион>:<окно>:<отпечаток>[:<страница>]`,
+// `v1:ac:<hs|hd>:<аукцион>:<окно>:<отпечаток>:<лот>` и
+// `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`.
 function parseConsole(parts: readonly string[]): CallbackAction {
   const auction = TokenSchema.safeParse(parts[3]);
   if (!auction.success) return { kind: "malformed" };
+  const index = WindowIndexSchema.safeParse(parts[4]);
+  const print = WindowPrintSchema.safeParse(parts[5]);
+  const window =
+    index.success && print.success
+      ? { index: index.data, print: print.data }
+      : undefined;
   switch (parts[2]) {
+    case "h":
+      return parts.length === 4
+        ? { kind: "console-windows", auction: auction.data }
+        : { kind: "malformed" };
+    case "ha":
+      return parts.length === 4
+        ? { kind: "console-window-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "hw": {
+      const page = PageSchema.safeParse(parts[6] ?? "0");
+      return (parts.length === 6 || parts.length === 7) &&
+        window !== undefined &&
+        page.success
+        ? {
+            kind: "console-window",
+            auction: auction.data,
+            window,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "hs":
+    case "hd": {
+      const lot = TokenSchema.safeParse(parts[6]);
+      return parts.length === 7 && window !== undefined && lot.success
+        ? {
+            kind: "console-window-lot",
+            auction: auction.data,
+            window,
+            lot: lot.data,
+            selected: parts[2] === "hs",
+          }
+        : { kind: "malformed" };
+    }
+    case "hx":
+      return parts.length === 6 && window !== undefined
+        ? { kind: "console-window-remove", auction: auction.data, window }
+        : { kind: "malformed" };
     case "v": {
       if (parts.length > 6) return { kind: "malformed" };
       const page = PageSchema.safeParse(parts[4] ?? "0");
@@ -1136,6 +1252,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "lot-image", lot: token.data };
       case "aw":
         return { kind: "console-week", auction: token.data };
+      case "ah":
+        return { kind: "console-window", auction: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":

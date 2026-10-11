@@ -1,15 +1,17 @@
+import type { AuctionStepWindow } from "../../../../gen/auction/v1/auction_pb.js";
 import type {
   AuctionConsole,
   AuctionSnapshot,
   ConsoleLot as WireConsoleLot,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
-import { lotViewOf } from "../../../core/auction/snapshot.js";
+import { lotViewOf, moneyOf } from "../../../core/auction/snapshot.js";
 import type {
   AuctionConsoleSnapshot,
   AuctionWeek,
   ConsoleAuctionStatus,
   ConsoleLotSnapshot,
   FinalLineup,
+  StepWindow,
 } from "../application/types.js";
 
 // Перевод `auction.v1.AuctionConsole` в пульт хаба (PER-320). Как и перевод
@@ -59,6 +61,19 @@ function weekOf(auction: AuctionSnapshot): AuctionWeek | undefined {
       : { opensAt: phase.opensAt }),
     ...(phase?.closesAt === undefined ? {} : { closesAt: phase.closesAt }),
     final: config.finalBlocks > 0,
+    windows: config.stepWindows.map(windowOf),
+  };
+}
+
+// Окно «Счастливых часов» (PER-504). Шаг у окна обязателен: Auction без него
+// окно не принимает, и пропуск — дефект соседа.
+function windowOf(window: AuctionStepWindow): StepWindow {
+  if (window.step === undefined) throw new Error("step window without step");
+  return {
+    from: window.from,
+    until: window.until,
+    step: moneyOf(window.step),
+    lotIds: [...window.lotIds],
   };
 }
 
