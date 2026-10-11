@@ -102,7 +102,7 @@ const surface: AuctionSurface = {
         };
       },
       async setProxyLimit() {
-        return { kind: "accepted" };
+        return { kind: "accepted", lotVersion: 0 };
       },
       async chooseDisplayName() {
         return { kind: "accepted", name: "@owl_fan" };

@@ -33,7 +33,10 @@ describe("bid leaf commands", () => {
     const calls: PortCall[] = [];
     const ports = spyPorts(calls, {
       ...AUCTION,
-      bids: [{ kind: "accepted" }, { kind: "accepted" }],
+      bids: [
+        { kind: "accepted", lotVersion: 0 },
+        { kind: "accepted", lotVersion: 0 },
+      ],
     });
     const confirm = await press(
       ports,
@@ -84,7 +87,7 @@ describe("bid leaf commands", () => {
       ...AUCTION,
       limits: [
         { kind: "refused", refusal: { kind: "proxy-disabled" } },
-        { kind: "accepted" },
+        { kind: "accepted", lotVersion: 0 },
       ],
     });
     await press(

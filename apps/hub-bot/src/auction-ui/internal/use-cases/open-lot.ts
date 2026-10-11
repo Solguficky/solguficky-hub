@@ -24,10 +24,14 @@ export async function openLot(input: {
   viewer: Viewer;
   lotId: string;
   page: number;
+  atLeastVersion?: number;
 }): Promise<AuctionScreenBody> {
   const lot = await input.auction.getLot({
     viewer: input.viewer,
     lotId: input.lotId,
+    ...(input.atLeastVersion === undefined
+      ? {}
+      : { atLeastVersion: input.atLeastVersion }),
   });
   return showLot({ ...input, lot });
 }

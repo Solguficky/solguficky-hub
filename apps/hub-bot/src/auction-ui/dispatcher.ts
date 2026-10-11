@@ -59,6 +59,9 @@ export function dispatchAuctionIntent(input: {
         viewer: input.viewer,
         lotId: intent.lotId,
         page: intent.page,
+        ...(intent.atLeastVersion === undefined
+          ? {}
+          : { atLeastVersion: intent.atLeastVersion }),
       });
     case "history":
       return openHistory({

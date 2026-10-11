@@ -685,22 +685,46 @@ final class AuctionGrpcIntegrationSpec
       val auction = freshAuction()
       val lotId = tradingLot(node, auction)
       val bidder = named(node, auction)
-      asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, bidder)).futureValue.outcome.isAccepted shouldBe true
-      // GetLot читает read model, которую пишет проекция: новая цена приходит с её задержкой, а не сразу.
-      eventually {
-        val snapshot =
-          asHubBot(node.client.getLot()).invoke(wire.GetLotRequest(Some(bidder), lotId.toString)).futureValue
-        snapshot.version shouldBe 4
-        snapshot.getTrading.currentPrice shouldBe Some(MoneyMessage(150, "RUB"))
-        snapshot.getTrading.leaderId shouldBe Some(bidder.identityId)
-        snapshot.nextPrice shouldBe Some(MoneyMessage(160, "RUB"))
-        snapshot.bidCount shouldBe 1
+      val accepted = asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, bidder)).futureValue.getAccepted
+      accepted.lotVersion shouldBe 4
+      // GetLot читает read model, которую пишет проекция: новая цена приходит с её задержкой, а не сразу. Ждать
+      // надо только версии из ответа ставки (PER-470): снимок на ней уже несёт всю команду.
+      val snapshot = eventually {
+        val read = asHubBot(node.client.getLot()).invoke(wire.GetLotRequest(Some(bidder), lotId.toString)).futureValue
+        read.version should be >= accepted.lotVersion
+        read
       }
+      snapshot.getTrading.currentPrice shouldBe Some(MoneyMessage(150, "RUB"))
+      snapshot.getTrading.leaderId shouldBe Some(bidder.identityId)
+      snapshot.nextPrice shouldBe Some(MoneyMessage(160, "RUB"))
+      snapshot.bidCount shouldBe 1
       val listed = asHubBot(node.client.listAuctionLots())
         .invoke(wire.ListAuctionLotsRequest(Some(bidder), auction.value.toString))
         .futureValue
       listed.lots.map(lot => (lot.id, lot.bidCount)) shouldBe Seq((lotId.toString, 1L))
       listed.nextPageToken shouldBe ""
+    }
+
+    "answers a proxy limit with the version from which GetLot shows the bid the limit produced" in withNode { node =>
+      val sale = freshAuction()
+      val lotId = tradingLot(node, sale)
+      val rival = named(node, sale, "Кот")
+      val holder = named(node, sale, "Пёс")
+      asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, rival)).futureValue.outcome.isAccepted shouldBe true
+      // Лимит перебивает соперника производной ставкой: транзакция из двух событий, и версия — последнее из них.
+      val accepted = asHubBot(node.client.setProxyLimit())
+        .invoke(wire.SetProxyLimitRequest(Some(holder), lotId.toString, Some(MoneyMessage(300, "RUB")), newId()))
+        .futureValue
+        .getAccepted
+      accepted.lotVersion shouldBe 6
+      val snapshot = eventually {
+        val read = asHubBot(node.client.getLot()).invoke(wire.GetLotRequest(Some(holder), lotId.toString)).futureValue
+        read.version should be >= accepted.lotVersion
+        read
+      }
+      snapshot.getTrading.leaderId shouldBe Some(holder.identityId)
+      snapshot.getTrading.currentPrice.map(_.minorUnits).getOrElse(0L) should be > 150L
+      snapshot.viewerProxyLimit shouldBe Some(MoneyMessage(300, "RUB"))
     }
 
     "answers the history of a lot in journal order with a proxy war folded into one entry and no limit" in withNode {

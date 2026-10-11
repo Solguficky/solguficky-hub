@@ -81,11 +81,11 @@ function surfaceFor(
         },
         async placeBid() {
           calls.auction += 1;
-          return { kind: "accepted" };
+          return { kind: "accepted", lotVersion: 0 };
         },
         async setProxyLimit() {
           calls.auction += 1;
-          return { kind: "accepted" };
+          return { kind: "accepted", lotVersion: 0 };
         },
         async chooseDisplayName() {
           calls.auction += 1;

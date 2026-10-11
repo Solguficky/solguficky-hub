@@ -26,7 +26,7 @@ export function bidOutcomeOf(
   const { outcome } = response;
   switch (outcome.case) {
     case "accepted":
-      return { kind: "accepted" };
+      return { kind: "accepted", lotVersion: Number(outcome.value.lotVersion) };
     case "refused": {
       const { reason } = outcome.value;
       switch (reason.case) {
@@ -85,7 +85,7 @@ export function limitOutcomeOf(
   const { outcome } = response;
   switch (outcome.case) {
     case "accepted":
-      return { kind: "accepted" };
+      return { kind: "accepted", lotVersion: Number(outcome.value.lotVersion) };
     case "refused": {
       const { reason } = outcome.value;
       switch (reason.case) {

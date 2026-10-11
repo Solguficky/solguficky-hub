@@ -119,6 +119,9 @@ export type ContractAuction = {
   displayNames?: readonly DisplayNameOutcome[];
   // Лоты после принятой команды: следующее чтение лота отдаёт их.
   after?: readonly LotView[];
+  // Read model отстаёт от команды (PER-470): `after` видит только чтение с
+  // порогом версии — его адаптер дочитывает, — а простое отдаёт `lots`.
+  lagging?: boolean;
   // Свои отметки избранного по порядку отметки (PER-495). Нет — порта
   // избранного у приложения нет, как у процесса без адреса Notifications;
   // `unavailable` — Notifications отказывает.
@@ -366,10 +369,14 @@ const listCalls = (auctionId: string, tokens: readonly string[]): PortCall[] =>
     request: { viewer: CONTRACT_VIEWER, auctionId, pageToken },
   }));
 
-const getLotCall = (lotId: string): PortCall => ({
+const getLotCall = (lotId: string, atLeastVersion?: number): PortCall => ({
   port: "auction",
   method: "getLot",
-  request: { viewer: CONTRACT_VIEWER, lotId },
+  request: {
+    viewer: CONTRACT_VIEWER,
+    lotId,
+    ...(atLeastVersion === undefined ? {} : { atLeastVersion }),
+  },
 });
 
 const namesCall = (...participantIds: string[]): PortCall => ({
@@ -392,8 +399,13 @@ const historyCalls = (lotId: string, tokens: readonly string[]): PortCall[] =>
 const feedCallback = (auctionId: string, page: number) =>
   encodeAuctionCallback({ kind: "feed", auctionId, page });
 
-const lotCallback = (lotId: string, page: number) =>
-  encodeAuctionCallback({ kind: "lot", lotId, page });
+const lotCallback = (lotId: string, page: number, atLeastVersion?: number) =>
+  encodeAuctionCallback({
+    kind: "lot",
+    lotId,
+    page,
+    ...(atLeastVersion === undefined ? {} : { atLeastVersion }),
+  });
 
 const historyCallback = (lotId: string, page: number, historyPage: number) =>
   encodeAuctionCallback({ kind: "history", lotId, page, historyPage });
@@ -445,16 +457,17 @@ const backRow = (page: number) => [
 const callback = (intent: AuctionIntent) => encodeAuctionCallback(intent);
 
 // Ряды ставки под лотом в онлайн-торгах: по шагу, своя сумма и лимит.
-const bidRows = (lot: LotView, page: number) => [
+// `step` — порог «По шагу» в копейках: следующая цена лота.
+const bidRows = (lot: LotView, page: number, step = 125000) => [
   [
     {
       action: "lot.bid-step" as const,
-      amount: rub(1250),
+      amount: rub(step / 100),
       callbackData: callback({
         kind: "confirm",
         command: "bid",
         lotId: lot.lotId,
-        amount: 125000,
+        amount: step,
         page,
       }),
     },
@@ -575,6 +588,21 @@ const LOT_AFTER_BID: LotView = {
     kind: "trading",
     currentPrice: rub(1300),
     leaderId: CONTRACT_VIEWER.identityId,
+    deadline: "2026-10-10T18:00:00Z",
+    phase: "online",
+  },
+};
+
+// Тот же лот на версии принятой ставки соперника лидера: цена выросла, лидер
+// прежний — чтение, которое отстаёт, показало бы цену 1200 ₽.
+const LOT_CAUGHT_UP: LotView = {
+  ...CONTRACT_LOT,
+  version: 4,
+  nextPrice: rub(1350),
+  status: {
+    kind: "trading",
+    currentPrice: rub(1300),
+    leaderId: LEADER_ID,
     deadline: "2026-10-10T18:00:00Z",
     phase: "online",
   },
@@ -734,9 +762,11 @@ const answerRefusedBody = (
 
 // Принятая команда — свой экран с «К лоту» (PER-473); карточку перечитывает
 // кнопка, поэтому после ответа Auction лот не читается.
+// «К лоту» несёт версию из ответа команды: карточка дочитает лот до неё.
 const acceptedBody = (
   command: "bid" | "proxy",
   amount: number,
+  lotVersion: number,
 ): AuctionScreenBody => ({
   blocks: [
     {
@@ -752,7 +782,7 @@ const acceptedBody = (
     [
       {
         action: "accepted.lot",
-        callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
+        callbackData: lotCallback(CONTRACT_LOT.lotId, 2, lotVersion),
       },
     ],
   ],
@@ -885,9 +915,27 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
   {
     intent: "bid: accepted",
     callbackData: commitCallback("bid", 130000),
-    auction: { ...AUCTION, bids: [{ kind: "accepted" }] },
+    auction: { ...AUCTION, bids: [{ kind: "accepted", lotVersion: 4 }] },
     auctionCalls: [LOT_CALL, bidCall(130000)],
-    body: acceptedBody("bid", 130000),
+    body: acceptedBody("bid", 130000, 4),
+  },
+  // Auction до PER-470 версии не называет: «К лоту» прежняя, без порога.
+  {
+    intent: "bid: accepted without a version",
+    callbackData: commitCallback("bid", 130000),
+    auction: { ...AUCTION, bids: [{ kind: "accepted", lotVersion: 0 }] },
+    auctionCalls: [LOT_CALL, bidCall(130000)],
+    body: {
+      ...acceptedBody("bid", 130000, 4),
+      keyboard: [
+        [
+          {
+            action: "accepted.lot",
+            callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
+          },
+        ],
+      ],
+    },
   },
   // Отказ, который виден по снимку, приходит до «Да» (PER-473): лидер и
   // сумма ниже порога не получают подтверждения, и Auction не зовут.
@@ -954,11 +1002,11 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     callbackData: commitCallback("bid", 130000),
     auction: {
       ...AUCTION,
-      bids: [{ kind: "unanswered" }, { kind: "accepted" }],
+      bids: [{ kind: "unanswered" }, { kind: "accepted", lotVersion: 4 }],
       after: [LOT_AFTER_BID],
     },
     auctionCalls: [LOT_CALL, bidCall(130000), bidCall(130000)],
-    body: acceptedBody("bid", 130000),
+    body: acceptedBody("bid", 130000, 4),
   },
   {
     intent: "bid: unanswered twice",
@@ -1135,9 +1183,9 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
   {
     intent: "proxy: accepted",
     callbackData: commitCallback("proxy", 200000),
-    auction: { ...AUCTION, limits: [{ kind: "accepted" }] },
+    auction: { ...AUCTION, limits: [{ kind: "accepted", lotVersion: 5 }] },
     auctionCalls: [LOT_CALL, limitCall(200000)],
-    body: acceptedBody("proxy", 200000),
+    body: acceptedBody("proxy", 200000, 5),
   },
   {
     intent: "proxy: refused below the current price",
@@ -1438,6 +1486,31 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
+// Карточка лота в торгах, открытая со страницы 2 ленты.
+const TRADING_LOT_BODY: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "lot",
+      lotId: CONTRACT_LOT.lotId,
+      auctionId: CONTRACT_AUCTION_ID,
+      version: 3,
+      card: {
+        title: "Кружка с совой",
+        description: "Ручная роспись.",
+        image: { version: "img-1" },
+      },
+      nextPrice: rub(1250),
+      fixedStep: rub(50),
+      status: CONTRACT_LOT.status,
+      participantName: "@owl",
+    },
+  ],
+  keyboard: [
+    ...bidRows(CONTRACT_LOT, 2),
+    ...lotKeyboard(CONTRACT_LOT.lotId, 2),
+  ],
+};
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   {
     intent: "feed",
@@ -1477,29 +1550,49 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
     auction: AUCTION,
     auctionCalls: [getLotCall(CONTRACT_LOT.lotId), namesCall(LEADER_ID)],
+    body: TRADING_LOT_BODY,
+  },
+  // «К лоту» после принятой команды, пока read model отстаёт (PER-470):
+  // карточка просит лот не старее версии из кнопки и показывает новую цену, а
+  // не прежнюю.
+  {
+    intent: "lot: after an accepted command while the read model lags",
+    callbackData: lotCallback(CONTRACT_LOT.lotId, 2, 4),
+    auction: { ...AUCTION, after: [LOT_CAUGHT_UP], lagging: true },
+    auctionCalls: [getLotCall(CONTRACT_LOT.lotId, 4), namesCall(LEADER_ID)],
     body: {
       blocks: [
         {
           kind: "lot",
           lotId: CONTRACT_LOT.lotId,
           auctionId: CONTRACT_AUCTION_ID,
-          version: 3,
+          version: 4,
           card: {
             title: "Кружка с совой",
             description: "Ручная роспись.",
             image: { version: "img-1" },
           },
-          nextPrice: rub(1250),
+          nextPrice: rub(1350),
           fixedStep: rub(50),
-          status: CONTRACT_LOT.status,
+          status: LOT_CAUGHT_UP.status,
           participantName: "@owl",
         },
       ],
       keyboard: [
-        ...bidRows(CONTRACT_LOT, 2),
+        ...bidRows(LOT_CAUGHT_UP, 2, 135000),
         ...lotKeyboard(CONTRACT_LOT.lotId, 2),
       ],
     },
+  },
+  // Read model не догнала за бюджет адаптера: карточка из последнего
+  // прочитанного снимка, а не экран сбоя — команда уже принята.
+  {
+    intent:
+      "lot: after an accepted command when the read model does not catch up",
+    callbackData: lotCallback(CONTRACT_LOT.lotId, 2, 4),
+    auction: { ...AUCTION, lagging: true },
+    auctionCalls: [getLotCall(CONTRACT_LOT.lotId, 4), namesCall(LEADER_ID)],
+    body: TRADING_LOT_BODY,
   },
   {
     intent: "lot: sold",
@@ -1748,8 +1841,13 @@ export function spyPorts(
     auction: {
       async getLot(request) {
         calls.push({ port: "auction", method: "getLot", request });
+        // Отставшая read model: новое видит только чтение с порогом версии.
+        const caughtUp =
+          snapshot.lagging === true
+            ? request.atLeastVersion !== undefined
+            : changed;
         const lots =
-          changed && snapshot.after !== undefined
+          caughtUp && snapshot.after !== undefined
             ? [...snapshot.after, ...snapshot.lots]
             : snapshot.lots;
         const lot = lots.find((each) => each.lotId === request.lotId);

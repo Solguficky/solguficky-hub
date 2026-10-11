@@ -35,7 +35,7 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
 
   implicit override val patienceConfig: PatienceConfig = PatienceConfig(timeout = Span(20, Seconds))
 
-  private type BidReply = Either[PlaceBidRejected, Envelope]
+  private type BidReply = Either[PlaceBidRejected, LotEntity.Recorded]
 
   /** Строка журнала: номер, сериализатор, manifest и payload текстом — так, как её читает человек в psql. */
   private final case class JournalRow(sequence: Long, serializerId: Int, manifest: String, payload: String)
@@ -103,13 +103,13 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
   private def bidOn(kit: ActorTestKit, entity: ActorRef[LotEntity.Command], who: Int, amount: Long, opN: Int) = {
     val replies = kit.createTestProbe[BidReply]()
     entity ! LotEntity.Bid(placeBid(who, amount, opN), Initiator.Participant(participant(who)), replies.ref)
-    replies.receiveMessage(patience)
+    replies.receiveMessage(patience).map(_.envelope)
   }
 
   private def limitOn(kit: ActorTestKit, entity: ActorRef[LotEntity.Command], who: Int, max: Long, opN: Int) = {
-    val replies = kit.createTestProbe[Either[SetProxyLimitRejected, Envelope]]()
+    val replies = kit.createTestProbe[Either[SetProxyLimitRejected, LotEntity.Recorded]]()
     entity ! LotEntity.SetLimit(setProxyLimit(who, max, opN), Initiator.Participant(participant(who)), replies.ref)
-    replies.receiveMessage(patience)
+    replies.receiveMessage(patience).map(_.envelope)
   }
 
   private def read(kit: ActorTestKit, entity: ActorRef[LotEntity.Command]): Lot = {

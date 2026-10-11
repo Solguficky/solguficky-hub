@@ -24,5 +24,4 @@ breaking:
   ignore:
     - identity/v1
     - meetups/v1/meetups_service.proto
-    - auction/v1/auction_service.proto
     - notifications/v1/notifications.proto

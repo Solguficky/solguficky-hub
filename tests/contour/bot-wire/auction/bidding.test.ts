@@ -163,7 +163,9 @@ describe("auction through both bots", () => {
     await member.says("/start");
     await member.opensLink(meetupId);
     await member.presses("Лоты");
-    await pressesAmount(member, `${lotTitle} · старт 1 000 ₽`);
+    // Строка ленты несёт цену, а не «старт»: лот ищется по названию, как у
+    // гостя ниже.
+    await member.presses(lotRow(member, lotTitle) ?? lotTitle);
     // Аукцион открывает лоты реестра сам, вслед за командой открытия недели.
     await eventually(member, "По шагу (1 100 ₽)", () =>
       member.presses("Обновить"),
@@ -174,12 +176,18 @@ describe("auction through both bots", () => {
     await member.says("Сова");
     await pressesAmount(member, "✔️ Да, поставить 1 100 ₽");
     expect(plain(member.sees())).toContain("1 100 ₽");
+    // «К лоту» дочитывает лот до версии из ответа ставки (PER-470): новая
+    // цена и лидер — сразу, без «Обновить».
     await member.presses("К лоту");
-    await eventually(member, "Автоставка", () => member.presses("Обновить"));
+    expect(plain(member.sees())).toContain("Цена: 1 100 ₽");
+    expect(plain(member.sees())).toContain("Лидер: Сова*");
+    expect(plain(member.sees())).toContain("Следующая ставка: от 1 200 ₽");
     await member.presses("Автоставка");
     await member.says("3 000");
     await member.presses("✔️ Да, включить автоставку");
     expect(plain(member.sees())).toContain("3 000 ₽");
+    await member.presses("К лоту");
+    expect(plain(member.sees())).toContain("Твоя автоставка: до 3 000 ₽");
 
     // Гость подаёт заявку в боте аукциона, администратор допускает его в
     // хабе, и гость торгует с одним правом аукциона.
@@ -227,16 +235,19 @@ describe("auction through both bots", () => {
     await guest.says("Филин");
     await pressesAmount(guest, "✔️ Да, поставить 1 200 ₽");
     expect(plain(guest.sees())).toContain("Ставка 1 200 ₽ принята");
-    // Автоставка участника отвечает гостю: на карточке цена уже на шаг выше.
+    // Автоставка участника отвечает гостю в той же транзакции, и «К лоту»
+    // сразу показывает цену на шаг выше — версия ответа её уже несёт.
     await guest.presses("К лоту");
-    await eventually(guest, "По шагу (1 400 ₽)", () =>
-      guest.presses("Обновить"),
-    );
-    expect(plain(guest.sees())).toContain("1 300 ₽");
+    expect(plain(guest.sees())).toContain("Цена: 1 300 ₽");
+    expect(pressableLike(guest, "По шагу (1 400 ₽)")).toBeDefined();
     await guest.presses("Автоставка");
     await guest.says("5 000");
     await guest.presses("✔️ Да, включить автоставку");
     expect(plain(guest.sees())).toContain("5 000 ₽");
+    // Лимит гостя перебивает лимит участника той же командой.
+    await guest.presses("К лоту");
+    expect(plain(guest.sees())).toContain("Твоя автоставка: до 5 000 ₽");
+    expect(plain(guest.sees())).toContain("Лидер: Филин*");
 
     // Гость без права аукциона — заявка ещё на рассмотрении — получает отказ
     // бота: вход отвечает ожиданием, и ни меню, ни лота ему не открыто.

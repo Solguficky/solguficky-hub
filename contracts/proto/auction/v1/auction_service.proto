@@ -118,6 +118,11 @@ message PlaceBidResponse {
 message BidAccepted {
   // Canonical lowercase UUIDv7 with hyphens.
   string bid_id = 1;
+
+  // The LotSnapshot.version from which GetLot shows the whole command: the bid and
+  // whatever it triggered. A repeat of the same op_id answers the version of the lot
+  // at that moment, which may be higher. 0 means the service did not tell.
+  int64 lot_version = 2;
 }
 
 message PlaceBidRefusal {
@@ -156,14 +161,19 @@ message SetProxyLimitRequest {
 
 message SetProxyLimitResponse {
   // Exactly one is set. Whether the limit also produced a bid is not carried here;
-  // it is visible in the state of the lot.
+  // it is visible in the state of the lot from ProxyLimitAccepted.lot_version on.
   oneof outcome {
     ProxyLimitAccepted accepted = 1;
     SetProxyLimitRefusal refused = 2;
   }
 }
 
-message ProxyLimitAccepted {}
+message ProxyLimitAccepted {
+  // The LotSnapshot.version from which GetLot shows the whole command: the limit and
+  // whatever bid it triggered. A repeat of the same op_id answers the version of the
+  // lot at that moment, which may be higher. 0 means the service did not tell.
+  int64 lot_version = 1;
+}
 
 message SetProxyLimitRefusal {
   // Exactly one is set.

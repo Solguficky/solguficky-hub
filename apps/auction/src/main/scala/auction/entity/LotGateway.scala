@@ -34,16 +34,20 @@ trait LotGateway {
   /**
    * Ставка лоту. Неудачное `Future` — ответа нет: ask истёк (например, entity остановилась на отказе записи в журнал)
    * или шардинг не доставил команду. Команда при этом могла быть принята, и повтор с тем же `op_id` вернёт исходный
-   * ответ.
+   * ответ. Принятая ставка приходит с версией лота, с которой её видно в чтении (`LotEntity.Recorded`).
    */
-  def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator): Future[Either[PlaceBidRejected, Envelope]]
+  def placeBid(
+      lotId: UUID,
+      command: PlaceBid,
+      initiator: Initiator
+  ): Future[Either[PlaceBidRejected, LotEntity.Recorded]]
 
-  /** Прокси-лимит лоту; неудачное `Future` значит то же, что у ставки. */
+  /** Прокси-лимит лоту; неудачное `Future` и версия в ответе значат то же, что у ставки. */
   def setProxyLimit(
       lotId: UUID,
       command: SetProxyLimit,
       initiator: Initiator
-  ): Future[Either[SetProxyLimitRejected, Envelope]]
+  ): Future[Either[SetProxyLimitRejected, LotEntity.Recorded]]
 
   /** Снятие прокси-лимита; неудачное `Future` значит то же, что у ставки. */
   def withdrawProxyLimit(
@@ -71,7 +75,11 @@ object LotGateway {
           .ask[Lot](LotEntity.Get(_))
           .map(_.auction)(using ExecutionContext.parasitic)
 
-      def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator): Future[Either[PlaceBidRejected, Envelope]] =
+      def placeBid(
+          lotId: UUID,
+          command: PlaceBid,
+          initiator: Initiator
+      ): Future[Either[PlaceBidRejected, LotEntity.Recorded]] =
         sharding
           .entityRefFor(LotEntity.TypeKey, lotId.toString)
           .ask(replyTo => LotEntity.Bid(command, initiator, replyTo))
@@ -80,7 +88,7 @@ object LotGateway {
           lotId: UUID,
           command: SetProxyLimit,
           initiator: Initiator
-      ): Future[Either[SetProxyLimitRejected, Envelope]] =
+      ): Future[Either[SetProxyLimitRejected, LotEntity.Recorded]] =
         sharding
           .entityRefFor(LotEntity.TypeKey, lotId.toString)
           .ask(replyTo => LotEntity.SetLimit(command, initiator, replyTo))

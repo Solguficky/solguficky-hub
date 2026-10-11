@@ -64,12 +64,12 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
   }
 
   private def bidOf(who: Int, amount: Long, opN: Int) =
-    entity.runCommand[Either[PlaceBidRejected, Envelope]](
+    entity.runCommand[Either[PlaceBidRejected, LotEntity.Recorded]](
       LotEntity.Bid(placeBid(who, amount, opN), Initiator.Participant(participant(who)), _)
     )
 
   private def limitOf(who: Int, max: Long, opN: Int) =
-    entity.runCommand[Either[SetProxyLimitRejected, Envelope]](
+    entity.runCommand[Either[SetProxyLimitRejected, LotEntity.Recorded]](
       LotEntity.SetLimit(setProxyLimit(who, max, opN), Initiator.Participant(participant(who)), _)
     )
 
@@ -111,7 +111,7 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
       val opening = open(opN = 3)
       val placed = bidOf(who = 1, amount = 110, opN = 4)
 
-      List(drafted.reply, planned.reply, opening.reply, placed.reply).map(_.map(_.sequence)) shouldBe
+      List(drafted.reply, planned.reply, opening.reply, placed.reply.map(_.envelope)).map(_.map(_.sequence)) shouldBe
         List(Right(1L), Right(2L), Right(3L), Right(4L))
       placed.state.sequence shouldBe 4L
       placed.state.lot.seen.values.map(envelope => envelope.opId -> envelope.sequence).toMap shouldBe
@@ -193,6 +193,18 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
       repeatedAfterRestart.reply shouldBe first.reply
     }
 
+    "answer a repeated bid with the version of the lot at the repeat, not lower than the original (PER-470)" in {
+      openThrough()
+      val first = bidOf(who = 1, amount = 110, opN = 4)
+      bidOf(who = 2, amount = 120, opN = 5)
+
+      val repeated = bidOf(who = 1, amount = 110, opN = 4)
+
+      repeated.events shouldBe Nil
+      first.reply.map(_.lotVersion) shouldBe Right(4L)
+      repeated.reply shouldBe first.reply.map(_.copy(lotVersion = 5L))
+    }
+
     "answer a refused command with its refusal and write nothing" in {
       val beforeDraft = plan(scheduleLot(opN = 1))
       draft(opN = 2)
@@ -216,8 +228,10 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
         written.events.map(row => (row.transactionId, row.opId, row.occurredAt, row.actor)).distinct.size shouldBe 1
         written.events.map(_.eventId).distinct.size shouldBe 2
       }
-      first.reply.map(envelope => (envelope.sequence, envelope.event)) shouldBe
+      first.reply.map(recorded => (recorded.envelope.sequence, recorded.envelope.event)) shouldBe
         Right((4L, LotEvent.ProxyLimitSet(participant(1), money(200))))
+      // Версия, с которой чтение видит команду целиком, — последнее событие транзакции, а не первый конверт (PER-470).
+      List(first, second).map(_.reply.map(_.lotVersion)) shouldBe List(Right(5L), Right(7L))
       second.state.sequence shouldBe 7L
       val trading = tradingOf(second.state.lot)
       (trading.currentPrice, trading.leader) shouldBe (money(160), Some(participant(1)))
@@ -254,6 +268,7 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
         )
         val placed = bidOf(who = 1, amount = 110, opN = 4)
 
+        placed.reply.map(recorded => (recorded.envelope.sequence, recorded.lotVersion)) shouldBe Right((4L, 5L))
         placed.events.map(row => (row.event.kind, row.opId, row.transactionId, row.occurredAt)) shouldBe List(
           ("BidPlaced", op(4).value, placed.events.head.transactionId, decidedAt),
           ("DeadlineExtended", op(4).value, placed.events.head.transactionId, decidedAt)
@@ -263,6 +278,28 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
         (tradingOf(restarted.lot).deadline, tradingOf(restarted.lot).extensionsUsed) shouldBe
           (Some(closesAt.plus(Duration.ofMinutes(2))), 1)
       }
+    }
+
+    "answer a bid that a proxy answers inside the window with the version of the extension, the last event (PER-470)" in {
+      // Лимит ставится задолго до дедлайна, без продления; ставка — за минуту до него, в окне.
+      val time = MovingClock(decidedAt)
+      val closesAt = decidedAt.plus(Duration.ofMinutes(10))
+      entity =
+        EventSourcedBehaviorTestKit(kit.system, LotEntity("lot-proxy-window", time, sequentialIds()), serialization)
+      draft(opN = 1)
+      plan(scheduleLot(opN = 2))
+      entity.runCommand[Either[OpenLotRejected, Envelope]](
+        LotEntity.Open(openLot(opN = 3, deadline = Some(closesAt)), Initiator.Scheduler, _)
+      )
+      limitOf(who = 2, max = 300, opN = 4).events.map(_.event.kind) shouldBe List("ProxyLimitSet", "BidPlaced")
+      time.now = closesAt.minus(Duration.ofMinutes(1))
+
+      val placed = bidOf(who = 1, amount = 150, opN = 5)
+
+      placed.events.map(_.event.kind) shouldBe List("BidPlaced", "BidPlaced", "DeadlineExtended")
+      placed.reply.map(_.envelope.event.isInstanceOf[LotEvent.BidPlaced]) shouldBe Right(true)
+      placed.reply.map(_.lotVersion) shouldBe Right(placed.state.sequence)
+      placed.reply.map(recorded => recorded.lotVersion - recorded.envelope.sequence) shouldBe Right(2L)
     }
 
     // Критерий PER-503 и Т-65 на entity: окно восстанавливается из LotOpened — журналом и snapshot, — а не из часов.
@@ -284,10 +321,10 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
 
         val restarted = entity.restart().state
         tradingOf(restarted.lot).stepWindows shouldBe List(window)
-        bidOf(who = 1, amount = 101, opN = 4).reply.map(_.event) shouldBe a[Right[?, ?]]
+        bidOf(who = 1, amount = 101, opN = 4).reply.map(_.envelope.event) shouldBe a[Right[?, ?]]
 
         time.now = window.until.minusSeconds(1)
-        bidOf(who = 2, amount = 102, opN = 5).reply.map(_.event) shouldBe a[Right[?, ?]]
+        bidOf(who = 2, amount = 102, opN = 5).reply.map(_.envelope.event) shouldBe a[Right[?, ?]]
         time.now = window.until.plusSeconds(1)
         bidOf(who = 1, amount = 103, opN = 6).reply shouldBe Left(PlaceBidRejected.BidBelowMinimum(money(112)))
       }
