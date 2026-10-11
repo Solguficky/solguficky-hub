@@ -28,6 +28,7 @@ import {
 } from "../../../core/config.js";
 import { countFailure, type FailureCategory } from "../../../core/failures.js";
 import type { LogFields, Logger } from "../../../core/logging.js";
+import { registerChatCommands } from "../../../core/menu-commands.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type { Tracing } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
@@ -66,8 +67,8 @@ import type {
   PublishMomentRetry,
   WeekAskError,
 } from "../application/types.js";
-import { startExecuteRequest } from "../application/types.js";
 import { type AuctionScreens, viewerOf } from "../auction/port.js";
+import { type CommunityDay, isBeforeDay } from "../community-time.js";
 import {
   type AccessRequester,
   type ApplicationAdministrator,
@@ -93,6 +94,7 @@ import type {
   MeetupMaterialSource,
   MeetupSchedule,
   MeetupSnapshot,
+  MeetupSummary,
 } from "../meetups/port.js";
 import type {
   CategoryState,
@@ -144,7 +146,7 @@ import {
   traceCallback,
   type WhenMode,
 } from "./parse-callback.js";
-import { parseUpdate } from "./parse-update.js";
+import { parseUpdate, type SectionCommand } from "./parse-update.js";
 import { RepliedKeyboardSchema } from "./schemas.js";
 import {
   applicationCardScreen,
@@ -181,8 +183,8 @@ import {
   cancelLabel,
   confirmKeyboard,
   escapeHtml,
+  exitToMeetups,
   heading,
-  menuOnly,
   outcomeText,
   type Parent,
   refusalText,
@@ -191,8 +193,8 @@ import {
   toCommunity,
   toManage,
   toMaterials,
+  toMeetups,
   toSourceChannels,
-  toUpcoming,
   withNav,
 } from "./screens/kit.js";
 import {
@@ -213,18 +215,24 @@ import {
   hiddenScreen,
   materialsScreen,
   materialTitle,
+  meetupsScreen,
   meetupTitleLabel,
+  publishConfirmScreen,
   stateConfirmScreen,
   statusScreen,
-  upcomingScreen,
 } from "./screens/meetup.js";
 import {
   canAdmitBidders,
   canManageMeetups,
   canManageMembers,
   canOpenManagement,
+  commandsFor,
+  helpScreen,
+  manageGroupScreen,
+  manageGroups,
+  manageItemParent,
   manageScreen,
-  menuScreen,
+  settingsScreen,
 } from "./screens/menu.js";
 import {
   categoryLabels,
@@ -308,6 +316,9 @@ const unavailableText = `Не получилось загрузить данны
 // ни то, ни другое, а ведёт к карточке, где видно текущее состояние (E-04).
 const staleMeetupText =
   "Сейчас это действие недоступно. Открой сходку заново и проверь её состояние и название.";
+// Публикация сразу без названия: Meetups отказывает, и подтверждать нечего.
+const untitledPublishText =
+  "У сходки нет названия, а без него сходку не опубликовать. Добавь название через «Изменить» на карточке.";
 // Отложенная публикация черновика без названия (PER-457): Meetups отказывает,
 // потому что опубликовать сходку без названия нельзя и по расписанию.
 const untitledPublicationText =
@@ -615,7 +626,7 @@ async function handleMessage(
     // приходит ответом на него. Это команда, а не значение поля: разбор ответа
     // её не видит. Человек ушёл от вопроса, и брошенный вопрос удаляется:
     // иначе клиент держал бы режим ответа на него и дальше.
-    const command = parsed.kind === "start";
+    const command = parsed.kind === "start" || parsed.kind === "command";
     const replyId = command
       ? undefined
       : ctx.message?.reply_to_message?.message_id;
@@ -785,7 +796,7 @@ async function handleMessage(
       }
       if (!canManageMeetups(identity.person)) {
         await answered();
-        await showRefusal(ctx, materialForbiddenText, menuOnly());
+        await showRefusal(ctx, materialForbiddenText, exitToMeetups());
         outcome = materialForbiddenOutcome(identity.person, pending.meetupId);
         return;
       }
@@ -904,7 +915,7 @@ async function handleMessage(
         await showRefusal(
           ctx,
           broadcastForbiddenText[audience.kind],
-          menuOnly(),
+          exitToMeetups(),
         );
         outcome = broadcastForbiddenOutcome(identity.person, meetupId);
         return;
@@ -974,7 +985,7 @@ async function handleMessage(
       }
       if (!canManageMembers(identity.person)) {
         await answered();
-        await showRefusal(ctx, sourceChannelsForbiddenText, menuOnly());
+        await showRefusal(ctx, sourceChannelsForbiddenText, exitToMeetups());
         outcome = sourceChannelsForbiddenOutcome(identity.person);
         return;
       }
@@ -1044,7 +1055,7 @@ async function handleMessage(
       }
       await answered();
       if (result.kind === "forbidden") {
-        await showRefusal(ctx, sourceChannelsForbiddenText, menuOnly());
+        await showRefusal(ctx, sourceChannelsForbiddenText, exitToMeetups());
         outcome = adminOutcome(result, identity.person.identityId);
         return;
       }
@@ -1398,12 +1409,12 @@ async function handleMessage(
           ? "Этот вопрос уже устарел. Прикрепи материал заново."
           : askedStep?.kind === "channel-label"
             ? "Этот вопрос уже устарел. Заведи канал заново."
-            : "Этот вопрос уже устарел. Открой актуальное меню и повтори действие.",
+            : "Этот вопрос уже устарел. Открой раздел заново и повтори действие.",
         askedStep?.kind === "material-title"
           ? withNav(new InlineKeyboard(), toMaterials(askedStep.token))
           : askedStep?.kind === "channel-label"
             ? withNav(new InlineKeyboard(), toSourceChannels)
-            : menuOnly(),
+            : exitToMeetups(),
       );
       outcome = {
         level: "info",
@@ -1429,6 +1440,16 @@ async function handleMessage(
         message: "update ignored",
         result: "ok",
       };
+      return;
+    }
+    if (parsed.kind === "command") {
+      useCase = commandUseCase[parsed.command];
+      outcome = await handleSectionCommand(
+        ctx,
+        runtime,
+        parsed.command,
+        useCase,
+      );
       return;
     }
     const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
@@ -1467,22 +1488,13 @@ async function handleMessage(
       outcome = await denyHubAccess(ctx, access, identity, useCase, false);
       return;
     }
-    const result = await runtime.dispatcher.execute(
-      deepLink?.kind === "meetup"
-        ? {
-            identity,
-            intent: "view-meetup",
-            meetupId: tokenToUuid(deepLink.payload.slice(2)),
-            ...rpcCall(ctx, "view_meetup"),
-          }
-        : startExecuteRequest(identity, deepLink),
-    );
-    if (
-      result.kind === "meetup-card" ||
-      result.kind === "meetup-not-found" ||
-      result.kind === "dependency-rejected" ||
-      result.kind === "rejected"
-    ) {
+    if (deepLink?.kind === "meetup") {
+      const result = await runtime.dispatcher.execute({
+        identity,
+        intent: "view-meetup",
+        meetupId: tokenToUuid(deepLink.payload.slice(2)),
+        ...rpcCall(ctx, "view_meetup"),
+      });
       await renderMeetupCard(
         ctx,
         result,
@@ -1496,70 +1508,16 @@ async function handleMessage(
         rejectedMessage: "meetup card rejected",
         useCase,
       });
-      return;
+    } else {
+      // Вход без ссылки на сходку открывает корень основного раздела «Сходки»:
+      // корневого экрана «Меню» нет (решение владельца 10 октября 2026 года).
+      outcome = await openNavScreen(ctx, runtime, identity, "hub", useCase);
     }
-    switch (result.kind) {
-      case "message":
-        await showScreen(ctx, menuScreen(identity, result.text));
-        outcome = {
-          level: "info",
-          message: "start reply sent",
-          result: "ok",
-          use_case: "find_meetup",
-        };
-        return;
-      case "ask":
-      case "edit-ask":
-      case "draft":
-      case "confirm-past-schedule":
-      case "published":
-      case "ask-publish-moment":
-      case "publication-scheduled":
-      case "publication-unavailable":
-      case "meetup-updated":
-      case "meetup-state-changed":
-      case "meetup-state-unchanged":
-      case "edit-unavailable":
-      case "conflict":
-      case "material-attached":
-      case "material-removed":
-      case "broadcast-accepted":
-      case "meetup-list":
-      case "meetup-notification-settings":
-      case "global-notification-settings":
-      case "archived-meetup-list":
-      case "auction-enabled":
-      case "auction-refused":
-      case "lot-form":
-      case "lot-ask":
-      case "lot-refused":
-      case "auction-console":
-      case "auction-week-ask":
-      case "auction-week-confirm":
-      case "auction-discard-confirm":
-      case "auction-discarded":
-      case "auction-console-refused":
-        outcome = {
-          level: "error",
-          message: "unexpected form result",
-          result: "error",
-          use_case: "find_meetup",
-          error_category: "unexpected",
-          error: result.kind,
-        };
-        return;
-      default: {
-        const _exhaustive: never = result;
-        outcome = {
-          level: "error",
-          message: "unhandled dispatcher result",
-          result: "error",
-          use_case: "find_meetup",
-          error_category: "unexpected",
-          error: String(_exhaustive),
-        };
-      }
-    }
+    // Команды кнопки меню клиента — по правам: держателю права управления
+    // свой список чата с `/manage`, остальным прежний список чата снимается
+    // (решение владельца 10 октября 2026 года). Запись идёт после экрана и
+    // входа не задерживает; отказ Telegram пишется в лог.
+    await registerHubCommands(ctx, runtime, identity);
   } catch (cause) {
     if (isScreenDeliveryFailure(cause)) {
       outcome = await replyScreenFailure({
@@ -1652,8 +1610,8 @@ async function handleCallback(
       };
       await showRefusal(
         ctx,
-        "Не получилось прочитать эту кнопку. Открой актуальное меню.",
-        menuOnly(),
+        "Не получилось прочитать эту кнопку. Открой раздел заново.",
+        exitToMeetups(),
       );
       return;
     }
@@ -1726,7 +1684,7 @@ async function handleCallback(
     // них решают Meetups и Identity (PER-396). Отказ приходит правкой.
     const refusedText = managementRefusal(action, person);
     if (refusedText !== undefined) {
-      await showRefusal(ctx, refusedText, menuOnly());
+      await showRefusal(ctx, refusedText, exitToMeetups());
       outcome = {
         level: "warn",
         message: "management rejected",
@@ -2047,13 +2005,23 @@ async function handleCallback(
           action.page ?? 0,
         );
       } else if (action.kind === "decline-attach-material") {
-        await renderMaterialManagement(
-          ctx,
-          current.meetup,
-          canManageMaterials,
-          0,
-          "Не прикреплено.",
-        );
+        // «Нет» под только что присланным материалом — экран исхода с «Ввести
+        // заново» (решение владельца 10 октября 2026 года). Файл в
+        // подтверждении остаётся следом с подписью «Не прикреплено.».
+        const step = { kind: "material-title", token: action.token } as const;
+        await showScreen(ctx, {
+          id: "outcome",
+          text: outcomeText(
+            "Не прикреплено. Связь со сходкой не появилась.",
+            current.meetup.title,
+          ),
+          keyboard: withNav(
+            new InlineKeyboard().text(retryAnswerLabel, reopenData(step)),
+            answerParent(step),
+          ),
+          format: "HTML",
+          fileTrace: "Не прикреплено.",
+        });
       } else if (action.kind === "begin-attach-material") {
         await askQuestion(
           ctx,
@@ -2133,7 +2101,15 @@ async function handleCallback(
         if (member === undefined) {
           // Человека закрыли с другого экрана, пока этот был открыт.
           await waiting.answer("Этого человека уже нет в списке.");
-          await showScreen(ctx, communityScreen(result.value, origin));
+          await showScreen(
+            ctx,
+            communityScreen(
+              result.value,
+              origin,
+              undefined,
+              manageItemParent(person, "members"),
+            ),
+          );
         } else {
           await showScreen(
             ctx,
@@ -2343,7 +2319,13 @@ async function handleCallback(
           // Заявку решил другой администратор, пока карточка висела: исход
           // назовёт только решение, а вопрос о нём уже не к месту.
           await waiting.answer("Эту заявку уже решили.");
-          await showApplicationQueue(ctx, action.queue, result.value, true);
+          await showApplicationQueue(
+            ctx,
+            person,
+            action.queue,
+            result.value,
+            true,
+          );
         }
       }
       outcome = adminOutcome(result, person.identityId);
@@ -2486,29 +2468,30 @@ async function handleCallback(
       outcome = adminOutcome(result, person.identityId);
       return;
     }
-    if (action.kind === "home") {
-      const result = await runtime.dispatcher.execute({
-        identity: person,
-        intent: "start",
-      });
-      if (result.kind === "message") {
-        await showScreen(ctx, menuScreen(person, result.text));
-        outcome = {
-          level: "info",
-          message: "start screen sent",
-          result: "ok",
-          use_case: useCase,
-        };
-      } else {
-        outcome = unexpectedOutcome(
-          `unexpected start result ${result.kind}`,
-          undefined,
-          useCase,
-        );
-      }
+    if (action.kind === "settings") {
+      await showScreen(ctx, settingsScreen());
+      outcome = {
+        level: "info",
+        message: "settings sent",
+        result: "ok",
+        use_case: useCase,
+      };
       return;
     }
-    if (action.kind === "hub" || action.kind === "outdated") {
+    if (action.kind === "help") {
+      outcome = await openHelp(ctx, runtime, person, useCase);
+      return;
+    }
+    if (action.kind === "next") {
+      outcome = await openNextMeetup(ctx, runtime, person, useCase);
+      return;
+    }
+    // Старая кнопка «Меню» ведёт в «Сходки»: корня «Меню» больше нет.
+    if (
+      action.kind === "hub" ||
+      action.kind === "home" ||
+      action.kind === "outdated"
+    ) {
       outcome = await openNavScreen(
         ctx,
         runtime,
@@ -2727,26 +2710,34 @@ async function handleCallback(
           "Отложенной публикации у сходки уже нет.",
           exitToCard(token),
         );
+      } else if (
+        action.kind === "manage-publish" &&
+        meetup.visibility === "visible"
+      ) {
+        // Устаревшая кнопка: сходку уже опубликовали — вручную или по
+        // расписанию. Подтверждать нечего.
+        await renderMeetupCard(
+          ctx,
+          current,
+          true,
+          runtime.presentation ?? "rich",
+          true,
+          `Сходка уже опубликована. Ссылка для чата: ${meetupStartLink(ctx.me.username, meetup.id)}`,
+        );
+      } else if (
+        action.kind === "manage-publish" &&
+        meetup.title.trim() === ""
+      ) {
+        // Без названия Meetups сходку не опубликует (PER-457): подтверждение
+        // закончилось бы отказом домена.
+        await showRefusal(ctx, untitledPublishText, exitToCard(token));
       } else if (action.kind === "manage-publish") {
-        // Публикация — единственное действие статуса, которое не перечитывает
-        // сходку в юзкейсе: устаревшую кнопку разбираем по снимку выше, иначе
-        // домен ответит FailedPrecondition и человек увидит кадр недоступности
-        // вместо причины отказа.
-        const result = await runtime.dispatcher.execute({
-          identity: person,
-          intent: "publish-meetup",
-          meetupId,
-          ...rpcCall(ctx, useCase),
-        });
-        await renderStateResult(ctx, result, runtime.presentation ?? "rich");
-        outcome = screenBoundary(result, {
-          ok: ["published"],
-          okMessage: "meetup published",
-          rejectedMessage: "meetup republish rejected",
-          useCase,
-          meetupId,
-        });
-        return;
+        // Публикация выходит наружу — через подтверждение (решение владельца
+        // 10 октября 2026 года); «Да» несёт версию этого снимка.
+        await showScreen(
+          ctx,
+          publishConfirmScreen({ meetup, origin: action.origin }),
+        );
       } else {
         // Все действия смены состояния живут в «Статусе», и отказ от
         // подтверждения возвращает туда.
@@ -2935,7 +2926,7 @@ async function handleCallback(
         intent: "list-visible-meetups",
         ...rpcCall(ctx, useCase),
       });
-      await renderHiddenMeetupList(ctx, result, action.page);
+      await renderHiddenMeetupList(ctx, person, result, action.page);
       outcome = screenBoundary(result, {
         ok: ["meetup-list"],
         okMessage: "hidden meetup list sent",
@@ -3017,14 +3008,22 @@ async function handleCallback(
       return;
     }
     if (action.kind === "cancel-broadcast") {
-      await showFrame(
-        ctx,
-        "broadcast-result",
-        "Не отправлено. Текст никуда не ушёл.",
+      // «Нет» под текстом, который человек только что прислал, — экран исхода
+      // с «Ввести заново» (решение владельца 10 октября 2026 года): текст в
+      // кнопку не помещается, и вопрос задаётся снова с начала.
+      const step: QuestionStep =
         action.token === undefined
-          ? withNav(new InlineKeyboard(), toManage)
-          : exitToCard(action.token),
-      );
+          ? { kind: "broadcast" }
+          : { kind: "broadcast", token: action.token };
+      await showScreen(ctx, {
+        id: "outcome",
+        text: outcomeText("Не отправлено. Текст никуда не ушёл."),
+        keyboard: withNav(
+          new InlineKeyboard().text(retryAnswerLabel, reopenData(step)),
+          answerParent(step),
+        ),
+        format: "HTML",
+      });
       outcome = {
         level: "info",
         message: "broadcast cancelled",
@@ -3097,6 +3096,19 @@ async function handleCallback(
       };
       return;
     }
+    if (action.kind === "manage-group") {
+      await showScreen(
+        ctx,
+        manageGroupScreen(person, action.group, uuidToToken(createUuidV7())),
+      );
+      outcome = {
+        level: "info",
+        message: "manage group sent",
+        result: "ok",
+        use_case: useCase,
+      };
+      return;
+    }
     if (action.kind === "create-meetup") {
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
@@ -3120,15 +3132,33 @@ async function handleCallback(
       });
       return;
     }
-    if (action.kind === "publish-meetup") {
+    if (
+      action.kind === "publish-meetup" ||
+      action.kind === "manage-confirm-publish"
+    ) {
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
         identity: person,
         intent: "publish-meetup",
         meetupId,
+        ...(action.version === undefined
+          ? {}
+          : { expectedVersion: action.version }),
         ...rpcCall(ctx, useCase),
       });
-      if (result.kind === "published" && result.repeated === true) {
+      if (result.kind === "conflict" && action.version !== undefined) {
+        // Подтверждение устарело, пока человек решал: заново оно не задаётся,
+        // приходит исход, и публикацию человек повторяет по свежим данным.
+        await showScreen(ctx, {
+          id: "outcome",
+          text: outcomeText(
+            conflictText,
+            meetupTitleLabel(result.meetup.title),
+          ),
+          keyboard: exitToCard(uuidToToken(result.meetup.id)),
+          format: "HTML",
+        });
+      } else if (result.kind === "published" && result.repeated === true) {
         // Повтор (E-09) и устаревший предпросмотр (E-04): карточка по текущему
         // состоянию вместо второго «Сходка создана». При повторе правка стирает
         // сообщение первой публикации, поэтому ссылка для чата стоит на
@@ -3220,7 +3250,7 @@ async function handleCallback(
           result.kind === "dependency-rejected" && result.reason === "forbidden"
             ? categoryForbiddenText(action.category)
             : unavailableText,
-          menuOnly(),
+          exitToMeetups(),
           "new",
         );
       }
@@ -3261,7 +3291,7 @@ async function handleCallback(
         await showRefusal(
           ctx,
           "Сходка больше недоступна: пока её снова не опубликуют, уведомлений по ней не будет.",
-          menuOnly(),
+          exitToMeetups(),
           "new",
         );
       } else {
@@ -3270,7 +3300,7 @@ async function handleCallback(
           result.kind === "dependency-rejected" && result.reason === "forbidden"
             ? forbiddenText
             : unavailableText,
-          menuOnly(),
+          exitToMeetups(),
           "new",
         );
       }
@@ -3283,8 +3313,9 @@ async function handleCallback(
       });
       return;
     }
-    // Подписка меняет карточку, а не открывает кадр настроек: действие живёт в
-    // P-04, и человек обязан остаться там же с обновлённой кнопкой.
+    // Подписка и отписка отвечают экраном исхода (PER-472, решение владельца
+    // 10 октября 2026 года): исход не стоит над карточкой, а карточку человек
+    // открывает возвратом «‹ Сходка» и видит на ней обновлённую кнопку.
     if (action.kind === "notify-subscription") {
       const meetupId = tokenToUuid(action.token);
       const result = await runtime.dispatcher.execute({
@@ -3294,23 +3325,28 @@ async function handleCallback(
         subscribed: action.subscribed,
         ...rpcCall(ctx, useCase),
       });
-      if (result.kind === "meetup-card" || result.kind === "meetup-not-found") {
-        // Заметка разовая: она отвечает на нажатие и при следующем открытии
-        // карточки не повторяется, чтобы подписанному не читать её каждый раз.
-        // Поэтому решение принимает этот обработчик, а не рендер карточки.
-        const note =
-          result.kind === "meetup-card" &&
-          result.subscribed === true &&
-          result.categories !== undefined
-            ? subscriptionNote(result.categories)
-            : undefined;
+      if (result.kind === "meetup-card") {
+        // Пояснение разовое: оно отвечает на нажатие и при следующем открытии
+        // карточки не повторяется, чтобы подписанному не читать его каждый
+        // раз. Поэтому его собирает этот обработчик, а не рендер карточки.
+        await showScreen(
+          ctx,
+          subscriptionOutcomeScreen(
+            action.token,
+            result.meetup.title,
+            action.subscribed,
+            action.subscribed && result.categories !== undefined
+              ? subscriptionExplanation(result.categories)
+              : undefined,
+          ),
+        );
+      } else if (result.kind === "meetup-not-found") {
         await renderMeetupCard(
           ctx,
           result,
           true,
           runtime.presentation ?? "rich",
           canManageMeetups(person),
-          note,
         );
       } else {
         await renderNotificationFailure(ctx, result, `v1:view:${action.token}`);
@@ -3554,6 +3590,7 @@ function removeConfirmScreen(confirm: {
         confirm.version,
       ),
       noData: `v1:mm:list:${confirm.token}`,
+      irreversible: true,
     }),
     format: "HTML",
   };
@@ -3732,6 +3769,7 @@ async function sendBroadcastConfirmation(
           audience.kind === "meetup"
             ? `v1:bc:no:${uuidToToken(audience.meetupId)}`
             : "v1:bc:no",
+        irreversible: true,
       }),
     },
   );
@@ -3845,7 +3883,15 @@ async function renderCommunity(
     await showCommunityRefusal(ctx, result, view);
     return result;
   }
-  await showScreen(ctx, communityScreen(result.value, view, notice));
+  await showScreen(
+    ctx,
+    communityScreen(
+      result.value,
+      view,
+      notice,
+      manageItemParent(actor, "members"),
+    ),
+  );
   return result;
 }
 
@@ -3858,6 +3904,10 @@ function managementRefusal(
   switch (action.kind) {
     case "manage-menu":
       return canOpenManagement(person) ? undefined : managementForbiddenText;
+    case "manage-group":
+      return manageGroups(person).includes(action.group)
+        ? undefined
+        : managementForbiddenText;
     case "ask-allowed-username":
       return canManageMembers(person) ? undefined : communityForbiddenText;
     case "source-channels":
@@ -4044,6 +4094,7 @@ async function renderRefused(
       page,
       communityToday(ctx),
       canManageMembers(actor),
+      manageItemParent(actor, "applications"),
     ),
   );
 }
@@ -4096,6 +4147,7 @@ async function renderSourceChannels(
           : { auction: runtime.auctionBotUsername }),
       },
       notice,
+      manageItemParent(actor, "members"),
     ),
   );
   return result;
@@ -4171,15 +4223,17 @@ function showApplicationRefusal(
 
 async function showApplicationQueue(
   ctx: UpdateContext,
+  actor: Person,
   queue: ApplicationQueue,
   read: ApplicationQueueRead,
   afterCursor: boolean,
 ): Promise<void> {
+  const parent = manageItemParent(actor, "applications");
   await showScreen(
     ctx,
     read.card === undefined
-      ? applicationQueueEndScreen(queue, read.total, afterCursor)
-      : applicationCardScreen(queue, read.card, read.total, Date.now()),
+      ? applicationQueueEndScreen(queue, read.total, afterCursor, parent)
+      : applicationCardScreen(queue, read.card, read.total, Date.now(), parent),
   );
 }
 
@@ -4195,7 +4249,13 @@ async function renderApplicationCard(
     await showApplicationRefusal(ctx, result, queue);
     return result;
   }
-  await showApplicationQueue(ctx, queue, result.value, after !== undefined);
+  await showApplicationQueue(
+    ctx,
+    actor,
+    queue,
+    result.value,
+    after !== undefined,
+  );
   return result;
 }
 
@@ -4245,7 +4305,7 @@ async function renderMeetupList(
   if (result.kind === "meetup-list") {
     await showScreen(
       ctx,
-      upcomingScreen(result.meetups, page, communityToday(ctx)),
+      meetupsScreen(result.meetups, page, communityToday(ctx)),
     );
     return;
   }
@@ -4254,7 +4314,7 @@ async function renderMeetupList(
   }
 }
 
-// «Ближайшие сходки» и «Скрытые сходки» читают один и тот же список, поэтому и
+// «Сходки» и «Скрытые сходки» читают один и тот же список, поэтому и
 // отказ у них один; различается только экран, на который ведёт повтор.
 async function renderMeetupListFailure(
   ctx: UpdateContext,
@@ -4269,13 +4329,19 @@ async function renderMeetupListFailure(
 
 async function renderHiddenMeetupList(
   ctx: UpdateContext,
+  person: Person,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   page = 0,
 ): Promise<void> {
   if (result.kind === "meetup-list") {
     await showScreen(
       ctx,
-      hiddenScreen(result.meetups, page, communityToday(ctx)),
+      hiddenScreen(
+        result.meetups,
+        page,
+        communityToday(ctx),
+        manageItemParent(person, "meetups"),
+      ),
     );
     return;
   }
@@ -4332,14 +4398,18 @@ function showRefusal(
   return showFrame(ctx, "refusal", text, keyboard, delivery);
 }
 
-/** Выход к карточке сходки: `[‹ Сходка] [Меню]`. */
+/** Выход к карточке сходки: `[‹ Сходка]`. */
 function exitToCard(token: string): InlineKeyboard {
   return withNav(new InlineKeyboard(), toCard(token));
 }
 
-/** Повтор после сбоя и выход: `[Повторить]` и `[Меню]`. */
+/**
+ * Повтор после сбоя и выход: `[Повторить]`, под ним `[‹ Сходки]`. Сбой самих
+ * «Сходок» несёт только повтор: возврат вёл бы туда же.
+ */
 function exitRetry(data: string): InlineKeyboard {
-  return menuOnly(new InlineKeyboard().text(retryLabel, data));
+  const keyboard = new InlineKeyboard().text(retryLabel, data);
+  return data === toMeetups.data ? keyboard : exitToMeetups(keyboard);
 }
 
 // Переходная форма единого отправителя: срезы перевёрстки заменяют её
@@ -4427,6 +4497,210 @@ async function openNavScreen(
   }
 }
 
+const commandUseCase: Record<SectionCommand, ProductUseCase> = {
+  meetups: "find_meetup",
+  next: "view_meetup",
+  settings: "manage_notifications",
+  manage: "create_meetup",
+  help: "find_meetup",
+};
+
+// Данные кнопки того же раздела: по ним «Повторить» под кадром сбоя повторяет
+// команду нажатием.
+const commandRetry: Record<SectionCommand, string> = {
+  meetups: "v1:nav:hub",
+  next: "v1:nav:next",
+  settings: "v1:nav:settings",
+  manage: "v1:manage:menu",
+  help: "v1:nav:help",
+};
+
+/**
+ * Команда раздела из кнопки меню клиента: корень раздела новым сообщением
+ * (дизайн-код, «Доставка»). Команда входом не является — заявку она не
+ * ставит: личность разрешается, как у нажатия, и недопущенный получает свой
+ * кадр (решение владельца 10 октября 2026 года).
+ */
+async function handleSectionCommand(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  command: SectionCommand,
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  const identity = await resolvePerson(
+    ctx,
+    runtime,
+    useCase,
+    commandRetry[command],
+  );
+  if (identity.kind === "failed") return identity.outcome;
+  const denied = await denyHubAccessIfNeeded(
+    ctx,
+    runtime,
+    identity,
+    useCase,
+    false,
+  );
+  if (denied !== undefined) return denied;
+  const person = identity.person;
+  switch (command) {
+    case "meetups":
+      return openNavScreen(ctx, runtime, person, "hub", useCase);
+    case "next":
+      return openNextMeetup(ctx, runtime, person, useCase);
+    case "settings":
+      await showScreen(ctx, settingsScreen());
+      return {
+        level: "info",
+        message: "settings sent",
+        result: "ok",
+        use_case: useCase,
+      };
+    case "help":
+      return openHelp(ctx, runtime, person, useCase);
+    case "manage":
+      if (!canOpenManagement(person)) {
+        await showRefusal(ctx, managementForbiddenText, exitToMeetups());
+        return {
+          level: "warn",
+          message: "management rejected",
+          result: "error",
+          use_case: useCase,
+          identity_id: person.identityId,
+          error_category: "authorization",
+          error: "management_forbidden",
+        };
+      }
+      await showScreen(ctx, manageScreen(person, uuidToToken(createUuidV7())));
+      return {
+        level: "info",
+        message: "manage menu sent",
+        result: "ok",
+        use_case: useCase,
+      };
+    default: {
+      const _exhaustive: never = command;
+      return _exhaustive;
+    }
+  }
+}
+
+// Команды кнопки меню клиента по правам человека: держателю права управления
+// — список чата с `/manage`, остальным — общий, а прежний список чата
+// снимается (решение владельца 10 октября 2026 года).
+async function registerHubCommands(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+): Promise<void> {
+  const chatId = ctx.chat?.id;
+  if (chatId === undefined) return;
+  await registerChatCommands(
+    ctx.api,
+    chatId,
+    canOpenManagement(person) ? commandsFor(person) : undefined,
+    runtime.logger,
+  );
+}
+
+// «Помощь» — корень раздела: текст о боте — тот же, что приветствие входа, —
+// и команды строками.
+async function openHelp(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "start",
+  });
+  if (result.kind !== "message") {
+    return unexpectedOutcome(
+      `unexpected start result ${result.kind}`,
+      undefined,
+      useCase,
+    );
+  }
+  await showScreen(ctx, helpScreen(person, result.text));
+  return {
+    level: "info",
+    message: "help sent",
+    result: "ok",
+    use_case: useCase,
+  };
+}
+
+/**
+ * Ближайшая предстоящая сходка, видимая смотрящему: опубликованная, с датой не
+ * раньше сегодняшнего дня сообщества, самая ранняя. Скрытые сходки, которые
+ * видят автор и администратор, не в счёт: «ближайшая сходка» — та, что
+ * объявлена сообществу.
+ */
+function nextMeetupOf(
+  meetups: readonly MeetupSummary[],
+  today: CommunityDay,
+): MeetupSummary | undefined {
+  let nearest: MeetupSummary | undefined;
+  for (const meetup of meetups) {
+    const day = meetup.schedule;
+    if (meetup.visibility !== "visible" || day === undefined) continue;
+    if (isBeforeDay(day, today)) continue;
+    if (nearest?.schedule === undefined || isBeforeDay(day, nearest.schedule)) {
+      nearest = meetup;
+    }
+  }
+  return nearest;
+}
+
+// `/next` открывает карточку ближайшей сходки; нет ни одной — «Сходки» с их
+// пустым текстом (решение владельца 10 октября 2026 года).
+async function openNextMeetup(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  const list = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "list-visible-meetups",
+    ...rpcCall(ctx, useCase),
+  });
+  const nearest =
+    list.kind === "meetup-list"
+      ? nextMeetupOf(list.meetups, communityToday(ctx))
+      : undefined;
+  if (nearest === undefined) {
+    await renderMeetupList(ctx, list);
+    return screenBoundary(list, {
+      ok: ["meetup-list"],
+      okMessage: "meetup list sent",
+      rejectedMessage: "meetup list rejected",
+      useCase,
+    });
+  }
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-meetup",
+    meetupId: nearest.id,
+    ...rpcCall(ctx, useCase),
+  });
+  await renderMeetupCard(
+    ctx,
+    result,
+    ctx.callbackQuery !== undefined,
+    runtime.presentation ?? "rich",
+    canManageMeetups(person),
+  );
+  return screenBoundary(result, {
+    ok: ["meetup-card"],
+    okMessage: "meetup card sent",
+    rejectedMessage: "meetup card rejected",
+    useCase,
+    meetupId: nearest.id,
+  });
+}
+
 const meetupCategoryOrder: readonly MeetupCategory[] = [
   "changes",
   "material",
@@ -4434,13 +4708,46 @@ const meetupCategoryOrder: readonly MeetupCategory[] = [
   "organizer",
 ];
 
+// Экран исхода подписки (дизайн-код, «Уведомления»): исход в заголовке,
+// название сходки в кавычках, у подписки — пояснение, что будет приходить, и
+// «Настроить уведомления» над выходом: настройки сходки — продолжение начатого.
+// Выход — «‹ Сходка»; возврат из настроек ведёт к карточке, как
+// всегда.
+function subscriptionOutcomeScreen(
+  token: string,
+  title: string,
+  subscribed: boolean,
+  explanation: string | undefined,
+): ShownScreen {
+  const keyboard = new InlineKeyboard();
+  if (subscribed) {
+    keyboard.text("Настроить уведомления", `v1:notify:settings:${token}`);
+  }
+  return {
+    id: "outcome",
+    text: outcomeText(
+      [
+        subscribed ? "Подписка включена." : "Подписка выключена.",
+        subscribed
+          ? explanation
+          : "Уведомления по этой сходке больше не придут.",
+      ]
+        .filter((part) => part !== undefined)
+        .join(" "),
+      meetupTitleLabel(title),
+    ),
+    keyboard: withNav(keyboard, toCard(token)),
+    format: "HTML",
+  };
+}
+
 // Перечень строится по действующим значениям, а не по умолчаниям продукта:
 // человек, который раньше включил напоминание или выключил материалы, иначе
 // прочёл бы неправду. Напоминание названо отдельно, потому что по умолчанию
 // оно выключено и без подсказки его не найти. Снимок без какой-то категории
-// заметки не даёт: пропуск неотличим от «выключено», и «ничего не приходит»
+// пояснения не даёт: пропуск неотличим от «выключено», и «ничего не приходит»
 // на пустом ответе было бы выдумкой.
-function subscriptionNote(
+function subscriptionExplanation(
   categories: readonly CategoryState<MeetupCategory>[],
 ): string | undefined {
   const known = meetupCategoryOrder
@@ -4453,11 +4760,9 @@ function subscriptionNote(
     .filter((state) => state.enabled)
     .map((state) => categoryLabels[state.category].toLowerCase());
   if (enabled.length === 0) {
-    return "Подписка включена. По этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомлениях сходки».";
+    return "По этой сходке сейчас ничего не приходит: все категории выключены. Включить их можно в «Уведомлениях сходки».";
   }
-  const lines = [
-    `Подписка включена. По этой сходке будут приходить: ${enabled.join(", ")}.`,
-  ];
+  const lines = [`По этой сходке будут приходить: ${enabled.join(", ")}.`];
   if (known.some((state) => state.category === "reminder" && !state.enabled)) {
     lines.push(
       "Напоминание перед началом выключено, включить его можно в «Уведомлениях сходки».",
@@ -4930,18 +5235,18 @@ async function showLotFailure(
     const exit =
       result.reason === "not-administrator" ||
       result.reason === "auction-not-found"
-        ? menuOnly()
+        ? exitToMeetups()
         : result.reason === "lot-not-found"
           ? // Чтения Auction отстают от команды: лот, который форма только что
             // завела, они могут ещё не знать. Нажатие можно повторить.
             context.retry === undefined
-            ? menuOnly()
+            ? exitToMeetups()
             : exitRetry(context.retry)
           : result.lotId !== undefined
             ? withNav(new InlineKeyboard(), toLot(result.lotId))
             : result.auctionId !== undefined
               ? withNav(new InlineKeyboard(), toLots(result.auctionId))
-              : menuOnly();
+              : exitToMeetups();
     await showRefusal(
       ctx,
       result.reason === "not-administrator"
@@ -4975,7 +5280,7 @@ async function showLotFailure(
         ? lotSaveRetryText
         : unavailableText,
     forbidden || context.retry === undefined
-      ? menuOnly()
+      ? exitToMeetups()
       : exitRetry(context.retry),
   );
   return {
@@ -4994,7 +5299,7 @@ async function refuseLotForm(
   ctx: UpdateContext,
   person: Person,
 ): Promise<BoundaryOutcome> {
-  await showRefusal(ctx, forbiddenText, menuOnly());
+  await showRefusal(ctx, forbiddenText, exitToMeetups());
   return {
     level: "warn",
     message: "lot form rejected",
@@ -5203,7 +5508,7 @@ async function renderConsoleResult(
         text: outcomeText(auctionDiscardedText),
         keyboard: withNav(
           new InlineKeyboard(),
-          meetupId === undefined ? toUpcoming : toCard(uuidToToken(meetupId)),
+          meetupId === undefined ? toMeetups : toCard(uuidToToken(meetupId)),
         ),
         format: "HTML",
       });
@@ -5228,7 +5533,7 @@ async function renderConsoleResult(
         result.reason === "not-administrator"
           ? forbiddenText
           : consoleMissingText,
-        menuOnly(),
+        exitToMeetups(),
       );
       return {
         level: "warn",
@@ -5253,7 +5558,7 @@ async function renderConsoleResult(
             ? lotSaveRetryText
             : unavailableText,
         forbidden || context.retry === undefined
-          ? menuOnly()
+          ? exitToMeetups()
           : exitRetry(context.retry),
       );
       return {
@@ -5309,7 +5614,7 @@ async function refuseConsole(
   ctx: UpdateContext,
   person: Person,
 ): Promise<BoundaryOutcome> {
-  await showRefusal(ctx, forbiddenText, menuOnly());
+  await showRefusal(ctx, forbiddenText, exitToMeetups());
   return {
     level: "warn",
     message: "auction console rejected",
@@ -5378,7 +5683,7 @@ async function handleAuctionCallback(
   if (denied !== undefined) return denied;
   const person = identity.person;
   if (runtime.auction === undefined) {
-    await showRefusal(ctx, unavailableText, menuOnly());
+    await showRefusal(ctx, unavailableText, exitToMeetups());
     return {
       level: "error",
       message: "auction is not configured",
@@ -5440,7 +5745,7 @@ async function handleAuctionCallback(
     await showRefusal(
       ctx,
       notFound ? "Лот не найден или больше недоступен." : unavailableText,
-      notFound || answer !== undefined ? menuOnly() : exitRetry(data),
+      notFound || answer !== undefined ? exitToMeetups() : exitRetry(data),
     );
     return {
       level: notFound ? "warn" : "error",
@@ -5473,8 +5778,8 @@ async function handleAuctionCallback(
     case "unreadable":
       await showRefusal(
         ctx,
-        "Не получилось прочитать эту кнопку. Открой актуальное меню.",
-        menuOnly(),
+        "Не получилось прочитать эту кнопку. Открой раздел заново.",
+        exitToMeetups(),
       );
       return {
         level: "warn",
@@ -5556,15 +5861,15 @@ async function handleAuctionCallback(
   };
 }
 
-// Родитель ленты: сходка аукциона, если бот её видел, иначе «Ближайшие»
+// Родитель ленты: сходка аукциона, если бот её видел, иначе «Сходки»
 // (ADR-030, дополнение 2026-10-04).
 function feedParentOf(ctx: UpdateContext, body: AuctionScreenBody): Parent {
   for (const block of body.blocks) {
     if (block.kind !== "feed") continue;
     const meetupId = ctx.auctionParents?.meetupOf(block.auctionId);
-    return meetupId === undefined ? toUpcoming : toCard(uuidToToken(meetupId));
+    return meetupId === undefined ? toMeetups : toCard(uuidToToken(meetupId));
   }
-  return toUpcoming;
+  return toMeetups;
 }
 
 // Доставка экрана аукциона (дизайн-код, «Показ фото лота»). Лента и карточка
@@ -5697,7 +6002,7 @@ async function renderMeetupCard(
     await showRefusal(
       ctx,
       "Сходка не найдена или больше недоступна.",
-      withNav(new InlineKeyboard(), toUpcoming),
+      withNav(new InlineKeyboard(), toMeetups),
       edit ? undefined : "new",
     );
     return;
@@ -5878,7 +6183,7 @@ async function renderNotificationFailure(
   forbidden: string = forbiddenText,
 ): Promise<void> {
   if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
-    await showRefusal(ctx, forbidden, menuOnly());
+    await showRefusal(ctx, forbidden, exitToMeetups());
     return;
   }
   if (result.kind === "dependency-rejected" && result.reason === "invalid") {
@@ -5943,7 +6248,7 @@ async function renderStateResult(
       : result.kind === "dependency-rejected" && result.reason === "forbidden"
         ? forbiddenText
         : unavailableText;
-  await showRefusal(ctx, text, menuOnly());
+  await showRefusal(ctx, text, exitToMeetups());
 }
 
 async function denyHubAccessIfNeeded(
@@ -6020,7 +6325,7 @@ async function resolvePerson(
     await showRefusal(
       ctx,
       unavailableText,
-      retryCallback === undefined ? menuOnly() : exitRetry(retryCallback),
+      retryCallback === undefined ? exitToMeetups() : exitRetry(retryCallback),
     );
     return {
       kind: "failed",
@@ -6169,7 +6474,7 @@ async function renderFormResult(
     const value = formatLocalMoment(result.schedule);
     await showScreen(ctx, {
       id: "past-date-confirm",
-      text: `${heading("Сохранить прошедшую дату?")}\n\nДата ${value} уже прошла. Сходка с этой датой сразу уйдёт в архив и не появится в «Ближайших сходках».`,
+      text: `${heading("Сохранить прошедшую дату?")}\n\nДата ${value} уже прошла. Сходка с этой датой сразу уйдёт в архив и не появится в «Сходках».`,
       // «Нет» задаёт вопрос о дате заново: человек чаще ошибся в дате, чем
       // передумал её менять.
       keyboard: confirmKeyboard({
@@ -6191,7 +6496,7 @@ async function renderFormResult(
       presentation,
       true,
       result.archived === true
-        ? "Изменение сохранено. Дата сходки уже прошла, поэтому она в архиве, а не в «Ближайших сходках»."
+        ? "Изменение сохранено. Дата сходки уже прошла, поэтому она в архиве, а не в «Сходках»."
         : "Изменение сохранено.",
     );
     return;
@@ -6311,10 +6616,10 @@ async function renderFormResult(
   if (result.kind === "published") {
     // Результат нажатия — карточка правкой того же сообщения: одновременный
     // двойной клик пишет в него же. С прошедшей датой сходка сразу в архиве:
-    // ответ не обещает её в списке «Ближайших», где её нет (PER-342).
+    // ответ не обещает её в списке «Сходках», где её нет (PER-342).
     const published =
       result.archived === true
-        ? "Сходка опубликована. Её дата уже прошла, поэтому она сразу в архиве, а не в «Ближайших сходках»."
+        ? "Сходка опубликована. Её дата уже прошла, поэтому она сразу в архиве, а не в «Сходках»."
         : "Сходка опубликована. Теперь она видна в списке.";
     await renderMeetupCard(
       ctx,
@@ -6336,7 +6641,7 @@ async function renderFormResult(
           : result.reason === "forbidden"
             ? forbiddenText
             : unavailableText,
-      menuOnly(),
+      exitToMeetups(),
       "new",
     );
   }
@@ -6929,6 +7234,10 @@ function rpcCall(ctx: UpdateContext, useCase?: ProductUseCase): RpcMetadata {
 function callbackUseCase(
   kind:
     | "home"
+    | "settings"
+    | "help"
+    | "next"
+    | "manage-group"
     | "hub"
     | "archive"
     | "outdated"
@@ -6976,6 +7285,7 @@ function callbackUseCase(
     | "console-discard-confirm"
     | "console-mark"
     | "manage-publish"
+    | "manage-confirm-publish"
     | "manage-unpublish"
     | "manage-confirm-unpublish"
     | "manage-cancel"
@@ -7019,11 +7329,13 @@ function callbackUseCase(
     case "manage-draft":
     case "publish-meetup":
     case "manage-menu":
+    case "manage-group":
       return "create_meetup";
     case "manage-edit":
     case "manage-field":
     case "manage-status":
     case "manage-publish":
+    case "manage-confirm-publish":
     case "manage-unpublish":
     case "manage-confirm-unpublish":
     case "manage-cancel":
@@ -7076,6 +7388,7 @@ function callbackUseCase(
     case "grant-moderation":
     case "revoke-moderation":
       return "manage_community";
+    case "settings":
     case "notify-global":
     case "notify-set-global":
     case "notify-disable-global":
@@ -7100,10 +7413,13 @@ function callbackUseCase(
     case "console-mark":
       return "manage_auction";
     case "home":
+    case "help":
     case "hub":
     case "archive":
     case "outdated":
       return "find_meetup";
+    case "next":
+      return "view_meetup";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
@@ -7261,8 +7577,8 @@ async function replyScreenFailure({
   try {
     await showRefusal(
       ctx,
-      "Не получилось показать экран. Это на моей стороне.\n\nОткрой меню и проверь состояние перед повтором действия.",
-      menuOnly(),
+      "Не получилось показать экран. Это на моей стороне.\n\nОткрой раздел заново и проверь состояние перед повтором действия.",
+      exitToMeetups(),
       // Предыдущая попытка могла снять клавиатуру. Snapshot callback ещё
       // содержит её: правка того же кадра была бы ошибочно пропущена.
       "new",
@@ -7288,7 +7604,7 @@ async function replyFailClosed(
   outcome: BoundaryOutcome,
 ): Promise<BoundaryOutcome> {
   try {
-    await showRefusal(ctx, unavailableText, menuOnly());
+    await showRefusal(ctx, unavailableText, exitToMeetups());
     return outcome;
   } catch (cause) {
     return await replyScreenFailure({

@@ -632,8 +632,6 @@ const confirmBody = (
         action: "confirm.yes",
         callbackData: commitCallback(command, amount, 2, opId),
       },
-    ],
-    [
       {
         action: "confirm.no",
         callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
@@ -1380,7 +1378,7 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
     ],
     body: soldWithFollow(false),
   },
-  // Список из меню бота аукциона: возврата у тела нет, его ставит оболочка.
+  // Список из команды бота аукциона: возврата у тела нет, это корень.
   // Лот, которого Auction не знает, выпадает до нарезки страниц.
   {
     intent: "favorites: from the menu",

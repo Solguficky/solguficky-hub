@@ -354,7 +354,7 @@ describe("meetup card auction row", () => {
 
     const outcome = lastScreen(calls);
     expect(outcome.text).toContain("<b>Сходка опубликована</b>");
-    expect(labels(outcome)).toEqual([["‹ Сходка", "Меню"]]);
+    expect(labels(outcome)).toEqual([["‹ Сходка"]]);
     expect(JSON.stringify(outcome)).not.toContain("Включить аукцион");
 
     await bot.handleUpdate(press(data(outcome, "‹ Сходка") ?? ""));
@@ -444,7 +444,7 @@ describe("enabling the auction", () => {
 
     const outcome = lastScreen(calls);
     expect(outcome.text).toContain("<b>Аукцион включён</b>");
-    expect(labels(outcome)).toEqual([["‹ Сходка", "Меню"]]);
+    expect(labels(outcome)).toEqual([["‹ Сходка"]]);
     expect(data(outcome, "Лоты")).toBeUndefined();
     expect(records.at(-1)?.fields).toMatchObject({
       result: "ok",
@@ -510,7 +510,7 @@ describe("auction feed shell", () => {
 
     const feed = lastScreen(calls);
     expect(feed.text).toMatch(/^<b>Лоты<\/b>/);
-    expect(labels(feed).at(-1)).toEqual(["‹ Сходка", "Меню"]);
+    expect(labels(feed).at(-1)).toEqual(["‹ Сходка"]);
     expect(data(feed, "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
   });
 
@@ -523,7 +523,7 @@ describe("auction feed shell", () => {
     await bot.handleUpdate(press(`v1:view:${meetupToken}`));
     await bot.handleUpdate(press(lotData));
     const card = lastScreen(calls);
-    expect(labels(card).at(-1)).toEqual(["‹ Лоты", "Меню"]);
+    expect(labels(card).at(-1)).toEqual(["‹ Лоты"]);
 
     const back = data(card, "‹ Лоты");
     if (back === undefined) throw new Error("no way back from the lot");
@@ -555,7 +555,7 @@ describe("auction feed shell", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(/1\s500\s₽ · вручную$/);
     expect(lines[1]).toMatch(/1\s600\s₽ · авто$/);
-    expect(labels(history).at(-1)).toEqual(["‹ Лот", "Меню"]);
+    expect(labels(history).at(-1)).toEqual(["‹ Лот"]);
     expect(data(history, "‹ Лот")).toBe(lotData);
   });
 
@@ -569,8 +569,8 @@ describe("auction feed shell", () => {
     await bot.handleUpdate(press(feedData));
 
     const feed = lastScreen(calls);
-    expect(labels(feed).at(-1)).toEqual(["‹ Ближайшие", "Меню"]);
-    expect(data(feed, "‹ Ближайшие")).toBe("v1:nav:hub");
+    expect(labels(feed).at(-1)).toEqual(["‹ Сходки"]);
+    expect(data(feed, "‹ Сходки")).toBe("v1:nav:hub");
   });
 
   it("remembers the meetup from enabling, not only from the card", async () => {
@@ -646,7 +646,7 @@ describe("favorite lots in the hub", () => {
     await bot.handleUpdate(press(open));
     const list = lastScreen(calls);
     expect(list.text).toMatch(/^<b>Избранное<\/b>/);
-    expect(labels(list).at(-1)).toEqual(["‹ Лоты", "Меню"]);
+    expect(labels(list).at(-1)).toEqual(["‹ Лоты"]);
     expect(data(list, "‹ Лоты")).toBe(feedData);
   });
 
@@ -695,7 +695,10 @@ describe("lot photo delivery", () => {
     await bot.handleUpdate(press(lotData));
 
     const card = lastScreen(calls);
-    expect(card.rich_message?.html).toContain('<img src="tg://photo?id=lot"/>');
+    // Фото — первым блоком, над заголовком (решение владельца 10 октября 2026).
+    expect(card.rich_message?.html).toMatch(
+      /^<img src="tg:\/\/photo\?id=lot"\/><h1>/,
+    );
     expect(card.rich_message?.media?.[0]?.media.media).toBeInstanceOf(
       InputFile,
     );
@@ -985,12 +988,12 @@ describe("bid leaf in the hub", () => {
         inline_keyboard: [
           [
             {
-              text: expect.stringMatching(/^Да, поставить 1\s300\s₽$/),
+              text: expect.stringMatching(/^✔️ Да, поставить 1\s300\s₽$/),
               style: "danger",
               callback_data: expect.stringMatching(/^v1:auc:b:/),
             },
+            { text: "✖️ Нет", callback_data: expect.any(String) },
           ],
-          [{ text: "Нет", callback_data: expect.any(String) }],
         ],
       },
     });
@@ -1030,7 +1033,6 @@ describe("bid leaf in the hub", () => {
                 page: 0,
               }),
             },
-            { text: "Меню", callback_data: "v1:nav:start" },
           ],
         ],
       },
@@ -1060,7 +1062,7 @@ describe("bid leaf in the hub", () => {
         payload?.reply_markup?.inline_keyboard?.map((row) =>
           row.map((button) => button.text),
         ),
-      ).toEqual([["Ввести заново"], ["К лоту", "Меню"]]);
+      ).toEqual([["Ввести заново"], ["К лоту"]]);
     },
   );
 

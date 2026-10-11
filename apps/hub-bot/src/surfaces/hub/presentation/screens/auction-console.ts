@@ -33,6 +33,7 @@ import {
   pagedTitle,
   paginate,
   readableMoment,
+  removeLabel,
   screenText,
   toggleLabel,
   withNav,
@@ -334,7 +335,10 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     nextRow(keyboard).text("Открыть онлайн-неделю", consoleOpenData(auction));
   }
   if (editable) {
-    nextRow(keyboard).text("Удалить аукцион", consoleDiscardData(auction));
+    nextRow(keyboard).text(
+      removeLabel("Удалить аукцион"),
+      consoleDiscardData(auction),
+    );
   }
   if (console.status === "prebidding") {
     // Без финала отбирать некуда: «В финал» не ставится, а снять прежнюю
@@ -419,6 +423,7 @@ export function weekConfirmScreen(confirm: {
       yes: "Да, открыть неделю",
       yesData: consoleConfirmData(auction, uuidToToken(confirm.opId)),
       noData: consoleViewData(auction),
+      irreversible: true,
     }),
     format: "HTML",
   };
@@ -449,6 +454,7 @@ export function discardConfirmScreen(confirm: {
       yes: "Да, удалить",
       yesData: consoleDiscardConfirmData(auction, uuidToToken(confirm.opId)),
       noData: consoleViewData(auction),
+      irreversible: true,
     }),
     format: "HTML",
   };

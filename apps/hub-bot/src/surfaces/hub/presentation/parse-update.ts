@@ -15,8 +15,29 @@ export type ParsedUpdate =
   // для карточки модератора (ADR-060, пункт 23).
   | ({ kind: "start"; firstName: string } & ResolveIdentityInput &
       ({ deepLink: DeepLink } | Record<never, never>))
+  // Команда раздела из кнопки меню клиента: открывает корень своего раздела
+  // новым сообщением (решение владельца 10 октября 2026 года).
+  | ({ kind: "command"; command: SectionCommand } & ResolveIdentityInput)
   | { kind: "ignored" }
   | { kind: "malformed" };
+
+export type SectionCommand =
+  | "meetups"
+  | "next"
+  | "settings"
+  | "manage"
+  | "help";
+
+// `/menu` — прежняя команда меню клиента: по старой привычке она открывает
+// «Сходки», как `/meetups`.
+const sectionCommands: Readonly<Record<string, SectionCommand>> = {
+  meetups: "meetups",
+  menu: "meetups",
+  next: "next",
+  settings: "settings",
+  manage: "manage",
+  help: "help",
+};
 
 const commandPattern =
   /^\/([A-Za-z0-9_]{1,32})(?:@([A-Za-z0-9_]{5,32}))?(?: (.*))?$/;
@@ -52,11 +73,17 @@ export function parseUpdate(raw: unknown, botUsername?: string): ParsedUpdate {
   if (command.name === "start") {
     return parsedStart(person, startDeepLink(command.argument));
   }
-  // `/menu` — это `/start` без payload: хвост в deep link не превращается.
-  if (command.name === "menu") {
-    return parsedStart(person, undefined);
+  // Хвост команды раздела ничего не значит и в deep link не превращается.
+  const section = Object.hasOwn(sectionCommands, command.name)
+    ? sectionCommands[command.name]
+    : undefined;
+  if (section !== undefined) {
+    return {
+      kind: "command",
+      command: section,
+      ...toResolveIdentityInput(BigInt(from.id), from.username),
+    };
   }
-  // Других команд у бота нет: разделы открываются кнопками стартового экрана.
   return { kind: "ignored" };
 }
 

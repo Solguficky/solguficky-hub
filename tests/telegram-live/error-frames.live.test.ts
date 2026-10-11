@@ -80,10 +80,10 @@ describe("кадры ошибок в тестовой среде Telegram", () =
 
     const edited = await live.press(older, "v1:nav:hub");
 
-    // Экран списка узнаётся по клавиатуре: текст зависит от того, пуст ли
-    // список. Домашний экран кнопки «Назад» не несёт.
+    // Экран «Сходки» узнаётся по клавиатуре: текст зависит от того, пуст ли
+    // список, а кнопка «Архив» стоит всегда.
     expect(edited.messageId).toBe(older.messageId);
-    expect(edited.callbackData).toContain("v1:nav:start");
+    expect(edited.callbackData).toContain("v1:nav:archive");
     expect(edited.callbackData).not.toContain("v1:manage:menu");
   });
 });

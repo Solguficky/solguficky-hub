@@ -3,6 +3,7 @@ import type { SourceChannel } from "../../identity/port.js";
 import { sourceStartLink } from "../source-deep-link.js";
 import {
   escapeHtml,
+  type Parent,
   pagedTitle,
   pageSize,
   paginate,
@@ -51,6 +52,8 @@ export function sourceChannelsScreen(
   requestedPage: number,
   bots: SourceLinkBots,
   notice?: string,
+  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  parent: Parent = toManage,
 ): ShownScreen {
   const page = paginate(channels, requestedPage);
   const keyboard = new InlineKeyboard().text("Завести канал", "v1:sc:a");
@@ -64,7 +67,7 @@ export function sourceChannelsScreen(
         ? "Пока ни одного."
         : page.items.map((channel) => channelLines(channel, bots)).join("\n"),
     ),
-    keyboard: withNav(keyboard, toManage),
+    keyboard: withNav(keyboard, parent),
     format: "HTML",
   };
 }

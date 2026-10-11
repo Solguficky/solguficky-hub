@@ -192,6 +192,9 @@ export type ExecuteRequest =
       identity: Person;
       intent: "publish-meetup";
       meetupId: string;
+      // Версия, которую человек видел на подтверждении публикации: правка
+      // между экраном и «Да» даёт конфликт, а не публикацию поверх неё.
+      expectedVersion?: number;
       requestId?: string;
       useCase?: string;
       deadlineAt?: number;
@@ -649,7 +652,7 @@ export type ExecuteResult =
     }
   // `repeated` — сходка была видна уже в перечитанном снимке: Meetups принял
   // повтор без события, и нового факта публикации нет (E-09). `archived` —
-  // дата сходки раньше сегодняшнего дня сообщества, и в «Ближайших» её нет.
+  // дата сходки раньше сегодняшнего дня сообщества, и в «Сходках» её нет.
   | {
       kind: "published";
       meetup: MeetupSnapshot;

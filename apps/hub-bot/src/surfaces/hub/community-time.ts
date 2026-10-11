@@ -4,7 +4,7 @@ export type CommunityDay = { year: number; month: number; day: number };
 
 /// Сегодняшний день сообщества — тот, по которому Meetups решает, ушла ли
 /// планируемая сходка в архив (meetups.md). Сравнение идёт по дню, а не по
-/// моменту: сходка сегодня в прошедший час остаётся в «Ближайших».
+/// моменту: сходка сегодня в прошедший час остаётся в «Сходках».
 export function communityDay(now: Date, timeZone: string): CommunityDay {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,

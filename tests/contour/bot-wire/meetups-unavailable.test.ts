@@ -35,7 +35,6 @@ describe("провод бота при недоступном Meetups", () => {
     const person = startConversation(wire.bot, wire.calls, telegramUserId);
 
     await person.says("/start");
-    await person.presses("Ближайшие сходки");
 
     expect(person.sees()).toContain("Не получилось загрузить сходки");
     expect(person.sees()).not.toContain("Пока ни одной запланированной сходки");

@@ -194,7 +194,7 @@ const followRefused: AuctionScreenBody = {
 };
 
 // Хронология с обеими кнопками листания и пустая — первая и единственная
-// страница. Возврат тела оболочка ставит в один ряд с «Меню».
+// страница. Возврат тела и есть ряд навигации.
 const history = (entries: boolean): AuctionScreenBody => ({
   blocks: [
     {
@@ -259,8 +259,10 @@ const confirm = (command: "bid" | "proxy"): AuctionScreenBody => ({
     },
   ],
   keyboard: [
-    [{ action: "confirm.yes", callbackData: "v1:auc:b:lot-1:op:fa:1" }],
-    [{ action: "confirm.no", callbackData: "v1:auc:lot:lot-1:1" }],
+    [
+      { action: "confirm.yes", callbackData: "v1:auc:b:lot-1:op:fa:1" },
+      { action: "confirm.no", callbackData: "v1:auc:lot:lot-1:1" },
+    ],
   ],
 });
 
@@ -351,7 +353,7 @@ const answerRefused = (retry: boolean): AuctionScreenBody => ({
   ],
 });
 
-// Принятая команда (PER-473): кадр исхода с «К лоту», «Меню» ставит оболочка.
+// Принятая команда (PER-473): кадр исхода с «К лоту».
 const accepted = (
   command: "bid" | "proxy",
   title: boolean,
@@ -407,13 +409,9 @@ const shown: readonly {
   faq?: typeof urls;
   presentation?: "plain";
 }[] = [
-  { screen: { kind: "menu" } },
-  { screen: { kind: "menu", notify: true } },
   { screen: { kind: "notify", current: "every" } },
   { screen: { kind: "notify", current: "15" } },
   { screen: { kind: "notify", current: "off" } },
-  { screen: { kind: "menu", favorites: true } },
-  { screen: { kind: "menu", favorites: true, notify: true } },
   { screen: { kind: "faq" } },
   { screen: { kind: "faq" }, faq: urls },
   { screen: { kind: "details" } },
@@ -601,14 +599,15 @@ describe("auction screens beyond the linter", () => {
     ).toEqual([]);
   });
 
-  it("keeps the FAQ button in the menu only", () => {
+  // Корня «Меню» нет: FAQ — корень раздела, его открывает команда `/faq`, и
+  // боковой кнопки к нему нет ни под одним экраном (решение владельца
+  // 10 октября 2026 года).
+  it("gives the FAQ no side button under any screen", () => {
     expect(
-      new Set(
-        buttons
-          .filter(({ button }) => button.text === "Правила и FAQ")
-          .map(({ screen }) => screen),
-      ),
-    ).toEqual(new Set(["menu"]));
+      buttons
+        .filter(({ button }) => button.text === "Правила и FAQ")
+        .map(({ screen }) => screen),
+    ).toEqual([]);
   });
 
   it("uses the dictionary for the menu and paging", () => {
@@ -670,7 +669,7 @@ describe("auction screens beyond the linter", () => {
         .flat()
         .filter(
           (button) =>
-            "callback_data" in button && !/^(‹ |←$|→$|Меню$)/.test(button.text),
+            "callback_data" in button && !/^(‹ |←$|→$)/.test(button.text),
         );
       expect(lines.length, screen.text).toBe(content.length);
     }

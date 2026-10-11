@@ -9,50 +9,49 @@ import { inspectCall, type LintConfig } from "./inspect.js";
 const tag = Symbol("screen");
 
 const catalog = {
-  menu: { class: "screen", nav: "root", title: "Меню", backName: "Меню" },
-  upcoming: {
+  meetups: {
+    class: "screen",
+    nav: "root",
+    title: "Сходки",
+    backName: "Сходки",
+  },
+  hidden: {
     class: "screen",
     nav: "tree",
-    title: "Ближайшие",
-    parent: "menu",
-    backName: "Ближайшие",
+    title: "Скрытые",
+    parent: "meetups",
+    backName: "Скрытые",
   },
   archive: {
     class: "screen",
     nav: "tree",
     title: "Архив",
-    parent: "menu",
+    parent: "meetups",
     backName: "Архив",
   },
   card: { class: "screen", nav: "tree", parent: "list" },
-  edit: { class: "screen", nav: "tree", title: "Изменить", parent: "menu" },
+  edit: { class: "screen", nav: "tree", title: "Изменить", parent: "meetups" },
   plain: {
     class: "screen",
     nav: "tree",
-    parent: "menu",
+    parent: "meetups",
     waive: { title: "PER-1: заголовка нет до перевёрстки" },
   },
   painted: {
     class: "screen",
     nav: "tree",
     title: "Крашеный",
-    parent: "menu",
+    parent: "meetups",
     waive: { nav: "PER-2: возврат подписан по-старому" },
   },
-  bid: { class: "screen", nav: "confirm", title: "Ставка", money: true },
-  open: { class: "screen", nav: "confirm", title: "Неделя" },
-  decline: {
-    class: "screen",
-    nav: "confirm",
-    title: "Отказать?",
-    decision: true,
-  },
+  bid: { class: "screen", nav: "confirm", title: "Ставка", irreversible: true },
+  hide: { class: "screen", nav: "confirm", title: "Скрыть" },
 } as const satisfies Catalog;
 
 const config: LintConfig = {
   tag,
   catalog,
-  parentGroups: { list: ["upcoming", "archive"] },
+  parentGroups: { list: ["hidden", "archive"] },
   namedPairs: new Set(["Изменить|Статус", "Материалы (#)|Лоты"]),
 };
 
@@ -82,33 +81,56 @@ describe("inspectCall configuration", () => {
     const foreign = Symbol("screen");
     expect(
       rulesOf("sendMessage", {
-        text: "<b>Меню</b>",
+        text: "<b>Сходки</b>",
         parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [[key("Ближайшие")]] },
-        [foreign]: "menu",
+        reply_markup: { inline_keyboard: [[key("Архив")]] },
+        [foreign]: "meetups",
       }),
     ).toEqual(["untagged"]);
   });
 
   it("accepts a return to any screen of a parent group", () => {
-    for (const back of ["‹ Ближайшие", "‹ Архив"]) {
+    for (const back of ["‹ Скрытые", "‹ Архив"]) {
       expect(
         rulesOf(
           "editMessageText",
-          call("card", "<b>Сходка</b>", [[key(back), key("Меню")]]),
+          call("card", "<b>Сходка</b>", [[key(back)]]),
         ),
       ).toEqual([]);
     }
     expect(
       rulesOf(
         "editMessageText",
-        call("card", "<b>Сходка</b>", [[key("‹ Меню"), key("Меню")]]),
+        call("card", "<b>Сходка</b>", [[key("‹ Сходки")]]),
       ),
     ).toEqual(["nav"]);
   });
 
+  // Решение владельца 10 октября 2026 года: ряд навигации — одна кнопка
+  // возврата, кнопки «Меню» нет нигде.
+  it("keeps the navigation row to the return alone", () => {
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("card", "<b>Сходка</b>", [[key("‹ Архив"), key("Меню")]]),
+      ),
+    ).toEqual(["nav", "vocabulary"]);
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("meetups", "<b>Сходки</b>", [[key("Архив")], [key("‹ Сходки")]]),
+      ),
+    ).toEqual(["nav"]);
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("meetups", "<b>Сходки</b>", [[key("Архив")]]),
+      ),
+    ).toEqual([]);
+  });
+
   it("allows a pair only when the bot names it", () => {
-    const rows = (pair: Key[]) => [pair, [key("‹ Меню")]];
+    const rows = (pair: Key[]) => [pair, [key("‹ Сходки")]];
     expect(
       rulesOf(
         "editMessageText",
@@ -128,7 +150,7 @@ describe("inspectCall configuration", () => {
   });
 
   it("reads # in a named pair as any number in the label", () => {
-    const rows = (pair: Key[]) => [pair, [key("‹ Меню")]];
+    const rows = (pair: Key[]) => [pair, [key("‹ Сходки")]];
     for (const count of ["0", "7", "12"]) {
       expect(
         rulesOf(
@@ -156,7 +178,7 @@ describe("inspectCall configuration", () => {
   it("drops only the waived rule of an entry", () => {
     expect(
       rulesOf("editMessageText", {
-        ...call("plain", "Без заголовка", [[key("‹ Меню")]]),
+        ...call("plain", "Без заголовка", [[key("‹ Сходки")]]),
         parse_mode: undefined,
       }),
     ).toEqual([]);
@@ -173,60 +195,73 @@ describe("inspectCall configuration", () => {
     ).toEqual(["style", "callback-data"]);
   });
 
-  // PER-473: цвет читается из каталога, а не из подписи.
-  it("paints only the money confirmation, and paints it always", () => {
+  // Решение владельца 10 октября 2026 года: цвет читается из каталога, а не
+  // из подписи; красное — только «Да» необратимого подтверждения.
+  it("paints only the irreversible confirmation, and paints it always", () => {
     const confirm = (id: string, title: string, yes: Key) =>
       rulesOf(
         "sendMessage",
-        call(id, `<b>${title}</b>`, [[yes], [key("Нет")]]),
+        call(id, `<b>${title}</b>`, [[yes, key("✖️ Нет")]]),
       );
     expect(
       confirm(
         "bid",
         "Ставка",
-        key("Да, поставить 1 300 ₽", { style: "danger" }),
+        key("✔️ Да, поставить 1 300 ₽", { style: "danger" }),
       ),
     ).toEqual([]);
-    expect(confirm("bid", "Ставка", key("Да, поставить 1 300 ₽"))).toEqual([
+    expect(confirm("bid", "Ставка", key("✔️ Да, поставить 1 300 ₽"))).toEqual([
       "style",
     ]);
     expect(
-      confirm("open", "Неделя", key("Да, открыть неделю", { style: "danger" })),
-    ).toEqual(["style"]);
-    expect(confirm("open", "Неделя", key("Да, открыть неделю"))).toEqual([]);
-  });
-
-  // PER-534: экран решения по заявке красит отказ красным, допуск зелёным, и
-  // только он.
-  it("paints the application decision, and paints it always", () => {
-    const decline = (id: string, title: string, yes: Key) =>
-      rulesOf(
-        "sendMessage",
-        call(id, `<b>${title}</b>`, [[yes], [key("Нет")]]),
-      );
-    expect(
-      decline("decline", "Отказать?", key("Да, отказать", { style: "danger" })),
-    ).toEqual([]);
-    expect(decline("decline", "Отказать?", key("Да, отказать"))).toEqual([
-      "style",
-    ]);
-    expect(
-      decline(
-        "decline",
-        "Отказать?",
-        key("Да, отказать", { style: "success" }),
-      ),
+      confirm("bid", "Ставка", key("✔️ Да, поставить", { style: "success" })),
     ).toEqual(["style", "style"]);
     expect(
-      decline("open", "Неделя", key("Да, отказать", { style: "danger" })),
+      confirm("hide", "Скрыть", key("✔️ Да, скрыть", { style: "danger" })),
     ).toEqual(["style"]);
+    expect(confirm("hide", "Скрыть", key("✔️ Да, скрыть"))).toEqual([]);
+  });
+
+  it("keeps the confirmation answers in one row", () => {
+    const rows = (keyboard: Key[][]) =>
+      rulesOf("sendMessage", call("hide", "<b>Скрыть</b>", keyboard));
+    expect(rows([[key("✔️ Да, скрыть"), key("✖️ Нет")]])).toEqual([]);
+    expect(rows([[key("✔️ Да, скрыть")], [key("✖️ Нет")]])).toEqual(["nav"]);
+    expect(rows([[key("Да, скрыть"), key("Нет")]])).toEqual(["nav"]);
+  });
+
+  it("keeps the admit choice in one row with its pair", () => {
+    const rows = (keyboard: Key[][]) =>
+      rulesOf("sendMessage", call("edit", "<b>Изменить</b>", keyboard));
+    expect(
+      rows([[key("✔️ Допустить")], [key("✖️ Отказать")], [key("‹ Сходки")]]),
+    ).toEqual(["rows"]);
+  });
+
+  it("lets only dictionary emoji before their words", () => {
+    const shown = (text: string, label: string) =>
+      rulesOf(
+        "sendMessage",
+        call("edit", text, [[key(label)], [key("‹ Сходки")]]),
+      );
+    expect(
+      shown(
+        "<b>Изменить</b>\n\n📅 Когда: 12 июня\n📍 Где: бар",
+        "🔔 Вкл · Новые",
+      ),
+    ).toEqual([]);
+    expect(shown("<b>Изменить</b>\n\n🎉 Готово", "Раз")).toEqual(["emoji"]);
+    expect(shown("<b>Изменить</b>", "🗑 Изменить")).toEqual(["emoji"]);
+    // Текст организатора без пробела за знаком не проверяется: так эмодзи
+    // бот не ставит.
+    expect(shown("<b>Изменить</b>\n\n🦉🦉🦉", "🎲🎲🎲")).toEqual([]);
   });
 
   // PER-472: тело экрана — пустая строка после заголовка, а над ним ничего:
   // исход действия — свой экран, а не заметка над карточкой.
   it("requires a blank line after the title and nothing above it", () => {
     const titled = (text: string) =>
-      rulesOf("sendMessage", call("edit", text, [[key("‹ Меню")]]));
+      rulesOf("sendMessage", call("edit", text, [[key("‹ Сходки")]]));
     expect(titled("<b>Изменить</b>")).toEqual([]);
     expect(titled("<b>Изменить</b>\n\nНазвание: Сходка")).toEqual([]);
     expect(titled("Сохранено.\n\n<b>Изменить</b>\n\nНазвание: Сходка")).toEqual(
@@ -249,7 +284,7 @@ describe("inspectCall configuration", () => {
       rulesOf("sendRichMessage", {
         chat_id: 42,
         rich_message: { html },
-        reply_markup: { inline_keyboard: [[key("‹ Меню")]] },
+        reply_markup: { inline_keyboard: [[key("‹ Сходки")]] },
         [tag]: "edit",
       });
     expect(rich("<h1>Изменить</h1><p>Тело</p>")).toEqual([]);
@@ -261,6 +296,31 @@ describe("inspectCall configuration", () => {
     expect(rich("<h1>Изменить</h1>Название: Сходка")).toEqual(["body"]);
   });
 
+  // Решение владельца 10 октября 2026 года: фото карточки стоит над
+  // заголовком — одно фото или карусель, и больше ничего.
+  it("lets only the card photo stand before the rich title", () => {
+    const rich = (html: string) =>
+      rulesOf("sendRichMessage", {
+        chat_id: 42,
+        rich_message: { html },
+        reply_markup: { inline_keyboard: [[key("‹ Сходки")]] },
+        [tag]: "edit",
+      });
+    const photo = '<img src="tg://photo?id=p1"/>';
+    expect(rich(`${photo}<h1>Изменить</h1><p>Тело</p>`)).toEqual([]);
+    expect(
+      rich(
+        `<tg-slideshow>${photo}<img src="tg://photo?id=p2"/></tg-slideshow><h1>Изменить</h1>`,
+      ),
+    ).toEqual([]);
+    expect(rich(`${photo}<p>Сохранено.</p><h1>Изменить</h1>`)).toEqual([
+      "body",
+    ]);
+    expect(rich(`<p>Сохранено.</p>${photo}<h1>Изменить</h1>`)).toEqual([
+      "body",
+    ]);
+  });
+
   it("finds the caption of an edited photo inside its media", () => {
     expect(
       rulesOf("editMessageMedia", {
@@ -270,7 +330,7 @@ describe("inspectCall configuration", () => {
           caption: "Лот",
           parse_mode: "HTML",
         },
-        reply_markup: { inline_keyboard: [[key("‹ Меню")]] },
+        reply_markup: { inline_keyboard: [[key("‹ Сходки")]] },
         [tag]: "edit",
       }),
     ).toEqual(["title"]);
@@ -282,7 +342,7 @@ describe("inspectCall configuration", () => {
           caption: "<b>Изменить</b>",
           parse_mode: "HTML",
         },
-        reply_markup: { inline_keyboard: [[key("‹ Меню")]] },
+        reply_markup: { inline_keyboard: [[key("‹ Сходки")]] },
         [tag]: "edit",
       }),
     ).toEqual([]);

@@ -694,7 +694,7 @@ describe("past meetup date", () => {
   });
 
   // Граница — день, как у архива Meetups: сходка сегодня в прошедший час
-  // остаётся в «Ближайших», и спрашивать о ней не о чем.
+  // остаётся в «Сходках», и спрашивать о ней не о чем.
   it("accepts today's date at an hour that has already passed", async () => {
     const { dispatcher, meetups } = harness();
     const result = await dispatcher.execute({

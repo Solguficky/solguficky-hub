@@ -8,9 +8,9 @@ const payload = "m_AZLzpFtsfY6fASNFZ4mrzQ";
 
 describe("язык живого пульта", () => {
   it("берёт хвост текста и подписи как есть", () => {
-    expect(parseCommand("press  Ближайшие сходки ")).toEqual({
+    expect(parseCommand("press  Архив ")).toEqual({
       kind: "press",
-      label: "Ближайшие сходки",
+      label: "Архив",
     });
     expect(parseCommand("say 12.06.2027 19:00, «Циферблат»\n")).toEqual({
       kind: "say",

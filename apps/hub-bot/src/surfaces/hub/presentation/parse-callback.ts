@@ -10,6 +10,7 @@ import type {
   MeetupCategory,
   NotificationCategory,
 } from "../notifications/port.js";
+import { type ManageGroup, manageGroupOf } from "./screens/menu.js";
 
 const CallbackSchema = z.string().max(64);
 const TokenSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/);
@@ -155,11 +156,18 @@ function parseCardCursor(
 }
 
 type PlainAction =
+  // Старая кнопка «Меню» и «‹ Меню» в чатах: корня «Меню» больше нет, и она
+  // открывает «Сходки» (решение владельца 10 октября 2026 года).
   | { kind: "home" }
+  // Корни разделов, которые открывают команды; кнопкой — повтор после сбоя.
+  | { kind: "settings" }
+  | { kind: "help" }
+  | { kind: "next" }
   // Списки листаются: страница едет в кнопке листания, без неё — первая.
   | { kind: "hub"; page?: number }
   | { kind: "archive"; page?: number }
   | { kind: "manage-menu" }
+  | { kind: "manage-group"; group: ManageGroup }
   | { kind: "manage-hidden"; page?: number }
   | { kind: "community" }
   // Курсор очереди — токен человека, а не номер: очередь меняется.
@@ -211,7 +219,10 @@ type PlainAction =
       cursor: CardCursor;
     }
   | { kind: "create-meetup"; token: string }
-  | { kind: "publish-meetup"; token: string }
+  // Команда публикации. С версией — «Да» подтверждения с черновика (решение
+  // владельца 10 октября 2026 года); без версии — «Да, опубликовать» кадра
+  // конфликта и кнопки, оставшиеся в чатах до подтверждения.
+  | { kind: "publish-meetup"; token: string; version?: number }
   | { kind: "manage-edit"; token: string }
   | { kind: "manage-field"; token: string; field: FormField }
   // Черновик формы создания: без поля — сам экран, с полем — вопрос о нём.
@@ -246,7 +257,9 @@ type PlainAction =
       page: number;
       sort: ConsoleSort;
     }
-  | { kind: "manage-publish"; token: string }
+  // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
+  | { kind: "manage-publish"; token: string; origin: PublishOrigin }
+  | { kind: "manage-confirm-publish"; token: string; version: number }
   | { kind: "manage-unpublish"; token: string }
   | { kind: "manage-confirm-unpublish"; token: string; version?: number }
   | { kind: "manage-cancel"; token: string }
@@ -572,6 +585,15 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:community:allow")
     return { kind: "ask-allowed-username" };
   if (parsed.data === "v1:nav:start") return { kind: "home" };
+  if (parsed.data === "v1:nav:settings") return { kind: "settings" };
+  if (parsed.data === "v1:nav:help") return { kind: "help" };
+  if (parsed.data === "v1:nav:next") return { kind: "next" };
+  if (parts.length === 4 && parts[1] === "manage" && parts[2] === "g") {
+    const group = manageGroupOf(parts[3] ?? "");
+    return group === undefined
+      ? { kind: "malformed" }
+      : { kind: "manage-group", group };
+  }
   if (parsed.data === "v1:nav:hub") return { kind: "hub" };
   if (parsed.data === "v1:notify:global") return { kind: "notify-global" };
   if (parsed.data === "v1:nav:archive") return { kind: "archive" };
@@ -716,6 +738,12 @@ export function parseCallback(raw: unknown): CallbackAction {
     return { kind: "create-meetup", token: token.data };
   if (parts.length === 4 && parts[2] === "publish")
     return { kind: "publish-meetup", token: token.data };
+  if (parts.length === 5 && parts[2] === "publish") {
+    const version = VersionSchema.safeParse(parts[4]);
+    return version.success
+      ? { kind: "publish-meetup", token: token.data, version: version.data }
+      : { kind: "malformed" };
+  }
   if (parts.length === 4 && parts[2] === "edit")
     return { kind: "manage-edit", token: token.data };
   if (parts.length === 5 && parts[2] === "field") {
@@ -798,7 +826,20 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts.length === 4 && parts[2] === "auction")
     return { kind: "manage-meetups", token: token.data };
   if (parts.length === 4 && parts[2] === "republish")
-    return { kind: "manage-publish", token: token.data };
+    return { kind: "manage-publish", token: token.data, origin: "status" };
+  // `d` — «Опубликовать» на черновике: «Нет» подтверждения вернёт на него.
+  if (parts.length === 5 && parts[2] === "republish" && parts[4] === "d")
+    return { kind: "manage-publish", token: token.data, origin: "draft" };
+  if (parts.length === 5 && parts[2] === "confirm-publish") {
+    const version = VersionSchema.safeParse(parts[4]);
+    return version.success
+      ? {
+          kind: "manage-confirm-publish",
+          token: token.data,
+          version: version.data,
+        }
+      : { kind: "malformed" };
+  }
   if (parts.length === 4 && parts[2] === "unpublish")
     return { kind: "manage-unpublish", token: token.data };
   if (parts[2] === "confirm-unpublish")

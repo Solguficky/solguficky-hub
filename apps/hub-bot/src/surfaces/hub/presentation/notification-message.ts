@@ -6,6 +6,7 @@ import {
   type NotificationSender,
   type SendResult,
 } from "../../../core/delivery/index.js";
+import { registerChatCommands } from "../../../core/menu-commands.js";
 import type {
   LocalDate,
   LocalDateTime,
@@ -15,6 +16,7 @@ import type {
   NotifiedMeetup,
   RenderableContent,
 } from "../delivery/notification.js";
+import { managerCommands } from "./commands.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import {
   type NotifiedMeetupCategory,
@@ -109,24 +111,25 @@ export function renderNotification(
     };
   }
   if (content.kind === "access-granted") {
-    // Тот же текст и та же кнопка, что слал экран состава до PER-442: сменился
-    // носитель, а не обещание. Кнопка следа — список придёт новым сообщением.
+    // Тот же текст, что слал экран состава до PER-442: сменился носитель, а
+    // не обещание. Кнопка следа — корень «Сходки» придёт новым сообщением.
     return {
       text: "Доступ открыт: теперь тебе видны сходки сообщества.",
       keyboard: new InlineKeyboard().text(
-        "Ближайшие сходки",
+        "Сходки",
         traceCallback("v1:nav:hub"),
       ),
     };
   }
   if (content.kind === "preset-granted") {
-    // Кнопка следа — стартовый экран придёт новым сообщением, а весть о
-    // правах останется в истории; «Управление» человек находит на нём сам.
+    // Кнопка следа — «Сходки» придут новым сообщением, а весть о правах
+    // останется в истории. «Управление» — команда `/manage`: отправитель
+    // ставит её в список команд чата (решение владельца 10 октября 2026 года).
     return {
-      text: "Тебе выданы права администратора сообщества. На стартовом экране появилось «Управление».",
+      text: "Тебе выданы права администратора сообщества. В меню команд появилось «Управление» — /manage.",
       keyboard: new InlineKeyboard().text(
-        "Меню",
-        traceCallback("v1:nav:start"),
+        "Сходки",
+        traceCallback("v1:nav:hub"),
       ),
     };
   }
@@ -385,7 +388,10 @@ function pad(part: number): string {
   return String(part).padStart(2, "0");
 }
 
-export type SendMessageApi = Pick<Api, "sendMessage">;
+export type SendMessageApi = Pick<
+  Api,
+  "sendMessage" | "setMyCommands" | "deleteMyCommands"
+>;
 
 // Содержимое рисуется здесь же, при отправке: соседи для текста хабу не
 // нужны, и рендер пакета доставки отдаёт содержимое как есть.
@@ -404,6 +410,16 @@ export function createNotificationSender(
             : { reply_markup: message.keyboard }),
           link_preview_options: { is_disabled: true },
         });
+        // Назначенному администратором — команда `/manage` в списке его чата
+        // (PER-468; решение владельца 10 октября 2026 года). Отказ записи
+        // доставку не отменяет: вход `/start` поставит список снова.
+        if (content.kind === "preset-granted") {
+          await registerChatCommands(
+            api,
+            Number(telegramUserId),
+            managerCommands,
+          );
+        }
         return { kind: "sent" };
       } catch (cause) {
         return classifySendFailure(cause);

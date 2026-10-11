@@ -60,31 +60,27 @@ function lotScreen(
 }
 
 describe("renderEntryScreen", () => {
-  it("keeps the menu free of trading buttons and hub promises", () => {
-    const screen = renderEntryScreen({ kind: "menu" }, options);
-    expect(screen.text).toBe(
-      "<b>Меню</b>\n\nАукцион сообщества: лоты, ставки и итоги торгов.",
-    );
-    // Два списка — пара одним рядом, как разделы меню хаба.
-    expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
-      ["Аукционы", "Прошедшие"],
-      ["Правила и FAQ"],
+  // Решение владельца 10 октября 2026 года: корня «Меню» нет, FAQ — корень
+  // без ряда навигации, а кнопка «Аукционы» под ним ставит отметку
+  // ознакомления и открывает список.
+  it("ends the FAQ root with the button that opens the auctions", () => {
+    const screen = renderEntryScreen({ kind: "faq" }, options);
+    expect(screen.keyboard.at(-1)).toEqual([
+      { text: "Аукционы", callback_data: entryCallback("read") },
     ]);
-    expect(screen.text).not.toMatch(/хаб|сходк/i);
+    expect(
+      screen.keyboard.flat().some((button) => button.text.startsWith("‹ ")),
+    ).toBe(false);
   });
 
-  // Состояния FAQ возвращают в FAQ, а не в меню (дизайн-код, «Дерево бота
-  // аукциона»).
+  // Состояния FAQ возвращают в FAQ (дизайн-код, «Дерево бота аукциона»).
   it.each(["details", "question"] as const)(
     "returns from the FAQ state %s to FAQ",
     (kind) => {
       const screen = renderEntryScreen({ kind }, options);
       expect(screen.text).toMatch(/^<b>Правила и FAQ<\/b>\n\nОрганизатор/);
       expect(screen.keyboard).toEqual([
-        [
-          { text: "‹ FAQ", callback_data: entryCallback("faq") },
-          { text: "Меню", callback_data: entryCallback("menu") },
-        ],
+        [{ text: "‹ FAQ", callback_data: entryCallback("faq") }],
       ]);
     },
   );
@@ -98,7 +94,7 @@ describe("renderEntryScreen", () => {
     );
     expect(screen.text).toContain("Пришли ответ ещё раз");
     expect(screen.keyboard).toEqual([
-      [{ text: "Меню", callback_data: entryCallback("menu") }],
+      [{ text: "‹ Аукционы", callback_data: entryCallback("auctions") }],
     ]);
   });
 
@@ -160,8 +156,8 @@ describe("renderEntryScreen", () => {
         ["Носки · старт 500 ₽"],
         ["Лот без названия · не продан"],
         ["→"],
-        // Оболочка ставит возврат в список аукциона и «Меню» одним рядом.
-        ["‹ Аукционы", "Меню"],
+        // Оболочка ставит возврат в список аукциона одной кнопкой.
+        ["‹ Аукционы"],
       ],
     );
   });
@@ -271,13 +267,11 @@ describe("renderEntryScreen", () => {
     expect(text).toContain("Победитель: Сыч*");
   });
 
-  // Критерий PER-463: последний ряд под лотом — возврат и «Меню».
-  it("puts the return to the feed and the menu into the last row of a lot", () => {
+  // Последний ряд под лотом — возврат одной кнопкой: «Меню» нет (решение
+  // владельца 10 октября 2026 года).
+  it("puts the return to the feed alone into the last row of a lot", () => {
     expect(lotScreen({}).keyboard).toEqual([
-      [
-        { text: "‹ Лоты", callback_data: "v1:auc:feed:x:0" },
-        { text: "Меню", callback_data: entryCallback("menu") },
-      ],
+      [{ text: "‹ Лоты", callback_data: "v1:auc:feed:x:0" }],
     ]);
   });
 
@@ -392,7 +386,7 @@ describe("renderEntryScreen", () => {
   });
 
   // Отказ команды — свой экран исхода (PER-472): исход в заголовке, лот в
-  // кавычках, цена из отказа абзацем, «К лоту» и «Меню» одним рядом.
+  // кавычках, цена из отказа абзацем, выход — «К лоту».
   it("shows a refused command as its own outcome screen", () => {
     const screen = renderEntryScreen(
       {
@@ -423,7 +417,7 @@ describe("renderEntryScreen", () => {
       "<b>Ставка ниже порога</b>\n\n«Кружка»\n\nСейчас можно от 1 300 ₽.",
     );
     expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
-      ["К лоту", "Меню"],
+      ["К лоту"],
     ]);
   });
 
@@ -486,7 +480,7 @@ describe("proxy limit confirmation", () => {
     expect(screen.text).toMatch(/поднимет её не больше чем на 800\s₽/);
     expect(screen.text).toContain("Лимит видишь только ты.");
     expect(screen.keyboard[0]?.[0]).toMatchObject({
-      text: "Да, включить автоставку",
+      text: "✔️ Да, включить автоставку",
       style: "danger",
     });
   });
@@ -578,7 +572,7 @@ describe("bid sheet screens", () => {
     );
     expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
       ["Ввести заново"],
-      ["К лоту", "Меню"],
+      ["К лоту"],
     ]);
   });
 
@@ -685,7 +679,6 @@ describe("auction lists", () => {
         { text: "←", callback_data: entryCallback("past") },
         { text: "→", callback_data: listCallback("past", 2) },
       ],
-      [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
     ]);
   });
 
@@ -697,9 +690,9 @@ describe("auction lists", () => {
     expect(screen.text).toBe(
       "<b>Аукционы</b>\n\nАктивных аукционов сейчас нет.",
     );
-    expect(screen.keyboard).toEqual([
-      [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
-    ]);
+    // Список — корень раздела: ряда навигации нет (решение владельца
+    // 10 октября 2026 года).
+    expect(screen.keyboard).toEqual([]);
   });
 });
 
@@ -809,7 +802,7 @@ describe("happy hours", () => {
       "<b>Лоты</b>\n\n• Кружка — 1 200 ₽, счастливые часы\n• Ваза — 1 200 ₽",
     );
     expect(screen.keyboard.map((row) => row.map((b) => plain(b.text)))).toEqual(
-      [["Кружка · 1 200 ₽"], ["Ваза · 1 200 ₽"], ["‹ Аукционы", "Меню"]],
+      [["Кружка · 1 200 ₽"], ["Ваза · 1 200 ₽"], ["‹ Аукционы"]],
     );
   });
 });

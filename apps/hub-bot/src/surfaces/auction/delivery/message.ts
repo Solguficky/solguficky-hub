@@ -43,15 +43,15 @@ export function traceLotCallback(lotId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({ kind: "lot", lotId, page: 0 })}`;
 }
 
-// Вход в аукцион из следа — тот же путь, что пункт меню «Аукционы»: FAQ, если
+// Вход в аукцион из следа — тот же путь, что команда `/auctions`: FAQ, если
 // человек его ещё не прошёл, иначе список активных аукционов (PER-442,
 // PER-453).
 export function traceAuctionsCallback(): string {
   return `${tracePrefix}${entryCallback("auctions")}`;
 }
 
-// «Реже» под перебитием — экран частоты тем же путём, что пункт меню
-// «Уведомления», новым сообщением (PER-515).
+// «Реже» под перебитием — экран частоты тем же путём, что команда
+// `/notifications`, новым сообщением (PER-515).
 export function traceNotifyCallback(): string {
   return `${tracePrefix}${notifyCallback()}`;
 }

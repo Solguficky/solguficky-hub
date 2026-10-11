@@ -13,7 +13,7 @@ import {
   createRenderMessage,
 } from "./delivery/message.js";
 import { decodeNotification } from "./delivery/notification.js";
-import { botCommands } from "./menu-commands.js";
+import { commandsFor } from "./menu-commands.js";
 
 // Поверхность аукциона (ADR-064, п. 18): процесс с `BOT_SURFACE=auction`.
 // Здесь — порты дерева поверх клиентов Identity и Auction, настройка
@@ -73,7 +73,7 @@ export const auctionSurface: SurfaceDefinition = ({
     ok: true,
     config: {
       bot,
-      commands: botCommands,
+      commands: commandsFor(auction.notificationsUrl !== undefined),
       startDelivery: (options) =>
         startNatsDelivery({
           ...options,

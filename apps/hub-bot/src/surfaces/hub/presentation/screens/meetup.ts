@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
+import { marked, pictogram } from "../../../../core/pictograms.js";
 import type {
   MeetupAuctionView,
   MeetupAuthor,
@@ -27,13 +28,13 @@ import {
   paginate,
   readableDay,
   readableMoment,
+  removeLabel,
   screenText,
   toArchive,
   toCard,
   toHidden,
   toManage,
-  toMenu,
-  toUpcoming,
+  toMeetups,
   withNav,
   withPager,
 } from "./kit.js";
@@ -65,7 +66,7 @@ export function meetupParent(
   const past =
     meetup.schedule !== undefined && isBeforeDay(meetup.schedule, today);
   if (meetup.lifecycle !== "planned" || past) return toArchive;
-  return meetup.visibility === "hidden" ? toHidden : toUpcoming;
+  return meetup.visibility === "hidden" ? toHidden : toMeetups;
 }
 
 function meetupButton(
@@ -95,25 +96,37 @@ function listLine(
     : `• ${readableDay(meetup.schedule, today)} — ${title}${tail}`;
 }
 
+function listRows(
+  page: Page<MeetupSummary>,
+  today: CommunityDay,
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  for (const meetup of page.items) {
+    keyboard.text(...meetupButton(meetup, today)).row();
+  }
+  return keyboard;
+}
+
 function listKeyboard(
   page: Page<MeetupSummary>,
   today: CommunityDay,
   pager: (page: number) => string,
   parent: Parent,
 ): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
-  for (const meetup of page.items) {
-    keyboard.text(...meetupButton(meetup, today)).row();
-  }
-  return withNav(withPager(keyboard, page, pager), parent);
+  return withNav(withPager(listRows(page, today), page, pager), parent);
 }
 
-export function upcomingScreen(
+/**
+ * «Сходки» — корень основного раздела (решение владельца 10 октября 2026 года;
+ * прежде «Ближайшие сходки»): ряда навигации нет, «Архив» — его дочерний экран
+ * последним рядом содержимого, перед листанием.
+ */
+export function meetupsScreen(
   meetups: readonly MeetupSummary[],
   requestedPage: number,
   today: CommunityDay,
 ): ShownScreen {
-  const title = "Ближайшие сходки";
+  const title = "Сходки";
   // Сходки с датой идут первыми, и страница режется по этому порядку: секции
   // на странице называют только то, что на ней есть.
   const ordered = [
@@ -136,7 +149,7 @@ export function upcomingScreen(
   const section = (name: string, rows: readonly string[]) =>
     rows.length === 0 ? undefined : `${name}\n${rows.join("\n")}`;
   return {
-    id: "upcoming",
+    id: "meetups",
     text:
       meetups.length === 0
         ? screenText(
@@ -149,7 +162,11 @@ export function upcomingScreen(
             section("С датой", lines(true)),
             section("Без даты", lines(false)),
           ),
-    keyboard: listKeyboard(page, today, (to) => `v1:nav:hub:${to}`, toMenu),
+    keyboard: withPager(
+      nextRow(listRows(page, today)).text(toArchive.name, toArchive.data),
+      page,
+      (to) => `v1:nav:hub:${to}`,
+    ),
     format: "HTML",
   };
 }
@@ -186,7 +203,12 @@ export function archiveScreen(
               )
               .join("\n"),
           ),
-    keyboard: listKeyboard(page, today, (to) => `v1:nav:archive:${to}`, toMenu),
+    keyboard: listKeyboard(
+      page,
+      today,
+      (to) => `v1:nav:archive:${to}`,
+      toMeetups,
+    ),
     format: "HTML",
   };
 }
@@ -197,6 +219,9 @@ export function hiddenScreen(
   meetups: readonly MeetupSummary[],
   requestedPage: number,
   today: CommunityDay,
+  // Родитель — группа «Сходки и объявления» либо само «Управление»
+  // (`manageItemParent`).
+  parent: Parent = toManage,
 ): ShownScreen {
   const title = "Скрытые сходки";
   const hidden = meetups.filter((meetup) => meetup.visibility === "hidden");
@@ -218,7 +243,7 @@ export function hiddenScreen(
       page,
       today,
       (to) => `v1:manage:hidden:${to}`,
-      toManage,
+      parent,
     ),
     format: "HTML",
   };
@@ -238,12 +263,16 @@ function displayMaterialTitle(material: MeetupMaterial, index: number): string {
 
 /**
  * Строки карточки без заголовка и материалов: статус, автор, когда, где и
- * описание. Текст уже экранирован.
+ * описание. Текст уже экранирован. Видимость — «видна» или «скрыта» — в
+ * статусе видит только тот, кто управляет сходкой: остальным скрытая сходка
+ * не показывается вовсе, а «видна» ничего им не говорит (решение владельца
+ * 10 октября 2026 года).
  */
 function cardLines(
   meetup: MeetupSnapshot,
   author: MeetupAuthor | undefined,
   today: CommunityDay,
+  manageable: boolean,
 ): string[] {
   const lifecycle =
     meetup.lifecycle === "cancelled"
@@ -253,7 +282,7 @@ function cardLines(
         : "запланирована";
   const visibility = meetup.visibility === "hidden" ? "скрыта" : "видна";
   return [
-    `Статус: ${lifecycle}, ${visibility}`,
+    manageable ? `Статус: ${lifecycle}, ${visibility}` : `Статус: ${lifecycle}`,
     // Назначенный момент стоит сразу под статусом: «скрыта» без него читается
     // как «черновик забыт», а с ним — как «ждёт публикации».
     ...(meetup.publishAt === undefined
@@ -269,8 +298,14 @@ function cardLines(
             : `Автор: @${escapeHtml(author.telegramUsername)}`,
         ]),
     "",
-    `Когда: ${meetup.schedule === undefined ? "дата не задана" : readableMoment(meetup.schedule, today)}`,
-    `Где: ${meetup.venue === "" ? "не указано" : escapeHtml(meetup.venue)}`,
+    marked(
+      pictogram.when,
+      `Когда: ${meetup.schedule === undefined ? "дата не задана" : readableMoment(meetup.schedule, today)}`,
+    ),
+    marked(
+      pictogram.where,
+      `Где: ${meetup.venue === "" ? "не указано" : escapeHtml(meetup.venue)}`,
+    ),
     "",
     meetup.description === ""
       ? "Описание пока не добавлено."
@@ -283,7 +318,7 @@ function materialLines(meetup: MeetupSnapshot): string[] {
   const hidden = meetup.materials.length - materialCardLimit;
   return [
     "",
-    "Материалы:",
+    marked(pictogram.materials, "Материалы:"),
     ...meetup.materials.slice(0, materialCardLimit).map((material, index) => {
       const label = escapeHtml(displayMaterialTitle(material, index + 1));
       return material.source.kind === "message-link"
@@ -417,7 +452,7 @@ export function cardScreen(view: CardView): ShownScreen {
   }
   const title = escapeHtml(meetupTitleLabel(meetup.title));
   const body = [
-    ...cardLines(meetup, view.author, today),
+    ...cardLines(meetup, view.author, today, manageable),
     ...materialLines(meetup),
   ];
   // Подсказка о подписке стоит под карточкой.
@@ -449,7 +484,10 @@ function cardText(parts: {
   body: readonly string[];
   hint?: string | undefined;
   presentation: "rich" | "plain";
-  /** Готовый блок постеров богатой карточки: стоит сразу под её телом. */
+  /**
+   * Готовый блок постеров богатой карточки: стоит первым, над заголовком
+   * (решение владельца 10 октября 2026 года).
+   */
   posters?: string | undefined;
 }): string {
   const { title, body, presentation } = parts;
@@ -461,7 +499,7 @@ function cardText(parts: {
         : escapeHtml(text);
   const card =
     presentation === "rich"
-      ? `<h1>${title}</h1><p>${body.join("<br>")}</p>${parts.posters ?? ""}`
+      ? `${parts.posters ?? ""}<h1>${title}</h1><p>${body.join("<br>")}</p>`
       : `<b>${title}</b>\n\n${body.join("\n")}`;
   return [card, paragraph(parts.hint)]
     .filter((part) => part !== undefined)
@@ -487,7 +525,8 @@ export function draftScreen(view: {
     .row()
     .text("Описание", `v1:manage:draft:${token}:description`)
     .row()
-    .text("Опубликовать", `v1:manage:publish:${token}`)
+    // `d` — источник подтверждения: «Нет» под ним вернёт на черновик.
+    .text("Опубликовать", `v1:manage:republish:${token}:d`)
     .row()
     .text(
       meetup.publishAt === undefined
@@ -500,7 +539,8 @@ export function draftScreen(view: {
     id: "draft",
     text: cardText({
       title: escapeHtml(meetupTitleLabel(meetup.title)),
-      body: cardLines(meetup, undefined, today),
+      // Черновик видит только организатор.
+      body: cardLines(meetup, undefined, today, true),
       presentation,
     }),
     keyboard: withNav(keyboard, toHidden),
@@ -532,9 +572,10 @@ export function editFieldsScreen(meetup: MeetupSnapshot): ShownScreen {
 }
 
 // Общая форма действий смены состояния: кадр подтверждения и повтор после
-// конфликта версий говорят об одном и том же действии одними словами. Цвета у
-// них нет: красным красится только трата денег, а необратимость конечной
-// стадии называет строка `irreversible` (PER-473).
+// конфликта версий говорят об одном и том же действии одними словами.
+// Необратимость конечной стадии называет строка `irreversible`, и такое «Да»
+// красное; скрытие и снятие отложенной публикации обратимы и цвета не несут
+// (решение владельца 10 октября 2026 года).
 export const stateActionCopy: Record<
   MeetupStateAction,
   {
@@ -613,8 +654,14 @@ export function statusScreen(
       )
       .row();
     if (meetup.publishAt !== undefined) {
+      // Снятие отложенной публикации обратимо с того же экрана — момент
+      // назначается заново — и наружу не выходит, поэтому без подтверждения
+      // (решение владельца 10 октября 2026 года). Кнопка сразу несёт версию.
       keyboard
-        .text(stateActionCopy.unschedule.label, `v1:manage:unschedule:${token}`)
+        .text(
+          stateActionCopy.unschedule.label,
+          confirmStateCallback("unschedule", token, meetup.version),
+        )
         .row();
     }
   }
@@ -631,9 +678,49 @@ export function statusScreen(
       heading("Статус"),
       "",
       escapeHtml(meetupTitleLabel(meetup.title)),
-      ...cardLines(meetup, author, today),
+      // Экран «Статус» открывает только тот, кто управляет сходкой.
+      ...cardLines(meetup, author, today, true),
     ].join("\n"),
     keyboard: withNav(keyboard, toCard(token)),
+    format: "HTML",
+  };
+}
+
+/**
+ * Подтверждение публикации (решение владельца 10 октября 2026 года): публикация
+ * выходит наружу — сходку видят участники, уведомления уходят. «Да» несёт
+ * версию, которую человек видит; «Нет» возвращает туда, где нажали
+ * «Опубликовать». Первая публикация уведомляет подписчиков новых сходок, возврат
+ * скрытой — подписчиков самой сходки (Notifications, PER-216 и PER-218); с
+ * черновика бывает только первая.
+ */
+export function publishConfirmScreen(confirm: {
+  meetup: Pick<MeetupSnapshot, "id" | "title" | "version">;
+  /** Где нажали «Опубликовать»: на черновике или в «Статусе». */
+  origin: "draft" | "status";
+}): ShownScreen {
+  const token = uuidToToken(confirm.meetup.id);
+  return {
+    id: "publish-confirm",
+    text: [
+      heading("Опубликовать сходку?"),
+      "",
+      `«${escapeHtml(meetupTitleLabel(confirm.meetup.title))}»`,
+      confirm.origin === "draft"
+        ? "Сходка станет видна участникам, подписчики новых сходок получат уведомление."
+        : "Сходка станет видна участникам. Уведомление получат подписчики новых сходок, а если сходку уже публиковали — её подписчики.",
+    ].join("\n"),
+    keyboard: confirmKeyboard({
+      yes: "Да, опубликовать сходку",
+      yesData:
+        confirm.origin === "draft"
+          ? `v1:manage:publish:${token}:${confirm.meetup.version}`
+          : `v1:manage:confirm-publish:${token}:${confirm.meetup.version}`,
+      noData:
+        confirm.origin === "draft"
+          ? `v1:manage:draft:${token}`
+          : `v1:manage:status:${token}`,
+    }),
     format: "HTML",
   };
 }
@@ -648,7 +735,10 @@ export function stateConfirmScreen(confirm: {
   const copy = stateActionCopy[confirm.action];
   const token = uuidToToken(confirm.meetup.id);
   return {
-    id: "state-confirm",
+    // Обратимое и необратимое подтверждения — разные записи каталога: по ним
+    // линтер знает, обязан ли «Да» быть красным.
+    id:
+      copy.irreversible === undefined ? "state-confirm" : "state-final-confirm",
     text: [
       heading(copy.question),
       "",
@@ -663,6 +753,7 @@ export function stateConfirmScreen(confirm: {
         confirm.meetup.version,
       ),
       noData: confirm.back,
+      irreversible: copy.irreversible !== undefined,
     }),
     format: "HTML",
   };
@@ -687,7 +778,10 @@ export function materialsScreen(
       keyboard.text(buttonText(title), `v1:mm:file:${token}:${materialToken}`);
     }
     if (canManage) {
-      keyboard.text("Убрать", `v1:mm:rm:${token}:${materialToken}`);
+      keyboard.text(
+        removeLabel("Убрать"),
+        `v1:mm:rm:${token}:${materialToken}`,
+      );
     }
     keyboard.row();
   }

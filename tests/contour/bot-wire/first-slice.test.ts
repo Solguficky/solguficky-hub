@@ -47,10 +47,11 @@ describe("сценарий первого среза", () => {
     const title = titleFor("Срез", telegramUserId);
 
     await member.says("/start");
-    await member.presses("Ближайшие сходки");
     expect(member.sees()).not.toContain(title);
 
-    await organizer.presses("Управление");
+    await organizer.says("/manage");
+
+    await organizer.presses("Сходки и объявления");
     await organizer.presses("Создать сходку");
     await fillsMeetupForm(organizer, title);
     // Отдельного предпросмотра нет: заполненное видно на самом черновике.
@@ -60,8 +61,7 @@ describe("сценарий первого среза", () => {
 
     // Отрицательная половина: черновик уже в Meetups, но для солегуфика его нет.
     // Список перечитывается при каждом открытии: «Обновить» у него нет.
-    await member.presses("‹ Меню");
-    await member.presses("Ближайшие сходки");
+    await member.says("/meetups");
     expect(member.sees()).not.toContain(title);
     expect(member.buttons()).not.toContain(listedAs(title));
     await member.opensLink(draftId);
@@ -73,11 +73,11 @@ describe("сценарий первого среза", () => {
     expect(hiddenAnswer).not.toContain(title);
 
     await organizer.presses("Опубликовать");
+    await organizer.presses("✔️ Да, опубликовать сходку");
     expect(organizer.sees()).toContain("Сходка опубликована");
 
     // P-03 и P-04: тот же человек видит сходку в списке и её карточку.
     await member.says("/start");
-    await member.presses("Ближайшие сходки");
     expect(member.buttons()).toContain(listedAs(title));
     await member.presses(listedAs(title));
     expect(member.sees()).toContain(title);
@@ -93,9 +93,12 @@ describe("сценарий первого среза", () => {
     const { person: member } = await memberAllowedBy(wire, direct, adminId);
 
     await member.says("/start");
+    expect(member.buttons()).toContain("Архив");
 
-    expect(member.buttons()).toContain("Ближайшие сходки");
-    expect(member.buttons()).not.toContain("Управление");
+    // Корня «Меню» нет: «Управление» — команда, и без права она отказывает
+    // (решение владельца 10 октября 2026 года).
+    await member.says("/manage");
+    expect(member.sees()).toBe("Управление сходками доступно администратору.");
   });
 
   it("E-01: создать сходку после снятия набора admin отказывает Meetups, и журнал не растёт", async () => {
@@ -110,11 +113,12 @@ describe("сценарий первого среза", () => {
     await person.says("/start");
     await direct.grantAdmin(telegramUserId);
     await person.says("/start");
-    await person.presses("Управление");
+    await person.says("/manage");
+    await person.presses("Сходки и объявления");
     const personId = await direct.identityOf(telegramUserId);
     await direct.revokeAdmin(personId);
 
-    // Меню осталось в чате, а кнопку внутри него бот не сторожит: право решает
+    // Группа осталась в чате, а кнопку внутри неё бот не сторожит: право решает
     // Meetups, и отказ звучит без имени сервиса.
     await person.presses("Создать сходку");
 

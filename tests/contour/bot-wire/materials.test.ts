@@ -39,10 +39,12 @@ async function organizerConfirmingMaterial(scenario: string) {
     person: organizer,
   } = await organizerAtStart(wire, direct);
   const title = titleFor(scenario, telegramUserId);
-  await organizer.presses("Управление");
+  await organizer.says("/manage");
+  await organizer.presses("Сходки и объявления");
   await organizer.presses("Создать сходку");
   await fillsMeetupForm(organizer, title);
   await organizer.presses("Опубликовать");
+  await organizer.presses("✔️ Да, опубликовать сходку");
   const meetupId = meetupIdFromStartLink(organizer.sees());
 
   await organizer.opensLink(meetupId);
@@ -59,15 +61,15 @@ describe("материалы сходки", () => {
     const { adminId, meetupId, organizer } =
       await organizerConfirmingMaterial("материал");
 
-    await organizer.presses("Да, прикрепить");
+    await organizer.presses("✔️ Да, прикрепить");
 
     expect(organizer.sees()).toContain("1. Программа вечера");
     expect(await direct.materialsAsAdmin(adminId, meetupId)).toEqual([
       "Программа вечера",
     ]);
 
-    await organizer.presses("Убрать");
-    await organizer.presses("Да, убрать материал");
+    await organizer.presses("🗑 Убрать");
+    await organizer.presses("✔️ Да, убрать материал");
 
     expect(organizer.sees()).toContain("Пока ничего не прикреплено.");
     expect(await direct.materialsAsAdmin(adminId, meetupId)).toEqual([]);
@@ -78,16 +80,18 @@ describe("материалы сходки", () => {
       wire,
       direct,
     );
-    await organizer.presses("Управление");
+    await organizer.says("/manage");
+    await organizer.presses("Сходки и объявления");
     await organizer.presses("Создать сходку");
     await fillsMeetupForm(organizer, titleFor("постер", telegramUserId));
     await organizer.presses("Опубликовать");
+    await organizer.presses("✔️ Да, опубликовать сходку");
     await organizer.opensLink(meetupIdFromStartLink(organizer.sees()));
     await organizer.presses("Материалы (0)");
     await organizer.presses("Прикрепить материал");
     await organizer.sendsPhoto();
     await organizer.says("Афиша");
-    await organizer.presses("Да, прикрепить");
+    await organizer.presses("✔️ Да, прикрепить");
     expect(organizer.sees()).toContain("1. Афиша");
 
     await organizer.presses("‹ Сходка");
@@ -102,12 +106,12 @@ describe("материалы сходки", () => {
     );
     await direct.renameAsAdmin(adminId, meetupId, "Переименована мимо бота");
 
-    await organizer.presses("Да, прикрепить");
+    await organizer.presses("✔️ Да, прикрепить");
 
     expect(organizer.sees()).toContain("Сходка уже изменилась.");
     expect(await direct.materialsAsAdmin(adminId, meetupId)).toEqual([]);
 
-    await organizer.presses("Да, прикрепить");
+    await organizer.presses("✔️ Да, прикрепить");
 
     expect(organizer.sees()).toContain("1. Программа вечера");
     expect(await direct.materialsAsAdmin(adminId, meetupId)).toEqual([

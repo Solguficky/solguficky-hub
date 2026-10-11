@@ -33,7 +33,8 @@ async function organizerInManagement() {
     adminId,
     person: organizer,
   } = await organizerAtStart(wire, direct);
-  await organizer.presses("Управление");
+  await organizer.says("/manage");
+  await organizer.presses("Сходки и объявления");
   return { telegramUserId, adminId, organizer };
 }
 
@@ -66,10 +67,10 @@ describe("идемпотентность по журналу Meetups", () => {
     const { adminId, organizer } = await organizerInManagement();
 
     await organizer.presses("Создать сходку");
-    // Перерисовка меню: оно правит своё сообщение, и второй вход в него идёт
-    // с нового стартового экрана.
-    await organizer.says("/start");
-    await organizer.presses("Управление");
+    // Перерисовка «Управления»: оно правит своё сообщение, и второй вход в него
+    // идёт новым сообщением по команде `/manage`.
+    await organizer.says("/manage");
+    await organizer.presses("Сходки и объявления");
     await organizer.presses("Создать сходку");
 
     const journal = await direct.journalOf(adminId);
@@ -77,7 +78,7 @@ describe("идемпотентность по журналу Meetups", () => {
     expect(journal.events).toBe(2);
   });
 
-  it("E-09: двойное нажатие «Опубликовать» публикует один раз", async () => {
+  it("E-09: двойное нажатие «Да, опубликовать сходку» публикует один раз", async () => {
     const { telegramUserId, adminId, organizer } =
       await organizerInManagement();
     await organizer.presses("Создать сходку");
@@ -87,7 +88,8 @@ describe("идемпотентность по журналу Meetups", () => {
     );
     const before = await direct.journalOf(adminId);
 
-    await organizer.pressesTwice("Опубликовать");
+    await organizer.presses("Опубликовать");
+    await organizer.pressesTwice("✔️ Да, опубликовать сходку");
 
     const after = await direct.journalOf(adminId);
     expect(after.meetupIds).toEqual(before.meetupIds);

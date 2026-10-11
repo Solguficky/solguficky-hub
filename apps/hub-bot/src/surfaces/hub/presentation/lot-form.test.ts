@@ -510,7 +510,7 @@ describe("lot form", () => {
         "Задай цену и шаг: без них он не выйдет на торги.",
       ].join("\n\n"),
     );
-    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот", "Меню"]]);
+    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот"]]);
     expect(dataOf(form, "‹ Лот")).toBe(lotData(lotId));
     // Форма с недостающими полями открывается кнопкой «Изменить лот».
     await bot.handleUpdate(press(dataOf(form, "Изменить лот")));
@@ -532,7 +532,7 @@ describe("lot form", () => {
       ["Описание"],
       ["Фото"],
       ["Цена и шаг"],
-      ["‹ Лот", "Меню"],
+      ["‹ Лот"],
     ]);
     // Лот виден в ленте аукциона сходки, пока без цены.
     await bot.handleUpdate(press(feedData));
@@ -582,7 +582,7 @@ describe("lot form", () => {
     expect(form.text).toBe(
       ["<b>Цена и шаг сохранены</b>", "«Ваза»"].join("\n\n"),
     );
-    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот", "Меню"]]);
+    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот"]]);
     // Значения видны на форме, которую открывает «Изменить лот».
     await next(() => press(dataOf(form, "Изменить лот")));
     expect(last(calls).text).toContain("Стартовая цена: 1 500 ₽");
@@ -631,7 +631,7 @@ describe("lot form", () => {
 
     // Причина — новый экран без вопроса, прежний вопрос закрыт.
     const refusal = last(calls);
-    expect(labels(refusal)).toEqual([["Ввести заново"], ["‹ Лот", "Меню"]]);
+    expect(labels(refusal)).toEqual([["Ввести заново"], ["‹ Лот"]]);
     expect(
       calls.some(
         (call) =>
@@ -684,7 +684,7 @@ describe("lot form", () => {
     expect(saved.text).toBe(
       ["<b>Изменение сохранено</b>", "«Кружка с совой»"].join("\n\n"),
     );
-    expect(labels(saved)).toEqual([["Изменить лот"], ["‹ Лот", "Меню"]]);
+    expect(labels(saved)).toEqual([["Изменить лот"], ["‹ Лот"]]);
     // Новый текст виден на форме, которую открывает «Изменить лот».
     await bot.handleUpdate(press(dataOf(saved, "Изменить лот")));
     expect(last(calls).text).toContain("Описание: Ручная роспись, 300 мл.");
@@ -714,7 +714,7 @@ describe("lot form", () => {
       ["Название"],
       ["Описание"],
       ["Фото"],
-      ["‹ Лот", "Меню"],
+      ["‹ Лот"],
     ]);
     expect(form.text).toContain(
       "Торги по лоту начались: цену и шаг изменить нельзя.",
@@ -747,7 +747,7 @@ describe("lot form", () => {
     expect(plain(refusal)).toBe(
       "Торги уже начались. Цену и шаг лота изменить нельзя.",
     );
-    expect(labels(refusal)).toEqual([["‹ Лот", "Меню"]]);
+    expect(labels(refusal)).toEqual([["‹ Лот"]]);
     expect(auction.lots.get(existingLot)?.status).toEqual(scheduled.status);
   });
 
@@ -835,7 +835,7 @@ describe("lot form", () => {
 
     expect(last(calls).text).toContain("Лот не найден или больше недоступен.");
     // Чтения Auction отстают от команды: только что заведённый лот появится.
-    expect(labels(last(calls))).toEqual([["Повторить"], ["Меню"]]);
+    expect(labels(last(calls))).toEqual([["Повторить"], ["‹ Сходки"]]);
     expect(dataOf(last(calls), "Повторить")).toBe(pressed);
     expect(records.at(-1)?.fields).toMatchObject({
       result: "error",
@@ -902,7 +902,7 @@ describe("lot form photo question", () => {
     expect(form.text).toBe(
       ["<b>Фото сохранено</b>", "«Кружка с совой»"].join("\n\n"),
     );
-    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот", "Меню"]]);
+    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот"]]);
     await next(() => press(dataOf(form, "Изменить лот")));
     expect(last(calls).text).toContain("Фото: есть");
 

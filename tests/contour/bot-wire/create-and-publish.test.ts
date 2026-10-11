@@ -35,7 +35,8 @@ describe("провод бота", () => {
     const year = new Date().getUTCFullYear() + 1;
 
     await organizer.says("/start");
-    await organizer.presses("Управление");
+    await organizer.says("/manage");
+    await organizer.presses("Сходки и объявления");
     await organizer.presses("Создать сходку");
     await organizer.says("Настолки в контуре");
     // Дата открывается экраном заготовок без режима ответа; дату, которой
@@ -49,6 +50,7 @@ describe("провод бота", () => {
     await organizer.presses("Описание");
     await organizer.says("Берём свои игры");
     await organizer.presses("Опубликовать");
+    await organizer.presses("✔️ Да, опубликовать сходку");
 
     expect(organizer.sees()).toContain("Сходка опубликована");
     const stored = await direct.readAsAdmin(

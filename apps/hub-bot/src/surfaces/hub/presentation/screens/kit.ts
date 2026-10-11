@@ -1,4 +1,10 @@
 import { InlineKeyboard } from "grammy";
+import {
+  confirmNoLabel,
+  confirmYesPrefix,
+  marked,
+  pictogram,
+} from "../../../../core/pictograms.js";
 import type { CommunityDay } from "../../community-time.js";
 
 // Словарь и сборщики экранов по дизайн-коду (docs/design/bot/design-code.md).
@@ -6,10 +12,9 @@ import type { CommunityDay } from "../../community-time.js";
 // рядом навигации в конце. Слова здесь закрыты: новое слово для той же
 // функции не заводится, и линтер test kit держит это правило.
 
-export const menuLabel = "Меню";
 export const retryLabel = "Повторить";
 export const cancelLabel = "Отмена";
-export const noLabel = "Нет";
+export const noLabel = confirmNoLabel;
 
 export function escapeHtml(value: string): string {
   return value
@@ -76,9 +81,17 @@ export function refusalText(text: string): string {
 /** Куда ведёт возврат: короткое имя родителя и данные его кнопки. */
 export type Parent = { name: string; data: string };
 
-export const toMenu: Parent = { name: menuLabel, data: "v1:nav:start" };
-export const toUpcoming: Parent = { name: "Ближайшие", data: "v1:nav:hub" };
+/**
+ * Корень основного раздела — «Сходки». Корневого экрана «Меню» нет: туда, где
+ * «Меню» было единственным выходом, ведёт этот возврат (решение владельца
+ * 10 октября 2026 года).
+ */
+export const toMeetups: Parent = { name: "Сходки", data: "v1:nav:hub" };
 export const toArchive: Parent = { name: "Архив", data: "v1:nav:archive" };
+export const toSettings: Parent = {
+  name: "Настройки",
+  data: "v1:nav:settings",
+};
 export const toManage: Parent = { name: "Управление", data: "v1:manage:menu" };
 export const toHidden: Parent = { name: "Скрытые", data: "v1:manage:hidden" };
 export const toSourceChannels: Parent = { name: "Каналы", data: "v1:sc:l" };
@@ -110,50 +123,58 @@ export function backLabel(parent: Parent): string {
 }
 
 /**
- * Последний ряд экрана: `[‹ Родитель] [Меню]`. У детей меню родитель и есть
- * меню, поэтому кнопка одна.
+ * Последний ряд экрана — одна кнопка `[‹ Родитель]`: кнопки «Меню» нет, между
+ * разделами человек ходит командами (решение владельца 10 октября 2026 года).
  */
 export function withNav(
   keyboard: InlineKeyboard,
   parent: Parent,
 ): InlineKeyboard {
   nextRow(keyboard).text(backLabel(parent), parent.data);
-  if (parent.data !== toMenu.data) {
-    keyboard.text(menuLabel, toMenu.data);
-  }
   return keyboard;
 }
 
-/** Выход из кадра отказа, у которого родителя нет: только «Меню». */
-export function menuOnly(keyboard = new InlineKeyboard()): InlineKeyboard {
-  return nextRow(keyboard).text(menuLabel, toMenu.data);
+/**
+ * Выход кадра, у которого родителя нет, — отказа, устаревшего экрана: возврат
+ * в корень основного раздела «‹ Сходки».
+ */
+export function exitToMeetups(keyboard = new InlineKeyboard()): InlineKeyboard {
+  return withNav(keyboard, toMeetups);
 }
 
 /**
- * Клавиатура подтверждения: «Да, <глагол>» и «Нет» двумя рядами, без ряда
- * навигации. `money` — подтверждение траты денег (ставка и автоставка): только
- * его «Да» красится `danger` (PER-473); необратимость остальных называет текст.
- * `style` — цвет «Да» решения по заявке (PER-534).
- * Ссылка на источник, если она есть, идёт первой.
+ * Клавиатура подтверждения: `[✔️ Да, <глагол>] [✖️ Нет]` одним рядом, без ряда
+ * навигации (решение владельца 10 октября 2026 года). `yes` — слова «Да, …»
+ * без знака: знак ставит сборщик. `irreversible` — после «Да» обратного
+ * действия нет или тратятся деньги: только такое «Да» красится `danger`, и
+ * красится обязательно; обратимое подтверждение цвета не несёт.
+ * Ссылка на источник, если она есть, идёт первым рядом.
  */
 export function confirmKeyboard(confirm: {
   yes: string;
   yesData: string;
   noData: string;
-  money?: boolean;
-  // Цвет «Да» решения по заявке: отказ красный, пересмотр зелёный (PER-534).
-  style?: "danger" | "success";
+  irreversible?: boolean;
   lead?: { text: string; url: string };
 }): InlineKeyboard {
   const keyboard = new InlineKeyboard();
   if (confirm.lead !== undefined) {
     keyboard.url(confirm.lead.text, confirm.lead.url).row();
   }
-  keyboard.text(confirm.yes, confirm.yesData);
+  keyboard.text(confirmYesLabel(confirm.yes), confirm.yesData);
   // Стиль grammY ставит на последнюю добавленную кнопку.
-  if (confirm.money === true || confirm.style === "danger") keyboard.danger();
-  else if (confirm.style === "success") keyboard.success();
-  return keyboard.row().text(noLabel, confirm.noData);
+  if (confirm.irreversible === true) keyboard.danger();
+  return keyboard.text(noLabel, confirm.noData);
+}
+
+/** Подпись «Да» подтверждения: «Да, …» со знаком словаря впереди. */
+export function confirmYesLabel(yes: string): string {
+  return yes.startsWith(confirmYesPrefix) ? yes : marked(pictogram.yes, yes);
+}
+
+/** Подпись кнопки, ведущей к удалению: «🗑 Убрать», «🗑 Удалить аукцион». */
+export function removeLabel(words: string): string {
+  return marked(pictogram.remove, words);
 }
 
 /** Сколько строк содержимого помещается на страницу списка. */
@@ -238,6 +259,20 @@ export function readableMoment(
 /** Подпись переключателя: состояние словом в начале. */
 export function toggleLabel(label: string, enabled: boolean): string {
   return `${enabled ? "Вкл" : "Выкл"} · ${label}`;
+}
+
+/**
+ * Подпись переключателя уведомлений: колокольчик словаря перед состоянием —
+ * «🔔 Вкл · Новые сходки», «🔕 Выкл · Объявления сообщества».
+ */
+export function notificationToggleLabel(
+  label: string,
+  enabled: boolean,
+): string {
+  return marked(
+    enabled ? pictogram.on : pictogram.off,
+    toggleLabel(label, enabled),
+  );
 }
 
 /** Подпись кнопки не длиннее того, что Telegram покажет без обрыва на байтах. */

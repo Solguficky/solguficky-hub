@@ -32,7 +32,8 @@ const organizer = () => organizerAtStart(wire, direct);
 describe("висящие вопросы формы", () => {
   it("случай 7: ответ на вопрос первого из двух черновиков попадает в первый", async () => {
     const { adminId, person } = await organizer();
-    await person.presses("Управление");
+    await person.says("/manage");
+    await person.presses("Сходки и объявления");
     await person.presses("Создать сходку");
     // Первый черновик запоминается до второго: ключи двух меню могут попасть в
     // одну миллисекунду, и порядок UUIDv7 их тогда не различит.
@@ -41,10 +42,10 @@ describe("висящие вопросы формы", () => {
     // следующее действие в чате его удаляет. Рестарт память стирает, а шаг
     // остаётся в кнопке «Отмена» под вопросом.
     wire.restart();
-    // Меню управления правит своё сообщение, поэтому второй вход в него — с
-    // нового стартового экрана.
-    await person.says("/start");
-    await person.presses("Управление");
+    // «Управление» правит своё сообщение, поэтому второй вход в него — новым
+    // сообщением по команде `/manage`.
+    await person.says("/manage");
+    await person.presses("Сходки и объявления");
     await person.presses("Создать сходку");
 
     await person.answers(1, "Первый черновик");
@@ -63,7 +64,8 @@ describe("висящие вопросы формы", () => {
 
   it("случай 8: ответ на вопрос формы создания после рестарта восстанавливает шаг из сообщения", async () => {
     const { adminId, person } = await organizer();
-    await person.presses("Управление");
+    await person.says("/manage");
+    await person.presses("Сходки и объявления");
     await person.presses("Создать сходку");
 
     wire.restart();

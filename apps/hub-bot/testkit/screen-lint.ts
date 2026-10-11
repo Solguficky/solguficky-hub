@@ -1,3 +1,4 @@
+import { admitLabel, declineLabel } from "../src/core/pictograms.js";
 import type { Surface } from "../src/core/surface.js";
 import {
   screenCatalog as auctionCatalog,
@@ -9,6 +10,7 @@ import {
   auctionFeedParent,
   auctionFeedParents,
   screenCatalog as hubCatalog,
+  manageParents,
   meetupListParent,
   meetupLists,
 } from "../src/surfaces/hub/presentation/screens/catalog.js";
@@ -50,7 +52,11 @@ void auctionShape;
 // PER-402, и отдельным рядом она вывела бы карточку за пять рядов. Материалы
 // и аукцион сходки — содержимое сходки одним рядом (PER-307): у организатора
 // ряд аукциона иначе стал бы шестым. «#» — число материалов в подписи.
+// Решение по заявке и очередь допуска — бинарные пары выбора одним рядом
+// (решение владельца 10 октября 2026 года).
 const hubNamedPairs: ReadonlySet<string> = new Set([
+  `${admitLabel}|${declineLabel}`,
+  `${admitLabel}|Закрыть`,
   "Изменить|Статус",
   "Отписаться|Уведомления сходки",
   "Материалы (#)|Лоты",
@@ -66,10 +72,12 @@ const configFor: Record<Surface, (catalog: Catalog) => LintConfig> = {
     tag: hubTag,
     catalog,
     // Карточка возвращает в тот список, в котором сходка стоит; лента лотов —
-    // к сходке аукциона, а если бот её не знает, в «Ближайшие».
+    // к сходке аукциона, а если бот её не знает, в «Сходки»; пункт управления —
+    // в свою группу либо, у человека с одной группой, в «Управление».
     parentGroups: {
       [meetupListParent]: meetupLists,
       [auctionFeedParent]: auctionFeedParents,
+      ...manageParents,
     },
     namedPairs: hubNamedPairs,
   }),

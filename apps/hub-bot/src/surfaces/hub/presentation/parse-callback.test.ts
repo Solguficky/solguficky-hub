@@ -111,6 +111,44 @@ describe("callback parser", () => {
     expect(parseCallback("v1:nav:archive")).toEqual({ kind: "archive" });
   });
 
+  it("parses the publication confirmation with the version it was shown with", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+    const callbacks = [
+      `v1:manage:republish:${token}:d`,
+      `v1:manage:publish:${token}:123456789`,
+      `v1:manage:confirm-publish:${token}:123456789`,
+    ];
+    for (const callback of callbacks) {
+      expect(Buffer.byteLength(callback, "utf8")).toBeLessThanOrEqual(64);
+    }
+    expect(parseCallback(callbacks[0])).toEqual({
+      kind: "manage-publish",
+      token,
+      origin: "draft",
+    });
+    expect(parseCallback(callbacks[1])).toEqual({
+      kind: "publish-meetup",
+      token,
+      version: 123456789,
+    });
+    expect(parseCallback(callbacks[2])).toEqual({
+      kind: "manage-confirm-publish",
+      token,
+      version: 123456789,
+    });
+    // Кнопка кадра конфликта и кнопки до подтверждения — без версии.
+    expect(parseCallback(`v1:manage:publish:${token}`)).toEqual({
+      kind: "publish-meetup",
+      token,
+    });
+    expect(parseCallback(`v1:manage:confirm-publish:${token}`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:manage:publish:${token}:0`)).toEqual({
+      kind: "malformed",
+    });
+  });
+
   it("parses meetup editing and confirmed state actions within the byte budget", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     const callbacks = [
@@ -143,6 +181,7 @@ describe("callback parser", () => {
     expect(parseCallback(callbacks[3])).toEqual({
       kind: "manage-publish",
       token,
+      origin: "status",
     });
     expect(parseCallback(callbacks[4])).toEqual({
       kind: "manage-unpublish",

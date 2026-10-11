@@ -10,57 +10,93 @@ export const meetupListParent = "meetup-list";
 
 /**
  * Родитель ленты лотов: сходка, у которой идёт аукцион. После рестарта бот её
- * может не знать — тогда лента возвращает в «Ближайшие» (ADR-030, дополнение
+ * может не знать — тогда лента возвращает в «Сходки» (ADR-030, дополнение
  * 2026-10-04; PER-307).
  */
 export const auctionFeedParent = "auction-feed-parent";
 
+/**
+ * Родители пунктов «Управления»: группа пункта, а у человека с одной группой —
+ * само «Управление», которое сразу показывает её пункты (решение владельца
+ * 10 октября 2026 года).
+ */
+export const manageMeetupsParent = "manage-meetups-parent";
+export const manageApplicationsParent = "manage-applications-parent";
+export const manageMembersParent = "manage-members-parent";
+
+// Корневого экрана «Меню» нет: корни разделов — «Сходки», «Настройки»,
+// «Помощь» и «Управление», их открывают команды кнопки меню клиента, и ряда
+// навигации у корня нет (решение владельца 10 октября 2026 года).
 export const screenCatalog = {
-  menu: {
+  meetups: {
     class: "screen",
     nav: "root",
-    title: "Меню",
-    backName: "Меню",
-  },
-  upcoming: {
-    class: "screen",
-    nav: "tree",
-    title: "Ближайшие сходки",
-    parent: "menu",
-    backName: "Ближайшие",
+    title: "Сходки",
+    backName: "Сходки",
   },
   archive: {
     class: "screen",
     nav: "tree",
     title: "Архив",
-    parent: "menu",
+    parent: "meetups",
     backName: "Архив",
+  },
+  settings: {
+    class: "screen",
+    nav: "root",
+    title: "Настройки",
+    backName: "Настройки",
   },
   "notify-global": {
     class: "screen",
     nav: "tree",
     title: "Уведомления",
-    parent: "menu",
+    parent: "settings",
+  },
+  help: {
+    class: "screen",
+    nav: "root",
+    title: "Помощь",
   },
   manage: {
     class: "screen",
-    nav: "tree",
+    nav: "root",
     title: "Управление",
-    parent: "menu",
     backName: "Управление",
+  },
+  "manage-meetups": {
+    class: "screen",
+    nav: "tree",
+    title: "Сходки и объявления",
+    parent: "manage",
+    backName: "Сходки и объявления",
+  },
+  "manage-applications": {
+    class: "screen",
+    nav: "tree",
+    title: "Заявки и отказы",
+    parent: "manage",
+    backName: "Заявки и отказы",
+  },
+  "manage-members": {
+    class: "screen",
+    nav: "tree",
+    title: "Участники",
+    parent: "manage",
+    backName: "Участники",
   },
   hidden: {
     class: "screen",
     nav: "tree",
     title: "Скрытые сходки",
-    parent: "manage",
+    parent: manageMeetupsParent,
     backName: "Скрытые",
   },
   community: {
     class: "screen",
     nav: "tree",
     title: "Состав сообщества",
-    parent: "manage",
+    parent: manageMembersParent,
     backName: "Состав",
     refresh: true,
   },
@@ -70,7 +106,6 @@ export const screenCatalog = {
     title: "Ожидают допуска",
     parent: "community",
     refresh: true,
-    decision: true,
   },
   "community-admitted": {
     class: "screen",
@@ -104,28 +139,27 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     title: "Отказанные",
-    parent: "manage",
+    parent: manageApplicationsParent,
   },
   // Отказанные очереди аукциона (ADR-064, пункт 15) — свой список.
   "refused-auction": {
     class: "screen",
     nav: "tree",
     title: "Отказанные в аукцион",
-    parent: "manage",
+    parent: manageApplicationsParent,
   },
   "source-channels": {
     class: "screen",
     nav: "tree",
     title: "Каналы прихода",
-    parent: "manage",
+    parent: manageMembersParent,
     backName: "Каналы",
   },
   // Заголовок карточки — номер заявки и круг, поэтому его даёт содержимое.
   application: {
     class: "screen",
     nav: "tree",
-    parent: "manage",
-    decision: true,
+    parent: manageApplicationsParent,
   },
   card: {
     class: "screen",
@@ -210,19 +244,21 @@ export const screenCatalog = {
     title: "Пульт",
     parent: "lots",
   },
-  // Открытие онлайн-недели: отменить его нельзя, поэтому — подтверждение.
-  // Цвета у него нет: неделю открывают штатно, денег оно не тратит (PER-473).
+  // Открытие онлайн-недели: отменить его нельзя, поэтому — подтверждение с
+  // красным «Да» (решение владельца 10 октября 2026 года).
   "week-confirm": {
     class: "screen",
     nav: "confirm",
     title: "Онлайн-неделя",
+    irreversible: true,
   },
-  // Удаление аукциона до торгов: черновик и сроки пропадают, поэтому —
-  // подтверждение. Цвета у него нет: денег оно не тратит.
+  // Удаление аукциона до торгов: черновик и сроки пропадают безвозвратно,
+  // поэтому — подтверждение с красным «Да».
   "discard-confirm": {
     class: "screen",
     nav: "confirm",
     title: "Удалить аукцион?",
+    irreversible: true,
   },
   // Хронология ставок лота (PER-309): тело — аукционное дерево, оболочка — хаб.
   bids: {
@@ -233,20 +269,20 @@ export const screenCatalog = {
   },
   // Лист ставки (PER-317): тело — аукционное дерево, тексты — оболочка хаба.
   // Подтверждение — без ряда навигации, выбор имени — под карточкой лота.
-  // Ставка и автоставка — траты денег: их «Да» красное, и только оно
-  // (PER-473). Принятая команда — кадр исхода с «К лоту» и «Меню». Заголовок
+  // Ставка и автоставка — траты денег: их «Да» красное (PER-473). Принятая
+  // команда — кадр исхода с «К лоту». Заголовок
   // подтверждения — вопрос с суммой (PER-472), линтер сверяет его по началу.
   "bid-confirm": {
     class: "screen",
     nav: "confirm",
     title: "Поставить",
-    money: true,
+    irreversible: true,
   },
   "proxy-confirm": {
     class: "screen",
     nav: "confirm",
     title: "Включить автоставку",
-    money: true,
+    irreversible: true,
   },
   "bid-accepted": { class: "screen", nav: "exit", title: "Ставка" },
   "proxy-accepted": { class: "screen", nav: "exit", title: "Автоставка" },
@@ -271,18 +307,38 @@ export const screenCatalog = {
     nav: "tree",
     parent: "hidden",
   },
+  // Подтверждения (решение владельца 10 октября 2026 года): «Да» красное
+  // только там, где после нажатия обратного действия нет или тратятся
+  // деньги, — признак `irreversible`. Скрытие сходки, снятие отложенной
+  // публикации, прошедшая дата, прикрепление материала и пересмотр отказа
+  // обратимы и цвета не несут.
   "state-confirm": { class: "screen", nav: "confirm" },
+  // Отмена сходки и отметка «состоялась»: в план сходка не возвращается.
+  "state-final-confirm": {
+    class: "screen",
+    nav: "confirm",
+    irreversible: true,
+  },
   "past-date-confirm": { class: "screen", nav: "confirm" },
+  // Подтверждение публикации и, у кнопки без версии, кадр её конфликта.
   "publish-confirm": { class: "screen", nav: "confirm" },
   "material-confirm": { class: "screen", nav: "confirm" },
-  "material-remove-confirm": { class: "screen", nav: "confirm" },
-  "broadcast-confirm": { class: "screen", nav: "confirm" },
-  "community-close-confirm": { class: "screen", nav: "confirm" },
-  "reconsider-confirm": { class: "screen", nav: "confirm", decision: true },
+  "material-remove-confirm": {
+    class: "screen",
+    nav: "confirm",
+    irreversible: true,
+  },
+  "broadcast-confirm": { class: "screen", nav: "confirm", irreversible: true },
+  "community-close-confirm": {
+    class: "screen",
+    nav: "confirm",
+    irreversible: true,
+  },
+  "reconsider-confirm": { class: "screen", nav: "confirm" },
   "application-decline-confirm": {
     class: "screen",
     nav: "confirm",
-    decision: true,
+    irreversible: true,
   },
   "broadcast-result": { class: "screen", nav: "exit" },
   question: { class: "question", nav: "question" },
@@ -291,8 +347,9 @@ export const screenCatalog = {
   "date-presets": { class: "screen", nav: "choice" },
   refusal: { class: "screen", nav: "exit" },
   // Исход действия — свой экран (PER-472): исход в заголовке, предмет в
-  // кавычках, выход — возврат туда, где действие сделано, и «Меню»; у
-  // непринятого ответа над ними — «Ввести заново».
+  // кавычках, выход — возврат туда, где действие сделано; у
+  // непринятого ответа над ними — «Ввести заново», у подписки на сходку —
+  // «Настроить уведомления».
   outcome: { class: "screen", nav: "exit" },
   "no-access": { class: "screen", nav: "none" },
   notification: { class: "trace", nav: "free" },
@@ -302,7 +359,14 @@ export const screenCatalog = {
 export type ScreenId = keyof typeof screenCatalog;
 
 /** Списки, в которых может стоять сходка: родитель карточки — один из них. */
-export const meetupLists = ["upcoming", "archive", "hidden"] as const;
+export const meetupLists = ["meetups", "archive", "hidden"] as const;
 
-/** Куда возвращает лента лотов: к сходке либо, если она неизвестна, в «Ближайшие». */
-export const auctionFeedParents = ["card", "upcoming"] as const;
+/** Куда возвращает лента лотов: к сходке либо, если она неизвестна, в «Сходки». */
+export const auctionFeedParents = ["card", "meetups"] as const;
+
+/** Родитель пункта управления: группа либо само «Управление». */
+export const manageParents = {
+  [manageMeetupsParent]: ["manage-meetups", "manage"],
+  [manageApplicationsParent]: ["manage-applications", "manage"],
+  [manageMembersParent]: ["manage-members", "manage"],
+} as const;

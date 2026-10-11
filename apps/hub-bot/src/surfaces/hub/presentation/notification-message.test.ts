@@ -370,15 +370,16 @@ describe("access request", () => {
 });
 
 describe("access granted", () => {
-  // Прежнее сообщение экрана состава: тот же текст и кнопка следа в список.
-  it("opens access and leads to the upcoming meetups", () => {
+  // Прежнее сообщение экрана состава: тот же текст и кнопка следа в корень
+  // «Сходки» (решение владельца 10 октября 2026 года).
+  it("opens access and leads to the meetups", () => {
     const content: RenderableContent = { kind: "access-granted" };
     expect(renderNotification(content).text).toBe(
       "Доступ открыт: теперь тебе видны сходки сообщества.",
     );
     expect(buttons(content)).toEqual([
       expect.objectContaining({
-        text: "Ближайшие сходки",
+        text: "Сходки",
         callback_data: "v1:t:nav:hub",
       }),
     ]);
@@ -386,18 +387,18 @@ describe("access granted", () => {
 });
 
 describe("preset granted", () => {
-  it("names the administrator rights and leads to the start screen by a trace button", () => {
+  it("names the administrator rights and leads to the meetups by a trace button", () => {
     const content: RenderableContent = {
       kind: "preset-granted",
       preset: "admin",
     };
     expect(renderNotification(content).text).toBe(
-      "Тебе выданы права администратора сообщества. На стартовом экране появилось «Управление».",
+      "Тебе выданы права администратора сообщества. В меню команд появилось «Управление» — /manage.",
     );
     expect(buttons(content)).toEqual([
       expect.objectContaining({
-        text: "Меню",
-        callback_data: "v1:t:nav:start",
+        text: "Сходки",
+        callback_data: "v1:t:nav:hub",
       }),
     ]);
   });
@@ -448,6 +449,29 @@ describe("notification sender", () => {
       42,
       expect.stringContaining("Новая сходка"),
       expect.objectContaining({ reply_markup: expect.anything() }),
+    );
+  });
+
+  // PER-468; решение владельца 10 октября 2026 года: «Управление» — команда,
+  // и назначенному администратором она встаёт в список команд его чата.
+  it("puts /manage into the chat commands of a new administrator", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({});
+    const setMyCommands = vi.fn().mockResolvedValue(true);
+    const sender = createNotificationSender({
+      sendMessage,
+      setMyCommands,
+    } as never);
+    await expect(
+      sender.send({
+        telegramUserId: 42n,
+        message: { kind: "preset-granted", preset: "admin" },
+      }),
+    ).resolves.toEqual({ kind: "sent" });
+    expect(setMyCommands).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        { command: "manage", description: "Управление" },
+      ]),
+      { scope: { type: "chat", chat_id: 42 } },
     );
   });
 

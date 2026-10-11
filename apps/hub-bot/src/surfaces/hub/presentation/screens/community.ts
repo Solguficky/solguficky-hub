@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { admitLabel } from "../../../../core/pictograms.js";
 import { applicationCode } from "../../application/hub-access.js";
 import type {
   AuctionModerator,
@@ -15,8 +16,10 @@ import {
   confirmKeyboard,
   escapeHtml,
   nextRow,
+  type Parent,
   pagedTitle,
   paginate,
+  removeLabel,
   screenText,
   toCommunity,
   toManage,
@@ -64,10 +67,12 @@ export function communityScreen(
   snapshot: CommunitySnapshot,
   view: CommunityView,
   notice?: string,
+  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  parent: Parent = toManage,
 ): ShownScreen {
   switch (view.kind) {
     case "root":
-      return rootScreen(snapshot);
+      return rootScreen(snapshot, parent);
     case "pending":
       return pendingScreen(snapshot, view.cursor);
     case "admitted":
@@ -81,7 +86,7 @@ export function communityScreen(
   }
 }
 
-function rootScreen(snapshot: CommunitySnapshot): ShownScreen {
+function rootScreen(snapshot: CommunitySnapshot, parent: Parent): ShownScreen {
   const keyboard = new InlineKeyboard()
     .text("Ожидают допуска", "v1:cm:p")
     .row()
@@ -102,7 +107,7 @@ function rootScreen(snapshot: CommunitySnapshot): ShownScreen {
         `Разрешённые ники: ${snapshot.allowedUsernames.length}`,
       ].join("\n"),
     ),
-    keyboard: withNav(keyboard, toManage),
+    keyboard: withNav(keyboard, parent),
     format: "HTML",
   };
 }
@@ -139,15 +144,15 @@ function pendingScreen(
     kind: "pending",
     ...(nextToken === undefined ? {} : { next: nextToken }),
   };
+  // Допуск и закрытие — бинарная пара выбора: одним рядом и без цвета
+  // (решение владельца 10 октября 2026 года). Закрытие красит своё «Да».
   const keyboard = new InlineKeyboard()
     .text(
-      "Допустить",
+      admitLabel,
       nextToken === undefined
         ? `v1:cm:ad:${token}`
         : `v1:cm:ad:${token}:${nextToken}`,
     )
-    .success()
-    .row()
     .text("Закрыть", `v1:cm:bq:${token}:${blockOriginData(origin)}`);
   if (nextToken !== undefined) {
     keyboard.row().text("Пропустить", `v1:cm:p:${nextToken}`);
@@ -205,7 +210,7 @@ function usernamesScreen(
   for (const username of page.items) {
     if (!removableUsernamePattern.test(username)) continue;
     nextRow(keyboard).text(
-      `Убрать @${username}`,
+      removeLabel(`Убрать @${username}`),
       `v1:cm:rm:${page.page}:${username}`,
     );
   }
@@ -341,6 +346,7 @@ export function closeAccessConfirmScreen(
       yes: "Да, закрыть доступ",
       yesData: `v1:cm:by:${token}:${blockOriginData(origin)}`,
       noData,
+      irreversible: true,
     }),
     format: "HTML",
   };

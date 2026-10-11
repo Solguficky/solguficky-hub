@@ -36,7 +36,7 @@ function dataOf(screen: ShownScreen, text: string): string | undefined {
     : undefined;
 }
 
-const nav = ["‹ Состав", "Меню"];
+const nav = ["‹ Состав"];
 
 describe("community root", () => {
   it("shows the three counts and leads to the three lists", () => {
@@ -58,7 +58,7 @@ describe("community root", () => {
       ["Разрешённые ники"],
       ["Модераторы аукциона"],
       ["Обновить"],
-      ["‹ Управление", "Меню"],
+      ["‹ Управление"],
     ]);
   });
 });
@@ -105,7 +105,7 @@ describe("auction moderators", () => {
     );
 
     expect(screen.id).toBe("community-moderator-candidates");
-    expect(rows(screen)).toEqual([["Выдать @user3"], ["‹ Модераторы", "Меню"]]);
+    expect(rows(screen)).toEqual([["Выдать @user3"], ["‹ Модераторы"]]);
     expect(dataOf(screen, "Выдать @user3")).toBe(
       `v1:cm:mg:${uuidToToken(id(3))}:0`,
     );
@@ -126,13 +126,12 @@ describe("community pending queue", () => {
       "<b>Ожидают допуска</b>\n\n@user1\n\nВ очереди: 3",
     );
     expect(rows(screen)).toEqual([
-      ["Допустить"],
-      ["Закрыть"],
+      ["✔️ Допустить", "Закрыть"],
       ["Пропустить"],
       ["Обновить"],
       nav,
     ]);
-    expect(dataOf(screen, "Допустить")).toBe(`v1:cm:ad:${first}:${second}`);
+    expect(dataOf(screen, "✔️ Допустить")).toBe(`v1:cm:ad:${first}:${second}`);
     expect(dataOf(screen, "Закрыть")).toBe(`v1:cm:bq:${first}:p${second}`);
     expect(dataOf(screen, "Пропустить")).toBe(`v1:cm:p:${second}`);
     expect(dataOf(screen, "Обновить")).toBe(`v1:cm:p:${first}`);
@@ -146,7 +145,7 @@ describe("community pending queue", () => {
 
     expect(screen.text).toContain("@user3");
     expect(dataOf(screen, "Пропустить")).toBe(`v1:cm:p:${first}`);
-    expect(dataOf(screen, "Допустить")).toBe(`v1:cm:ad:${third}:${first}`);
+    expect(dataOf(screen, "✔️ Допустить")).toBe(`v1:cm:ad:${third}:${first}`);
   });
 
   it("falls back to the head of the queue when the cursor is gone", () => {
@@ -165,12 +164,11 @@ describe("community pending queue", () => {
     );
 
     expect(rows(screen)).toEqual([
-      ["Допустить"],
-      ["Закрыть"],
+      ["✔️ Допустить", "Закрыть"],
       ["Обновить"],
       nav,
     ]);
-    expect(dataOf(screen, "Допустить")).toBe(`v1:cm:ad:${first}`);
+    expect(dataOf(screen, "✔️ Допустить")).toBe(`v1:cm:ad:${first}`);
     expect(dataOf(screen, "Закрыть")).toBe(`v1:cm:bq:${first}:p`);
   });
 
@@ -281,12 +279,12 @@ describe("community allowed usernames", () => {
       `<b>Разрешённые ники</b>\n\nНик добавлен.\n\n• @alice_1\n• @${long}`,
     );
     expect(rows(screen)).toEqual([
-      ["Убрать @alice_1"],
+      ["🗑 Убрать @alice_1"],
       ["Добавить ник"],
       ["Обновить"],
       nav,
     ]);
-    expect(dataOf(screen, "Убрать @alice_1")).toBe("v1:cm:rm:0:alice_1");
+    expect(dataOf(screen, "🗑 Убрать @alice_1")).toBe("v1:cm:rm:0:alice_1");
   });
 
   it("fits a full page into the row limit", () => {
@@ -299,7 +297,7 @@ describe("community allowed usernames", () => {
     );
 
     expect(rows(screen)).toHaveLength(12);
-    expect(dataOf(screen, "Убрать @nick8")).toBe("v1:cm:rm:1:nick8");
+    expect(dataOf(screen, "🗑 Убрать @nick8")).toBe("v1:cm:rm:1:nick8");
   });
 });
 
@@ -307,7 +305,7 @@ describe("closing access", () => {
   const member = person(1, true);
   const token = uuidToToken(member.identityId);
 
-  it("asks with a plain confirmation and returns to the same page", () => {
+  it("asks with a red confirmation and returns to the same page", () => {
     const screen = closeAccessConfirmScreen(member, {
       kind: "admitted",
       page: 2,
@@ -317,11 +315,12 @@ describe("closing access", () => {
     expect(screen.keyboard.inline_keyboard).toEqual([
       [
         {
-          text: "Да, закрыть доступ",
+          text: "✔️ Да, закрыть доступ",
           callback_data: `v1:cm:by:${token}:a2`,
+          style: "danger",
         },
+        { text: "✖️ Нет", callback_data: "v1:cm:a:2" },
       ],
-      [{ text: "Нет", callback_data: "v1:cm:a:2" }],
     ]);
   });
 
@@ -329,10 +328,10 @@ describe("closing access", () => {
     const next = uuidToToken(id(2));
     const screen = closeAccessConfirmScreen(member, { kind: "pending", next });
 
-    expect(dataOf(screen, "Да, закрыть доступ")).toBe(
+    expect(dataOf(screen, "✔️ Да, закрыть доступ")).toBe(
       `v1:cm:by:${token}:p${next}`,
     );
-    expect(dataOf(screen, "Нет")).toBe(`v1:cm:p:${token}`);
+    expect(dataOf(screen, "✖️ Нет")).toBe(`v1:cm:p:${token}`);
   });
 
   it("moves on to the next person once access is closed", () => {

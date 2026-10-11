@@ -45,25 +45,12 @@ describe("application card", () => {
     );
     expect(screen.keyboard.inline_keyboard).toEqual([
       [
-        {
-          text: "Допустить",
-          callback_data: `v1:aq:qa:${cursor}`,
-          style: "success",
-        },
-      ],
-      [
-        {
-          text: "Отказать",
-          callback_data: `v1:aq:qd:${cursor}`,
-          style: "danger",
-        },
+        { text: "✔️ Допустить", callback_data: `v1:aq:qa:${cursor}` },
+        { text: "✖️ Отказать", callback_data: `v1:aq:qd:${cursor}` },
       ],
       [{ text: "Профиль ↗", url: "https://t.me/ivan_p" }],
       [{ text: "Пропустить", callback_data: `v1:aq:q:${cursor}` }],
-      [
-        { text: "‹ Управление", callback_data: "v1:manage:menu" },
-        { text: "Меню", callback_data: "v1:nav:start" },
-      ],
+      [{ text: "‹ Управление", callback_data: "v1:manage:menu" }],
     ]);
   });
 
@@ -97,10 +84,9 @@ describe("application card", () => {
     expect(screen.text).toContain("Иван П. · код c0de1234");
     expect(screen.text).not.toContain(card.identityId);
     expect(rows(screen.keyboard)).toEqual([
-      ["Допустить"],
-      ["Отказать"],
+      ["✔️ Допустить", "✖️ Отказать"],
       ["Пропустить"],
-      ["‹ Управление", "Меню"],
+      ["‹ Управление"],
     ]);
   });
 
@@ -160,7 +146,7 @@ describe("application queue end", () => {
     const screen = applicationQueueEndScreen("community", 0, false);
 
     expect(screen.text).toBe("<b>Заявки</b>\n\nНовых заявок нет.");
-    expect(rows(screen.keyboard)).toEqual([["‹ Управление", "Меню"]]);
+    expect(rows(screen.keyboard)).toEqual([["‹ Управление"]]);
   });
 
   it("says the queue ended and offers the skipped ones from the start", () => {
@@ -197,12 +183,12 @@ describe("decline confirmation", () => {
     expect(screen.keyboard.inline_keyboard).toEqual([
       [
         {
-          text: "Да, отказать",
+          text: "✔️ Да, отказать",
           callback_data: `v1:aq:qy:${cursor}`,
           style: "danger",
         },
+        { text: "✖️ Нет", callback_data: `v1:aq:qc:${cursor}` },
       ],
-      [{ text: "Нет", callback_data: `v1:aq:qc:${cursor}` }],
     ]);
   });
 

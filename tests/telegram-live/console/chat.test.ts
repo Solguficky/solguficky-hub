@@ -43,16 +43,14 @@ function message(
 describe("экраны живого чата", () => {
   it("правка переносит экран в конец и снимает клавиатуру, как в клиенте", () => {
     const chat = new ChatScreens();
-    chat.apply(
-      screenOf(message(10, "Привет", [["Ближайшие сходки", "v1:nav:list"]])),
-    );
+    chat.apply(screenOf(message(10, "Привет", [["Архив", "v1:nav:archive"]])));
     chat.apply(screenOf(message(11, "Как назовём сходку?", [], "force_reply")));
     expect(chat.last()?.awaitsReply).toBe(true);
 
     chat.apply(screenOf(message(10, "Сходок пока нет")));
     expect(chat.last()?.message).toBe(10);
     expect(chat.pressable()).toEqual([]);
-    expect(() => chat.findButton("Ближайшие сходки")).toThrow(/нет/);
+    expect(() => chat.findButton("Архив")).toThrow(/нет/);
   });
 
   it("нажимает по подписи на последнем экране, где она есть, и не нажимает ссылку", () => {

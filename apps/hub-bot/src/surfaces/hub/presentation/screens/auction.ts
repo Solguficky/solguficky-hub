@@ -51,7 +51,7 @@ import type { ScreenPhoto, ShownScreen } from "./show.js";
 
 export type AuctionView = {
   body: AuctionScreenBody;
-  /** Родитель ленты: сходка аукциона либо «Ближайшие», если бот её не знает. */
+  /** Родитель ленты: сходка аукциона либо «Сходки», если бот её не знает. */
   feedParent: Parent;
   presentation: "rich" | "plain";
   timeZone: string;
@@ -283,7 +283,7 @@ function lotScreen(
   const keyboard = new InlineKeyboard();
   let back: Parent | undefined;
   for (const row of view.body.keyboard) {
-    // Возврат с лота — кнопка тела, а в один ряд с «Меню» её ставит оболочка.
+    // Возврат с лота — кнопка тела, а рядом навигации её ставит оболочка.
     const content = row.filter((button) => {
       if (button.action !== "lot.back") return true;
       back = { name: "Лоты", data: button.callbackData };
@@ -315,14 +315,16 @@ function lotScreen(
     lot.card?.image === undefined
       ? undefined
       : { lotId: lot.lotId, version: lot.card.image.version };
+  // Фото — первым блоком, над заголовком (решение владельца 10 октября 2026
+  // года, «Показ фото лота»).
   const text = rich
     ? [
+        photo === undefined ? "" : `<img src="tg://photo?id=${photo.id}"/>`,
         `<h1>${escapeHtml(title)}</h1>`,
         ...groups.map(
           (lines) => `<p>${lines.map(escapeHtml).join("<br>")}</p>`,
         ),
         ...richParagraphs(description),
-        photo === undefined ? "" : `<img src="tg://photo?id=${photo.id}"/>`,
       ].join("")
     : plainLot(title, description, groups);
   return {
@@ -491,7 +493,7 @@ function favoritesLabelOf(
 
 // Хронология ставок лота (PER-309): название лота в кавычках, строки «• …» по
 // порядку журнала, листание «←» и «→», а возврат тела на карточку оболочка
-// ставит в один ряд с «Меню».
+// ставит рядом навигации.
 function historyScreen(
   view: AuctionView,
   history: Extract<AuctionBlock, { kind: "history" }>,

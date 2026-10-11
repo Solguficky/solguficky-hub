@@ -33,7 +33,7 @@ describe("sourceChannelsScreen", () => {
     expect(screen.text).toContain(
       "Аукцион: https://t.me/auction_bot?start=s_tg_ads",
     );
-    expect(rows(screen)).toEqual([["Завести канал"], ["‹ Управление", "Меню"]]);
+    expect(rows(screen)).toEqual([["Завести канал"], ["‹ Управление"]]);
   });
 
   it("leaves out the auction link when the bot is not named", () => {

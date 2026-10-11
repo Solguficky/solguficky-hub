@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import type { ApplicationQueue } from "../../../../auction-ui/index.js";
+import { admitLabel, declineLabel } from "../../../../core/pictograms.js";
 import { applicationCode } from "../../application/hub-access.js";
 import type {
   ApplicationCard,
@@ -14,6 +15,7 @@ import {
 import {
   confirmKeyboard,
   escapeHtml,
+  type Parent,
   screenText,
   toManage,
   withNav,
@@ -107,29 +109,29 @@ export function ageLabel(createdAtMs: number, nowMs: number): string {
 }
 
 /**
- * Карточка ведёт в профиль только по публичному username. Допуск зелёный,
- * отказ красный (решение владельца по PER-534).
+ * Карточка ведёт в профиль только по публичному username. Допуск и отказ —
+ * бинарная пара одним рядом и без цвета: красное у отказа — его «Да, отказать»
+ * (решение владельца 10 октября 2026 года).
  */
 export function applicationCardScreen(
   queue: ApplicationQueue,
   { application, position }: { application: ApplicationCard; position: number },
   total: number,
   nowMs: number,
+  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  parent: Parent = toManage,
 ): ShownScreen {
   const cursor = cursorOf(application);
   const data = cardCursorData(cursor);
   const domain = queueDomain(queue);
   const rows = new InlineKeyboard()
-    .text("Допустить", `${domain}:qa:${data}`)
-    .success()
-    .row()
-    .text("Отказать", `${domain}:qd:${data}`)
-    .danger();
+    .text(admitLabel, `${domain}:qa:${data}`)
+    .text(declineLabel, `${domain}:qd:${data}`);
   if (application.telegramUsername !== undefined) {
     rows.row().url("Профиль ↗", `https://t.me/${application.telegramUsername}`);
   }
   rows.row().text("Пропустить", `${domain}:q:${data}`);
-  const keyboard = withNav(rows, toManage);
+  const keyboard = withNav(rows, parent);
   return {
     id: "application",
     text: screenText(
@@ -153,6 +155,8 @@ export function applicationQueueEndScreen(
   queue: ApplicationQueue,
   total: number,
   afterCursor: boolean,
+  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  parent: Parent = toManage,
 ): ShownScreen {
   const keyboard = new InlineKeyboard();
   if (afterCursor && total > 0) {
@@ -168,7 +172,7 @@ export function applicationQueueEndScreen(
           ? `Очередь кончилась. Ещё открыто заявок: ${total}.`
           : undefined,
     ),
-    keyboard: withNav(keyboard, toManage),
+    keyboard: withNav(keyboard, parent),
     format: "HTML",
   };
 }
@@ -195,7 +199,7 @@ export function declineConfirmScreen(
       yes: "Да, отказать",
       yesData: `${queueDomain(queue)}:qy:${cardCursorData(cursor)}`,
       noData: sameCardData(queue, cursor),
-      style: "danger",
+      irreversible: true,
     }),
     format: "HTML",
   };

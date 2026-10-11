@@ -8,10 +8,10 @@ import type {
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   escapeHtml,
+  notificationToggleLabel,
   screenText,
   toCard,
-  toggleLabel,
-  toMenu,
+  toSettings,
   withNav,
 } from "./kit.js";
 import { meetupTitleLabel } from "./meetup.js";
@@ -68,7 +68,7 @@ export function globalNotificationsScreen(
   for (const entry of ordered) {
     keyboard
       .text(
-        toggleLabel(categoryLabels[entry.category], entry.enabled),
+        notificationToggleLabel(categoryLabels[entry.category], entry.enabled),
         `v1:notify:gset:${entry.category}:${entry.enabled ? "0" : "1"}`,
       )
       .row();
@@ -84,7 +84,7 @@ export function globalNotificationsScreen(
       "По сходкам, на которые ты подписан: изменения, новые материалы, напоминание и сообщения организатора. Здесь — значение для всех таких сходок, включая будущие. У отдельной сходки его можно поменять в её уведомлениях, и тогда общая настройка её уже не меняет.",
       "Нажми на категорию, чтобы включить или выключить её.",
     ),
-    keyboard: withNav(keyboard, toMenu),
+    keyboard: withNav(keyboard, toSettings),
     format: "HTML",
   };
 }
@@ -99,7 +99,7 @@ export function meetupNotificationsScreen(settings: {
   for (const entry of settings.categories) {
     keyboard
       .text(
-        toggleLabel(categoryLabels[entry.category], entry.enabled),
+        notificationToggleLabel(categoryLabels[entry.category], entry.enabled),
         `v1:notify:set:${token}:${entry.category}:${entry.enabled ? "0" : "1"}`,
       )
       .row();
@@ -126,7 +126,7 @@ export function meetupNotificationsScreen(settings: {
       "Нажми на категорию, чтобы включить или выключить её. Настройка действует только для этой сходки и закрепляется за ней: общая настройка её больше не меняет.",
       differing.length === 0
         ? undefined
-        : `Отличаются от общих: ${differing.join(", ")}. Общие настройки — в меню, раздел «Уведомления».`,
+        : `Отличаются от общих: ${differing.join(", ")}. Общие настройки — в «Настройках» (/settings), раздел «Уведомления».`,
     ),
     keyboard: withNav(keyboard, toCard(token)),
     format: "HTML",

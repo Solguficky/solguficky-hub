@@ -1,3 +1,11 @@
+import {
+  admitLabel,
+  confirmNoLabel,
+  confirmYesPrefix,
+  marked,
+  pictogram,
+  pictogramWords,
+} from "../../src/core/pictograms.js";
 import type {
   Catalog,
   RuleName,
@@ -64,25 +72,20 @@ const carryingMethods: ReadonlySet<string> = new Set([
 ]);
 
 // Словарь у обоих ботов один (дизайн-код, «Аукцион: тело, шлюз, оболочка»).
-const menuLabel = "Меню";
 const backSign = "‹ ";
-const confirmPrefix = "Да, ";
-
-// Цвета решения по заявке (решение владельца 8 октября 2026 года, PER-534):
-// допуск — зелёный, отказ — красный. Подпись без цвета здесь не красится.
-const decisionColors: ReadonlyMap<string, string> = new Map([
-  ["Допустить", "success"],
-  ["Да, пересмотреть", "success"],
-  ["Отказать", "danger"],
-  ["Да, отказать", "danger"],
-]);
+// Выход кадра исхода аукциона — к карточке лота, как у кнопки следа.
+const toLotLabel = "К лоту";
+const removeMaterialLabel = marked(pictogram.remove, "Убрать");
 const linkSign = " ↗";
 const callbackDataLimit = 64;
 const defaultMaxRows = 12;
 
 // Слова, которые дизайн-код заменил: возврат называет родителя, подтверждение —
-// действие, состояние переключателя пишется словом.
+// действие, состояние переключателя пишется словом. Кнопки «Меню» нет: корня
+// «Меню» нет ни в одном боте, между разделами человек ходит командами
+// (решение владельца 10 октября 2026 года).
 const retiredLabels: ReadonlySet<string> = new Set([
+  "Меню",
   "Назад",
   "К списку",
   "К сходке",
@@ -172,38 +175,36 @@ function checkRules(
       }
       break;
     case "tree": {
+      // Ряд навигации — одна кнопка `[‹ Родитель]`: кнопки «Меню» нет
+      // (решение владельца 10 октября 2026 года).
       const parents = backNamesOf(config, entry.parent);
-      const [back, menu, ...rest] = labels(last);
-      const toMenu = entry.parent === "menu";
+      const [back, ...rest] = labels(last);
       const backOk =
         back !== undefined &&
         parents.some((name) => back === `${backSign}${name}`);
-      const tailOk = toMenu
-        ? menu === undefined
-        : menu === menuLabel && rest.length === 0;
-      if (!backOk || !tailOk) {
+      if (!backOk || rest.length > 0) {
         found.push([
           "nav",
-          `последний ряд ${describeRow(last)}, а нужен [${backSign}${parents.join(" | ")}]${toMenu ? "" : ` [${menuLabel}]`}`,
+          `последний ряд ${describeRow(last)}, а нужен [${backSign}${parents.join(" | ")}]`,
         ]);
       }
       break;
     }
     case "confirm": {
-      const [yes] = labels(rows.at(-2));
-      const [no] = labels(last);
+      // Ответы подтверждения — один ряд `[✔️ Да, …] [✖️ Нет]` (решение
+      // владельца 10 октября 2026 года); над ним — только ссылки источника.
+      const [yes, no, ...rest] = labels(last);
       const pairOk =
-        rows.at(-2)?.length === 1 &&
-        last?.length === 1 &&
-        yes?.startsWith(confirmPrefix) === true &&
-        no === "Нет";
+        yes?.startsWith(confirmYesPrefix) === true &&
+        no === confirmNoLabel &&
+        rest.length === 0;
       const leadOk = rows
-        .slice(0, -2)
+        .slice(0, -1)
         .every((row) => row.every((button) => button.url !== undefined));
       if (!pairOk || !leadOk) {
         found.push([
           "nav",
-          `подтверждение — ряды [${confirmPrefix}<глагол>] и [Нет], а пришло ${describeRows(rows)}`,
+          `подтверждение — один ряд [${confirmYesPrefix}<глагол>] [${confirmNoLabel}], а пришло ${describeRows(rows)}`,
         ]);
       }
       break;
@@ -235,7 +236,7 @@ function checkRules(
         !labels(last).some(
           (label) =>
             label === "Повторить" ||
-            label === menuLabel ||
+            label === toLotLabel ||
             label.startsWith(backSign),
         )
       ) {
@@ -247,7 +248,7 @@ function checkRules(
       break;
     case "links": {
       // Кадр без доступа, которому есть куда уйти вне бота: ссылка не ведёт
-      // по дереву, поэтому возврат и «Меню» здесь нарушение, как у `none`.
+      // по дереву, поэтому возврат здесь нарушение, как у `none`.
       // Пустая клавиатура — тоже нарушение: кадр без выхода — это `none`, и
       // потерянная ссылка иначе прошла бы молча.
       const stray = buttons.filter(
@@ -287,7 +288,7 @@ function checkRules(
     }
     // Две в ряду — только у пар, которые дизайн-код называет поимённо: ряд
     // навигации, разделы меню, листание и заготовки, пары дерева бота,
-    // материал с «Убрать».
+    // материал с «🗑 Убрать».
     const pair = labels(row).join("|");
     const allowed =
       short ||
@@ -295,47 +296,49 @@ function checkRules(
       entry.nav === "root" ||
       config.namedPairs?.has(pair) === true ||
       config.namedPairs?.has(pair.replace(/\d+/g, "#")) === true ||
-      row.some((button) => button.text === "Убрать");
+      row.some((button) => button.text === removeMaterialLabel);
     if (row.length === 2 && !allowed) {
       found.push(["rows", `пара вне дизайн-кода: ${describeRow(row)}`]);
     }
-  });
-
-  // Цвет — по каталогу: красный только у «Да, …» подтверждения, где человек
-  // платит, и там он обязателен. Экран решения по заявке красит допуск
-  // зелёным, а отказ красным — тоже обязательно (PER-534).
-  const decision = entry.decision === true;
-  for (const button of buttons) {
-    const color = decisionColors.get(button.text);
-    if (decision && color !== undefined && button.style !== color) {
+    // Бинарная пара выбора стоит одним рядом (решение владельца 10 октября
+    // 2026 года): допуск — рядом с отказом или закрытием, а не над ним.
+    if (row.some((button) => button.text === admitLabel) && row.length !== 2) {
       found.push([
-        "style",
-        `«${button.text}» на экране решения по заявке красится ${color}`,
+        "rows",
+        `«${admitLabel}» стоит одним рядом со своей парой: ${describeRow(row)}`,
       ]);
     }
-  }
-  const paid = entry.money === true && entry.nav === "confirm";
-  const yes = buttons.find((button) => button.text.startsWith(confirmPrefix));
-  if (paid && yes !== undefined && yes.style !== "danger") {
+  });
+
+  // Цвет — по каталогу: красный только у «Да, …» подтверждения, после
+  // которого обратного действия нет или тратятся деньги, и там он обязателен
+  // (решение владельца 10 октября 2026 года). Других цветов нет.
+  const final = entry.irreversible === true && entry.nav === "confirm";
+  const yes = buttons.find((button) =>
+    button.text.startsWith(confirmYesPrefix),
+  );
+  if (final && yes !== undefined && yes.style !== "danger") {
     found.push([
       "style",
-      `«${yes.text}» подтверждает трату денег, а цвета danger у него нет`,
+      `«${yes.text}» подтверждает необратимое действие, а цвета danger у него нет`,
     ]);
   }
   for (const button of buttons) {
-    const decided =
-      decision && decisionColors.get(button.text) === button.style;
-    const money =
-      paid &&
-      button.style === "danger" &&
-      button.text.startsWith(confirmPrefix);
-    if (button.style !== undefined && !decided && !money) {
+    const red = final && button === yes && button.style === "danger";
+    if (button.style !== undefined && !red) {
       found.push([
         "style",
-        `цвет ${button.style} у «${button.text}»: красится только «${confirmPrefix}…» подтверждения с деньгами (danger) и решение по заявке`,
+        `цвет ${button.style} у «${button.text}»: красится только «${confirmYesPrefix}…» необратимого подтверждения (danger)`,
       ]);
     }
-    if (retiredLabels.has(button.text) || /^\[[x ]\] /.test(button.text)) {
+    const sign = strayPictogram(button.text);
+    if (sign !== undefined) {
+      found.push(["emoji", `подпись «${button.text}»: ${sign}`]);
+    }
+    // Знак словаря в подписи слово не меняет: «✔️ Да, продолжить» тоже вне
+    // словаря.
+    const word = button.text.replace(/^\p{Extended_Pictographic}️?\s/u, "");
+    if (retiredLabels.has(word) || /^\[[x ]\] /.test(button.text)) {
       found.push(["vocabulary", `подпись «${button.text}» вне словаря`]);
     }
     if (button.text === "Обновить" && entry.refresh !== true) {
@@ -370,7 +373,54 @@ function checkRules(
       ]);
     }
   }
+  for (const line of textLines(call)) {
+    const sign = strayPictogram(line);
+    if (sign !== undefined) found.push(["emoji", `строка «${line}»: ${sign}`]);
+  }
   return found;
+}
+
+// Знак в начале подписи или строки — «<эмодзи> <слово>» — слово бота, и
+// эмодзи в нём только из закрытого словаря и только перед своим словом
+// (дизайн-код, «Формат»; решение владельца 10 октября 2026 года). Текст
+// организатора словарём не ограничен; линтер его не отличает и потому
+// проверяет только знак, за которым идёт пробел, — так эмодзи ставит бот.
+// Служебные знаки «‹», «↗», «←», «→», «·», «•» эмодзи не считаются.
+const leadingSign = /^(\p{Extended_Pictographic}\uFE0F?)\s(.*)$/u;
+const serviceSigns: ReadonlySet<string> = new Set([
+  "‹",
+  "↗",
+  "←",
+  "→",
+  "·",
+  "•",
+]);
+const signWords: Readonly<Record<string, readonly string[]>> = pictogramWords;
+
+function strayPictogram(text: string): string | undefined {
+  const match = leadingSign.exec(text);
+  if (match === null) return undefined;
+  const [, sign = "", rest = ""] = match;
+  if (serviceSigns.has(sign)) return undefined;
+  const words = signWords[sign];
+  if (words === undefined) return `эмодзи «${sign}» вне словаря`;
+  return words.some((word) => rest.startsWith(word))
+    ? undefined
+    : `«${sign}» стоит только перед ${words.map((word) => `«${word.trim()}»`).join(", ")}`;
+}
+
+// Строки текста вызова: обычный текст делится переносом, rich-карточка — ещё
+// и блоками; разметка в начале строки снимается.
+function textLines(call: Carried): string[] {
+  const html =
+    typeof call.rich_message?.html === "string"
+      ? call.rich_message.html
+      : textOf(call);
+  if (html === undefined) return [];
+  return html
+    .split(/\n|<br\s*\/?>|<\/?(?:p|h1|li|ul|ol|blockquote)>/)
+    .map((line) => line.replace(/^(?:<[^>]+>)+/, "").trim())
+    .filter((line) => line !== "");
 }
 
 // Заголовок — первая жирная строка. Что над ним, проверяет правило тела.
@@ -405,9 +455,13 @@ function textOf(call: Carried): string | undefined {
         : undefined;
 }
 
+// Фото карточки над заголовком rich-экрана: одно фото или карусель фото.
+const leadingPhotoBlock =
+  /^(?:<img src="tg:\/\/photo\?id=[^"]*"\/>|<tg-slideshow>(?:<img src="tg:\/\/photo\?id=[^"]*"\/>)+<\/tg-slideshow>)/;
+
 // Тело экрана (дизайн-код, «Формат»): заголовок первой строкой, после него
-// пустая строка. Над заголовком ничего нет: исход действия — свой экран, а не
-// заметка над карточкой (PER-472). Кадр отказа держит жирное предложение и
+// пустая строка. Над заголовком ничего нет, кроме фото карточки: исход
+// действия — свой экран, а не заметка над карточкой (PER-472). Кадр отказа держит жирное предложение и
 // остальной текст в одной строке, и правило его не задевает. Чем заполнено тело, линтер не читает: это
 // держат тесты каталога бота.
 function bodyProblem(call: Carried): string | undefined {
@@ -420,9 +474,12 @@ function bodyProblem(call: Carried): string | undefined {
     if (after !== "" && !after.startsWith("<")) {
       return `после заголовка rich-экрана текст вне блока: «${after.slice(0, 20)}»`;
     }
-    return at === 0
+    // Единственное, что стоит над заголовком, — фото карточки: одно `<img>`
+    // или карусель (решение владельца 10 октября 2026 года).
+    const above = html.slice(0, at).replace(leadingPhotoBlock, "");
+    return above === ""
       ? undefined
-      : `над заголовком rich-экрана текст: «${html.slice(0, Math.min(at, 40))}»`;
+      : `над заголовком rich-экрана текст: «${above.slice(0, 40)}»`;
   }
   const lines = textOf(call)?.split("\n");
   if (lines === undefined) return undefined;

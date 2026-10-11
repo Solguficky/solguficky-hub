@@ -27,7 +27,7 @@ describe("hub auction FAQ screen", () => {
     });
     expect(
       screen.keyboard.inline_keyboard.at(-1)?.map((button) => button.text),
-    ).toEqual(["‹ Лоты", "Меню"]);
+    ).toEqual(["‹ Лоты"]);
   });
 
   it("uses only configured external links and keeps the return button", () => {
@@ -39,6 +39,6 @@ describe("hub auction FAQ screen", () => {
       screen.keyboard.inline_keyboard.map((row) =>
         row.map((button) => button.text),
       ),
-    ).toEqual([["Прочитать подробнее ↗"], ["‹ Лоты", "Меню"]]);
+    ).toEqual([["Прочитать подробнее ↗"], ["‹ Лоты"]]);
   });
 });
