@@ -266,17 +266,34 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
       )
     }
 
-    "take the next live bid after the resume" in {
+    "take the next live bid after the resume and answer it with the leader's limit on the grid" in {
       val (_, live) = holding.resume(resumeLot(opN = 3))
 
       live.submit(placeBid(who = 3, amount = 510, opN = 4), bid(1))._1 shouldBe
-        Right(Decision.Accepted(manual(bid(1), 3, 510, Some(2))))
+        Right(
+          Decision.Accepted(
+            manual(bid(1), 3, 510, Some(2)).copy(overtakenByProxy = true),
+            List(proxied(proxyBid(4), 2, 520, Some(3)))
+          )
+        )
+    }
+
+    "recount the limits the hold kept in the transaction of the resume, on the grid (Т-39)" in {
+      val waiting = Journal.of(held(price = 100, leader = participant(1)))
+
+      val (kept, limited) = waiting.limit(setProxyLimit(who = 2, max = 150, opN = 1))
+      kept shouldBe Right(Decision.Accepted(LotEvent.ProxyLimitSet(participant(2), money(150))))
+
+      val (resumed, live) = limited.resume(resumeLot(opN = 2))
+      resumed shouldBe Right(Decision.Accepted(LotEvent.LotResumed, List(proxied(proxyBid(2), 2, 110, Some(1)))))
+      tradingOf(live.lot).leader shouldBe Some(participant(2))
+      tradingOf(live.lot).currentPrice shouldBe money(110)
     }
 
     "answer a repeated resume with the original response" in {
       val (_, live) = holding.resume(resumeLot(opN = 3))
 
-      Lot.decide(live.lot, resumeLot(opN = 3)) shouldBe Right(Decision.Repeated(live.entries.last))
+      Lot.decide(live.lot, resumeLot(opN = 3), proxyBid(9), calm) shouldBe Right(Decision.Repeated(live.entries.last))
     }
 
     "refuse a resume under the op_id of another command instead of answering with its envelope" in {
@@ -287,9 +304,9 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
     }
 
     "refuse to resume a lot that is not held" in {
-      Lot.decide(Lot.initial, resumeLot(opN = 1)) shouldBe Left(ResumeLotRejected.LotNotFound)
+      Lot.decide(Lot.initial, resumeLot(opN = 1), proxyBid(9), calm) shouldBe Left(ResumeLotRejected.LotNotFound)
       List(drafted, scheduled(), trading(price = 100), sold(price = 100, winner = participant(1))).foreach { lot =>
-        Lot.decide(lot, resumeLot(opN = 1)) shouldBe Left(ResumeLotRejected.LotNotHeld)
+        Lot.decide(lot, resumeLot(opN = 1), proxyBid(9), calm) shouldBe Left(ResumeLotRejected.LotNotHeld)
       }
     }
   }

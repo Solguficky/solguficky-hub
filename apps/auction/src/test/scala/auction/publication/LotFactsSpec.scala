@@ -75,6 +75,13 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       (live.phase, live.deadline) shouldBe (model.LotPhase.LOT_PHASE_LIVE, None)
     }
 
+    "publish the ask of the auctioneer with the ask in the state of the lot" in {
+      val steps = facts(lotDrafted, lotScheduled, opened, LotEvent.AskAdvanced(money(50000)))
+
+      steps.last._2.map(_.subject) shouldBe Some("events.auction.ask_advanced")
+      message(steps.last._2).getState.getTrading.ask.map(_.minorUnits) shouldBe Some(50000L)
+    }
+
     "keep proxy limits off the bus while they still take a version" in {
       val steps = facts(lotDrafted, lotScheduled, opened, limitSet, limitWithdrawn, placed)
       steps.map((step, fact) => step.sequence -> fact.isDefined) shouldBe List(

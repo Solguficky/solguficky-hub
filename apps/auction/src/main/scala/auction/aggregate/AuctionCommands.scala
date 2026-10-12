@@ -5,6 +5,7 @@ import auction.entity.AuctionAnswer
 import auction.entity.AuctionGateway
 import auction.entity.Initiator
 import auction.entity.LotGateway
+import auction.lot.AdvanceAskRejected
 import auction.lot.AuctionId
 import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
@@ -108,6 +109,16 @@ enum FinalChoiceRefusal[+R] {
 }
 
 /**
+ * Отказ ask ведущего: проверка до агрегата, реестр аукциона или решение самого лота. `OpIdTaken` — под этим `op_id`
+ * записана команда аукциона, а не ask.
+ */
+enum AskRefusal {
+  case Denied(denial: Denial)
+  case LotNotInAuction
+  case ByLot(rejected: AdvanceAskRejected)
+}
+
+/**
  * Отказ заморозки состава: проверка до агрегата или решение агрегата. `LineupUnknown` — аукцион ещё переспрашивает лоты
  * после рестарта, и повтор позже пройдёт.
  */
@@ -164,6 +175,9 @@ enum NextLotRefusal {
  *
  * Команды финала (PER-334) — команды самого аукциона, как открытие торгов: событие пишет он, и повтор `op_id` получает
  * исходный ответ из его окна. Повтор `StartNextLot` отвечает лотом исходной активации, не спрашивая Meetups.
+ *
+ * Ask ведущего (PER-293) идёт тем же путём, что отметка: аукцион — прокси к команде лота, он проверяет реестр и шлёт
+ * лоту `AdvanceAsk`, а фазу и цену судит лот; событие пишет лот, и повтор `op_id` узнаёт он.
  */
 final class AuctionCommands(
     auctions: AuctionGateway,
@@ -337,6 +351,28 @@ final class AuctionCommands(
       auctions.deselectForFinal(auctionId, DeselectForFinal(lot, opId), Initiator.Operator(person))
     }
 
+  /** Ask ведущего лоту реестра (RFC-011, П-08); инициатор у лота — ведущий. */
+  def advanceAsk(
+      auctionId: AuctionId,
+      lot: LotId,
+      newAsk: Money,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[AskRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Left(AskRefusal.ByLot(AdvanceAskRejected.OpIdTaken)))
+      case Inspection.Absent => Future.successful(Left(AskRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, AskRefusal.Denied(_)) {
+          auctions.advanceAsk(auctionId, AdvanceLotAsk(lot, newAsk, opId), Initiator.Operator(person)).map {
+            case Right(()) => Right(())
+            case Left(AdvanceLotAskRejected.AuctionNotFound) => Left(AskRefusal.Denied(Denial.AuctionNotFound))
+            case Left(AdvanceLotAskRejected.LotNotInAuction) => Left(AskRefusal.LotNotInAuction)
+            case Left(AdvanceLotAskRejected.ByLot(rejected)) => Left(AskRefusal.ByLot(rejected))
+          }
+        }
+    }
+
   /** Заморозка состава финала: удержанные лоты в порядке выхода (RFC-011). */
   def freezeFinalLineup(
       auctionId: AuctionId,
@@ -403,6 +439,17 @@ final class AuctionCommands(
    */
   def authorize(meetup: MeetupId, person: ParticipantId): Future[Either[Denial, Unit]] =
     authorized(meetup, person, (denial: Denial) => denial)(Future.successful(Right(())))
+
+  /**
+   * Право вести торги аукциона — у Meetups, как у остальных команд администратора: ставку зала заносит помощник
+   * ведущего, держатель права администрировать сходку (integration.md, «Финал и его поток»). Аукцион без журнала —
+   * `AuctionNotFound` до вопроса Meetups.
+   */
+  def hosts(auctionId: AuctionId, person: ParticipantId): Future[Either[Denial, Unit]] =
+    current(auctionId).map(_.flatMap(_.meetup)).flatMap {
+      case Some(meetup) => authorize(meetup, person)
+      case None => Future.successful(Left(Denial.AuctionNotFound))
+    }
 
   /**
    * Аукцион, каким его знает entity, а не read model: пульт собирает из него следующую команду — сроки и финал целиком,

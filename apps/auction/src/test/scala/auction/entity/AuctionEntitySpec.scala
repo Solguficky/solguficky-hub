@@ -4,6 +4,8 @@ import auction.aggregate.*
 import auction.aggregate.AuctionFixtures.*
 import auction.catalog.LotId
 import auction.entity.JournalFixtures.*
+import auction.lot.AdvanceAsk
+import auction.lot.AdvanceAskRejected
 import auction.lot.CloseLot
 import auction.lot.CloseLotRejected
 import auction.lot.Decision
@@ -129,7 +131,10 @@ final class AuctionEntitySpec
     /** Возврат в финал; `lost` — лот принял команду, но ответ потерялся. */
     def resume(lot: LotId, command: ResumeLot): Future[Either[ResumeLotRejected, Unit]] = synchronized {
       resumptions :+= lot -> command
-      val answer = Lot.decide(lots(lot), command).map(decision => written(lot, command.opId, decision)).map(_ => ())
+      val answer = Lot
+        .decide(lots(lot), command, LotFixtures.proxyBid(90), Instant.EPOCH)
+        .map(decision => written(lot, command.opId, decision))
+        .map(_ => ())
       if (lost(lot)) Promise[Either[ResumeLotRejected, Unit]]().future else Future.successful(answer)
     }
 
@@ -187,6 +192,17 @@ final class AuctionEntitySpec
           Future.successful(
             Lot.decide(lots(lot), command, now()).map(decision => written(lot, command.opId, decision)).map(_ => ())
           )
+      }
+
+    def advanceAsk(lot: LotId, command: AdvanceAsk, initiator: Initiator): Future[Either[AdvanceAskRejected, Unit]] =
+      synchronized {
+        choices :+= (lot, command, initiator)
+        Future.successful(
+          Lot
+            .decide(lots(lot), command, LotFixtures.proxyBid(91), now())
+            .map(decision => written(lot, command.opId, decision))
+            .map(_ => ())
+        )
       }
 
     private def opening(event: LotEvent): Option[Instant] =

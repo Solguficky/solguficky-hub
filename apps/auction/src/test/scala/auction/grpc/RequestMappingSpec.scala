@@ -12,6 +12,7 @@ import auction.lot.BidSource
 import auction.lot.CurrencyCode
 import auction.lot.LotConfigInput
 import auction.lot.Money
+import auction.lot.ParticipantId
 import auction.lot.StepPolicy
 import auction.lot.StepPolicyInput
 import auction.v1.auction.AntiSnipe as AntiSnipeMessage
@@ -26,6 +27,7 @@ import auction.v1.auction.OnlinePhase as OnlinePhaseMessage
 import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction.StepTier
 import auction.v1.auction.TieredSteps
+import auction.v1.auction_service.AdvanceAskRequest
 import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
@@ -95,6 +97,35 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
         .placeBid(validBid.withSource(BidSourceMessage.BID_SOURCE_BOT).withParticipantId(identity))
         .left
         .value shouldBe FormError("participant_id")
+    }
+
+    "maps a floor bid to the participant in the room, not to the assistant who enters it" in {
+      val room = "01890a5d-ac99-7aaa-8bbb-dddddddddddd"
+      val command = RequestMapping
+        .placeBid(validBid.withSource(BidSourceMessage.BID_SOURCE_FLOOR).withParticipantId(room))
+        .value
+
+      command.bid.source shouldBe BidSource.Floor
+      command.bid.participant shouldBe ParticipantId(UUID.fromString(room))
+      command.acting.participant shouldBe ParticipantId(UUID.fromString(identity))
+    }
+
+    "names participant_id as the invalid field when a floor bid names no participant or a malformed one" in {
+      val floor = validBid.withSource(BidSourceMessage.BID_SOURCE_FLOOR)
+      RequestMapping.placeBid(floor).left.value shouldBe FormError("participant_id")
+      RequestMapping.placeBid(floor.withParticipantId("not-a-person")).left.value shouldBe FormError("participant_id")
+    }
+
+    "maps an ask to the amount the auctioneer announced" in {
+      RequestMapping.advanceAsk(validAsk).value.newAsk shouldBe Money(50000, CurrencyCode("RUB"))
+    }
+
+    "names new_ask as the invalid field of an ask without an amount" in {
+      RequestMapping.advanceAsk(validAsk.clearNewAsk).left.value shouldBe FormError("new_ask")
+    }
+
+    "names auction_id as the invalid field of an ask to an auction that is not of a meetup" in {
+      RequestMapping.advanceAsk(validAsk.withAuctionId(lot)).left.value shouldBe FormError("auction_id")
     }
 
     "names source as the invalid field when the channel of the bid is unknown" in {
@@ -386,6 +417,9 @@ object RequestMappingSpec {
 
   /** Аукцион сходки `meetupId`: UUIDv5, вектор контракта. */
   val meetupAuction = "daef05c7-cd68-5048-b03d-cb4860e8dc73"
+
+  val validAsk: AdvanceAskRequest =
+    AdvanceAskRequest(Some(viewer), meetupAuction, lot, op, Some(MoneyMessage(50000, "RUB")))
 
   val validSchedule: ScheduleLotRequest = ScheduleLotRequest(
     Some(viewer),

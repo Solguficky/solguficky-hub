@@ -72,6 +72,13 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
 
+  /** Ask ведущего лоту реестра. Ответ приходит после ответа лота, как у `scheduleLot`. */
+  def advanceAsk(
+      auctionId: AuctionId,
+      command: AdvanceLotAsk,
+      initiator: Initiator
+  ): Future[Either[AdvanceLotAskRejected, Unit]]
+
   /** Заморозка состава финала в перерыве. */
   def freezeFinalLineup(
       auctionId: AuctionId,
@@ -169,6 +176,13 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]] =
         entity(auctionId).ask(AuctionEntity.Deselect(command, initiator, _))
+
+      def advanceAsk(
+          auctionId: AuctionId,
+          command: AdvanceLotAsk,
+          initiator: Initiator
+      ): Future[Either[AdvanceLotAskRejected, Unit]] =
+        entity(auctionId).ask(AuctionEntity.AskLot(command, initiator, _))
 
       def freezeFinalLineup(
           auctionId: AuctionId,

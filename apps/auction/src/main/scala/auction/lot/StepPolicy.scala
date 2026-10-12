@@ -60,6 +60,36 @@ object StepPolicy {
       case Tiered(base, tiers) =>
         tiers.foldLeft(base)((current, tier) => if (tier.bound <= price) tier.step else current)
     }
+
+  /**
+   * Наибольшая точка сетки `origin, origin + step(origin), …`, не превосходящая `target`; пусто, если `target` ниже
+   * `origin` (ADR-049, «прокси по сетке»). Каждая следующая точка — от предыдущей шагом её цены, как в П-03.
+   *
+   * Внутри порога шаг постоянен, поэтому точки до следующей границы берутся одним делением, а не перебором: лимит
+   * участника — его ввод, и перебор шагов до суммы около `Long.MaxValue` подвесил бы лот. Проходов не больше, чем
+   * порогов. Арифметика — в `BigInt`: промежуточная сумма с шагом у лимита около `Long.MaxValue` выходит за `Long`, а
+   * ответ не выходит, потому что он не выше `target`.
+   */
+  def gridFloor(policy: StepPolicy, origin: Money, target: Money): Option[Money] =
+    Option.when(origin <= target) {
+      val bounds = policy match {
+        case Fixed(_) => Nil
+        case Tiered(_, tiers) => tiers.map(tier => BigInt(tier.bound.minorUnits))
+      }
+      val limit = BigInt(target.minorUnits)
+      def from(point: BigInt): BigInt = {
+        val step = BigInt(StepPolicy.step(policy, origin.copy(minorUnits = point.toLong)).minorUnits)
+        val reachable = point + (limit - point) / step * step
+        bounds.find(_ > point) match {
+          case Some(bound) if reachable >= bound =>
+            // Первая точка на новом пороге или за ним; она не выше `reachable`, а значит и `target`. Следующий проход
+            // считает от неё уже её шагом.
+            from(point + ((bound - point) + step - 1) / step * step)
+          case _ => reachable
+        }
+      }
+      origin.copy(minorUnits = from(BigInt(origin.minorUnits)).toLong)
+    }
 }
 
 /** Почему политика шага противоречива. Каждое нарушение И-15 названо отдельно, а не строкой сообщения. */

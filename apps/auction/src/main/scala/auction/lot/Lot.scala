@@ -284,17 +284,50 @@ object Lot {
     }
 
   /**
-   * Возврат удержанного лота в торги живого финала (П-09). Производной ставки прокси по сетке, которую RFC-011 пишет
-   * той же транзакцией, здесь нет: пересчёт в `Live` — [PER-293](https://linear.app/anticnvm/issue/per-293), и до него
-   * лимиты, записанные в удержании, ждут первой ставки финала. Повтор — только своей команды, как у отметки.
+   * Возврат удержанного лота в торги живого финала (П-09). Лимиты, записанные в удержании, ждали финала без пересчёта,
+   * и пересчёт П-02 по сетке идёт той же транзакцией на торгах после возврата: производная ставка, если она есть,
+   * пишется за `LotResumed`, как у `SetProxyLimit`. Повтор — только своей команды, как у отметки.
    */
-  def decide(lot: Lot, command: ResumeLot): Either[ResumeLotRejected, Decision] =
+  def decide(lot: Lot, command: ResumeLot, proxyBidId: BidId, now: Instant): Either[ResumeLotRejected, Decision] =
     repeatOf(lot, command.opId, ResumeLotRejected.OpIdTaken)(_ == LotEvent.LotResumed).getOrElse {
       lot.state match {
         case LotState.Initial => Left(ResumeLotRejected.LotNotFound)
-        case LotState.Held(_) => Right(Decision.Accepted(LotEvent.LotResumed))
+        case LotState.Held(held) =>
+          Right(Decision.Accepted(LotEvent.LotResumed, resolve(resumed(held), proxyBidId, now).toList))
         case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Sold(_) | LotState.Unsold(_) =>
           Left(ResumeLotRejected.LotNotHeld)
+      }
+    }
+
+  /**
+   * Ask ведущего (RFC-011, П-08): следующая цена, которую он объявил залу. Ask поднимает нижнюю границу торга, но не
+   * цену и не лидера, и обязан её превысить. Удержанный лот ask не принимает: ведущий объявляет цену торгам, а не
+   * перерыву.
+   *
+   * В фазе `Live` за `AskAdvanced` той же транзакцией идёт пересчёт П-02 на торгах с новым ask (О-6.B): лимит, которому
+   * ask по карману, берёт его производной ставкой. В онлайн-неделе пересчёта за ask нет: ask поднимает нижнюю границу,
+   * и лимиты меряются от неё только на следующей ставке или лимите (RFC-011, П-02). Дедлайна в `Live` нет, поэтому нет
+   * и продления П-04.
+   */
+  def decide(lot: Lot, command: AdvanceAsk, proxyBidId: BidId, now: Instant): Either[AdvanceAskRejected, Decision] =
+    repeatOf(lot, command.opId, AdvanceAskRejected.OpIdTaken) {
+      case _: LotEvent.AskAdvanced => true
+      case _ => false
+    }.getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(AdvanceAskRejected.LotNotFound)
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+          Left(AdvanceAskRejected.LotNotOpen)
+        case LotState.Trading(trading) =>
+          val f = floor(trading)
+          if (command.newAsk.currency != trading.config.currency) Left(AdvanceAskRejected.CurrencyMismatch)
+          else if (command.newAsk <= f) Left(AdvanceAskRejected.AskBelowCurrentPrice(f))
+          else {
+            val derived =
+              if (trading.phase == Phase.Live) resolve(trading.copy(ask = Some(command.newAsk)), proxyBidId, now).toList
+              else Nil
+            Right(Decision.Accepted(LotEvent.AskAdvanced(command.newAsk), derived))
+          }
       }
     }
 
@@ -357,6 +390,10 @@ object Lot {
   /**
    * Порядок проверок повторяет RFC-011: валюта, лидерство, затем порог. В `Live` сумма — ожидаемая цена, и проверка
    * `BidNotAtNextPrice` стоит выше `BidBelowMinimum`, чтобы отказ в финале был один и называл цену (ADR-049).
+   *
+   * Ставку зала лот принимает только в живом финале: зала в онлайн-неделе нет, а право человека в зале никто не
+   * проверяет — его заменяет право помощника ведущего (решение владельца в PER-293). Вне `Live` она — `LotNotOpen`, и
+   * этот отказ стоит первым: от суммы и лидерства он не зависит.
    */
   private def placeBid(
       trading: TradingState,
@@ -365,7 +402,8 @@ object Lot {
       now: Instant
   ): Either[PlaceBidRejected, LotEvent.BidPlaced] = {
     val required = minRequired(trading, now)
-    if (command.amount.currency != trading.config.currency) Left(PlaceBidRejected.CurrencyMismatch)
+    if (command.source == BidSource.Floor && trading.phase != Phase.Live) Left(PlaceBidRejected.LotNotOpen)
+    else if (command.amount.currency != trading.config.currency) Left(PlaceBidRejected.CurrencyMismatch)
     else if (trading.leader.contains(command.participant)) Left(PlaceBidRejected.BidderIsLeader(trading.currentPrice))
     else if (trading.phase == Phase.Live && command.amount != required)
       Left(PlaceBidRejected.BidNotAtNextPrice(required))
@@ -408,35 +446,76 @@ object Lot {
    * Шаг берётся в момент `now` команды — один на всю свёрнутую серию: в окне сниженного шага серия считается по шагу
    * окна, вне окна — по обычному, и шаги двух режимов в одном событии не смешиваются (П-03).
    *
-   * Только фаза `Online`: в `Live` цель округляется до сетки, а это
-   * [PER-293](https://linear.app/anticnvm/issue/per-293). После `AskAdvanced` пересчёт не запускается, пока открыт О-6.
+   * Так правило читается в фазе `Online`; в `Live` цель ложится на сетку ADR-049 — [[resolveLive]].
    */
   private[lot] def resolve(trading: TradingState, bidId: BidId, now: Instant): Option[LotEvent.BidPlaced] =
-    if (trading.phase != Phase.Online) None
-    else {
-      val f = floor(trading)
-      val stepAbove = (price: Money) => {
-        val step = Lot.step(trading, price, now).minorUnits
-        if (price.minorUnits > Long.MaxValue - step) price.copy(minorUnits = Long.MaxValue)
-        else price.copy(minorUnits = price.minorUnits + step)
-      }
-      val contender = trading.proxyLimits.toList
-        .filter((who, limit) => !trading.leader.contains(who) && limit.max > f)
-        .sortBy((_, limit) => (-limit.max.minorUnits, limit.setSeq))
-        .headOption
-      val leading = trading.leader.flatMap(leader => trading.proxyLimits.get(leader).map(leader -> _))
-      contender.flatMap { (rival, c) =>
-        leading match {
-          case Some((leader, l)) if l.max > c.max || (l.max == c.max && l.setSeq < c.setSeq) =>
-            val target = lesser(l.max, stepAbove(c.max))
-            Option.when(target > f)(proxyBid(bidId, leader, target, trading.leader))
-          case _ =>
-            val base = leading.fold(f)((_, l) => greater(l.max, f))
-            val target = lesser(c.max, stepAbove(base))
-            Option.when(target > f)(proxyBid(bidId, rival, target, trading.leader))
-        }
+    trading.phase match {
+      case Phase.Online => resolveOnline(trading, bidId, now)
+      case Phase.Live => resolveLive(trading, bidId)
+    }
+
+  private def resolveOnline(trading: TradingState, bidId: BidId, now: Instant): Option[LotEvent.BidPlaced] = {
+    val f = floor(trading)
+    val stepAbove = (price: Money) => {
+      val step = Lot.step(trading, price, now).minorUnits
+      if (price.minorUnits > Long.MaxValue - step) price.copy(minorUnits = Long.MaxValue)
+      else price.copy(minorUnits = price.minorUnits + step)
+    }
+    val contender = trading.proxyLimits.toList
+      .filter((who, limit) => !trading.leader.contains(who) && limit.max > f)
+      .sortBy((_, limit) => (-limit.max.minorUnits, limit.setSeq))
+      .headOption
+    val leading = trading.leader.flatMap(leader => trading.proxyLimits.get(leader).map(leader -> _))
+    contender.flatMap { (rival, c) =>
+      leading match {
+        case Some((leader, l)) if l.max > c.max || (l.max == c.max && l.setSeq < c.setSeq) =>
+          val target = lesser(l.max, stepAbove(c.max))
+          Option.when(target > f)(proxyBid(bidId, leader, target, trading.leader))
+        case _ =>
+          val base = leading.fold(f)((_, l) => greater(l.max, f))
+          val target = lesser(c.max, stepAbove(base))
+          Option.when(target > f)(proxyBid(bidId, rival, target, trading.leader))
       }
     }
+  }
+
+  /**
+   * П-02 в живом финале (ADR-049, О-6.B). Те же две ветки, но цель округляется вниз до сетки `f, f + step(f), …`: в
+   * финале производная ставка всегда равна цене, которую ведущий мог бы объявить, а лимит, которого не хватает на
+   * полный шаг, исчерпан (Т-42). Сетка строится обычным шагом — окон в `Live` нет.
+   *
+   * Пока ask выше цены, лимиты меряются по нему: кандидат — лимит с `max ≥ ask`, а не `max > f`, ставка — не ниже ask,
+   * а в ветке смены лидера цель не опускается ниже ask, хотя база считается от цены (`max(ask, base + шаг)`): после
+   * скачка ask больше чем на шаг `цена + шаг` лежит ниже него. Без ask `f` — сама цена, и правило то же, что в
+   * `Online`, с округлением. Когда обоим лимитам хватает только на одну точку, её берёт сильнейший (Т-76).
+   */
+  private def resolveLive(trading: TradingState, bidId: BidId): Option[LotEvent.BidPlaced] = {
+    val f = floor(trading)
+    val ask = trading.ask.filter(_ > trading.currentPrice)
+    val reaches = (amount: Money) => ask.fold(amount > f)(threshold => !(amount < threshold))
+    val stepAbove = (price: Money) => saturatedPlus(price, baseStep(trading, price))
+    val onGrid = (target: Money) => StepPolicy.gridFloor(trading.config.stepPolicy, f, target).filter(reaches)
+    val contender = trading.proxyLimits.toList
+      .filter((who, limit) => !trading.leader.contains(who) && reaches(limit.max))
+      .sortBy((_, limit) => (-limit.max.minorUnits, limit.setSeq))
+      .headOption
+    val leading = trading.leader.flatMap(leader => trading.proxyLimits.get(leader).map(leader -> _))
+    contender.flatMap { (rival, c) =>
+      leading match {
+        case Some((leader, l)) if l.max > c.max || (l.max == c.max && l.setSeq < c.setSeq) =>
+          onGrid(lesser(l.max, stepAbove(c.max))).map(proxyBid(bidId, leader, _, trading.leader))
+        case _ =>
+          val price = trading.currentPrice
+          val next = stepAbove(leading.fold(price)((_, l) => greater(l.max, price)))
+          onGrid(lesser(c.max, ask.fold(next)(greater(_, next)))).map(proxyBid(bidId, rival, _, trading.leader))
+      }
+    }
+  }
+
+  /** Цена на шаг выше, насыщенная на `Long.MaxValue`, как в [[resolve]]. */
+  private def saturatedPlus(price: Money, step: Money): Money =
+    if (price.minorUnits > Long.MaxValue - step.minorUnits) price.copy(minorUnits = Long.MaxValue)
+    else price.copy(minorUnits = price.minorUnits + step.minorUnits)
 
   /**
    * Анти-снайп (П-04): одно продление на команду, сколько бы ставок она ни записала. Ставки команды несут одно время
@@ -472,6 +551,21 @@ object Lot {
       leadingBidId = Some(placed.bidId)
     )
 
+  /** Торги живого финала из удержания; общее для [[apply]] и пересчёта на возврате в [[decide]]. */
+  private def resumed(held: HeldState): TradingState =
+    TradingState(
+      config = held.config,
+      currentPrice = held.currentPrice,
+      ask = None,
+      leader = held.leader,
+      leadingBidId = held.leadingBidId,
+      phase = Phase.Live,
+      deadline = None,
+      extensionsUsed = held.extensionsUsed,
+      proxyLimits = held.proxyLimits,
+      markedForFinal = false
+    )
+
   /** Лимиты после `ProxyLimitSet`: новый заменяет прежний лимит участника (И-03). */
   private def limited(
       limits: Map[ParticipantId, ProxyLimit],
@@ -490,9 +584,10 @@ object Lot {
    * `DeadlineExtended` ставит дедлайн и счётчик из события, а не прибавляет к ним.
    *
    * Удержание `LotHeldForFinal` переносит цену, лидера, лимиты и счётчик продлений из торгов как есть, а возврат
-   * `LotResumed` строит торги живого финала из удержания: фаза `Live`, без дедлайна и ask, отметка снята (П-09). Окон
-   * сниженного шага удержание не несёт (RFC-011, «Состояние лота»), и в финале их нет; правило шага не применяет их в
-   * `Live` и тогда, когда они в состоянии лежат.
+   * `LotResumed` строит торги живого финала из удержания: фаза `Live`, без дедлайна и ask, отметка снята (П-09).
+   * `AskAdvanced` ставит ask и больше ничего не трогает: цену и лидера меняет только ставка (П-08). Окон сниженного
+   * шага удержание не несёт (RFC-011, «Состояние лота»), и в финале их нет; правило шага не применяет их в `Live` и
+   * тогда, когда они в состоянии лежат.
    */
   def apply(lot: Lot, envelope: Envelope): Lot = {
     val state = (lot.state, envelope.event) match {
@@ -529,21 +624,8 @@ object Lot {
             extensionsUsed = trading.extensionsUsed
           )
         )
-      case (LotState.Held(held), LotEvent.LotResumed) =>
-        LotState.Trading(
-          TradingState(
-            config = held.config,
-            currentPrice = held.currentPrice,
-            ask = None,
-            leader = held.leader,
-            leadingBidId = held.leadingBidId,
-            phase = Phase.Live,
-            deadline = None,
-            extensionsUsed = held.extensionsUsed,
-            proxyLimits = held.proxyLimits,
-            markedForFinal = false
-          )
-        )
+      case (LotState.Held(held), LotEvent.LotResumed) => LotState.Trading(resumed(held))
+      case (LotState.Trading(trading), LotEvent.AskAdvanced(ask)) => LotState.Trading(trading.copy(ask = Some(ask)))
       case (LotState.Trading(trading), placed: LotEvent.BidPlaced) => LotState.Trading(bidden(trading, placed))
       case (LotState.Trading(trading), LotEvent.DeadlineExtended(deadline, extensionsUsed)) =>
         LotState.Trading(trading.copy(deadline = Some(deadline), extensionsUsed = extensionsUsed))

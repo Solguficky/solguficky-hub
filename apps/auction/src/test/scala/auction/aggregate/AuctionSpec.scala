@@ -2,6 +2,7 @@ package auction.aggregate
 
 import auction.aggregate.AuctionFixtures.*
 import auction.catalog.LotId
+import auction.lot.AdvanceAsk
 import auction.lot.AntiSnipe
 import auction.lot.LotConfigInput
 import auction.lot.LotFixtures
@@ -251,6 +252,25 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         Auction.replay(Auction.initial, shuffled) shouldBe Auction.replay(Auction.initial, journal)
       }
       Auction.replay(Auction.initial, journal).lots shouldBe Set(lot)
+    }
+  }
+
+  "ask of the auctioneer" should {
+
+    "sends the lot its ask with the op_id of the command in any phase" in {
+      val trading = Auction.apply(holding(scheduled), AuctionEnvelope(9, op(9), AuctionEvent.PrebiddingStarted))
+      List(holding(born), trading).foreach { auction =>
+        Auction.decide(auction, AdvanceLotAsk(lot, money(50000), op(10))) shouldBe Right(
+          AdvanceAsk(money(50000), op(10))
+        )
+      }
+    }
+
+    "refuses an ask to a lot outside the registry and of an auction that was never born" in {
+      Auction.decide(started, AdvanceLotAsk(lot, money(50000), op(10))) shouldBe
+        Left(AdvanceLotAskRejected.LotNotInAuction)
+      Auction.decide(Auction.initial, AdvanceLotAsk(lot, money(50000), op(10))) shouldBe
+        Left(AdvanceLotAskRejected.AuctionNotFound)
     }
   }
 
