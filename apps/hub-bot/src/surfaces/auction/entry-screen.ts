@@ -25,6 +25,12 @@ import {
 } from "../../auction-ui/index.js";
 import type { Presentation } from "../../core/config.js";
 import {
+  admittersLine,
+  applyLabel,
+  menuTitle,
+  strayHintText,
+} from "../../core/entry.js";
+import {
   OUTBID_FREQUENCIES,
   type OutbidFrequency,
   outbidExplanation,
@@ -37,6 +43,7 @@ import type {
   AuctionSummary,
 } from "./auctions.js";
 import {
+  applyCallback,
   defaultFaq,
   entryCallback,
   type FaqContent,
@@ -54,11 +61,16 @@ import type { ScreenId } from "./screen-catalog.js";
 // Общий FAQ, меню и списки аукционов (PER-453) — оболочка. Лента и карточка
 // лота — тело аукционного дерева (PER-306), лист ставки — PER-317. Правила экрана
 // — дизайн-код (docs/design/bot/design-code.md): жирный заголовок, HTML,
-// последний ряд `[‹ Родитель]`, кадр отказа с выходом. Корневого экрана «Меню»
-// нет: «Аукционы», «Прошедшие», FAQ и, у бота с Notifications, «Избранное»
-// (PER-495) и «Уведомления» (PER-515) — корни, их открывают команды (решение
-// владельца 10 октября 2026 года).
+// последний ряд `[‹ Родитель]`, кадр отказа с выходом. Корень один — «Меню»
+// (PER-592): «Аукционы» с «Прошедшими» внутри, FAQ и, у бота с Notifications,
+// «Избранное» (PER-495) и «Уведомления» (PER-515) — его разделы, их же
+// открывают команды.
 export type AuctionEntryScreen =
+  | { kind: "menu"; favorites: boolean; notifications: boolean }
+  // Приветствие человека без права: заявку ставит только его кнопка.
+  | { kind: "welcome"; sourceCode?: string }
+  // Подсказка на сообщение вне вопроса (PER-592).
+  | { kind: "hint"; openQuestion: boolean }
   | { kind: "faq" }
   | { kind: "notify"; current: OutbidFrequency }
   | { kind: "auctions"; list: AuctionListPage }
@@ -75,9 +87,9 @@ export type AuctionEntryScreen =
 
 // Выход кадра «недоступно». `retry` — «Повторить» с данными действия, на
 // котором случился отказ: хранилища у экранов нет, и повтор едет в кнопке.
-// `enter` — отказ на входе: повтор зовёт тот же `RequestAccess`, и возврата
-// рядом с ним нет — он разрешил бы личность без заявки и показал бы человеку
-// «заявка на рассмотрении», которой нет. `answer` — отказ на ответе на вопрос:
+// `enter` — отказ на `/start` или на «Подать заявку»: повтор несёт то же
+// действие с кодом канала, и возврата рядом с ним нет — у человека, которого
+// бот ещё не пустил, возвращаться некуда. `answer` — отказ на ответе на вопрос:
 // ответ в кнопку не помещается, его присылают ещё раз, а вопрос остаётся
 // открытым.
 export type UnavailableExit =
@@ -145,8 +157,7 @@ const untitled = "Лот без названия";
 // только переходом, без ссылки: её даёт администратор (ADR-064, пункт 2).
 // Первое предложение — жирное: оно кадру отказа вместо заголовка.
 export const deniedTexts: Record<AuctionDenial, string> = {
-  "not-admitted":
-    "<b>Заявка на рассмотрении.</b> Участие в аукционе пока не открыто.",
+  "not-admitted": `<b>Заявка на рассмотрении.</b> Участие в аукционе пока не открыто. ${admittersLine}`,
   "in-community":
     "<b>Ты уже участник сообщества солегуфиков.</b> Аукционы для тебя — в основном боте сообщества: открой сходку и нажми «Лоты».",
   declined: "<b>Заявка на участие в аукционе отклонена.</b>",
@@ -155,11 +166,24 @@ export const deniedTexts: Record<AuctionDenial, string> = {
 
 const faqTitle = "Правила и FAQ";
 // Выход кадра, у которого родителя нет, — в корень основного раздела
-// «Аукционы»: кнопки «Меню» нет (решение владельца 10 октября 2026 года).
+// «Аукционы» (дизайн-код, «Навигация»).
 const toAuctions = {
   text: "‹ Аукционы",
   callback_data: entryCallback("auctions"),
 };
+// Возврат разделов в корневое меню (PER-592).
+const toMenu = {
+  text: `‹ ${menuTitle}`,
+  callback_data: entryCallback("menu"),
+};
+
+// Приветствие человека без права аукциона (PER-592): что за бот, что за
+// аукцион и что дальше. Заявку ставит только кнопка под ним.
+const welcomeTitle = "Привет! Это бот аукциона сообщества солегуфиков.";
+const welcomeParagraphs = [
+  "Здесь проходят аукционы сообщества: лоты, ставки и итоги торгов. Торговать могут допущенные участники.",
+  `Чтобы участвовать, подай заявку. ${admittersLine} Если заявка уже подана, кнопка покажет, что с ней.`,
+];
 const notifyTitle = "Уведомления";
 const favoritesTitle = "Избранное";
 const linkSign = " ↗";
@@ -201,6 +225,59 @@ export function renderEntryScreen(
 ): RenderedScreen {
   const faq = options.faq ?? defaultFaq;
   switch (screen.kind) {
+    // Корневое меню: разделы кнопками в порядке списка команд, возврата нет.
+    case "menu":
+      return {
+        id: "menu",
+        format: "html",
+        text: screenText(
+          menuTitle,
+          "Разделы бота. Те же разделы — в кнопке меню рядом с полем ввода.",
+        ),
+        keyboard: [
+          [{ text: "Аукционы", callback_data: entryCallback("auctions") }],
+          ...(screen.favorites
+            ? [
+                [
+                  {
+                    text: favoritesTitle,
+                    callback_data: encodeAuctionCallback({
+                      kind: "favorites",
+                      page: 0,
+                    }),
+                  },
+                ],
+              ]
+            : []),
+          ...(screen.notifications
+            ? [[{ text: notifyTitle, callback_data: notifyCallback() }]]
+            : []),
+          [{ text: faqTitle, callback_data: entryCallback("faq") }],
+        ],
+      };
+    case "welcome":
+      return {
+        id: "welcome",
+        format: "html",
+        text: screenText(welcomeTitle, ...welcomeParagraphs.map(escapeHtml)),
+        keyboard: [
+          [
+            {
+              text: applyLabel,
+              callback_data: applyCallback(screen.sourceCode),
+            },
+          ],
+        ],
+      };
+    case "hint": {
+      const hint = strayHintText(screen.openQuestion);
+      return {
+        id: "hint",
+        format: "html",
+        text: `${heading(hint.lead)} ${escapeHtml(hint.rest)}`,
+        keyboard: [[toMenu]],
+      };
+    }
     case "faq": {
       return {
         id: "faq",
@@ -226,10 +303,11 @@ export function renderEntryScreen(
                 }
               : { text: `Задать вопрос${linkSign}`, url: faq.questionUrl },
           ],
-          // FAQ — корень, ряда навигации у него нет. «Аукционы» под ним —
-          // единственная кнопка, которая ставит отметку ознакомления, и
-          // открывает список аукционов.
+          // «Аукционы» под FAQ — единственная кнопка, которая ставит отметку
+          // ознакомления, и открывает список аукционов; последний ряд —
+          // возврат в меню (PER-592).
           [{ text: "Аукционы", callback_data: entryCallback("read") }],
+          [toMenu],
         ],
       };
     }
@@ -237,7 +315,7 @@ export function renderEntryScreen(
     // строкой «Сейчас: …» в теле, а не меткой на кнопке (дизайн-код,
     // «Уведомления»). Выбор отменяется с того же экрана, поэтому
     // подтверждения «Да» у него нет: что сработало, говорит ответ на нажатие.
-    // Экран — корень, его открывает команда, и ряда навигации у него нет.
+    // Экран — раздел под меню: последний ряд — «‹ Меню».
     case "notify":
       return {
         id: "notify",
@@ -247,12 +325,15 @@ export function renderEntryScreen(
           outbidExplanation,
           `Сейчас: ${outbidLabels[screen.current].state}.`,
         ),
-        keyboard: OUTBID_FREQUENCIES.map((frequency) => [
-          {
-            text: outbidLabels[frequency].button,
-            callback_data: notifyCallback(frequency),
-          },
-        ]),
+        keyboard: [
+          ...OUTBID_FREQUENCIES.map((frequency) => [
+            {
+              text: outbidLabels[frequency].button,
+              callback_data: notifyCallback(frequency),
+            },
+          ]),
+          [toMenu],
+        ],
       };
     case "auctions":
     case "past":
@@ -272,8 +353,11 @@ export function renderEntryScreen(
       const body = renderBody(screen.body, options);
       // Подтверждение и вопрос несут только свои ряды: «Да» и «Нет», «Отмена».
       if (body.asks === true || isConfirm(body.id)) return body;
-      // Избранное, открытое командой, — корень: возврата у тела нет, и ряда
-      // навигации оболочка не ставит.
+      // Избранное — раздел под меню: возврата у тела нет, и «‹ Меню» ставит
+      // оболочка (PER-592).
+      if (body.id === "favorites") {
+        return { ...body, keyboard: [...body.keyboard, [toMenu]] };
+      }
       // Родителя ленты тело не знает: возврат в её список ставит оболочка.
       if (body.id === "feed") {
         const parent = screen.parent ?? "auctions";
@@ -373,9 +457,11 @@ const listTexts: Record<
 };
 
 // Список аукционов по дизайн-коду: жирный заголовок с номером страницы, строка
-// на аукцион в теле и ряд на аукцион в клавиатуре, листание стрелками. Список —
-// корень раздела, ряда навигации у него нет (решение владельца 10 октября
-// 2026 года). Пустой список говорит об этом текстом.
+// на аукцион в теле и ряд на аукцион в клавиатуре, листание стрелками.
+// «Аукционы» — раздел под меню: последним рядом содержимого — «Прошедшие»,
+// история внутри основного раздела, как «Архив» под «Сходками» хаба, а
+// последний ряд — «‹ Меню». «Прошедшие» возвращают в «Аукционы» (PER-592).
+// Пустой список говорит об этом текстом, и выход у него тот же.
 function renderList(
   kind: ListAction,
   list: AuctionListPage,
@@ -414,7 +500,18 @@ function renderList(
           }),
         },
       ]),
+      ...(kind === "auctions"
+        ? [
+            [
+              {
+                text: listTexts.past.backName,
+                callback_data: entryCallback("past"),
+              },
+            ],
+          ]
+        : []),
       ...(paging.length === 0 ? [] : [paging]),
+      [kind === "auctions" ? toMenu : toAuctions],
     ],
   };
 }

@@ -272,7 +272,7 @@ describe("administrators in the hub bot", () => {
 
     await harness.bot.handleUpdate(command("/manage"));
 
-    expect(labels(last(harness.calls))).toEqual(["Администраторы"]);
+    expect(labels(last(harness.calls))).toEqual(["Администраторы", "‹ Меню"]);
   });
 
   it("keeps the item from an administrator without grant_admins", async () => {

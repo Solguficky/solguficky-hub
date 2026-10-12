@@ -176,9 +176,12 @@ function parseCardCursor(
 }
 
 type PlainAction =
-  // Старая кнопка «Меню» и «‹ Меню» в чатах: корня «Меню» больше нет, и она
-  // открывает «Сходки» (решение владельца 10 октября 2026 года).
+  // «‹ Меню» и старые кнопки «Меню» в чатах: корневое меню (PER-592).
   | { kind: "home" }
+  // «Подать заявку» под приветствием: единственное действие, которое ставит
+  // заявку (дополнение ADR-060). Код канала прихода едет в кнопке, пока
+  // помещается: `v1:apply` или `v1:apply:<код>`.
+  | { kind: "apply"; sourceCode?: string }
   // Корни разделов, которые открывают команды; кнопкой — повтор после сбоя.
   | { kind: "settings" }
   | { kind: "help" }
@@ -705,6 +708,9 @@ function stepData(step: QuestionStep): string {
 // сообщением, а след остаётся в истории как был (дизайн-код, «Доставка»).
 export type CallbackAction = PlainAction & { trace?: true };
 
+/** Данные кнопки «Подать заявку» без кода канала. */
+export const applyData = "v1:apply";
+
 const tracePrefix = "v1:t:";
 
 /** Данные кнопки следа для действия, которое на экране несёт `data`. */
@@ -753,6 +759,13 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:community:allow")
     return { kind: "ask-allowed-username" };
   if (parsed.data === "v1:nav:start") return { kind: "home" };
+  if (parsed.data === applyData) return { kind: "apply" };
+  if (parsed.data.startsWith(`${applyData}:`)) {
+    const code = parsed.data.slice(applyData.length + 1);
+    return /^[A-Za-z0-9_-]*$/.test(code)
+      ? { kind: "apply", sourceCode: code }
+      : { kind: "malformed" };
+  }
   if (parsed.data === "v1:nav:settings") return { kind: "settings" };
   if (parsed.data === "v1:nav:help") return { kind: "help" };
   if (parsed.data === "v1:nav:next") return { kind: "next" };

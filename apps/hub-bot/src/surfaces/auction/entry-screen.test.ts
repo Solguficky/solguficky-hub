@@ -60,17 +60,83 @@ function lotScreen(
 }
 
 describe("renderEntryScreen", () => {
-  // Решение владельца 10 октября 2026 года: корня «Меню» нет, FAQ — корень
-  // без ряда навигации, а кнопка «Аукционы» под ним ставит отметку
-  // ознакомления и открывает список.
-  it("ends the FAQ root with the button that opens the auctions", () => {
+  // FAQ — раздел под меню (PER-592): кнопка «Аукционы» под ним ставит
+  // отметку ознакомления и открывает список, последний ряд — «‹ Меню».
+  it("ends the FAQ with the button that opens the auctions and the way back", () => {
     const screen = renderEntryScreen({ kind: "faq" }, options);
-    expect(screen.keyboard.at(-1)).toEqual([
-      { text: "Аукционы", callback_data: entryCallback("read") },
+    expect(screen.keyboard.slice(-2)).toEqual([
+      [{ text: "Аукционы", callback_data: entryCallback("read") }],
+      [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
     ]);
-    expect(
-      screen.keyboard.flat().some((button) => button.text.startsWith("‹ ")),
-    ).toBe(false);
+  });
+
+  // Корневое меню — общий родитель разделов (PER-592): «Аукционы», у бота с
+  // Notifications «Избранное» и «Уведомления», затем FAQ; возврата нет.
+  it("lists the sections in the menu and the Notifications ones only with it", () => {
+    const labels = (favorites: boolean, notifications: boolean) =>
+      renderEntryScreen({ kind: "menu", favorites, notifications }, options)
+        .keyboard.flat()
+        .map((button) => button.text);
+    expect(labels(false, false)).toEqual(["Аукционы", "Правила и FAQ"]);
+    expect(labels(true, true)).toEqual([
+      "Аукционы",
+      "Избранное",
+      "Уведомления",
+      "Правила и FAQ",
+    ]);
+    const menu = renderEntryScreen(
+      { kind: "menu", favorites: true, notifications: true },
+      options,
+    );
+    expect(menu.id).toBe("menu");
+    expect(menu.text).toMatch(/^<b>Меню<\/b>\n\n/);
+  });
+
+  // Приветствие без права (дополнение ADR-060): что за бот, что за аукцион,
+  // кто даёт допуск — и одна кнопка, которая ставит заявку; код канала едет
+  // в её данных.
+  it("welcomes with one button that applies and carries the channel code", () => {
+    const screen = renderEntryScreen(
+      { kind: "welcome", sourceCode: "chat" },
+      options,
+    );
+    expect(screen.id).toBe("welcome");
+    expect(screen.text).toContain("бот аукциона сообщества солегуфиков");
+    expect(screen.text).toContain(
+      "Доступ выдаёт администратор или мейнтейнер.",
+    );
+    expect(screen.keyboard).toEqual([
+      [{ text: "Подать заявку", callback_data: "v1:entry:apply:chat" }],
+    ]);
+    expect(renderEntryScreen({ kind: "welcome" }, options).keyboard).toEqual([
+      [{ text: "Подать заявку", callback_data: "v1:entry:apply" }],
+    ]);
+  });
+
+  it("names who admits on the waiting frame", () => {
+    const screen = renderEntryScreen(
+      { kind: "denied", reason: "not-admitted" },
+      options,
+    );
+    expect(screen.text).toBe(
+      "<b>Заявка на рассмотрении.</b> Участие в аукционе пока не открыто. Доступ выдаёт администратор или мейнтейнер.",
+    );
+  });
+
+  it("hints how to answer an open question and where to go otherwise", () => {
+    const open = renderEntryScreen(
+      { kind: "hint", openQuestion: true },
+      options,
+    );
+    const none = renderEntryScreen(
+      { kind: "hint", openQuestion: false },
+      options,
+    );
+    expect(open.text).toMatch(/^<b>Ответ не дошёл до вопроса\.<\/b> /);
+    expect(none.text).toMatch(/^<b>Я отвечаю на кнопки и команды\.<\/b> /);
+    expect(none.keyboard).toEqual([
+      [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+    ]);
   });
 
   // Состояния FAQ возвращают в FAQ (дизайн-код, «Дерево бота аукциона»).
@@ -746,6 +812,8 @@ describe("auction lists", () => {
         { text: "←", callback_data: entryCallback("past") },
         { text: "→", callback_data: listCallback("past", 2) },
       ],
+      // «Прошедшие» — внутри «Аукционов» и возвращают в них (PER-592).
+      [{ text: "‹ Аукционы", callback_data: entryCallback("auctions") }],
     ]);
   });
 
@@ -802,9 +870,12 @@ describe("auction lists", () => {
     expect(screen.text).toBe(
       "<b>Аукционы</b>\n\nАктивных аукционов сейчас нет.",
     );
-    // Список — корень раздела: ряда навигации нет (решение владельца
-    // 10 октября 2026 года).
-    expect(screen.keyboard).toEqual([]);
+    // Пустой список — не тупик (PER-592): «Прошедшие» внутри раздела и
+    // возврат в меню.
+    expect(screen.keyboard).toEqual([
+      [{ text: "Прошедшие", callback_data: entryCallback("past") }],
+      [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+    ]);
   });
 });
 

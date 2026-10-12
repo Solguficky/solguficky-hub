@@ -1,3 +1,4 @@
+import { applyLabel } from "../../src/core/entry.js";
 import {
   admitLabel,
   confirmNoLabel,
@@ -81,9 +82,8 @@ const callbackDataLimit = 64;
 const defaultMaxRows = 12;
 
 // Слова, которые дизайн-код заменил: возврат называет родителя, подтверждение —
-// действие, состояние переключателя пишется словом. Кнопки «Меню» нет: корня
-// «Меню» нет ни в одном боте, между разделами человек ходит командами
-// (решение владельца 10 октября 2026 года).
+// действие, состояние переключателя пишется словом. «Меню» — имя корня, и
+// кнопка к нему пишется возвратом «‹ Меню», а не голым словом (PER-592).
 const retiredLabels: ReadonlySet<string> = new Set([
   "Меню",
   "Назад",
@@ -179,8 +179,8 @@ function checkRules(
       }
       break;
     case "tree": {
-      // Ряд навигации — одна кнопка `[‹ Родитель]`: кнопки «Меню» нет
-      // (решение владельца 10 октября 2026 года).
+      // Ряд навигации — одна кнопка `[‹ Родитель]`; у корней разделов это
+      // `[‹ Меню]` (PER-592).
       const parents = backNamesOf(config, entry.parent);
       const [back, ...rest] = labels(last);
       const backOk =
@@ -263,6 +263,21 @@ function checkRules(
           "nav",
           `здесь хотя бы одна кнопка и только ссылки со знаком «↗», а пришло ${describeRows(rows)}`,
         ]);
+      }
+      break;
+    }
+    case "apply": {
+      // Приветствие без права: заявку ставит только эта кнопка (PER-592,
+      // дополнение ADR-060), возврата нет — дерева за приветствием нет.
+      const [only, ...rest] = labels(last);
+      if (only !== applyLabel || rest.length > 0) {
+        found.push([
+          "nav",
+          `приветствие кончается рядом [${applyLabel}], а пришло ${describeRows(rows)}`,
+        ]);
+      }
+      if (buttons.some((button) => button.text.startsWith(backSign))) {
+        found.push(["nav", "у приветствия возврата нет"]);
       }
       break;
     }

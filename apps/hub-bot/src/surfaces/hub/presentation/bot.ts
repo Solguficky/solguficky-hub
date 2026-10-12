@@ -29,9 +29,15 @@ import {
   defaultTelegramEnvironment,
   type TelegramEnvironment,
 } from "../../../core/config.js";
+import {
+  applyLabel,
+  createHintedAlbums,
+  strayHintText,
+  withSourceCode,
+} from "../../../core/entry.js";
 import { countFailure, type FailureCategory } from "../../../core/failures.js";
 import type { LogFields, Logger } from "../../../core/logging.js";
-import { registerChatCommands } from "../../../core/menu-commands.js";
+import { createChatCommandsSync } from "../../../core/menu-commands.js";
 import { outbidToast } from "../../../core/notifications/outbid.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type { Tracing } from "../../../core/tracing.js";
@@ -47,6 +53,7 @@ import {
   type HubAccess,
   hubAccessErrors,
   hubAccessText,
+  hubWelcome,
 } from "../application/hub-access.js";
 import {
   type CommunityToday,
@@ -139,6 +146,7 @@ import {
 import { newLotId, newLotIdOf, newLotKey } from "./new-lot-id.js";
 import { telegramTextLimit } from "./notification-message.js";
 import {
+  applyData,
   auctionFaqData,
   type CallbackAction,
   type CardCursor,
@@ -223,11 +231,13 @@ import {
   type Parent,
   refusalText,
   retryLabel,
+  screenText,
   toCard,
   toCommunity,
   toManage,
   toMaterials,
   toMeetups,
+  toMenu,
   toSourceChannels,
   withNav,
 } from "./screens/kit.js";
@@ -267,6 +277,7 @@ import {
   manageGroups,
   manageItemParent,
   manageScreen,
+  menuScreen,
   settingsScreen,
 } from "./screens/menu.js";
 import {
@@ -611,6 +622,9 @@ type UpdateContext = ShellContext & {
   postersRejected?: string;
   // Сходки аукционов, которые бот видел: родитель ленты лотов.
   auctionParents?: AuctionParents;
+  // Личность, разрешённая на этом update: по её правам после ответа
+  // сверяется список команд чата (PER-592).
+  commandsPerson?: Person;
 };
 
 type BoundaryOutcome =
@@ -656,16 +670,39 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       environment: runtime.environment ?? defaultTelegramEnvironment,
     });
   const albums = createSeenAlbums();
-  bot.use((ctx, next) => {
+  const hintedAlbums = createHintedAlbums();
+  const syncCommands = createChatCommandsSync(runtime.logger);
+  bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
     ctx.auctionParents = auctionParents;
-    return next();
+    await next();
+    // Команды кнопки меню клиента — по правам, на каждом действии, где
+    // личность разрешена, а не только на `/start` (PER-592): держателю права
+    // управления — свой список чата с `/manage`, у снятого он снимается.
+    // Запись идёт после ответа и его не задерживает; отказ Telegram пишется в
+    // лог, а вызов уходит, только когда список расходится с тем, что процесс
+    // уже записал.
+    const person = ctx.commandsPerson;
+    const chatId = ctx.chat?.id;
+    if (person === undefined || chatId === undefined) return;
+    await syncCommands(
+      ctx.api,
+      chatId,
+      canOpenManagement(person) ? commandsFor(person) : undefined,
+    );
   });
   bot.on("callback_query:data", (ctx) =>
     handleCallback(ctx, runtime, questions, lotPhotos),
   );
   bot.on("message", (ctx) =>
-    handleMessage(ctx, runtime, questions, { files, albums }, lotPhotos),
+    handleMessage(
+      ctx,
+      runtime,
+      questions,
+      { files, albums },
+      lotPhotos,
+      hintedAlbums,
+    ),
   );
   bot.catch((botError) => {
     writeBoundary(
@@ -683,6 +720,7 @@ async function handleMessage(
   questions: Map<string, PendingInput>,
   photos: { files: TelegramFiles; albums: SeenAlbums },
   lotPhotos: LotPhotos,
+  hintedAlbums: ReturnType<typeof createHintedAlbums>,
 ): Promise<void> {
   let outcome: BoundaryOutcome | undefined;
   let useCase: ProductUseCase | undefined;
@@ -1663,6 +1701,20 @@ async function handleMessage(
       };
       return;
     }
+    if (parsed.kind === "stray") {
+      // Альбом приходит сообщением на каждый снимок: подсказка — одна.
+      const group = ctx.message?.media_group_id;
+      if (group !== undefined && !hintedAlbums.first(group)) {
+        outcome = {
+          level: "info",
+          message: "stray album message ignored",
+          result: "ok",
+        };
+        return;
+      }
+      outcome = await hintStray(ctx, questions);
+      return;
+    }
     if (parsed.kind === "ignored") {
       outcome = {
         level: "info",
@@ -1683,43 +1735,44 @@ async function handleMessage(
     }
     const deepLink = "deepLink" in parsed ? parsed.deepLink : undefined;
     useCase = deepLink?.kind === "meetup" ? "view_meetup" : "find_meetup";
-    // `/start` и `/menu` — вход на поверхность (ADR-060): вместо разрешения
-    // личности бот зовёт `RequestAccess` с кругом хаба, и Identity гасит белый
-    // список или ставит заявку. Личность по-прежнему разрешается один раз на
-    // update.
-    const accessAnswer = await runtime.identity.requestAccess(
-      hubAccessRequest(parsed, deepLink),
+    // `/start` заявку не ставит (PER-592, дополнение ADR-060 от 2026-10-12):
+    // личность разрешается, как у нажатия, и белый список Identity гасит в том
+    // же вызове. Человеку без права хаба — приветствие с кнопкой «Подать
+    // заявку», и код канала из ссылки `s_<код>` едет в ней.
+    // Отказ Identity на входе — кадр недоступности через `replyFailClosed`:
+    // если Telegram отвергнет и его, граница сохранит причину входа.
+    const resolved = await runtime.identity.resolve(
+      toResolveIdentityInput(parsed.telegramUserId, parsed.telegramUsername),
       rpcCall(ctx, useCase),
     );
-    if (accessAnswer.kind !== "answered") {
+    if (resolved.kind !== "resolved") {
       outcome = await replyFailClosed(
         ctx,
-        identityFailureOutcome(accessAnswer, useCase),
+        identityFailureOutcome(resolved, useCase),
       );
       return;
     }
-    const entry = decideHubEntry(accessAnswer);
-    if (entry.kind === "unknown-outcome") {
-      outcome = await replyFailClosed(ctx, {
-        level: "error",
-        message: "identity answered an unknown access request outcome",
-        result: "error",
-        use_case: useCase,
-        identity_id: entry.identityId,
-        error_category: "invariant",
-        error: "access_request_outcome_unspecified",
-      });
+    const identity = {
+      person: { identityId: resolved.identityId, rights: resolved.rights },
+      blocked: resolved.blocked,
+    };
+    ctx.commandsPerson = identity.person;
+    const denied = await denyHubAccessIfNeeded(
+      ctx,
+      runtime,
+      identity,
+      useCase,
+      false,
+      deepLink?.kind === "source" ? deepLink.code : undefined,
+    );
+    if (denied !== undefined) {
+      outcome = denied;
       return;
     }
-    const identity = entry.person;
-    const access = entry.access;
-    if (access !== "admitted") {
-      outcome = await denyHubAccess(ctx, access, identity, useCase, false);
-      return;
-    }
+    const person = identity.person;
     if (deepLink?.kind === "meetup") {
       const result = await runtime.dispatcher.execute({
-        identity,
+        identity: person,
         intent: "view-meetup",
         meetupId: tokenToUuid(deepLink.payload.slice(2)),
         ...rpcCall(ctx, "view_meetup"),
@@ -1729,7 +1782,7 @@ async function handleMessage(
         result,
         false,
         runtime.presentation ?? "rich",
-        canManageMeetups(identity),
+        canManageMeetups(person),
       );
       outcome = screenBoundary(result, {
         ok: ["meetup-card"],
@@ -1738,15 +1791,10 @@ async function handleMessage(
         useCase,
       });
     } else {
-      // Вход без ссылки на сходку открывает корень основного раздела «Сходки»:
-      // корневого экрана «Меню» нет (решение владельца 10 октября 2026 года).
-      outcome = await openNavScreen(ctx, runtime, identity, "hub", useCase);
+      // Вход без ссылки на сходку открывает корневое меню: из него видно
+      // всё, что доступно человеку (PER-592).
+      outcome = await openMenu(ctx, person, useCase);
     }
-    // Команды кнопки меню клиента — по правам: держателю права управления
-    // свой список чата с `/manage`, остальным прежний список чата снимается
-    // (решение владельца 10 октября 2026 года). Запись идёт после экрана и
-    // входа не задерживает; отказ Telegram пишется в лог.
-    await registerHubCommands(ctx, runtime, identity);
   } catch (cause) {
     if (isScreenDeliveryFailure(cause)) {
       outcome = await replyScreenFailure({
@@ -1886,6 +1934,12 @@ async function handleCallback(
         action.mode === "c")
     ) {
       useCase = "create_meetup";
+    }
+    // «Подать заявку» — вход, а не нажатие по дереву: вместо разрешения
+    // личности бот ставит заявку (дополнение ADR-060 от 2026-10-12).
+    if (action.kind === "apply") {
+      outcome = await applyForHub(ctx, runtime, action.sourceCode);
+      return;
     }
     const retryCallback =
       action.kind === "outdated"
@@ -2884,12 +2938,12 @@ async function handleCallback(
       outcome = await openNextMeetup(ctx, runtime, person, useCase);
       return;
     }
-    // Старая кнопка «Меню» ведёт в «Сходки»: корня «Меню» больше нет.
-    if (
-      action.kind === "hub" ||
-      action.kind === "home" ||
-      action.kind === "outdated"
-    ) {
+    // «‹ Меню» и прежние кнопки «Меню» открывают корневое меню (PER-592).
+    if (action.kind === "home") {
+      outcome = await openMenu(ctx, person, useCase);
+      return;
+    }
+    if (action.kind === "hub" || action.kind === "outdated") {
       outcome = await openNavScreen(
         ctx,
         runtime,
@@ -5008,6 +5062,7 @@ async function openNavScreen(
 }
 
 const commandUseCase: Record<SectionCommand, ProductUseCase> = {
+  menu: "find_meetup",
   meetups: "find_meetup",
   next: "view_meetup",
   settings: "manage_notifications",
@@ -5018,6 +5073,7 @@ const commandUseCase: Record<SectionCommand, ProductUseCase> = {
 // Данные кнопки того же раздела: по ним «Повторить» под кадром сбоя повторяет
 // команду нажатием.
 const commandRetry: Record<SectionCommand, string> = {
+  menu: toMenu.data,
   meetups: "v1:nav:hub",
   next: "v1:nav:next",
   settings: "v1:nav:settings",
@@ -5054,6 +5110,8 @@ async function handleSectionCommand(
   if (denied !== undefined) return denied;
   const person = identity.person;
   switch (command) {
+    case "menu":
+      return openMenu(ctx, person, useCase);
     case "meetups":
       return openNavScreen(ctx, runtime, person, "hub", useCase);
     case "next":
@@ -5095,22 +5153,109 @@ async function handleSectionCommand(
   }
 }
 
-// Команды кнопки меню клиента по правам человека: держателю права управления
-// — список чата с `/manage`, остальным — общий, а прежний список чата
-// снимается (решение владельца 10 октября 2026 года).
-async function registerHubCommands(
+// Корневое меню — общий родитель разделов (PER-592): его открывают `/menu`,
+// вход без ссылки на сходку, «‹ Меню» с разделов и прежние кнопки «Меню».
+async function openMenu(
+  ctx: UpdateContext,
+  person: Person,
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  await showScreen(ctx, menuScreen(person));
+  return {
+    level: "info",
+    message: "menu sent",
+    result: "ok",
+    use_case: useCase,
+  };
+}
+
+/**
+ * «Подать заявку» под приветствием — единственное действие, которое ставит
+ * заявку (PER-592, дополнение ADR-060 от 2026-10-12): `RequestAccess` в
+ * очередь сообщества с именем для карточки модератора и кодом канала из
+ * кнопки. Исход политики дерева тот же, что у прежнего входа на `/start`:
+ * белый список, сработавший между приветствием и нажатием, открывает меню,
+ * остальным — кадр ожидания, отказа или блокировки на месте приветствия.
+ */
+async function applyForHub(
   ctx: UpdateContext,
   runtime: BotRuntime,
-  person: Person,
-): Promise<void> {
-  const chatId = ctx.chat?.id;
-  if (chatId === undefined) return;
-  await registerChatCommands(
-    ctx.api,
-    chatId,
-    canOpenManagement(person) ? commandsFor(person) : undefined,
-    runtime.logger,
+  sourceCode: string | undefined,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "find_meetup";
+  const from = ctx.from;
+  if (from === undefined) {
+    return unexpectedOutcome("sender is missing", undefined, useCase);
+  }
+  const answer = await runtime.identity.requestAccess(
+    hubAccessRequest(
+      {
+        ...toResolveIdentityInput(BigInt(from.id), from.username),
+        firstName: from.first_name,
+      },
+      sourceCode === undefined
+        ? undefined
+        : { kind: "source", code: sourceCode },
+    ),
+    rpcCall(ctx, useCase),
   );
+  if (answer.kind !== "answered") {
+    // «Повторить» несёт ту же кнопку: заявка идемпотентна, и повтор с тем же
+    // кодом канала второй заявки не поставит.
+    await showRefusal(
+      ctx,
+      unavailableText,
+      new InlineKeyboard().text(
+        retryLabel,
+        ctx.callbackQuery?.data ?? applyData,
+      ),
+    );
+    return identityFailureOutcome(answer, useCase);
+  }
+  const entry = decideHubEntry(answer);
+  if (entry.kind === "unknown-outcome") {
+    return replyFailClosed(ctx, {
+      level: "error",
+      message: "identity answered an unknown access request outcome",
+      result: "error",
+      use_case: useCase,
+      identity_id: entry.identityId,
+      error_category: "invariant",
+      error: "access_request_outcome_unspecified",
+    });
+  }
+  ctx.commandsPerson = entry.person;
+  if (entry.access !== "admitted") {
+    return denyHubAccess(ctx, entry.access, entry.person, useCase, true);
+  }
+  return openMenu(ctx, entry.person, useCase);
+}
+
+/**
+ * Сообщение, которое бот не читает (PER-592): текст без ответа на вопрос,
+ * незнакомая команда, файл. Есть открытый вопрос в этом чате — подсказка, как
+ * на него ответить: реплай слетает в Web K и при нажатии мимо. Нет — куда
+ * идти. Выход — «‹ Меню». Личность не разрешается: подсказке она не нужна.
+ */
+async function hintStray(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+): Promise<BoundaryOutcome> {
+  const prefix = `${ctx.chat?.id ?? "unknown"}:`;
+  const open = [...questions.keys()].some((key) => key.startsWith(prefix));
+  const hint = strayHintText(open);
+  await showScreen(ctx, {
+    id: "hint",
+    text: `${heading(hint.lead)} ${escapeHtml(hint.rest)}`,
+    keyboard: withNav(new InlineKeyboard(), toMenu),
+    format: "HTML",
+    delivery: "new",
+  });
+  return {
+    level: "info",
+    message: open ? "stray answer hinted" : "stray message hinted",
+    result: "ok",
+  };
 }
 
 // «Помощь» — корень раздела: текст о боте — тот же, что приветствие входа, —
@@ -7083,23 +7228,43 @@ async function denyHubAccessIfNeeded(
   identity: { person: Person; blocked: boolean },
   useCase: ProductUseCase | undefined,
   edit: boolean,
+  // Код канала из ссылки `/start`: едет в кнопке «Подать заявку».
+  sourceCode?: string,
 ): Promise<BoundaryOutcome | undefined> {
   const access = decideHubAccess(identity.person.rights, identity.blocked);
   if (access === "admitted") {
     return undefined;
   }
-  return denyHubAccess(ctx, access, identity.person, useCase, edit);
+  return denyHubAccess(ctx, access, identity.person, useCase, edit, sourceCode);
 }
 
 // Кадр отказа хаба без выхода: гостю намёк на бот аукциона не нужен, он там
-// уже есть (RFC-015, С-4).
+// уже есть (RFC-015, С-4). Человеку без права, о заявке которого разрешение
+// личности не знает, — приветствие с кнопкой «Подать заявку» (PER-592).
 async function denyHubAccess(
   ctx: UpdateContext,
   access: Exclude<HubAccess, "admitted">,
   person: Person,
   useCase: ProductUseCase | undefined,
   edit: boolean,
+  sourceCode?: string,
 ): Promise<BoundaryOutcome> {
+  if (access === "unapplied") {
+    await showScreen(ctx, {
+      id: "welcome",
+      text: screenText(
+        hubWelcome.title,
+        ...hubWelcome.paragraphs.map(escapeHtml),
+      ),
+      keyboard: new InlineKeyboard().text(
+        applyLabel,
+        withSourceCode(applyData, sourceCode),
+      ),
+      format: "HTML",
+      ...(edit ? {} : { delivery: "new" as const }),
+    });
+    return hubAccessOutcome(access, person.identityId, useCase);
+  }
   const text = hubAccessText(access, person.identityId, ctx.from?.username);
   await showFrame(
     ctx,
@@ -7158,14 +7323,12 @@ async function resolvePerson(
       outcome: identityFailureOutcome(resolved, useCase),
     };
   }
-  return {
-    kind: "resolved",
-    person: {
-      identityId: resolved.identityId,
-      rights: resolved.rights,
-    },
-    blocked: resolved.blocked,
+  const person = {
+    identityId: resolved.identityId,
+    rights: resolved.rights,
   };
+  ctx.commandsPerson = person;
+  return { kind: "resolved", person, blocked: resolved.blocked };
 }
 
 /// Прошедшая дата цифрами `ДДММГГГГЧЧММ` для данных кнопки подтверждения;
@@ -8110,6 +8273,7 @@ function rpcCall(ctx: UpdateContext, useCase?: ProductUseCase): RpcMetadata {
 function callbackUseCase(
   kind:
     | "home"
+    | "apply"
     | "settings"
     | "help"
     | "next"
@@ -8327,6 +8491,7 @@ function callbackUseCase(
     case "console-window-remove":
       return "manage_auction";
     case "home":
+    case "apply":
     case "help":
     case "hub":
     case "archive":

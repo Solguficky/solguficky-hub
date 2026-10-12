@@ -18,7 +18,12 @@ import {
 import { type AuctionListing, listPage, readAuctions } from "./auctions.js";
 import type { EntryPorts } from "./entry-ports.js";
 import type { AuctionEntryScreen, UnavailableExit } from "./entry-screen.js";
-import { type ListAction, parseEntryCallback, startCallback } from "./faq.js";
+import {
+  applyCallback,
+  type ListAction,
+  parseEntryCallback,
+  startCallback,
+} from "./faq.js";
 
 // Отказ зависимости для записи в лог: класс по словарю logging.md и код gRPC.
 // Человеку ни то ни другое не показывается.
@@ -81,8 +86,8 @@ export function tradeCallback(input: {
 // недоступны — fail-closed: человек получает «недоступно», а не экран без
 // проверки.
 //
-// `firstName` нужен одной кнопке — повтору входа под кадром «недоступно»
-// после `/start`: она зовёт тот же `RequestAccess`, что и команда.
+// `firstName` нужен одной кнопке — «Подать заявку»: она зовёт `RequestAccess`
+// с именем для карточки модератора.
 export async function routeAuctionCallback(input: {
   ports: EntryPorts;
   user: TelegramUser;
@@ -120,10 +125,11 @@ export function routeAuctionReply(input: {
   });
 }
 
-// `/start` — вход на поверхность (ADR-060): вместо разрешения личности бот
-// зовёт `RequestAccess` в очередь аукциона, с кодом канала из payload `s_<код>` и
-// именем для карточки модератора. Identity гасит белый список или ставит
-// заявку, а ответ по исходу выбирает политика пакета.
+// `/start` заявку не ставит (PER-592, дополнение ADR-060 от 2026-10-12): он
+// разрешает личность, как нажатие, и белый список Identity гасит в том же
+// вызове. Человеку без права — приветствие с кнопкой «Подать заявку», и код
+// канала из payload `s_<код>` едет в ней; заявку в очередь аукциона ставит
+// только эта кнопка.
 export function routeAuctionStart(input: {
   ports: EntryPorts;
   user: TelegramUser;
@@ -155,27 +161,39 @@ async function routeEntry(input: {
     input.action.kind === "callback"
       ? parseEntryCallback(input.action.data)
       : undefined;
-  // Вход — команда `/start` либо её повтор кнопкой после сбоя: оба зовут
-  // `RequestAccess`, остальные действия разрешают личность и заявок не ставят.
-  const entering =
+  // `/start` — команда либо её повтор кнопкой после сбоя: он разрешает
+  // личность, а код канала несёт дальше, в кнопку «Подать заявку».
+  const starting: { sourceCode?: string } | undefined =
     input.action.kind === "start"
-      ? input.action
-      : input.action.kind === "callback" && local?.action === "start"
-        ? {
-            firstName: input.action.firstName,
-            ...(local.sourceCode === undefined
-              ? {}
-              : { sourceCode: local.sourceCode }),
-          }
+      ? input.action.sourceCode === undefined
+        ? {}
+        : { sourceCode: input.action.sourceCode }
+      : local?.action === "start"
+        ? local.sourceCode === undefined
+          ? {}
+          : { sourceCode: local.sourceCode }
         : undefined;
+  // Заявка — только «Подать заявку»: единственное действие, которое зовёт
+  // `RequestAccess`; остальные разрешают личность и заявок не ставят.
+  const entering =
+    input.action.kind === "callback" && local?.action === "apply"
+      ? {
+          firstName: input.action.firstName,
+          ...(local.sourceCode === undefined
+            ? {}
+            : { sourceCode: local.sourceCode }),
+        }
+      : undefined;
   // Выход кадра «недоступно»: повтор несёт данные того же действия. Ответ на
   // вопрос в кнопку не помещается — его присылают ещё раз.
   const exit: UnavailableExit =
     entering !== undefined
-      ? { kind: "enter", data: startCallback(entering.sourceCode) }
-      : input.action.kind === "callback"
-        ? { kind: "retry", data: input.action.data }
-        : { kind: "answer" };
+      ? { kind: "enter", data: applyCallback(entering.sourceCode) }
+      : starting !== undefined
+        ? { kind: "enter", data: startCallback(starting.sourceCode) }
+        : input.action.kind === "callback"
+          ? { kind: "retry", data: input.action.data }
+          : { kind: "answer" };
   const unavailable = { kind: "unavailable", exit } as const;
   if (
     input.action.kind !== "start" &&
@@ -236,14 +254,40 @@ async function routeEntry(input: {
     rights: viewer.rights,
     blocked: identity.blocked,
   });
+  // Без права аукциона и без блокировки — приветствие с кнопкой заявки:
+  // есть ли заявка, разрешение личности не знает, а «на рассмотрении» без
+  // неё было бы ложью (PER-592).
+  if (denial === "not-admitted") {
+    return {
+      screen: {
+        kind: "welcome",
+        ...(starting?.sourceCode === undefined
+          ? {}
+          : { sourceCode: starting.sourceCode }),
+      },
+      identityId,
+    };
+  }
   if (denial !== undefined) {
     return { screen: { kind: "denied", reason: denial }, identityId };
   }
+  // Корневое меню — общий родитель разделов (PER-592). Отметкой FAQ оно не
+  // закрыто: иначе «‹ Меню» с FAQ вернула бы в FAQ, а разделы за меню
+  // закрыты ею по-прежнему.
+  const menu = {
+    screen: {
+      kind: "menu",
+      favorites: input.ports.favorites !== undefined,
+      notifications: input.ports.outbid !== undefined,
+    },
+    identityId,
+  } as const;
   try {
     const action = local?.action;
     if (action === "faq" || action === "details" || action === "question") {
       return { screen: { kind: action }, identityId };
     }
+    if (action === "menu") return menu;
     // Отметку ставит только кнопка «Аукционы» под FAQ: фиксируется действие,
     // не доставка Telegram и не факт прочтения. Запись идемпотентна: таймаут
     // безопасно повторить тем же действием. Дальше кнопка открывает список,
@@ -273,16 +317,16 @@ async function routeEntry(input: {
         identityId,
       };
     };
-    // Вход и прежняя кнопка «Меню» открывают корень основного раздела —
-    // «Аукционы»: корня «Меню» нет (решение владельца 10 октября 2026 года).
+    // Вход и допущенная заявка открывают корневое меню (PER-592); «Аукционы»
+    // под FAQ — список, который отметку и ставит.
     if (
       input.action.kind === "start" ||
-      action === "start" ||
-      action === "menu" ||
-      action === "read"
+      starting !== undefined ||
+      entering !== undefined
     ) {
-      return await listScreen("auctions");
+      return menu;
     }
+    if (action === "read") return await listScreen("auctions");
     if (action === "auctions" || action === "past") {
       return await listScreen(action);
     }

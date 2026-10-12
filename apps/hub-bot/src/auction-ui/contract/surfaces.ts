@@ -1,6 +1,7 @@
 import {
   type AuctionDenial,
   type AuctionSurface,
+  admission,
   applicationQueue,
   decideEntry,
   handleAuctionUpdate,
@@ -17,11 +18,18 @@ const KNOWN: Record<AuctionSurface["kind"], true> = {
 };
 export const AUCTION_SURFACES = Object.keys(KNOWN) as AuctionSurface["kind"][];
 
+// Отказ разрешения личности: без права — приветствие, о заявке оно не знает.
 const ANSWERS: Record<AuctionDenial, AccessAnswer> = {
-  "not-admitted": "pending",
+  "not-admitted": "welcome",
   "in-community": "in-community",
   declined: "declined",
   blocked: "blocked",
+};
+
+// Отказ заявки: её исход виден человеку — «на рассмотрении», отказ, блок.
+const ENTRY_ANSWERS: Record<AuctionDenial, AccessAnswer> = {
+  ...ANSWERS,
+  "not-admitted": "pending",
 };
 
 // Одна фабрика contract suite, поверхность — параметр: нажатие доведено ровно
@@ -40,13 +48,23 @@ export const auctionContractApp =
       },
     );
 
-// Одна фабрика матрицы доступа, поверхность — параметр: вход на `/start` и
-// нажатие доведены до политики шлюза так, как их доводит процесс.
+// Одна фабрика матрицы доступа, поверхность — параметр: `/start`, нажатие и
+// «Подать заявку» доведены до политики шлюза так, как их доводит процесс.
+// `/start` разрешает личность и заявки не ставит (PER-592, дополнение
+// ADR-060); заявку ставит только «Подать заявку».
 export const accessMatrixApp =
   (kind: AuctionSurface["kind"]): AccessMatrixApp =>
   (ports) =>
   async ({ from, firstName, action }) => {
     if (action.kind === "start") {
+      const identity = await ports.identity.resolveIdentity(from);
+      const refused = admission(kind, {
+        rights: identity.viewer.rights,
+        blocked: identity.blocked,
+      });
+      return refused === undefined ? "admitted" : ANSWERS[refused];
+    }
+    if (action.kind === "apply") {
       const entry = decideEntry(
         kind,
         await ports.entry.requestAccess({
@@ -59,7 +77,9 @@ export const accessMatrixApp =
         }),
       );
       if (entry.kind === "entered") return "admitted";
-      return entry.kind === "denied" ? ANSWERS[entry.reason] : "unavailable";
+      return entry.kind === "denied"
+        ? ENTRY_ANSWERS[entry.reason]
+        : "unavailable";
     }
     const result = await handleAuctionUpdate(
       { kind, ports },

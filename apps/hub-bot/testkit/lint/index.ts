@@ -16,6 +16,7 @@ export type {
   WaivableRule,
   Waiver,
 } from "./catalog.js";
+export { inspectCatalog } from "./graph.js";
 export {
   inspectCall,
   type LintConfig,

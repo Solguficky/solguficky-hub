@@ -449,8 +449,8 @@ describe("meetup card auction row", () => {
 
     expect(auction.lookups).toEqual([]);
     expect(auction.listAuctionLots).not.toHaveBeenCalled();
-    // Кадр ожидания допуска P-14, а не экран аукциона.
-    expect(lastScreen(calls).text).toContain("Заявка на доступ ждёт проверки");
+    // Приветствие с кнопкой заявки (PER-592), а не экран аукциона.
+    expect(lastScreen(calls).text).toContain("Чтобы войти, подай заявку.");
   });
 
   it("does not call Auction for a blocked person", async () => {

@@ -6,8 +6,8 @@ export type BotCommand = { command: string; description: string };
 
 // Список команд кнопки меню клиента — у каждой поверхности свой
 // (`botCommands` рядом с её экранами), запись — общая. Команды — постоянный
-// вход: корневого экрана «Меню» нет, разделы открываются командами (решение
-// владельца 10 октября 2026 года).
+// вход в разделы, а `/menu` открывает корневое меню — общего родителя
+// разделов (решение владельца по прогону 12 октября 2026 года, PER-592).
 //
 // Меню — удобство, а не условие работы: отказ Telegram пишется в лог и не
 // выбрасывается, иначе он остановил бы процесс до начала polling. Прежний
@@ -43,7 +43,7 @@ export async function registerChatCommands(
   chatId: number,
   commands: readonly BotCommand[] | undefined,
   logger?: Logger,
-): Promise<void> {
+): Promise<boolean> {
   const scope = { type: "chat" as const, chat_id: chatId };
   try {
     if (commands === undefined) {
@@ -51,11 +51,61 @@ export async function registerChatCommands(
     } else {
       await api.setMyCommands(commands, { scope });
     }
+    return true;
   } catch (cause) {
     countFailure("dependency_unavailable");
     logger?.warn("chat bot commands not registered", {
       error_category: "dependency_unavailable",
       error: cause instanceof Error ? cause.message : String(cause),
     });
+    return false;
   }
+}
+
+/** Сверка списка команд чата с правами: см. `createChatCommandsSync`. */
+export type ChatCommandsSync = (
+  api: Pick<Api, "setMyCommands" | "deleteMyCommands">,
+  chatId: number,
+  commands: readonly BotCommand[] | undefined,
+) => Promise<void>;
+
+/**
+ * Список команд чата сверяется с правами на каждом действии человека, а не
+ * только на `/start` и при выдаче прав (PER-592): права меняются и без них —
+ * выдачей до выкладки, снятием. Что стоит в чате, процесс помнит сам, и
+ * Telegram получает вызов, только когда желаемый список с памятью
+ * расходится. После рестарта память пуста, и первое действие держателя права
+ * пишет его список заново — так права, выданные до выкладки, доходят до
+ * клиента.
+ * Отказ Telegram в память не попадает: следующее действие повторит запись.
+ * Память ограничена `limit` чатами: самый давний вытесняется и потом просто
+ * пишется ещё раз.
+ */
+export function createChatCommandsSync(
+  logger?: Logger,
+  limit = 10_000,
+): ChatCommandsSync {
+  const written = new Map<number, string>();
+  return async (api, chatId, commands) => {
+    const print =
+      commands === undefined
+        ? "-"
+        : commands.map((entry) => entry.command).join(" ");
+    const known = written.get(chatId);
+    if (known === print) return;
+    // Чат, которого процесс ещё не видел — после рестарта или вытесненный из
+    // памяти, — без своего списка не трогается: иначе после каждой выкладки
+    // первое действие каждого человека стоило бы вызова Bot API. Цена —
+    // список, оставшийся от прав, снятых, пока процесс этот чат не помнил: он
+    // уходит, только когда права снова выдадут и снимут в живом процессе, а до
+    // того `/manage` из него отвечает отказом без права.
+    if (known === undefined && commands === undefined) return;
+    if (!(await registerChatCommands(api, chatId, commands, logger))) return;
+    written.delete(chatId);
+    written.set(chatId, print);
+    if (written.size > limit) {
+      const [oldest] = written.keys();
+      if (oldest !== undefined) written.delete(oldest);
+    }
+  };
 }

@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import type { AccessRight } from "../../../../auction-ui/index.js";
+import { menuTitle } from "../../../../core/entry.js";
 import type { BotCommand } from "../../../../core/menu-commands.js";
 import { botCommands, managerCommands } from "../commands.js";
 import {
@@ -9,15 +10,18 @@ import {
   type Parent,
   screenText,
   toManage,
+  toMeetups,
+  toMenu,
+  toSettings,
   withNav,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
 
-// Корни разделов, которые открывают команды: «Настройки», «Помощь» и
-// «Управление» с его группами. Корневого экрана «Меню» нет — между разделами
-// человек ходит командами кнопки меню клиента (решение владельца 10 октября
-// 2026 года). Подпись кнопки раздела совпадает с заголовком экрана, который она
-// открывает.
+// Корневое меню и разделы, которые открывают команды: «Настройки», «Помощь»
+// и «Управление» с его группами. Меню — общий родитель разделов: команды
+// открывают раздел сразу, а «‹ Меню» с раздела ведёт в него (PER-592;
+// пересматривает решение владельца 10 октября 2026 года). Подпись кнопки
+// раздела совпадает с заголовком экрана, который она открывает.
 
 // Бот показывает и пропускает пункты по праву, которое проверит сервис
 // (RFC-016): вход, который ведёт в отказ, хуже его отсутствия. Круг и набор
@@ -56,6 +60,38 @@ export function canOpenManagement(person: Viewer): boolean {
 export function commandsFor(person: Viewer): readonly BotCommand[] {
   return canOpenManagement(person) ? managerCommands : botCommands;
 }
+
+/**
+ * Корневое меню: разделы бота кнопками в порядке списка команд — тот же
+ * источник, `commandsFor`, поэтому кнопки меню и команды одного человека не
+ * расходятся. «Управление» — держателю права управления. Возврата у корня нет.
+ */
+export function menuScreen(person: Viewer): ShownScreen {
+  const keyboard = new InlineKeyboard();
+  for (const entry of commandsFor(person)) {
+    const data = sectionData[entry.command];
+    if (data !== undefined) nextRow(keyboard).text(entry.description, data);
+  }
+  return {
+    id: "menu",
+    text: screenText(
+      menuTitle,
+      "Разделы бота. Те же разделы — в кнопке меню рядом с полем ввода.",
+    ),
+    keyboard,
+    format: "HTML",
+  };
+}
+
+// Кнопка раздела в меню — те же данные, что «Повторить» под его командой.
+// Своей команды `/menu` у меню кнопки нет.
+const sectionData: Readonly<Record<string, string | undefined>> = {
+  meetups: toMeetups.data,
+  next: "v1:nav:next",
+  settings: toSettings.data,
+  manage: toManage.data,
+  help: "v1:nav:help",
+};
 
 /**
  * Группы «Управления» (решение владельца 10 октября 2026 года): вместо девяти
@@ -175,7 +211,7 @@ function itemsKeyboard(items: readonly Item[]): InlineKeyboard {
 }
 
 /**
- * «Управление» — корень раздела: ряда возврата нет. Человек с одной группой
+ * «Управление» — раздел под корневым меню: возврат «‹ Меню». Человек с одной группой
  * видит сразу её пункты, с несколькими — кнопки групп. Ключ создания рождается
  * при отрисовке и лежит в кнопке: два быстрых нажатия несут один ключ, а
  * перерисовка — новый. Заявки в аукцион лежат рядом с заявками в сообщество:
@@ -196,8 +232,8 @@ export function manageScreen(
         );
   return {
     id: "manage",
+    keyboard: withNav(keyboard, toMenu),
     text: screenText("Управление"),
-    keyboard,
     format: "HTML",
   };
 }
@@ -219,19 +255,22 @@ export function manageGroupScreen(
   };
 }
 
-/** «Настройки» — корень раздела; пока в нём один пункт — уведомления. */
+/** «Настройки» — раздел под меню; пока в нём один пункт — уведомления. */
 export function settingsScreen(): ShownScreen {
   return {
     id: "settings",
     text: screenText("Настройки", "Что и когда бот тебе присылает."),
-    keyboard: new InlineKeyboard().text("Уведомления", "v1:notify:global"),
+    keyboard: withNav(
+      new InlineKeyboard().text("Уведомления", "v1:notify:global"),
+      toMenu,
+    ),
     format: "HTML",
   };
 }
 
 /**
- * «Помощь» — корень раздела без кнопок: текст о боте и команды строками.
- * `welcome` — текст о боте, абзацы через пустую строку.
+ * «Помощь» — раздел под меню: текст о боте и команды строками, кнопка одна —
+ * «‹ Меню». `welcome` — текст о боте, абзацы через пустую строку.
  */
 export function helpScreen(person: Viewer, welcome: string): ShownScreen {
   return {
@@ -246,7 +285,7 @@ export function helpScreen(person: Viewer, welcome: string): ShownScreen {
         ),
       ].join("\n"),
     ),
-    keyboard: new InlineKeyboard(),
+    keyboard: withNav(new InlineKeyboard(), toMenu),
     format: "HTML",
   };
 }

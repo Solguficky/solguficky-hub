@@ -11,7 +11,7 @@ import {
   notificationMarkup,
   parseTraceCallback,
   renderNotification,
-  traceAuctionsCallback,
+  traceFaqCallback,
   traceLotCallback,
   traceNotifyCallback,
 } from "./message.js";
@@ -140,11 +140,10 @@ describe("parseTraceCallback", () => {
     expect(parseTraceCallback("v1:entry:menu")).toBeUndefined();
   });
 
-  // Вход в аукцион из сообщения о допуске — тоже след (PER-442).
+  // Вход в аукцион из сообщения о допуске — тоже след (PER-442): FAQ, а не
+  // список аукционов, — у допущенного впереди правила (PER-592).
   it("carries an entry button inside a trace", () => {
-    expect(parseTraceCallback(traceAuctionsCallback())).toBe(
-      "v1:entry:auctions",
-    );
+    expect(parseTraceCallback(traceFaqCallback())).toBe("v1:entry:faq");
   });
 
   it("refuses a trace that carries neither a lot nor an entry button", () => {
@@ -168,8 +167,8 @@ describe("access granted", () => {
     const message = renderNotification({ kind: "access-granted" });
     expect(message.text).toBe("Тебя допустили к аукциону.");
     expect(message.button).toEqual({
-      text: "Открыть аукцион",
-      callback_data: traceAuctionsCallback(),
+      text: "Правила и FAQ",
+      callback_data: traceFaqCallback(),
     });
   });
 

@@ -21,12 +21,13 @@ describe("FAQ content", () => {
     expect(screen.text).toContain("Отменить сделанную ставку нельзя");
     for (const text of Object.values(defaultFaq))
       expect(screen.text).toContain(text);
-    // «Аукционы» — последний ряд, и только эта кнопка ставит отметку
-    // ознакомления.
+    // Только «Аукционы» ставит отметку ознакомления; последний ряд —
+    // возврат в меню (PER-592).
     expect(screen.keyboard).toEqual([
       [{ text: "Прочитать подробнее", callback_data: "v1:entry:details" }],
       [{ text: "Задать вопрос", callback_data: "v1:entry:question" }],
       [{ text: "Аукционы", callback_data: "v1:entry:read" }],
+      [{ text: "‹ Меню", callback_data: "v1:entry:menu" }],
     ]);
   });
 

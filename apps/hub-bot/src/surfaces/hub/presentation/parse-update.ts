@@ -1,3 +1,4 @@
+import { carriesPersonContent } from "../../../core/entry.js";
 import type { DeepLink } from "../application/types.js";
 import {
   type ResolveIdentityInput,
@@ -15,24 +16,27 @@ export type ParsedUpdate =
   // для карточки модератора (ADR-060, пункт 23).
   | ({ kind: "start"; firstName: string } & ResolveIdentityInput &
       ({ deepLink: DeepLink } | Record<never, never>))
-  // Команда раздела из кнопки меню клиента: открывает корень своего раздела
-  // новым сообщением (решение владельца 10 октября 2026 года).
+  // Команда раздела из кнопки меню клиента: открывает свой раздел новым
+  // сообщением, `/menu` — корневое меню (PER-592).
   | ({ kind: "command"; command: SectionCommand } & ResolveIdentityInput)
+  // Сообщение человека в личном чате, которое бот не читает: текст без
+  // команды, незнакомая команда, файл. Ответ на вопрос сюда не доходит — его
+  // разбирают раньше. Бот отвечает подсказкой, а не молчит (PER-592).
+  | { kind: "stray" }
   | { kind: "ignored" }
   | { kind: "malformed" };
 
 export type SectionCommand =
+  | "menu"
   | "meetups"
   | "next"
   | "settings"
   | "manage"
   | "help";
 
-// `/menu` — прежняя команда меню клиента: по старой привычке она открывает
-// «Сходки», как `/meetups`.
 const sectionCommands: Readonly<Record<string, SectionCommand>> = {
+  menu: "menu",
   meetups: "meetups",
-  menu: "meetups",
   next: "next",
   settings: "settings",
   manage: "manage",
@@ -60,11 +64,19 @@ export function parseUpdate(raw: unknown, botUsername?: string): ParsedUpdate {
   }
   const text = message.text;
   if (text === undefined || text === "") {
-    return { kind: "ignored" };
+    // Служебное событие чата подсказки не получает: человек ничего не писал.
+    const rawMessage = (raw as { message?: unknown }).message;
+    return carriesPersonContent(rawMessage)
+      ? { kind: "stray" }
+      : { kind: "ignored" };
   }
   const command = parseCommand(text, botUsername);
-  if (command === undefined) {
+  // Команда другому боту обращена не к нам: на неё бот молчит.
+  if (command === "foreign") {
     return { kind: "ignored" };
+  }
+  if (command === undefined) {
+    return { kind: "stray" };
   }
   const person = {
     ...toResolveIdentityInput(BigInt(from.id), from.username),
@@ -84,7 +96,7 @@ export function parseUpdate(raw: unknown, botUsername?: string): ParsedUpdate {
       ...toResolveIdentityInput(BigInt(from.id), from.username),
     };
   }
-  return { kind: "ignored" };
+  return { kind: "stray" };
 }
 
 type Command = { name: string; argument: string | undefined };
@@ -92,7 +104,7 @@ type Command = { name: string; argument: string | undefined };
 function parseCommand(
   text: string,
   botUsername: string | undefined,
-): Command | undefined {
+): Command | "foreign" | undefined {
   const match = commandPattern.exec(text.trimEnd());
   if (match === null) {
     return undefined;
@@ -103,7 +115,7 @@ function parseCommand(
       botUsername === undefined ||
       mentionedBot.toLowerCase() !== botUsername.toLowerCase()
     ) {
-      return undefined;
+      return "foreign";
     }
   }
   return { name: (match[1] ?? "").toLowerCase(), argument: match[3] };

@@ -165,6 +165,8 @@ function portsWith(
     lot?: Partial<LotView>;
     image?: LotImagePort["getLotImage"];
     entry?: EntryPort["requestAccess"];
+    // Права смотрящего; по умолчанию — право аукциона.
+    rights?: readonly ("place-bids" | "access-hub")[];
     history?: readonly LotHistoryEntryView[];
     names?: Readonly<Record<string, string>>;
     // Аукционы по выборкам; по умолчанию аукцион ленты активен.
@@ -194,7 +196,10 @@ function portsWith(
       : { proxyExplainer: overrides.proxyExplainer }),
     identity: {
       resolveIdentity: async () => ({
-        viewer: { identityId: VIEWER_ID, rights: ["place-bids"] },
+        viewer: {
+          identityId: VIEWER_ID,
+          rights: overrides.rights ?? ["place-bids"],
+        },
         blocked: false,
       }),
     },
@@ -330,7 +335,7 @@ describe("auction bot", () => {
     const restarted = makeBot(ports);
     await restarted.bot.handleUpdate(start);
     expect(restarted.calls[0]?.payload).toMatchObject({
-      text: expect.stringContaining("<b>Аукционы</b>"),
+      text: expect.stringContaining("<b>Меню</b>"),
     });
     await restarted.bot.handleUpdate(press("faq"));
     expect(restarted.calls.at(-1)?.payload).toMatchObject({
@@ -338,9 +343,9 @@ describe("auction bot", () => {
     });
   });
 
-  // Решение владельца 10 октября 2026 года: корня «Меню» нет, `/start`
-  // ознакомившегося открывает «Аукционы» — корень без ряда навигации.
-  it("answers /start with the auctions for a returning admitted participant", async () => {
+  // `/start` ознакомившегося открывает корневое меню — корень без ряда
+  // навигации (PER-592).
+  it("answers /start with the menu for a returning admitted participant", async () => {
     const { bot, calls } = makeBot(publicPorts);
     await bot.handleUpdate(
       startUpdate({
@@ -356,7 +361,7 @@ describe("auction bot", () => {
     expect(calls[0]?.method).toBe("sendMessage");
     expect(calls[0]?.payload).toMatchObject({
       chat_id: 42,
-      text: expect.stringMatching(/^<b>Аукционы<\/b>/),
+      text: expect.stringMatching(/^<b>Меню<\/b>/),
       parse_mode: "HTML",
     });
     expect(JSON.stringify(calls[0]?.payload)).not.toContain("‹ ");
@@ -389,29 +394,33 @@ describe("auction bot", () => {
       "/start s_",
       "/start m_AZLzpLXGfY6fChssPU5fYA",
       "/start not a payload",
-      // `/menu` — прежняя команда меню: открывает «Аукционы», как `/start`
-      // ознакомившегося (решение владельца 10 октября 2026 года).
+      // `/menu` открывает корневое меню, как `/start` ознакомившегося
+      // (PER-592).
       "/menu",
     ]) {
       expect(await answer(text)).toEqual(plain);
     }
   });
 
-  // Код канала — недоверенный хвост `s_<код>`: до Identity он едет как пришёл,
-  // а payload без префикса кода не несёт (ADR-060, пункты 17–18).
+  // Код канала — недоверенный хвост `s_<код>`: `/start` заявку не ставит, а
+  // кладёт его в кнопку «Подать заявку», и до Identity он едет нажатием, как
+  // пришёл; payload без префикса кода не несёт (ADR-060, пункты 17–18;
+  // дополнение от 2026-10-12).
   it.each([
-    ["/start s_tg_ads", { sourceCode: "tg_ads" }],
-    ["/start s_", { sourceCode: "" }],
-    ["/start m_AZLzpLXGfY6fChssPU5fYA", {}],
-    ["/start", {}],
+    ["/start s_tg_ads", { sourceCode: "tg_ads" }, "v1:entry:apply:tg_ads"],
+    ["/start s_", { sourceCode: "" }, "v1:entry:apply:"],
+    ["/start m_AZLzpLXGfY6fChssPU5fYA", {}, "v1:entry:apply"],
+    ["/start", {}, "v1:entry:apply"],
   ])(
-    "enters on %s with the auction queue and the first name",
-    async (text, code) => {
+    "welcomes on %s and applies with the auction queue and the first name",
+    async (text, code, data) => {
       const requestAccess = vi.fn<EntryPort["requestAccess"]>(async () => ({
         viewer: { identityId: VIEWER_ID, rights: [] },
         outcome: "pending",
       }));
-      const { bot, calls } = makeBot(portsWith({ entry: requestAccess }));
+      const { bot, calls } = makeBot(
+        portsWith({ entry: requestAccess, rights: [] }),
+      );
       await bot.handleUpdate(
         startUpdate({
           message_id: 1,
@@ -428,15 +437,21 @@ describe("auction bot", () => {
           ],
         }),
       );
+      expect(requestAccess).not.toHaveBeenCalled();
+      expect(keyboardOf(calls[0]?.payload)).toEqual([
+        [{ text: "Подать заявку", callback_data: data }],
+      ]);
+      await bot.handleUpdate(lotPress({ data }));
       expect(requestAccess).toHaveBeenCalledExactlyOnceWith({
         user: { telegramUserId: 42 },
         queue: "auction",
         firstName: "Person",
         ...code,
       });
-      expect(calls.map((call) => call.payload)).toMatchObject([
-        { text: deniedTexts["not-admitted"] },
-      ]);
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: { text: deniedTexts["not-admitted"] },
+      });
     },
   );
 
@@ -549,6 +564,8 @@ describe("auction bot", () => {
               callback_data: feedButton,
             },
           ],
+          [{ text: "Прошедшие", callback_data: entryCallback("past") }],
+          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
         ],
       },
     });
@@ -570,10 +587,14 @@ describe("auction bot", () => {
       portsWith({ auctions: { active: [], finished: [finished] } }),
     );
     await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
+    // Пустой список — не тупик: «Прошедшие» внутри и «‹ Меню» (PER-592).
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("Активных аукционов сейчас нет."),
       reply_markup: {
-        inline_keyboard: [],
+        inline_keyboard: [
+          [{ text: "Прошедшие", callback_data: entryCallback("past") }],
+          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+        ],
       },
     });
     await bot.handleUpdate(lotPress({ data: entryCallback("past") }));
@@ -591,6 +612,7 @@ describe("auction bot", () => {
               }),
             },
           ],
+          [{ text: "‹ Аукционы", callback_data: entryCallback("auctions") }],
         ],
       },
     });
@@ -614,7 +636,9 @@ describe("auction bot", () => {
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("Прошедших аукционов пока нет."),
       reply_markup: {
-        inline_keyboard: [],
+        inline_keyboard: [
+          [{ text: "‹ Аукционы", callback_data: entryCallback("auctions") }],
+        ],
       },
     });
   });
@@ -688,13 +712,21 @@ describe("auction bot", () => {
   // `/start` при недоступном Identity: заявка не подана, и «Повторить»
   // повторяет вход с тем же кодом канала, а не открывает меню без заявки.
   it("retries the entry with the channel code after a failed /start", async () => {
-    const requestAccess = vi
-      .fn<EntryPort["requestAccess"]>(async () => ({
+    const requestAccess = vi.fn<EntryPort["requestAccess"]>(async () => ({
+      viewer: { identityId: VIEWER_ID, rights: [] },
+      outcome: "pending",
+    }));
+    const resolveIdentity = vi
+      .fn(async () => ({
         viewer: { identityId: VIEWER_ID, rights: [] },
-        outcome: "pending",
+        blocked: false,
       }))
       .mockRejectedValueOnce(new ConnectError("down", Code.Unavailable));
-    const { bot, calls } = makeBot(portsWith({ entry: requestAccess }));
+    const base = portsWith({ entry: requestAccess });
+    const { bot, calls } = makeBot((requestId, deadlineAt) => ({
+      ...base(requestId, deadlineAt),
+      identity: { resolveIdentity },
+    }));
     await bot.handleUpdate(
       startUpdate({
         message_id: 1,
@@ -710,22 +742,25 @@ describe("auction bot", () => {
       payload: {
         reply_markup: {
           inline_keyboard: [
-            // Возврата здесь нет: он разрешил бы личность без заявки.
+            // Возврата здесь нет: человеку, которого бот ещё не пустил,
+            // возвращаться некуда.
             [{ text: "Повторить", callback_data: startCallback("tg_ads") }],
           ],
         },
       },
     });
+    // Повтор — тот же `/start`: заявки нет, код канала доезжает до кнопки.
     await bot.handleUpdate(lotPress({ data: startCallback("tg_ads") }));
-    expect(requestAccess).toHaveBeenLastCalledWith({
-      user: { telegramUserId: 42 },
-      queue: "auction",
-      sourceCode: "tg_ads",
-      firstName: "Person",
-    });
+    expect(requestAccess).not.toHaveBeenCalled();
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
-      payload: { text: deniedTexts["not-admitted"] },
+      payload: {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "Подать заявку", callback_data: "v1:entry:apply:tg_ads" }],
+          ],
+        },
+      },
     });
   });
 
@@ -743,12 +778,12 @@ describe("auction bot", () => {
     });
   });
 
-  // Решение владельца 10 октября 2026 года: разделы открываются командами,
-  // `/menu` — прежняя команда — открывает «Аукционы». Заявки команда не
-  // ставит, а без отметки ознакомления человек видит FAQ.
+  // Разделы открываются командами, `/menu` — корневое меню, `/past` вне
+  // списка команд по старой привычке открывает прошедшие (PER-592). Заявки
+  // команда не ставит, а без отметки ознакомления человек видит FAQ.
   it.each([
     ["/auctions", "<b>Аукционы</b>"],
-    ["/menu", "<b>Аукционы</b>"],
+    ["/menu", "<b>Меню</b>"],
     ["/past", "<b>Прошедшие аукционы</b>"],
   ])(
     "answers %s with its list root without requesting access",
@@ -774,9 +809,8 @@ describe("auction bot", () => {
     },
   );
 
-  // Отсчёт до финала (PER-518): `/menu` открывает «Аукционы», и строка
-  // активного аукциона несёт его хвостом, а кнопка — нет. Экран идёт через
-  // линтер харнесса.
+  // Отсчёт до финала (PER-518): строка активного аукциона несёт его хвостом,
+  // а кнопка — нет. Экран идёт через линтер харнесса.
   it("counts down to the finale in the active auction row", async () => {
     vi.useFakeTimers({
       toFake: ["Date"],
@@ -796,8 +830,8 @@ describe("auction bot", () => {
           date: 0,
           chat: privateChat,
           from,
-          text: "/menu",
-          entities: [{ type: "bot_command", offset: 0, length: 5 }],
+          text: "/auctions",
+          entities: [{ type: "bot_command", offset: 0, length: 9 }],
         }),
       );
       expect(calls[0]?.payload).toMatchObject({
@@ -809,6 +843,8 @@ describe("auction bot", () => {
                 text: "10 октября, сб · идут ставки · 3 лота",
               }),
             ],
+            [expect.objectContaining({ text: "Прошедшие" })],
+            [expect.objectContaining({ text: "‹ Меню" })],
           ],
         },
       });
@@ -830,15 +866,24 @@ describe("auction bot", () => {
         parse_mode: "HTML",
       },
     });
-    expect(keyboardOf(calls[0]?.payload).at(-1)).toEqual([
-      { text: "Аукционы", callback_data: entryCallback("read") },
+    expect(keyboardOf(calls[0]?.payload).slice(-2)).toEqual([
+      [{ text: "Аукционы", callback_data: entryCallback("read") }],
+      [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
     ]);
     expect(requestAccess).not.toHaveBeenCalled();
   });
 
-  // Та же проверка доступа, что у `/start`: недопущенный получает свой кадр.
+  // Та же проверка доступа, что у `/start`: без права — приветствие с
+  // кнопкой заявки, остальным недопущенным — свой кадр.
+  it("welcomes a person without the right on /faq", async () => {
+    const { bot, calls } = makeBot(portsWith({ rights: [] }));
+    await bot.handleUpdate(faqUpdate());
+    expect(keyboardOf(calls[0]?.payload)).toEqual([
+      [{ text: "Подать заявку", callback_data: "v1:entry:apply" }],
+    ]);
+  });
+
   it.each([
-    [{ rights: [], blocked: false }, "not-admitted"],
     [{ rights: ["place-bids"], blocked: true }, "blocked"],
     // Участнику сообщества бот аукциона и FAQ не открывает: только переход
     // в бот хаба (ADR-064, пункт 2).
@@ -1538,11 +1583,11 @@ describe("waiting", () => {
       const base = publicPorts(requestId, deadlineAt);
       return {
         ...base,
-        entry: {
-          requestAccess: (request) =>
+        identity: {
+          resolveIdentity: (user) =>
             new Promise((resolve) => {
               setTimeout(
-                () => resolve(base.entry.requestAccess(request)),
+                () => resolve(base.identity.resolveIdentity(user)),
                 1_500,
               );
             }),
@@ -2008,7 +2053,9 @@ describe("bid leaf delivery", () => {
     expect(methods).not.toContain("editMessageText");
   });
 
-  it("ignores a message that answers no question", async () => {
+  // Сообщение без реплая бот не пропускает молча (PER-592): ответ, у которого
+  // клиент потерял реплай, получает подсказку, а не тишину.
+  it("hints at a message that answers no question", async () => {
     const { bot, calls } = makeBot(trading);
     await bot.handleUpdate({
       update_id: 6,
@@ -2018,6 +2065,58 @@ describe("bid leaf delivery", () => {
         chat: privateChat,
         from,
         text: "1300",
+      },
+    } as Update);
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage"]);
+    expect(calls[0]?.payload).toMatchObject({
+      text: expect.stringMatching(/^<b>Я отвечаю на кнопки и команды\.<\/b>/),
+    });
+    expect(keyboardOf(calls[0]?.payload)).toEqual([
+      [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+    ]);
+  });
+
+  it("stays silent on a service message and hints once at an album", async () => {
+    const { bot, calls } = makeBot(trading);
+    await bot.handleUpdate({
+      update_id: 7,
+      message: {
+        message_id: 12,
+        date: 0,
+        chat: privateChat,
+        from,
+        pinned_message: { message_id: 3, date: 0 },
+      },
+    } as Update);
+    expect(calls).toEqual([]);
+    for (const message_id of [13, 14]) {
+      await bot.handleUpdate({
+        update_id: message_id,
+        message: {
+          message_id,
+          date: 0,
+          chat: privateChat,
+          from,
+          media_group_id: "album-1",
+          photo: [
+            { file_id: "file", file_unique_id: "uniq", width: 1, height: 1 },
+          ],
+        },
+      } as Update);
+    }
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage"]);
+  });
+
+  it("stays silent on a command for another bot", async () => {
+    const { bot, calls } = makeBot(trading);
+    await bot.handleUpdate({
+      update_id: 6,
+      message: {
+        message_id: 11,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: "/start@other_bot",
       },
     } as Update);
     expect(calls).toEqual([]);
@@ -2049,9 +2148,9 @@ describe("outbid frequency", () => {
     return Object.assign(ports, { chosen });
   }
 
-  // Корня «Меню» нет: настройку открывает команда `/notifications` новым
-  // сообщением (решение владельца 10 октября 2026 года).
-  it("opens the settings by the command as a root without a way back", async () => {
+  // Настройку открывает команда `/notifications` новым сообщением; это раздел
+  // под меню (PER-592): пять режимов и последним рядом «‹ Меню».
+  it("opens the settings by the command with the way back to the menu", async () => {
     const { bot, calls } = makeBot(withOutbid({ frequency: "every" }));
     await bot.handleUpdate(commandUpdate("/notifications"));
     expect(calls.at(-1)?.method).toBe("sendMessage");
@@ -2059,8 +2158,10 @@ describe("outbid frequency", () => {
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("<b>Уведомления</b>"),
     });
-    expect(rows).toHaveLength(5);
-    expect(rows.flat().map((button) => button.text)).not.toContain("‹ Меню");
+    expect(rows).toHaveLength(6);
+    expect(rows.at(-1)).toEqual([
+      { text: "‹ Меню", callback_data: entryCallback("menu") },
+    ]);
   });
 
   it("answers the settings command as outdated without Notifications", async () => {
@@ -2099,6 +2200,7 @@ describe("outbid frequency", () => {
           ],
           [{ text: "Не чаще раза в час", callback_data: notifyCallback("60") }],
           [{ text: "Не присылать", callback_data: notifyCallback("off") }],
+          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
         ],
       },
     });
@@ -2389,9 +2491,10 @@ describe("favorite lots", () => {
     const list = lastScreen(second.calls);
     expect(list.text).toContain("<b>Избранное</b>");
     expect(list.text.match(/Кружка/g)).toHaveLength(1);
-    // Избранное, открытое командой, — корень: возврата у него нет.
+    // Избранное — раздел под меню: последним рядом «‹ Меню» (PER-592).
     expect(list.keyboard.flat().map((b) => b.text)).toEqual([
       "Кружка · старт 500 ₽",
+      "‹ Меню",
     ]);
 
     await second.bot.handleUpdate(
@@ -2402,7 +2505,7 @@ describe("favorite lots", () => {
     );
     expect(favorites.marks).toEqual([]);
     await second.bot.handleUpdate(commandUpdate("/favorites"));
-    // Пустой корень кнопок не несёт: его текст — в последнем вызове.
+    // Пустой список несёт только возврат: его текст — в последнем вызове.
     expect(second.calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("Лотов в избранном пока нет."),
     });

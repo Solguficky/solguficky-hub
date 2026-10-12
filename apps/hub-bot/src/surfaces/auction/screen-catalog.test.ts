@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { inspectCall, type ScreenEntry } from "../../../testkit/screen-lint.js";
+import {
+  inspectCall,
+  inspectCatalog,
+  type ScreenEntry,
+} from "../../../testkit/screen-lint.js";
 import type {
   AuctionScreenBody,
   RaffleStatusView,
@@ -525,6 +529,13 @@ const shown: readonly {
   { screen: { kind: "notify", current: "off" } },
   { screen: { kind: "faq" } },
   { screen: { kind: "faq" }, faq: urls },
+  // Корневое меню, приветствие и подсказка (PER-592).
+  { screen: { kind: "menu", favorites: false, notifications: false } },
+  { screen: { kind: "menu", favorites: true, notifications: true } },
+  { screen: { kind: "welcome" } },
+  { screen: { kind: "welcome", sourceCode: "chat" } },
+  { screen: { kind: "hint", openQuestion: true } },
+  { screen: { kind: "hint", openQuestion: false } },
   { screen: { kind: "details" } },
   { screen: { kind: "question" } },
   { screen: { kind: "auctions", list: emptyList } },
@@ -686,6 +697,12 @@ function brokenRules(): Map<ScreenId, Set<string>> {
 describe("auction screen catalog", () => {
   const broken = brokenRules();
 
+  // Корень один — меню, и цепочка родителей каждого экрана дерева доходит
+  // до него (PER-592): «‹» за конечное число шагов приводит в корень.
+  it("roots every tree screen in the menu", () => {
+    expect(inspectCatalog("auction")).toEqual([]);
+  });
+
   it("shows every entry at least once", () => {
     expect(entries.map(([id]) => id).filter((id) => !broken.has(id))).toEqual(
       [],
@@ -718,14 +735,14 @@ describe("auction screens beyond the linter", () => {
     ).toEqual([]);
   });
 
-  // Корня «Меню» нет: FAQ — корень раздела, его открывает команда `/faq`, и
-  // боковой кнопки к нему нет ни под одним экраном (решение владельца
-  // 10 октября 2026 года).
-  it("gives the FAQ no side button under any screen", () => {
+  // FAQ — раздел под меню: кнопка к нему стоит только в самом меню, боковой
+  // кнопки под другими экранами нет (PER-592).
+  it("gives the FAQ a button only in the menu", () => {
     expect(
       buttons
         .filter(({ button }) => button.text === "Правила и FAQ")
-        .map(({ screen }) => screen),
+        .map(({ screen }) => screen)
+        .filter((screen) => screen !== "menu"),
     ).toEqual([]);
   });
 
@@ -784,14 +801,14 @@ describe("auction screens beyond the linter", () => {
       const lines = screen.text
         .split("\n")
         .filter((line) => line.startsWith("• "));
-      // Навигация, листание и действие ленты «Розыгрыш» (ADR-066) — не
-      // содержимое списка.
+      // Навигация, листание, действие ленты «Розыгрыш» (ADR-066) и вход в
+      // «Прошедшие» под «Аукционами» (PER-592) — не содержимое списка.
       const content = screen.keyboard
         .flat()
         .filter(
           (button) =>
             "callback_data" in button &&
-            !/^(‹ |←$|→$|Розыгрыш$)/.test(button.text),
+            !/^(‹ |←$|→$|Розыгрыш$|Прошедшие$)/.test(button.text),
         );
       expect(lines.length, screen.text).toBe(content.length);
     }

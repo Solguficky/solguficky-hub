@@ -6,10 +6,12 @@ import {
   type AccessMatrixInput,
   describeAccessMatrix,
 } from "../../auction-ui/contract/index.js";
+import { applyLabel } from "../../core/entry.js";
 import type { Logger } from "../../core/logging.js";
 import { noopTracing } from "../../core/tracing.js";
 import { createBot } from "./bot.js";
 import { deniedTexts } from "./entry-screen.js";
+import { applyCallback } from "./faq.js";
 
 // Матрица доступа аукционного дерева над ботом поверхности аукциона целиком
 // (ADR-064, п. 19; ADR-060): update проходит тот же `createBot`, что и в
@@ -54,14 +56,17 @@ function updateOf({ from, firstName, action }: AccessMatrixInput): Update {
     type: "private" as const,
     first_name: firstName,
   };
-  if (action.kind === "callback") {
+  if (action.kind !== "start") {
     return {
       update_id: 1,
       callback_query: {
         id: "press",
         chat_instance: "chat",
         from: sender,
-        data: action.data,
+        data:
+          action.kind === "callback"
+            ? action.data
+            : applyCallback(action.sourceCode),
         message: { message_id: 9, date: 0, chat, text: "Лоты" },
       },
     };
@@ -115,12 +120,17 @@ describeAccessMatrix("auction bot", "auction", (ports) => async (input) => {
     botInfo,
   });
   const shown: string[] = [];
+  let welcomed = false;
   // Результат зависит от метода, фикстура его не знает: единственное
   // ослабление типа в тесте.
   const recorder: Transformer = (_prev, method, payload) => {
     reportViolations(inspectCall("auction", method, payload));
     if ("text" in payload && typeof payload.text === "string") {
       shown.push(payload.text);
+    }
+    // Приветствие узнаётся по его кнопке: заявку ставит только она.
+    if (JSON.stringify(payload).includes(`"text":"${applyLabel}"`)) {
+      welcomed = true;
     }
     return Promise.resolve({ ok: true, result: true as never });
   };
@@ -129,6 +139,7 @@ describeAccessMatrix("auction bot", "auction", (ports) => async (input) => {
 
   const [text] = shown;
   if (text === undefined) throw new Error("the person got no answer");
+  if (welcomed) return "welcome";
   for (const [refusal, answer] of refusals) {
     if (text === refusal) return answer;
   }

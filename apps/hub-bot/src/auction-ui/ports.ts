@@ -69,8 +69,9 @@ export type AccessRequestAnswer = {
   outcome: AccessRequestOutcome;
 };
 
-// Порт входа отдельный от `IdentityPort`: шлюзу нажатия он не нужен, а вход
-// зовёт приложение — один раз на `/start`, вместо разрешения личности.
+// Порт входа отдельный от `IdentityPort`: шлюзу нажатия он не нужен, а заявку
+// зовёт приложение — один раз на «Подать заявку», вместо разрешения личности
+// (дополнение ADR-060 от 2026-10-12).
 export interface EntryPort {
   requestAccess(request: AccessRequest): Promise<AccessRequestAnswer>;
 }

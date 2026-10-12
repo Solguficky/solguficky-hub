@@ -6,8 +6,10 @@ import {
   screenTag,
 } from "../src/surfaces/hub/presentation/screens/show.js";
 import { createHarness } from "./harness.js";
+import { inspectCatalog as inspectGraph } from "./lint/index.js";
 import {
   inspectCall,
+  inspectCatalog,
   type ScreenEntry,
   takeViolations,
 } from "./screen-lint.js";
@@ -58,6 +60,7 @@ const catalog: Record<string, ScreenEntry> = {
   refusal: { class: "screen", nav: "exit" },
   "no-access": { class: "screen", nav: "none" },
   "no-access-link": { class: "screen", nav: "links" },
+  welcome: { class: "screen", nav: "apply" },
   notification: { class: "trace", nav: "free" },
   old: {
     class: "screen",
@@ -485,6 +488,24 @@ describe("inspectCall", () => {
     ).toEqual(["callback-data"]);
   });
 
+  // Приветствие без права (PER-592): последним рядом одна кнопка «Подать
+  // заявку», возврата нет — дерева за приветствием нет.
+  it("holds a welcome to the one apply button and no way back", () => {
+    const text = "<b>Привет!</b> Это бот.";
+    expect(
+      rulesOf("sendMessage", screen("welcome", text, [[key("Подать заявку")]])),
+    ).toEqual([]);
+    expect(
+      rulesOf(
+        "sendMessage",
+        screen("welcome", text, [[key("Подать заявку")], [key("‹ Сходки")]]),
+      ),
+    ).toEqual(["nav", "nav"]);
+    expect(rulesOf("sendMessage", screen("welcome", text, []))).toEqual([
+      "nav",
+    ]);
+  });
+
   it("leaves a trace free to keep its own keyboard", () => {
     expect(
       rulesOf("sendMessage", {
@@ -552,5 +573,83 @@ describe("harness recorder", () => {
     });
 
     expect(takeViolations()).toEqual([]);
+  });
+});
+
+// Граф дерева по каталогу (PER-592): «‹» за конечное число шагов приводит в
+// корень. Каталоги здесь свои и маленькие: правило проверяется само по себе.
+describe("inspectCatalog", () => {
+  const menu: ScreenEntry = {
+    class: "screen",
+    nav: "root",
+    title: "Меню",
+    backName: "Меню",
+  };
+  const section = (parent: string, backName?: string): ScreenEntry => ({
+    class: "screen",
+    nav: "tree",
+    title: "Раздел",
+    parent,
+    ...(backName === undefined ? {} : { backName }),
+  });
+  const detailsOf = (graph: Record<string, ScreenEntry>) =>
+    inspectCatalog("hub", graph).map(({ screen, detail }) => [screen, detail]);
+
+  it("accepts one root and chains that reach it", () => {
+    expect(
+      inspectCatalog("hub", {
+        menu,
+        meetups: section("menu", "Сходки"),
+        archive: section("meetups"),
+        refusal: { class: "screen", nav: "exit" },
+        "no-access": { class: "screen", nav: "none" },
+        question: { class: "question", nav: "question" },
+      }),
+    ).toEqual([]);
+  });
+
+  it("flags a catalog with more than one root or none", () => {
+    expect(detailsOf({ menu, meetups: { ...menu, title: "Сходки" } })).toEqual([
+      ["menu, meetups", "корень в каталоге один — корневое меню, а их 2"],
+    ]);
+    expect(detailsOf({ meetups: section("meetups", "Сходки") })).toEqual([
+      ["—", "корень в каталоге один — корневое меню, а их 0"],
+      ["meetups", "цепочка родителей не доходит до корня"],
+    ]);
+  });
+
+  it("flags a missing parent, a parent without a name and a cycle", () => {
+    expect(
+      detailsOf({
+        menu,
+        lost: section("nowhere"),
+        nameless: section("quiet"),
+        quiet: section("menu"),
+        first: section("second", "Первый"),
+        second: section("first", "Второй"),
+      }),
+    ).toEqual([
+      ["lost", "родителя nowhere в каталоге нет"],
+      ["nameless", "у родителя quiet нет имени для «‹ …»"],
+      ["first", "цепочка родителей не доходит до корня"],
+      ["second", "цепочка родителей не доходит до корня"],
+    ]);
+  });
+
+  // Группа без единого экрана — не «все родители дошли до корня», а обрыв.
+  it("flags an empty parent group", () => {
+    expect(
+      inspectGraph({
+        tag: Symbol("screen"),
+        catalog: { menu, card: section("lists") },
+        parentGroups: { lists: [] },
+      }).map(({ screen, detail }) => [screen, detail]),
+    ).toEqual([["card", "группа родителей lists пуста"]]);
+  });
+
+  it("flags a tree screen without a parent", () => {
+    expect(
+      detailsOf({ menu, orphan: { class: "screen", nav: "tree" } }),
+    ).toEqual([["orphan", "у экрана дерева нет родителя"]]);
   });
 });

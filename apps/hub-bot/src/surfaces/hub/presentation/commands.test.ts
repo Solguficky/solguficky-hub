@@ -2,6 +2,7 @@ import type { Api } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 import type { LogFields, Logger } from "../../../core/logging.js";
 import {
+  createChatCommandsSync,
   registerChatCommands,
   registerCommands,
 } from "../../../core/menu-commands.js";
@@ -34,6 +35,7 @@ describe("bot command menu", () => {
     await registerCommands({ setMyCommands }, botCommands, logger);
     expect(setMyCommands).toHaveBeenCalledWith(
       [
+        { command: "menu", description: "Меню" },
         { command: "meetups", description: "Сходки" },
         { command: "next", description: "Ближайшая сходка" },
         { command: "settings", description: "Настройки" },
@@ -66,16 +68,17 @@ describe("bot command menu", () => {
     ]);
   });
 
-  // Решение владельца 10 октября 2026 года: корневого «Меню» нет, разделы
-  // открываются командами; `/menu` в списке больше нет.
+  // `/menu` — корневое меню первым пунктом, затем разделы (PER-592).
   it("puts /manage before /help only in the manager list", () => {
     expect(botCommands.map((entry) => entry.command)).toEqual([
+      "menu",
       "meetups",
       "next",
       "settings",
       "help",
     ]);
     expect(managerCommands.map((entry) => entry.command)).toEqual([
+      "menu",
       "meetups",
       "next",
       "settings",
@@ -120,9 +123,65 @@ describe("bot command menu", () => {
         undefined,
         logger,
       ),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
     expect(records.map((record) => record.message)).toEqual([
       "chat bot commands not registered",
     ]);
+  });
+});
+
+// Сверка списка команд чата на каждом действии (PER-592): Telegram получает
+// вызов только при расхождении с тем, что процесс уже записал.
+describe("chat commands sync", () => {
+  function fakeApi() {
+    const setMyCommands = vi.fn<Api["setMyCommands"]>().mockResolvedValue(true);
+    const deleteMyCommands = vi
+      .fn<Api["deleteMyCommands"]>()
+      .mockResolvedValue(true);
+    return { setMyCommands, deleteMyCommands };
+  }
+
+  it("writes the list once and again only when the rights change", async () => {
+    const api = fakeApi();
+    const sync = createChatCommandsSync();
+    await sync(api, 42, managerCommands);
+    await sync(api, 42, managerCommands);
+    expect(api.setMyCommands).toHaveBeenCalledTimes(1);
+    await sync(api, 42, undefined);
+    await sync(api, 42, undefined);
+    expect(api.deleteMyCommands).toHaveBeenCalledTimes(1);
+    await sync(api, 42, managerCommands);
+    expect(api.setMyCommands).toHaveBeenCalledTimes(2);
+  });
+
+  // После рестарта память пуста: держателю права список пишется на первом
+  // же действии, а чат без своего списка не трогается.
+  it("leaves an unseen chat without a list alone", async () => {
+    const api = fakeApi();
+    const sync = createChatCommandsSync();
+    await sync(api, 7, undefined);
+    expect(api.deleteMyCommands).not.toHaveBeenCalled();
+    await sync(api, 8, managerCommands);
+    expect(api.setMyCommands).toHaveBeenCalledWith(managerCommands, {
+      scope: { type: "chat", chat_id: 8 },
+    });
+  });
+
+  it("retries a write Telegram refused on the next action", async () => {
+    const api = fakeApi();
+    api.setMyCommands.mockRejectedValueOnce(new Error("Too Many Requests"));
+    const sync = createChatCommandsSync();
+    await sync(api, 42, managerCommands);
+    await sync(api, 42, managerCommands);
+    expect(api.setMyCommands).toHaveBeenCalledTimes(2);
+  });
+
+  it("forgets the oldest chat beyond the limit and writes it again", async () => {
+    const api = fakeApi();
+    const sync = createChatCommandsSync(undefined, 1);
+    await sync(api, 1, managerCommands);
+    await sync(api, 2, managerCommands);
+    await sync(api, 1, managerCommands);
+    expect(api.setMyCommands).toHaveBeenCalledTimes(3);
   });
 });

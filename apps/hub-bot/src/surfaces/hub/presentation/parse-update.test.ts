@@ -120,8 +120,10 @@ describe("parseUpdate", () => {
     });
   });
 
-  it("ignores other text", () => {
-    expect(messageText("hello").kind).toBe("ignored");
+  // Сообщение вне команды бот не пропускает молча: на него идёт подсказка
+  // (PER-592).
+  it("reads other text as a stray message", () => {
+    expect(messageText("hello").kind).toBe("stray");
   });
 
   it("ignores /start outside a private chat", () => {
@@ -142,10 +144,10 @@ describe("parseUpdate", () => {
     ).toBe("ignored");
   });
 
-  // Решение владельца 10 октября 2026 года: разделы открываются командами,
-  // корня «Меню» нет; отменяет «одна команда /menu» PER-468.
+  // Разделы открываются командами, `/menu` — корневое меню (PER-592).
   it("reads the section commands", () => {
     for (const command of [
+      "menu",
       "meetups",
       "next",
       "settings",
@@ -165,25 +167,16 @@ describe("parseUpdate", () => {
     });
   });
 
-  it("ignores the commands of the former sections", () => {
+  it("reads the commands of the former sections as stray", () => {
     for (const text of ["/archive", "/notifications"]) {
-      expect(messageText(text)).toEqual({ kind: "ignored" });
+      expect(messageText(text)).toEqual({ kind: "stray" });
     }
-  });
-
-  // `/menu` убран из списка, но по старой привычке открывает «Сходки».
-  it("reads /menu as /meetups", () => {
-    expect(messageText("/menu")).toEqual({
-      kind: "command",
-      command: "meetups",
-      telegramUserId: 42n,
-    });
   });
 
   it("does not turn a tail after /menu into a deep link", () => {
     expect(messageText("/menu m_AZLzpLXGfY6fChssPU5fYA")).toEqual({
       kind: "command",
-      command: "meetups",
+      command: "menu",
       telegramUserId: 42n,
     });
   });
@@ -198,9 +191,9 @@ describe("parseUpdate", () => {
     expect(messageText("/menu@other_bot")).toEqual({ kind: "ignored" });
   });
 
-  it("ignores unknown commands, including prototype property names", () => {
+  it("reads unknown commands as stray, including prototype property names", () => {
     for (const text of ["/faq", "/constructor", "/toString", "/__proto__"]) {
-      expect(messageText(text)).toEqual({ kind: "ignored" });
+      expect(messageText(text)).toEqual({ kind: "stray" });
     }
   });
 
@@ -235,7 +228,7 @@ describe("parseUpdate", () => {
     ).toBe("ignored");
   });
 
-  it("ignores non-text user messages", () => {
+  it("reads non-text user messages as stray", () => {
     const from = {
       id: 42,
       is_bot: false,
@@ -250,14 +243,33 @@ describe("parseUpdate", () => {
     const cases: unknown[] = [
       { update_id: 1, message: { ...base, photo: [{}] } },
       { update_id: 2, message: { ...base, sticker: { file_id: "sticker" } } },
-      {
-        update_id: 3,
-        message: { ...base, new_chat_members: [{ id: 9, is_bot: false }] },
-      },
       { update_id: 4, message: { ...base, text: "" } },
     ];
     for (const raw of cases) {
-      expect(parseUpdate(raw, botUsername).kind).toBe("ignored");
+      expect(parseUpdate(raw, botUsername).kind).toBe("stray");
+    }
+  });
+
+  // Служебное событие чата — закрепление, таймер автоудаления — подсказки не
+  // получает: человек ничего боту не писал.
+  it("ignores service messages of the chat", () => {
+    const base = {
+      message_id: 7,
+      date: 0,
+      chat: { id: 42, type: "private" },
+      from: { id: 42, is_bot: false, first_name: "tester" },
+    };
+    for (const service of [
+      { pinned_message: { message_id: 3, date: 0 } },
+      { message_auto_delete_timer_changed: { message_auto_delete_time: 60 } },
+      { new_chat_members: [{ id: 9, is_bot: false }] },
+    ]) {
+      expect(
+        parseUpdate(
+          { update_id: 1, message: { ...base, ...service } },
+          botUsername,
+        ).kind,
+      ).toBe("ignored");
     }
   });
 });
