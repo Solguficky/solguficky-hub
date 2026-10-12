@@ -131,3 +131,7 @@
 - Другие ADR: [ADR-064](ADR-064-two-bots-by-audience-circle-and-rights.md) — аудитория ботов; [ADR-065](ADR-065-circle-presets-and-verb-rights.md) — право `place_bids`; [ADR-059](ADR-059-auction-participant-display-name.md) — имя участника в аукционе; [ADR-056](ADR-056-service-calls-per-caller-token-and-closed-network.md) — вызывающие; [ADR-055](ADR-055-k3s-runtime-from-aspire-chart.md) — исходящий доступ кластера
 - Внешнее: [drand](https://docs.drand.love/), сеть `quicknet`
 - Задачи: [PER-497](https://linear.app/anticnvm/issue/per-497), [PER-498](https://linear.app/anticnvm/issue/per-498), [PER-499](https://linear.app/anticnvm/issue/per-499), [PER-500](https://linear.app/anticnvm/issue/per-500)
+
+## Дополнение 2026-10-12: отмена вместе с аукционом
+
+Раздел дописан после принятия. Розыгрыш получает переход отмены: аукцион, отменённый вместе со сходкой или администратором, отменяет розыгрыш, у которого регистрация открыта или жеребьёвка ещё не прошла. Отменённый розыгрыш не принимает регистраций и не тянет раунд маяка, а проведённая жеребьёвка остаётся. Правило и порядок — [ADR-047, дополнение 2026-10-12](ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-12-аукцион-наследует-состояние-сходки), «Отмена аукциона»; реализация — [PER-601](https://linear.app/anticnvm/issue/per-601).
