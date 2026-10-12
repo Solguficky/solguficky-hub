@@ -1164,7 +1164,8 @@ describe("raffle of the week", () => {
     expect(question(calls).payload.text).toContain("Сейчас: 22.10.2026 18:00");
     await next((history) => press(dataOf(question(history).payload, "Отмена")));
 
-    // Неделя с моментом после открытия торгов ставит «Розыгрыш» в ленту.
+    // Неделя с моментом после открытия торгов ставит «Розыгрыш» в корень
+    // аукциона парой к «Пульту» (PER-605).
     await next(() => press(consoleData));
     await next((history) =>
       press(dataOf(last(history), "Открыть онлайн-неделю")),
@@ -1172,8 +1173,8 @@ describe("raffle of the week", () => {
     await next((history) =>
       press(dataOf(last(history), "✔️ Да, открыть неделю")),
     );
-    await next(() => press(feedData));
-    expect(labels(last(calls))[0]).toEqual(["Пульт", "Розыгрыш"]);
+    await next(() => press(rootData));
+    expect(labels(last(calls))[1]).toEqual(["Пульт", "Розыгрыш"]);
   });
 
   it("keeps the moment over new dates and the final and names it when new dates cut it off", async () => {
