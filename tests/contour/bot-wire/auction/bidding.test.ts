@@ -113,12 +113,28 @@ describe("auction through both bots", () => {
     // Сходку открывают по ссылке для чата: список «Сходки» листается, а база
     // контура в режиме `just contour-up` живёт дольше прогона.
     const meetupId = meetupIdFromStartLink(admin.sees());
+    // Аукцион — расширение сходки (PER-605): включение и вход — в меню
+    // «Расширения» её карточки.
     await admin.presses("‹ Сходка");
+    await admin.presses("🧩 Расширения");
+    // Первый вызов холодного Auction дольше бюджета действия: меню называет
+    // сбой с «Повторить», а не прячет аукцион.
+    await eventually(admin, "Включить аукцион", () =>
+      admin.presses("Повторить"),
+    );
     await admin.presses("Включить аукцион");
-    await admin.presses("‹ Сходка");
-    // Чтения Auction отстают от команды: карточка покажет «Лоты», когда read
+    // Повтор включения отвечает тем же аукционом: ключ выводит Auction.
+    await eventually(admin, "Аукцион", () => admin.presses("Повторить"));
+    await admin.presses("Аукцион");
+    // Чтения Auction отстают от команды: корень покажет «Лоты», когда read
     // model узнает аукцион сходки.
-    await eventually(admin, "Лоты", () => admin.opensLink(meetupId));
+    await eventually(admin, "Лоты", async () => {
+      await admin.opensLink(meetupId);
+      await admin.presses("🧩 Расширения");
+      if (pressableLike(admin, "Аукцион") !== undefined) {
+        await admin.presses("Аукцион");
+      }
+    });
     await admin.presses("Лоты");
     await admin.presses("Добавить лот");
     await admin.says("Кружка");
@@ -143,6 +159,7 @@ describe("auction through both bots", () => {
     const from = communityStamp(new Date());
     const to = communityStamp(new Date(Date.now() + 2 * day));
     await admin.presses("‹ Лоты");
+    await admin.presses("‹ Аукцион");
     await admin.presses("Пульт");
     await admin.presses("Сроки недели");
     await admin.says(`${from} — ${to}`);
@@ -162,6 +179,9 @@ describe("auction through both bots", () => {
     const { person: member } = await memberAllowedBy(hub, direct, adminId);
     await member.says("/start");
     await member.opensLink(meetupId);
+    await member.presses("🧩 Расширения");
+    await eventually(member, "Аукцион", () => member.presses("Повторить"));
+    await member.presses("Аукцион");
     await member.presses("Лоты");
     // Строка ленты несёт цену, а не «старт»: лот ищется по названию, как у
     // гостя ниже.

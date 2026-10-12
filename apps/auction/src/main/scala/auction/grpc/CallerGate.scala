@@ -44,6 +44,7 @@ object MethodAccess {
     "GetAuctionConsole" -> Set(Caller.HubBot),
     "GetAuctionLotStatistics" -> Set(Caller.HubBot),
     "GetMeetupAuction" -> Set(Caller.HubBot),
+    "GetAuction" -> bots,
     "ListAuctions" -> bots,
     "RegisterForRaffle" -> bots,
     "CancelRaffleRegistration" -> bots,

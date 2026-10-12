@@ -111,6 +111,18 @@ export function toCard(token: string): Parent {
   return { name: "Сходка", data: `v1:view:${token}` };
 }
 
+/**
+ * Меню «Расширения» сходки (PER-605): вход в расширения с карточки. Данные —
+ * токен сходки, 29 байт.
+ */
+export function extensionsData(meetupToken: string): string {
+  return `v1:ext:${meetupToken}`;
+}
+
+export function toExtensions(meetupToken: string): Parent {
+  return { name: "Расширения", data: extensionsData(meetupToken) };
+}
+
 export function toMaterials(token: string): Parent {
   return { name: "Материалы", data: `v1:mm:list:${token}` };
 }

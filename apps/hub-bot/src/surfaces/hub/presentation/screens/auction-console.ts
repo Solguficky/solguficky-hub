@@ -49,6 +49,7 @@ import {
   defaultConsoleSort,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
+import { toAuctionRoot } from "./extensions.js";
 import {
   buttonText,
   confirmKeyboard,
@@ -65,7 +66,6 @@ import {
   withNav,
   withPager,
 } from "./kit.js";
-import { toLots } from "./lot-form.js";
 import type { ShownScreen } from "./show.js";
 
 // Пульт аукциона администратора в боте хаба (PER-320). Экран хаба, а не тело
@@ -281,7 +281,7 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
       lineupLines(console).map(escapeHtml).join("\n"),
       trading.length === 0 ? undefined : trading.map(escapeHtml).join("\n"),
     ),
-    keyboard: withNav(keyboard, toLots(console.auctionId)),
+    keyboard: withNav(keyboard, toAuctionRoot(console.auctionId)),
     format: "HTML",
   };
 }
@@ -549,7 +549,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
             `Просрочены, не закрыты: ${overdue.map(titleOf).join(", ")}.`,
           ),
     ),
-    keyboard: withNav(keyboard, toLots(console.auctionId)),
+    keyboard: withNav(keyboard, toAuctionRoot(console.auctionId)),
     format: "HTML",
   };
 }

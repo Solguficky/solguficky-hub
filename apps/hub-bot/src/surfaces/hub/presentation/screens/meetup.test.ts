@@ -323,7 +323,7 @@ describe("cardScreen", () => {
 
     expect(rows(screen)).toEqual([
       ["Изменить", "Статус"],
-      ["Материалы (0)"],
+      ["Материалы (0)", "🧩 Расширения"],
       ["Написать подписчикам"],
       ["Отписаться", "Уведомления сходки"],
       ["‹ Сходки"],
@@ -333,7 +333,9 @@ describe("cardScreen", () => {
   it("shows a participant the subscription and materials only when there are any", () => {
     const participant = { ...view, manageable: false, subscribed: false };
 
+    // «Расширения» — у всех: что за ними, говорит меню (PER-605).
     expect(rows(cardScreen({ ...participant, meetup: meetup() }))).toEqual([
+      ["🧩 Расширения"],
       ["Подписаться на сходку"],
       ["‹ Сходки"],
     ]);
@@ -356,7 +358,11 @@ describe("cardScreen", () => {
           }),
         }),
       ),
-    ).toEqual([["Материалы (1)"], ["Подписаться на сходку"], ["‹ Сходки"]]);
+    ).toEqual([
+      ["Материалы (1)", "🧩 Расширения"],
+      ["Подписаться на сходку"],
+      ["‹ Сходки"],
+    ]);
   });
 
   // Исход действия на карточку не ложится: он свой экран, а карточка
@@ -389,6 +395,7 @@ describe("cardScreen", () => {
     });
 
     expect(rows(screen)).toEqual([
+      ["🧩 Расширения"],
       ["Написать подписчикам"],
       ["Уведомления сходки"],
       ["‹ Архив"],

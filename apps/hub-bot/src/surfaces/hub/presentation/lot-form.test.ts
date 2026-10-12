@@ -185,6 +185,7 @@ function fakeAuction(
           placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
           setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
           chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
+          getAuction: async () => undefined,
           getRaffle: async () => undefined,
           registerForRaffle: async () => {
             throw new Error("not used");
@@ -426,11 +427,9 @@ describe("entries into the lot form", () => {
 
     await bot.handleUpdate(press(feedData));
     const feed = last(calls);
-    // Действия экрана стоят над лотами отдельными рядами и разрешённой парой.
-    expect(labels(feed).slice(0, 2)).toEqual([
-      ["Добавить лот", "Пульт"],
-      ["Правила и FAQ"],
-    ]);
+    // Над списком лотов — только «Добавить лот»: пульт и правила стоят в
+    // корне аукциона (PER-605).
+    expect(labels(feed)[0]).toEqual(["Добавить лот"]);
     expect(dataOf(feed, "Добавить лот")).toBe(`v1:lot:new:${auctionToken}`);
 
     await bot.handleUpdate(press(lotData(existingLot)));

@@ -4,8 +4,8 @@ import {
   type ScreenEntry,
 } from "../../../../../testkit/screen-lint.js";
 import {
-  auctionFeedParent,
-  auctionFeedParents,
+  auctionRootParent,
+  auctionRootParents,
   manageParents,
   meetupListParent,
   meetupLists,
@@ -21,7 +21,7 @@ describe("screen catalog", () => {
       .filter(([, entry]) => {
         const groups: Readonly<Record<string, readonly string[]>> = {
           [meetupListParent]: meetupLists,
-          [auctionFeedParent]: auctionFeedParents,
+          [auctionRootParent]: auctionRootParents,
           ...manageParents,
         };
         const parents: readonly string[] = groups[entry.parent ?? ""] ?? [

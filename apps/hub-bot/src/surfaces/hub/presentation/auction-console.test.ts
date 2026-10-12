@@ -46,6 +46,7 @@ const now = new Date("2026-10-06T09:00:00Z");
 
 const consoleData = `v1:ac:v:${auctionToken}`;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
+const rootData = encodeAuctionCallback({ kind: "root", auctionId });
 
 const rub = (minorUnits: number): Money => ({ minorUnits, currency: "RUB" });
 
@@ -365,6 +366,11 @@ function fakeAuction(
           placeBid: notUsed,
           setProxyLimit: notUsed,
           chooseDisplayName: notUsed,
+          getAuction: async () => ({
+            auctionId,
+            stage: "scheduled" as const,
+            final: false,
+          }),
           // Розыгрыш открывается с онлайн-неделей, если у недели есть момент
           // закрытия регистрации, — как в сервисе.
           getRaffle: async () =>
@@ -567,21 +573,24 @@ const unpriced: ConsoleLot = {
 };
 
 describe("entry into the auction console", () => {
-  it("shows the console under the lot entry to the administrator only", async () => {
+  // Пульт — ряд корня аукциона (PER-605), а «Добавить лот» остаётся над
+  // списком лотов.
+  it("shows the console in the auction root to the administrator only", async () => {
     const auction = fakeAuction({ lots: [vase] });
     const admin = harness("admin", auction);
     await admin.bot.init();
-    await admin.bot.handleUpdate(press(feedData));
-    const feed = last(admin.calls);
-    expect(labels(feed).slice(0, 2)).toEqual([
-      ["Добавить лот", "Пульт"],
+    await admin.bot.handleUpdate(press(rootData));
+    const root = last(admin.calls);
+    expect(labels(root).slice(0, 3)).toEqual([
+      ["Лоты"],
+      ["Пульт"],
       ["Правила и FAQ"],
     ]);
-    expect(dataOf(feed, "Пульт")).toBe(consoleData);
+    expect(dataOf(root, "Пульт")).toBe(consoleData);
 
     const member = harness("member", auction);
     await member.bot.init();
-    await member.bot.handleUpdate(press(feedData));
+    await member.bot.handleUpdate(press(rootData));
     expect(JSON.stringify(shown(member.calls))).not.toContain("Пульт");
   });
 
@@ -593,17 +602,14 @@ describe("entry into the auction console", () => {
       const { bot, calls } = harness("admin", auction);
       await bot.init();
       await bot.handleUpdate(press(feedData));
-      expect(labels(last(calls)).slice(0, 2)).toEqual([
-        ["Добавить лот", "Пульт"],
-        ["Правила и FAQ"],
-      ]);
+      expect(labels(last(calls))[0]).toEqual(["Добавить лот"]);
       expect(auction.sent("getAuctionConsole")).toHaveLength(1);
     }
   });
 
-  // Розыгрыш открыт с онлайн-недели, когда «Добавить лот» уже нет: у
-  // администратора он встаёт парой к «Пульту», у участника — своим рядом.
-  it("pairs the raffle with the console once the online week is open", async () => {
+  // Розыгрыш открыт с онлайн-недели: у администратора он встаёт в корне
+  // парой к «Пульту», у участника — своим рядом.
+  it("pairs the raffle with the console in the root once the online week is open", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       lots: [vase],
@@ -611,30 +617,29 @@ describe("entry into the auction console", () => {
     });
     const admin = harness("admin", auction);
     await admin.bot.init();
-    await admin.bot.handleUpdate(press(feedData));
-    expect(labels(last(admin.calls)).slice(0, 2)).toEqual([
+    await admin.bot.handleUpdate(press(rootData));
+    expect(labels(last(admin.calls)).slice(1, 3)).toEqual([
       ["Пульт", "Розыгрыш"],
       ["Правила и FAQ"],
     ]);
 
     const member = harness("member", auction);
     await member.bot.init();
-    await member.bot.handleUpdate(press(feedData));
-    expect(labels(last(member.calls)).slice(0, 2)).toEqual([
+    await member.bot.handleUpdate(press(rootData));
+    expect(labels(last(member.calls)).slice(1, 3)).toEqual([
       ["Розыгрыш"],
       ["Правила и FAQ"],
     ]);
   });
 
-  it("hides the lot entry once the online week is open and keeps the console", async () => {
+  it("hides the lot entry once the online week is open", async () => {
     const auction = fakeAuction({ status: "prebidding", lots: [vase] });
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(feedData));
     const feed = last(calls);
-    expect(labels(feed)[0]).toEqual(["Пульт"]);
-    expect(labels(feed)[1]).toEqual(["Правила и FAQ"]);
     expect(JSON.stringify(feed)).not.toContain("Добавить лот");
+    expect(labels(feed).at(-1)).toEqual(["‹ Аукцион"]);
   });
 
   it("keeps the lot entry when the console cannot be read", async () => {
@@ -642,10 +647,7 @@ describe("entry into the auction console", () => {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(feedData));
-    expect(labels(last(calls)).slice(0, 2)).toEqual([
-      ["Добавить лот", "Пульт"],
-      ["Правила и FAQ"],
-    ]);
+    expect(labels(last(calls))[0]).toEqual(["Добавить лот"]);
   });
 
   // Пульт и каталог лотов — одно право вести сходки (RFC-016): держатель
@@ -838,9 +840,9 @@ describe("auction console", () => {
       ["Ставки", "Люди", "Рост"],
       ["В финал · Ваза"],
       ["Снять из финала · Кружка"],
-      ["‹ Лоты"],
+      ["‹ Аукцион"],
     ]);
-    expect(dataOf(screen, "‹ Лоты")).toBe(feedData);
+    expect(dataOf(screen, "‹ Аукцион")).toBe(rootData);
   });
 
   it("marks a lot for the final and takes the mark off", async () => {
@@ -924,7 +926,7 @@ describe("week of the auction", () => {
       ["Ставки", "Люди", "Рост"],
       ["Сроки недели"],
       ["🗑 Удалить аукцион"],
-      ["‹ Лоты"],
+      ["‹ Аукцион"],
     ]);
 
     await next((history) => press(dataOf(last(history), "Сроки недели")));
@@ -986,7 +988,7 @@ describe("week of the auction", () => {
       ["Розыгрыш"],
       ["Открыть онлайн-неделю"],
       ["🗑 Удалить аукцион"],
-      ["‹ Лоты"],
+      ["‹ Аукцион"],
     ]);
   });
 
@@ -1376,7 +1378,7 @@ describe("final selection", () => {
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
       ["Снять из финала · Кружка"],
-      ["‹ Лоты"],
+      ["‹ Аукцион"],
     ]);
   });
 
@@ -1428,7 +1430,7 @@ describe("final selection", () => {
     );
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["‹ Лоты"],
+      ["‹ Аукцион"],
     ]);
   });
 });
@@ -1556,7 +1558,7 @@ describe("final of the auctioneer", () => {
     expect(labels(last(calls))).toEqual([
       ["Начать финал"],
       ["Обновить"],
-      ["‹ Лоты"],
+      ["‹ Аукцион"],
     ]);
 
     await next((history) => press(dataOf(last(history), "Начать финал")));
@@ -1576,7 +1578,7 @@ describe("final of the auctioneer", () => {
       ["Поднять цену"],
       ["Продать"],
       ["Обновить"],
-      ["‹ Лоты"],
+      ["‹ Аукцион"],
     ]);
 
     // Ask не выше текущей цены Auction отвергает, и бот называет порог.
@@ -1630,7 +1632,7 @@ describe("final of the auctioneer", () => {
     expect(labels(last(calls))).toEqual([
       ["Открыть следующий лот"],
       ["Обновить"],
-      ["‹ Лоты"],
+      ["‹ Аукцион"],
     ]);
 
     // Повторное «Да» несёт тот же ключ: Auction отвечает исходной продажей,

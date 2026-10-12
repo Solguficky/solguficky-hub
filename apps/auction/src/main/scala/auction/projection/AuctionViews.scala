@@ -22,6 +22,9 @@ enum AuctionListing {
 trait AuctionViews {
   def byMeetup(meetup: MeetupId): Future[Option[AuctionSnapshotView]]
 
+  /** Аукцион по идентификатору; удалённый до торгов не отдаётся, как в `byMeetup`. */
+  def byId(auctionId: UUID): Future[Option[AuctionSnapshotView]]
+
   /** Аукционы выборки по возрастанию `auction_id`, строго после `after`, не больше `limit`. */
   def page(listing: AuctionListing, after: Option[UUID], limit: Int): Future[List[AuctionSnapshotView]]
 }

@@ -13,6 +13,7 @@ import type {
 } from "../../../../auction-ui/index.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { nameChoiceScreen } from "./auction-bid.js";
+import { toAuctionRoot } from "./extensions.js";
 import {
   cancelLabel,
   nextRow,
@@ -66,10 +67,9 @@ export function raffleScreen(
           ),
       }),
     ),
-    keyboard: withNav(rows, {
-      name: "Лоты",
-      data: dataOf(keyboard, "raffle.back"),
-    }),
+    // Тело ведёт назад в ленту, а розыгрыш открыт из корня аукциона
+    // (PER-605): туда и возврат.
+    keyboard: withNav(rows, toAuctionRoot(block.auctionId)),
     format: "HTML",
   };
 }

@@ -223,6 +223,7 @@ function portsWith(
       placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
       setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
       chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
+      getAuction: async () => undefined,
       getRaffle: async () => undefined,
       registerForRaffle: async () => {
         throw new Error("not used");

@@ -379,6 +379,10 @@ type PlainAction =
     }
   | { kind: "open-material-file"; token: string; materialToken: string }
   | { kind: "view-meetup"; token: string }
+  // Расширения (PER-605): меню «Расширения» сходки и «Расширения» в
+  // «Настройках».
+  | { kind: "meetup-extensions"; token: string }
+  | { kind: "settings-extensions" }
   // Рассылка: вход из карточки сходки или из управления, затем подтверждение.
   // Ключ рассылки рождается в кнопке подтверждения, как ключ создания сходки,
   // а текст едет не в кнопке, а в сообщении предпросмотра, на которое кадр
@@ -785,6 +789,7 @@ export function parseCallback(raw: unknown): CallbackAction {
       : { kind: "malformed" };
   }
   if (parsed.data === "v1:nav:settings") return { kind: "settings" };
+  if (parsed.data === "v1:nav:ext") return { kind: "settings-extensions" };
   if (parsed.data === "v1:nav:help") return { kind: "help" };
   if (parsed.data === "v1:nav:next") return { kind: "next" };
   if (parts.length === 4 && parts[1] === "manage" && parts[2] === "g") {
@@ -813,6 +818,12 @@ export function parseCallback(raw: unknown): CallbackAction {
   }
   const listed = parseListPage(parts);
   if (listed !== undefined) return listed;
+  if (parts.length === 3 && parts[1] === "ext") {
+    const extToken = TokenSchema.safeParse(parts[2]);
+    return extToken.success
+      ? { kind: "meetup-extensions", token: extToken.data }
+      : { kind: "malformed" };
+  }
   if (parts.length === 3 && parts[1] === "view") {
     const viewToken = TokenSchema.safeParse(parts[2]);
     return viewToken.success

@@ -9,6 +9,7 @@ import {
   type ConfigInvalid,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
 import type { Money } from "../../../auction-ui/index.js";
+import { auctionSummaryViewOf } from "../../../core/auction/auction.js";
 import {
   bidOutcomeOf,
   displayNameOutcomeOf,
@@ -77,6 +78,7 @@ type AuctionRpc = Pick<
   | "placeBid"
   | "setProxyLimit"
   | "chooseDisplayName"
+  | "getAuction"
   | "getRaffle"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
@@ -625,6 +627,20 @@ export function createAuctionAdapter(
                 options(meta),
               ),
             );
+          },
+          // Корень аукциона (PER-605): черновик бот хаба видит, как в
+          // `GetMeetupAuction`.
+          async getAuction(request) {
+            const { auction } = await rpc.getAuction(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              options(meta),
+            );
+            return auction === undefined
+              ? undefined
+              : auctionSummaryViewOf(auction);
           },
           // Розыгрыш среди участников (ADR-066): команды — как у ставки.
           async getRaffle(request) {

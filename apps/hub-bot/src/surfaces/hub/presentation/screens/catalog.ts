@@ -9,11 +9,11 @@
 export const meetupListParent = "meetup-list";
 
 /**
- * Родитель ленты лотов: сходка, у которой идёт аукцион. После рестарта бот её
- * может не знать — тогда лента возвращает в «Сходки» (ADR-030, дополнение
- * 2026-10-04; PER-307).
+ * Родитель корня аукциона: меню «Расширения» сходки, у которой идёт аукцион.
+ * После рестарта бот сходку может не знать — тогда корень возвращает в
+ * «Сходки» (ADR-030, дополнение 2026-10-04; PER-605).
  */
-export const auctionFeedParent = "auction-feed-parent";
+export const auctionRootParent = "auction-root-parent";
 
 /**
  * Родители пунктов «Управления»: группа пункта, а у человека с одной группой —
@@ -64,13 +64,22 @@ export const screenCatalog = {
     parent: "settings",
     backName: "Уведомления",
   },
-  // Частота «перебили» (PER-552): пять режимов, как у бота аукциона, но узел
-  // дерева под «Уведомлениями», а не корень команды.
+  // Расширения в «Настройках» (PER-605; ADR-064, дополнение 2026-10-12): у
+  // каждого расширения свои настройки, у аукциона — частота «перебили».
+  "settings-extensions": {
+    class: "screen",
+    nav: "tree",
+    title: "Расширения",
+    parent: "settings",
+    backName: "Расширения",
+  },
+  // Частота «перебили» (PER-552): пять режимов, как у бота аукциона, — узел
+  // «Аукцион» под «Расширениями» настроек, а не под «Уведомлениями».
   "notify-outbid": {
     class: "screen",
     nav: "tree",
-    title: "Перебитые ставки",
-    parent: "notify-global",
+    title: "Аукцион",
+    parent: "settings-extensions",
   },
   help: {
     class: "screen",
@@ -218,20 +227,38 @@ export const screenCatalog = {
     parent: "card",
     backName: "Материалы",
   },
-  // Аукцион сходки (PER-307): тело — аукционное дерево, оболочка — хаб.
+  // Меню «Расширения» сходки (PER-605): включённый аукцион открывает свой
+  // корень, держателю права управлять сходкой у невключённого — «Включить
+  // аукцион».
+  extensions: {
+    class: "screen",
+    nav: "tree",
+    title: "Расширения",
+    parent: "card",
+    backName: "Расширения",
+  },
+  // Корень аукциона (PER-605): тело — аукционное дерево, оболочка — хаб.
+  // Стадия и сроки, «Лоты», «Пульт» и «Розыгрыш», «Избранное» и правила.
+  "auction-root": {
+    class: "screen",
+    nav: "tree",
+    title: "Аукцион",
+    parent: auctionRootParent,
+    backName: "Аукцион",
+  },
+  // Аукцион сходки (PER-307): лента — просто список лотов (PER-605).
   lots: {
     class: "screen",
     nav: "tree",
     title: "Лоты",
-    parent: auctionFeedParent,
+    parent: "auction-root",
     backName: "Лоты",
   },
   "auction-faq": {
     class: "screen",
     nav: "tree",
     title: "Правила и FAQ",
-    parent: "lots",
-    backName: "Лоты",
+    parent: "auction-root",
   },
   // Заголовок карточки лота — его название. «Обновить» тело ставит, пока у
   // лота нет итога: цена и лидер меняются без участия человека. Предел рядов
@@ -246,12 +273,12 @@ export const screenCatalog = {
     maxRows: 8,
   },
   // Избранное (PER-495): тело — аукционное дерево, оболочка — хаб. Открывается
-  // из корня ленты рядом с «Правила и FAQ» и возвращает в неё.
+  // из корня аукциона рядом с «Правила и FAQ» и возвращает в него (PER-605).
   favorites: {
     class: "screen",
     nav: "tree",
     title: "Избранное",
-    parent: "lots",
+    parent: "auction-root",
   },
   // Notifications ещё не знает лот — кадр исхода с «К лоту» и «Меню».
   "follow-refused": {
@@ -276,14 +303,14 @@ export const screenCatalog = {
     parent: "lot-form",
   },
   // Пульт аукциона администратора (PER-320): экран хаба, а не тело пакета.
-  // Открывается из ленты лотов рядом с «Добавить лот». В финале он же —
+  // Открывается из корня аукциона (PER-605). В финале он же —
   // пульт ведущего (PER-337): цену и ставки лота двигает зал, поэтому у
   // экрана «Обновить».
   "auction-console": {
     class: "screen",
     nav: "tree",
     title: "Пульт",
-    parent: "lots",
+    parent: "auction-root",
     backName: "Пульт",
     refresh: true,
   },
@@ -367,14 +394,14 @@ export const screenCatalog = {
     parent: "lot",
   },
   // Розыгрыш среди участников (ADR-066): тело — аукционное дерево, вход —
-  // «Розыгрыш» в корне ленты, у администратора парой к «Пульту». Выбор имени
+  // «Розыгрыш» в корне аукциона, у администратора парой к «Пульту». Выбор имени
   // перед регистрацией возвращает в розыгрыш; вопрос псевдонима и непринятый
   // ответ — общие записи `question` и `answer-refused`.
   raffle: {
     class: "screen",
     nav: "tree",
     title: "Розыгрыш среди участников",
-    parent: "lots",
+    parent: "auction-root",
     backName: "Розыгрыш",
   },
   "raffle-name-choice": {
@@ -466,8 +493,11 @@ export type ScreenId = keyof typeof screenCatalog;
 /** Списки, в которых может стоять сходка: родитель карточки — один из них. */
 export const meetupLists = ["meetups", "archive", "hidden"] as const;
 
-/** Куда возвращает лента лотов: к сходке либо, если она неизвестна, в «Сходки». */
-export const auctionFeedParents = ["card", "meetups"] as const;
+/**
+ * Куда возвращает корень аукциона: в меню «Расширения» сходки либо, если она
+ * неизвестна, в «Сходки».
+ */
+export const auctionRootParents = ["extensions", "meetups"] as const;
 
 /** Родитель пункта управления: группа либо само «Управление». */
 export const manageParents = {

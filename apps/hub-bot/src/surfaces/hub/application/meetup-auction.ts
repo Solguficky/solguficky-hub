@@ -13,12 +13,13 @@ import type {
 type WithMeetup = { meetup: { id: string }; auction?: MeetupAuctionView };
 
 // Аукцион у сходки (PER-307; ADR-047, дополнение 2026-10-03). Аукцион —
-// расширение сходки: карточка показывает его вход, администратор включает его
-// с карточки. Решения о праве здесь нет — его принимает Auction, спрашивая
-// Meetups; край лишь не зовёт Auction за человека без права хаба.
+// расширение сходки: меню «Расширения» сходки показывает его вход, и там же
+// администратор его включает (PER-605). Решения о праве здесь нет — его
+// принимает Auction, спрашивая Meetups; край лишь не зовёт Auction за
+// человека без права хаба.
 export function createMeetupAuction(auctions: MeetupAuctions) {
-  // Аукцион сходки на карточке. Отказ Auction карточку не роняет: сходка
-  // читается из Meetups и остаётся верной, а ряда аукциона в кадре нет.
+  // Аукцион сходки в её меню. Отказ Auction меню не роняет: сходка читается
+  // из Meetups и остаётся верной, а аукцион помечен недоступным.
   async function withAuction<T extends WithMeetup>(
     card: T,
     request: { identity: Person; requestId?: string; deadlineAt?: number },
@@ -29,7 +30,8 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
       card.meetup.id,
       rpcMeta(request),
     );
-    if (result.kind !== "ok") return card;
+    if (result.kind !== "ok")
+      return { ...card, auction: { kind: "unavailable" } };
     return {
       ...card,
       auction:
@@ -41,7 +43,6 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
 
   async function enable(
     request: Extract<ExecuteRequest, { intent: "enable-auction" }>,
-    viewCard: () => Promise<ExecuteResult>,
   ): Promise<ExecuteResult> {
     if (!admittedToHub(request.identity)) {
       return { kind: "dependency-rejected", reason: "forbidden" };
@@ -53,33 +54,15 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
       rpcMeta(request),
     );
     switch (enabled.kind) {
-      case "enabled": {
-        // Карточка перечитывается тем же путём, что и при просмотре: аукцион
-        // включают с неё, и после команды человек видит её же, уже со входом.
-        // Аукцион берётся из ответа команды — чтение read model Auction могло
-        // бы его ещё не увидеть.
-        const current = await viewCard();
-        // Аукцион уже родился: отказ перечитать карточку — не отказ команды.
-        // Человек узнаёт, что аукцион включён, и открывает карточку сам.
-        if (current.kind !== "meetup-card") {
-          return {
-            kind: "auction-enabled",
-            alreadyExisted: enabled.alreadyExisted,
-            meetupId: request.meetupId,
-            auctionId: enabled.auctionId,
-          };
-        }
+      // Аукцион берётся из ответа команды: чтение read model Auction могло бы
+      // его ещё не увидеть.
+      case "enabled":
         return {
           kind: "auction-enabled",
           alreadyExisted: enabled.alreadyExisted,
           meetupId: request.meetupId,
           auctionId: enabled.auctionId,
-          card: {
-            ...current,
-            auction: { kind: "open", auctionId: enabled.auctionId },
-          },
         };
-      }
       case "not-administrator":
         return { kind: "auction-refused", reason: "not-administrator" };
       case "meetup-not-found":

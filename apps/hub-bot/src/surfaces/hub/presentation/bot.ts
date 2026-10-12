@@ -226,6 +226,11 @@ import {
   viewOfOrigin,
 } from "./screens/community.js";
 import {
+  auctionEnabledScreen,
+  extensionsScreen,
+  settingsExtensionsScreen,
+} from "./screens/extensions.js";
+import {
   cancelLabel,
   confirmKeyboard,
   escapeHtml,
@@ -238,6 +243,7 @@ import {
   screenText,
   toCard,
   toCommunity,
+  toExtensions,
   toManage,
   toMaterials,
   toMeetups,
@@ -2957,6 +2963,31 @@ async function handleCallback(
       outcome = await openHelp(ctx, runtime, person, useCase);
       return;
     }
+    // «Расширения» в «Настройках» (PER-605): статичный экран, Notifications
+    // он не зовёт — частоту читает экран аукциона за ним.
+    if (action.kind === "settings-extensions") {
+      await showScreen(
+        ctx,
+        settingsExtensionsScreen(runtime.auction !== undefined),
+      );
+      outcome = {
+        level: "info",
+        message: "settings extensions sent",
+        result: "ok",
+        use_case: useCase,
+      };
+      return;
+    }
+    if (action.kind === "meetup-extensions") {
+      outcome = await openMeetupExtensions(
+        ctx,
+        runtime,
+        person,
+        action.token,
+        useCase,
+      );
+      return;
+    }
     if (action.kind === "next") {
       outcome = await openNextMeetup(ctx, runtime, person, useCase);
       return;
@@ -3689,7 +3720,6 @@ async function handleCallback(
         result,
         "v1:notify:global",
         categoryForbiddenText(action.category),
-        runtime.auction !== undefined,
       );
       outcome = screenBoundary(result, {
         ok: ["global-notification-settings"],
@@ -4984,6 +5014,10 @@ function exitToCard(token: string): InlineKeyboard {
   return withNav(new InlineKeyboard(), toCard(token));
 }
 
+function exitToExtensions(token: string): InlineKeyboard {
+  return withNav(new InlineKeyboard(), toExtensions(token));
+}
+
 /**
  * Повтор после сбоя и выход: `[Повторить]`, под ним `[‹ Сходки]`. Сбой самих
  * «Сходок» несёт только повтор: возврат вёл бы туда же.
@@ -5064,7 +5098,6 @@ async function openNavScreen(
         result,
         "v1:notify:global",
         forbiddenText,
-        runtime.auction !== undefined,
       );
       return screenBoundary(result, {
         ok: ["global-notification-settings"],
@@ -5505,10 +5538,53 @@ async function auctionAcceptsLots(
     : true;
 }
 
-// «Включить аукцион» на карточке сходки (PER-307). Право решает Auction,
-// спрашивая Meetups; край кнопку только показывает администратору. Ключ
-// команды рождается на нажатие, а аукцион сходки один при любом их числе:
-// повторное нажатие отвечает тем же аукционом.
+// Меню «Расширения» сходки (PER-605; ADR-064, дополнение 2026-10-12): сходка
+// из Meetups и её аукцион из Auction. Отказ Auction меню не роняет — меню
+// называет его с повтором; отказ Meetups — тот же кадр, что у карточки.
+async function openMeetupExtensions(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  token: string,
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  const meetupId = tokenToUuid(token);
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-meetup-extensions",
+    meetupId,
+    ...rpcCall(ctx, useCase),
+  });
+  if (result.kind === "meetup-card") {
+    // Пара «аукцион — сходка» запоминается здесь: из неё корень аукциона
+    // берёт свой возврат «‹ Расширения».
+    if (result.auction?.kind === "open") {
+      ctx.auctionParents?.remember(result.auction.auctionId, result.meetup.id);
+    }
+    await showScreen(
+      ctx,
+      extensionsScreen({
+        meetup: result.meetup,
+        auction: result.auction,
+        manageable: canManageMeetups(person),
+      }),
+    );
+  } else {
+    await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
+  }
+  return screenBoundary(result, {
+    ok: ["meetup-card"],
+    okMessage: "meetup extensions sent",
+    rejectedMessage: "meetup extensions rejected",
+    useCase,
+    meetupId,
+  });
+}
+
+// «Включить аукцион» в меню «Расширения» сходки (PER-307, PER-605). Право
+// решает Auction, спрашивая Meetups; край кнопку только показывает
+// администратору. Ключ команды рождается на нажатие, а аукцион сходки один при
+// любом их числе: повторное нажатие отвечает тем же аукционом.
 async function enableAuction(
   ctx: UpdateContext,
   runtime: BotRuntime,
@@ -5526,23 +5602,16 @@ async function enableAuction(
   });
   if (result.kind === "auction-enabled") {
     ctx.auctionParents?.remember(result.auctionId, result.meetupId);
-    const note = result.alreadyExisted
-      ? "Аукцион у этой сходки уже включён."
-      : "Аукцион включён. Лоты появятся в нём, когда их добавят.";
-    if (result.card === undefined) {
-      // Аукцион включён, а карточку перечитать не вышло: человек узнаёт об
-      // итоге и открывает сходку сам, а не видит сбой и не жмёт повтор.
-      await showRefusal(ctx, note, exitToCard(token));
-    } else {
-      await renderMeetupCard(
-        ctx,
-        result.card,
-        true,
-        runtime.presentation ?? "rich",
-        canManageMeetups(person),
-        note,
-      );
-    }
+    // Исход — свой экран с кнопкой «Аукцион»: корень открывает она, а не этот
+    // ответ, потому что read model Auction может ещё не увидеть аукцион.
+    await showScreen(
+      ctx,
+      auctionEnabledScreen({
+        meetupToken: token,
+        auctionId: result.auctionId,
+        alreadyExisted: result.alreadyExisted,
+      }),
+    );
     return {
       level: "info",
       message: result.alreadyExisted
@@ -5555,7 +5624,7 @@ async function enableAuction(
     };
   }
   if (result.kind === "auction-refused") {
-    await showRefusal(ctx, forbiddenText, exitToCard(token));
+    await showRefusal(ctx, forbiddenText, exitToExtensions(token));
     return {
       level: "warn",
       message: "auction enabling rejected",
@@ -5582,7 +5651,9 @@ async function enableAuction(
   await showRefusal(
     ctx,
     forbidden ? forbiddenText : unavailableText,
-    forbidden ? exitToCard(token) : exitRetry(`v1:manage:auction:${token}`),
+    forbidden
+      ? exitToExtensions(token)
+      : exitRetry(`v1:manage:auction:${token}`),
   );
   return screenBoundary(result, {
     ok: [],
@@ -5704,7 +5775,7 @@ async function handleLotPreviewCallback(
   const photoNote = await deliverAuctionScreen(ctx, {
     view: {
       body,
-      feedParent: toMeetups,
+      rootParent: toMeetups,
       presentation: runtime.presentation ?? "rich",
       timeZone: runtime.communityTimeZone ?? "UTC",
       today: communityToday(ctx),
@@ -6868,7 +6939,7 @@ async function handleAuctionCallback(
       : await auctionAcceptsLots(ctx, runtime, person, feedAuctionId);
   const view: AuctionView = {
     body: result.body,
-    feedParent: feedParentOf(ctx, result.body),
+    rootParent: rootParentOf(ctx, result.body),
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: communityToday(ctx),
@@ -6922,13 +6993,16 @@ async function handleAuctionCallback(
   };
 }
 
-// Родитель ленты: сходка аукциона, если бот её видел, иначе «Сходки»
-// (ADR-030, дополнение 2026-10-04).
-function feedParentOf(ctx: UpdateContext, body: AuctionScreenBody): Parent {
+// Родитель корня аукциона: меню «Расширения» его сходки, если бот её видел,
+// иначе «Сходки» (ADR-030, дополнение 2026-10-04; PER-605). Остальные экраны
+// аукциона возвращают в корень сами: ему хватает идентификатора аукциона.
+function rootParentOf(ctx: UpdateContext, body: AuctionScreenBody): Parent {
   for (const block of body.blocks) {
-    if (block.kind !== "feed") continue;
+    if (block.kind !== "root") continue;
     const meetupId = ctx.auctionParents?.meetupOf(block.auctionId);
-    return meetupId === undefined ? toMeetups : toCard(uuidToToken(meetupId));
+    return meetupId === undefined
+      ? toMeetups
+      : toExtensions(uuidToToken(meetupId));
   }
   return toMeetups;
 }
@@ -7069,11 +7143,6 @@ async function renderMeetupCard(
     return;
   }
   if (result.kind === "meetup-card") {
-    // Пара «аукцион — сходка» запоминается с каждой карточки, где аукцион
-    // виден: из неё лента лотов берёт свой возврат «‹ Сходка».
-    if (result.auction?.kind === "open") {
-      ctx.auctionParents?.remember(result.auction.auctionId, result.meetup.id);
-    }
     // Исход действия — свой экран (PER-472): карточку открывает «‹ Сходка».
     if (note !== undefined) {
       await showScreen(ctx, {
@@ -7089,7 +7158,6 @@ async function renderMeetupCard(
       meetup: result.meetup,
       author: result.author,
       subscribed: result.subscribed,
-      auction: result.auction,
       manageable,
       presentation,
       today: communityToday(ctx),
@@ -7140,10 +7208,9 @@ async function renderNotificationSettings(
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   retry: string,
   forbidden: string = forbiddenText,
-  outbid = false,
 ): Promise<void> {
   if (result.kind === "global-notification-settings") {
-    await showScreen(ctx, globalNotificationsScreen(result.categories, outbid));
+    await showScreen(ctx, globalNotificationsScreen(result.categories));
     return;
   }
   if (result.kind === "meetup-notification-settings") {
@@ -8382,6 +8449,8 @@ function callbackUseCase(
     | "home"
     | "apply"
     | "settings"
+    | "settings-extensions"
+    | "meetup-extensions"
     | "help"
     | "next"
     | "manage-group"
@@ -8490,6 +8559,7 @@ function callbackUseCase(
 ): ProductUseCase {
   switch (kind) {
     case "view-meetup":
+    case "meetup-extensions":
       return "view_meetup";
     case "manage-hidden":
       return "find_meetup";
@@ -8563,6 +8633,7 @@ function callbackUseCase(
     case "dismiss-administrator":
       return "manage_community";
     case "settings":
+    case "settings-extensions":
     case "notify-global":
     case "notify-set-global":
     case "notify-outbid":

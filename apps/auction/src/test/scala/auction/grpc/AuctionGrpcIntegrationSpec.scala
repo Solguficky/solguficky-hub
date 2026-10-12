@@ -324,6 +324,20 @@ final class AuctionGrpcIntegrationSpec
         }
     }
 
+    "reads an auction by id through the boundary: the hub bot sees a draft, the auction bot does not" in withNode {
+      node =>
+        val auction = enable(node, newId()).getAccepted.auctionId
+        def read(token: String): Option[wire.AuctionSnapshot] =
+          node.client
+            .getAuction()
+            .addHeader("authorization", s"Bearer $token")
+            .invoke(wire.GetAuctionRequest(Some(administrator), auction))
+            .futureValue
+            .auction
+        eventually(read(hubToken).map(_.status.isDraft) shouldBe Some(true))
+        read("auction") shouldBe None
+    }
+
     "refuses a viewer whom meetups does not confirm as administrator and creates no auction" in withNode { node =>
       val meetup = newId()
       node.authority.answer = Authority.NotAdministrator

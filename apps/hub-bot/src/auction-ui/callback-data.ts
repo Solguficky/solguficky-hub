@@ -53,6 +53,8 @@ export type PendingCommand = { command: AuctionCommand; amount: number };
 export type AuctionQuestion = "bid" | "proxy" | "alias";
 
 export type AuctionIntent =
+  // Корень аукциона (PER-605): стадия, сроки и входы в лоты и розыгрыш.
+  | { kind: "root"; auctionId: string }
   | { kind: "feed"; auctionId: string; page: number }
   | { kind: "lot"; lotId: string; page: number; atLeastVersion?: number }
   | { kind: "history"; lotId: string; page: number; historyPage: number }
@@ -265,6 +267,8 @@ function addresseeOf(raw: string | undefined): number | undefined {
 export function encodeAuctionCallback(intent: AuctionIntent): string {
   const prefix = `${VERSION}:${AUCTION_CALLBACK_DOMAIN}`;
   switch (intent.kind) {
+    case "root":
+      return `${prefix}:rt:${uuidToToken(intent.auctionId)}`;
     case "feed":
       return `${prefix}:feed:${uuidToToken(intent.auctionId)}:${pageArgument(intent.page)}`;
     case "lot":
@@ -355,6 +359,7 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   const command = commandAction(action, args);
   if (command !== undefined) return command;
   if (action === "fav") return favoritesAction(args);
+  if (action === "rt") return rootAction(args);
   const raffle = raffleAction(action, args);
   if (raffle !== undefined) return raffle;
   // Аргументов у действия ровно столько, сколько пишет его кодировщик: лишний
@@ -450,6 +455,15 @@ function raffleAction(
   return addressee === undefined
     ? refuse("malformed")
     : accept({ kind: "raffle-question", auctionId, addressee });
+}
+
+// Корень аукциона: ровно один токен аукциона.
+function rootAction(args: readonly string[]): ParsedAuctionCallback {
+  const [token, ...rest] = args;
+  const auctionId = token === undefined ? undefined : tokenToUuid(token);
+  return auctionId === undefined || rest.length !== 0
+    ? refuse("malformed")
+    : accept({ kind: "root", auctionId });
 }
 
 // Список избранного: страница и, у списка из ленты, токен её аукциона.

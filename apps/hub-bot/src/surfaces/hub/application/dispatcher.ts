@@ -14,7 +14,7 @@ import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { start } from "./start.js";
-import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
+import type { ExecuteRequest, ExecuteResult } from "./types.js";
 
 export type Dispatcher = {
   execute(request: ExecuteRequest): ExecuteResult | Promise<ExecuteResult>;
@@ -58,10 +58,14 @@ export function createDispatcher(
     meetups === undefined ? undefined : createMeetupMaterials(meetups);
   const broadcasts =
     notifications === undefined ? undefined : createBroadcasts(notifications);
-  // Карточка сходки: сама сходка из Meetups, подписка из Notifications и
-  // аукцион из Auction. Отказ соседа сходки карточку не роняет.
+  // Карточка сходки: сама сходка из Meetups и подписка из Notifications; меню
+  // «Расширения» — ещё и аукцион из Auction. Отказ соседа сходки экран не
+  // роняет.
   async function viewMeetup(
-    request: Extract<ExecuteRequest, { intent: "view-meetup" }>,
+    request: Extract<
+      ExecuteRequest,
+      { intent: "view-meetup" | "view-meetup-extensions" }
+    >,
     readAuction: boolean,
   ): Promise<ExecuteResult> {
     if (meetups === undefined)
@@ -109,39 +113,6 @@ export function createDispatcher(
       : { kind: "dependency-rejected", reason: result.kind };
   }
 
-  // Карточка, которую вернула команда на ней же — подписка, публикация,
-  // правка поля, смена состояния, — несёт и ряд аукциона: иначе нажатие
-  // «Подписаться» убирало бы с карточки «Лоты», а карточка сразу после
-  // «Опубликовать» была бы без «Включить аукцион». Скрытый черновик и вопросы
-  // формы карточкой не показываются, и аукцион им не нужен.
-  async function withCardAuction(
-    result: ExecuteResult,
-    request: { identity: Person; requestId?: string; deadlineAt?: number },
-  ): Promise<ExecuteResult> {
-    if (meetupAuction === undefined) return result;
-    switch (result.kind) {
-      case "meetup-card":
-      case "published":
-      case "publication-scheduled":
-      case "publication-unavailable":
-      case "meetup-updated":
-      case "meetup-state-changed":
-        return result.auction === undefined
-          ? meetupAuction.withAuction(result, request)
-          : result;
-      // Ответ на вопрос черновика, когда сходку уже опубликовали: бот покажет
-      // её карточкой, и ряд аукциона ей положен. Скрытый черновик показывается
-      // формой, и за аукционом для него не ходят.
-      case "draft":
-        return result.meetup.visibility === "visible" &&
-          result.auction === undefined
-          ? meetupAuction.withAuction(result, request)
-          : result;
-      default:
-        return result;
-    }
-  }
-
   return {
     async execute(request) {
       switch (request.intent) {
@@ -183,18 +154,16 @@ export function createDispatcher(
                 }
               : { kind: "dependency-rejected", reason: result.kind };
         }
+        // Карточка в Auction не ходит: вход в аукцион — кнопка «Расширения»
+        // без состояния, а аукцион читает само меню (PER-605).
         case "view-meetup":
+          return viewMeetup(request, false);
+        case "view-meetup-extensions":
           return viewMeetup(request, true);
         case "enable-auction":
           if (meetupAuction === undefined)
             return { kind: "rejected", reason: "auction-not-configured" };
-          return meetupAuction.enable(request, () =>
-            viewMeetup(
-              { ...request, intent: "view-meetup" },
-              // Аукцион у карточки уже назван ответом команды.
-              false,
-            ),
-          );
+          return meetupAuction.enable(request);
         case "create-meetup":
         case "set-meetup-field":
         case "update-meetup-field":
@@ -203,7 +172,7 @@ export function createDispatcher(
         case "change-meetup-state":
           return form === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }
-            : withCardAuction(await form(request), request);
+            : form(request);
         case "view-global-notifications":
         case "set-global-category":
         case "view-outbid-frequency":
@@ -213,7 +182,7 @@ export function createDispatcher(
         case "set-meetup-category":
           if (settings === undefined)
             return { kind: "rejected", reason: "notifications-not-configured" };
-          return withCardAuction(await settings(request), request);
+          return settings(request);
         case "attach-material":
         case "remove-material":
           return materials === undefined

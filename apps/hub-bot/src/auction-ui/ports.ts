@@ -192,7 +192,38 @@ export type LotHistoryPage = {
   nextPageToken: string;
 };
 
+// Где аукцион — ветка `status` у `auction.v1.AuctionSnapshot`. Корень аукциона
+// (PER-605) называет стадию и сроки онлайн-торгов; правило каждой стадии
+// принадлежит Auction, дерево его не выводит.
+export type AuctionStageView =
+  | "draft"
+  | "scheduled"
+  | "prebidding"
+  | "settling"
+  | "on-break"
+  | "lineup-frozen"
+  | "in-final"
+  | "finished";
+
+// Срез `auction.v1.AuctionSnapshot` для корня аукциона. Моменты — RFC 3339 в
+// UTC; нет — у черновика конфигурации нет или фаза их не задала.
+export type AuctionSummaryView = {
+  auctionId: string;
+  stage: AuctionStageView;
+  opensAt?: string;
+  closesAt?: string;
+  // Финал в зале запланирован: после онлайн-торгов лоты состава уходят в него.
+  final: boolean;
+};
+
 export interface AuctionPort {
+  // Аукцион по идентификатору (PER-605) или `undefined`, если Auction его не
+  // отдаёт этому вызывающему: удалённый, чужой или черновик для бота аукциона.
+  // Прочие отказы метод бросает.
+  getAuction(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<AuctionSummaryView | undefined>;
   // `atLeastVersion` — версия из ответа принятой команды (PER-470): адаптер
   // дочитывает лот до неё в своём бюджете, а не догнав — отдаёт последний
   // прочитанный снимок, а не отказ. Без неё — одно чтение.

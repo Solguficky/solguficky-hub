@@ -115,6 +115,7 @@ function ports(
         kind: "accepted" as const,
         name: "@owl",
       })),
+      getAuction: vi.fn(async () => undefined),
       getRaffle: vi.fn(async () => undefined),
       registerForRaffle: vi.fn(async () => {
         throw new Error("not used");

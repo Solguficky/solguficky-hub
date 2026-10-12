@@ -12,6 +12,7 @@ import type {
 import type {
   AccessRight,
   AuctionBotPorts,
+  AuctionSummaryView,
   BidRefusal,
   CommandOutcome,
   DisplayNameOutcome,
@@ -102,6 +103,11 @@ export type PortCall =
     }
   | {
       port: "auction";
+      method: "getAuction";
+      request: Parameters<AuctionMethods["getAuction"]>[0];
+    }
+  | {
+      port: "auction";
       method: "getRaffle";
       request: Parameters<AuctionMethods["getRaffle"]>[0];
     }
@@ -124,6 +130,9 @@ export type PortCall =
 // Запрос того, чего в снимке нет, падает — так suite ловит приложение, которое
 // спрашивает не то, а не подсовывает ему правдоподобный ответ.
 export type ContractAuction = {
+  // Сам аукцион для его корня (PER-605). Нет — Auction его не отдаёт;
+  // `unavailable` — `GetAuction` отказывает.
+  summary?: AuctionSummaryView | "unavailable";
   lots: readonly LotView[];
   // Страницы `ListAuctionLots` по токену; первая — под пустым.
   pages: Readonly<Record<string, LotPage>>;
@@ -2051,7 +2060,95 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
+// Корень аукциона (PER-605): стадия и сроки, «Лоты» и, пока розыгрыш есть,
+// «Розыгрыш». Розыгрыш читается параллельно аукциону и стартует первым; его
+// отказ убирает кнопку, а аукцион, которого Auction не отдал, оставляет корень
+// без кнопок — кнопка устарела.
+const CONTRACT_SUMMARY: AuctionSummaryView = {
+  auctionId: CONTRACT_AUCTION_ID,
+  stage: "prebidding",
+  opensAt: "2026-10-26T09:00:00Z",
+  closesAt: "2026-10-29T18:00:00Z",
+  final: true,
+};
+
+const rootCallback = (auctionId: string) =>
+  encodeAuctionCallback({ kind: "root", auctionId });
+
+const rootCalls = (auctionId: string): PortCall[] => [
+  raffleCall(auctionId),
+  {
+    port: "auction",
+    method: "getAuction",
+    request: { viewer: CONTRACT_VIEWER, auctionId },
+  },
+];
+
+const rootLotsRow = [
+  {
+    action: "root.lots" as const,
+    callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
+  },
+];
+
+const ROOT_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "root: with a raffle",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: { ...AUCTION, summary: CONTRACT_SUMMARY, raffle: OPEN_RAFFLE },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: CONTRACT_SUMMARY,
+        },
+      ],
+      keyboard: [
+        rootLotsRow,
+        [
+          {
+            action: "root.raffle",
+            callbackData: encodeAuctionCallback({
+              kind: "raffle",
+              auctionId: CONTRACT_AUCTION_ID,
+            }),
+          },
+        ],
+      ],
+    },
+  },
+  {
+    intent: "root: raffle read refused",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: { ...AUCTION, summary: CONTRACT_SUMMARY, raffle: "unavailable" },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: CONTRACT_SUMMARY,
+        },
+      ],
+      keyboard: [rootLotsRow],
+    },
+  },
+  {
+    intent: "root: auction not given",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: AUCTION,
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [{ kind: "root", auctionId: CONTRACT_AUCTION_ID }],
+      keyboard: [],
+    },
+  },
+];
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
+  ...ROOT_CASES,
   {
     intent: "feed",
     callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
@@ -2438,6 +2535,13 @@ export function spyPorts(
       async chooseDisplayName(request) {
         calls.push({ port: "auction", method: "chooseDisplayName", request });
         return settled(displayNames.shift());
+      },
+      async getAuction(request) {
+        calls.push({ port: "auction", method: "getAuction", request });
+        if (snapshot.summary === "unavailable") {
+          throw new Error("auction unavailable");
+        }
+        return snapshot.summary;
       },
       async getRaffle(request) {
         calls.push({ port: "auction", method: "getRaffle", request });

@@ -2,7 +2,9 @@ import { InlineKeyboard } from "grammy";
 import type { AccessRight } from "../../../../auction-ui/index.js";
 import { menuTitle } from "../../../../core/entry.js";
 import type { BotCommand } from "../../../../core/menu-commands.js";
+import { extensionsLabel } from "../../../../core/pictograms.js";
 import { botCommands, managerCommands } from "../commands.js";
+import { settingsExtensionsData } from "./extensions.js";
 import {
   bullet,
   escapeHtml,
@@ -255,18 +257,32 @@ export function manageGroupScreen(
   };
 }
 
-/** «Настройки» — раздел под меню; пока в нём один пункт — уведомления. */
+/**
+ * «Настройки» — раздел под меню: уведомления ядра и «Расширения» — настройки
+ * расширений сходок, у аукциона это частота «перебили» (PER-605; ADR-064,
+ * дополнение 2026-10-12).
+ */
 export function settingsScreen(): ShownScreen {
   return {
     id: "settings",
-    text: screenText("Настройки", "Что и когда бот тебе присылает."),
+    text: screenText(
+      "Настройки",
+      "Что и когда бот тебе присылает, и настройки расширений сходок.",
+    ),
     keyboard: withNav(
-      new InlineKeyboard().text("Уведомления", "v1:notify:global"),
+      new InlineKeyboard()
+        .text("Уведомления", "v1:notify:global")
+        .row()
+        .text(extensionsLabel, settingsExtensionsData),
       toMenu,
     ),
     format: "HTML",
   };
 }
+
+// Правила расширений живут в их корне: «Помощь» ядра их не повторяет и только
+// говорит, где расширения сходки (ADR-064, дополнение 2026-10-12).
+const extensionsHelp = `Расширения сходки, например аукцион, — кнопка «${extensionsLabel}» в её карточке.`;
 
 /**
  * «Помощь» — раздел под меню: текст о боте и команды строками, кнопка одна —
@@ -278,6 +294,7 @@ export function helpScreen(person: Viewer, welcome: string): ShownScreen {
     text: screenText(
       "Помощь",
       ...welcome.split("\n\n").map(escapeHtml),
+      escapeHtml(extensionsHelp),
       [
         "Команды — в кнопке меню рядом с полем ввода:",
         ...commandsFor(person).map((entry) =>

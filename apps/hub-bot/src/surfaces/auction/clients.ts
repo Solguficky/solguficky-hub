@@ -24,6 +24,7 @@ import type {
   TelegramUser,
   Viewer,
 } from "../../auction-ui/index.js";
+import { auctionSummaryViewOf } from "../../core/auction/auction.js";
 import {
   bidOutcomeOf,
   displayNameOutcomeOf,
@@ -91,6 +92,7 @@ export type AuctionRpc = Pick<
   | "placeBid"
   | "setProxyLimit"
   | "chooseDisplayName"
+  | "getAuction"
   | "getRaffle"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
@@ -322,6 +324,19 @@ export function createPorts(
               callOptions(timeoutMs),
             ),
           );
+        },
+        // Корень аукциона (PER-605): черновика Auction этому боту не отдаёт.
+        async getAuction(request) {
+          const { auction: snapshot } = await auction.getAuction(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return snapshot === undefined
+            ? undefined
+            : auctionSummaryViewOf(snapshot);
         },
         // Розыгрыш среди участников (ADR-066): команды — как у ставки.
         async getRaffle(request) {

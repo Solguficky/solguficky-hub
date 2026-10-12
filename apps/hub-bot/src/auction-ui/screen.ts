@@ -1,5 +1,6 @@
 import type { AuctionCommand, AuctionQuestion } from "./callback-data.js";
 import type {
+  AuctionSummaryView,
   BidOriginView,
   BidRefusal,
   DisplayNameRefusal,
@@ -41,6 +42,13 @@ export type HistoryItem = {
 };
 
 export type AuctionBlock =
+  | {
+      // Корень аукциона (PER-605): стадия и сроки, вход в лоты и розыгрыш.
+      // Нет `auction` — Auction аукцион не отдал: кнопка устарела.
+      kind: "root";
+      auctionId: string;
+      auction?: AuctionSummaryView;
+    }
   | {
       kind: "feed";
       auctionId: string;
@@ -237,7 +245,9 @@ export type AuctionButton =
   // «По шагу» с порогом в подписи: сумма — та, что уедет в подтверждение.
   | { action: "lot.bid-step"; amount: Money; callbackData: string }
   | {
-      action:
+      action: // Корень аукциона: лоты и розыгрыш.
+        | "root.lots"
+        | "root.raffle"
         | "feed.prev"
         | "feed.next"
         | "lot.refresh"

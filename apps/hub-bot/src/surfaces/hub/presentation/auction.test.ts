@@ -165,6 +165,18 @@ function fakeAuction(
     nextPageToken: "",
   }));
   const getLot = vi.fn(async () => shownLot);
+  // Корень аукциона (PER-605): Auction отдаёт аукцион, который у сходки есть.
+  const getAuction = vi.fn(async (request: { auctionId: string }) =>
+    [...auctions.values()].includes(request.auctionId)
+      ? {
+          auctionId: request.auctionId,
+          stage: "scheduled" as const,
+          opensAt: "2026-10-26T09:00:00Z",
+          closesAt: "2026-10-29T18:00:00Z",
+          final: true,
+        }
+      : undefined,
+  );
   const port: MeetupAuctions & AuctionScreens = {
     async getMeetupAuction(_person, id) {
       lookups.push(id);
@@ -220,6 +232,7 @@ function fakeAuction(
             named = true;
             return { kind: "accepted", name: "@owl" };
           },
+          getAuction,
           getRaffle: async () => raffle.current,
           registerForRaffle: async () => {
             if (raffle.current === undefined) throw new Error("no raffle");
@@ -253,6 +266,7 @@ function fakeAuction(
     getLotImage,
     listAuctionLots,
     getLot,
+    getAuction,
     raffle,
   };
 }
@@ -344,8 +358,11 @@ function data(shown: Shown, text: string): string | undefined {
     .find((button) => button.text === text)?.callback_data;
 }
 
-describe("meetup card auction row", () => {
-  it("lets a member open the auction of the meetup next to its materials", async () => {
+const extensionsData = `v1:ext:${meetupToken}`;
+const rootData = encodeAuctionCallback({ kind: "root", auctionId });
+
+describe("meetup card extensions entry", () => {
+  it("puts one extensions entry next to the materials and does not ask Auction", async () => {
     const auction = fakeAuction({ existing: true });
     const { bot, calls } = harness("member", auction, {
       snapshot: meetup(2),
@@ -354,77 +371,15 @@ describe("meetup card auction row", () => {
     await bot.handleUpdate(press(`v1:view:${meetupToken}`));
 
     const card = lastScreen(calls);
-    expect(labels(card)).toContainEqual(["Материалы (2)", "Лоты"]);
-    expect(data(card, "Лоты")).toBe(feedData);
-    expect(JSON.stringify(card)).not.toContain("Включить аукцион");
-  });
-
-  it("shows no auction entry at a meetup without an auction", async () => {
-    const auction = fakeAuction();
-    const { bot, calls } = harness("member", auction);
-    await bot.init();
-    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
-
-    const card = lastScreen(calls);
+    expect(labels(card)).toContainEqual(["Материалы (2)", "🧩 Расширения"]);
+    expect(data(card, "🧩 Расширения")).toBe(extensionsData);
     expect(JSON.stringify(card)).not.toContain("Лоты");
     expect(JSON.stringify(card)).not.toContain("Включить аукцион");
+    // Карточка в Auction не ходит: вход в аукцион — меню за кнопкой.
+    expect(auction.lookups).toEqual([]);
   });
 
-  // На «Опубликовать» бот отвечает экраном исхода; карточка за «‹ Сходка» —
-  // та же, что из списка: ряд аукциона на ней есть (PER-468, PER-472).
-  it("keeps the auction row on the card opened from the publishing outcome", async () => {
-    const auction = fakeAuction();
-    const { bot, calls } = harness("admin", auction, {
-      snapshot: { ...meetup(), visibility: "hidden" },
-    });
-    await bot.init();
-    await bot.handleUpdate(press(`v1:manage:publish:${meetupToken}`));
-
-    const outcome = lastScreen(calls);
-    expect(outcome.text).toContain("<b>Сходка опубликована</b>");
-    expect(labels(outcome)).toEqual([["‹ Сходка"]]);
-    expect(JSON.stringify(outcome)).not.toContain("Включить аукцион");
-
-    await bot.handleUpdate(press(data(outcome, "‹ Сходка") ?? ""));
-
-    const card = lastScreen(calls);
-    expect(labels(card)).toContainEqual(["Материалы (0)", "Включить аукцион"]);
-  });
-
-  it("shows the lots entry on the card opened from the publishing outcome of a meetup with an auction", async () => {
-    const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness("admin", auction, {
-      snapshot: { ...meetup(), visibility: "hidden" },
-    });
-    await bot.init();
-    await bot.handleUpdate(press(`v1:manage:publish:${meetupToken}`));
-
-    const outcome = lastScreen(calls);
-    expect(outcome.text).toContain("<b>Сходка опубликована</b>");
-    expect(data(outcome, "Лоты")).toBeUndefined();
-
-    await bot.handleUpdate(press(data(outcome, "‹ Сходка") ?? ""));
-
-    const card = lastScreen(calls);
-    expect(data(card, "Лоты")).toBe(feedData);
-  });
-
-  it("offers enabling to the administrator in the materials row", async () => {
-    const auction = fakeAuction();
-    const { bot, calls } = harness("admin", auction);
-    await bot.init();
-    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
-
-    const card = lastScreen(calls);
-    expect(labels(card)).toContainEqual(["Материалы (0)", "Включить аукцион"]);
-    expect(data(card, "Включить аукцион")).toBe(
-      `v1:manage:auction:${meetupToken}`,
-    );
-    // Пять рядов организатора не превышены: аукцион встал в ряд материалов.
-    expect(card.reply_markup?.inline_keyboard.length).toBeLessThanOrEqual(5);
-  });
-
-  it("keeps the card without an auction row when Auction does not answer", async () => {
+  it("keeps the card and its extensions entry when Auction does not answer", async () => {
     const auction = fakeAuction({
       lookup: () => ({ kind: "unavailable", cause: new Error("down") }),
     });
@@ -434,8 +389,9 @@ describe("meetup card auction row", () => {
 
     const card = lastScreen(calls);
     expect(card.rich_message?.html ?? card.text).toContain("Ярмарка");
-    expect(JSON.stringify(card)).not.toContain("Включить аукцион");
-    expect(JSON.stringify(card)).not.toContain("Лоты");
+    expect(labels(card)).toContainEqual(["Материалы (0)", "🧩 Расширения"]);
+    // Пять рядов организатора не превышены: расширения — в ряду материалов.
+    expect(card.reply_markup?.inline_keyboard.length).toBeLessThanOrEqual(5);
   });
 
   it("does not call Auction for a person without the hub right", async () => {
@@ -444,11 +400,11 @@ describe("meetup card auction row", () => {
       rights: ["place-bids"],
     });
     await bot.init();
-    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
-    await bot.handleUpdate(press(feedData));
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
 
     expect(auction.lookups).toEqual([]);
-    expect(auction.listAuctionLots).not.toHaveBeenCalled();
+    expect(auction.getAuction).not.toHaveBeenCalled();
     // Приветствие с кнопкой заявки (PER-592), а не экран аукциона.
     expect(lastScreen(calls).text).toContain("Чтобы войти, подай заявку.");
   });
@@ -457,14 +413,81 @@ describe("meetup card auction row", () => {
     const auction = fakeAuction({ existing: true });
     const { bot } = harness("member", auction, { blocked: true });
     await bot.init();
-    await bot.handleUpdate(press(feedData));
+    await bot.handleUpdate(press(rootData));
 
-    expect(auction.listAuctionLots).not.toHaveBeenCalled();
+    expect(auction.getAuction).not.toHaveBeenCalled();
+  });
+});
+
+describe("meetup extensions menu", () => {
+  it("opens the auction root of an enabled auction", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    const menu = lastScreen(calls);
+    expect(menu.text).toMatch(/^<b>Расширения<\/b>/);
+    expect(menu.text).toContain("«Ярмарка»");
+    expect(labels(menu)).toEqual([["Аукцион"], ["‹ Сходка"]]);
+    expect(data(menu, "Аукцион")).toBe(rootData);
+    expect(data(menu, "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
+  });
+
+  it("offers enabling to the administrator of a meetup without an auction", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    const menu = lastScreen(calls);
+    expect(labels(menu)).toEqual([["Включить аукцион"], ["‹ Сходка"]]);
+    expect(data(menu, "Включить аукцион")).toBe(
+      `v1:manage:auction:${meetupToken}`,
+    );
+  });
+
+  it("tells a member that the meetup has no extensions", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    const menu = lastScreen(calls);
+    expect(menu.text).toContain("У этой сходки пока нет расширений.");
+    expect(labels(menu)).toEqual([["‹ Сходка"]]);
+  });
+
+  it("offers no enabling at a cancelled meetup", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("admin", auction, {
+      snapshot: { ...meetup(), lifecycle: "cancelled" },
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    const menu = lastScreen(calls);
+    expect(menu.text).toContain("У этой сходки пока нет расширений.");
+    expect(JSON.stringify(menu)).not.toContain("Включить аукцион");
+  });
+
+  it("names an Auction outage with a retry instead of guessing the auction", async () => {
+    const auction = fakeAuction({
+      lookup: () => ({ kind: "unavailable", cause: new Error("down") }),
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    const menu = lastScreen(calls);
+    expect(menu.text).toContain("Аукцион сейчас не отвечает.");
+    expect(labels(menu)).toEqual([["Повторить"], ["‹ Сходка"]]);
+    expect(data(menu, "Повторить")).toBe(extensionsData);
   });
 });
 
 describe("enabling the auction", () => {
-  it("enables the auction and shows the outcome, with the card and its entry behind the way back", async () => {
+  it("enables the auction and shows the outcome with the auction root behind it", async () => {
     const auction = fakeAuction();
     const { bot, calls, records } = harness("admin", auction);
     await bot.init();
@@ -472,14 +495,15 @@ describe("enabling the auction", () => {
 
     const outcome = lastScreen(calls);
     expect(outcome.text).toContain("<b>Аукцион включён</b>");
-    expect(labels(outcome)).toEqual([["‹ Сходка"]]);
-    expect(data(outcome, "Лоты")).toBeUndefined();
+    expect(labels(outcome)).toEqual([["Аукцион"], ["‹ Расширения"]]);
+    expect(data(outcome, "Аукцион")).toBe(rootData);
+    expect(data(outcome, "‹ Расширения")).toBe(extensionsData);
     expect(records.at(-1)?.fields).toMatchObject({
       result: "ok",
       use_case: "enable_auction",
     });
-    await bot.handleUpdate(press(data(outcome, "‹ Сходка") ?? ""));
-    expect(data(lastScreen(calls), "Лоты")).toBe(feedData);
+    await bot.handleUpdate(press(rootData));
+    expect(lastScreen(calls).text).toMatch(/^<b>Аукцион<\/b>/);
   });
 
   it("does not birth a second auction on a repeated press", async () => {
@@ -497,7 +521,7 @@ describe("enabling the auction", () => {
     );
   });
 
-  it("answers a refusal of the meetup administrator right with a frame back to the card", async () => {
+  it("answers a refusal of the meetup administrator right with a frame back to the extensions", async () => {
     const auction = fakeAuction({
       enable: () => ({ kind: "not-administrator" }),
     });
@@ -507,7 +531,7 @@ describe("enabling the auction", () => {
 
     const frame = lastScreen(calls);
     expect(frame.text).toContain("Это действие тебе недоступно.");
-    expect(data(frame, "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
+    expect(data(frame, "‹ Расширения")).toBe(extensionsData);
     expect(records.at(-1)?.fields).toMatchObject({
       result: "error",
       error_category: "authorization",
@@ -528,35 +552,110 @@ describe("enabling the auction", () => {
   });
 });
 
-describe("auction feed shell", () => {
-  it("returns from the feed to the meetup it was opened from", async () => {
-    const auction = fakeAuction({ existing: true });
-    const { bot, calls } = harness("member", auction);
-    await bot.init();
-    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
-    await bot.handleUpdate(press(feedData));
-
-    const feed = lastScreen(calls);
-    expect(feed.text).toMatch(/^<b>Лоты<\/b>/);
-    expect(labels(feed).at(-1)).toEqual(["‹ Сходка"]);
-    expect(data(feed, "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
-  });
-
-  it("keeps the way back to the meetup through a lot and back to the feed", async () => {
+describe("auction root and the way back", () => {
+  it("walks extensions, auction, lots and a lot, and returns the same way", async () => {
     const auction = fakeAuction({ existing: true });
     const { bot, calls } = harness("member", auction, {
       presentation: "plain",
     });
     await bot.init();
-    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(root.text).toMatch(/^<b>Аукцион<\/b>/);
+    expect(root.text).toContain("Статус: скоро старт");
+    expect(root.text).toContain("Онлайн-торги: с ");
+    expect(root.text).toContain("Финал: в зале");
+    expect(labels(root)).toEqual([
+      ["Лоты"],
+      ["Правила и FAQ"],
+      ["‹ Расширения"],
+    ]);
+    expect(data(root, "‹ Расширения")).toBe(extensionsData);
+
+    await bot.handleUpdate(press(data(root, "Лоты") ?? ""));
+    const feed = lastScreen(calls);
+    expect(feed.text).toMatch(/^<b>Лоты<\/b>/);
+    // Лента — просто список лотов: входов корня в ней нет.
+    expect(JSON.stringify(labels(feed))).not.toContain("Правила и FAQ");
+    expect(labels(feed).at(-1)).toEqual(["‹ Аукцион"]);
+    expect(data(feed, "‹ Аукцион")).toBe(rootData);
+
     await bot.handleUpdate(press(lotData));
     const card = lastScreen(calls);
     expect(labels(card).at(-1)).toEqual(["‹ Лоты"]);
+    await bot.handleUpdate(press(data(card, "‹ Лоты") ?? ""));
+    expect(data(lastScreen(calls), "‹ Аукцион")).toBe(rootData);
+  });
 
-    const back = data(card, "‹ Лоты");
-    if (back === undefined) throw new Error("no way back from the lot");
-    await bot.handleUpdate(press(back));
-    expect(data(lastScreen(calls), "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
+  it("gives the administrator the console in the root and keeps adding lots in the list", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("admin", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+    expect(labels(lastScreen(calls))).toEqual([
+      ["Лоты"],
+      ["Пульт"],
+      ["Правила и FAQ"],
+      ["‹ Сходки"],
+    ]);
+    await bot.handleUpdate(press(feedData));
+    expect(labels(lastScreen(calls))[0]).toEqual(["Добавить лот"]);
+  });
+
+  it("returns from the root to the upcoming list when the process no longer knows the meetup", async () => {
+    const auction = fakeAuction({ existing: true });
+    // Рестарт: память процесса пуста, а кнопка корня осталась в чате.
+    const { bot, calls } = harness("member", auction, {
+      auctionParents: createAuctionParents(),
+    });
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(labels(root).at(-1)).toEqual(["‹ Сходки"]);
+    expect(data(root, "‹ Сходки")).toBe("v1:nav:hub");
+  });
+
+  it("remembers the meetup from enabling, not only from the menu", async () => {
+    const auction = fakeAuction();
+    const parents = createAuctionParents();
+    const { bot } = harness("admin", auction, { auctionParents: parents });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
+
+    expect(parents.meetupOf(auctionId)).toBe(meetupId);
+  });
+
+  it("offers a retry when Auction does not answer the root", async () => {
+    const auction = fakeAuction({ existing: true });
+    auction.getAuction.mockRejectedValue(
+      new ConnectError("down", Code.Unavailable),
+    );
+    const { bot, calls, records } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+
+    expect(data(lastScreen(calls), "Повторить")).toBe(rootData);
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      use_case: "view_auction",
+      error_category: "dependency_unavailable",
+    });
+  });
+
+  it("tells that the auction is gone when Auction no longer gives it", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(root.text).toContain("Этого аукциона больше нет.");
+    expect(labels(root)).toEqual([["‹ Сходки"]]);
   });
 
   it("shows the bids of a lot in journal order and returns to the lot", async () => {
@@ -585,30 +684,6 @@ describe("auction feed shell", () => {
     expect(lines[1]).toMatch(/1\s600\s₽ · авто$/);
     expect(labels(history).at(-1)).toEqual(["‹ Лот"]);
     expect(data(history, "‹ Лот")).toBe(lotData);
-  });
-
-  it("returns to the upcoming list when the process no longer knows the meetup", async () => {
-    const auction = fakeAuction({ existing: true });
-    // Рестарт: память процесса пуста, а кнопка ленты осталась в чате.
-    const { bot, calls } = harness("member", auction, {
-      auctionParents: createAuctionParents(),
-    });
-    await bot.init();
-    await bot.handleUpdate(press(feedData));
-
-    const feed = lastScreen(calls);
-    expect(labels(feed).at(-1)).toEqual(["‹ Сходки"]);
-    expect(data(feed, "‹ Сходки")).toBe("v1:nav:hub");
-  });
-
-  it("remembers the meetup from enabling, not only from the card", async () => {
-    const auction = fakeAuction();
-    const parents = createAuctionParents();
-    const { bot } = harness("admin", auction, { auctionParents: parents });
-    await bot.init();
-    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
-
-    expect(parents.meetupOf(auctionId)).toBe(meetupId);
   });
 
   it("offers a retry when Auction does not answer the feed", async () => {
@@ -649,7 +724,7 @@ describe("favorite lots in the hub", () => {
     return { marks, port };
   }
 
-  it("marks a lot from its card and lists it from the feed root with the way back to the feed", async () => {
+  it("marks a lot from its card and lists it from the auction root with the way back to the root", async () => {
     const favorites = notificationsFavorites();
     const auction = fakeAuction({ existing: true });
     const { bot, calls } = harness("member", auction, {
@@ -657,10 +732,9 @@ describe("favorite lots in the hub", () => {
       favorites: () => favorites.port,
     });
     await bot.init();
-    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
-    await bot.handleUpdate(press(feedData));
-    const feed = lastScreen(calls);
-    expect(labels(feed)[0]).toEqual(["Избранное", "Правила и FAQ"]);
+    await bot.handleUpdate(press(rootData));
+    const root = lastScreen(calls);
+    expect(labels(root)[1]).toEqual(["Избранное", "Правила и FAQ"]);
 
     await bot.handleUpdate(press(lotData));
     const follow = data(lastScreen(calls), "В избранное");
@@ -669,23 +743,23 @@ describe("favorite lots in the hub", () => {
     expect(favorites.marks).toEqual([lotId]);
     expect(data(lastScreen(calls), "Убрать")).toBeDefined();
 
-    const open = data(feed, "Избранное");
-    if (open === undefined) throw new Error("no favorites in the feed root");
+    const open = data(root, "Избранное");
+    if (open === undefined) throw new Error("no favorites in the auction root");
     await bot.handleUpdate(press(open));
     const list = lastScreen(calls);
     expect(list.text).toMatch(/^<b>Избранное<\/b>/);
-    expect(labels(list).at(-1)).toEqual(["‹ Лоты"]);
-    expect(data(list, "‹ Лоты")).toBe(feedData);
+    expect(labels(list).at(-1)).toEqual(["‹ Аукцион"]);
+    expect(data(list, "‹ Аукцион")).toBe(rootData);
   });
 
-  it("keeps the feed root and the card without favorites when Notifications is not configured", async () => {
+  it("keeps the root and the card without favorites when Notifications is not configured", async () => {
     const auction = fakeAuction({ existing: true });
     const { bot, calls } = harness("member", auction, {
       presentation: "plain",
     });
     await bot.init();
-    await bot.handleUpdate(press(feedData));
-    expect(labels(lastScreen(calls))[0]).toEqual(["Правила и FAQ"]);
+    await bot.handleUpdate(press(rootData));
+    expect(labels(lastScreen(calls))[1]).toEqual(["Правила и FAQ"]);
     await bot.handleUpdate(press(lotData));
     expect(JSON.stringify(labels(lastScreen(calls)))).not.toContain(
       "В избранное",
@@ -804,7 +878,9 @@ describe("lot photo delivery", () => {
 });
 
 describe("review findings", () => {
-  it("reports an enabled auction when the card cannot be read again", async () => {
+  // Включение не читает сходку заново (PER-605): исход называет аукцион и
+  // ведёт в его корень, даже когда Meetups лежит.
+  it("reports an enabled auction when Meetups does not answer", async () => {
     const auction = fakeAuction();
     const parents = createAuctionParents();
     const { bot, calls, records } = harness("admin", auction, {
@@ -815,8 +891,8 @@ describe("review findings", () => {
     await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
 
     const frame = lastScreen(calls);
-    expect(frame.text).toContain("Аукцион включён.");
-    expect(data(frame, "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
+    expect(frame.text).toContain("<b>Аукцион включён</b>");
+    expect(data(frame, "‹ Расширения")).toBe(`v1:ext:${meetupToken}`);
     expect(JSON.stringify(frame)).not.toContain("Повторить");
     expect(parents.meetupOf(auctionId)).toBe(meetupId);
     expect(records.at(-1)?.fields).toMatchObject({ result: "ok" });
@@ -1177,23 +1253,26 @@ describe("raffle among the participants", () => {
     tickets: [],
   };
 
-  it("registers from the meetup feed and shows the result with the recomputation", async () => {
+  it("registers from the auction root and shows the result with the recomputation", async () => {
     const auction = fakeAuction({ existing: true, raffle: openRaffle });
     const { bot, calls } = harness("member", auction);
 
-    await bot.handleUpdate(press(feedData));
+    await bot.handleUpdate(press(rootData));
     const raffleData = data(lastScreen(calls), "Розыгрыш");
     expect(raffleData).toBeDefined();
     await bot.handleUpdate(press(raffleData ?? ""));
     const before = lastScreen(calls);
     expect(before.text).toContain("<b>Розыгрыш среди участников</b>");
-    expect(labels(before)).toEqual([["Зарегистрироваться"], ["‹ Лоты"]]);
+    expect(labels(before)).toEqual([["Зарегистрироваться"], ["‹ Аукцион"]]);
 
     await bot.handleUpdate(press(data(before, "Зарегистрироваться") ?? ""));
     const registered = lastScreen(calls);
     expect(registered.text).toContain("Ты зарегистрирован.");
     expect(registered.text).toContain("ab".repeat(32));
-    expect(labels(registered)).toEqual([["Отменить регистрацию"], ["‹ Лоты"]]);
+    expect(labels(registered)).toEqual([
+      ["Отменить регистрацию"],
+      ["‹ Аукцион"],
+    ]);
 
     auction.raffle.current = {
       ...openRaffle,
@@ -1214,7 +1293,7 @@ describe("raffle among the participants", () => {
     expect(result.text).toContain("Это твой билет.");
     expect(result.text).toContain("cd".repeat(32));
     expect(result.text).toContain("Как проверить итог");
-    expect(labels(result)).toEqual([["‹ Лоты"]]);
+    expect(labels(result)).toEqual([["‹ Аукцион"]]);
   });
 
   it("offers no registration outside the registration window", async () => {
@@ -1229,7 +1308,7 @@ describe("raffle among the participants", () => {
     );
     const screen = lastScreen(calls);
     expect(screen.text).toContain("Розыгрыш не проводится");
-    expect(labels(screen)).toEqual([["‹ Лоты"]]);
+    expect(labels(screen)).toEqual([["‹ Аукцион"]]);
   });
 });
 
@@ -1286,7 +1365,7 @@ describe("raffle screens in the hub", () => {
     await bot.handleUpdate(press(raffleData));
     const screen = lastScreen(calls);
     expect(screen.text).toContain(text);
-    expect(labels(screen)).toEqual([["‹ Лоты"]]);
+    expect(labels(screen)).toEqual([["‹ Аукцион"]]);
   });
 
   it("chooses a name before the registration and returns to the raffle", async () => {

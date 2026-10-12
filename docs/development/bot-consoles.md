@@ -160,8 +160,10 @@ sh $S alice@hub press Прикрепить
 ```bash
 sh $S alice@hub say /meetups
 sh $S alice@hub press 17 октября · Настолки у Алисы
-sh $S alice@hub press Включить аукцион       # ряд появляется на карточке, открытой из списка
-sh $S alice@hub press Лоты                   # лента: «Добавить лот», «Пульт», лоты
+sh $S alice@hub press 🧩 Расширения          # меню расширений сходки (PER-605)
+sh $S alice@hub press Включить аукцион       # исход «Аукцион включён» с кнопкой «Аукцион»
+sh $S alice@hub press Аукцион                # корень: «Лоты», «Пульт», «Правила и FAQ»; read model может отстать — повтори
+sh $S alice@hub press Лоты                   # лента: «Добавить лот» и лоты
 sh $S alice@hub press Добавить лот
 sh $S alice@hub say Кружка солегуфика        # название — единственный вопрос; дальше экран «Изменить лот»
 sh $S alice@hub press Фото
@@ -178,6 +180,7 @@ sh $S alice@hub press ‹ Лот                  # карточка лота: r
 
 ```bash
 sh $S alice@hub press ‹ Лоты
+sh $S alice@hub press ‹ Аукцион              # пульт стоит в корне аукциона
 sh $S alice@hub press Пульт
 sh $S alice@hub press Сроки недели
 sh $S alice@hub say 06.10.2026 12:00 — 08.10.2026 00:00   # время сообщества; конец — общий дедлайн лотов

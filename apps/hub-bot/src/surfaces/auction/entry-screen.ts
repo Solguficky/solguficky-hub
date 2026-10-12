@@ -14,6 +14,7 @@ import {
   type AuctionButton,
   type AuctionDenial,
   type AuctionScreenBody,
+  type AuctionStageView,
   type BidOriginView,
   type CommandResult,
   encodeAuctionCallback,
@@ -359,7 +360,9 @@ export function renderEntryScreen(
         return { ...body, keyboard: [...body.keyboard, [toMenu]] };
       }
       // Родителя ленты тело не знает: возврат в её список ставит оболочка.
-      if (body.id === "feed") {
+      // Корень аукциона (PER-605) входа в этом боте не имеет, но нарисовать
+      // его бот обязан: возврат — тот же, что у ленты.
+      if (body.id === "feed" || body.id === "root") {
         const parent = screen.parent ?? "auctions";
         return {
           ...body,
@@ -673,6 +676,12 @@ function renderBody(
   const id = screenOf(body.blocks);
   const leaf = renderLeaf(body.blocks, options);
   if (leaf !== undefined) return { id, keyboard, ...leaf };
+  const root = body.blocks.find(
+    (block): block is RootBlock => block.kind === "root",
+  );
+  if (id === "root" && root !== undefined) {
+    return { id, keyboard, format: "html", text: rootText(root, options) };
+  }
   const lot = body.blocks.find(
     (block): block is LotBlock => block.kind === "lot",
   );
@@ -724,6 +733,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
   let screen: ScreenId = "feed";
   for (const block of blocks) {
     switch (block.kind) {
+      case "root":
+        return "root";
       case "lot":
         screen = "lot";
         break;
@@ -766,6 +777,43 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
 }
 
 type LotBlock = Extract<AuctionBlock, { kind: "lot" }>;
+type RootBlock = Extract<AuctionBlock, { kind: "root" }>;
+
+// Стадия корня аукциона: черновика этот бот не получает, но слово для него
+// есть — перевод полон по стадиям.
+const rootStages: Record<AuctionStageView, string> = {
+  draft: "Аукцион готовится.",
+  scheduled: "Скоро старт.",
+  prebidding: "Идут ставки.",
+  settling: "Подводим итоги.",
+  "on-break": "Перерыв перед финалом.",
+  "lineup-frozen": "Готовим финал.",
+  "in-final": "Идёт финал.",
+  finished: "Аукцион завершён.",
+};
+
+function rootText(block: RootBlock, options: RenderOptions): string {
+  const { auction } = block;
+  if (auction === undefined) {
+    return screenText("Аукцион", "Этого аукциона больше нет.");
+  }
+  const day = (instant: string) =>
+    readableDay(instant, options.timeZone, options.now);
+  const online =
+    auction.opensAt === undefined
+      ? undefined
+      : auction.closesAt === undefined
+        ? `Онлайн-торги — с ${day(auction.opensAt)}.`
+        : `Онлайн-торги — с ${day(auction.opensAt)} до ${day(auction.closesAt)}.`;
+  return screenText(
+    "Аукцион",
+    [
+      rootStages[auction.stage],
+      ...(online === undefined ? [] : [online]),
+      ...(auction.final ? ["После них — финал в зале."] : []),
+    ].join("\n"),
+  );
+}
 
 function isConfirm(id: ScreenId): boolean {
   return id === "bid-confirm" || id === "proxy-confirm";
@@ -1426,7 +1474,10 @@ function renderButton(
       return text("К лоту");
     case "answer.retry":
       return text("Ввести заново");
+    case "root.lots":
+      return text("Лоты");
     case "feed.raffle":
+    case "root.raffle":
       return text(raffleButtonLabel);
     case "raffle.register":
       return text(registerLabel);

@@ -27,11 +27,13 @@ export type Person = {
 export type MeetupAuthor =
   | { kind: "self" }
   | { kind: "organizer"; telegramUsername: string };
-// Аукцион сходки на карточке. `none` — ответ Auction «аукциона нет», а не
-// отказ: только тогда администратор видит «Включить аукцион».
+// Аукцион сходки в её меню «Расширения» (PER-605). `none` — ответ Auction
+// «аукциона нет», а не отказ: только тогда администратор видит «Включить».
+// `unavailable` — Auction не ответил: меню говорит об этом, а не прячет аукцион.
 export type MeetupAuctionView =
   | { kind: "none" }
-  | { kind: "open"; auctionId: string };
+  | { kind: "open"; auctionId: string }
+  | { kind: "unavailable" };
 // `source` — ссылка канала прихода `s_<код>` (ADR-060, пункт 17). Код —
 // недоверенный хвост без префикса: Identity сам решает, известен ли канал, и
 // до него код доносит операция входа `RequestAccess`.
@@ -141,6 +143,15 @@ export type ExecuteRequest =
   | {
       identity: Person;
       intent: "view-meetup";
+      meetupId: string;
+      requestId?: string;
+      useCase?: string;
+      deadlineAt?: number;
+    }
+  | {
+      // Меню «Расширения» сходки (PER-605): сходка и её аукцион.
+      identity: Person;
+      intent: "view-meetup-extensions";
       meetupId: string;
       requestId?: string;
       useCase?: string;
@@ -724,14 +735,12 @@ export type ExecuteResult =
       author?: MeetupAuthor;
       auction?: MeetupAuctionView;
     }
-  // Аукцион включён: карточка перечитана после команды. `alreadyExisted` —
-  // аукцион у сходки уже был, и второго не родилось. `card` нет — аукцион
-  // включён, а перечитать карточку не вышло: бюджет действия ушёл на команду.
+  // Аукцион включён. `alreadyExisted` — аукцион у сходки уже был, и второго
+  // не родилось.
   | {
       kind: "auction-enabled";
       meetupId: string;
       auctionId: string;
-      card?: Extract<ExecuteResult, { kind: "meetup-card" }>;
       alreadyExisted: boolean;
     }
   // Auction отказал по праву администратора сходки — отказ окончательный, и

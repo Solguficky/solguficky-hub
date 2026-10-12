@@ -4194,22 +4194,34 @@ describe("presentation adapter", () => {
       },
     );
 
-    it("opens the settings root with the notifications inside", async () => {
+    it("opens the settings root with the notifications and the extensions inside", async () => {
       const { bot, calls } = createHarness(resolvedIdentity());
       await bot.init();
       await bot.handleUpdate(messageUpdate("/settings"));
       expect(calls[0]).toMatchObject({
         method: "sendMessage",
         payload: {
-          text: "<b>Настройки</b>\n\nЧто и когда бот тебе присылает.",
+          text: "<b>Настройки</b>\n\nЧто и когда бот тебе присылает, и настройки расширений сходок.",
           reply_markup: {
             inline_keyboard: [
               [{ text: "Уведомления", callback_data: "v1:notify:global" }],
+              [{ text: "🧩 Расширения", callback_data: "v1:nav:ext" }],
               [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
             ],
           },
         },
       });
+    });
+
+    // «Помощь» ядра называет расширения строкой, но их правил не повторяет
+    // (ADR-064, дополнение 2026-10-12).
+    it("names the extensions of a meetup in the help", async () => {
+      const { bot, calls } = createHarness(resolvedIdentity());
+      await bot.init();
+      await bot.handleUpdate(messageUpdate("/help"));
+      expect(sendMessageText(calls[0])).toContain(
+        "Расширения сходки, например аукцион, — кнопка «🧩 Расширения» в её карточке.",
+      );
     });
 
     it("lists the commands of the person in the help", async () => {
@@ -5905,8 +5917,8 @@ describe("notification frames", () => {
     const keyboard = screen(calls[1]).reply_markup;
     // Без подписки входа в настройки сходки нет: они решают, что присылать
     // по подписке, и рядом с ней читались как второй способ получать
-    // уведомления (прогон PER-395).
-    expect(keyboard?.inline_keyboard[0]).toEqual([
+    // уведомления (прогон PER-395). Первый ряд — «Расширения» (PER-605).
+    expect(keyboard?.inline_keyboard[1]).toEqual([
       {
         text: "Подписаться на сходку",
         callback_data: `v1:notify:sub:${token}:1`,
@@ -5925,13 +5937,13 @@ describe("notification frames", () => {
     await bot.init();
     await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
     const keyboard = screen(calls[1]).reply_markup;
-    expect(keyboard?.inline_keyboard[0]?.[0]).toEqual({
+    expect(keyboard?.inline_keyboard[1]?.[0]).toEqual({
       text: "Отписаться",
       callback_data: `v1:notify:sub:${token}:0`,
     });
     // Отписка и настройки подписки стоят одним рядом: под карточкой не больше
     // пяти рядов.
-    expect(keyboard?.inline_keyboard[0]?.[1]).toEqual({
+    expect(keyboard?.inline_keyboard[1]?.[1]).toEqual({
       text: "Уведомления сходки",
       callback_data: `v1:notify:settings:${token}`,
     });
@@ -6368,25 +6380,31 @@ describe("notification frames", () => {
         auction ? withAuction : {},
       );
 
-    it("leads from the notifications frame to the frequency in a bot with auctions", async () => {
+    // Частота — настройки расширения «Аукцион» (PER-605): в «Уведомлениях»
+    // её нет ни у какого бота, а «Расширения» настроек ведут к ней у бота с
+    // аукционом.
+    it("leads to the frequency from the settings extensions, not from the notifications", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "global-notification-settings",
         categories: [{ category: "published", enabled: true }],
       });
+      const entry = { text: "Аукцион", callback_data: "v1:notify:outbid" };
       for (const auction of [true, false]) {
         const { bot, calls } = harness(execute, auction);
         await bot.init();
         await bot.handleUpdate(callbackUpdate("v1:notify:global"));
-        const rows = screen(calls[1]).reply_markup?.inline_keyboard ?? [];
-        const entry = {
-          text: "Перебитые ставки",
-          callback_data: "v1:notify:outbid",
-        };
+        const notifications = JSON.stringify(screen(calls[1]).reply_markup);
+        expect(notifications).not.toContain("v1:notify:outbid");
+
+        await bot.handleUpdate(callbackUpdate("v1:nav:ext"));
+        const extensions = screen(calls.at(-1)).reply_markup?.inline_keyboard;
         if (auction) {
-          // Вход — последний ряд содержимого, над возвратом в «Настройки».
-          expect(rows.at(-2)).toEqual([entry]);
+          expect(extensions).toEqual([
+            [entry],
+            [{ text: "‹ Настройки", callback_data: "v1:nav:settings" }],
+          ]);
         } else {
-          expect(rows.flat()).not.toContainEqual(entry);
+          expect(extensions?.flat()).not.toContainEqual(entry);
         }
       }
     });
@@ -6403,7 +6421,7 @@ describe("notification frames", () => {
         expect.objectContaining({ intent: "view-outbid-frequency" }),
       );
       const payload = screen(calls[1]);
-      expect(payload.text).toContain("<b>Перебитые ставки</b>");
+      expect(payload.text).toContain("<b>Аукцион</b>");
       expect(payload.text).toContain("Сейчас: не присылаю.");
       expect(payload.reply_markup?.inline_keyboard).toEqual([
         [
@@ -6426,7 +6444,7 @@ describe("notification frames", () => {
         ],
         [{ text: "Не чаще раза в час", callback_data: "v1:notify:outbid:60" }],
         [{ text: "Не присылать", callback_data: "v1:notify:outbid:off" }],
-        [{ text: "‹ Уведомления", callback_data: "v1:notify:global" }],
+        [{ text: "‹ Расширения", callback_data: "v1:nav:ext" }],
       ]);
     });
 
@@ -6478,8 +6496,10 @@ describe("notification frames", () => {
     });
 
     // «Реже» под перебитием — след: экран приходит новым сообщением, а
-    // уведомление остаётся как было.
-    it("opens the frequency from «Реже» as a new message", async () => {
+    // уведомление остаётся как было. Данные кнопки прежние, поэтому «Реже» из
+    // старого сообщения открывает частоту на новом месте — под «Расширениями»
+    // настроек (PER-605).
+    it("opens the frequency from «Реже» as a new message at its new place", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "outbid-frequency",
         frequency: "every",
@@ -6490,9 +6510,11 @@ describe("notification frames", () => {
       const methods = calls.map((call) => call.method);
       expect(methods).toContain("sendMessage");
       expect(methods).not.toContain("editMessageText");
-      expect(
-        screen(calls.find((call) => call.method === "sendMessage")).text,
-      ).toContain("Сейчас: о каждом перебитии.");
+      const sent = screen(calls.find((call) => call.method === "sendMessage"));
+      expect(sent.text).toContain("Сейчас: о каждом перебитии.");
+      expect(sent.reply_markup?.inline_keyboard.at(-1)).toEqual([
+        { text: "‹ Расширения", callback_data: "v1:nav:ext" },
+      ]);
     });
 
     // Отвергнутый выбор — устаревший экран: повтор перечитывает его, а не
@@ -8643,7 +8665,7 @@ describe("source channels", () => {
       (call) => call.method === "editMessageText",
     )?.payload;
     expect(JSON.stringify(rendered)).toContain("<b>Правила и FAQ</b>");
-    expect(JSON.stringify(rendered)).toContain("‹ Лоты");
+    expect(JSON.stringify(rendered)).toContain("‹ Аукцион");
     expect(records.at(-1)?.fields.use_case).toBe("view_auction");
   });
 });

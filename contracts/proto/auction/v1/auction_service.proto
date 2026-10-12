@@ -56,6 +56,7 @@ service AuctionService {
   rpc GetAuctionConsole(GetAuctionConsoleRequest) returns (GetAuctionConsoleResponse);
   rpc GetAuctionLotStatistics(GetAuctionLotStatisticsRequest) returns (GetAuctionLotStatisticsResponse);
   rpc GetMeetupAuction(GetMeetupAuctionRequest) returns (GetMeetupAuctionResponse);
+  rpc GetAuction(GetAuctionRequest) returns (GetAuctionResponse);
   rpc ListAuctions(ListAuctionsRequest) returns (ListAuctionsResponse);
   rpc RegisterForRaffle(RegisterForRaffleRequest) returns (RegisterForRaffleResponse);
   rpc CancelRaffleRegistration(CancelRaffleRegistrationRequest) returns (CancelRaffleRegistrationResponse);
@@ -1462,6 +1463,20 @@ message GetMeetupAuctionRequest {
 message GetMeetupAuctionResponse {
   // Unset when the meetup has no auction: absent, not an error. A draft is
   // returned here, unlike in ListAuctions.
+  AuctionSnapshot auction = 1;
+}
+
+message GetAuctionRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+}
+
+message GetAuctionResponse {
+  // Unset when there is no such auction for this caller: absent, not an error.
+  // Whether a draft is returned depends on the caller, see
+  // docs/architecture/integration.md, section "Auction gRPC".
   AuctionSnapshot auction = 1;
 }
 

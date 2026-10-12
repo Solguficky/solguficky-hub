@@ -12,6 +12,7 @@ import type {
   NotificationCategory,
 } from "../../notifications/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
+import { toSettingsExtensions } from "./extensions.js";
 import {
   escapeHtml,
   notificationToggleLabel,
@@ -54,14 +55,8 @@ export function toggleToast(
   return `${enabled ? "Включено" : "Выключено"}: ${categoryLabels[category].toLowerCase()}.`;
 }
 
-export const outbidTitle = "Перебитые ставки";
-const toNotifications = { name: "Уведомления", data: "v1:notify:global" };
-
 export function globalNotificationsScreen(
   categories: readonly CategoryState<NotificationCategory>[],
-  // Вход в частоту «перебили» (PER-552) — у бота с аукционом: без него
-  // ставок, которые можно перебить, у человека здесь нет.
-  outbid = false,
 ): ShownScreen {
   // Подзаголовков у клавиатуры нет, поэтому группы называет текст, а кнопки
   // идут в том же порядке: сначала то, что приходит без подписки, потом
@@ -85,7 +80,6 @@ export function globalNotificationsScreen(
       )
       .row();
   }
-  if (outbid) keyboard.text(outbidTitle, "v1:notify:outbid").row();
   return {
     id: "notify-global",
     text: screenText(
@@ -150,7 +144,11 @@ export function meetupNotificationsScreen(settings: {
  * Частота «перебили» (PER-552): пять режимов по одному в ряд, текущий —
  * строкой «Сейчас: …» в теле, а не меткой на кнопке, как у бота аукциона
  * (дизайн-код, «Уведомления»). Выбор отменяется с того же экрана, поэтому
- * подтверждения «Да» нет: что сработало, говорит ответ на нажатие.
+ * подтверждения «Да» нет: что сработало, говорит ответ на нажатие. Это
+ * настройки расширения «Аукцион» в «Настройках» → «Расширения»: в
+ * «Уведомлениях» остаются только категории ядра (PER-605). Данные кнопок
+ * прежние, поэтому «Реже» и «Перебитые ставки» из старых сообщений открывают
+ * этот экран на новом месте.
  */
 export function outbidFrequencyScreen(current: OutbidFrequency): ShownScreen {
   const keyboard = new InlineKeyboard();
@@ -162,11 +160,11 @@ export function outbidFrequencyScreen(current: OutbidFrequency): ShownScreen {
   return {
     id: "notify-outbid",
     text: screenText(
-      outbidTitle,
+      "Аукцион",
       outbidExplanation,
       `Сейчас: ${outbidLabels[current].state}.`,
     ),
-    keyboard: withNav(keyboard, toNotifications),
+    keyboard: withNav(keyboard, toSettingsExtensions),
     format: "HTML",
   };
 }

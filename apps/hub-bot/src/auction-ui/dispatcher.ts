@@ -11,6 +11,7 @@ import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
 import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
+import { openRoot } from "./internal/use-cases/open-root.js";
 import {
   answerRaffleQuestion,
   askRaffleAlias,
@@ -59,6 +60,12 @@ export function dispatchAuctionIntent(input: {
     user: input.user,
   };
   switch (intent.kind) {
+    case "root":
+      return openRoot({
+        auction: input.auction,
+        viewer: input.viewer,
+        auctionId: intent.auctionId,
+      });
     case "feed":
       return openFeed({
         auction: input.auction,
