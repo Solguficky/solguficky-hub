@@ -59,6 +59,39 @@ describe("lotViewOf", () => {
         phase: "live",
       },
     ],
+    // Ask ведущего выше цены — следующая цена финала (PER-336).
+    [
+      {
+        case: "trading",
+        value: {
+          currentPrice: rub(100n),
+          ask: rub(150n),
+          phase: LotPhase.LIVE,
+        },
+      },
+      {
+        kind: "trading",
+        currentPrice: { minorUnits: 10_000, currency: "RUB" },
+        phase: "live",
+        ask: { minorUnits: 15_000, currency: "RUB" },
+      },
+    ],
+    // Ask не выше цены уже ничего не объявляет.
+    [
+      {
+        case: "trading",
+        value: {
+          currentPrice: rub(150n),
+          ask: rub(150n),
+          phase: LotPhase.LIVE,
+        },
+      },
+      {
+        kind: "trading",
+        currentPrice: { minorUnits: 15_000, currency: "RUB" },
+        phase: "live",
+      },
+    ],
     [
       { case: "held", value: { currentPrice: rub(700n), leaderId: "p-2" } },
       {

@@ -1,7 +1,9 @@
 import type { Update } from "grammy/types";
 import type { Presentation } from "../src/core/config.js";
 import { noopTracing } from "../src/core/tracing.js";
+import { createUuidV7 } from "../src/core/uuid-v7.js";
 import { createClients } from "../src/surfaces/auction/clients.js";
+import { type LiveRuntime, liveRuntime } from "./contour.js";
 import {
   createAuctionHarness,
   type LogRecord,
@@ -76,7 +78,20 @@ export function openAuctionBotWire(
         error: cause instanceof Error ? cause.message : String(cause),
       }),
   });
-  current = createAuctionHarness(clients.ports, calls, options);
+  // Карточки финала (PER-336): поток и темп правок принадлежат процессу
+  // бота, и рестарт гасит прежние — иначе старый процесс правил бы карточки.
+  let live: LiveRuntime | undefined;
+  const spawn = () => {
+    live?.close();
+    live = liveRuntime(clients.watch, (request) =>
+      clients.ports(createUuidV7()).auction.getDisplayNames(request),
+    );
+    return createAuctionHarness(clients.ports, calls, {
+      ...options,
+      live: live.options,
+    });
+  };
+  current = spawn();
   return {
     // Разговор держит этот вход, а не сам бот: после рестарта он говорит уже
     // с новым процессом, а история чата остаётся прежней.
@@ -93,9 +108,10 @@ export function openAuctionBotWire(
      * теряются, Auction и история сообщений у человека остаются.
      */
     restart(): void {
-      current = createAuctionHarness(clients.ports, calls, options);
+      current = spawn();
     },
     close(): void {
+      live?.close();
       clients.close();
     },
   };

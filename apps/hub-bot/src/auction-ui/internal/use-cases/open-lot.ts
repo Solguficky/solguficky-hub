@@ -15,6 +15,7 @@ import type {
   AuctionBlock,
   AuctionButton,
   AuctionScreenBody,
+  FinalBidOutcome,
 } from "../../screen.js";
 import { namesOf } from "./names.js";
 
@@ -41,8 +42,9 @@ export async function openLot(input: {
   return showLot({ ...input, lot });
 }
 
-// Карточка по уже прочитанному снимку. Исход команды участника карточка не
-// несёт: он — свой экран (PER-472).
+// Карточка по уже прочитанному снимку. Исход команды онлайн-недели карточка не
+// несёт: он — свой экран (PER-472). Исключение — ставка финала `finalBid`
+// (PER-336): её исход — строка карточки, которая остаётся живой.
 //
 // `following` — состояние отметки, которое уже известно из ответа команды
 // избранного: тогда список отметок карточка не перечитывает.
@@ -53,11 +55,55 @@ export async function showLot(input: {
   lot: LotView;
   page: number;
   following?: boolean;
+  finalBid?: FinalBidOutcome;
 }): Promise<AuctionScreenBody> {
   const { lot } = input;
   const participantName = await participantNameOf(input);
   const following =
     input.following ?? (await followingOf(input.favorites, input.viewer, lot));
+  return lotBody({
+    lot,
+    viewer: input.viewer,
+    page: input.page,
+    ...(participantName === undefined ? {} : { participantName }),
+    ...(following === undefined ? {} : { following }),
+    ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
+  });
+}
+
+// Карточка финала по снимку из потока `WatchAuction` (PER-336): поверхность
+// правит ею открытое сообщение вне update. Шлюза здесь нет, как у
+// `previewLot`: снимок прочитан правами смотрящего, которого шлюз пустил,
+// когда карточку открывали, а команду кнопка карточки шлёт снова через шлюз.
+// `following` — отметка, с которой карточку открыли: Notifications на каждое
+// изменение цены не спрашивается. Имя участника — тем же путём, что у
+// карточки; кэш имён держит вызывающий.
+export async function liveLot(input: {
+  auction: Pick<AuctionPort, "getDisplayNames">;
+  viewer: Viewer;
+  lot: LotView;
+  page: number;
+  following?: boolean;
+}): Promise<AuctionScreenBody> {
+  const participantName = await participantNameOf(input);
+  return lotBody({
+    lot: input.lot,
+    viewer: input.viewer,
+    page: input.page,
+    ...(participantName === undefined ? {} : { participantName }),
+    ...(input.following === undefined ? {} : { following: input.following }),
+  });
+}
+
+function lotBody(input: {
+  lot: LotView;
+  viewer: Viewer;
+  page: number;
+  participantName?: string;
+  following?: boolean;
+  finalBid?: FinalBidOutcome;
+}): AuctionScreenBody {
+  const { lot, participantName, following } = input;
   // Хронология открывается на последней странице — со свежими ставками:
   // страницу за пределом юзкейс хронологии прижимает к последней.
   const history: AuctionButton[][] = hasTraded(lot.status)
@@ -97,10 +143,12 @@ export async function showLot(input: {
           ? {}
           : { viewerProxyLimit: lot.viewerProxyLimit }),
         ...(following === undefined ? {} : { following }),
+        ...(isLive(lot.status) ? { live: { page: input.page } } : {}),
+        ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
       },
     ],
     keyboard: [
-      ...bidRows(lot, input.page),
+      ...bidRows(lot, input.viewer, input.page),
       ...refresh,
       ...history,
       ...followRows(lot, input.page, following),
@@ -158,7 +206,7 @@ function lotBlock(
 }
 
 async function participantNameOf(input: {
-  auction: AuctionPort;
+  auction: Pick<AuctionPort, "getDisplayNames">;
   viewer: Viewer;
   lot: LotView;
 }): Promise<string | undefined> {
@@ -312,21 +360,48 @@ function hasTraded(status: LotStatusView): boolean {
   }
 }
 
-// Ставка из бота — только в онлайн-торгах: в живом финале ставят по шагу в
-// зале, а кнопку финала добавит его лист. Ряд «по шагу» несёт порог, который
-// видел человек. Порог выше потолка кнопки не принимает ни одна команда бота —
-// ни ставка, ни лимит не меньше порога, — поэтому рядов ставки у такого лота
-// нет вовсе, а не вопрос, на который любой ответ отказ. Лимит предлагается
-// лоту, который его принимает.
-function bidRows(lot: LotView, page: number): AuctionButton[][] {
-  const { nextPrice } = lot;
+function isLive(status: LotStatusView): boolean {
+  return status.kind === "trading" && status.phase === "live";
+}
+
+// Ставка из бота в онлайн-торгах — «по шагу», своя сумма и автоставка. Ряд
+// «по шагу» несёт порог, который видел человек. Порог выше потолка кнопки не
+// принимает ни одна команда бота — ни ставка, ни лимит не меньше порога, —
+// поэтому рядов ставки у такого лота нет вовсе, а не вопрос, на который любой
+// ответ отказ. Лимит предлагается лоту, который его принимает.
+//
+// В живом финале кнопка одна — «Поставить N» на следующую цену (ADR-049):
+// своей суммы нет, а лимит участник ставит до финала. Лидеру кнопки нет —
+// против себя он не ставит, и Auction отказал бы.
+function bidRows(
+  lot: LotView,
+  viewer: Viewer,
+  page: number,
+): AuctionButton[][] {
+  const { nextPrice, status } = lot;
   if (
-    lot.status.kind !== "trading" ||
-    lot.status.phase !== "online" ||
+    status.kind !== "trading" ||
     nextPrice === undefined ||
     nextPrice.minorUnits > MAX_COMMAND_AMOUNT
   ) {
     return [];
+  }
+  if (status.phase === "live") {
+    if (status.leaderId === viewer.identityId) return [];
+    return [
+      [
+        {
+          action: "lot.bid-final",
+          amount: nextPrice,
+          callbackData: encodeAuctionCallback({
+            kind: "final-bid",
+            lotId: lot.lotId,
+            amount: nextPrice.minorUnits,
+            page,
+          }),
+        },
+      ],
+    ];
   }
   const ask = (question: "bid" | "proxy") =>
     encodeAuctionCallback({ kind: "ask", question, lotId: lot.lotId, page });

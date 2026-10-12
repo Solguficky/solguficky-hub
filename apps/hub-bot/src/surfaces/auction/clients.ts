@@ -40,6 +40,10 @@ import {
 } from "../../core/auction/raffle.js";
 import { lotOrMissing, lotViewOf } from "../../core/auction/snapshot.js";
 import {
+  type AuctionWatchSource,
+  watchSourceOf,
+} from "../../core/auction/watch.js";
+import {
   classifyRecipientFailure,
   type TelegramRecipientResolver,
 } from "../../core/delivery/index.js";
@@ -519,6 +523,9 @@ export function createDeliveryPorts(
 
 export type Clients = {
   ports: PortsFactory;
+  // Поток аукциона для карточек финала (PER-336): без дедлайна, его рвёт
+  // отписка или остановка процесса.
+  watch: AuctionWatchSource;
   delivery: DeliveryPorts;
   // Есть ли у бота настройка «перебили»: по ней под перебитием стоит «Реже».
   outbidSettings: boolean;
@@ -590,6 +597,7 @@ export function createClients(options: {
         : { onRaffleRefused: options.onRaffleRefused }),
     }),
     delivery: createDeliveryPorts(identity, auction),
+    watch: watchSourceOf(auction),
     outbidSettings: notifications !== undefined,
     close() {
       identitySession.abort();

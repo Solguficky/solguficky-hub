@@ -42,6 +42,11 @@ const MAX_BYTES = 64;
 // - `username` — выбрать ник своим именем в аукционе. Команда, ради которой
 //   выбирается имя, едет в кнопке, чтобы после выбора вернуться к ней.
 //
+// - `fb` — «Поставить N» карточки финала (PER-336): лот, сумма и страница.
+//   Подтверждения нет (ADR-049): сумма — ожидаемая цена, и устаревшая кнопка
+//   получает отказ с новой ценой, а не чужую ставку. `op_id` рождается на
+//   нажатии: два нажатия — два намерения, и второе Auction отклонит.
+//
 // Кнопка лота после принятой команды несёт третий аргумент — версию лота из
 // ответа Auction в base36 (PER-470): карточка дочитывает лот до неё, потому что
 // чтение отстаёт от команды. У остальных кнопок лота хвоста нет.
@@ -89,6 +94,7 @@ export type AuctionIntent =
       pending?: PendingCommand;
     }
   | { kind: "username"; lotId: string; page: number; pending: PendingCommand }
+  | { kind: "final-bid"; lotId: string; amount: number; page: number }
   | { kind: "explain"; lotId: string; page: number }
   // Избранное (PER-495): отметка и снятие с карточки возвращают на ту же
   // карточку, поэтому несут страницу ленты, как кнопка лота.
@@ -307,6 +313,8 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
       ].join(":");
     case "username":
       return `${prefix}:nu:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}:${pendingArgument(intent.pending)}`;
+    case "final-bid":
+      return `${prefix}:fb:${uuidToToken(intent.lotId)}:${amountArgument(intent.amount)}:${pageArgument(intent.page)}`;
     case "explain":
       return `${prefix}:xe:${uuidToToken(intent.lotId)}:${pageArgument(intent.page)}`;
     case "follow":
@@ -494,6 +502,20 @@ function commandAction(
 ): ParsedAuctionCallback | undefined {
   const [first, ...more] = args;
   const lotId = first === undefined ? undefined : tokenToUuid(first);
+  if (action === "fb") {
+    const [rawAmount, rawPage, ...rest] = more;
+    const amount = amountOf(rawAmount);
+    const page = pageOf(rawPage);
+    if (
+      lotId === undefined ||
+      amount === undefined ||
+      page === undefined ||
+      rest.length !== 0
+    ) {
+      return refuse("malformed");
+    }
+    return accept({ kind: "final-bid", lotId, amount, page });
+  }
   if (action === "cb" || action === "cx") {
     const [rawAmount, rawPage, ...rest] = more;
     const command = commandOf(action.slice(1));

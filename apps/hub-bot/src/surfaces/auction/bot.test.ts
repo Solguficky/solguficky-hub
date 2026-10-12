@@ -14,6 +14,11 @@ import {
   type ProxyExplainerPort,
   type RaffleView,
 } from "../../auction-ui/index.js";
+import type {
+  AuctionWatches,
+  AuctionWatchState,
+} from "../../core/auction/watch.js";
+import type { EditLimiter } from "../../core/bot/edit-limiter.js";
 import { createLogger, type Logger } from "../../core/logging.js";
 import type {
   OutbidFrequency,
@@ -80,6 +85,10 @@ function makeBot(
     presentation?: "rich" | "plain";
     // Обрыв соединения на первом вызове метода.
     dropOnce?: string;
+    // Карточки финала (PER-336): поток и темп правок.
+    live?: Parameters<typeof createBot>[0]["live"];
+    // Отказ с кодом, а не 400: `429` и `403` у правки вне update.
+    refuseWith?: Record<string, { code: number; description: string }>;
   } = {},
 ) {
   const bot = createBot({
@@ -93,6 +102,7 @@ function makeBot(
     logger: options.logger ?? silent,
     timeZone: "Europe/Moscow",
     ...(options.photos === undefined ? {} : { photos: options.photos }),
+    ...(options.live === undefined ? {} : { live: options.live }),
     botInfo,
   });
   const calls: Array<{ method: string; payload: unknown }> = [];
@@ -113,6 +123,15 @@ function makeBot(
     if (once !== undefined && options.refuseOnce !== undefined) {
       delete options.refuseOnce[method];
       return Promise.resolve({ ok: false, error_code: 400, description: once });
+    }
+    const coded = options.refuseWith?.[method];
+    if (coded !== undefined) {
+      return Promise.resolve({
+        ok: false,
+        error_code: coded.code,
+        description: coded.description,
+        parameters: { retry_after: 2 },
+      });
     }
     const description = options.refuse?.[method];
     if (description !== undefined) {
@@ -2684,5 +2703,262 @@ describe("raffle among the participants", () => {
         .keyboard.flat()
         .map((b) => b.text),
     ).not.toContain("Розыгрыш");
+  });
+});
+
+// Карточка финала (PER-336): открытая нажатием карточка лота живого финала
+// правится по потоку аукциона тем же сообщением, а другой экран в нём её
+// снимает.
+describe("final lot card", () => {
+  const RIVAL = "01926f3c-8b7a-7cde-8f00-00000000000b";
+  const rub = (rubles: number) => ({
+    minorUnits: rubles * 100,
+    currency: "RUB",
+  });
+  const liveLot = (version: number, price: number): LotView => ({
+    lotId,
+    auctionId,
+    version,
+    card: { title: "Кружка", description: "" },
+    nextPrice: rub(price + 100),
+    proxyEnabled: true,
+    status: {
+      kind: "trading",
+      currentPrice: rub(price),
+      leaderId: RIVAL,
+      phase: "live",
+    },
+  });
+
+  function liveStream() {
+    const listeners = new Set<(state: AuctionWatchState) => void>();
+    const watches: AuctionWatches = {
+      subscribe(_auctionId, _viewer, listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      open: () => (listeners.size > 0 ? 1 : 0),
+      close: () => listeners.clear(),
+    };
+    return {
+      watches,
+      listeners,
+      emit(activeLot: LotView) {
+        for (const listener of [...listeners]) {
+          listener({ auctionId, finished: false, activeLot, lineup: [] });
+        }
+      },
+    };
+  }
+
+  // Темп проверяет тест лимитера; здесь правка уходит сразу.
+  const immediate: EditLimiter = {
+    submit: (_chat, _key, task) => {
+      void task();
+    },
+    drop: () => {},
+    waiting: () => 0,
+    close: () => {},
+  };
+
+  const flush = async () => {
+    for (let i = 0; i < 50; i += 1) await Promise.resolve();
+  };
+
+  const edits = (calls: Array<{ method: string; payload: unknown }>) =>
+    calls.filter(
+      ({ method, payload }) =>
+        method === "editMessageText" &&
+        (payload as { message_id?: number }).message_id === 7 &&
+        (payload as { chat_id?: number }).chat_id === 42,
+    );
+
+  // Сумму `Intl` пишет с неразрывными пробелами: тест сравнивает обычные.
+  const plain = (text: string) => text.replace(/[  ]/g, " ");
+  const htmlOf = (payload: unknown) =>
+    plain(
+      (payload as { rich_message?: { html?: string } }).rich_message?.html ??
+        "",
+    );
+  const labels = (payload: unknown) =>
+    keyboardOf(payload)
+      .flat()
+      .map((b) => plain(b.text));
+
+  function setup(
+    options: {
+      lot?: LotView;
+      refuseWith?: Record<string, { code: number; description: string }>;
+    } = {},
+  ) {
+    const stream = liveStream();
+    const ports = portsWith({
+      lot: options.lot ?? liveLot(1, 1200),
+      names: { [RIVAL]: "@jay" },
+    });
+    const { bot, calls } = makeBot(ports, {
+      live: {
+        watches: stream.watches,
+        limiter: immediate,
+        names: { getDisplayNames: async () => ({ [RIVAL]: "@jay" }) },
+      },
+      ...(options.refuseWith === undefined
+        ? {}
+        : { refuseWith: options.refuseWith }),
+    });
+    return { bot, calls, stream };
+  }
+
+  it("shows one button at the next price and edits the card on a new price", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(lotPress({ rich: true }));
+    const opened = lastScreen(calls);
+    expect(opened.keyboard.flat().map((b) => plain(b.text))).toContain(
+      "Поставить 1 300 ₽",
+    );
+    expect(plain(opened.text)).toContain("Следующая ставка: 1 300 ₽");
+    const before = edits(calls).length;
+    stream.emit(liveLot(2, 1400));
+    await flush();
+    const after = edits(calls);
+    expect(after).toHaveLength(before + 1);
+    const edited = after.at(-1)?.payload;
+    expect(htmlOf(edited)).toContain("Цена: 1 400 ₽");
+    expect(htmlOf(edited)).toContain("Лидер: @jay");
+    expect(labels(edited)).toContain("Поставить 1 500 ₽");
+  });
+
+  it("names the ask of the auctioneer", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(lotPress({ rich: true }));
+    stream.emit({
+      ...liveLot(2, 1200),
+      nextPrice: rub(2000),
+      status: {
+        kind: "trading",
+        currentPrice: rub(1200),
+        leaderId: RIVAL,
+        phase: "live",
+        ask: rub(2000),
+      },
+    });
+    await flush();
+    const edited = edits(calls).at(-1)?.payload;
+    expect(htmlOf(edited)).toContain("Ведущий объявил: 2 000 ₽");
+    expect(labels(edited)).toContain("Поставить 2 000 ₽");
+  });
+
+  it("stops editing once another screen takes the message", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(lotPress({ rich: true }));
+    // «‹ Лоты» правит то же сообщение в ленту.
+    await bot.handleUpdate(
+      lotPress({
+        rich: true,
+        data: encodeAuctionCallback({ kind: "feed", auctionId, page: 0 }),
+      }),
+    );
+    expect(stream.listeners.size).toBe(0);
+    const before = edits(calls).length;
+    stream.emit(liveLot(2, 1400));
+    await flush();
+    expect(edits(calls)).toHaveLength(before);
+  });
+
+  // Сообщение удалили: правка получает отказ, карточку больше не правят и
+  // нового сообщения вместо неё не шлют — живой экран не становится рассылкой.
+  it("forgets the card when Telegram no longer has the message", async () => {
+    const { bot, calls, stream } = setup();
+    await bot.handleUpdate(
+      lotPress({
+        data: encodeAuctionCallback({ kind: "lot", lotId, page: 0 }),
+      }),
+    );
+    // Нажатие пришло из текстового сообщения, и правка его в rich-карточку
+    // прошла; дальше сообщения нет.
+    const sentBefore = calls.filter(
+      ({ method }) => method === "sendRichMessage" || method === "sendMessage",
+    ).length;
+    const refusing = makeBot(
+      portsWith({ lot: liveLot(1, 1200), names: { [RIVAL]: "@jay" } }),
+      {
+        live: {
+          watches: stream.watches,
+          limiter: immediate,
+          names: { getDisplayNames: async () => ({}) },
+        },
+        refuseWith: {
+          editMessageText: {
+            code: 400,
+            description: "Bad Request: message to edit not found",
+          },
+        },
+      },
+    );
+    await refusing.bot.handleUpdate(lotPress({ rich: true }));
+    const subscribed = stream.listeners.size;
+    stream.emit(liveLot(2, 1400));
+    await flush();
+    expect(stream.listeners.size).toBe(subscribed - 1);
+    expect(
+      refusing.calls.filter(({ method }) => method === "sendRichMessage")
+        .length,
+    ).toBe(1);
+    expect(
+      calls.filter(
+        ({ method }) =>
+          method === "sendRichMessage" || method === "sendMessage",
+      ).length,
+    ).toBe(sentBefore);
+  });
+
+  // Гонка двух нажатий (ADR-049): второе получает отказ с новой ценой, и та
+  // же карточка несёт кнопку на неё.
+  it("answers a bid at a moved price with the new price on the card", async () => {
+    const stream = liveStream();
+    const base = portsWith({
+      lot: liveLot(1, 1200),
+      names: { [RIVAL]: "@jay" },
+    });
+    const ports: PortsFactory = (requestId, deadlineAt) => {
+      const shared = base(requestId, deadlineAt);
+      return {
+        ...shared,
+        auction: {
+          ...shared.auction,
+          placeBid: async () => ({
+            kind: "refused",
+            refusal: { kind: "bid-not-at-next-price", expected: rub(1400) },
+          }),
+        },
+      };
+    };
+    const { bot, calls } = makeBot(ports, {
+      live: {
+        watches: stream.watches,
+        limiter: immediate,
+        names: { getDisplayNames: async () => ({}) },
+      },
+    });
+    await bot.handleUpdate(
+      lotPress({
+        rich: true,
+        data: encodeAuctionCallback({
+          kind: "final-bid",
+          lotId,
+          amount: 130000,
+          page: 0,
+        }),
+      }),
+    );
+    const shown = lastScreen(calls);
+    expect(plain(shown.text)).toContain(
+      "Цену уже подняли: следующая ставка — 1 400 ₽",
+    );
+    expect(shown.keyboard.flat().map((b) => plain(b.text))).toContain(
+      "Поставить 1 400 ₽",
+    );
+    // Карточка после отказа остаётся живой.
+    expect(stream.listeners.size).toBe(1);
   });
 });

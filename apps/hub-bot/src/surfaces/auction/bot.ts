@@ -1,12 +1,22 @@
 import { type Bot, GrammyError, HttpError, InputFile } from "grammy";
 import type { InputRichMessage, Message, UserFromGetMe } from "grammy/types";
 import {
+  type AuctionPort,
   encodeAuctionCallback,
   isAuctionQuestion,
   type LotImagePort,
   replacesAuctionQuestion,
   type Viewer,
 } from "../../auction-ui/index.js";
+import {
+  createLiveCards,
+  type LiveCardEntry,
+  type LiveEditOutcome,
+  liveCardOf,
+  liveEditFailure,
+} from "../../core/auction/live-cards.js";
+import type { AuctionWatches } from "../../core/auction/watch.js";
+import type { EditLimiter } from "../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../core/bot/shell.js";
 import { markUpdateFailed } from "../../core/bot/tracing.js";
 import type { Presentation, TelegramEnvironment } from "../../core/config.js";
@@ -68,6 +78,13 @@ export type BotOptions = {
   questions?: QuestionMemory;
   // Тесты передают его, чтобы не звать getMe.
   botInfo?: UserFromGetMe;
+  // Карточки финала (PER-336): поток аукциона, темп правок и имена для правки
+  // вне update. Нет — карточка финала правится только нажатием.
+  live?: {
+    watches: AuctionWatches;
+    limiter: EditLimiter;
+    names: Pick<AuctionPort, "getDisplayNames">;
+  };
 };
 
 type UpdateContext = ShellContext;
@@ -93,6 +110,37 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   const photos = options.photos ?? createPhotoCache();
   const questions = options.questions ?? createQuestionMemory();
   const hintedAlbums = createHintedAlbums();
+  const liveCards =
+    options.live === undefined
+      ? undefined
+      : createLiveCards({
+          ...options.live,
+          edit: (card, body) =>
+            editLiveCard(bot.api, {
+              card,
+              screen: render({ kind: "auction", body }),
+              photos,
+              logger,
+            }),
+        });
+  // Что показало сообщение: карточку финала реестр запоминает, другой экран в
+  // том же сообщении её вытесняет (PER-336).
+  const observe = (
+    ctx: UpdateContext,
+    messageId: number | undefined,
+    outcome: RouteOutcome,
+  ) => {
+    const chatId = ctx.chat?.id;
+    if (liveCards === undefined || chatId === undefined) return;
+    if (messageId === undefined) return;
+    liveCards.shown(
+      chatId,
+      messageId,
+      outcome.screen.kind === "auction"
+        ? liveCardOf(outcome.screen.body, outcome.viewer)
+        : undefined,
+    );
+  };
 
   // Только личный чат: в группе бот аукциона молчит.
   const direct = bot.chatType("private");
@@ -114,13 +162,14 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       const outcome = await input.route(ports);
       // Команда бросает открытые вопросы чата (дизайн-код, «Вопросы»).
       await dropQuestions(ctx, questions);
-      await deliver(ctx, {
+      const shown = await deliver(ctx, {
         screen: render(outcome.screen),
         photos,
         image: ports.image,
         viewer: outcome.viewer,
         logger,
       });
+      observe(ctx, shown, outcome);
       log({ logger, ctx, outcome, operation });
     } finally {
       await waiting.finish();
@@ -234,7 +283,11 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         questions.forget(ctx.chat.id, pressed);
         const deleted = await deleteMessage(ctx, pressed);
         // Удалить не дали — вопрос правится в экран на месте.
-        await deliver(ctx, { ...delivery, keepCurrent: deleted });
+        observe(
+          ctx,
+          await deliver(ctx, { ...delivery, keepCurrent: deleted }),
+          outcome,
+        );
       } else {
         // Удалить не дали — прежний вопрос остаётся живым: его «Отмена» несёт
         // шаг, и ответ на него по-прежнему принимается.
@@ -257,10 +310,14 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
               !spent && !replacing && !isTraceCallback(ctx.callbackQuery.data),
           });
         } else {
-          await deliver(ctx, {
-            ...delivery,
-            keepCurrent: isTraceCallback(ctx.callbackQuery.data),
-          });
+          observe(
+            ctx,
+            await deliver(ctx, {
+              ...delivery,
+              keepCurrent: isTraceCallback(ctx.callbackQuery.data),
+            }),
+            outcome,
+          );
         }
       }
     } finally {
@@ -344,14 +401,18 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         // Результат — одним новым сообщением, у вопроса снимается «Отмена».
         // После сбоя сервиса вопрос остаётся открытым: тот же ответ можно
         // прислать ещё раз.
-        await deliver(ctx, {
-          screen,
-          photos,
-          image: ports.image,
-          viewer: outcome.viewer,
-          logger,
-          keepCurrent: true,
-        });
+        observe(
+          ctx,
+          await deliver(ctx, {
+            screen,
+            photos,
+            image: ports.image,
+            viewer: outcome.viewer,
+            logger,
+            keepCurrent: true,
+          }),
+          outcome,
+        );
         if (outcome.failure === undefined) {
           questions.forget(ctx.chat.id, replied.message_id);
           await closeQuestion(ctx, replied.message_id);
@@ -625,6 +686,7 @@ async function photoFor(input: {
 // сообщение и правятся друг в друга, удаления при смене вида нет. Новым
 // сообщением экран приходит, только когда править нечего: под нажатием
 // сообщение-фото от прежней версии бота, или Telegram правку не принял.
+// Ответ — сообщение, в котором экран оказался; нет — Telegram его не назвал.
 async function deliver(
   ctx: UpdateContext,
   input: {
@@ -637,7 +699,7 @@ async function deliver(
     // удаляется — экран уходит новым.
     keepCurrent?: boolean;
   },
-): Promise<void> {
+): Promise<number | undefined> {
   const { screen } = input;
   const markup = markupOf(screen);
   // След под уведомлением остаётся целым: его не правят и клавиатуру не
@@ -657,16 +719,16 @@ async function deliver(
     try {
       if (editable) {
         await ctx.editMessageText(screen.text, markup);
-        return;
+        return current?.message_id;
       }
     } catch (cause) {
       if (!(cause instanceof GrammyError)) throw cause;
-      if (notModified(cause.description)) return;
+      if (notModified(cause.description)) return current?.message_id;
       if (!notEditable(cause.description)) throw cause;
     }
-    await ctx.reply(screen.text, markup);
+    const sent = await ctx.reply(screen.text, markup);
     await leave();
-    return;
+    return sent.message_id;
   }
   let photo = await photoFor({ ...input, requestId: ctx.requestId });
   // Новое сообщение после отказа правки загрузку не повторяет.
@@ -684,7 +746,9 @@ async function deliver(
       // в лимите, правах или разметке: только тогда версия помечается.
       if (rejected !== undefined) input.photos.refuse(rejected);
       await leave();
-      return;
+      // Правка оставляет экран в нажатом сообщении; новое называет ответ.
+      if (editable) return current?.message_id;
+      return sent === true ? undefined : sent.message_id;
     } catch (cause) {
       if (photo?.kind === "upload" && cause instanceof HttpError) {
         // Обрыв соединения: Telegram мог вызов и не получить. Отметки нет,
@@ -700,7 +764,9 @@ async function deliver(
         continue;
       }
       if (!(cause instanceof GrammyError)) throw cause;
-      if (notModified(cause.description)) return;
+      if (notModified(cause.description)) {
+        return editable ? current?.message_id : undefined;
+      }
       if (editable && notEditable(cause.description)) {
         // Сообщение не редактируется — экран уходит новым сообщением по
         // `file_id` из кэша либо без фото.
@@ -734,6 +800,53 @@ async function deliver(
       }
       throw cause;
     }
+  }
+}
+
+// Правка карточки финала вне update (PER-336): тот же экран, что дала бы
+// кнопка, тем же сообщением. Фото — только из кэша `file_id`: загрузка байтов
+// на каждой цене залпа съела бы и время, и лимит; без записи в кэше карточка
+// правится без фото. Отказ «сообщения нет», «не редактируется» и закрытый
+// чат — `gone`: карточку больше не правят и нового сообщения не шлют, иначе
+// живой экран превратился бы в рассылку.
+async function editLiveCard(
+  api: Bot<UpdateContext>["api"],
+  input: {
+    card: LiveCardEntry;
+    screen: RenderedScreen;
+    photos: PhotoCache;
+    logger: Logger;
+  },
+): Promise<LiveEditOutcome> {
+  const { card, screen } = input;
+  const markup = markupOf(screen);
+  const key = screen.photo;
+  const cached = key === undefined ? undefined : input.photos.get(key);
+  const photo: Photo | undefined =
+    key !== undefined && cached?.kind === "file"
+      ? { kind: "cached", key, fileId: cached.fileId }
+      : undefined;
+  try {
+    if (screen.format === "rich") {
+      await api.editMessageText(
+        card.chatId,
+        card.messageId,
+        richMessageOf(screen, photo),
+        markup,
+      );
+    } else {
+      await api.editMessageText(
+        card.chatId,
+        card.messageId,
+        screen.text,
+        markup,
+      );
+    }
+    return { kind: "done" };
+  } catch (cause) {
+    return liveEditFailure(cause, (error) =>
+      input.logger.warn("live lot card edit failed", { error }),
+    );
   }
 }
 

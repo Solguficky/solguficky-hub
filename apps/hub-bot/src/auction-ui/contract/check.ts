@@ -34,6 +34,7 @@ import type {
 import type {
   AuctionScreenBody,
   CommandResult,
+  FinalBidOutcome,
   ProxyExample,
 } from "../screen.js";
 
@@ -1673,6 +1674,209 @@ const TRADING_LOT_BODY: AuctionScreenBody = {
   ],
 };
 
+// Ставка финала (PER-336, ADR-049): у карточки лота в живом финале одна
+// кнопка — следующая цена, и ставка уходит одним нажатием, без «Да». Исход —
+// строка на той же карточке, а отказ «не по цене» несёт кнопку на новую цену.
+const LIVE_LOT: LotView = {
+  ...CONTRACT_LOT,
+  status: {
+    kind: "trading",
+    currentPrice: rub(1200),
+    leaderId: LEADER_ID,
+    phase: "live",
+  },
+};
+
+// Принятая ставка смотрящего: цена его, лидер — он, кнопки у него нет.
+const LIVE_LOT_AFTER_BID: LotView = {
+  ...LIVE_LOT,
+  version: 4,
+  nextPrice: rub(1300),
+  status: {
+    kind: "trading",
+    currentPrice: rub(1250),
+    leaderId: CONTRACT_VIEWER.identityId,
+    phase: "live",
+  },
+};
+
+const LIVE_AUCTION: ContractAuction = {
+  ...AUCTION,
+  lots: [LIVE_LOT],
+  names: { ...NAMES, [CONTRACT_VIEWER.identityId]: "@me" },
+};
+
+const finalBidCallback = (amount: number) =>
+  callback({ kind: "final-bid", lotId: CONTRACT_LOT.lotId, amount, page: 2 });
+
+const liveBody = (input: {
+  lot: LotView;
+  participantName: string;
+  // Сумма кнопки в копейках; нет — смотрящий лидирует.
+  button?: number;
+  finalBid?: FinalBidOutcome;
+}): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "lot",
+      lotId: CONTRACT_LOT.lotId,
+      auctionId: CONTRACT_AUCTION_ID,
+      version: input.lot.version,
+      card: {
+        title: "Кружка с совой",
+        description: "Ручная роспись.",
+        image: { version: "img-1" },
+      },
+      nextPrice:
+        input.button === undefined
+          ? (input.lot.nextPrice ?? rub(0))
+          : rub(input.button / 100),
+      fixedStep: rub(50),
+      status: input.lot.status,
+      participantName: input.participantName,
+      live: { page: 2 },
+      ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
+    },
+  ],
+  keyboard: [
+    ...(input.button === undefined
+      ? []
+      : [
+          [
+            {
+              action: "lot.bid-final" as const,
+              amount: rub(input.button / 100),
+              callbackData: finalBidCallback(input.button),
+            },
+          ],
+        ]),
+    ...lotKeyboard(CONTRACT_LOT.lotId, 2),
+  ],
+});
+
+const FINAL_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "final: card",
+    callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
+    auction: LIVE_AUCTION,
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    body: liveBody({ lot: LIVE_LOT, participantName: "@owl", button: 125000 }),
+  },
+  // Одно нажатие: команда с суммой кнопки и `op_id` нажатия, затем карточка,
+  // дочитанная до версии ответа, со строкой «принята».
+  {
+    intent: "final: bid accepted",
+    callbackData: finalBidCallback(125000),
+    auction: {
+      ...LIVE_AUCTION,
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+      after: [LIVE_LOT_AFTER_BID],
+      lagging: true,
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(125000),
+      getLotCall(CONTRACT_LOT.lotId, 4),
+      namesCall(CONTRACT_VIEWER.identityId),
+    ],
+    body: liveBody({
+      lot: LIVE_LOT_AFTER_BID,
+      participantName: "@me",
+      finalBid: { kind: "accepted", amount: rub(1250) },
+    }),
+  },
+  // Гонка двух нажатий на одну цену (ADR-049): второе получает отказ с новой
+  // ценой. Чтение ещё не догнало ставку соперника, а кнопка уже несёт цену из
+  // отказа — нажатие на прежнюю снова получило бы отказ.
+  {
+    intent: "final: bid at a price that moved",
+    callbackData: finalBidCallback(125000),
+    auction: {
+      ...LIVE_AUCTION,
+      bids: [
+        {
+          kind: "refused",
+          refusal: { kind: "bid-not-at-next-price", expected: rub(1300) },
+        },
+      ],
+    },
+    auctionCalls: [LOT_CALL, bidCall(125000), LOT_CALL, namesCall(LEADER_ID)],
+    body: liveBody({
+      lot: LIVE_LOT,
+      participantName: "@owl",
+      button: 130000,
+      finalBid: {
+        kind: "refused",
+        refusal: { kind: "bid-not-at-next-price", expected: rub(1300) },
+      },
+    }),
+  },
+  {
+    intent: "final: bid unanswered twice",
+    callbackData: finalBidCallback(125000),
+    auction: {
+      ...LIVE_AUCTION,
+      bids: [{ kind: "unanswered" }, { kind: "unanswered" }],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      bidCall(125000),
+      bidCall(125000),
+      LOT_CALL,
+      namesCall(LEADER_ID),
+    ],
+    body: liveBody({
+      lot: LIVE_LOT,
+      participantName: "@owl",
+      button: 125000,
+      finalBid: { kind: "unknown" },
+    }),
+  },
+  // Первая ставка в аукционе: тот же выбор имени, что в онлайн-неделе.
+  {
+    intent: "final: bid without a chosen name",
+    callbackData: finalBidCallback(125000),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...LIVE_AUCTION,
+      bids: [{ kind: "refused", refusal: { kind: "display-name-not-chosen" } }],
+    },
+    auctionCalls: [LOT_CALL, bidCall(125000)],
+    body: nameChoiceBody(125000, { username: "owl_fan" }),
+  },
+  // Имя выбрано — назад на карточку финала, а не к подтверждению: ставку
+  // человек делает сам, по цене, которая действует сейчас.
+  {
+    intent: "final: name chosen returns to the card",
+    callbackData: callback({
+      kind: "username",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+      pending: pending("bid", 125000),
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...LIVE_AUCTION,
+      displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      chooseCall({ kind: "username", username: "owl_fan" }),
+      namesCall(LEADER_ID),
+    ],
+    body: liveBody({ lot: LIVE_LOT, participantName: "@owl", button: 125000 }),
+  },
+  // Кнопка финала у лота, который уже не в финале: команда не уходит, а
+  // карточка показывает, где лот.
+  {
+    intent: "final: stale button outside the final",
+    callbackData: finalBidCallback(125000),
+    auction: AUCTION,
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    body: TRADING_LOT_BODY,
+  },
+];
+
 // Розыгрыш среди участников (ADR-066). Кнопка регистрации или отмены есть
 // только в окне регистрации; принятая команда отвечает розыгрышем после неё,
 // отказ и неизвестный исход перечитывают его. Без имени — выбор имени с
@@ -2443,6 +2647,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     },
   },
   ...COMMAND_CASES,
+  ...FINAL_CASES,
   ...FAVORITE_CASES,
   ...RAFFLE_CASES,
 ];

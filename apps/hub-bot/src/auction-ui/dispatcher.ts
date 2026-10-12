@@ -6,6 +6,7 @@ import {
   chooseUsername,
   commitCommand,
   confirmCommand,
+  placeFinalBid,
 } from "./internal/use-cases/commands.js";
 import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
 import { openFeed } from "./internal/use-cases/open-feed.js";
@@ -96,6 +97,8 @@ export function dispatchAuctionIntent(input: {
       return confirmCommand(context, intent);
     case "commit":
       return commitCommand(context, intent);
+    case "final-bid":
+      return placeFinalBid(context, intent);
     case "ask":
       return askQuestion(context, intent);
     case "explain":

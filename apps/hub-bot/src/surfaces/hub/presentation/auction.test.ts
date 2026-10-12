@@ -14,6 +14,11 @@ import {
   type LotView,
   type RaffleView,
 } from "../../../auction-ui/index.js";
+import type {
+  AuctionWatches,
+  AuctionWatchState,
+} from "../../../core/auction/watch.js";
+import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import { createDispatcher } from "../application/dispatcher.js";
 import type {
   AuctionScreenPorts,
@@ -1460,5 +1465,111 @@ describe("raffle screens in the hub", () => {
     const refused = lastScreen(calls);
     expect(refused.text).toContain("Этот псевдоним уже занят");
     expect(labels(refused)).toEqual([["Ввести заново"], ["‹ Розыгрыш"]]);
+  });
+});
+
+// Карточка финала в боте хаба (PER-336): та же карточка дерева, что у бота
+// аукциона, правится по потоку аукциона в сообщении, где её открыли.
+describe("final lot card in the hub", () => {
+  const rival = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402";
+  const rub = (rubles: number) => ({
+    minorUnits: rubles * 100,
+    currency: "RUB",
+  });
+  const live = (version: number, price: number): LotView => ({
+    ...lot,
+    version,
+    nextPrice: rub(price + 100),
+    proxyEnabled: true,
+    status: {
+      kind: "trading",
+      currentPrice: rub(price),
+      leaderId: rival,
+      phase: "live",
+    },
+  });
+  const plain = (text: string) => text.replace(/[  ]/g, " ");
+
+  function stream() {
+    const listeners = new Set<(state: AuctionWatchState) => void>();
+    const watches: AuctionWatches = {
+      subscribe(_auctionId, _viewer, listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      open: () => (listeners.size > 0 ? 1 : 0),
+      close: () => listeners.clear(),
+    };
+    return {
+      watches,
+      listeners,
+      emit(activeLot: LotView) {
+        for (const listener of [...listeners]) {
+          listener({ auctionId, finished: false, activeLot, lineup: [] });
+        }
+      },
+    };
+  }
+
+  const immediate: EditLimiter = {
+    submit: (_chat, _key, task) => {
+      void task();
+    },
+    drop: () => {},
+    waiting: () => 0,
+    close: () => {},
+  };
+
+  const flush = async () => {
+    for (let i = 0; i < 50; i += 1) await Promise.resolve();
+  };
+
+  const setup = async () => {
+    const watch = stream();
+    const auction = fakeAuction({ existing: true, lot: live(1, 1200) });
+    const run = harness("member", auction, {
+      presentation: "plain",
+      live: {
+        watches: watch.watches,
+        limiter: immediate,
+        names: { getDisplayNames: async () => ({ [rival]: "@jay" }) },
+      },
+    });
+    await run.bot.init();
+    return { ...run, watch };
+  };
+
+  const liveEdits = (calls: readonly RecordedCall[]) =>
+    calls.filter(
+      (call) =>
+        call.method === "editMessageText" &&
+        (call.payload as { message_id?: number }).message_id === 9,
+    );
+
+  it("shows one button at the next price and edits the card on a new price", async () => {
+    const { bot, calls, watch } = await setup();
+    await bot.handleUpdate(press(lotData));
+    const card = lastScreen(calls);
+    expect(labels(card)[0]?.map(plain)).toEqual(["Поставить 1 300 ₽"]);
+    expect(watch.listeners.size).toBe(1);
+    const before = liveEdits(calls).length;
+    watch.emit(live(2, 1400));
+    await flush();
+    const edited = liveEdits(calls).at(-1)?.payload as Shown;
+    expect(liveEdits(calls)).toHaveLength(before + 1);
+    expect(plain(edited.text ?? "")).toContain("Цена: 1 400 ₽");
+    expect(plain(edited.text ?? "")).toContain("Лидер: @jay");
+    expect(labels(edited)[0]?.map(plain)).toEqual(["Поставить 1 500 ₽"]);
+  });
+
+  it("stops editing once another screen takes the message", async () => {
+    const { bot, calls, watch } = await setup();
+    await bot.handleUpdate(press(lotData));
+    await bot.handleUpdate(press(feedData));
+    expect(watch.listeners.size).toBe(0);
+    const before = liveEdits(calls).length;
+    watch.emit(live(2, 1400));
+    await flush();
+    expect(liveEdits(calls)).toHaveLength(before);
   });
 });
