@@ -1,4 +1,5 @@
 import { create } from "@bufbuild/protobuf";
+import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
 import { WithdrawnReason } from "../../../gen/auction/v1/auction_pb.js";
 import {
@@ -159,6 +160,66 @@ describe("auction watches", () => {
     await flush();
     expect(seen).toEqual([1, 1]);
     expect(errors).toHaveLength(2);
+  });
+});
+
+describe("auction watches on joining and on refusals", () => {
+  // Изменение между чтением карточки и подпиской не проходит мимо: новый
+  // подписчик открытого потока получает последнее состояние.
+  it("hands the last state to a subscriber that joins an open stream", async () => {
+    const { source, opened } = scriptedSource();
+    const watches = createAuctionWatches({ source, sleep: async () => {} });
+    watches.subscribe(AUCTION_ID, ALICE, () => {});
+    await flush();
+    opened[0]?.push(state());
+    await flush();
+    const seen: AuctionWatchState[] = [];
+    watches.subscribe(AUCTION_ID, BOB, (s) => seen.push(s));
+    await flush();
+    expect(seen).toHaveLength(1);
+    expect(opened).toHaveLength(1);
+  });
+
+  // Права отказали у всех подписчиков подряд: повторять нечем, и поток
+  // закрывается, а не переподключается без конца.
+  it("ends the stream when the rights of every subscriber are refused", async () => {
+    const { source, opened } = scriptedSource();
+    const watches = createAuctionWatches({ source, sleep: async () => {} });
+    const ended: string[] = [];
+    watches.subscribe(
+      AUCTION_ID,
+      ALICE,
+      () => {},
+      () => ended.push("alice"),
+    );
+    watches.subscribe(
+      AUCTION_ID,
+      BOB,
+      () => {},
+      () => ended.push("bob"),
+    );
+    await flush();
+    const denied = () => new ConnectError("no rights", Code.PermissionDenied);
+    opened[0]?.fail(denied());
+    await flush();
+    opened[1]?.fail(denied());
+    await flush();
+    expect(ended).toEqual(["alice", "bob"]);
+    expect(watches.open()).toBe(0);
+    expect(opened).toHaveLength(2);
+  });
+
+  it("keeps reconnecting while the neighbour is only unavailable", async () => {
+    const { source, opened } = scriptedSource();
+    const watches = createAuctionWatches({ source, sleep: async () => {} });
+    watches.subscribe(AUCTION_ID, ALICE, () => {});
+    await flush();
+    for (let i = 0; i < 3; i += 1) {
+      opened[i]?.fail(new ConnectError("down", Code.Unavailable));
+      await flush();
+    }
+    expect(opened).toHaveLength(4);
+    expect(watches.open()).toBe(1);
   });
 });
 

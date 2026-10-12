@@ -1,4 +1,4 @@
-import { GrammyError } from "grammy";
+import { GrammyError, HttpError } from "grammy";
 import {
   type AuctionPort,
   type AuctionScreenBody,
@@ -22,51 +22,77 @@ export type LiveCardEntry = {
   chatId: number;
   messageId: number;
   auctionId: string;
-  // Лот и версия, которые карточка показывает сейчас.
+  // Лот и версия, которые карточка показывает или вот-вот покажет.
   lotId: string;
   version: number;
   // Смотрящий, которого шлюз пустил, когда карточку открывали: его правами
   // поверхность читает имена, им же открывается поток.
   viewer: Viewer;
   page: number;
-  // Отметка избранного, с которой карточку открыли: Notifications на каждую
-  // цену не спрашивается.
-  following?: boolean;
-  // Свой лимит смотрящего на лоте открытия: поток лимитов не несёт, а без
+  // Отметка избранного лота, на котором карточку показали: Notifications на
+  // каждую цену не спрашивается, а на другом лоте отметка не та.
+  following?: { lotId: string; value: boolean };
+  // Свой лимит смотрящего на том же лоте: поток лимитов не несёт, а без
   // строки лимит пропадал бы с карточки на первой правке.
   proxyLimit?: { lotId: string; amount: Money };
 };
 
-/** Исход правки на стороне Telegram: `gone` — сообщения больше нет. */
-export type LiveEditOutcome = EditOutcome | { kind: "gone" };
+/**
+ * Исход правки на стороне Telegram: `gone` — сообщения больше нет; `failed` —
+ * эта правка не дошла по незнакомой причине, и следующее состояние потока
+ * правит карточку заново, даже если оно то же.
+ */
+export type LiveEditOutcome =
+  | EditOutcome
+  | { kind: "gone" }
+  | { kind: "failed" };
 
 export type LiveCardEdit = (
   card: LiveCardEntry,
   body: AuctionScreenBody,
 ) => Promise<LiveEditOutcome>;
 
+/**
+ * Карточка лота в показанном экране. `live` — лот торгуется в живом финале:
+ * такая карточка заводится в реестре. Карточка лота того же аукциона без
+ * пометки — проданный лот между лотами, «Обновить», отметка избранного — в
+ * сообщении, которое уже живое, его не гасит: финал идёт дальше.
+ */
+export type LiveCardShown = {
+  auctionId: string;
+  lotId: string;
+  version: number;
+  viewer: Viewer;
+  live: boolean;
+  // Страница ленты кнопок карточки; есть только у карточки финала.
+  page?: number;
+  following?: boolean;
+  proxyLimit?: Money;
+};
+
 export type LiveCards = {
   /**
-   * Сообщение в чате показало экран. Карточка финала — запоминается, прочее
-   * в том же сообщении — вытесняет карточку: экран сменили, и правка по
-   * потоку вернула бы карточку поверх него.
+   * Сообщение в чате показало экран. Карточка финала запоминается, прочий
+   * экран в том же сообщении вытесняет карточку: экран сменили, и правка по
+   * потоку вернула бы карточку поверх него. Ответ — живо ли сообщение после
+   * показа.
    */
   shown(
     chatId: number,
     messageId: number,
     card: LiveCardShown | undefined,
-  ): void;
+  ): boolean;
   size(): number;
   close(): void;
 };
-
-export type LiveCardShown = Omit<LiveCardEntry, "chatId" | "messageId">;
 
 // Предел держит память процесса: на финал приходят десятки участников, а
 // одна карточка на чат — новая вытесняет прежнюю.
 export const LIVE_CARDS_LIMIT = 2_000;
 // Имена участников: лидер меняется на каждой ставке, а имя — нет.
 const NAMES_LIMIT = 1_000;
+// Обрыв соединения с Telegram: та же правка повторяется после паузы.
+const NETWORK_RETRY_MS = 1_000;
 
 export function createLiveCards(options: {
   watches: AuctionWatches;
@@ -93,6 +119,16 @@ export function createLiveCards(options: {
     unsubscribe.delete(chatId);
   };
 
+  // Правка ещё нужна: карточку не сменили и не показали новее, пока правка
+  // ждала очереди или имени.
+  const current = (
+    card: LiveCardEntry,
+    target: { lotId: string; version: number },
+  ) =>
+    cards.get(card.chatId) === card &&
+    card.lotId === target.lotId &&
+    card.version === target.version;
+
   const onState = (chatId: number, state: AuctionWatchState) => {
     const card = cards.get(chatId);
     if (card === undefined) return;
@@ -100,50 +136,108 @@ export function createLiveCards(options: {
       state.activeLot ?? state.lineup.find((each) => each.lotId === card.lotId);
     // Лота нет ни в торгах, ни в составе — показать нечего, карточка ждёт.
     if (lot === undefined) return;
-    if (lot.lotId === card.lotId && lot.version === card.version) return;
+    // Версия лота растёт с каждым его фактом: поток, отставший от чтения по
+    // нажатию, карточку назад не откатывает.
+    if (lot.lotId === card.lotId && lot.version <= card.version) return;
     card.lotId = lot.lotId;
     card.version = lot.version;
+    const target = { lotId: lot.lotId, version: lot.version };
     const shownLot = withProxyLimit(lot, card.proxyLimit);
     options.limiter.submit(card.chatId, keyOf(card), async () => {
-      // Карточку сменили, пока правка ждала: править уже нечего.
-      if (cards.get(chatId) !== card) return { kind: "done" };
+      if (!current(card, target)) return { kind: "done" };
+      const following =
+        card.following?.lotId === lot.lotId ? card.following.value : undefined;
       const body = await liveLot({
         auction: names,
         viewer: card.viewer,
         lot: shownLot,
         page: card.page,
-        ...(card.following === undefined ? {} : { following: card.following }),
+        ...(following === undefined ? {} : { following }),
       });
+      if (!current(card, target)) return { kind: "done" };
       const outcome = await options.edit(card, body);
-      if (outcome.kind === "gone") {
-        if (cards.get(chatId) === card) forget(chatId);
-        return { kind: "done" };
+      switch (outcome.kind) {
+        case "gone":
+          if (cards.get(chatId) === card) forget(chatId);
+          return { kind: "done" };
+        case "failed":
+          // Цена не дошла: следующее состояние потока правит заново.
+          if (current(card, target)) card.version = 0;
+          return { kind: "done" };
+        default:
+          return outcome;
       }
-      return outcome;
     });
+  };
+
+  // Нажатие показало лот того же аукциона в живом сообщении: запись берёт
+  // то, что человек видит сейчас, а поток не переоткрывается. Поток, который
+  // уже ушёл дальше этой версии, карточку не откатывает.
+  const refresh = (card: LiveCardEntry, shown: LiveCardShown) => {
+    if (shown.lotId !== card.lotId || shown.version > card.version) {
+      card.version = shown.version;
+    }
+    card.lotId = shown.lotId;
+    card.viewer = shown.viewer;
+    if (shown.page !== undefined) card.page = shown.page;
+    if (shown.following !== undefined) {
+      card.following = { lotId: shown.lotId, value: shown.following };
+    }
+    if (shown.proxyLimit !== undefined) {
+      card.proxyLimit = { lotId: shown.lotId, amount: shown.proxyLimit };
+    }
   };
 
   return {
     shown(chatId, messageId, shown) {
       const prior = cards.get(chatId);
-      if (shown === undefined) {
-        if (prior?.messageId === messageId) forget(chatId);
-        return;
+      const same =
+        prior !== undefined &&
+        prior.messageId === messageId &&
+        shown !== undefined &&
+        shown.auctionId === prior.auctionId;
+      if (same && prior !== undefined && shown !== undefined) {
+        refresh(prior, shown);
+        return true;
       }
-      forget(chatId);
-      const card: LiveCardEntry = { chatId, messageId, ...shown };
-      cards.set(chatId, card);
-      unsubscribe.set(
+      if (shown === undefined || !shown.live || shown.page === undefined) {
+        if (prior?.messageId === messageId) forget(chatId);
+        return false;
+      }
+      const card: LiveCardEntry = {
         chatId,
-        options.watches.subscribe(card.auctionId, card.viewer, (state) =>
-          onState(chatId, state),
-        ),
+        messageId,
+        auctionId: shown.auctionId,
+        lotId: shown.lotId,
+        version: shown.version,
+        viewer: shown.viewer,
+        page: shown.page,
+        ...(shown.following === undefined
+          ? {}
+          : { following: { lotId: shown.lotId, value: shown.following } }),
+        ...(shown.proxyLimit === undefined
+          ? {}
+          : { proxyLimit: { lotId: shown.lotId, amount: shown.proxyLimit } }),
+      };
+      // Новая подписка — до снятия прежней: у аукциона с одним подписчиком
+      // поток иначе закрылся бы и открылся заново.
+      const leave = options.watches.subscribe(
+        card.auctionId,
+        card.viewer,
+        (state) => onState(chatId, state),
+        () => {
+          if (cards.get(chatId) === card) forget(chatId);
+        },
       );
+      forget(chatId);
+      cards.set(chatId, card);
+      unsubscribe.set(chatId, leave);
       while (cards.size > limit) {
         const oldest = cards.keys().next().value;
         if (oldest === undefined) break;
         forget(oldest);
       }
+      return true;
     },
     size: () => cards.size,
     close() {
@@ -153,9 +247,8 @@ export function createLiveCards(options: {
 }
 
 /**
- * Карточка финала в теле показанного экрана: блок лота с пометкой `live`.
- * Нет смотрящего — экран показан без личности, и править его нечьими
- * правами нельзя.
+ * Карточка лота в теле показанного экрана. Нет смотрящего — экран показан
+ * без личности, и править его нечьими правами нельзя.
  */
 export function liveCardOf(
   body: AuctionScreenBody,
@@ -163,19 +256,18 @@ export function liveCardOf(
 ): LiveCardShown | undefined {
   if (viewer === undefined) return undefined;
   for (const block of body.blocks) {
-    if (block.kind !== "lot" || block.live === undefined) continue;
+    if (block.kind !== "lot") continue;
     return {
       auctionId: block.auctionId,
       lotId: block.lotId,
       version: block.version,
       viewer,
-      page: block.live.page,
+      live: block.live !== undefined,
+      ...(block.live === undefined ? {} : { page: block.live.page }),
       ...(block.following === undefined ? {} : { following: block.following }),
       ...(block.viewerProxyLimit === undefined
         ? {}
-        : {
-            proxyLimit: { lotId: block.lotId, amount: block.viewerProxyLimit },
-          }),
+        : { proxyLimit: block.viewerProxyLimit }),
     };
   }
   return undefined;
@@ -193,7 +285,7 @@ function withProxyLimit(
 // Имя участника видно всем участникам аукциона (ADR-059), поэтому кэш один на
 // процесс, а не на смотрящего. Кэш держит и вызов в полёте: на залпе все
 // карточки аукциона спрашивают одного нового лидера разом, и вызов уходит
-// один. Отказ не кэшируется: следующая правка спросит снова.
+// один. Отказ и ответ без имени не кэшируются: следующая правка спросит снова.
 function cachedNames(
   port: Pick<AuctionPort, "getDisplayNames">,
 ): Pick<AuctionPort, "getDisplayNames"> {
@@ -215,7 +307,11 @@ function cachedNames(
           known.set(
             key,
             fetched.then(
-              (names) => names[id],
+              (names) => {
+                const name = names[id];
+                if (name === undefined) known.delete(key);
+                return name;
+              },
               () => {
                 known.delete(key);
                 return undefined;
@@ -239,13 +335,14 @@ function cachedNames(
   };
 }
 
-// Отказ правки живого экрана: `429` — пауза всему боту, «сообщения нет», «не
+// Отказ правки живого экрана: `429` — пауза всему боту; «сообщения нет», «не
 // редактируется», закрытый чат и заблокированный бот — экран ушёл, и нового
-// сообщения правка не шлёт, иначе живой экран стал бы рассылкой. Прочее —
-// эта цена не дошла, следующая правка придёт с новой.
+// сообщения правка не шлёт, иначе живой экран стал бы рассылкой; обрыв
+// соединения — та же правка ещё раз. Прочее — `failed`: правку пишет
+// поверхность, а следующее состояние потока правит карточку заново.
 export function liveEditFailure(
   cause: unknown,
-  warn: (error: string) => void,
+  report: (error: string) => void,
 ): LiveEditOutcome {
   if (cause instanceof GrammyError) {
     if (cause.error_code === 429) {
@@ -266,6 +363,9 @@ export function liveEditFailure(
       return { kind: "gone" };
     }
   }
-  warn(cause instanceof Error ? cause.message : String(cause));
-  return { kind: "done" };
+  report(cause instanceof Error ? cause.message : String(cause));
+  if (cause instanceof HttpError) {
+    return { kind: "retry-after", ms: NETWORK_RETRY_MS };
+  }
+  return { kind: "failed" };
 }

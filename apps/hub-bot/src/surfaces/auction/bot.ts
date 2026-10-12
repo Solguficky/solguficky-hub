@@ -15,6 +15,7 @@ import {
   liveCardOf,
   liveEditFailure,
 } from "../../core/auction/live-cards.js";
+import { reportLiveEditFailure } from "../../core/auction/live-failures.js";
 import type { AuctionWatches } from "../../core/auction/watch.js";
 import type { EditLimiter } from "../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../core/bot/shell.js";
@@ -845,7 +846,7 @@ async function editLiveCard(
     return { kind: "done" };
   } catch (cause) {
     return liveEditFailure(cause, (error) =>
-      input.logger.warn("live lot card edit failed", { error }),
+      reportLiveEditFailure(input.logger, error),
     );
   }
 }

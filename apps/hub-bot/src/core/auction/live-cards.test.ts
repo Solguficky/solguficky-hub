@@ -50,14 +50,19 @@ const sold = (lotId: string, version: number): LotView => ({
 // Поток, который ведёт тест: состояние приходит вызовом `emit`.
 function manualWatches() {
   const listeners = new Map<number, (state: AuctionWatchState) => void>();
+  const endings = new Map<number, () => void>();
   const viewers: Viewer[] = [];
   let id = 0;
   const watches: AuctionWatches = {
-    subscribe(_auctionId, viewer, listener) {
+    subscribe(_auctionId, viewer, listener, ended) {
       const own = id++;
       viewers.push(viewer);
       listeners.set(own, listener);
-      return () => listeners.delete(own);
+      if (ended !== undefined) endings.set(own, ended);
+      return () => {
+        listeners.delete(own);
+        endings.delete(own);
+      };
     },
     open: () => (listeners.size > 0 ? 1 : 0),
     close: () => listeners.clear(),
@@ -66,6 +71,9 @@ function manualWatches() {
     watches,
     viewers,
     subscribers: () => listeners.size,
+    end() {
+      for (const ended of [...endings.values()]) ended();
+    },
     emit(activeLot: LotView | undefined, lineup: readonly LotView[] = []) {
       for (const listener of [...listeners.values()]) {
         listener({
@@ -126,11 +134,12 @@ const opened = {
   lotId: LOT_A,
   version: 1,
   viewer: VIEWER,
+  live: true,
   page: 2,
 };
 
 describe("live cards", () => {
-  it("edits an open card on a new price and skips a state it already shows", async () => {
+  it("edits an open card only on a state it does not show yet", async () => {
     const { stream, edits, cards, lotOf } = setup();
     cards.shown(7, 70, opened);
     expect(stream.viewers).toEqual([VIEWER]);
@@ -219,10 +228,7 @@ describe("live cards", () => {
 
   it("keeps the own proxy limit on the lot it was opened on", async () => {
     const { stream, edits, cards, lotOf } = setup();
-    cards.shown(7, 70, {
-      ...opened,
-      proxyLimit: { lotId: LOT_A, amount: rub(2000) },
-    });
+    cards.shown(7, 70, { ...opened, proxyLimit: rub(2000) });
     stream.emit(live(LOT_A, 2, 1300));
     await flush();
     stream.emit(live(LOT_B, 1, 500));
@@ -233,6 +239,116 @@ describe("live cards", () => {
     expect(
       lotOf(edits[1]?.body ?? { blocks: [], keyboard: [] })?.viewerProxyLimit,
     ).toBeUndefined();
+  });
+
+  // Между лотами человек жмёт «Обновить» или «В избранное» на проданном
+  // лоте: тело без пометки `live`, но финал идёт, и карточка остаётся живой.
+  it("keeps the card when the same message shows a settled lot of its auction", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    cards.shown(7, 70, opened);
+    const { page: _page, ...settled } = opened;
+    expect(cards.shown(7, 70, { ...settled, live: false, version: 3 })).toBe(
+      true,
+    );
+    expect(stream.subscribers()).toBe(1);
+    stream.emit(live(LOT_B, 1, 500));
+    await flush();
+    expect(lotOf(edits[0]?.body ?? { blocks: [], keyboard: [] })?.lotId).toBe(
+      LOT_B,
+    );
+  });
+
+  it("does not keep a settled lot in a message that was not live", () => {
+    const { stream, cards } = setup();
+    expect(cards.shown(7, 70, { ...opened, live: false })).toBe(false);
+    expect(stream.subscribers()).toBe(0);
+  });
+
+  it("carries the favorite mark only on the lot it was read for", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    cards.shown(7, 70, { ...opened, following: true });
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    stream.emit(live(LOT_B, 1, 500));
+    await flush();
+    expect(
+      lotOf(edits[0]?.body ?? { blocks: [], keyboard: [] })?.following,
+    ).toBe(true);
+    expect(
+      lotOf(edits[1]?.body ?? { blocks: [], keyboard: [] })?.following,
+    ).toBeUndefined();
+  });
+
+  // Поток отстал от чтения по нажатию: карточка назад не откатывается.
+  it("does not roll the card back to an older version", async () => {
+    const { stream, edits, cards } = setup();
+    cards.shown(7, 70, { ...opened, version: 5 });
+    stream.emit(live(LOT_A, 4, 1300));
+    await flush();
+    expect(edits).toHaveLength(0);
+  });
+
+  // Нажатие показало карточку новее, пока правка ждала имени: устаревшая
+  // правка её не затирает.
+  it("drops an edit that a newer card overtook while it waited", async () => {
+    const stream = manualWatches();
+    const edits: AuctionScreenBody[] = [];
+    let release: () => void = () => {};
+    const cards = createLiveCards({
+      watches: stream.watches,
+      limiter: immediate,
+      names: {
+        getDisplayNames: () =>
+          new Promise((resolve) => {
+            release = () => resolve({ leader: "@leader" });
+          }),
+      },
+      edit: async (_card, body) => {
+        edits.push(body);
+        return { kind: "done" };
+      },
+    });
+    cards.shown(7, 70, opened);
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    cards.shown(7, 70, { ...opened, version: 3 });
+    release();
+    await flush();
+    expect(edits).toHaveLength(0);
+  });
+
+  it("edits the same state again after an edit that failed", async () => {
+    const stream = manualWatches();
+    const outcomes: LiveEditOutcome[] = [{ kind: "failed" }, { kind: "done" }];
+    let calls = 0;
+    const cards = createLiveCards({
+      watches: stream.watches,
+      limiter: immediate,
+      names: { getDisplayNames: async () => ({}) },
+      edit: async () => {
+        calls += 1;
+        return outcomes.shift() ?? { kind: "done" };
+      },
+    });
+    cards.shown(7, 70, opened);
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    stream.emit(live(LOT_A, 2, 1300));
+    await flush();
+    expect(calls).toBe(2);
+  });
+
+  it("forgets the cards of a stream that ended", () => {
+    const stream = manualWatches();
+    const cards = createLiveCards({
+      watches: stream.watches,
+      limiter: immediate,
+      names: { getDisplayNames: async () => ({}) },
+      edit: async () => ({ kind: "done" }),
+    });
+    cards.shown(7, 70, opened);
+    stream.end();
+    expect(cards.size()).toBe(0);
   });
 
   it("evicts the oldest card over the limit", () => {
@@ -269,14 +385,16 @@ describe("live card of a body", () => {
       lotId: LOT_A,
       version: 4,
       viewer: VIEWER,
+      live: true,
       page: 3,
       following: true,
-      proxyLimit: { lotId: LOT_A, amount: rub(2000) },
+      proxyLimit: rub(2000),
     });
     const { live: _live, ...online } = block;
-    expect(liveCardOf({ blocks: [online], keyboard: [] }, VIEWER)).toBe(
-      undefined,
-    );
+    expect(
+      liveCardOf({ blocks: [online], keyboard: [] }, VIEWER),
+    ).toMatchObject({ live: false });
+    expect(liveCardOf({ blocks: [], keyboard: [] }, VIEWER)).toBeUndefined();
     expect(liveCardOf({ blocks: [block], keyboard: [] }, undefined)).toBe(
       undefined,
     );

@@ -1,3 +1,7 @@
+import {
+  reportLiveEditFailure,
+  reportWatchFailure,
+} from "../../core/auction/live-failures.js";
 import { createAuctionWatches } from "../../core/auction/watch.js";
 import { createEditLimiter } from "../../core/bot/edit-limiter.js";
 import {
@@ -100,18 +104,16 @@ export const hubSurface: SurfaceDefinition = ({
       ? undefined
       : createAuctionWatches({
           source: auction.watch,
-          onError: (_auctionId, cause) =>
-            logger.warn("auction watch interrupted", {
-              operation: "watch_auction",
-              error_category: "dependency_unavailable",
-              error: cause instanceof Error ? cause.message : String(cause),
-            }),
+          onError: (_auctionId, cause, failure) =>
+            reportWatchFailure(logger, cause, failure),
         });
   const limiter = createEditLimiter({
     onError: (_key, cause) =>
-      logger.warn("live lot card edit failed", {
-        error: cause instanceof Error ? cause.message : String(cause),
-      }),
+      reportLiveEditFailure(
+        logger,
+        cause instanceof Error ? cause.message : String(cause),
+        "unexpected",
+      ),
   });
   const bot = createBot({
     token,

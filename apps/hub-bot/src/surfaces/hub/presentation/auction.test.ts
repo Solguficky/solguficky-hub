@@ -1546,7 +1546,7 @@ describe("final lot card in the hub", () => {
         (call.payload as { message_id?: number }).message_id === 9,
     );
 
-  it("shows one button at the next price and edits the card on a new price", async () => {
+  it("keeps one button at the next price as the price moves", async () => {
     const { bot, calls, watch } = await setup();
     await bot.handleUpdate(press(lotData));
     const card = lastScreen(calls);

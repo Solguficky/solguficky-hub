@@ -32,6 +32,7 @@ import {
   liveCardOf,
   liveEditFailure,
 } from "../../../core/auction/live-cards.js";
+import { reportLiveEditFailure } from "../../../core/auction/live-failures.js";
 import type { AuctionWatches } from "../../../core/auction/watch.js";
 import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
@@ -7035,9 +7036,9 @@ async function handleAuctionCallback(
   if (ctx.liveCards !== undefined && chatId !== undefined) {
     const live = liveCardOf(result.body, viewerOf(person));
     if (delivered.messageId !== undefined) {
-      ctx.liveCards.shown(chatId, delivered.messageId, live);
+      const kept = ctx.liveCards.shown(chatId, delivered.messageId, live);
       if (delivered.messageId === ctx.callbackQuery?.message?.message_id) {
-        ctx.liveShown = live !== undefined;
+        ctx.liveShown = kept;
       }
     }
   }
@@ -7252,7 +7253,7 @@ async function editLiveLotCard(
     return { kind: "done" };
   } catch (cause) {
     return liveEditFailure(cause, (error) =>
-      runtime.logger.warn("live lot card edit failed", { error }),
+      reportLiveEditFailure(runtime.logger, error),
     );
   }
 }

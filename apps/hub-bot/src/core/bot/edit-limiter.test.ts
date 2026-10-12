@@ -123,7 +123,7 @@ describe("edit limiter", () => {
     expect(lastAt).toBeLessThanOrEqual(1_000 + 2_000);
   });
 
-  it("pauses the whole bot on 429 and keeps the edit that did not land", async () => {
+  it("pauses the whole bot on 429 without losing the edit", async () => {
     const time = manualClock();
     const limiter = createEditLimiter({ clock: time.clock });
     const { edits, task } = recorder(time.now);

@@ -2809,7 +2809,7 @@ describe("final lot card", () => {
     return { bot, calls, stream };
   }
 
-  it("shows one button at the next price and edits the card on a new price", async () => {
+  it("keeps one button at the next price as the price moves", async () => {
     const { bot, calls, stream } = setup();
     await bot.handleUpdate(lotPress({ rich: true }));
     const opened = lastScreen(calls);
