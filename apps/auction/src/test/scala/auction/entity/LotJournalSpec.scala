@@ -178,6 +178,20 @@ final class LotJournalSpec
       keepsGolden("lot-resumed", storedEvent(LotEvent.LotResumed, opN = 4))
     }
 
+    "keep the stored form of an ask of the auctioneer equal to its golden file and read it back into the same event" in {
+      val ask = LotEvent.AskAdvanced(money(50000))
+      val stored = LotJournal.store(uuid(1), transaction(5, Initiator.Operator(participant(3))), ask)
+
+      keepsGolden("ask-advanced", stored)
+      LotJournal.envelope(5, stored).event shouldBe ask
+    }
+
+    "read an event written before the ask section into the same event" in {
+      val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
+
+      read(kit.system, row).asInstanceOf[StoredLotEvent].event.askAdvanced shouldBe None
+    }
+
     "read an event written before the hold section into the same event" in {
       val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
 

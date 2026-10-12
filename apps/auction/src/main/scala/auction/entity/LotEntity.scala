@@ -113,6 +113,13 @@ object LotEntity {
       replyTo: ActorRef[Either[ResumeLotRejected, Envelope]]
   ) extends Command
 
+  /** Ask ведущего (П-08); шлёт аукцион по команде ведущего, инициатор — `Operator`. */
+  final case class Ask(
+      command: AdvanceAsk,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[AdvanceAskRejected, Envelope]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Lot]) extends Command
 
   /**
@@ -173,7 +180,9 @@ object LotEntity {
       case UnmarkFinal(unmark, initiator, replyTo) =>
         record(state, Lot.decide(lot, unmark, now), unmark.opId, initiator, replyTo, now, newId)
       case Resume(resume, initiator, replyTo) =>
-        record(state, Lot.decide(lot, resume), resume.opId, initiator, replyTo, now, newId)
+        record(state, Lot.decide(lot, resume, BidId(newId()), now), resume.opId, initiator, replyTo, now, newId)
+      case Ask(ask, initiator, replyTo) =>
+        record(state, Lot.decide(lot, ask, BidId(newId()), now), ask.opId, initiator, replyTo, now, newId)
       case Get(replyTo) =>
         Effect.reply(replyTo)(lot)
     }

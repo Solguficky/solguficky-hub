@@ -79,6 +79,57 @@ final class StepPolicySpec extends AnyWordSpec with Matchers with ScalaCheckDriv
     }
   }
 
+  /** Эталон сетки: точки перебором, каждая от предыдущей шагом её цены (П-03). Годится только для малых сумм. */
+  private def walkedGrid(policy: StepPolicy, origin: Long, target: Long): Option[Long] =
+    Option.when(origin <= target)(
+      Iterator
+        .iterate(origin)(point => point + StepPolicy.step(policy, money(point)).minorUnits)
+        .takeWhile(_ <= target)
+        .toList
+        .last
+    )
+
+  private val tierLists: Gen[List[(Long, Long)]] = for {
+    size <- Gen.chooseNum(1, 6)
+    bounds <- Gen.listOfN(size - 1, Gen.chooseNum(1L, 10_000L)).map(_.distinct.sorted)
+    steps <- Gen.listOfN(bounds.size + 1, Gen.chooseNum(1L, 500L))
+  } yield (0L :: bounds).zip(steps)
+
+  "grid floor" should {
+
+    "take the highest point of the grid that does not exceed the target" in {
+      StepPolicy.gridFloor(fixedTen, money(110), money(115)) shouldBe Some(money(110))
+      StepPolicy.gridFloor(fixedTen, money(110), money(120)) shouldBe Some(money(120))
+      StepPolicy.gridFloor(fixedHundred, money(1050), money(1090)) shouldBe Some(money(1050))
+    }
+
+    "be empty below the origin of the grid" in {
+      StepPolicy.gridFloor(fixedTen, money(110), money(109)) shouldBe None
+    }
+
+    "walk each point from the previous one with the step of its own price across tier bounds" in {
+      // 190 → 200 шагом 10, дальше шагом 50: 250, 300; 200 — граница, и от неё шаг уже второго порога.
+      StepPolicy.gridFloor(tiered(0L -> 10L, 200L -> 50L), money(190), money(320)) shouldBe Some(money(300))
+      // 195 → 205 перешагивает границу, и следующая точка 255 — от 205 шагом второго порога.
+      StepPolicy.gridFloor(tiered(0L -> 10L, 200L -> 50L), money(195), money(300)) shouldBe Some(money(255))
+    }
+
+    "match the grid walked point by point" in {
+      forAll(tierLists, Gen.chooseNum(0L, 12_000L), Gen.chooseNum(0L, 30_000L)) {
+        (tiers: List[(Long, Long)], origin: Long, target: Long) =>
+          StepPolicy.gridFloor(tiered(tiers*), money(origin), money(target)).map(_.minorUnits) shouldBe
+            walkedGrid(tiered(tiers*), origin, target)
+      }
+    }
+
+    "answer at once for a target near the largest amount, without walking every point" in {
+      StepPolicy.gridFloor(fixedTen, money(0), money(Long.MaxValue)) shouldBe
+        Some(money(Long.MaxValue / 10 * 10))
+      StepPolicy.gridFloor(tiered(0L -> 1L, 1_000L -> 7L), money(0), money(Long.MaxValue)).map(_.minorUnits) shouldBe
+        Some(1_000L + (Long.MaxValue - 1_000L) / 7 * 7)
+    }
+  }
+
   "lot config" should {
 
     "reject a step policy in a currency other than the lot's" in {

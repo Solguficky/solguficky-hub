@@ -134,6 +134,13 @@ object LotFixtures {
   def placeBid(who: Int, amount: Long, opN: Int, currency: CurrencyCode = rub): PlaceBid =
     PlaceBid(participant(who), Money(amount, currency), op(opN), BidSource.Bot)
 
+  /** Ставка зала: помощник ведущего записывает, что участник `who` принял объявленную цену `amount`. */
+  def floorBid(who: Int, amount: Long, opN: Int): PlaceBid =
+    PlaceBid(participant(who), money(amount), op(opN), BidSource.Floor)
+
+  def advanceAsk(amount: Long, opN: Int, currency: CurrencyCode = rub): AdvanceAsk =
+    AdvanceAsk(Money(amount, currency), op(opN))
+
   def setProxyLimit(who: Int, max: Long, opN: Int, currency: CurrencyCode = rub): SetProxyLimit =
     SetProxyLimit(participant(who), Money(max, currency), op(opN))
 
@@ -215,8 +222,13 @@ object LotFixtures {
     def unmark(command: UnmarkForFinal, now: Instant = calm): (Either[UnmarkForFinalRejected, Decision], Journal) =
       record(command.opId, Lot.decide(lot, command, now))
 
+    /** Возврат в финал; производная ставка по сетке, если она есть, получает `proxyBid` с номером первой строки. */
     def resume(command: ResumeLot): (Either[ResumeLotRejected, Decision], Journal) =
-      record(command.opId, Lot.decide(lot, command))
+      record(command.opId, Lot.decide(lot, command, proxyBid(entries.size + 1), calm))
+
+    /** Ask ведущего; производная ставка — как у возврата. */
+    def ask(command: AdvanceAsk): (Either[AdvanceAskRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command, proxyBid(entries.size + 1), calm))
 
     def submitAll(commands: Seq[PlaceBid]): (Vector[Either[PlaceBidRejected, Decision]], Journal) =
       commands.zipWithIndex.foldLeft((Vector.empty[Either[PlaceBidRejected, Decision]], this)) {

@@ -2,6 +2,8 @@ package auction.entity
 
 import auction.aggregate.Closure
 import auction.catalog.LotId
+import auction.lot.AdvanceAsk
+import auction.lot.AdvanceAskRejected
 import auction.lot.CloseLot
 import auction.lot.CloseLotRejected
 import auction.lot.Envelope
@@ -33,7 +35,7 @@ import scala.util.Try
  * Лоты, какими их видит entity аукциона: вопрос о состоянии, команда открытия, закрытие по дедлайну и условия торгов.
  * Это не [[LotGateway]]: тот — порт транспорта, а `OpenLot` и `CloseLot` шлёт лоту сам аукцион, и межсервисной
  * поверхности у них нет (integration.md, «Auction gRPC»). `ScheduleLot`, отметка для финала и её снятие приходят
- * снаружи, но тоже через аукцион: заморозку условий, фазу торгов и реестр решает он.
+ * снаружи, но тоже через аукцион: заморозку условий, фазу торгов и реестр решает он; ask ведущего — так же, реестр.
  *
  * Неудачное `Future` — ответа нет: ask истёк или шардинг не доставил сообщение. Команда при этом могла быть принята,
  * поэтому аукцион после такого ответа снова спрашивает состояние, а не считает лот закрытым.
@@ -60,6 +62,9 @@ trait AuctionLots {
   def mark(lot: LotId, command: MarkForFinal, initiator: Initiator): Future[Either[MarkForFinalRejected, Unit]]
 
   def unmark(lot: LotId, command: UnmarkForFinal, initiator: Initiator): Future[Either[UnmarkForFinalRejected, Unit]]
+
+  /** Ask ведущего лоту реестра (П-08); инициатор — ведущий, как у `mark`. */
+  def advanceAsk(lot: LotId, command: AdvanceAsk, initiator: Initiator): Future[Either[AdvanceAskRejected, Unit]]
 }
 
 object AuctionLots {
@@ -113,6 +118,12 @@ object AuctionLots {
       ): Future[Either[UnmarkForFinalRejected, Unit]] =
         entity(lot)
           .ask[Either[UnmarkForFinalRejected, Envelope]](LotEntity.UnmarkFinal(command, initiator, _))
+          .map(_.map(_ => ()))(using ExecutionContext.parasitic)
+
+      // Как у `mark`: принятый ответ — конверт своей команды, чужой `op_id` лот отклоняет `OpIdTaken`.
+      def advanceAsk(lot: LotId, command: AdvanceAsk, initiator: Initiator): Future[Either[AdvanceAskRejected, Unit]] =
+        entity(lot)
+          .ask[Either[AdvanceAskRejected, Envelope]](LotEntity.Ask(command, initiator, _))
           .map(_.map(_ => ()))(using ExecutionContext.parasitic)
     }
 

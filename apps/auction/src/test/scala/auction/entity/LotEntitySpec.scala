@@ -353,6 +353,45 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
         (Phase.Live, None, money(110), Some(participant(1)))
     }
 
+    "let the first bid at the ask of the auctioneer lead and refuse a later one at that price with the next" in {
+      holdThrough()
+      entity.runCommand[Either[ResumeLotRejected, Envelope]](
+        LotEntity.Resume(resumeLot(opN = 7), Initiator.Scheduler, _)
+      )
+
+      val asked = entity.runCommand[Either[AdvanceAskRejected, Envelope]](
+        LotEntity.Ask(advanceAsk(150, opN = 8), organizer, _)
+      )
+      asked.events.map(_.event.kind) shouldBe List("AskAdvanced")
+      asked.events.map(_.actor) shouldBe List(StoredActor("Operator", Some(participant(9).value)))
+      tradingOf(entity.restart().state.lot).ask shouldBe Some(money(150))
+
+      val floor = entity.runCommand[Either[PlaceBidRejected, LotEntity.Recorded]](
+        LotEntity.Bid(floorBid(who = 2, amount = 150, opN = 9), organizer, _)
+      )
+      floor.reply.isRight shouldBe true
+      floor.events.flatMap(_.event.bidPlaced).map(_.source) shouldBe List(Some("Floor"))
+
+      bidOf(who = 3, amount = 150, opN = 10).reply shouldBe Left(PlaceBidRejected.BidNotAtNextPrice(money(160)))
+    }
+
+    "write the ask and the derived bid it lets a proxy place as one transaction" in {
+      holdThrough()
+      entity.runCommand[Either[ResumeLotRejected, Envelope]](
+        LotEntity.Resume(resumeLot(opN = 7), Initiator.Scheduler, _)
+      )
+      limitOf(who = 2, max = 115, opN = 8)
+
+      val asked = entity.runCommand[Either[AdvanceAskRejected, Envelope]](
+        LotEntity.Ask(advanceAsk(115, opN = 9), organizer, _)
+      )
+
+      asked.events.map(_.event.kind) shouldBe List("AskAdvanced", "BidPlaced")
+      asked.events.map(_.transactionId).distinct.size shouldBe 1
+      asked.events.flatMap(_.event.bidPlaced).map(placed => (placed.amount.minorUnits, placed.origin)) shouldBe
+        List(115L -> "Proxy")
+    }
+
     "restore proxy limits with their sequence after a restart from the journal alone (Т-16)" in {
       openThrough()
       limitOf(who = 1, max = 200, opN = 4)

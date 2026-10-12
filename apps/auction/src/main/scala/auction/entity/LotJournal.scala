@@ -90,6 +90,9 @@ final case class StoredLotUnsold(reason: String)
 /** Секция `LotHeldForFinal`: время удержания, остальное лот свернул из журнала до него (ADR-047). */
 final case class StoredLotHeldForFinal(at: Instant)
 
+/** Секция `AskAdvanced`: объявленная сумма; ведущий — инициатор конверта, в секцию он не входит. */
+final case class StoredAskAdvanced(ask: StoredMoney)
+
 /**
  * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а аукцион лежит в конверте строки. Так
  * же без секции `LotMarkedForFinal` и `LotResumed`. Секции добавлялись в конец: строка, записанная до них, читает
@@ -105,7 +108,8 @@ final case class StoredEvent(
     lotSold: Option[StoredSale],
     lotUnsold: Option[StoredLotUnsold],
     deadlineExtended: Option[StoredDeadlineExtended],
-    lotHeldForFinal: Option[StoredLotHeldForFinal]
+    lotHeldForFinal: Option[StoredLotHeldForFinal],
+    askAdvanced: Option[StoredAskAdvanced] = None
 )
 
 object StoredEvent {
@@ -346,6 +350,8 @@ object LotJournal {
         StoredEvent.of("LotHeldForFinal").copy(lotHeldForFinal = Some(StoredLotHeldForFinal(at)))
       case LotEvent.LotResumed => StoredEvent.of("LotResumed")
       case LotEvent.LotUnmarkedForFinal => StoredEvent.of("LotUnmarkedForFinal")
+      case LotEvent.AskAdvanced(ask) =>
+        StoredEvent.of("AskAdvanced").copy(askAdvanced = Some(StoredAskAdvanced(storeMoney(ask))))
     }
 
   /**
@@ -362,7 +368,8 @@ object LotJournal {
       stored.lotSold,
       stored.lotUnsold,
       stored.deadlineExtended,
-      stored.lotHeldForFinal
+      stored.lotHeldForFinal,
+      stored.askAdvanced
     ).count(_.isDefined)
     def mismatch: Nothing = corrupted(s"lot event of kind ${stored.kind} with sections that do not match it")
     (stored.kind, sections) match {
@@ -418,6 +425,8 @@ object LotJournal {
       case ("LotHeldForFinal", 1) => stored.lotHeldForFinal.fold(mismatch)(held => LotEvent.LotHeldForFinal(held.at))
       case ("LotResumed", 0) => LotEvent.LotResumed
       case ("LotUnmarkedForFinal", 0) => LotEvent.LotUnmarkedForFinal
+      case ("AskAdvanced", 1) =>
+        stored.askAdvanced.fold(mismatch)(advanced => LotEvent.AskAdvanced(restoreMoney(advanced.ask)))
       case _ => mismatch
     }
   }

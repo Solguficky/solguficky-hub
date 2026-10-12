@@ -254,14 +254,11 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         Some(money(320))
     }
 
-    "accept a floor bid equal to the announced ask (Т-30)" in {
+    "refuse a floor bid while online, even at the announced ask: the room bids only in the live final" in {
       val lot = trading(price = 200, ask = Some(500))
 
-      accepted(Lot.decide(lot, placeBid(who = 1, amount = 500, opN = 1), bid(1), proxyBid(1), calm))
-        .map(_.amount) shouldBe
-        Some(money(500))
-      Lot.decide(lot, placeBid(who = 1, amount = 490, opN = 1), bid(1), proxyBid(1), calm) shouldBe
-        Left(PlaceBidRejected.BidBelowMinimum(money(500)))
+      Lot.decide(lot, floorBid(who = 1, amount = 500, opN = 1), bid(1), proxyBid(1), calm) shouldBe
+        Left(PlaceBidRejected.LotNotOpen)
     }
 
     "accept any amount above the next price while online (Т-43)" in {
