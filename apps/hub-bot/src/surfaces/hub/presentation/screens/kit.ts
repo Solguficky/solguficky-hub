@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
 import { menuTitle } from "../../../../core/entry.js";
 import {
   confirmNoLabel,
@@ -121,6 +122,16 @@ export function extensionsData(meetupToken: string): string {
 
 export function toExtensions(meetupToken: string): Parent {
   return { name: "Расширения", data: extensionsData(meetupToken) };
+}
+
+/** Корень аукциона — тело аукционного дерева (PER-605). */
+export function auctionRootData(auctionId: string): string {
+  return encodeAuctionCallback({ kind: "root", auctionId });
+}
+
+/** Возврат в корень аукциона: ему хватает идентификатора аукциона. */
+export function toAuctionRoot(auctionId: string): Parent {
+  return { name: "Аукцион", data: auctionRootData(auctionId) };
 }
 
 export function toMaterials(token: string): Parent {

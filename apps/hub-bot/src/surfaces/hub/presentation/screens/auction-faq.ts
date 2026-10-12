@@ -1,8 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { type FaqContent, renderFaqText } from "../../../../auction-faq.js";
 import { tokenToUuid } from "../meetup-deep-link.js";
-import { toAuctionRoot } from "./extensions.js";
-import { backLabel } from "./kit.js";
+import { backLabel, toAuctionRoot } from "./kit.js";
 import type { ShownScreen } from "./show.js";
 
 export function auctionFaqScreen(

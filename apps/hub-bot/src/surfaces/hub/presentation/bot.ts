@@ -5572,6 +5572,20 @@ async function openMeetupExtensions(
   } else {
     await renderMeetupCard(ctx, result, true, runtime.presentation ?? "rich");
   }
+  // Меню показано, но без аукциона: отказ Auction — сбой соседа в записи
+  // границы, а не успех.
+  if (result.kind === "meetup-card" && result.auction?.kind === "unavailable") {
+    return {
+      level: "warn",
+      message: "meetup extensions sent without the auction",
+      result: "error",
+      use_case: useCase,
+      meetup_id: meetupId,
+      identity_id: person.identityId,
+      error_category: "dependency_unavailable",
+      error: "auction_unavailable",
+    };
+  }
   return screenBoundary(result, {
     ok: ["meetup-card"],
     okMessage: "meetup extensions sent",

@@ -475,7 +475,7 @@ describe("meetup extensions menu", () => {
     const auction = fakeAuction({
       lookup: () => ({ kind: "unavailable", cause: new Error("down") }),
     });
-    const { bot, calls } = harness("admin", auction);
+    const { bot, calls, records } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(extensionsData));
 
@@ -483,6 +483,11 @@ describe("meetup extensions menu", () => {
     expect(menu.text).toContain("Аукцион сейчас не отвечает.");
     expect(labels(menu)).toEqual([["Повторить"], ["‹ Сходка"]]);
     expect(data(menu, "Повторить")).toBe(extensionsData);
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      error_category: "dependency_unavailable",
+      error: "auction_unavailable",
+    });
   });
 });
 
@@ -647,15 +652,18 @@ describe("auction root and the way back", () => {
     });
   });
 
-  it("tells that the auction is gone when Auction no longer gives it", async () => {
+  // Чтение Auction могло ещё не увидеть только что включённый аукцион:
+  // кадр предлагает повтор, а не тупик.
+  it("offers a retry when Auction does not give the auction yet", async () => {
     const auction = fakeAuction();
     const { bot, calls } = harness("member", auction);
     await bot.init();
     await bot.handleUpdate(press(rootData));
 
     const root = lastScreen(calls);
-    expect(root.text).toContain("Этого аукциона больше нет.");
-    expect(labels(root)).toEqual([["‹ Сходки"]]);
+    expect(root.text).toContain("Аукцион не найден.");
+    expect(labels(root)).toEqual([["Повторить"], ["‹ Сходки"]]);
+    expect(data(root, "Повторить")).toBe(rootData);
   });
 
   it("shows the bids of a lot in journal order and returns to the lot", async () => {

@@ -80,17 +80,20 @@ export function createDispatcher(
         kind: "meetup-card",
         meetup: result.meetup,
       };
-      // Аукцион и подписка читаются параллельно: оба — вторичные ряды
-      // карточки, и зависший один не должен съесть бюджет действия другого.
+      // Карточке нужна подписка, меню «Расширения» — аукцион (PER-605);
+      // вторичное чтение не роняет экран и идёт параллельно чтению сходки.
       const [withAuction, preferences] = await Promise.all([
         readAuction && meetupAuction !== undefined
           ? meetupAuction.withAuction(card, request)
           : card,
-        notifications?.getMeetupPreferences(
-          request.identity.identityId,
-          request.meetupId,
-          rpcMeta(request),
-        ),
+        // Меню «Расширения» подпиской не пользуется: её не читают.
+        readAuction
+          ? undefined
+          : notifications?.getMeetupPreferences(
+              request.identity.identityId,
+              request.meetupId,
+              rpcMeta(request),
+            ),
       ]);
       // Отказ Notifications карточку не роняет: сходка читается из
       // Meetups и остаётся верной. Состояние подписки при этом не

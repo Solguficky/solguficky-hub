@@ -39,7 +39,6 @@ import {
   raffleQuestionScreen,
   raffleScreen,
 } from "./auction-raffle.js";
-import { toAuctionRoot } from "./extensions.js";
 import {
   bullet,
   buttonText,
@@ -48,7 +47,9 @@ import {
   type Parent,
   pagedTitle,
   readableMoment,
+  retryLabel,
   screenText,
+  toAuctionRoot,
   withNav,
 } from "./kit.js";
 import type { ScreenPhoto, ShownScreen } from "./show.js";
@@ -296,10 +297,17 @@ function rootScreen(
 ): ShownScreen {
   const keyboard = new InlineKeyboard();
   const { auction } = root;
+  // Auction аукциона не отдал: его удалили — или включили только что, и
+  // чтение Auction его ещё не видит. Различить нельзя, поэтому у кадра
+  // «Повторить», а не тупик.
   if (auction === undefined) {
+    keyboard.text(retryLabel, toAuctionRoot(root.auctionId).data);
     return {
       id: "auction-root",
-      text: screenText("Аукцион", "Этого аукциона больше нет."),
+      text: screenText(
+        "Аукцион",
+        "Аукцион не найден. Если его только что включили, он появится через несколько секунд.",
+      ),
       keyboard: withNav(keyboard, view.rootParent),
       format: "HTML",
     };

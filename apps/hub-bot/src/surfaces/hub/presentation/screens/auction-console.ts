@@ -49,7 +49,6 @@ import {
   defaultConsoleSort,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
-import { toAuctionRoot } from "./extensions.js";
 import {
   buttonText,
   confirmKeyboard,
@@ -62,6 +61,7 @@ import {
   readableMoment,
   removeLabel,
   screenText,
+  toAuctionRoot,
   toggleLabel,
   withNav,
   withPager,

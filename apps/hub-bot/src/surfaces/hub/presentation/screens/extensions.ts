@@ -1,9 +1,9 @@
 import { InlineKeyboard } from "grammy";
-import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
 import type { MeetupAuctionView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
+  auctionRootData,
   escapeHtml,
   extensionsData,
   outcomeText,
@@ -30,16 +30,6 @@ export const toSettingsExtensions: Parent = {
   name: "Расширения",
   data: settingsExtensionsData,
 };
-
-/** Корень аукциона — тело аукционного дерева (PER-605). */
-export function auctionRootData(auctionId: string): string {
-  return encodeAuctionCallback({ kind: "root", auctionId });
-}
-
-/** Возврат в корень аукциона: ему хватает идентификатора аукциона. */
-export function toAuctionRoot(auctionId: string): Parent {
-  return { name: "Аукцион", data: auctionRootData(auctionId) };
-}
 
 const auctionLabel = "Аукцион";
 const enableLabel = "Включить аукцион";
@@ -91,7 +81,6 @@ export function extensionsScreen(view: {
  * Auction может ещё не увидеть только что рождённый аукцион.
  */
 export function auctionEnabledScreen(view: {
-  meetup?: MeetupSnapshot;
   meetupToken: string;
   auctionId: string;
   alreadyExisted: boolean;
@@ -106,9 +95,6 @@ export function auctionEnabledScreen(view: {
       view.alreadyExisted
         ? "Аукцион у этой сходки уже включён"
         : "Аукцион включён. Лоты появятся в нём, когда их добавят",
-      view.meetup === undefined
-        ? undefined
-        : meetupTitleLabel(view.meetup.title),
     ),
     keyboard: withNav(keyboard, toExtensions(view.meetupToken)),
     format: "HTML",

@@ -13,12 +13,12 @@ import type {
 } from "../../../../auction-ui/index.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { nameChoiceScreen } from "./auction-bid.js";
-import { toAuctionRoot } from "./extensions.js";
 import {
   cancelLabel,
   nextRow,
   readableMoment,
   screenText,
+  toAuctionRoot,
   withNav,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
