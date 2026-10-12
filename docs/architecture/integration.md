@@ -166,7 +166,7 @@ Subjects удалённой аукционной ветки перечислен
 | `MeetupsService.ListArchivedMeetups` | то же | Hub Bot | Meetups |
 | `MeetupsService.GetMeetup` | то же | Hub Bot | Meetups |
 | `MeetupsService.ListMeetupStates` | gRPC | — (вызывающего нет; первым ожидается Notifications) | Meetups |
-| `MeetupsService.CheckMeetupAuthority` | то же | Notifications ([PER-225](https://linear.app/anticnvm/issue/per-225)) и Auction ([PER-448](https://linear.app/anticnvm/issue/per-448)) | Meetups |
+| `MeetupsService.CheckMeetupAuthority` | то же | Notifications ([PER-225](https://linear.app/anticnvm/issue/per-225)) и Auction ([PER-448](https://linear.app/anticnvm/issue/per-448)); решено, что ответ `OK` понесёт жизненный цикл и видимость сходки для ворот Auction ([ADR-047, дополнение 2026-10-12](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-12-аукцион-наследует-состояние-сходки), [PER-600](https://linear.app/anticnvm/issue/per-600)) | Meetups |
 
 Шестнадцать синхронных операций идут по gRPC. Четырнадцать пользовательских операций не используют NATS: боту нужен ответ в том же ходе, что и Telegram update. `CheckMeetupAuthority` — синхронный вопрос другого сервиса о праве человека, описан ниже; для ответа на него Meetups сам вызывает Identity. `ListMeetupStates` — служебное keyset-перечисление полных снимков из таблицы `meetups`; оно не принимает `viewer` и не применяет правила человеческой видимости. Непрозрачный stateless-курсор переживает разрыв между страницами, размер страницы ограничен 100 строками. Каждая страница называет `consistent_at` своей repeatable-read транзакции. Пересобирающий реплику потребитель начинает буферизовать события до первого вызова, а после последней страницы применяет буфер по версии агрегата. Вызывающего каждая операция принимает по его токену и только из колонки Caller ([Service authentication](#service-authentication)); у `ListMeetupStates` вызывающего пока нет, поэтому метод закрыт для всех, пока его не объявят в колонке.
 
@@ -332,6 +332,7 @@ Identity публикует события о регистрации, смене
 | `AuctionService.ScheduleAuction` | то же | Только Hub Bot: сроки недели, финал ([PER-320](https://linear.app/anticnvm/issue/per-320)) и окна «Счастливых часов» ([PER-504](https://linear.app/anticnvm/issue/per-504)) в пульте администратора; окна едут в каждой команде, потому что конфигурацию Auction заменяет целиком | Auction |
 | `AuctionService.StartPrebidding` | то же | Только Hub Bot: открытие онлайн-недели в пульте администратора ([PER-320](https://linear.app/anticnvm/issue/per-320)) | Auction |
 | `AuctionService.DiscardAuction` | то же | Только Hub Bot: «Удалить аукцион» в пульте администратора, пока онлайн-неделя не открыта ([ADR-047](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-09-удаление-аукциона-до-торгов)) | Auction |
+| `AuctionService.CancelAuction` | решено, в контракте ещё нет | Hub Bot: «Отменить аукцион» в пульте после старта торгов ([ADR-047, дополнение 2026-10-12](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-12-аукцион-наследует-состояние-сходки), [PER-601](https://linear.app/anticnvm/issue/per-601)) | Auction |
 | `AuctionService.SelectForFinal` | то же | Только Hub Bot: отметка лота для финала в пульте администратора ([PER-320](https://linear.app/anticnvm/issue/per-320)) | Auction |
 | `AuctionService.DeselectForFinal` | то же | то же | Auction |
 | `AuctionService.FreezeFinalLineup` | то же | Только Hub Bot: заморозка состава финала в пульте администратора ([PER-334](https://linear.app/anticnvm/issue/per-334)) | Auction |
@@ -504,7 +505,7 @@ Subject называет повод, сообщение на всех повод
 | `events.meetups.meetup_republished` | то же | Meetups | то же |
 | `events.meetups.meetup_publication_scheduled` | то же | Meetups | то же |
 | `events.meetups.meetup_publication_cancelled` | то же | Meetups | то же |
-| `events.meetups.meetup_cancelled` | то же | Meetups | то же |
+| `events.meetups.meetup_cancelled` | то же | Meetups | то же; решено, что Auction удаляет или отменяет по нему аукцион сходки ([ADR-047, дополнение 2026-10-12](../decisions/ADR-047-auction-trading-domain-vocabulary-and-event-form.md#дополнение-2026-10-12-аукцион-наследует-состояние-сходки), реализация — [PER-602](https://linear.app/anticnvm/issue/per-602)) |
 | `events.meetups.meetup_material_attached` | то же | Meetups | то же |
 | `events.meetups.meetup_material_removed` | то же | Meetups | то же |
 | `events.meetups.meetup_held` | то же | Meetups | то же |
@@ -588,12 +589,14 @@ Subject называет повод, сообщение на всех повод
 | `events.auction.lot_removed` | то же | Auction | не заявлен |
 | `events.auction.prebidding_started` | то же | Auction | не заявлен |
 | `events.auction.prebidding_deadline_reached` | то же | Auction | не заявлен |
-| `events.auction.prebidding_ended` | то же | Auction | не заявлен |
+| `events.auction.prebidding_ended` | то же | Auction | не заявлен; решено, что Notifications по снимку `finished` чистит избранное аукциона ([ADR-063, дополнение 2026-10-12](../decisions/ADR-063-auction-favorites-in-notifications.md#дополнение-2026-10-12-избранное-до-конца-аукциона), [PER-604](https://linear.app/anticnvm/issue/per-604)) |
 | `events.auction.final_lineup_frozen` | то же | Auction | Notifications, анонс состава финала участникам ([PER-477](https://linear.app/anticnvm/issue/per-477)) |
 | `events.auction.final_started` | то же | Auction | Notifications, анонс старта финала участникам ([PER-477](https://linear.app/anticnvm/issue/per-477)) |
 | `events.auction.final_lot_activated` | то же | Auction | не заявлен |
 | `events.auction.final_lot_completed` | то же | Auction | не заявлен |
-| `events.auction.auction_finished` | то же | Auction | не заявлен |
+| `events.auction.auction_finished` | то же | Auction | не заявлен; решено то же, что у `prebidding_ended` с `finished` (PER-604) |
+| `events.auction.auction_discarded` | решено, в контракте ещё нет ([PER-601](https://linear.app/anticnvm/issue/per-601)) | Auction | решено: Notifications — чистка избранного удалённого до торгов аукциона ([PER-604](https://linear.app/anticnvm/issue/per-604)) |
+| `events.auction.auction_cancelled` | решено, в контракте ещё нет ([PER-601](https://linear.app/anticnvm/issue/per-601)) | Auction | решено: Notifications — извещение причастных и чистка избранного ([PER-604](https://linear.app/anticnvm/issue/per-604)) |
 | `events.auction.invoice_issued` | `auction.v1.InvoiceEvent` в том же файле | Auction | Notifications: два задания напоминания на счёт ([PER-330](https://linear.app/anticnvm/issue/per-330)) |
 | `events.auction.invoice_paid` | то же | Auction | Notifications: снятие незапущенных напоминаний (PER-330) |
 | `events.auction.invoice_handed_over` | то же | Auction | не заявлен |
