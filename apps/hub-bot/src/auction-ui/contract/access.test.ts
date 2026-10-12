@@ -28,16 +28,18 @@ describe("access matrix self-check", () => {
     expect(await checkAccessMatrix("auction", appOf("auction"))).toEqual([]);
   });
 
-  // Вход, каким он был до `RequestAccess`: личность разрешена, заявки нет.
-  it("fails when /start resolves the identity instead of entering", async () => {
-    const resolving: AccessMatrixApp =
-      (ports) =>
-      async ({ from }) => {
-        const identity = await ports.identity.resolveIdentity(from);
-        return identity.blocked ? "blocked" : "pending";
-      };
-    expect(await kindsOf(resolving, "hub: newcomer starts")).toEqual([
+  // Вход, каким он был до PER-592: `/start` ставит заявку без намерения
+  // человека, а не разрешает личность.
+  it("fails when /start applies instead of resolving the identity", async () => {
+    const applying: AccessMatrixApp = (ports) => (input) =>
+      appOf("hub")(ports)(
+        input.action.kind === "start"
+          ? { ...input, action: { ...input.action, kind: "apply" } }
+          : input,
+      );
+    expect(await kindsOf(applying, "hub: newcomer starts")).toEqual([
       "wrong-identity-calls",
+      "wrong-answer",
     ]);
   });
 
@@ -50,15 +52,15 @@ describe("access matrix self-check", () => {
             ports.entry.requestAccess({ ...request, queue: "auction" }),
         },
       })(input);
-    expect(await kindsOf(wrongQueue, "hub: newcomer starts")).toEqual([
+    expect(await kindsOf(wrongQueue, "hub: newcomer applies")).toEqual([
       "wrong-identity-calls",
     ]);
   });
 
   it("fails when the channel code does not reach Identity", async () => {
     const dropping: AccessMatrixApp = (ports) => (input) =>
-      appOf("auction")(ports)({ ...input, action: { kind: "start" } });
-    expect(await kindsOf(dropping, "auction: newcomer starts")).toEqual([
+      appOf("auction")(ports)({ ...input, action: { kind: "apply" } });
+    expect(await kindsOf(dropping, "auction: newcomer applies")).toEqual([
       "wrong-identity-calls",
     ]);
   });
@@ -80,7 +82,7 @@ describe("access matrix self-check", () => {
   // проверки матрица зелёная над приложением, которое забыло Auction.
   it("fails when an admitted press never reaches Auction", async () => {
     const idle: AccessMatrixApp = (ports) => async (input) => {
-      if (input.action.kind === "start") return appOf("hub")(ports)(input);
+      if (input.action.kind !== "callback") return appOf("hub")(ports)(input);
       await ports.identity.resolveIdentity(input.from);
       return "admitted";
     };
@@ -89,9 +91,9 @@ describe("access matrix self-check", () => {
     ]);
   });
 
-  // Повторный `/start` обязан ответить как первый: приложение, которое
+  // Повторная заявка обязана ответить как первая: приложение, которое
   // запомнило человека и на второй раз отказало, матрицу не проходит.
-  it("fails when a repeated /start answers differently", async () => {
+  it("fails when a repeated application answers differently", async () => {
     const forgetful: AccessMatrixApp = (ports) => {
       const act = appOf("hub")(ports);
       let seen = false;
@@ -104,7 +106,7 @@ describe("access matrix self-check", () => {
     };
     const violations = await checkAccessMatrixCase(
       forgetful,
-      caseOf("hub: newcomer starts"),
+      caseOf("hub: newcomer applies"),
     );
     expect(violations.map((v) => v.kind)).toEqual(["wrong-answer"]);
     expect(violations[0]?.detail).toContain('"attempt":2');
@@ -195,29 +197,37 @@ describe("access matrix self-check", () => {
     expect(ACCESS_MATRIX_CASES.map((each) => each.name)).toEqual([
       "hub: hub right starts",
       "hub: hub right presses",
-      "hub: allowlisted starts",
+      "hub: allowlisted applies",
       "hub: auction right only starts",
       "hub: auction right only presses",
+      "hub: auction right only applies",
       "hub: newcomer starts",
       "hub: newcomer presses",
+      "hub: newcomer applies",
       "hub: declined starts",
       "hub: declined presses",
+      "hub: declined applies",
       "hub: blocked starts",
       "hub: blocked presses",
+      "hub: blocked applies",
       "hub: unknown outcome",
       "auction: auction right starts",
       "auction: auction right presses",
       "auction: hub right starts",
       "auction: hub right presses",
+      "auction: hub right applies",
       "auction: all rights start",
       "auction: all rights press",
       "auction: hub right only starts",
-      "auction: allowlisted starts",
+      "auction: allowlisted applies",
       "auction: newcomer starts",
       "auction: newcomer presses",
+      "auction: newcomer applies",
       "auction: declined starts",
+      "auction: declined applies",
       "auction: blocked starts",
       "auction: blocked presses",
+      "auction: blocked applies",
       "auction: unknown outcome",
     ]);
   });

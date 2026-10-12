@@ -16,7 +16,11 @@ import { AUCTION, CONTRACT_LOT, CONTRACT_USER, spyPorts } from "./check.js";
 
 export type AccessAction =
   // `sourceCode` — код канала из payload `s_<код>` без префикса.
-  { kind: "start"; sourceCode?: string } | { kind: "callback"; data: string };
+  | { kind: "start"; sourceCode?: string }
+  | { kind: "callback"; data: string }
+  // «Подать заявку» под приветствием (PER-592, дополнение ADR-060): код
+  // канала едет в кнопке, и приложение само кладёт его в свои данные.
+  | { kind: "apply"; sourceCode?: string };
 
 // Действие, каким его видит приложение до Identity: кто пришёл, с каким
 // именем и что сделал. Типов Telegram здесь нет.
@@ -30,6 +34,9 @@ export type AccessMatrixInput = {
 // сравнивает ответы поверхностей, а не их тексты.
 export type AccessAnswer =
   | "admitted"
+  // Приветствие с кнопкой «Подать заявку»: права нет, а есть ли заявка,
+  // разрешение личности не знает (PER-592).
+  | "welcome"
   // «Заявка на рассмотрении».
   | "pending"
   | "declined"
@@ -51,7 +58,7 @@ export type AccessMatrixCase = {
   name: string;
   surface: AuctionSurface["kind"];
   // Что Identity знает о человеке: права и отметку отдаёт разрешение личности,
-  // права и исход — вход.
+  // права и исход — заявка.
   person: {
     rights: readonly AccessRight[];
     blocked: boolean;
@@ -68,7 +75,8 @@ export type AccessViolation = {
     | "app-threw"
     | "wrong-answer"
     // Identity спрошен не один раз, не тем вызовом или не о том человеке:
-    // `/start` — один вход с очередью поверхности, остальное — одно разрешение.
+    // «Подать заявку» — одна заявка с очередью поверхности, остальное, и
+    // `/start` тоже, — одно разрешение.
     | "wrong-identity-calls"
     // До Auction дошёл человек, которого поверхность не пускает.
     | "auction-reached"
@@ -90,6 +98,8 @@ const LOT_BUTTON: AccessAction = {
 };
 const START: AccessAction = { kind: "start" };
 const START_FROM_CHANNEL: AccessAction = { kind: "start", sourceCode: "chat" };
+const APPLY: AccessAction = { kind: "apply" };
+const APPLY_FROM_CHANNEL: AccessAction = { kind: "apply", sourceCode: "chat" };
 
 type Person = AccessMatrixCase["person"];
 
@@ -118,10 +128,17 @@ const DECLINED: Person = {
   blocked: false,
   outcome: "declined",
 };
+const AUCTION_ONLY: Person = {
+  rights: ["place-bids"],
+  blocked: false,
+  outcome: "pending",
+};
 
 // Строку добавляет лист, который меняет политику поверхности. До Auction
 // доходят только право хаба в хабе и право аукциона без права хаба в боте
-// аукциона.
+// аукциона. `/start` заявку не ставит (PER-592, дополнение ADR-060): без права
+// он отвечает приветствием, и только «Подать заявку» зовёт заявку — её исход
+// и видит человек.
 export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
   {
     name: "hub: hub right starts",
@@ -137,60 +154,82 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     action: LOT_BUTTON,
     answer: "admitted",
   },
+  // Белый список, сработавший между приветствием и нажатием, пускает сразу.
   {
-    name: "hub: allowlisted starts",
+    name: "hub: allowlisted applies",
     surface: "hub",
     person: { ...MEMBER, outcome: "granted-by-allowlist" },
-    action: START,
+    action: APPLY,
     answer: "admitted",
   },
-  // Право аукциона хаб не открывает: вход ставит заявку на участника, и она
-  // ложится в очередь сообщества (ADR-064, пункт 5).
+  // Право аукциона хаб не открывает: заявка — на участника, и она ложится в
+  // очередь сообщества (ADR-064, пункт 5).
   {
     name: "hub: auction right only starts",
     surface: "hub",
-    person: { rights: ["place-bids"], blocked: false, outcome: "pending" },
+    person: AUCTION_ONLY,
     action: START_FROM_CHANNEL,
-    answer: "pending",
+    answer: "welcome",
   },
   {
     name: "hub: auction right only presses",
     surface: "hub",
-    person: { rights: ["place-bids"], blocked: false, outcome: "pending" },
+    person: AUCTION_ONLY,
     action: LOT_BUTTON,
+    answer: "welcome",
+  },
+  {
+    name: "hub: auction right only applies",
+    surface: "hub",
+    person: AUCTION_ONLY,
+    action: APPLY_FROM_CHANNEL,
     answer: "pending",
   },
-  // Повторный `/start` отвечает так же: Identity не различает заявку, которую
-  // открыл этот вызов, и найденную открытой.
   {
     name: "hub: newcomer starts",
     surface: "hub",
     person: NEWCOMER,
     action: START_FROM_CHANNEL,
-    answer: "pending",
+    answer: "welcome",
   },
   {
     name: "hub: newcomer presses",
     surface: "hub",
     person: NEWCOMER,
     action: LOT_BUTTON,
+    answer: "welcome",
+  },
+  // Повторное нажатие отвечает так же: Identity не различает заявку, которую
+  // открыл этот вызов, и найденную открытой.
+  {
+    name: "hub: newcomer applies",
+    surface: "hub",
+    person: NEWCOMER,
+    action: APPLY_FROM_CHANNEL,
     answer: "pending",
   },
+  // Разрешение личности исхода `declined` не несёт: на `/start` и нажатии
+  // такой человек неотличим от нового, а отказ видит, нажав «Подать заявку».
   {
     name: "hub: declined starts",
     surface: "hub",
     person: DECLINED,
     action: START,
-    answer: "declined",
+    answer: "welcome",
   },
-  // Разрешение личности исхода `declined` не несёт: на нажатии такой человек
-  // неотличим от ожидающего.
   {
     name: "hub: declined presses",
     surface: "hub",
     person: DECLINED,
     action: LOT_BUTTON,
-    answer: "pending",
+    answer: "welcome",
+  },
+  {
+    name: "hub: declined applies",
+    surface: "hub",
+    person: DECLINED,
+    action: APPLY,
+    answer: "declined",
   },
   {
     name: "hub: blocked starts",
@@ -207,10 +246,17 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     answer: "blocked",
   },
   {
+    name: "hub: blocked applies",
+    surface: "hub",
+    person: BLOCKED,
+    action: APPLY,
+    answer: "blocked",
+  },
+  {
     name: "hub: unknown outcome",
     surface: "hub",
     person: { ...MEMBER, outcome: "unspecified" },
-    action: START,
+    action: APPLY,
     answer: "unavailable",
   },
   {
@@ -245,6 +291,13 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     answer: "in-community",
   },
   {
+    name: "auction: hub right applies",
+    surface: "auction",
+    person: MEMBER,
+    action: APPLY,
+    answer: "in-community",
+  },
+  {
     name: "auction: all rights start",
     surface: "auction",
     person: ADMIN,
@@ -268,14 +321,14 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     answer: "in-community",
   },
   {
-    name: "auction: allowlisted starts",
+    name: "auction: allowlisted applies",
     surface: "auction",
     person: {
       rights: ["place-bids"],
       blocked: false,
       outcome: "granted-by-allowlist",
     },
-    action: START_FROM_CHANNEL,
+    action: APPLY_FROM_CHANNEL,
     answer: "admitted",
   },
   {
@@ -283,22 +336,36 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     surface: "auction",
     person: NEWCOMER,
     action: START_FROM_CHANNEL,
-    answer: "pending",
+    answer: "welcome",
   },
   {
     name: "auction: newcomer presses",
     surface: "auction",
     person: NEWCOMER,
     action: LOT_BUTTON,
+    answer: "welcome",
+  },
+  {
+    name: "auction: newcomer applies",
+    surface: "auction",
+    person: NEWCOMER,
+    action: APPLY_FROM_CHANNEL,
     answer: "pending",
   },
   // Отказ по очереди аукциона — исход `declined` только этой очереди
-  // (ADR-064, пункт 15).
+  // (ADR-064, пункт 15); виден он после «Подать заявку».
   {
     name: "auction: declined starts",
     surface: "auction",
     person: DECLINED,
     action: START,
+    answer: "welcome",
+  },
+  {
+    name: "auction: declined applies",
+    surface: "auction",
+    person: DECLINED,
+    action: APPLY,
     answer: "declined",
   },
   {
@@ -316,10 +383,17 @@ export const ACCESS_MATRIX_CASES: readonly AccessMatrixCase[] = [
     answer: "blocked",
   },
   {
+    name: "auction: blocked applies",
+    surface: "auction",
+    person: BLOCKED,
+    action: APPLY,
+    answer: "blocked",
+  },
+  {
     name: "auction: unknown outcome",
     surface: "auction",
     person: { rights: ["place-bids"], blocked: false, outcome: "unspecified" },
-    action: START,
+    action: APPLY,
     answer: "unavailable",
   },
 ];
@@ -330,7 +404,7 @@ type IdentityCall =
 
 function expectedIdentityCalls(matrixCase: AccessMatrixCase): IdentityCall[] {
   const { action, surface } = matrixCase;
-  if (action.kind === "callback") {
+  if (action.kind !== "apply") {
     return [{ method: "resolveIdentity", request: CONTRACT_USER }];
   }
   return [
@@ -382,7 +456,7 @@ export async function checkAccessMatrixCase(
 
   // Действие идёт дважды, и второй раз обязан пройти как первый: Identity
   // отвечает то же, значит и человек видит то же. Так строка держит и
-  // повторный `/start` — он не даёт отказа там, где первый его не дал, — и
+  // повторную заявку — она не даёт отказа там, где первая его не дала, — и
   // правило «один вызов Identity на update», а не на разговор.
   for (const attempt of [1, 2]) {
     identityCalls.length = 0;

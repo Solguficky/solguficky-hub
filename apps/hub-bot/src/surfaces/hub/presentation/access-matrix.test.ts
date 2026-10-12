@@ -5,16 +5,18 @@ import {
   type AccessMatrixInput,
   describeAccessMatrix,
 } from "../../../auction-ui/contract/index.js";
+import { applyLabel, withSourceCode } from "../../../core/entry.js";
 import { createDispatcher } from "../application/dispatcher.js";
 import {
   blockedHubAccessText,
   declinedHubAccessText,
   pendingHubAccessText,
 } from "../application/hub-access.js";
+import { applyData } from "./parse-callback.js";
 import { refusalText } from "./screens/kit.js";
 
-// Допущенный вход открывает «Сходки» (решение владельца 10 октября 2026
-// года): список отвечает пустым, остальное — диспетчер без соседей.
+// Допущенный вход открывает корневое меню (PER-592), а «Сходки» под ним
+// отвечают пустым списком; остальное — диспетчер без соседей.
 const bare = createDispatcher();
 const dispatcher: typeof bare = {
   execute: async (request) =>
@@ -42,14 +44,17 @@ function updateOf({ from, firstName, action }: AccessMatrixInput): Update {
     type: "private" as const,
     first_name: firstName,
   };
-  if (action.kind === "callback") {
+  if (action.kind !== "start") {
     return {
       update_id: 1,
       callback_query: {
         id: "press",
         chat_instance: "chat",
         from: sender,
-        data: action.data,
+        data:
+          action.kind === "callback"
+            ? action.data
+            : withSourceCode(applyData, action.sourceCode),
         message: { message_id: 9, date: 0, chat },
       },
     };
@@ -136,6 +141,11 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
   for (const [text, answer] of frames) {
     if (shown.includes(refusalText(text))) return answer;
   }
+  // Приветствие узнаётся по его кнопке: заявку ставит только она.
+  const welcomed = calls.some((call) =>
+    JSON.stringify(call.payload).includes(`"text":"${applyLabel}"`),
+  );
+  if (welcomed) return "welcome";
   // Запись границы без единого сообщения — не ответ человеку: «ok» в логе
   // ещё не значит, что он что-то увидел.
   const answered = calls.some(

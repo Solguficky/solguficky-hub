@@ -23,15 +23,25 @@ export function screenMark(id: ScreenId): { [screenTag]: ScreenId } {
 export const auctionListParent = "auction-list";
 export const auctionLists = ["auctions", "past"] as const;
 
-// Корневого экрана «Меню» нет: «Аукционы», «Прошедшие» и FAQ — корни
-// разделов, их открывают команды, и ряда навигации у корня нет (решение
-// владельца 10 октября 2026 года).
+// Корень один — «Меню», общий родитель разделов «Аукционы», FAQ,
+// «Избранное» и «Уведомления»: команды открывают раздел сразу, а «‹ Меню» с
+// раздела ведёт в корень. «Прошедшие» — внутри «Аукционов» (PER-592;
+// пересматривает решение владельца 10 октября 2026 года). Что цепочка
+// родителей каждого экрана доходит до корня, держит проверка графа
+// `inspectCatalog` test kit.
 export const screenCatalog = {
+  menu: {
+    class: "screen",
+    nav: "root",
+    title: "Меню",
+    backName: "Меню",
+  },
   // Отметку ознакомления ставит кнопка «Аукционы» под самим FAQ.
   faq: {
     class: "screen",
-    nav: "root",
+    nav: "tree",
     title: "Правила и FAQ",
+    parent: "menu",
     backName: "FAQ",
   },
   // Состояния FAQ, а не узлы: ссылка на правила и адрес для вопросов не
@@ -50,30 +60,34 @@ export const screenCatalog = {
   },
   auctions: {
     class: "screen",
-    nav: "root",
+    nav: "tree",
     title: "Аукционы",
+    parent: "menu",
     backName: "Аукционы",
   },
   past: {
     class: "screen",
-    nav: "root",
+    nav: "tree",
     title: "Прошедшие аукционы",
+    parent: "auctions",
     backName: "Прошедшие",
   },
-  // Частота «перебили» (PER-515): корень команды `/notifications`, пять
+  // Частота «перебили» (PER-515): раздел команды `/notifications`, пять
   // режимов по одному в ряд. Отказ Notifications — общий кадр `unavailable`.
   notify: {
     class: "screen",
-    nav: "root",
+    nav: "tree",
     title: "Уведомления",
+    parent: "menu",
     backName: "Уведомления",
   },
   // Избранное (PER-495): свои отмеченные лоты, у закрытых — итог. Список
-  // аукционного дерева, корень команды `/favorites`: возврата у него нет.
+  // аукционного дерева, раздел команды `/favorites`: «‹ Меню» ставит оболочка.
   favorites: {
     class: "screen",
-    nav: "root",
+    nav: "tree",
     title: "Избранное",
+    parent: "menu",
     backName: "Избранное",
   },
   // Лента возвращает в тот список, где аукцион стоит сейчас.
@@ -164,6 +178,11 @@ export const screenCatalog = {
   },
   // Кадры ожидания допуска и блокировки: в дерево не входят, клавиатуры нет.
   denied: { class: "screen", nav: "none" },
+  // Приветствие человека без права (PER-592, дополнение ADR-060): заявку
+  // ставит только его кнопка «Подать заявку».
+  welcome: { class: "screen", nav: "apply" },
+  // Подсказка на сообщение вне вопроса (PER-592): кадр исхода с «‹ Меню».
+  hint: { class: "screen", nav: "exit" },
   // Переход участника сообщества в бот хаба (ADR-064, пункт 2): торгов здесь
   // у него нет, ссылки на экране тоже.
   "in-community": { class: "screen", nav: "none" },

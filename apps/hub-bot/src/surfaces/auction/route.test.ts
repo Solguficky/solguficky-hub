@@ -12,7 +12,12 @@ import {
   LIST_PAGE_SIZE,
 } from "./auctions.js";
 import type { EntryPorts } from "./entry-ports.js";
-import { entryCallback, listCallback, startCallback } from "./faq.js";
+import {
+  applyCallback,
+  entryCallback,
+  listCallback,
+  startCallback,
+} from "./faq.js";
 import {
   routeAuctionReply,
   routeAuctionStart,
@@ -24,7 +29,7 @@ const auctionId = "01926f3c-8b7a-7cde-8f00-0123456789ac";
 const user = { telegramUserId: 42 };
 const firstName = "Сова";
 
-// Имя нужно одной кнопке — повтору входа; остальным нажатиям оно безразлично.
+// Имя нужно одной кнопке — «Подать заявку»; остальным нажатиям оно безразлично.
 const routeAuctionCallback = (
   input: Omit<Parameters<typeof routeCallback>[0], "firstName">,
 ) => routeCallback({ ...input, firstName });
@@ -157,13 +162,10 @@ describe("FAQ entry", () => {
     const p = ports(identity({ rights: [] }));
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
-    ).toEqual({
-      kind: "denied",
-      reason: "not-admitted",
-    });
+    ).toEqual({ kind: "welcome" });
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
-    vi.mocked(p.entry.requestAccess).mockResolvedValue(
-      entered(identity({ rights: GUEST })),
+    vi.mocked(p.identity.resolveIdentity).mockResolvedValue(
+      identity({ rights: GUEST }),
     );
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
     expect(
@@ -286,18 +288,17 @@ describe("FAQ entry", () => {
     });
     expect(p.faq.acknowledge).not.toHaveBeenCalled();
     expect(p.auction.getLot).not.toHaveBeenCalled();
-    // Вход заменяет разрешение личности: Identity спрошен один раз.
-    expect(p.entry.requestAccess).toHaveBeenCalledTimes(1);
-    expect(p.identity.resolveIdentity).not.toHaveBeenCalled();
+    // `/start` разрешает личность один раз и заявки не ставит (PER-592).
+    expect(p.identity.resolveIdentity).toHaveBeenCalledTimes(1);
+    expect(p.entry.requestAccess).not.toHaveBeenCalled();
   });
 
-  it("shows the auctions to a returning participant without an auction id", async () => {
+  // Вход открывает корневое меню: из него видно всё, что доступно (PER-592).
+  it("shows the menu to a returning participant", async () => {
     const p = ports(identity({ rights: GUEST }));
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
-    ).toMatchObject({
-      kind: "auctions",
-    });
+    ).toEqual({ kind: "menu", favorites: false, notifications: false });
   });
 
   it("records completion on the return from FAQ and allows its repetition", async () => {
@@ -320,16 +321,19 @@ describe("FAQ entry", () => {
     });
   });
 
-  // Прежняя кнопка «Меню» отметку не ставит: человек, который FAQ не
-  // закрывал, видит FAQ, а не «Аукционы».
-  it("opens the auctions from a former menu button without recording completion", async () => {
+  // «‹ Меню» и прежние кнопки «Меню» открывают корневое меню и отметку не
+  // ставят. Отметкой меню не закрыто: иначе «‹ Меню» с FAQ вернула бы в FAQ;
+  // разделы за ним закрыты ею по-прежнему (PER-592).
+  it("opens the menu from a menu button without recording completion", async () => {
     const p = ports(identity({ rights: GUEST }));
     const menu = () =>
       routeAuctionCallback({ ports: p, user, data: entryCallback("menu") });
-    expect((await menu()).screen).toMatchObject({ kind: "auctions" });
+    const shown = { kind: "menu", favorites: false, notifications: false };
+    expect((await menu()).screen).toEqual(shown);
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
-    expect((await menu()).screen).toEqual({ kind: "faq" });
+    expect((await menu()).screen).toEqual(shown);
     expect(p.faq.acknowledge).not.toHaveBeenCalled();
+    expect(p.catalog.listAuctions).not.toHaveBeenCalled();
   });
 
   it("does not enter the menu when completion cannot be saved", async () => {
@@ -401,7 +405,7 @@ describe("FAQ entry", () => {
             data: entryCallback(action),
           })
         ).screen,
-      ).toEqual({ kind: "denied", reason: "not-admitted" });
+      ).toEqual({ kind: "welcome" });
       expect(p.faq.acknowledged).not.toHaveBeenCalled();
       expect(p.faq.acknowledge).not.toHaveBeenCalled();
     },
@@ -567,7 +571,7 @@ describe("routeAuctionCallback", () => {
       user,
       data: lotButton,
     });
-    expect(outcome.screen).toEqual({ kind: "denied", reason: "not-admitted" });
+    expect(outcome.screen).toEqual({ kind: "welcome" });
     expect(p.auction.getLot).not.toHaveBeenCalled();
   });
 
@@ -666,8 +670,11 @@ describe("routeAuctionCallback", () => {
   });
 });
 
+// `/start` заявку не ставит (PER-592, дополнение ADR-060): он разрешает
+// личность, а человеку без права отвечает приветствием, и код канала едет в
+// кнопке «Подать заявку».
 describe("routeAuctionStart", () => {
-  it("applies to the auction queue with the channel code and the first name", async () => {
+  it("welcomes a person without the right and applies nowhere", async () => {
     const p = ports(identity({ rights: [] }));
     const outcome = await routeAuctionStart({
       ports: p,
@@ -675,14 +682,13 @@ describe("routeAuctionStart", () => {
       firstName,
       sourceCode: "chat",
     });
-    expect(p.entry.requestAccess).toHaveBeenCalledExactlyOnceWith({
-      user: { telegramUserId: 42, telegramUsername: "owl" },
-      queue: "auction",
-      sourceCode: "chat",
-      firstName,
+    expect(p.entry.requestAccess).not.toHaveBeenCalled();
+    expect(p.identity.resolveIdentity).toHaveBeenCalledExactlyOnceWith({
+      telegramUserId: 42,
+      telegramUsername: "owl",
     });
     expect(outcome).toEqual({
-      screen: { kind: "denied", reason: "not-admitted" },
+      screen: { kind: "welcome", sourceCode: "chat" },
       identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
     });
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
@@ -693,13 +699,78 @@ describe("routeAuctionStart", () => {
   it.each([
     ["", { sourceCode: "" }],
     [undefined, {}],
-  ])("passes the channel code %j as received", async (sourceCode, expected) => {
-    const p = ports(identity({ rights: [] }));
-    await routeAuctionStart({
+  ])(
+    "carries the channel code %j into the welcome",
+    async (sourceCode, expected) => {
+      const p = ports(identity({ rights: [] }));
+      const outcome = await routeAuctionStart({
+        ports: p,
+        user,
+        firstName,
+        ...(sourceCode === undefined ? {} : { sourceCode }),
+      });
+      expect(outcome.screen).toEqual({ kind: "welcome", ...expected });
+    },
+  );
+
+  it("opens the menu for a person the allowlist has just admitted", async () => {
+    const p = ports(identity({ rights: GUEST }));
+    expect(
+      (await routeAuctionStart({ ports: p, user, firstName })).screen,
+    ).toEqual({ kind: "menu", favorites: false, notifications: false });
+  });
+
+  it("fails closed when Identity is unavailable", async () => {
+    const p = ports(new ConnectError("offline", Code.Unavailable));
+    const outcome = await routeAuctionStart({
       ports: p,
       user,
       firstName,
-      ...(sourceCode === undefined ? {} : { sourceCode }),
+      sourceCode: "chat",
+    });
+    // Повтор `/start` несёт код канала: приветствие не теряет источник.
+    expect(outcome.screen).toEqual({
+      kind: "unavailable",
+      exit: { kind: "enter", data: startCallback("chat") },
+    });
+    expect(outcome.failure?.category).toBe("dependency_unavailable");
+    expect(p.faq.acknowledged).not.toHaveBeenCalled();
+  });
+});
+
+// «Подать заявку» — единственное действие, которое зовёт `RequestAccess`:
+// очередь аукциона, код канала из кнопки и имя для карточки модератора.
+describe("apply", () => {
+  it("puts the application into the auction queue with the channel code and the first name", async () => {
+    const p = ports(identity({ rights: [] }));
+    const outcome = await routeAuctionCallback({
+      ports: p,
+      user: { telegramUserId: 42, telegramUsername: "owl" },
+      data: applyCallback("chat"),
+    });
+    expect(p.entry.requestAccess).toHaveBeenCalledExactlyOnceWith({
+      user: { telegramUserId: 42, telegramUsername: "owl" },
+      queue: "auction",
+      sourceCode: "chat",
+      firstName,
+    });
+    expect(p.identity.resolveIdentity).not.toHaveBeenCalled();
+    expect(outcome).toEqual({
+      screen: { kind: "denied", reason: "not-admitted" },
+      identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
+    });
+    expect(p.faq.acknowledged).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["", { sourceCode: "" }],
+    [undefined, {}],
+  ])("passes the channel code %j as received", async (sourceCode, expected) => {
+    const p = ports(identity({ rights: [] }));
+    await routeAuctionCallback({
+      ports: p,
+      user,
+      data: applyCallback(sourceCode),
     });
     expect(p.entry.requestAccess).toHaveBeenCalledExactlyOnceWith({
       user,
@@ -709,15 +780,21 @@ describe("routeAuctionStart", () => {
     });
   });
 
-  it("opens the entry for a person the allowlist has just admitted", async () => {
+  it("opens the menu for a person the allowlist has just admitted", async () => {
     const p = ports(identity({ rights: [] }));
     vi.mocked(p.entry.requestAccess).mockResolvedValue({
       ...entered(identity({ rights: GUEST })),
       outcome: "granted-by-allowlist",
     });
     expect(
-      (await routeAuctionStart({ ports: p, user, firstName })).screen,
-    ).toMatchObject({ kind: "auctions" });
+      (
+        await routeAuctionCallback({
+          ports: p,
+          user,
+          data: applyCallback(),
+        })
+      ).screen,
+    ).toEqual({ kind: "menu", favorites: false, notifications: false });
   });
 
   it("answers a declined application with a refusal of its own", async () => {
@@ -727,7 +804,13 @@ describe("routeAuctionStart", () => {
       outcome: "declined",
     });
     expect(
-      (await routeAuctionStart({ ports: p, user, firstName })).screen,
+      (
+        await routeAuctionCallback({
+          ports: p,
+          user,
+          data: applyCallback(),
+        })
+      ).screen,
     ).toEqual({ kind: "denied", reason: "declined" });
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
   });
@@ -738,10 +821,12 @@ describe("routeAuctionStart", () => {
       ...entered(identity({ rights: GUEST })),
       outcome: "unspecified",
     });
-    expect(await routeAuctionStart({ ports: p, user, firstName })).toEqual({
+    expect(
+      await routeAuctionCallback({ ports: p, user, data: applyCallback() }),
+    ).toEqual({
       screen: {
         kind: "unavailable",
-        exit: { kind: "enter", data: startCallback() },
+        exit: { kind: "enter", data: applyCallback() },
       },
       identityId: "01926f3c-8b7a-7cde-8f00-00000000000a",
       failure: {
@@ -752,49 +837,38 @@ describe("routeAuctionStart", () => {
     expect(p.faq.acknowledged).not.toHaveBeenCalled();
   });
 
-  it("fails closed when the entry is unavailable", async () => {
+  // Повтор заявки несёт тот же код канала: заявка не теряет источник.
+  it("offers the same application again when Identity is unavailable", async () => {
     const p = ports(new ConnectError("offline", Code.Unavailable));
-    const outcome = await routeAuctionStart({
-      ports: p,
-      user,
-      firstName,
-      sourceCode: "chat",
-    });
-    // Повтор входа несёт код канала прихода: заявка не теряет источник.
+    const data = applyCallback("chat");
+    const outcome = await routeAuctionCallback({ ports: p, user, data });
     expect(outcome.screen).toEqual({
       kind: "unavailable",
-      exit: { kind: "enter", data: startCallback("chat") },
+      exit: { kind: "enter", data },
     });
     expect(outcome.failure?.category).toBe("dependency_unavailable");
-    expect(p.faq.acknowledged).not.toHaveBeenCalled();
   });
 });
 
-// «Повторить» под кадром «недоступно» после `/start` — тот же вход: без него
-// новичок после сбоя увидел бы «заявка на рассмотрении» без заявки.
+// «Повторить» под кадром «недоступно» после `/start` — тот же `/start`:
+// личность разрешается заново, а код канала доживает до кнопки заявки.
 describe("entry retry", () => {
-  it("requests access again with the channel code and the first name", async () => {
+  it("welcomes again with the channel code and applies nowhere", async () => {
     const p = ports(identity({ rights: [] }));
     const outcome = await routeAuctionCallback({
       ports: p,
       user,
       data: startCallback("chat"),
     });
-    expect(p.entry.requestAccess).toHaveBeenCalledExactlyOnceWith({
-      user,
-      queue: "auction",
-      sourceCode: "chat",
-      firstName,
-    });
-    expect(p.identity.resolveIdentity).not.toHaveBeenCalled();
-    expect(outcome.screen).toEqual({ kind: "denied", reason: "not-admitted" });
+    expect(p.entry.requestAccess).not.toHaveBeenCalled();
+    expect(outcome.screen).toEqual({ kind: "welcome", sourceCode: "chat" });
   });
 
-  it("opens the auctions for an admitted person and FAQ before its completion", async () => {
+  it("opens FAQ until it is read and the menu after", async () => {
     const p = ports(identity({ rights: GUEST }));
     const retry = () =>
       routeAuctionCallback({ ports: p, user, data: startCallback() });
-    expect((await retry()).screen).toMatchObject({ kind: "auctions" });
+    expect((await retry()).screen).toMatchObject({ kind: "menu" });
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
     expect((await retry()).screen).toEqual({ kind: "faq" });
     expect(p.faq.acknowledge).not.toHaveBeenCalled();
@@ -816,17 +890,12 @@ describe("entry retry", () => {
     )
       throw new Error("expected the entry retry frame");
     const p = ports(identity({ rights: [] }));
-    await routeAuctionCallback({
+    const outcome = await routeAuctionCallback({
       ports: p,
       user,
       data: failed.screen.exit.data,
     });
-    expect(p.entry.requestAccess).toHaveBeenCalledExactlyOnceWith({
-      user,
-      queue: "auction",
-      sourceCode: "",
-      firstName,
-    });
+    expect(outcome.screen).toEqual({ kind: "welcome", sourceCode: "" });
   });
 
   it("offers the same retry when the entry fails again", async () => {

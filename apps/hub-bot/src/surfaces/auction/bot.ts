@@ -10,6 +10,7 @@ import {
 import { createBotShell, type ShellContext } from "../../core/bot/shell.js";
 import { markUpdateFailed } from "../../core/bot/tracing.js";
 import type { Presentation, TelegramEnvironment } from "../../core/config.js";
+import { carriesPersonContent, createHintedAlbums } from "../../core/entry.js";
 import { countFailure } from "../../core/failures.js";
 import type { LogFields, Logger } from "../../core/logging.js";
 import type { Tracing } from "../../core/tracing.js";
@@ -43,6 +44,7 @@ import { startWaiting } from "./waiting.js";
 
 // Операция команды в логе: имя раздела, который она открывает.
 type CommandOperation =
+  | "menu"
   | "start"
   | "faq"
   | "auctions"
@@ -90,6 +92,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     });
   const photos = options.photos ?? createPhotoCache();
   const questions = options.questions ?? createQuestionMemory();
+  const hintedAlbums = createHintedAlbums();
 
   // Только личный чат: в группе бот аукциона молчит.
   const direct = bot.chatType("private");
@@ -124,15 +127,17 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     }
   };
 
-  // Разделы из кнопки меню клиента: корень раздела новым сообщением (решение
-  // владельца 10 октября 2026 года). Вход команда не ставит — он остаётся за
-  // `/start`: допуск проверяется, как у нажатия, и без отметки FAQ человек
-  // видит FAQ. `/menu` — прежняя команда меню — открывает «Аукционы».
+  // Разделы из кнопки меню клиента: раздел новым сообщением, `/menu` —
+  // корневое меню (PER-592). Заявку команда не ставит: допуск проверяется,
+  // как у нажатия, и без отметки FAQ человек видит FAQ. `/past` из списка
+  // убран — прошедшие внутри «Аукционов», — но по старой привычке открывает
+  // их.
   // «Избранное» и «Уведомления» идут маршрутом своих кнопок: у бота без
   // Notifications их нет в меню клиента, а набранная руками команда получает
   // кадр устаревшего экрана, как кнопка из сборки с Notifications.
   for (const [names, operation, data] of [
-    [["auctions", "menu"], "auctions", entryCallback("auctions")],
+    [["menu"], "menu", entryCallback("menu")],
+    [["auctions"], "auctions", entryCallback("auctions")],
     [["past"], "past", entryCallback("past")],
     [
       ["favorites"],
@@ -273,11 +278,40 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     }
   });
 
+  // Сообщение, которое бот не читает: текст без ответа на вопрос, незнакомая
+  // команда, файл (PER-592). Есть открытый вопрос — подсказка, как на него
+  // ответить: реплай слетает в Web K и при нажатии мимо; нет — куда идти.
+  // Команда другому боту обращена не к нам: на неё бот молчит.
+  const hintStray = async (ctx: UpdateContext & { chat: { id: number } }) => {
+    // Служебное событие чата подсказки не получает, а альбом — одну на все
+    // снимки.
+    if (!carriesPersonContent(ctx.message)) return;
+    const group = ctx.message?.media_group_id;
+    if (group !== undefined && !hintedAlbums.first(group)) return;
+    const text = ctx.message?.text ?? "";
+    const addressee = /^\/[A-Za-z0-9_]+@([A-Za-z0-9_]+)/.exec(text)?.[1];
+    if (
+      addressee !== undefined &&
+      addressee.toLowerCase() !== ctx.me.username.toLowerCase()
+    ) {
+      return;
+    }
+    const outcome: RouteOutcome = {
+      screen: { kind: "hint", openQuestion: questions.has(ctx.chat.id) },
+    };
+    const screen = render(outcome.screen);
+    await ctx.reply(screen.text, markupOf(screen));
+    log({ logger, ctx, outcome, operation: "message" });
+  };
+
   // Ответ на вопрос листа ставки (PER-317): reply на сообщение бота, шаг —
-  // `callback_data` его «Отмены». Прочие сообщения бот оставляет без ответа.
+  // `callback_data` его «Отмены». Прочие сообщения получают подсказку.
   direct.on("message", async (ctx) => {
     const replied = ctx.message.reply_to_message;
-    if (replied === undefined || replied.from?.id !== ctx.me.id) return;
+    if (replied === undefined || replied.from?.id !== ctx.me.id) {
+      await hintStray(ctx);
+      return;
+    }
     // Шаг лежит в «Отмене»; над ней может стоять «Как это работает», поэтому
     // кнопка ищется по всей клавиатуре, как у бота хаба.
     const data = replied.reply_markup?.inline_keyboard
@@ -287,6 +321,7 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
           "callback_data" in button && isAuctionQuestion(button.callback_data),
       );
     if (data === undefined || !("callback_data" in data)) {
+      await hintStray(ctx);
       return;
     }
     const waiting = startWaiting(ctx);
@@ -356,7 +391,7 @@ function log(input: {
   logger: Logger;
   ctx: UpdateContext;
   outcome: RouteOutcome;
-  operation: CommandOperation | "callback" | "reply";
+  operation: CommandOperation | "callback" | "reply" | "message";
 }): void {
   const { logger, ctx, outcome, operation } = input;
   const fields: LogFields = {
@@ -404,6 +439,10 @@ function refusalCategory(
     // счётчик отказов авторизации он не трогает (ADR-064, пункт 2).
     case "denied":
       return screen.reason === "in-community" ? undefined : "authorization";
+    // Приветствие без права — тот же отказ авторизации, что прежний кадр
+    // ожидания: допуска нет.
+    case "welcome":
+      return "authorization";
     case "outdated":
       return "invariant";
     default:

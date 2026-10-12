@@ -95,13 +95,22 @@ export type Respond = (method: ApiMethod, payload: ApiPayload) => unknown;
 // Записывающий трансформер: вызов уходит в `calls`, экран сверяется с
 // каталогом поверхности и дизайн-кодом в момент отправки — найденное снимает
 // хук набора (`lint-setup.ts`) либо пульт, — а ответ Telegram подставляется.
+// Запись списка команд чата — не экран: бот сверяет её после ответа на каждом
+// действии (PER-592), и она уходит в свой журнал `commands`, если он передан,
+// чтобы `calls` оставался разговором.
 function recorder(
   surface: Surface,
   calls: RecordedCall[],
   respond?: Respond,
+  commands?: RecordedCall[],
 ): Transformer {
   return (_prev, method, payload) => {
-    calls.push({ method, payload });
+    const commandsCall =
+      method === "setMyCommands" || method === "deleteMyCommands";
+    (commandsCall && commands !== undefined ? commands : calls).push({
+      method,
+      payload,
+    });
     reportViolations(inspectCall(surface, method, payload));
     // Ответ с полем `ok` — готовый ответ Bot API, в том числе отказ: из него
     // grammY сам соберёт GrammyError. Остальное — результат успешного вызова.
@@ -273,8 +282,10 @@ export function createHarness(
     ...runtime,
   });
   bot.botInfo = botInfo;
-  bot.api.config.use(recorder("hub", calls, respond));
-  return { bot, calls, records };
+  // Списки команд чата: см. `recorder`.
+  const commands: RecordedCall[] = [];
+  bot.api.config.use(recorder("hub", calls, respond, commands));
+  return { bot, calls, records, commands };
 }
 
 /**

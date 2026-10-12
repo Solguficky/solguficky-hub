@@ -16,6 +16,7 @@ import {
 } from "../src/surfaces/hub/presentation/screens/catalog.js";
 import { screenTag as hubTag } from "../src/surfaces/hub/presentation/screens/show.js";
 import {
+  inspectCatalog as inspectGraphWith,
   inspectCall as inspectWith,
   type LintConfig,
   type ScreenEntry,
@@ -109,5 +110,19 @@ export function inspectCall(
     catalog === undefined ? configs[surface] : configFor[surface](catalog),
     method,
     payload,
+  );
+}
+
+/**
+ * Граф дерева экранов поверхности по каталогу (PER-592): один корень — меню,
+ * у каждого экрана дерева цепочка родителей доходит до него. Каталог
+ * передаётся только в тестах самого правила.
+ */
+export function inspectCatalog(
+  surface: Surface,
+  catalog?: Catalog,
+): ScreenViolation[] {
+  return inspectGraphWith(
+    catalog === undefined ? configs[surface] : configFor[surface](catalog),
   );
 }

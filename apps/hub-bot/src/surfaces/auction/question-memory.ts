@@ -7,6 +7,9 @@ export type QuestionMemory = {
   forget(chatId: number, messageId: number): void;
   // Забирает и забывает все открытые вопросы чата.
   takeAll(chatId: number): number[];
+  // Есть ли в чате открытый вопрос: по нему подсказка на сообщение без
+  // реплая говорит, как ответить (PER-592).
+  has(chatId: number): boolean;
 };
 
 // Чатов с открытым вопросом немного: старейший вытесняется, и его вопрос
@@ -37,6 +40,9 @@ export function createQuestionMemory(limit = CHAT_LIMIT): QuestionMemory {
       const ids = open.get(chatId);
       open.delete(chatId);
       return ids === undefined ? [] : [...ids];
+    },
+    has(chatId) {
+      return open.has(chatId);
     },
   };
 }

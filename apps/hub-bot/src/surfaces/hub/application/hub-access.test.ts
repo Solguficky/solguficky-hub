@@ -25,12 +25,13 @@ describe("decideHubAccess", () => {
   });
 
   // Права выводит Identity: бот не достраивает право хаба ни из права
-  // модерации, ни из права аукциона.
-  it("keeps a person without the hub right in pending", () => {
-    expect(decideHubAccess([], false)).toBe("pending");
-    expect(decideHubAccess(["place-bids"], false)).toBe("pending");
+  // модерации, ни из права аукциона. Есть ли заявка, разрешение личности не
+  // знает: без права — приветствие с кнопкой заявки (PER-592).
+  it("keeps a person without the hub right unapplied", () => {
+    expect(decideHubAccess([], false)).toBe("unapplied");
+    expect(decideHubAccess(["place-bids"], false)).toBe("unapplied");
     expect(decideHubAccess(["place-bids", "admit-bidders"], false)).toBe(
-      "pending",
+      "unapplied",
     );
   });
 

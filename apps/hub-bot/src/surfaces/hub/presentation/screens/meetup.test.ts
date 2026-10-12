@@ -225,16 +225,22 @@ describe("meetupsScreen", () => {
     const last = meetupsScreen(summaries(17), 2, today);
 
     expect(first.text).toContain("<b>Сходки · 1 из 3</b>");
-    // «Сходки» — корень (решение владельца 10 октября 2026 года): ряда
-    // навигации нет, «Архив» — последним рядом содержимого, перед листанием.
-    expect(rows(first)).toHaveLength(8 + 2);
-    expect(rows(first).at(-2)).toEqual(["Архив"]);
-    expect(rows(first).at(-1)).toEqual(["→"]);
-    expect(first.keyboard.inline_keyboard.at(-1)?.[0]).toMatchObject({
+    // «Сходки» — раздел под меню (PER-592): «Архив» — последним рядом
+    // содержимого, затем листание, последним — «‹ Меню».
+    expect(rows(first)).toHaveLength(8 + 3);
+    expect(rows(first).at(-3)).toEqual(["Архив"]);
+    expect(rows(first).at(-2)).toEqual(["→"]);
+    expect(rows(first).at(-1)).toEqual(["‹ Меню"]);
+    expect(first.keyboard.inline_keyboard.at(-2)?.[0]).toMatchObject({
       callback_data: "v1:nav:hub:1",
     });
     expect(last.text).toContain("· 3 из 3");
-    expect(rows(last)).toEqual([["17 августа · Сходка 17"], ["Архив"], ["←"]]);
+    expect(rows(last)).toEqual([
+      ["17 августа · Сходка 17"],
+      ["Архив"],
+      ["←"],
+      ["‹ Меню"],
+    ]);
   });
 
   it("opens the last page for a page beyond the list", () => {

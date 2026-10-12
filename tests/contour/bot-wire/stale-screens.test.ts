@@ -55,6 +55,7 @@ async function memberLookingAtPublishedMeetup(scenario: string) {
 
   const { person: member } = await memberAllowedBy(wire, direct, adminId);
   await member.says("/start");
+  await member.presses("Сходки");
   expect(member.buttons()).toContain(listedAs(title));
   return { adminId, meetupId, title, member };
 }

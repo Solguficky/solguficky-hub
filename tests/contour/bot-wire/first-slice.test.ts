@@ -77,7 +77,7 @@ describe("сценарий первого среза", () => {
     expect(organizer.sees()).toContain("Сходка опубликована");
 
     // P-03 и P-04: тот же человек видит сходку в списке и её карточку.
-    await member.says("/start");
+    await member.says("/meetups");
     expect(member.buttons()).toContain(listedAs(title));
     await member.presses(listedAs(title));
     expect(member.sees()).toContain(title);
@@ -92,11 +92,13 @@ describe("сценарий первого среза", () => {
     const adminId = await direct.grantAdmin(freshTelegramUserId());
     const { person: member } = await memberAllowedBy(wire, direct, adminId);
 
+    // Вход открывает корневое меню, и «Управления» в нём у солегуфика нет;
+    // команда без права отказывает (PER-592).
     await member.says("/start");
+    expect(member.buttons()).toContain("Сходки");
+    expect(member.buttons()).not.toContain("Управление");
+    await member.presses("Сходки");
     expect(member.buttons()).toContain("Архив");
-
-    // Корня «Меню» нет: «Управление» — команда, и без права она отказывает
-    // (решение владельца 10 октября 2026 года).
     await member.says("/manage");
     expect(member.sees()).toBe("Управление сходками доступно администратору.");
   });

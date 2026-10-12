@@ -144,7 +144,9 @@ describe("waiting", () => {
     expect(methods(calls)).toEqual(["sendChatAction", "sendMessage"]);
   });
 
-  it("stays silent for a message it ignores", async () => {
+  // Сообщение, которое бот не читает, получает подсказку сразу, без
+  // индикатора: сервисы за ней не стоят (PER-592).
+  it("answers a stray message with a hint and no typing indicator", async () => {
     const identity = resolved();
     const { bot, calls } = createHarness(identity);
     await bot.init();
@@ -155,7 +157,7 @@ describe("waiting", () => {
     });
     await vi.advanceTimersByTimeAsync(pressWatchdogMs);
 
-    expect(calls).toEqual([]);
+    expect(calls.map((call) => call.method)).toEqual(["sendMessage"]);
     expect(identity.resolve).not.toHaveBeenCalled();
   });
 

@@ -24,14 +24,23 @@ export const manageMeetupsParent = "manage-meetups-parent";
 export const manageApplicationsParent = "manage-applications-parent";
 export const manageMembersParent = "manage-members-parent";
 
-// Корневого экрана «Меню» нет: корни разделов — «Сходки», «Настройки»,
-// «Помощь» и «Управление», их открывают команды кнопки меню клиента, и ряда
-// навигации у корня нет (решение владельца 10 октября 2026 года).
+// Корень один — «Меню», общий родитель разделов «Сходки», «Настройки»,
+// «Помощь» и «Управление»: команды кнопки меню клиента открывают раздел сразу,
+// а «‹ Меню» с раздела ведёт в корень (PER-592; пересматривает решение
+// владельца 10 октября 2026 года). Что цепочка родителей каждого экрана
+// доходит до корня, держит проверка графа `inspectCatalog` test kit.
 export const screenCatalog = {
-  meetups: {
+  menu: {
     class: "screen",
     nav: "root",
+    title: "Меню",
+    backName: "Меню",
+  },
+  meetups: {
+    class: "screen",
+    nav: "tree",
     title: "Сходки",
+    parent: "menu",
     backName: "Сходки",
   },
   archive: {
@@ -43,8 +52,9 @@ export const screenCatalog = {
   },
   settings: {
     class: "screen",
-    nav: "root",
+    nav: "tree",
     title: "Настройки",
+    parent: "menu",
     backName: "Настройки",
   },
   "notify-global": {
@@ -64,13 +74,15 @@ export const screenCatalog = {
   },
   help: {
     class: "screen",
-    nav: "root",
+    nav: "tree",
     title: "Помощь",
+    parent: "menu",
   },
   manage: {
     class: "screen",
-    nav: "root",
+    nav: "tree",
     title: "Управление",
+    parent: "menu",
     backName: "Управление",
   },
   "manage-meetups": {
@@ -439,6 +451,12 @@ export const screenCatalog = {
   // «Настроить уведомления».
   outcome: { class: "screen", nav: "exit" },
   "no-access": { class: "screen", nav: "none" },
+  // Приветствие человека без права хаба (PER-592, дополнение ADR-060): заявку
+  // ставит только его кнопка «Подать заявку». Заголовка нет — первое
+  // предложение жирным, как у кадра отказа.
+  welcome: { class: "screen", nav: "apply" },
+  // Подсказка на сообщение вне вопроса (PER-592): кадр исхода с «‹ Меню».
+  hint: { class: "screen", nav: "exit" },
   notification: { class: "trace", nav: "free" },
   "access-opened": { class: "trace", nav: "free" },
 } as const;

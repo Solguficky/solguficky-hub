@@ -35,6 +35,7 @@ import {
   toHidden,
   toManage,
   toMeetups,
+  toMenu,
   withNav,
   withPager,
 } from "./kit.js";
@@ -117,9 +118,9 @@ function listKeyboard(
 }
 
 /**
- * «Сходки» — корень основного раздела (решение владельца 10 октября 2026 года;
- * прежде «Ближайшие сходки»): ряда навигации нет, «Архив» — его дочерний экран
- * последним рядом содержимого, перед листанием.
+ * «Сходки» — основной раздел (прежде «Ближайшие сходки»), ребёнок корневого
+ * меню (PER-592): «Архив» — его дочерний экран последним рядом содержимого,
+ * перед листанием, а последний ряд — «‹ Меню».
  */
 export function meetupsScreen(
   meetups: readonly MeetupSummary[],
@@ -162,10 +163,13 @@ export function meetupsScreen(
             section("С датой", lines(true)),
             section("Без даты", lines(false)),
           ),
-    keyboard: withPager(
-      nextRow(listRows(page, today)).text(toArchive.name, toArchive.data),
-      page,
-      (to) => `v1:nav:hub:${to}`,
+    keyboard: withNav(
+      withPager(
+        nextRow(listRows(page, today)).text(toArchive.name, toArchive.data),
+        page,
+        (to) => `v1:nav:hub:${to}`,
+      ),
+      toMenu,
     ),
     format: "HTML",
   };

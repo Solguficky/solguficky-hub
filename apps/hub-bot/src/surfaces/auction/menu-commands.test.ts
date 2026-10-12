@@ -19,16 +19,16 @@ function capturingLogger() {
 }
 
 describe("bot command menu", () => {
-  // Решение владельца 10 октября 2026 года: корня «Меню» нет, разделы
-  // открываются командами.
+  // `/menu` — корневое меню первым пунктом, затем разделы; «Прошедшие» —
+  // внутри «Аукционов», и своей команды в списке у них нет (PER-592).
   it("registers the section commands for private chats", async () => {
     const setMyCommands = vi.fn<Api["setMyCommands"]>().mockResolvedValue(true);
     const { logger, records } = capturingLogger();
     await registerCommands({ setMyCommands }, botCommands, logger);
     expect(setMyCommands).toHaveBeenCalledWith(
       [
+        { command: "menu", description: "Меню" },
         { command: "auctions", description: "Аукционы" },
-        { command: "past", description: "Прошедшие" },
         { command: "faq", description: "Правила и FAQ" },
       ],
       { scope: { type: "all_private_chats" } },

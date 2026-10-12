@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ScreenEntry } from "../../../../../testkit/screen-lint.js";
+import {
+  inspectCatalog,
+  type ScreenEntry,
+} from "../../../../../testkit/screen-lint.js";
 import {
   auctionFeedParent,
   auctionFeedParents,
@@ -35,14 +38,19 @@ describe("screen catalog", () => {
     expect(orphans).toEqual([]);
   });
 
-  // Решение владельца 10 октября 2026 года: корня «Меню» нет, корни — разделы,
-  // которые открывают команды.
-  it("roots the tree in the sections the commands open", () => {
+  // Корень один — меню, общий родитель разделов, которые открывают команды
+  // (PER-592); цепочку родителей до него держит `inspectCatalog`.
+  it("roots the tree in the menu over the sections the commands open", () => {
     const roots = entries
       .filter(([, entry]) => entry.nav === "root")
       .map(([id]) => id);
+    const sections = entries
+      .filter(([, entry]) => entry.parent === "menu")
+      .map(([id]) => id);
 
-    expect(roots).toEqual(["meetups", "settings", "help", "manage"]);
+    expect(roots).toEqual(["menu"]);
+    expect(sections).toEqual(["meetups", "settings", "help", "manage"]);
+    expect(inspectCatalog("hub")).toEqual([]);
   });
 
   it("does not hang a parent on a message that is not a tree screen", () => {

@@ -196,7 +196,11 @@ describe("auction through both bots", () => {
     const guest = startConversation(auction.bot, auction.calls, guestId, {
       username: guestUsername,
     });
+    // `/start` заявку не ставит: её ставит «Подать заявку» под приветствием
+    // (дополнение ADR-060 от 2026-10-12).
     await guest.says("/start");
+    expect(plain(guest.sees())).toContain("Доступ выдаёт администратор");
+    await guest.presses("Подать заявку");
     await admin.says("/manage");
     await admin.presses("Заявки и отказы");
     // Заявка гостя лежит в очереди аукциона, отдельной от очереди сообщества
@@ -249,13 +253,15 @@ describe("auction through both bots", () => {
     expect(plain(guest.sees())).toContain("Твоя автоставка: до 5 000 ₽");
     expect(plain(guest.sees())).toContain("Лидер: Филин*");
 
-    // Гость без права аукциона — заявка ещё на рассмотрении — получает отказ
-    // бота: вход отвечает ожиданием, и ни меню, ни лота ему не открыто.
+    // Гость без права аукциона видит приветствие без заявки; «Подать заявку»
+    // ставит её, и бот отвечает ожиданием — ни меню, ни лота ему не открыто.
     const pendingId = freshTelegramUserId();
     const pending = startConversation(auction.bot, auction.calls, pendingId, {
       username: usernameFor(pendingId),
     });
     await pending.says("/start");
+    expect(pending.pressable()).toEqual(["Подать заявку"]);
+    await pending.presses("Подать заявку");
     expect(plain(pending.sees())).toContain("Заявка на рассмотрении");
     expect(pending.pressable()).not.toContain("Аукционы");
   });

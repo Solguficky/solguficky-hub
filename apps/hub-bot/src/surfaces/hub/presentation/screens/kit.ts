@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { menuTitle } from "../../../../core/entry.js";
 import {
   confirmNoLabel,
   confirmYesPrefix,
@@ -82,9 +83,15 @@ export function refusalText(text: string): string {
 export type Parent = { name: string; data: string };
 
 /**
- * Корень основного раздела — «Сходки». Корневого экрана «Меню» нет: туда, где
- * «Меню» было единственным выходом, ведёт этот возврат (решение владельца
- * 10 октября 2026 года).
+ * Корневое меню — общий родитель разделов (PER-592; пересматривает решение
+ * владельца 10 октября 2026 года). Кнопка старая — `v1:nav:start`: прежние
+ * кнопки «Меню» в чатах ведут туда же.
+ */
+export const toMenu: Parent = { name: menuTitle, data: "v1:nav:start" };
+
+/**
+ * Корень основного раздела — «Сходки». Кадры отказа и устаревшие экраны
+ * возвращают сюда: это ближайший живой экран (дизайн-код, «Навигация»).
  */
 export const toMeetups: Parent = { name: "Сходки", data: "v1:nav:hub" };
 export const toArchive: Parent = { name: "Архив", data: "v1:nav:archive" };
@@ -123,8 +130,8 @@ export function backLabel(parent: Parent): string {
 }
 
 /**
- * Последний ряд экрана — одна кнопка `[‹ Родитель]`: кнопки «Меню» нет, между
- * разделами человек ходит командами (решение владельца 10 октября 2026 года).
+ * Последний ряд экрана — одна кнопка `[‹ Родитель]`; корни разделов
+ * возвращают `[‹ Меню]` (PER-592).
  */
 export function withNav(
   keyboard: InlineKeyboard,

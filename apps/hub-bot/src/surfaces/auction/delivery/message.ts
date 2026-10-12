@@ -43,11 +43,11 @@ export function traceLotCallback(lotId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({ kind: "lot", lotId, page: 0 })}`;
 }
 
-// Вход в аукцион из следа — тот же путь, что команда `/auctions`: FAQ, если
-// человек его ещё не прошёл, иначе список активных аукционов (PER-442,
-// PER-453).
-export function traceAuctionsCallback(): string {
-  return `${tracePrefix}${entryCallback("auctions")}`;
+// Вход в аукцион из следа сообщения о допуске — FAQ, тем же путём, что
+// команда `/faq`: впереди у допущенного правила, и подпись это и обещает
+// (PER-592). «Аукционы» под FAQ ставят отметку и открывают список.
+export function traceFaqCallback(): string {
+  return `${tracePrefix}${entryCallback("faq")}`;
 }
 
 // «Реже» под перебитием — экран частоты тем же путём, что команда
@@ -133,8 +133,8 @@ export function renderNotification(
     return {
       text: "Тебя допустили к аукциону.",
       button: {
-        text: "Открыть аукцион",
-        callback_data: traceAuctionsCallback(),
+        text: "Правила и FAQ",
+        callback_data: traceFaqCallback(),
       },
     };
   }
