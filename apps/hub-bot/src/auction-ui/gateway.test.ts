@@ -91,6 +91,9 @@ function surfaceFor(
           calls.auction += 1;
           return { kind: "accepted", name: "@owl" };
         },
+        async getAuction() {
+          return undefined;
+        },
         async getRaffle() {
           calls.auction += 1;
           return undefined;

@@ -44,6 +44,8 @@ export type {
   ApplicationQueue,
   AuctionBotPorts,
   AuctionPort,
+  AuctionStageView,
+  AuctionSummaryView,
   BidOriginView,
   BidRefusal,
   CommandOutcome,

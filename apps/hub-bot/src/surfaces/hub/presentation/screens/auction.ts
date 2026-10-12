@@ -4,12 +4,14 @@ import {
   type AuctionBlock,
   type AuctionButton,
   type AuctionScreenBody,
+  type AuctionStageView,
   type BidOriginView,
   encodeAuctionCallback,
   type FeedItem,
   type HistoryItem,
   type LotStatusView,
   type Money,
+  parseAuctionCallback,
 } from "../../../../auction-ui/index.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
@@ -45,7 +47,9 @@ import {
   type Parent,
   pagedTitle,
   readableMoment,
+  retryLabel,
   screenText,
+  toAuctionRoot,
   withNav,
 } from "./kit.js";
 import type { ScreenPhoto, ShownScreen } from "./show.js";
@@ -58,8 +62,12 @@ import type { ScreenPhoto, ShownScreen } from "./show.js";
 
 export type AuctionView = {
   body: AuctionScreenBody;
-  /** Родитель ленты: сходка аукциона либо «Сходки», если бот её не знает. */
-  feedParent: Parent;
+  /**
+   * Родитель корня аукциона (PER-605): меню «Расширения» его сходки либо
+   * «Сходки», если бот сходку не знает. Лента, избранное, розыгрыш, правила и
+   * пульт возвращают в корень: ему хватает идентификатора аукциона.
+   */
+  rootParent: Parent;
   presentation: "rich" | "plain";
   timeZone: string;
   today: CommunityDay;
@@ -97,7 +105,7 @@ export type AuctionView = {
 // нет, и тело у двух ботов остаётся одним.
 const addLotLabel = "Добавить лот";
 const editLotLabel = "Изменить лот";
-// Пульт аукциона (PER-320) — тоже ряд оболочки хаба под «Добавить лот».
+// Пульт аукциона (PER-320) — ряд оболочки хаба в корне аукциона.
 const consoleLabel = "Пульт";
 const favoritesLabel = "Избранное";
 
@@ -174,6 +182,11 @@ export function auctionScreen(view: AuctionView): AuctionShown {
         break;
     }
   }
+  const root = view.body.blocks.find(
+    (block): block is Extract<AuctionBlock, { kind: "root" }> =>
+      block.kind === "root",
+  );
+  if (root !== undefined) return { screen: rootScreen(view, root) };
   const lot = view.body.blocks.find(
     (block): block is Extract<AuctionBlock, { kind: "lot" }> =>
       block.kind === "lot",
@@ -211,44 +224,18 @@ function feedScreen(
     feed.lots.map((item) => [item.lotId, item]),
   );
   const keyboard = new InlineKeyboard();
-  // Действия экрана стоят первыми рядами, над лотами и листанием. После
-  // старта онлайн-недели добавлять лот нельзя, и «Добавить лот» нет; «Пульт»
-  // остаётся. Короткие действия идут разрешёнными парами: так полная
-  // страница из восьми лотов держит предел рядов.
+  // Лента — просто список лотов (PER-605): вход в пульт, розыгрыш, избранное и
+  // правила стоят в корне аукциона. Над лотами остаётся «Добавить лот»
+  // администратора, пока аукцион принимает лоты. «Розыгрыш» тело ленты
+  // ставит для бота аукциона, и оболочка его убирает; он же говорит, что
+  // онлайн-неделя открыта и лоты не принимаются, даже если пульт не прочитан.
   const auction = uuidToToken(feed.auctionId);
-  // «Розыгрыш» ставит тело, пока розыгрыш есть (ADR-066). Auction открывает
-  // его вместе с онлайн-неделей, после которой лоты не принимаются, поэтому
-  // при розыгрыше «Добавить лот» нет, даже если пульт не прочитан, а у
-  // администратора кнопка встаёт парой к «Пульту»: так полная страница держит
-  // предел рядов.
   const raffle = view.body.keyboard
     .flat()
-    .find((button) => button.action === "feed.raffle");
-  if (view.canManage === true) {
-    if (view.canAddLots !== false && raffle === undefined) {
-      keyboard.text(addLotLabel, lotNewData(auction));
-    }
-    keyboard.text(consoleLabel, consoleViewData(auction));
-    if (raffle !== undefined) {
-      keyboard.text(raffleButtonLabel, raffle.callbackData);
-    }
-    keyboard.row();
-  } else if (raffle !== undefined) {
-    keyboard.text(raffleButtonLabel, raffle.callbackData).row();
+    .some((button) => button.action === "feed.raffle");
+  if (view.canManage === true && view.canAddLots !== false && !raffle) {
+    keyboard.text(addLotLabel, lotNewData(auction)).row();
   }
-  // Избранное (PER-495) — свои отмеченные лоты из любых аукционов; возврат
-  // из списка ведёт в эту ленту.
-  if (view.favorites === true) {
-    keyboard.text(
-      favoritesLabel,
-      encodeAuctionCallback({
-        kind: "favorites",
-        page: 0,
-        auctionId: feed.auctionId,
-      }),
-    );
-  }
-  keyboard.text("Правила и FAQ", auctionFaqData(auction)).row();
   for (const row of view.body.keyboard) {
     const content = row.filter((button) => button.action !== "feed.raffle");
     if (content.length === 0) continue;
@@ -273,7 +260,102 @@ function feedScreen(
             )
             .join("\n"),
     ),
-    keyboard: withNav(keyboard, view.feedParent),
+    keyboard: withNav(keyboard, toAuctionRoot(feed.auctionId)),
+    format: "HTML",
+  };
+}
+
+/** Аукцион кнопки ленты, которой тело дерева ведёт назад. */
+function auctionOfFeedButton(data: string): string | undefined {
+  const parsed = parseAuctionCallback(data);
+  return parsed.ok && parsed.intent.kind === "feed"
+    ? parsed.intent.auctionId
+    : undefined;
+}
+
+// Стадия аукциона в его корне (PER-605): «ключ: значение» без точки, как
+// строки карточки.
+const stageWords: Record<AuctionStageView, string> = {
+  draft: "готовится",
+  scheduled: "скоро старт",
+  prebidding: "идут онлайн-торги",
+  settling: "подводим итоги онлайн-торгов",
+  "on-break": "перерыв перед финалом",
+  "lineup-frozen": "готовим финал",
+  "in-final": "идёт финал",
+  finished: "завершён",
+};
+
+/**
+ * Корень аукциона (PER-605; ADR-064, дополнение 2026-10-12): стадия и сроки,
+ * «Лоты», «Пульт» по праву и «Розыгрыш», пока он есть, «Избранное» и
+ * «Правила и FAQ». Возврат — в меню «Расширения» сходки.
+ */
+function rootScreen(
+  view: AuctionView,
+  root: Extract<AuctionBlock, { kind: "root" }>,
+): ShownScreen {
+  const keyboard = new InlineKeyboard();
+  const { auction } = root;
+  // Auction аукциона не отдал: его удалили — или включили только что, и
+  // чтение Auction его ещё не видит. Различить нельзя, поэтому у кадра
+  // «Повторить», а не тупик.
+  if (auction === undefined) {
+    keyboard.text(retryLabel, toAuctionRoot(root.auctionId).data);
+    return {
+      id: "auction-root",
+      text: screenText(
+        "Аукцион",
+        "Аукцион не найден. Если его только что включили, он появится через несколько секунд.",
+      ),
+      keyboard: withNav(keyboard, view.rootParent),
+      format: "HTML",
+    };
+  }
+  const token = uuidToToken(root.auctionId);
+  const buttons = view.body.keyboard.flat();
+  const lots = buttons.find((button) => button.action === "root.lots");
+  const raffle = buttons.find((button) => button.action === "root.raffle");
+  if (lots !== undefined) keyboard.text("Лоты", lots.callbackData).row();
+  if (view.canManage === true) {
+    keyboard.text(consoleLabel, consoleViewData(token));
+  }
+  if (raffle !== undefined) {
+    keyboard.text(raffleButtonLabel, raffle.callbackData);
+  }
+  nextRow(keyboard);
+  if (view.favorites === true) {
+    keyboard.text(
+      favoritesLabel,
+      encodeAuctionCallback({
+        kind: "favorites",
+        page: 0,
+        auctionId: root.auctionId,
+      }),
+    );
+  }
+  keyboard.text("Правила и FAQ", auctionFaqData(token));
+  const moment = (instant: string) =>
+    readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+  const online =
+    auction.opensAt === undefined
+      ? undefined
+      : auction.closesAt === undefined
+        ? `Онлайн-торги: с ${moment(auction.opensAt)}`
+        : `Онлайн-торги: с ${moment(auction.opensAt)} до ${moment(auction.closesAt)}`;
+  return {
+    id: "auction-root",
+    text: screenText(
+      "Аукцион",
+      [
+        `Статус: ${stageWords[auction.stage]}`,
+        ...(online === undefined ? [] : [online]),
+        ...(auction.final ? ["Финал: в зале"] : []),
+      ]
+        .map(escapeHtml)
+        .join("\n"),
+    ),
+    keyboard: withNav(keyboard, view.rootParent),
     format: "HTML",
   };
 }
@@ -323,6 +405,8 @@ function feedLabel(
     case "raffle.cancel":
     case "raffle.back":
     case "raffle.return":
+    case "root.lots":
+    case "root.raffle":
       throw new Error(`action ${button.action} in a feed body`);
     default: {
       const _exhaustive: never = button;
@@ -477,6 +561,8 @@ function lotLabel(button: AuctionButton): string {
     case "raffle.cancel":
     case "raffle.back":
     case "raffle.return":
+    case "root.lots":
+    case "root.raffle":
       throw new Error(`action ${button.action} in a lot body`);
     default: {
       const _exhaustive: never = button;
@@ -498,9 +584,15 @@ function favoritesScreen(
   const keyboard = new InlineKeyboard();
   let back: Parent | undefined;
   for (const row of view.body.keyboard) {
+    // Возврат тела ведёт в ленту; список открыт из корня аукциона, и
+    // оболочка возвращает туда же (PER-605).
     const content = row.filter((button) => {
       if (button.action !== "favorites.back") return true;
-      back = { name: "Лоты", data: button.callbackData };
+      const auctionId = auctionOfFeedButton(button.callbackData);
+      back =
+        auctionId === undefined
+          ? { name: "Лоты", data: button.callbackData }
+          : toAuctionRoot(auctionId);
       return false;
     });
     if (content.length === 0) continue;
@@ -643,6 +735,8 @@ function historyLabel(button: AuctionButton): string {
     case "raffle.cancel":
     case "raffle.back":
     case "raffle.return":
+    case "root.lots":
+    case "root.raffle":
       throw new Error(`action ${button.action} in a history body`);
     default: {
       const _exhaustive: never = button;

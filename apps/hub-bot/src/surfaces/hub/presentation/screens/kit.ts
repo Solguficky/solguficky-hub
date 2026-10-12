@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
 import { menuTitle } from "../../../../core/entry.js";
 import {
   confirmNoLabel,
@@ -109,6 +110,28 @@ export const toCommunity: Parent = {
 
 export function toCard(token: string): Parent {
   return { name: "Сходка", data: `v1:view:${token}` };
+}
+
+/**
+ * Меню «Расширения» сходки (PER-605): вход в расширения с карточки. Данные —
+ * токен сходки, 29 байт.
+ */
+export function extensionsData(meetupToken: string): string {
+  return `v1:ext:${meetupToken}`;
+}
+
+export function toExtensions(meetupToken: string): Parent {
+  return { name: "Расширения", data: extensionsData(meetupToken) };
+}
+
+/** Корень аукциона — тело аукционного дерева (PER-605). */
+export function auctionRootData(auctionId: string): string {
+  return encodeAuctionCallback({ kind: "root", auctionId });
+}
+
+/** Возврат в корень аукциона: ему хватает идентификатора аукциона. */
+export function toAuctionRoot(auctionId: string): Parent {
+  return { name: "Аукцион", data: auctionRootData(auctionId) };
 }
 
 export function toMaterials(token: string): Parent {

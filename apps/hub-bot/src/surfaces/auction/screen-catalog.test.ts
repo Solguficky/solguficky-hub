@@ -57,6 +57,33 @@ const feed: AuctionScreenBody = {
   ],
 };
 
+// Корень аукциона (PER-605): входа в него этот бот не даёт, но тело дерева
+// он рисует — по стадии и без аукциона.
+const root: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "root",
+      auctionId: "auc-1",
+      auction: {
+        auctionId: "auc-1",
+        stage: "prebidding",
+        opensAt: "2026-10-26T09:00:00Z",
+        closesAt: "2026-10-29T18:00:00Z",
+        final: true,
+      },
+    },
+  ],
+  keyboard: [
+    [{ action: "root.lots", callbackData: "v1:auc:feed:auc-1:0" }],
+    [{ action: "root.raffle", callbackData: "v1:auc:rf:auc-1" }],
+  ],
+};
+
+const goneRoot: AuctionScreenBody = {
+  blocks: [{ kind: "root", auctionId: "auc-1" }],
+  keyboard: [],
+};
+
 const emptyFeed: AuctionScreenBody = {
   blocks: [
     { kind: "feed", auctionId: "auc-1", page: 0, pageCount: 1, lots: [] },
@@ -545,6 +572,8 @@ const shown: readonly {
   { screen: { kind: "auction", body: feed, parent: "auctions" } },
   { screen: { kind: "auction", body: feed, parent: "past" } },
   { screen: { kind: "auction", body: emptyFeed, parent: "auctions" } },
+  { screen: { kind: "auction", body: root, parent: "auctions" } },
+  { screen: { kind: "auction", body: goneRoot, parent: "auctions" } },
   { screen: { kind: "auction", body: lot(false) } },
   { screen: { kind: "auction", body: lot(true) } },
   { screen: { kind: "auction", body: lot(true) }, presentation: "plain" },

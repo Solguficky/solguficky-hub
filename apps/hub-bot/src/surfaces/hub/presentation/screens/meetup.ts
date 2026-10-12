@@ -1,8 +1,10 @@
 import { InlineKeyboard } from "grammy";
-import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
-import { marked, pictogram } from "../../../../core/pictograms.js";
+import {
+  extensionsLabel,
+  marked,
+  pictogram,
+} from "../../../../core/pictograms.js";
 import type {
-  MeetupAuctionView,
   MeetupAuthor,
   MeetupStateAction,
 } from "../../application/types.js";
@@ -19,6 +21,7 @@ import {
   confirmKeyboard,
   dayLabel,
   escapeHtml,
+  extensionsData,
   heading,
   nextRow,
   type Page,
@@ -361,27 +364,6 @@ function posterBlock(photos: readonly ScreenPhoto[]): string | undefined {
     : `<tg-slideshow>${images.join("")}</tg-slideshow>`;
 }
 
-function auctionButton(
-  auction: MeetupAuctionView | undefined,
-  editable: boolean,
-  token: string,
-): { label: string; data: string } | undefined {
-  if (auction?.kind === "open") {
-    return {
-      label: "Лоты",
-      data: encodeAuctionCallback({
-        kind: "feed",
-        auctionId: auction.auctionId,
-        page: 0,
-      }),
-    };
-  }
-  if (auction?.kind === "none" && editable) {
-    return { label: "Включить аукцион", data: `v1:manage:auction:${token}` };
-  }
-  return undefined;
-}
-
 export type CardView = {
   meetup: MeetupSnapshot;
   author?: MeetupAuthor | undefined;
@@ -389,8 +371,6 @@ export type CardView = {
   subscribed?: boolean | undefined;
   /** Смотрящий управляет сходкой: видны правка, статус и рассылка. */
   manageable: boolean;
-  /** Нет — Auction не ответил, и ряда аукциона на карточке нет. */
-  auction?: MeetupAuctionView | undefined;
   presentation: "rich" | "plain";
   today: CommunityDay;
   /**
@@ -406,9 +386,9 @@ const unsubscribedHint =
   "Подпишись, чтобы получать изменения, материалы и сообщения организатора этой сходки.";
 
 /**
- * Карточка сходки. Под ней не больше пяти рядов: правка и статус, материалы,
- * рассылка, подписка с её настройками и возврат. Файлы открываются из
- * «Материалов», а «Отметить состоявшейся» живёт в «Статусе».
+ * Карточка сходки. Под ней не больше пяти рядов: правка и статус, материалы и
+ * расширения, рассылка, подписка с её настройками и возврат. Файлы
+ * открываются из «Материалов», а «Отметить состоявшейся» живёт в «Статусе».
  */
 export function cardScreen(view: CardView): ShownScreen {
   const { meetup, manageable, presentation, today } = view;
@@ -427,14 +407,12 @@ export function cardScreen(view: CardView): ShownScreen {
       `v1:mm:list:${token}`,
     );
   }
-  // Аукцион сходки стоит в ряду материалов: оба — содержимое сходки, и
-  // отдельным рядом он вывел бы карточку организатора за пять рядов. Вход —
-  // всем, у кого аукцион есть; включение — организатору, пока аукциона нет и
-  // сходка не отменена. Auction не ответил — ряда аукциона нет вовсе.
-  const auction = auctionButton(view.auction, editable, token);
-  if (auction !== undefined) {
-    keyboard.text(auction.label, auction.data);
-  }
+  // Расширения сходки (PER-605; ADR-064, дополнение 2026-10-12) стоят в ряду
+  // материалов: оба — содержимое сходки, и отдельным рядом они вывели бы
+  // карточку организатора за пять рядов. Кнопка одна у всех и без состояния:
+  // включённое расширение, включение и «расширений нет» показывает меню за
+  // ней, поэтому карточка в Auction не ходит и его сбой её не трогает.
+  keyboard.text(extensionsLabel, extensionsData(token));
   nextRow(keyboard);
   // Написать подписчикам можно и об отменённой сходке: сообщить им об отмене
   // — законный повод, и Notifications жизненный цикл при рассылке не фильтрует.

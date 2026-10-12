@@ -18,6 +18,7 @@ import {
   nextRow,
   readableMoment,
   screenText,
+  toAuctionRoot,
   withNav,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
@@ -66,10 +67,9 @@ export function raffleScreen(
           ),
       }),
     ),
-    keyboard: withNav(rows, {
-      name: "Лоты",
-      data: dataOf(keyboard, "raffle.back"),
-    }),
+    // Тело ведёт назад в ленту, а розыгрыш открыт из корня аукциона
+    // (PER-605): туда и возврат.
+    keyboard: withNav(rows, toAuctionRoot(block.auctionId)),
     format: "HTML",
   };
 }

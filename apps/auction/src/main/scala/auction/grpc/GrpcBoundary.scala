@@ -50,13 +50,14 @@ object GrpcBoundary {
   def apply(table: CallerTable, service: AuctionService)(using
       system: ActorSystem[?]
   ): HttpRequest => Future[HttpResponse] =
-    apply(table, (_: Correlation) => service)
+    apply(table, (_: Caller, _: Correlation) => service)
 
   /**
    * Граница, которая собирает сервис на каждый вызов с его сквозными значениями: сгенерированный сервис заголовков не
-   * видит, а вызов Meetups обязан их передать (logging.md). Обработчик и так строится на каждый запрос.
+   * видит, а вызов Meetups обязан их передать (logging.md). Вызывающий тоже едет в сервис: черновик аукциона по
+   * идентификатору отдаётся одному боту хаба (PER-605). Обработчик и так строится на каждый запрос.
    */
-  def apply(table: CallerTable, service: Correlation => AuctionService)(using
+  def apply(table: CallerTable, service: (Caller, Correlation) => AuctionService)(using
       system: ActorSystem[?]
   ): HttpRequest => Future[HttpResponse] = {
     import system.executionContext
@@ -69,8 +70,8 @@ object GrpcBoundary {
       val outcome = new AtomicReference[Outcome](Outcome(Status.OK, None))
 
       val target = decision match {
-        case GateDecision.Admitted(_) =>
-          service(Correlation(header(request, "x-request-id"), header(request, "x-use-case")))
+        case GateDecision.Admitted(caller) =>
+          service(caller, Correlation(header(request, "x-request-id"), header(request, "x-use-case")))
         case GateDecision.Refused(_, _) => refusing
       }
 
@@ -235,6 +236,7 @@ object GrpcBoundary {
     def getAuctionLotStatistics(in: wire.GetAuctionLotStatisticsRequest): Future[wire.GetAuctionLotStatisticsResponse] =
       refuse
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest): Future[wire.GetMeetupAuctionResponse] = refuse
+    def getAuction(in: wire.GetAuctionRequest): Future[wire.GetAuctionResponse] = refuse
     def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] = refuse
     def registerForRaffle(in: wire.RegisterForRaffleRequest): Future[wire.RegisterForRaffleResponse] = refuse
     def cancelRaffleRegistration(

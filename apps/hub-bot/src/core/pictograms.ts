@@ -21,6 +21,8 @@ export const pictogram = {
   where: "📍",
   /** Заголовок списка материалов на карточке сходки. */
   materials: "📎",
+  /** Вход в расширения: на карточке сходки и в «Настройках» (PER-605). */
+  extensions: "🧩",
 } as const;
 
 export type Pictogram = (typeof pictogram)[keyof typeof pictogram];
@@ -38,6 +40,7 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.when]: ["Когда: "],
   [pictogram.where]: ["Где: "],
   [pictogram.materials]: ["Материалы:"],
+  [pictogram.extensions]: ["Расширения"],
 };
 
 /** Слово со своим знаком впереди: «✔️ Да, отменить сходку». */
@@ -53,6 +56,8 @@ export const confirmNoLabel = marked(pictogram.no, "Нет");
 export const admitLabel = marked(pictogram.yes, "Допустить");
 /** Отказ по заявке: ведёт на подтверждение «Да, отказать». */
 export const declineLabel = marked(pictogram.no, "Отказать");
+/** Вход в расширения сходки и в их настройки (ADR-064, дополнение 2026-10-12). */
+export const extensionsLabel = marked(pictogram.extensions, "Расширения");
 
 /** «✔️ Да, …» по глаголу с предметом: «отменить сходку». */
 export function confirmYesLabel(action: string): string {

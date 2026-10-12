@@ -1,4 +1,8 @@
-import { admitLabel, declineLabel } from "../src/core/pictograms.js";
+import {
+  admitLabel,
+  declineLabel,
+  extensionsLabel,
+} from "../src/core/pictograms.js";
 import type { Surface } from "../src/core/surface.js";
 import {
   screenCatalog as auctionCatalog,
@@ -7,8 +11,8 @@ import {
   screenTag as auctionTag,
 } from "../src/surfaces/auction/screen-catalog.js";
 import {
-  auctionFeedParent,
-  auctionFeedParents,
+  auctionRootParent,
+  auctionRootParents,
   screenCatalog as hubCatalog,
   manageParents,
   meetupListParent,
@@ -51,8 +55,9 @@ void auctionShape;
 // Пары хаба, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
 // пара, которой в дизайн-коде нет: подписка живёт в карточке по решению
 // PER-402, и отдельным рядом она вывела бы карточку за пять рядов. Материалы
-// и аукцион сходки — содержимое сходки одним рядом (PER-307): у организатора
-// ряд аукциона иначе стал бы шестым. «#» — число материалов в подписи.
+// и расширения сходки — её содержимое одним рядом (PER-307, PER-605): у
+// организатора ряд расширений иначе стал бы шестым. «#» — число материалов в
+// подписи.
 // Решение по заявке и очередь допуска — бинарные пары выбора одним рядом
 // (решение владельца 10 октября 2026 года).
 const hubNamedPairs: ReadonlySet<string> = new Set([
@@ -60,11 +65,9 @@ const hubNamedPairs: ReadonlySet<string> = new Set([
   `${admitLabel}|Закрыть`,
   "Изменить|Статус",
   "Отписаться|Уведомления сходки",
-  "Материалы (#)|Лоты",
-  "Материалы (#)|Включить аукцион",
-  "Добавить лот|Пульт",
-  // Розыгрыш открыт с онлайн-недели, когда «Добавить лот» уже нет: пара держит
-  // ленту администратора в пределе рядов (PER-500).
+  `Материалы (#)|${extensionsLabel}`,
+  // Корень аукциона (PER-605): входы администратора и розыгрыша, затем свои
+  // отметки и правила — парами, как стояли в корне ленты (PER-500).
   "Пульт|Розыгрыш",
   "Избранное|Правила и FAQ",
 ]);
@@ -75,12 +78,13 @@ const configFor: Record<Surface, (catalog: Catalog) => LintConfig> = {
   hub: (catalog) => ({
     tag: hubTag,
     catalog,
-    // Карточка возвращает в тот список, в котором сходка стоит; лента лотов —
-    // к сходке аукциона, а если бот её не знает, в «Сходки»; пункт управления —
-    // в свою группу либо, у человека с одной группой, в «Управление».
+    // Карточка возвращает в тот список, в котором сходка стоит; корень
+    // аукциона — в «Расширения» его сходки, а если бот её не знает, в
+    // «Сходки»; пункт управления — в свою группу либо, у человека с одной
+    // группой, в «Управление».
     parentGroups: {
       [meetupListParent]: meetupLists,
-      [auctionFeedParent]: auctionFeedParents,
+      [auctionRootParent]: auctionRootParents,
       ...manageParents,
     },
     namedPairs: hubNamedPairs,

@@ -334,6 +334,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   private val meetupAuctionId = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
 
   private object UntouchableAuctionViews extends AuctionViews {
+    def byId(auctionId: UUID): Future[Option[AuctionSnapshotView]] = fail("an auction was read by id")
     def byMeetup(meetup: MeetupId): Future[Option[AuctionSnapshotView]] = fail("the auction read model was touched")
     def page(listing: AuctionListing, after: Option[UUID], limit: Int): Future[List[AuctionSnapshotView]] =
       fail("the auction read model was touched")
@@ -350,7 +351,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       raffles: RaffleGateway = AuctionGrpcService.NoRaffles,
       raffleNames: AuctionId => Future[Map[Int, String]] = _ => Future.successful(Map.empty),
       watchViews: AuctionWatchViews = _ => fail("the watch read model was touched"),
-      changes: AuctionChanges = AuctionGrpcService.NoChanges
+      changes: AuctionChanges = AuctionGrpcService.NoChanges,
+      caller: Option[Caller] = None
   ) =
     AuctionGrpcService(
       lots,
@@ -365,7 +367,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       raffles = raffles,
       raffleNames = raffleNames,
       watchViews = watchViews,
-      changes = changes
+      changes = changes,
+      caller = caller
     )
 
   /**
@@ -1218,10 +1221,39 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       statusOf(auction.getMeetupAuction(wire.GetMeetupAuctionRequest(Some(viewer), "meetup"))) shouldBe
         Status.Code.INVALID_ARGUMENT
       statusOf(auction.listAuctions(wire.ListAuctionsRequest(Some(viewer)))) shouldBe Status.Code.INVALID_ARGUMENT
+      // Корень аукциона читает только аукцион сходки, UUIDv5.
+      statusOf(auction.getAuction(wire.GetAuctionRequest(Some(viewer), lot))) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers an auction by id, showing a draft to the hub bot only" in {
+      val meetup = MeetupId(UUID.fromString(meetupId))
+      val id = Auction.idOf(meetup).value
+      def views(state: AuctionState) = new AuctionViews {
+        def byId(auctionId: UUID) =
+          Future.successful(
+            Option.when(auctionId == id)(AuctionSnapshotView(id, Auction(state, Some(meetup), Set.empty, Map.empty)))
+          )
+        def byMeetup(meetup: MeetupId) = fail("a meetup auction was read")
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("a list was read")
+      }
+      def read(state: AuctionState, caller: Option[Caller], auction: String = id.toString) =
+        service(Unreachable, auctionViews = views(state), caller = caller)
+          .getAuction(wire.GetAuctionRequest(Some(viewer), auction))
+          .futureValue
+          .auction
+      read(AuctionState.Draft, Some(Caller.HubBot)).map(_.status.isDraft) shouldBe Some(true)
+      read(AuctionState.Draft, Some(Caller.AuctionBot)) shouldBe None
+      read(AuctionState.Draft, None) shouldBe None
+      val scheduled = AuctionState.Scheduled(AuctionFixtures.config())
+      read(scheduled, Some(Caller.AuctionBot)).map(_.id) shouldBe Some(id.toString)
+      read(scheduled, Some(Caller.HubBot)).map(_.id) shouldBe Some(id.toString)
+      val other = Auction.idOf(MeetupId(UUID.fromString(lot))).value.toString
+      read(scheduled, Some(Caller.HubBot), other) shouldBe None
     }
 
     "answers a meetup without an auction with an empty response, not an error" in {
       val none = new AuctionViews {
+        def byId(auctionId: UUID): Future[Option[AuctionSnapshotView]] = fail("an auction was read by id")
         def byMeetup(meetup: MeetupId) = Future.successful(None)
         def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("a list was read")
       }
@@ -1241,6 +1273,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         Map.empty
       )
       val views = new AuctionViews {
+        def byId(auctionId: UUID): Future[Option[AuctionSnapshotView]] = fail("an auction was read by id")
         def byMeetup(meetup: MeetupId) = Future.successful(Some(AuctionSnapshotView(sorted.head, draft)))
         def page(listing: AuctionListing, after: Option[UUID], limit: Int) =
           Future.successful(
@@ -1373,6 +1406,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val id = Auction.idOf(meetup).value
       def read(state: AuctionState): wire.AuctionSnapshot = {
         val views = new AuctionViews {
+          def byId(auctionId: UUID): Future[Option[AuctionSnapshotView]] = fail("an auction was read by id")
           def byMeetup(meetup: MeetupId) =
             Future.successful(Some(AuctionSnapshotView(id, Auction(state, Some(meetup), Set.empty, Map.empty))))
           def page(listing: AuctionListing, after: Option[UUID], limit: Int) = fail("a list was read")

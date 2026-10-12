@@ -87,6 +87,7 @@ function adapter(rpc: {
     placeBid: notUsed,
     setProxyLimit: notUsed,
     chooseDisplayName: notUsed,
+    getAuction: notUsed,
     getRaffle: notUsed,
     registerForRaffle: notUsed,
     cancelRaffleRegistration: notUsed,

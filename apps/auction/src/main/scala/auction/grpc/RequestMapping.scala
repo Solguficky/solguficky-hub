@@ -36,6 +36,7 @@ import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AdvanceAskRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.CancelRaffleRegistrationRequest
+import auction.v1.auction_service.GetAuctionRequest
 import auction.v1.auction_service.GetRaffleRequest
 import auction.v1.auction_service.RegisterForRaffleRequest
 import auction.v1.auction_service.ChooseDisplayNameRequest
@@ -152,6 +153,9 @@ final case class RaffleQuery(auctionId: AuctionId, acting: Acting)
 
 /** Чтение аукциона сходки. */
 final case class MeetupAuctionQuery(meetup: MeetupId, acting: Acting)
+
+/** Чтение аукциона по идентификатору — корень аукциона у обоих ботов (PER-605). */
+final case class AuctionQuery(auctionId: AuctionId, acting: Acting)
 
 /** Чтение пульта администратора: аукцион сходки и тот, кто смотрит. */
 final case class ConsoleQuery(auctionId: AuctionId, acting: Acting)
@@ -557,6 +561,12 @@ object RequestMapping {
       acting <- acting(request.viewer)
       meetup <- uuidV7("meetup_id", request.meetupId)
     } yield MeetupAuctionQuery(MeetupId(meetup), acting)
+
+  def getAuction(request: GetAuctionRequest): Either[FormError, AuctionQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield AuctionQuery(auction, acting)
 
   def listAuctions(request: ListAuctionsRequest): Either[FormError, AuctionsQuery] =
     for {

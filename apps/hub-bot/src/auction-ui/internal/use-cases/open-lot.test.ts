@@ -37,6 +37,7 @@ const auction: AuctionPort = {
   listAuctionLots: async () => {
     throw new Error("not used");
   },
+  getAuction: async () => undefined,
   getRaffle: async () => undefined,
   registerForRaffle: async () => {
     throw new Error("not used");

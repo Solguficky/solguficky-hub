@@ -13,6 +13,9 @@ const rub = (rubles: number): Money => ({
   currency: "RUB",
 });
 // Intl разделяет разряды неразрывным пробелом; тесты читают его обычным.
+// Лента возвращает в корень аукциона, и её кнопка несёт токен аукциона.
+const auctionId = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
+
 const plain = (text: string) => text.replace(/[  ]/g, " ");
 
 function view(
@@ -24,7 +27,7 @@ function view(
       blocks,
       keyboard: [[{ action: "lot.back", callbackData: "v1:auc:feed:x:0" }]],
     },
-    feedParent: { name: "Сходка", data: "v1:view:x" },
+    rootParent: { name: "Расширения", data: "v1:ext:x" },
     presentation,
     timeZone: "Europe/Moscow",
     today,
@@ -36,7 +39,7 @@ const lot = (
 ): Extract<AuctionBlock, { kind: "lot" }> => ({
   kind: "lot",
   lotId: "lot-1",
-  auctionId: "auc-1",
+  auctionId: auctionId,
   version: 1,
   status: { kind: "unsold" },
   ...overrides,
@@ -190,13 +193,11 @@ describe("feed and history in the hub shell", () => {
       row.map((button) => button.text),
     );
 
-    // «Избранное» (PER-495) встаёт в пару с «Правила и FAQ», а «Пульт» — с
-    // «Добавить лот»: третий ряд действий вывел бы полную страницу за предел.
-    expect(rows).toHaveLength(12);
-    expect(rows.slice(0, 2)).toEqual([
-      ["Добавить лот", "Пульт"],
-      ["Избранное", "Правила и FAQ"],
-    ]);
+    // Лента — просто список лотов (PER-605): пульт, избранное и правила
+    // стоят в корне аукциона, а над лотами — только «Добавить лот».
+    expect(rows).toHaveLength(11);
+    expect(rows[0]).toEqual(["Добавить лот"]);
+    expect(rows.at(-1)).toEqual(["‹ Аукцион"]);
   });
 
   it("lists every lot as a line of the body and as a button", () => {
@@ -206,7 +207,7 @@ describe("feed and history in the hub shell", () => {
         blocks: [
           {
             kind: "feed",
-            auctionId: "auc-1",
+            auctionId: auctionId,
             page: 0,
             pageCount: 2,
             lots: [
@@ -249,7 +250,7 @@ describe("feed and history in the hub shell", () => {
         blocks: [
           {
             kind: "feed",
-            auctionId: "auc-1",
+            auctionId: auctionId,
             page: 0,
             pageCount: 1,
             lots: [
@@ -277,7 +278,7 @@ describe("feed and history in the hub shell", () => {
           {
             kind: "history",
             lotId: "lot-1",
-            auctionId: "auc-1",
+            auctionId: auctionId,
             title: "Кружка",
             page: 0,
             pageCount: 1,
@@ -323,7 +324,7 @@ describe("bid sheet in the hub shell", () => {
       kind: "confirm",
       command: "bid",
       lotId: "lot-1",
-      auctionId: "auc-1",
+      auctionId: auctionId,
       title: "Кружка <с совой>",
       amount: rub(1300),
       currentPrice: rub(1200),
@@ -338,7 +339,7 @@ describe("bid sheet in the hub shell", () => {
       kind: "confirm",
       command: "proxy",
       lotId: "lot-1",
-      auctionId: "auc-1",
+      auctionId: auctionId,
       amount: rub(2000),
       currentPrice: rub(1200),
     });
@@ -354,7 +355,7 @@ describe("bid sheet in the hub shell", () => {
       kind: "question",
       question: "bid",
       lotId: "lot-1",
-      auctionId: "auc-1",
+      auctionId: auctionId,
       current: rub(1600),
     });
     expect(plain(screen.text)).toBe(
@@ -369,7 +370,7 @@ describe("bid sheet in the hub shell", () => {
       kind: "question",
       question: "proxy",
       lotId: "lot-1",
-      auctionId: "auc-1",
+      auctionId: auctionId,
       current: rub(1250),
       explainer: {
         example: {
@@ -405,7 +406,7 @@ describe("bid sheet in the hub shell", () => {
             kind: "question",
             question: "proxy",
             lotId: "lot-1",
-            auctionId: "auc-1",
+            auctionId: auctionId,
             current: rub(1250),
           },
         ],
@@ -438,7 +439,7 @@ describe("bid sheet in the hub shell", () => {
               refusal: { kind: "bid-below-minimum", minRequired: rub(1300) },
             },
             lotId: "lot-1",
-            auctionId: "auc-1",
+            auctionId: auctionId,
             title: "Кружка",
           },
         ],
@@ -466,7 +467,7 @@ describe("bid sheet in the hub shell", () => {
             kind: "answer-refused",
             refusal: "not-a-number",
             lotId: "lot-1",
-            auctionId: "auc-1",
+            auctionId: auctionId,
             title: "Кружка",
           },
         ],
@@ -549,7 +550,7 @@ describe("happy hours in the hub shell", () => {
     const feed = view([
       {
         kind: "feed",
-        auctionId: "auc-1",
+        auctionId: auctionId,
         page: 0,
         pageCount: 1,
         lots: [

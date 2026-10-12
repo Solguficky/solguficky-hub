@@ -176,6 +176,9 @@ describe("auction contract self-check", () => {
 
   it("checks every intent of the table", () => {
     expect(AUCTION_CONTRACT_CASES.map((c) => c.intent)).toEqual([
+      "root: with a raffle",
+      "root: raffle read refused",
+      "root: auction not given",
       "feed",
       "feed: stale page",
       "feed: empty",

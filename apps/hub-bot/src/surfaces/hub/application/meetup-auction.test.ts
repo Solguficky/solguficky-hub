@@ -5,9 +5,10 @@ import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { createDispatcher } from "./dispatcher.js";
 
-// Аукцион у сходки в прикладном слое (PER-307). Политика хаба уже не пускает
-// человека без права хаба к карточке, а этот слой второй раз не зовёт
-// Auction за него: прикладной юзкейс не полагается на то, что край проверил.
+// Аукцион у сходки в прикладном слое (PER-307, PER-605). Политика хаба уже не
+// пускает человека без права хаба к меню «Расширения», а этот слой второй раз
+// не зовёт Auction за него: прикладной юзкейс не полагается на то, что край
+// проверил.
 
 const meetupId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
 const auctionId = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
@@ -72,14 +73,14 @@ const ADMIN: readonly AccessRight[] = [
 ];
 
 describe("meetup auction", () => {
-  it("names the auction of the meetup on the card", async () => {
+  it("names the auction of the meetup in its extensions menu", async () => {
     const port = auctions();
     const dispatcher = createDispatcher(meetups(), undefined, undefined, port);
 
     await expect(
       dispatcher.execute({
         identity: person(MEMBER),
-        intent: "view-meetup",
+        intent: "view-meetup-extensions",
         meetupId,
       }),
     ).resolves.toMatchObject({
@@ -88,13 +89,51 @@ describe("meetup auction", () => {
     });
   });
 
-  it("does not ask Auction for a person without the hub right", async () => {
+  // Вход в аукцион — кнопка «Расширения» без состояния (PER-605): карточка в
+  // Auction не ходит, и его сбой её не трогает.
+  it("reads the card without Auction", async () => {
     const port = auctions();
     const dispatcher = createDispatcher(meetups(), undefined, undefined, port);
 
     const card = await dispatcher.execute({
-      identity: person(["place-bids"]),
+      identity: person(MEMBER),
       intent: "view-meetup",
+      meetupId,
+    });
+
+    expect(card).toMatchObject({ kind: "meetup-card", meetup });
+    expect(card).not.toHaveProperty("auction");
+    expect(port.getMeetupAuction).not.toHaveBeenCalled();
+  });
+
+  it("marks the auction unavailable in the menu when Auction does not answer", async () => {
+    const port = auctions();
+    port.getMeetupAuction.mockResolvedValue({
+      kind: "unavailable",
+      cause: new Error("down"),
+    });
+    const dispatcher = createDispatcher(meetups(), undefined, undefined, port);
+
+    await expect(
+      dispatcher.execute({
+        identity: person(ADMIN),
+        intent: "view-meetup-extensions",
+        meetupId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-card",
+      meetup,
+      auction: { kind: "unavailable" },
+    });
+  });
+
+  it("does not ask Auction for a person without the hub right", async () => {
+    const port = auctions();
+    const dispatcher = createDispatcher(meetups(), undefined, undefined, port);
+
+    const menu = await dispatcher.execute({
+      identity: person(["place-bids"]),
+      intent: "view-meetup-extensions",
       meetupId,
     });
     const enabled = await dispatcher.execute({
@@ -104,7 +143,7 @@ describe("meetup auction", () => {
       opId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa",
     });
 
-    expect(card).not.toHaveProperty("auction");
+    expect(menu).not.toHaveProperty("auction");
     expect(enabled).toEqual({
       kind: "dependency-rejected",
       reason: "forbidden",
@@ -113,7 +152,7 @@ describe("meetup auction", () => {
     expect(port.enableAuction).not.toHaveBeenCalled();
   });
 
-  it("takes the auction of the card from the command, not from a second read", async () => {
+  it("takes the enabled auction from the command, not from a second read", async () => {
     const port = auctions();
     // Read model Auction ещё не увидела рождения: чтение отвечает «нет».
     port.getMeetupAuction.mockResolvedValue({ kind: "ok" });
@@ -126,105 +165,18 @@ describe("meetup auction", () => {
         meetupId,
         opId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34aa",
       }),
-    ).resolves.toMatchObject({
+    ).resolves.toEqual({
       kind: "auction-enabled",
       alreadyExisted: false,
-      card: { auction: { kind: "open", auctionId } },
+      meetupId,
+      auctionId,
     });
     expect(port.getMeetupAuction).not.toHaveBeenCalled();
   });
 
-  // Карточка сразу после «Опубликовать» — та же карточка, что из списка: ряд
-  // аукциона на ней дописывает диспетчер, а не чтение `view-meetup`.
-  it("adds the auction to the card a publication returns", async () => {
-    const port = auctions();
-    const dispatcher = createDispatcher(meetups(), undefined, undefined, port);
-
-    await expect(
-      dispatcher.execute({
-        identity: person(ADMIN),
-        intent: "publish-meetup",
-        meetupId,
-      }),
-    ).resolves.toMatchObject({
-      kind: "published",
-      auction: { kind: "open", auctionId },
-    });
-    expect(port.getMeetupAuction).toHaveBeenCalledTimes(1);
-  });
-
-  it("publishes without an auction row when Auction is not configured or refuses", async () => {
-    const without = createDispatcher(meetups());
-    await expect(
-      without.execute({
-        identity: person(ADMIN),
-        intent: "publish-meetup",
-        meetupId,
-      }),
-    ).resolves.toEqual({ kind: "published", meetup, repeated: true });
-
-    const port = auctions();
-    port.getMeetupAuction.mockResolvedValue({
-      kind: "unavailable",
-      cause: new Error("down"),
-    });
-    const refusing = createDispatcher(meetups(), undefined, undefined, port);
-    await expect(
-      refusing.execute({
-        identity: person(ADMIN),
-        intent: "publish-meetup",
-        meetupId,
-      }),
-    ).resolves.toEqual({ kind: "published", meetup, repeated: true });
-  });
-
-  // Ответ на вопрос черновика пришёл после публикации: бот покажет сходку
-  // карточкой, и ряд аукциона ей положен. Скрытый черновик показывается
-  // формой, и Auction за него не спрашивают.
-  it("adds the auction to a draft answer only once the meetup is visible", async () => {
-    const changed = (visibility: "visible" | "hidden"): Meetups => ({
-      ...meetups(),
-      get: async () => ({ kind: "ok", meetup: { ...meetup, visibility } }),
-      changeAttributes: async () => ({
-        kind: "ok",
-        meetup: { ...meetup, visibility, description: "Про всё" },
-      }),
-    });
-    const answer = {
-      identity: person(ADMIN),
-      intent: "set-meetup-field" as const,
-      field: "description" as const,
-      value: "Про всё",
-      meetupId,
-    };
-
-    const hidden = auctions();
-    await expect(
-      createDispatcher(changed("hidden"), undefined, undefined, hidden).execute(
-        answer,
-      ),
-    ).resolves.toEqual({
-      kind: "draft",
-      meetup: { ...meetup, visibility: "hidden", description: "Про всё" },
-    });
-    expect(hidden.getMeetupAuction).not.toHaveBeenCalled();
-
-    const visible = auctions();
-    await expect(
-      createDispatcher(
-        changed("visible"),
-        undefined,
-        undefined,
-        visible,
-      ).execute(answer),
-    ).resolves.toMatchObject({
-      kind: "draft",
-      auction: { kind: "open", auctionId },
-    });
-    expect(visible.getMeetupAuction).toHaveBeenCalledTimes(1);
-  });
-
-  it("keeps the auction row on the card a subscription returns", async () => {
+  // Ответы формы и подписки показываются карточкой, а карточка в Auction не
+  // ходит (PER-605): ни публикация, ни подписка его не спрашивают.
+  it("publishes and subscribes without asking Auction", async () => {
     const port = auctions();
     const notifications = {
       setSubscription: async () => ({
@@ -241,15 +193,19 @@ describe("meetup auction", () => {
 
     await expect(
       dispatcher.execute({
+        identity: person(ADMIN),
+        intent: "publish-meetup",
+        meetupId,
+      }),
+    ).resolves.toEqual({ kind: "published", meetup, repeated: true });
+    await expect(
+      dispatcher.execute({
         identity: person(MEMBER),
         intent: "set-meetup-subscription",
         meetupId,
         subscribed: true,
       }),
-    ).resolves.toMatchObject({
-      kind: "meetup-card",
-      subscribed: true,
-      auction: { kind: "open", auctionId },
-    });
+    ).resolves.toMatchObject({ kind: "meetup-card", subscribed: true });
+    expect(port.getMeetupAuction).not.toHaveBeenCalled();
   });
 });

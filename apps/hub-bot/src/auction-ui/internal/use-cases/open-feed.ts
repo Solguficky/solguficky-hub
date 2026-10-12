@@ -100,7 +100,7 @@ export async function openFeed(input: {
 // Кнопка «Розыгрыш» стоит, только пока розыгрыш есть: Auction отдаёт его с
 // открытия онлайн-торгов (ADR-066). Отказ чтения убирает кнопку, а не роняет
 // ленту — как отказ имён на карточке.
-async function hasRaffle(input: {
+export async function hasRaffle(input: {
   auction: AuctionPort;
   viewer: Viewer;
   auctionId: string;

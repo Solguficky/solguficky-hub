@@ -2,6 +2,7 @@ package auction.grpc
 
 import auction.aggregate.Auction
 import auction.aggregate.AuctionCommands
+import auction.aggregate.AuctionState
 import auction.aggregate.Correlation
 import auction.aggregate.Denial
 import auction.catalog.LotCatalogCommands
@@ -62,7 +63,8 @@ final class AuctionGrpcService(
     raffles: RaffleGateway = AuctionGrpcService.NoRaffles,
     raffleNames: AuctionId => Future[Map[Int, String]] = _ => Future.successful(Map.empty),
     watchViews: AuctionWatchViews = AuctionGrpcService.NoWatch,
-    changes: AuctionChanges = AuctionGrpcService.NoChanges
+    changes: AuctionChanges = AuctionGrpcService.NoChanges,
+    caller: Option[Caller] = None
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -70,7 +72,7 @@ final class AuctionGrpcService(
    * Сервис для одного входящего вызова: команды аукциона спрашивают Meetups с его сквозными значениями, а событие сбоя
    * заморозки несёт их, чтобы его можно было связать с записью операции.
    */
-  def within(correlation: Correlation): AuctionGrpcService =
+  def within(correlation: Correlation, caller: Option[Caller] = None): AuctionGrpcService =
     AuctionGrpcService(
       lots,
       catalog,
@@ -85,7 +87,8 @@ final class AuctionGrpcService(
       raffles,
       raffleNames,
       watchViews,
-      changes
+      changes,
+      caller
     )
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
@@ -513,6 +516,23 @@ final class AuctionGrpcService(
         auctionViews
           .byMeetup(query.meetup)
           .map(found => wire.GetMeetupAuctionResponse(found.map(ResponseMapping.auctionSnapshot)))
+    }
+
+  /**
+   * Аукцион по идентификатору — корень аукциона у обоих ботов (PER-605). Черновик видит только бот хаба, как в
+   * `GetMeetupAuction`: бот аукциона черновиков не показывает и в списках, и по идентификатору (integration.md).
+   */
+  def getAuction(in: wire.GetAuctionRequest): Future[wire.GetAuctionResponse] =
+    RequestMapping.getAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) =>
+        auctionViews
+          .byId(query.auctionId.value)
+          .map { found =>
+            val shown =
+              found.filter(view => view.auction.state != AuctionState.Draft || caller.contains(Caller.HubBot))
+            wire.GetAuctionResponse(shown.map(ResponseMapping.auctionSnapshot))
+          }
     }
 
   def listAuctions(in: wire.ListAuctionsRequest): Future[wire.ListAuctionsResponse] =

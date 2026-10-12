@@ -337,7 +337,7 @@ object AuctionNode {
       watchViews = SlickAuctionWatchViews(system),
       changes = changes
     )
-    GrpcBoundary(callers, correlation => service.within(correlation))
+    GrpcBoundary(callers, (caller, correlation) => service.within(correlation, Some(caller)))
   }
 
   def readiness(system: ActorSystem[?], timeout: FiniteDuration): () => Future[Readiness] = {
