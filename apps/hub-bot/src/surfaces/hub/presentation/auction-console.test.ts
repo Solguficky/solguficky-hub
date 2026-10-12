@@ -216,12 +216,23 @@ function fakeAuction(
       if (outside !== -1) {
         return { kind: "window-outside-week", window: outside };
       }
+      // Момент розыгрыша лежит строго внутри недели (ADR-066, п. 5).
+      const raffle = config.raffleClosesAt;
+      if (raffle !== undefined) {
+        if (Date.parse(raffle) <= Date.parse(config.opensAt)) {
+          return { kind: "raffle-not-after-opens" };
+        }
+        if (Date.parse(raffle) >= Date.parse(config.closesAt)) {
+          return { kind: "raffle-not-before-closes" };
+        }
+      }
       state.status = "scheduled";
       state.week = {
         opensAt: config.opensAt,
         closesAt: config.closesAt,
         final: config.final,
         windows: config.windows,
+        ...(raffle === undefined ? {} : { raffleClosesAt: raffle }),
       };
       return { kind: "ok" };
     },
@@ -354,8 +365,12 @@ function fakeAuction(
           placeBid: notUsed,
           setProxyLimit: notUsed,
           chooseDisplayName: notUsed,
+          // Розыгрыш открывается с онлайн-неделей, если у недели есть момент
+          // закрытия регистрации, — как в сервисе.
           getRaffle: async () =>
-            options.raffle === true
+            options.raffle === true ||
+            (state.status === "prebidding" &&
+              state.week?.raffleClosesAt !== undefined)
               ? {
                   auctionId,
                   status: "open" as const,
@@ -810,7 +825,7 @@ describe("auction console", () => {
     expect(spaced(screen.text ?? "")).toBe(
       [
         "<b>Пульт</b>",
-        "Идут онлайн-торги до 27 октября, вт, 00:00.\nФинал: есть.",
+        "Идут онлайн-торги до 27 октября, вт, 00:00.\nФинал: есть.\nРозыгрыш: нет.",
         "Сортировка: по ставкам ↓.",
         [
           "• Ваза — 1 200 ₽ · 3 ставки · 2 уч.",
@@ -968,6 +983,7 @@ describe("week of the auction", () => {
       ["Сроки недели"],
       ["Вкл · Финал"],
       ["Счастливые часы"],
+      ["Розыгрыш"],
       ["Открыть онлайн-неделю"],
       ["🗑 Удалить аукцион"],
       ["‹ Лоты"],
@@ -1079,6 +1095,153 @@ describe("week of the auction", () => {
     expect(last(calls).text).toBe("<b>Конец недели уже прошёл</b>");
     expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
     expect(auction.sent("scheduleAuction")).toEqual([]);
+  });
+});
+
+// Розыгрыш (PER-593): момент закрытия регистрации — свой вопрос на пульте,
+// «Убрать» снимает его, а сроки, финал и окна его не стирают.
+describe("raffle of the week", () => {
+  const moment = "2026-10-22T15:00:00Z";
+
+  it("asks the moment, keeps the step over a restart, opens the raffle with the week", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced],
+    });
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(consoleData));
+    expect(plain(last(calls))).toContain("Розыгрыш: нет.");
+    expect(dataOf(last(calls), "Розыгрыш")).toBe(`v1:ac:r:${auctionToken}`);
+    expect(labels(last(calls)).flat()).not.toContain("🗑 Убрать розыгрыш");
+
+    await next((history) => press(dataOf(last(history), "Розыгрыш")));
+    const asked = question(calls).payload;
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:ar:${auctionToken}:42`);
+    expect(asked.text).toContain("Неделя: 20.10.2026 18:00 — 27.10.2026 00:00");
+    expect(asked.text).toContain("Например: 22.10.2026 18:00");
+
+    // Момент вне недели бот отклоняет сам, без команды.
+    await next((history) => answer(history, { text: "28.10.2026 18:00" }));
+    expect(last(calls).text).toBe(
+      "<b>Регистрация в розыгрыше должна закрыться раньше конца недели</b>",
+    );
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+    expect(auction.sent("scheduleAuction")).toEqual([]);
+    await next((history) => press(dataOf(last(history), "Ввести заново")));
+
+    await next((history) => answer(history, { text: "22.10.2026 18:00" }));
+    expect(auction.sent("scheduleAuction")).toEqual([
+      {
+        method: "scheduleAuction",
+        args: {
+          auctionId,
+          opId: expect.any(String),
+          ...week,
+          final: true,
+          raffleClosesAt: moment,
+        },
+      },
+    ]);
+    expect(last(calls).text).toBe("<b>Момент розыгрыша сохранён</b>");
+    await next((history) => press(dataOf(last(history), "‹ Пульт")));
+    expect(plain(last(calls))).toContain(
+      "Розыгрыш: регистрация до 22 октября, чт, 18:00.",
+    );
+    expect(labels(last(calls))).toContainEqual(["Розыгрыш"]);
+    expect(labels(last(calls))).toContainEqual(["🗑 Убрать розыгрыш"]);
+
+    // Вопрос называет текущий момент в том виде, в каком его вводят.
+    await next((history) => press(dataOf(last(history), "Розыгрыш")));
+    expect(question(calls).payload.text).toContain("Сейчас: 22.10.2026 18:00");
+    await next((history) => press(dataOf(question(history).payload, "Отмена")));
+
+    // Неделя с моментом после открытия торгов ставит «Розыгрыш» в ленту.
+    await next(() => press(consoleData));
+    await next((history) =>
+      press(dataOf(last(history), "Открыть онлайн-неделю")),
+    );
+    await next((history) =>
+      press(dataOf(last(history), "✔️ Да, открыть неделю")),
+    );
+    await next(() => press(feedData));
+    expect(labels(last(calls))[0]).toEqual(["Пульт", "Розыгрыш"]);
+  });
+
+  it("keeps the moment over new dates and the final and names it when new dates cut it off", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true, raffleClosesAt: moment },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Вкл · Финал")));
+    await bot.handleUpdate(press(`v1:ac:w:${auctionToken}`));
+    await bot.handleUpdate(
+      answer(calls, { text: "20.10.2026 18:00 — 28.10.2026 00:00" }),
+    );
+    expect(
+      auction.sent("scheduleAuction").map((command) => command.args),
+    ).toEqual([
+      expect.objectContaining({ final: false, raffleClosesAt: moment }),
+      expect.objectContaining({
+        closesAt: "2026-10-27T21:00:00Z",
+        raffleClosesAt: moment,
+      }),
+    ]);
+
+    await bot.handleUpdate(press(`v1:ac:w:${auctionToken}`));
+    await bot.handleUpdate(
+      answer(calls, { text: "23.10.2026 18:00 — 28.10.2026 00:00" }),
+    );
+    expect(last(calls).text).toBe(
+      "<b>Момент розыгрыша не помещается в новые сроки</b>\n\nСдвинь или убери его кнопкой «Розыгрыш» на пульте или задай сроки шире.",
+    );
+    expect(auction.state.week?.raffleClosesAt).toBe(moment);
+  });
+
+  it("removes the moment: the week goes without the raffle", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true, raffleClosesAt: moment },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+
+    const remove = dataOf(last(calls), "🗑 Убрать розыгрыш");
+    expect(remove).toBe(`v1:ac:rx:${auctionToken}`);
+    await bot.handleUpdate(press(remove));
+
+    expect(auction.sent("scheduleAuction")).toEqual([
+      {
+        method: "scheduleAuction",
+        args: {
+          auctionId,
+          opId: expect.any(String),
+          ...week,
+          final: true,
+          raffleClosesAt: undefined,
+        },
+      },
+    ]);
+    expect(last(calls).text).toBe(
+      "<b>Розыгрыш убран</b>\n\nНеделя пройдёт без него.",
+    );
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    expect(plain(last(calls))).toContain("Розыгрыш: нет.");
+    expect(labels(last(calls)).flat()).not.toContain("🗑 Убрать розыгрыш");
+
+    // Неделя без момента открывается без розыгрыша, как раньше.
+    await bot.handleUpdate(press(feedData));
+    expect(labels(last(calls)).flat()).not.toContain("Розыгрыш");
   });
 });
 

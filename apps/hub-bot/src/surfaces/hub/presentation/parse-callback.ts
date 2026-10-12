@@ -274,6 +274,9 @@ type PlainAction =
   // финала — ещё лот и страницу пульта, на которую вернуться.
   | { kind: "console-view"; auction: string; page: number; sort: ConsoleSort }
   | { kind: "console-week"; auction: string }
+  // Розыгрыш (PER-593): вопрос о моменте и снятие момента.
+  | { kind: "console-raffle"; auction: string }
+  | { kind: "console-raffle-remove"; auction: string }
   | { kind: "console-final"; auction: string; final: boolean }
   | { kind: "console-open"; auction: string }
   // «Да» подтверждения: ключ открытия рождён, когда подтверждение показано,
@@ -457,6 +460,9 @@ export type QuestionStep =
   // Сроки онлайн-недели на пульте (PER-320): аукцион, а финал и текущие сроки
   // ответ читает у Auction заново.
   | { kind: "console-week"; auction: string }
+  // Момент розыгрыша (PER-593): аукцион, а сроки и текущий момент ответ
+  // читает у Auction заново.
+  | { kind: "console-raffle"; auction: string }
   // Новое окно «Счастливых часов» (PER-504): аукцион, а сроки недели и окна
   // ответ читает у Auction заново.
   | { kind: "console-window"; auction: string }
@@ -514,6 +520,16 @@ export function consoleViewData(
 /** «Сроки недели»: вопрос о начале и конце онлайн-недели. */
 export function consoleWeekData(auction: string): string {
   return `v1:ac:w:${auction}`;
+}
+
+/** «Розыгрыш»: вопрос о моменте закрытия регистрации (PER-593). */
+export function consoleRaffleData(auction: string): string {
+  return `v1:ac:r:${auction}`;
+}
+
+/** «Убрать розыгрыш»: неделя без момента проходит без розыгрыша. */
+export function consoleRaffleRemoveData(auction: string): string {
+  return `v1:ac:rx:${auction}`;
 }
 
 /** Переключатель финала с целевым состоянием. */
@@ -673,6 +689,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:li:${step.lot}`;
     case "console-week":
       return `v1:q:aw:${step.auction}`;
+    case "console-raffle":
+      return `v1:q:ar:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
     case "final-ask":
@@ -1084,7 +1102,8 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // (PER-504): `v1:ac:h:<аукцион>`, `v1:ac:ha:<аукцион>`,
 // `v1:ac:hw:<аукцион>:<окно>:<отпечаток>[:<страница>]`,
 // `v1:ac:<hs|hd>:<аукцион>:<окно>:<отпечаток>:<лот>` и
-// `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`.
+// `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`. Розыгрыш (PER-593):
+// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`.
 function parseConsole(parts: readonly string[]): CallbackAction {
   const auction = TokenSchema.safeParse(parts[3]);
   if (!auction.success) return { kind: "malformed" };
@@ -1145,6 +1164,14 @@ function parseConsole(parts: readonly string[]): CallbackAction {
     case "w":
       return parts.length === 4
         ? { kind: "console-week", auction: auction.data }
+        : { kind: "malformed" };
+    case "r":
+      return parts.length === 4
+        ? { kind: "console-raffle", auction: auction.data }
+        : { kind: "malformed" };
+    case "rx":
+      return parts.length === 4
+        ? { kind: "console-raffle-remove", auction: auction.data }
         : { kind: "malformed" };
     case "f": {
       const final = TargetStateSchema.safeParse(parts[4]);
@@ -1281,6 +1308,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "lot-image", lot: token.data };
       case "aw":
         return { kind: "console-week", auction: token.data };
+      case "ar":
+        return { kind: "console-raffle", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
       case "pm":

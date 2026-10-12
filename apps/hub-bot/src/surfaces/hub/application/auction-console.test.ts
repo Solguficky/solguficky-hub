@@ -19,6 +19,7 @@ import type {
 } from "../auction/port.js";
 import {
   createAuctionConsole,
+  parseRaffle,
   parseWeek,
   parseWindow,
   windowLimit,
@@ -1330,5 +1331,280 @@ describe("happy hours", () => {
       }),
     ).resolves.toMatchObject({ kind: "auction-console", note: "week-frozen" });
     expect(scheduled).toEqual([]);
+  });
+});
+
+// Розыгрыш (PER-593): момент закрытия регистрации задаётся своим вопросом на
+// пульте, лежит строго внутри недели и едет в каждой команде над
+// конфигурацией — без него Auction стёр бы розыгрыш молча.
+describe("parseRaffle", () => {
+  const span = { opensAt: week.opensAt, closesAt: week.closesAt };
+
+  it("reads the moment in community time inside the week", () => {
+    expect(parseRaffle(" 22.10.2026 18:00 ", span, zone, now)).toEqual({
+      kind: "ok",
+      raffleClosesAt: "2026-10-22T15:00:00Z",
+    });
+  });
+
+  it.each([
+    ["в среду вечером", "raffle-format"],
+    ["31.10.2026 24:00", "raffle-format"],
+    ["30.02.2026 18:00", "raffle-format"],
+    ["20.10.2026 18:00", "raffle-not-after-opens"],
+    ["27.10.2026 00:00", "raffle-not-before-closes"],
+  ] as const)("refuses %s as %s", (raw, error) => {
+    expect(parseRaffle(raw, span, zone, now)).toEqual({
+      kind: "rejected",
+      error,
+    });
+  });
+
+  it("refuses a time the clocks skipped and a moment that has already come", () => {
+    expect(
+      parseRaffle(
+        "29.03.2026 02:30",
+        { opensAt: "2026-03-28T00:00:00Z", closesAt: "2026-04-05T00:00:00Z" },
+        "Europe/Berlin",
+        new Date("2026-03-01T00:00:00Z"),
+      ),
+    ).toEqual({ kind: "rejected", error: "raffle-moment" });
+    expect(
+      parseRaffle(
+        "06.10.2026 11:00",
+        { opensAt: "2026-10-01T00:00:00Z", closesAt: "2026-10-10T00:00:00Z" },
+        zone,
+        now,
+      ),
+    ).toEqual({ kind: "rejected", error: "raffle-ended" });
+  });
+});
+
+describe("raffle of the week", () => {
+  const call = { identity: admin, auctionId };
+  const moment = "2026-10-22T15:00:00Z";
+  const evening: StepWindow = {
+    from: "2026-10-21T15:00:00Z",
+    until: "2026-10-21T18:00:00Z",
+    step: { minorUnits: 5_000, currency: "RUB" },
+    lotIds: [lotId],
+  };
+  const lot: ConsoleLot = {
+    lot: {
+      lotId,
+      auctionId,
+      version: 1,
+      proxyEnabled: false,
+      status: { kind: "draft" },
+    },
+    bidCount: 0,
+    uniqueParticipantCount: 0,
+    markedForFinal: false,
+    overdue: false,
+  };
+  const statistics: LotStatisticsReadResult = {
+    kind: "ok",
+    lots: [{ lotId, bidCount: 0, uniqueParticipantCount: 0 }],
+  };
+  const scheduledWith = (raffleClosesAt?: string) =>
+    view("scheduled", {
+      week: {
+        ...week,
+        final: true,
+        windows: [evening],
+        ...(raffleClosesAt === undefined ? {} : { raffleClosesAt }),
+      },
+      lots: [lot],
+    });
+
+  it("asks the moment naming the week only while the dates are set and can change", async () => {
+    await expect(
+      fake({
+        read: { kind: "ok", console: scheduledWith(moment) },
+        statistics,
+      }).run({ ...call, intent: "ask-auction-raffle" }),
+    ).resolves.toEqual({
+      kind: "auction-raffle-ask",
+      auctionId,
+      week: {
+        ...week,
+        final: true,
+        windows: [evening],
+        raffleClosesAt: moment,
+      },
+    });
+    await expect(
+      fake({
+        read: { kind: "ok", console: view("draft") },
+        statistics: noLotStatistics,
+      }).run({ ...call, intent: "ask-auction-raffle" }),
+    ).resolves.toMatchObject({ kind: "auction-console", note: "week-needed" });
+    await expect(
+      fake({
+        read: {
+          kind: "ok",
+          console: view("prebidding", {
+            week: { ...week, final: true, raffleClosesAt: moment },
+          }),
+        },
+        statistics: noLotStatistics,
+      }).run({ ...call, intent: "ask-auction-raffle" }),
+    ).resolves.toMatchObject({ kind: "auction-console", note: "week-frozen" });
+  });
+
+  it("schedules the moment with the dates, the final and the windows and shows it over a lagging read", async () => {
+    const { run, scheduled } = fake({
+      read: { kind: "ok", console: scheduledWith() },
+      statistics,
+    });
+
+    const result = await run({
+      ...call,
+      intent: "set-auction-raffle",
+      value: "22.10.2026 18:00",
+      opId,
+    });
+
+    expect(scheduled).toEqual([
+      {
+        auctionId,
+        opId,
+        ...week,
+        final: true,
+        windows: [evening],
+        raffleClosesAt: moment,
+      },
+    ]);
+    expect(result).toMatchObject({
+      kind: "auction-console",
+      note: "raffle-saved",
+      console: { week: { raffleClosesAt: moment } },
+    });
+  });
+
+  it("asks again without a command for a moment outside the week and with Auction's refusal after a move of the dates", async () => {
+    const outside = fake({
+      read: { kind: "ok", console: scheduledWith() },
+      statistics,
+    });
+    await expect(
+      outside.run({
+        ...call,
+        intent: "set-auction-raffle",
+        value: "28.10.2026 18:00",
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-raffle-ask",
+      error: "raffle-not-before-closes",
+    });
+    expect(outside.scheduled).toEqual([]);
+
+    // Сроки сдвинул второй администратор: чтение их не видело, Auction —
+    // видит, и его отказ — тот же ответ.
+    await expect(
+      fake({
+        read: { kind: "ok", console: scheduledWith() },
+        statistics,
+        schedule: { kind: "raffle-not-after-opens" },
+      }).run({
+        ...call,
+        intent: "set-auction-raffle",
+        value: "22.10.2026 18:00",
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-raffle-ask",
+      error: "raffle-not-after-opens",
+    });
+  });
+
+  it("removes the moment, and a moment already gone takes no command", async () => {
+    const set = fake({
+      read: { kind: "ok", console: scheduledWith(moment) },
+      statistics,
+    });
+    const removed = await set.run({
+      ...call,
+      intent: "remove-auction-raffle",
+      opId,
+    });
+    expect(set.scheduled).toEqual([
+      {
+        auctionId,
+        opId,
+        ...week,
+        final: true,
+        windows: [evening],
+        raffleClosesAt: undefined,
+      },
+    ]);
+    expect(removed).toMatchObject({
+      kind: "auction-console",
+      note: "raffle-removed",
+    });
+    expect(
+      removed.kind === "auction-console" && removed.console.week,
+    ).not.toHaveProperty("raffleClosesAt");
+
+    const gone = fake({
+      read: { kind: "ok", console: scheduledWith() },
+      statistics,
+    });
+    await expect(
+      gone.run({ ...call, intent: "remove-auction-raffle", opId }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "raffle-removed",
+    });
+    expect(gone.scheduled).toEqual([]);
+  });
+
+  it("keeps the moment when the dates, the final and the windows change", async () => {
+    const { run, scheduled } = fake({
+      read: { kind: "ok", console: scheduledWith(moment) },
+      statistics,
+    });
+
+    await run({
+      ...call,
+      intent: "schedule-auction-week",
+      value: "20.10.2026 18:00 — 28.10.2026 00:00",
+      opId,
+    });
+    await run({ ...call, intent: "set-auction-final", final: false, opId });
+    await run({
+      ...call,
+      intent: "remove-step-window",
+      window: { index: 0, print: windowPrint(evening) },
+      opId,
+    });
+
+    expect(scheduled.map((config) => config.raffleClosesAt)).toEqual([
+      moment,
+      moment,
+      moment,
+    ]);
+  });
+
+  it("asks the dates again when the new dates cut the moment off instead of dropping it", async () => {
+    const { run, scheduled } = fake({
+      read: { kind: "ok", console: scheduledWith(moment) },
+      statistics,
+      schedule: { kind: "raffle-not-after-opens" },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "schedule-auction-week",
+        value: "23.10.2026 18:00 — 28.10.2026 00:00",
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-week-ask",
+      error: "week-cuts-raffle",
+    });
+    expect(scheduled.map((config) => config.raffleClosesAt)).toEqual([moment]);
   });
 });

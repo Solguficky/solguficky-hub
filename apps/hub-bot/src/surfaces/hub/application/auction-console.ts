@@ -19,6 +19,7 @@ import type {
   ConsoleNote,
   ExecuteResult,
   LotAmount,
+  RaffleAskError,
   StepWindow,
   WeekAskError,
   WindowAskError,
@@ -63,21 +64,9 @@ export function parseWeek(
   const match = weekPattern.exec(raw.trim());
   if (match === null) return { kind: "rejected", error: "week-format" };
   const numbers = match.slice(1).map(Number);
-  const moments = [numbers.slice(0, 5), numbers.slice(5, 10)].map(
-    ([day = 0, month = 0, year = 0, hours = 0, minutes = 0]) => {
-      if (hours > 23 || minutes > 59) return undefined;
-      const date = new Date(Date.UTC(year, month - 1, day));
-      if (
-        date.getUTCFullYear() !== year ||
-        date.getUTCMonth() + 1 !== month ||
-        date.getUTCDate() !== day
-      ) {
-        return undefined;
-      }
-      return { year, month, day, hours, minutes };
-    },
+  const [opens, closes] = [numbers.slice(0, 5), numbers.slice(5, 10)].map(
+    calendarMoment,
   );
-  const [opens, closes] = moments;
   if (opens === undefined || closes === undefined) {
     return { kind: "rejected", error: "week-format" };
   }
@@ -95,6 +84,66 @@ export function parseWeek(
   return { kind: "ok", opensAt, closesAt };
 }
 
+// Дата и время из разобранных чисел `ДД ММ ГГГГ ЧЧ ММ`, если такие есть в
+// календаре: 31.02 и 24:00 — не моменты.
+function calendarMoment([
+  day = 0,
+  month = 0,
+  year = 0,
+  hours = 0,
+  minutes = 0,
+]: readonly number[]):
+  | { year: number; month: number; day: number; hours: number; minutes: number }
+  | undefined {
+  if (hours > 23 || minutes > 59) return undefined;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() + 1 !== month ||
+    date.getUTCDate() !== day
+  ) {
+    return undefined;
+  }
+  return { year, month, day, hours, minutes };
+}
+
+export type RaffleResult =
+  | { kind: "ok"; raffleClosesAt: string }
+  | { kind: "rejected"; error: RaffleAskError };
+
+const rafflePattern = new RegExp(`^${momentPattern}$`);
+
+/**
+ * Момент закрытия регистрации в розыгрыше (PER-593) в виде `ДД.ММ.ГГГГ ЧЧ:ММ`
+ * по времени сообщества. Он лежит строго внутри недели (ADR-066, п. 5): бот
+ * проверяет это по прочитанным срокам до команды, а Auction — ещё раз.
+ * Наступивший момент — не момент: регистрация закрылась бы, не открывшись.
+ */
+export function parseRaffle(
+  raw: string,
+  week: { opensAt: string; closesAt: string },
+  timeZone: string,
+  now: Date,
+): RaffleResult {
+  const match = rafflePattern.exec(raw.trim());
+  if (match === null) return { kind: "rejected", error: "raffle-format" };
+  const local = calendarMoment(match.slice(1).map(Number));
+  if (local === undefined) return { kind: "rejected", error: "raffle-format" };
+  const raffleClosesAt = communityInstant(local, timeZone);
+  if (raffleClosesAt === undefined) {
+    return { kind: "rejected", error: "raffle-moment" };
+  }
+  const at = Date.parse(raffleClosesAt);
+  if (at <= Date.parse(week.opensAt)) {
+    return { kind: "rejected", error: "raffle-not-after-opens" };
+  }
+  if (at >= Date.parse(week.closesAt)) {
+    return { kind: "rejected", error: "raffle-not-before-closes" };
+  }
+  if (at <= now.getTime()) return { kind: "rejected", error: "raffle-ended" };
+  return { kind: "ok", raffleClosesAt };
+}
+
 export type WindowResult =
   | { kind: "ok"; from: string; until: string; step: LotAmount }
   | { kind: "rejected"; error: WindowAskError };
@@ -104,8 +153,9 @@ const windowErrorOf: Record<WeekAskError, WindowAskError> = {
   "week-moment": "window-moment",
   "week-order": "window-order",
   "week-ended": "window-ended",
-  // Разбор сроков этот отказ не даёт: его называет Auction.
+  // Разбор сроков эти отказы не даёт: их называет Auction.
   "week-cuts-window": "window-outside-week",
+  "week-cuts-raffle": "window-outside-week",
 };
 
 /**
@@ -433,8 +483,10 @@ export function createAuctionConsole(
     const week = parseWeek(request.value, timeZone, now());
     if (week.kind === "rejected") return { ...asked, error: week.error };
     const final = console.week?.final ?? defaultFinal;
-    // Окна едут с новыми сроками: без них Auction стёр бы их молча.
+    // Окна и момент розыгрыша едут с новыми сроками: без них Auction стёр бы
+    // их молча.
     const windows = console.week?.windows ?? [];
+    const raffleClosesAt = console.week?.raffleClosesAt;
     const scheduled = await consoles.scheduleAuction(
       request.identity,
       {
@@ -444,6 +496,7 @@ export function createAuctionConsole(
         closesAt: week.closesAt,
         final,
         windows,
+        raffleClosesAt,
       },
       rpcMeta(request),
     );
@@ -459,6 +512,7 @@ export function createAuctionConsole(
               closesAt: week.closesAt,
               final,
               windows,
+              ...(raffleClosesAt === undefined ? {} : { raffleClosesAt }),
             },
           },
           note: "week-saved",
@@ -473,6 +527,11 @@ export function createAuctionConsole(
           error: "week-cuts-window",
           window: scheduled.window + 1,
         };
+      // Момент розыгрыша новые сроки тоже не выбрасывают молча: его сдвигает
+      // или убирает человек кнопкой «Розыгрыш».
+      case "raffle-not-after-opens":
+      case "raffle-not-before-closes":
+        return { ...asked, error: "week-cuts-raffle" };
       case "windows-overlap":
       case "window-step-invalid":
       case "window-lots-empty":
@@ -520,6 +579,7 @@ export function createAuctionConsole(
         closesAt: week.closesAt,
         final: request.final,
         windows: week.windows,
+        raffleClosesAt: week.raffleClosesAt,
       },
       rpcMeta(request),
     );
@@ -528,12 +588,15 @@ export function createAuctionConsole(
         return toggled({ ...console, week: { ...week, final: request.final } });
       case "already-started":
         return after(request, "week-frozen");
-      // Сроки и окна прочитаны у самого Auction, и он их уже принимал.
+      // Сроки, окна и момент розыгрыша прочитаны у самого Auction, и он их
+      // уже принимал.
       case "closes-not-after-opens":
       case "window-outside-week":
       case "windows-overlap":
       case "window-step-invalid":
       case "window-lots-empty":
+      case "raffle-not-after-opens":
+      case "raffle-not-before-closes":
         return storedRefused(scheduled);
       case "not-administrator":
       case "meetup-not-found":
@@ -1110,13 +1173,14 @@ export function createAuctionConsole(
         closesAt: week.closesAt,
         final: week.final,
         windows,
+        raffleClosesAt: week.raffleClosesAt,
       },
       rpcMeta(request),
     );
   }
 
-  // Исходы, общие у всех команд над окнами: отказы конфигурации каждая
-  // команда разбирает сама до этой функции.
+  // Исходы, общие у всех команд над окнами и моментом розыгрыша: отказы
+  // конфигурации каждая команда разбирает сама до этой функции.
   function windowsRefused(
     request: AuctionConsoleRequest,
     scheduled: ScheduleAuctionResult,
@@ -1135,10 +1199,117 @@ export function createAuctionConsole(
       case "windows-overlap":
       case "window-step-invalid":
       case "window-lots-empty":
+      case "raffle-not-after-opens":
+      case "raffle-not-before-closes":
         return storedRefused(scheduled);
       default:
         return failed(scheduled);
     }
+  }
+
+  // Розыгрыш (PER-593). Момент закрытия регистрации живёт в той же
+  // конфигурации, что сроки и окна: команда читает её заново и отдаёт целиком.
+  // Вопрос называет сроки недели и текущий момент, поэтому пульт читается до
+  // него; без сроков вопроса нет — момент лежит внутри недели.
+  async function askRaffle(
+    request: Extract<AuctionConsoleRequest, { intent: "ask-auction-raffle" }>,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    return {
+      kind: "auction-raffle-ask",
+      auctionId: request.auctionId,
+      week: found.week,
+    };
+  }
+
+  function scheduleRaffle(
+    request: AuctionConsoleRequest & { opId: string },
+    week: ScheduledWeek,
+    raffleClosesAt: string | undefined,
+  ): Promise<ScheduleAuctionResult> {
+    return consoles.scheduleAuction(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        opId: request.opId,
+        opensAt: week.opensAt,
+        closesAt: week.closesAt,
+        final: week.final,
+        windows: week.windows,
+        raffleClosesAt,
+      },
+      rpcMeta(request),
+    );
+  }
+
+  // Исход команды над моментом розыгрыша: пульт с заметкой и неделей, на
+  // которую наложена принятая команда, — чтение отстаёт от команд.
+  function raffleScheduled(
+    console: AuctionConsoleView,
+    week: ScheduledWeek,
+    raffleClosesAt: string | undefined,
+  ): ExecuteResult {
+    const { raffleClosesAt: _previous, ...rest } = week;
+    return {
+      kind: "auction-console",
+      console: {
+        ...console,
+        week: raffleClosesAt === undefined ? rest : { ...rest, raffleClosesAt },
+      },
+      note: raffleClosesAt === undefined ? "raffle-removed" : "raffle-saved",
+    };
+  }
+
+  async function setRaffle(
+    request: Extract<AuctionConsoleRequest, { intent: "set-auction-raffle" }>,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    const { console, week } = found;
+    const asked = {
+      kind: "auction-raffle-ask" as const,
+      auctionId: request.auctionId,
+      week,
+    };
+    const parsed = parseRaffle(request.value, week, timeZone, now());
+    if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
+    const scheduled = await scheduleRaffle(
+      request,
+      week,
+      parsed.raffleClosesAt,
+    );
+    switch (scheduled.kind) {
+      case "ok":
+        return raffleScheduled(console, week, parsed.raffleClosesAt);
+      // Сроки бот проверил по прочитанным, но их мог сдвинуть второй
+      // администратор: отказ Auction — тот же ответ, что проверка бота.
+      case "raffle-not-after-opens":
+      case "raffle-not-before-closes":
+        return { ...asked, error: scheduled.kind };
+      default:
+        return windowsRefused(request, scheduled);
+    }
+  }
+
+  // «Убрать розыгрыш»: неделя без момента проходит без розыгрыша. Момента уже
+  // нет — команды нет, а ответ тот же: кнопка могла устареть.
+  async function removeRaffle(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "remove-auction-raffle" }
+    >,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    const { console, week } = found;
+    if (week.raffleClosesAt === undefined) {
+      return raffleScheduled(console, week, undefined);
+    }
+    const scheduled = await scheduleRaffle(request, week, undefined);
+    return scheduled.kind === "ok"
+      ? raffleScheduled(console, week, undefined)
+      : windowsRefused(request, scheduled);
   }
 
   // «Добавить окно»: вопрос называет сроки недели, поэтому пульт читается до
@@ -1349,6 +1520,12 @@ export function createAuctionConsole(
         return prepareStart(request);
       case "schedule-auction-week":
         return scheduleWeek(request);
+      case "ask-auction-raffle":
+        return askRaffle(request);
+      case "set-auction-raffle":
+        return setRaffle(request);
+      case "remove-auction-raffle":
+        return removeRaffle(request);
       case "set-auction-final":
         return setFinal(request);
       case "start-auction-week":

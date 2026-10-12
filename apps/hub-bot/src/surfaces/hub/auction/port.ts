@@ -170,7 +170,8 @@ export type LotStatisticsReadResult =
 
 // Из отказов конфигурации человек может вызвать «конец не позже начала» и
 // отказы окон «Счастливых часов» (PER-504): окно вне недели, пересечение двух
-// окон по общему лоту, шаг окна и окно без лотов. Остальные бот не собирает,
+// окон по общему лоту, шаг окна и окно без лотов, — а также момент закрытия
+// регистрации в розыгрыше вне недели (PER-593). Остальные бот не собирает,
 // и они — дефект. Окна названы номером в конфигурации с нуля.
 export type ScheduleAuctionResult =
   | { kind: "ok" }
@@ -181,6 +182,8 @@ export type ScheduleAuctionResult =
   | { kind: "windows-overlap"; first: number; second: number }
   | { kind: "window-step-invalid"; window: number }
   | { kind: "window-lots-empty"; window: number }
+  | { kind: "raffle-not-after-opens" }
+  | { kind: "raffle-not-before-closes" }
   | { kind: "already-started" }
   | { kind: "auction-not-found" }
   | AuctionFailure;
@@ -221,8 +224,10 @@ export type FinalistResult =
   | AuctionFailure;
 
 // Сроки недели целиком: Auction заменяет конфигурацию, а не правит её, поэтому
-// окна «Счастливых часов» едут в каждой команде — без них правка сроков или
-// финала стёрла бы окна молча. `lot_defaults` бот не шлёт — их подставляет
+// окна «Счастливых часов» и момент закрытия регистрации в розыгрыше едут в
+// каждой команде — без них правка сроков или финала стёрла бы их молча.
+// Ключ `raffleClosesAt` обязателен по той же причине; `undefined` — неделя без
+// розыгрыша (ADR-066, п. 5). `lot_defaults` бот не шлёт — их подставляет
 // Auction; правило закрытия выводится из финала.
 export type AuctionWeekConfig = {
   auctionId: string;
@@ -231,6 +236,7 @@ export type AuctionWeekConfig = {
   closesAt: string;
   final: boolean;
   windows: readonly StepWindow[];
+  raffleClosesAt: string | undefined;
 };
 
 export type FinalistMark = { auctionId: string; lotId: string; opId: string };
