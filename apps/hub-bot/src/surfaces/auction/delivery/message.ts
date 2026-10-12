@@ -19,10 +19,11 @@ type TraceButton = { text: string; callback_data: string };
 
 // `settings` — «Реже» рядом с «К лоту» у перебития (PER-515): пара одним
 // рядом, единственная вторая кнопка следа (дизайн-код, «Уведомления
-// аукциона»).
+// аукциона»). Кнопки нет у вести о смене круга (PER-537): в боте аукциона
+// участник дальше экрана перехода в сообщество не пройдёт, и вести её нечем.
 export type NotificationMessage = {
   text: string;
-  button: TraceButton;
+  button?: TraceButton;
   settings?: TraceButton;
 };
 
@@ -94,6 +95,11 @@ export function createRenderMessage(
   outbidSettings = false,
 ): RenderMessage<AuctionNotificationContent, NotificationMessage> {
   return async (content, { recipientId, requestId }) => {
+    // Весть о смене круга (PER-537) — не о торгах: право ставить бот для неё не
+    // спрашивает, и кнопки, которая упёрлась бы в тот же отказ, у неё нет.
+    if (content.kind === "circle-promoted") {
+      return { kind: "ready", message: renderNotification(content) };
+    }
     let eligible: boolean;
     try {
       eligible = await reads.holdsPlaceBids(recipientId, requestId);
@@ -138,6 +144,12 @@ export function renderNotification(
       },
     };
   }
+  // Повышение до участника (PER-537): кнопки нет — любое действие участника в
+  // боте аукциона ведёт на экран перехода в сообщество, и обещать кнопкой
+  // больше нечего.
+  if (content.kind === "circle-promoted") {
+    return { text: "Тебя приняли в сообщество." };
+  }
   const lot =
     title === undefined || title === ""
       ? undefined
@@ -153,7 +165,10 @@ export function renderNotification(
 }
 
 function notificationText(
-  content: Exclude<AuctionNotificationContent, { kind: "access-granted" }>,
+  content: Exclude<
+    AuctionNotificationContent,
+    { kind: "access-granted" } | { kind: "circle-promoted" }
+  >,
   lot: string | undefined,
 ): string {
   switch (content.kind) {
@@ -186,8 +201,11 @@ export function createNotificationApi(
 export type SendMessageApi = Pick<Api, "sendMessage">;
 
 // Клавиатура следа — один ряд: «К лоту» и у перебития ещё «Реже». Её же
-// собирает тест каталога экранов, а не свою копию.
+// собирает тест каталога экранов, а не свою копию. У вести о смене круга
+// (PER-537) кнопки нет вовсе — тогда и клавиатуры не шлём; «Реже» без «К лоту»
+// не бывает: второй след ставится только рядом с первым.
 export function notificationMarkup(message: NotificationMessage) {
+  if (message.button === undefined) return undefined;
   return {
     inline_keyboard: [
       message.settings === undefined
@@ -202,6 +220,7 @@ export function createNotificationSender(
 ): NotificationSender<NotificationMessage> {
   return {
     async send({ telegramUserId, message }) {
+      const markup = notificationMarkup(message);
       try {
         // Личный чат с человеком имеет id самого человека. Telegram держит id в
         // 52 битах, поэтому переход из bigint в number точен. Метка каталога —
@@ -209,7 +228,7 @@ export function createNotificationSender(
         // экранов.
         await api.sendMessage(Number(telegramUserId), message.text, {
           ...screenMark("notification"),
-          reply_markup: notificationMarkup(message),
+          ...(markup === undefined ? {} : { reply_markup: markup }),
           link_preview_options: { is_disabled: true },
         });
         return { kind: "sent" };

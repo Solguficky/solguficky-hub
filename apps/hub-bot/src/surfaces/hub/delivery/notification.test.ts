@@ -67,23 +67,69 @@ function published(
 }
 
 describe("decodeNotification", () => {
-  it("recognizes a circle-change fact pending the dedicated delivery slice", () => {
-    const decoded = decodeNotification(
-      published((message) => {
-        message.type = {
-          case: "circleChanged",
-          value: create(CircleChangedSchema, {
-            previousCircle: Circle.GUEST,
-            currentCircle: Circle.MEMBER,
-          }),
-        };
-      }),
-    );
+  // PER-537: понижение участника — весть бота хаба, её он и доставляет.
+  it("decodes a demotion to a guest as its own branch", () => {
+    expect(
+      decodeNotification(
+        published((message) => {
+          message.type = {
+            case: "circleChanged",
+            value: create(CircleChangedSchema, {
+              previousCircle: Circle.MEMBER,
+              currentCircle: Circle.GUEST,
+            }),
+          };
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "circle-demoted" } },
+    });
+  });
 
-    expect(decoded).toMatchObject({
+  // Повышение адресовано боту аукциона (PER-536) и в этот durable не попадает,
+  // но разбирается как чужая ветка, а не как отказ.
+  it("leaves a promotion to the auction bot", () => {
+    expect(
+      decodeNotification(
+        published((message) => {
+          message.type = {
+            case: "circleChanged",
+            value: create(CircleChangedSchema, {
+              previousCircle: Circle.GUEST,
+              currentCircle: Circle.MEMBER,
+            }),
+          };
+        }),
+      ),
+    ).toMatchObject({
       kind: "ok",
       notification: { content: { kind: "foreign", type: "circleChanged" } },
     });
+  });
+
+  // Пару кругов вне `guest ↔ member` издатель не рождает: показывать в ней
+  // нечего, и это дефект, а не весть.
+  it.each([
+    [
+      "no previous circle",
+      { previousCircle: Circle.UNSPECIFIED, currentCircle: Circle.GUEST },
+    ],
+    [
+      "no current circle",
+      { previousCircle: Circle.MEMBER, currentCircle: Circle.UNSPECIFIED },
+    ],
+  ])("treats a circle change with %s as malformed", (_name, value) => {
+    expect(
+      decodeNotification(
+        published((message) => {
+          message.type = {
+            case: "circleChanged",
+            value: create(CircleChangedSchema, value),
+          };
+        }),
+      ),
+    ).toEqual({ kind: "malformed", error: "invalid notification body" });
   });
 
   it("decodes a published meetup with its schedule and request id", () => {

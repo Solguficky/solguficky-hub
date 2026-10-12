@@ -178,6 +178,28 @@ describe("renderNotification", () => {
   it("keeps the disable button within the 64-byte budget", () => {
     expect(Buffer.byteLength(disablePublishedCallback)).toBeLessThanOrEqual(64);
   });
+
+  // PER-537, RFC-015 С-12: о понижении сообщает прежний бот — хаб, и вручает
+  // ссылку на бот аукциона текстом. Клавиатуры у вести нет: вести внутрь хаба
+  // некуда, а url-кнопка к чужому боту была бы новым приёмом.
+  it("tells the demoted member where the auction moved, with the link in the text", () => {
+    const message = renderNotification(
+      { kind: "circle-demoted" },
+      "solguficky_auction_bot",
+    );
+    expect(message.text).toBe(
+      "Аукцион теперь в боте аукциона: https://t.me/solguficky_auction_bot",
+    );
+    expect(message.keyboard).toBeUndefined();
+  });
+
+  // Имени бота нет — ссылку дать нечем, но о смене круга человеку всё равно
+  // сообщают (PER-537).
+  it("sends the news without a link when the auction bot name is unknown", () => {
+    expect(renderNotification({ kind: "circle-demoted" }).text).toBe(
+      "Аукцион теперь в боте аукциона.",
+    );
+  });
 });
 
 describe("reminder notification", () => {
@@ -503,6 +525,26 @@ describe("notification sender", () => {
       telegramUserId: 42n,
       message: { kind: "meetup-unpublished", meetup },
     });
+    expect(sendMessage.mock.calls[0]?.[2]).not.toHaveProperty("reply_markup");
+  });
+
+  // PER-537: имя бота аукциона отправитель берёт из конфигурации — сама весть о
+  // понижении ссылку не несёт.
+  it("delivers the demotion with the auction bot link from the config", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({});
+    const sender = createNotificationSender(
+      { sendMessage } as never,
+      "solguficky_auction_bot",
+    );
+    await sender.send({
+      telegramUserId: 42n,
+      message: { kind: "circle-demoted" },
+    });
+    expect(sendMessage).toHaveBeenCalledWith(
+      42,
+      "Аукцион теперь в боте аукциона: https://t.me/solguficky_auction_bot",
+      expect.objectContaining({ link_preview_options: { is_disabled: true } }),
+    );
     expect(sendMessage.mock.calls[0]?.[2]).not.toHaveProperty("reply_markup");
   });
 

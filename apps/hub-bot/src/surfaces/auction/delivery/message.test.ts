@@ -83,6 +83,8 @@ describe("renderNotification", () => {
   // Критерий приёмки: факт перебития доходит с кнопкой на карточку лота.
   it("leads to the lot card with a trace button", () => {
     const { button } = renderNotification(outbid, "Кружка");
+    if (button === undefined)
+      throw new Error("the outbid must lead to the lot");
     expect(button.text).toBe("К лоту");
     expect(Buffer.byteLength(button.callback_data)).toBeLessThanOrEqual(64);
     const inner = parseTraceCallback(button.callback_data);
@@ -91,6 +93,15 @@ describe("renderNotification", () => {
       ok: true,
       intent: { kind: "lot", lotId, page: 0 },
     });
+  });
+
+  // PER-537: весть о повышении — без кнопки. В боте аукциона участник дальше
+  // экрана перехода в сообщество не пройдёт, и обещать кнопкой нечего.
+  it("tells the promoted guest they are in the community, with no button", () => {
+    const message = renderNotification({ kind: "circle-promoted" });
+    expect(message.text).toBe("Тебя приняли в сообщество.");
+    expect(message.button).toBeUndefined();
+    expect(notificationMarkup(message)).toBeUndefined();
   });
 });
 
@@ -195,6 +206,21 @@ describe("access granted", () => {
 });
 
 describe("createRenderMessage", () => {
+  // Право ставить для вести о круге не спрашивается, и лот не читается: она не
+  // о торгах, и кнопки, которая упёрлась бы в отказ, у неё нет (PER-537).
+  it("reads neither the right to bid nor the lot", async () => {
+    const source = reads();
+    const render = createRenderMessage(source, () => {});
+    await expect(
+      render({ kind: "circle-promoted" }, { recipientId }),
+    ).resolves.toMatchObject({
+      kind: "ready",
+      message: { text: "Тебя приняли в сообщество." },
+    });
+    expect(source.holdsPlaceBids).not.toHaveBeenCalled();
+    expect(source.lotTitle).not.toHaveBeenCalled();
+  });
+
   it("reads the title as the recipient with the right to bid", async () => {
     const source = reads();
     const render = createRenderMessage(source, () => {});
@@ -291,6 +317,22 @@ describe("notification sender", () => {
     });
   });
 
+  // Весть о смене круга идёт без клавиатуры (PER-537).
+  it("sends the promotion without a keyboard", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({});
+    const sender = createNotificationSender({ sendMessage } as never);
+    await expect(
+      sender.send({
+        telegramUserId: 42n,
+        message: renderNotification({ kind: "circle-promoted" }),
+      }),
+    ).resolves.toEqual({ kind: "sent" });
+    expect(sendMessage).toHaveBeenCalledWith(42, "Тебя приняли в сообщество.", {
+      ...screenMark("notification"),
+      link_preview_options: { is_disabled: true },
+    });
+  });
+
   // Отправка идёт мимо адаптера экранов, но метку каталога несёт: след с
   // кнопкой проходит линтер дизайн-кода, как любой экран (PER-472).
   it("marks every notification for the screen linter", async () => {
@@ -306,10 +348,11 @@ describe("notification sender", () => {
       renderNotification(raised),
       renderNotification(purchased, "Кружка"),
       renderNotification({ kind: "access-granted" }),
+      renderNotification({ kind: "circle-promoted" }),
     ]) {
       await sender.send({ telegramUserId: 42n, message });
     }
-    expect(sent).toHaveLength(5);
+    expect(sent).toHaveLength(6);
     expect(
       sent.flatMap((call) => inspectCall("auction", "sendMessage", call)),
     ).toEqual([]);

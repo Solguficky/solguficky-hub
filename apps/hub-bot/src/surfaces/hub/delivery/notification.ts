@@ -1,6 +1,7 @@
 import { fromBinary } from "@bufbuild/protobuf";
 import type { Money as WireMoney } from "../../../../gen/auction/v1/auction_pb.js";
 import {
+  Circle,
   Preset,
   ApplicationQueue as WireQueue,
 } from "../../../../gen/identity/v1/access_pb.js";
@@ -99,7 +100,11 @@ export type RenderableContent =
   // Аукционные факты об участнике сообщества доставляет бот хаба (ADR-064).
   | { kind: "lot-outbid"; lotId: string; currentPrice: NotificationMoney }
   | { kind: "lot-proxy-raised"; lotId: string; currentPrice: NotificationMoney }
-  | { kind: "lot-purchased"; lotId: string; price: NotificationMoney };
+  | { kind: "lot-purchased"; lotId: string; price: NotificationMoney }
+  // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
+  // — этот (RFC-015, С-12). Ссылку на бот аукциона он вручает сам; факт её не
+  // несёт (PER-536), и она приходит не из ветки, а из настройки бота.
+  | { kind: "circle-demoted" };
 
 export type NotificationMoney = { minorUnits: number; currency: string };
 
@@ -215,10 +220,22 @@ function toContent(message: Notification): NotificationContent | undefined {
       return type.value.preset === Preset.ADMIN
         ? { kind: "preset-granted", preset: "admin" }
         : undefined;
-    // PER-537 добавит текст и отправку; пока факт маршрутизирован в этот
-    // durable, но канал не должен трактовать известную ветку как дефект схемы.
-    case "circleChanged":
-      return { kind: "foreign", type: type.case };
+    // Смена круга (PER-537): до хаба доходит сторона понижения участника — её
+    // он и доставляет. Повышение гостя адресовано боту аукциона (PER-536) и в
+    // этот durable не попадает: subject у каналов свой, и маршрут выбирается по
+    // прежнему кругу. Всё равно оно разбирается как чужое, а не как отказ.
+    // Пустая или неизвестная пара кругов — дефект издателя: `guest ↔ member` —
+    // единственные переходы, которые он рождает.
+    case "circleChanged": {
+      const { previousCircle, currentCircle } = type.value;
+      if (previousCircle === Circle.MEMBER && currentCircle === Circle.GUEST) {
+        return { kind: "circle-demoted" };
+      }
+      if (previousCircle === Circle.GUEST && currentCircle === Circle.MEMBER) {
+        return { kind: "foreign", type: type.case };
+      }
+      return undefined;
+    }
     case "lotOutbid": {
       const lotId = canonical(type.value.lotId);
       const currentPrice = toMoney(type.value.currentPrice);

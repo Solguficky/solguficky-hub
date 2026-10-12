@@ -1,6 +1,9 @@
 import { fromBinary } from "@bufbuild/protobuf";
 import type { Money as WireMoney } from "../../../../gen/auction/v1/auction_pb.js";
-import { ApplicationQueue } from "../../../../gen/identity/v1/access_pb.js";
+import {
+  ApplicationQueue,
+  Circle,
+} from "../../../../gen/identity/v1/access_pb.js";
 import {
   type Notification,
   NotificationSchema,
@@ -24,7 +27,12 @@ export type AuctionNotificationContent =
   | { kind: "lot-purchased"; lotId: string; price: Money }
   // Допуск к аукциону получает сам заявитель (PER-442). Круг здесь всегда
   // public: допуск в хаб доставляет бот хаба.
-  | { kind: "access-granted" };
+  | { kind: "access-granted" }
+  // Повышение гостя до участника (PER-537): о смене круга сообщает прежний бот
+  // — этот, и это последнее его сообщение человеку (RFC-015, С-11). Ссылки на
+  // бот хаба весть не несёт, и сохранять в ней нечего: круг приходит в самом
+  // факте и всё сказано текстом.
+  | { kind: "circle-promoted" };
 
 export type DeliveryNotification =
   ChannelNotification<AuctionNotificationContent>;
@@ -83,6 +91,23 @@ function toContent(
       }
       return undefined;
     }
+    // Смена круга (PER-537): до этой поверхности доходит сторона повышения
+    // гостя — её она и доставляет. Обратный переход `member → guest` адресован
+    // боту хаба (PER-536) и в этот durable не попадает: subject у каналов свой,
+    // и маршрут выбирается по прежнему кругу. Всё равно он разбирается как
+    // чужая ветка, а не как отказ — так же ведёт себя и ветка чужого канала.
+    // Пустая или неизвестная пара кругов — дефект издателя: `guest ↔ member` —
+    // единственные переходы, которые он рождает.
+    case "circleChanged": {
+      const { previousCircle, currentCircle } = type.value;
+      if (previousCircle === Circle.GUEST && currentCircle === Circle.MEMBER) {
+        return { kind: "circle-promoted" };
+      }
+      if (previousCircle === Circle.MEMBER && currentCircle === Circle.GUEST) {
+        return { kind: "foreign", type: type.case };
+      }
+      return undefined;
+    }
     // Ветки сходок, ручных рассылок и заявок доставляет бот хаба: общий поток
     // несёт их и сюда, и это не отказ.
     case "meetupPublished":
@@ -94,7 +119,6 @@ function toContent(
     case "meetupUnpublished":
     case "accessRequested":
     case "presetGranted":
-    case "circleChanged":
       return { kind: "foreign", type: type.case };
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };
