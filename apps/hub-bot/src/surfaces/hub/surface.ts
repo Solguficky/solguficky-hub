@@ -134,6 +134,7 @@ export const hubSurface: SurfaceDefinition = ({
   });
   const sender = createNotificationSender(
     createNotificationApi(token, environment),
+    hub.auctionBotUsername,
   );
   return {
     ok: true,

@@ -663,13 +663,18 @@ const notifications = [
     true,
   ),
   renderNotification({ kind: "access-granted" }),
-].map((message) => ({
-  chat_id: 42,
-  text: message.text,
-  ...screenMark("notification"),
-  reply_markup: notificationMarkup(message),
-  link_preview_options: { is_disabled: true },
-}));
+  // Весть о смене круга — без клавиатуры (PER-537).
+  renderNotification({ kind: "circle-promoted" }),
+].map((message) => {
+  const markup = notificationMarkup(message);
+  return {
+    chat_id: 42,
+    text: message.text,
+    ...screenMark("notification"),
+    ...(markup === undefined ? {} : { reply_markup: markup }),
+    link_preview_options: { is_disabled: true },
+  };
+});
 
 function brokenRules(): Map<ScreenId, Set<string>> {
   const broken = new Map<ScreenId, Set<string>>();

@@ -82,6 +82,7 @@ export function disableMeetupCategoryCallback(
 // не повторяется: описание и ссылка на календарь только называются.
 export function renderNotification(
   content: RenderableContent,
+  auctionBotUsername?: string,
 ): NotificationMessage {
   if (content.kind === "access-requested") {
     // Повод и переход в очередь, где заявку решают, и выключатель категории.
@@ -131,6 +132,21 @@ export function renderNotification(
         "Сходки",
         traceCallback("v1:nav:hub"),
       ),
+    };
+  }
+  if (content.kind === "circle-demoted") {
+    // Понижение до гостя (PER-537): о смене круга сообщает прежний бот — хаб, и
+    // вручает ссылку на новый, бот аукциона (RFC-015, С-12). Ссылка идёт
+    // текстом, клавиатуры нет: вести внутрь хаба некуда, а url-кнопка к чужому
+    // боту в уведомлении хаба была бы новым приёмом. Факт ссылку не несёт
+    // (PER-536) — её даёт `BOT_AUCTION_BOT_USERNAME`; настройки нет, и текст
+    // уходит без ссылки: о смене круга человеку всё равно сообщают.
+    return {
+      text:
+        auctionBotUsername === undefined
+          ? "Аукцион теперь в боте аукциона."
+          : `Аукцион теперь в боте аукциона: https://t.me/${auctionBotUsername}`,
+      keyboard: undefined,
     };
   }
   if (
@@ -398,13 +414,16 @@ export type SendMessageApi = Pick<
 >;
 
 // Содержимое рисуется здесь же, при отправке: соседи для текста хабу не
-// нужны, и рендер пакета доставки отдаёт содержимое как есть.
+// нужны, и рендер пакета доставки отдаёт содержимое как есть. `auctionBotUsername`
+// нужен одному сообщению — вести о понижении, которая вручает ссылку на бот
+// аукциона (PER-537).
 export function createNotificationSender(
   api: SendMessageApi,
+  auctionBotUsername?: string,
 ): NotificationSender<RenderableContent> {
   return {
     async send({ telegramUserId, message: content }) {
-      const message = renderNotification(content);
+      const message = renderNotification(content, auctionBotUsername);
       try {
         // Личный чат с человеком имеет id самого человека. Telegram держит id в
         // 52 битах, поэтому переход из bigint в number точен.

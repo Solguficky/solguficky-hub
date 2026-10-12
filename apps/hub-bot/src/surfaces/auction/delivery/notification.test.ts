@@ -27,20 +27,58 @@ function fact(
 }
 
 describe("decodeNotification", () => {
-  it("recognizes a circle-change fact pending the dedicated delivery slice", () => {
-    const decoded = decodeNotification(
-      fact({
-        case: "circleChanged",
-        value: {
-          previousCircle: Circle.GUEST,
-          currentCircle: Circle.MEMBER,
-        },
-      }),
-    );
+  // PER-537: повышение гостя — весть бота аукциона, её он и доставляет.
+  it("decodes a promotion to the community as its own branch", () => {
+    expect(
+      decodeNotification(
+        fact({
+          case: "circleChanged",
+          value: {
+            previousCircle: Circle.GUEST,
+            currentCircle: Circle.MEMBER,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "circle-promoted" } },
+    });
+  });
 
-    expect(decoded).toMatchObject({
+  // Понижение адресовано боту хаба (PER-536) и в этот durable не попадает, но
+  // разбирается как чужая ветка, а не как отказ.
+  it("leaves a demotion to the hub bot", () => {
+    expect(
+      decodeNotification(
+        fact({
+          case: "circleChanged",
+          value: {
+            previousCircle: Circle.MEMBER,
+            currentCircle: Circle.GUEST,
+          },
+        }),
+      ),
+    ).toMatchObject({
       kind: "ok",
       notification: { content: { kind: "foreign", type: "circleChanged" } },
+    });
+  });
+
+  // Пару кругов вне `guest ↔ member` издатель не рождает: показывать в ней
+  // нечего, и это дефект, а не весть.
+  it.each([
+    [
+      "no previous circle",
+      { previousCircle: Circle.UNSPECIFIED, currentCircle: Circle.MEMBER },
+    ],
+    [
+      "no current circle",
+      { previousCircle: Circle.GUEST, currentCircle: Circle.UNSPECIFIED },
+    ],
+  ])("treats a circle change with %s as malformed", (_name, value) => {
+    expect(decodeNotification(fact({ case: "circleChanged", value }))).toEqual({
+      kind: "malformed",
+      error: "invalid notification body",
     });
   });
 
