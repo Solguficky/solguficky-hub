@@ -60,6 +60,10 @@ function weekOf(auction: AuctionSnapshot): AuctionWeek | undefined {
       ? {}
       : { opensAt: phase.opensAt }),
     ...(phase?.closesAt === undefined ? {} : { closesAt: phase.closesAt }),
+    // Неделя без розыгрыша — поле не выставлено (ADR-066, п. 5).
+    ...(phase?.raffleClosesAt === undefined
+      ? {}
+      : { raffleClosesAt: phase.raffleClosesAt }),
     final: config.finalBlocks > 0,
     windows: config.stepWindows.map(windowOf),
   };

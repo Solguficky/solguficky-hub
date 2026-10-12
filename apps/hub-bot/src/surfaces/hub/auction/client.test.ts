@@ -454,6 +454,7 @@ describe("auction console adapter", () => {
     opensAt: "2026-10-20T15:00:00Z",
     closesAt: "2026-10-26T21:00:00Z",
     windows: [],
+    raffleClosesAt: undefined,
   };
 
   it.each([
@@ -593,6 +594,93 @@ describe("auction console adapter", () => {
     await expect(
       refusing({ case: "stepWindowLotsEmpty", value: { windowIndex: 1 } }),
     ).resolves.toEqual({ kind: "window-lots-empty", window: 1 });
+  });
+
+  // Розыгрыш (PER-593): момент едет в онлайн-фазе, неделя без него — без
+  // поля, а оба отказа Auction о моменте — ответ человеку.
+  it("sends the raffle moment in the online phase and reads its refusals", async () => {
+    const scheduleAuction = vi.fn(async (_request: unknown) =>
+      create(ScheduleAuctionResponseSchema, {
+        outcome: { case: "accepted", value: {} },
+      }),
+    );
+    const raffleClosesAt = "2026-10-22T15:00:00Z";
+    await adapter({ scheduleAuction }).scheduleAuction(admin, {
+      ...week,
+      final: true,
+      raffleClosesAt,
+    });
+    await adapter({ scheduleAuction }).scheduleAuction(admin, {
+      ...week,
+      final: true,
+    });
+    const phases = scheduleAuction.mock.calls.map(
+      (call) =>
+        (call[0] as { config: { onlinePhase: Record<string, unknown> } }).config
+          .onlinePhase,
+    );
+    expect(phases[0]).toMatchObject({ raffleClosesAt });
+    expect(phases[1]).not.toHaveProperty("raffleClosesAt");
+
+    const refusing = (reason: string) =>
+      adapter({
+        scheduleAuction: async () =>
+          create(ScheduleAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: {
+                reason: {
+                  case: "configInvalid",
+                  value: { reason: { case: reason as never, value: {} } },
+                },
+              },
+            },
+          }),
+      }).scheduleAuction(admin, { ...week, final: true, raffleClosesAt });
+    await expect(refusing("raffleClosesAtNotAfterOpensAt")).resolves.toEqual({
+      kind: "raffle-not-after-opens",
+    });
+    await expect(refusing("raffleClosesAtNotBeforeClosesAt")).resolves.toEqual({
+      kind: "raffle-not-before-closes",
+    });
+  });
+
+  it("reads the raffle moment of the console and its absence", async () => {
+    const reading = (raffleClosesAt: string | undefined) =>
+      adapter({
+        getAuctionConsole: async () =>
+          create(GetAuctionConsoleResponseSchema, {
+            outcome: {
+              case: "console",
+              value: {
+                auction: {
+                  id: auctionId,
+                  config: {
+                    onlinePhase: {
+                      opensAt: week.opensAt,
+                      closesAt: week.closesAt,
+                      closesLots: true,
+                      ...(raffleClosesAt === undefined
+                        ? {}
+                        : { raffleClosesAt }),
+                    },
+                  },
+                  status: { case: "scheduled", value: {} },
+                },
+                lots: [],
+              },
+            },
+          }),
+      }).getAuctionConsole(admin, auctionId);
+
+    await expect(reading("2026-10-22T15:00:00Z")).resolves.toMatchObject({
+      kind: "ok",
+      console: { week: { raffleClosesAt: "2026-10-22T15:00:00Z" } },
+    });
+    const without = await reading(undefined);
+    expect(without.kind === "ok" && without.console.week).not.toHaveProperty(
+      "raffleClosesAt",
+    );
   });
 
   it("reads the happy hours windows of the console and takes a window without a step for a defect", async () => {

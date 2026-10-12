@@ -233,6 +233,9 @@ export function createDispatcher(
         case "ask-auction-week":
         case "prepare-auction-week-start":
         case "schedule-auction-week":
+        case "ask-auction-raffle":
+        case "set-auction-raffle":
+        case "remove-auction-raffle":
         case "set-auction-final":
         case "start-auction-week":
         case "mark-auction-finalist":

@@ -323,6 +323,9 @@ export type AuctionWeek = {
   // Окна «Счастливых часов» (PER-504) в порядке конфигурации: номер окна —
   // его позиция, ею же Auction называет окно в отказе.
   windows: readonly StepWindow[];
+  // Момент закрытия регистрации в розыгрыше (PER-593, ADR-066 п. 5); нет —
+  // неделя без розыгрыша.
+  raffleClosesAt?: string;
 };
 
 // Окно сниженного шага (ADR-047, дополнение 2026-10-08): полуоткрытый
@@ -401,6 +404,9 @@ export type ConsoleNote =
   | "week-not-scheduled"
   | "week-frozen"
   | "week-needed"
+  // Момент розыгрыша (PER-593): задан либо убран.
+  | "raffle-saved"
+  | "raffle-removed"
   | "marked"
   | "unmarked"
   | "already-marked"
@@ -428,12 +434,24 @@ export type ConsoleNote =
 
 // Почему вопрос о сроках недели задан заново. `week-cuts-window` — окно
 // «Счастливых часов» не помещается в новые сроки; номер окна едет рядом.
+// `week-cuts-raffle` — заданный момент розыгрыша не помещается в новые сроки.
 export type WeekAskError =
   | "week-format"
   | "week-moment"
   | "week-order"
   | "week-ended"
-  | "week-cuts-window";
+  | "week-cuts-window"
+  | "week-cuts-raffle";
+
+// Почему вопрос о моменте розыгрыша задан заново (PER-593). Момент лежит
+// строго внутри недели (ADR-066, п. 5): бот проверяет это сам по прочитанным
+// срокам, а отказ Auction переводит в ту же причину.
+export type RaffleAskError =
+  | "raffle-format"
+  | "raffle-moment"
+  | "raffle-ended"
+  | "raffle-not-after-opens"
+  | "raffle-not-before-closes";
 
 // Почему вопрос об окне «Счастливых часов» задан заново (PER-504). Сроки окна
 // разбираются тем же правилом, что сроки недели; остальное решает Auction.
@@ -494,6 +512,15 @@ export type AuctionConsoleRequest =
       value: string;
       opId: string;
     })
+  // Розыгрыш (PER-593): вопрос о моменте закрытия регистрации, ответ строкой,
+  // как его написал человек, и снятие момента.
+  | (AuctionConsoleCall & { intent: "ask-auction-raffle" })
+  | (AuctionConsoleCall & {
+      intent: "set-auction-raffle";
+      value: string;
+      opId: string;
+    })
+  | (AuctionConsoleCall & { intent: "remove-auction-raffle"; opId: string })
   // Кнопка несёт целевое состояние финала, а не переворот.
   | (AuctionConsoleCall & {
       intent: "set-auction-final";
@@ -754,6 +781,14 @@ export type ExecuteResult =
       week?: AuctionWeek;
       error?: WeekAskError;
       window?: number;
+    }
+  // Вопрос о моменте розыгрыша (PER-593): первый либо тот же заново, с
+  // причиной. Сроки недели заданы: без них вопроса нет.
+  | {
+      kind: "auction-raffle-ask";
+      auctionId: string;
+      week: AuctionWeek;
+      error?: RaffleAskError;
     }
   // «Счастливые часы» (PER-504): список окон либо исход команды над ними.
   | {

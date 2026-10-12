@@ -298,13 +298,17 @@ export function createAuctionAdapter(
             opId: week.opId,
             // Неделя закрывает лоты общим дедлайном; финал — один блок либо
             // ни одного. `lot_defaults` не шлются: их подставляет Auction.
-            // Окна «Счастливых часов» едут всегда: конфигурацию Auction
-            // заменяет целиком.
+            // Окна «Счастливых часов» и момент розыгрыша едут всегда:
+            // конфигурацию Auction заменяет целиком. Неделя без розыгрыша —
+            // поле не выставлено.
             config: {
               onlinePhase: {
                 opensAt: week.opensAt,
                 closesAt: week.closesAt,
                 closesLots: true,
+                ...(week.raffleClosesAt === undefined
+                  ? {}
+                  : { raffleClosesAt: week.raffleClosesAt }),
               },
               finalBlocks: week.final ? 1 : 0,
               closingPolicy: {
@@ -939,8 +943,9 @@ function moneyOf(value: { minorUnits: bigint; currency: string }): Money {
   return { minorUnits, currency: value.currency };
 }
 
-// Конфигурацию собирает бот: конец позже начала и окна «Счастливых часов»
-// задаёт человек, а остальные отказы — дефект сборки, а не ответ человеку.
+// Конфигурацию собирает бот: конец позже начала, окна «Счастливых часов» и
+// момент розыгрыша задаёт человек, а остальные отказы — дефект сборки, а не
+// ответ человеку.
 // Окно без `closes_at` бот не соберёт: сроки недели он шлёт всегда.
 function configRefusal(reason: ConfigInvalid["reason"]): ScheduleAuctionResult {
   switch (reason.case) {
@@ -958,6 +963,10 @@ function configRefusal(reason: ConfigInvalid["reason"]): ScheduleAuctionResult {
       return { kind: "window-step-invalid", window: reason.value.windowIndex };
     case "stepWindowLotsEmpty":
       return { kind: "window-lots-empty", window: reason.value.windowIndex };
+    case "raffleClosesAtNotAfterOpensAt":
+      return { kind: "raffle-not-after-opens" };
+    case "raffleClosesAtNotBeforeClosesAt":
+      return { kind: "raffle-not-before-closes" };
     default:
       return defect(
         `schedule auction refused the configuration: ${reason.case ?? "no reason"}`,

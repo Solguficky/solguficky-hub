@@ -13,6 +13,8 @@ import {
   consoleMarkData,
   consoleNextLotData,
   consoleOpenData,
+  consoleRaffleData,
+  consoleRaffleRemoveData,
   consoleStartFinalData,
   consoleViewData,
   consoleWeekData,
@@ -1097,6 +1099,11 @@ describe("auction console callbacks", () => {
         },
       ],
       [consoleWeekData(auction), { kind: "console-week", auction }],
+      [consoleRaffleData(auction), { kind: "console-raffle", auction }],
+      [
+        consoleRaffleRemoveData(auction),
+        { kind: "console-raffle-remove", auction },
+      ],
       [
         consoleFinalData(auction, false),
         { kind: "console-final", auction, final: false },
@@ -1206,6 +1213,15 @@ describe("auction console callbacks", () => {
     expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
   });
 
+  it("carries the auction of the raffle question in its cancel button", () => {
+    const askedBy = 9007199254740991;
+    const step: QuestionStep = { kind: "console-raffle", auction };
+    const asked = `v1:q:ar:${auction}:${askedBy}`;
+    expect(questionData(step, askedBy)).toBe(asked);
+    expect(Buffer.byteLength(asked)).toBeLessThanOrEqual(64);
+    expect(parseCallback(asked)).toEqual({ kind: "question", step, askedBy });
+  });
+
   it("carries the auction and the lineup position of the final ask question in its cancel button", () => {
     const askedBy = 9007199254740991;
     const step: QuestionStep = { kind: "final-ask", auction, position: 99 };
@@ -1224,6 +1240,8 @@ describe("auction console callbacks", () => {
       "v1:ac:v:short",
       `v1:ac:v:${auction}:x`,
       `v1:ac:w:${auction}:1`,
+      `v1:ac:r:${auction}:1`,
+      `v1:ac:rx:${auction}:1`,
       `v1:ac:f:${auction}`,
       `v1:ac:f:${auction}:2`,
       `v1:ac:o:${auction}:1`,

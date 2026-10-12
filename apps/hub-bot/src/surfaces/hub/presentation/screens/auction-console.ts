@@ -16,6 +16,7 @@ import type {
   ConsoleSortMetric,
   FinalAskError,
   LotAmount,
+  RaffleAskError,
   StepWindow,
   WeekAskError,
   WindowAskError,
@@ -35,6 +36,8 @@ import {
   consoleMarkData,
   consoleNextLotData,
   consoleOpenData,
+  consoleRaffleData,
+  consoleRaffleRemoveData,
   consoleStartFinalData,
   consoleViewData,
   consoleWeekData,
@@ -90,8 +93,10 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-not-scheduled":
     "Сначала задай сроки недели. Без них неделю не открыть.",
   "week-frozen":
-    "Онлайн-неделя уже открыта. Сроки, финал и счастливые часы больше не меняются.",
+    "Онлайн-неделя уже открыта. Сроки, финал, счастливые часы и розыгрыш больше не меняются.",
   "week-needed": "Сначала задай сроки недели.",
+  "raffle-saved": "Момент розыгрыша сохранён.",
+  "raffle-removed": "Розыгрыш убран. Неделя пройдёт без него.",
   marked: "Лот отмечен для финала.",
   unmarked: "Отметка финала снята.",
   "already-marked": "Лот уже отмечен для финала.",
@@ -138,6 +143,14 @@ function windowsLines(week: AuctionWeek): string[] {
     : [`Счастливые часы: ${windowsLabel(week.windows.length)}.`];
 }
 
+// Розыгрыш (PER-593) виден строкой всегда: без момента у участников нет
+// кнопки «Розыгрыш», и администратор видит почему.
+function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
+  return week.raffleClosesAt === undefined
+    ? "Розыгрыш: нет."
+    : `Розыгрыш: регистрация до ${moment(week.raffleClosesAt, view)}.`;
+}
+
 function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
   if (week.opensAt === undefined || week.closesAt === undefined) {
     return "Сроки недели заданы не полностью.";
@@ -153,13 +166,20 @@ function statusLines(view: ConsoleScreenView): string[] {
     case "scheduled":
       return week === undefined
         ? ["Сроки недели не заданы."]
-        : [weekLine(week, view), finalLine(week), ...windowsLines(week)];
+        : [
+            weekLine(week, view),
+            finalLine(week),
+            ...windowsLines(week),
+            raffleLine(week, view),
+          ];
     case "prebidding":
       return [
         week?.closesAt === undefined
           ? "Идут онлайн-торги."
           : `Идут онлайн-торги до ${moment(week.closesAt, view)}.`,
-        ...(week === undefined ? [] : [finalLine(week), ...windowsLines(week)]),
+        ...(week === undefined
+          ? []
+          : [finalLine(week), ...windowsLines(week), raffleLine(week, view)]),
       ];
     case "settling":
       return ["Общий дедлайн прошёл: аукцион ждёт закрытия лотов."];
@@ -468,6 +488,13 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       consoleFinalData(auction, !week.final),
     );
     nextRow(keyboard).text("Счастливые часы", consoleWindowsData(auction));
+    nextRow(keyboard).text("Розыгрыш", consoleRaffleData(auction));
+    if (week.raffleClosesAt !== undefined) {
+      nextRow(keyboard).text(
+        removeLabel("Убрать розыгрыш"),
+        consoleRaffleRemoveData(auction),
+      );
+    }
     nextRow(keyboard).text("Открыть онлайн-неделю", consoleOpenData(auction));
   } else if (
     console.status === "prebidding" &&
@@ -740,6 +767,8 @@ export const weekAskErrorText: Record<WeekAskError, string> = {
   "week-ended": "Конец недели уже прошёл.",
   "week-cuts-window":
     "Окно счастливых часов не помещается в новые сроки. Удали его или задай сроки шире.",
+  "week-cuts-raffle":
+    "Момент розыгрыша не помещается в новые сроки. Сдвинь или убери его кнопкой «Розыгрыш» на пульте или задай сроки шире.",
 };
 
 /** Причина отказа ответу о сроках с номером окна, которое сроки отрезали. */
@@ -764,6 +793,43 @@ export function weekQuestionText(timeZone: string, week?: AuctionWeek): string {
       ? []
       : [`Сейчас: ${local(week.opensAt)} — ${local(week.closesAt)}`]),
     weekPrompt,
+  ].join("\n");
+}
+
+/** Причина отказа ответу о моменте розыгрыша: заголовок экрана исхода. */
+export const raffleAskErrorText: Record<RaffleAskError, string> = {
+  "raffle-format":
+    "Не получилось разобрать момент. Нужны дата и время: ДД.ММ.ГГГГ ЧЧ:ММ.",
+  "raffle-moment":
+    "Такого времени нет по времени сообщества: в этот час переводили часы.",
+  "raffle-ended": "Этот момент уже прошёл.",
+  "raffle-not-after-opens":
+    "Регистрация в розыгрыше должна закрыться позже начала недели.",
+  "raffle-not-before-closes":
+    "Регистрация в розыгрыше должна закрыться раньше конца недели.",
+};
+
+export const rafflePrompt =
+  "Когда закрыть регистрацию в розыгрыше? Дата и время по времени сообщества, между началом и концом недели. Итог — через пару минут после закрытия.\nНапример: 22.10.2026 18:00";
+
+/**
+ * Вопрос о моменте розыгрыша (дизайн-код, «Вопросы»): сроки недели и текущий
+ * момент в том же виде, в каком их вводят, затем образец.
+ */
+export function raffleQuestionText(
+  timeZone: string,
+  week: AuctionWeek,
+): string {
+  const local = (instant: string) =>
+    formatLocalMoment(communityLocalTime(instant, timeZone));
+  return [
+    ...(week.opensAt === undefined || week.closesAt === undefined
+      ? []
+      : [`Неделя: ${local(week.opensAt)} — ${local(week.closesAt)}`]),
+    ...(week.raffleClosesAt === undefined
+      ? []
+      : [`Сейчас: ${local(week.raffleClosesAt)}`]),
+    rafflePrompt,
   ].join("\n");
 }
 
