@@ -164,21 +164,25 @@ message OutbidPreference {
 }
 
 // A fixed list rather than a number of minutes: only these intervals exist.
-// The interval is counted per lot.
+// It governs outbids and the answers of the person's own proxy limit alike;
+// purchases are not affected. The interval is counted per person, across lots.
 enum OutbidFrequency {
   // No value: the field is unset or the value is unknown to the consumer.
   OUTBID_FREQUENCY_UNSPECIFIED = 0;
 
-  // Every outbid on its own.
+  // Every outbid and every proxy answer on its own.
   OUTBID_FREQUENCY_EVERY = 1;
 
-  // At most one message per lot in the interval, sent when it ends and only if
-  // the person is still outbid; it carries the price at that moment.
+  // At most one message in the interval: the first outbid or proxy answer on
+  // any lot opens a window, and when it ends one lot_activity_digest lists
+  // every lot touched in it, with the price at that moment. A sale of a lot in
+  // the window closes it early.
   OUTBID_FREQUENCY_AT_MOST_EVERY_5_MINUTES = 2;
   OUTBID_FREQUENCY_AT_MOST_EVERY_15_MINUTES = 3;
   OUTBID_FREQUENCY_AT_MOST_EVERY_60_MINUTES = 4;
 
-  // No outbid messages. Purchase, proxy and access messages are not affected.
+  // No outbid and no proxy answer messages. Purchase and access messages are
+  // not affected.
   OUTBID_FREQUENCY_OFF = 5;
 }
 

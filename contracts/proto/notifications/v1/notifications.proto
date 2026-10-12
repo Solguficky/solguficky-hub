@@ -73,9 +73,9 @@ message Notification {
 
     // Someone else's bid took the lead of a lot away from the recipient. Sent
     // only to the previous leader named by the auction fact: a subscription is
-    // not required. The recipient's outbid frequency may withhold it or fold
-    // several outbids into one sent later; then the cause is the latest bid on
-    // the lot or its sale, and the price is that event's.
+    // not required. Sent one by one only when the recipient's outbid frequency
+    // is "every outbid"; a frequency with an interval folds outbids into
+    // lot_activity_digest instead, and "off" withholds them.
     LotOutbid lot_outbid = 14;
 
     // The recipient bought a lot: it was sold to them.
@@ -94,13 +94,22 @@ message Notification {
 
     // The recipient's proxy limit answered another participant and raised the
     // price of a lot; the recipient leads. Sent only to that bidder: a
-    // subscription is not required.
+    // subscription is not required. The outbid frequency governs it as it
+    // governs lot_outbid: one by one under "every outbid", a line of
+    // lot_activity_digest under an interval, nothing under "off".
     LotProxyRaised lot_proxy_raised = 19;
 
     // The recipient's circle changed between guest and member. This fact is
     // delivered by the bot of the previous circle; it carries both circles so
     // that the channel can explain the transition without a link to another bot.
     CircleChanged circle_changed = 20;
+
+    // The outbids and proxy answers of one person collected over the interval
+    // of their outbid frequency. One window per person, opened by the first
+    // such event on any lot and closed when the interval ends or, earlier, when
+    // a lot in it is sold. Sent only to that person: a subscription is not
+    // required.
+    LotActivityDigest lot_activity_digest = 22;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -135,6 +144,10 @@ message Cause {
     // event_id of the consumed Identity event. Stable across republication,
     // therefore a transport repeat is recognized.
     string identity_event_id = 5;
+
+    // Identifier of the Notifications outbid window that closed into a
+    // lot_activity_digest. A window closes once, so it produces one digest.
+    string outbid_digest_id = 6;
   }
 }
 
@@ -277,6 +290,45 @@ message LotPurchased {
 
   // The price the lot was sold at.
   auction.v1.Money price = 2;
+}
+
+// What happened to the recipient's bids over one outbid window. Every lot where
+// the recipient was outbid in the window is listed, even if they took the lead
+// back before it closed; every lot where their proxy limit answered another
+// participant is listed too. A window without lines produces no notification.
+message LotActivityDigest {
+  // At least one line. One line per lot and kind, in the order the lines
+  // first appeared in the window.
+  repeated LotActivityLine lines = 1;
+}
+
+// One lot in a LotActivityDigest. The price and the lead are the lot's at the
+// moment the window closed, not at the moment of the event that added the
+// line: bids of third parties after it are reflected. For a lot sold in the
+// window they are the sale's.
+message LotActivityLine {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  LotActivityKind kind = 2;
+
+  // The price of the lot when the window closed.
+  auction.v1.Money current_price = 3;
+
+  // Whether the recipient led the lot when the window closed. An outbid line
+  // with true means the lead came back.
+  bool recipient_leads = 4;
+}
+
+enum LotActivityKind {
+  // No value: the field is unset or the value is unknown to the consumer.
+  LOT_ACTIVITY_KIND_UNSPECIFIED = 0;
+
+  // Someone else's bid took the lead of the lot away from the recipient.
+  LOT_ACTIVITY_KIND_OUTBID = 1;
+
+  // The recipient's proxy limit answered another participant on the lot.
+  LOT_ACTIVITY_KIND_PROXY_RAISED = 2;
 }
 
 // A new application was opened in a queue the recipient moderates. The

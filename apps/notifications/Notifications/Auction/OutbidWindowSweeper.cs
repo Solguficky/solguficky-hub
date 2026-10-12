@@ -21,13 +21,13 @@ public sealed class OutbidWindowOptions
 }
 
 /// <summary>
-/// Закрывает наступившие окна частоты перебитий (PER-514): при старте и
-/// периодически.
+/// Закрывает наступившие окна сводки перебитий (PER-514, PER-596): при старте
+/// и периодически.
 /// </summary>
 /// <remarks>
 /// Грина здесь нет, и это не расхождение с напоминаниями: у окна нет хода,
 /// которому нужен единственный владелец в рантайме. Единственность сообщения
-/// держит база — закрытие удаляет строку, и второй проход, дошедший до неё,
+/// держит база — закрытие удаляет строку окна, и второй проход, дошедший до неё,
 /// удаляет ноль строк, — а пропущенное за простой окно подбирает первый проход
 /// после подъёма, потому что момент живёт строкой.
 /// </remarks>
@@ -68,10 +68,10 @@ public sealed class OutbidWindowSweeper(
         var requestId = Guid.NewGuid().ToString("N");
         using var scope = logger.BeginScope(new Dictionary<string, object> { ["request_id"] = requestId });
         var now = clock.GetUtcNow();
-        IReadOnlyList<Infrastructure.OutbidWindowKey> due;
+        IReadOnlyList<Guid> due;
         try
         {
-            due = await store.DueWindows(now, options.Value.SweepBatchSize, stoppingToken);
+            due = await store.DueDigests(now, options.Value.SweepBatchSize, stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -88,7 +88,7 @@ public sealed class OutbidWindowSweeper(
         var failed = 0;
         var sent = 0;
         string? errorCategory = null;
-        foreach (var key in due)
+        foreach (var recipientId in due)
         {
             if (stoppingToken.IsCancellationRequested)
             {
@@ -99,7 +99,7 @@ public sealed class OutbidWindowSweeper(
             // ядовитое окно держало бы все остальные наступившие.
             try
             {
-                sent += await store.CloseWindow(key, now, stoppingToken);
+                sent += await store.CloseDigest(recipientId, now, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -109,13 +109,13 @@ public sealed class OutbidWindowSweeper(
             {
                 failed++;
                 errorCategory = "unexpected";
-                logger.LogError(ex, "Outbid window {lot_id} {identity_id} failed to close", key.LotId, key.RecipientId);
+                logger.LogError(ex, "Outbid digest {identity_id} failed to close", recipientId);
             }
         }
 
         if (sent > 0)
         {
-            facts.Record(AuctionFacts.OutbidType, new FactCount(sent, 0));
+            facts.Record(AuctionFacts.DigestType, new FactCount(sent, 0));
         }
         // Пустой проход строки не пишет: раз в период он только шумел бы.
         if (due.Count > 0 || failed > 0)

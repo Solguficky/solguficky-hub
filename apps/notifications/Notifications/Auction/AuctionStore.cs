@@ -18,10 +18,10 @@ public sealed record AuctionApplication(AuctionOutcome Outcome, IReadOnlyDiction
 
 /// <summary>Ключ события, реплика лота и адресный факт — одна транзакция, без чтения чужой реплики.</summary>
 /// <remarks>
-/// «Перебили» фильтрует настройка получателя (PER-514), и читается она той же
-/// транзакцией, что и ключ события: повтор, пришедший после смены настройки,
-/// уже отсечён ключом и решения не меняет. Остальные факты аукциона настройка
-/// не трогает.
+/// «Перебили» и ответ своей автоставки фильтрует настройка получателя
+/// (PER-514, PER-596), и читается она той же транзакцией, что и ключ события:
+/// повтор, пришедший после смены настройки, уже отсечён ключом и решения не
+/// меняет. Покупку настройка не трогает.
 /// </remarks>
 public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> options)
 {
@@ -50,32 +50,52 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             : bid.OvertakenByProxy ? AuctionOutcome.Overtaken
             : AuctionOutcome.LeaderUnchanged;
 
-        // Ставка обновляет все открытые окна лота: отметку «перебит» по её
-        // лидеру, повод и цену. Ручная ставка, перебитая той же командой,
-        // лидерства не дала, и её снимок окна не трогает — их догонит
-        // следующее событие той же команды.
+        // Решения по обоим адресатам — до записи: окна берутся раньше, чем
+        // ставка тронет строки лота, потому что порядок блокировок — окна по
+        // возрастанию идентификатора, затем строки (OutbidStore).
+        var outbid = bid.OutbidRecipient is { } outbidRecipient
+            ? new Addressed(outbidRecipient, LotActivityKind.Outbid,
+                OutbidFrequencies.Decide(await OutbidStore.ReadPreference(work, outbidRecipient, cancellationToken)))
+            : null;
+        var proxy = bid.ProxyRaisedRecipient is { } proxyRecipient
+            ? new Addressed(proxyRecipient, LotActivityKind.ProxyRaised,
+                OutbidFrequencies.Decide(await OutbidStore.ReadPreference(work, proxyRecipient, cancellationToken)))
+            : null;
+        var collected = new[] { outbid, proxy }
+            .OfType<Addressed>()
+            .Where(addressed => addressed.Decision is OutbidDecision.Collect)
+            .ToArray();
+        await OutbidStore.LockForBid(work, bid.LotId,
+            collected.ToDictionary(addressed => addressed.RecipientId,
+                addressed => now + ((OutbidDecision.Collect)addressed.Decision).Window),
+            now, cancellationToken);
+
+        // Ставка обновляет все строки лота: лидера, повод и цену. Ручная ставка, перебитая той же командой, лидерства не дала, и
+        // строк не трогает — их догонит следующее событие той же команды.
         if (!bid.OvertakenByProxy)
         {
             await OutbidStore.FollowLot(work, bid.LotId, bid.Leader, bid.EventId, bid.Version, bid.Price,
                 cancellationToken);
         }
-
-        if (bid.OutbidRecipient is { } recipient)
+        foreach (var addressed in collected)
         {
-            var preference = await OutbidStore.ReadPreference(work, recipient, cancellationToken);
-            switch (OutbidFrequencies.Decide(preference))
+            await OutbidStore.AddLine(work, addressed.RecipientId, bid.LotId, addressed.Kind,
+                bid.Leader, bid.EventId, bid.Version, bid.Price, now, cancellationToken);
+        }
+
+        if (outbid is not null)
+        {
+            switch (outbid.Decision)
             {
                 case OutbidDecision.Send:
                     var notification = AuctionFacts.Outbid(Guid.CreateVersion7(now), bid, now, notAfter);
                     created[AuctionFacts.OutbidType] = await NotificationStore.AddAddressed(work, notification,
                         AuctionFacts.OutbidType, AuctionFacts.CauseKind, bid.EventId.ToString(), now, notAfter,
                         cancellationToken,
-                        await NotificationStore.DeliverySurface(work, recipient, cancellationToken));
+                        await NotificationStore.DeliverySurface(work, outbid.RecipientId, cancellationToken));
                     outcome = AuctionOutcome.Outbid;
                     break;
-                case OutbidDecision.Collect collect:
-                    await OutbidStore.Open(work, bid.LotId, recipient, bid.EventId, bid.Version, bid.Price, now,
-                        now + collect.Window, cancellationToken);
+                case OutbidDecision.Collect:
                     outcome = AuctionOutcome.Collected;
                     break;
                 case OutbidDecision.Suppress:
@@ -85,13 +105,13 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         }
         // Уникальность факта — (тип, повод, получатель), поэтому лидер и
         // перебитый получают по факту от одного события, а повтор — ни одного.
-        if (bid.ProxyRaisedRecipient is not null)
+        if (proxy is { Decision: OutbidDecision.Send })
         {
             var notification = AuctionFacts.ProxyRaised(Guid.CreateVersion7(now), bid, now, notAfter);
             created[AuctionFacts.ProxyRaisedType] = await NotificationStore.AddAddressed(work, notification,
                 AuctionFacts.ProxyRaisedType, AuctionFacts.CauseKind, bid.EventId.ToString(), now, notAfter,
                 cancellationToken,
-                await NotificationStore.DeliverySurface(work, bid.ProxyRaisedRecipient.Value, cancellationToken));
+                await NotificationStore.DeliverySurface(work, proxy.RecipientId, cancellationToken));
         }
         await work.Commit(cancellationToken);
         return new AuctionApplication(outcome, created);
@@ -120,20 +140,18 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
                 await NotificationStore.DeliverySurface(work, sale.Winner, cancellationToken)),
         };
 
-        // Торги кончились, и окна лота закрываются сейчас, а не по своему
-        // моменту: перебитый узнаёт итоговую цену, а не «перебили» после
-        // продажи. Повод и цена — продажи.
-        var outbid = 0;
-        foreach (var window in await OutbidStore.TakeLot(work, sale.LotId, cancellationToken))
+        // Торги кончились, и окна со строками лота закрываются сейчас, а не по
+        // своему моменту: перебитый узнаёт итоговую цену, а не сводку после
+        // конца торгов. Строка проданного лота несёт цену продажи.
+        var digests = 0;
+        foreach (var digest in await OutbidStore.TakeLot(work, sale.LotId, sale.Winner, cancellationToken))
         {
-            if (window.RecipientId != sale.Winner)
-            {
-                outbid += await SendIfOutbid(work, window, sale.EventId, sale.Price, now, notAfter, cancellationToken);
-            }
+            digests += await SendDigest(work, AuctionFacts.Sold(digest, sale.LotId, sale.Price), now, notAfter,
+                cancellationToken);
         }
-        if (outbid > 0)
+        if (digests > 0)
         {
-            created[AuctionFacts.OutbidType] = outbid;
+            created[AuctionFacts.DigestType] = digests;
         }
 
         await work.Commit(cancellationToken);
@@ -155,8 +173,8 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         return new AuctionApplication(AuctionOutcome.LotReplicated, new Dictionary<string, int>());
     }
 
-    /// <summary>Наступившие окна частоты для прохода.</summary>
-    public async Task<IReadOnlyList<OutbidWindowKey>> DueWindows(DateTimeOffset now, int limit,
+    /// <summary>Люди, чьи окна сводки наступили, для прохода.</summary>
+    public async Task<IReadOnlyList<Guid>> DueDigests(DateTimeOffset now, int limit,
         CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
@@ -166,35 +184,35 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
     }
 
     /// <summary>
-    /// Закрывает наступившее окно своей транзакцией: одно сообщение, если
-    /// участник всё ещё перебит. Возвращает число созданных фактов.
+    /// Закрывает наступившее окно своей транзакцией: одна сводка со всеми его
+    /// строками. Возвращает число созданных фактов.
     /// </summary>
-    public async Task<int> CloseWindow(OutbidWindowKey key, DateTimeOffset now, CancellationToken cancellationToken)
+    public async Task<int> CloseDigest(Guid recipientId, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
-        var window = await OutbidStore.TakeDue(work, key, now, cancellationToken);
-        var created = window is null ? 0
-            : await SendIfOutbid(work, window, window.LastEventId, window.Price, now, now + options.Value.StaleAfter,
-                cancellationToken);
+        var digest = await OutbidStore.TakeDue(work, recipientId, now, cancellationToken);
+        var created = digest is null ? 0
+            : await SendDigest(work, digest, now, now + options.Value.StaleAfter, cancellationToken);
         await work.Commit(cancellationToken);
         return created;
     }
 
     // Настройка читается и на закрытии: выключивший перебития за время окна
-    // сообщения уже не ждёт.
-    private static async Task<int> SendIfOutbid(UnitOfWork work, ClosedOutbidWindow window, Guid causeEventId,
-        global::Auction.V1.Money price, DateTimeOffset now, DateTimeOffset notAfter, CancellationToken cancellationToken)
+    // сводки уже не ждёт.
+    private static async Task<int> SendDigest(UnitOfWork work, ClosedDigest digest, DateTimeOffset now,
+        DateTimeOffset notAfter, CancellationToken cancellationToken)
     {
-        if (!window.Outbid
-            || await OutbidStore.ReadPreference(work, window.RecipientId, cancellationToken) == OutbidFrequency.Off)
+        if (digest.Lines.Count == 0
+            || await OutbidStore.ReadPreference(work, digest.RecipientId, cancellationToken) == OutbidFrequency.Off)
         {
             return 0;
         }
 
-        var notification = AuctionFacts.Outbid(Guid.CreateVersion7(now), window.RecipientId, window.LotId,
-            causeEventId, price, now, notAfter);
-        return await NotificationStore.AddAddressed(work, notification, AuctionFacts.OutbidType,
-            AuctionFacts.CauseKind, causeEventId.ToString(), now, notAfter, cancellationToken,
-            await NotificationStore.DeliverySurface(work, window.RecipientId, cancellationToken));
+        var notification = AuctionFacts.Digest(Guid.CreateVersion7(now), digest, now, notAfter);
+        return await NotificationStore.AddAddressed(work, notification, AuctionFacts.DigestType,
+            AuctionFacts.DigestCauseKind, digest.DigestId.ToString(), now, notAfter, cancellationToken,
+            await NotificationStore.DeliverySurface(work, digest.RecipientId, cancellationToken));
     }
+
+    private sealed record Addressed(Guid RecipientId, LotActivityKind Kind, OutbidDecision Decision);
 }

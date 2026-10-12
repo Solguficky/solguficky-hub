@@ -1,4 +1,6 @@
 using Notifications.Auction;
+using Notifications.Infrastructure;
+using Notifications.V1;
 using Notifications.TestKit;
 using Shouldly;
 using Xunit;
@@ -25,19 +27,49 @@ public class AuctionFactsTests
     }
 
     [Fact]
-    public void When_WindowOutbidFactBuilt_Expect_GivenRecipientCauseAndPrice()
+    public void When_DigestFactBuilt_Expect_WindowCauseAndLinesInOrder()
     {
         var recipient = Guid.CreateVersion7();
-        var lot = Guid.CreateVersion7();
-        var cause = Guid.CreateVersion7();
+        var digestId = Guid.CreateVersion7();
+        var first = Guid.CreateVersion7();
+        var second = Guid.CreateVersion7();
         var price = new global::Auction.V1.Money { MinorUnits = 50000, Currency = "RUB" };
+        var digest = new ClosedDigest(recipient, digestId,
+        [
+            new DigestLine(first, LotActivityKind.Outbid, true, price),
+            new DigestLine(second, LotActivityKind.ProxyRaised, false, price),
+        ]);
         var now = EventFactory.Committed;
-        var fact = AuctionFacts.Outbid(Guid.CreateVersion7(), recipient, lot, cause, price, now, now.AddHours(24));
+        var fact = AuctionFacts.Digest(Guid.CreateVersion7(), digest, now, now.AddHours(24));
         fact.RecipientId.ShouldBe(recipient.ToString());
-        fact.Cause.AuctionLotEventId.ShouldBe(cause.ToString());
-        fact.LotOutbid.LotId.ShouldBe(lot.ToString());
-        fact.LotOutbid.CurrentPrice.ShouldBe(price);
-        fact.LotOutbid.CurrentPrice.ShouldNotBeSameAs(price);
+        fact.Cause.OutbidDigestId.ShouldBe(digestId.ToString());
+        fact.LotActivityDigest.Lines.Select(line => (line.LotId, line.Kind, line.RecipientLeads)).ShouldBe(
+        [
+            (first.ToString(), LotActivityKind.Outbid, true),
+            (second.ToString(), LotActivityKind.ProxyRaised, false),
+        ]);
+        fact.LotActivityDigest.Lines[0].CurrentPrice.ShouldBe(price);
+        fact.LotActivityDigest.Lines[0].CurrentPrice.ShouldNotBeSameAs(price);
+    }
+
+    [Fact]
+    public void When_DigestClosedBySale_Expect_SoldLotLinesCarrySalePriceAndNoLead()
+    {
+        var sold = Guid.CreateVersion7();
+        var other = Guid.CreateVersion7();
+        var bid = new global::Auction.V1.Money { MinorUnits = 40000, Currency = "RUB" };
+        var sale = new global::Auction.V1.Money { MinorUnits = 45000, Currency = "RUB" };
+        var digest = new ClosedDigest(Guid.CreateVersion7(), Guid.CreateVersion7(),
+        [
+            new DigestLine(sold, LotActivityKind.Outbid, true, bid),
+            new DigestLine(other, LotActivityKind.Outbid, true, bid),
+        ]);
+        var closed = AuctionFacts.Sold(digest, sold, sale);
+        closed.Lines.ShouldBe(
+        [
+            new DigestLine(sold, LotActivityKind.Outbid, false, sale),
+            new DigestLine(other, LotActivityKind.Outbid, true, bid),
+        ]);
     }
 
     [Fact]

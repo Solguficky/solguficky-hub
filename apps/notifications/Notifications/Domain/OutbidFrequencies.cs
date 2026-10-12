@@ -2,16 +2,16 @@ using Notifications.V1;
 
 namespace Notifications.Domain;
 
-/// <summary>Что делать с перебитием по настройке получателя.</summary>
+/// <summary>Что делать с перебитием или ответом своей автоставки по настройке получателя.</summary>
 public abstract record OutbidDecision
 {
     /// <summary>Сообщить сразу, как до настройки.</summary>
     public sealed record Send : OutbidDecision;
 
-    /// <summary>Не сообщать: участник перебития слышать не хочет.</summary>
+    /// <summary>Не сообщать: участник о перебитиях и автоставке слышать не хочет.</summary>
     public sealed record Suppress : OutbidDecision;
 
-    /// <summary>Свернуть в окно этой длины по лоту и участнику.</summary>
+    /// <summary>Свернуть в сводку окна этой длины, одного на участника по всем лотам.</summary>
     public sealed record Collect(TimeSpan Window) : OutbidDecision;
 }
 
