@@ -1,0 +1,79 @@
+{
+  "meetup": {
+    "title": "Тестовый аукцион",
+    "description": "Сходка для прогона аукциона на stage: лоты и ставки ненастоящие.",
+    "venue": "Онлайн",
+    "startsAt": "31.10.2026 19:00"
+  },
+  "lots": [
+    {
+      "title": "Янтарная кружка",
+      "description": "Кружка с росписью, 350 мл.",
+      "image": "lot-amber.png",
+      "startingPrice": 300,
+      "step": 50
+    },
+    {
+      "title": "Бирюзовый шарф",
+      "description": "Вязаный шарф ручной работы.",
+      "image": "lot-teal.png",
+      "startingPrice": 500,
+      "step": 100
+    },
+    {
+      "title": "Сливовый блокнот",
+      "description": "Блокнот A5 в твёрдой обложке.",
+      "image": "lot-plum.png",
+      "startingPrice": 200,
+      "step": 50
+    },
+    {
+      "title": "Моховая открытка",
+      "description": "Набор из пяти открыток.",
+      "image": "lot-moss.png",
+      "startingPrice": 100,
+      "step": 20
+    },
+    {
+      "title": "Стикерпак сообщества",
+      "description": "Двадцать виниловых наклеек.",
+      "image": "lot-amber.png",
+      "startingPrice": 150,
+      "step": 50
+    },
+    {
+      "title": "Значок «Солегуфик»",
+      "description": "Металлический значок на булавке.",
+      "image": "lot-teal.png",
+      "startingPrice": 250,
+      "step": 50
+    },
+    {
+      "title": "Постер со сходки",
+      "description": "Печать A3 с автографами.",
+      "image": "lot-plum.png",
+      "startingPrice": 800,
+      "step": 100
+    },
+    {
+      "title": "Чайный сбор",
+      "description": "Травяной сбор, 100 г.",
+      "image": "lot-moss.png",
+      "startingPrice": 120,
+      "step": 20
+    },
+    {
+      "title": "Настольная игра",
+      "description": "Карточная игра на компанию до шести человек.",
+      "image": "lot-amber.png",
+      "startingPrice": 1200,
+      "step": 200
+    },
+    {
+      "title": "Лот без фото",
+      "description": "Проверка карточки без изображения.",
+      "startingPrice": 100,
+      "step": 50
+    }
+  ]
+}

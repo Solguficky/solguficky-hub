@@ -57,20 +57,22 @@ assert_selects "identity selects identity" \
     "$always identity-build identity-test identity-test-log-check identity-lint" apps/identity/cmd/identity/main.go
 assert_selects "identity test tooling selects identity" \
     "$always identity-build identity-test identity-test-log-check identity-lint" tools/identity/check-test-log.py
-assert_selects "hub bot selects its own recipes and the console that reads its kit" \
-    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" apps/hub-bot/src/main.ts
+assert_selects "hub bot selects its own recipes and the units that read its code" \
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test" apps/hub-bot/src/main.ts
 assert_selects "published page selects the site api" \
     "$always community-site-api-typecheck community-site-api-lint community-site-api-test" docs/published/index.html
 assert_selects "aspire.config.json selects apphost" \
     "$always apphost-config-check apphost-build apphost-test apphost-chart-test" aspire.config.json
-assert_selects "auction surface selects the bot package and the console" \
-    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" apps/hub-bot/src/surfaces/auction/surface.ts
-assert_selects "screen lint selects the bot package and the console" \
-    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" apps/hub-bot/testkit/lint/inspect.ts
-assert_selects "delivery mechanics select the bot package and the console" \
-    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" apps/hub-bot/src/core/delivery/deliver.ts
+assert_selects "auction surface selects the bot package and the units that read it" \
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test" apps/hub-bot/src/surfaces/auction/surface.ts
+assert_selects "screen lint selects the bot package and the units that read it" \
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test" apps/hub-bot/testkit/lint/inspect.ts
+assert_selects "delivery mechanics select the bot package and the units that read it" \
+    "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test" apps/hub-bot/src/core/delivery/deliver.ts
 assert_selects "console selects itself and the hub whose lint covers it" \
     "$always hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build bot-console-typecheck bot-console-lint bot-console-test" tests/contour/bot-wire/console/commands.ts
+assert_selects "auction seed selects only itself" \
+    "$always auction-seed-typecheck auction-seed-lint auction-seed-test" tools/auction-seed/seed.ts
 assert_selects "prefix match stops at the directory" "$always" apps/identity-old/readme.md
 assert_selects "shared prefix match stops at the directory" "$always" shared/dotnet-old/readme.md
 

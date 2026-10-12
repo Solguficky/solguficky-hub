@@ -27,6 +27,7 @@ jobs:
       apphost: ${{ steps.filter.outputs.apphost }}
       community-site-api: ${{ steps.filter.outputs.community-site-api }}
       bot-console: ${{ steps.filter.outputs.bot-console }}
+      auction-seed: ${{ steps.filter.outputs.auction-seed }}
       auction: ${{ steps.filter.outputs.auction }}
       contour: ${{ steps.filter.outputs.contour }}
       nats-tester: ${{ steps.filter.outputs.nats-tester }}
@@ -93,6 +94,14 @@ jobs:
             # дерева их пакета: правка test kit любой поверхности проверяет и пульт.
             bot-console:
               - 'tests/contour/bot-wire/console/**'
+              - 'apps/hub-bot/**'
+              - 'contracts/proto/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            # Наполнение аукциона — своя единица, но клиенты бота хаба берёт из
+            # дерева пакета ботов: правка пакета проверяет и наполнение.
+            auction-seed:
+              - 'tools/auction-seed/**'
               - 'apps/hub-bot/**'
               - 'contracts/proto/**'
               - 'justfile'
@@ -505,6 +514,46 @@ jobs:
         working-directory: tests/contour/bot-wire/console
       - run: npm test
         working-directory: tests/contour/bot-wire/console
+
+  # Наполнение аукциона: своя установка, typecheck по клиентам бота хаба и L0
+  # каталога, переменных и порядка вызовов. Само наполнение — не гейт.
+  auction-seed:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.auction-seed == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/hub-bot/package-lock.json
+            tools/auction-seed/package-lock.json
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      # Typecheck наполнения читает клиенты бота хаба, а те — сгенерированный код.
+      - run: npm ci
+        working-directory: apps/hub-bot
+      - run: buf generate --template apps/hub-bot/buf.gen.yaml
+      - run: npm ci
+        working-directory: tools/auction-seed
+      - run: npm run typecheck
+        working-directory: tools/auction-seed
+      - run: npm run lint
+        working-directory: tools/auction-seed
+      - run: npm test
+        working-directory: tools/auction-seed
 
   auction:
     needs: changes
