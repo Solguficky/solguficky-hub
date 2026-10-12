@@ -68,16 +68,20 @@ public static class AuctionFixtures
     public static async Task<int> CloseDueWindows(AuctionStore store, DateTimeOffset now)
     {
         var created = 0;
-        foreach (var key in await store.DueWindows(now, 256, Cancellation))
+        foreach (var recipientId in await store.DueDigests(now, 256, Cancellation))
         {
-            created += await store.CloseWindow(key, now, Cancellation);
+            created += await store.CloseDigest(recipientId, now, Cancellation);
         }
         return created;
     }
 
     /// <summary>Сдвигает момент закрытия всех окон в прошлое: время двигается данными.</summary>
     public static Task ExpireWindows(IsolatedDatabase db) =>
-        Execute(db, "UPDATE outbid_window SET due_at = now() - interval '1 second';");
+        Execute(db, "UPDATE outbid_digest SET due_at = now() - interval '1 second';");
+
+    /// <summary>Сводки в порядке записи; другие типы пропускаются.</summary>
+    public static async Task<IReadOnlyList<Notification>> StoredDigests(IsolatedDatabase db) =>
+        (await StoredFacts(db)).Where(fact => fact.TypeCase == Notification.TypeOneofCase.LotActivityDigest).ToArray();
 
     public static async Task<IReadOnlyList<Notification>> StoredFacts(IsolatedDatabase db)
     {

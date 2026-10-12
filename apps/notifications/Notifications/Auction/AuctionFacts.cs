@@ -1,3 +1,4 @@
+using Notifications.Infrastructure;
 using Notifications.V1;
 
 namespace Notifications.Auction;
@@ -10,24 +11,56 @@ public static class AuctionFacts
     public const string ProxyRaisedType = "lot_proxy_raised";
     public const string CauseKind = "auction_lot_event";
 
-    public static Notification Outbid(Guid notificationId, AuctionBid bid, DateTimeOffset now, DateTimeOffset notAfter) =>
-        Outbid(notificationId, bid.OutbidRecipient ?? throw new ArgumentException("bid has no outbid recipient", nameof(bid)),
-            bid.LotId, bid.EventId, bid.Price, now, notAfter);
+    public const string DigestType = "lot_activity_digest";
+    public const string DigestCauseKind = "outbid_digest";
 
-    /// <summary>
-    /// Перебитие, свёрнутое окном частоты (PER-514): повод — событие, которым
-    /// окно закрылось по существу, цена — цена этого события.
-    /// </summary>
-    public static Notification Outbid(Guid notificationId, Guid recipientId, Guid lotId, Guid causeEventId,
-        global::Auction.V1.Money price, DateTimeOffset now, DateTimeOffset notAfter) => new()
+    public static Notification Outbid(Guid notificationId, AuctionBid bid, DateTimeOffset now, DateTimeOffset notAfter) => new()
     {
         NotificationId = notificationId.ToString(),
-        RecipientId = recipientId.ToString(),
+        RecipientId = (bid.OutbidRecipient ?? throw new ArgumentException("bid has no outbid recipient", nameof(bid))).ToString(),
         CreatedAt = now.ToUniversalTime().ToString("O"),
         NotAfter = notAfter.ToUniversalTime().ToString("O"),
-        Cause = new Cause { AuctionLotEventId = causeEventId.ToString() },
-        LotOutbid = new LotOutbid { LotId = lotId.ToString(), CurrentPrice = price.Clone() },
+        Cause = new Cause { AuctionLotEventId = bid.EventId.ToString() },
+        LotOutbid = new LotOutbid { LotId = bid.LotId.ToString(), CurrentPrice = bid.Price.Clone() },
     };
+
+    /// <summary>
+    /// Сводка закрытого окна (PER-596): повод — само окно, строки — в порядке
+    /// появления, с ценой и лидерством лота на закрытии.
+    /// </summary>
+    public static Notification Digest(Guid notificationId, ClosedDigest digest, DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var body = new LotActivityDigest();
+        body.Lines.AddRange(digest.Lines.Select(line => new LotActivityLine
+        {
+            LotId = line.LotId.ToString(),
+            Kind = line.Kind,
+            CurrentPrice = line.Price.Clone(),
+            RecipientLeads = line.RecipientLeads,
+        }));
+        return new Notification
+        {
+            NotificationId = notificationId.ToString(),
+            RecipientId = digest.RecipientId.ToString(),
+            CreatedAt = now.ToUniversalTime().ToString("O"),
+            NotAfter = notAfter.ToUniversalTime().ToString("O"),
+            Cause = new Cause { OutbidDigestId = digest.DigestId.ToString() },
+            LotActivityDigest = body,
+        };
+    }
+
+    /// <summary>
+    /// Окно, закрытое продажей лота: строки проданного лота несут цену продажи,
+    /// и человек его не ведёт — окно победителя продажа не закрывает.
+    /// </summary>
+    public static ClosedDigest Sold(ClosedDigest digest, Guid lotId, global::Auction.V1.Money price) =>
+        digest with
+        {
+            Lines = digest.Lines
+                .Select(line => line.LotId == lotId ? line with { RecipientLeads = false, Price = price } : line)
+                .ToArray(),
+        };
 
     public static Notification ProxyRaised(Guid notificationId, AuctionBid bid, DateTimeOffset now, DateTimeOffset notAfter) => new()
     {
