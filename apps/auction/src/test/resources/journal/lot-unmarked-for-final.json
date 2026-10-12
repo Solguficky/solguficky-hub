@@ -18,6 +18,7 @@
     "lotSold": null,
     "lotUnsold": null,
     "deadlineExtended": null,
-    "lotHeldForFinal": null
+    "lotHeldForFinal": null,
+    "askAdvanced": null
   }
 }

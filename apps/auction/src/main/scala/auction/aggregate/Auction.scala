@@ -1,6 +1,8 @@
 package auction.aggregate
 
 import auction.catalog.LotId
+import auction.lot.AdvanceAsk
+import auction.lot.AdvanceAskRejected
 import auction.lot.AntiSnipe
 import auction.lot.AuctionId
 import auction.lot.CurrencyCode
@@ -94,6 +96,12 @@ final case class ScheduleAuctionLot(lot: LotId, startingPrice: Money, stepPolicy
 final case class SelectForFinal(lot: LotId, opId: OpId)
 
 final case class DeselectForFinal(lot: LotId, opId: OpId)
+
+/**
+ * Ask ведущего лоту реестра (RFC-011, П-08). Аукцион — прокси к команде лота: он проверяет только, что лот в его
+ * реестре, и отдаёт лоту `AdvanceAsk` с тем же `op_id`; фазу и цену судит лот, и событие пишет только он.
+ */
+final case class AdvanceLotAsk(lot: LotId, newAsk: Money, opId: OpId)
 
 /**
  * Общий дедлайн онлайн-торгов (RFC-011, `EndPrebidding`). Отдаёт её не человек, а таймер entity на `closesAt`, поэтому
@@ -251,6 +259,13 @@ enum ScheduleAuctionLotRejected {
   case LotsFrozen
   case LotNotInAuction
   case ByLot(rejected: ScheduleLotRejected)
+}
+
+/** Отказы ask ведущего, идущего через аукцион: аукциона нет или лота нет в реестре — это решает аукцион, — либо лот. */
+enum AdvanceLotAskRejected {
+  case AuctionNotFound
+  case LotNotInAuction
+  case ByLot(rejected: AdvanceAskRejected)
 }
 
 /**
@@ -492,6 +507,17 @@ object Auction {
   /** Снятие отметки — по тем же правилам аукциона, что и отметка; остальное решает лот. */
   def decide(auction: Auction, command: DeselectForFinal): Either[FinalChoiceRejected[Nothing], UnmarkForFinal] =
     choice(auction, command.lot)(UnmarkForFinal(command.opId))
+
+  /**
+   * Ask ведущего лоту реестра. Окна `seen` нет, как у `ScheduleAuctionLot`: повтор `op_id` узнаёт лот. Фазу аукциона
+   * ask не проверяет: объявить цену можно любому лоту в торгах (П-08), а лот вне торгов отвечает сам.
+   */
+  def decide(auction: Auction, command: AdvanceLotAsk): Either[AdvanceLotAskRejected, AdvanceAsk] =
+    auction.state match {
+      case AuctionState.Initial => Left(AdvanceLotAskRejected.AuctionNotFound)
+      case _ if !auction.lots.contains(command.lot) => Left(AdvanceLotAskRejected.LotNotInAuction)
+      case _ => Right(AdvanceAsk(command.newAsk, command.opId))
+    }
 
   private def choice[C](auction: Auction, lot: LotId)(command: C): Either[FinalChoiceRejected[Nothing], C] =
     auction.state match {

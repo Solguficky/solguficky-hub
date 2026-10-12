@@ -76,7 +76,8 @@
         "lotSold": null,
         "lotUnsold": null,
         "deadlineExtended": null,
-        "lotHeldForFinal": null
+        "lotHeldForFinal": null,
+        "askAdvanced": null
       }
     },
     {
@@ -132,7 +133,8 @@
         "lotSold": null,
         "lotUnsold": null,
         "deadlineExtended": null,
-        "lotHeldForFinal": null
+        "lotHeldForFinal": null,
+        "askAdvanced": null
       }
     },
     {
@@ -190,7 +192,8 @@
         "lotSold": null,
         "lotUnsold": null,
         "deadlineExtended": null,
-        "lotHeldForFinal": null
+        "lotHeldForFinal": null,
+        "askAdvanced": null
       }
     },
     {
@@ -218,7 +221,8 @@
         "lotSold": null,
         "lotUnsold": null,
         "deadlineExtended": null,
-        "lotHeldForFinal": null
+        "lotHeldForFinal": null,
+        "askAdvanced": null
       }
     },
     {
@@ -241,7 +245,8 @@
         "lotSold": null,
         "lotUnsold": null,
         "deadlineExtended": null,
-        "lotHeldForFinal": null
+        "lotHeldForFinal": null,
+        "askAdvanced": null
       }
     },
     {
@@ -258,7 +263,8 @@
         "lotSold": null,
         "lotUnsold": null,
         "deadlineExtended": null,
-        "lotHeldForFinal": null
+        "lotHeldForFinal": null,
+        "askAdvanced": null
       }
     },
     {
@@ -277,7 +283,8 @@
         "deadlineExtended": null,
         "lotHeldForFinal": {
           "at": "2026-10-07T18:00:00Z"
-        }
+        },
+        "askAdvanced": null
       }
     }
   ]

@@ -173,7 +173,10 @@ enum LotState {
   case Unsold(reason: UnsoldReason)
 }
 
-/** Кто отправил ставку: участник из бота или аукционист за зал. */
+/**
+ * Кто отправил ставку: участник из бота или помощник ведущего за человека в зале. Ставка зала — запись «участник принял
+ * объявленную цену»: сумма в ней та, что огласил ведущий, и в живом финале правило приёма у неё то же, что у бота.
+ */
 enum BidSource {
   case Bot
   case Floor
@@ -240,6 +243,12 @@ final case class UnmarkForFinal(opId: OpId)
 final case class ResumeLot(opId: OpId)
 
 /**
+ * Следующая цена, которую ведущий объявил залу (RFC-011, П-08). Ведущего команда не несёт: он — инициатор конверта, а
+ * ask — приглашение, а не ставка, поэтому ни цену, ни лидера команда не меняет.
+ */
+final case class AdvanceAsk(newAsk: Money, opId: OpId)
+
+/**
  * События лота. `LotOpened` несёт всю конфигурацию торгов и окна сниженного шага, чтобы состояние восстанавливалось из
  * журнала без обращения наружу (И-07). `previousLeader` при первой ставке отсутствует, а не равен нулю (RFC-011, П-01).
  *
@@ -254,6 +263,8 @@ final case class ResumeLot(opId: OpId)
  * `LotMarkedForFinal` и `LotResumed` payload не несут, `LotHeldForFinal` — только время удержания (ADR-047, дополнение
  * 2026-09-24): цена, лидер и лимиты удержанного лота — те, что свёрнуты из журнала до него. `LotUnmarkedForFinal` тоже
  * без payload (дополнение 2026-10-06): он только снимает признак.
+ *
+ * `AskAdvanced` несёт только объявленную сумму: кто её объявил, лежит в конверте инициатором, как в контракте шины.
  *
  * `overtakenByProxy` у ручной ставки — её той же командой перебила производная ставка другого участника, и лидерство,
  * взятое ею, команду не пережило. Свёртка его не читает: это знание о транзакции для потребителей факта, которое
@@ -285,6 +296,7 @@ enum LotEvent {
   case LotHeldForFinal(at: Instant)
   case LotResumed
   case LotUnmarkedForFinal
+  case AskAdvanced(ask: Money)
 }
 
 /**
@@ -402,6 +414,19 @@ enum ResumeLotRejected {
   case LotNotFound
   case OpIdTaken
   case LotNotHeld
+}
+
+/**
+ * Отказы `AdvanceAsk` (RFC-011, П-08). `LotNotOpen` — лот не в торгах, в том числе удержанный: ask объявляют торгам, а
+ * не перерыву. `AskBelowCurrentPrice` называет сумму, которую ask обязан превысить, — нижнюю границу торга: текущую
+ * цену или прежний ask, если он выше. `OpIdTaken` — `op_id` уже записан под другим событием лота.
+ */
+enum AdvanceAskRejected {
+  case LotNotFound
+  case OpIdTaken
+  case LotNotOpen
+  case CurrencyMismatch
+  case AskBelowCurrentPrice(mustExceed: Money)
 }
 
 /** Отказы `WithdrawProxyLimit`: у участника нет действующего лимита на этот лот. */

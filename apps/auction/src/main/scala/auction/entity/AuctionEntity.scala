@@ -2,6 +2,7 @@ package auction.entity
 
 import auction.aggregate.*
 import auction.catalog.LotId
+import auction.lot.AdvanceAskRejected
 import auction.lot.CloseLotRejected
 import auction.lot.LotState
 import auction.lot.MarkForFinalRejected
@@ -160,6 +161,13 @@ object AuctionEntity {
       replyTo: ActorRef[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
   ) extends Command
 
+  /** Ask ведущего лоту реестра (П-08): та же форма, что `Select` — решает аукцион, событие пишет лот. */
+  final case class AskLot(
+      command: AdvanceLotAsk,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[AdvanceLotAskRejected, Unit]]
+  ) extends Command
+
   /** Заморозка состава финала; удержанных entity берёт у своего знания о лотах. */
   final case class Freeze(
       command: FreezeFinalLineup,
@@ -240,6 +248,13 @@ object AuctionEntity {
       lot: LotId,
       replyTo: ActorRef[Either[FinalChoiceRejected[R], Unit]],
       answer: Try[Either[R, Unit]]
+  ) extends Command
+
+  /** Ответ лота на ask вместе с тем, кому его отдать; неудача — ответа нет. */
+  private[entity] final case class LotAsked(
+      lot: LotId,
+      replyTo: ActorRef[Either[AdvanceLotAskRejected, Unit]],
+      answer: Try[Either[AdvanceAskRejected, Unit]]
   ) extends Command
 
   /**
@@ -484,6 +499,17 @@ object AuctionEntity {
                 case Success(answer) => Effect.reply(chosen.replyTo)(answer.left.map(FinalChoiceRejected.ByLot(_)))
                 case Failure(failure) => Effect.none.thenRun(_ => logUnanswered(chosen.lot, failure))
               }
+            case AskLot(ask, initiator, replyTo) =>
+              Auction.decide(state.auction, ask) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(command) =>
+                  Effect.none.thenRun { _ =>
+                    context.pipeToSelf(lots.advanceAsk(ask.lot, command, initiator))(LotAsked(ask.lot, replyTo, _))
+                  }
+              }
+            case LotAsked(_, replyTo, Success(answer)) =>
+              Effect.reply(replyTo)(answer.left.map(AdvanceLotAskRejected.ByLot(_)))
+            case LotAsked(lot, _, Failure(failure)) => Effect.none.thenRun(_ => logUnanswered(lot, failure))
             case Inspect(opId, replyTo) => Effect.reply(replyTo)(Auction.inspect(state.auction, opId))
             case Draft(draft, initiator, replyTo) =>
               val decision = Auction.decide(state.auction, draft)

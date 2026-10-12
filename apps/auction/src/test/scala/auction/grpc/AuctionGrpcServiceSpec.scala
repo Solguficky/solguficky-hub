@@ -1,6 +1,8 @@
 package auction.grpc
 
 import auction.aggregate.AddLot
+import auction.aggregate.AdvanceLotAsk
+import auction.aggregate.AdvanceLotAskRejected
 import auction.aggregate.Auction
 import auction.aggregate.AuctionEnvelope
 import auction.aggregate.AuctionEvent
@@ -42,7 +44,10 @@ import auction.entity.Initiator
 import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.contract.LotValues
+import auction.lot.AdvanceAsk
+import auction.lot.AdvanceAskRejected
 import auction.lot.AuctionId
+import auction.lot.BidSource
 import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
 import auction.lot.Envelope
@@ -305,9 +310,25 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         command: StartNextLot,
         initiator: Initiator
     ): Future[Either[StartNextLotRejected, LotId]] = fail("the auction was reached")
+    def advanceAsk(
+        auctionId: AuctionId,
+        command: AdvanceLotAsk,
+        initiator: Initiator
+    ): Future[Either[AdvanceLotAskRejected, Unit]] = fail("the auction was reached")
   }
 
   private val NoMeetups: MeetupAuthority = (_, _, _) => fail("meetups was asked")
+
+  private val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+
+  /** Человек в зале, за которого помощник заносит ставку, и его имя в аукционе. */
+  private val RoomId = ParticipantId(UUID.fromString("01890a5d-ac99-7aaa-8bbb-dddddddddddd"))
+
+  private def roomNamed: Map[ParticipantId, ChosenName] =
+    named + (RoomId -> ChosenName.Telegram(TelegramUsername.from("petya").getOrElse(fail("not a username"))))
+
+  private def floorBid: wire.PlaceBidRequest =
+    validBid.withSource(BidSourceMessage.BID_SOURCE_FLOOR).withParticipantId(RoomId.value.toString)
 
   /** Аукцион сходки запросов `meetupId`: команды финала называют его каноническим UUIDv5. */
   private val meetupAuctionId = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
@@ -346,6 +367,37 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       watchViews = watchViews,
       changes = changes
     )
+
+  /**
+   * Аукцион сходки с лотами в реестре, как его видят команды ведущего: окно `op_id` пусто, entity отдаёт аукцион
+   * целиком. Без аргументов — аукцион лота `Born`, `TheAuction`.
+   */
+  private def registered(registry: UUID*): Auctions = {
+    val console = consoleOf(registry*)
+    new Auctions {
+      override def inspect(auctionId: AuctionId, opId: OpId) =
+        Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId)), registryOpen = false))
+      override def get(auctionId: AuctionId) = console.get(auctionId)
+    }
+  }
+
+  /**
+   * Аукцион команд ведущего, который решает ask настоящим `Auction.decide` по своему реестру, а лот отвечает `lot`: так
+   * тест проходит тот же путь «аукцион — прокси к лоту», что entity аукциона.
+   */
+  private def askingThrough(
+      registry: UUID*
+  )(lot: (AdvanceAsk, Initiator) => Either[AdvanceAskRejected, Unit]): Auctions = {
+    val known = registered(registry*)
+    new Auctions {
+      override def inspect(auctionId: AuctionId, opId: OpId) = known.inspect(auctionId, opId)
+      override def get(auctionId: AuctionId) = known.get(auctionId)
+      override def advanceAsk(auctionId: AuctionId, command: AdvanceLotAsk, initiator: Initiator) =
+        known
+          .get(auctionId)
+          .map(Auction.decide(_, command).flatMap(ask => lot(ask, initiator).left.map(AdvanceLotAskRejected.ByLot(_))))
+    }
+  }
 
   /** Аукцион сходки в онлайн-торгах с лотами в реестре — то, что пульт читает у entity. */
   private def consoleOf(registry: UUID*): Auctions = {
@@ -1481,10 +1533,57 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       statusOf(auction.listAuctionInvoices(wire.ListAuctionInvoicesRequest())) shouldBe Status.Code.UNIMPLEMENTED
     }
 
-    "answers UNIMPLEMENTED on the ask and the closing of the auctioneer until their slice" in {
-      val auction = service(Unreachable)
-      statusOf(auction.advanceAsk(wire.AdvanceAskRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.closeLot(wire.CloseLotRequest())) shouldBe Status.Code.UNIMPLEMENTED
+    "answers UNIMPLEMENTED on the closing of the auctioneer until its slice" in {
+      statusOf(service(Unreachable).closeLot(wire.CloseLotRequest())) shouldBe Status.Code.UNIMPLEMENTED
+    }
+
+    "answers the ask of the auctioneer after the right and the registry, with the operator on the lot" in {
+      val asked = new java.util.concurrent.atomic.AtomicReference[Option[Initiator]](None)
+      val auctions = askingThrough(UUID.fromString(lot)) { (command, initiator) =>
+        asked.set(Some(initiator))
+        if (command.newAsk.minorUnits > 1000) Right(())
+        else Left(AdvanceAskRejected.AskBelowCurrentPrice(Money(1000, CurrencyCode("RUB"))))
+      }
+      val auction = service(Unreachable, auctions = AuctionCommands(auctions, Unreachable, granted))
+      val request = wire.AdvanceAskRequest(Some(viewer), meetupAuctionId, lot, op, Some(MoneyMessage(1500, "RUB")))
+
+      auction.advanceAsk(request).futureValue shouldBe
+        wire.AdvanceAskResponse().withAccepted(wire.AskAdvanceAccepted())
+      asked.get shouldBe Some(Initiator.Operator(ViewerId))
+      auction.advanceAsk(request.withNewAsk(MoneyMessage(900, "RUB"))).futureValue shouldBe
+        wire
+          .AdvanceAskResponse()
+          .withRefused(
+            wire.AdvanceAskRefusal(
+              wire.AdvanceAskRefusal.Reason.AskBelowCurrentPrice(
+                wire.AskBelowCurrentPrice(Some(MoneyMessage(1000, "RUB")))
+              )
+            )
+          )
+    }
+
+    "refuses the ask of a stranger and of a lot outside the registry without reaching the lot" in {
+      val request = wire.AdvanceAskRequest(Some(viewer), meetupAuctionId, lot, op, Some(MoneyMessage(1500, "RUB")))
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val unreached = (_: AdvanceAsk, _: Initiator) => fail("the lot was reached")
+
+      service(
+        Unreachable,
+        auctions = AuctionCommands(askingThrough(UUID.fromString(lot))(unreached), Unreachable, stranger)
+      )
+        .advanceAsk(request)
+        .futureValue shouldBe
+        wire
+          .AdvanceAskResponse()
+          .withRefused(
+            wire.AdvanceAskRefusal(wire.AdvanceAskRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+          )
+      service(Unreachable, auctions = AuctionCommands(askingThrough(new UUID(7L, 1L))(unreached), Unreachable, granted))
+        .advanceAsk(request)
+        .futureValue shouldBe
+        wire
+          .AdvanceAskResponse()
+          .withRefused(wire.AdvanceAskRefusal(wire.AdvanceAskRefusal.Reason.LotNotInAuction(wire.LotNotInAuction())))
     }
 
     "answers INVALID_ARGUMENT on the commands of the final without a viewer, before the auction" in {
@@ -1551,9 +1650,55 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       ) shouldBe Status.Code.UNAVAILABLE
     }
 
-    "answers UNIMPLEMENTED on a floor bid before its form and without reaching the lot" in {
-      val floor = wire.PlaceBidRequest(source = BidSourceMessage.BID_SOURCE_FLOOR, participantId = identity)
-      statusOf(service(Unreachable).placeBid(floor)) shouldBe Status.Code.UNIMPLEMENTED
+    "places a floor bid for the person in the room, entered by the assistant with the right of the meetup" in {
+      val placed = new java.util.concurrent.atomic.AtomicReference[Option[(PlaceBid, Initiator)]](None)
+      val lots = new Born {
+        override def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator) = {
+          placed.set(Some(command -> initiator))
+          Future.successful(Right(accepted))
+        }
+      }
+      // У помощника нет права ставить: ставит человек в зале, а помощнику нужно право сходки.
+      val assistant = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS))
+      val request = floorBid.withViewer(assistant)
+
+      service(lots, auctions = AuctionCommands(registered(), Unreachable, granted), names = Names(roomNamed))
+        .placeBid(request)
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      placed.get shouldBe Some(
+        PlaceBid(RoomId, Money(150, CurrencyCode("RUB")), OpId(UUID.fromString(op)), BidSource.Floor) ->
+          Initiator.Operator(ViewerId)
+      )
+    }
+
+    "refuses a floor bid of a stranger to the meetup without reaching the lot" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+
+      service(new Born, auctions = AuctionCommands(registered(), Unreachable, stranger))
+        .placeBid(floorBid)
+        .futureValue shouldBe
+        wire
+          .PlaceBidResponse()
+          .withRefused(
+            wire.PlaceBidRefusal(wire.PlaceBidRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+          )
+    }
+
+    "refuses a floor bid for a person in the room without a name, though the assistant has one" in {
+      service(new Born, auctions = AuctionCommands(registered(), Unreachable, granted))
+        .placeBid(floorBid)
+        .futureValue shouldBe ResponseMapping.displayNameNotChosen
+    }
+
+    "answers UNAVAILABLE on a floor bid while the right of the assistant cannot be checked" in {
+      val silent: MeetupAuthority = (_, _, _) => Future.successful(Authority.Unavailable)
+
+      statusOf(
+        service(new Born, auctions = AuctionCommands(registered(), Unreachable, silent)).placeBid(floorBid)
+      ) shouldBe
+        Status.Code.UNAVAILABLE
     }
   }
 

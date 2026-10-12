@@ -33,6 +33,7 @@ import auction.v1.auction.LotDefaults as LotDefaultsMessage
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service.AddLotRequest
+import auction.v1.auction_service.AdvanceAskRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.CancelRaffleRegistrationRequest
 import auction.v1.auction_service.GetRaffleRequest
@@ -107,6 +108,9 @@ final case class DraftCommand(meetup: MeetupId, opId: OpId, acting: Acting)
 
 /** Правка реестра — `AddLot` и `RemoveLot` несут одно и то же. */
 final case class RegistryCommand(auctionId: AuctionId, lotId: LotId, opId: OpId, acting: Acting)
+
+/** Ask ведущего лоту реестра: то же, что команда реестра, и объявленная сумма. */
+final case class AskCommand(registry: RegistryCommand, newAsk: Money)
 
 /**
  * Условия торгов лоту реестра. Политика шага здесь ещё не проверена: И-15 — решение домена, а не форма запроса.
@@ -194,18 +198,26 @@ object RequestMapping {
       lotId <- uuidV7("lot_id", request.lotId)
       amount <- money("amount", request.amount)
       opId <- uuidV7("op_id", request.opId)
-      _ <- botBid(request)
-    } yield BidCommand(lotId, PlaceBid(acting.participant, amount, OpId(opId), BidSource.Bot), acting)
+      bidder <- bidder(request, acting)
+    } yield BidCommand(lotId, PlaceBid(bidder.participant, amount, OpId(opId), bidder.source), acting)
 
   /**
-   * Ставка из бота: канал не задан или `BOT`, и участника зала у неё нет. Ставку зала сюда граница не пускает — она
-   * отвечает `UNIMPLEMENTED` до поведения ([PER-293](https://linear.app/anticnvm/issue/per-293)); неизвестный канал —
-   * битая форма, а не ставка из бота.
+   * Кто ставит и через какой канал. Ставка из бота — канал не задан или `BOT`: участник — сам смотрящий, и
+   * `participant_id` у неё пуст. Ставка зала — `FLOOR`: её заносит помощник ведущего, и участник — `participant_id`,
+   * человек в зале, а смотрящий — помощник. Неизвестный канал — битая форма, а не ставка из бота.
    */
-  private def botBid(request: PlaceBidRequest): Either[FormError, Unit] =
+  private final case class Bidder(participant: ParticipantId, source: BidSource)
+
+  private def bidder(request: PlaceBidRequest, acting: Acting): Either[FormError, Bidder] =
     request.source match {
       case BidSourceMessage.BID_SOURCE_UNSPECIFIED | BidSourceMessage.BID_SOURCE_BOT =>
-        Either.cond(request.participantId.isEmpty, (), FormError("participant_id"))
+        Either.cond(
+          request.participantId.isEmpty,
+          Bidder(acting.participant, BidSource.Bot),
+          FormError("participant_id")
+        )
+      case BidSourceMessage.BID_SOURCE_FLOOR =>
+        uuidV7("participant_id", request.participantId).map(person => Bidder(ParticipantId(person), BidSource.Floor))
       case _ => Left(FormError("source"))
     }
 
@@ -331,6 +343,12 @@ object RequestMapping {
 
   def deselectForFinal(request: DeselectForFinalRequest): Either[FormError, RegistryCommand] =
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  def advanceAsk(request: AdvanceAskRequest): Either[FormError, AskCommand] =
+    for {
+      command <- registry(request.viewer, request.auctionId, request.lotId, request.opId)
+      newAsk <- money("new_ask", request.newAsk)
+    } yield AskCommand(command, newAsk)
 
   def getAuctionConsole(request: GetAuctionConsoleRequest): Either[FormError, ConsoleQuery] =
     administered(request.viewer, request.auctionId)

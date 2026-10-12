@@ -8,6 +8,7 @@ import auction.catalog.LotCatalogCommands
 import auction.entity.Initiator
 import auction.entity.LotGateway
 import auction.lot.AuctionId
+import auction.lot.BidSource
 import auction.lot.ParticipantId
 import auction.naming.DisplayNameCommands
 import auction.naming.NameNotChosen
@@ -87,14 +88,10 @@ final class AuctionGrpcService(
       changes
     )
 
-  // Ставка зала: контракт есть (PER-475), право ведущего и участник зала — поведение PER-293.
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
-    if (in.source.isBidSourceFloor) unimplemented
-    else placeBotBid(in)
-
-  private def placeBotBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
     RequestMapping.placeBid(in) match {
       case Left(error) => invalid(error)
+      case Right(command) if command.bid.source == BidSource.Floor => placeFloorBid(command)
       case Right(command) if !command.acting.viewer.isParticipant =>
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(command) =>
@@ -102,6 +99,25 @@ final class AuctionGrpcService(
         asNamed(command.lotId, participant, ResponseMapping.displayNameNotChosen)(
           lots.placeBid(command.lotId, command.bid, Initiator.Participant(participant))
         )(ResponseMapping.placeBid)
+    }
+
+  /**
+   * Ставка зала (integration.md, «Финал и его поток»): помощник ведущего записывает, что человек в зале принял
+   * объявленную цену. Право — у помощника: он держатель права администрировать сходку аукциона лота, и проверяет это
+   * Meetups. Право `place_bids` человека в зале не спрашивается — решение владельца в PER-293. Имя нужно человеку в
+   * зале, а не помощнику: лидером и победителем станет он. В журнал ставка ложится с инициатором-оператором.
+   */
+  private def placeFloorBid(command: BidCommand): Future[wire.PlaceBidResponse] =
+    lots.auctionOf(command.lotId).recoverWith(awaited).flatMap {
+      case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
+      case Some(auction) =>
+        auctions.hosts(auction, command.acting.participant).flatMap {
+          case Left(denial) => ResponseMapping.floorDenied(denial).fold(refuse, Future.successful)
+          case Right(()) =>
+            asNamed(command.lotId, command.bid.participant, ResponseMapping.displayNameNotChosen)(
+              lots.placeBid(command.lotId, command.bid, Initiator.Operator(command.acting.participant))
+            )(ResponseMapping.placeBid)
+        }
     }
 
   /**
@@ -628,9 +644,21 @@ final class AuctionGrpcService(
           .flatMap(outcome => ResponseMapping.startNextLot(outcome).fold(refuse, Future.successful))
     }
 
-  // Финал: ask и закрытие лота ведущим приносит PER-293.
-  def advanceAsk(in: wire.AdvanceAskRequest): Future[wire.AdvanceAskResponse] = unimplemented
+  /**
+   * Ask ведущего (RFC-011, П-08): право у Meetups, реестр — у аукциона, цену и фазу судит лот. В живом финале лот той
+   * же транзакцией пересчитывает прокси, поэтому ответ приходит после записи и ask, и производной ставки.
+   */
+  def advanceAsk(in: wire.AdvanceAskRequest): Future[wire.AdvanceAskResponse] =
+    RequestMapping.advanceAsk(in) match {
+      case Left(error) => invalid(error)
+      case Right(AskCommand(command, newAsk)) =>
+        auctions
+          .advanceAsk(command.auctionId, command.lotId, newAsk, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.advanceAsk(outcome).fold(refuse, Future.successful))
+    }
 
+  // Закрытие лота ведущим — отдельная задача: в постановке PER-293 его нет (ADR-047, дополнение 2026-10-11).
   def closeLot(in: wire.CloseLotRequest): Future[wire.CloseLotResponse] = unimplemented
 
   /**

@@ -95,6 +95,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(deselectAnswer)
     }
 
+    var askAnswer: Either[AdvanceLotAskRejected, Unit] = Right(())
+
+    def advanceAsk(auctionId: AuctionId, command: AdvanceLotAsk, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(askAnswer)
+    }
+
     var freezeAnswer: Either[FreezeFinalLineupRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
     var finalAnswer: Either[StartFinalRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
     var nextAnswer: Either[StartNextLotRejected, LotId] = Right(lot)

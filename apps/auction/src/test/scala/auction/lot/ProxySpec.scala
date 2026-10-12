@@ -174,11 +174,16 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
       }
     }
 
-    "place no derived bid in the live phase, where rounding to the grid belongs to a later slice" in {
-      val lot = trading(price = 110, phase = Phase.Live, leader = Some(participant(1)))
+    "place the derived bid of the live phase on the grid of prices" in {
+      val lot = trading(price = 110, phase = Phase.Live, leader = Some(participant(1)), closesAt = None)
 
       Lot.decide(lot, setProxyLimit(who = 2, max = 200, opN = 1), 1, proxyBid(1), calm) shouldBe
-        Right(Decision.Accepted(LotEvent.ProxyLimitSet(participant(2), money(200))))
+        Right(
+          Decision.Accepted(
+            LotEvent.ProxyLimitSet(participant(2), money(200)),
+            List(proxied(proxyBid(1), 2, 120, Some(1)))
+          )
+        )
     }
 
     "replace a participant's earlier limit and take the sequence of the new one" in {

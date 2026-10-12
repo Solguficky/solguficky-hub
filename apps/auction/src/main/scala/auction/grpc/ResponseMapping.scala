@@ -1,5 +1,6 @@
 package auction.grpc
 
+import auction.aggregate.AskRefusal
 import auction.aggregate.AuctionState
 import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
@@ -18,6 +19,7 @@ import auction.catalog.LotCard
 import auction.catalog.LotId
 import auction.contract.AuctionValues
 import auction.entity.LotEntity
+import auction.lot.AdvanceAskRejected
 import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.MarkForFinalRejected
@@ -63,6 +65,24 @@ object ResponseMapping {
     wire
       .PlaceBidResponse()
       .withRefused(wire.PlaceBidRefusal(wire.PlaceBidRefusal.Reason.DisplayNameNotChosen(wire.DisplayNameNotChosen())))
+
+  /**
+   * Право помощника ведущего на ставку зала: отказ — значение ответа, как у команд администратора, `Unavailable` —
+   * статус. Реестровых отказов у проверки права нет.
+   */
+  def floorDenied(denial: Denial): Either[Status, wire.PlaceBidResponse] = {
+    def refused(reason: wire.PlaceBidRefusal.Reason) =
+      Right(wire.PlaceBidResponse().withRefused(wire.PlaceBidRefusal(reason)))
+    denial match {
+      case Denial.NotAdministrator =>
+        refused(wire.PlaceBidRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Denial.MeetupNotFound => refused(wire.PlaceBidRefusal.Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"floor bid answered $denial")
+    }
+  }
 
   /** То же для прокси-лимита: лимит без имени лот не получает. */
   val proxyDisplayNameNotChosen: wire.SetProxyLimitResponse =
@@ -495,6 +515,34 @@ object ResponseMapping {
       case Left(NextLotRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
       case Left(NextLotRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
         throw new IllegalStateException(s"next lot of the final answered $denial")
+    }
+  }
+
+  /**
+   * Ask ведущего (RFC-011, П-08). Отказы лота и аукциона — значения ответа: пульт показывает ведущему сумму, которую
+   * ask обязан превысить. Лот реестра без журнала — дефект, как у `scheduleLot`.
+   */
+  def advanceAsk(outcome: Either[AskRefusal, Unit]): Either[Status, wire.AdvanceAskResponse] = {
+    import wire.AdvanceAskRefusal.Reason
+    def refused(reason: Reason) = Right(wire.AdvanceAskResponse().withRefused(wire.AdvanceAskRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.AdvanceAskResponse().withAccepted(wire.AskAdvanceAccepted()))
+      case Left(AskRefusal.ByLot(AdvanceAskRejected.LotNotOpen)) => refused(Reason.LotNotOpen(wire.LotNotOpen()))
+      case Left(AskRefusal.ByLot(AdvanceAskRejected.CurrencyMismatch)) =>
+        refused(Reason.CurrencyMismatch(wire.CurrencyMismatch()))
+      case Left(AskRefusal.ByLot(AdvanceAskRejected.AskBelowCurrentPrice(mustExceed))) =>
+        refused(Reason.AskBelowCurrentPrice(wire.AskBelowCurrentPrice(Some(money(mustExceed)))))
+      case Left(AskRefusal.ByLot(AdvanceAskRejected.OpIdTaken)) => Left(opIdTaken)
+      case Left(AskRefusal.ByLot(AdvanceAskRejected.LotNotFound)) =>
+        throw new IllegalStateException("a lot of the registry has no journal")
+      case Left(AskRefusal.LotNotInAuction) => refused(Reason.LotNotInAuction(wire.LotNotInAuction()))
+      case Left(AskRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(AskRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(AskRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(AskRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(AskRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"ask answered $denial")
     }
   }
 

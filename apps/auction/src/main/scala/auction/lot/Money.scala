@@ -9,8 +9,7 @@ final case class CurrencyCode(value: String)
  * Плавающей точки нет ни на одном уровне: ни `Double`, ни `BigDecimal` сюда не попадают по типу поля. Арифметики между
  * валютами тип не даёт намеренно — сумма лота сравнивается с порогом только после того, как [[Lot.decide]] проверил
  * валюту команды. Одна валюта политики шага и лота гарантирована [[LotConfig]]; одну валюту стартовой цены с
- * конфигурацией — [[Schedule]], который строит `ScheduleLot`. Ask в чужой валюте отклонит `AdvanceAsk`, когда команда
- * появится.
+ * конфигурацией — [[Schedule]], который строит `ScheduleLot`. Ask в чужой валюте отклоняет `AdvanceAsk`.
  */
 final case class Money(minorUnits: Long, currency: CurrencyCode) {
 
