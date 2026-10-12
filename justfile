@@ -183,8 +183,8 @@ check-verify-selection:
 check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
@@ -206,7 +206,7 @@ verify-changed:
 test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
-tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools dotnet-tools auction-tools nats-tester-tools
+tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools nats-tester-tools
 
 # --- Локальная оркестрация -------------------------------------------------
 
@@ -829,6 +829,41 @@ bot-console-test: hub-bot-proto
 
 bot-console-lint:
     cd tests/contour/bot-wire/console && npm run lint
+
+# --- Наполнение аукциона (TypeScript) ---------------------------------------
+#
+# `tools/auction-seed` — своя единица по образцу пульта провода: заводит
+# сходку, её аукцион и лоты по JSON-каталогу клиентами бота хаба, импортируя
+# их из дерева пакета ботов относительным путём (PER-613). Зависимости у
+# единицы свои (vitest, typescript, biome), поэтому её typecheck требует
+# установленного и сгенерированного пакета ботов. L0 — разбор каталога,
+# переменных и порядок вызовов на фейках портов.
+
+auction-seed-tools:
+    cd tools/auction-seed && npm ci
+
+auction-seed-typecheck: hub-bot-typecheck
+    cd tools/auction-seed && npm run typecheck
+
+# L0 импортирует типы портов бота хаба, а те — сгенерированный код пакета
+auction-seed-test: hub-bot-proto
+    cd tools/auction-seed && npm test
+
+auction-seed-lint:
+    cd tools/auction-seed && npm run lint
+
+# Наполняет аукцион по каталогу: публикует сходку, включает у неё аукцион и
+# заводит лоты с фото, ценой и шагом от имени администратора. Сроки недели и
+# её открытие остаются пульту. Переменные без умолчаний: IDENTITY_GRPC_URL,
+# MEETUPS_GRPC_URL, AUCTION_GRPC_URL, HUB_BOT_SERVICE_TOKEN,
+# AUCTION_SEED_ADMIN_TELEGRAM_ID, BOT_COMMUNITY_TIME_ZONE; против контура
+# адреса и токен отдаёт Contour.Host с `--with-auction`, против stage —
+# туннель и файл секретов по README ops-репозитория (docs/development/stage.md).
+# Каждый запуск заводит новую сходку. Не гейт: вне verify, test-all и CI.
+#
+# Наполнение аукциона по JSON-каталогу; вне verify, test-all и CI
+auction-seed catalog: hub-bot-proto
+    AUCTION_SEED_CATALOG="$(realpath '{{ catalog }}')" npm --prefix tools/auction-seed run seed
 
 # Контрактный проект контура остаётся generated-only (ADR-025)
 contour-contracts-check:
