@@ -11,6 +11,7 @@ import auction.entity.Initiator
 import auction.entity.LotGateway
 import auction.lot.AuctionId
 import auction.lot.BidSource
+import auction.lot.OpId
 import auction.lot.ParticipantId
 import auction.naming.DisplayNameCommands
 import auction.naming.NameNotChosen
@@ -632,7 +633,16 @@ final class AuctionGrpcService(
           case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
           case Some(auction) =>
             roundLots(auction, forecast.round).flatMap(forecast.foreignLot) match {
-              case Some((nomination, lot)) => Future.successful(PredictionMapping.lotNotInRound(nomination, lot))
+              // Повтор принятой отправки получает исходный ответ, даже если её лот с тех пор сняли из реестра.
+              case Some((nomination, lot)) =>
+                predictions
+                  .recall(command.auctionId, participant, forecast.round, command.opId)
+                  .recoverWith(awaited)
+                  .flatMap {
+                    case Some(Right(accepted)) => Future.successful(PredictionMapping.accepted(accepted))
+                    case Some(Left(rejected)) => PredictionMapping.refused(rejected).fold(refuse, Future.successful)
+                    case None => Future.successful(PredictionMapping.lotNotInRound(nomination, lot))
+                  }
               case None =>
                 names.requireChosen(command.auctionId, participant).flatMap {
                   case Left(NameNotChosen) => Future.successful(PredictionMapping.displayNameNotChosen)
@@ -667,12 +677,13 @@ final class AuctionGrpcService(
     }
 
   /**
-   * Лоты раунда, пока он может быть открыт: каталог — реестр запланированного аукциона, финал — замороженный состав
-   * (ADR-067, п. 4). В остальных фазах `None`: раунд закрыт или не открыт, и это скажет игра.
+   * Лоты раунда, пока он может быть открыт: каталог — реестр запланированного аукциона и аукциона, открывшего торги,
+   * пока прогнозы не подтвердили закрытие раунда, финал — замороженный состав (ADR-067, п. 4). В остальных фазах
+   * `None`: раунд закрыт или не открыт, и это скажет игра.
    */
   private def roundLots(auction: Auction, round: PredictionRound): Option[Set[LotId]] =
     (round, auction.state) match {
-      case (PredictionRound.Catalog, AuctionState.Scheduled(_)) => Some(auction.lots)
+      case (PredictionRound.Catalog, AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _)) => Some(auction.lots)
       case (PredictionRound.Final, AuctionState.LineupFrozen(_, _, order)) => Some(order.toSet)
       case _ => None
     }
@@ -849,6 +860,7 @@ object AuctionGrpcService {
     private def none[T]: Future[T] = Future.failed(new IllegalStateException("predictions are not wired in this node"))
     def submit(auction: AuctionId, command: SubmitForecast) = none
     def mine(auction: AuctionId, participant: ParticipantId) = none
+    def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) = none
   }
 
   /** Изменений нет: поток читает состояние один раз, при подписке. */

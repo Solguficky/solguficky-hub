@@ -12,8 +12,8 @@ import "identity/v1/access.proto";
 // for the final, the commands of the live final and its stream, reads of a lot,
 // of its history, of its image, of the display names of participants and of
 // auctions, the console and lot statistics of the meetup administrator, the
-// raffle among participants, the predictions game, and the invoices of sold lots: the commands of the
-// organizer and of the winner and their reads.
+// raffle among participants, the predictions game, and the invoices of sold
+// lots: the commands of the organizer and of the winner and their reads.
 //
 // A named refusal is a value of the response, not a gRPC status: a command
 // response carries exactly one of accepted or refused, and a refusal carries the
@@ -1786,7 +1786,7 @@ message SubmitPredictionRequest {
 
 message SubmitPredictionResponse {
   // Exactly one is set. A repeat of the same op_id is accepted and returns the
-  // viewer's prediction of the round as it is now.
+  // prediction that op_id sent, even if a later one replaced it.
   oneof outcome {
     Prediction accepted = 1;
     PredictionRefusal refused = 2;
@@ -1869,10 +1869,8 @@ message PredictionAnswer {
 enum PredictionRound {
   PREDICTION_ROUND_UNSPECIFIED = 0;
 
-  // From scheduling until prebidding starts; lots of the registry.
   PREDICTION_ROUND_CATALOG = 1;
 
-  // From the frozen lineup until the final starts; lots of the lineup.
   PREDICTION_ROUND_FINAL = 2;
 }
 
@@ -1891,39 +1889,39 @@ enum PredictionRoundStatus {
   PREDICTION_ROUND_STATUS_CANCELLED = 4;
 }
 
-// The ten nominations: which round each belongs to and whether it asks for a
-// lot or a number is fixed by the nomination.
+// The ten nominations. Each belongs to one round and asks for either a lot or
+// a number; an answer of the other round or the other kind is malformed.
 enum PredictionNomination {
   PREDICTION_NOMINATION_UNSPECIFIED = 0;
 
-  // Catalog round, a lot: the highest sale price.
+  // Catalog round, a lot.
   PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT = 1;
 
-  // Catalog round, a number: the sum of sale prices.
+  // Catalog round, a number.
   PREDICTION_NOMINATION_TOTAL_SALES = 2;
 
-  // Catalog round, a lot: the most bids.
+  // Catalog round, a lot.
   PREDICTION_NOMINATION_MOST_BIDS_LOT = 3;
 
-  // Catalog round, a lot: the largest growth from the starting price.
+  // Catalog round, a lot.
   PREDICTION_NOMINATION_BIGGEST_GROWTH_LOT = 4;
 
-  // Catalog round, a lot: the most distinct participants.
+  // Catalog round, a lot.
   PREDICTION_NOMINATION_MOST_BIDDERS_LOT = 5;
 
-  // Catalog round, a number: the number of bids.
+  // Catalog round, a number.
   PREDICTION_NOMINATION_TOTAL_BIDS = 6;
 
-  // Final round, a lot: the highest sale price in the final.
+  // Final round, a lot.
   PREDICTION_NOMINATION_FINAL_MOST_EXPENSIVE_LOT = 7;
 
-  // Final round, a number: the sum of sale prices in the final.
+  // Final round, a number.
   PREDICTION_NOMINATION_FINAL_TOTAL_SALES = 8;
 
-  // Final round, a lot: the largest growth in the final.
+  // Final round, a lot.
   PREDICTION_NOMINATION_FINAL_BIGGEST_GROWTH_LOT = 9;
 
-  // Final round, a number: the number of bids in the final.
+  // Final round, a number.
   PREDICTION_NOMINATION_FINAL_TOTAL_BIDS = 10;
 }
 

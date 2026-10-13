@@ -530,7 +530,7 @@ final class AuctionEntitySpec
 
   "auction entity" should {
 
-    "opens the catalog round after scheduling and asks no lot until the predictions confirm its closing" in {
+    "opens the catalog round after scheduling and sends no lot an opening until the predictions confirm its closing" in {
       val predictions = Predictions()
       val closed = Promise[org.apache.pekko.Done]()
       predictions.closing = _ => closed.future
@@ -539,8 +539,8 @@ final class AuctionEntitySpec
       eventually(predictions.count("open Catalog") shouldBe 1)
       start(opening).reply.isRight shouldBe true
       eventually(predictions.count("close Catalog") shouldBe 1)
+      eventually(lots.asked should contain(lot))
       Thread.sleep(200)
-      lots.asked shouldBe empty
       lots.opens shouldBe empty
       closed.success(org.apache.pekko.Done)
       eventually(roster.active shouldBe Set(lot))
@@ -556,7 +556,6 @@ final class AuctionEntitySpec
       eventually(predictions.count("close Catalog") should be >= 2)
       entity.restart()
       Thread.sleep(200)
-      lots.asked shouldBe empty
       lots.opens shouldBe empty
       predictions.closing = _ => Future.successful(org.apache.pekko.Done)
       eventually(roster.active shouldBe Set(lot))
@@ -577,6 +576,36 @@ final class AuctionEntitySpec
       answer.receiveMessage().isRight shouldBe true
       entity.getState().auction.state shouldBe AuctionState.Initial
       predictions.count("discard") shouldBe 1
+    }
+
+    "holds every other command while the predictions are being erased, so trading cannot start under the discard" in {
+      val predictions = Predictions()
+      val wiped = Promise[org.apache.pekko.Done]()
+      predictions.discarding = () => wiped.future
+      entity = entityOf(lots, predictions = predictions)
+      val opening = scheduledWith(lot)
+      val discarding = kit.createTestProbe[Either[DiscardAuctionRejected, AuctionAnswer]]()
+      entity.runCommand(AuctionEntity.Discard(DiscardAuction(op(9)), administrator, discarding.ref))
+      val starting = kit.createTestProbe[Either[OpeningRejected, AuctionAnswer]]()
+      entity.runCommand(AuctionEntity.Start(StartPrebidding(op(opening)), administrator, starting.ref))
+      starting.expectNoMessage(200.millis)
+      wiped.success(org.apache.pekko.Done)
+      discarding.receiveMessage().isRight shouldBe true
+      starting.receiveMessage() shouldBe Left(OpeningRejected.ByAuction(StartPrebiddingRejected.AuctionNotFound))
+      entity.getState().auction.state shouldBe AuctionState.Initial
+    }
+
+    "keeps closing lots opened before a restart while the predictions are silent" in {
+      val predictions = Predictions()
+      entity = entityOf(lots, recheckEvery = 50.millis, predictions = predictions)
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+      predictions.closing = _ => Promise[org.apache.pekko.Done]().future
+      time.instant0 = closesAt.plusSeconds(1)
+      entity.restart()
+      eventually(lots.closes.map(_._1) should contain(lot))
+      lots.opens.map(_._1) shouldBe Vector(lot)
     }
 
     "discards a draft without asking the predictions: before scheduling there are none" in {

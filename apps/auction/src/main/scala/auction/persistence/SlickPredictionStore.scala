@@ -13,6 +13,7 @@ import auction.prediction.SubmitForecast
 import auction.prediction.SubmitRejected
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.persistence.jdbc.db.SlickExtension
+import slick.jdbc.GetResult
 import slick.jdbc.JdbcBackend.Database
 import slick.jdbc.PostgresProfile.api.*
 
@@ -20,16 +21,30 @@ import java.util.UUID
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
+/** Строка ответа на одну номинацию: ровно одно из двух — лот или число. */
+private final case class PredictionRow(round: String, nomination: String, lot: Option[String], number: Option[Long])
+
+/** Строка окна отправок: кто отправил, в какой раунд и что — исходный ответ повтору. */
+private final case class SentPrediction(participant: UUID, round: String, answers: String)
+
 /**
  * Прогнозы в таблицах `auction_prediction` и `auction_prediction_op` через пул плагина журнала — по той же причине, что
  * каталог лота. Имена раунда и номинаций в строке — формат хранения: их переименование делает строки нечитаемыми,
  * поэтому они перечислены здесь, а не выводятся из имён доменных типов.
+ *
+ * Окно отправок хранит и сам отправленный прогноз: повтор `op_id` получает исходный ответ, даже если участник с тех пор
+ * прогноз поправил. Формат — `<номинация>=lot:<uuid>` или `<номинация>=number:<n>` через запятую, пустая строка —
+ * очищенный прогноз.
  */
 final class SlickPredictionStore(database: Database)(using ExecutionContext) extends PredictionStore {
 
+  private given GetResult[PredictionRow] = GetResult(row => PredictionRow(row.<<, row.<<, row.<<?, row.<<?))
+
+  private given GetResult[SentPrediction] = GetResult(row => SentPrediction(UUID.fromString(row.<<), row.<<, row.<<))
+
   def submit(auction: AuctionId, command: SubmitForecast): Future[Either[SubmitRejected.OpIdTaken.type, Forecast]] = {
     val write = operation(auction, command.opId).flatMap {
-      case Some(sent) => repeated(auction, command.participant, command.round, sent)
+      case Some(sent) => DBIO.successful(repeated(command.participant, command.round, sent))
       case None =>
         val rows = command.forecast.ordered.map { (nomination, answer) =>
           val (lot, number) = answer match {
@@ -42,9 +57,10 @@ final class SlickPredictionStore(database: Database)(using ExecutionContext) ext
                          $lot::uuid, $number)"""
         }
         for {
-          _ <- sqlu"""INSERT INTO auction_prediction_op (auction_id, op_id, participant_id, round)
+          _ <- sqlu"""INSERT INTO auction_prediction_op (auction_id, op_id, participant_id, round, answers)
                       VALUES (${auction.value.toString}::uuid, ${command.opId.value.toString}::uuid,
-                              ${command.participant.value.toString}::uuid, ${roundName(command.round)})"""
+                              ${command.participant.value.toString}::uuid, ${roundName(command.round)},
+                              ${encode(command.forecast)})"""
           _ <- sqlu"""DELETE FROM auction_prediction
                       WHERE auction_id = ${auction.value.toString}::uuid AND round = ${roundName(command.round)}
                         AND participant_id = ${command.participant.value.toString}::uuid"""
@@ -60,12 +76,7 @@ final class SlickPredictionStore(database: Database)(using ExecutionContext) ext
       round: PredictionRound,
       opId: OpId
   ): Future[Option[Either[SubmitRejected.OpIdTaken.type, Forecast]]] =
-    database.run(
-      operation(auction, opId).flatMap {
-        case Some(sent) => repeated(auction, participant, round, sent).map(Some(_))
-        case None => DBIO.successful(None)
-      }.transactionally
-    )
+    database.run(operation(auction, opId)).map(_.map(repeated(participant, round, _)))
 
   def mine(auction: AuctionId, participant: ParticipantId): Future[Map[PredictionRound, Forecast]] =
     database
@@ -73,12 +84,13 @@ final class SlickPredictionStore(database: Database)(using ExecutionContext) ext
         sql"""SELECT round, nomination, lot_id::text, number FROM auction_prediction
               WHERE auction_id = ${auction.value.toString}::uuid
                 AND participant_id = ${participant.value.toString}::uuid"""
-          .as[(String, String, Option[String], Option[Long])]
+          .as[PredictionRow]
       )
       .map { rows =>
-        rows
-          .groupBy(_._1)
-          .map((round, answers) => restoreRound(round) -> forecast(restoreRound(round), answers))
+        rows.groupBy(_.round).map { (name, answers) =>
+          val round = restoreRound(name)
+          round -> forecast(round, answers.toList.map(row => restoreNomination(row.nomination) -> answerOf(row)))
+        }
       }
 
   def discard(auction: AuctionId): Future[Unit] =
@@ -103,44 +115,56 @@ final class SlickPredictionStore(database: Database)(using ExecutionContext) ext
           .transactionally
       )
 
-  private def operation(auction: AuctionId, opId: OpId): DBIO[Option[(String, String)]] =
-    sql"""SELECT participant_id::text, round FROM auction_prediction_op
+  private def operation(auction: AuctionId, opId: OpId): DBIO[Option[SentPrediction]] =
+    sql"""SELECT participant_id::text, round, answers FROM auction_prediction_op
           WHERE auction_id = ${auction.value.toString}::uuid AND op_id = ${opId.value.toString}::uuid"""
-      .as[(String, String)]
+      .as[SentPrediction]
       .headOption
 
-  /** Своему повтору — текущий прогноз раунда, как у повтора регистрации в розыгрыше; чужому `op_id` — отказ. */
+  /** Своему повтору — исходный прогноз отправки; `op_id` другого участника или раунда — отказ. */
   private def repeated(
-      auction: AuctionId,
       participant: ParticipantId,
       round: PredictionRound,
-      sent: (String, String)
-  ): DBIO[Either[SubmitRejected.OpIdTaken.type, Forecast]] =
-    if (UUID.fromString(sent._1) != participant.value || sent._2 != roundName(round))
-      DBIO.successful(Left(SubmitRejected.OpIdTaken))
-    else
-      sql"""SELECT round, nomination, lot_id::text, number FROM auction_prediction
-            WHERE auction_id = ${auction.value.toString}::uuid AND round = ${roundName(round)}
-              AND participant_id = ${participant.value.toString}::uuid"""
-        .as[(String, String, Option[String], Option[Long])]
-        .map(rows => Right(forecast(round, rows)))
+      sent: SentPrediction
+  ): Either[SubmitRejected.OpIdTaken.type, Forecast] =
+    if (sent.participant != participant.value || sent.round != roundName(round)) Left(SubmitRejected.OpIdTaken)
+    else Right(forecast(round, decode(sent.answers)))
 
-  private def forecast(round: PredictionRound, rows: Seq[(String, String, Option[String], Option[Long])]): Forecast = {
-    val answers = rows.toList.map { (_, nomination, lot, number) =>
-      val answer = (lot, number) match {
-        case (Some(value), None) => Answer.Lot(LotId(UUID.fromString(value)))
-        case (None, Some(value)) => Answer.Number(value)
-        case _ => throw new IllegalStateException("prediction row holds neither a lot nor a number")
-      }
-      restoreNomination(nomination) -> answer
+  private def answerOf(row: PredictionRow): Answer =
+    (row.lot, row.number) match {
+      case (Some(value), None) => Answer.Lot(LotId(UUID.fromString(value)))
+      case (None, Some(value)) => Answer.Number(value)
+      case _ => throw new IllegalStateException("prediction row holds neither a lot nor a number")
     }
+
+  private def encode(forecast: Forecast): String =
+    forecast.ordered
+      .map {
+        case (nomination, Answer.Lot(lot)) => s"${nominationName(nomination)}=lot:${lot.value}"
+        case (nomination, Answer.Number(value)) => s"${nominationName(nomination)}=number:$value"
+      }
+      .mkString(",")
+
+  private def decode(text: String): List[(Nomination, Answer)] =
+    if (text.isEmpty) Nil
+    else
+      text.split(',').toList.map { pair =>
+        pair.split('=') match {
+          case Array(nomination, value) if value.startsWith("lot:") =>
+            restoreNomination(nomination) -> Answer.Lot(LotId(UUID.fromString(value.stripPrefix("lot:"))))
+          case Array(nomination, value) if value.startsWith("number:") =>
+            restoreNomination(nomination) -> Answer.Number(value.stripPrefix("number:").toLong)
+          case _ => throw new IllegalStateException("prediction op row holds an unreadable answer")
+        }
+      }
+
+  private def forecast(round: PredictionRound, answers: List[(Nomination, Answer)]): Forecast =
     Forecast
       .parse(round, answers)
       .fold(
         invalid => throw new IllegalStateException(s"prediction rows do not form a forecast: $invalid"),
         forecast => forecast
       )
-  }
 
   private def roundName(round: PredictionRound): String =
     round match {

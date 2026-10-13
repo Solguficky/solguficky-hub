@@ -31,21 +31,18 @@ final class PredictionEntitySpec extends AnyWordSpec with Matchers with BeforeAn
   /** Строки в памяти. `held` задерживает следующую запись до своего обещания; `down` отвечает отказом. */
   private final class Store extends PredictionStore {
     private var rows = Map.empty[(AuctionId, PredictionRound, ParticipantId), Forecast]
-    private var ops = Map.empty[(AuctionId, OpId), (ParticipantId, PredictionRound)]
+    private var ops = Map.empty[(AuctionId, OpId), (ParticipantId, Forecast)]
     @volatile var held: Option[Promise[Unit]] = None
     @volatile var down = false
     @volatile var discards = 0
 
-    private def current(auction: AuctionId, participant: ParticipantId, round: PredictionRound) =
-      rows.getOrElse((auction, round, participant), Forecast.empty(round))
-
+    /** Своему повтору — то, что отправил этот `op_id`; другому участнику или раунду — отказ. */
     private def repeated(
-        auction: AuctionId,
         participant: ParticipantId,
         round: PredictionRound,
-        sent: (ParticipantId, PredictionRound)
+        sent: (ParticipantId, Forecast)
     ): Either[SubmitRejected.OpIdTaken.type, Forecast] =
-      if (sent == (participant, round)) Right(current(auction, participant, round)) else Left(SubmitRejected.OpIdTaken)
+      if (sent._1 == participant && sent._2.round == round) Right(sent._2) else Left(SubmitRejected.OpIdTaken)
 
     def submit(auction: AuctionId, command: SubmitForecast): Future[Either[SubmitRejected.OpIdTaken.type, Forecast]] = {
       val gate = held.fold(Future.unit)(_.future)
@@ -55,9 +52,9 @@ final class PredictionEntitySpec extends AnyWordSpec with Matchers with BeforeAn
         gate.map { _ =>
           synchronized[Either[SubmitRejected.OpIdTaken.type, Forecast]] {
             ops.get(auction -> command.opId) match {
-              case Some(sent) => repeated(auction, command.participant, command.round, sent)
+              case Some(sent) => repeated(command.participant, command.round, sent)
               case None =>
-                ops = ops.updated(auction -> command.opId, command.participant -> command.round)
+                ops = ops.updated(auction -> command.opId, command.participant -> command.forecast)
                 rows = rows.updated((auction, command.round, command.participant), command.forecast)
                 Right(command.forecast)
             }
@@ -71,7 +68,7 @@ final class PredictionEntitySpec extends AnyWordSpec with Matchers with BeforeAn
         round: PredictionRound,
         opId: OpId
     ): Future[Option[Either[SubmitRejected.OpIdTaken.type, Forecast]]] =
-      Future.successful(synchronized(ops.get(auction -> opId).map(repeated(auction, participant, round, _))))
+      Future.successful(synchronized(ops.get(auction -> opId).map(repeated(participant, round, _))))
 
     def mine(auction: AuctionId, participant: ParticipantId): Future[Map[PredictionRound, Forecast]] =
       Future.successful(synchronized(rows.collect { case ((`auction`, round, `participant`), forecast) =>

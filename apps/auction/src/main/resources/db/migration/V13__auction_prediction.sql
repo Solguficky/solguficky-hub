@@ -18,13 +18,15 @@ CREATE TABLE auction_prediction (
     CHECK ((lot_id IS NULL) <> (number IS NULL))
 );
 
--- Окно отправок: повтор `op_id` получает исходный ответ и после закрытия раунда.
--- Несёт участника, поэтому стирается вместе с его прогнозами.
+-- Окно отправок: повтор `op_id` получает исходный ответ и после закрытия раунда,
+-- поэтому строка хранит и сам отправленный прогноз. Несёт участника и его ответы,
+-- поэтому стирается вместе с его прогнозами.
 CREATE TABLE auction_prediction_op (
     auction_id     uuid NOT NULL,
     op_id          uuid NOT NULL,
     participant_id uuid NOT NULL,
     round          text NOT NULL CHECK (round IN ('catalog', 'final')),
+    answers        text NOT NULL,
     PRIMARY KEY (auction_id, op_id)
 );
 

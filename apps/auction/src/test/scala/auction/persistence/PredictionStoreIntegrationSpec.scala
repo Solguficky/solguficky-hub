@@ -44,7 +44,7 @@ final class PredictionStoreIntegrationSpec extends AnyWordSpec with Matchers wit
 
   "prediction store" should {
 
-    "replaces the prediction of a round, answers a repeat with the current one and refuses another's op_id" in {
+    "replaces the prediction of a round, answers a repeat with what it sent and refuses another's op_id" in {
       withStore { store =>
         val auction = AuctionId(UUID.randomUUID())
         val person = ParticipantId(UUID.randomUUID())
@@ -55,8 +55,8 @@ final class PredictionStoreIntegrationSpec extends AnyWordSpec with Matchers wit
 
         store.submit(auction, SubmitForecast(person, first, sent)).futureValue shouldBe Right(first)
         store.submit(auction, SubmitForecast(person, second, op())).futureValue shouldBe Right(second)
-        store.submit(auction, SubmitForecast(person, first, sent)).futureValue shouldBe Right(second)
-        store.recall(auction, person, PredictionRound.Catalog, sent).futureValue shouldBe Some(Right(second))
+        store.submit(auction, SubmitForecast(person, second, sent)).futureValue shouldBe Right(first)
+        store.recall(auction, person, PredictionRound.Catalog, sent).futureValue shouldBe Some(Right(first))
         store.recall(auction, person, PredictionRound.Catalog, op()).futureValue shouldBe None
 
         val stranger = ParticipantId(UUID.randomUUID())

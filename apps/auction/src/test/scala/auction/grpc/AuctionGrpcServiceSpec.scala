@@ -492,7 +492,10 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   private def registration = wire.RegisterForRaffleRequest(Some(viewer), raffleAuction, raffleOp)
 
   /** Игра в памяти: отвечает тем, что задал тест, и помнит, что до неё дошло и чьи прогнозы у неё спросили. */
-  private final class Games(answer: Either[SubmitRejected, Forecast]) extends PredictionGateway {
+  private final class Games(
+      answer: Either[SubmitRejected, Forecast],
+      sent: Option[Either[SubmitRejected.OpIdTaken.type, Forecast]] = None
+  ) extends PredictionGateway {
     var reached: Vector[SubmitForecast] = Vector.empty
     var asked: Vector[ParticipantId] = Vector.empty
     def submit(auction: AuctionId, command: SubmitForecast) = {
@@ -504,6 +507,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val open = Predictions(RoundStatus.Open, RoundStatus.NotOpen, cancelled = false)
       Future.successful(MyPredictions(open, answer.toOption.map(found => found.round -> found).toMap))
     }
+    def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) =
+      Future.successful(sent)
   }
 
   /** Аукцион сходки, запланированный с `lot` в реестре: раунд каталога может быть открыт. */
@@ -604,6 +609,17 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       )
       mine.rounds.head.answers should have size 2
       games.asked shouldBe Vector(ViewerId)
+    }
+
+    "answers a repeat of an accepted op_id with its prediction even after its lot left the registry" in {
+      val stranger = "01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e60"
+      val games = Games(Left(SubmitRejected.RoundClosed), sent = Some(Right(guess)))
+      service(Unreachable, auctions = scheduledWithLot, predictions = games)
+        .submitPrediction(predictionOf(stranger))
+        .futureValue
+        .getAccepted
+        .answers should have size 2
+      games.reached shouldBe empty
     }
 
     "answers a closed round as a value and a foreign op_id as already existing" in {

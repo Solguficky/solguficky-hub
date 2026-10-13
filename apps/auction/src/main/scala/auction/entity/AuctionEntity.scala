@@ -9,6 +9,7 @@ import auction.lot.Envelope
 import auction.lot.LotState
 import auction.lot.MarkForFinalRejected
 import auction.lot.OpId
+import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.ResumeLotRejected
 import auction.lot.ScheduleLotRejected
@@ -27,6 +28,7 @@ import org.apache.pekko.persistence.Persistence
 import org.apache.pekko.persistence.typed.PersistenceId
 import org.apache.pekko.persistence.typed.RecoveryCompleted
 import org.apache.pekko.persistence.typed.scaladsl.Effect
+import org.apache.pekko.persistence.typed.scaladsl.EffectBuilder
 import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
 import org.apache.pekko.persistence.typed.scaladsl.RetentionCriteria
 
@@ -128,13 +130,15 @@ enum OpeningRejected {
  * сделано, кто-то повторит», а не «сделано не то, и никто не исправит». Раунд каталога открывается после
  * `AuctionScheduled`, раунд финала — после `FinalLineupFrozen`, игра отменяется после `AuctionCancelled`; каждое с
  * переспросом на тике и после recovery, пока прогнозы не ответят. Раунд каталога закрывается после записи
- * `PrebiddingStarted`, и лоты не открываются, пока прогнозы не подтвердили закрытие: до этого entity в `Prebidding` не
- * спрашивает лоты вовсе, а подтверждение начинает тот же опрос, что recovery, — ставка до закрытия раунда получает
- * `LotNotOpen`. Общий дедлайн торгов ждёт того же подтверждения: иначе торги кончились бы, не начавшись. Раунд финала
- * закрывается до записи `FinalStarted`, а прогнозы удаляются до записи `AuctionDiscarded`: после этих событий повторять
- * было бы некому — лоты состава возвращаются в торги только в финале, а удалённый аукцион ничего не переспрашивает.
- * Прогнозы не ответили — ответа на команду нет, и повтор с тем же `op_id` дописывает её, как у `StartNextLot`. Знание
- * «прогнозы ответили» несохраняемо, как знание о лотах: все команды прогнозов идемпотентны.
+ * `PrebiddingStarted`, и `OpenLot` лоты не получают, пока прогнозы не подтвердили закрытие: вопросы к лотам и таймеры
+ * их дедлайнов идут как обычно, а придержанные команды entity отправляет по подтверждению, — ставка до закрытия раунда
+ * получает `LotNotOpen`. Общий дедлайн ждёт того же подтверждения, пока торги не начались: иначе они кончились бы, не
+ * начавшись. Решает это чистый [[PredictionSteps]]. Пока стирание прогнозов в пути, остальные команды лежат в stash, а
+ * ответы прогнозов на шаги, ушедшие до удаления, знания нового аукциона не трогают. Раунд финала закрывается до записи
+ * `FinalStarted`, а прогнозы удаляются до записи `AuctionDiscarded`: после этих событий повторять было бы некому — лоты
+ * состава возвращаются в торги только в финале, а удалённый аукцион ничего не переспрашивает. Прогнозы не ответили —
+ * ответа на команду нет, и повтор с тем же `op_id` дописывает её, как у `StartNextLot`. Знание «прогнозы ответили»
+ * несохраняемо, как знание о лотах: все команды прогнозов идемпотентны.
  */
 object AuctionEntity {
 
@@ -329,12 +333,12 @@ object AuctionEntity {
   /** Ответ розыгрыша на отмену; неудача — ответа нет, и отмена повторится на тике переспроса. */
   private[entity] final case class RaffleCancelAnswered(answer: Try[Done]) extends Command
 
-  /** Ответ прогнозов на открытие или закрытие раунда; неудача — ответа нет, и шаг повторится на тике переспроса. */
-  private[entity] final case class PredictionRoundAnswered(round: PredictionRound, opened: Boolean, answer: Try[Done])
+  /**
+   * Ответ прогнозов на шаг [[PredictionSteps]] вместе с номером удаления, при котором шаг ушёл; неудача — ответа нет, и
+   * шаг повторится на тике переспроса.
+   */
+  private[entity] final case class PredictionAnswered(step: PredictionStep, generation: Int, answer: Try[Done])
       extends Command
-
-  /** Ответ прогнозов на отмену игры; неудача — ответа нет, и отмена повторится на тике переспроса. */
-  private[entity] final case class PredictionsCancelAnswered(answer: Try[Done]) extends Command
 
   /** Ответ прогнозов на закрытие раунда финала вместе со стартом финала, который его ждёт; неудача — ответа нет. */
   private[entity] final case class FinalPredictionsClosed(
@@ -432,11 +436,30 @@ object AuctionEntity {
         // recovery пережить не может. Меняют его только сообщения этой entity, по одному.
         var roster = LotRoster.empty
 
+        // Что прогнозы подтвердили в этой инкарнации; рестарт спрашивает снова — каждый шаг идемпотентен.
+        var progress = PredictionProgress.empty
+
+        // Сколько удалений записала эта инкарнация: ответ прогнозов на шаг, ушедший до удаления, о новом аукционе под
+        // тем же идентификатором ничего не говорит.
+        var generation = 0
+
+        // Стирание прогнозов в пути: удаление аукциона ждёт его ответа, и остальные команды до него лежат в stash —
+        // иначе старт торгов, принятый между стиранием и записью, остался бы с пустыми прогнозами.
+        var wiping = false
+
+        // `OpenLot`, придержанные до закрытия раунда каталога. Несохраняемы, как знание о лотах: рестарт строит их
+        // заново тем же опросом.
+        var heldOpenings = Vector.empty[(LotId, OpenLot)]
+
         def follow(step: (LotRoster, List[LotInstruction])): Unit = {
           val (known, instructions) = step
           roster = known
           instructions.foreach {
             case LotInstruction.Ask(lot) => context.pipeToSelf(lots.stateOf(lot))(LotObserved(lot, _))
+            // Раунд каталога ещё открыт: лот остаётся в знании «открывается», а команду придерживает entity до
+            // подтверждения закрытия.
+            case LotInstruction.Open(lot, command) if PredictionSteps.holdsOpening(progress) =>
+              heldOpenings :+= lot -> command
             case LotInstruction.Open(lot, command) => context.pipeToSelf(lots.open(lot, command))(LotAnswered(lot, _))
             case LotInstruction.Arm(lot, deadline) =>
               // Дедлайн, истёкший за время простоя, даёт нулевую задержку: лот закрывается сразу (ADR-045).
@@ -488,12 +511,6 @@ object AuctionEntity {
             case _ => ()
           }
 
-        // Что прогнозы подтвердили в этой инкарнации; рестарт спрашивает снова — каждый шаг идемпотентен.
-        var catalogOpened = false
-        var catalogClosed = false
-        var finalOpened = false
-        var predictionsCancelled = false
-
         def warnPredictions(message: String, failure: Throwable): Unit =
           context.log.warn(
             message,
@@ -505,42 +522,15 @@ object AuctionEntity {
         // Синхронный отказ порта приходит неудачей, а не роняет entity в обработке сообщения — как у слота.
         def askPredictions(asked: => Future[Done]): Future[Done] = Try(asked).fold(Future.failed, answer => answer)
 
-        def roundStep(round: PredictionRound, opened: Boolean)(asked: => Future[Done]): Unit =
-          context.pipeToSelf(askPredictions(asked))(PredictionRoundAnswered(round, opened, _))
-
-        /**
-         * Шаги прогнозов, которые entity повторяет, пока прогнозы не ответят: открытие раунда каталога в `Scheduled`,
-         * его закрытие у начавшегося аукциона, открытие раунда финала в `LineupFrozen` и отмена у отменённого.
-         * Отменённому закрывать раунд не нужно: отмена закрывает открытый раунд сама.
-         */
+        /** Шаги прогнозов, которых требует состояние аукциона и которые ещё не подтверждены. */
         def followPredictions(auction: Auction): Unit =
-          auction.state match {
-            case AuctionState.Scheduled(_) if !catalogOpened =>
-              roundStep(PredictionRound.Catalog, opened = true)(predictions.open(auctionId, PredictionRound.Catalog))
-            case AuctionState.Cancelled(_, _, _) =>
-              if (!predictionsCancelled)
-                context.pipeToSelf(askPredictions(predictions.cancel(auctionId)))(PredictionsCancelAnswered(_))
-            case current if current.started.isDefined =>
-              if (!catalogClosed)
-                roundStep(PredictionRound.Catalog, opened = false)(
-                  predictions.close(auctionId, PredictionRound.Catalog)
-                )
-              current match {
-                case AuctionState.LineupFrozen(_, _, _) if !finalOpened =>
-                  roundStep(PredictionRound.Final, opened = true)(predictions.open(auctionId, PredictionRound.Final))
-                case _ => ()
-              }
-            case _ => ()
-          }
-
-        /**
-         * Лоты онлайн-торгов ждут закрытия раунда каталога: пока прогнозы его не подтвердили, entity в `Prebidding`
-         * лоты не спрашивает и не открывает. После `Prebidding` открывать лоты уже поздно, и ждать нечего.
-         */
-        def awaitingCatalog(auction: Auction): Boolean =
-          auction.state match {
-            case AuctionState.Prebidding(_, _) => !catalogClosed
-            case _ => false
+          PredictionSteps.due(auction, progress).foreach { step =>
+            val asked = step match {
+              case PredictionStep.Open(round) => askPredictions(predictions.open(auctionId, round))
+              case PredictionStep.Close(round) => askPredictions(predictions.close(auctionId, round))
+              case PredictionStep.Cancel => askPredictions(predictions.cancel(auctionId))
+            }
+            context.pipeToSelf(asked)(PredictionAnswered(step, generation, _))
           }
 
         // Сколько занятий слота в пути: повтор открытия в полёте шлёт своё занятие, и «занят» держится до последнего
@@ -595,7 +585,7 @@ object AuctionEntity {
           record(auction, decision, start.opId, initiator, clock, newId) { (after, answer) =>
             replyTo ! Right(answer)
             if (LotRoster.holding(after.state)) slotConfirmed = true
-            if (!awaitingCatalog(after)) follow(LotRoster.started(after, roster, decision))
+            follow(LotRoster.started(after, roster, decision))
             followPredictions(after)
             openRaffle(after)
             armPrebidding(after)
@@ -634,28 +624,42 @@ object AuctionEntity {
               }
           }
 
-        // Аукцион, рождённый заново в той же инкарнации, начинает прогнозы заново: знание об удалённом не переносится.
+        /**
+         * Записанное удаление начинает знание о прогнозах заново: аукцион, рождённый в той же инкарнации, — новая игра.
+         * Повтор удаления знание не трогает: под тем же идентификатором уже мог идти аукцион, рождённый заново.
+         */
         def discarded(
             state: State,
             decision: Either[DiscardAuctionRejected, AuctionDecision],
             discard: DiscardAuction,
             initiator: Initiator,
             replyTo: ActorRef[Either[DiscardAuctionRejected, AuctionAnswer]]
-        ): Effect[StoredAuctionEvent, State] =
+        ): EffectBuilder[StoredAuctionEvent, State] =
           decision match {
-            case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+            case Left(rejected) => Effect.none.thenRun(_ => replyTo ! Left(rejected))
             case Right(accepted) =>
               record(state.auction, accepted, discard.opId, initiator, clock, newId) { (_, answer) =>
-                catalogOpened = false
-                catalogClosed = false
-                finalOpened = false
-                predictionsCancelled = false
+                accepted match {
+                  case AuctionDecision.Accepted(_) =>
+                    progress = PredictionProgress.empty
+                    generation += 1
+                  case AuctionDecision.Repeated(_) | AuctionDecision.Unchanged => ()
+                }
                 replyTo ! Right(answer)
               }
           }
 
         def onCommand(state: State, command: Command): Effect[StoredAuctionEvent, State] =
           command match {
+            case PredictionsWiped(discard, initiator, replyTo, Success(_)) =>
+              wiping = false
+              discarded(state, Auction.decide(state.auction, discard), discard, initiator, replyTo).thenUnstashAll()
+            case PredictionsWiped(_, _, _, Failure(failure)) =>
+              wiping = false
+              Effect.none
+                .thenRun((_: State) => warnPredictions("predictions did not discard", failure))
+                .thenUnstashAll()
+            case _ if wiping => Effect.stash()
             case Start(start, initiator, replyTo) =>
               Auction.decide(state.auction, start) match {
                 case Left(rejected) => Effect.reply(replyTo)(Left(OpeningRejected.ByAuction(rejected)))
@@ -761,7 +765,7 @@ object AuctionEntity {
                       AuctionState.Settling(_, _) | AuctionState.Break(_, _) | AuctionState.LineupFrozen(_, _, _) |
                       AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
                       AuctionState.Cancelled(_, _, _) =>
-                    if (!awaitingCatalog(after.auction)) follow(LotRoster.recheck(after.auction, roster))
+                    follow(LotRoster.recheck(after.auction, roster))
                     followPredictions(after.auction)
                     openRaffle(after.auction)
                     cancelRaffle(after.auction)
@@ -769,9 +773,9 @@ object AuctionEntity {
                     releaseSlot(after.auction)
                 }
               }
-            // Общий дедлайн ждёт закрытия раунда каталога так же, как лоты: иначе торги кончились бы, не начавшись.
-            // Подтверждение закрытия взводит таймер заново.
-            case PrebiddingDue if awaitingCatalog(state.auction) => Effect.none
+            // Общий дедлайн ждёт закрытия раунда каталога, пока торги не начались, и спрашивается снова через тик.
+            case PrebiddingDue if PredictionSteps.holdsDeadline(state.auction, progress, roster) =>
+              Effect.none.thenRun(_ => timers.startSingleTimer(PrebiddingKey, PrebiddingDue, recheckEvery))
             case PrebiddingDue =>
               state.auction.state.started match {
                 case None => Effect.none
@@ -911,32 +915,27 @@ object AuctionEntity {
                       }
                   }
               }
-            case PredictionRoundAnswered(round, opened, Success(_)) =>
-              // Переспрос мог послать закрытие второй раз, пока первое было в пути: лоты пускает только первый ответ.
-              val catalogJustClosed = round == PredictionRound.Catalog && !opened && !catalogClosed
-              (round, opened) match {
-                case (PredictionRound.Catalog, true) => catalogOpened = true
-                case (PredictionRound.Catalog, false) => catalogClosed = true
-                case (PredictionRound.Final, true) => finalOpened = true
-                case (PredictionRound.Final, false) => ()
-              }
-              // Подтверждённое закрытие каталога пускает лоты тем же опросом, что recovery: в `Prebidding` entity их до
-              // него не спрашивала, и знания о лотах нет.
+            // Ответ на шаг, ушедший до записанного удаления, — о прежнем аукционе: знание нового он не трогает.
+            case PredictionAnswered(_, sent, _) if sent != generation => Effect.none
+            case PredictionAnswered(step, _, Success(_)) =>
+              // Переспрос мог послать шаг второй раз, пока первый был в пути: придержанные лоты пускает только первый.
+              val before = progress
+              progress = PredictionSteps.answered(progress, step)
+              val held = heldOpenings
+              if (!PredictionSteps.holdsOpening(progress)) heldOpenings = Vector.empty
               Effect.none.thenRun { after =>
-                after.auction.state match {
-                  case AuctionState.Prebidding(_, _) if catalogJustClosed =>
-                    follow(LotRoster.survey(after.auction))
-                    armPrebidding(after.auction)
-                  case _ => ()
-                }
+                if (PredictionSteps.releases(after.auction, before, step))
+                  after.auction.state match {
+                    // Торги идут: придержанные лоты открываются, и общий дедлайн, ждавший их, взводится заново.
+                    case AuctionState.Prebidding(_, _) =>
+                      held.foreach((lot, command) => context.pipeToSelf(lots.open(lot, command))(LotAnswered(lot, _)))
+                      armPrebidding(after.auction)
+                    // Торги кончились раньше подтверждения: открывать поздно, и опрос отметит лоты неоткрытыми.
+                    case _ => follow(LotRoster.survey(after.auction))
+                  }
               }
-            case PredictionRoundAnswered(_, _, Failure(failure)) =>
+            case PredictionAnswered(_, _, Failure(failure)) =>
               Effect.none.thenRun(_ => warnPredictions("predictions did not answer the auction", failure))
-            case PredictionsCancelAnswered(Success(_)) =>
-              predictionsCancelled = true
-              Effect.none
-            case PredictionsCancelAnswered(Failure(failure)) =>
-              Effect.none.thenRun(_ => warnPredictions("predictions did not answer the cancellation", failure))
             case RaffleAnswered(Success(_)) =>
               raffleOpened = true
               Effect.none
@@ -1021,6 +1020,7 @@ object AuctionEntity {
             case Discard(discard, initiator, replyTo) =>
               (state.auction.state, Auction.decide(state.auction, discard)) match {
                 case (AuctionState.Scheduled(_), Right(AuctionDecision.Accepted(_))) =>
+                  wiping = true
                   Effect.none.thenRun { _ =>
                     context.pipeToSelf(askPredictions(predictions.discard(auctionId)))(
                       PredictionsWiped(discard, initiator, replyTo, _)
@@ -1028,10 +1028,6 @@ object AuctionEntity {
                   }
                 case (_, decision) => discarded(state, decision, discard, initiator, replyTo)
               }
-            case PredictionsWiped(discard, initiator, replyTo, Success(_)) =>
-              discarded(state, Auction.decide(state.auction, discard), discard, initiator, replyTo)
-            case PredictionsWiped(_, _, _, Failure(failure)) =>
-              Effect.none.thenRun(_ => warnPredictions("predictions did not discard", failure))
             case Get(replyTo) => Effect.reply(replyTo)(state.auction)
           }
 
@@ -1047,7 +1043,7 @@ object AuctionEntity {
           .withRetention(RetentionCriteria.snapshotEvery(snapshotEvery, keepNSnapshots = 2))
           .withTagger(_ => tag)
           .receiveSignal { case (state, RecoveryCompleted) =>
-            if (!awaitingCatalog(state.auction)) follow(LotRoster.survey(state.auction))
+            follow(LotRoster.survey(state.auction))
             followPredictions(state.auction)
             openRaffle(state.auction)
             cancelRaffle(state.auction)
@@ -1069,7 +1065,7 @@ object AuctionEntity {
       initiator: Initiator,
       clock: Clock,
       newId: () => UUID
-  )(reply: (Auction, AuctionAnswer) => Unit): Effect[StoredAuctionEvent, State] =
+  )(reply: (Auction, AuctionAnswer) => Unit): EffectBuilder[StoredAuctionEvent, State] =
     decision match {
       case AuctionDecision.Repeated(original) =>
         Effect.none.thenRun(_ => reply(auction, AuctionAnswer.Written(original)))
