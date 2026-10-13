@@ -6,25 +6,29 @@ import {
 import type { TelegramEnvironment } from "../../../core/config.js";
 import {
   classifyTelegramFailure,
-  isPermanentFailure,
   type NotificationSender,
   type RenderMessage,
 } from "../../../core/delivery/index.js";
-import { money, truncate } from "../entry-screen.js";
+import {
+  checkPlaceBids,
+  createLotNoticeRender,
+  type LotNoticeReads,
+  type LotNoticeView,
+  renderLotNotice,
+} from "../../../core/notifications/lot-notice.js";
 import { entryCallback, notifyCallback, parseEntryCallback } from "../faq.js";
 import { screenMark } from "../screen-catalog.js";
 import type { AuctionNotificationContent } from "./notification.js";
 
 type TraceButton = { text: string; callback_data: string };
 
-// `settings` — «Реже» рядом с «К лоту» у перебития (PER-515): пара одним
-// рядом, единственная вторая кнопка следа (дизайн-код, «Уведомления
-// аукциона»). Кнопки нет у вести о смене круга (PER-537): в боте аукциона
+// Ряды кнопок следа (дизайн-код, «Уведомления аукциона»): у одиночной вести о
+// лоте — «К лоту» и рядом «Частота уведомлений», у сводки — ряд на лот и ряд
+// частоты (PER-598). Кнопок нет у вести о смене круга (PER-537): в боте аукциона
 // участник дальше экрана перехода в сообщество не пройдёт, и вести её нечем.
 export type NotificationMessage = {
   text: string;
-  button?: TraceButton;
-  settings?: TraceButton;
+  rows?: readonly (readonly TraceButton[])[];
 };
 
 // Кнопка под следом (дизайн-код, «Доставка»): карточка лота приходит новым
@@ -51,8 +55,8 @@ export function traceFaqCallback(): string {
   return `${tracePrefix}${entryCallback("faq")}`;
 }
 
-// «Реже» под перебитием — экран частоты тем же путём, что команда
-// `/notifications`, новым сообщением (PER-515).
+// «Частота уведомлений» под вестью о торгах — экран частоты тем же путём, что
+// команда `/notifications`, новым сообщением (PER-515, PER-598).
 export function traceNotifyCallback(): string {
   return `${tracePrefix}${notifyCallback()}`;
 }
@@ -67,81 +71,57 @@ export function parseTraceCallback(data: string): string | undefined {
   return parsed.ok && parsed.intent.kind === "lot" ? inner : undefined;
 }
 
-// Чтения, которые нужны тексту уведомления. Название лота отдаёт Auction
-// только зрителю с правом `auction` (Viewer.isParticipant), а право получателя
-// канал не придумывает — спрашивает у Identity.
-export type NotificationReads = {
-  // true — право есть, false — нет; недоступность Identity — исключение.
-  holdsPlaceBids(identityId: string, requestId?: string): Promise<boolean>;
-  // Название лота глазами получателя; любой отказ — исключение со своим кодом.
-  lotTitle(
-    identityId: string,
-    lotId: string,
-    requestId?: string,
-  ): Promise<string>;
-};
+// Чтения, которые нужны тексту уведомления о лоте: право получателя и название
+// лота — общий порт двух ботов.
+export type NotificationReads = LotNoticeReads;
 
-// Сборка сообщения. Без права `auction` уведомление не отправляется вовсе:
-// кнопка упёрлась бы в тот же отказ, а человек, у которого право сняли, о
-// торгах больше не слышит. Недоступный Auction названия не роняет: перебитие
-// ценно вовремя, а название видно в карточке по кнопке. Отказ, который повтор
-// не изменит, — лот не найден или не виден получателю с правом, — дефект: такое
-// уведомление снимается, а не уходит с кнопкой в тот же отказ.
+// Сборка сообщения. Вести о лотах собирает общий рендер двух ботов
+// (`lot-notice.ts`): без права `place-bids` уведомление не уходит, недоступный
+// Auction роняет только название. Допуск к аукциону тоже требует права: кнопка
+// ведёт в FAQ, который без него не откроется.
 //
-// `outbidSettings` — у бота есть Notifications, и под перебитием стоит «Реже».
+// `frequencyButton` — у бота есть Notifications, и под вестью о торгах стоит
+// «Частота уведомлений».
 export function createRenderMessage(
   reads: NotificationReads,
   onTitleMissing: (cause: unknown, requestId?: string) => void,
-  outbidSettings = false,
+  frequencyButton = false,
 ): RenderMessage<AuctionNotificationContent, NotificationMessage> {
-  return async (content, { recipientId, requestId }) => {
+  const renderLot = createLotNoticeRender({
+    reads,
+    onTitleMissing,
+    frequencyButton,
+  });
+  return async (content, context) => {
     // Весть о смене круга (PER-537) — не о торгах: право ставить бот для неё не
     // спрашивает, и кнопки, которая упёрлась бы в тот же отказ, у неё нет.
     if (content.kind === "circle-promoted") {
       return { kind: "ready", message: renderNotification(content) };
     }
-    let eligible: boolean;
-    try {
-      eligible = await reads.holdsPlaceBids(recipientId, requestId);
-    } catch (cause) {
-      return isPermanentFailure(cause)
-        ? { kind: "rejected", cause }
-        : { kind: "unavailable", cause };
-    }
-    if (!eligible) return { kind: "ineligible" };
     if (content.kind === "access-granted") {
-      return { kind: "ready", message: renderNotification(content) };
+      return (
+        (await checkPlaceBids(reads, context)) ?? {
+          kind: "ready",
+          message: renderNotification(content),
+        }
+      );
     }
-    let title: string | undefined;
-    try {
-      title = await reads.lotTitle(recipientId, content.lotId, requestId);
-    } catch (cause) {
-      if (isPermanentFailure(cause)) return { kind: "rejected", cause };
-      onTitleMissing(cause, requestId);
-    }
-    return {
-      kind: "ready",
-      message: renderNotification(content, title, outbidSettings),
-    };
+    const rendered = await renderLot(content, context);
+    return rendered.kind === "ready"
+      ? { kind: "ready", message: traceMessage(rendered.message) }
+      : rendered;
   };
 }
 
-// Название лота у Auction ничем не ограничено, а сообщение длиннее предела
-// Telegram отвергается окончательно: уведомление потерялось бы целиком.
-const TITLE_LIMIT = 200;
-
 export function renderNotification(
   content: AuctionNotificationContent,
-  title?: string,
-  outbidSettings = false,
+  titles: ReadonlyMap<string, string> = new Map(),
+  frequencyButton = false,
 ): NotificationMessage {
   if (content.kind === "access-granted") {
     return {
       text: "Тебя допустили к аукциону.",
-      button: {
-        text: "Правила и FAQ",
-        callback_data: traceFaqCallback(),
-      },
+      rows: [[{ text: "Правила и FAQ", callback_data: traceFaqCallback() }]],
     };
   }
   // Повышение до участника (PER-537): кнопки нет — любое действие участника в
@@ -150,39 +130,24 @@ export function renderNotification(
   if (content.kind === "circle-promoted") {
     return { text: "Тебя приняли в сообщество." };
   }
-  const lot =
-    title === undefined || title === ""
-      ? undefined
-      : `«${truncate(title, TITLE_LIMIT)}»`;
-  const text = notificationText(content, lot);
-  return {
-    text,
-    button: { text: "К лоту", callback_data: traceLotCallback(content.lotId) },
-    ...(outbidSettings && content.kind === "lot-outbid"
-      ? { settings: { text: "Реже", callback_data: traceNotifyCallback() } }
-      : {}),
-  };
+  return traceMessage(renderLotNotice(content, { titles, frequencyButton }));
 }
 
-function notificationText(
-  content: Exclude<
-    AuctionNotificationContent,
-    { kind: "access-granted" } | { kind: "circle-promoted" }
-  >,
-  lot: string | undefined,
-): string {
-  switch (content.kind) {
-    case "lot-outbid":
-      return `Твою ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(content.currentPrice)}.`;
-    case "lot-proxy-raised":
-      return `Твоя автоставка на ${lot ?? "лот"} подняла цену до ${money(content.currentPrice)}: лидируешь ты.`;
-    case "lot-purchased":
-      return `Лот ${lot === undefined ? "" : `${lot} `}твой за ${money(content.price)}.`;
-    default: {
-      const _exhaustive: never = content;
-      return _exhaustive;
-    }
-  }
+// Кнопки общего рендера — следы этой поверхности: лот — кнопка лота дерева,
+// частота — экран `/notifications`.
+function traceMessage(view: LotNoticeView): NotificationMessage {
+  return {
+    text: view.text,
+    rows: view.rows.map((row) =>
+      row.map((button) => ({
+        text: button.text,
+        callback_data:
+          button.kind === "lot"
+            ? traceLotCallback(button.lotId)
+            : traceNotifyCallback(),
+      })),
+    ),
+  };
 }
 
 // Вызов Bot API обязан уложиться в ack_wait durable (30 с): иначе шина выдаст
@@ -200,19 +165,11 @@ export function createNotificationApi(
 
 export type SendMessageApi = Pick<Api, "sendMessage">;
 
-// Клавиатура следа — один ряд: «К лоту» и у перебития ещё «Реже». Её же
-// собирает тест каталога экранов, а не свою копию. У вести о смене круга
-// (PER-537) кнопки нет вовсе — тогда и клавиатуры не шлём; «Реже» без «К лоту»
-// не бывает: второй след ставится только рядом с первым.
+// Клавиатура следа. Её же собирает тест каталога экранов, а не свою копию. У
+// вести о смене круга (PER-537) кнопок нет вовсе — тогда и клавиатуры не шлём.
 export function notificationMarkup(message: NotificationMessage) {
-  if (message.button === undefined) return undefined;
-  return {
-    inline_keyboard: [
-      message.settings === undefined
-        ? [message.button]
-        : [message.button, message.settings],
-    ],
-  };
+  if (message.rows === undefined || message.rows.length === 0) return undefined;
+  return { inline_keyboard: message.rows.map((row) => [...row]) };
 }
 
 export function createNotificationSender(

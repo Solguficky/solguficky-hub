@@ -9,6 +9,7 @@ import {
   startNatsDelivery,
 } from "../../core/delivery/index.js";
 import { countFailure } from "../../core/failures.js";
+import { logMissingTitle } from "../../core/notifications/lot-notice.js";
 import type { SurfaceDefinition } from "../../core/process.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
 import { createBot } from "./bot.js";
@@ -130,15 +131,7 @@ export const auctionSurface: SurfaceDefinition = ({
               recipients: clients.delivery.recipients,
               render: createRenderMessage(
                 clients.delivery.reads,
-                (cause, requestId) =>
-                  logger.warn("lot title unavailable", {
-                    ...(requestId === undefined
-                      ? {}
-                      : { request_id: requestId }),
-                    error_category: "dependency_unavailable",
-                    error:
-                      cause instanceof Error ? cause.message : String(cause),
-                  }),
+                logMissingTitle(logger),
                 clients.outbidSettings,
               ),
               sender,

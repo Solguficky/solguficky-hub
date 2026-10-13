@@ -2,8 +2,8 @@ import { InlineKeyboard } from "grammy";
 import {
   OUTBID_FREQUENCIES,
   type OutbidFrequency,
+  outbidButtonLabel,
   outbidExplanation,
-  outbidLabels,
 } from "../../../../core/notifications/outbid.js";
 import type { NotificationCategoryView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
@@ -141,29 +141,28 @@ export function meetupNotificationsScreen(settings: {
 }
 
 /**
- * Частота «перебили» (PER-552): пять режимов по одному в ряд, текущий —
- * строкой «Сейчас: …» в теле, а не меткой на кнопке, как у бота аукциона
- * (дизайн-код, «Уведомления»). Выбор отменяется с того же экрана, поэтому
+ * Частота «перебили» (PER-552): пять режимов по одному в ряд, текущий
+ * отмечен на своей кнопке маркером «• », как у бота аукциона (PER-598;
+ * дизайн-код, «Уведомления»). Выбор отменяется с того же экрана, поэтому
  * подтверждения «Да» нет: что сработало, говорит ответ на нажатие. Это
  * настройки расширения «Аукцион» в «Настройках» → «Расширения»: в
  * «Уведомлениях» остаются только категории ядра (PER-605). Данные кнопок
- * прежние, поэтому «Реже» и «Перебитые ставки» из старых сообщений открывают
- * этот экран на новом месте.
+ * прежние, поэтому «Реже» и «Перебитые ставки» из старых сообщений и
+ * «Частота уведомлений» из новых открывают этот экран на новом месте.
  */
 export function outbidFrequencyScreen(current: OutbidFrequency): ShownScreen {
   const keyboard = new InlineKeyboard();
   for (const frequency of OUTBID_FREQUENCIES) {
     keyboard
-      .text(outbidLabels[frequency].button, `v1:notify:outbid:${frequency}`)
+      .text(
+        outbidButtonLabel(frequency, current),
+        `v1:notify:outbid:${frequency}`,
+      )
       .row();
   }
   return {
     id: "notify-outbid",
-    text: screenText(
-      "Аукцион",
-      outbidExplanation,
-      `Сейчас: ${outbidLabels[current].state}.`,
-    ),
+    text: screenText("Аукцион", ...outbidExplanation),
     keyboard: withNav(keyboard, toSettingsExtensions),
     format: "HTML",
   };

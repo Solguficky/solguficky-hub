@@ -527,7 +527,7 @@ export type Clients = {
   // отписка или остановка процесса.
   watch: AuctionWatchSource;
   delivery: DeliveryPorts;
-  // Есть ли у бота настройка «перебили»: по ней под перебитием стоит «Реже».
+  // Есть ли у бота настройка «перебили»: по ней под вестью о торгах стоит «Частота уведомлений».
   outbidSettings: boolean;
   close(): void;
 };

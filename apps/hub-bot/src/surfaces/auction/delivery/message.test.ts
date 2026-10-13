@@ -38,9 +38,12 @@ const purchased: AuctionNotificationContent = {
 // Пробел в сумме — неразрывный, как его ставит Intl.NumberFormat ru-RU.
 const nbsp = " ";
 
+// Название лота глазами получателя: рендер берёт его из карты по лоту.
+const titled = (title: string, id = lotId) => new Map([[id, title]]);
+
 describe("renderNotification", () => {
   it("names the lot and the current price of an outbid", () => {
-    expect(renderNotification(outbid, "Кружка").text).toBe(
+    expect(renderNotification(outbid, titled("Кружка")).text).toBe(
       `Твою ставку на «Кружка» перебили. Текущая цена — 1${nbsp}500${nbsp}₽.`,
     );
   });
@@ -48,25 +51,28 @@ describe("renderNotification", () => {
   // PER-473: лидер узнаёт, что его автоставка ответила чужой, с кнопкой на
   // тот же лот, что и перебитый.
   it("tells the leader the proxy answered and leads, with the lot button", () => {
-    const message = renderNotification(raised, "Кружка");
+    const message = renderNotification(raised, titled("Кружка"));
     expect(message.text).toBe(
       `Твоя автоставка на «Кружка» подняла цену до 1${nbsp}600${nbsp}₽: лидируешь ты.`,
     );
-    expect(message.button).toEqual({
-      text: "К лоту",
-      callback_data: traceLotCallback(lotId),
-    });
+    expect(message.rows).toEqual([
+      [{ text: "К лоту", callback_data: traceLotCallback(lotId) }],
+    ]);
   });
 
-  it("names the lot and the sale price of a purchase", () => {
-    expect(renderNotification(purchased, "Кружка").text).toBe(
-      `Лот «Кружка» твой за 1${nbsp}500,50${nbsp}₽.`,
+  // Запись 37 прогона 12.10: покупка называет лот и следующий шаг.
+  it("names the lot, the sale price and the next step of a purchase", () => {
+    expect(renderNotification(purchased, titled("Кружка")).text).toBe(
+      `Лот «Кружка» твой за 1${nbsp}500,50${nbsp}₽. Как оплатить и забрать — напишет организатор аукциона.`,
     );
   });
 
   // Предел сообщения Telegram отверг бы уведомление окончательно.
   it("shortens a title that would not fit the message", () => {
-    const { text } = renderNotification(outbid, "Кружка ".repeat(1_000));
+    const { text } = renderNotification(
+      outbid,
+      titled("Кружка ".repeat(1_000)),
+    );
     expect(text.length).toBeLessThan(300);
     expect(text).toContain("…»");
   });
@@ -75,14 +81,14 @@ describe("renderNotification", () => {
     expect(renderNotification(outbid).text).toBe(
       `Твою ставку на лот перебили. Текущая цена — 1${nbsp}500${nbsp}₽.`,
     );
-    expect(renderNotification(purchased, "").text).toBe(
-      `Лот твой за 1${nbsp}500,50${nbsp}₽.`,
+    expect(renderNotification(purchased, titled("")).text).toBe(
+      `Лот твой за 1${nbsp}500,50${nbsp}₽. Как оплатить и забрать — напишет организатор аукциона.`,
     );
   });
 
   // Критерий приёмки: факт перебития доходит с кнопкой на карточку лота.
   it("leads to the lot card with a trace button", () => {
-    const { button } = renderNotification(outbid, "Кружка");
+    const button = renderNotification(outbid, titled("Кружка")).rows?.[0]?.[0];
     if (button === undefined)
       throw new Error("the outbid must lead to the lot");
     expect(button.text).toBe("К лоту");
@@ -100,49 +106,154 @@ describe("renderNotification", () => {
   it("tells the promoted guest they are in the community, with no button", () => {
     const message = renderNotification({ kind: "circle-promoted" });
     expect(message.text).toBe("Тебя приняли в сообщество.");
-    expect(message.button).toBeUndefined();
+    expect(message.rows).toBeUndefined();
     expect(notificationMarkup(message)).toBeUndefined();
   });
 });
 
-// PER-515: «Реже» стоит рядом с «К лоту» только под перебитием и только у
-// бота с Notifications; покупку и автоставку настройка не трогает.
-describe("outbid settings button", () => {
-  it("pairs the lot button with the settings under an outbid", () => {
-    const message = renderNotification(outbid, "Кружка", true);
-    expect(notificationMarkup(message)).toEqual({
-      inline_keyboard: [
-        [
-          { text: "К лоту", callback_data: traceLotCallback(lotId) },
-          { text: "Реже", callback_data: traceNotifyCallback() },
+// PER-515, PER-598: «Частота уведомлений» стоит рядом с «К лоту» под тем, чем
+// частота управляет, — перебитием и ответом автоставки — и только у бота с
+// Notifications; покупку настройка не трогает.
+describe("frequency button", () => {
+  it("pairs the lot button with the frequency under an outbid and a proxy answer", () => {
+    for (const content of [outbid, raised]) {
+      expect(
+        notificationMarkup(renderNotification(content, titled("Кружка"), true)),
+      ).toEqual({
+        inline_keyboard: [
+          [
+            { text: "К лоту", callback_data: traceLotCallback(lotId) },
+            {
+              text: "Частота уведомлений",
+              callback_data: traceNotifyCallback(),
+            },
+          ],
         ],
-      ],
-    });
+      });
+    }
     const inner = parseTraceCallback(traceNotifyCallback());
     expect(inner).toBe(notifyCallback());
     expect(parseEntryCallback(inner)).toEqual({ action: "notify", page: 0 });
     expect(Buffer.byteLength(traceNotifyCallback())).toBeLessThanOrEqual(64);
   });
 
-  it("keeps one button elsewhere and without Notifications", () => {
-    for (const content of [raised, purchased]) {
-      expect(
-        renderNotification(content, "Кружка", true).settings,
-      ).toBeUndefined();
-    }
-    expect(renderNotification(outbid, "Кружка").settings).toBeUndefined();
+  it("keeps the lot button alone under a purchase and without Notifications", () => {
+    const alone = [{ text: "К лоту", callback_data: traceLotCallback(lotId) }];
+    expect(renderNotification(purchased, titled("Кружка"), true).rows).toEqual([
+      alone,
+    ]);
+    expect(renderNotification(outbid, titled("Кружка")).rows).toEqual([alone]);
   });
 
-  it("puts the settings under an outbid rendered for delivery", async () => {
+  it("puts the frequency under an outbid rendered for delivery", async () => {
     const reads: NotificationReads = {
       holdsPlaceBids: async () => true,
       lotTitle: async () => "Кружка",
     };
     const render = createRenderMessage(reads, () => {}, true);
-    await expect(render(outbid, { recipientId })).resolves.toMatchObject({
-      kind: "ready",
-      message: { settings: { text: "Реже" } },
+    const rendered = await render(outbid, { recipientId });
+    if (rendered.kind !== "ready") throw new Error("the outbid must render");
+    expect(rendered.message.rows?.[0]?.[1]?.text).toBe("Частота уведомлений");
+  });
+});
+
+// Сводка окна частоты (PER-596): одно сообщение, ряд на лот и ряд частоты
+// (PER-598).
+describe("activity digest", () => {
+  const otherLot = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1";
+  const digest: AuctionNotificationContent = {
+    kind: "lot-activity-digest",
+    lines: [
+      {
+        lotId,
+        kind: "outbid",
+        currentPrice: { minorUnits: 150_000, currency: "RUB" },
+        recipientLeads: false,
+      },
+      {
+        lotId: otherLot,
+        kind: "proxy-raised",
+        currentPrice: { minorUnits: 90_000, currency: "RUB" },
+        recipientLeads: true,
+      },
+    ],
+  };
+
+  it("opens every lot from one message", async () => {
+    const source = reads({
+      lotTitle: vi.fn(async (_who: string, id: string) =>
+        id === lotId ? "Кружка" : "Плакат",
+      ),
     });
+    const render = createRenderMessage(source, () => {}, true);
+    const rendered = await render(digest, { recipientId });
+    if (rendered.kind !== "ready") throw new Error("the digest must render");
+    expect(rendered.message.text).toBe(
+      [
+        "Сводка по твоим ставкам:",
+        "",
+        `• «Кружка» — перебили, цена 1${nbsp}500${nbsp}₽`,
+        `• «Плакат» — автоставка подняла цену до 900${nbsp}₽, лот за тобой`,
+      ].join("\n"),
+    );
+    expect(notificationMarkup(rendered.message)).toEqual({
+      inline_keyboard: [
+        [{ text: "Кружка", callback_data: traceLotCallback(lotId) }],
+        [{ text: "Плакат", callback_data: traceLotCallback(otherLot) }],
+        [{ text: "Частота уведомлений", callback_data: traceNotifyCallback() }],
+      ],
+    });
+    expect(source.holdsPlaceBids).toHaveBeenCalledTimes(1);
+  });
+
+  // Отказ по одному лоту остальные строки не роняет: строка уходит без
+  // названия и кнопки, а отказ виден в логе.
+  it("keeps the other lines when one title is refused for good", async () => {
+    const missing = vi.fn();
+    const notFound = Object.assign(new Error("lot not found"), { code: 5 });
+    const render = createRenderMessage(
+      reads({
+        lotTitle: vi.fn(async (_who: string, id: string) =>
+          id === lotId ? Promise.reject(notFound) : "Плакат",
+        ),
+      }),
+      missing,
+    );
+    const rendered = await render(digest, { recipientId });
+    if (rendered.kind !== "ready") throw new Error("the digest must render");
+    expect(rendered.message.text).toContain("• Лот — перебили");
+    expect(rendered.message.text).toContain("• «Плакат» —");
+    // Кнопки к лоту, который Auction не отдаёт, нет: она упёрлась бы в тот же
+    // отказ.
+    expect(rendered.message.rows?.[0]?.[0]?.text).toBe("Плакат");
+    expect(missing).toHaveBeenCalledWith(notFound, undefined);
+  });
+
+  it("finds a recipient without the right to bid ineligible", async () => {
+    const render = createRenderMessage(
+      reads({ holdsPlaceBids: vi.fn(async () => false) }),
+      () => {},
+    );
+    await expect(render(digest, { recipientId })).resolves.toEqual({
+      kind: "ineligible",
+    });
+  });
+
+  it("passes the screen linter", async () => {
+    const sent: unknown[] = [];
+    const sender = createNotificationSender({
+      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
+        sent.push({ chat_id: chat, text, ...extra });
+        return {};
+      }),
+    } as never);
+    await sender.send({
+      telegramUserId: 42n,
+      message: renderNotification(digest, titled("Кружка"), true),
+    });
+    expect(
+      sent.flatMap((call) => inspectCall("auction", "sendMessage", call)),
+    ).toEqual([]);
   });
 });
 
@@ -177,10 +288,9 @@ describe("access granted", () => {
   it("tells the applicant they are admitted and leads into the auction", () => {
     const message = renderNotification({ kind: "access-granted" });
     expect(message.text).toBe("Тебя допустили к аукциону.");
-    expect(message.button).toEqual({
-      text: "Правила и FAQ",
-      callback_data: traceFaqCallback(),
-    });
+    expect(message.rows).toEqual([
+      [{ text: "Правила и FAQ", callback_data: traceFaqCallback() }],
+    ]);
   });
 
   // Лота у допуска нет: название не читается, а роль проверяется, как у торгов.
@@ -306,13 +416,13 @@ describe("notification sender", () => {
   it("sends the text with the lot button to the private chat", async () => {
     const sendMessage = vi.fn().mockResolvedValue({});
     const sender = createNotificationSender({ sendMessage } as never);
-    const message = renderNotification(outbid, "Кружка");
+    const message = renderNotification(outbid, titled("Кружка"));
     await expect(
       sender.send({ telegramUserId: 42n, message }),
     ).resolves.toEqual({ kind: "sent" });
     expect(sendMessage).toHaveBeenCalledWith(42, message.text, {
       ...screenMark("notification"),
-      reply_markup: { inline_keyboard: [[message.button]] },
+      reply_markup: { inline_keyboard: message.rows },
       link_preview_options: { is_disabled: true },
     });
   });
@@ -343,10 +453,10 @@ describe("notification sender", () => {
     });
     const sender = createNotificationSender({ sendMessage } as never);
     for (const message of [
-      renderNotification(outbid, "Кружка"),
-      renderNotification(outbid, "Кружка", true),
+      renderNotification(outbid, titled("Кружка")),
+      renderNotification(outbid, titled("Кружка"), true),
       renderNotification(raised),
-      renderNotification(purchased, "Кружка"),
+      renderNotification(purchased, titled("Кружка")),
       renderNotification({ kind: "access-granted" }),
       renderNotification({ kind: "circle-promoted" }),
     ]) {

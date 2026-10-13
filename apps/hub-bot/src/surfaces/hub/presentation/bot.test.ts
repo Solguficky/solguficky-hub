@@ -6409,7 +6409,9 @@ describe("notification frames", () => {
       }
     });
 
-    it("shows the five modes and names the current one in the body", async () => {
+    // Запись 33 прогона 12.10: выбранный режим отмечен на своей кнопке, а
+    // пояснение говорит о сводке и о том, что покупку настройка не трогает.
+    it("shows the five modes and marks the current one on its button", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "outbid-frequency",
         frequency: "off",
@@ -6422,7 +6424,9 @@ describe("notification frames", () => {
       );
       const payload = screen(calls[1]);
       expect(payload.text).toContain("<b>Аукцион</b>");
-      expect(payload.text).toContain("Сейчас: не присылаю.");
+      expect(payload.text).toContain("одной сводкой");
+      expect(payload.text).toContain("О покупке лота пишу всегда");
+      expect(payload.text).not.toContain("Сейчас:");
       expect(payload.reply_markup?.inline_keyboard).toEqual([
         [
           {
@@ -6443,7 +6447,7 @@ describe("notification frames", () => {
           },
         ],
         [{ text: "Не чаще раза в час", callback_data: "v1:notify:outbid:60" }],
-        [{ text: "Не присылать", callback_data: "v1:notify:outbid:off" }],
+        [{ text: "• Не присылать", callback_data: "v1:notify:outbid:off" }],
         [{ text: "‹ Расширения", callback_data: "v1:nav:ext" }],
       ]);
     });
@@ -6464,11 +6468,15 @@ describe("notification frames", () => {
       );
       expect(calls[0]?.method).toBe("answerCallbackQuery");
       expect(calls[0]?.payload).toMatchObject({
-        text: "Теперь: не чаще раза в 15 минут по лоту.",
+        text: "Теперь: сводкой не чаще раза в 15 минут.",
       });
-      expect(screen(calls[1]).text).toContain(
-        "Сейчас: не чаще раза в 15 минут по лоту.",
-      );
+      // Экран обновлён на месте, и отметка стоит на том, что сохранил сервис.
+      expect(calls[1]?.method).toBe("editMessageText");
+      expect(
+        (screen(calls[1]).reply_markup?.inline_keyboard ?? [])
+          .flat()
+          .map((button) => button.text),
+      ).toContain("• Не чаще раза в 15 минут");
     });
 
     it("refuses with a retry of the same choice when Notifications is down", async () => {
@@ -6495,11 +6503,11 @@ describe("notification frames", () => {
       ).toContain("v1:notify:outbid:off");
     });
 
-    // «Реже» под перебитием — след: экран приходит новым сообщением, а
-    // уведомление остаётся как было. Данные кнопки прежние, поэтому «Реже» из
-    // старого сообщения открывает частоту на новом месте — под «Расширениями»
-    // настроек (PER-605).
-    it("opens the frequency from «Реже» as a new message at its new place", async () => {
+    // «Частота уведомлений» под перебитием — след: экран приходит новым
+    // сообщением, а уведомление остаётся как было. Данные кнопки прежние,
+    // поэтому и «Реже» из старого сообщения открывает частоту на новом месте —
+    // под «Расширениями» настроек (PER-605, PER-598).
+    it("opens the frequency from a notification as a new message at its new place", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "outbid-frequency",
         frequency: "every",
@@ -6511,7 +6519,9 @@ describe("notification frames", () => {
       expect(methods).toContain("sendMessage");
       expect(methods).not.toContain("editMessageText");
       const sent = screen(calls.find((call) => call.method === "sendMessage"));
-      expect(sent.text).toContain("Сейчас: о каждом перебитии.");
+      expect(JSON.stringify(sent.reply_markup)).toContain(
+        "• О каждом перебитии",
+      );
       expect(sent.reply_markup?.inline_keyboard.at(-1)).toEqual([
         { text: "‹ Расширения", callback_data: "v1:nav:ext" },
       ]);

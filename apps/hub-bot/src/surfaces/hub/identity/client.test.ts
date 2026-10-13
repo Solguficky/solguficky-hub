@@ -30,6 +30,7 @@ import {
   createIdentityClient,
   createIdentityResolver,
   createOrganizerResolver,
+  createPlaceBidsReader,
   createTelegramRecipientResolver,
   requestIdHeader,
   useCaseHeader,
@@ -269,6 +270,32 @@ describe("identity client", () => {
     identity.close();
     expect(abort).toHaveBeenCalledOnce();
     abort.mockRestore();
+  });
+});
+
+// Канал доставки хаба (PER-598): право place_bids получателя перед чтением
+// названия лота. Отказ Identity — исключение: повтор решает рендер.
+describe("place bids reader", () => {
+  const identityId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
+
+  it("asks Identity for the right to bid of the recipient", async () => {
+    const rpc = vi.fn().mockResolvedValue({ granted: true });
+    const reader = createPlaceBidsReader({ checkAccessRight: rpc });
+    await expect(
+      reader.holdsPlaceBids(identityId, { requestId: "req-1" }),
+    ).resolves.toBe(true);
+    expect(rpc).toHaveBeenCalledWith(
+      { identityId, right: AccessRight.PLACE_BIDS },
+      expect.objectContaining({ headers: { [requestIdHeader]: "req-1" } }),
+    );
+  });
+
+  it("lets a refusal of Identity through", async () => {
+    const down = new ConnectError("down", Code.Unavailable);
+    const reader = createPlaceBidsReader({
+      checkAccessRight: () => Promise.reject(down),
+    });
+    await expect(reader.holdsPlaceBids(identityId)).rejects.toBe(down);
   });
 });
 

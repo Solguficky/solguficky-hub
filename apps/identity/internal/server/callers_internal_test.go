@@ -107,7 +107,7 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 		{name: "unknown token", method: resolve, authorization: []string{"Bearer stranger"}, refusal: refusalUnknownToken},
 		{name: "maintainer secret", method: resolve, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
 		{name: "meetups on resolve", method: resolve, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
-		{name: "bot on check right", method: checkRight, authorization: []string{bearer(CallerHubBot)}, refusal: refusalNotDeclared, caller: CallerHubBot},
+		{name: "no header on check right", method: checkRight, refusal: refusalMissingToken},
 		{name: "maintainer secret on request access", method: requestAccess, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
 		{name: "meetups on request access", method: requestAccess, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
 		{name: "no header on appoint", method: appoint, refusal: refusalMissingToken},
@@ -172,6 +172,9 @@ func TestCallerGateAdmitsDeclaredCaller(t *testing.T) {
 		// право place_bids, без которого Auction не отдаст лот для текста.
 		{identityv1.IdentityService_ResolveTelegramUserId_FullMethodName, CallerAuctionBot},
 		{identityv1.IdentityService_CheckAccessRight_FullMethodName, CallerAuctionBot},
+		// Канал доставки бота хаба (PER-598): то же право place_bids участника,
+		// без которого Auction не отдаст лот для названия в уведомлении.
+		{identityv1.IdentityService_CheckAccessRight_FullMethodName, CallerHubBot},
 		// Закрытие регистрации в розыгрыше (PER-499): право place_bids кандидатов.
 		{identityv1.IdentityService_CheckAccessRight_FullMethodName, CallerAuction},
 	}

@@ -1,11 +1,14 @@
 import { GrammyError, HttpError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
+import {
+  createLotNoticeRender,
+  type LotNotice,
+} from "../../../core/notifications/lot-notice.js";
 import type {
   MeetupAspect,
   MeetupLifecycle,
   MeetupWhen,
   NotifiedMeetup,
-  RenderableContent,
 } from "../delivery/notification.js";
 import {
   classifySendFailure,
@@ -14,6 +17,7 @@ import {
   disableMeetupCategoryCallback,
   disablePublishedCallback,
   disableReminderCallback,
+  type OutgoingNotification,
   renderNotification,
   telegramTextLimit,
 } from "./notification-message.js";
@@ -24,7 +28,7 @@ const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
 function content(
   when: MeetupWhen,
   overrides: { title?: string; venue?: string } = {},
-): RenderableContent {
+): OutgoingNotification {
   return {
     kind: "meetup-published",
     meetup: {
@@ -53,12 +57,24 @@ function changed(
   aspects: MeetupAspect[],
   lifecycle: MeetupLifecycle = "planned",
   visibility: "hidden" | "visible" = "visible",
-): RenderableContent {
+): OutgoingNotification {
   return { kind: "meetup-changed", meetup, aspects, lifecycle, visibility };
 }
 
-function buttons(content: RenderableContent): unknown[] {
+function buttons(content: OutgoingNotification): unknown[] {
   return (renderNotification(content).keyboard?.inline_keyboard ?? []).flat();
+}
+
+// Весть о лоте собирает общий рендер двух ботов, отправитель хаба рисует её
+// своими следами (PER-598).
+async function lotNotice(notice: LotNotice) {
+  const rendered = await createLotNoticeRender({
+    reads: { holdsPlaceBids: async () => true, lotTitle: async () => "Кружка" },
+    onTitleMissing: () => {},
+    frequencyButton: true,
+  })(notice, { recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd" });
+  if (rendered.kind !== "ready") throw new Error("the notice must render");
+  return renderNotification({ kind: "lot-notice", view: rendered.message });
 }
 
 function grammyError(code: number, retryAfter?: number): GrammyError {
@@ -78,42 +94,96 @@ function grammyError(code: number, retryAfter?: number): GrammyError {
 }
 
 describe("renderNotification", () => {
-  it("renders an outbid for a community member with a traced lot button", () => {
-    const rendered = renderNotification({
+  // Записи 30 и 32 прогона 12.10: участник сообщества видит название лота, как
+  // гость в боте аукциона, а под перебитием — «Частота уведомлений» вместо
+  // «Реже» (PER-598).
+  it("names the lot of an outbid for a community member with traced buttons", async () => {
+    const rendered = await lotNotice({
       kind: "lot-outbid",
       lotId,
       currentPrice: { minorUnits: 150_000, currency: "RUB" },
     });
 
     expect(rendered.text).toBe(
-      "Твою ставку на лот перебили. Текущая цена — 1 500 ₽.",
+      "Твою ставку на «Кружка» перебили. Текущая цена — 1 500 ₽.",
     );
     const button = rendered.keyboard?.inline_keyboard[0]?.[0];
     expect(button?.text).toBe("К лоту");
     expect(button).toMatchObject({
       callback_data: expect.stringMatching(/^v1:t:auc:lot:/),
     });
-    // «Реже» — одним рядом с «К лоту», след ведёт в частоту «перебили».
+    // Частота — одним рядом с «К лоту», след ведёт в её экран под
+    // «Расширениями» (PER-605).
     expect(rendered.keyboard?.inline_keyboard).toHaveLength(1);
     expect(rendered.keyboard?.inline_keyboard[0]?.[1]).toEqual({
-      text: "Реже",
+      text: "Частота уведомлений",
       callback_data: "v1:t:notify:outbid",
     });
   });
 
-  it.each([
-    {
-      kind: "lot-proxy-raised" as const,
+  it("puts the frequency under a proxy answer too", async () => {
+    const rendered = await lotNotice({
+      kind: "lot-proxy-raised",
       lotId,
       currentPrice: { minorUnits: 150_000, currency: "RUB" },
-    },
-    {
-      kind: "lot-purchased" as const,
+    });
+    expect(rendered.keyboard?.inline_keyboard[0]?.[1]?.text).toBe(
+      "Частота уведомлений",
+    );
+  });
+
+  // Запись 37: покупка называет лот и следующий шаг, а частота её не трогает.
+  it("keeps a purchase to the lot button alone, with the next step", async () => {
+    const rendered = await lotNotice({
+      kind: "lot-purchased",
       lotId,
       price: { minorUnits: 150_000, currency: "RUB" },
-    },
-  ])("keeps $kind to the lot button alone", (content) => {
-    expect(buttons(content)).toHaveLength(1);
+    });
+    expect(rendered.text).toBe(
+      "Лот «Кружка» твой за 1 500 ₽. Как оплатить и забрать — напишет организатор аукциона.",
+    );
+    expect(rendered.keyboard?.inline_keyboard).toEqual([
+      [expect.objectContaining({ text: "К лоту" })],
+    ]);
+  });
+
+  // Сводка (PER-596) — одним сообщением, и каждый лот открывается своей
+  // кнопкой следа в пределах 64 байт.
+  it("opens every lot of a digest by a traced button", async () => {
+    const other = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1";
+    const rendered = await lotNotice({
+      kind: "lot-activity-digest",
+      lines: [
+        {
+          lotId,
+          kind: "outbid",
+          currentPrice: { minorUnits: 150_000, currency: "RUB" },
+          recipientLeads: false,
+        },
+        {
+          lotId: other,
+          kind: "outbid",
+          currentPrice: { minorUnits: 90_000, currency: "RUB" },
+          recipientLeads: true,
+        },
+      ],
+    });
+    expect(rendered.text.split("\n")[0]).toBe("Сводка по твоим ставкам:");
+    const rows = rendered.keyboard?.inline_keyboard ?? [];
+    expect(rows).toHaveLength(3);
+    for (const [index, id] of [lotId, other].entries()) {
+      const button = rows[index]?.[0];
+      const data =
+        button !== undefined && "callback_data" in button
+          ? button.callback_data
+          : "";
+      expect(data).toContain(`v1:t:auc:lot:`);
+      expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+      expect(data).not.toContain(id === lotId ? other : lotId);
+    }
+    expect(rows[2]).toEqual([
+      { text: "Частота уведомлений", callback_data: "v1:t:notify:outbid" },
+    ]);
   });
 
   it("names the meetup, when and where, with two buttons", () => {
@@ -289,7 +359,7 @@ describe("change notification", () => {
 
 describe("material notification", () => {
   it("names the material and the meetup", () => {
-    const content: RenderableContent = {
+    const content: OutgoingNotification = {
       kind: "meetup-material",
       meetup,
       materialTitle: "Правила",
@@ -330,7 +400,7 @@ describe("unpublished notification", () => {
 });
 
 describe("organizer message", () => {
-  const organizer = (body: string): RenderableContent => ({
+  const organizer = (body: string): OutgoingNotification => ({
     kind: "organizer-message",
     meetup,
     body,
@@ -375,7 +445,7 @@ describe("access request", () => {
   });
 
   it("names the hub request, leads to its queue and offers to stop requests", () => {
-    const content: RenderableContent = {
+    const content: OutgoingNotification = {
       kind: "access-requested",
       queue: "community",
     };
@@ -395,7 +465,7 @@ describe("access request", () => {
   // аукциона, где допуск выдаёт право ставить (PER-534). Категория у обеих
   // очередей одна, и выключатель стоит под обеими.
   it("leads the auction request to the auction queue, not the hub one", () => {
-    const content: RenderableContent = {
+    const content: OutgoingNotification = {
       kind: "access-requested",
       queue: "auction",
     };
@@ -416,7 +486,7 @@ describe("access granted", () => {
   // Прежнее сообщение экрана состава: тот же текст и кнопка следа в корень
   // «Сходки» (решение владельца 10 октября 2026 года).
   it("opens access and leads to the meetups", () => {
-    const content: RenderableContent = { kind: "access-granted" };
+    const content: OutgoingNotification = { kind: "access-granted" };
     expect(renderNotification(content).text).toBe(
       "Доступ открыт: теперь тебе видны сходки сообщества.",
     );
@@ -431,7 +501,7 @@ describe("access granted", () => {
 
 describe("preset granted", () => {
   it("names the administrator rights and leads to the meetups by a trace button", () => {
-    const content: RenderableContent = {
+    const content: OutgoingNotification = {
       kind: "preset-granted",
       preset: "admin",
     };
@@ -448,7 +518,7 @@ describe("preset granted", () => {
 });
 
 describe("community announcement", () => {
-  const announcement = (body: string): RenderableContent => ({
+  const announcement = (body: string): OutgoingNotification => ({
     kind: "community-announcement",
     body,
   });
