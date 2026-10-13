@@ -106,35 +106,34 @@ function lotBody(input: {
   const { lot, participantName, following } = input;
   // Хронология открывается на последней странице — со свежими ставками:
   // страницу за пределом юзкейс хронологии прижимает к последней.
-  const history: AuctionButton[][] = hasTraded(lot.status)
+  const history: AuctionButton[] = hasTraded(lot.status)
     ? [
-        [
-          {
-            action: "lot.history",
-            callbackData: encodeAuctionCallback({
-              kind: "history",
-              lotId: lot.lotId,
-              page: input.page,
-              historyPage: MAX_FEED_PAGE,
-            }),
-          },
-        ],
+        {
+          action: "lot.history",
+          callbackData: encodeAuctionCallback({
+            kind: "history",
+            lotId: lot.lotId,
+            page: input.page,
+            historyPage: MAX_FEED_PAGE,
+          }),
+        },
       ]
     : [];
-  const refresh: AuctionButton[][] = changesUnattended(lot.status)
+  const refresh: AuctionButton[] = changesUnattended(lot.status)
     ? [
-        [
-          {
-            action: "lot.refresh",
-            callbackData: encodeAuctionCallback({
-              kind: "lot",
-              lotId: lot.lotId,
-              page: input.page,
-            }),
-          },
-        ],
+        {
+          action: "lot.refresh",
+          callbackData: encodeAuctionCallback({
+            kind: "lot",
+            lotId: lot.lotId,
+            page: input.page,
+          }),
+        },
       ]
     : [];
+  // Ряды складываются по смыслу (дизайн-код, «Клавиатура»; PER-594):
+  // «Обновить» и «Ставки» — одна группа, просмотр хода торгов лота.
+  const watch = [...refresh, ...history];
   return {
     blocks: [
       {
@@ -149,8 +148,7 @@ function lotBody(input: {
     ],
     keyboard: [
       ...bidRows(lot, input.viewer, input.page),
-      ...refresh,
-      ...history,
+      ...(watch.length === 0 ? [] : [watch]),
       ...followRows(lot, input.page, following),
       [
         {
@@ -419,9 +417,13 @@ function bidRows(
         }),
       },
     ],
-    [{ action: "lot.bid-custom", callbackData: ask("bid") }],
-    ...(lot.proxyEnabled
-      ? [[{ action: "lot.proxy" as const, callbackData: ask("proxy") }]]
-      : []),
+    // Своя сумма и автоставка — ставки, которые человек задаёт сам, одним
+    // рядом; ставка по шагу несёт цену и стоит рядом одна (PER-594).
+    [
+      { action: "lot.bid-custom", callbackData: ask("bid") },
+      ...(lot.proxyEnabled
+        ? [{ action: "lot.proxy" as const, callbackData: ask("proxy") }]
+        : []),
+    ],
   ];
 }

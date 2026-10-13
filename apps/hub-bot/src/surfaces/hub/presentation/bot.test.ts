@@ -486,7 +486,41 @@ describe("presentation adapter", () => {
       const shown = JSON.stringify(calls.at(-1)?.payload);
       expect(shown).not.toContain("tg://photo");
       expect(shown).not.toContain("rich_message");
-      expect(shown).toContain("1. Афиша 1 (файл)");
+      // Фото уже стоят постерами: пометки «(файл)» у них нет (PER-594).
+      expect(shown).toContain("1. Афиша 1\\n2. Афиша 2");
+      expect(shown).not.toContain("(файл)");
+    });
+
+    // Пометка «(файл)» остаётся у документа, у фото её нет (PER-594).
+    it("marks a document as a file in the material list and a photo not", async () => {
+      const document = {
+        id: "0199c0de-0000-7000-8000-000000000009",
+        title: "Регламент",
+        source: {
+          kind: "file" as const,
+          fileId: "doc-9",
+          fileKind: "document" as const,
+        },
+      };
+      const { bot, calls } = createHarness(
+        resolvedIdentity(),
+        {
+          execute: vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+            kind: "meetup-card",
+            meetup: { ...publishedMeetup(), materials: [poster(1), document] },
+          }),
+        },
+        [],
+        undefined,
+        "plain",
+      );
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(view));
+
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+        "📎 Материалы:\\n1. Афиша 1\\n2. Регламент (файл)",
+      );
     });
 
     it("falls back to the card without posters when Telegram rejects the photos", async () => {
@@ -516,7 +550,9 @@ describe("presentation adapter", () => {
       const last = calls.at(-1);
       expect(last?.method).toBe("sendRichMessage");
       expect(JSON.stringify(last?.payload)).not.toContain("tg://photo");
-      expect(JSON.stringify(last?.payload)).toContain("1. Афиша 1 (файл)");
+      expect(JSON.stringify(last?.payload)).toContain(
+        "1. Афиша 1<br>2. Афиша 2",
+      );
       // Деградация видна оператору: причина едет в запись границы.
       expect(JSON.stringify(records)).toContain(
         "Bad Request: wrong file identifier",
@@ -903,7 +939,7 @@ describe("presentation adapter", () => {
       "remove",
       "v1:mm:confirm-rm:AZLzpLXGfY6fChssPU5fYA:AZnA3gAAcACAAAAAAAAAmg",
       // Снятие отвечает экраном исхода: предмет — материал, возврат — список.
-      ["v1:mm:list:AZLzpLXGfY6fChssPU5fYA", "«Уточнение по времени»"],
+      ["v1:mm:list:AZLzpLXGfY6fChssPU5fYA", "<b>Уточнение по времени</b>"],
       ["<b>Сходка уже изменилась</b>", "Твои изменения не сохранены."],
     ],
   ])(
@@ -2823,7 +2859,7 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Отметить сходку состоявшейся?</b>\n\n«Настолки»\nОтменить нельзя: состоявшаяся сходка в план не возвращается.",
+        text: "<b>Отметить сходку состоявшейся?</b>\n\n<b>Настолки</b>\nОтменить нельзя: состоявшаяся сходка в план не возвращается.",
         reply_markup: {
           inline_keyboard: [
             [
@@ -3078,7 +3114,7 @@ describe("presentation adapter", () => {
       "editMessageReplyMarkup",
     ]);
     expect(sendMessageText(answered[0])).toBe(
-      "<b>Изменение сохранено</b>\n\n«Настолки»",
+      "<b>Изменение сохранено</b>\n\n<b>Настолки</b>",
     );
     expect(JSON.stringify(answered[0]?.payload)).toContain("‹ Сходка");
   });
@@ -3133,7 +3169,7 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Скрыть сходку из общего списка?</b>\n\n«Настолки»",
+        text: "<b>Скрыть сходку из общего списка?</b>\n\n<b>Настолки</b>",
         reply_markup: {
           inline_keyboard: [
             [
@@ -3304,7 +3340,7 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Опубликовать сходку?</b>\n\n«Настолки»\nСходка станет видна участникам. Уведомление получат подписчики новых сходок, а если сходку уже публиковали — её подписчики.",
+        text: "<b>Опубликовать сходку?</b>\n\n<b>Настолки</b>\nСходка станет видна участникам. Уведомление получат подписчики новых сходок, а если сходку уже публиковали — её подписчики.",
       },
     });
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
@@ -3460,7 +3496,7 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Сходка уже изменилась</b>\n\n«Настолки»\n\nТвои изменения не сохранены. Проверь актуальные данные и повтори.",
+        text: "<b>Сходка уже изменилась</b>\n\n<b>Настолки</b>\n\nТвои изменения не сохранены. Проверь актуальные данные и повтори.",
         reply_markup: {
           inline_keyboard: [
             [
@@ -3503,7 +3539,7 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Опубликовать сходку?</b>\n\n«Настолки»\nСходка станет видна участникам, подписчики новых сходок получат уведомление.",
+        text: "<b>Опубликовать сходку?</b>\n\n<b>Настолки</b>\nСходка станет видна участникам, подписчики новых сходок получат уведомление.",
         reply_markup: {
           inline_keyboard: [
             [
@@ -3558,7 +3594,7 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Сходка уже изменилась</b>\n\n«Настолки»\n\nТвои изменения не сохранены. Проверь актуальные данные и повтори.",
+        text: "<b>Сходка уже изменилась</b>\n\n<b>Настолки</b>\n\nТвои изменения не сохранены. Проверь актуальные данные и повтори.",
         reply_markup: {
           inline_keyboard: [
             [
@@ -3662,7 +3698,7 @@ describe("presentation adapter", () => {
     expect(calls.some((call) => call.method.startsWith("send"))).toBe(false);
     const edited = calls.find((call) => call.method === "editMessageText");
     expect(edited?.payload).toMatchObject({
-      text: "<b>Сходка опубликована</b>\n\n«Настолки»\n\nТеперь она видна в списке. Ссылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
+      text: "<b>Сходка опубликована</b>\n\n<b>Настолки</b>\n\nТеперь она видна в списке. Ссылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
       parse_mode: "HTML",
     });
     // Исход — свой экран: ряды карточки на нём не стоят, возврат — «‹ Сходка».
@@ -3722,13 +3758,13 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringContaining("«Настолки»"),
+        text: expect.stringContaining("<b>Настолки</b>"),
       },
     });
     // Правка стёрла сообщение первой публикации, но ссылка для чата осталась
     // на экране (PER-461).
     expect(calls.at(-1)?.payload).toMatchObject({
-      text: "<b>Сходка уже опубликована</b>\n\n«Настолки»\n\nСсылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
+      text: "<b>Сходка уже опубликована</b>\n\n<b>Настолки</b>\n\nСсылка для чата: https://t.me/stub_bot?start=m_AZLzpLXGfY6fChssPU5fYA",
     });
   });
 
@@ -3755,7 +3791,7 @@ describe("presentation adapter", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: expect.stringContaining("«Настолки у Лёши»"),
+        text: expect.stringContaining("<b>Настолки у Лёши</b>"),
       },
     });
     expectBoundary(
@@ -5431,7 +5467,7 @@ describe("confirmations", () => {
     // «Нет» над только что присланным — исход с «Ввести заново»: вопрос
     // задаётся с начала цепочки, с источника материала.
     expect(sendMessageText(calls[2])).toBe(
-      "<b>Не прикреплено</b>\n\n«Настолки»\n\nСвязь со сходкой не появилась.",
+      "<b>Не прикреплено</b>\n\n<b>Настолки</b>\n\nСвязь со сходкой не появилась.",
     );
     expect(keyboardOf(calls[2])).toEqual([
       [{ text: "Ввести заново", callback_data: `v1:mm:add:${token}` }],
@@ -5988,7 +6024,9 @@ describe("notification frames", () => {
     );
     expect(calls[1]?.method).toBe("editMessageText");
     const shown = screen(calls[1]);
-    expect(shown.text).toBe("<b>Подписка включена</b>\n\n«Настолки у Лёши»");
+    expect(shown.text).toBe(
+      "<b>Подписка включена</b>\n\n<b>Настолки у Лёши</b>",
+    );
     expect(shown.reply_markup?.inline_keyboard).toEqual([
       [
         {
@@ -6012,7 +6050,7 @@ describe("notification frames", () => {
     await bot.handleUpdate(callbackUpdate(`v1:notify:sub:${token}:0`));
     const shown = screen(calls[1]);
     expect(shown.text).toBe(
-      "<b>Подписка выключена</b>\n\n«Настолки у Лёши»\n\nУведомления по этой сходке больше не придут.",
+      "<b>Подписка выключена</b>\n\n<b>Настолки у Лёши</b>\n\nУведомления по этой сходке больше не придут.",
     );
     expect(shown.reply_markup?.inline_keyboard).toEqual([
       [{ text: "‹ Сходка", callback_data: `v1:view:${token}` }],
@@ -6061,7 +6099,7 @@ describe("notification frames", () => {
         ],
       });
       expect(html).toContain(
-        "<b>Подписка включена</b>\n\n«Настолки у Лёши»\n\nПо этой сходке будут приходить: изменения данных и статуса, новые материалы, сообщения организатора.",
+        "<b>Подписка включена</b>\n\n<b>Настолки у Лёши</b>\n\nПо этой сходке будут приходить: изменения данных и статуса, новые материалы, сообщения организатора.",
       );
       expect(html).toContain(
         "Напоминание перед началом выключено, включить его можно в «Уведомлениях сходки».",
@@ -6122,7 +6160,7 @@ describe("notification frames", () => {
           subscribed: true,
           categories,
         });
-        expect(html).toBe("<b>Подписка включена</b>\n\n«Настолки у Лёши»");
+        expect(html).toBe("<b>Подписка включена</b>\n\n<b>Настолки у Лёши</b>");
       },
     );
 
@@ -6230,7 +6268,7 @@ describe("notification frames", () => {
     await bot.handleUpdate(callbackUpdate(`v1:notify:settings:${token}`));
     const payload = screen(calls[1]);
     expect(payload.text).toContain(
-      "<b>Уведомления сходки</b>\n\n«Настолки у Лёши»",
+      "<b>Уведомления сходки</b>\n\n<b>Настолки у Лёши</b>",
     );
     expect(payload.text).toContain("закрепляется за ней");
     // Расхождение с общей настройкой называет текст, а не подпись кнопки.
@@ -7608,7 +7646,7 @@ describe("deferred publication frames", () => {
     );
     expect(answered).toContain(
       JSON.stringify(
-        "<b>Сходка уже опубликована</b>\n\n«Настолки»\n\nНазначать публикацию больше не нужно.",
+        "<b>Сходка уже опубликована</b>\n\n<b>Настолки</b>\n\nНазначать публикацию больше не нужно.",
       ).slice(1, -1),
     );
     expect(answered).not.toContain("Это время уже прошло");
@@ -7720,7 +7758,7 @@ describe("deferred publication frames", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Отменить отложенную публикацию?</b>\n\n«Настолки»",
+        text: "<b>Отменить отложенную публикацию?</b>\n\n<b>Настолки</b>",
         reply_markup: {
           inline_keyboard: [
             [
@@ -7930,7 +7968,7 @@ describe("past meetup date", () => {
 
     expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
       JSON.stringify(
-        "<b>Изменение сохранено</b>\n\n«Настолки»\n\nДата сходки уже прошла, поэтому она в архиве",
+        "<b>Изменение сохранено</b>\n\n<b>Настолки</b>\n\nДата сходки уже прошла, поэтому она в архиве",
       ).slice(1, -1),
     );
   });

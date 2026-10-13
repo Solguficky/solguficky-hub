@@ -35,9 +35,13 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
     return {
       ...card,
       auction:
-        result.auctionId === undefined
+        result.auction === undefined
           ? { kind: "none" }
-          : { kind: "open", auctionId: result.auctionId },
+          : {
+              kind: "open",
+              auctionId: result.auction.auctionId,
+              auction: result.auction,
+            },
     };
   }
 

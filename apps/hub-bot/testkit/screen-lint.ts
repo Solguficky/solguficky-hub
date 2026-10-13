@@ -52,6 +52,10 @@ const auctionShape: [UnknownEntryKeys<typeof auctionCatalog>] extends [never]
 void hubShape;
 void auctionShape;
 
+// Пары карточки лота у обоих ботов (PER-594): ряды складываются по смыслу —
+// ставки, которые человек задаёт сам, и просмотр хода торгов.
+const lotCardPairs = ["Своя сумма|Автоставка", "Обновить|Ставки"];
+
 // Пары хаба, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
 // пара, которой в дизайн-коде нет: подписка живёт в карточке по решению
 // PER-402, и отдельным рядом она вывела бы карточку за пять рядов. Материалы
@@ -70,6 +74,7 @@ const hubNamedPairs: ReadonlySet<string> = new Set([
   // отметки и правила — парами, как стояли в корне ленты (PER-500).
   "Пульт|Розыгрыш",
   "Избранное|Правила и FAQ",
+  ...lotCardPairs,
 ]);
 
 type Catalog = Readonly<Record<string, ScreenEntry>>;
@@ -89,12 +94,13 @@ const configFor: Record<Surface, (catalog: Catalog) => LintConfig> = {
     },
     namedPairs: hubNamedPairs,
   }),
-  // Именованных пар у дерева аукциона нет, группа родителей одна — списки
-  // аукционов, в которые возвращает лента.
+  // Именованные пары у дерева аукциона — только пары карточки лота, группа
+  // родителей одна — списки аукционов, в которые возвращает лента.
   auction: (catalog) => ({
     tag: auctionTag,
     catalog,
     parentGroups: { [auctionListParent]: auctionLists },
+    namedPairs: new Set(lotCardPairs),
   }),
 };
 

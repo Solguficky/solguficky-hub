@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AuctionSummaryView } from "../../../../auction-ui/index.js";
 import type {
   ArchivedMeetupSummary,
   MeetupSnapshot,
@@ -386,6 +387,85 @@ describe("cardScreen", () => {
 
     expect(screen.text).toContain("Когда: 15 августа, сб, 19:00");
     expect(screen.text).toContain("Ты автор этой сходки");
+  });
+
+  // Пустое описание — заглушка, одна у карточек сходки и лота (PER-594).
+  it("shows the placeholder for an empty description without photos", () => {
+    const screen = cardScreen({
+      ...view,
+      meetup: meetup({ description: "" }),
+      subscribed: true,
+    });
+
+    expect(screen.media).toBeUndefined();
+    expect(screen.text).toContain("\n\nОписание пока не добавлено.");
+  });
+
+  // Строка аукциона — свой блок после «Когда» и «Где» (PER-594): стадия
+  // словом, у онлайн-торгов со сроком — срок в поясе сообщества.
+  describe("auction line", () => {
+    const withAuction = (auction?: AuctionSummaryView) =>
+      cardScreen({
+        ...view,
+        meetup: meetup(),
+        subscribed: true,
+        timeZone: "Europe/Moscow",
+        ...(auction === undefined ? {} : { auction }),
+      }).text;
+    const auctionId = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
+
+    it("names the deadline of online trading", () => {
+      expect(
+        withAuction({
+          auctionId,
+          stage: "prebidding",
+          opensAt: "2026-08-10T09:00:00Z",
+          closesAt: "2026-08-20T16:00:00Z",
+          final: true,
+        }),
+      ).toContain(
+        "📍 Где: Циферблат\n\nАукцион: идут онлайн-торги до 20 августа, чт, 19:00\n\nБерём свои игры",
+      );
+    });
+
+    it("names a finished auction by its stage", () => {
+      expect(
+        withAuction({ auctionId, stage: "finished", final: false }),
+      ).toContain("\n\nАукцион: завершён\n\n");
+    });
+
+    it("leaves the line out without an auction", () => {
+      const text = withAuction();
+      expect(text).not.toContain("Аукцион:");
+      expect(text).toContain("📍 Где: Циферблат\n\nБерём свои игры");
+    });
+  });
+
+  // Фото уже стоят постерами над заголовком: «(файл)» — только у документа
+  // (PER-594).
+  it("marks a document as a file in the material list and a photo not", () => {
+    const screen = cardScreen({
+      ...view,
+      meetup: meetup({
+        materials: [
+          {
+            id: "0199c0de-0000-7000-8000-000000000001",
+            title: "Афиша",
+            source: { kind: "file", fileId: "photo-1", fileKind: "photo" },
+          },
+          {
+            id: "0199c0de-0000-7000-8000-000000000002",
+            title: "Регламент",
+            source: { kind: "file", fileId: "doc-2", fileKind: "document" },
+          },
+        ],
+      }),
+      subscribed: true,
+    });
+
+    expect(screen.text).toContain(
+      "📎 Материалы:\n1. Афиша\n2. Регламент (файл)",
+    );
   });
 
   it("keeps a cancelled meetup readable but not editable", () => {

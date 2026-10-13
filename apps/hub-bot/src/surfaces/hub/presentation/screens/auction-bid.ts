@@ -13,6 +13,7 @@ import {
   nextRow,
   type Parent,
   screenText,
+  subjectLine,
   withNav,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
@@ -40,10 +41,10 @@ function dataOf(
   return button.callbackData;
 }
 
-// Название лота на экранах листа ставки — абзац в кавычках (дизайн-код,
-// «Лист ставки»).
+// Название лота на экранах листа ставки и хронологии — предмет экрана:
+// жирный абзац без кавычек (дизайн-код, «Формат»; PER-594).
 export const quoted = (title: string | undefined) =>
-  title === undefined ? undefined : `«${escapeHtml(oneLine(title))}»`;
+  title === undefined ? undefined : subjectLine(oneLine(title));
 
 // Название лота в одну строку: Auction переносы строк в названии не режет, а
 // в строке списка и в кавычках второй строкой оно читалось бы как чужая

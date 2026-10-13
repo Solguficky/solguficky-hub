@@ -298,14 +298,25 @@ describe("renderEntryScreen", () => {
       participantName: "@owl",
     });
     expect(screen.format).toBe("rich");
-    // Порядок групп: статус, цена и лидер, описание; строки без точек
-    // (дизайн-код, «Карточка лота»). 18:00 UTC — 21:00 по Москве.
+    // Порядок групп: статус, цена, лидер и срок со знаками, ход торгов,
+    // описание; строки без точек (дизайн-код, «Карточка»; PER-594).
+    // 18:00 UTC — 21:00 по Москве.
     expect(plain(screen.text)).toBe(
       "<h1>Кружка</h1><p>Статус: идут торги</p>" +
-        "<p>Цена: 1 200 ₽<br>Лидер: @owl<br>Следующая ставка: от 1 250 ₽<br>Шаг: 50 ₽<br>Торги до: 10 октября, сб, 21:00</p>" +
+        "<p>💰 Цена: 1 200 ₽<br>👤 Лидер: @owl<br>⏳ Торги до: 10 октября, сб, 21:00</p>" +
+        "<p>Следующая ставка: от 1 250 ₽<br>Шаг: 50 ₽</p>" +
         "<p>Роспись.</p>",
     );
     expect(screen.photo).toBeUndefined();
+  });
+
+  // Пустое описание — заглушка, та же, что у карточки сходки хаба (PER-594).
+  it("shows the placeholder for an empty description of a lot without a photo", () => {
+    const screen = lotScreen({ card: { title: "Кружка", description: "" } });
+    expect(screen.photo).toBeUndefined();
+    expect(plain(screen.text)).toMatch(
+      /<\/p><p>Описание пока не добавлено\.<\/p>$/,
+    );
   });
 
   it("does not show an identifier when the leader's name is missing", () => {
@@ -370,7 +381,7 @@ describe("renderEntryScreen", () => {
     });
     expect(plain(screen.text)).toBe(
       "<h1>Кружка &lt;XL&gt; &amp; блюдце</h1>" +
-        "<p>Статус: продан</p><p>Цена продажи: 3 000 ₽<br>Победитель: Сыч</p>" +
+        "<p>Статус: продан</p><p>💰 Цена продажи: 3 000 ₽<br>👤 Победитель: Сыч</p>" +
         "<p>Роспись.<br>Ручная.</p><p>Объём 300 мл.</p>",
     );
   });
@@ -435,7 +446,8 @@ describe("renderEntryScreen", () => {
     expect(screen.text).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/);
   });
 
-  // Свой лимит — строка фактов; над названием ничего нет (PER-472).
+  // Свой лимит — строка хода торгов; над названием ничего нет (PER-472,
+  // PER-594). Пустое описание — заглушка.
   it("shows the own limit among the facts and nothing above the title", () => {
     const screen = lotScreen(
       {
@@ -447,12 +459,14 @@ describe("renderEntryScreen", () => {
     );
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
-        "Статус: идут торги\n\nЦена: 1 200 ₽\nЛидер: пока нет\nТвоя автоставка: до 2 000 ₽ (видишь только ты)",
+        "Статус: идут торги\n\n💰 Цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
+        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
+        "Описание пока не добавлено.",
     );
   });
 
-  // Отказ команды — свой экран исхода (PER-472): исход в заголовке, лот в
-  // кавычках, цена из отказа абзацем, выход — «К лоту».
+  // Отказ команды — свой экран исхода (PER-472): исход в заголовке, лот
+  // жирным абзацем (PER-594), цена из отказа абзацем, выход — «К лоту».
   it("shows a refused command as its own outcome screen", () => {
     const screen = renderEntryScreen(
       {
@@ -480,7 +494,7 @@ describe("renderEntryScreen", () => {
     );
     expect(screen.id).toBe("command-result");
     expect(plain(screen.text)).toBe(
-      "<b>Ставка ниже порога</b>\n\n«Кружка»\n\nСейчас можно от 1 300 ₽.",
+      "<b>Ставка ниже порога</b>\n\n<b>Кружка</b>\n\nСейчас можно от 1 300 ₽.",
     );
     expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
       ["К лоту"],
@@ -556,7 +570,7 @@ describe("proxy limit confirmation", () => {
   });
 });
 
-// Лист ставки (PER-472): заголовок-вопрос с суммой и название в кавычках у
+// Лист ставки (PER-472): заголовок-вопрос с суммой и название жирным у
 // подтверждения, пустая строка после заголовка, причина отказа над ним.
 describe("bid sheet screens", () => {
   const body = (block: AuctionBlock) =>
@@ -578,7 +592,7 @@ describe("bid sheet screens", () => {
       options,
     );
 
-  it("asks the bid as a question with the lot in quotes", () => {
+  it("asks the bid as a question with the lot in bold", () => {
     const screen = body({
       kind: "confirm",
       command: "bid",
@@ -589,7 +603,7 @@ describe("bid sheet screens", () => {
       currentPrice: rub(1200),
     });
     expect(plain(screen.text)).toBe(
-      "<b>Поставить 1 300 ₽?</b>\n\n«Кружка &lt;с совой&gt;»\n\nОтменить ставку нельзя.",
+      "<b>Поставить 1 300 ₽?</b>\n\n<b>Кружка &lt;с совой&gt;</b>\n\nОтменить ставку нельзя.",
     );
   });
 
@@ -701,7 +715,7 @@ describe("bid sheet screens", () => {
     expect(screen.id).toBe("answer-refused");
     expect(screen.asks).toBeUndefined();
     expect(plain(screen.text)).toBe(
-      "<b>Сумма слишком большая</b>\n\n«Кружка»\n\nБот принимает суммы до 604 661,75 ₽.",
+      "<b>Сумма слишком большая</b>\n\n<b>Кружка</b>\n\nБот принимает суммы до 604 661,75 ₽.",
     );
     expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
       ["Ввести заново"],
@@ -709,7 +723,7 @@ describe("bid sheet screens", () => {
     ]);
   });
 
-  it("lists the bids as lines under the lot in quotes with the foreign year", () => {
+  it("lists the bids as lines under the lot in bold with the foreign year", () => {
     const screen = body({
       kind: "history",
       lotId: "lot-1",
@@ -729,7 +743,7 @@ describe("bid sheet screens", () => {
       ],
     });
     expect(plain(screen.text)).toBe(
-      "<b>Ставки</b>\n\n«Кружка»\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
+      "<b>Ставки</b>\n\n<b>Кружка</b>\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
     );
   });
 });

@@ -43,7 +43,13 @@ import {
   outbidButtonLabel,
   outbidExplanation,
 } from "../../core/notifications/outbid.js";
-import { confirmNoLabel, confirmYesLabel } from "../../core/pictograms.js";
+import {
+  confirmNoLabel,
+  confirmYesLabel,
+  emptyDescription,
+  marked,
+  pictogram,
+} from "../../core/pictograms.js";
 import type {
   AuctionListPage,
   AuctionStage,
@@ -223,9 +229,10 @@ function screenText(
 const oneLine = (title: string) =>
   truncate(title.replace(/\s+/g, " ").trim(), TITLE_LIMIT);
 
-// Название лота на экранах листа ставки и хронологии — абзац в кавычках.
+// Название лота на экранах листа ставки и хронологии — предмет экрана:
+// жирный абзац без кавычек (дизайн-код, «Формат»; PER-594).
 const quoted = (title: string | undefined) =>
-  title === undefined ? undefined : `«${escapeHtml(oneLine(title))}»`;
+  title === undefined ? undefined : `<b>${escapeHtml(oneLine(title))}</b>`;
 
 // Строка списка в теле (дизайн-код, «Списки»): маркер, затем поля через «—».
 const bullet = (line: string) => `• ${line}`;
@@ -1191,9 +1198,9 @@ function originLabel(origin: BidOriginView): string {
   }
 }
 
-// Карточка лота (дизайн-код, «Карточка лота»): название, группа статуса,
-// группа цены и лидера, описание — группы через пустую строку, строки «ключ:
-// значение» без точки. Rich-карточка размечается блоками: перенос строки в её
+// Карточка лота (дизайн-код, «Карточка»): название, группа статуса, группа
+// цены, лидера и срока со знаками, группа хода торгов, описание или его
+// заглушка — группы через пустую строку, строки «ключ: значение» без точки. Rich-карточка размечается блоками: перенос строки в её
 // `html` не рисуется, поэтому группа и абзац описания — свой `<p>`, строки
 // внутри — `<br>`, а фото адаптер ставит первым блоком, над заголовком.
 // Предела подписи у неё нет. В `plain` та же карточка уходит обычным сообщением с HTML и без
@@ -1211,9 +1218,13 @@ function renderCard(
       : [[finalBidLine(block.finalBid, money)]]),
   ];
   const rich = (options.presentation ?? "rich") === "rich";
+  // Пустое описание — та же заглушка, что у карточки сходки хаба (дизайн-код,
+  // «Карточка»; PER-594).
   const description = fitDescription(
     title,
-    block.card?.description ?? "",
+    block.card?.description === undefined || block.card.description === ""
+      ? emptyDescription
+      : block.card.description,
     groups.flat(),
     rich ? RICH_TEXT_LIMIT : TEXT_LIMIT,
   );
@@ -1248,8 +1259,9 @@ function renderCard(
   };
 }
 
-// Группы карточки: статус словом, затем факты о цене и лидере, если они есть.
-// Слова статусов — дизайн-код, «Карточка лота».
+// Группы карточки: статус словом, затем блок цены, лидера и срока со знаками
+// словаря, затем ход торгов — следующая ставка, шаг, своя автоставка. Слова
+// статусов — дизайн-код, «Карточка лота»; у хаба они те же.
 function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
   const { status, participantName } = block;
   switch (status.kind) {
@@ -1258,9 +1270,26 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
     case "scheduled":
       return [
         ["Статус: торги ещё не начались"],
-        [`Стартовая цена: ${money(status.startingPrice)}`],
+        [
+          marked(
+            pictogram.price,
+            `Стартовая цена: ${money(status.startingPrice)}`,
+          ),
+        ],
       ];
-    case "trading":
+    case "trading": {
+      // Ход торгов: в финале — объявленная цена и следующая ставка ровно по
+      // ней (PER-336), в онлайн-торгах — порог следующей ставки; затем шаг и
+      // свой лимит.
+      const course = [
+        ...(status.phase === "live"
+          ? finalPriceLines(block, money)
+          : block.nextPrice === undefined
+            ? []
+            : [`Следующая ставка: от ${money(block.nextPrice)}`]),
+        ...stepLines(block, options),
+        ...proxyLine(block),
+      ];
       return [
         [
           status.phase === "live"
@@ -1268,38 +1297,45 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
             : "Статус: идут торги",
         ],
         [
-          `Цена: ${money(status.currentPrice)}`,
-          leaderLine(status.leaderId, participantName),
-          ...(status.phase === "live"
-            ? finalPriceLines(block, money)
-            : block.nextPrice === undefined
-              ? []
-              : [`Следующая ставка: от ${money(block.nextPrice)}`]),
-          ...stepLines(block, options),
+          marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
+          marked(
+            pictogram.leader,
+            leaderLine(status.leaderId, participantName),
+          ),
           ...(status.deadline === undefined
             ? []
             : [
-                `Торги до: ${readableMoment(status.deadline, options.timeZone, options.now)}`,
+                marked(
+                  pictogram.deadline,
+                  `Торги до: ${readableMoment(status.deadline, options.timeZone, options.now)}`,
+                ),
               ]),
-          ...proxyLine(block),
         ],
+        ...(course.length === 0 ? [] : [course]),
       ];
+    }
     case "held":
       return [
         ["Статус: ждёт финала"],
         [
-          `Цена: ${money(status.currentPrice)}`,
-          leaderLine(status.leaderId, participantName),
+          marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
+          marked(
+            pictogram.leader,
+            leaderLine(status.leaderId, participantName),
+          ),
         ],
       ];
     case "sold":
       return [
         ["Статус: продан"],
         [
-          `Цена продажи: ${money(status.price)}`,
-          participantName === undefined
-            ? "Победитель: определён"
-            : `Победитель: ${participantName}`,
+          marked(pictogram.price, `Цена продажи: ${money(status.price)}`),
+          marked(
+            pictogram.leader,
+            participantName === undefined
+              ? "Победитель: определён"
+              : `Победитель: ${participantName}`,
+          ),
         ],
       ];
     case "unsold":

@@ -14,7 +14,7 @@ import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
 import { start } from "./start.js";
-import type { ExecuteRequest, ExecuteResult } from "./types.js";
+import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
 
 export type Dispatcher = {
   execute(request: ExecuteRequest): ExecuteResult | Promise<ExecuteResult>;
@@ -58,15 +58,15 @@ export function createDispatcher(
     meetups === undefined ? undefined : createMeetupMaterials(meetups);
   const broadcasts =
     notifications === undefined ? undefined : createBroadcasts(notifications);
-  // Карточка сходки: сама сходка из Meetups и подписка из Notifications; меню
-  // «Расширения» — ещё и аукцион из Auction. Отказ соседа сходки экран не
-  // роняет.
+  // Карточка сходки: сама сходка из Meetups, подписка из Notifications и
+  // аукцион из Auction — для строки аукциона (PER-594); меню «Расширения» —
+  // сходка и аукцион. Отказ соседа сходки экран не роняет.
   async function viewMeetup(
     request: Extract<
       ExecuteRequest,
       { intent: "view-meetup" | "view-meetup-extensions" }
     >,
-    readAuction: boolean,
+    readPreferences: boolean,
   ): Promise<ExecuteResult> {
     if (meetups === undefined)
       return { kind: "rejected", reason: "meetups-not-configured" };
@@ -80,14 +80,15 @@ export function createDispatcher(
         kind: "meetup-card",
         meetup: result.meetup,
       };
-      // Карточке нужна подписка, меню «Расширения» — аукцион (PER-605);
-      // вторичное чтение не роняет экран и идёт параллельно чтению сходки.
+      // Аукцион нужен и карточке, и меню «Расширения» (PER-605, PER-594),
+      // подписка — только карточке; вторичные чтения не роняют экран и идут
+      // параллельно друг другу.
       const [withAuction, preferences] = await Promise.all([
-        readAuction && meetupAuction !== undefined
+        meetupAuction !== undefined
           ? meetupAuction.withAuction(card, request)
           : card,
         // Меню «Расширения» подпиской не пользуется: её не читают.
-        readAuction
+        !readPreferences
           ? undefined
           : notifications?.getMeetupPreferences(
               request.identity.identityId,
@@ -114,6 +115,39 @@ export function createDispatcher(
           cause: result.cause,
         }
       : { kind: "dependency-rejected", reason: result.kind };
+  }
+
+  // Карточка, которую вернула команда на ней же — публикация, правка поля,
+  // смена состояния, — несёт и строку аукциона (PER-594): иначе после правки
+  // она пропадала бы до следующего открытия. Подписка отвечает экраном исхода,
+  // а не карточкой, и аукцион ей не нужен.
+  // Скрытый черновик и вопросы формы карточкой не показываются, и аукцион им
+  // не нужен.
+  async function withCardAuction(
+    result: ExecuteResult,
+    request: { identity: Person; requestId?: string; deadlineAt?: number },
+  ): Promise<ExecuteResult> {
+    if (meetupAuction === undefined) return result;
+    switch (result.kind) {
+      case "published":
+      case "publication-scheduled":
+      case "publication-unavailable":
+      case "meetup-updated":
+      case "meetup-state-changed":
+        return result.auction === undefined
+          ? meetupAuction.withAuction(result, request)
+          : result;
+      // Ответ на вопрос черновика, когда сходку уже опубликовали: бот покажет
+      // её карточкой. Скрытый черновик показывается формой, и за аукционом
+      // для него не ходят.
+      case "draft":
+        return result.meetup.visibility === "visible" &&
+          result.auction === undefined
+          ? meetupAuction.withAuction(result, request)
+          : result;
+      default:
+        return result;
+    }
   }
 
   return {
@@ -157,12 +191,13 @@ export function createDispatcher(
                 }
               : { kind: "dependency-rejected", reason: result.kind };
         }
-        // Карточка в Auction не ходит: вход в аукцион — кнопка «Расширения»
-        // без состояния, а аукцион читает само меню (PER-605).
+        // Карточка читает аукцион ради строки его состояния (PER-594;
+        // ADR-064, дополнение 2026-10-12), кнопка «Расширения» остаётся без
+        // состояния, а меню за ней читает аукцион само (PER-605).
         case "view-meetup":
-          return viewMeetup(request, false);
-        case "view-meetup-extensions":
           return viewMeetup(request, true);
+        case "view-meetup-extensions":
+          return viewMeetup(request, false);
         case "enable-auction":
           if (meetupAuction === undefined)
             return { kind: "rejected", reason: "auction-not-configured" };
@@ -175,7 +210,7 @@ export function createDispatcher(
         case "change-meetup-state":
           return form === undefined
             ? { kind: "rejected", reason: "meetups-not-configured" }
-            : form(request);
+            : withCardAuction(await form(request), request);
         case "view-global-notifications":
         case "set-global-category":
         case "view-outbid-frequency":
@@ -185,7 +220,7 @@ export function createDispatcher(
         case "set-meetup-category":
           if (settings === undefined)
             return { kind: "rejected", reason: "notifications-not-configured" };
-          return settings(request);
+          return withCardAuction(await settings(request), request);
         case "attach-material":
         case "remove-material":
           return materials === undefined

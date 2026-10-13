@@ -655,6 +655,8 @@ type UpdateContext = ShellContext & {
   pressedGone?: boolean;
   // Сегодняшний день сообщества для этого update.
   today?: CommunityToday;
+  // Пояс сообщества: в нём карточка сходки называет срок торгов аукциона.
+  communityTimeZone?: string;
   // Telegram отверг карточку с постерами, и она ушла без них: причина едет в
   // запись границы, иначе деградация оператору не видна.
   postersRejected?: string;
@@ -724,6 +726,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
         });
   bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
+    ctx.communityTimeZone = runtime.communityTimeZone ?? "UTC";
     ctx.auctionParents = auctionParents;
     if (liveCards !== undefined) ctx.liveCards = liveCards;
     await next();
@@ -7320,6 +7323,10 @@ async function renderMeetupCard(
       manageable,
       presentation,
       today: communityToday(ctx),
+      ...(result.auction?.kind === "open"
+        ? { auction: result.auction.auction }
+        : {}),
+      timeZone: ctx.communityTimeZone ?? "UTC",
     };
     const card = cardScreen(view);
     const delivery = edit ? "auto" : "new";
@@ -7541,7 +7548,7 @@ async function renderStateResult(
 
 async function denyHubAccessIfNeeded(
   ctx: UpdateContext,
-  runtime: BotRuntime,
+  _runtime: BotRuntime,
   identity: { person: Person; blocked: boolean },
   useCase: ProductUseCase | undefined,
   edit: boolean,

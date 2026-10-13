@@ -1623,7 +1623,7 @@ describe("final of the auctioneer", () => {
 
     // Продажа — свой экран исхода; пульт ведущего за «‹ Пульт».
     const sold =
-      "<b>Лот продан</b>\n\n«Ваза»\n\nЦена: 1 200 ₽, покупатель — Бэтмен.";
+      "<b>Лот продан</b>\n\n<b>Ваза</b>\n\nЦена: 1 200 ₽, покупатель — Бэтмен.";
     const yes = dataOf(confirm, "✔️ Да, продать");
     await next(() => press(yes));
     expect(spaced(last(calls).text ?? "")).toBe(sold);
@@ -1695,7 +1695,7 @@ describe("final of the auctioneer", () => {
     await bot.handleUpdate(press(dataOf(last(calls), "✔️ Да, закрыть")));
 
     expect(last(calls).text).toBe(
-      "<b>Лот закрыт без продажи</b>\n\n«Кружка»\n\nСтавок не было.",
+      "<b>Лот закрыт без продажи</b>\n\n<b>Кружка</b>\n\nСтавок не было.",
     );
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(plain(last(calls))).toContain("1. Кружка — не продан");

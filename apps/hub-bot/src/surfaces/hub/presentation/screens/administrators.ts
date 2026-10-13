@@ -14,6 +14,7 @@ import {
   outcomeText,
   type Parent,
   screenText,
+  subjectLine,
   withNav,
 } from "./kit.js";
 import type { ShownScreen } from "./show.js";
@@ -138,7 +139,7 @@ export function appointConfirmScreen(username: string): ShownScreen {
     id: "administrator-appoint-confirm",
     text: screenText(
       "Назначить администратором?",
-      `«@${escapeHtml(username)}»`,
+      subjectLine(`@${username}`),
       "Человек сможет решать заявки, вести состав и сходки, и ему придёт сообщение о назначении.",
     ),
     keyboard: confirmKeyboard({
@@ -159,7 +160,7 @@ export function dismissConfirmScreen(
     id: "administrator-dismiss-confirm",
     text: screenText(
       "Снять администратора?",
-      `«${escapeHtml(fullLabel(administrator))}»`,
+      subjectLine(fullLabel(administrator)),
       administrator.identityId === viewerId
         ? "Это ты: права администратора уйдут у тебя. Записи останутся, назначить снова можно по нику."
         : "Права администратора уйдут: заявки, состав и сходки. Записи человека останутся, назначить снова можно по нику.",

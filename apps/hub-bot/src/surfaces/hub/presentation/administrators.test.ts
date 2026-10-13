@@ -328,7 +328,8 @@ describe("administrators in the hub bot", () => {
     const confirm = await appoint(harness, "@Keeper");
 
     expect(plain(confirm)).toContain("Назначить администратором?");
-    expect(plain(confirm)).toContain("«@Keeper»");
+    // Ник — предмет экрана: жирным абзацем без кавычек (PER-594).
+    expect(confirm.text).toContain("\n\n<b>@Keeper</b>\n\n");
     expect(harness.sent("appoint")).toHaveLength(1);
     expect(harness.sent("appoint")[0]?.args[1]).toBe("Keeper");
     expect(plain(last(harness.calls))).toContain("Администратор назначен");
@@ -365,7 +366,7 @@ describe("administrators in the hub bot", () => {
     await appoint(harness, username);
 
     expect(plain(last(harness.calls))).toContain(text);
-    expect(plain(last(harness.calls))).toContain(`«@${username}»`);
+    expect(last(harness.calls).text).toContain(`\n\n<b>@${username}</b>\n\n`);
     expect(labels(last(harness.calls))).toEqual([
       "Ввести заново",
       "‹ Администраторы",
@@ -415,6 +416,9 @@ describe("administrators in the hub bot", () => {
       );
       const confirm = last(harness.calls);
       expect(plain(confirm)).toContain("Снять администратора?");
+      // Человек — предмет экрана: жирным абзацем без кавычек (PER-594).
+      expect(confirm.text).toContain(`\n\n<b>${name}`);
+      expect(confirm.text).not.toContain("«");
       // Снятие обратимо: «Да» цвета не несёт.
       expect(
         confirm.reply_markup?.inline_keyboard.flat()[0]?.style,

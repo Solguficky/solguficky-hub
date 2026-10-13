@@ -1,0 +1,39 @@
+import type {
+  AuctionStageView,
+  AuctionSummaryView,
+} from "../../../../auction-ui/index.js";
+import { type CommunityDay, communityLocalTime } from "../../community-time.js";
+import { readableMoment } from "./kit.js";
+
+// Стадия аукциона словом — одна у его корня (PER-605) и у строки аукциона на
+// карточке сходки (PER-594): «ключ: значение» без точки, как строки карточки.
+export const stageWords: Record<AuctionStageView, string> = {
+  draft: "готовится",
+  scheduled: "скоро старт",
+  prebidding: "идут онлайн-торги",
+  settling: "подводим итоги онлайн-торгов",
+  "on-break": "перерыв перед финалом",
+  "lineup-frozen": "готовим финал",
+  "in-final": "идёт финал",
+  finished: "завершён",
+};
+
+/**
+ * Строка аукциона на карточке сходки (PER-594; ADR-064, дополнение
+ * 2026-10-12): стадия словом, а у онлайн-торгов с дедлайном — и срок, «Аукцион:
+ * идут онлайн-торги до 12 июня, сб, 19:00». Остальное об аукционе — в его
+ * корне за «🧩 Расширения».
+ */
+export function auctionStateLine(
+  auction: AuctionSummaryView,
+  timeZone: string,
+  today: CommunityDay,
+): string {
+  const words = stageWords[auction.stage];
+  return auction.stage === "prebidding" && auction.closesAt !== undefined
+    ? `Аукцион: ${words} до ${readableMoment(
+        communityLocalTime(auction.closesAt, timeZone),
+        today,
+      )}`
+    : `Аукцион: ${words}`;
+}

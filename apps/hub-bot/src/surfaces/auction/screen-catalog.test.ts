@@ -134,16 +134,22 @@ const lot = (image: boolean): AuctionScreenBody => ({
         callbackData: "v1:auc:cb:lot-1:fa:1",
       },
     ],
-    [{ action: "lot.bid-custom", callbackData: "v1:auc:ab:lot-1:1" }],
-    [{ action: "lot.proxy", callbackData: "v1:auc:ax:lot-1:1" }],
-    [{ action: "lot.refresh", callbackData: "v1:auc:lot:lot-1:1" }],
-    [{ action: "lot.history", callbackData: "v1:auc:hist:lot-1:1:999" }],
+    // Своя сумма с автоставкой и «Обновить» со «Ставками» — парами (PER-594).
+    [
+      { action: "lot.bid-custom", callbackData: "v1:auc:ab:lot-1:1" },
+      { action: "lot.proxy", callbackData: "v1:auc:ax:lot-1:1" },
+    ],
+    [
+      { action: "lot.refresh", callbackData: "v1:auc:lot:lot-1:1" },
+      { action: "lot.history", callbackData: "v1:auc:hist:lot-1:1:999" },
+    ],
     [{ action: "lot.back", callbackData: "v1:auc:feed:auc-1:1" }],
   ],
 });
 
-// Карточка с кнопкой избранного (PER-495): полный лист ставки, «Обновить»,
-// «Ставки», избранное и навигация — семь рядов, предел карточки.
+// Карточка с кнопкой избранного (PER-495): ставка по шагу, своя сумма с
+// автоставкой, «Обновить» со «Ставками», избранное и навигация — пять рядов,
+// предел карточки (PER-594).
 const withFollow = (following: boolean): AuctionScreenBody => {
   const body = lot(false);
   const back = body.keyboard.at(-1) ?? [];

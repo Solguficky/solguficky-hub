@@ -219,7 +219,7 @@ export function createAuctionAdapter(
         );
         return response.auction === undefined
           ? { kind: "ok" }
-          : { kind: "ok", auctionId: response.auction.id };
+          : { kind: "ok", auction: auctionSummaryViewOf(response.auction) };
       } catch (cause) {
         return toFailure(cause);
       }

@@ -46,7 +46,7 @@ const lot = (
 });
 
 describe("lot card in the hub shell", () => {
-  it("orders the groups as status, price and leader, description", () => {
+  it("orders the groups as status, price with leader and deadline, course, description", () => {
     const { screen } = auctionScreen(
       view([
         lot({
@@ -66,14 +66,17 @@ describe("lot card in the hub shell", () => {
     );
     expect(screen.format).toBe("rich");
     // 18:00 UTC — 21:00 по Москве; строки без точек, как у бота аукциона.
+    // Цена, лидер и срок — блок со знаками, ход торгов — свой (PER-594).
     expect(plain(screen.text)).toBe(
       "<h1>Кружка</h1><p>Статус: идут торги</p>" +
-        "<p>Цена: 1 200 ₽<br>Лидер: @owl<br>Следующая ставка: от 1 250 ₽<br>Шаг: 50 ₽<br>Торги до: 10 октября, сб, 21:00</p>" +
+        "<p>💰 Цена: 1 200 ₽<br>👤 Лидер: @owl<br>⏳ Торги до: 10 октября, сб, 21:00</p>" +
+        "<p>Следующая ставка: от 1 250 ₽<br>Шаг: 50 ₽</p>" +
         "<p>Роспись.</p>",
     );
   });
 
-  // Свой лимит — строка фактов; над названием ничего нет (PER-472).
+  // Свой лимит — строка хода торгов; над названием ничего нет (PER-472,
+  // PER-594). Пустое описание — заглушка.
   it("shows the own limit among the facts and nothing above the title", () => {
     const { screen } = auctionScreen(
       view(
@@ -93,7 +96,20 @@ describe("lot card in the hub shell", () => {
     );
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
-        "Статус: идут торги\n\nЦена: 1 200 ₽\nЛидер: пока нет\nТвоя автоставка: до 2 000 ₽ (видишь только ты)",
+        "Статус: идут торги\n\n💰 Цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
+        "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
+        "Описание пока не добавлено.",
+    );
+  });
+
+  // Пустое описание — заглушка, та же, что у карточки сходки (PER-594).
+  it("shows the placeholder for an empty description of a lot without a photo", () => {
+    const { screen } = auctionScreen(
+      view([lot({ card: { title: "Кружка", description: "" } })]),
+    );
+    expect(screen.format).toBe("rich");
+    expect(plain(screen.text)).toMatch(
+      /^<h1>Кружка<\/h1>.*<p>Описание пока не добавлено\.<\/p>$/,
     );
   });
 
@@ -112,7 +128,7 @@ describe("lot card in the hub shell", () => {
     );
     expect(plain(screen.text)).toBe(
       "<h1>Кружка &lt;XL&gt; &amp; блюдце</h1>" +
-        "<p>Статус: продан</p><p>Цена продажи: 3 000 ₽<br>Победитель: Сыч</p>" +
+        "<p>Статус: продан</p><p>💰 Цена продажи: 3 000 ₽<br>👤 Победитель: Сыч</p>" +
         "<p>Роспись.<br>Ручная.</p><p>Объём 300 мл.</p>",
     );
   });
@@ -300,7 +316,7 @@ describe("feed and history in the hub shell", () => {
       },
     });
     expect(plain(screen.text)).toBe(
-      "<b>Ставки</b>\n\n«Кружка»\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
+      "<b>Ставки</b>\n\n<b>Кружка</b>\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
     );
   });
 });
@@ -330,7 +346,7 @@ describe("bid sheet in the hub shell", () => {
       currentPrice: rub(1200),
     });
     expect(plain(screen.text)).toBe(
-      "<b>Поставить 1 300 ₽?</b>\n\n«Кружка &lt;с совой&gt;»\n\nОтменить ставку нельзя.",
+      "<b>Поставить 1 300 ₽?</b>\n\n<b>Кружка &lt;с совой&gt;</b>\n\nОтменить ставку нельзя.",
     );
   });
 
@@ -450,7 +466,7 @@ describe("bid sheet in the hub shell", () => {
     });
     expect(screen.id).toBe("command-result");
     expect(plain(screen.text)).toBe(
-      "<b>Ставка ниже порога</b>\n\n«Кружка»\n\nСейчас можно от 1 300 ₽.",
+      "<b>Ставка ниже порога</b>\n\n<b>Кружка</b>\n\nСейчас можно от 1 300 ₽.",
     );
     expect(
       screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
@@ -479,7 +495,7 @@ describe("bid sheet in the hub shell", () => {
     });
     expect(screen.id).toBe("answer-refused");
     expect(asks).toBeUndefined();
-    expect(plain(screen.text)).toBe("<b>Это не сумма</b>\n\n«Кружка»");
+    expect(plain(screen.text)).toBe("<b>Это не сумма</b>\n\n<b>Кружка</b>");
     expect(
       screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
     ).toEqual([["Ввести заново"], ["К лоту"]]);

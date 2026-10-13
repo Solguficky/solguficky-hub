@@ -1,4 +1,8 @@
-import type { AccessRight, LotView } from "../../../auction-ui/index.js";
+import type {
+  AccessRight,
+  AuctionSummaryView,
+  LotView,
+} from "../../../auction-ui/index.js";
 import type { OutbidFrequency } from "../../../core/notifications/outbid.js";
 import type {
   ArchivedMeetupSummary,
@@ -27,12 +31,13 @@ export type Person = {
 export type MeetupAuthor =
   | { kind: "self" }
   | { kind: "organizer"; telegramUsername: string };
-// Аукцион сходки в её меню «Расширения» (PER-605). `none` — ответ Auction
-// «аукциона нет», а не отказ: только тогда администратор видит «Включить».
-// `unavailable` — Auction не ответил: меню говорит об этом, а не прячет аукцион.
+// Аукцион сходки в её меню «Расширения» (PER-605) и строке карточки
+// (PER-594). `none` — ответ Auction «аукциона нет», а не отказ: только тогда
+// администратор видит «Включить». `unavailable` — Auction не ответил: меню
+// говорит об этом, а не прячет аукцион, а карточка остаётся без строки.
 export type MeetupAuctionView =
   | { kind: "none" }
-  | { kind: "open"; auctionId: string }
+  | { kind: "open"; auctionId: string; auction: AuctionSummaryView }
   | { kind: "unavailable" };
 // `source` — ссылка канала прихода `s_<код>` (ADR-060, пункт 17). Код —
 // недоверенный хвост без префикса: Identity сам решает, известен ли канал, и
