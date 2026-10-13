@@ -56,6 +56,7 @@ import {
 import {
   raffleAnswerRefusedScreen,
   raffleNameChoiceScreen,
+  raffleProofScreen,
   raffleQuestionScreen,
   raffleScreen,
 } from "./auction-raffle.js";
@@ -191,6 +192,8 @@ export function auctionScreen(view: AuctionView): AuctionShown {
       // Розыгрыш среди участников (ADR-066).
       case "raffle":
         return { screen: raffleScreen(block, view.body.keyboard, view) };
+      case "raffle-proof":
+        return { screen: raffleProofScreen(block, view.body.keyboard) };
       case "raffle-name-choice":
         return {
           screen: raffleNameChoiceScreen(block, view.body.keyboard),
@@ -297,7 +300,7 @@ function feedScreen(
       pagedTitle("Лоты", { items: feed.lots, ...feed }),
       ...(feed.lots.length === 0
         ? ["Лотов пока нет."]
-        : feedSummary(feed.mine ?? [], feed.lots, mineOptions)),
+        : feedSummary(feed, mineOptions)),
     ),
     keyboard: withNav(keyboard, toAuctionRoot(feed.auctionId)),
     format: "HTML",
@@ -440,6 +443,7 @@ function feedLabel(
     case "feed.raffle":
     case "raffle.register":
     case "raffle.cancel":
+    case "raffle.proof":
     case "raffle.back":
     case "raffle.return":
     case "root.lots":
@@ -609,6 +613,7 @@ function lotLabel(button: AuctionButton): string {
     case "feed.raffle":
     case "raffle.register":
     case "raffle.cancel":
+    case "raffle.proof":
     case "raffle.back":
     case "raffle.return":
     case "root.lots":
@@ -787,6 +792,7 @@ function historyLabel(button: AuctionButton): string {
     case "feed.raffle":
     case "raffle.register":
     case "raffle.cancel":
+    case "raffle.proof":
     case "raffle.back":
     case "raffle.return":
     case "root.lots":
@@ -839,7 +845,10 @@ function statusGroups(
   switch (status.kind) {
     case "draft":
       return [["Статус: готовится к торгам"]];
-    case "scheduled":
+    // Шаг до торгов — тем же форматом, что в торгах (PER-618): условия
+    // Auction отдаёт с первого планирования, и участник видит их заранее.
+    case "scheduled": {
+      const step = stepLines(block, view);
       return [
         ["Статус: торги ещё не начались"],
         [
@@ -848,7 +857,9 @@ function statusGroups(
             `Стартовая цена: ${money(status.startingPrice)}`,
           ),
         ],
+        ...(step.length === 0 ? [] : [step]),
       ];
+    }
     case "trading": {
       // Ход торгов: в финале — объявленная цена и следующая ставка ровно по
       // ней (PER-336), в онлайн-торгах — порог следующей ставки; затем шаг и
@@ -930,9 +941,10 @@ function statusGroups(
   }
 }
 
-// Шаг лота в торгах — те же строки, что у бота аукциона (дизайн-код,
-// «Карточка лота»): в окне «Счастливых часов» шаг окна до его конца и обычный
-// шаг, иначе «Шаг», когда он один на все цены; будущее окно — своей строкой.
+// Шаг лота до торгов и в торгах — те же строки, что у бота аукциона
+// (дизайн-код, «Карточка лота»): в окне «Счастливых часов» шаг окна до его
+// конца и обычный шаг, иначе «Шаг», когда он один на все цены, или «Шаг по
+// порогам»; будущее окно — своей строкой. Окна Auction отдаёт только в торгах.
 function stepLines(
   block: Extract<AuctionBlock, { kind: "lot" }>,
   view: AuctionView,

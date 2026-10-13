@@ -411,6 +411,14 @@ function bidRows(
   }
   const ask = (question: "bid" | "proxy") =>
     encodeAuctionCallback({ kind: "ask", question, lotId: lot.lotId, page });
+  // Лидеру онлайна — как в финале: ставку против себя Auction отклонит, и
+  // «Своя сумма» узнала бы об этом только после введённой суммы. Лимит
+  // автоставки лидер ставить может.
+  if (status.leaderId === viewer.identityId) {
+    return lot.proxyEnabled
+      ? [[{ action: "lot.proxy", callbackData: ask("proxy") }]]
+      : [];
+  }
   return [
     [
       {

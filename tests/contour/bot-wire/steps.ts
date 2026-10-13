@@ -44,7 +44,7 @@ export async function memberAllowedBy(
  * Администратор называет сходку и заполняет поля с черновика: кнопка поля,
  * затем ответ на её вопрос. В конце на экране черновик с «Опубликовать».
  * Дата — через год: сегодняшняя граница «прошедшей» даты сценарий не касается,
- * и среди заготовок такой даты нет — её пишут текстом через «Другая дата».
+ * и среди заготовок такой даты нет — её пишут текстом через «Ввести дату».
  */
 export async function fillsMeetupForm(
   organizer: Person,
@@ -53,7 +53,7 @@ export async function fillsMeetupForm(
   const year = new Date().getUTCFullYear() + 1;
   await organizer.says(title);
   await organizer.presses("Дата и время");
-  await organizer.presses("Другая дата");
+  await organizer.presses("Ввести дату");
   await organizer.says(`12.06.${year} 19:00`);
   await organizer.presses("Место");
   await organizer.says("Циферблат");

@@ -48,7 +48,7 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
 
       written(first, before = 0) shouldBe List(
         LotEvent.ProxyLimitSet(participant(1), money(200)),
-        proxied(proxyBid(1), who = 1, amount = 110, previous = None)
+        proxied(proxyBid(1), who = 1, amount = 100, previous = None)
       )
       written(second, before = first.entries.size) shouldBe List(
         LotEvent.ProxyLimitSet(participant(2), money(150)),
@@ -74,12 +74,39 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
         Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(200)))
     }
 
-    "accept a limit equal to the current price without a bid" in {
-      val (result, journal) = Journal.of(trading(price = 150)).limit(setProxyLimit(who = 1, max = 150, opN = 1))
+    "accept a limit equal to the current price of a lot with a leader without a bid" in {
+      val lot = trading(price = 150, leader = Some(participant(9)))
+      val (result, journal) = Journal.of(lot).limit(setProxyLimit(who = 1, max = 150, opN = 1))
 
       result shouldBe Right(Decision.Accepted(LotEvent.ProxyLimitSet(participant(1), money(150))))
       tradingOf(journal.lot).proxyLimits shouldBe Map(participant(1) -> limit(150, setSeq = 1))
-      tradingOf(journal.lot).leader shouldBe None
+      tradingOf(journal.lot).leader shouldBe Some(participant(9))
+    }
+
+    "place the first bid of a lot without bids at the starting price, not a step above it (PER-618)" in {
+      val (result, journal) = open.limit(setProxyLimit(who = 1, max = 500, opN = 1))
+
+      result shouldBe Right(
+        Decision.Accepted(
+          LotEvent.ProxyLimitSet(participant(1), money(500)),
+          List(proxied(proxyBid(1), who = 1, amount = 100, previous = None))
+        )
+      )
+      tradingOf(journal.lot).currentPrice shouldBe money(100)
+      tradingOf(journal.lot).leader shouldBe Some(participant(1))
+    }
+
+    "take the starting price with a limit equal to it while the lot has no bids" in {
+      val (_, journal) = open.limit(setProxyLimit(who = 1, max = 100, opN = 1))
+
+      bids(written(journal, before = 0)) shouldBe List(proxied(proxyBid(1), who = 1, amount = 100, previous = None))
+    }
+
+    "place the first derived bid at the announced ask of a lot without bids when it is above the price" in {
+      val (_, journal) =
+        Journal.of(trading(price = 100, ask = Some(150))).limit(setProxyLimit(who = 1, max = 500, opN = 1))
+
+      bids(written(journal, before = 0)) shouldBe List(proxied(proxyBid(1), who = 1, amount = 150, previous = None))
     }
 
     "keep the leader on equal maximums when the leader set the limit first (Т-18)" in {
@@ -187,7 +214,8 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
     }
 
     "replace a participant's earlier limit and take the sequence of the new one" in {
-      val (_, first) = Journal.of(trading(price = 100)).limit(setProxyLimit(who = 1, max = 100, opN = 1))
+      val lot = trading(price = 100, leader = Some(participant(9)))
+      val (_, first) = Journal.of(lot).limit(setProxyLimit(who = 1, max = 100, opN = 1))
       val (_, second) = first.limit(setProxyLimit(who = 1, max = 300, opN = 2))
 
       tradingOf(second.lot).proxyLimits shouldBe Map(participant(1) -> limit(300, setSeq = 2))
@@ -195,12 +223,12 @@ final class ProxySpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPro
 
     "let the leader lower the own limit down to the current price but not below it" in {
       val (_, leading) = open.limit(setProxyLimit(who = 1, max = 200, opN = 1))
-      val (lowered, journal) = leading.limit(setProxyLimit(who = 1, max = 110, opN = 2))
+      val (lowered, journal) = leading.limit(setProxyLimit(who = 1, max = 100, opN = 2))
 
-      lowered shouldBe Right(Decision.Accepted(LotEvent.ProxyLimitSet(participant(1), money(110))))
-      tradingOf(journal.lot).currentPrice shouldBe money(110)
-      journal.limit(setProxyLimit(who = 1, max = 100, opN = 3))._1 shouldBe
-        Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(110)))
+      lowered shouldBe Right(Decision.Accepted(LotEvent.ProxyLimitSet(participant(1), money(100))))
+      tradingOf(journal.lot).currentPrice shouldBe money(100)
+      journal.limit(setProxyLimit(who = 1, max = 90, opN = 3))._1 shouldBe
+        Left(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(100)))
     }
 
     "let the stronger limit reach the weaker one plus a step even at the edge of the amount range" in {

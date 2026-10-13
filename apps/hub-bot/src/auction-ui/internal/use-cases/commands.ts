@@ -75,6 +75,7 @@ function confirmBody(
         ...titled(lot),
         amount: { minorUnits: pending.amount, currency: currentPrice.currency },
         currentPrice,
+        ...firstProxyBid(lot, pending),
       },
     ],
     keyboard: [
@@ -590,6 +591,26 @@ async function explainerShown(
   } catch {
     return true;
   }
+}
+
+// У лота без лидера автоставка сразу ставит порог `nextPrice` — стартовую
+// цену (П-01): лимит, равный ей, не «ничего», а первая ставка.
+function firstProxyBid(
+  lot: LotView,
+  pending: PendingCommand,
+): { firstBid?: Money } {
+  const { status } = lot;
+  const firstBid = lot.nextPrice;
+  if (
+    pending.command !== "proxy" ||
+    status.kind !== "trading" ||
+    status.leaderId !== undefined ||
+    firstBid === undefined ||
+    firstBid.minorUnits > pending.amount
+  ) {
+    return {};
+  }
+  return { firstBid };
 }
 
 // Пример на текущем лоте: цена сейчас, шаг в силе — сниженный окном, если

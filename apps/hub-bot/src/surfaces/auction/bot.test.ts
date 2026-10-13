@@ -2721,19 +2721,35 @@ describe("raffle among the participants", () => {
     expect(before.text).toContain("Ты пока не зарегистрирован.");
     expect(before.keyboard.flat().map((b) => b.text)).toEqual([
       "Зарегистрироваться",
+      "Как проверить честность",
       "‹ Лоты",
     ]);
 
     await bot.handleUpdate(press(buttonData(before, "Зарегистрироваться")));
     const registered = lastScreen(calls);
     expect(registered.text).toContain("Ты зарегистрирован.");
-    expect(registered.text).toContain("ab".repeat(32));
-    expect(registered.text).toContain("12345678");
+    // Техника — за кнопкой (PER-618): экран участника о ней молчит.
+    expect(registered.text).toContain("Итог проверяемый");
+    expect(registered.text).not.toContain("ab".repeat(32));
+    expect(registered.text).not.toContain("drand");
     expect(registered.keyboard.flat().map((b) => b.text)).toEqual([
       "Отменить регистрацию",
+      "Как проверить честность",
       "‹ Лоты",
     ]);
     expect(service.registrations).toHaveLength(1);
+
+    await bot.handleUpdate(
+      press(buttonData(registered, "Как проверить честность")),
+    );
+    const commitment = lastScreen(calls);
+    expect(commitment.text).toContain("<b>Как проверить честность</b>");
+    expect(commitment.text).toContain("ab".repeat(32));
+    expect(commitment.text).toContain("12345678");
+    expect(commitment.text).not.toContain("python3 -c");
+    expect(commitment.keyboard.flat().map((b) => b.text)).toEqual([
+      "‹ Розыгрыш",
+    ]);
 
     // Жеребьёвка прошла: пул зафиксирован, seed раскрыт.
     service.set({
@@ -2756,10 +2772,25 @@ describe("raffle among the participants", () => {
     await bot.handleUpdate(press(buttonData(lastScreen(calls), "Розыгрыш")));
     const result = lastScreen(calls);
     expect(result.text).toContain("Выиграл билет №2 — Сова*");
-    expect(result.text).toContain("cd".repeat(32));
-    expect(result.text).toContain("Как проверить итог");
-    expect(result.text).toContain("python3 -c");
-    expect(result.keyboard.flat().map((b) => b.text)).toEqual(["‹ Лоты"]);
+    expect(result.text).toContain("Билетов: 2");
+    expect(result.text).toContain("Твой билет: №1");
+    expect(result.text).not.toContain("cd".repeat(32));
+    expect(result.text).not.toContain("python3 -c");
+    expect(result.keyboard.flat().map((b) => b.text)).toEqual([
+      "Как проверить честность",
+      "‹ Лоты",
+    ]);
+
+    await bot.handleUpdate(
+      press(buttonData(result, "Как проверить честность")),
+    );
+    const proof = lastScreen(calls);
+    expect(proof.text).toContain("ab".repeat(32));
+    expect(proof.text).toContain("cd".repeat(32));
+    expect(proof.text).toContain("Как проверить итог");
+    expect(proof.text).toContain("python3 -c");
+    await bot.handleUpdate(press(buttonData(proof, "‹ Розыгрыш")));
+    expect(lastScreen(calls).text).toContain("Выиграл билет №2 — Сова*");
   });
 
   // Вне окна регистрации кнопки нет — есть объяснение.
@@ -2772,7 +2803,31 @@ describe("raffle among the participants", () => {
     );
     const screen = lastScreen(calls);
     expect(screen.text).toContain("Регистрация закрыта");
-    expect(screen.keyboard.flat().map((b) => b.text)).toEqual(["‹ Лоты"]);
+    expect(screen.keyboard.flat().map((b) => b.text)).toEqual([
+      "Как проверить честность",
+      "‹ Лоты",
+    ]);
+  });
+
+  // Непроведённый розыгрыш проверять нечего: кнопки проверки нет.
+  it("offers no proof of a raffle that was not held", async () => {
+    const service = raffleService({
+      auctionId,
+      status: "not-held",
+      closesAt: openRaffle.closesAt,
+      registered: false,
+      tickets: [],
+    });
+    const { bot, calls } = makeBot(withRaffle(publicPorts, service));
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "raffle", auctionId })),
+    );
+    expect(
+      lastScreen(calls)
+        .keyboard.flat()
+        .map((b) => b.text),
+    ).toEqual(["‹ Лоты"]);
   });
 
   // «К розыгрышу» под итогом (PER-620) — кнопка следа: экран итога приходит

@@ -41,7 +41,8 @@ object LotCommands extends Commands {
   ) {
     def step(at: Long): Long = tiers.filter((bound, _) => bound <= at).last._2
 
-    def next: Long = price + step(price)
+    /** До первой ставки следующая цена — стартовая, дальше — цена плюс шаг (PER-618). */
+    def next: Long = if (leader.isEmpty) price else price + step(price)
   }
 
   /** Ожидаемый ответ модели на команду. */
@@ -76,8 +77,8 @@ object LotCommands extends Commands {
     } yield Model(phase, tiers, price = 100, leader = None, accepted = Map.empty, lastOp = 0)
 
   def genCommand(state: State): Gen[Command] = {
-    // Сумма залпа — следующая цена от старта: равные ставки разных участников приходят подряд.
-    val volley = 100 + state.step(100)
+    // Сумма залпа — первая ставка, то есть сам старт: равные ставки разных участников приходят подряд.
+    val volley = 100L
     val amounts = Gen.frequency(
       4 -> Gen.const(state.next),
       3 -> Gen.const(volley),

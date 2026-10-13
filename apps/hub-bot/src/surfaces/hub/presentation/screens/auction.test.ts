@@ -369,6 +369,23 @@ describe("bid sheet in the hub shell", () => {
     expect(screen.text).toContain("Лимит видишь только ты.");
   });
 
+  // Лимит, равный стартовой цене лота без ставок, — первая ставка (П-01).
+  it("names the first bid when the limit equals the start price", () => {
+    const { screen } = sheet({
+      kind: "confirm",
+      command: "proxy",
+      lotId: "lot-1",
+      auctionId: auctionId,
+      amount: rub(1200),
+      currentPrice: rub(1200),
+      firstBid: rub(1200),
+    });
+    expect(screen.text).toMatch(
+      /Ставок ещё нет: бот сразу поставит за тебя 1\s200\s₽ и будет перебивать чужие ставки по шагу, но не выше 1\s200\s₽\./,
+    );
+    expect(screen.text).not.toContain("лимит не выше неё");
+  });
+
   it("asks the question with the prompt under the title", () => {
     const { screen, asks } = sheet({
       kind: "question",
@@ -409,7 +426,6 @@ describe("bid sheet in the hub shell", () => {
         "",
         "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
         "Минимальная ставка: 1 250 ₽",
-        "Например: 3 000",
       ].join("\n"),
     );
     expect(asks).toBe(true);
@@ -606,5 +622,84 @@ describe("happy hours in the hub shell", () => {
     });
     // Отметка окна — строкой сводки (PER-595): строк лотов в теле больше нет.
     expect(plain(screen.text)).toContain("Счастливые часы сейчас: Кружка.");
+  });
+});
+
+// Шаг до торгов (PER-618): тем же форматом, что в торгах, своей группой под
+// стартовой ценой. Те же строки ждёт оболочка бота аукциона.
+describe("lot card before trading", () => {
+  const scheduled = (block: Partial<Extract<AuctionBlock, { kind: "lot" }>>) =>
+    plain(
+      auctionScreen(
+        view([
+          lot({
+            status: { kind: "scheduled", startingPrice: rub(500) },
+            ...block,
+          }),
+        ]),
+      ).screen.text,
+    );
+
+  it("shows the single step under the starting price", () => {
+    expect(scheduled({ fixedStep: rub(50) })).toContain(
+      "<p>Статус: торги ещё не начались</p><p>💰 Стартовая цена: 500 ₽</p><p>Шаг: 50 ₽</p>",
+    );
+  });
+
+  it("shows the thresholds under the starting price", () => {
+    expect(
+      scheduled({
+        tiers: [
+          { lowerBound: rub(0), step: rub(50) },
+          { lowerBound: rub(5000), step: rub(250) },
+        ],
+      }),
+    ).toContain(
+      "<p>💰 Стартовая цена: 500 ₽</p><p>Шаг по порогам:<br>от 0 ₽ — 50 ₽<br>от 5 000 ₽ — 250 ₽</p>",
+    );
+  });
+});
+
+// Лента до торгов (PER-618): лидерства ещё нет ни у кого, и сводка говорит,
+// что торги не начались. В торгах — прежняя сводка о своих лотах.
+describe("feed before trading", () => {
+  const feedText = (beforeTrading: boolean) =>
+    plain(
+      auctionScreen({
+        ...view([]),
+        body: {
+          blocks: [
+            {
+              kind: "feed",
+              auctionId,
+              page: 0,
+              pageCount: 1,
+              lots: [
+                {
+                  lotId: "a",
+                  title: "Носки",
+                  status: { kind: "scheduled", startingPrice: rub(500) },
+                },
+              ],
+              ...(beforeTrading ? { beforeTrading: true as const } : {}),
+            },
+          ],
+          keyboard: [
+            [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
+          ],
+        },
+      }).screen.text,
+    );
+
+  it("says the trading has not started instead of the leadership line", () => {
+    expect(feedText(true)).toBe(
+      "<b>Лоты</b>\n\nТорги ещё не начались. Лоты — кнопками ниже.",
+    );
+  });
+
+  it("keeps the leadership line once the trading is open", () => {
+    expect(feedText(false)).toBe(
+      "<b>Лоты</b>\n\nТы пока не лидируешь ни в одном лоте этого аукциона. Все лоты — кнопками ниже.",
+    );
   });
 });

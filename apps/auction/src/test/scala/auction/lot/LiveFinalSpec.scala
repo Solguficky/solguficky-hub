@@ -174,6 +174,26 @@ final class LiveFinalSpec extends AnyWordSpec with Matchers with ScalaCheckDrive
         )
     }
 
+    "places the first derived bid of a lot without bids at the starting price, the first point of the grid" in {
+      live(price = 1000).limit(setProxyLimit(who = 2, max = 1250, opN = 1))._1 shouldBe
+        Right(
+          Decision.Accepted(
+            LotEvent.ProxyLimitSet(participant(2), money(1250)),
+            List(proxied(proxyBid(1), 2, 1000, None))
+          )
+        )
+    }
+
+    "takes the starting price with a limit equal to it while the lot has no bids" in {
+      live(price = 1000).limit(setProxyLimit(who = 2, max = 1000, opN = 1))._1 shouldBe
+        Right(
+          Decision.Accepted(
+            LotEvent.ProxyLimitSet(participant(2), money(1000)),
+            List(proxied(proxyBid(1), 2, 1000, None))
+          )
+        )
+    }
+
     "places every derived bid on the grid, above the floor and within the winning limit" in {
       val limits = Gen.mapOfN(3, Gen.zip(Gen.chooseNum(2, 6), Gen.chooseNum(100L, 3_000L)))
       forAll(Gen.chooseNum(100L, 2_000L), limits, Gen.option(Gen.chooseNum(1L, 900L))) {

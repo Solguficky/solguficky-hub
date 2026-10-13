@@ -1371,14 +1371,23 @@ describe("raffle among the participants", () => {
     await bot.handleUpdate(press(raffleData ?? ""));
     const before = lastScreen(calls);
     expect(before.text).toContain("<b>Розыгрыш среди участников</b>");
-    expect(labels(before)).toEqual([["Зарегистрироваться"], ["‹ Аукцион"]]);
+    expect(labels(before)).toEqual([
+      ["Зарегистрироваться"],
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
 
     await bot.handleUpdate(press(data(before, "Зарегистрироваться") ?? ""));
     const registered = lastScreen(calls);
     expect(registered.text).toContain("Ты зарегистрирован.");
-    expect(registered.text).toContain("ab".repeat(32));
+    // Техника — за кнопкой (PER-618).
+    expect(registered.text).toContain(
+      "Итог проверяемый: как его проверить — по кнопке ниже.",
+    );
+    expect(registered.text).not.toContain("ab".repeat(32));
     expect(labels(registered)).toEqual([
       ["Отменить регистрацию"],
+      ["Как проверить честность"],
       ["‹ Аукцион"],
     ]);
 
@@ -1399,9 +1408,24 @@ describe("raffle among the participants", () => {
     const result = lastScreen(calls);
     expect(result.text).toContain("Выиграл билет №1 — @owl.");
     expect(result.text).toContain("Это твой билет.");
-    expect(result.text).toContain("cd".repeat(32));
-    expect(result.text).toContain("Как проверить итог");
-    expect(labels(result)).toEqual([["‹ Аукцион"]]);
+    expect(result.text).toContain("Билетов: 1");
+    expect(result.text).not.toContain("cd".repeat(32));
+    expect(result.text).not.toContain("Как проверить итог");
+    expect(labels(result)).toEqual([
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
+
+    await bot.handleUpdate(
+      press(data(result, "Как проверить честность") ?? ""),
+    );
+    const proof = lastScreen(calls);
+    expect(proof.text).toContain("<b>Как проверить честность</b>");
+    expect(proof.text).toContain("ab".repeat(32));
+    expect(proof.text).toContain("cd".repeat(32));
+    expect(proof.text).toContain("Как проверить итог");
+    expect(proof.text).toContain("python3 -c");
+    expect(labels(proof)).toEqual([["‹ Розыгрыш"]]);
   });
 
   it("offers no registration outside the registration window", async () => {
@@ -1442,7 +1466,7 @@ describe("raffle screens in the hub", () => {
     [{ ...base, status: "closing" as const }, "Регистрация закрыта"],
     [
       { ...base, ...pool, status: "awaiting-beacon" as const },
-      "Жеребьёвка ждёт значение маяка drand",
+      "Жеребьёвка идёт: итог — через пару минут.",
     ],
     [
       {
@@ -1473,7 +1497,39 @@ describe("raffle screens in the hub", () => {
     await bot.handleUpdate(press(raffleData));
     const screen = lastScreen(calls);
     expect(screen.text).toContain(text);
-    expect(labels(screen)).toEqual([["‹ Аукцион"]]);
+    expect(screen.text).not.toContain("drand");
+    expect(labels(screen)).toEqual([
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
+  });
+
+  // Экран проверки в каждом статусе уходит в Telegram и проходит линтер.
+  it.each([
+    [{ ...base }, "Seed раскроется после жеребьёвки"],
+    [
+      { ...base, ...pool, status: "awaiting-beacon" as const },
+      "Жеребьёвка ждёт значение маяка drand",
+    ],
+    [
+      {
+        ...base,
+        status: "no-tickets" as const,
+        reveal: { seed: "cd".repeat(32) },
+      },
+      "Билетов не было: пересчитывать нечего.",
+    ],
+  ])("shows the proof in status %#", async (raffle, text) => {
+    const auction = fakeAuction({ existing: true, raffle });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "raffle-proof", auctionId })),
+    );
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("Отпечаток seed (SHA-256)");
+    expect(screen.text).toContain(text);
+    expect(labels(screen)).toEqual([["‹ Розыгрыш"]]);
   });
 
   // «К розыгрышу» под итогом (PER-620) — кнопка следа: экран итога приходит

@@ -15,8 +15,14 @@ final class StepWindowSpec extends AnyWordSpec with Matchers with ScalaCheckDriv
   /** Окно `[12:00, 14:00)` с шагом 1 при обычном `Fixed 10` и цене 100 — образец Т-56…Т-59. */
   private val happyHours = stepWindow("12:00", "14:00", step = 1)
 
+  /**
+   * Лидер, который ставит не тот участник, что в `bidAt`: шаг считается только после первой ставки, а до неё следующая
+   * цена — стартовая (PER-618).
+   */
+  private val leader = Some(participant(9))
+
   private def windowed(price: Long = 100, policy: StepPolicy = fixedTen): Lot =
-    trading(price = price, policy = policy, stepWindows = List(happyHours))
+    trading(price = price, policy = policy, leader = leader, stepWindows = List(happyHours))
 
   private def bidAt(lot: Lot, amount: Long, time: String): Either[PlaceBidRejected, Decision] =
     Journal.of(lot).submit(placeBid(who = 1, amount = amount, opN = 99), bid(1), now = at(time))._1
@@ -46,7 +52,9 @@ final class StepWindowSpec extends AnyWordSpec with Matchers with ScalaCheckDriv
     }
 
     "leave a lot outside every window at the regular step inside the interval (Т-60)" in {
-      bidAt(trading(price = 100), 101, "13:00") shouldBe Left(PlaceBidRejected.BidBelowMinimum(money(110)))
+      bidAt(trading(price = 100, leader = leader), 101, "13:00") shouldBe Left(
+        PlaceBidRejected.BidBelowMinimum(money(110))
+      )
     }
 
     "never raise the step above the regular one of the tier the price has reached (Т-61)" in {
@@ -54,12 +62,12 @@ final class StepWindowSpec extends AnyWordSpec with Matchers with ScalaCheckDriv
       val window = stepWindow("12:00", "14:00", step = 5)
 
       Lot.minRequired(
-        tradingOf(trading(price = 100, policy = policy, stepWindows = List(window))),
+        tradingOf(trading(price = 100, policy = policy, leader = leader, stepWindows = List(window))),
         at("13:00")
       ) shouldBe
         money(101)
       Lot.minRequired(
-        tradingOf(trading(price = 300, policy = policy, stepWindows = List(window))),
+        tradingOf(trading(price = 300, policy = policy, leader = leader, stepWindows = List(window))),
         at("13:00")
       ) shouldBe
         money(305)
@@ -130,9 +138,10 @@ final class StepWindowSpec extends AnyWordSpec with Matchers with ScalaCheckDriv
         .of(scheduled())
         .open(OpenLot(Some(deadline), op(1), List(happyHours)))
       val restored = Lot.replay(scheduled(), opened.entries)
+      val (_, led) = Journal.of(restored).submit(placeBid(who = 2, amount = 100, opN = 2), bid(2), now = at("13:00"))
 
       tradingOf(restored).stepWindows shouldBe List(happyHours)
-      placedAmount(bidAt(restored, 101, "13:00")) shouldBe Some(money(101))
+      placedAmount(bidAt(led.lot, 101, "13:00")) shouldBe Some(money(101))
     }
 
     "let an extension past the common deadline run at the regular step (Т-66)" in {
@@ -153,6 +162,7 @@ final class StepWindowSpec extends AnyWordSpec with Matchers with ScalaCheckDriv
         price = 1000,
         policy = fixedHundred,
         phase = Phase.Live,
+        leader = leader,
         closesAt = None,
         stepWindows = List(happyHours)
       )
@@ -166,8 +176,10 @@ final class StepWindowSpec extends AnyWordSpec with Matchers with ScalaCheckDriv
       val foreign = stepWindow("12:00", "14:00", step = 1, currency = eur)
       val (result, journal) = Journal.of(scheduled()).open(OpenLot(Some(deadline), op(1), List(foreign)))
 
+      val (_, led) = journal.submit(placeBid(who = 2, amount = 100, opN = 2), bid(2), now = at("13:00"))
+
       result shouldBe Right(Decision.Accepted(LotEvent.LotOpened(money(100), config(), Some(deadline), Nil)))
-      bidAt(journal.lot, 101, "13:00") shouldBe Left(PlaceBidRejected.BidBelowMinimum(money(110)))
+      bidAt(led.lot, 101, "13:00") shouldBe Left(PlaceBidRejected.BidBelowMinimum(money(110)))
     }
 
     "record the windows of the lot in LotOpened in the order they start" in {

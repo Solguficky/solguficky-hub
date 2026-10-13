@@ -26,6 +26,7 @@ import {
   cancelRaffleRegistration,
   chooseRaffleUsername,
   openRaffle,
+  openRaffleProof,
   registerForRaffle,
 } from "./internal/use-cases/raffle.js";
 import type {
@@ -146,6 +147,8 @@ export function dispatchAuctionIntent(input: {
       return registerForRaffle(context, intent.auctionId);
     case "raffle-cancel":
       return cancelRaffleRegistration(context, intent.auctionId);
+    case "raffle-proof":
+      return openRaffleProof(context, intent.auctionId);
     case "raffle-username":
       return chooseRaffleUsername(context, intent.auctionId);
     case "raffle-ask-alias":

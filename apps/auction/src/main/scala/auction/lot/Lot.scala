@@ -374,14 +374,22 @@ object Lot {
 
   /**
    * Следующая цена в момент `at`: объявленный ask, если он выше текущей цены, иначе цена плюс шаг от неё (П-01, П-03).
-   * До первой ставки это стартовая цена плюс шаг. `at` — серверное время команды, а у чтения — время ответа: в окне
-   * сниженного шага следующая цена ниже.
+   * До первой ставки — пока лидера нет (И-02) — шага нет: следующая цена равна стартовой, которая до первой ставки и
+   * есть текущая (решение владельца 14.10.2026, PER-618). `at` — серверное время команды, а у чтения — время ответа: в
+   * окне сниженного шага следующая цена ниже.
    */
   def minRequired(trading: TradingState, at: Instant): Money =
     trading.ask.filter(_ > trading.currentPrice) match {
       case Some(ask) => ask
+      case None if opening(trading) => trading.currentPrice
       case None => trading.currentPrice.plus(step(trading, trading.currentPrice, at))
     }
+
+  /**
+   * Ставок по лоту ещё не было: лидера нет только до первой принятой ставки (И-02), и текущая цена тогда — стартовая.
+   * Первая ставка, ручная или производная, вправе быть равной ей, а не выше на шаг (PER-618).
+   */
+  private def opening(trading: TradingState): Boolean = trading.leader.isEmpty
 
   /** Обычный шаг при цене `price`: политика шага лота без окон (П-03, `base`). */
   def baseStep(trading: TradingState, price: Money): Money =
@@ -471,6 +479,9 @@ object Lot {
    * Шаг берётся в момент `now` команды — один на всю свёрнутую серию: в окне сниженного шага серия считается по шагу
    * окна, вне окна — по обычному, и шаги двух режимов в одном событии не смешиваются (П-03).
    *
+   * До первой ставки лидера нет, и первая ставка равна `f` без шага, как у ручной (решение владельца 14.10.2026,
+   * PER-618): кандидат — лимит с `max ≥ f`, а производная ставка — ровно `f`.
+   *
    * Так правило читается в фазе `Online`; в `Live` цель ложится на сетку ADR-049 — [[resolveLive]].
    */
   private[lot] def resolve(trading: TradingState, bidId: BidId, now: Instant): Option[LotEvent.BidPlaced] =
@@ -486,8 +497,9 @@ object Lot {
       if (price.minorUnits > Long.MaxValue - step) price.copy(minorUnits = Long.MaxValue)
       else price.copy(minorUnits = price.minorUnits + step)
     }
+    val reaches = (amount: Money) => if (opening(trading)) !(amount < f) else amount > f
     val contender = trading.proxyLimits.toList
-      .filter((who, limit) => !trading.leader.contains(who) && limit.max > f)
+      .filter((who, limit) => !trading.leader.contains(who) && reaches(limit.max))
       .sortBy((_, limit) => (-limit.max.minorUnits, limit.setSeq))
       .headOption
     val leading = trading.leader.flatMap(leader => trading.proxyLimits.get(leader).map(leader -> _))
@@ -496,6 +508,8 @@ object Lot {
         case Some((leader, l)) if l.max > c.max || (l.max == c.max && l.setSeq < c.setSeq) =>
           val target = lesser(l.max, stepAbove(c.max))
           Option.when(target > f)(proxyBid(bidId, leader, target, trading.leader))
+        case _ if opening(trading) =>
+          Some(proxyBid(bidId, rival, f, trading.leader))
         case _ =>
           val base = leading.fold(f)((_, l) => greater(l.max, f))
           val target = lesser(c.max, stepAbove(base))
@@ -512,12 +526,14 @@ object Lot {
    * Пока ask выше цены, лимиты меряются по нему: кандидат — лимит с `max ≥ ask`, а не `max > f`, ставка — не ниже ask,
    * а в ветке смены лидера цель не опускается ниже ask, хотя база считается от цены (`max(ask, base + шаг)`): после
    * скачка ask больше чем на шаг `цена + шаг` лежит ниже него. Без ask `f` — сама цена, и правило то же, что в
-   * `Online`, с округлением. Когда обоим лимитам хватает только на одну точку, её берёт сильнейший (Т-76).
+   * `Online`, с округлением. Когда обоим лимитам хватает только на одну точку, её берёт сильнейший (Т-76). До первой
+   * ставки, как в `Online`, кандидату хватает `max ≥ f`, и ставит он саму `f` — или ask, если он объявлен (PER-618).
    */
   private def resolveLive(trading: TradingState, bidId: BidId): Option[LotEvent.BidPlaced] = {
     val f = floor(trading)
     val ask = trading.ask.filter(_ > trading.currentPrice)
-    val reaches = (amount: Money) => ask.fold(amount > f)(threshold => !(amount < threshold))
+    val reaches = (amount: Money) =>
+      ask.fold(if (opening(trading)) !(amount < f) else amount > f)(threshold => !(amount < threshold))
     val stepAbove = (price: Money) => saturatedPlus(price, baseStep(trading, price))
     val onGrid = (target: Money) => StepPolicy.gridFloor(trading.config.stepPolicy, f, target).filter(reaches)
     val contender = trading.proxyLimits.toList
@@ -531,7 +547,8 @@ object Lot {
           onGrid(lesser(l.max, stepAbove(c.max))).map(proxyBid(bidId, leader, _, trading.leader))
         case _ =>
           val price = trading.currentPrice
-          val next = stepAbove(leading.fold(price)((_, l) => greater(l.max, price)))
+          val next =
+            if (opening(trading)) price else stepAbove(leading.fold(price)((_, l) => greater(l.max, price)))
           onGrid(lesser(c.max, ask.fold(next)(greater(_, next)))).map(proxyBid(bidId, rival, _, trading.leader))
       }
     }

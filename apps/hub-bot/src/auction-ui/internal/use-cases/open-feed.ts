@@ -58,6 +58,7 @@ export async function openFeed(input: {
         pageCount,
         lots: shown.map((lot) => feedItemOf(lot, input.viewer)),
         ...withMine(mineOf(lots, input.viewer)),
+        ...(beforeTrading(lots) ? { beforeTrading: true as const } : {}),
       },
     ],
     keyboard: [
@@ -109,6 +110,39 @@ export async function hasRaffle(input: {
     );
   } catch {
     return false;
+  }
+}
+
+// Торги аукциона ещё не открыты: ни один лот не торговался и хотя бы один
+// ещё ждёт торгов (PER-618). Снятый лот торгов не доказывает в обе стороны —
+// его снимают и из черновика, и при отмене идущего аукциона, — поэтому лента
+// из одних снятых лотов ничего не обещает, а пустая своё говорит сама.
+function beforeTrading(lots: readonly LotView[]): boolean {
+  return (
+    lots.some((lot) => awaitsTrading(lot.status)) &&
+    lots.every((lot) => !hasOpened(lot.status))
+  );
+}
+
+function awaitsTrading(status: LotStatusView): boolean {
+  return status.kind === "draft" || status.kind === "scheduled";
+}
+
+function hasOpened(status: LotStatusView): boolean {
+  switch (status.kind) {
+    case "trading":
+    case "held":
+    case "sold":
+    case "unsold":
+      return true;
+    case "draft":
+    case "scheduled":
+    case "withdrawn":
+      return false;
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
   }
 }
 

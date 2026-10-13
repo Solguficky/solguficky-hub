@@ -96,7 +96,7 @@ export function auctionEnabledScreen(view: {
     text: outcomeText(
       view.alreadyExisted
         ? "Аукцион у этой сходки уже включён"
-        : "Аукцион включён. Лоты появятся в нём, когда их добавят",
+        : "Аукцион включён. Лоты добавляются в нём: «Аукцион» → «Лоты».",
     ),
     keyboard: withNav(keyboard, toExtensions(view.meetupToken)),
     format: "HTML",

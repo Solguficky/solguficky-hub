@@ -509,8 +509,25 @@ const raffleBody = (raffle: RaffleView | undefined): AuctionScreenBody => ({
           ],
         ]
       : []),
+    ...(raffle === undefined || raffle.status === "not-held"
+      ? []
+      : [[{ action: "raffle.proof" as const, callbackData: "v1:auc:rp:a" }]]),
     [{ action: "raffle.back", callbackData: "v1:auc:feed:auc-1:0" }],
   ],
+});
+
+// Как проверить честность (PER-618) — в каждом статусе розыгрыша.
+const raffleProofBody = (
+  raffle: RaffleView | undefined,
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "raffle-proof",
+      auctionId: "auc-1",
+      ...(raffle ? { raffle } : {}),
+    },
+  ],
+  keyboard: [[{ action: "raffle.return", callbackData: "v1:auc:rf:a" }]],
 });
 
 const feedWithRaffle: AuctionScreenBody = {
@@ -697,6 +714,9 @@ const shown: readonly {
   { screen: { kind: "auction", body: feedWithRaffle, parent: "auctions" } },
   ...raffles.map((raffle) => ({
     screen: { kind: "auction" as const, body: raffleBody(raffle) },
+  })),
+  ...raffles.map((raffle) => ({
+    screen: { kind: "auction" as const, body: raffleProofBody(raffle) },
   })),
   { screen: { kind: "auction", body: raffleNameChoice } },
   { screen: { kind: "auction", body: raffleQuestion } },

@@ -79,7 +79,7 @@ export function confirmScreen(
       : screenText(
           `Включить автоставку до ${money(block.amount)}?`,
           lotSubject(block.title),
-          `${proxyGap(block.currentPrice, block.amount, money)}\nЛимит видишь только ты.`,
+          `${proxyGap(block.currentPrice, block.amount, money, block.firstBid)}\nЛимит видишь только ты.`,
         ),
     keyboard: confirmKeyboard({
       yes: bid
@@ -128,11 +128,17 @@ export function acceptedScreen(
 
 // Автоставка объясняется разницей цены и лимита (RFC-007): на столько бот
 // может поднять цену за человека, перебивая чужие ставки по шагу.
+// У лота без ставок автоставка сразу ставит стартовую цену (П-01), даже
+// лимитом, равным ей: подтверждение говорит о первой ставке прямо.
 function proxyGap(
   currentPrice: Money,
   limit: Money,
   money: (amount: Money) => string,
+  firstBid: Money | undefined,
 ): string {
+  if (firstBid !== undefined) {
+    return `Ставок ещё нет: бот сразу поставит за тебя ${money(firstBid)} и будет перебивать чужие ставки по шагу, но не выше ${money(limit)}.`;
+  }
   const gap = limit.minorUnits - currentPrice.minorUnits;
   return gap > 0
     ? `Цена сейчас ${money(currentPrice)}: бот будет перебивать чужие ставки по шагу и поднимет её не больше чем на ${money({ minorUnits: gap, currency: limit.currency })}.`
@@ -177,7 +183,9 @@ export function questionScreen(
           [
             "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
             ...current(),
-            "Например: 3 000",
+            // Подсказка уже несёт пример с ценой этого лота: второй, общий,
+            // с ним расходится.
+            ...(block.explainer === undefined ? ["Например: 3 000"] : []),
           ].join("\n"),
         );
       case "alias":
