@@ -590,9 +590,8 @@ message DisplayName {
 
   DisplayNameKind kind = 2;
 
-  // True once the auction accepted a bid or a proxy limit of the participant: the
-  // choice no longer changes, and ChooseDisplayName with another choice is
-  // refused with NameFrozen. False for a placeholder.
+  // True when the choice of the participant no longer changes in this auction.
+  // False for a placeholder.
   bool frozen = 3;
 }
 

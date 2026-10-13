@@ -345,7 +345,7 @@ Identity публикует события о регистрации, смене
 | `AuctionService.GetAuctionLotStatistics` | то же | Только Hub Bot: статистика лотов для ручного отбора финалистов ([PER-480](https://linear.app/anticnvm/issue/per-480)) | Auction |
 | `AuctionService.GetMeetupAuction` | то же | Только Hub Bot: вход в аукцион из меню «Расширения» сходки ([PER-307](https://linear.app/anticnvm/issue/per-307), [PER-605](https://linear.app/anticnvm/issue/per-605)) | Auction |
 | `AuctionService.GetAuction` | то же | Hub Bot и Auction Bot: корень аукциона — стадия и сроки ([PER-605](https://linear.app/anticnvm/issue/per-605)); черновик отдаётся только боту хаба | Auction |
-| `AuctionService.ListAuctions` | то же | Auction Bot: списки активных и прошедших аукционов и родитель ленты; оба бота — идущий аукцион для «Имени в аукционе» в «Настройках» ([PER-595](https://linear.app/anticnvm/issue/per-595)); бот хаба списков не получает | Auction |
+| `AuctionService.ListAuctions` | то же | Auction Bot: списки активных и прошедших аукционов и родитель ленты; оба бота — идущий аукцион для «Имени в аукционе» в «Настройках» ([PER-595](https://linear.app/anticnvm/issue/per-595)); списков аукционов бот хаба не показывает | Auction |
 | `AuctionService.RegisterForRaffle` | то же | Hub Bot и Auction Bot: регистрация в розыгрыше среди участников ([ADR-066](../decisions/ADR-066-auction-raffle-commit-reveal-with-beacon.md), [PER-499](https://linear.app/anticnvm/issue/per-499)) | Auction |
 | `AuctionService.CancelRaffleRegistration` | то же | то же | Auction |
 | `AuctionService.GetRaffle` | то же | то же | Auction |
