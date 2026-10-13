@@ -146,7 +146,7 @@ public class CallerGateTests
         string[] bothBots =
         [
             "FollowLot", "UnfollowLot", "ListFollowedLots", "GetProxyExplainer", "MarkProxyExplainerSeen",
-            "GetOutbidPreference", "SetOutbidPreference",
+            "GetAuctionNotificationPreferences", "SetAuctionNotificationPreferences",
         ];
         foreach (var method in NotificationsService.Descriptor.Methods)
         {
@@ -172,8 +172,8 @@ public class CallerGateTests
     [InlineData("/notifications.v1.NotificationsService/UnfollowLot", false)]
     [InlineData("/notifications.v1.NotificationsService/ListFollowedLots", true)]
     [InlineData("/notifications.v1.NotificationsService/ListFollowedLots", false)]
-    [InlineData("/notifications.v1.NotificationsService/GetOutbidPreference", true)]
-    [InlineData("/notifications.v1.NotificationsService/SetOutbidPreference", false)]
+    [InlineData("/notifications.v1.NotificationsService/GetAuctionNotificationPreferences", true)]
+    [InlineData("/notifications.v1.NotificationsService/SetAuctionNotificationPreferences", false)]
     public void Decide_EitherBotOnSharedMethod_Admits(string path, bool auctionBot)
     {
         var (token, caller) = auctionBot ? (AuctionBotToken, Caller.AuctionBot) : (BotToken, Caller.HubBot);

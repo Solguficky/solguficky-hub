@@ -70,6 +70,7 @@ public class MigrationsTests
             "proxy_explainer",
             "outbid_digest",
             "auction_final",
+            "final_announcement_preference",
         ]);
 
         var main = names.IndexOf("orleans_main");

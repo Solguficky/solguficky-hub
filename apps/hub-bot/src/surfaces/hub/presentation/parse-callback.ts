@@ -395,9 +395,11 @@ type PlainAction =
   // возвращает к ней; у объявления сообществу токена нет.
   | { kind: "cancel-broadcast"; token?: string }
   | { kind: "notify-global" }
-  // Частота «перебили» (PER-552): экран и выбор режима целевым значением.
+  // Настройки уведомлений аукциона (PER-552, PER-539): экран, выбор режима
+  // частоты и выключатель анонса финала — целевыми значениями.
   | { kind: "notify-outbid" }
   | { kind: "notify-set-outbid"; frequency: OutbidFrequency }
+  | { kind: "notify-set-final"; enabled: boolean }
   | {
       kind: "notify-set-global";
       category: NotificationCategory;
@@ -1674,6 +1676,12 @@ function parseNotify(parts: readonly string[]): CallbackAction {
     const frequency = OutbidFrequencySchema.safeParse(parts[3]);
     return frequency.success
       ? { kind: "notify-set-outbid", frequency: frequency.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "final") {
+    const state = TargetStateSchema.safeParse(parts[3]);
+    return state.success
+      ? { kind: "notify-set-final", enabled: state.data === "1" }
       : { kind: "malformed" };
   }
   if (parts.length === 5 && parts[2] === "gset") {

@@ -67,11 +67,11 @@ export function createNotificationSettings(
         }
       : rejection(result);
 
-  const outbidFrame = (
-    result: Awaited<ReturnType<Notifications["getOutbidFrequency"]>>,
+  const auctionFrame = (
+    result: Awaited<ReturnType<Notifications["getAuctionNotifications"]>>,
   ): ExecuteResult =>
     result.kind === "ok"
-      ? { kind: "outbid-frequency", frequency: result.frequency }
+      ? { kind: "auction-notifications", settings: result.settings }
       : result.kind === "unknown"
         ? // Ответ вне контракта — дефект соседа, а не его недоступность: граница
           // пишет его ошибкой с причиной, человеку уходит кадр сбоя.
@@ -100,15 +100,15 @@ export function createNotificationSettings(
         );
       // Экран и подтверждение показывают то, что ответил Notifications, а не
       // то, что нажато: выбор уходит целевым значением.
-      case "view-outbid-frequency":
-        return outbidFrame(
-          await notifications.getOutbidFrequency(identityId, meta),
+      case "view-auction-notifications":
+        return auctionFrame(
+          await notifications.getAuctionNotifications(identityId, meta),
         );
-      case "set-outbid-frequency":
-        return outbidFrame(
-          await notifications.setOutbidFrequency(
+      case "set-auction-notifications":
+        return auctionFrame(
+          await notifications.setAuctionNotifications(
             identityId,
-            request.frequency,
+            request.change,
             meta,
           ),
         );

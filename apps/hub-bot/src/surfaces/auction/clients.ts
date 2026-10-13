@@ -54,8 +54,8 @@ import {
   type FavoritesRpc,
 } from "../../core/notifications/favorites.js";
 import {
-  createOutbidPreferencePort,
-  type OutbidPreferenceRpc,
+  type AuctionNotificationsRpc,
+  createAuctionNotificationsPort,
 } from "../../core/notifications/outbid.js";
 import {
   createProxyExplainerPort,
@@ -106,9 +106,10 @@ export type AuctionRpc = Pick<
   | "getFaqAcknowledgement"
   | "acknowledgeFaq"
 >;
-// Notifications боту аукциона нужен ради настройки «перебили» (PER-515),
+// Notifications боту аукциона нужен ради настроек уведомлений аукциона
+// (PER-515, PER-539),
 // избранного (PER-495) и пояснения автоставки (PER-517).
-export type NotificationsRpc = OutbidPreferenceRpc &
+export type NotificationsRpc = AuctionNotificationsRpc &
   FavoritesRpc &
   ProxyExplainerRpc;
 
@@ -466,7 +467,7 @@ export function createPorts(
       ...(notifications === undefined
         ? {}
         : {
-            outbid: createOutbidPreferencePort(notifications, () =>
+            outbid: createAuctionNotificationsPort(notifications, () =>
               callOptions(timeoutMs),
             ),
           }),

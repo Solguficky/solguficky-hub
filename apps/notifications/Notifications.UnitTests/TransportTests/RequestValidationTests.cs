@@ -102,6 +102,30 @@ public class RequestValidationTests
     }
 
     [Fact]
+    public void AuctionPreferences_NeitherSettingNamed_IsRejected()
+    {
+        Code(() => RequestValidation.AuctionPreferences(new SetAuctionNotificationPreferencesRequest()))
+            .ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void AuctionPreferences_OnlyFinalNamed_LeavesFrequencyUnchanged()
+    {
+        RequestValidation.AuctionPreferences(new SetAuctionNotificationPreferencesRequest { FinalAnnouncements = false })
+            .ShouldBe((null, false));
+    }
+
+    [Fact]
+    public void AuctionPreferences_UnknownFrequency_IsRejected()
+    {
+        Code(() => RequestValidation.AuctionPreferences(new SetAuctionNotificationPreferencesRequest
+        {
+            OutbidFrequency = OutbidFrequency.Unspecified,
+            FinalAnnouncements = true,
+        })).ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
     public void MeetupScopedCategory_CategoryAMeetupCanHold_IsAccepted()
     {
         RequestValidation.MeetupScopedCategory(NotificationCategory.MeetupReminder)

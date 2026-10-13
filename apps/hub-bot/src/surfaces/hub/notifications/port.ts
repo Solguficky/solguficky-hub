@@ -1,4 +1,7 @@
-import type { OutbidFrequency } from "../../../core/notifications/outbid.js";
+import type {
+  AuctionNotificationChange,
+  AuctionNotificationSettings,
+} from "../../../core/notifications/outbid.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 
 // Категории, которые сходка может нести. Отдельный тип, а не фильтр по списку:
@@ -48,12 +51,12 @@ export type MeetupPreferencesResult =
   | { kind: "ok"; preferences: MeetupPreferences }
   | NotificationFailure;
 
-// Частота «перебили» (PER-552) лежит на личности, как у бота аукциона:
-// настройка у человека одна, в каком бы боте он её ни менял.
-// `unknown` — значение вне словаря бота (`UNSPECIFIED` или режим новее
+// Настройки уведомлений аукциона (PER-552, PER-539) лежат на личности, как у
+// бота аукциона: настройки у человека одни, в каком бы боте он их ни менял.
+// `unknown` — частота вне словаря бота (`UNSPECIFIED` или режим новее
 // бота): ответ вне контракта, а не недоступность сервиса.
-export type OutbidFrequencyResult =
-  | { kind: "ok"; frequency: OutbidFrequency }
+export type AuctionNotificationsResult =
+  | { kind: "ok"; settings: AuctionNotificationSettings }
   | { kind: "unknown"; value: number }
   | NotificationFailure;
 
@@ -105,15 +108,15 @@ export type Notifications = {
     enabled: boolean,
     meta?: RpcMetadata,
   ): Promise<MeetupPreferencesResult>;
-  getOutbidFrequency(
+  getAuctionNotifications(
     identityId: string,
     meta?: RpcMetadata,
-  ): Promise<OutbidFrequencyResult>;
-  setOutbidFrequency(
+  ): Promise<AuctionNotificationsResult>;
+  setAuctionNotifications(
     identityId: string,
-    frequency: OutbidFrequency,
+    change: AuctionNotificationChange,
     meta?: RpcMetadata,
-  ): Promise<OutbidFrequencyResult>;
+  ): Promise<AuctionNotificationsResult>;
   broadcastToMeetupSubscribers(
     broadcast: Broadcast & { meetupId: string },
     meta?: RpcMetadata,

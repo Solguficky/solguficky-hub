@@ -50,7 +50,10 @@ import {
 import { countFailure, type FailureCategory } from "../../../core/failures.js";
 import type { LogFields, Logger } from "../../../core/logging.js";
 import { createChatCommandsSync } from "../../../core/menu-commands.js";
-import { outbidToast } from "../../../core/notifications/outbid.js";
+import {
+  type AuctionNotificationChange,
+  auctionNotificationsToast,
+} from "../../../core/notifications/outbid.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type { Tracing } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
@@ -303,10 +306,10 @@ import {
   settingsScreen,
 } from "./screens/menu.js";
 import {
+  auctionNotificationsScreen,
   categoryLabels,
   globalNotificationsScreen,
   meetupNotificationsScreen,
-  outbidFrequencyScreen,
   toggleToast,
 } from "./screens/notifications.js";
 import { reconsiderConfirmScreen, refusedScreen } from "./screens/refused.js";
@@ -3779,51 +3782,63 @@ async function handleCallback(
       });
       return;
     }
-    // Частота «перебили» (PER-552). Выбор — целевое значение, и экран с
-    // подтверждением показывают то, что ответил Notifications. Подтверждение
-    // уходит до показа экрана: показ ответил бы на нажатие сам. «Частота
-    // уведомлений» под вестью о торгах открывает тот же экран новым сообщением (`v1:t:`), а повтор
+    // Настройки уведомлений аукциона (PER-552, PER-539): частота «перебили»
+    // и анонс финала. Выбор — целевое значение, и экран с подтверждением
+    // показывают то, что ответил Notifications. Подтверждение уходит до показа
+    // экрана: показ ответил бы на нажатие сам. «Частота уведомлений» под вестью
+    // о торгах открывает тот же экран новым сообщением (`v1:t:`), а повтор
     // после сбоя — уже на месте, без следа.
     if (
       action.kind === "notify-outbid" ||
-      action.kind === "notify-set-outbid"
+      action.kind === "notify-set-outbid" ||
+      action.kind === "notify-set-final"
     ) {
+      const change: AuctionNotificationChange | undefined =
+        action.kind === "notify-set-outbid"
+          ? { kind: "frequency", frequency: action.frequency }
+          : action.kind === "notify-set-final"
+            ? { kind: "final", enabled: action.enabled }
+            : undefined;
       const result = await runtime.dispatcher.execute(
-        action.kind === "notify-outbid"
+        change === undefined
           ? {
               identity: person,
-              intent: "view-outbid-frequency",
+              intent: "view-auction-notifications",
               ...rpcCall(ctx, useCase),
             }
           : {
               identity: person,
-              intent: "set-outbid-frequency",
-              frequency: action.frequency,
+              intent: "set-auction-notifications",
+              change,
               ...rpcCall(ctx, useCase),
             },
       );
-      if (result.kind === "outbid-frequency") {
-        if (action.kind === "notify-set-outbid") {
-          await waiting.answer(outbidToast(result.frequency));
+      if (result.kind === "auction-notifications") {
+        if (change !== undefined) {
+          await waiting.answer(
+            auctionNotificationsToast(change, result.settings),
+          );
         }
-        await showScreen(ctx, outbidFrequencyScreen(result.frequency));
+        await showScreen(ctx, auctionNotificationsScreen(result.settings));
       } else {
         // Отвергнутый выбор не повторяется: экран устарел, и повтор
-        // перечитывает его, а не шлёт тот же режим.
+        // перечитывает его, а не шлёт то же значение.
         const stale =
           result.kind === "dependency-rejected" && result.reason === "invalid";
         await renderNotificationFailure(
           ctx,
           result,
-          action.kind === "notify-outbid" || stale
+          change === undefined || stale
             ? "v1:notify:outbid"
-            : `v1:notify:outbid:${action.frequency}`,
+            : change.kind === "frequency"
+              ? `v1:notify:outbid:${change.frequency}`
+              : `v1:notify:final:${change.enabled ? "1" : "0"}`,
         );
       }
       outcome = screenBoundary(result, {
-        ok: ["outbid-frequency"],
-        okMessage: "outbid frequency sent",
-        rejectedMessage: "outbid frequency rejected",
+        ok: ["auction-notifications"],
+        okMessage: "auction notification settings sent",
+        rejectedMessage: "auction notification settings rejected",
         useCase,
       });
       return;
@@ -8705,6 +8720,7 @@ function callbackUseCase(
     | "notify-set-global"
     | "notify-outbid"
     | "notify-set-outbid"
+    | "notify-set-final"
     | "notify-disable-global"
     | "notify-disable-meetup"
     | "notify-settings"
@@ -8814,6 +8830,7 @@ function callbackUseCase(
     case "notify-set-global":
     case "notify-outbid":
     case "notify-set-outbid":
+    case "notify-set-final":
     case "notify-disable-global":
     case "notify-disable-meetup":
     case "notify-settings":

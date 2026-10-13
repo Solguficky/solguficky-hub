@@ -335,17 +335,20 @@ describe("createPorts", () => {
   });
 });
 
-// PER-515: настройка «перебили» — на личности, без прав смотрящего.
-describe("outbid preference port", () => {
+// PER-515, PER-539: настройки уведомлений аукциона — на личности, без прав
+// смотрящего.
+describe("auction notification settings port", () => {
   function outbidPorts(answer: WireFrequency) {
     const notifications = {
-      getOutbidPreference: vi.fn(async () => ({
+      getAuctionNotificationPreferences: vi.fn(async () => ({
         identityId: "id-1",
-        frequency: answer,
+        outbidFrequency: answer,
+        finalAnnouncements: true,
       })),
-      setOutbidPreference: vi.fn(async () => ({
+      setAuctionNotificationPreferences: vi.fn(async () => ({
         identityId: "id-1",
-        frequency: answer,
+        outbidFrequency: answer,
+        finalAnnouncements: false,
       })),
     };
     const { identity, auction } = rpcs();
@@ -364,20 +367,36 @@ describe("outbid preference port", () => {
     expect(rpcs().ports.outbid).toBeUndefined();
   });
 
-  it("reads and sets the frequency of the person with request metadata", async () => {
+  it("reads and sets the settings of the person with request metadata", async () => {
     const { notifications, ports } = outbidPorts(
       WireFrequency.AT_MOST_EVERY_15_MINUTES,
     );
-    expect(await ports.outbid?.get(viewer)).toBe("15");
-    expect(await ports.outbid?.set(viewer, "15")).toBe("15");
-    expect(notifications.getOutbidPreference).toHaveBeenCalledWith(
-      { identityId: "id-1" },
+    expect(await ports.outbid?.get(viewer)).toEqual({
+      frequency: "15",
+      finalAnnouncements: true,
+    });
+    expect(
+      await ports.outbid?.set(viewer, { kind: "final", enabled: false }),
+    ).toEqual({ frequency: "15", finalAnnouncements: false });
+    await ports.outbid?.set(viewer, { kind: "frequency", frequency: "15" });
+    expect(
+      notifications.getAuctionNotificationPreferences,
+    ).toHaveBeenCalledWith({ identityId: "id-1" }, callOptions);
+    // Изменение несёт только свою настройку: вторую сервер не трогает.
+    expect(
+      notifications.setAuctionNotificationPreferences,
+    ).toHaveBeenNthCalledWith(
+      1,
+      { identityId: "id-1", finalAnnouncements: false },
       callOptions,
     );
-    expect(notifications.setOutbidPreference).toHaveBeenCalledWith(
+    expect(
+      notifications.setAuctionNotificationPreferences,
+    ).toHaveBeenNthCalledWith(
+      2,
       {
         identityId: "id-1",
-        frequency: WireFrequency.AT_MOST_EVERY_15_MINUTES,
+        outbidFrequency: WireFrequency.AT_MOST_EVERY_15_MINUTES,
       },
       callOptions,
     );

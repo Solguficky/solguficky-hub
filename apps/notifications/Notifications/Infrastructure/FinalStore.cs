@@ -39,6 +39,21 @@ public static class FinalStore
         WHERE lot_id = ANY(@LotIds);
         """;
 
+    private const string ReadAnnouncementsSql = """
+        SELECT enabled FROM final_announcement_preference WHERE identity_id = @IdentityId;
+        """;
+
+    private const string SetAnnouncementsSql = """
+        INSERT INTO final_announcement_preference (identity_id, enabled, updated_at)
+        VALUES (@IdentityId, @Enabled, @UpdatedAt)
+        ON CONFLICT (identity_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = EXCLUDED.updated_at;
+        """;
+
+    private const string SilencedSql = """
+        SELECT identity_id FROM final_announcement_preference
+        WHERE identity_id = ANY(@IdentityIds) AND NOT enabled;
+        """;
+
     private const string ForgetSql = """
         DELETE FROM auction_bidder WHERE auction_id = @AuctionId;
         DELETE FROM lot_hold WHERE auction_id = @AuctionId;
@@ -72,6 +87,25 @@ public static class FinalStore
         return rows.ToDictionary(row => row.LotId, row => new HeldLot(row.LotId, row.Leader,
             new global::Auction.V1.Money { MinorUnits = row.MinorUnits, Currency = row.Currency }));
     }
+
+    /// <summary>Выключатель анонса финала (PER-539); <c>null</c> — человек его не трогал.</summary>
+    public static async Task<bool?> ReadAnnouncements(UnitOfWork work, Guid identityId,
+        CancellationToken cancellationToken)
+    {
+        var rows = await work.Query<bool>(ReadAnnouncementsSql, new { IdentityId = identityId }, cancellationToken);
+        return rows.Count == 0 ? null : rows[0];
+    }
+
+    public static Task SetAnnouncements(UnitOfWork work, Guid identityId, bool enabled, DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        work.Execute(SetAnnouncementsSql, new { IdentityId = identityId, Enabled = enabled, UpdatedAt = now.UtcDateTime },
+            cancellationToken);
+
+    /// <summary>Те из названных, кто анонс финала выключил.</summary>
+    public static async Task<IReadOnlySet<Guid>> Silenced(UnitOfWork work, IReadOnlyList<Guid> identityIds,
+        CancellationToken cancellationToken) =>
+        (await work.Query<Guid>(SilencedSql, new { IdentityIds = identityIds.ToArray() }, cancellationToken))
+        .ToHashSet();
 
     /// <summary>Аукцион кончился: круг и удержания больше никому не нужны.</summary>
     public static Task<int> Forget(UnitOfWork work, Guid auctionId, CancellationToken cancellationToken) =>
