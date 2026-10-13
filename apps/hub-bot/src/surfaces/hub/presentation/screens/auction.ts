@@ -1,4 +1,9 @@
 import { InlineKeyboard } from "grammy";
+import {
+  finalBidLabel,
+  finalBidLine,
+  finalPriceLines,
+} from "../../../../auction-final.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
 import {
   type AuctionBlock,
@@ -377,6 +382,7 @@ function feedLabel(
       return "→";
     case "lot.refresh":
     case "lot.bid-step":
+    case "lot.bid-final":
     case "lot.bid-custom":
     case "lot.proxy":
     case "lot.history":
@@ -451,7 +457,13 @@ function lotScreen(
       : lot.card.description;
   // Карточка лота (дизайн-код, «Карточка лота»): группа статуса, группа цены
   // и лидера, описание — группы через пустую строку, в rich — блоками.
-  const groups = statusGroups(lot, view);
+  // Исход ставки финала — своей группой под статусом и ценой (PER-336).
+  const groups = [
+    ...statusGroups(lot, view),
+    ...(lot.finalBid === undefined
+      ? []
+      : [[finalBidLine(lot.finalBid, money)]]),
+  ];
   const mark = preview === undefined ? [] : [lotPreviewMark];
   const rich = view.presentation === "rich";
   const photo = rich ? view.photo : undefined;
@@ -527,6 +539,8 @@ function lotLabel(button: AuctionButton): string {
       return "Ставки";
     case "lot.bid-step":
       return `По шагу (${money(button.amount)})`;
+    case "lot.bid-final":
+      return finalBidLabel(button.amount, money);
     case "lot.bid-custom":
       return "Своя сумма";
     case "lot.proxy":
@@ -709,6 +723,7 @@ function historyLabel(button: AuctionButton): string {
     case "feed.next":
     case "lot.refresh":
     case "lot.bid-step":
+    case "lot.bid-final":
     case "lot.bid-custom":
     case "lot.proxy":
     case "lot.history":
@@ -790,13 +805,19 @@ function statusGroups(
       ];
     case "trading":
       return [
-        ["Статус: идут торги"],
+        [
+          status.phase === "live"
+            ? "Статус: торги финала"
+            : "Статус: идут торги",
+        ],
         [
           `Цена: ${money(status.currentPrice)}`,
           leaderLine(status.leaderId, participantName),
-          ...(block.nextPrice === undefined
-            ? []
-            : [`Следующая ставка: от ${money(block.nextPrice)}`]),
+          ...(status.phase === "live"
+            ? finalPriceLines(block, money)
+            : block.nextPrice === undefined
+              ? []
+              : [`Следующая ставка: от ${money(block.nextPrice)}`]),
           ...stepLines(block, view),
           ...(status.deadline === undefined
             ? []

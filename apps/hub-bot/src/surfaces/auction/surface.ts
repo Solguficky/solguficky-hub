@@ -1,9 +1,16 @@
 import {
+  reportLiveEditFailure,
+  reportWatchFailure,
+} from "../../core/auction/live-failures.js";
+import { createAuctionWatches } from "../../core/auction/watch.js";
+import { createEditLimiter } from "../../core/bot/edit-limiter.js";
+import {
   createDeliverNotification,
   startNatsDelivery,
 } from "../../core/delivery/index.js";
 import { countFailure } from "../../core/failures.js";
 import type { SurfaceDefinition } from "../../core/process.js";
+import { createUuidV7 } from "../../core/uuid-v7.js";
 import { createBot } from "./bot.js";
 import { createClients } from "./clients.js";
 import { readAuctionConfig } from "./config.js";
@@ -70,6 +77,21 @@ export const auctionSurface: SurfaceDefinition = ({
       "NOTIFICATIONS_GRPC_URL is not set: favorite lots and outbid settings are off",
     );
   }
+  // Карточки финала (PER-336): поток аукциона и темп правок живут столько же,
+  // сколько процесс, и гасятся до клиентов.
+  const watches = createAuctionWatches({
+    source: clients.watch,
+    onError: (_auctionId, cause, failure) =>
+      reportWatchFailure(logger, cause, failure),
+  });
+  const limiter = createEditLimiter({
+    onError: (_key, cause) =>
+      reportLiveEditFailure(
+        logger,
+        cause instanceof Error ? cause.message : String(cause),
+        "unexpected",
+      ),
+  });
   const bot = createBot({
     token: config.token,
     environment: config.environment,
@@ -79,6 +101,15 @@ export const auctionSurface: SurfaceDefinition = ({
     faq: auction.faq,
     logger,
     timeZone: config.communityTimeZone,
+    live: {
+      watches,
+      limiter,
+      // Имена правки вне update: свой `request_id` у каждого чтения.
+      names: {
+        getDisplayNames: (request) =>
+          clients.ports(createUuidV7()).auction.getDisplayNames(request),
+      },
+    },
   });
   const sender = createNotificationSender(
     createNotificationApi(config.token, config.environment),
@@ -114,6 +145,8 @@ export const auctionSurface: SurfaceDefinition = ({
             }),
         }),
       close() {
+        limiter.close();
+        watches.close();
         clients.close();
       },
     },

@@ -6,7 +6,9 @@
 //
 // Исключение — `previewLot` (PER-512): тело карточки по снимку, который уже
 // прочитал и проверил на право вызывающий. Команд он не шлёт и кнопок не
-// ставит, поэтому шлюз ему не нужен.
+// ставит, поэтому шлюз ему не нужен. Второе — `liveLot` (PER-336): карточка
+// финала по снимку из потока `WatchAuction` для правки сообщения вне update.
+// Команд он тоже не шлёт; его кнопки возвращаются в дерево через шлюз.
 
 export {
   AUCTION_CALLBACK_DOMAIN,
@@ -35,7 +37,7 @@ export {
   handleAuctionUpdate,
   type SurfaceEntry,
 } from "./gateway.js";
-export { previewLot } from "./internal/use-cases/open-lot.js";
+export { liveLot, previewLot } from "./internal/use-cases/open-lot.js";
 export type {
   AccessRequest,
   AccessRequestAnswer,
@@ -88,6 +90,7 @@ export type {
   AuctionScreenBody,
   CommandResult,
   FeedItem,
+  FinalBidOutcome,
   HistoryItem,
   ProxyExample,
 } from "./screen.js";

@@ -1,10 +1,17 @@
 import {
+  reportLiveEditFailure,
+  reportWatchFailure,
+} from "../../core/auction/live-failures.js";
+import { createAuctionWatches } from "../../core/auction/watch.js";
+import { createEditLimiter } from "../../core/bot/edit-limiter.js";
+import {
   createDeliverNotification,
   startNatsDelivery,
 } from "../../core/delivery/index.js";
 import { countFailure } from "../../core/failures.js";
 import type { SurfaceDefinition } from "../../core/process.js";
 import { rpcMeta } from "../../core/rpc-metadata.js";
+import { createUuidV7 } from "../../core/uuid-v7.js";
 import { createDispatcher } from "./application/dispatcher.js";
 import { createAuctionClient } from "./auction/client.js";
 import { communityDay } from "./community-time.js";
@@ -90,6 +97,24 @@ export const hubSurface: SurfaceDefinition = ({
     tracing,
     serviceToken,
   });
+  // Карточки финала (PER-336): поток аукциона и темп правок живут столько же,
+  // сколько процесс, и гасятся до клиентов.
+  const watches =
+    auction === undefined
+      ? undefined
+      : createAuctionWatches({
+          source: auction.watch,
+          onError: (_auctionId, cause, failure) =>
+            reportWatchFailure(logger, cause, failure),
+        });
+  const limiter = createEditLimiter({
+    onError: (_key, cause) =>
+      reportLiveEditFailure(
+        logger,
+        cause instanceof Error ? cause.message : String(cause),
+        "unexpected",
+      ),
+  });
   const bot = createBot({
     token,
     dispatcher,
@@ -108,6 +133,20 @@ export const hubSurface: SurfaceDefinition = ({
       ? {}
       : {
           auction,
+          ...(watches === undefined
+            ? {}
+            : {
+                live: {
+                  watches,
+                  limiter,
+                  names: {
+                    getDisplayNames: (request) =>
+                      auction
+                        .screenPorts(rpcMeta({ requestId: createUuidV7() }))
+                        .auction.getDisplayNames(request),
+                  },
+                },
+              }),
           // Избранное — лоты аукциона: без Auction его нечем показать.
           // Отказ списка карточка гасит, и запись на warn делает это видимым.
           favorites: (meta) =>
@@ -164,6 +203,8 @@ export const hubSurface: SurfaceDefinition = ({
             }),
         }),
       close() {
+        limiter.close();
+        watches?.close();
         identity.close();
         meetups.close();
         notifications.close();

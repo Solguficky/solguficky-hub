@@ -24,6 +24,10 @@ import {
   registrationOutcomeOf,
 } from "../../../core/auction/raffle.js";
 import { lotOrMissing, lotViewOf } from "../../../core/auction/snapshot.js";
+import {
+  type AuctionWatchSource,
+  watchSourceOf,
+} from "../../../core/auction/watch.js";
 import { wireViewer } from "../../../core/identity/access.js";
 import {
   callHeaders,
@@ -102,7 +106,11 @@ const historyPageLimit = 20;
 export type AuctionClient = MeetupAuctions &
   AuctionScreens &
   LotAdministration &
-  AuctionConsoles & { close(): void };
+  AuctionConsoles & {
+    // Поток аукциона для карточек финала (PER-336).
+    watch: AuctionWatchSource;
+    close(): void;
+  };
 
 export type AuctionAdapterOptions = {
   timeoutMs?: number;
@@ -144,7 +152,13 @@ export function createAuctionClient(
     ...(onNamesRefused === undefined ? {} : { onNamesRefused }),
     ...(onRaffleRefused === undefined ? {} : { onRaffleRefused }),
   });
-  return { ...client, close: () => sessionManager.abort() };
+  return {
+    ...client,
+    // Поток живёт, пока его не отпустит подписка: дедлайн транспорта по
+    // умолчанию оборвал бы его через три секунды.
+    watch: watchSourceOf(rpc, (signal) => ({ signal, timeoutMs: 0 })),
+    close: () => sessionManager.abort(),
+  };
 }
 
 export function createAuctionAdapter(

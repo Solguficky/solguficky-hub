@@ -203,6 +203,7 @@ export type HarnessOptions = Partial<
     | "files"
     | "favorites"
     | "proxyExplainer"
+    | "live"
   >
 > & {
   respond?: Respond;
@@ -296,7 +297,12 @@ export function createHarness(
 export function createAuctionHarness(
   ports: PortsFactory,
   calls: RecordedCall[] = [],
-  options: { presentation?: Presentation; timeZone?: string } = {},
+  options: {
+    presentation?: Presentation;
+    timeZone?: string;
+    // Карточки финала (PER-336): поток и темп правок процесса.
+    live?: Parameters<typeof createAuctionBot>[0]["live"];
+  } = {},
 ) {
   const { logger, records } = createCapturingLogger();
   const bot = createAuctionBot({
@@ -310,6 +316,7 @@ export function createAuctionHarness(
     logger,
     timeZone: options.timeZone ?? "Europe/Moscow",
     botInfo: auctionBotInfo,
+    ...(options.live === undefined ? {} : { live: options.live }),
   });
   bot.api.config.use(recorder("auction", calls));
   return { bot, calls, records, logger };

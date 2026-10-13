@@ -84,10 +84,13 @@ function statusOf(status: LotSnapshot["status"]): LotStatusView {
         kind: "scheduled",
         startingPrice: required(status.value.startingPrice),
       };
-    case "trading":
+    case "trading": {
+      const currentPrice = required(status.value.currentPrice);
+      const ask =
+        status.value.ask === undefined ? undefined : moneyOf(status.value.ask);
       return {
         kind: "trading",
-        currentPrice: required(status.value.currentPrice),
+        currentPrice,
         ...(status.value.leaderId === undefined
           ? {}
           : { leaderId: status.value.leaderId }),
@@ -95,7 +98,13 @@ function statusOf(status: LotSnapshot["status"]): LotStatusView {
           ? {}
           : { deadline: status.value.deadline }),
         phase: phaseOf(status.value.phase),
+        // Ask не выше цены уже ничего не объявляет: следующую цену считает
+        // шаг (П-01), и карточка о нём молчит.
+        ...(ask !== undefined && ask.minorUnits > currentPrice.minorUnits
+          ? { ask }
+          : {}),
       };
+    }
     case "held":
       return {
         kind: "held",

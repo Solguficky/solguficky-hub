@@ -69,6 +69,13 @@ const WORST: readonly AuctionIntent[] = [
     page: MAX_FEED_PAGE,
     pending: { command: "bid", amount: MAX_COMMAND_AMOUNT },
   },
+  // «Поставить N» карточки финала (PER-336).
+  {
+    kind: "final-bid",
+    lotId: LOT_ID,
+    amount: MAX_COMMAND_AMOUNT,
+    page: MAX_FEED_PAGE,
+  },
 ];
 
 describe("bid leaf callback_data", () => {
@@ -92,6 +99,17 @@ describe("bid leaf callback_data", () => {
         page: 3,
       }),
     ).toBe("v1:auc:b:AZKbflwdej-OSy1snwobPA:AZKbflwdej-OS________w:2og8:3");
+  });
+
+  it("writes the final bid with the amount it expects and the page", () => {
+    expect(
+      encodeAuctionCallback({
+        kind: "final-bid",
+        lotId: LOT_ID,
+        amount: 125000,
+        page: 3,
+      }),
+    ).toBe("v1:auc:fb:AZKbflwdej-OSy1snwobPA:2og8:3");
   });
 
   it("refuses to encode an amount the button cannot carry", () => {
@@ -118,6 +136,8 @@ describe("bid leaf callback_data", () => {
     ["an alias question without command", "v1:auc:aa:AZKbflwdej-OSy1snwobPA:0"],
     ["a bid question with a command", "v1:auc:ab:AZKbflwdej-OSy1snwobPA:0:b1"],
     ["an unknown pending command", "v1:auc:nu:AZKbflwdej-OSy1snwobPA:0:z1"],
+    ["a final bid without an amount", "v1:auc:fb:AZKbflwdej-OSy1snwobPA:0"],
+    ["a final bid with a tail", "v1:auc:fb:AZKbflwdej-OSy1snwobPA:2oho:0:1"],
   ])("refuses %s", (_, raw) => {
     const parsed = parseAuctionCallback(raw);
     expect(parsed.ok).toBe(false);

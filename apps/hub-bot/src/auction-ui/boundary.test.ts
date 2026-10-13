@@ -41,9 +41,11 @@ describe("auction tree boundary", () => {
   });
 
   // Из сырых юзкейсов и диспетчера `index.ts` отдаёт ровно `previewLot`
-  // (PER-512): тело без кнопок по снимку, прочитанному правом вызывающего.
-  // Любой другой реэкспорт открыл бы юзкейс мимо шлюза.
-  it("exports nothing from the raw use cases but the lot preview", () => {
+  // (PER-512) — тело без кнопок по снимку, прочитанному правом вызывающего, —
+  // и `liveLot` (PER-336) — карточку финала по снимку потока для правки вне
+  // update: команд оба не шлют. Любой другой реэкспорт открыл бы юзкейс мимо
+  // шлюза.
+  it("exports nothing from the raw use cases but the lot preview and the live card", () => {
     const index = readFileSync(entry, "utf8");
     const exported = [
       ...index.matchAll(
@@ -55,7 +57,7 @@ describe("auction tree boundary", () => {
         .map((name) => name.trim())
         .filter((name) => name !== ""),
     );
-    expect(exported).toEqual(["previewLot"]);
+    expect(exported).toEqual(["liveLot", "previewLot"]);
   });
 
   // `contract/` зовёт vitest и в сборку не входит (`tsconfig.build.json`).
