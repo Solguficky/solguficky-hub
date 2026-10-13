@@ -36,6 +36,7 @@ import auction.lot.UnsoldReason
 import auction.lot.WithdrawLot
 import auction.lot.WithdrawLotRejected
 import auction.lot.WithdrawnReason
+import auction.prediction.PredictionRound
 import auction.slot.TradingSlotEntity
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorRef
@@ -282,13 +283,58 @@ final class AuctionEntitySpec
       recheckEvery: FiniteDuration = AuctionEntity.DefaultRecheckEvery,
       shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None,
       raffle: AuctionRaffle = AuctionRaffle.none,
-      slot: AuctionSlot = AuctionSlot.none
+      slot: AuctionSlot = AuctionSlot.none,
+      predictions: AuctionPredictions = AuctionPredictions.none
   ): Kit =
     EventSourcedBehaviorTestKit(
       kit.system,
-      AuctionEntity("auction-1", time, sequentialIds(), lots, snapshotEvery, recheckEvery, shard, raffle, slot),
+      AuctionEntity(
+        "auction-1",
+        time,
+        sequentialIds(),
+        lots,
+        snapshotEvery,
+        recheckEvery,
+        shard,
+        raffle,
+        slot,
+        predictions
+      ),
       serialization
     )
+
+  /**
+   * Прогнозы-подмена: каждый вызов записывается, а ответ на закрытие раунда и на удаление — то, что задал тест. Функция
+   * зовётся на каждый вызов, поэтому тест может сменить ответ между переспросами.
+   */
+  private final class Predictions extends AuctionPredictions {
+    val calls = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+    @volatile var closing: PredictionRound => Future[org.apache.pekko.Done] =
+      _ => Future.successful(org.apache.pekko.Done)
+    @volatile var discarding: () => Future[org.apache.pekko.Done] = () => Future.successful(org.apache.pekko.Done)
+
+    def count(call: String): Int = calls.toArray.count(_ == call)
+
+    def open(auctionId: String, round: PredictionRound): Future[org.apache.pekko.Done] = {
+      calls.add(s"open $round")
+      Future.successful(org.apache.pekko.Done)
+    }
+
+    def close(auctionId: String, round: PredictionRound): Future[org.apache.pekko.Done] = {
+      calls.add(s"close $round")
+      closing(round)
+    }
+
+    def cancel(auctionId: String): Future[org.apache.pekko.Done] = {
+      calls.add("cancel")
+      Future.successful(org.apache.pekko.Done)
+    }
+
+    def discard(auctionId: String): Future[org.apache.pekko.Done] = {
+      calls.add("discard")
+      discarding()
+    }
+  }
 
   /**
    * Слот-подмена: занятие отвечает тем, что задал тест, освобождение — отказом, пока не исчерпаны `releaseFailures`, а
@@ -419,12 +465,15 @@ final class AuctionEntitySpec
   private val third = LotId(uuid(13))
 
   /** `lot` и `third` с условиями торгов, `other` — без них; реестр аукциона — `lot` и `third`. */
-  private def withTwoLots(recheckEvery: FiniteDuration): Int = {
+  private def withTwoLots(
+      recheckEvery: FiniteDuration,
+      predictions: AuctionPredictions = AuctionPredictions.none
+  ): Int = {
     lots = Lots(
       Map(lot -> LotFixtures.scheduled(), third -> LotFixtures.scheduled(), other -> LotFixtures.drafted),
       () => time.instant()
     )
-    entity = entityOf(lots, recheckEvery = recheckEvery)
+    entity = entityOf(lots, recheckEvery = recheckEvery, predictions = predictions)
     scheduledWith(lot, third)
   }
 
@@ -433,8 +482,12 @@ final class AuctionEntitySpec
    * рождение, два лота, план, старт, дедлайн, перерыв. Возвращает номер `op_id` открытия; два следующих заняты
    * отметками.
    */
-  private def breakOfTwo(bid: Boolean, recheckEvery: FiniteDuration = AuctionEntity.DefaultRecheckEvery): Int = {
-    val opening = withTwoLots(recheckEvery)
+  private def breakOfTwo(
+      bid: Boolean,
+      recheckEvery: FiniteDuration = AuctionEntity.DefaultRecheckEvery,
+      predictions: AuctionPredictions = AuctionPredictions.none
+  ): Int = {
+    val opening = withTwoLots(recheckEvery, predictions)
     time.instant0 = closesAt.minusSeconds(60)
     start(opening)
     eventually(roster.active shouldBe Set(lot, third))
@@ -476,6 +529,121 @@ final class AuctionEntitySpec
   }
 
   "auction entity" should {
+
+    "opens the catalog round after scheduling and sends no lot an opening until the predictions confirm its closing" in {
+      val predictions = Predictions()
+      val closed = Promise[org.apache.pekko.Done]()
+      predictions.closing = _ => closed.future
+      entity = entityOf(lots, predictions = predictions)
+      val opening = scheduledWith(lot)
+      eventually(predictions.count("open Catalog") shouldBe 1)
+      start(opening).reply.isRight shouldBe true
+      eventually(predictions.count("close Catalog") shouldBe 1)
+      eventually(lots.asked should contain(lot))
+      Thread.sleep(200)
+      lots.opens shouldBe empty
+      closed.success(org.apache.pekko.Done)
+      eventually(roster.active shouldBe Set(lot))
+      lots.opens.map(_._1) shouldBe Vector(lot)
+    }
+
+    "asks to close the catalog round again on the tick and after a restart and opens no lot until it answers" in {
+      val predictions = Predictions()
+      predictions.closing = _ => Promise[org.apache.pekko.Done]().future
+      entity = entityOf(lots, recheckEvery = 50.millis, predictions = predictions)
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      eventually(predictions.count("close Catalog") should be >= 2)
+      entity.restart()
+      Thread.sleep(200)
+      lots.opens shouldBe empty
+      predictions.closing = _ => Future.successful(org.apache.pekko.Done)
+      eventually(roster.active shouldBe Set(lot))
+      lots.opens.map(_._1) shouldBe Vector(lot)
+    }
+
+    "erases the predictions before the discard is written and answers nothing while they are silent" in {
+      val predictions = Predictions()
+      val wiped = Promise[org.apache.pekko.Done]()
+      predictions.discarding = () => wiped.future
+      entity = entityOf(lots, predictions = predictions)
+      scheduledWith(lot)
+      val answer = kit.createTestProbe[Either[DiscardAuctionRejected, AuctionAnswer]]()
+      entity.runCommand(AuctionEntity.Discard(DiscardAuction(op(9)), administrator, answer.ref)).events shouldBe empty
+      answer.expectNoMessage(200.millis)
+      entity.getState().auction.state shouldBe a[AuctionState.Scheduled]
+      wiped.success(org.apache.pekko.Done)
+      answer.receiveMessage().isRight shouldBe true
+      entity.getState().auction.state shouldBe AuctionState.Initial
+      predictions.count("discard") shouldBe 1
+    }
+
+    "holds every other command while the predictions are being erased, so trading cannot start under the discard" in {
+      val predictions = Predictions()
+      val wiped = Promise[org.apache.pekko.Done]()
+      predictions.discarding = () => wiped.future
+      entity = entityOf(lots, predictions = predictions)
+      val opening = scheduledWith(lot)
+      val discarding = kit.createTestProbe[Either[DiscardAuctionRejected, AuctionAnswer]]()
+      entity.runCommand(AuctionEntity.Discard(DiscardAuction(op(9)), administrator, discarding.ref))
+      val starting = kit.createTestProbe[Either[OpeningRejected, AuctionAnswer]]()
+      entity.runCommand(AuctionEntity.Start(StartPrebidding(op(opening)), administrator, starting.ref))
+      starting.expectNoMessage(200.millis)
+      wiped.success(org.apache.pekko.Done)
+      discarding.receiveMessage().isRight shouldBe true
+      starting.receiveMessage() shouldBe Left(OpeningRejected.ByAuction(StartPrebiddingRejected.AuctionNotFound))
+      entity.getState().auction.state shouldBe AuctionState.Initial
+    }
+
+    "keeps closing lots opened before a restart while the predictions are silent" in {
+      val predictions = Predictions()
+      entity = entityOf(lots, recheckEvery = 50.millis, predictions = predictions)
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+      predictions.closing = _ => Promise[org.apache.pekko.Done]().future
+      time.instant0 = closesAt.plusSeconds(1)
+      entity.restart()
+      eventually(lots.closes.map(_._1) should contain(lot))
+      lots.opens.map(_._1) shouldBe Vector(lot)
+    }
+
+    "discards a draft without asking the predictions: before scheduling there are none" in {
+      val predictions = Predictions()
+      entity = entityOf(lots, predictions = predictions)
+      draft(1)
+      discard(2).reply.isRight shouldBe true
+      predictions.count("discard") shouldBe 0
+    }
+
+    "opens the final round after the lineup freezes and closes it before the start of the final is written" in {
+      val predictions = Predictions()
+      val closed = Promise[org.apache.pekko.Done]()
+      predictions.closing = {
+        case PredictionRound.Final => closed.future
+        case PredictionRound.Catalog => Future.successful(org.apache.pekko.Done)
+      }
+      val opening = breakOfTwo(bid = false, predictions = predictions)
+      freeze(opening + 3, List(lot, third)).reply.isRight shouldBe true
+      eventually(predictions.count("open Final") shouldBe 1)
+      val answer = kit.createTestProbe[Either[StartFinalRejected, AuctionAnswer]]()
+      entity.runCommand(AuctionEntity.BeginFinal(StartFinal(op(opening + 4)), administrator, answer.ref))
+      answer.expectNoMessage(200.millis)
+      entity.getState().auction.state shouldBe a[AuctionState.LineupFrozen]
+      closed.success(org.apache.pekko.Done)
+      answer.receiveMessage().isRight shouldBe true
+      entity.getState().auction.state shouldBe a[AuctionState.Final]
+      predictions.count("close Final") shouldBe 1
+    }
+
+    "cancels the predictions after the cancel of the auction" in {
+      val predictions = Predictions()
+      entity = entityOf(lots, predictions = predictions)
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      cancel(opening + 1).reply.isRight shouldBe true
+      eventually(predictions.count("cancel") shouldBe 1)
+    }
 
     "opens the raffle after the start of prebidding, asks again until it answers and again after a restart" in {
       val closesAt = AuctionFixtures.opensAt.plusSeconds(3600)

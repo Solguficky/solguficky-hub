@@ -50,6 +50,8 @@ object MethodAccess {
     "RegisterForRaffle" -> bots,
     "CancelRaffleRegistration" -> bots,
     "GetRaffle" -> bots,
+    "SubmitPrediction" -> bots,
+    "GetMyPredictions" -> bots,
     "MarkInvoicePaid" -> Set(Caller.AuctionBot),
     "MarkInvoiceHandedOver" -> Set(Caller.AuctionBot),
     "ChooseFulfillment" -> Set(Caller.AuctionBot),

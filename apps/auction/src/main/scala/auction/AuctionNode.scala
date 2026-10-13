@@ -6,6 +6,7 @@ import auction.catalog.LotCatalogCommands
 import auction.entity.AuctionEntity
 import auction.entity.AuctionGateway
 import auction.entity.AuctionLots
+import auction.entity.AuctionPredictions
 import auction.entity.AuctionRaffle
 import auction.entity.AuctionSlot
 import auction.entity.LotEntity
@@ -36,7 +37,11 @@ import auction.telemetry.PublicationMetrics
 import auction.persistence.SlickDisplayNameStore
 import auction.persistence.SlickLotCatalogStore
 import auction.persistence.SlickFaqAcknowledgements
+import auction.persistence.SlickPredictionStore
 import auction.persistence.SlickRaffleTickets
+import auction.prediction.PredictionEntity
+import auction.prediction.PredictionGateway
+import auction.prediction.PredictionStore
 import auction.raffle.Beacon
 import auction.raffle.RaffleAccess
 import auction.raffle.RaffleEntity
@@ -122,12 +127,22 @@ object AuctionNode {
       newId: () => UUID,
       askTimeout: FiniteDuration,
       raffle: AuctionRaffle = AuctionRaffle.none,
-      slot: AuctionSlot = AuctionSlot.none
+      slot: AuctionSlot = AuctionSlot.none,
+      predictions: AuctionPredictions = AuctionPredictions.none
   ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] = {
     val lots = AuctionLots.sharded(sharding, askTimeout)
     sharding.init(
       Entity(AuctionEntity.TypeKey) { context =>
-        AuctionEntity(context.entityId, clock, newId, lots, shard = Some(context.shard), raffle = raffle, slot = slot)
+        AuctionEntity(
+          context.entityId,
+          clock,
+          newId,
+          lots,
+          shard = Some(context.shard),
+          raffle = raffle,
+          slot = slot,
+          predictions = predictions
+        )
       }
         .withSettings(remembered(system))
     )
@@ -152,6 +167,21 @@ object AuctionNode {
     }
     sharding.init(Entity(TradingSlotEntity.TypeKey)(_ => TradingSlotEntity(clock, newId, holders)))
     AuctionSlot.sharded(sharding, settings.askTimeout)
+  }
+
+  /**
+   * Регистрирует entity прогнозов (ADR-067); идентификатор entity — идентификатор аукциона. Регистрируется раньше
+   * аукциона: раунды ведёт аукцион. Таймеров у неё нет, поэтому шардинг её не помнит, и простаивающая entity засыпает.
+   */
+  def registerPredictions(
+      sharding: ClusterSharding,
+      clock: Clock,
+      newId: () => UUID,
+      store: PredictionStore,
+      askTimeout: FiniteDuration
+  ): AuctionPredictions = {
+    sharding.init(Entity(PredictionEntity.TypeKey)(context => PredictionEntity(context.entityId, clock, newId, store)))
+    AuctionPredictions.sharded(sharding, askTimeout)
   }
 
   /** Запоминание entity в журнале — у аукциона и у розыгрыша: их таймеры обязаны пережить рестарт процесса. */
@@ -361,6 +391,7 @@ object AuctionNode {
       overdueGrace = overdueGrace,
       raffles = RaffleGateway.sharded(sharding, askTimeout),
       raffleNames = raffleTickets.names,
+      predictions = PredictionGateway.sharded(sharding, SlickPredictionStore(system), askTimeout),
       watchViews = SlickAuctionWatchViews(system),
       changes = changes
     )

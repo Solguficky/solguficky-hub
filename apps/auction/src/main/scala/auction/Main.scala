@@ -15,6 +15,7 @@ import auction.meetup.MeetupsSettings
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import auction.persistence.SlickDisplayNameStore
+import auction.persistence.SlickPredictionStore
 import auction.persistence.SlickRaffleTickets
 import auction.naming.DisplayNameCommands
 import auction.raffle.RaffleSettings
@@ -144,7 +145,14 @@ object Main {
       UuidV7.generator(clock),
       askTimeout,
       AuctionRaffle.sharded(sharding, askTimeout),
-      AuctionNode.registerSlot(sharding, clock, UuidV7.generator(clock), slot)
+      AuctionNode.registerSlot(sharding, clock, UuidV7.generator(clock), slot),
+      AuctionNode.registerPredictions(
+        sharding,
+        clock,
+        UuidV7.generator(clock),
+        SlickPredictionStore(system),
+        askTimeout
+      )
     )
     AuctionNode.eraseRaffleNames(system, raffleTickets, clock, erasureEvery)
     if (identity.url.isEmpty)

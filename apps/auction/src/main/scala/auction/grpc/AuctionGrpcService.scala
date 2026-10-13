@@ -6,10 +6,12 @@ import auction.aggregate.AuctionState
 import auction.aggregate.Correlation
 import auction.aggregate.Denial
 import auction.catalog.LotCatalogCommands
+import auction.catalog.LotId
 import auction.entity.Initiator
 import auction.entity.LotGateway
 import auction.lot.AuctionId
 import auction.lot.BidSource
+import auction.lot.OpId
 import auction.lot.ParticipantId
 import auction.naming.DisplayNameCommands
 import auction.naming.NameNotChosen
@@ -17,6 +19,9 @@ import auction.onboarding.FaqAcknowledgements
 import auction.projection.AuctionSnapshotView
 import auction.projection.AuctionViews
 import auction.projection.AuctionWatchViews
+import auction.prediction.PredictionGateway
+import auction.prediction.PredictionRound
+import auction.prediction.SubmitForecast
 import auction.projection.LotViews
 import auction.raffle.CancelRegistration
 import auction.raffle.Raffle
@@ -64,7 +69,8 @@ final class AuctionGrpcService(
     raffleNames: AuctionId => Future[Map[Int, String]] = _ => Future.successful(Map.empty),
     watchViews: AuctionWatchViews = AuctionGrpcService.NoWatch,
     changes: AuctionChanges = AuctionGrpcService.NoChanges,
-    caller: Option[Caller] = None
+    caller: Option[Caller] = None,
+    predictions: PredictionGateway = AuctionGrpcService.NoPredictions
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -88,7 +94,8 @@ final class AuctionGrpcService(
       raffleNames,
       watchViews,
       changes,
-      caller
+      caller,
+      predictions
     )
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
@@ -610,6 +617,77 @@ final class AuctionGrpcService(
           .map(found => wire.GetRaffleResponse(found))
     }
 
+  /**
+   * Прогноз раунда (ADR-067, пп. 2–5): форма, право `place_bids` на каждой отправке, аукцион и лоты раунда, имя в
+   * аукционе — тем же правилом, что перед ставкой, но без заморозки, — затем игра. Лоты сверяются, только пока раунд
+   * может быть открыт: в остальное время отказ раунда даёт сама игра, и чужой лот его не подменяет.
+   */
+  def submitPrediction(in: wire.SubmitPredictionRequest): Future[wire.SubmitPredictionResponse] =
+    PredictionMapping.submit(in).flatMap(command => PredictionMapping.forecast(command).map(command -> _)) match {
+      case Left(error) => invalid(error)
+      case Right((command, _)) if !command.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right((command, forecast)) =>
+        val participant = command.acting.participant
+        auctions.current(command.auctionId).recoverWith(awaited).flatMap {
+          case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          case Some(auction) =>
+            roundLots(auction, forecast.round).flatMap(forecast.foreignLot) match {
+              // Повтор принятой отправки получает исходный ответ, даже если её лот с тех пор сняли из реестра.
+              case Some((nomination, lot)) =>
+                predictions
+                  .recall(command.auctionId, participant, forecast.round, command.opId)
+                  .recoverWith(awaited)
+                  .flatMap {
+                    case Some(Right(accepted)) => Future.successful(PredictionMapping.accepted(accepted))
+                    case Some(Left(rejected)) => PredictionMapping.refused(rejected).fold(refuse, Future.successful)
+                    case None => Future.successful(PredictionMapping.lotNotInRound(nomination, lot))
+                  }
+              case None =>
+                names.requireChosen(command.auctionId, participant).flatMap {
+                  case Left(NameNotChosen) => Future.successful(PredictionMapping.displayNameNotChosen)
+                  case Right(_) =>
+                    predictions
+                      .submit(command.auctionId, SubmitForecast(participant, forecast, command.opId))
+                      .recoverWith(awaited)
+                      .flatMap {
+                        case Right(accepted) => Future.successful(PredictionMapping.accepted(accepted))
+                        case Left(rejected) => PredictionMapping.refused(rejected).fold(refuse, Future.successful)
+                      }
+                }
+            }
+        }
+    }
+
+  /** Свои прогнозы смотрящего по раундам; чужих это чтение не отдаёт (ADR-067, п. 9). */
+  def getMyPredictions(in: wire.GetMyPredictionsRequest): Future[wire.GetMyPredictionsResponse] =
+    PredictionMapping.mine(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(query) =>
+        auctions.current(query.auctionId).recoverWith(awaited).flatMap {
+          case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          case Some(_) =>
+            predictions
+              .mine(query.auctionId, query.acting.participant)
+              .recoverWith(awaited)
+              .map(PredictionMapping.mine)
+        }
+    }
+
+  /**
+   * Лоты раунда, пока он может быть открыт: каталог — реестр запланированного аукциона и аукциона, открывшего торги,
+   * пока прогнозы не подтвердили закрытие раунда, финал — замороженный состав (ADR-067, п. 4). В остальных фазах
+   * `None`: раунд закрыт или не открыт, и это скажет игра.
+   */
+  private def roundLots(auction: Auction, round: PredictionRound): Option[Set[LotId]] =
+    (round, auction.state) match {
+      case (PredictionRound.Catalog, AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _)) => Some(auction.lots)
+      case (PredictionRound.Final, AuctionState.LineupFrozen(_, _, order)) => Some(order.toSet)
+      case _ => None
+    }
+
   private def viewed[R](
       auction: AuctionId,
       participant: ParticipantId,
@@ -776,6 +854,14 @@ object AuctionGrpcService {
 
   /** Потока в узле нет: тесты границы, которым он не нужен. Аукциона для потока не существует. */
   val NoWatch: AuctionWatchViews = _ => Future.successful(None)
+
+  /** Узел без прогнозов: тесты границы, которым игра не нужна. */
+  val NoPredictions: PredictionGateway = new PredictionGateway {
+    private def none[T]: Future[T] = Future.failed(new IllegalStateException("predictions are not wired in this node"))
+    def submit(auction: AuctionId, command: SubmitForecast) = none
+    def mine(auction: AuctionId, participant: ParticipantId) = none
+    def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) = none
+  }
 
   /** Изменений нет: поток читает состояние один раз, при подписке. */
   val NoChanges: AuctionChanges = _ => Source.single(())
