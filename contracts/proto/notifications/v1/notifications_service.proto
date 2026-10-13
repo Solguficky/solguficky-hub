@@ -147,8 +147,7 @@ message GetAuctionNotificationPreferencesRequest {
   string identity_id = 1;
 }
 
-// Changes one or both settings. An absent field leaves its setting as it is;
-// a request with neither field is rejected.
+// Changes one or both settings. An absent field leaves its setting as it is.
 message SetAuctionNotificationPreferencesRequest {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;

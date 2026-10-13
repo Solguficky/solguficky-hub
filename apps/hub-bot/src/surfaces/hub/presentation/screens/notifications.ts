@@ -141,6 +141,11 @@ export function meetupNotificationsScreen(settings: {
   };
 }
 
+/** Данные переключателя анонса финала: целевое состояние, а не шаг. */
+export function finalAnnouncementsData(enabled: boolean): string {
+  return `v1:notify:final:${enabled ? "1" : "0"}`;
+}
+
 /**
  * Настройки уведомлений аукциона (PER-552, PER-539) — самодостаточные, как у
  * бота аукциона: пять режимов частоты «перебили» по одному в ряд, текущий
@@ -167,7 +172,7 @@ export function auctionNotificationsScreen(
   keyboard
     .text(
       finalAnnouncementsButtonLabel(current.finalAnnouncements),
-      `v1:notify:final:${current.finalAnnouncements ? "0" : "1"}`,
+      finalAnnouncementsData(!current.finalAnnouncements),
     )
     .row();
   return {

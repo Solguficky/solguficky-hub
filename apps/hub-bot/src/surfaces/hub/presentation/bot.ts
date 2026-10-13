@@ -308,6 +308,7 @@ import {
 import {
   auctionNotificationsScreen,
   categoryLabels,
+  finalAnnouncementsData,
   globalNotificationsScreen,
   meetupNotificationsScreen,
   toggleToast,
@@ -3832,7 +3833,7 @@ async function handleCallback(
             ? "v1:notify:outbid"
             : change.kind === "frequency"
               ? `v1:notify:outbid:${change.frequency}`
-              : `v1:notify:final:${change.enabled ? "1" : "0"}`,
+              : finalAnnouncementsData(change.enabled),
         );
       }
       outcome = screenBoundary(result, {

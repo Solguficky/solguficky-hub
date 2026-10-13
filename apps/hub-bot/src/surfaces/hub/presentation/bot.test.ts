@@ -6610,6 +6610,30 @@ describe("notification frames", () => {
       ).toContain("v1:notify:outbid:off");
     });
 
+    // Повтор после сбоя несёт то же целевое состояние финала, а не частоту
+    // (PER-539).
+    it("refuses a final switch with a retry of the same switch when Notifications is down", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "dependency-rejected",
+        reason: "unavailable",
+      });
+      const { bot, calls } = harness(execute);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:notify:final:0"));
+      const answered = calls.filter(
+        (call) => call.method === "answerCallbackQuery",
+      );
+      expect(JSON.stringify(answered)).not.toContain("Выключено:");
+      const refusal = screen(
+        calls.findLast((call) => call.method !== "answerCallbackQuery"),
+      );
+      expect(
+        (refusal.reply_markup?.inline_keyboard ?? [])
+          .flat()
+          .map((button) => button.callback_data),
+      ).toContain("v1:notify:final:0");
+    });
+
     // «Частота уведомлений» под перебитием — след: экран приходит новым
     // сообщением, а уведомление остаётся как было. Данные кнопки прежние,
     // поэтому и «Реже» из старого сообщения открывает частоту на новом месте —

@@ -104,8 +104,8 @@ export type AuctionEntryScreen =
   // Подсказка на сообщение вне вопроса (PER-592).
   | { kind: "hint"; openQuestion: boolean }
   | { kind: "faq" }
-  // «Настройки» (PER-595): настройки уведомлений аукциона, у бота с Notifications, и имя в
-  // идущем аукционе, если такой есть.
+  // «Настройки» (PER-595): настройки уведомлений аукциона, у бота с
+  // Notifications, и имя в идущем аукционе, если такой есть.
   | { kind: "settings"; notifications: boolean; auctionId?: string }
   | { kind: "notify"; current: AuctionNotificationSettings }
   | { kind: "auctions"; list: AuctionListPage }
