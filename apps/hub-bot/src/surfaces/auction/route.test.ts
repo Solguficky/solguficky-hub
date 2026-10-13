@@ -477,6 +477,18 @@ describe("auction lists", () => {
       data: entryCallback("settings"),
     });
     expect(without.screen).toEqual({ kind: "settings", notifications: false });
+    // Сбой списка убирает пункт имени, а не раздел: частота от Auction не
+    // зависит.
+    const failing = ports(admitted, { active: [nearest] });
+    failing.catalog.listAuctions = vi.fn(async () => {
+      throw new Error("auction is down");
+    });
+    const degraded = await routeAuctionCallback({
+      ports: failing,
+      user,
+      data: entryCallback("settings"),
+    });
+    expect(degraded.screen).toEqual({ kind: "settings", notifications: false });
   });
 
   it("reads finished auctions for the past list, freshest first", async () => {

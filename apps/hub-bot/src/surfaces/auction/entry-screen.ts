@@ -321,9 +321,7 @@ export function renderEntryScreen(
         format: "html",
         text: screenText(
           settingsTitle,
-          rows.length === 0
-            ? "Настраивать пока нечего: имя выбирается, когда идёт аукцион."
-            : "Уведомления о торгах и имя, под которым ты ставишь в идущем аукционе.",
+          settingsText(screen.notifications, screen.auctionId !== undefined),
         ),
         keyboard: [...rows, [toMenu]],
       };
@@ -505,6 +503,18 @@ export function renderEntryScreen(
       return _exhaustive;
     }
   }
+}
+
+// Пояснение «Настроек» называет только пункты, которые на экране есть.
+function settingsText(notifications: boolean, name: boolean): string {
+  if (notifications && name) {
+    return "Уведомления о торгах и имя, под которым ты ставишь в идущем аукционе.";
+  }
+  if (notifications) {
+    return "Уведомления о торгах. Имя в аукционе появится здесь, когда пойдёт аукцион.";
+  }
+  if (name) return "Имя, под которым ты ставишь в идущем аукционе.";
+  return "Настраивать пока нечего: имя выбирается, когда идёт аукцион.";
 }
 
 function faqState(id: "details" | "question", text: string): RenderedScreen {

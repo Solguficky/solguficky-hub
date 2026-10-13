@@ -267,6 +267,7 @@ describe("auction contract self-check", () => {
       "name settings: chosen, not frozen",
       "name settings: frozen",
       "name settings: username",
+      "name settings: same name after the freeze",
       "name settings: frozen meanwhile",
       "name settings: ask alias",
       "name settings: alias taken",

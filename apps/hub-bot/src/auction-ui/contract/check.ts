@@ -2545,6 +2545,19 @@ const PER595_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [chooseCall({ kind: "username", username: "owl_fan" })],
     body: nameSettingsBody({ text: "@owl_fan", frozen: false }, "owl_fan"),
   },
+  // Повтор того же ника после первой ставки Auction принимает: экран
+  // показывает имя закреплённым, без выбора.
+  {
+    intent: "name settings: same name after the freeze",
+    callbackData: nameCallback("name-username"),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "accepted", name: "@owl_fan", frozen: true }],
+    },
+    auctionCalls: [chooseCall({ kind: "username", username: "owl_fan" })],
+    body: nameSettingsBody({ text: "@owl_fan", frozen: true }),
+  },
   // Имя закрепила ставка из другого окна: экран перечитывает и называет его.
   {
     intent: "name settings: frozen meanwhile",

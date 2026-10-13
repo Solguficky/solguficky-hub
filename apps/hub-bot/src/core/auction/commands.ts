@@ -128,7 +128,11 @@ export function displayNameOutcomeOf(
   const { outcome } = response;
   switch (outcome.case) {
     case "accepted":
-      return { kind: "accepted", name: outcome.value.text };
+      return {
+        kind: "accepted",
+        name: outcome.value.text,
+        ...(outcome.value.frozen ? { frozen: true as const } : {}),
+      };
     case "refused": {
       const refusal = displayNameRefusalOf(outcome.value.reason.case);
       if (refusal === undefined) {

@@ -298,13 +298,14 @@ async function routeEntry(input: {
       return { screen: { kind: "faq" }, identityId };
     }
     // «Настройки» (PER-595): имя выбирается в идущем аукционе — ближайшем
-    // активном. Торги открыты у одного аукциона (RFC-017).
+    // активном. Торги открыты у одного аукциона (RFC-017). Сбой списка
+    // убирает пункт имени, а не раздел: частота от Auction не зависит.
     if (local?.action === "settings") {
       const [current] = await readAuctions({
         catalog: input.ports.catalog,
         viewer,
         listing: "active",
-      });
+      }).catch(() => []);
       return {
         screen: {
           kind: "settings",

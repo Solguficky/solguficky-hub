@@ -411,8 +411,10 @@ export type DisplayNameRefusal =
 // лимит, и выбор больше не меняется (ADR-059, п. 5).
 export type OwnDisplayName = { text: string; frozen: boolean };
 
+// `frozen` у принятого — повтор того же выбора после первой ставки: имя
+// закреплено (PER-595).
 export type DisplayNameOutcome =
-  | { kind: "accepted"; name: string }
+  | { kind: "accepted"; name: string; frozen?: true }
   | { kind: "refused"; refusal: DisplayNameRefusal };
 
 export type LotImage = {

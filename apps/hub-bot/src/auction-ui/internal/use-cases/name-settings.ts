@@ -124,9 +124,10 @@ export function chooseNameUsername(
   });
 }
 
-// Принятое имя — экран имени с ним. Закреплённое имя — ставкой из другого
-// окна, пока висел этот экран, — экран перечитывает: человек видит имя, а не
-// отказ.
+// Принятое имя — экран имени с ним; повтор того же выбора после первой
+// ставки Auction принимает, и экран показывает имя закреплённым. Другое
+// закреплённое имя — ставкой из другого окна, пока висел этот экран, — экран
+// перечитывает: человек видит имя, а не отказ.
 async function chooseName(
   context: CommandContext,
   auctionId: string,
@@ -138,7 +139,10 @@ async function chooseName(
     choice,
   });
   if (outcome.kind === "accepted") {
-    return nameBody(context, auctionId, { text: outcome.name, frozen: false });
+    return nameBody(context, auctionId, {
+      text: outcome.name,
+      frozen: outcome.frozen === true,
+    });
   }
   if (outcome.refusal === "name-frozen") return openName(context, auctionId);
   return refusedBody(auctionId, outcome.refusal);
