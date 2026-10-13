@@ -10,6 +10,9 @@ import {
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
+  consoleLineupConfirmData,
+  consoleLineupData,
+  consoleLineupPickData,
   consoleMarkData,
   consoleNextLotData,
   consoleOpenData,
@@ -1273,6 +1276,44 @@ describe("auction console callbacks", () => {
         },
       ],
       [
+        consoleLineupData(auction),
+        { kind: "console-lineup", auction, page: 0 },
+      ],
+      [
+        consoleLineupPickData(auction, { print: "z0a9q", order: [] }),
+        {
+          kind: "console-lineup",
+          auction,
+          pick: { print: "z0a9q", order: [] },
+          page: 0,
+        },
+      ],
+      // Самая длинная кнопка пульта: двадцать четыре лота и страница.
+      [
+        consoleLineupPickData(
+          auction,
+          { print: "z0a9q", order: [...Array(24).keys()].reverse() },
+          2,
+        ),
+        {
+          kind: "console-lineup",
+          auction,
+          pick: { print: "z0a9q", order: [...Array(24).keys()].reverse() },
+          page: 2,
+        },
+      ],
+      [
+        consoleLineupConfirmData(auction, {
+          print: "z0a9q",
+          order: [2, 0, 11, 1],
+        }),
+        {
+          kind: "console-lineup-confirm",
+          auction,
+          pick: { print: "z0a9q", order: [2, 0, 11, 1] },
+        },
+      ],
+      [
         consoleStartFinalData(auction),
         { kind: "console-start-final", auction },
       ],
@@ -1378,6 +1419,14 @@ describe("auction console callbacks", () => {
       `v1:ac:s:${auction}:${lot}`,
       `v1:ac:d:${auction}:${lot}:-1`,
       `v1:ac:x:${auction}:1`,
+      `v1:ac:l:${auction}:1`,
+      `v1:ac:lo:${auction}:z0a9q`,
+      `v1:ac:lo:${auction}:z0a9:01`,
+      `v1:ac:lo:${auction}:z0a9q:0A`,
+      `v1:ac:lo:${auction}:z0a9q:${"0".repeat(25)}`,
+      `v1:ac:lo:${auction}:z0a9q:01:x`,
+      `v1:ac:ly:${auction}:z0a9q:-`,
+      `v1:ac:ly:${auction}:z0a9q:01:1`,
       `v1:ac:z:${auction}`,
       `v1:ac:z:${auction}:short`,
       `v1:ac:q:${auction}`,

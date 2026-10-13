@@ -17,6 +17,7 @@ import type {
   FinalBidsResult,
   FinalistResult,
   FinalLotCommand,
+  FreezeFinalLineupResult,
   LotStatisticsReadResult,
   ScheduleAuctionResult,
   StartFinalResult,
@@ -25,6 +26,7 @@ import type {
 } from "../auction/port.js";
 import {
   createAuctionConsole,
+  lineupPrint,
   parseRaffle,
   parseWeek,
   parseWindow,
@@ -74,6 +76,7 @@ function fake(answers: {
   start?: StartPrebiddingResult;
   mark?: FinalistResult;
   discard?: DiscardAuctionResult;
+  freeze?: FreezeFinalLineupResult;
   startFinal?: StartFinalResult;
   nextLot?: StartNextLotResult;
   ask?: AdvanceAskResult;
@@ -87,6 +90,7 @@ function fake(answers: {
   const reads = { raffle: 0, active: 0 };
   const asks: Money[] = [];
   const closes: FinalLotCommand[] = [];
+  const freezes: (readonly string[])[] = [];
   const port: AuctionConsoles = {
     getAuctionConsole: async () =>
       answers.read ?? { kind: "ok", console: view("draft") },
@@ -104,6 +108,10 @@ function fake(answers: {
     discardAuction: async () => answers.discard ?? { kind: "ok" },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },
+    freezeFinalLineup: async (_person, freeze) => {
+      freezes.push(freeze.lotIds);
+      return answers.freeze ?? { kind: "ok" };
+    },
     startFinal: async () => answers.startFinal ?? { kind: "ok" },
     startNextLot: async () =>
       answers.nextLot ?? { kind: "ok", lotId: "not configured" },
@@ -132,6 +140,7 @@ function fake(answers: {
     scheduled,
     asks,
     closes,
+    freezes,
   };
 }
 
@@ -826,6 +835,90 @@ describe("final of the auctioneer", () => {
     await expect(
       early.run({ ...call, intent: "start-auction-final", opId }),
     ).resolves.toMatchObject({ note: "lineup-not-frozen" });
+  });
+
+  it("picks the lineup order lot by lot and confirms it once one lot is left", async () => {
+    const first = entry(lotId, { kind: "held", currentPrice: rub(1_000) });
+    const onBreak = view("break", { lots: [held, first] });
+    const print = lineupPrint([first, held]);
+    const { run } = running(onBreak);
+
+    await expect(
+      run({ ...call, intent: "order-final-lineup", page: 0 }),
+    ).resolves.toMatchObject({
+      kind: "lineup-order",
+      held: [first, held],
+      pick: { print, order: [] },
+    });
+    await expect(
+      run({
+        ...call,
+        intent: "order-final-lineup",
+        pick: { print, order: [1] },
+        page: 0,
+      }),
+    ).resolves.toMatchObject({
+      kind: "lineup-confirm",
+      pick: { print, order: [1, 0] },
+    });
+    await expect(
+      run({
+        ...call,
+        intent: "order-final-lineup",
+        pick: { print: "zzzzz", order: [1] },
+        page: 0,
+      }),
+    ).resolves.toMatchObject({
+      kind: "lineup-order",
+      pick: { print, order: [] },
+      changed: true,
+    });
+  });
+
+  it("announces the picked order and names a lineup announced already", async () => {
+    const first = entry(lotId, { kind: "held", currentPrice: rub(1_000) });
+    const onBreak = view("break", { lots: [held, first] });
+    const pick = { print: lineupPrint([first, held]), order: [1, 0] };
+    const accepted = running(onBreak);
+    const late = running(onBreak, { freeze: { kind: "not-in-break" } });
+    const frozen = running(
+      view("lineup-frozen", {
+        lots: [held, first],
+        lineup: { order: [second, lotId] },
+      }),
+    );
+
+    await expect(
+      accepted.run({ ...call, intent: "freeze-final-lineup", pick, opId }),
+    ).resolves.toMatchObject({ note: "lineup-frozen" });
+    expect(accepted.freezes).toEqual([[second, lotId]]);
+    await expect(
+      late.run({ ...call, intent: "freeze-final-lineup", pick, opId }),
+    ).resolves.toMatchObject({ note: "not-in-break" });
+    await expect(
+      frozen.run({ ...call, intent: "freeze-final-lineup", pick, opId }),
+    ).resolves.toMatchObject({ note: "lineup-frozen" });
+    expect(frozen.freezes).toEqual([]);
+  });
+
+  it("names a break without held lots and a lineup longer than a button holds", async () => {
+    const many = Array.from({ length: 25 }, (_, at) =>
+      entry(`01929b7e-5c1d-7a3f-8e4b-2d6c9f0a${String(at).padStart(4, "0")}`, {
+        kind: "held",
+        currentPrice: rub(100),
+      }),
+    );
+    const empty = running(
+      view("break", { lots: [{ ...held, markedForFinal: false }] }),
+    );
+    const long = running(view("break", { lots: many }));
+
+    await expect(
+      empty.run({ ...call, intent: "order-final-lineup", page: 0 }),
+    ).resolves.toMatchObject({ note: "lineup-empty" });
+    await expect(
+      long.run({ ...call, intent: "order-final-lineup", page: 0 }),
+    ).resolves.toMatchObject({ note: "lineup-too-long" });
   });
 
   it("opens the next lot over a lagging read and names a lot still trading", async () => {

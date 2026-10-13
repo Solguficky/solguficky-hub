@@ -260,6 +260,19 @@ export type FinalistMark = { auctionId: string; lotId: string; opId: string };
 // того же `opId` Auction отвечает исходным ответом, поэтому второе нажатие
 // «Да, продать» не создаёт второй продажи.
 
+// Объявление состава финала (PER-619). `lineup-mismatch` — порядок назвал не
+// тот набор удержанных лотов, что знает Auction: состав изменился после чтения
+// или чтение лотов отстаёт.
+export type FreezeFinalLineupResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "not-in-break" }
+  | { kind: "lineup-empty" }
+  | { kind: "lineup-mismatch" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
 export type StartFinalResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
@@ -378,6 +391,13 @@ export type AuctionConsoles = {
     mark: FinalistMark,
     meta?: RpcMetadata,
   ): Promise<FinalistResult>;
+  // `lotIds` — удержанные лоты в порядке выхода. Auction сверяет набор, а
+  // порядок берёт как есть.
+  freezeFinalLineup(
+    person: Person,
+    freeze: { auctionId: string; opId: string; lotIds: readonly string[] },
+    meta?: RpcMetadata,
+  ): Promise<FreezeFinalLineupResult>;
   startFinal(
     person: Person,
     start: { auctionId: string; opId: string },

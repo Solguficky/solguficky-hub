@@ -3,6 +3,7 @@ import type { LotStatusView } from "../../../../auction-ui/index.js";
 import {
   acceptsLots,
   activeLot,
+  heldLots,
   windowLimit,
   windowPrint,
 } from "../../application/auction-console.js";
@@ -15,6 +16,7 @@ import type {
   ConsoleSort,
   ConsoleSortMetric,
   FinalAskError,
+  LineupPick,
   LotAmount,
   RaffleAskError,
   StepWindow,
@@ -34,6 +36,9 @@ import {
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
+  consoleLineupConfirmData,
+  consoleLineupData,
+  consoleLineupPickData,
   consoleMarkData,
   consoleNextLotData,
   consoleOpenData,
@@ -126,6 +131,11 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "deadline-not-reached":
     "Лот торгуется онлайн до своего дедлайна. Закрыть его раньше нельзя.",
   "final-finished": "Финал завершён. Все лоты закрыты, итоги — в пульте.",
+  "lineup-frozen": "Состав финала объявлен. Начать финал — в пульте.",
+  "lineup-empty": "В финал не отмечено ни одного лота. Объявлять нечего.",
+  "lineup-too-long":
+    "В финал отмечено больше 24 лотов. Столько бот не объявит.",
+  "not-in-break": "Объявить состав можно только в перерыве перед финалом.",
 };
 
 // Исход, который повторяет сохранённое или называет аукцион с торгами
@@ -414,6 +424,16 @@ export function bidsLabel(count: number): string {
     : counted(count, ["ставка", "ставки", "ставок"]);
 }
 
+// Перерыв (PER-619): сколько лотов удержано для финала. Сами лоты видны в
+// реестре пометкой «в финал», порядок выбирается на своём экране.
+function heldLine(console: AuctionConsoleView): string | undefined {
+  if (console.status !== "break") return undefined;
+  const held = heldLots(console).length;
+  return held === 0
+    ? consoleNoteText["lineup-empty"]
+    : `В финал отмечены: ${lotsLabel(held)}.`;
+}
+
 /** «1 лот», «3 лота», «12 лотов». */
 function lotsLabel(count: number): string {
   return counted(count, ["лот", "лота", "лотов"]);
@@ -608,6 +628,12 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       consoleDiscardData(auction),
     );
   }
+  if (console.status === "break" && heldLots(console).length > 0) {
+    nextRow(keyboard).text(
+      "Объявить состав финала",
+      consoleLineupData(auction),
+    );
+  }
   if (console.status === "prebidding") {
     // Без финала отбирать некуда: «В финал» не ставится, а снять прежнюю
     // отметку можно и после того, как финал выключили.
@@ -637,7 +663,10 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     id: "auction-console",
     text: screenText(
       pagedTitle("Пульт", page),
-      statusLines(view).map(escapeHtml).join("\n"),
+      [...statusLines(view), heldLine(console)]
+        .filter((line) => line !== undefined)
+        .map(escapeHtml)
+        .join("\n"),
       escapeHtml(sortLine(view.sort)),
       lots.length === 0
         ? "Лотов пока нет."
@@ -690,6 +719,120 @@ export function weekConfirmScreen(confirm: {
     keyboard: confirmKeyboard({
       yes: "Да, открыть неделю",
       yesData: consoleConfirmData(auction, uuidToToken(confirm.opId)),
+      noData: consoleViewData(auction),
+      irreversible: true,
+    }),
+    format: "HTML",
+  };
+}
+
+function lineupEntryLines(
+  held: readonly ConsoleLot[],
+  order: readonly number[],
+): string[] {
+  return order.flatMap((at, index) => {
+    const entry = held[at];
+    return entry === undefined
+      ? []
+      : [`${index + 1}. ${titleOf(entry)} — ${priceLabel(entry.lot.status)}`];
+  });
+}
+
+/**
+ * Выбор порядка состава финала (PER-619): уже выбранные лоты по порядку и
+ * кнопка на каждый невыбранный. Последний лот встаёт в конец сам, «Остальные
+ * — как в списке» дозаполняет порядок порядком заведения. Всё выбранное едет
+ * в кнопке: состояния у пульта нет.
+ */
+export function lineupOrderScreen(order: {
+  console: AuctionConsoleView;
+  held: readonly ConsoleLot[];
+  pick: LineupPick;
+  page: number;
+  changed?: true | undefined;
+}): ShownScreen {
+  const auction = uuidToToken(order.console.auctionId);
+  const { held, pick } = order;
+  const rest = [...held.keys()].filter((at) => !pick.order.includes(at));
+  const page = paginate(rest, order.page);
+  const keyboard = new InlineKeyboard();
+  const pickNext = (next: readonly number[]) =>
+    consoleLineupPickData(auction, {
+      print: pick.print,
+      order: [...pick.order, ...next],
+    });
+  // Сначала действия, затем лоты и листание (дизайн-код, «Клавиатура»).
+  keyboard.text(
+    pick.order.length === 0 ? "Все — как в списке" : "Остальные — как в списке",
+    pickNext(rest),
+  );
+  if (pick.order.length > 0) {
+    nextRow(keyboard).text("Заново", consoleLineupData(auction));
+  }
+  for (const at of page.items) {
+    const entry = held[at];
+    if (entry === undefined) continue;
+    // Цена рядом с названием различает лоты с одинаковым названием.
+    nextRow(keyboard).text(
+      buttonText(`${titleOf(entry)} — ${priceLabel(entry.lot.status)}`),
+      pickNext([at]),
+    );
+  }
+  withPager(keyboard, page, (target) =>
+    consoleLineupPickData(auction, pick, target),
+  );
+  const chosen = lineupEntryLines(held, pick.order);
+  return {
+    id: "lineup-order",
+    text: screenText(
+      pagedTitle("Порядок финала", page),
+      order.changed === true
+        ? escapeHtml(
+            "Отметки финала изменились, пока выбирался порядок. Выбери заново.",
+          )
+        : undefined,
+      chosen.length === 0
+        ? undefined
+        : ["Уже по порядку:", ...chosen].map(escapeHtml).join("\n"),
+      escapeHtml(
+        pick.order.length === 0
+          ? "Кто выходит первым?"
+          : "Кто выходит следующим?",
+      ),
+    ),
+    keyboard: withNav(keyboard, {
+      name: "Пульт",
+      data: consoleViewData(auction),
+    }),
+    format: "HTML",
+  };
+}
+
+/**
+ * Подтверждение состава финала (PER-619): лоты в порядке выхода. Порядок и
+ * отпечаток набора едут в «Да», а ключ объявления рождается на нажатие:
+ * повтор после принятого объявления пульт узнаёт по статусу аукциона.
+ */
+export function lineupConfirmScreen(confirm: {
+  console: AuctionConsoleView;
+  held: readonly ConsoleLot[];
+  pick: LineupPick;
+}): ShownScreen {
+  const auction = uuidToToken(confirm.console.auctionId);
+  return {
+    id: "lineup-confirm",
+    text: screenText(
+      "Объявить состав финала?",
+      lineupEntryLines(confirm.held, confirm.pick.order)
+        .map(escapeHtml)
+        .join("\n"),
+      escapeHtml(
+        "Отменить объявление нельзя: состав и порядок финала после него не меняются.",
+      ),
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, объявить",
+      yesData: consoleLineupConfirmData(auction, confirm.pick),
       noData: consoleViewData(auction),
       irreversible: true,
     }),

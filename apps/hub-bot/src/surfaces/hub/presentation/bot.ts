@@ -223,6 +223,8 @@ import {
   finalAskErrorText,
   finalAskText,
   finalToast,
+  lineupConfirmScreen,
+  lineupOrderScreen,
   raffleAskErrorText,
   raffleQuestionText,
   weekAskError,
@@ -2111,6 +2113,8 @@ async function handleCallback(
       action.kind === "console-discard" ||
       action.kind === "console-discard-confirm" ||
       action.kind === "console-mark" ||
+      action.kind === "console-lineup" ||
+      action.kind === "console-lineup-confirm" ||
       action.kind === "console-start-final" ||
       action.kind === "console-next-lot" ||
       action.kind === "console-ask" ||
@@ -6320,6 +6324,8 @@ async function handleConsoleCallback(
         | "console-discard"
         | "console-discard-confirm"
         | "console-mark"
+        | "console-lineup"
+        | "console-lineup-confirm"
         | "console-start-final"
         | "console-next-lot"
         | "console-ask"
@@ -6440,6 +6446,27 @@ async function handleConsoleCallback(
         }),
         action.page,
         action.sort,
+      );
+    // Состав финала (PER-619). Выбранный порядок едет в кнопках, ключ
+    // объявления рождается на нажатие «Да»: повтор после принятого
+    // объявления пульт узнаёт по статусу аукциона и к Auction не идёт.
+    case "console-lineup":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "order-final-lineup",
+          ...(action.pick === undefined ? {} : { pick: action.pick }),
+          page: action.page,
+        }),
+      );
+    case "console-lineup-confirm":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "freeze-final-lineup",
+          pick: action.pick,
+          opId: createUuidV7(),
+        }),
       );
     // Финал ведущего (PER-337). Ключ начала финала и следующего лота
     // рождается на нажатие: повтор с новым ключом Auction называет отказом
@@ -6748,6 +6775,16 @@ async function renderConsoleResult(
     case "final-close-confirm":
       await showScreen(ctx, closeConfirmScreen(result));
       return handled("final lot close confirmation sent");
+    case "lineup-order":
+      await showScreen(ctx, lineupOrderScreen(result));
+      return handled(
+        result.changed === true
+          ? "final lineup order restarted"
+          : "final lineup order sent",
+      );
+    case "lineup-confirm":
+      await showScreen(ctx, lineupConfirmScreen(result));
+      return handled("final lineup confirmation sent");
     case "final-lot-closed":
       await showScreen(ctx, closedScreen(result));
       return handled(
@@ -8844,6 +8881,8 @@ function callbackUseCase(
     | "console-discard"
     | "console-discard-confirm"
     | "console-mark"
+    | "console-lineup"
+    | "console-lineup-confirm"
     | "console-start-final"
     | "console-next-lot"
     | "console-ask"
@@ -8996,6 +9035,8 @@ function callbackUseCase(
     case "console-discard":
     case "console-discard-confirm":
     case "console-mark":
+    case "console-lineup":
+    case "console-lineup-confirm":
     case "console-start-final":
     case "console-next-lot":
     case "console-ask":
