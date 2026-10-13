@@ -249,6 +249,17 @@ describe("watch state of an AuctionWatch message", () => {
     expect(parsed.lineup).toHaveLength(1);
   });
 
+  // Отменённый аукцион тоже конечный: сервер закрывает поток, и подписка не
+  // переподключается к нему по кругу.
+  it("reads a cancelled auction as finished", () => {
+    const parsed = watchStateOf(
+      create(AuctionWatchSchema, {
+        auction: { id: AUCTION_ID, status: { case: "cancelled", value: {} } },
+      }),
+    );
+    expect(parsed.finished).toBe(true);
+  });
+
   it("refuses a message without an auction", () => {
     expect(() => watchStateOf(create(AuctionWatchSchema, {}))).toThrow(
       "auction watch message without an auction",
