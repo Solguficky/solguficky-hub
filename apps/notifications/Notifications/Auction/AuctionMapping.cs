@@ -22,8 +22,17 @@ public sealed record LotSnapshot(Guid LotId, long Version, DateTimeOffset Occurr
     public bool Terminal => Status is LotStatus.Sold or LotStatus.Unsold or LotStatus.Withdrawn;
 }
 
-/// <summary>Факт лота без собственного повода: он только ведёт реплику.</summary>
-public sealed record AuctionLotFact(Guid EventId, LotSnapshot Snapshot);
+/// <summary>
+/// Лидер и цена лота на момент удержания для финала: из них собирается анонс
+/// состава (PER-477). Лидера нет у лота, удержанного без ставки.
+/// </summary>
+public sealed record LotHold(Guid LotId, Guid AuctionId, Guid? Leader, Money Price, DateTimeOffset HeldAt);
+
+/// <summary>
+/// Факт лота без собственного повода: он только ведёт реплику, а удержание
+/// для финала ещё и запоминает лидера и цену.
+/// </summary>
+public sealed record AuctionLotFact(Guid EventId, LotSnapshot Snapshot, LotHold? Hold = null);
 
 /// <summary>
 /// Проверенная ставка и снимок лота после неё. Ручная ставка, которую та же
@@ -33,7 +42,7 @@ public sealed record AuctionLotFact(Guid EventId, LotSnapshot Snapshot);
 /// подняла цену. Версией фильтруется только реплика, а не повод. Снимка нет,
 /// если его поля, которые повод не читает, кривые: повод важнее реплики.
 /// </summary>
-public sealed record AuctionBid(Guid EventId, Guid LotId, long Version, DateTimeOffset OccurredAt,
+public sealed record AuctionBid(Guid EventId, Guid LotId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
     Guid? PreviousLeader, Guid Leader, Money Price, LotSnapshot? Snapshot, bool OvertakenByProxy = false,
     bool AnswersOtherBidder = false)
 {
@@ -47,26 +56,46 @@ public sealed record AuctionBid(Guid EventId, Guid LotId, long Version, DateTime
 public sealed record AuctionSale(Guid EventId, Guid LotId, long Version, DateTimeOffset OccurredAt,
     Guid Winner, Money Price, LotSnapshot? Snapshot);
 
+/// <summary>Повод финала аукциона: заморозка состава или старт.</summary>
+public enum FinalOccasion { LineupFrozen, Started }
+
+/// <summary>
+/// Проверенный факт финала (PER-477). Состав — лоты в порядке финала; у
+/// старта он тот же, но анонсу старта не нужен.
+/// </summary>
+public sealed record AuctionFinal(Guid EventId, Guid AuctionId, Guid MeetupId, long Version, DateTimeOffset OccurredAt,
+    FinalOccasion Occasion, IReadOnlyList<Guid> Lineup);
+
+/// <summary>Аукцион пришёл в конечное положение: круг анонса больше не нужен.</summary>
+public sealed record AuctionClosed(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt);
+
 public abstract record AuctionDecoded
 {
     public sealed record Bid(AuctionBid Value) : AuctionDecoded;
     public sealed record Sale(AuctionSale Value) : AuctionDecoded;
     public sealed record Lot(AuctionLotFact Value) : AuctionDecoded;
+    public sealed record Final(AuctionFinal Value) : AuctionDecoded;
+    public sealed record Closed(AuctionClosed Value) : AuctionDecoded;
     public sealed record Poison(string Reason) : AuctionDecoded;
     public sealed record Ignored : AuctionDecoded;
 }
 
 /// <summary>
-/// Разбор фактов лота. Факты аукциона и счёта под тем же префиксом не
-/// декодируются как LotEvent: тип сообщения выбирает subject.
+/// Разбор фактов лота и тех фактов аукциона, что нужны анонсу финала. Тип
+/// сообщения выбирает subject: факт аукциона не декодируется как LotEvent, а
+/// факты счёта не декодируются вовсе.
 /// </summary>
 public static class AuctionMapping
 {
     public static AuctionDecoded Decode(string subject, ReadOnlyMemory<byte> payload)
     {
         // В доменном стриме есть LotEvent, AuctionEvent и InvoiceEvent. Этот
-        // модуль ведёт реплику лота по каждому его факту, а поводы дают только
-        // ставка и продажа; снимки остальных агрегатов он не читает.
+        // модуль ведёт реплику лота по каждому его факту, а поводы дают
+        // ставка, продажа и факты финала аукциона; счёт он не читает.
+        if (AuctionFeed.AuctionSubjects.TryGetValue(subject, out var auctionOccasion))
+        {
+            return DecodeAuction(subject, auctionOccasion, payload);
+        }
         if (!AuctionFeed.LotSubjects.TryGetValue(subject, out var occasion))
         {
             return new AuctionDecoded.Ignored();
@@ -107,8 +136,91 @@ public static class AuctionMapping
             LotEvent.OccasionOneofCase.BidPlaced => DecodeBid(message, eventId, lotId, occurredAt, snapshot),
             LotEvent.OccasionOneofCase.LotSold => DecodeSale(message, eventId, lotId, occurredAt, snapshot),
             _ when snapshot is null => new AuctionDecoded.Poison("state status, deadline or leader is invalid"),
+            _ when state.StatusCase == LotState.StatusOneofCase.Held => DecodeHold(state, eventId, snapshot),
             _ => new AuctionDecoded.Lot(new AuctionLotFact(eventId, snapshot)),
         };
+    }
+
+    // Цена удержания — то, что анонс состава покажет у лота. Кривая цена
+    // лишает удержание только записи для анонса, а реплику оно ведёт, как
+    // вело до анонса: избранному цена не нужна.
+    private static AuctionDecoded DecodeHold(LotState state, Guid eventId, LotSnapshot snapshot) =>
+        new AuctionDecoded.Lot(new AuctionLotFact(eventId, snapshot,
+            state.Held.CurrentPrice is { } price && Price(price)
+                ? new LotHold(snapshot.LotId, Guid.Parse(state.AuctionId), snapshot.Leader, price.Clone(),
+                    snapshot.OccurredAt)
+                : null));
+
+    private static AuctionDecoded DecodeAuction(string subject, AuctionEvent.OccasionOneofCase occasion,
+        ReadOnlyMemory<byte> payload)
+    {
+        AuctionEvent message;
+        try
+        {
+            message = AuctionEvent.Parser.ParseFrom(payload.Span);
+        }
+        catch (InvalidProtocolBufferException)
+        {
+            return new AuctionDecoded.Poison("not an auction.v1.AuctionEvent");
+        }
+
+        if (!Id(message.EventId, out var eventId) || !AuctionId(message.AuctionId) || message.Version < 1)
+        {
+            return new AuctionDecoded.Poison("event_id, auction_id or version is invalid");
+        }
+        if (!Instant(message.OccurredAt, out var occurredAt))
+        {
+            return new AuctionDecoded.Poison("occurred_at is not an RFC 3339 UTC instant");
+        }
+        if (message.OccasionCase != occasion)
+        {
+            return new AuctionDecoded.Poison($"{subject} subject does not match occasion");
+        }
+        if (message.State is not { } state || state.Id != message.AuctionId)
+        {
+            return new AuctionDecoded.Poison("state does not identify the auction");
+        }
+        var auctionId = Guid.Parse(message.AuctionId);
+
+        // Каталог без удержанных лотов кончает аукцион тем же prebidding_ended:
+        // какой из двух исходов случился, говорит снимок.
+        if (occasion is AuctionEvent.OccasionOneofCase.AuctionFinished or AuctionEvent.OccasionOneofCase.PrebiddingEnded)
+        {
+            if (state.StatusCase == AuctionState.StatusOneofCase.Finished)
+            {
+                return new AuctionDecoded.Closed(new AuctionClosed(eventId, auctionId, message.Version, occurredAt));
+            }
+            return occasion == AuctionEvent.OccasionOneofCase.PrebiddingEnded
+                ? new AuctionDecoded.Ignored()
+                : new AuctionDecoded.Poison("auction_finished state is not finished");
+        }
+
+        if (!Id(state.MeetupId, out var meetupId))
+        {
+            return new AuctionDecoded.Poison("meetup_id is not a canonical UUIDv7");
+        }
+        var (order, final) = occasion == AuctionEvent.OccasionOneofCase.FinalLineupFrozen
+            ? (state.LineupFrozen?.Order, FinalOccasion.LineupFrozen)
+            : (state.InFinal?.Order, FinalOccasion.Started);
+        if (order is null)
+        {
+            return new AuctionDecoded.Poison($"{subject} state is not the status of its occasion");
+        }
+        var lineup = new List<Guid>(order.Count);
+        foreach (var lot in order)
+        {
+            if (!Id(lot, out var lotId) || lineup.Contains(lotId))
+            {
+                return new AuctionDecoded.Poison("lineup lot id is invalid or repeated");
+            }
+            lineup.Add(lotId);
+        }
+        if (lineup.Count == 0)
+        {
+            return new AuctionDecoded.Poison("lineup is empty");
+        }
+        return new AuctionDecoded.Final(new AuctionFinal(eventId, auctionId, meetupId, message.Version, occurredAt,
+            final, lineup));
     }
 
     // Неизвестное положение — яд, а не «ничего не менять»: снимок без
@@ -196,7 +308,8 @@ public static class AuctionMapping
             }
             previous = previousId;
         }
-        return new AuctionDecoded.Bid(new AuctionBid(eventId, lotId, message.Version, occurredAt, previous, leader, price.Clone(),
+        return new AuctionDecoded.Bid(new AuctionBid(eventId, lotId, Guid.Parse(state.AuctionId), message.Version,
+            occurredAt, previous, leader, price.Clone(),
             snapshot, placed.OvertakenByProxy, placed.AnswersOtherBidder));
     }
 

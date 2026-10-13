@@ -9,7 +9,8 @@ namespace Notifications.Auction;
 public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetry, FactTelemetry facts,
     TimeProvider clock, ILogger<AuctionHandler> logger) : IEventHandler
 {
-    private sealed record EventRef(Guid EventId, Guid LotId, long Version, DateTimeOffset OccurredAt);
+    // Факт лота несёт лот, факт аукциона — аукцион: в лог идёт свой ключ.
+    private sealed record EventRef(Guid EventId, Guid? LotId, Guid? AuctionId, long Version, DateTimeOffset OccurredAt);
 
     public Task Start(CancellationToken cancellationToken) => Task.CompletedTask;
 
@@ -31,13 +32,19 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
         }
         var (source, apply) = decoded switch
         {
-            AuctionDecoded.Bid { Value: var bid } => (new EventRef(bid.EventId, bid.LotId, bid.Version, bid.OccurredAt),
+            AuctionDecoded.Bid { Value: var bid } => (new EventRef(bid.EventId, bid.LotId, null, bid.Version, bid.OccurredAt),
                 (Func<Task<AuctionApplication>>)(() => store.Apply(bid, clock.GetUtcNow(), stoppingToken))),
-            AuctionDecoded.Sale { Value: var sale } => (new EventRef(sale.EventId, sale.LotId, sale.Version, sale.OccurredAt),
+            AuctionDecoded.Sale { Value: var sale } => (new EventRef(sale.EventId, sale.LotId, null, sale.Version, sale.OccurredAt),
                 () => store.Apply(sale, clock.GetUtcNow(), stoppingToken)),
-            AuctionDecoded.Lot { Value: var fact } => (new EventRef(fact.EventId, fact.Snapshot.LotId,
+            AuctionDecoded.Lot { Value: var fact } => (new EventRef(fact.EventId, fact.Snapshot.LotId, null,
                     fact.Snapshot.Version, fact.Snapshot.OccurredAt),
                 () => store.Apply(fact, clock.GetUtcNow(), stoppingToken)),
+            AuctionDecoded.Final { Value: var final } => (new EventRef(final.EventId, null, final.AuctionId,
+                    final.Version, final.OccurredAt),
+                () => store.Apply(final, clock.GetUtcNow(), stoppingToken)),
+            AuctionDecoded.Closed { Value: var closed } => (new EventRef(closed.EventId, null, closed.AuctionId,
+                    closed.Version, closed.OccurredAt),
+                () => store.Apply(closed, clock.GetUtcNow(), stoppingToken)),
             _ => throw new ArgumentOutOfRangeException(nameof(message)),
         };
         AuctionApplication application;
@@ -53,6 +60,14 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
         {
             await message.Retry(stoppingToken);
             Record(message, started, source, "failed", 0, "dependency_unavailable", "auction cause apply failed; message returned to the stream", ex);
+            return;
+        }
+        // Удержание лота состава ещё не пришло: анонс откатился целиком, и
+        // сообщение ждёт в потоке, пока удержание его не догонит.
+        if (application.Outcome == AuctionOutcome.LineupPending)
+        {
+            await message.Retry(stoppingToken);
+            Record(message, started, source, "lineup_pending", 0);
             return;
         }
         foreach (var (type, created) in application.Created)
@@ -71,6 +86,9 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionOutcome.Suppressed => "suppressed",
             AuctionOutcome.Collected => "collected",
             AuctionOutcome.LotReplicated => "lot_replicated",
+            AuctionOutcome.FinalAnnounced => "final_announced",
+            AuctionOutcome.LineupIncomplete => "lineup_incomplete",
+            AuctionOutcome.AuctionForgotten => "auction_forgotten",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),
         }, application.FactsCreated);
     }
@@ -93,7 +111,8 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
         if (source is not null)
         {
             fields["event_id"] = source.EventId;
-            fields["lot_id"] = source.LotId;
+            if (source.LotId is { } lotId) fields["lot_id"] = lotId;
+            if (source.AuctionId is { } auctionId) fields["auction_id"] = auctionId;
             fields["version"] = source.Version;
             fields["event_age_seconds"] = (clock.GetUtcNow() - source.OccurredAt).TotalSeconds;
         }

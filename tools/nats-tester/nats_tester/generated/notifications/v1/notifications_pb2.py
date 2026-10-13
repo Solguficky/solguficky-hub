@@ -27,53 +27,59 @@ from nats_tester.generated.identity.v1 import access_pb2 as identity_dot_v1_dot_
 from nats_tester.generated.meetups.v1 import meetups_pb2 as meetups_dot_v1_dot_meetups__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$notifications/v1/notifications.proto\x12\x10notifications.v1\x1a\x18\x61uction/v1/auction.proto\x1a\x18identity/v1/access.proto\x1a\x18meetups/v1/meetups.proto\"\x84\t\n\x0cNotification\x12\x17\n\x0fnotification_id\x18\x01 \x01(\t\x12\x14\n\x0crecipient_id\x18\x02 \x01(\t\x12\x12\n\ncreated_at\x18\x03 \x01(\t\x12\x16\n\tnot_after\x18\x04 \x01(\tH\x01\x88\x01\x01\x12&\n\x05\x63\x61use\x18\x05 \x01(\x0b\x32\x17.notifications.v1.Cause\x12=\n\x10meetup_published\x18\x06 \x01(\x0b\x32!.notifications.v1.MeetupPublishedH\x00\x12\x39\n\x0emeetup_changed\x18\x07 \x01(\x0b\x32\x1f.notifications.v1.MeetupChangedH\x00\x12;\n\x0fmeetup_material\x18\x08 \x01(\x0b\x32 .notifications.v1.MeetupMaterialH\x00\x12;\n\x0fmeetup_reminder\x18\t \x01(\x0b\x32 .notifications.v1.MeetupReminderH\x00\x12?\n\x11organizer_message\x18\n \x01(\x0b\x32\".notifications.v1.OrganizerMessageH\x00\x12I\n\x16\x63ommunity_announcement\x18\x0b \x01(\x0b\x32\'.notifications.v1.CommunityAnnouncementH\x00\x12\x41\n\x12meetup_unpublished\x18\x0c \x01(\x0b\x32#.notifications.v1.MeetupUnpublishedH\x00\x12\x31\n\nlot_outbid\x18\x0e \x01(\x0b\x32\x1b.notifications.v1.LotOutbidH\x00\x12\x37\n\rlot_purchased\x18\x0f \x01(\x0b\x32\x1e.notifications.v1.LotPurchasedH\x00\x12=\n\x10\x61\x63\x63\x65ss_requested\x18\x10 \x01(\x0b\x32!.notifications.v1.AccessRequestedH\x00\x12\x39\n\x0e\x61\x63\x63\x65ss_granted\x18\x11 \x01(\x0b\x32\x1f.notifications.v1.AccessGrantedH\x00\x12\x39\n\x0epreset_granted\x18\x15 \x01(\x0b\x32\x1f.notifications.v1.PresetGrantedH\x00\x12<\n\x10lot_proxy_raised\x18\x13 \x01(\x0b\x32 .notifications.v1.LotProxyRaisedH\x00\x12\x39\n\x0e\x63ircle_changed\x18\x14 \x01(\x0b\x32\x1f.notifications.v1.CircleChangedH\x00\x12\x42\n\x13lot_activity_digest\x18\x16 \x01(\x0b\x32#.notifications.v1.LotActivityDigestH\x00\x12\x17\n\nrequest_id\x18\r \x01(\tH\x02\x88\x01\x01\x42\x06\n\x04typeB\x0c\n\n_not_afterB\r\n\x0b_request_idJ\x04\x08\x12\x10\x13R\x0crole_granted\"\xbc\x01\n\x05\x43\x61use\x12\x19\n\x0fmeetup_event_id\x18\x01 \x01(\tH\x00\x12\x1a\n\x10reminder_task_id\x18\x02 \x01(\tH\x00\x12\x1c\n\x12\x63ommand_request_id\x18\x03 \x01(\tH\x00\x12\x1e\n\x14\x61uction_lot_event_id\x18\x04 \x01(\tH\x00\x12\x1b\n\x11identity_event_id\x18\x05 \x01(\tH\x00\x12\x1a\n\x10outbid_digest_id\x18\x06 \x01(\tH\x00\x42\x05\n\x03ref\"\xfa\x01\n\nMeetupCard\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\r\n\x05venue\x18\x04 \x01(\t\x12\x0c\n\x04kind\x18\x05 \x01(\t\x12\x15\n\rcalendar_link\x18\x06 \x01(\t\x12&\n\x08schedule\x18\x07 \x01(\x0b\x32\x14.meetups.v1.Schedule\x12.\n\tlifecycle\x18\x08 \x01(\x0e\x32\x1b.meetups.v1.MeetupLifecycle\x12\x30\n\nvisibility\x18\t \x01(\x0e\x32\x1c.meetups.v1.MeetupVisibility\"?\n\x0fMeetupPublished\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\"v\n\rMeetupChanged\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x37\n\x0f\x63hanged_aspects\x18\x02 \x03(\x0e\x32\x1e.notifications.v1.MeetupAspect\"k\n\x0eMeetupMaterial\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x13\n\x0bmaterial_id\x18\x02 \x01(\t\x12\x16\n\x0ematerial_title\x18\x03 \x01(\t\">\n\x0eMeetupReminder\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\"a\n\x10OrganizerMessage\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x11\n\tsender_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t\"8\n\x15\x43ommunityAnnouncement\x12\x11\n\tsender_id\x18\x01 \x01(\t\x12\x0c\n\x04\x62ody\x18\x02 \x01(\t\"A\n\x11MeetupUnpublished\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\"E\n\tLotOutbid\x12\x0e\n\x06lot_id\x18\x01 \x01(\t\x12(\n\rcurrent_price\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\"J\n\x0eLotProxyRaised\x12\x0e\n\x06lot_id\x18\x01 \x01(\t\x12(\n\rcurrent_price\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\"@\n\x0cLotPurchased\x12\x0e\n\x06lot_id\x18\x01 \x01(\t\x12 \n\x05price\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\"E\n\x11LotActivityDigest\x12\x30\n\x05lines\x18\x01 \x03(\x0b\x32!.notifications.v1.LotActivityLine\"\x95\x01\n\x0fLotActivityLine\x12\x0e\n\x06lot_id\x18\x01 \x01(\t\x12/\n\x04kind\x18\x02 \x01(\x0e\x32!.notifications.v1.LotActivityKind\x12(\n\rcurrent_price\x18\x03 \x01(\x0b\x32\x11.auction.v1.Money\x12\x17\n\x0frecipient_leads\x18\x04 \x01(\x08\"M\n\x0f\x41\x63\x63\x65ssRequested\x12,\n\x05queue\x18\x02 \x01(\x0e\x32\x1d.identity.v1.ApplicationQueueJ\x04\x08\x01\x10\x02R\x06\x63ircle\"K\n\rAccessGranted\x12,\n\x05queue\x18\x02 \x01(\x0e\x32\x1d.identity.v1.ApplicationQueueJ\x04\x08\x01\x10\x02R\x06\x63ircle\"4\n\rPresetGranted\x12#\n\x06preset\x18\x01 \x01(\x0e\x32\x13.identity.v1.Preset\"j\n\rCircleChanged\x12,\n\x0fprevious_circle\x18\x01 \x01(\x0e\x32\x13.identity.v1.Circle\x12+\n\x0e\x63urrent_circle\x18\x02 \x01(\x0e\x32\x13.identity.v1.Circle*\x8e\x02\n\x0cMeetupAspect\x12\x1d\n\x19MEETUP_ASPECT_UNSPECIFIED\x10\x00\x12\x17\n\x13MEETUP_ASPECT_TITLE\x10\x01\x12\x1d\n\x19MEETUP_ASPECT_DESCRIPTION\x10\x02\x12\x17\n\x13MEETUP_ASPECT_VENUE\x10\x03\x12\x16\n\x12MEETUP_ASPECT_KIND\x10\x04\x12\x1f\n\x1bMEETUP_ASPECT_CALENDAR_LINK\x10\x05\x12\x1a\n\x16MEETUP_ASPECT_SCHEDULE\x10\x06\x12\x1b\n\x17MEETUP_ASPECT_LIFECYCLE\x10\x07\x12\x1c\n\x18MEETUP_ASPECT_VISIBILITY\x10\x08*v\n\x0fLotActivityKind\x12!\n\x1dLOT_ACTIVITY_KIND_UNSPECIFIED\x10\x00\x12\x1c\n\x18LOT_ACTIVITY_KIND_OUTBID\x10\x01\x12\"\n\x1eLOT_ACTIVITY_KIND_PROXY_RAISED\x10\x02\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n$notifications/v1/notifications.proto\x12\x10notifications.v1\x1a\x18\x61uction/v1/auction.proto\x1a\x18identity/v1/access.proto\x1a\x18meetups/v1/meetups.proto\"\x92\n\n\x0cNotification\x12\x17\n\x0fnotification_id\x18\x01 \x01(\t\x12\x14\n\x0crecipient_id\x18\x02 \x01(\t\x12\x12\n\ncreated_at\x18\x03 \x01(\t\x12\x16\n\tnot_after\x18\x04 \x01(\tH\x01\x88\x01\x01\x12&\n\x05\x63\x61use\x18\x05 \x01(\x0b\x32\x17.notifications.v1.Cause\x12=\n\x10meetup_published\x18\x06 \x01(\x0b\x32!.notifications.v1.MeetupPublishedH\x00\x12\x39\n\x0emeetup_changed\x18\x07 \x01(\x0b\x32\x1f.notifications.v1.MeetupChangedH\x00\x12;\n\x0fmeetup_material\x18\x08 \x01(\x0b\x32 .notifications.v1.MeetupMaterialH\x00\x12;\n\x0fmeetup_reminder\x18\t \x01(\x0b\x32 .notifications.v1.MeetupReminderH\x00\x12?\n\x11organizer_message\x18\n \x01(\x0b\x32\".notifications.v1.OrganizerMessageH\x00\x12I\n\x16\x63ommunity_announcement\x18\x0b \x01(\x0b\x32\'.notifications.v1.CommunityAnnouncementH\x00\x12\x41\n\x12meetup_unpublished\x18\x0c \x01(\x0b\x32#.notifications.v1.MeetupUnpublishedH\x00\x12\x31\n\nlot_outbid\x18\x0e \x01(\x0b\x32\x1b.notifications.v1.LotOutbidH\x00\x12\x37\n\rlot_purchased\x18\x0f \x01(\x0b\x32\x1e.notifications.v1.LotPurchasedH\x00\x12=\n\x10\x61\x63\x63\x65ss_requested\x18\x10 \x01(\x0b\x32!.notifications.v1.AccessRequestedH\x00\x12\x39\n\x0e\x61\x63\x63\x65ss_granted\x18\x11 \x01(\x0b\x32\x1f.notifications.v1.AccessGrantedH\x00\x12\x39\n\x0epreset_granted\x18\x15 \x01(\x0b\x32\x1f.notifications.v1.PresetGrantedH\x00\x12<\n\x10lot_proxy_raised\x18\x13 \x01(\x0b\x32 .notifications.v1.LotProxyRaisedH\x00\x12\x39\n\x0e\x63ircle_changed\x18\x14 \x01(\x0b\x32\x1f.notifications.v1.CircleChangedH\x00\x12\x42\n\x13lot_activity_digest\x18\x16 \x01(\x0b\x32#.notifications.v1.LotActivityDigestH\x00\x12\x44\n\x14\x61uction_final_lineup\x18\x17 \x01(\x0b\x32$.notifications.v1.AuctionFinalLineupH\x00\x12\x46\n\x15\x61uction_final_started\x18\x18 \x01(\x0b\x32%.notifications.v1.AuctionFinalStartedH\x00\x12\x17\n\nrequest_id\x18\r \x01(\tH\x02\x88\x01\x01\x42\x06\n\x04typeB\x0c\n\n_not_afterB\r\n\x0b_request_idJ\x04\x08\x12\x10\x13R\x0crole_granted\"\xd8\x01\n\x05\x43\x61use\x12\x19\n\x0fmeetup_event_id\x18\x01 \x01(\tH\x00\x12\x1a\n\x10reminder_task_id\x18\x02 \x01(\tH\x00\x12\x1c\n\x12\x63ommand_request_id\x18\x03 \x01(\tH\x00\x12\x1e\n\x14\x61uction_lot_event_id\x18\x04 \x01(\tH\x00\x12\x1b\n\x11identity_event_id\x18\x05 \x01(\tH\x00\x12\x1a\n\x10outbid_digest_id\x18\x06 \x01(\tH\x00\x12\x1a\n\x10\x61uction_event_id\x18\x07 \x01(\tH\x00\x42\x05\n\x03ref\"\xfa\x01\n\nMeetupCard\x12\n\n\x02id\x18\x01 \x01(\t\x12\r\n\x05title\x18\x02 \x01(\t\x12\x13\n\x0b\x64\x65scription\x18\x03 \x01(\t\x12\r\n\x05venue\x18\x04 \x01(\t\x12\x0c\n\x04kind\x18\x05 \x01(\t\x12\x15\n\rcalendar_link\x18\x06 \x01(\t\x12&\n\x08schedule\x18\x07 \x01(\x0b\x32\x14.meetups.v1.Schedule\x12.\n\tlifecycle\x18\x08 \x01(\x0e\x32\x1b.meetups.v1.MeetupLifecycle\x12\x30\n\nvisibility\x18\t \x01(\x0e\x32\x1c.meetups.v1.MeetupVisibility\"?\n\x0fMeetupPublished\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\"v\n\rMeetupChanged\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x37\n\x0f\x63hanged_aspects\x18\x02 \x03(\x0e\x32\x1e.notifications.v1.MeetupAspect\"k\n\x0eMeetupMaterial\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x13\n\x0bmaterial_id\x18\x02 \x01(\t\x12\x16\n\x0ematerial_title\x18\x03 \x01(\t\">\n\x0eMeetupReminder\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\"a\n\x10OrganizerMessage\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\x12\x11\n\tsender_id\x18\x02 \x01(\t\x12\x0c\n\x04\x62ody\x18\x03 \x01(\t\"8\n\x15\x43ommunityAnnouncement\x12\x11\n\tsender_id\x18\x01 \x01(\t\x12\x0c\n\x04\x62ody\x18\x02 \x01(\t\"A\n\x11MeetupUnpublished\x12,\n\x06meetup\x18\x01 \x01(\x0b\x32\x1c.notifications.v1.MeetupCard\"E\n\tLotOutbid\x12\x0e\n\x06lot_id\x18\x01 \x01(\t\x12(\n\rcurrent_price\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\"J\n\x0eLotProxyRaised\x12\x0e\n\x06lot_id\x18\x01 \x01(\t\x12(\n\rcurrent_price\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\"@\n\x0cLotPurchased\x12\x0e\n\x06lot_id\x18\x01 \x01(\t\x12 \n\x05price\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\"E\n\x11LotActivityDigest\x12\x30\n\x05lines\x18\x01 \x03(\x0b\x32!.notifications.v1.LotActivityLine\"\x95\x01\n\x0fLotActivityLine\x12\x0e\n\x06lot_id\x18\x01 \x01(\t\x12/\n\x04kind\x18\x02 \x01(\x0e\x32!.notifications.v1.LotActivityKind\x12(\n\rcurrent_price\x18\x03 \x01(\x0b\x32\x11.auction.v1.Money\x12\x17\n\x0frecipient_leads\x18\x04 \x01(\x08\"\x83\x01\n\x12\x41uctionFinalLineup\x12\x12\n\nauction_id\x18\x01 \x01(\t\x12\x11\n\tmeetup_id\x18\x02 \x01(\t\x12\x30\n\x06lineup\x18\x03 \x03(\x0b\x32 .notifications.v1.FinalLineupLot\x12\x14\n\x0cyour_lot_ids\x18\x04 \x03(\t\"B\n\x0e\x46inalLineupLot\x12\x0e\n\x06lot_id\x18\x01 \x01(\t\x12 \n\x05price\x18\x02 \x01(\x0b\x32\x11.auction.v1.Money\"<\n\x13\x41uctionFinalStarted\x12\x12\n\nauction_id\x18\x01 \x01(\t\x12\x11\n\tmeetup_id\x18\x02 \x01(\t\"M\n\x0f\x41\x63\x63\x65ssRequested\x12,\n\x05queue\x18\x02 \x01(\x0e\x32\x1d.identity.v1.ApplicationQueueJ\x04\x08\x01\x10\x02R\x06\x63ircle\"K\n\rAccessGranted\x12,\n\x05queue\x18\x02 \x01(\x0e\x32\x1d.identity.v1.ApplicationQueueJ\x04\x08\x01\x10\x02R\x06\x63ircle\"4\n\rPresetGranted\x12#\n\x06preset\x18\x01 \x01(\x0e\x32\x13.identity.v1.Preset\"j\n\rCircleChanged\x12,\n\x0fprevious_circle\x18\x01 \x01(\x0e\x32\x13.identity.v1.Circle\x12+\n\x0e\x63urrent_circle\x18\x02 \x01(\x0e\x32\x13.identity.v1.Circle*\x8e\x02\n\x0cMeetupAspect\x12\x1d\n\x19MEETUP_ASPECT_UNSPECIFIED\x10\x00\x12\x17\n\x13MEETUP_ASPECT_TITLE\x10\x01\x12\x1d\n\x19MEETUP_ASPECT_DESCRIPTION\x10\x02\x12\x17\n\x13MEETUP_ASPECT_VENUE\x10\x03\x12\x16\n\x12MEETUP_ASPECT_KIND\x10\x04\x12\x1f\n\x1bMEETUP_ASPECT_CALENDAR_LINK\x10\x05\x12\x1a\n\x16MEETUP_ASPECT_SCHEDULE\x10\x06\x12\x1b\n\x17MEETUP_ASPECT_LIFECYCLE\x10\x07\x12\x1c\n\x18MEETUP_ASPECT_VISIBILITY\x10\x08*v\n\x0fLotActivityKind\x12!\n\x1dLOT_ACTIVITY_KIND_UNSPECIFIED\x10\x00\x12\x1c\n\x18LOT_ACTIVITY_KIND_OUTBID\x10\x01\x12\"\n\x1eLOT_ACTIVITY_KIND_PROXY_RAISED\x10\x02\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'notifications.v1.notifications_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_MEETUPASPECT']._serialized_start=3076
-  _globals['_MEETUPASPECT']._serialized_end=3346
-  _globals['_LOTACTIVITYKIND']._serialized_start=3348
-  _globals['_LOTACTIVITYKIND']._serialized_end=3466
+  _globals['_MEETUPASPECT']._serialized_start=3510
+  _globals['_MEETUPASPECT']._serialized_end=3780
+  _globals['_LOTACTIVITYKIND']._serialized_start=3782
+  _globals['_LOTACTIVITYKIND']._serialized_end=3900
   _globals['_NOTIFICATION']._serialized_start=137
-  _globals['_NOTIFICATION']._serialized_end=1293
-  _globals['_CAUSE']._serialized_start=1296
-  _globals['_CAUSE']._serialized_end=1484
-  _globals['_MEETUPCARD']._serialized_start=1487
-  _globals['_MEETUPCARD']._serialized_end=1737
-  _globals['_MEETUPPUBLISHED']._serialized_start=1739
-  _globals['_MEETUPPUBLISHED']._serialized_end=1802
-  _globals['_MEETUPCHANGED']._serialized_start=1804
-  _globals['_MEETUPCHANGED']._serialized_end=1922
-  _globals['_MEETUPMATERIAL']._serialized_start=1924
-  _globals['_MEETUPMATERIAL']._serialized_end=2031
-  _globals['_MEETUPREMINDER']._serialized_start=2033
-  _globals['_MEETUPREMINDER']._serialized_end=2095
-  _globals['_ORGANIZERMESSAGE']._serialized_start=2097
-  _globals['_ORGANIZERMESSAGE']._serialized_end=2194
-  _globals['_COMMUNITYANNOUNCEMENT']._serialized_start=2196
-  _globals['_COMMUNITYANNOUNCEMENT']._serialized_end=2252
-  _globals['_MEETUPUNPUBLISHED']._serialized_start=2254
-  _globals['_MEETUPUNPUBLISHED']._serialized_end=2319
-  _globals['_LOTOUTBID']._serialized_start=2321
-  _globals['_LOTOUTBID']._serialized_end=2390
-  _globals['_LOTPROXYRAISED']._serialized_start=2392
-  _globals['_LOTPROXYRAISED']._serialized_end=2466
-  _globals['_LOTPURCHASED']._serialized_start=2468
-  _globals['_LOTPURCHASED']._serialized_end=2532
-  _globals['_LOTACTIVITYDIGEST']._serialized_start=2534
-  _globals['_LOTACTIVITYDIGEST']._serialized_end=2603
-  _globals['_LOTACTIVITYLINE']._serialized_start=2606
-  _globals['_LOTACTIVITYLINE']._serialized_end=2755
-  _globals['_ACCESSREQUESTED']._serialized_start=2757
-  _globals['_ACCESSREQUESTED']._serialized_end=2834
-  _globals['_ACCESSGRANTED']._serialized_start=2836
-  _globals['_ACCESSGRANTED']._serialized_end=2911
-  _globals['_PRESETGRANTED']._serialized_start=2913
-  _globals['_PRESETGRANTED']._serialized_end=2965
-  _globals['_CIRCLECHANGED']._serialized_start=2967
-  _globals['_CIRCLECHANGED']._serialized_end=3073
+  _globals['_NOTIFICATION']._serialized_end=1435
+  _globals['_CAUSE']._serialized_start=1438
+  _globals['_CAUSE']._serialized_end=1654
+  _globals['_MEETUPCARD']._serialized_start=1657
+  _globals['_MEETUPCARD']._serialized_end=1907
+  _globals['_MEETUPPUBLISHED']._serialized_start=1909
+  _globals['_MEETUPPUBLISHED']._serialized_end=1972
+  _globals['_MEETUPCHANGED']._serialized_start=1974
+  _globals['_MEETUPCHANGED']._serialized_end=2092
+  _globals['_MEETUPMATERIAL']._serialized_start=2094
+  _globals['_MEETUPMATERIAL']._serialized_end=2201
+  _globals['_MEETUPREMINDER']._serialized_start=2203
+  _globals['_MEETUPREMINDER']._serialized_end=2265
+  _globals['_ORGANIZERMESSAGE']._serialized_start=2267
+  _globals['_ORGANIZERMESSAGE']._serialized_end=2364
+  _globals['_COMMUNITYANNOUNCEMENT']._serialized_start=2366
+  _globals['_COMMUNITYANNOUNCEMENT']._serialized_end=2422
+  _globals['_MEETUPUNPUBLISHED']._serialized_start=2424
+  _globals['_MEETUPUNPUBLISHED']._serialized_end=2489
+  _globals['_LOTOUTBID']._serialized_start=2491
+  _globals['_LOTOUTBID']._serialized_end=2560
+  _globals['_LOTPROXYRAISED']._serialized_start=2562
+  _globals['_LOTPROXYRAISED']._serialized_end=2636
+  _globals['_LOTPURCHASED']._serialized_start=2638
+  _globals['_LOTPURCHASED']._serialized_end=2702
+  _globals['_LOTACTIVITYDIGEST']._serialized_start=2704
+  _globals['_LOTACTIVITYDIGEST']._serialized_end=2773
+  _globals['_LOTACTIVITYLINE']._serialized_start=2776
+  _globals['_LOTACTIVITYLINE']._serialized_end=2925
+  _globals['_AUCTIONFINALLINEUP']._serialized_start=2928
+  _globals['_AUCTIONFINALLINEUP']._serialized_end=3059
+  _globals['_FINALLINEUPLOT']._serialized_start=3061
+  _globals['_FINALLINEUPLOT']._serialized_end=3127
+  _globals['_AUCTIONFINALSTARTED']._serialized_start=3129
+  _globals['_AUCTIONFINALSTARTED']._serialized_end=3189
+  _globals['_ACCESSREQUESTED']._serialized_start=3191
+  _globals['_ACCESSREQUESTED']._serialized_end=3268
+  _globals['_ACCESSGRANTED']._serialized_start=3270
+  _globals['_ACCESSGRANTED']._serialized_end=3345
+  _globals['_PRESETGRANTED']._serialized_start=3347
+  _globals['_PRESETGRANTED']._serialized_end=3399
+  _globals['_CIRCLECHANGED']._serialized_start=3401
+  _globals['_CIRCLECHANGED']._serialized_end=3507
 # @@protoc_insertion_point(module_scope)

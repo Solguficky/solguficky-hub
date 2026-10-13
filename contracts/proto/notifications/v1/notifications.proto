@@ -110,6 +110,14 @@ message Notification {
     // a lot in it is sold. Sent only to that person: a subscription is not
     // required.
     LotActivityDigest lot_activity_digest = 22;
+
+    // The lineup of the final of an auction was frozen. One fact per
+    // recipient: the recipient's own lots of the lineup are named inside it,
+    // never in a second fact.
+    AuctionFinalLineup auction_final_lineup = 23;
+
+    // The live final of an auction started.
+    AuctionFinalStarted auction_final_started = 24;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -148,6 +156,10 @@ message Cause {
     // Identifier of the Notifications outbid window that closed into a
     // lot_activity_digest. A window closes once, so it produces one digest.
     string outbid_digest_id = 6;
+
+    // event_id of the consumed Auction auction event. Stable across
+    // republication, therefore a transport repeat is recognized.
+    string auction_event_id = 7;
   }
 }
 
@@ -329,6 +341,45 @@ enum LotActivityKind {
 
   // The recipient's proxy limit answered another participant on the lot.
   LOT_ACTIVITY_KIND_PROXY_RAISED = 2;
+}
+
+// The frozen lineup of the final of an auction. The auction and lot titles are
+// not part of the trading domain; the channel reads them by id.
+message AuctionFinalLineup {
+  // Canonical lowercase UUID with hyphens: version 5 for an auction of a
+  // meetup, as auction.v1.AuctionState.id.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // At least one lot, in the order they go in the final.
+  repeated FinalLineupLot lineup = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the lots of the lineup the
+  // recipient led when they were held, in lineup order. Empty when the
+  // recipient leads none: then this is the plain announcement.
+  repeated string your_lot_ids = 4;
+}
+
+// One lot of a frozen lineup. Who leads it is not carried: that is data about
+// another person, and the recipient's own lots are named by your_lot_ids.
+message FinalLineupLot {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // The price the lot had when it was held for the final.
+  auction.v1.Money price = 2;
+}
+
+// The live final of an auction started. No lot is active yet, so none is
+// carried.
+message AuctionFinalStarted {
+  // Canonical lowercase UUID with hyphens, as in AuctionFinalLineup.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
 }
 
 // A new application was opened in a queue the recipient moderates. The
