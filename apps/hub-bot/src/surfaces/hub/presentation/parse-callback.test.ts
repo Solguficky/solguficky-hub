@@ -975,9 +975,10 @@ describe("lot form callbacks", () => {
       // Наибольшая цена, которую принимает разбор ответа, помещается в кнопку.
       [
         `v1:q:ls:${lot}:${maxLotRubles}`,
-        { kind: "lot-step", lot, price: maxLotRubles },
+        { kind: "lot-step", lot, price: maxLotRubles, mode: "single" },
       ],
-      [`v1:q:ls:${lot}:1`, { kind: "lot-step", lot, price: 1 }],
+      [`v1:q:ls:${lot}:1`, { kind: "lot-step", lot, price: 1, mode: "single" }],
+      [`v1:q:ly:${lot}:1`, { kind: "lot-step", lot, price: 1, mode: "tiered" }],
     ];
     // Самый длинный Telegram id — 16 цифр; с ним шаг обязан уложиться в кнопку.
     const askedBy = 9007199254740991;

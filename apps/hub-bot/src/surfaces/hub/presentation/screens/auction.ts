@@ -942,9 +942,16 @@ function stepLines(
   const active = block.activeWindow;
   const current =
     active === undefined
-      ? block.fixedStep === undefined
-        ? []
-        : [`Шаг: ${money(block.fixedStep)}`]
+      ? block.tiers === undefined
+        ? block.fixedStep === undefined
+          ? []
+          : [`Шаг: ${money(block.fixedStep)}`]
+        : [
+            "Шаг по порогам:",
+            ...block.tiers.map(
+              (tier) => `от ${money(tier.lowerBound)} — ${money(tier.step)}`,
+            ),
+          ]
       : [
           `Счастливые часы: шаг ${money(active.step)} до ${at(active.until)}`,
           ...(block.baseStep === undefined

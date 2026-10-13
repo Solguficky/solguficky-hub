@@ -73,7 +73,8 @@ export type LotQuestion =
   | { kind: "new"; auctionId: string; lotId: NewLotId }
   | { kind: "text"; field: LotTextField; lotId: string }
   | { kind: "price"; lotId: string }
-  | { kind: "step"; lotId: string; priceRubles: number }
+  // Способ шага выбирается до вопроса о нём (PER-491): один шаг или пороги.
+  | { kind: "step"; lotId: string; priceRubles: number; mode: LotStepMode }
   | { kind: "image"; lotId: string };
 
 // Почему вопрос формы лота задан заново.
@@ -82,6 +83,11 @@ export type LotAskError =
   | "empty-description"
   | "amount-format"
   | "amount-range"
+  // Порог не разобран: не строка «от суммы — шаг» либо сумма не число формы.
+  | "step-format"
+  // Пороги не начинаются с нуля либо идут не по возрастанию.
+  | "step-order"
+  // Auction отклонил политику шага целиком.
   | "step-refused"
   // Отказы Auction на фото: больше его предела либо не изображение.
   | "image-too-large"
@@ -93,12 +99,23 @@ export type LotAskError =
   // Telegram не отдал файл фотографии: её можно прислать ещё раз.
   | "photo-unavailable";
 
+// Способ задать шаг (PER-491): один на все цены либо по ценовым порогам.
+export type LotStepMode = "single" | "tiered";
+
+// Порог шага по цене в форме: нижняя граница и шаг от неё.
+export type LotTierView = { lowerBound: LotAmount; step: LotAmount };
+
 // `unset` — лот без условий торгов. `closed` — торги по лоту начались или
-// закончились: условия заморожены. Шага у `set` нет, когда он не один на все
-// цены: сетку форма не показывает и не задаёт.
+// закончились: условия заморожены. Шага у `set` нет, когда он по порогам:
+// тогда его несёт `tiers`.
 export type LotTermsView =
   | { kind: "unset" }
-  | { kind: "set"; startingPrice: LotAmount; step?: LotAmount }
+  | {
+      kind: "set";
+      startingPrice: LotAmount;
+      step?: LotAmount;
+      tiers?: readonly LotTierView[];
+    }
   | { kind: "closed" };
 
 // Сумма в минимальных единицах валюты, как в `auction.v1.Money`.
@@ -307,6 +324,8 @@ export type LotFormRequest =
       intent: "set-lot-terms";
       lotId: string;
       priceRubles: number;
+      // Способ шага выбран до вопроса: один шаг или пороги (PER-491).
+      mode: LotStepMode;
       value: string;
       opId: string;
     })
@@ -766,6 +785,9 @@ export type ExecuteResult =
     }
   // Предпросмотр лота (PER-512): снимок, прочитанный правом администратора.
   | { kind: "lot-preview"; lot: LotView }
+  // Цена принята, спрашивается способ шага (PER-491): один шаг или пороги.
+  // Кнопка выбора несёт цену, чтобы рестарт не терял её.
+  | { kind: "lot-step-mode"; lot: LotFormView; priceRubles: number }
   // Вопрос формы лота: следующий шаг либо тот же заново, с причиной отказа.
   // Лота нет у нового лота и там, где его не читали.
   | {

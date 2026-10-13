@@ -5,14 +5,18 @@ import type {
   LotAdministration,
   LotCardResult,
   LotReadResult,
+  LotStepPolicyInput,
 } from "../auction/port.js";
 import type {
   ExecuteResult,
   LotAmount,
+  LotAskError,
   LotFormRequest,
   LotFormView,
   LotQuestion,
+  LotStepMode,
   LotTermsView,
+  LotTierView,
 } from "./types.js";
 
 // Форма лота администратора (PER-319; ADR-047, дополнение 2026-10-05). Каждый
@@ -68,6 +72,71 @@ function rubles(amount: number): LotAmount {
   return { minorUnits: amount * 100, currency: lotCurrency };
 }
 
+// Целое число рублей, где ноль допустим (первая граница порога). Отличается от
+// `parseRubles` только этим: цена ноль не бывает, а граница «от 0» обязана.
+function parseWholeRubles(raw: string): number | undefined {
+  const digits = raw.trim().replace(groupSeparators, "");
+  if (!/^\d+$/.test(digits)) return undefined;
+  const significant = digits.replace(/^0+/, "");
+  const value = significant === "" ? 0 : Number(significant);
+  return value > maxLotRubles ? undefined : value;
+}
+
+type StepParse =
+  | {
+      kind: "ok";
+      policy: LotStepPolicyInput;
+      terms: { step: LotAmount } | { tiers: LotTierView[] };
+    }
+  | { kind: "rejected"; reason: LotAskError };
+
+// Шаг из ответа (PER-491): одно число — `fixed`, строки «от суммы — шаг» —
+// `tiered`. Пороги проверяются здесь, до Auction: первая граница ноль и
+// возрастание (И-15), и та же проверка приходит отказом Auction на всякий
+// случай, но человеку она нужна текстом формы.
+function parseStep(mode: LotStepMode, raw: string): StepParse {
+  if (mode === "single") {
+    const step = parseRubles(raw);
+    if (step.kind === "rejected")
+      return { kind: "rejected", reason: step.reason };
+    const amount = rubles(step.rubles);
+    return {
+      kind: "ok",
+      policy: { kind: "fixed", step: amount },
+      terms: { step: amount },
+    };
+  }
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  if (lines.length === 0) return { kind: "rejected", reason: "step-format" };
+  const tiers: LotTierView[] = [];
+  for (const line of lines) {
+    // Разделитель — тире любое из трёх; в сумме тире не бывает.
+    const parts = line.split(/[—–-]/);
+    if (parts.length !== 2) return { kind: "rejected", reason: "step-format" };
+    const bound = parseWholeRubles(parts[0] ?? "");
+    const step = parseWholeRubles(parts[1] ?? "");
+    if (bound === undefined || step === undefined || step <= 0) {
+      return { kind: "rejected", reason: "step-format" };
+    }
+    tiers.push({ lowerBound: rubles(bound), step: rubles(step) });
+  }
+  const [first] = tiers;
+  if (first === undefined || first.lowerBound.minorUnits !== 0) {
+    return { kind: "rejected", reason: "step-order" };
+  }
+  for (let i = 1; i < tiers.length; i += 1) {
+    if (
+      tiers[i]!.lowerBound.minorUnits <= tiers[i - 1]!.lowerBound.minorUnits
+    ) {
+      return { kind: "rejected", reason: "step-order" };
+    }
+  }
+  return { kind: "ok", policy: { kind: "tiered", tiers }, terms: { tiers } };
+}
+
 function termsOf(lot: LotView): LotTermsView {
   switch (lot.status.kind) {
     case "draft":
@@ -77,6 +146,7 @@ function termsOf(lot: LotView): LotTermsView {
         kind: "set",
         startingPrice: lot.status.startingPrice,
         ...(lot.fixedStep === undefined ? {} : { step: lot.fixedStep }),
+        ...(lot.tiers === undefined ? {} : { tiers: lot.tiers }),
       };
     case "trading":
     case "held":
@@ -440,14 +510,11 @@ export function createLotForm(lots: LotAdministration) {
           lot: current.lot,
           error: price.reason,
         }
-      : {
-          kind: "lot-ask",
-          question: {
-            kind: "step",
-            lotId: request.lotId,
-            priceRubles: price.rubles,
-          },
+      : // Цена принята — спрашивается способ шага (PER-491), а не шаг сразу.
+        {
+          kind: "lot-step-mode",
           lot: current.lot,
+          priceRubles: price.rubles,
         };
   }
 
@@ -466,8 +533,9 @@ export function createLotForm(lots: LotAdministration) {
       kind: "step",
       lotId: request.lotId,
       priceRubles: request.priceRubles,
+      mode: request.mode,
     };
-    const step = parseRubles(request.value);
+    const step = parseStep(request.mode, request.value);
     if (step.kind === "rejected") {
       return {
         kind: "lot-ask",
@@ -477,7 +545,6 @@ export function createLotForm(lots: LotAdministration) {
       };
     }
     const startingPrice = rubles(request.priceRubles);
-    const fixedStep = rubles(step.rubles);
     const scheduled = await lots.scheduleLot(
       request.identity,
       {
@@ -486,7 +553,7 @@ export function createLotForm(lots: LotAdministration) {
         lotId: request.lotId,
         opId: request.opId,
         startingPrice,
-        step: fixedStep,
+        stepPolicy: step.policy,
       },
       rpcMeta(request),
     );
@@ -496,7 +563,7 @@ export function createLotForm(lots: LotAdministration) {
           kind: "lot-form",
           lot: {
             ...current.lot,
-            terms: { kind: "set", startingPrice, step: fixedStep },
+            terms: { kind: "set", startingPrice, ...step.terms },
           },
           saved: "terms",
         };

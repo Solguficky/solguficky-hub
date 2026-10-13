@@ -535,6 +535,20 @@ describe("happy hours in the hub shell", () => {
     );
   });
 
+  it("shows the thresholds instead of one step when the step is tiered", () => {
+    expect(
+      facts({
+        nextPrice: rub(1210),
+        tiers: [
+          { lowerBound: rub(0), step: rub(50) },
+          { lowerBound: rub(5000), step: rub(250) },
+        ],
+      }),
+    ).toContain(
+      "Следующая ставка: от 1 210 ₽<br>Шаг по порогам:<br>от 0 ₽ — 50 ₽<br>от 5 000 ₽ — 250 ₽",
+    );
+  });
+
   it("names the day of a future window once when it fits in a day", () => {
     expect(
       facts({

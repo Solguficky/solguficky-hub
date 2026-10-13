@@ -158,7 +158,10 @@ describe("наполнение аукциона", () => {
       auctionId: "a-1",
       lotId: "id-3",
       startingPrice: { minorUnits: 30_000, currency: "RUB" },
-      step: { minorUnits: 5_000, currency: "RUB" },
+      stepPolicy: {
+        kind: "fixed",
+        step: { minorUnits: 5_000, currency: "RUB" },
+      },
     });
     const photo = calls.find((call) => call.method === "editLotCard");
     expect(photo?.args).toEqual({

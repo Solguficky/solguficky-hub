@@ -105,6 +105,13 @@ export type LotReadResult =
 
 export type LotCardText = { lotId: string; title: string; description: string };
 
+// Шаг ставки условий лота (PER-491): один на все цены либо по ценовым порогам.
+// У порогов первая граница — ноль, границы возрастают (И-15 RFC-011).
+export type LotTierInput = { lowerBound: Money; step: Money };
+export type LotStepPolicyInput =
+  | { kind: "fixed"; step: Money }
+  | { kind: "tiered"; tiers: readonly LotTierInput[] };
+
 // Правка карточки. Без `image` изображение остаётся как есть: `image_change` не
 // выставляется. С ним — заменяется файлом, скачанным у Telegram.
 export type LotCardEdit = LotCardText & { image?: Uint8Array };
@@ -133,7 +140,7 @@ export type LotAdministration = {
       lotId: string;
       opId: string;
       startingPrice: Money;
-      step: Money;
+      stepPolicy: LotStepPolicyInput;
     },
     meta?: RpcMetadata,
   ): Promise<ScheduleLotResult>;
