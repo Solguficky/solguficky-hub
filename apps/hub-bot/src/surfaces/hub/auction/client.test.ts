@@ -1,4 +1,4 @@
-import { create } from "@bufbuild/protobuf";
+import { create, type MessageInitShape } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
 import { AuctionState_DraftSchema } from "../../../../gen/auction/v1/auction_events_pb.js";
@@ -12,6 +12,8 @@ import {
   DiscardAuctionResponseSchema,
   DraftAuctionResponseSchema,
   EditLotCardResponseSchema,
+  FreezeFinalLineupRefusalSchema,
+  FreezeFinalLineupResponseSchema,
   GetAuctionConsoleResponseSchema,
   GetAuctionLotStatisticsResponseSchema,
   GetMeetupAuctionResponseSchema,
@@ -67,6 +69,7 @@ function adapter(rpc: {
   discardAuction?: Call;
   selectForFinal?: Call;
   deselectForFinal?: Call;
+  freezeFinalLineup?: Call;
   startFinal?: Call;
   startNextLot?: Call;
   advanceAsk?: Call;
@@ -101,6 +104,7 @@ function adapter(rpc: {
     discardAuction: (rpc.discardAuction ?? notUsed) as never,
     selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
     deselectForFinal: (rpc.deselectForFinal ?? notUsed) as never,
+    freezeFinalLineup: (rpc.freezeFinalLineup ?? notUsed) as never,
     startFinal: (rpc.startFinal ?? notUsed) as never,
     startNextLot: (rpc.startNextLot ?? notUsed) as never,
     advanceAsk: (rpc.advanceAsk ?? notUsed) as never,
@@ -1053,6 +1057,64 @@ describe("auction adapter in the final", () => {
     await expect(
       console({ case: "inFinal", value: { order: [] } }),
     ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+
+  it("sends the lineup in its order and reads every refusal of the announcement", async () => {
+    const sent: unknown[] = [];
+    const refusing = (
+      refusal: MessageInitShape<typeof FreezeFinalLineupRefusalSchema>,
+    ) =>
+      adapter({
+        freezeFinalLineup: async () =>
+          create(FreezeFinalLineupResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: create(FreezeFinalLineupRefusalSchema, refusal),
+            },
+          }),
+      });
+    const accepted = adapter({
+      freezeFinalLineup: async (request) => {
+        sent.push(request);
+        return create(FreezeFinalLineupResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    const freeze = { auctionId, opId, lotIds: [second, lotId] };
+
+    await expect(accepted.freezeFinalLineup(admin, freeze)).resolves.toEqual({
+      kind: "ok",
+    });
+    expect(sent).toEqual([
+      expect.objectContaining({ auctionId, opId, lotIds: [second, lotId] }),
+    ]);
+    const refusals: [
+      NonNullable<
+        MessageInitShape<typeof FreezeFinalLineupRefusalSchema>["reason"]
+      >,
+      string,
+    ][] = [
+      [{ case: "notMeetupAdministrator", value: {} }, "not-administrator"],
+      [{ case: "meetupNotFound", value: {} }, "meetup-not-found"],
+      [{ case: "notInBreak", value: {} }, "not-in-break"],
+      [{ case: "lineupEmpty", value: {} }, "lineup-empty"],
+      [
+        { case: "lineupMismatch", value: { heldLotIds: [lotId] } },
+        "lineup-mismatch",
+      ],
+    ];
+    for (const [reason, kind] of refusals) {
+      await expect(
+        refusing({ reason }).freezeFinalLineup(admin, freeze),
+      ).resolves.toEqual({ kind });
+    }
+    await expect(
+      adapter({
+        freezeFinalLineup: async () =>
+          create(FreezeFinalLineupResponseSchema, {}),
+      }).freezeFinalLineup(admin, freeze),
+    ).resolves.toMatchObject({ kind: "invalid" });
   });
 
   it("reads a started final, the next lot and a lot still trading", async () => {

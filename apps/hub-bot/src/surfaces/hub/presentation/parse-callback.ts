@@ -8,6 +8,7 @@ import type {
   CloseQuote,
   ConsoleSort,
   FormField,
+  LineupPick,
   LotStepMode,
   LotTextField,
   WindowRef,
@@ -91,6 +92,17 @@ const WindowIndexSchema = z
   .regex(/^(0|[1-9]\d?)$/)
   .transform(Number);
 const WindowPrintSchema = z.string().regex(/^[0-9a-z]{5}$/);
+// Порядок состава финала в кнопке (PER-619): номер лота в наборе удержанных —
+// знак base36, не больше двадцати четырёх; `-` — ещё ничего не выбрано.
+const emptyLineupOrder = "-";
+const LineupOrderSchema = z
+  .string()
+  .regex(/^(-|[0-9a-z]{1,24})$/)
+  .transform((raw): number[] =>
+    raw === emptyLineupOrder
+      ? []
+      : [...raw].map((each) => Number.parseInt(each, 36)),
+  );
 const ConsoleSortSchema = z.enum(["bd", "ba", "pd", "pa", "gd", "ga"]);
 export const defaultConsoleSort: ConsoleSort = {
   metric: "bids",
@@ -339,6 +351,10 @@ type PlainAction =
       selected: boolean;
     }
   | { kind: "console-window-remove"; auction: string; window: WindowRef }
+  // Состав финала (PER-619): начать выбор порядка, выбрать следующий лот
+  // или страницу и «Да» подтверждения с полным порядком.
+  | { kind: "console-lineup"; auction: string; pick?: LineupPick; page: number }
+  | { kind: "console-lineup-confirm"; auction: string; pick: LineupPick }
   // Финал ведущего (PER-337). Лот финала — номер в замороженном составе с
   // нуля: токен лота рядом с аукционом и ключом в 64 байта не помещается.
   | { kind: "console-start-final"; auction: string }
@@ -554,8 +570,9 @@ export function lotStepModeData(
   return `v1:lot:sm:${lot}:${price}:${mode}`;
 }
 
-// Кнопки пульта аукциона: `v1:ac:<действие>:<аукцион>[:…]`. Самая длинная —
-// лот в окне «Счастливых часов» с номером окна и отпечатком, до 63 байт.
+// Кнопки пульта аукциона: `v1:ac:<действие>:<аукцион>[:…]`. Самые длинные —
+// выбор порядка состава финала, до 64 байт, и лот в окне «Счастливых часов»
+// с номером окна и отпечатком, до 63.
 
 /** Пульт аукциона на странице `page`; первая страница — без номера. */
 export function consoleViewData(
@@ -663,6 +680,39 @@ export function consoleWindowRemoveData(
   window: WindowRef,
 ): string {
   return `v1:ac:hx:${auction}:${window.index}:${window.print}`;
+}
+
+/** «Объявить состав финала» и «Заново»: выбор порядка с первого лота. */
+export function consoleLineupData(auction: string): string {
+  return `v1:ac:l:${auction}`;
+}
+
+function lineupOrderToken(order: readonly number[]): string {
+  return order.length === 0
+    ? emptyLineupOrder
+    : order.map((at) => at.toString(36)).join("");
+}
+
+/**
+ * Следующий лот порядка или страница выбора: отпечаток набора удержанных,
+ * выбранные номера и страница. Двадцать четыре лота с однозначной страницей —
+ * ровно 64 байта.
+ */
+export function consoleLineupPickData(
+  auction: string,
+  pick: LineupPick,
+  page = 0,
+): string {
+  const base = `v1:ac:lo:${auction}:${pick.print}:${lineupOrderToken(pick.order)}`;
+  return page === 0 ? base : `${base}:${page}`;
+}
+
+/** «Да» подтверждения состава: полный порядок; ключ рождается на нажатие. */
+export function consoleLineupConfirmData(
+  auction: string,
+  pick: LineupPick,
+): string {
+  return `v1:ac:ly:${auction}:${pick.print}:${lineupOrderToken(pick.order)}`;
 }
 
 /** «Начать финал». */
@@ -1168,7 +1218,9 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // Кнопки пульта аукциона (PER-320): `v1:ac:v:<аукцион>[:<страница>]`,
 // `v1:ac:w:<аукцион>`, `v1:ac:f:<аукцион>:<0|1>`, `v1:ac:o:<аукцион>`,
 // `v1:ac:y:<аукцион>:<ключ>`, `v1:ac:x:<аукцион>`, `v1:ac:z:<аукцион>:<ключ>`
-// и `v1:ac:<s|d>:<аукцион>:<лот>:<страница>`. Финал (PER-337):
+// и `v1:ac:<s|d>:<аукцион>:<лот>:<страница>`. Состав финала (PER-619):
+// `v1:ac:l:<аукцион>`, `v1:ac:lo:<аукцион>:<отпечаток>:<порядок>[:<страница>]`
+// и `v1:ac:ly:<аукцион>:<отпечаток>:<порядок>`. Финал (PER-337):
 // `v1:ac:g:<аукцион>`, `v1:ac:n:<аукцион>`, `v1:ac:<a|c>:<аукцион>:<номер>` и
 // `v1:ac:k:<аукцион>:<номер>:<ключ>:<названное>`. «Счастливые часы»
 // (PER-504): `v1:ac:h:<аукцион>`, `v1:ac:ha:<аукцион>`,
@@ -1276,6 +1328,31 @@ function parseConsole(parts: readonly string[]): CallbackAction {
             kind: "console-discard-confirm",
             auction: auction.data,
             op: op.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "l":
+      return parts.length === 4
+        ? { kind: "console-lineup", auction: auction.data, page: 0 }
+        : { kind: "malformed" };
+    case "lo":
+    case "ly": {
+      const print = WindowPrintSchema.safeParse(parts[4]);
+      const order = LineupOrderSchema.safeParse(parts[5]);
+      if (!print.success || !order.success) return { kind: "malformed" };
+      const pick = { print: print.data, order: order.data };
+      if (parts[2] === "ly") {
+        return parts.length === 6 && pick.order.length > 0
+          ? { kind: "console-lineup-confirm", auction: auction.data, pick }
+          : { kind: "malformed" };
+      }
+      const page = PageSchema.safeParse(parts[6] ?? "0");
+      return (parts.length === 6 || parts.length === 7) && page.success
+        ? {
+            kind: "console-lineup",
+            auction: auction.data,
+            pick,
+            page: page.data,
           }
         : { kind: "malformed" };
     }
