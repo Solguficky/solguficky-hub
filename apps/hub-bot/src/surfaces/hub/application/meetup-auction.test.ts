@@ -12,6 +12,14 @@ import { createDispatcher } from "./dispatcher.js";
 
 const meetupId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
 const auctionId = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
+// Аукцион сходки, как его отдаёт порт: стадия и сроки нужны строке аукциона
+// на карточке (PER-594).
+const auction = {
+  auctionId,
+  stage: "prebidding" as const,
+  closesAt: "2026-10-29T18:00:00Z",
+  final: false,
+};
 const meetup = {
   id: meetupId,
   title: "Ярмарка",
@@ -48,7 +56,7 @@ function meetups(): Meetups {
 
 function auctions() {
   const getMeetupAuction = vi.fn<MeetupAuctions["getMeetupAuction"]>(
-    async () => ({ kind: "ok", auctionId }),
+    async () => ({ kind: "ok", auction }),
   );
   const enableAuction = vi.fn<MeetupAuctions["enableAuction"]>(async () => ({
     kind: "enabled",
@@ -85,13 +93,13 @@ describe("meetup auction", () => {
       }),
     ).resolves.toMatchObject({
       kind: "meetup-card",
-      auction: { kind: "open", auctionId },
+      auction: { kind: "open", auctionId, auction },
     });
   });
 
-  // Вход в аукцион — кнопка «Расширения» без состояния (PER-605): карточка в
-  // Auction не ходит, и его сбой её не трогает.
-  it("reads the card without Auction", async () => {
+  // Кнопка «Расширения» остаётся без состояния (PER-605), а состояние
+  // аукциона карточка несёт строкой текста (PER-594): она читает аукцион.
+  it("reads the auction of the meetup for its card", async () => {
     const port = auctions();
     const dispatcher = createDispatcher(meetups(), undefined, undefined, port);
 
@@ -101,9 +109,34 @@ describe("meetup auction", () => {
       meetupId,
     });
 
-    expect(card).toMatchObject({ kind: "meetup-card", meetup });
-    expect(card).not.toHaveProperty("auction");
-    expect(port.getMeetupAuction).not.toHaveBeenCalled();
+    expect(card).toMatchObject({
+      kind: "meetup-card",
+      meetup,
+      auction: { kind: "open", auctionId, auction },
+    });
+    expect(port.getMeetupAuction).toHaveBeenCalledTimes(1);
+  });
+
+  // Сбой Auction карточку не роняет: она остаётся без строки аукциона.
+  it("reads the card when Auction does not answer", async () => {
+    const port = auctions();
+    port.getMeetupAuction.mockResolvedValue({
+      kind: "unavailable",
+      cause: new Error("down"),
+    });
+    const dispatcher = createDispatcher(meetups(), undefined, undefined, port);
+
+    await expect(
+      dispatcher.execute({
+        identity: person(MEMBER),
+        intent: "view-meetup",
+        meetupId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-card",
+      meetup,
+      auction: { kind: "unavailable" },
+    });
   });
 
   it("marks the auction unavailable in the menu when Auction does not answer", async () => {
@@ -174,9 +207,9 @@ describe("meetup auction", () => {
     expect(port.getMeetupAuction).not.toHaveBeenCalled();
   });
 
-  // Ответы формы и подписки показываются карточкой, а карточка в Auction не
-  // ходит (PER-605): ни публикация, ни подписка его не спрашивают.
-  it("publishes and subscribes without asking Auction", async () => {
+  // Карточка после публикации несёт строку аукциона (PER-594), а подписка
+  // отвечает экраном исхода и Auction не спрашивает.
+  it("reads the auction for the published card but not for a subscription", async () => {
     const port = auctions();
     const notifications = {
       setSubscription: async () => ({
@@ -197,7 +230,13 @@ describe("meetup auction", () => {
         intent: "publish-meetup",
         meetupId,
       }),
-    ).resolves.toEqual({ kind: "published", meetup, repeated: true });
+    ).resolves.toEqual({
+      kind: "published",
+      meetup,
+      repeated: true,
+      auction: { kind: "open", auctionId, auction },
+    });
+    expect(port.getMeetupAuction).toHaveBeenCalledTimes(1);
     await expect(
       dispatcher.execute({
         identity: person(MEMBER),
@@ -206,6 +245,6 @@ describe("meetup auction", () => {
         subscribed: true,
       }),
     ).resolves.toMatchObject({ kind: "meetup-card", subscribed: true });
-    expect(port.getMeetupAuction).not.toHaveBeenCalled();
+    expect(port.getMeetupAuction).toHaveBeenCalledTimes(1);
   });
 });

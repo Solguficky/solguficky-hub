@@ -510,7 +510,8 @@ const backRow = (page: number) => [
 
 const callback = (intent: AuctionIntent) => encodeAuctionCallback(intent);
 
-// Ряды ставки под лотом в онлайн-торгах: по шагу, своя сумма и лимит.
+// Ряды ставки под лотом в онлайн-торгах: по шагу, затем своя сумма и лимит
+// одним рядом (PER-594).
 // `step` — порог «По шагу» в копейках: следующая цена лота.
 const bidRows = (lot: LotView, page: number, step = 125000) => [
   [
@@ -536,8 +537,6 @@ const bidRows = (lot: LotView, page: number, step = 125000) => [
         page,
       }),
     },
-  ],
-  [
     {
       action: "lot.proxy" as const,
       callbackData: callback({
@@ -550,25 +549,21 @@ const bidRows = (lot: LotView, page: number, step = 125000) => [
   ],
 ];
 
+// Лот без итога: «Обновить» и «Ставки» одним рядом (PER-594), затем возврат.
 const lotKeyboard = (lotId: string, page: number) => [
-  refreshRow(lotId, page),
-  ...settledKeyboard(lotId, page),
+  [...refreshRow(lotId, page), historyButton(lotId, page)],
+  backRow(page),
 ];
+
+const historyButton = (lotId: string, page: number) => ({
+  action: "lot.history" as const,
+  callbackData: historyCallback(lotId, page, MAX_FEED_PAGE),
+});
 
 // Лот с итогом: «Обновить» под ним нет — без человека он уже не меняется.
 const settledKeyboard = (lotId: string, page: number) => [
-  [
-    {
-      action: "lot.history" as const,
-      callbackData: historyCallback(lotId, page, MAX_FEED_PAGE),
-    },
-  ],
-  [
-    {
-      action: "lot.back" as const,
-      callbackData: feedCallback(CONTRACT_AUCTION_ID, page),
-    },
-  ],
+  [historyButton(lotId, page)],
+  backRow(page),
 ];
 
 // Строки хронологии, как их показывает экран: имя — из `names`, если отдано.

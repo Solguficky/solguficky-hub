@@ -53,7 +53,7 @@ export function bullet(line: string): string {
 /**
  * Экран исхода (дизайн-код, «Экран исхода», PER-472): исход действия — свой
  * экран, а не строка над карточкой. Первое предложение исхода — заголовок без
- * точки, под ним предмет в кавычках, затем остаток исхода абзацем. Карточку
+ * точки, под ним предмет жирным, затем остаток исхода абзацем. Карточку
  * открывает возврат: исход и содержимое не смешиваются.
  */
 export function outcomeText(outcome: string, subject?: string): string {
@@ -65,9 +65,18 @@ export function outcomeText(outcome: string, subject?: string): string {
     title,
     subject === undefined || subject.trim() === ""
       ? undefined
-      : `«${escapeHtml(subject.replace(/\s+/g, " ").trim())}»`,
+      : subjectLine(subject),
     rest === "" ? undefined : escapeHtml(rest),
   );
+}
+
+/**
+ * Предмет экрана — название сходки, лота, материала или имя человека абзацем
+ * под заголовком — жирным и без кавычек (дизайн-код, «Формат»; PER-594).
+ * Внутри фразы название по-прежнему стоит в кавычках.
+ */
+export function subjectLine(subject: string): string {
+  return `<b>${escapeHtml(subject.replace(/\s+/g, " ").trim())}</b>`;
 }
 
 /**

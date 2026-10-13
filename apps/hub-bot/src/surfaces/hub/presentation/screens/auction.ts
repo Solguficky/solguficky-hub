@@ -9,7 +9,6 @@ import {
   type AuctionBlock,
   type AuctionButton,
   type AuctionScreenBody,
-  type AuctionStageView,
   type BidOriginView,
   encodeAuctionCallback,
   type FeedItem,
@@ -19,6 +18,11 @@ import {
   parseAuctionCallback,
 } from "../../../../auction-ui/index.js";
 import { money, truncate } from "../../../../core/format.js";
+import {
+  emptyDescription,
+  marked,
+  pictogram,
+} from "../../../../core/pictograms.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";
@@ -34,10 +38,10 @@ import {
   commandResultScreen,
   confirmScreen,
   followRefusedScreen,
+  lotSubject,
   nameChoiceScreen,
   oneLine,
   questionScreen,
-  quoted,
 } from "./auction-bid.js";
 import {
   raffleAnswerRefusedScreen,
@@ -45,6 +49,7 @@ import {
   raffleQuestionScreen,
   raffleScreen,
 } from "./auction-raffle.js";
+import { stageWords } from "./auction-stage.js";
 import {
   bullet,
   buttonText,
@@ -283,19 +288,6 @@ function auctionOfFeedButton(data: string): string | undefined {
     : undefined;
 }
 
-// Стадия аукциона в его корне (PER-605): «ключ: значение» без точки, как
-// строки карточки.
-const stageWords: Record<AuctionStageView, string> = {
-  draft: "готовится",
-  scheduled: "скоро старт",
-  prebidding: "идут онлайн-торги",
-  settling: "подводим итоги онлайн-торгов",
-  "on-break": "перерыв перед финалом",
-  "lineup-frozen": "готовим финал",
-  "in-final": "идёт финал",
-  finished: "завершён",
-};
-
 /**
  * Корень аукциона (PER-605; ADR-064, дополнение 2026-10-12): стадия и сроки,
  * «Лоты», «Пульт» по праву и «Розыгрыш», пока он есть, «Избранное» и
@@ -456,13 +448,16 @@ function lotScreen(
     nextRow(keyboard).text(editLotLabel, lotFormData(uuidToToken(lot.lotId)));
   }
   const title = truncate(lot.card?.title ?? untitled, titleLimit);
+  // Пустое описание — та же заглушка, что у карточки сходки (дизайн-код,
+  // «Карточка»; PER-594).
   const description =
     lot.card?.description === undefined || lot.card.description === ""
-      ? undefined
+      ? emptyDescription
       : lot.card.description;
-  // Карточка лота (дизайн-код, «Карточка лота»): группа статуса, группа цены
-  // и лидера, описание — группы через пустую строку, в rich — блоками.
-  // Исход ставки финала — своей группой под статусом и ценой (PER-336).
+  // Карточка лота (дизайн-код, «Карточка»): группа статуса, группа цены,
+  // лидера и срока со знаками, группа хода торгов, описание — группы через
+  // пустую строку, в rich — блоками. Исход ставки финала — своей группой под
+  // ними (PER-336).
   const groups = [
     ...statusGroups(lot, view),
     ...(lot.finalBid === undefined
@@ -673,7 +668,7 @@ function favoritesLabelOf(
   }
 }
 
-// Хронология ставок лота (PER-309): название лота в кавычках, строки «• …» по
+// Хронология ставок лота (PER-309): название лота жирным, строки «• …» по
 // порядку журнала, листание «←» и «→», а возврат тела на карточку оболочка
 // ставит рядом навигации.
 function historyScreen(
@@ -705,7 +700,7 @@ function historyScreen(
         page: history.page,
         pageCount: history.pageCount,
       }),
-      quoted(truncate(history.title ?? untitled, titleLimit)),
+      lotSubject(truncate(history.title ?? untitled, titleLimit)),
       history.entries.length === 0
         ? "Ставок пока нет."
         : history.entries
@@ -792,9 +787,11 @@ function originLabel(origin: BidOriginView): string {
   }
 }
 
-// Группы карточки: статус словом, затем факты о цене и лидере. Строки «ключ:
-// значение» без точки; слова статусов — дизайн-код, «Карточка лота». Слова —
-// те же, что у бота аукциона, словарь один.
+// Группы карточки: статус словом, затем блок цены, лидера и срока со знаками
+// словаря — как «Когда» и «Где» у сходки, — затем ход торгов: следующая
+// ставка, шаг, своя автоставка. Строки «ключ: значение» без точки; слова
+// статусов — дизайн-код, «Карточка лота». Слова — те же, что у бота аукциона,
+// словарь один.
 function statusGroups(
   block: Extract<AuctionBlock, { kind: "lot" }>,
   view: AuctionView,
@@ -806,9 +803,31 @@ function statusGroups(
     case "scheduled":
       return [
         ["Статус: торги ещё не начались"],
-        [`Стартовая цена: ${money(status.startingPrice)}`],
+        [
+          marked(
+            pictogram.price,
+            `Стартовая цена: ${money(status.startingPrice)}`,
+          ),
+        ],
       ];
-    case "trading":
+    case "trading": {
+      // Ход торгов: в финале — объявленная цена и следующая ставка ровно по
+      // ней (PER-336), в онлайн-торгах — порог следующей ставки; затем шаг и
+      // свой лимит.
+      const course = [
+        ...(status.phase === "live"
+          ? finalPriceLines(block, money)
+          : block.nextPrice === undefined
+            ? []
+            : [`Следующая ставка: от ${money(block.nextPrice)}`]),
+        ...stepLines(block, view),
+        // Свой лимит смотрящего: чужих Auction не отдаёт.
+        ...(block.viewerProxyLimit === undefined
+          ? []
+          : [
+              `Твоя автоставка: до ${money(block.viewerProxyLimit)} (видишь только ты)`,
+            ]),
+      ];
       return [
         [
           status.phase === "live"
@@ -816,46 +835,48 @@ function statusGroups(
             : "Статус: идут торги",
         ],
         [
-          `Цена: ${money(status.currentPrice)}`,
-          leaderLine(status.leaderId, participantName),
-          ...(status.phase === "live"
-            ? finalPriceLines(block, money)
-            : block.nextPrice === undefined
-              ? []
-              : [`Следующая ставка: от ${money(block.nextPrice)}`]),
-          ...stepLines(block, view),
+          marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
+          marked(
+            pictogram.leader,
+            leaderLine(status.leaderId, participantName),
+          ),
           ...(status.deadline === undefined
             ? []
             : [
-                `Торги до: ${readableMoment(
-                  communityLocalTime(status.deadline, view.timeZone),
-                  view.today,
-                )}`,
-              ]),
-          // Свой лимит смотрящего: чужих Auction не отдаёт.
-          ...(block.viewerProxyLimit === undefined
-            ? []
-            : [
-                `Твоя автоставка: до ${money(block.viewerProxyLimit)} (видишь только ты)`,
+                marked(
+                  pictogram.deadline,
+                  `Торги до: ${readableMoment(
+                    communityLocalTime(status.deadline, view.timeZone),
+                    view.today,
+                  )}`,
+                ),
               ]),
         ],
+        ...(course.length === 0 ? [] : [course]),
       ];
+    }
     case "held":
       return [
         ["Статус: ждёт финала"],
         [
-          `Цена: ${money(status.currentPrice)}`,
-          leaderLine(status.leaderId, participantName),
+          marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
+          marked(
+            pictogram.leader,
+            leaderLine(status.leaderId, participantName),
+          ),
         ],
       ];
     case "sold":
       return [
         ["Статус: продан"],
         [
-          `Цена продажи: ${money(status.price)}`,
-          participantName === undefined
-            ? "Победитель: определён"
-            : `Победитель: ${participantName}`,
+          marked(pictogram.price, `Цена продажи: ${money(status.price)}`),
+          marked(
+            pictogram.leader,
+            participantName === undefined
+              ? "Победитель: определён"
+              : `Победитель: ${participantName}`,
+          ),
         ],
       ];
     case "unsold":

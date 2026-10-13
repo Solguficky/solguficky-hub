@@ -1,6 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
+import { AuctionState_DraftSchema } from "../../../../gen/auction/v1/auction_events_pb.js";
 import { BidSource } from "../../../../gen/auction/v1/auction_pb.js";
 import {
   AddLotResponseSchema,
@@ -107,23 +108,47 @@ function adapter(rpc: {
 }
 
 describe("auction adapter", () => {
-  it("names the auction of the meetup and reads its absence as an answer", async () => {
+  it("reads the auction of the meetup and its absence as an answer", async () => {
     const found = adapter({
       getMeetupAuction: async () =>
         create(GetMeetupAuctionResponseSchema, {
-          auction: create(AuctionSnapshotSchema, { id: auctionId }),
+          auction: create(AuctionSnapshotSchema, {
+            id: auctionId,
+            status: {
+              case: "draft",
+              value: create(AuctionState_DraftSchema, {}),
+            },
+          }),
         }),
     });
     const absent = adapter({
       getMeetupAuction: async () => create(GetMeetupAuctionResponseSchema, {}),
     });
 
+    // Стадия нужна строке аукциона на карточке сходки (PER-594).
     await expect(found.getMeetupAuction(admin, meetupId)).resolves.toEqual({
       kind: "ok",
       auctionId,
+      auction: { auctionId, stage: "draft", final: false },
     });
     await expect(absent.getMeetupAuction(admin, meetupId)).resolves.toEqual({
       kind: "ok",
+    });
+  });
+
+  // Снимок без статуса — дефект соседа: строки на карточке не будет, но меню
+  // «Расширения» по-прежнему открывает аукцион по идентификатору (PER-594).
+  it("keeps the auction of the meetup when its snapshot has no status", async () => {
+    const broken = adapter({
+      getMeetupAuction: async () =>
+        create(GetMeetupAuctionResponseSchema, {
+          auction: create(AuctionSnapshotSchema, { id: auctionId }),
+        }),
+    });
+
+    await expect(broken.getMeetupAuction(admin, meetupId)).resolves.toEqual({
+      kind: "ok",
+      auctionId,
     });
   });
 

@@ -1,5 +1,7 @@
 import { InlineKeyboard } from "grammy";
+import type { AuctionSummaryView } from "../../../../auction-ui/index.js";
 import {
+  emptyDescription,
   extensionsLabel,
   marked,
   pictogram,
@@ -16,6 +18,7 @@ import type {
   MeetupSummary,
 } from "../../meetups/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
+import { auctionStateLine } from "./auction-stage.js";
 import {
   buttonText,
   confirmKeyboard,
@@ -33,6 +36,7 @@ import {
   readableMoment,
   removeLabel,
   screenText,
+  subjectLine,
   toArchive,
   toCard,
   toHidden,
@@ -280,6 +284,7 @@ function cardLines(
   author: MeetupAuthor | undefined,
   today: CommunityDay,
   manageable: boolean,
+  extensions: readonly string[] = [],
 ): string[] {
   const lifecycle =
     meetup.lifecycle === "cancelled"
@@ -314,13 +319,42 @@ function cardLines(
       `Где: ${meetup.venue === "" ? "не указано" : escapeHtml(meetup.venue)}`,
     ),
     "",
+    ...(extensions.length === 0 ? [] : [...extensions, ""]),
     meetup.description === ""
-      ? "Описание пока не добавлено."
+      ? emptyDescription
       : escapeHtml(meetup.description),
   ];
 }
 
-function materialLines(meetup: MeetupSnapshot): string[] {
+// Пометка файла в списке материалов карточки (PER-594): фото, которое уже стоит
+// постером над заголовком, пометки не несёт; фото без постера — в обычной
+// карточке, после отказа Telegram или сверх предела постеров — «(фото)»,
+// документ — «(файл)».
+function fileMark(
+  source: Extract<MeetupMaterial["source"], { kind: "file" }>,
+  shown: ReadonlySet<string>,
+): string {
+  if (source.fileKind !== "photo") return " (файл)";
+  return shown.has(source.fileId) ? "" : " (фото)";
+}
+
+// Строки расширений сходки — блок после «Когда» и «Где»: сейчас одна, строка
+// аукциона (PER-594). Без аукциона блока нет.
+function auctionLines(view: CardView): string[] {
+  return view.auction === undefined
+    ? []
+    : [
+        escapeHtml(
+          auctionStateLine(view.auction, view.timeZone ?? "UTC", view.today),
+        ),
+      ];
+}
+
+// `shown` — файлы, которые карточка показала постерами над заголовком.
+function materialLines(
+  meetup: MeetupSnapshot,
+  shown: ReadonlySet<string> = new Set(),
+): string[] {
   if (meetup.materials.length === 0) return [];
   const hidden = meetup.materials.length - materialCardLimit;
   return [
@@ -330,7 +364,7 @@ function materialLines(meetup: MeetupSnapshot): string[] {
       const label = escapeHtml(displayMaterialTitle(material, index + 1));
       return material.source.kind === "message-link"
         ? `${index + 1}. <a href="${escapeHtml(material.source.url)}">${label}</a>`
-        : `${index + 1}. ${label} (файл)`;
+        : `${index + 1}. ${label}${fileMark(material.source, shown)}`;
     }),
     ...(hidden > 0 ? [`…и ещё ${hidden}. Открой раздел «Материалы».`] : []),
   ];
@@ -378,6 +412,13 @@ export type CardView = {
    * не принял сообщение с фото, например файл больше недоступен.
    */
   posters?: boolean;
+  /**
+   * Аукцион сходки для строки его состояния (PER-594). Нет — аукциона нет,
+   * бот без Auction или Auction не ответил: строки нет, без заглушки.
+   */
+  auction?: AuctionSummaryView;
+  /** Пояс сообщества: в нём строка аукциона называет срок торгов. */
+  timeZone?: string;
 };
 
 // Без подписки карточка объясняет, что она даёт: кнопка настроек сходки
@@ -411,7 +452,8 @@ export function cardScreen(view: CardView): ShownScreen {
   // материалов: оба — содержимое сходки, и отдельным рядом они вывели бы
   // карточку организатора за пять рядов. Кнопка одна у всех и без состояния:
   // включённое расширение, включение и «расширений нет» показывает меню за
-  // ней, поэтому карточка в Auction не ходит и его сбой её не трогает.
+  // ней. Состояние аукциона карточка несёт строкой текста (PER-594), и сбой
+  // Auction убирает только её.
   keyboard.text(extensionsLabel, extensionsData(token));
   nextRow(keyboard);
   // Написать подписчикам можно и об отменённой сходке: сообщить им об отмене
@@ -432,17 +474,22 @@ export function cardScreen(view: CardView): ShownScreen {
     }
     keyboard.text("Уведомления сходки", `v1:notify:settings:${token}`).row();
   }
-  const title = escapeHtml(meetupTitleLabel(meetup.title));
-  const body = [
-    ...cardLines(meetup, view.author, today, manageable),
-    ...materialLines(meetup),
-  ];
-  // Подсказка о подписке стоит под карточкой.
-  const hint = view.subscribed === false ? unsubscribedHint : undefined;
   // Постеры — только в богатой карточке: обычное сообщение несёт либо текст,
   // либо файл, и с файлом оно перестало бы правиться на месте.
   const photos =
     presentation === "rich" && view.posters !== false ? posters(meetup) : [];
+  const title = escapeHtml(meetupTitleLabel(meetup.title));
+  const body = [
+    ...cardLines(meetup, view.author, today, manageable, auctionLines(view)),
+    ...materialLines(
+      meetup,
+      new Set(
+        photos.flatMap((photo) => ("fileId" in photo ? [photo.fileId] : [])),
+      ),
+    ),
+  ];
+  // Подсказка о подписке стоит под карточкой.
+  const hint = view.subscribed === false ? unsubscribedHint : undefined;
   return {
     id: "card",
     text: cardText({
@@ -687,7 +734,7 @@ export function publishConfirmScreen(confirm: {
     text: [
       heading("Опубликовать сходку?"),
       "",
-      `«${escapeHtml(meetupTitleLabel(confirm.meetup.title))}»`,
+      subjectLine(meetupTitleLabel(confirm.meetup.title)),
       confirm.origin === "draft"
         ? "Сходка станет видна участникам, подписчики новых сходок получат уведомление."
         : "Сходка станет видна участникам. Уведомление получат подписчики новых сходок, а если сходку уже публиковали — её подписчики.",
@@ -724,7 +771,7 @@ export function stateConfirmScreen(confirm: {
     text: [
       heading(copy.question),
       "",
-      `«${escapeHtml(meetupTitleLabel(confirm.meetup.title))}»`,
+      subjectLine(meetupTitleLabel(confirm.meetup.title)),
       ...(copy.irreversible === undefined ? [] : [copy.irreversible]),
     ].join("\n"),
     keyboard: confirmKeyboard({

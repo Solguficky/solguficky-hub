@@ -170,16 +170,19 @@ function fakeAuction(
     nextPageToken: "",
   }));
   const getLot = vi.fn(async () => shownLot);
+  // Снимок аукциона — один у корня (PER-605) и у строки аукциона на карточке
+  // сходки (PER-594).
+  const summaryOf = (id: string) => ({
+    auctionId: id,
+    stage: "scheduled" as const,
+    opensAt: "2026-10-26T09:00:00Z",
+    closesAt: "2026-10-29T18:00:00Z",
+    final: true,
+  });
   // Корень аукциона (PER-605): Auction отдаёт аукцион, который у сходки есть.
   const getAuction = vi.fn(async (request: { auctionId: string }) =>
     [...auctions.values()].includes(request.auctionId)
-      ? {
-          auctionId: request.auctionId,
-          stage: "scheduled" as const,
-          opensAt: "2026-10-26T09:00:00Z",
-          closesAt: "2026-10-29T18:00:00Z",
-          final: true,
-        }
+      ? summaryOf(request.auctionId)
       : undefined,
   );
   const port: MeetupAuctions & AuctionScreens = {
@@ -189,7 +192,7 @@ function fakeAuction(
       const found = auctions.get(id);
       return found === undefined
         ? { kind: "ok" }
-        : { kind: "ok", auctionId: found };
+        : { kind: "ok", auction: summaryOf(found) };
     },
     async enableAuction(_person, id, opId) {
       opIds.push(opId);
@@ -367,7 +370,7 @@ const extensionsData = `v1:ext:${meetupToken}`;
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });
 
 describe("meetup card extensions entry", () => {
-  it("puts one extensions entry next to the materials and does not ask Auction", async () => {
+  it("puts one extensions entry next to the materials and names the auction stage in a line", async () => {
     const auction = fakeAuction({ existing: true });
     const { bot, calls } = harness("member", auction, {
       snapshot: meetup(2),
@@ -378,22 +381,83 @@ describe("meetup card extensions entry", () => {
     const card = lastScreen(calls);
     expect(labels(card)).toContainEqual(["Материалы (2)", "🧩 Расширения"]);
     expect(data(card, "🧩 Расширения")).toBe(extensionsData);
-    expect(JSON.stringify(card)).not.toContain("Лоты");
+    expect(JSON.stringify(labels(card))).not.toContain("Лоты");
     expect(JSON.stringify(card)).not.toContain("Включить аукцион");
-    // Карточка в Auction не ходит: вход в аукцион — меню за кнопкой.
-    expect(auction.lookups).toEqual([]);
+    // Кнопка без состояния, а состояние аукциона — строка текста (PER-594):
+    // карточка читает аукцион один раз.
+    expect(card.rich_message?.html ?? card.text).toContain(
+      "Аукцион: скоро старт",
+    );
+    expect(auction.lookups).toEqual([meetupId]);
+  });
+
+  // Строка аукциона — блок после «Когда» и «Где» (PER-594): у онлайн-торгов
+  // со сроком — и срок в поясе сообщества.
+  it.each([
+    [
+      "prebidding",
+      {
+        auctionId,
+        stage: "prebidding" as const,
+        closesAt: "2026-10-29T18:00:00Z",
+        final: false,
+      },
+      /\n\nАукцион: идут онлайн-торги до 29 октября( 2026)?, чт, \d\d:00\n\n/,
+    ],
+    [
+      "finished",
+      { auctionId, stage: "finished" as const, final: false },
+      /\n\nАукцион: завершён\n\n/,
+    ],
+  ])("names the %s auction on the meetup card", async (_, summary, line) => {
+    const auction = fakeAuction({
+      lookup: () => ({ kind: "ok", auction: summary }),
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
+
+    const text = lastScreen(calls).text ?? "";
+    expect(text).toMatch(line);
+    // Блок стоит после «Когда» и «Где» и перед описанием.
+    expect(text.indexOf("📍 Где:")).toBeLessThan(text.indexOf("Аукцион:"));
+    expect(text.indexOf("Аукцион:")).toBeLessThan(
+      text.indexOf("Описание пока не добавлено."),
+    );
+  });
+
+  it("leaves the auction line out without an auction at the meetup", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
+
+    expect(lastScreen(calls).text).not.toContain("Аукцион:");
   });
 
   it("keeps the card and its extensions entry when Auction does not answer", async () => {
     const auction = fakeAuction({
       lookup: () => ({ kind: "unavailable", cause: new Error("down") }),
     });
-    const { bot, calls } = harness("admin", auction);
+    const { bot, calls, records } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:view:${meetupToken}`));
 
     const card = lastScreen(calls);
     expect(card.rich_message?.html ?? card.text).toContain("Ярмарка");
+    // Карточка верна, но для записи границы это сбой соседа: иначе его не
+    // отличить от сходки без аукциона (PER-594).
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      error_category: "dependency_unavailable",
+      error: "auction_unavailable",
+    });
+    // Сбой Auction убирает только строку аукциона (PER-594).
+    expect(card.rich_message?.html ?? card.text).not.toContain("Аукцион:");
     expect(labels(card)).toContainEqual(["Материалы (0)", "🧩 Расширения"]);
     // Пять рядов организатора не превышены: расширения — в ряду материалов.
     expect(card.reply_markup?.inline_keyboard.length).toBeLessThanOrEqual(5);
@@ -433,7 +497,7 @@ describe("meetup extensions menu", () => {
 
     const menu = lastScreen(calls);
     expect(menu.text).toMatch(/^<b>Расширения<\/b>/);
-    expect(menu.text).toContain("«Ярмарка»");
+    expect(menu.text).toContain("<b>Ярмарка</b>");
     expect(labels(menu)).toEqual([["Аукцион"], ["‹ Сходка"]]);
     expect(data(menu, "Аукцион")).toBe(rootData);
     expect(data(menu, "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
@@ -1068,10 +1132,36 @@ describe("bid leaf in the hub", () => {
     const { bot, calls } = await setup();
     await bot.handleUpdate(press(lotData));
     const card = lastScreen(calls);
+    // Своя сумма с автоставкой и «Обновить» со «Ставками» — парами (PER-594).
     expect(labels(card).slice(0, 3)).toEqual([
       [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
-      ["Своя сумма"],
-      ["Автоставка"],
+      ["Своя сумма", "Автоставка"],
+      ["Обновить", "Ставки"],
+    ]);
+  });
+
+  // Карточка участника в онлайн-торгах с автоставкой и избранным — пять рядов
+  // (PER-594): ставка по шагу, своя сумма с автоставкой, «Обновить» со
+  // «Ставками», избранное и возврат.
+  it("fits the card of a participant with limits and favorites into five rows", async () => {
+    const auction = fakeAuction({ existing: true, lot: trading });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+      favorites: () => ({
+        listFollowedLots: async () => [],
+        followLot: async () => ({ kind: "done", following: true }),
+        unfollowLot: async () => ({ kind: "done", following: false }),
+      }),
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    expect(labels(lastScreen(calls))).toEqual([
+      [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
+      ["Своя сумма", "Автоставка"],
+      ["Обновить", "Ставки"],
+      ["В избранное"],
+      ["‹ Лоты"],
     ]);
   });
 

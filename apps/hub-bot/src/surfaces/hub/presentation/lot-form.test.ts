@@ -528,7 +528,7 @@ describe("lot form", () => {
     expect(form.text).toBe(
       [
         "<b>Лот добавлен</b>",
-        "«Ваза синяя»",
+        "<b>Ваза синяя</b>",
         "Задай цену и шаг: без них он не выйдет на торги.",
       ].join("\n\n"),
     );
@@ -603,7 +603,7 @@ describe("lot form", () => {
     });
     const form = last(calls);
     expect(form.text).toBe(
-      ["<b>Цена и шаг сохранены</b>", "«Ваза»"].join("\n\n"),
+      ["<b>Цена и шаг сохранены</b>", "<b>Ваза</b>"].join("\n\n"),
     );
     expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот"]]);
     // Значения видны на форме, которую открывает «Изменить лот».
@@ -705,7 +705,7 @@ describe("lot form", () => {
     ]);
     const saved = last(calls);
     expect(saved.text).toBe(
-      ["<b>Изменение сохранено</b>", "«Кружка с совой»"].join("\n\n"),
+      ["<b>Изменение сохранено</b>", "<b>Кружка с совой</b>"].join("\n\n"),
     );
     expect(labels(saved)).toEqual([["Изменить лот"], ["‹ Лот"]]);
     // Новый текст виден на форме, которую открывает «Изменить лот».
@@ -958,7 +958,7 @@ describe("lot form photo question", () => {
     ]);
     const form = last(calls);
     expect(form.text).toBe(
-      ["<b>Фото сохранено</b>", "«Кружка с совой»"].join("\n\n"),
+      ["<b>Фото сохранено</b>", "<b>Кружка с совой</b>"].join("\n\n"),
     );
     expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот"]]);
     await next(() => press(dataOf(form, "Изменить лот")));

@@ -23,6 +23,12 @@ export const pictogram = {
   materials: "📎",
   /** Вход в расширения: на карточке сходки и в «Настройках» (PER-605). */
   extensions: "🧩",
+  /** Поле цены карточки лота (PER-594). */
+  price: "💰",
+  /** Поле лидера или победителя карточки лота (PER-594). */
+  leader: "👤",
+  /** Поле срока торгов карточки лота (PER-594). */
+  deadline: "⏳",
 } as const;
 
 export type Pictogram = (typeof pictogram)[keyof typeof pictogram];
@@ -41,7 +47,16 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.where]: ["Где: "],
   [pictogram.materials]: ["Материалы:"],
   [pictogram.extensions]: ["Расширения"],
+  [pictogram.price]: ["Цена: ", "Стартовая цена: ", "Цена продажи: "],
+  [pictogram.leader]: ["Лидер: ", "Победитель: "],
+  [pictogram.deadline]: ["Торги до: "],
 };
+
+/**
+ * Заглушка пустого описания — одна у карточек сходки и лота (дизайн-код,
+ * «Карточка»; PER-594).
+ */
+export const emptyDescription = "Описание пока не добавлено.";
 
 /** Слово со своим знаком впереди: «✔️ Да, отменить сходку». */
 export function marked(sign: Pictogram, words: string): string {

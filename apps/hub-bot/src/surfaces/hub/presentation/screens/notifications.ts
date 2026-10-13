@@ -14,9 +14,9 @@ import type {
 import { uuidToToken } from "../meetup-deep-link.js";
 import { toSettingsExtensions } from "./extensions.js";
 import {
-  escapeHtml,
   notificationToggleLabel,
   screenText,
+  subjectLine,
   toCard,
   toSettings,
   withNav,
@@ -120,7 +120,7 @@ export function meetupNotificationsScreen(settings: {
     id: "notify-meetup",
     text: screenText(
       "Уведомления сходки",
-      `«${escapeHtml(meetupTitleLabel(settings.meetup.title))}»`,
+      subjectLine(meetupTitleLabel(settings.meetup.title)),
       // Подписки здесь нет намеренно: действие живёт в карточке P-04. Состояние
       // подписки кадр называет текстом, чтобы состояния категорий не читались
       // как «придёт всё это».

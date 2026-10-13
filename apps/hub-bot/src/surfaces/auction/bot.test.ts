@@ -2536,6 +2536,38 @@ describe("favorite lots", () => {
     });
   });
 
+  // Карточка участника в онлайн-торгах с автоставкой и избранным — пять рядов
+  // (PER-594): ставка по шагу, своя сумма с автоставкой, «Обновить» со
+  // «Ставками», избранное и возврат. Пустое описание — заглушка.
+  it("fits the card of a participant with limits and favorites into five rows", async () => {
+    const { bot, calls } = makeBot(
+      portsWith({
+        favorites: notificationsFavorites().port,
+        lot: {
+          nextPrice: { minorUnits: 125_000, currency: "RUB" },
+          proxyEnabled: true,
+          status: {
+            kind: "trading",
+            currentPrice: { minorUnits: 120_000, currency: "RUB" },
+            phase: "online",
+          },
+        },
+      }),
+    );
+
+    await bot.handleUpdate(lotPress());
+
+    const card = lastScreen(calls);
+    expect(card.keyboard.map((row) => row.map((b) => b.text))).toEqual([
+      [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
+      ["Своя сумма", "Автоставка"],
+      ["Обновить", "Ставки"],
+      ["В избранное"],
+      ["‹ Лоты"],
+    ]);
+    expect(card.text).toContain("Описание пока не добавлено.");
+  });
+
   // Без адреса Notifications избранного у бота нет вовсе: ни команды в меню
   // клиента, ни кнопки на карточке.
   it("lists neither the command nor the card button without Notifications", async () => {

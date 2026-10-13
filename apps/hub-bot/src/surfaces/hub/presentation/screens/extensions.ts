@@ -4,12 +4,12 @@ import type { MeetupSnapshot } from "../../meetups/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   auctionRootData,
-  escapeHtml,
   extensionsData,
   outcomeText,
   type Parent,
   retryLabel,
   screenText,
+  subjectLine,
   toCard,
   toExtensions,
   toSettings,
@@ -49,7 +49,7 @@ export function extensionsScreen(view: {
   const { meetup, auction } = view;
   const token = uuidToToken(meetup.id);
   const keyboard = new InlineKeyboard();
-  const subject = `«${escapeHtml(meetupTitleLabel(meetup.title))}»`;
+  const subject = subjectLine(meetupTitleLabel(meetup.title));
   let line: string;
   if (auction?.kind === "open") {
     line = "Аукцион: торги лотов сходки, избранное, розыгрыш и правила.";

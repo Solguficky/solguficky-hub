@@ -4,11 +4,12 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
+import type { AuctionSnapshot } from "../../../../gen/auction/v1/auction_service_pb.js";
 import {
   AuctionService,
   type ConfigInvalid,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
-import type { Money } from "../../../auction-ui/index.js";
+import type { AuctionSummaryView, Money } from "../../../auction-ui/index.js";
 import { auctionSummaryViewOf } from "../../../core/auction/auction.js";
 import {
   bidOutcomeOf,
@@ -217,9 +218,12 @@ export function createAuctionAdapter(
           { viewer: wireViewer(viewerOf(person)), meetupId },
           options(meta),
         );
-        return response.auction === undefined
-          ? { kind: "ok" }
-          : { kind: "ok", auctionId: response.auction.id };
+        if (response.auction === undefined) return { kind: "ok" };
+        return {
+          kind: "ok",
+          auctionId: response.auction.id,
+          ...summaryOrNothing(response.auction),
+        };
       } catch (cause) {
         return toFailure(cause);
       }
@@ -1379,6 +1383,20 @@ function wireMoney(amount: Money) {
 // «Auction gRPC»): форма запроса, роль, недоступный Meetups за спиной Auction.
 // `ALREADY_EXISTS` — `op_id` занят другой командой: ключ рождается на каждый
 // вызов, поэтому это дефект, а не сбой, который лечит повтор.
+// Стадия и сроки нужны только строке аукциона на карточке сходки (PER-594).
+// Снимок, который не разбирается, — дефект соседа, но меню «Расширения»
+// по-прежнему открывает аукцион по одному идентификатору, а карточка остаётся
+// без строки.
+function summaryOrNothing(
+  snapshot: AuctionSnapshot,
+): { auction: AuctionSummaryView } | Record<string, never> {
+  try {
+    return { auction: auctionSummaryViewOf(snapshot) };
+  } catch {
+    return {};
+  }
+}
+
 function toFailure(cause: unknown): AuctionFailure {
   if (cause instanceof ConnectError && cause.code === Code.DeadlineExceeded) {
     return { kind: "timeout", cause };

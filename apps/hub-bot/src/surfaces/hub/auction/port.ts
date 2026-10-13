@@ -1,5 +1,6 @@
 import type {
   AuctionPort,
+  AuctionSummaryView,
   LotImagePort,
   LotView,
   Money,
@@ -26,8 +27,10 @@ export type AuctionFailure =
 
 // `auctionId` нет — у сходки нет аукциона. Это ответ, а не отказ: Auction
 // отвечает пустым снимком, и черновик аукциона тоже считается аукционом.
+// `auction` — стадия и сроки для строки аукциона на карточке сходки (PER-594);
+// нет её — снимок не разобрался, и строки не будет.
 export type MeetupAuctionResult =
-  | { kind: "ok"; auctionId?: string }
+  | { kind: "ok"; auctionId?: string; auction?: AuctionSummaryView }
   | AuctionFailure;
 
 // Повторное включение не отказ: Auction отвечает существующим аукционом и

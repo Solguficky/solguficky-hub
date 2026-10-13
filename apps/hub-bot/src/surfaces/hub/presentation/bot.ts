@@ -655,6 +655,8 @@ type UpdateContext = ShellContext & {
   pressedGone?: boolean;
   // Сегодняшний день сообщества для этого update.
   today?: CommunityToday;
+  // Пояс сообщества: в нём карточка сходки называет срок торгов аукциона.
+  communityTimeZone?: string;
   // Telegram отверг карточку с постерами, и она ушла без них: причина едет в
   // запись границы, иначе деградация оператору не видна.
   postersRejected?: string;
@@ -724,6 +726,7 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
         });
   bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
+    ctx.communityTimeZone = runtime.communityTimeZone ?? "UTC";
     ctx.auctionParents = auctionParents;
     if (liveCards !== undefined) ctx.liveCards = liveCards;
     await next();
@@ -7320,6 +7323,11 @@ async function renderMeetupCard(
       manageable,
       presentation,
       today: communityToday(ctx),
+      ...(result.auction?.kind === "open" &&
+      result.auction.auction !== undefined
+        ? { auction: result.auction.auction }
+        : {}),
+      timeZone: ctx.communityTimeZone ?? "UTC",
     };
     const card = cardScreen(view);
     const delivery = edit ? "auto" : "new";
@@ -8867,6 +8875,20 @@ function screenBoundary(
 ): BoundaryOutcome {
   const meetup =
     screen.meetupId === undefined ? {} : { meetup_id: screen.meetupId };
+  // Карточка ушла без строки аукциона, потому что Auction не ответил
+  // (PER-594): человек видит верную карточку, но для записи границы это
+  // сбой соседа, а не успех, — иначе его не отличить от сходки без аукциона.
+  if (result.kind === "meetup-card" && result.auction?.kind === "unavailable") {
+    return {
+      level: "warn",
+      message: `${screen.okMessage} without the auction`,
+      result: "error",
+      use_case: screen.useCase,
+      ...meetup,
+      error_category: "dependency_unavailable",
+      error: "auction_unavailable",
+    };
+  }
   if (result.kind === "meetup-not-found") {
     return {
       level: "warn",
