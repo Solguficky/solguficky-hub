@@ -41,10 +41,10 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
 
   "journal schema" should {
 
-    "create the journal, tag, snapshot, lot catalog, display name, FAQ, lot projection, lot publication, auction projection, lot statistics, raffle ticket and auction publication tables on an empty database" in {
+    "create the journal, tag, snapshot, lot catalog, display name, FAQ, lot projection, lot publication, auction projection, lot statistics, final metrics, raffle ticket and auction publication tables on an empty database" in {
       val database = freshDatabase()
 
-      JournalSchema.migrate(database) shouldBe 11
+      JournalSchema.migrate(database) shouldBe 12
 
       tables(database) should contain allOf (
         "event_journal",
@@ -63,6 +63,9 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
         "auction_lot",
         "lot_participant",
         "lot_starting_price",
+        "lot_hold",
+        "lot_resume",
+        "auction_lineup",
         "raffle_ticket",
         "auction_publication",
         JournalSchema.HistoryTable
@@ -75,7 +78,7 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
 
       JournalSchema.migrate(database) shouldBe 0
 
-      appliedVersions(database) shouldBe List("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11")
+      appliedVersions(database) shouldBe List("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12")
     }
 
     "let two processes migrating the same empty database at once apply the schema exactly once" in {
@@ -86,8 +89,8 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
         60.seconds
       )
 
-      executed.sum shouldBe 11
-      appliedVersions(database) shouldBe List("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11")
+      executed.sum shouldBe 12
+      appliedVersions(database) shouldBe List("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12")
     }
   }
 }

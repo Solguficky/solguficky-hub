@@ -18,6 +18,12 @@ import java.util.UUID
 final case class AuctionViewRow(auctionId: UUID, meetupId: UUID, stored: StoredAuction) {
   def version: Long = stored.sequence
   def lots: Set[UUID] = stored.lots.toSet
+
+  /**
+   * Состав финала, замороженный `FinalLineupFrozen` (PER-608): пусто до заморозки и после `Finished` — снимок
+   * последнего состав не несёт, поэтому строку `auction_lineup` обработчик пишет на заморозке и уже не удаляет.
+   */
+  def lineup: Set[UUID] = stored.order.fold(Set.empty[UUID])(_.toSet)
 }
 
 /** Событие аукциона, которое проекция применить не может: обработчик падает, offset остаётся перед ним. */

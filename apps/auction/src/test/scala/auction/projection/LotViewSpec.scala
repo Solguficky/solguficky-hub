@@ -151,6 +151,23 @@ final class LotViewSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       )
     }
 
+    "takes the hold price and the resume position of a lot brought through the final" in {
+      val events = numbered(
+        journal(List(500)) ++
+          Vector(stored(5, LotEvent.LotHeldForFinal(deadline)), stored(6, LotEvent.LotResumed))
+      )
+
+      // До возврата цена удержания уже есть, а номера возврата нет.
+      val held = folded(None, events.take(5))
+      held.heldPrice shouldBe Some(StoredMoney(10500L, "RUB"))
+      held.resumedSequence shouldBe None
+
+      // После возврата цена удержания переживает переход `Held -> Trading`, а номер возврата его отделяет.
+      val resumed = folded(None, events)
+      resumed.heldPrice shouldBe Some(StoredMoney(10500L, "RUB"))
+      resumed.resumedSequence shouldBe Some(6L)
+    }
+
     "collects the same statistics facts however the deliveries are split and redelivered" in {
       forAll(raises, Gen.choose(1, 4)) { (steps, size) =>
         val events = numbered(journalWithLimit(steps))

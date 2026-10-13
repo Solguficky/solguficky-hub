@@ -31,6 +31,8 @@ import org.scalatest.wordspec.AnyWordSpec
 
 import java.sql.Connection
 import java.time.Clock
+import java.time.Instant
+import java.time.ZoneId
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -85,13 +87,30 @@ final class LotProjectionIntegrationSpec
       reader: InMemoryMetricReader
   )
 
-  private def withNode[A](database: DatabaseSettings)(use: Node => A): A = {
+  /** Часы узла, которые тест двигает: удержание лота наступает только на дедлайне (PER-608). */
+  private final class ProjectionClock(var now: Instant) extends Clock {
+    override def getZone: ZoneId = ZoneId.of("UTC")
+    override def withZone(zone: ZoneId): Clock = this
+    override def instant(): Instant = now
+  }
+
+  /** Строка статистики для сравнения: значения, а не снимок лота целиком (PER-481, PER-608). */
+  private final case class Statistics(
+      lotId: UUID,
+      bidCount: Long,
+      participantCount: Long,
+      priceGrowth: Option[Money],
+      lastBidAt: Option[Instant],
+      finalGrowth: Option[Money],
+      finalBidCount: Option[Long]
+  )
+
+  private def withNode[A](database: DatabaseSettings, clock: Clock = Clock.systemUTC())(use: Node => A): A = {
     val config = ConfigFactory
       .parseString("""pekko.projection.restart-backoff { min-backoff = 100ms, max-backoff = 300ms }""")
       .withFallback(nodeConfig(database))
     val kit = ActorTestKit(s"auction-projection-${UUID.randomUUID()}", config)
     try {
-      val clock = Clock.systemUTC()
       val sharding = AuctionNode.join(kit.system)
       AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
       val reader = InMemoryMetricReader.create()
@@ -114,7 +133,8 @@ final class LotProjectionIntegrationSpec
   private val ids = UuidV7.generator(Clock.systemUTC())
 
   /** Лот в торгах: рождение, условия со стартовой ценой 100 и шагом 10, открытие — три события. */
-  private def tradingLot(node: Node, id: UUID = ids()): UUID = {
+  /** Рождение лота, условия (старт 100, шаг 10) и открытие торгов с дедлайном `deadline` — три события. */
+  private def draftPlanOpen(node: Node, id: UUID, deadline: Instant): Unit = {
     val entity = lot(node, id)
     entity
       .ask[Either[DraftLotRejected, Envelope]](LotEntity.Draft(draftLot(opN = 1), Initiator.Scheduler, _))
@@ -124,9 +144,72 @@ final class LotProjectionIntegrationSpec
       .futureValue
     entity
       .ask[Either[OpenLotRejected, Envelope]](
-        LotEntity.Open(openLot(opN = 3, deadline = Some(distantDeadline)), Initiator.Scheduler, _)
+        LotEntity.Open(openLot(opN = 3, deadline = Some(deadline)), Initiator.Scheduler, _)
       )
       .futureValue
+  }
+
+  /** Лот в торгах: рождение, условия и открытие. */
+  private def tradingLot(node: Node, id: UUID = ids()): UUID = {
+    draftPlanOpen(node, id, distantDeadline)
+    id
+  }
+
+  /**
+   * Лот, прошедший неделю и финал (PER-608): рождение, условия, открытие с дедлайном `deadline`, ставка недели 110,
+   * отметка для финала, удержание на дедлайне (`time` двигает тест), возврат в торги и ставка финала 120. Ведущий
+   * продаёт его по 120.
+   */
+  private def lineupLot(node: Node, time: ProjectionClock, id: UUID, deadline: Instant): UUID = {
+    draftPlanOpen(node, id, deadline)
+    val entity = lot(node, id)
+    bidOn(node, id, who = 1, amount = 110).futureValue.isRight shouldBe true
+    entity
+      .ask[Either[MarkForFinalRejected, Envelope]](LotEntity.MarkFinal(markForFinal(opN = 5), Initiator.Scheduler, _))
+      .futureValue
+      .isRight shouldBe true
+    time.now = deadline
+    entity
+      .ask[Either[CloseLotRejected, Envelope]](LotEntity.Close(closeLot(opN = 6), Initiator.Scheduler, _))
+      .futureValue
+      .isRight shouldBe true
+    entity
+      .ask[Either[ResumeLotRejected, Envelope]](LotEntity.Resume(resumeLot(opN = 7), Initiator.Scheduler, _))
+      .futureValue
+      .isRight shouldBe true
+    bidOn(node, id, who = 2, amount = 120).futureValue.isRight shouldBe true
+    entity
+      .ask[Either[CloseLotRejected, Envelope]](
+        LotEntity.Close(closeLot(opN = 9, reason = CloseReason.ByAuctioneer), Initiator.Scheduler, _)
+      )
+      .futureValue
+      .isRight shouldBe true
+    id
+  }
+
+  /**
+   * Лот, удержанный на дедлайне и проданный ведущим до заморозки состава (PER-608): рождение, условия, открытие, ставка
+   * недели 110, отметка, удержание и продажа по цене удержания. Возврата в торги и ставок финала у него нет.
+   */
+  private def heldLotSoldBeforeLineup(node: Node, time: ProjectionClock, id: UUID, deadline: Instant): UUID = {
+    draftPlanOpen(node, id, deadline)
+    val entity = lot(node, id)
+    bidOn(node, id, who = 1, amount = 110).futureValue.isRight shouldBe true
+    entity
+      .ask[Either[MarkForFinalRejected, Envelope]](LotEntity.MarkFinal(markForFinal(opN = 5), Initiator.Scheduler, _))
+      .futureValue
+      .isRight shouldBe true
+    time.now = deadline
+    entity
+      .ask[Either[CloseLotRejected, Envelope]](LotEntity.Close(closeLot(opN = 6), Initiator.Scheduler, _))
+      .futureValue
+      .isRight shouldBe true
+    entity
+      .ask[Either[CloseLotRejected, Envelope]](
+        LotEntity.Close(closeLot(opN = 7, reason = CloseReason.ByAuctioneer), Initiator.Scheduler, _)
+      )
+      .futureValue
+      .isRight shouldBe true
     id
   }
 
@@ -155,10 +238,11 @@ final class LotProjectionIntegrationSpec
       .futureValue
 
   /**
-   * Лот в реестре аукциона: статистика перечисляет реестр, а проекцию аукционов этот сьют не поднимает. Состояние
-   * аукциона статистика не читает, поэтому строка `auction_view` — только опора для внешнего ключа реестра.
+   * Лот в реестре аукциона: статистика перечисляет реестр, а проекцию аукционов этот сьют не поднимает. Строки
+   * `auction_view` и `auction_lineup` статистика читает только как опоры: первая держит реестр внешним ключом, вторая —
+   * состав финала (PER-608); лот в `lineup` — лот состава, у остальных метрик финала нет.
    */
-  private def registered(database: DatabaseSettings, auctionId: UUID, lots: UUID*): Unit =
+  private def registered(database: DatabaseSettings, auctionId: UUID, lineup: Set[UUID], lots: UUID*): Unit =
     withConnection(database) { connection =>
       Using.resource(
         connection.prepareStatement(
@@ -169,8 +253,16 @@ final class LotProjectionIntegrationSpec
         statement.setObject(2, UUID.randomUUID())
         statement.executeUpdate()
       }
-      lots.foreach { id =>
+      (lots.toSet ++ lineup).foreach { id =>
         Using.resource(connection.prepareStatement("INSERT INTO auction_lot (auction_id, lot_id) VALUES (?, ?)")) {
+          statement =>
+            statement.setObject(1, auctionId)
+            statement.setObject(2, id)
+            statement.executeUpdate()
+        }
+      }
+      lineup.foreach { id =>
+        Using.resource(connection.prepareStatement("INSERT INTO auction_lineup (auction_id, lot_id) VALUES (?, ?)")) {
           statement =>
             statement.setObject(1, auctionId)
             statement.setObject(2, id)
@@ -180,11 +272,21 @@ final class LotProjectionIntegrationSpec
     }
 
   /** Статистика тем же чтением, что у gRPC; сравнивается по значениям, а не по снимку лота целиком. */
-  private def statisticsOf(node: Node, auctionId: UUID) =
+  private def statisticsOf(node: Node, auctionId: UUID): List[Statistics] =
     SlickLotViews(node.kit.system)
       .statistics(auctionId)
       .futureValue
-      .map(view => (view.lotId, view.bidCount, view.participantCount, view.priceGrowth, view.lastBidAt))
+      .map(view =>
+        Statistics(
+          view.lotId,
+          view.bidCount,
+          view.participantCount,
+          view.priceGrowth,
+          view.lastBidAt,
+          view.finalGrowth,
+          view.finalBidCount
+        )
+      )
 
   private def bidders(database: DatabaseSettings, id: UUID): Set[UUID] =
     query(database, "SELECT DISTINCT participant_id FROM lot_bid WHERE lot_id = ?", id)(
@@ -314,7 +416,7 @@ final class LotProjectionIntegrationSpec
       val (incremental, limitOwners) = withNode(database) { node =>
         tradingLot(node, busy)
         tradingLot(node, quiet)
-        registered(database, auctionId, busy, quiet)
+        registered(database, auctionId, Set.empty, busy, quiet)
         bidOn(node, busy, who = 1, amount = 110).futureValue.isRight shouldBe true
         // Лимит второго ставит производную ставку от его имени, ответ первому — ещё одну.
         limitOn(node, busy, who = 2, max = 300).isRight shouldBe true
@@ -332,18 +434,19 @@ final class LotProjectionIntegrationSpec
         (statisticsOf(node, auctionId), Set(2, 3, 4).map(participant(_).value))
       }
 
-      val busyStatistics = incremental.find(_._1 == busy).getOrElse(fail("busy lot is missing"))
+      val busyStatistics = incremental.find(_.lotId == busy).getOrElse(fail("busy lot is missing"))
       val lastBid = query(
         database,
         "SELECT occurred_at FROM lot_bid WHERE lot_id = ? ORDER BY sequence DESC LIMIT 1",
         busy
       )(_.getTimestamp(1).toInstant).headOption
-      busyStatistics._2 shouldBe bidRows(database, busy).toLong
-      busyStatistics._3 shouldBe (bidders(database, busy) ++ limitOwners).size.toLong
+      busyStatistics.bidCount shouldBe bidRows(database, busy).toLong
+      busyStatistics.participantCount shouldBe (bidders(database, busy) ++ limitOwners).size.toLong
       bidders(database, busy) should not contain participant(9).value
-      busyStatistics._5 shouldBe lastBid
-      busyStatistics._4.map(_.minorUnits).exists(_ > 0) shouldBe true
-      incremental.find(_._1 == quiet) shouldBe Some((quiet, 0L, 0L, Some(money(0)), None))
+      busyStatistics.lastBidAt shouldBe lastBid
+      busyStatistics.priceGrowth.map(_.minorUnits).exists(_ > 0) shouldBe true
+      incremental.find(_.lotId == quiet) shouldBe
+        Some(Statistics(quiet, 0L, 0L, Some(money(0)), None, None, None))
 
       // Повторная доставка: без offset журнал переигрывается целиком, а числа не меняются.
       withConnection(database)(_.createStatement().execute("DELETE FROM pekko_projection_offset_store"))
@@ -352,10 +455,10 @@ final class LotProjectionIntegrationSpec
         statisticsOf(node, auctionId) shouldBe incremental
       }
 
-      // Перестройка с нуля, как в V9: read model пуста, offset проекции нет, числа — те же, что инкрементальные.
+      // Перестройка с нуля, как в V9 и V12: read model пуста, offset проекции нет, числа — те же, что инкрементальные.
       withConnection(database) { connection =>
         val statement = connection.createStatement()
-        List("lot_bid", "lot_view", "lot_participant", "lot_starting_price").foreach(table =>
+        List("lot_bid", "lot_view", "lot_participant", "lot_starting_price", "lot_hold", "lot_resume").foreach(table =>
           statement.execute(s"DELETE FROM $table")
         )
         statement.execute("DELETE FROM pekko_projection_offset_store WHERE projection_name = 'lot-view'")
@@ -364,6 +467,50 @@ final class LotProjectionIntegrationSpec
         eventually(version(database, busy) shouldBe Some(journalVersion(database, busy)))
         eventually(version(database, quiet) shouldBe Some(3L))
         statisticsOf(node, auctionId) shouldBe incremental
+      }
+    }
+
+    "counts the final growth and final bids of a held lot of the lineup and leaves them absent outside it" in {
+      val database = migrated()
+      val auctionId = UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000020")
+      val base = Instant.parse("2026-10-07T18:00:00Z")
+      val time = new ProjectionClock(base)
+      val deadline = base.plusSeconds(600)
+      val (lineup, excluded, plain) =
+        (
+          UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000021"),
+          UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000023"),
+          UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000022")
+        )
+
+      withNode(database, time) { node =>
+        lineupLot(node, time, lineup, deadline)
+        // Часы узла тест двигает сам, и удержание оставляет их на дедлайне: перед следующим лотом время возвращается к
+        // началу, иначе лот открылся бы уже на своём дедлайне, а его ставка продлила бы дедлайн анти-снайпом.
+        time.now = base
+        // Удержан, но продан ведущим до заморозки: в состав не входит, и обеих метрик у него нет.
+        heldLotSoldBeforeLineup(node, time, excluded, deadline)
+        time.now = base
+        tradingLot(node, plain)
+        registered(database, auctionId, Set(lineup), lineup, excluded, plain)
+        eventually(version(database, lineup) shouldBe Some(9L))
+        eventually(version(database, excluded) shouldBe Some(7L))
+        eventually(version(database, plain) shouldBe Some(3L))
+
+        val statistics = statisticsOf(node, auctionId)
+        val held = statistics.find(_.lotId == lineup).getOrElse(fail("the held lot is missing"))
+        // Обе ставки — недели и финала; рост от стартовой цены и рост финала от цены удержания; в финале одна ставка.
+        held.bidCount shouldBe 2L
+        held.priceGrowth shouldBe Some(money(20))
+        held.finalGrowth shouldBe Some(money(10))
+        held.finalBidCount shouldBe Some(1L)
+
+        // Удержанный вне состава и вовсе не удержанный лот: метрик финала нет, а не ноль.
+        List(excluded, plain).foreach { id =>
+          val outside = statistics.find(_.lotId == id).getOrElse(fail(s"lot $id is missing"))
+          outside.finalGrowth shouldBe None
+          outside.finalBidCount shouldBe None
+        }
       }
     }
 

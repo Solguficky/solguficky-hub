@@ -15,6 +15,9 @@ final class LotStatisticsViewSpec extends AnyWordSpec with Matchers {
   private def growth(lot: auction.lot.Lot, start: Option[Long]): Option[Money] =
     LotStatisticsView(new UUID(9L, 9L), lot, start.map(money), 0, 0, None).priceGrowth
 
+  private def finalGrowth(lot: auction.lot.Lot, held: Option[Long]): Option[Money] =
+    LotStatisticsView(new UUID(9L, 9L), lot, None, 0, 0, None, held.map(money)).finalGrowth
+
   "price growth" should {
 
     "is absent for a lot without trading conditions" in {
@@ -63,6 +66,33 @@ final class LotStatisticsViewSpec extends AnyWordSpec with Matchers {
           0,
           None
         ).priceGrowth
+    }
+  }
+
+  "final growth" should {
+
+    "is absent for a lot outside the lineup" in {
+      val outside =
+        LotStatisticsView(new UUID(9L, 9L), sold(price = 700, winner = participant(1)), None, 0, 0, None)
+      outside.finalGrowth shouldBe None
+      outside.finalBidCount shouldBe None
+    }
+
+    "is the price of the sale minus the price the lot was held at" in {
+      finalGrowth(sold(price = 700, winner = participant(1)), Some(500)) shouldBe Some(money(200))
+    }
+
+    "is zero for a lot without bids in the final" in {
+      finalGrowth(held(price = 500, leader = participant(1)), Some(500)) shouldBe Some(money(0))
+      finalGrowth(sold(price = 500, winner = participant(1)), Some(500)) shouldBe Some(money(0))
+    }
+
+    "is zero for a lineup lot closed without a sale" in {
+      finalGrowth(lotIn(LotState.Unsold(UnsoldReason.NoBids)), Some(500)) shouldBe Some(money(0))
+    }
+
+    "is the current price minus the hold price of a lot returned to trading" in {
+      finalGrowth(trading(price = 620), Some(500)) shouldBe Some(money(120))
     }
   }
 }
