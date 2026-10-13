@@ -326,13 +326,15 @@ public static class EventFactory
     /// <summary>
     /// Ставка лота. <paramref name="overtaken" /> — ручная ставка, которую та же
     /// команда перебила чужой автоставкой; <paramref name="answers" /> —
-    /// автоставка, ответившая чужой команде.
+    /// автоставка, ответившая чужой команде. Без <paramref name="auction" />
+    /// каждая ставка — в своём аукционе.
     /// </summary>
     public static global::Auction.V1.LotEvent Bid(string lotId, string? previousLeader = null,
         string? leader = null, long version = 3, bool proxy = false, bool overtaken = false, bool answers = false,
-        string? deadline = null)
+        string? deadline = null, string? auction = null)
     {
         var message = BidWithoutDeadline(lotId, previousLeader, leader, version, proxy, overtaken, answers);
+        if (auction is not null) message.State.AuctionId = auction;
         if (deadline is not null) message.State.Trading.Deadline = deadline;
         return message;
     }
@@ -435,18 +437,71 @@ public static class EventFactory
         return message;
     }
 
-    public static global::Auction.V1.LotEvent HeldForFinal(string lotId, long version = 7)
+    /// <summary>
+    /// Удержание лота для финала. <paramref name="leader" /> пустой строкой —
+    /// лот удержан без ставки.
+    /// </summary>
+    public static global::Auction.V1.LotEvent HeldForFinal(string lotId, long version = 7, string? auction = null,
+        string? leader = null, long price = 12300)
     {
         var message = Closed(lotId, version);
+        if (auction is not null) message.State.AuctionId = auction;
         message.State.Config = Config();
         message.State.Held = new global::Auction.V1.LotHeld
         {
-            CurrentPrice = new global::Auction.V1.Money { MinorUnits = 12300, Currency = "RUB" },
-            LeaderId = NewId(), LeadingBidId = NewId(),
+            CurrentPrice = new global::Auction.V1.Money { MinorUnits = price, Currency = "RUB" },
         };
+        if (leader != "")
+        {
+            message.State.Held.LeaderId = leader ?? NewId();
+            message.State.Held.LeadingBidId = NewId();
+        }
         message.LotHeldForFinal = new global::Auction.V1.LotHeldForFinal();
         return message;
     }
+
+    /// <summary>Аукцион сходки: UUIDv5, как его выводит Auction.</summary>
+    public static string AuctionOfMeetup()
+    {
+        var random = Guid.NewGuid().ToString();
+        return string.Concat(random.AsSpan(0, 14), "5", random.AsSpan(15));
+    }
+
+    /// <summary>Состав финала заморожен: лоты в порядке финала.</summary>
+    public static global::Auction.V1.AuctionEvent LineupFrozen(string auction, string meetup, params string[] lineup)
+    {
+        var message = AuctionFact(auction, meetup, 20);
+        message.State.LineupFrozen = new global::Auction.V1.AuctionState.Types.LineupFrozen();
+        message.State.LineupFrozen.Order.AddRange(lineup);
+        message.FinalLineupFrozen = new global::Auction.V1.FinalLineupFrozen();
+        return message;
+    }
+
+    /// <summary>Живой финал начался; лот ещё не выставлен.</summary>
+    public static global::Auction.V1.AuctionEvent FinalStarted(string auction, string meetup, params string[] lineup)
+    {
+        var message = AuctionFact(auction, meetup, 21);
+        message.State.InFinal = new global::Auction.V1.AuctionState.Types.Final();
+        message.State.InFinal.Order.AddRange(lineup);
+        message.FinalStarted = new global::Auction.V1.FinalStarted();
+        return message;
+    }
+
+    /// <summary>Аукцион кончился после финала.</summary>
+    public static global::Auction.V1.AuctionEvent AuctionFinished(string auction, string meetup)
+    {
+        var message = AuctionFact(auction, meetup, 30);
+        message.State.Finished = new global::Auction.V1.AuctionState.Types.Finished();
+        message.AuctionFinished = new global::Auction.V1.AuctionFinished();
+        return message;
+    }
+
+    private static global::Auction.V1.AuctionEvent AuctionFact(string auction, string meetup, long version) => new()
+    {
+        EventId = NewId(), AuctionId = auction, Version = version,
+        OccurredAt = Committed.AddMinutes(version).ToString("O"),
+        State = new global::Auction.V1.AuctionState { Id = auction, MeetupId = meetup },
+    };
 
     private static global::Auction.V1.LotEvent Closed(string lotId, long version) => new()
     {

@@ -8,7 +8,11 @@ using Npgsql;
 
 namespace Notifications.Auction;
 
-public enum AuctionOutcome { Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected, LotReplicated }
+public enum AuctionOutcome
+{
+    Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected, LotReplicated,
+    FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten,
+}
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
 public sealed record AuctionApplication(AuctionOutcome Outcome, IReadOnlyDictionary<string, int> Created)
@@ -43,6 +47,11 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             await LotReplicaStore.Apply(work, snapshot, now, cancellationToken);
         }
         await FavoriteStore.AutoFollow(work, bid.Leader, bid.LotId, now, cancellationToken);
+
+        // Лидер ставки — участник аукциона и адресат анонса финала (PER-477).
+        // Ручная ставка, перебитая той же командой, тоже участие: человек
+        // ставил, а лидерство он потерял уже чужой автоставкой.
+        await FinalStore.AddBidder(work, bid.AuctionId, bid.Leader, now, cancellationToken);
 
         var created = new Dictionary<string, int>();
         var notAfter = now + options.Value.StaleAfter;
@@ -168,9 +177,82 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         }
 
         await LotReplicaStore.Apply(work, fact.Snapshot, now, cancellationToken);
+        if (fact.Hold is { } hold)
+        {
+            await FinalStore.Hold(work, hold, cancellationToken);
+        }
 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.LotReplicated, new Dictionary<string, int>());
+    }
+
+    /// <summary>
+    /// Анонс финала (PER-477): по факту на человека из круга аукциона и
+    /// лидеров лотов состава. У заморозки лидер лота состава получает тот же
+    /// факт со своими лотами, а не второй. Удержание каждого лота состава
+    /// приходит своим фактом и может отстать: пока его нет и срок ожидания не
+    /// вышел, анонс откатывается целиком, и сообщение возвращается в поток.
+    /// После срока анонс уходит по известным удержаниям.
+    /// </summary>
+    public async Task<AuctionApplication> Apply(AuctionFinal final, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, final.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        var held = await FinalStore.Held(work, final.Lineup, cancellationToken);
+        var complete = held.Count == final.Lineup.Count;
+        var lineupFrozen = final.Occasion == FinalOccasion.LineupFrozen;
+        if (lineupFrozen && !complete && now - final.OccurredAt < options.Value.FinalLineupWait)
+        {
+            return new AuctionApplication(AuctionOutcome.LineupPending, new Dictionary<string, int>());
+        }
+        var lineup = final.Lineup.Where(held.ContainsKey).Select(lot => held[lot]).ToArray();
+
+        // Лидер лота стал им ставкой, но ставка могла прийти раньше, чем круг
+        // завёлся: лидер состава в анонс попадает в любом случае.
+        var audience = (await FinalStore.Bidders(work, final.AuctionId, cancellationToken))
+            .Union(lineup.Select(lot => lot.Leader).OfType<Guid>())
+            .ToArray();
+
+        var notAfter = now + options.Value.StaleAfter;
+        var type = lineupFrozen ? AuctionFacts.FinalLineupType : AuctionFacts.FinalStartedType;
+        var created = 0;
+        // Состав без единого известного удержания показать нечем: факта нет,
+        // а исход говорит, что состав неполон.
+        if (!lineupFrozen || lineup.Length > 0)
+        {
+            foreach (var recipient in audience)
+            {
+                var notification = lineupFrozen
+                    ? AuctionFacts.FinalLineup(Guid.CreateVersion7(now), recipient, final, lineup, now, notAfter)
+                    : AuctionFacts.FinalStarted(Guid.CreateVersion7(now), recipient, final, now, notAfter);
+                created += await NotificationStore.AddAddressed(work, notification, type,
+                    AuctionFacts.AuctionCauseKind, final.EventId.ToString(), now, notAfter, cancellationToken,
+                    await NotificationStore.DeliverySurface(work, recipient, cancellationToken));
+            }
+        }
+
+        await work.Commit(cancellationToken);
+        var outcome = lineupFrozen && !complete ? AuctionOutcome.LineupIncomplete : AuctionOutcome.FinalAnnounced;
+        return new AuctionApplication(outcome, new Dictionary<string, int> { [type] = created });
+    }
+
+    /// <summary>Конец аукциона: круг анонса и удержания лотов больше не нужны.</summary>
+    public async Task<AuctionApplication> Apply(AuctionClosed closed, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, closed.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        await FinalStore.Forget(work, closed.AuctionId, cancellationToken);
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.AuctionForgotten, new Dictionary<string, int>());
     }
 
     /// <summary>Люди, чьи окна сводки наступили, для прохода.</summary>

@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { CatalogError, parseCatalog, parseSchedule } from "./catalog.js";
@@ -60,7 +61,8 @@ describe("каталог наполнения", () => {
         return Promise.resolve(new Uint8Array([1]));
       },
     );
-    expect(read).toEqual(["/catalogs/photos/a.png"]);
+    // Путь разрешает платформа: на Windows корень получает букву диска.
+    expect(read).toEqual([resolve("/catalogs/photos/a.png")]);
   });
 
   it("называет номер лота у каждой ошибки и все ошибки сразу", async () => {

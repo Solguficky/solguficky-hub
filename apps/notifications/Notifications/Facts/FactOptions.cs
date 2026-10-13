@@ -17,6 +17,15 @@ public sealed class FactOptions
     /// </remarks>
     public TimeSpan StaleAfter { get; set; } = TimeSpan.FromHours(24);
 
+    /// <summary>
+    /// Сколько анонс состава финала ждёт удержаний своих лотов от момента
+    /// заморозки (PER-477). Удержание приходит своим фактом и обычно отстаёт
+    /// на секунды; удержание, которое не придёт никогда, — ядовитое или
+    /// забытое концом аукциона, — не должно держать анонс в потоке вечно.
+    /// После срока анонс уходит по тем лотам, чьи удержания известны.
+    /// </summary>
+    public TimeSpan FinalLineupWait { get; set; } = TimeSpan.FromMinutes(10);
+
     /// <summary>Верхняя граница срока: дольше года весть не лежит нигде.</summary>
     public static readonly TimeSpan MaxStaleAfter = TimeSpan.FromDays(365);
 

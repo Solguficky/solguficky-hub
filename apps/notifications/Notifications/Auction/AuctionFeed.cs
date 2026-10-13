@@ -11,9 +11,25 @@ public static class AuctionFeed
     public static readonly EventFeed Feed = new(Source, "AUCTION_EVENTS", "notifications-auction-events");
 
     /// <summary>
+    /// Subjects фактов аукциона, которые нужны анонсу финала (PER-477), и
+    /// ветка, которую каждый обязан нести. Конец аукциона нужен, чтобы забыть
+    /// его круг; каталог без удержанных лотов кончает аукцион своим
+    /// <c>prebidding_ended</c>.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<string, AuctionEvent.OccasionOneofCase> AuctionSubjects =
+        new Dictionary<string, AuctionEvent.OccasionOneofCase>(StringComparer.Ordinal)
+        {
+            ["events.auction.prebidding_ended"] = AuctionEvent.OccasionOneofCase.PrebiddingEnded,
+            ["events.auction.final_lineup_frozen"] = AuctionEvent.OccasionOneofCase.FinalLineupFrozen,
+            ["events.auction.final_started"] = AuctionEvent.OccasionOneofCase.FinalStarted,
+            ["events.auction.auction_finished"] = AuctionEvent.OccasionOneofCase.AuctionFinished,
+        };
+
+    /// <summary>
     /// Subjects фактов лота и ветка, которую каждый обязан нести. Имя subject'а
     /// — <c>events.auction.</c> плюс имя ветки (integration.md, «Auction NATS»);
-    /// всё вне таблицы — факты аукциона и счёта, их этот модуль не разбирает.
+    /// всё вне этой таблицы и таблицы аукциона — остальные факты аукциона и
+    /// счёта, их этот модуль не разбирает.
     /// </summary>
     public static readonly IReadOnlyDictionary<string, LotEvent.OccasionOneofCase> LotSubjects =
         new Dictionary<string, LotEvent.OccasionOneofCase>(StringComparer.Ordinal)

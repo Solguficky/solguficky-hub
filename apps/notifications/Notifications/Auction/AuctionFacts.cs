@@ -14,6 +14,55 @@ public static class AuctionFacts
     public const string DigestType = "lot_activity_digest";
     public const string DigestCauseKind = "outbid_digest";
 
+    public const string FinalLineupType = "auction_final_lineup";
+    public const string FinalStartedType = "auction_final_started";
+    public const string AuctionCauseKind = "auction_event";
+
+    /// <summary>
+    /// Анонс состава одному человеку: весь состав с ценами удержания и те его
+    /// лоты, которые человек вёл на удержании. Лидер состава получает этот же
+    /// факт со своими лотами, а не второй.
+    /// </summary>
+    public static Notification FinalLineup(Guid notificationId, Guid recipientId, AuctionFinal final,
+        IReadOnlyList<HeldLot> lineup, DateTimeOffset now, DateTimeOffset notAfter)
+    {
+        var body = new AuctionFinalLineup
+        {
+            AuctionId = final.AuctionId.ToString(),
+            MeetupId = final.MeetupId.ToString(),
+        };
+        body.Lineup.AddRange(lineup.Select(lot => new FinalLineupLot
+        {
+            LotId = lot.LotId.ToString(),
+            Price = lot.Price.Clone(),
+        }));
+        body.YourLotIds.AddRange(lineup.Where(lot => lot.Leader == recipientId).Select(lot => lot.LotId.ToString()));
+        return new Notification
+        {
+            NotificationId = notificationId.ToString(),
+            RecipientId = recipientId.ToString(),
+            CreatedAt = now.ToUniversalTime().ToString("O"),
+            NotAfter = notAfter.ToUniversalTime().ToString("O"),
+            Cause = new Cause { AuctionEventId = final.EventId.ToString() },
+            AuctionFinalLineup = body,
+        };
+    }
+
+    public static Notification FinalStarted(Guid notificationId, Guid recipientId, AuctionFinal final,
+        DateTimeOffset now, DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = recipientId.ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionEventId = final.EventId.ToString() },
+        AuctionFinalStarted = new AuctionFinalStarted
+        {
+            AuctionId = final.AuctionId.ToString(),
+            MeetupId = final.MeetupId.ToString(),
+        },
+    };
+
     public static Notification Outbid(Guid notificationId, AuctionBid bid, DateTimeOffset now, DateTimeOffset notAfter) => new()
     {
         NotificationId = notificationId.ToString(),
