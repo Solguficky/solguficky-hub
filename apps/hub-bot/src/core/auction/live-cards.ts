@@ -114,6 +114,7 @@ export function createLiveCards(options: {
     const card = cards.get(chatId);
     if (card === undefined) return;
     cards.delete(chatId);
+    latest.delete(chatId);
     options.limiter.drop(keyOf(card));
     unsubscribe.get(chatId)?.();
     unsubscribe.delete(chatId);
@@ -129,21 +130,21 @@ export function createLiveCards(options: {
     card.lotId === target.lotId &&
     card.version === target.version;
 
-  const onState = (chatId: number, state: AuctionWatchState) => {
-    const card = cards.get(chatId);
-    if (card === undefined) return;
-    const lot =
-      state.activeLot ?? state.lineup.find((each) => each.lotId === card.lotId);
-    // Лота нет ни в торгах, ни в составе — показать нечего, карточка ждёт.
-    if (lot === undefined) return;
-    // Версия лота растёт с каждым его фактом: поток, отставший от чтения по
-    // нажатию, карточку назад не откатывает.
-    if (lot.lotId === card.lotId && lot.version <= card.version) return;
+  // Последнее состояние потока у карточки: им карточка возвращается к
+  // правде, если ответ на нажатие отрисовал лот старее того, что поток уже
+  // показал.
+  const latest = new Map<number, AuctionWatchState>();
+
+  const lotOf = (card: LiveCardEntry, state: AuctionWatchState) =>
+    state.activeLot ?? state.lineup.find((each) => each.lotId === card.lotId);
+
+  const schedule = (card: LiveCardEntry, lot: LotView) => {
+    const { chatId } = card;
     card.lotId = lot.lotId;
     card.version = lot.version;
     const target = { lotId: lot.lotId, version: lot.version };
     const shownLot = withProxyLimit(lot, card.proxyLimit);
-    options.limiter.submit(card.chatId, keyOf(card), async () => {
+    options.limiter.submit(chatId, keyOf(card), async () => {
       if (!current(card, target)) return { kind: "done" };
       const following =
         card.following?.lotId === lot.lotId ? card.following.value : undefined;
@@ -170,14 +171,26 @@ export function createLiveCards(options: {
     });
   };
 
+  const onState = (chatId: number, state: AuctionWatchState) => {
+    const card = cards.get(chatId);
+    if (card === undefined) return;
+    latest.set(chatId, state);
+    const lot = lotOf(card, state);
+    // Лота нет ни в торгах, ни в составе — показать нечего, карточка ждёт.
+    if (lot === undefined) return;
+    // Версия лота растёт с каждым его фактом: поток, отставший от чтения по
+    // нажатию, карточку назад не откатывает.
+    if (lot.lotId === card.lotId && lot.version <= card.version) return;
+    schedule(card, lot);
+  };
+
   // Нажатие показало лот того же аукциона в живом сообщении: запись берёт
-  // то, что человек видит сейчас, а поток не переоткрывается. Поток, который
-  // уже ушёл дальше этой версии, карточку не откатывает.
+  // то, что человек видит сейчас, а поток не переоткрывается. Ответ на
+  // нажатие мог отрисовать лот старее того, что поток уже показал, — тогда
+  // карточка снова получает последнее состояние потока.
   const refresh = (card: LiveCardEntry, shown: LiveCardShown) => {
-    if (shown.lotId !== card.lotId || shown.version > card.version) {
-      card.version = shown.version;
-    }
     card.lotId = shown.lotId;
+    card.version = shown.version;
     card.viewer = shown.viewer;
     if (shown.page !== undefined) card.page = shown.page;
     if (shown.following !== undefined) {
@@ -185,6 +198,14 @@ export function createLiveCards(options: {
     }
     if (shown.proxyLimit !== undefined) {
       card.proxyLimit = { lotId: shown.lotId, amount: shown.proxyLimit };
+    }
+    const state = latest.get(card.chatId);
+    const lot = state === undefined ? undefined : lotOf(card, state);
+    if (
+      lot !== undefined &&
+      (lot.lotId !== shown.lotId || lot.version > shown.version)
+    ) {
+      schedule(card, lot);
     }
   };
 

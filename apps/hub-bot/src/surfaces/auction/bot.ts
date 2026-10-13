@@ -827,21 +827,30 @@ async function editLiveCard(
     key !== undefined && cached?.kind === "file"
       ? { kind: "cached", key, fileId: cached.fileId }
       : undefined;
+  const edit = (shownPhoto: Photo | undefined) =>
+    screen.format === "rich"
+      ? api.editMessageText(
+          card.chatId,
+          card.messageId,
+          richMessageOf(screen, shownPhoto),
+          markup,
+        )
+      : api.editMessageText(card.chatId, card.messageId, screen.text, markup);
   try {
-    if (screen.format === "rich") {
-      await api.editMessageText(
-        card.chatId,
-        card.messageId,
-        richMessageOf(screen, photo),
-        markup,
-      );
-    } else {
-      await api.editMessageText(
-        card.chatId,
-        card.messageId,
-        screen.text,
-        markup,
-      );
+    try {
+      await edit(photo);
+    } catch (cause) {
+      // Telegram больше не знает `file_id` из кэша: запись вытесняется, и
+      // правка идёт без фото — иначе каждая следующая цена падала бы на нём же.
+      if (
+        photo === undefined ||
+        !(cause instanceof GrammyError) ||
+        !rejectedFile(cause.description)
+      ) {
+        throw cause;
+      }
+      input.photos.delete(photo.key);
+      await edit(undefined);
     }
     return { kind: "done" };
   } catch (cause) {

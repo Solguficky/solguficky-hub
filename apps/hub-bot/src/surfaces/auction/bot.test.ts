@@ -2912,6 +2912,38 @@ describe("final lot card", () => {
     ).toBe(sentBefore);
   });
 
+  // Telegram забыл `file_id` фото из кэша: правка вытесняет запись и идёт без
+  // фото, а не падает на каждой следующей цене.
+  it("edits without the photo once Telegram refuses the cached file", async () => {
+    const stream = liveStream();
+    const photos = createPhotoCache();
+    photos.set({ lotId, version: "img-1" }, "known-file");
+    const lot = { ...liveLot(1, 1200), card: withImage.card };
+    const options: Parameters<typeof makeBot>[1] = {
+      photos,
+      live: {
+        watches: stream.watches,
+        limiter: immediate,
+        names: { getDisplayNames: async () => ({}) },
+      },
+    };
+    const { bot, calls } = makeBot(
+      portsWith({ lot, names: { [RIVAL]: "@jay" } }),
+      options,
+    );
+    await bot.handleUpdate(lotPress({ rich: true }));
+    options.refuseOnce = {
+      editMessageText: "Bad Request: wrong file identifier/HTTP URL specified",
+    };
+    stream.emit({ ...liveLot(2, 1400), card: withImage.card });
+    await flush();
+    const last = edits(calls).at(-1)?.payload as {
+      rich_message?: { media?: unknown[] };
+    };
+    expect(last.rich_message?.media).toBeUndefined();
+    expect(photos.get({ lotId, version: "img-1" })).toBeUndefined();
+  });
+
   // Гонка двух нажатий (ADR-049): второе получает отказ с новой ценой, и та
   // же карточка несёт кнопку на неё.
   it("answers a bid at a moved price with the new price on the card", async () => {

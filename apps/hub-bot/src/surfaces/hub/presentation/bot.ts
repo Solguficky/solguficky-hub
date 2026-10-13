@@ -7209,46 +7209,56 @@ async function editLiveLotCard(
   const shown = auctionScreen(view);
   const key = shown.image;
   const cached = key === undefined ? undefined : input.lotPhotos.get(key);
-  const screen =
+  const withPhoto =
     cached?.kind === "file"
       ? auctionScreen({
           ...view,
           photo: { id: lotPhotoId, fileId: cached.fileId },
         }).screen
-      : shown.screen;
-  const other = {
-    ...screenMark(screen.id),
-    reply_markup: screen.keyboard,
-    ...(screen.format === "HTML" ? { parse_mode: "HTML" as const } : {}),
+      : undefined;
+  const edit = (screen: ShownScreen) => {
+    const other = {
+      ...screenMark(screen.id),
+      reply_markup: screen.keyboard,
+      ...(screen.format === "HTML" ? { parse_mode: "HTML" as const } : {}),
+    };
+    return screen.format === "rich"
+      ? api.editMessageText(
+          card.chatId,
+          card.messageId,
+          {
+            html: screen.text,
+            ...(screen.media === undefined || screen.media.length === 0
+              ? {}
+              : {
+                  media: screen.media.map((photo) => ({
+                    id: photo.id,
+                    media: {
+                      type: "photo" as const,
+                      media: "fileId" in photo ? photo.fileId : photo.upload,
+                    },
+                  })),
+                }),
+          },
+          other,
+        )
+      : api.editMessageText(card.chatId, card.messageId, screen.text, other);
   };
   try {
-    if (screen.format === "rich") {
-      await api.editMessageText(
-        card.chatId,
-        card.messageId,
-        {
-          html: screen.text,
-          ...(screen.media === undefined || screen.media.length === 0
-            ? {}
-            : {
-                media: screen.media.map((photo) => ({
-                  id: photo.id,
-                  media: {
-                    type: "photo" as const,
-                    media: "fileId" in photo ? photo.fileId : photo.upload,
-                  },
-                })),
-              }),
-        },
-        other,
-      );
-    } else {
-      await api.editMessageText(
-        card.chatId,
-        card.messageId,
-        screen.text,
-        other,
-      );
+    try {
+      await edit(withPhoto ?? shown.screen);
+    } catch (cause) {
+      // Telegram больше не знает `file_id` из кэша: запись вытесняется, и
+      // правка идёт без фото — иначе каждая следующая цена падала бы на нём же.
+      if (
+        withPhoto === undefined ||
+        key === undefined ||
+        !rejectedFile(cause)
+      ) {
+        throw cause;
+      }
+      input.lotPhotos.delete(key);
+      await edit(shown.screen);
     }
     return { kind: "done" };
   } catch (cause) {

@@ -317,6 +317,21 @@ describe("live cards", () => {
     expect(edits).toHaveLength(0);
   });
 
+  // Ответ на нажатие прочитал лот раньше, чем поток ушёл дальше, а
+  // отрисовался после правки потока: карточка снова получает последнее.
+  it("reapplies the latest stream state after a stale press render", async () => {
+    const { stream, edits, cards, lotOf } = setup();
+    cards.shown(7, 70, opened);
+    stream.emit(live(LOT_A, 6, 1400));
+    await flush();
+    cards.shown(7, 70, { ...opened, version: 5 });
+    await flush();
+    expect(edits).toHaveLength(2);
+    expect(lotOf(edits[1]?.body ?? { blocks: [], keyboard: [] })?.version).toBe(
+      6,
+    );
+  });
+
   it("edits the same state again after an edit that failed", async () => {
     const stream = manualWatches();
     const outcomes: LiveEditOutcome[] = [{ kind: "failed" }, { kind: "done" }];
