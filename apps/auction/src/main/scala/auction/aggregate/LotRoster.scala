@@ -72,6 +72,15 @@ enum LotInstruction {
 
   /** Снять лот с торгов: аукцион отменён (ADR-047, дополнение 2026-10-12). */
   case Withdraw(lot: LotId, command: WithdrawLot)
+
+  /** Активный лот финала завершился, а аукцион этого ещё не записал: пора записать `FinalLotCompleted` (PER-607). */
+  case Complete(lot: LotId)
+
+  /**
+   * Аукцион кончился, а записи о том нет: в финале завершён каждый лот состава, в перерыве не осталось удержанных —
+   * пора записать `AuctionFinished`.
+   */
+  case Finish
 }
 
 /**
@@ -134,6 +143,15 @@ object LotRoster {
   def stepOpId(startedBy: OpId, step: String): OpId =
     OpId(Auction.nameBased(StepNamespace, s"${startedBy.value}/$step"))
 
+  /**
+   * `op_id` завершения лота финала — шаг аукциона без человека от `op_id` открытия и лота. Один и тот же у ответа на
+   * закрытие ведущим и у восстановления после рестарта: кто бы ни пришёл вторым, он упирается в окно `seen`.
+   */
+  def completionOf(startedBy: OpId, lot: LotId): OpId = stepOpId(startedBy, s"final-lot-completed/${lot.value}")
+
+  /** `op_id` конца аукциона после финала — шаг без человека, как конец ожидания лотов. */
+  def finishOf(startedBy: OpId): OpId = stepOpId(startedBy, "auction-finished")
+
   /** Пространство имён `op_id` снятия лота отменённым аукционом (UUIDv5). */
   val WithdrawNamespace: UUID = UUID.fromString("9e3c5a71-2b8d-4f06-a1e4-6d0b7c93f852")
 
@@ -152,11 +170,17 @@ object LotRoster {
    * открыты, а с заморозки состава аукцион знает финалистов из своего журнала. Отменённый аукцион не спрашивает, а
    * снимает каждый лот реестра: что ответить, решает лот, и проданный остаётся проданным. Других команд лотам
    * отменённый аукцион больше не шлёт — ни открытия, ни закрытия.
+   *
+   * В финале спрашивается только активный лот (PER-607): ведущий мог закрыть его, а аукцион упасть до записи
+   * `FinalLotCompleted`. Это восстановление знания, которое дал бы ответ на закрытие, а не второй путь к концу лота:
+   * без закрытия ведущим ответ лота ничего не меняет. Финал с завершённым составом сразу получает `Finish`.
    */
   def survey(auction: Auction): (LotRoster, List[LotInstruction]) =
     auction.state match {
       case AuctionState.Cancelled(_, _, cancelledBy) => withdraw(empty, auction.lots.toList, cancelledBy)
       case current if asking(current) => settling(auction, ask(empty, auction.lots.toList))
+      case AuctionState.Final(_, _, _, _, _) if Auction.lineupCompleted(auction) => (empty, List(LotInstruction.Finish))
+      case current @ AuctionState.Final(_, _, _, _, _) => ask(empty, current.activeLot.toList)
       case _ => (empty, Nil)
     }
 
@@ -187,6 +211,7 @@ object LotRoster {
     auction.state match {
       case AuctionState.Cancelled(_, _, cancelledBy) => withdraw(roster, silent, cancelledBy)
       case current if asking(current) => ask(roster, silent)
+      case AuctionState.Final(_, _, _, _, _) => ask(roster, silent)
       case _ => (roster, Nil)
     }
   }
@@ -257,9 +282,61 @@ object LotRoster {
               case _ => (roster.mark(lot, LotStanding.NotOpened), Nil)
             }
         }
-        settling(auction, step)
+        breakOver(auction, settling(auction, step))
+      // В финале аукцион спрашивает лот только затем, чтобы узнать, не кончился ли он без записи о том.
+      case (AuctionState.Final(_, _, _, _, _), Some(LotStanding.Asked)) =>
+        state match {
+          case LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
+            (roster.mark(lot, LotStanding.Closed), List(LotInstruction.Complete(lot)))
+          case LotState.Initial | LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) =>
+            (roster.mark(lot, LotStanding.Active), Nil)
+        }
       case _ => (roster, Nil)
     }
+
+  /**
+   * Закрытие ведущим ушло лоту (PER-607). В перерыве лот до ответа — `Closing`: такой лот держит знание о составе, и
+   * заморозка, пришедшая до ответа, отвечает «состав пока не известен», а не берёт в состав лот, который вот-вот будет
+   * продан. В финале знание ведётся только об активном лоте: потерянный ответ на его закрытие доводит переспрос. В
+   * остальных фазах и для остальных лотов финала шаг знания не трогает.
+   */
+  def closingByAuctioneer(auction: Auction, roster: LotRoster, lot: LotId): LotRoster =
+    auction.state match {
+      case AuctionState.Break(_, _) => roster.mark(lot, LotStanding.Closing)
+      case current @ AuctionState.Final(_, _, _, _, _) if current.activeLot.contains(lot) =>
+        roster.mark(lot, LotStanding.Closing)
+      case _ => roster
+    }
+
+  /**
+   * Лот ответил на закрытие ведущим. Принятое — лот закрыт, и перерыв, в котором не осталось удержанных, кончается.
+   * Отказ значит, что аукцион знает о лоте не то, что лот, и истину даёт вопрос о состоянии — по ответу на него финал
+   * запишет конец лота, если лот уже кончился.
+   */
+  def endedByAuctioneer(
+      auction: Auction,
+      roster: LotRoster,
+      lot: LotId,
+      accepted: Boolean
+  ): (LotRoster, List[LotInstruction]) =
+    roster.lots.get(lot) match {
+      case Some(LotStanding.Closing) =>
+        if (accepted) breakOver(auction, (roster.mark(lot, LotStanding.Closed), Nil)) else ask(roster, List(lot))
+      case _ => (roster, Nil)
+    }
+
+  /**
+   * Шаг в перерыве: когда о каждом лоте реестра есть ответ и удержанных среди них не осталось — ведущий продал всех, —
+   * к шагу добавляется `Finish` (PER-607). В перерыв аукцион входит только с удержанными, поэтому пустым он становится
+   * лишь закрытием ведущим; после рестарта тот же вывод даёт опрос. Вне перерыва шаг не меняется.
+   */
+  def breakOver(auction: Auction, step: (LotRoster, List[LotInstruction])): (LotRoster, List[LotInstruction]) = {
+    val (roster, instructions) = step
+    lineup(auction, roster) match {
+      case Some(held) if held.isEmpty => (roster, instructions :+ LotInstruction.Finish)
+      case _ => step
+    }
+  }
 
   /**
    * Лот ответил на `OpenLot`: подтверждение делает его активным и взводит таймер по дедлайну из его `LotOpened`, отказ
@@ -344,7 +421,7 @@ object LotRoster {
     state match {
       case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) => true
       case AuctionState.Initial | AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.LineupFrozen(_, _, _) |
-          AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) | AuctionState.Cancelled(_, _, _) =>
+          AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) | AuctionState.Cancelled(_, _, _) =>
         false
     }
 

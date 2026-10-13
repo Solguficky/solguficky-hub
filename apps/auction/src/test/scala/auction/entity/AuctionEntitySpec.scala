@@ -8,6 +8,7 @@ import auction.lot.AdvanceAsk
 import auction.lot.AdvanceAskRejected
 import auction.lot.CloseLot
 import auction.lot.CloseLotRejected
+import auction.lot.CloseReason
 import auction.lot.Decision
 import auction.lot.Envelope
 import auction.lot.Lot
@@ -125,6 +126,26 @@ final class AuctionEntitySpec
           case _ => Closure.Closed
         }
       if (mute(lot)) Future.failed(new java.util.concurrent.TimeoutException("the lot did not answer"))
+      else Future.successful(answer)
+    }
+
+    private var hammers = Vector.empty[(LotId, CloseLot, Initiator)]
+
+    def hammered: Vector[(LotId, CloseLot, Initiator)] = synchronized(hammers)
+
+    /** Закрытие ведущим; `lost` — лот закрылся, но ответ потерялся, `mute` — ответа нет, а лот закрылся. */
+    def closeByAuctioneer(
+        lot: LotId,
+        command: CloseLot,
+        initiator: Initiator
+    ): Future[Either[CloseLotRejected, Envelope]] = synchronized {
+      hammers :+= (lot, command, initiator)
+      val answer = Lot.decide(lots(lot), command, now()).map { decision =>
+        val event = written(lot, command.opId, decision)
+        Envelope(lots(lot).seen.size.toLong, command.opId, event)
+      }
+      if (lost(lot)) Promise[Either[CloseLotRejected, Envelope]]().future
+      else if (mute(lot)) Future.failed(new java.util.concurrent.TimeoutException("the lot did not answer"))
       else Future.successful(answer)
     }
 
@@ -358,6 +379,58 @@ final class AuctionEntitySpec
   private def next(opN: Int) = {
     val answer = kit.createTestProbe[Either[StartNextLotRejected, LotId]]()
     (entity.runCommand(AuctionEntity.Next(StartNextLot(op(opN)), administrator, answer.ref)).events, answer)
+  }
+
+  /** Закрытие ведущим: ответ приходит после ответа лота — и записи завершения лота финала, — и его ждёт проба. */
+  private def hammer(opN: Int, closed: LotId = lot) = {
+    val answer = kit.createTestProbe[Either[CloseAuctionLotRejected, LotEnding]]()
+    val command = CloseAuctionLot(closed, op(opN))
+    (entity.runCommand(AuctionEntity.CloseByAuctioneer(command, administrator, answer.ref)).events, answer)
+  }
+
+  private val third = LotId(uuid(13))
+
+  /** `lot` и `third` с условиями торгов, `other` — без них; реестр аукциона — `lot` и `third`. */
+  private def withTwoLots(recheckEvery: FiniteDuration): Int = {
+    lots = Lots(
+      Map(lot -> LotFixtures.scheduled(), third -> LotFixtures.scheduled(), other -> LotFixtures.drafted),
+      () => time.instant()
+    )
+    entity = entityOf(lots, recheckEvery = recheckEvery)
+    scheduledWith(lot, third)
+  }
+
+  /**
+   * Перерыв с удержанными `lot` и `third` по отметке до дедлайна; `bid` — ставка на `lot` до дедлайна. События 1…7:
+   * рождение, два лота, план, старт, дедлайн, перерыв. Возвращает номер `op_id` открытия; два следующих заняты
+   * отметками.
+   */
+  private def breakOfTwo(bid: Boolean, recheckEvery: FiniteDuration = AuctionEntity.DefaultRecheckEvery): Int = {
+    val opening = withTwoLots(recheckEvery)
+    time.instant0 = closesAt.minusSeconds(60)
+    start(opening)
+    eventually(roster.active shouldBe Set(lot, third))
+    if (bid) lots.bid(lot, LotFixtures.placeBid(who = 2, amount = 110, opN = 90), time.instant())
+    select(opening + 1, lot)._2.expectMessage(Right(()))
+    select(opening + 2, third)._2.expectMessage(Right(()))
+    time.instant0 = closesAt.plus(Duration.ofMinutes(10))
+    entity.restart()
+    eventually(roster.held shouldBe Set(lot, third))
+    entity.getState().sequence shouldBe 7
+    opening
+  }
+
+  /**
+   * Финал из перерыва [[breakOfTwo]] с составом `lot`, `third` и возвращённым `lot`: события 8…10; свободен `opening +
+   * 6`.
+   */
+  private def finalOfTwo(bid: Boolean, recheckEvery: FiniteDuration = AuctionEntity.DefaultRecheckEvery): Int = {
+    val opening = breakOfTwo(bid, recheckEvery)
+    freeze(opening + 3, List(lot, third)).reply.isRight shouldBe true
+    begin(opening + 4).reply.isRight shouldBe true
+    next(opening + 5)._2.expectMessage(Right(lot))
+    entity.getState().sequence shouldBe 10
+    opening
   }
 
   private def markedNow(chosen: LotId): Boolean =
@@ -989,13 +1062,13 @@ final class AuctionEntitySpec
       val (_, lost) = next(opening + 4)
       lost.expectNoMessage(100.millis)
       lots.stateNow(lot) shouldBe a[LotState.Trading]
-      entity.getState().auction.state shouldBe AuctionState.Final(config(), op(opening), List(lot), Nil)
+      entity.getState().auction.state shouldBe AuctionState.Final(config(), op(opening), List(lot), Nil, Nil)
 
       lots.lost = Set.empty
       entity.restart()
       val (_, answered) = next(opening + 4)
       answered.expectMessage(Right(lot))
-      entity.getState().auction.state shouldBe AuctionState.Final(config(), op(opening), List(lot), List(lot))
+      entity.getState().auction.state shouldBe AuctionState.Final(config(), op(opening), List(lot), List(lot), Nil)
       lots.resumes.map(_._2).distinct shouldBe Vector(LotRoster.resumeOf(op(opening), lot))
 
       val (_, repeated) = next(opening + 4)
@@ -1003,6 +1076,118 @@ final class AuctionEntitySpec
       val (_, another) = next(opening + 5)
       another.expectMessage(Left(StartNextLotRejected.AnotherLotActive(lot)))
       entity.getState().sequence shouldBe 9
+    }
+
+    "completes the active lot closed by the auctioneer, opens the next one and finishes the auction after the last" in {
+      val opening = finalOfTwo(bid = true)
+      // Лот очереди закрывается только в свою очередь: удержанный, он остаётся удержанным.
+      val (_, early) = hammer(opening + 6, third)
+      early.expectMessage(Left(CloseAuctionLotRejected.LotNotOpen))
+      lots.stateNow(third) shouldBe a[LotState.Held]
+
+      val (written, sold) = hammer(opening + 7)
+      written shouldBe empty
+      sold.expectMessageType[Either[CloseAuctionLotRejected, LotEnding]] match {
+        case Right(LotEnding.Sold(sale)) => sale.winner shouldBe participant(2)
+        case other => fail(s"the lot was not sold: $other")
+      }
+      lots.hammered.last shouldBe (lot, CloseLot(CloseReason.ByAuctioneer, op(opening + 7)), administrator)
+      entity.getState().auction.state shouldBe
+        AuctionState.Final(config(), op(opening), List(lot, third), List(lot), List(lot))
+      entity.getState().auction.seen(LotRoster.completionOf(op(opening), lot)).event shouldBe
+        AuctionEvent.FinalLotCompleted(lot)
+
+      next(opening + 8)._2.expectMessage(Right(third))
+      hammer(opening + 9, third)._2.expectMessage(Right(LotEnding.Unsold(UnsoldReason.NoBids)))
+      eventually(entity.getState().auction.state shouldBe AuctionState.Finished(config(), op(opening)))
+      entity.getState().sequence shouldBe 14
+      entity.getState().auction.seen(LotRoster.finishOf(op(opening))).event shouldBe AuctionEvent.AuctionFinished
+
+      // Повтор кнопки доходит до лота и получает исходное закрытие; аукцион больше ничего не пишет.
+      hammer(opening + 9, third)._2.expectMessage(Right(LotEnding.Unsold(UnsoldReason.NoBids)))
+      entity.restart()
+      entity.getState().auction.state shouldBe AuctionState.Finished(config(), op(opening))
+      entity.getState().sequence shouldBe 14
+    }
+
+    "finishes the final after a restart between the sale of its last lot and the completion, writing each step once" in {
+      val opening = finalOfTwo(bid = false)
+      hammer(opening + 6)._2.expectMessage(Right(LotEnding.Unsold(UnsoldReason.NoBids)))
+      next(opening + 7)._2.expectMessage(Right(third))
+
+      // Лот закрыт, а ответ до аукциона не дошёл: аукцион упал до записи завершения.
+      lots.lost = Set(third)
+      val (_, lost) = hammer(opening + 8, third)
+      lost.expectNoMessage(100.millis)
+      lots.stateNow(third) shouldBe a[LotState.Unsold]
+      entity.getState().auction.state.activeLot shouldBe Some(third)
+
+      lots.lost = Set.empty
+      entity.restart()
+      eventually(entity.getState().auction.state shouldBe AuctionState.Finished(config(), op(opening)))
+      entity.getState().sequence shouldBe 14
+      entity.restart()
+      Thread.sleep(200)
+      entity.getState().sequence shouldBe 14
+      // Ведущий повторил кнопку после рестарта: исходное закрытие, без второй записи.
+      hammer(opening + 8, third)._2.expectMessage(Right(LotEnding.Unsold(UnsoldReason.NoBids)))
+      entity.getState().sequence shouldBe 14
+    }
+
+    "completes the active lot by asking it when the answer to the closing did not come" in {
+      val opening = finalOfTwo(bid = false, recheckEvery = 50.millis)
+      lots.mute = Set(lot)
+      val (_, silent) = hammer(opening + 6)
+      silent.expectNoMessage(100.millis)
+      lots.mute = Set.empty
+      eventually(entity.getState().auction.state.activeLot shouldBe None)
+      entity.getState().auction.state shouldBe
+        AuctionState.Final(config(), op(opening), List(lot, third), List(lot), List(lot))
+      entity.getState().sequence shouldBe 11
+    }
+
+    "sells a lot held in the break when the auctioneer closes it and leaves it out of the lineup" in {
+      val opening = breakOfTwo(bid = false)
+      // Пока лот не ответил на закрытие, состав не известен: заморозка не возьмёт в него лот, который вот-вот закроется.
+      lots.lost = Set(lot)
+      hammer(opening + 3)._2.expectNoMessage(100.millis)
+      freeze(opening + 4, List(third)).reply shouldBe Left(FreezeFinalLineupRejected.LineupUnknown)
+      lots.lost = Set.empty
+      entity.restart()
+      hammer(opening + 3)._2.expectMessage(Right(LotEnding.Unsold(UnsoldReason.NoBids)))
+      eventually(
+        freeze(opening + 4, List(lot, third)).reply shouldBe Left(FreezeFinalLineupRejected.LineupMismatch(Set(third)))
+      )
+      freeze(opening + 5, List(third)).reply.isRight shouldBe true
+      entity.getState().auction.state shouldBe AuctionState.LineupFrozen(config(), op(opening), List(third))
+    }
+
+    "finishes the auction when the auctioneer sold every held lot in the break, also after a restart before the end" in {
+      val opening = breakOfTwo(bid = false)
+      hammer(opening + 3)._2.expectMessage(Right(LotEnding.Unsold(UnsoldReason.NoBids)))
+      entity.getState().auction.state shouldBe a[AuctionState.Break]
+
+      // Последний удержанный закрыт, а ответ потерялся: конец даёт опрос перерыва после рестарта.
+      lots.lost = Set(third)
+      hammer(opening + 4, third)._2.expectNoMessage(100.millis)
+      lots.lost = Set.empty
+      entity.restart()
+      eventually(entity.getState().auction.state shouldBe AuctionState.Finished(config(), op(opening)))
+      entity.getState().sequence shouldBe 8
+      entity.getState().auction.seen(LotRoster.finishOf(op(opening))).event shouldBe AuctionEvent.AuctionFinished
+      cancel(opening + 5).reply shouldBe Left(CancelAuctionRejected.AuctionAlreadyFinished)
+      entity.restart()
+      entity.getState().sequence shouldBe 8
+    }
+
+    "refuses the closing of the auctioneer during prebidding and outside its registry without reaching the lot" in {
+      val opening = scheduledWith(lot)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      hammer(opening + 1)._2.expectMessage(Left(CloseAuctionLotRejected.DeadlineNotReached))
+      hammer(opening + 2, LotId(uuid(13)))._2.expectMessage(Left(CloseAuctionLotRejected.LotNotInAuction))
+      lots.hammered shouldBe empty
+      lots.stateNow(lot) shouldBe a[LotState.Trading]
     }
 
     "asks its shard to passivate an auction that was never drafted, so that a stray auction_id is not remembered" in {

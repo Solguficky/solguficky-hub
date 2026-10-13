@@ -19,7 +19,8 @@
         "auctionScheduled": null,
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
-        "finalLotActivated": null
+        "finalLotActivated": null,
+        "finalLotCompleted": null
       }
     },
     {
@@ -35,7 +36,8 @@
         "auctionScheduled": null,
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
-        "finalLotActivated": null
+        "finalLotActivated": null,
+        "finalLotCompleted": null
       }
     },
     {
@@ -80,7 +82,8 @@
         },
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
-        "finalLotActivated": null
+        "finalLotActivated": null,
+        "finalLotCompleted": null
       }
     },
     {
@@ -94,7 +97,8 @@
         "auctionScheduled": null,
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
-        "finalLotActivated": null
+        "finalLotActivated": null,
+        "finalLotCompleted": null
       }
     },
     {
@@ -108,7 +112,8 @@
         "auctionScheduled": null,
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
-        "finalLotActivated": null
+        "finalLotActivated": null,
+        "finalLotCompleted": null
       }
     },
     {
@@ -124,7 +129,8 @@
           "finished": false
         },
         "finalLineupFrozen": null,
-        "finalLotActivated": null
+        "finalLotActivated": null,
+        "finalLotCompleted": null
       }
     },
     {
@@ -138,7 +144,8 @@
         "auctionScheduled": null,
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
-        "finalLotActivated": null
+        "finalLotActivated": null,
+        "finalLotCompleted": null
       }
     }
   ],
@@ -177,5 +184,6 @@
   "startedBy": "00000000-0000-0003-0000-000000000004",
   "order": null,
   "activated": null,
-  "cancelledBy": "00000000-0000-0003-0000-000000000007"
+  "cancelledBy": "00000000-0000-0003-0000-000000000007",
+  "completed": null
 }

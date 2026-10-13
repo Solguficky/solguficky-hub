@@ -19,7 +19,8 @@
         "auctionScheduled": null,
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
-        "finalLotActivated": null
+        "finalLotActivated": null,
+        "finalLotCompleted": null
       }
     },
     {
@@ -35,7 +36,8 @@
         "auctionScheduled": null,
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
-        "finalLotActivated": null
+        "finalLotActivated": null,
+        "finalLotCompleted": null
       }
     }
   ],
@@ -43,5 +45,6 @@
   "startedBy": null,
   "order": null,
   "activated": null,
-  "cancelledBy": null
+  "cancelledBy": null,
+  "completed": null
 }

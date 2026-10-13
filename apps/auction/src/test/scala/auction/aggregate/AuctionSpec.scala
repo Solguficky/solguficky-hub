@@ -4,6 +4,8 @@ import auction.aggregate.AuctionFixtures.*
 import auction.catalog.LotId
 import auction.lot.AdvanceAsk
 import auction.lot.AntiSnipe
+import auction.lot.CloseLot
+import auction.lot.CloseReason
 import auction.lot.LotConfigInput
 import auction.lot.LotFixtures
 import auction.lot.LotFixtures.eur
@@ -453,7 +455,7 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       Auction.decide(settling, StartFinal(op(9))) shouldBe Left(StartFinalRejected.LineupNotFrozen)
       Auction.decide(inFinal, StartFinal(op(19))) shouldBe Left(StartFinalRejected.LineupNotFrozen)
       Auction.decide(frozen, StartFinal(op(9))) shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalStarted))
-      inFinal.state shouldBe AuctionState.Final(config(), op(5), List(lot), Nil)
+      inFinal.state shouldBe AuctionState.Final(config(), op(5), List(lot), Nil, Nil)
     }
 
     "returns the lots of the lineup to trading one by one in its order" in {
@@ -465,8 +467,8 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       Auction.activate(running, StartNextLot(op(10)), other) shouldBe
         Right(AuctionDecision.Accepted(AuctionEvent.FinalLotActivated(other)))
       val first = Auction.apply(running, AuctionEnvelope(10, op(10), AuctionEvent.FinalLotActivated(other)))
-      first.state shouldBe AuctionState.Final(config(), op(5), order, List(other))
-      // Активный лот завершает закрытие ведущим; до него следующего лота нет.
+      first.state shouldBe AuctionState.Final(config(), op(5), order, List(other), Nil)
+      // Активный лот завершается закрытием ведущим; до него следующего лота нет.
       Auction.decide(first, StartNextLot(op(11))) shouldBe Left(StartNextLotRejected.AnotherLotActive(other))
       Auction.decide(first, StartNextLot(op(10))) shouldBe
         Right(NextLot.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.FinalLotActivated(other))))
@@ -538,6 +540,104 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       Auction.decide(gone, StartFinal(op(40))) shouldBe Left(StartFinalRejected.LineupNotFrozen)
       Auction.decide(gone, StartNextLot(op(40))) shouldBe Left(StartNextLotRejected.NotInFinal)
       Auction.prebiddingDeadline(gone) shouldBe None
+    }
+
+    def active: Auction = applied(inFinal, Auction.activate(inFinal, StartNextLot(op(10)), lot).toOption.get, 10, 10)
+
+    def completed: Auction =
+      applied(active, Auction.decide(active, CompleteFinalLot(lot, op(11))).toOption.get, 11, 11)
+
+    "sends the closing of the auctioneer to the active lot of the final and to a lot held in the break" in {
+      val close = CloseLot(CloseReason.ByAuctioneer, op(40))
+      Auction.decide(active, CloseAuctionLot(lot, op(40))) shouldBe Right(close)
+      Auction.decide(onBreak, CloseAuctionLot(lot, op(40))) shouldBe Right(close)
+      // Лот, который не в составе, кончился раньше: его ответ решает лот, и повтор получит исходное закрытие.
+      Auction.decide(active, CloseAuctionLot(other, op(40))) shouldBe Right(close)
+      Auction.decide(completed, CloseAuctionLot(lot, op(40))) shouldBe Right(close)
+    }
+
+    "refuses the closing of the auctioneer while the deadline closes lots and for a lot of the lineup before its turn" in {
+      List(trading, settling).foreach { auction =>
+        Auction.decide(auction, CloseAuctionLot(lot, op(40))) shouldBe Left(CloseAuctionLotRejected.DeadlineNotReached)
+      }
+      Auction.decide(frozen, CloseAuctionLot(lot, op(40))) shouldBe Left(CloseAuctionLotRejected.LotNotOpen)
+      Auction.decide(inFinal, CloseAuctionLot(lot, op(40))) shouldBe Left(CloseAuctionLotRejected.LotNotOpen)
+      Auction.decide(active, CloseAuctionLot(LotId(new UUID(5L, 99L)), op(40))) shouldBe
+        Left(CloseAuctionLotRejected.LotNotInAuction)
+      Auction.decide(Auction.initial, CloseAuctionLot(lot, op(40))) shouldBe
+        Left(CloseAuctionLotRejected.AuctionNotFound)
+    }
+
+    "finishes a break whose every held lot the auctioneer sold, and only once the lots of the break all answered" in {
+      Auction.decide(onBreak, FinishAuction(op(20)), Some(Set.empty)) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.AuctionFinished))
+      Auction.decide(onBreak, FinishAuction(op(20)), Some(Set(lot))) shouldBe
+        Left(FinishAuctionRejected.LineupNotCompleted)
+      Auction.decide(onBreak, FinishAuction(op(20)), None) shouldBe Left(FinishAuctionRejected.LineupNotCompleted)
+      Auction.decide(frozen, FinishAuction(op(20)), Some(Set.empty)) shouldBe
+        Left(FinishAuctionRejected.NotInBreakOrFinal)
+      val over = applied(onBreak, AuctionDecision.Accepted(AuctionEvent.AuctionFinished), 8, 20)
+      over.state shouldBe AuctionState.Finished(config(), op(5))
+      // Отмена, обогнавшая запись конца пустого перерыва, уже опоздала; перерыв с удержанным отменяется.
+      Auction.decide(onBreak, CancelAuction(op(30)), Some(Set.empty)) shouldBe
+        Left(CancelAuctionRejected.AuctionAlreadyFinished)
+      Auction.decide(onBreak, CancelAuction(op(30)), Some(Set(lot))) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.AuctionCancelled))
+    }
+
+    "sends no closing to a lot of a cancelled auction, though its withdrawal may not have reached the lot" in {
+      Auction.decide(cancelled(active, 11), CloseAuctionLot(lot, op(40))) shouldBe
+        Left(CloseAuctionLotRejected.LotNotOpen)
+    }
+
+    "completes only the active lot of the final and answers a repeated step with the original envelope" in {
+      Auction.decide(inFinal, CompleteFinalLot(lot, op(11))) shouldBe Left(CompleteFinalLotRejected.NotActive)
+      Auction.decide(active, CompleteFinalLot(other, op(11))) shouldBe Left(CompleteFinalLotRejected.NotActive)
+      completed.state shouldBe AuctionState.Final(config(), op(5), List(lot), List(lot), List(lot))
+      completed.state.activeLot shouldBe None
+      Auction.decide(completed, CompleteFinalLot(lot, op(11))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(11, op(11), AuctionEvent.FinalLotCompleted(lot))))
+      Auction.decide(completed, CompleteFinalLot(lot, op(12))) shouldBe Left(CompleteFinalLotRejected.NotActive)
+    }
+
+    "returns the next lot of the lineup once the active one is completed and finishes only after the last one" in {
+      val order = List(other, lot)
+      val both = applied(settling, Auction.decide(settling, EndSettling(Set(lot, other), op(7))).toOption.get, 7, 7)
+      val running = Auction.replay(
+        both,
+        List(
+          AuctionEnvelope(8, op(8), AuctionEvent.FinalLineupFrozen(order)),
+          AuctionEnvelope(9, op(9), AuctionEvent.FinalStarted),
+          AuctionEnvelope(10, op(10), AuctionEvent.FinalLotActivated(other))
+        )
+      )
+      Auction.decide(running, FinishAuction(op(20)), None) shouldBe Left(FinishAuctionRejected.LineupNotCompleted)
+      val first = applied(running, Auction.decide(running, CompleteFinalLot(other, op(11))).toOption.get, 11, 11)
+      Auction.lineupCompleted(first) shouldBe false
+      Auction.decide(first, FinishAuction(op(20)), None) shouldBe Left(FinishAuctionRejected.LineupNotCompleted)
+      Auction.decide(first, StartNextLot(op(12))) shouldBe Right(NextLot.Resume(lot))
+      val second = Auction.replay(
+        first,
+        List(
+          AuctionEnvelope(12, op(12), AuctionEvent.FinalLotActivated(lot)),
+          AuctionEnvelope(13, op(13), AuctionEvent.FinalLotCompleted(lot))
+        )
+      )
+      Auction.decide(second, StartNextLot(op(14))) shouldBe Left(StartNextLotRejected.LineupExhausted)
+      Auction.lineupCompleted(second) shouldBe true
+      Auction.decide(second, FinishAuction(op(20)), None) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.AuctionFinished))
+      val over = applied(second, AuctionDecision.Accepted(AuctionEvent.AuctionFinished), 14, 20)
+      over.state shouldBe AuctionState.Finished(config(), op(5))
+      Auction.decide(over, FinishAuction(op(20)), None) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(14, op(20), AuctionEvent.AuctionFinished)))
+      Auction.decide(over, FinishAuction(op(21)), None) shouldBe Left(FinishAuctionRejected.NotInBreakOrFinal)
+      Auction.decide(over, CancelAuction(op(30))) shouldBe Left(CancelAuctionRejected.AuctionAlreadyFinished)
+      // Конец ещё не записан, но состав завершён: отмена, обогнавшая его, уже опоздала.
+      Auction.decide(second, CancelAuction(op(30))) shouldBe Left(CancelAuctionRejected.AuctionAlreadyFinished)
+      Auction.decide(first, CancelAuction(op(30))) shouldBe Right(
+        AuctionDecision.Accepted(AuctionEvent.AuctionCancelled)
+      )
     }
   }
 }

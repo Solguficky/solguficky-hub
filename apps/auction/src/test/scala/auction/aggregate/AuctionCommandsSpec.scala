@@ -127,6 +127,15 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       commands :+= command
       Future.successful(nextAnswer)
     }
+
+    var closeAnswer: Either[CloseAuctionLotRejected, LotEnding] = Right(LotEnding.Unsold(UnsoldReason.NoBids))
+    var closeInitiator: Option[Initiator] = None
+
+    def closeLot(auctionId: AuctionId, command: CloseAuctionLot, initiator: Initiator) = {
+      commands :+= command
+      closeInitiator = Some(initiator)
+      Future.successful(closeAnswer)
+    }
   }
 
   private class Lots(answer: Either[DraftLotRejected, Envelope], bornIn: Option[AuctionId] = None) extends LotGateway {
@@ -647,6 +656,41 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         .futureValue shouldBe Left(NextLotRefusal.OpIdTaken)
       meetups.asked shouldBe 0
       auctions.commands shouldBe empty
+    }
+
+    "sends the closing of the auctioneer to the auction in his name once meetups confirms the administrator" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      commands.closeLot(auctionOfMeetup, lot, op(9), person).futureValue shouldBe
+        Right(LotEnding.Unsold(UnsoldReason.NoBids))
+      auctions.commands shouldBe List(CloseAuctionLot(lot, op(9)))
+      auctions.closeInitiator shouldBe Some(Initiator.Operator(person))
+
+      auctions.closeAnswer = Left(CloseAuctionLotRejected.LotNotOpen)
+      commands.closeLot(auctionOfMeetup, lot, op(10), person).futureValue shouldBe
+        Left(ClosingRefusal.Rejected(CloseAuctionLotRejected.LotNotOpen))
+      auctions.closeAnswer = Left(CloseAuctionLotRejected.AuctionNotFound)
+      commands.closeLot(auctionOfMeetup, lot, op(11), person).futureValue shouldBe
+        Left(ClosingRefusal.Denied(Denial.AuctionNotFound))
+    }
+
+    // Своего события под `op_id` ведущего аукцион не пишет: `op_id` в его окне — заведомо другая команда.
+    "refuses a closing under the op_id of another auction command and a stranger without reaching the auction" in {
+      val started = AuctionEnvelope(8, op(7), AuctionEvent.FinalStarted)
+      val repeated = Auctions(Inspection.Repeated(started))
+      val meetups = Meetups(Authority.Granted)
+      AuctionCommands(repeated, noLots, meetups).closeLot(auctionOfMeetup, lot, op(7), person).futureValue shouldBe
+        Left(ClosingRefusal.Rejected(CloseAuctionLotRejected.OpIdTaken))
+      meetups.asked shouldBe 0
+      AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
+        .closeLot(auctionOfMeetup, lot, op(9), person)
+        .futureValue shouldBe Left(ClosingRefusal.Denied(Denial.AuctionNotFound))
+      val stranger = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(stranger, noLots, Meetups(Authority.NotAdministrator))
+        .closeLot(auctionOfMeetup, lot, op(9), person)
+        .futureValue shouldBe Left(ClosingRefusal.Denied(Denial.NotAdministrator))
+      repeated.commands shouldBe empty
+      stranger.commands shouldBe empty
     }
 
     "grants the console only once meetups confirms the administrator" in {

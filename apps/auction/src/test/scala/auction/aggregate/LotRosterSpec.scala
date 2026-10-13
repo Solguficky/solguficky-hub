@@ -261,11 +261,76 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
       LotRoster.settling(break, (active, Nil)) shouldBe (active, Nil)
     }
 
-    "asks no lot once the lineup is frozen: the final knows its lots from the journal" in {
+    "asks no lot once the lineup is frozen and before a lot of the final is out: the final knows them from the journal" in {
       val frozen = auctionIn(AuctionState.LineupFrozen(config(), op(3), List(first)))
       LotRoster.survey(frozen) shouldBe (LotRoster.empty, Nil)
-      val final_ = auctionIn(AuctionState.Final(config(), op(3), List(first), Nil))
+      val final_ = auctionIn(AuctionState.Final(config(), op(3), List(first), Nil, Nil))
       LotRoster.survey(final_) shouldBe (LotRoster.empty, Nil)
+    }
+
+    "asks only the active lot of the final after a restart and completes it once the lot answers that it ended" in {
+      val final_ = auctionIn(AuctionState.Final(config(), op(3), List(first, second), List(first), Nil))
+      val (asking, questions) = LotRoster.survey(final_)
+      asking.lots shouldBe Map(first -> LotStanding.Asked)
+      questions shouldBe List(LotInstruction.Ask(first))
+      LotRoster.observed(final_, asking, first, LotFixtures.sold(100, participant(1)).state) shouldBe
+        (LotRoster(Map(first -> LotStanding.Closed)), List(LotInstruction.Complete(first)))
+      LotRoster.observed(final_, asking, first, trading.state) shouldBe
+        (LotRoster(Map(first -> LotStanding.Active)), Nil)
+      // Ответ, которого аукцион не ждёт, знания не меняет.
+      LotRoster.observed(final_, asking, second, LotFixtures.sold(100, participant(1)).state) shouldBe (asking, Nil)
+    }
+
+    "finishes a final whose every lot of the lineup is completed and asks the silent active lot again" in {
+      val over = auctionIn(AuctionState.Final(config(), op(3), List(first), List(first), List(first)))
+      LotRoster.survey(over) shouldBe (LotRoster.empty, List(LotInstruction.Finish))
+      val final_ = auctionIn(AuctionState.Final(config(), op(3), List(first), List(first), Nil))
+      val silent = LotRoster.unanswered(LotRoster.survey(final_)._1, first)
+      LotRoster.recheck(final_, silent) shouldBe
+        (LotRoster(Map(first -> LotStanding.Asked)), List(LotInstruction.Ask(first)))
+    }
+
+    "keeps the lot closed by the auctioneer out of the lineup until it answers and asks it again on a refusal" in {
+      val break = auctionIn(AuctionState.Break(config(), op(3)))
+      val asked = LotRoster.survey(break)._1
+      val held = LotRoster.observed(break, asked, first, LotFixtures.held(100, participant(1)).state)._1
+      val known = LotRoster.observed(break, held, second, LotFixtures.held(100, participant(1)).state)._1
+      LotRoster.lineup(break, known) shouldBe Some(Set(first, second))
+      val closing = LotRoster.closingByAuctioneer(break, known, first)
+      LotRoster.lineup(break, closing) shouldBe None
+      val (sold, instructions) = LotRoster.endedByAuctioneer(break, closing, first, accepted = true)
+      LotRoster.lineup(break, sold) shouldBe Some(Set(second))
+      instructions shouldBe Nil
+      LotRoster.endedByAuctioneer(break, closing, first, accepted = false) shouldBe
+        (LotRoster(closing.lots.updated(first, LotStanding.Asked)), List(LotInstruction.Ask(first)))
+      // Вне перерыва и вне активного лота финала знание о лотах закрытие ведущим не трогает.
+      LotRoster.closingByAuctioneer(prebidding, active, first) shouldBe active
+      val final_ = auctionIn(AuctionState.Final(config(), op(3), List(first, second), List(first), Nil))
+      LotRoster.closingByAuctioneer(final_, LotRoster.empty, second) shouldBe LotRoster.empty
+      LotRoster.closingByAuctioneer(final_, LotRoster.empty, first) shouldBe
+        LotRoster(Map(first -> LotStanding.Closing))
+    }
+
+    "finishes a break once the auctioneer sold its last held lot, and after a restart once every lot answered" in {
+      val break = auctionIn(AuctionState.Break(config(), op(3)))
+      val asked = LotRoster.survey(break)._1
+      val held = LotRoster.observed(break, asked, first, LotFixtures.held(100, participant(1)).state)._1
+      val known = LotRoster.observed(break, held, second, LotFixtures.sold(100, participant(1)).state)._1
+      val closing = LotRoster.closingByAuctioneer(break, known, first)
+      LotRoster.endedByAuctioneer(break, closing, first, accepted = true) shouldBe
+        (LotRoster(Map(first -> LotStanding.Closed, second -> LotStanding.Closed)), List(LotInstruction.Finish))
+      // После рестарта перерыв переспрашивает лоты, и конец даёт последний ответ, а не первый.
+      val firstSold = LotRoster.observed(break, asked, first, LotFixtures.sold(100, participant(1)).state)
+      firstSold._2 shouldBe Nil
+      LotRoster.observed(break, firstSold._1, second, LotFixtures.sold(100, participant(1)).state)._2 shouldBe
+        List(LotInstruction.Finish)
+    }
+
+    "derives the op_id of the completion of a lot of the final and of the end of the auction from the opening" in {
+      LotRoster.completionOf(op(3), first) shouldBe LotRoster.completionOf(op(3), first)
+      LotRoster.completionOf(op(3), first) should not be LotRoster.completionOf(op(3), second)
+      LotRoster.completionOf(op(3), first) should not be LotRoster.finishOf(op(3))
+      LotRoster.finishOf(op(3)) should not be LotRoster.stepOpId(op(3), "prebidding-ended")
     }
 
     "derives the op_id of the resume and of its own steps so that they stay the same after any restart" in {
