@@ -1,3 +1,7 @@
+import type {
+  AuctionSummaryView,
+  RaffleView,
+} from "../../../auction-ui/index.js";
 import { rpcMeta } from "../../../core/rpc-metadata.js";
 import type {
   AuctionConsoles,
@@ -18,10 +22,12 @@ import type {
   ConsoleLot,
   ConsoleNote,
   ExecuteResult,
+  FinalTrading,
   LineupPick,
   LotAmount,
   RaffleAskError,
   StepWindow,
+  TradingHolder,
   WeekAskError,
   WindowAskError,
   WindowRef,
@@ -211,6 +217,14 @@ function print(source: string): string {
 // укладываются в двенадцать рядов экрана, а строки окон — в одно сообщение.
 export const windowLimit = 8;
 
+// Статусы, в которых пульт показывает строку розыгрыша после закрытия
+// регистрации (PER-618): онлайн-торги, их закрытие, перерыв и итоги.
+const rafflePhases: ReadonlySet<ConsoleAuctionStatus> = new Set([
+  "prebidding",
+  "settling",
+  "break",
+  "finished",
+]);
 /**
  * Сколько лотов держит состав финала в кнопке (PER-619): номер лота — знак
  * base36, и выбор порядка с отпечатком и страницей укладывается в 64 байта
@@ -456,8 +470,27 @@ export function createAuctionConsole(
       });
     }
     const console = liveActive({ ...found.console, lots });
+    const [trading, raffle] = await Promise.all([
+      tradingOf(request, console),
+      raffleOf(request, console),
+    ]);
+    return {
+      kind: "ok",
+      console: {
+        ...console,
+        ...(trading === undefined ? {} : { trading }),
+        ...(raffle === undefined ? {} : { raffle }),
+      },
+    };
+  }
+
+  // Торги активного лота финала: последние ставки и имя лидера.
+  async function tradingOf(
+    request: AuctionConsoleRequest,
+    console: AuctionConsoleView,
+  ): Promise<FinalTrading | undefined> {
     const active = activeLot(console);
-    if (active === undefined) return { kind: "ok", console };
+    if (active === undefined) return undefined;
     const leaderId =
       active.lot.status.kind === "trading"
         ? active.lot.status.leaderId
@@ -474,25 +507,79 @@ export function createAuctionConsole(
     );
     // Ставки — подсказка ведущему, а не условие команды: без них пульт
     // показывает цену и лидера без имени, и «Продать» остаётся доступным.
-    if (bids.kind !== "ok") return { kind: "ok", console };
+    if (bids.kind !== "ok") return undefined;
     const leaderName =
       leaderId === undefined ? undefined : bids.names[leaderId];
     return {
-      kind: "ok",
-      console: {
-        ...console,
-        trading: {
-          lotId: active.lot.lotId,
-          bids: bids.bids.map((bid) => {
-            const name = bids.names[bid.participantId];
-            return name === undefined
-              ? { amount: bid.amount }
-              : { amount: bid.amount, name };
-          }),
-          ...(leaderName === undefined ? {} : { leaderName }),
-        },
-      },
+      lotId: active.lot.lotId,
+      bids: bids.bids.map((bid) => {
+        const name = bids.names[bid.participantId];
+        return name === undefined
+          ? { amount: bid.amount }
+          : { amount: bid.amount, name };
+      }),
+      ...(leaderName === undefined ? {} : { leaderName }),
     };
+  }
+
+  // Розыгрыш для строки пульта (PER-618): читается, только когда момент
+  // закрытия регистрации у открытой недели прошёл, — до него строка называет
+  // момент, и вызов не нужен. Пульт ведущего строки розыгрыша не несёт и
+  // не читает его на каждом «Обновить». Отказ чтения пульт не роняет: строка
+  // остаётся прежней.
+  async function raffleOf(
+    request: AuctionConsoleRequest,
+    console: AuctionConsoleView,
+  ): Promise<RaffleView | undefined> {
+    const closesAt = console.week?.raffleClosesAt;
+    if (
+      closesAt === undefined ||
+      !rafflePhases.has(console.status) ||
+      Date.parse(closesAt) > now().getTime()
+    ) {
+      return undefined;
+    }
+    const raffle = await consoles.consoleRaffle(
+      request.identity,
+      request.auctionId,
+      rpcMeta(request),
+    );
+    return raffle.kind === "ok" ? raffle.raffle : undefined;
+  }
+
+  // Аукцион, который держит слот торгов (PER-603): от открытия онлайн-торгов
+  // до конца. Запланированный слот не держит, а свой аукцион — не другой.
+  function holding(auctionId: string) {
+    return (auction: AuctionSummaryView): boolean =>
+      auction.auctionId !== auctionId &&
+      auction.stage !== "draft" &&
+      auction.stage !== "scheduled" &&
+      auction.stage !== "finished";
+  }
+
+  function holderOf(auction: AuctionSummaryView): TradingHolder {
+    return {
+      auctionId: auction.auctionId,
+      ...(auction.opensAt === undefined ? {} : { opensAt: auction.opensAt }),
+      ...(auction.closesAt === undefined ? {} : { closesAt: auction.closesAt }),
+    };
+  }
+
+  // Аукцион, названный отказом `AnotherAuctionActive`: его сроки — из чтения
+  // активных аукционов, а отказ чтения оставляет один идентификатор.
+  async function namedHolder(
+    request: AuctionConsoleRequest,
+    auctionId: string,
+  ): Promise<TradingHolder> {
+    const active = await consoles.activeAuctions(
+      request.identity,
+      rpcMeta(request),
+    );
+    const found =
+      active.kind === "ok"
+        ? active.auctions.find((each) => each.auctionId === auctionId)
+        : undefined;
+    return found === undefined ? { auctionId } : holderOf(found);
   }
 
   // Пульт после команды: чтение Auction с исходом первой строкой. Статус и
@@ -688,15 +775,19 @@ export function createAuctionConsole(
               : "week-already-open",
         };
       }
-      // Торги идут у другого аукциона сообщества. Кадр с ним и возвратом —
-      // PER-606; до него пульт называет отказ строкой исхода.
+      // Торги идут у другого аукциона сообщества: исход называет его
+      // (PER-618). Кадр с переходом к нему — PER-606.
       case "another-auction-active": {
-        const current = await read(request);
+        const [current, holder] = await Promise.all([
+          read(request),
+          namedHolder(request, started.auctionId),
+        ]);
         if (current.kind === "refused") return current.result;
         return {
           kind: "auction-console",
           console: current.console,
           note: "another-auction-active",
+          holder,
         };
       }
       case "not-administrator":
@@ -828,7 +919,14 @@ export function createAuctionConsole(
       { intent: "prepare-auction-week-start" }
     >,
   ): Promise<ExecuteResult> {
-    const current = await read(request);
+    // Идущие торги другого аукциона пульт называет до подтверждения
+    // (PER-618): «Да» на них Auction всё равно отказал бы. Чтение идёт
+    // параллельно пульту, а его отказ подтверждения не прячет — страховкой
+    // остаётся отказ команды.
+    const [current, active] = await Promise.all([
+      read(request),
+      consoles.activeAuctions(request.identity, rpcMeta(request)),
+    ]);
     if (current.kind === "refused") return current.result;
     const { console } = current;
     const noted = (note: ConsoleNote): ExecuteResult => ({
@@ -848,6 +946,18 @@ export function createAuctionConsole(
       (each) => each.lot.status.kind === "draft",
     ).length;
     if (opening === 0) return noted("no-lots-to-open");
+    const holder =
+      active.kind === "ok"
+        ? active.auctions.find(holding(request.auctionId))
+        : undefined;
+    if (holder !== undefined) {
+      return {
+        kind: "auction-console",
+        console,
+        note: "another-auction-active",
+        holder: holderOf(holder),
+      };
+    }
     return {
       kind: "auction-week-confirm",
       console,

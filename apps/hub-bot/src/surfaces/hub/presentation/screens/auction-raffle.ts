@@ -4,6 +4,9 @@ import {
   raffleBackName,
   raffleNameChoiceText,
   raffleParagraphs,
+  raffleProofLabel,
+  raffleProofParagraphs,
+  raffleProofTitle,
   raffleTitle,
   registerLabel,
 } from "../../../../auction-raffle.js";
@@ -54,6 +57,9 @@ export function raffleScreen(
     if (button.action === "raffle.cancel") {
       nextRow(rows).text(cancelRegistrationLabel, button.callbackData);
     }
+    if (button.action === "raffle.proof") {
+      nextRow(rows).text(raffleProofLabel, button.callbackData);
+    }
   }
   return {
     id: "raffle",
@@ -70,6 +76,20 @@ export function raffleScreen(
     // Тело ведёт назад в ленту, а розыгрыш открыт из корня аукциона
     // (PER-605): туда и возврат.
     keyboard: withNav(rows, toAuctionRoot(block.auctionId)),
+    format: "HTML",
+  };
+}
+
+// Как проверить честность (PER-618): техника розыгрыша отдельным экраном с
+// возвратом «‹ Розыгрыш».
+export function raffleProofScreen(
+  block: Extract<AuctionBlock, { kind: "raffle-proof" }>,
+  keyboard: Keyboard,
+): ShownScreen {
+  return {
+    id: "raffle-proof",
+    text: screenText(raffleProofTitle, ...raffleProofParagraphs(block.raffle)),
+    keyboard: withNav(new InlineKeyboard(), toRaffle(keyboard)),
     format: "HTML",
   };
 }

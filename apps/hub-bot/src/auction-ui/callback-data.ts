@@ -110,6 +110,9 @@ export type AuctionIntent =
   | { kind: "raffle"; auctionId: string }
   | { kind: "raffle-register"; auctionId: string }
   | { kind: "raffle-cancel"; auctionId: string }
+  // Как проверить честность (PER-618): отпечаток, раунд маяка, раскрытие и
+  // пересчёт — отдельным экраном за кнопкой розыгрыша.
+  | { kind: "raffle-proof"; auctionId: string }
   | { kind: "raffle-username"; auctionId: string }
   | { kind: "raffle-ask-alias"; auctionId: string }
   | { kind: "raffle-question"; auctionId: string; addressee: number }
@@ -126,6 +129,7 @@ const AUCTION_ACTION = {
   raffle: "rf",
   "raffle-register": "rr",
   "raffle-cancel": "rc",
+  "raffle-proof": "rp",
   "raffle-username": "ru",
   "raffle-ask-alias": "ra",
   name: "nm",
@@ -349,6 +353,7 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
     case "raffle":
     case "raffle-register":
     case "raffle-cancel":
+    case "raffle-proof":
     case "raffle-username":
     case "raffle-ask-alias":
     case "name":

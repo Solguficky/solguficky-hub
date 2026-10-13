@@ -425,6 +425,14 @@ export const screenCatalog = {
     title: "Имя в аукционе",
     parent: "raffle",
   },
+  // Как проверить честность (PER-618): техника розыгрыша за кнопкой с его
+  // экрана, возврат — «‹ Розыгрыш».
+  "raffle-proof": {
+    class: "screen",
+    nav: "tree",
+    title: "Как проверить честность",
+    parent: "raffle",
+  },
   "notify-meetup": {
     class: "screen",
     nav: "tree",

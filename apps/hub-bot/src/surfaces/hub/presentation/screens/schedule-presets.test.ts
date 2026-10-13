@@ -38,7 +38,7 @@ describe("day presets", () => {
     expect(rows(keyboard)).toEqual([
       ["чт 1", "пт 2", "сб 3", "вс 4"],
       ["сб 10", "вс 11"],
-      ["Другая дата"],
+      ["Ввести дату"],
       ["Отмена"],
     ]);
     expect(data(keyboard)).toEqual([
@@ -88,8 +88,8 @@ describe("time presets", () => {
     expect(rows(keyboard)).toEqual([
       ["12:00", "15:00", "17:00", "18:00"],
       ["19:00", "19:30", "20:00", "21:00"],
-      ["Другой день"],
-      ["Другая дата"],
+      ["‹ День"],
+      ["Ввести дату"],
       ["Отмена"],
     ]);
     expect(data(keyboard)).toEqual([
@@ -146,7 +146,7 @@ describe("date presets screen", () => {
     expect(screen.text).toBe(
       "<b>Дата и время</b>\n\n3 октября, сб — во сколько?",
     );
-    expect(rows(screen.keyboard)[2]).toEqual(["Другой день"]);
+    expect(rows(screen.keyboard)[2]).toEqual(["‹ День"]);
   });
 
   it("asks for the publication moment and puts the lead above the question as text", () => {

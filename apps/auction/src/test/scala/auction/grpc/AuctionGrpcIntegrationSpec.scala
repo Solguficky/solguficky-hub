@@ -846,10 +846,11 @@ final class AuctionGrpcIntegrationSpec
         val lotId = tradingLot(node, auction)
         val bidder = named(node, auction)
         val refused = asHubBot(node.client.placeBid())
-          .invoke(bid(lotId, 105, bidder))
+          .invoke(bid(lotId, 95, bidder))
           .futureValue
           .getRefused
-        refused.getBidBelowMinimum.minRequired shouldBe Some(MoneyMessage(110, "RUB"))
+        // До первой ставки минимум — сама стартовая цена (PER-618).
+        refused.getBidBelowMinimum.minRequired shouldBe Some(MoneyMessage(100, "RUB"))
         currentPrice(node, lotId) shouldBe money(100)
         // Отклонённая ставка имя не замораживает: обещание — «до первой принятой».
         choose(node, bidder, auction, "Пёс").outcome.isAccepted shouldBe true

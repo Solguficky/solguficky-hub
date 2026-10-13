@@ -99,8 +99,9 @@ func assertCommunityIDs(t *testing.T, filter identityv1.CommunityFilter, got map
 }
 
 // Состав несёт круг и запись модерации и сужается фильтром: гости отдельно от
-// участников, люди без круга — только без фильтра, держатель набора — нигде
-// (PER-547).
+// участников, люди без круга — только без фильтра (PER-547). Держатель набора
+// входит в список в своём круге (PER-618), а в модераторы — нет: право
+// модерации у него от набора, а не записью.
 func TestCommunityMembersCarryCircleAndModerationByFilter(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
@@ -119,12 +120,13 @@ func TestCommunityMembersCarryCircleAndModerationByFilter(t *testing.T) {
 	newcomerID := seedProfile(t, db, 9535)
 
 	all := communityOfFilter(t, svc, actor, identityv1.CommunityFilter_COMMUNITY_FILTER_UNSPECIFIED)
-	assertCommunityIDs(t, identityv1.CommunityFilter_COMMUNITY_FILTER_UNSPECIFIED, all, memberID, moderatorID, guestID, newcomerID)
+	assertCommunityIDs(t, identityv1.CommunityFilter_COMMUNITY_FILTER_UNSPECIFIED, all, adminID, memberID, moderatorID, guestID, newcomerID)
 	for id, want := range map[string]struct {
 		circle     identityv1.Circle
 		admitted   bool
 		moderation bool
 	}{
+		adminID:     {identityv1.Circle_CIRCLE_MEMBER, true, false},
 		memberID:    {identityv1.Circle_CIRCLE_MEMBER, true, false},
 		moderatorID: {identityv1.Circle_CIRCLE_MEMBER, true, true},
 		guestID:     {identityv1.Circle_CIRCLE_GUEST, false, false},
@@ -136,7 +138,7 @@ func TestCommunityMembersCarryCircleAndModerationByFilter(t *testing.T) {
 		}
 	}
 	assertCommunityIDs(t, identityv1.CommunityFilter_COMMUNITY_FILTER_MEMBERS,
-		communityOfFilter(t, svc, actor, identityv1.CommunityFilter_COMMUNITY_FILTER_MEMBERS), memberID, moderatorID)
+		communityOfFilter(t, svc, actor, identityv1.CommunityFilter_COMMUNITY_FILTER_MEMBERS), adminID, memberID, moderatorID)
 	assertCommunityIDs(t, identityv1.CommunityFilter_COMMUNITY_FILTER_GUESTS,
 		communityOfFilter(t, svc, actor, identityv1.CommunityFilter_COMMUNITY_FILTER_GUESTS), guestID)
 	assertCommunityIDs(t, identityv1.CommunityFilter_COMMUNITY_FILTER_AUCTION_MODERATORS,

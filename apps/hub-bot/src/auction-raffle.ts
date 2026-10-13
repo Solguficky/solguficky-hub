@@ -28,6 +28,15 @@ export type RaffleTextOptions = {
   moment: (instant: string) => string;
 };
 
+// Экран «Как проверить честность» (PER-618): техника розыгрыша за кнопкой с
+// экрана участника, возврат — «‹ Розыгрыш».
+export const raffleProofTitle = "Как проверить честность";
+export const raffleProofLabel = "Как проверить честность";
+
+// Строка экрана участника до жеребьёвки вместо отпечатка: техника — на экране
+// проверки, а здесь только то, что она есть.
+const provableLine = "Итог проверяемый: как его проверить — по кнопке ниже.";
+
 /** Абзацы тела экрана под заголовком, уже экранированные. */
 export function raffleParagraphs(
   raffle: RaffleView | undefined,
@@ -43,8 +52,7 @@ export function raffleParagraphs(
         raffle.registered
           ? "<b>Ты зарегистрирован.</b> Отменить регистрацию можно до её закрытия."
           : "Ты пока не зарегистрирован.",
-        commitmentLines(raffle),
-        "Seed раскроется после жеребьёвки: по нему любой пересчитает итог сам.",
+        provableLine,
       ];
     case "closing":
       return [
@@ -52,35 +60,70 @@ export function raffleParagraphs(
         raffle.registered
           ? "Ты зарегистрирован: номер билета появится, когда пул зафиксируют."
           : "Ты не зарегистрирован.",
-        commitmentLines(raffle),
+        provableLine,
       ];
     case "awaiting-beacon":
       return [
         `Регистрация закрыта ${closesAt}.`,
         poolLine(raffle),
         ticketList(raffle),
-        `Жеребьёвка ждёт значение маяка drand, раунд ${roundLink(raffle)}.`,
-        commitmentLines(raffle),
+        "Жеребьёвка идёт: итог — через пару минут.",
+        provableLine,
       ];
     case "drawn":
-      return [
-        winnerLine(raffle),
-        poolLine(raffle),
-        ticketList(raffle),
-        revealLines(raffle),
-        raffle.reveal === undefined ? "" : recomputeSteps(raffle),
-      ];
+      return [winnerLine(raffle), poolLine(raffle), ticketList(raffle)];
     case "no-tickets":
       return [
         `Розыгрыш не состоялся: к закрытию регистрации ${closesAt} никто не зарегистрировался.`,
-        raffle.reveal === undefined
-          ? ""
-          : `Seed: <code>${escapeHtml(raffle.reveal.seed)}</code>`,
-      ].filter((line) => line !== "");
+      ];
     case "not-held":
       return [
         "Розыгрыш не проводится: онлайн-торги открылись не раньше момента закрытия регистрации.",
       ];
+    default: {
+      const _exhaustive: never = raffle.status;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Абзацы экрана «Как проверить честность» (PER-618), уже экранированные:
+ * отпечаток seed и раунд маяка с открытия регистрации, после жеребьёвки — seed,
+ * значение раунда, V и пересчёт с командой.
+ */
+export function raffleProofParagraphs(
+  raffle: RaffleView | undefined,
+): string[] {
+  if (raffle === undefined) return ["У этого аукциона розыгрыша нет."];
+  switch (raffle.status) {
+    case "open":
+    case "closing":
+      return [
+        commitmentLines(raffle),
+        "Seed раскроется после жеребьёвки: по нему любой пересчитает итог сам.",
+      ];
+    case "awaiting-beacon":
+      return [
+        commitmentLines(raffle),
+        `Жеребьёвка ждёт значение маяка drand, раунд ${roundLink(raffle)}. Seed раскроется после неё.`,
+      ];
+    case "drawn":
+      return [
+        commitmentLines(raffle),
+        revealLines(raffle),
+        raffle.reveal === undefined ? "" : recomputeSteps(raffle),
+      ].filter((line) => line !== "");
+    case "no-tickets":
+      return [
+        commitmentLines(raffle),
+        raffle.reveal === undefined
+          ? ""
+          : `Seed: <code>${escapeHtml(raffle.reveal.seed)}</code>`,
+        "Билетов не было: пересчитывать нечего.",
+      ].filter((line) => line !== "");
+    case "not-held":
+      return ["Розыгрыш не проводился: проверять нечего."];
     default: {
       const _exhaustive: never = raffle.status;
       return _exhaustive;
@@ -97,7 +140,7 @@ function roundLink(raffle: RaffleView): string {
     : `<a href="${drandRoundUrl(raffle.beaconRound)}">${raffle.beaconRound}</a>`;
 }
 
-// Опубликованное до жеребьёвки: отпечаток seed и раунд маяка.
+// Опубликованное с открытия регистрации: отпечаток seed и раунд маяка.
 function commitmentLines(raffle: RaffleView): string {
   return [
     `Отпечаток seed (SHA-256): <code>${escapeHtml(raffle.commitment ?? "—")}</code>`,

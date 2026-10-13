@@ -5,6 +5,7 @@ import type {
   LotView,
   Money,
   OperationIdPort,
+  RaffleView,
   Viewer,
 } from "../../../auction-ui/index.js";
 import type { RpcMetadata } from "../../../core/rpc-metadata.js";
@@ -338,6 +339,18 @@ export type FinalBidsResult =
     }
   | AuctionFailure;
 
+// Розыгрыш аукциона для строки пульта (PER-618): `raffle` нет — у аукциона
+// розыгрыша нет.
+export type ConsoleRaffleResult =
+  | { kind: "ok"; raffle?: RaffleView }
+  | AuctionFailure;
+
+// Аукционы сообщества от запланированного до финала (`ListAuctions` ACTIVE):
+// по ним пульт узнаёт, у кого идут торги, до подтверждения открытия недели.
+export type ActiveAuctionsResult =
+  | { kind: "ok"; auctions: readonly AuctionSummaryView[] }
+  | AuctionFailure;
+
 export type AuctionConsoles = {
   getAuctionConsole(
     person: Person,
@@ -411,6 +424,19 @@ export type AuctionConsoles = {
     read: { auctionId: string; participantIds: readonly string[] },
     meta?: RpcMetadata,
   ): Promise<DisplayNamesResult>;
+  // Розыгрыш аукциона, как его видит администратор: после закрытия
+  // регистрации пульт показывает его статус и итог (PER-618).
+  consoleRaffle(
+    person: Person,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<ConsoleRaffleResult>;
+  // Активные аукционы сообщества: слот торгов один (PER-603), и пульт
+  // предупреждает об идущих торгах до подтверждения открытия (PER-618).
+  activeAuctions(
+    person: Person,
+    meta?: RpcMetadata,
+  ): Promise<ActiveAuctionsResult>;
   // `limit` последних ставок лота и имена их авторов и `extraIds` — лидера.
   recentBids(
     person: Person,

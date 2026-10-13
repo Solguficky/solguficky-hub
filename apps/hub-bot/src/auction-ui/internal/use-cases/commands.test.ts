@@ -27,6 +27,45 @@ const commandCalls = (calls: readonly PortCall[]) =>
   );
 
 describe("bid leaf commands", () => {
+  // Лот без ставок: порог — стартовая цена (П-01), и автоставка с лимитом,
+  // равным ей, сразу ставит её. Подтверждение это называет.
+  it("names the first bid in the proxy confirmation of a lot without bids", async () => {
+    const unled = {
+      ...CONTRACT_LOT,
+      nextPrice: { minorUnits: 120000, currency: "RUB" },
+      status: {
+        kind: "trading" as const,
+        currentPrice: { minorUnits: 120000, currency: "RUB" },
+        deadline: "2026-10-10T18:00:00Z",
+        phase: "online" as const,
+      },
+    };
+    const confirmOf = async (lot: typeof CONTRACT_LOT, amount: number) => {
+      const ports = spyPorts([], { ...AUCTION, lots: [lot] });
+      const result = await press(
+        ports,
+        encodeAuctionCallback({
+          kind: "confirm",
+          command: "proxy",
+          lotId: lot.lotId,
+          amount,
+          page: 0,
+        }),
+      );
+      if (result.kind !== "screen") throw new Error("no confirmation");
+      const block = result.body.blocks[0];
+      if (block?.kind !== "confirm") throw new Error("no confirm block");
+      return block;
+    };
+
+    expect((await confirmOf(unled, 120000)).firstBid).toEqual({
+      minorUnits: 120000,
+      currency: "RUB",
+    });
+    // С лидером первой ставки нет: лимит перебивает по шагу.
+    expect((await confirmOf(CONTRACT_LOT, 200000)).firstBid).toBeUndefined();
+  });
+
   // Повторное нажатие той же «Да» несёт тот же `op_id`: принятую команду
   // Auction узнаёт по нему и второй ставки не создаёт.
   it("sends the same op_id when the same confirmation is pressed twice", async () => {

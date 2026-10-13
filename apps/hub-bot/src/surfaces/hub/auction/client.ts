@@ -42,6 +42,7 @@ import {
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import { createUuidV7 } from "../../../core/uuid-v7.js";
+import type { Person } from "../application/types.js";
 import { consoleOf } from "./console.js";
 import {
   type AddLotResult,
@@ -228,6 +229,28 @@ export function createAuctionAdapter(
     timeoutMs: callTimeoutMs(meta, timeoutMs),
     ...callHeaders(meta),
   });
+  // Активные аукционы сообщества целиком: их единицы, а обход страниц —
+  // предохранитель от соседа, который повторяет токен.
+  async function listActive(person: Person, meta?: RpcMetadata) {
+    const auctions = [];
+    let pageToken = "";
+    for (let pages = 0; pages < currentAuctionPageLimit; pages += 1) {
+      const page = await rpc.listAuctions(
+        {
+          viewer: wireViewer(viewerOf(person)),
+          listing: AuctionListing.ACTIVE,
+          pageToken,
+        },
+        options(meta),
+      );
+      auctions.push(...page.auctions.map(auctionSummaryViewOf));
+      if (page.nextPageToken === "" || page.nextPageToken === pageToken) {
+        break;
+      }
+      pageToken = page.nextPageToken;
+    }
+    return auctions;
+  }
   return {
     async getMeetupAuction(person, meetupId, meta) {
       try {
@@ -247,29 +270,33 @@ export function createAuctionAdapter(
     },
     async currentAuction(person, meta) {
       try {
-        const auctions = [];
-        let pageToken = "";
-        for (let pages = 0; pages < currentAuctionPageLimit; pages += 1) {
-          const page = await rpc.listAuctions(
-            {
-              viewer: wireViewer(viewerOf(person)),
-              listing: AuctionListing.ACTIVE,
-              pageToken,
-            },
-            options(meta),
-          );
-          auctions.push(...page.auctions.map(auctionSummaryViewOf));
-          if (page.nextPageToken === "" || page.nextPageToken === pageToken) {
-            break;
-          }
-          pageToken = page.nextPageToken;
-        }
+        const auctions = await listActive(person, meta);
         const [current] = auctions.sort(
           (a, b) => openingOf(a.opensAt) - openingOf(b.opensAt),
         );
         return current === undefined
           ? { kind: "ok" }
           : { kind: "ok", auctionId: current.auctionId };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async activeAuctions(person, meta) {
+      try {
+        return { kind: "ok", auctions: await listActive(person, meta) };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async consoleRaffle(person, auctionId, meta) {
+      try {
+        const { raffle } = await rpc.getRaffle(
+          { viewer: wireViewer(viewerOf(person)), auctionId },
+          options(meta),
+        );
+        return raffle === undefined
+          ? { kind: "ok" }
+          : { kind: "ok", raffle: raffleOf(raffle) };
       } catch (cause) {
         return toFailure(cause);
       }

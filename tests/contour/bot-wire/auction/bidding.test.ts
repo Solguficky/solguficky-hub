@@ -138,6 +138,13 @@ describe("auction through both bots", () => {
     await admin.presses("Лоты");
     await admin.presses("Добавить лот");
     await admin.says("Кружка");
+    // Цепочка нового лота (PER-618): после названия — цена, способ шага, шаг
+    // и фото по порядку. Чтение лота под ценой ждёт отстающую read model.
+    await admin.says("1 000");
+    await admin.presses("Один шаг");
+    await admin.says("100");
+    await admin.presses("Пропустить");
+    expect(plain(admin.sees())).toContain("Лот готов");
     await admin.presses("Изменить лот");
     // Лот, который форма только что завела, чтения ещё могут не знать: кадр
     // «Лот не найден» несёт «Повторить».
@@ -145,12 +152,6 @@ describe("auction through both bots", () => {
     await admin.presses("Название");
     await admin.says(lotTitle);
     expect(plain(admin.sees())).toContain(lotTitle);
-    await admin.presses("Изменить лот");
-    await eventually(admin, "Цена и шаг", () => admin.presses("Повторить"));
-    await admin.presses("Цена и шаг");
-    await admin.says("1 000");
-    await admin.says("100");
-    expect(plain(admin.sees())).toContain("Цена и шаг сохранены");
     await admin.presses("‹ Лот");
     expect(plain(admin.sees())).toContain(lotTitle);
 

@@ -14,6 +14,7 @@ import {
   firstMembersPage,
   removableUsernamePattern,
 } from "../parse-callback.js";
+import { toAdministrators } from "./administrators.js";
 import {
   bullet,
   confirmKeyboard,
@@ -29,6 +30,7 @@ import {
   withNav,
   withPager,
 } from "./kit.js";
+import { canGrantAdmins } from "./menu.js";
 import type { ShownScreen } from "./show.js";
 
 const refreshLabel = "Обновить";
@@ -122,16 +124,24 @@ function filterLabel(filter: CommunityFilter, current: CommunityFilter) {
     : filterLabels[filter];
 }
 
+/** Обстановка экрана состава, которую знает только вызывающий. */
+export type CommunityScreenOptions = {
+  // Исход последнего действия над разрешёнными никами.
+  notice?: string | undefined;
+  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  parent?: Parent;
+  // Кто смотрит: его строка списка помечена «(ты)», как у администраторов.
+  viewerId?: string;
+};
+
 export function communityScreen(
   snapshot: CommunitySnapshot,
   view: CommunityView,
-  notice?: string,
-  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
-  parent: Parent = toManage,
+  { notice, parent = toManage, viewerId }: CommunityScreenOptions = {},
 ): ShownScreen {
   switch (view.kind) {
     case "list":
-      return listScreen(snapshot, view.place, parent);
+      return listScreen(snapshot, view.place, parent, viewerId);
     case "usernames":
       return usernamesScreen(snapshot, view.page, notice);
     default: {
@@ -141,10 +151,28 @@ export function communityScreen(
   }
 }
 
+// Строка человека в тексте списка: смотрящий помечен «(ты)», модерация —
+// только под фильтром участников: под фильтром модераторов её видно и так.
+function memberLine(
+  member: CommunityMember,
+  filter: CommunityFilter,
+  viewerId: string | undefined,
+): string {
+  const self = member.identityId === viewerId ? " (ты)" : "";
+  const moderation =
+    filter === "members" && member.auctionModeration
+      ? " · модерирует аукцион"
+      : "";
+  return bullet(`${memberHtml(member)}${self}${moderation}`);
+}
+
 /**
  * Список людей состава с фильтром по кругу (PER-547): участники и гости
  * парой, под ними модераторы аукциона парой с разрешёнными никами — соседние
- * списки состава. Человек открывает карточку. «Обновить» нет: восемь человек,
+ * списки состава. Список полный (PER-618): держатели наборов в нём в своём
+ * круге и в счётчике, но Identity не отдаёт признака набора, поэтому пометки
+ * «администратор» у строки нет — что это администратор, отвечает его
+ * карточка. Человек открывает карточку. «Обновить» нет: восемь человек,
  * листание и два ряда списков занимают все двенадцать рядов, а выбранный
  * фильтр перечитывает список нажатием.
  */
@@ -152,6 +180,7 @@ function listScreen(
   snapshot: CommunitySnapshot,
   place: CommunityPlace,
   parent: Parent,
+  viewerId: string | undefined,
 ): ShownScreen {
   const people = snapshot.members.filter((member) =>
     inFilter(member, place.filter),
@@ -187,13 +216,7 @@ function listScreen(
       page.items.length === 0
         ? emptyTexts[place.filter]
         : page.items
-            .map((member) =>
-              bullet(
-                place.filter === "members" && member.auctionModeration
-                  ? `${memberHtml(member)} · модерирует аукцион`
-                  : memberHtml(member),
-              ),
-            )
+            .map((member) => memberLine(member, place.filter, viewerId))
             .join("\n"),
     ),
     keyboard: withNav(keyboard, parent),
@@ -252,10 +275,26 @@ export function communityMemberRefusalText(
     case "blocked":
       return "Доступ этому человеку уже закрыт.";
     case "holds-preset":
-      return "Это администратор: его ведут на экране «Администраторы».";
+      return "Это администратор: закрыть доступ или поменять модерацию отсюда нельзя. Правами администратора управляет мейнтейнер в «Участники → Администраторы».";
     default:
       return unavailable;
   }
+}
+
+/**
+ * Кнопки под отказом карточки: возврат на то же место списка, а у
+ * администратора — ещё «Администраторы» тому, кто их ведёт (PER-618).
+ */
+export function communityMemberRefusalKeyboard(
+  result: Exclude<CommunityMemberResult, { kind: "ok" }>,
+  place: CommunityPlace,
+  viewer: Parameters<typeof canGrantAdmins>[0],
+): InlineKeyboard {
+  const keyboard = new InlineKeyboard();
+  if (result.kind === "holds-preset" && canGrantAdmins(viewer)) {
+    keyboard.text(toAdministrators.name, toAdministrators.data);
+  }
+  return withNav(keyboard, toCommunityPlace(place));
 }
 
 function usernamesScreen(

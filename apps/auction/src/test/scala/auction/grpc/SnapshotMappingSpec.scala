@@ -23,9 +23,13 @@ final class SnapshotMappingSpec extends AnyWordSpec with Matchers {
 
   private def rub(minorUnits: Long): model.Money = model.Money(minorUnits, "RUB")
 
-  /** Окно `[12:00, 14:00)` с шагом 1 и следующее `[15:00, 16:00)` с шагом 2 при обычном `Fixed 10` и цене 100. */
+  /**
+   * Окно `[12:00, 14:00)` с шагом 1 и следующее `[15:00, 16:00)` с шагом 2 при обычном `Fixed 10` и цене 100 у лота с
+   * лидером: до первой ставки шага нет, и следующая цена — стартовая (PER-618).
+   */
   private val windowed = trading(
     price = 100,
+    leader = Some(participant(2)),
     stepWindows = List(stepWindow("12:00", "14:00", step = 1), stepWindow("15:00", "16:00", step = 2))
   )
 
@@ -55,7 +59,12 @@ final class SnapshotMappingSpec extends AnyWordSpec with Matchers {
     }
 
     "not show a window that does not lower the step at the current price as being in force" in {
-      val lot = trading(price = 100, policy = fixedTen, stepWindows = List(stepWindow("12:00", "14:00", step = 50)))
+      val lot = trading(
+        price = 100,
+        policy = fixedTen,
+        leader = Some(participant(2)),
+        stepWindows = List(stepWindow("12:00", "14:00", step = 50))
+      )
       val snapshot = SnapshotMapping.snapshot(view(lot), participant(1), at("13:00"))
 
       snapshot.activeWindow shouldBe None
@@ -83,7 +92,13 @@ final class SnapshotMappingSpec extends AnyWordSpec with Matchers {
     "answers the next price by the step rule while the lot is trading" in {
       SnapshotMapping.snapshot(view(trading(price = 100, ask = Some(150))), participant(1), calm).nextPrice shouldBe
         Some(rub(150))
-      SnapshotMapping.snapshot(view(trading(price = 100)), participant(1), calm).nextPrice shouldBe Some(rub(110))
+      SnapshotMapping
+        .snapshot(view(trading(price = 100, leader = Some(participant(2)))), participant(1), calm)
+        .nextPrice shouldBe Some(rub(110))
+    }
+
+    "answers the starting price as the next price of a lot without bids (PER-618)" in {
+      SnapshotMapping.snapshot(view(trading(price = 300)), participant(1), calm).nextPrice shouldBe Some(rub(300))
     }
 
     "leaves the next price unset outside trading" in {

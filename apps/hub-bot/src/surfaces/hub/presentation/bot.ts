@@ -94,6 +94,7 @@ import type {
   Person,
   PublishMomentRetry,
   RaffleAskError,
+  TradingHolder,
   WeekAskError,
   WindowAskError,
 } from "../application/types.js";
@@ -177,6 +178,8 @@ import {
   lotAskData,
   lotFormData,
   lotNewData,
+  lotSkipData,
+  lotStepModeData,
   type NotifiedMeetupCategory,
   type PublishOrigin,
   parseCallback,
@@ -238,11 +241,11 @@ import type { ScreenId } from "./screens/catalog.js";
 import {
   type CommunityView,
   closeAccessConfirmScreen,
+  communityMemberRefusalKeyboard,
   communityMemberRefusalText,
   communityMemberScreen,
   communityScreen,
   firstCommunityPlace,
-  toCommunityPlace,
 } from "./screens/community.js";
 import {
   auctionEnabledScreen,
@@ -272,12 +275,14 @@ import {
 } from "./screens/kit.js";
 import {
   lotAskErrorText,
+  lotChainLead,
   lotFormScreen,
   lotQuestionText,
   lotRefusalText,
   lotSavedNote,
   lotSavedScreen,
   lotStepModeScreen,
+  skipPhotoLabel,
   toLot,
   toLots,
 } from "./screens/lot-form.js";
@@ -1951,7 +1956,9 @@ async function handleCallback(
     const action: ScreenAction =
       pressed.kind === "question" ? cancelTarget(pressed.step) : pressed;
     const pressedId = ctx.callbackQuery?.message?.message_id;
-    if (pressed.kind === "question") {
+    // «Пропустить» под вопросом о фото нового лота (PER-618) уходит от вопроса
+    // так же, как «Отмена»: вопрос удаляется, итог приходит новым сообщением.
+    if (pressed.kind === "question" || pressed.kind === "lot-skip") {
       if (pressedId !== undefined) {
         questions.delete(questionKey(ctx.chat?.id, pressedId));
       }
@@ -2070,7 +2077,8 @@ async function handleCallback(
       action.kind === "lot-new" ||
       action.kind === "lot-form" ||
       action.kind === "lot-ask" ||
-      action.kind === "lot-step-mode"
+      action.kind === "lot-step-mode" ||
+      action.kind === "lot-skip"
     ) {
       outcome = canManageMeetups(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
@@ -3328,7 +3336,7 @@ async function handleCallback(
       return;
     }
     if (action.kind === "manage-type-schedule") {
-      // «Другая дата»: экран выбора уступает место вопросу. Он удаляется, а не
+      // «Ввести дату»: экран выбора уступает место вопросу. Он удаляется, а не
       // остаётся без кнопок — иначе над вопросом висел бы тот же вопрос.
       // Удаление идёт после отправки вопроса: упавшая отправка не должна
       // оставить человека без обоих.
@@ -4466,12 +4474,11 @@ async function renderCommunity(
   }
   await showScreen(
     ctx,
-    communityScreen(
-      result.value,
-      view,
+    communityScreen(result.value, view, {
       notice,
-      manageItemParent(actor, "members"),
-    ),
+      parent: manageItemParent(actor, "members"),
+      viewerId: actor.identityId,
+    }),
   );
   return result;
 }
@@ -4505,7 +4512,7 @@ async function renderCommunityMember(
         communityForbiddenText,
         unavailableText,
       ),
-      withNav(new InlineKeyboard(), toCommunityPlace(place)),
+      communityMemberRefusalKeyboard(result, place, actor),
     );
     return result;
   }
@@ -5723,7 +5730,7 @@ async function handleLotFormCallback(
   person: Person,
   action: Extract<
     CallbackAction,
-    { kind: "lot-new" | "lot-form" | "lot-ask" | "lot-step-mode" }
+    { kind: "lot-new" | "lot-form" | "lot-ask" | "lot-step-mode" | "lot-skip" }
   >,
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "manage_lot";
@@ -5763,6 +5770,13 @@ async function handleLotFormCallback(
     await showScreen(ctx, lotFormScreen(result.lot));
     return sent("lot form sent");
   }
+  // Фото пропущено — цепочка нового лота кончилась (PER-618): тот же итог,
+  // что после принятого фото. Вопрос удалён до чтения, итог — новым
+  // сообщением.
+  if (action.kind === "lot-skip") {
+    await showScreen(ctx, lotSavedScreen(result.lot, lotSavedNote.ready));
+    return sent("lot photo skipped");
+  }
   // Способ шага выбран (PER-491): цена едет в кнопке. Условия могли замерзнуть
   // между ценой и этим нажатием — отказ приходит здесь, до вопроса, а не после
   // ответа, как у ряда цены.
@@ -5780,6 +5794,7 @@ async function handleLotFormCallback(
         lotId,
         priceRubles: action.price,
         mode: action.mode,
+        ...chained(action.chain),
       },
       lot: result.lot,
     });
@@ -5794,17 +5809,52 @@ async function handleLotFormCallback(
       { person },
     );
   }
-  // Фото, как и тексты, меняется и после старта торгов (ADR-057).
+  // Фото, как и тексты, меняется и после старта торгов (ADR-057). Кнопка
+  // цепочки нового лота (PER-618) — «Ввести заново» под ней — задаёт вопрос
+  // цепочки.
   await askLotQuestion(ctx, questions, {
     question:
       action.field === "price"
-        ? { kind: "price", lotId }
+        ? { kind: "price", lotId, ...chained(action.chain) }
         : action.field === "image"
-          ? { kind: "image", lotId }
+          ? { kind: "image", lotId, ...chained(action.chain) }
           : { kind: "text", field: action.field, lotId },
     lot: result.lot,
   });
   return sent("lot field requested");
+}
+
+// Признак цепочки нового лота (PER-618) полем вопроса: нет — нет и поля.
+function chained(chain: boolean | undefined): { chain?: true } {
+  return chain === true ? { chain: true } : {};
+}
+
+// Идёт ли вопрос цепочкой нового лота (PER-618).
+function inChain(question: LotQuestion): boolean {
+  return (
+    question.kind !== "new" &&
+    question.kind !== "text" &&
+    question.chain === true
+  );
+}
+
+// Вопрос, который юзкейс вернул заново, остаётся в цепочке, если в ней был
+// отвеченный: юзкейс признак цепочки не читает и не возвращает.
+function keepChain(question: LotQuestion, answered: LotQuestion): LotQuestion {
+  if (!inChain(answered)) return question;
+  switch (question.kind) {
+    case "price":
+    case "step":
+    case "image":
+      return { ...question, chain: true };
+    case "new":
+    case "text":
+      return question;
+    default: {
+      const _exhaustive: never = question;
+      return _exhaustive;
+    }
+  }
 }
 
 // Лот глазами участника (PER-512): снимок читается правом администратора, как
@@ -5883,6 +5933,8 @@ function askLotQuestion(
     error?: LotAskError | undefined;
     maxImageBytes?: number | undefined;
     replaces?: number | undefined;
+    // Что уже сделано, строкой над вопросом цепочки нового лота (PER-618).
+    lead?: string | undefined;
   },
 ): Promise<void> {
   const pending: PendingBody = {
@@ -5900,12 +5952,22 @@ function askLotQuestion(
       ask.replaces,
     );
   }
+  // Фото в цепочке нового лота можно пропустить (PER-618): кнопка стоит над
+  // «Отменой» и, как она, уводит от вопроса.
+  const skip =
+    ask.question.kind === "image" && ask.question.chain === true
+      ? {
+          text: skipPhotoLabel,
+          data: lotSkipData(uuidToToken(ask.question.lotId)),
+        }
+      : undefined;
   return askQuestion(
     ctx,
     questions,
     pending,
-    lotQuestionText(ask.question, ask.lot),
+    lotQuestionText(ask.question, ask.lot, ask.lead),
     ask.replaces,
+    skip,
   );
 }
 
@@ -5977,24 +6039,54 @@ async function renderLotAnswer(
     use_case: useCase,
     identity_id: answer.person.identityId,
   });
+  const chain = inChain(answer.answered);
+  // Цепочка нового лота (PER-618): после названия — цена, после цены и шага —
+  // фото. Лот, у которого условия уже заданы или закрыты, — повторный ответ на
+  // вопрос о названии — цепочку не начинает: правка идёт экраном исхода.
+  if (
+    result.kind === "lot-form" &&
+    answer.answered.kind === "new" &&
+    result.lot.terms.kind === "unset"
+  ) {
+    await askLotQuestion(ctx, questions, {
+      question: { kind: "price", lotId: result.lot.lotId, chain: true },
+      lead: lotChainLead.created,
+    });
+    return handled("lot price requested in the chain");
+  }
+  if (result.kind === "lot-form" && chain && result.saved === "terms") {
+    await askLotQuestion(ctx, questions, {
+      question: { kind: "image", lotId: result.lot.lotId, chain: true },
+      lead: lotChainLead.terms,
+    });
+    return handled("lot photo requested in the chain");
+  }
   if (result.kind === "lot-form") {
     await showScreen(
       ctx,
       result.saved === undefined
         ? lotFormScreen(result.lot)
-        : lotSavedScreen(result.lot, lotSavedNote[result.saved]),
+        : lotSavedScreen(
+            result.lot,
+            lotSavedNote[
+              chain && result.saved === "image" ? "ready" : result.saved
+            ],
+          ),
     );
     return handled("lot form answer saved");
   }
   // Цена принята — спрашивается способ шага (PER-491) отдельным экраном:
   // вопрос о шаге предполагает текст, а способ — выбор кнопкой.
   if (result.kind === "lot-step-mode") {
-    await showScreen(ctx, lotStepModeScreen(result.lot, result.priceRubles));
+    await showScreen(
+      ctx,
+      lotStepModeScreen(result.lot, result.priceRubles, chain),
+    );
     return handled("lot step mode requested");
   }
   if (result.kind === "lot-ask") {
     await askLotQuestion(ctx, questions, {
-      question: result.question,
+      question: keepChain(result.question, answer.answered),
       lot: result.lot,
       error: result.error,
       maxImageBytes: result.maxImageBytes,
@@ -6478,6 +6570,34 @@ async function handleConsoleCallback(
   }
 }
 
+// Аукцион с идущими торгами исход называет сходкой (PER-618), но Auction по
+// аукциону сходку не отдаёт намеренно: её знает только память процесса —
+// пара, которую бот видел в меню «Расширения». Название читается у Meetups от
+// имени администратора; нет пары или чтение отказало — исход называет
+// аукцион сроками недели.
+async function withMeetupTitle(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  holder: TradingHolder,
+): Promise<TradingHolder> {
+  const meetupId = ctx.auctionParents?.meetupOf(holder.auctionId);
+  if (meetupId === undefined) return holder;
+  try {
+    const meetup = await runtime.dispatcher.execute({
+      identity: person,
+      intent: "view-meetup-extensions",
+      meetupId,
+      ...rpcCall(ctx, "manage_auction"),
+    });
+    return meetup.kind === "meetup-card"
+      ? { ...holder, meetupTitle: meetup.meetup.title }
+      : holder;
+  } catch {
+    return holder;
+  }
+}
+
 // Исход пульта: экран пульта с исходом первой строкой, вопрос о сроках либо
 // кадр отказа. `replyId` — ответ на вопрос о сроках: новый вопрос закрывает
 // прежний, а сбой Auction оставляет его открытым.
@@ -6512,11 +6632,16 @@ async function renderConsoleResult(
           finalToast(result.console.week?.final === true),
         );
       }
+      const holder =
+        result.holder === undefined
+          ? undefined
+          : await withMeetupTitle(ctx, runtime, context.person, result.holder);
       await showScreen(
         ctx,
         consoleScreen({
           console: result.console,
           ...(result.note === undefined ? {} : { note: result.note }),
+          ...(holder === undefined ? {} : { holder }),
           page: context.page ?? 0,
           sort: context.sort ?? defaultConsoleSort,
           timeZone,
@@ -8112,16 +8237,17 @@ function lotStepOf(question: LotQuestion): QuestionStep {
     case "text":
       return { kind: "lot-text", lot, field: question.field };
     case "price":
-      return { kind: "lot-price", lot };
+      return { kind: "lot-price", lot, ...chained(question.chain) };
     case "step":
       return {
         kind: "lot-step",
         lot,
         price: question.priceRubles,
         mode: question.mode,
+        ...chained(question.chain),
       };
     case "image":
-      return { kind: "lot-image", lot };
+      return { kind: "lot-image", lot, ...chained(question.chain) };
     default: {
       const _exhaustive: never = question;
       return _exhaustive;
@@ -8144,16 +8270,17 @@ function lotQuestionOf(
     case "lot-text":
       return { kind: "text", field: step.field, lotId };
     case "lot-price":
-      return { kind: "price", lotId };
+      return { kind: "price", lotId, ...chained(step.chain) };
     case "lot-step":
       return {
         kind: "step",
         lotId,
         priceRubles: step.price,
         mode: step.mode,
+        ...chained(step.chain),
       };
     case "lot-image":
-      return { kind: "image", lotId };
+      return { kind: "image", lotId, ...chained(step.chain) };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -8362,11 +8489,16 @@ async function askQuestion(
   pending: PendingBody,
   text: string,
   replaces?: number,
+  // Кнопка над «Отменой», которая тоже уводит от вопроса: «Пропустить» фото
+  // нового лота (PER-618).
+  above?: { text: string; data: string },
 ): Promise<void> {
   if (ctx.callbackQuery !== undefined && ctx.pressedGone !== true) {
     await clearCallbackKeyboard(ctx);
   }
-  const keyboard = new InlineKeyboard().text(
+  const keyboard = new InlineKeyboard();
+  if (above !== undefined) keyboard.text(above.text, above.data).row();
+  keyboard.text(
     cancelLabel,
     questionData(stepOf(pending), pending.telegramUserId),
   );
@@ -8454,11 +8586,16 @@ function reopenData(step: QuestionStep): string {
       return lotNewData(step.auction);
     case "lot-text":
       return lotAskData(step.lot, step.field);
+    // Вопрос цепочки нового лота (PER-618) повтор задаёт в цепочке: после
+    // него она идёт дальше.
     case "lot-price":
+      return lotAskData(step.lot, "price", step.chain);
+    // Цена уже в шаге, как в кнопке выбора способа (PER-491): повтор задаёт
+    // тот же вопрос о шаге, а не цену заново.
     case "lot-step":
-      return lotAskData(step.lot, "price");
+      return lotStepModeData(step.lot, step.price, step.mode, step.chain);
     case "lot-image":
-      return lotAskData(step.lot, "image");
+      return lotAskData(step.lot, "image", step.chain);
     case "console-week":
       return consoleWeekData(step.auction);
     case "console-raffle":
@@ -8733,6 +8870,7 @@ function callbackUseCase(
     | "lot-view"
     | "lot-ask"
     | "lot-step-mode"
+    | "lot-skip"
     | "console-view"
     | "console-week"
     | "console-raffle"
@@ -8885,6 +9023,7 @@ function callbackUseCase(
     case "lot-view":
     case "lot-ask":
     case "lot-step-mode":
+    case "lot-skip":
       return "manage_lot";
     case "console-view":
     case "console-week":
