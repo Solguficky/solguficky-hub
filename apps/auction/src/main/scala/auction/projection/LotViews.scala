@@ -40,10 +40,11 @@ final case class LotStatisticsView(
   /**
    * Текущая цена минус стартовая — абсолютная сумма в валюте лота. До открытия стартовая цена — из условий торгов, и
    * рост нулевой; лот без условий роста не имеет. Лот без продажи закрылся без ставок, и его цена осталась стартовой.
+   * Снятый лот цены не несёт: ставки на нём потеряли силу, и роста у него нет.
    */
   def priceGrowth: Option[Money] =
     lot.state match {
-      case LotState.Initial | LotState.Draft => None
+      case LotState.Initial | LotState.Draft | LotState.Withdrawn(_) => None
       case LotState.Scheduled(schedule) => Some(schedule.startingPrice.copy(minorUnits = 0))
       case LotState.Trading(state) => startingPrice.map(growth(state.currentPrice, _))
       case LotState.Held(state) => startingPrice.map(growth(state.currentPrice, _))

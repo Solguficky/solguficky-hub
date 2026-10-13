@@ -239,6 +239,8 @@ message AuctionEvent {
     FinalLotActivated final_lot_activated = 14;
     FinalLotCompleted final_lot_completed = 15;
     AuctionFinished auction_finished = 16;
+    AuctionDiscarded auction_discarded = 18;
+    AuctionCancelled auction_cancelled = 19;
   }
 }
 
@@ -285,6 +287,8 @@ message AuctionState {
     LineupFrozen lineup_frozen = 15;
     Final in_final = 16;
     Finished finished = 17;
+    Cancelled cancelled = 18;
+    Discarded discarded = 19;
   }
 
   // The auction was born at its meetup: no configuration yet; lots may be added
@@ -324,6 +328,15 @@ message AuctionState {
 
   // Terminal.
   message Finished {}
+
+  // Terminal: the auction was cancelled after prebidding started. Sold lots stay
+  // sold; every other lot is withdrawn by its own fact.
+  message Cancelled {}
+
+  // The auction was discarded before prebidding started. Only auction_discarded
+  // carries it: a read never returns a discarded auction, and the meetup may get
+  // an auction again under the same id, starting with auction_drafted.
+  message Discarded {}
 }
 
 // The auction came into existence at a meetup: the meetup is state.meetup_id and
@@ -381,6 +394,15 @@ message FinalLotCompleted {
 
 // Every lot of the lineup is completed. Terminal.
 message AuctionFinished {}
+
+// The auction was discarded before prebidding started; the status is discarded.
+// The configuration and the registry are those it had before.
+message AuctionDiscarded {}
+
+// The auction was cancelled after prebidding started; the status is cancelled.
+// Who cancelled it is not carried. Lots are withdrawn by their own facts, which
+// may come before or after this one.
+message AuctionCancelled {}
 
 // A recorded public fact about one invoice: why it changed and what is true about
 // it now. The envelope is the one of LotEvent, field for field; which of the

@@ -40,7 +40,7 @@ object Lot {
         lot.state match {
           case LotState.Initial => Right(Decision.Accepted(LotEvent.LotDrafted(command.auction)))
           case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) |
-              LotState.Unsold(_) =>
+              LotState.Unsold(_) | LotState.Withdrawn(_) =>
             Left(DraftLotRejected.LotAlreadyExists)
         }
     }
@@ -68,7 +68,7 @@ object Lot {
             .map(ScheduleLotRejected.StepPolicyInvalid(_))
             .flatMap(Schedule.of(command.startingPrice, _))
             .map(schedule => Decision.Accepted(LotEvent.LotScheduled(schedule)))
-        case LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+        case LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
           Left(ScheduleLotRejected.SchedulingClosed)
       }
     }
@@ -96,7 +96,9 @@ object Lot {
                 LotEvent.LotOpened(schedule.startingPrice, schedule.config, command.deadline, windows)
               )
             )
-          case LotState.Draft | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+          // Снятый лот запоздавшего открытия не принимает: `Withdrawn` терминален (ADR-047, дополнение 2026-10-12).
+          case LotState.Draft | LotState.Trading(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) |
+              LotState.Withdrawn(_) =>
             Left(OpenLotRejected.LotNotScheduled)
         }
     }
@@ -132,7 +134,7 @@ object Lot {
             Decision.Accepted(placed.copy(overtakenByProxy = overtaken), derived.toList ++ extended(trading, now))
           }
         case LotState.Held(held) => Left(PlaceBidRejected.LotOnHold(held.currentPrice))
-        case LotState.Sold(_) | LotState.Unsold(_) => Left(PlaceBidRejected.LotNotOpen)
+        case LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) => Left(PlaceBidRejected.LotNotOpen)
       }
     }
 
@@ -159,7 +161,7 @@ object Lot {
     }.getOrElse {
       lot.state match {
         case LotState.Initial => Left(SetProxyLimitRejected.LotNotFound)
-        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
           Left(SetProxyLimitRejected.LotNotOpen)
         case LotState.Trading(trading) =>
           proxyLimitSet(trading.config, floor(trading), command).map { set =>
@@ -184,7 +186,7 @@ object Lot {
     }.getOrElse {
       val limits = lot.state match {
         case LotState.Initial => None
-        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
           Some(Map.empty[ParticipantId, ProxyLimit])
         case LotState.Trading(trading) => Some(trading.proxyLimits)
         case LotState.Held(held) => Some(held.proxyLimits)
@@ -203,8 +205,8 @@ object Lot {
    * транзакции — всегда событие самой команды, не производная ставка прокси, и участник в нём — инициатор. Чужой
    * участник или команда другого вида с тем же `op_id` получает `conflict`: исходный ответ выдал бы чужой `bid_id`, а
    * исполнение заново записало бы вторую транзакцию под тем же `op_id`. Инициатор в окне не хранится, поэтому журнал и
-   * snapshot прежней формы читаются тем же состоянием. У `ScheduleLot`, `MarkForFinal`, `UnmarkForFinal` и `ResumeLot`
-   * участника в событии нет, и своя команда — событие того же вида.
+   * snapshot прежней формы читаются тем же состоянием. У `ScheduleLot`, `MarkForFinal`, `UnmarkForFinal`, `ResumeLot` и
+   * `WithdrawLot` участника в событии нет, и своя команда — событие того же вида.
    */
   private def repeatOf[R](lot: Lot, opId: OpId, conflict: R)(own: LotEvent => Boolean): Option[Either[R, Decision]] =
     lot.seen.get(opId).map(original => if (own(original.event)) Right(Decision.Repeated(original)) else Left(conflict))
@@ -225,7 +227,7 @@ object Lot {
       case None =>
         lot.state match {
           case LotState.Initial => Left(CloseLotRejected.LotNotFound)
-          case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+          case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
             Left(CloseLotRejected.LotNotOpen)
           case LotState.Trading(trading) =>
             val byDeadline = command.reason == CloseReason.DeadlineReached
@@ -252,7 +254,8 @@ object Lot {
     repeatOf(lot, command.opId, MarkForFinalRejected.OpIdTaken)(_ == LotEvent.LotMarkedForFinal).getOrElse {
       lot.state match {
         case LotState.Initial => Left(MarkForFinalRejected.LotNotFound)
-        case LotState.Draft | LotState.Scheduled(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) |
+            LotState.Withdrawn(_) =>
           Left(MarkForFinalRejected.LotNotOpen)
         case LotState.Trading(trading) =>
           if (trading.phase != Phase.Online) Left(MarkForFinalRejected.NotInOnlinePhase)
@@ -272,7 +275,7 @@ object Lot {
     repeatOf(lot, command.opId, UnmarkForFinalRejected.OpIdTaken)(_ == LotEvent.LotUnmarkedForFinal).getOrElse {
       lot.state match {
         case LotState.Initial => Left(UnmarkForFinalRejected.LotNotFound)
-        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
           Left(UnmarkForFinalRejected.LotNotOpen)
         case LotState.Held(_) => Left(UnmarkForFinalRejected.DeadlinePassed)
         case LotState.Trading(trading) =>
@@ -294,7 +297,8 @@ object Lot {
         case LotState.Initial => Left(ResumeLotRejected.LotNotFound)
         case LotState.Held(held) =>
           Right(Decision.Accepted(LotEvent.LotResumed, resolve(resumed(held), proxyBidId, now).toList))
-        case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Sold(_) | LotState.Unsold(_) |
+            LotState.Withdrawn(_) =>
           Left(ResumeLotRejected.LotNotHeld)
       }
     }
@@ -316,7 +320,8 @@ object Lot {
     }.getOrElse {
       lot.state match {
         case LotState.Initial => Left(AdvanceAskRejected.LotNotFound)
-        case LotState.Draft | LotState.Scheduled(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) =>
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Held(_) | LotState.Sold(_) | LotState.Unsold(_) |
+            LotState.Withdrawn(_) =>
           Left(AdvanceAskRejected.LotNotOpen)
         case LotState.Trading(trading) =>
           val f = floor(trading)
@@ -328,6 +333,26 @@ object Lot {
               else Nil
             Right(Decision.Accepted(LotEvent.AskAdvanced(command.newAsk), derived))
           }
+      }
+    }
+
+  /**
+   * Снятие с торгов по отмене аукциона (ADR-047, дополнение 2026-10-12): что завершилось, остаётся, что идёт,
+   * обрывается. Снимается лот без исхода — черновик, запланированный, в торгах или удержанный; проданный, закрытый без
+   * продажи и уже снятый под другим `op_id` отвечает `LotAlreadyClosed`. Гонку с закрытием по дедлайну решает порядок в
+   * журнале: продажа, записанная первой, остаётся. Повтор — только своей команды: аукцион шлёт её после рестарта с тем
+   * же `op_id`, и второго события лот не пишет.
+   */
+  def decide(lot: Lot, command: WithdrawLot): Either[WithdrawLotRejected, Decision] =
+    repeatOf(lot, command.opId, WithdrawLotRejected.OpIdTaken) {
+      case _: LotEvent.LotWithdrawn => true
+      case _ => false
+    }.getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(WithdrawLotRejected.LotNotFound)
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) =>
+          Right(Decision.Accepted(LotEvent.LotWithdrawn(command.reason)))
+        case LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) => Left(WithdrawLotRejected.LotAlreadyClosed)
       }
     }
 
@@ -640,6 +665,11 @@ object Lot {
       case (LotState.Trading(_) | LotState.Held(_), sold: LotEvent.LotSold) =>
         LotState.Sold(Sale(sold.winner, sold.price, sold.bidId, sold.at))
       case (LotState.Trading(_) | LotState.Held(_), LotEvent.LotUnsold(reason)) => LotState.Unsold(reason)
+      case (
+            LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_),
+            LotEvent.LotWithdrawn(reason)
+          ) =>
+        LotState.Withdrawn(reason)
       case (other, _) => other
     }
     val auction = (lot.state, envelope.event) match {

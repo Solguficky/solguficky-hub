@@ -42,6 +42,12 @@ final class CallerGateSpec extends AnyWordSpec with Matchers with EitherValues {
         GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
     }
 
+    "admits only the hub bot on the cancel of an auction" in {
+      CallerGate.decide(table, Some("CancelAuction"), Some("Bearer hub")) shouldBe GateDecision.Admitted(Caller.HubBot)
+      CallerGate.decide(table, Some("CancelAuction"), Some("Bearer auction")) shouldBe
+        GateDecision.Refused(CallerRefusal.NotDeclared, Some(Caller.AuctionBot))
+    }
+
     "admits a declared caller that presents its bearer token" in {
       CallerGate.decide(table, placeBid, Some("Bearer hub")) shouldBe GateDecision.Admitted(Caller.HubBot)
       CallerGate.decide(table, placeBid, Some("bearer auction")) shouldBe GateDecision.Admitted(Caller.AuctionBot)

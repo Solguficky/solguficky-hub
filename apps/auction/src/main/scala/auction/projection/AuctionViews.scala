@@ -32,11 +32,12 @@ trait AuctionViews {
 object AuctionViews {
 
   /**
-   * Статусы выборки — значения `auction_view.status`. Активные — от `scheduled` до `in_final`, прошедшие — `finished`.
+   * Статусы выборки — значения `auction_view.status`. Активные — от `scheduled` до `in_final`, прошедшие — `finished` и
+   * `cancelled` (ADR-047, дополнение 2026-10-12): отменённый аукцион из активных уходит сразу.
    */
   def statuses(listing: AuctionListing): List[String] =
     listing match {
       case AuctionListing.Active => List("scheduled", "prebidding", "settling", "on_break", "lineup_frozen", "in_final")
-      case AuctionListing.Finished => List("finished")
+      case AuctionListing.Finished => List("finished", "cancelled")
     }
 }

@@ -12,6 +12,8 @@ import auction.lot.LotState
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.UnsoldReason
+import auction.lot.WithdrawLotRejected
+import auction.lot.WithdrawnReason
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
@@ -272,6 +274,67 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
       LotRoster.resumeOf(op(3), first).opId should not be LotRoster.closeOpId(op(3), first)
       LotRoster.stepOpId(op(3), "prebidding-deadline") shouldBe LotRoster.stepOpId(op(3), "prebidding-deadline")
       LotRoster.stepOpId(op(3), "prebidding-deadline") should not be LotRoster.stepOpId(op(3), "prebidding-ended")
+    }
+
+    "withdraws every lot of the registry of a cancelled auction with an op_id of the cancel and the lot" in {
+      val cancelled = auctionIn(AuctionState.Cancelled(config(), op(3), op(9)))
+      val (roster, instructions) = LotRoster.survey(cancelled)
+      roster.lots shouldBe Map(first -> LotStanding.Withdrawing, second -> LotStanding.Withdrawing)
+      instructions should contain theSameElementsAs List(
+        LotInstruction.Withdraw(first, LotRoster.withdrawalOf(op(9), first)),
+        LotInstruction.Withdraw(second, LotRoster.withdrawalOf(op(9), second))
+      )
+      LotRoster.withdrawalOf(op(9), first).reason shouldBe WithdrawnReason.AuctionCancelled
+      LotRoster.withdrawalOf(op(9), first) shouldBe LotRoster.withdrawalOf(op(9), first)
+      LotRoster.withdrawalOf(op(9), first).opId should not be LotRoster.withdrawalOf(op(9), second).opId
+      LotRoster.withdrawalOf(op(9), first).opId should not be LotRoster.closeOpId(op(9), first)
+    }
+
+    "starts the withdrawal over the knowledge of the prebidding and sends no opening or closing after it" in {
+      val cancelled = auctionIn(AuctionState.Cancelled(config(), op(3), op(9)))
+      val (roster, instructions) =
+        LotRoster.cancelled(cancelled, closing, AuctionDecision.Accepted(AuctionEvent.AuctionCancelled))
+      roster.lots.values.toSet shouldBe Set(LotStanding.Withdrawing)
+      instructions.collect { case withdraw: LotInstruction.Withdraw => withdraw.lot }.toSet shouldBe Set(first, second)
+      LotRoster.observed(cancelled, roster, first, LotFixtures.scheduled().state) shouldBe (roster, Nil)
+      LotRoster.opened(cancelled, roster, first, Right(Some(closesAt))) shouldBe (roster, Nil)
+      LotRoster.due(cancelled, roster, first) shouldBe (roster, Nil)
+      LotRoster.closed(cancelled, roster, first, Right(Closure.Closed)) shouldBe (roster, Nil)
+    }
+
+    "counts a withdrawn lot and one that answered it had already ended as settled" in {
+      val cancelled = auctionIn(AuctionState.Cancelled(config(), op(3), op(9)))
+      val withdrawing = LotRoster.survey(cancelled)._1
+      val answered = LotRoster.withdrawn(
+        LotRoster.withdrawn(withdrawing, first, Right(())),
+        second,
+        Left(WithdrawLotRejected.LotAlreadyClosed)
+      )
+      answered.lots shouldBe Map(first -> LotStanding.Withdrawn, second -> LotStanding.Closed)
+      answered.lots.values.forall(_.settled) shouldBe true
+      LotRoster.withdrawn(answered, first, Left(WithdrawLotRejected.LotAlreadyClosed)) shouldBe answered
+    }
+
+    "withdraws again on a recheck exactly the lots whose answer did not come" in {
+      val cancelled = auctionIn(AuctionState.Cancelled(config(), op(3), op(9)))
+      val withdrawing = LotRoster.survey(cancelled)._1
+      val silent = LotRoster.unanswered(LotRoster.withdrawn(withdrawing, first, Right(())), second)
+      silent.lots(second) shouldBe LotStanding.Unanswered
+      LotRoster.recheck(cancelled, silent) shouldBe (
+        silent.copy(lots = silent.lots.updated(second, LotStanding.Withdrawing)),
+        List(LotInstruction.Withdraw(second, LotRoster.withdrawalOf(op(9), second)))
+      )
+    }
+
+    "withdraws the unanswered lots again on a repeat of the cancel itself, not of another command or cancel" in {
+      val cancelled = auctionIn(AuctionState.Cancelled(config(), op(3), op(9)))
+      val silent = LotRoster.unanswered(LotRoster.withdrawn(LotRoster.survey(cancelled)._1, first, Right(())), second)
+      val repeated = AuctionDecision.Repeated(AuctionEnvelope(6, op(9), AuctionEvent.AuctionCancelled))
+      LotRoster.cancelled(cancelled, silent, repeated)._2 shouldBe
+        List(LotInstruction.Withdraw(second, LotRoster.withdrawalOf(op(9), second)))
+      val other = AuctionDecision.Repeated(AuctionEnvelope(5, op(3), AuctionEvent.PrebiddingStarted))
+      LotRoster.cancelled(cancelled, silent, other) shouldBe (silent, Nil)
+      LotRoster.cancelled(cancelled, silent, AuctionDecision.Unchanged) shouldBe (silent, Nil)
     }
   }
 }

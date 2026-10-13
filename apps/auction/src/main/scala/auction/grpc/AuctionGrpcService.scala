@@ -421,6 +421,17 @@ final class AuctionGrpcService(
           .flatMap(outcome => ResponseMapping.discardAuction(outcome).fold(refuse, Future.successful))
     }
 
+  /** Отмена после старта торгов (ADR-047, дополнение 2026-10-12): право у Meetups, состояние решает аукцион. */
+  def cancelAuction(in: wire.CancelAuctionRequest): Future[wire.CancelAuctionResponse] =
+    RequestMapping.cancelAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .cancel(command.auctionId, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.cancelAuction(outcome).fold(refuse, Future.successful))
+    }
+
   /**
    * Отметка лота для финала и её снятие (ADR-047, дополнение 2026-10-06): право у Meetups, фазу и реестр решает
    * аукцион, дедлайн и сам признак — лот. Один срок ожидания накрывает оба перехода, как у `scheduleLot`.
@@ -685,7 +696,7 @@ final class AuctionGrpcService(
    * Поток аукциона (PER-335): каждое сообщение — состояние целиком из read model, первое — при подписке, следующие —
    * после коммита проекции, тронувшего аукцион или лот в нём. Право — то же, что у чтения лота: поток несёт снимки
    * лотов. Аукциона нет в read model — `NOT_FOUND`, и сразу, и когда его удалили посреди потока. После сообщения, где
-   * аукцион завершён, поток закрывается: изменений у него больше не будет.
+   * аукцион завершён или отменён, поток закрывается: изменений у него больше не будет.
    *
    * Чтение идёт по одному на подписчика и только по его спросу: медленный клиент получает свежее состояние, а не
    * очередь, и ставки не ждут ни его, ни поток. Повод, после которого состояние не изменилось, сообщения не даёт.
@@ -705,7 +716,7 @@ final class AuctionGrpcService(
             case None => throw new GrpcServiceException(Status.NOT_FOUND.withDescription("auction not found"))
           }
           .via(AuctionGrpcService.changed)
-          .takeWhile(message => !message.getAuction.status.isFinished, inclusive = true)
+          .takeWhile(message => !AuctionGrpcService.terminal(message.getAuction.status), inclusive = true)
     }
 
   // Счета: контракт есть (PER-308), выставление, статусы и чтения приносит лист счёта (PER-338).
@@ -757,6 +768,9 @@ object AuctionGrpcService {
 
   /** Изменений нет: поток читает состояние один раз, при подписке. */
   val NoChanges: AuctionChanges = _ => Source.single(())
+
+  /** Аукцион в конечном состоянии — законченный или отменённый: после него поток закрывается. */
+  private def terminal(status: wire.AuctionSnapshot.Status): Boolean = status.isFinished || status.isCancelled
 
   /** Сообщение потока проходит, только если отличается от предыдущего отправленного. */
   private def changed[T]: Flow[T, T, NotUsed] =

@@ -74,6 +74,8 @@ object LotFacts {
         Some("lot_held_for_final" -> bus.LotEvent.Occasion.LotHeldForFinal(bus.LotHeldForFinal()))
       case LotEvent.LotResumed => Some("lot_resumed" -> bus.LotEvent.Occasion.LotResumed(bus.LotResumed()))
       case LotEvent.AskAdvanced(_) => Some("ask_advanced" -> bus.LotEvent.Occasion.AskAdvanced(bus.AskAdvanced()))
+      case LotEvent.LotWithdrawn(_) =>
+        Some("lot_withdrawn" -> bus.LotEvent.Occasion.LotWithdrawn(bus.LotWithdrawn()))
       // Отметка — рабочий выбор организатора до заморозки состава: публичным факт становится только удержание.
       case LotEvent.ProxyLimitSet(_, _) | LotEvent.ProxyLimitWithdrawn(_) | LotEvent.LotMarkedForFinal |
           LotEvent.LotUnmarkedForFinal =>
@@ -96,6 +98,7 @@ object LotFacts {
       case LotState.Held(held) => base.withConfig(LotValues.config(held.config)).withHeld(LotValues.held(held))
       case LotState.Sold(sale) => base.withSold(LotValues.sale(sale))
       case LotState.Unsold(reason) => base.withUnsold(LotValues.unsold(reason))
+      case LotState.Withdrawn(reason) => base.withWithdrawn(LotValues.withdrawn(reason))
     }
   }
 }

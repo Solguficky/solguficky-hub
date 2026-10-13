@@ -1,5 +1,6 @@
 package auction.publication
 
+import auction.aggregate.Auction
 import auction.aggregate.AuctionEvent
 import auction.aggregate.AuctionState
 import auction.contract.AuctionValues
@@ -13,26 +14,41 @@ import auction.v1.auction_events as bus
  * Отображение строки журнала аукциона в публичный факт на шине (integration.md, «Аукцион на шине»), та же форма, что
  * [[LotFacts]]: конверт — `event_id`, аукцион, номер события и время решения, тело — снимок аукциона сразу после
  * события. Финалистов снимок не называет до заморозки состава: статусы `prebidding`, `settling` и `on_break` пустые.
+ *
+ * Удалённый до торгов аукцион свёрнут в `Initial`, и снимок после события его не опишет. Поэтому снимок
+ * `auction_discarded` — строка до события со статусом `discarded`: сходка, конфигурация и реестр, какими они были.
  */
 object AuctionFacts {
 
-  def fact(sequence: Long, stored: StoredAuctionEvent, row: AuctionViewRow): Option[Fact] =
-    occasion(AuctionJournal.restoreEvent(stored.event)).map { (name, occasion) =>
+  /** `before` — строка до события; нужна только удалению, остальным снимок даёт строка после него. */
+  def fact(
+      sequence: Long,
+      stored: StoredAuctionEvent,
+      before: Option[AuctionViewRow],
+      after: AuctionViewRow
+  ): Option[Fact] = {
+    val event = AuctionJournal.restoreEvent(stored.event)
+    occasion(event).map { (name, occasion) =>
+      val snapshot = event match {
+        case AuctionEvent.AuctionDiscarded =>
+          before.fold(throw new IllegalStateException(s"auction ${after.auctionId} discarded without a row"))(discarded)
+        case _ => state(after)
+      }
       val message = bus.AuctionEvent(
         eventId = stored.eventId.toString,
-        auctionId = row.auctionId.toString,
+        auctionId = after.auctionId.toString,
         version = sequence,
         occurredAt = LotValues.instant(stored.occurredAt),
-        state = Some(state(row)),
+        state = Some(snapshot),
         occasion = occasion
       )
       Fact(stored.eventId, LotFacts.SubjectPrefix + name, message.toByteArray)
     }
+  }
 
   /**
    * Повод события и имя его subject'а, как у [[LotFacts.occasion]]: match без ветки по умолчанию, и новое событие
-   * аукциона не скомпилируется, пока ему не назначат повод. Удаление до торгов поводом не стало: в контракте ветки нет,
-   * а подписчика у аукциона без торгов не заявлено.
+   * аукциона не скомпилируется, пока ему не назначат повод.
    */
   def occasion(event: AuctionEvent): Option[(String, bus.AuctionEvent.Occasion)] =
     event match {
@@ -59,23 +75,16 @@ object AuctionFacts {
         Some("final_started" -> bus.AuctionEvent.Occasion.FinalStarted(bus.FinalStarted()))
       case AuctionEvent.FinalLotActivated(_) =>
         Some("final_lot_activated" -> bus.AuctionEvent.Occasion.FinalLotActivated(bus.FinalLotActivated()))
-      case AuctionEvent.AuctionDiscarded => None
+      case AuctionEvent.AuctionDiscarded =>
+        Some("auction_discarded" -> bus.AuctionEvent.Occasion.AuctionDiscarded(bus.AuctionDiscarded()))
+      case AuctionEvent.AuctionCancelled =>
+        Some("auction_cancelled" -> bus.AuctionEvent.Occasion.AuctionCancelled(bus.AuctionCancelled()))
     }
 
   /** Публичное состояние аукциона: сходка, конфигурация, реестр по возрастанию `lot_id` и статус. */
   def state(row: AuctionViewRow): bus.AuctionState = {
     val auction = AuctionJournal.restoreAuction(row.stored)
-    // Конфигурация есть с планирования: у `Scheduled` — своя, с открытия торгов — замороженная.
-    val config = auction.state match {
-      case AuctionState.Scheduled(config) => Some(config)
-      case other => other.started.map((config, _) => config)
-    }
-    val base = bus.AuctionState(
-      id = row.auctionId.toString,
-      config = config.map(AuctionValues.config),
-      lotIds = auction.lots.toList.map(_.value).sorted.map(_.toString),
-      meetupId = row.meetupId.toString
-    )
+    val base = described(row, auction)
     auction.state match {
       case AuctionState.Initial =>
         throw new IllegalStateException(s"auction ${row.auctionId} published without being drafted")
@@ -87,6 +96,25 @@ object AuctionFacts {
       case AuctionState.LineupFrozen(_, _, order) => base.withLineupFrozen(AuctionValues.lineupFrozen(order))
       case AuctionState.Final(_, _, order, activated) => base.withInFinal(AuctionValues.inFinal(order, activated))
       case AuctionState.Finished(_, _) => base.withFinished(bus.AuctionState.Finished())
+      case AuctionState.Cancelled(_, _, _) => base.withCancelled(bus.AuctionState.Cancelled())
     }
+  }
+
+  /** Снимок удалённого аукциона: строка до удаления со статусом `discarded`. */
+  private def discarded(before: AuctionViewRow): bus.AuctionState =
+    described(before, AuctionJournal.restoreAuction(before.stored)).withDiscarded(bus.AuctionState.Discarded())
+
+  private def described(row: AuctionViewRow, auction: Auction): bus.AuctionState = {
+    // Конфигурация есть с планирования: у `Scheduled` — своя, с открытия торгов — замороженная.
+    val config = auction.state match {
+      case AuctionState.Scheduled(config) => Some(config)
+      case other => other.started.map((config, _) => config)
+    }
+    bus.AuctionState(
+      id = row.auctionId.toString,
+      config = config.map(AuctionValues.config),
+      lotIds = auction.lots.toList.map(_.value).sorted.map(_.toString),
+      meetupId = row.meetupId.toString
+    )
   }
 }

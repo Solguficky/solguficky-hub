@@ -36,7 +36,9 @@ final case class MeetupId(value: UUID)
  * аукцион ждёт, пока каждый открытый лот закроется или удержится. `Break` — все закрыты или удержаны, состав не
  * заморожен; финалистов он не несёт: их знают лоты (ADR-047, дополнение 2026-10-06). `LineupFrozen` несёт порядок
  * выхода. `Final` — финал идёт, `activated` — лоты состава, которые аукцион вернул в торги, в порядке возврата.
- * `Finished` — аукцион без финалистов закончился вместе с онлайн-торгами.
+ * `Finished` — аукцион без финалистов закончился вместе с онлайн-торгами. `Cancelled` — аукцион отменён после старта
+ * торгов (ADR-047, дополнение 2026-10-12); `cancelledBy` — `op_id` отмены, от которого выводятся `op_id` снятия лотов и
+ * отмены розыгрыша.
  */
 enum AuctionState {
   case Initial
@@ -48,6 +50,7 @@ enum AuctionState {
   case LineupFrozen(config: AuctionConfig, startedBy: OpId, order: List[LotId])
   case Final(config: AuctionConfig, startedBy: OpId, order: List[LotId], activated: List[LotId])
   case Finished(config: AuctionConfig, startedBy: OpId)
+  case Cancelled(config: AuctionConfig, startedBy: OpId, cancelledBy: OpId)
 
   /** Конфигурация и `op_id` открытия у аукциона, который открыл торги; до старта — `None`. */
   def started: Option[(AuctionConfig, OpId)] =
@@ -59,6 +62,7 @@ enum AuctionState {
       case LineupFrozen(config, startedBy, _) => Some((config, startedBy))
       case Final(config, startedBy, _, _) => Some((config, startedBy))
       case Finished(config, startedBy) => Some((config, startedBy))
+      case Cancelled(config, startedBy, _) => Some((config, startedBy))
     }
 }
 
@@ -80,6 +84,12 @@ final case class StartPrebidding(opId: OpId)
  * `Initial`, и `DraftAuction` рождает его у той же сходки заново под тем же `auction_id`.
  */
 final case class DiscardAuction(opId: OpId)
+
+/**
+ * Отмена аукциона после старта торгов (ADR-047, дополнение 2026-10-12): что завершилось, остаётся, что идёт,
+ * обрывается. Лоты и розыгрыш снимает не сама команда, а протокол после неё ([[LotRoster]]).
+ */
+final case class CancelAuction(opId: OpId)
 
 /**
  * `ScheduleLot` словаря ADR-047, каким он приходит аукциону: администратор задаёт стартовую цену и шаг, остальные
@@ -145,9 +155,9 @@ object LotTerms {
 
 /**
  * События аукциона: payload рождения — `meetup_id`, реестра — `lot_id`, планирования — конфигурация целиком, у старта
- * торгов payload нет (ADR-047). `PrebiddingEnded` несёт `finished`: уходит ли аукцион в перерыв или заканчивается без
- * финалистов, решают ответы лотов, которых журнал не хранит, а свёртке нужно знать это из самого события. Состав финала
- * — порядок выхода в `FinalLineupFrozen`, возвращённый в торги лот — в `FinalLotActivated`.
+ * торгов и отмены payload нет (ADR-047). `PrebiddingEnded` несёт `finished`: уходит ли аукцион в перерыв или
+ * заканчивается без финалистов, решают ответы лотов, которых журнал не хранит, а свёртке нужно знать это из самого
+ * события. Состав финала — порядок выхода в `FinalLineupFrozen`, возвращённый в торги лот — в `FinalLotActivated`.
  */
 enum AuctionEvent {
   case AuctionDrafted(meetup: MeetupId)
@@ -156,6 +166,7 @@ enum AuctionEvent {
   case AuctionScheduled(config: AuctionConfig)
   case PrebiddingStarted
   case AuctionDiscarded
+  case AuctionCancelled
   case PrebiddingDeadlineReached
   case PrebiddingEnded(finished: Boolean)
   case FinalLineupFrozen(order: List[LotId])
@@ -190,6 +201,16 @@ enum ScheduleAuctionRejected {
 enum DiscardAuctionRejected {
   case AuctionNotFound
   case AuctionAlreadyStarted
+}
+
+/**
+ * Отказы `CancelAuction`: аукциона нет, торги не открыты — там действует `DiscardAuction`, — или аукцион уже
+ * закончился. Отменённый аукцион не отказывает: повтор отмены события не пишет.
+ */
+enum CancelAuctionRejected {
+  case AuctionNotFound
+  case AuctionNotStarted
+  case AuctionAlreadyFinished
 }
 
 /** Отказы `StartPrebidding`: аукциона нет либо он не в `Scheduled` — не запланирован или уже открыт. */
@@ -360,7 +381,7 @@ object Auction {
       case AuctionState.Draft | AuctionState.Scheduled(_) => true
       case AuctionState.Initial | AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) |
           AuctionState.Break(_, _) | AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) |
-          AuctionState.Finished(_, _) =>
+          AuctionState.Finished(_, _) | AuctionState.Cancelled(_, _, _) =>
         false
     }
 
@@ -373,7 +394,7 @@ object Auction {
           case AuctionState.Initial => AuctionDecision.Accepted(AuctionEvent.AuctionDrafted(command.meetup))
           case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _) |
               AuctionState.Settling(_, _) | AuctionState.Break(_, _) | AuctionState.LineupFrozen(_, _, _) |
-              AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) =>
+              AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) | AuctionState.Cancelled(_, _, _) =>
             AuctionDecision.Unchanged
         }
     }
@@ -393,7 +414,8 @@ object Auction {
           case AuctionState.Draft | AuctionState.Scheduled(_) =>
             Right(AuctionDecision.Accepted(AuctionEvent.LotAdded(command.lot)))
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
-              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) =>
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
             Left(AddLotRejected.LotsFrozen)
         }
     }
@@ -410,7 +432,8 @@ object Auction {
               Right(AuctionDecision.Accepted(AuctionEvent.LotRemoved(command.lot)))
             else Left(RemoveLotRejected.LotNotInAuction)
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
-              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) =>
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
             Left(RemoveLotRejected.LotsFrozen)
         }
     }
@@ -426,7 +449,8 @@ object Auction {
         auction.state match {
           case AuctionState.Initial => Left(ScheduleAuctionRejected.AuctionNotFound)
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
-              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) =>
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
             Left(ScheduleAuctionRejected.AuctionAlreadyStarted)
           case AuctionState.Draft | AuctionState.Scheduled(_) =>
             AuctionConfig
@@ -450,7 +474,7 @@ object Auction {
           case AuctionState.Scheduled(_) => Right(AuctionDecision.Accepted(AuctionEvent.PrebiddingStarted))
           case AuctionState.Draft | AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) |
               AuctionState.Break(_, _) | AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) |
-              AuctionState.Finished(_, _) =>
+              AuctionState.Finished(_, _) | AuctionState.Cancelled(_, _, _) =>
             Left(StartPrebiddingRejected.AuctionNotScheduled)
         }
     }
@@ -468,8 +492,29 @@ object Auction {
           case AuctionState.Draft | AuctionState.Scheduled(_) =>
             Right(AuctionDecision.Accepted(AuctionEvent.AuctionDiscarded))
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
-              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) =>
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
             Left(DiscardAuctionRejected.AuctionAlreadyStarted)
+        }
+    }
+
+  /**
+   * Отмена после старта торгов: из любой фазы от `Prebidding` до `Final`. До торгов — `AuctionNotStarted`, на
+   * законченном — `AuctionAlreadyFinished`. Отменённый аукцион на новую отмену отвечает без события: отменить его
+   * второй раз нечем, а повтор прежнего `op_id` получает исходный ответ из окна `seen`.
+   */
+  def decide(auction: Auction, command: CancelAuction): Either[CancelAuctionRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(CancelAuctionRejected.AuctionNotFound)
+          case AuctionState.Draft | AuctionState.Scheduled(_) => Left(CancelAuctionRejected.AuctionNotStarted)
+          case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) =>
+            Right(AuctionDecision.Accepted(AuctionEvent.AuctionCancelled))
+          case AuctionState.Finished(_, _) => Left(CancelAuctionRejected.AuctionAlreadyFinished)
+          case AuctionState.Cancelled(_, _, _) => Right(AuctionDecision.Unchanged)
         }
     }
 
@@ -483,7 +528,8 @@ object Auction {
     auction.state match {
       case AuctionState.Initial => Left(ScheduleAuctionLotRejected.AuctionNotFound)
       case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
-          AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) =>
+          AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) |
+          AuctionState.Cancelled(_, _, _) =>
         Left(ScheduleAuctionLotRejected.LotsFrozen)
       case AuctionState.Draft => planned(auction, command, LotTerms.platform)
       case AuctionState.Scheduled(config) =>
@@ -523,7 +569,8 @@ object Auction {
     auction.state match {
       case AuctionState.Initial => Left(FinalChoiceRejected.AuctionNotFound)
       case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
-          AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) =>
+          AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) |
+          AuctionState.Cancelled(_, _, _) =>
         Left(FinalChoiceRejected.NotInPrebidding)
       case AuctionState.Prebidding(_, _) =>
         if (auction.lots.contains(lot)) Right(command) else Left(FinalChoiceRejected.LotNotInAuction)
@@ -686,6 +733,15 @@ object Auction {
         auction.copy(state = AuctionState.Final(config, startedBy, order, Nil))
       case (AuctionState.Final(config, startedBy, order, activated), AuctionEvent.FinalLotActivated(lot)) =>
         auction.copy(state = AuctionState.Final(config, startedBy, order, activated :+ lot))
+      case (current, AuctionEvent.AuctionCancelled) =>
+        current match {
+          case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) =>
+            current.started.fold(auction) { (config, startedBy) =>
+              auction.copy(state = AuctionState.Cancelled(config, startedBy, envelope.opId))
+            }
+          case _ => auction
+        }
       case _ => auction
     }
     val seen = if (auction.seen.contains(envelope.opId)) auction.seen else auction.seen.updated(envelope.opId, envelope)

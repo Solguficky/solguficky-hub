@@ -52,6 +52,13 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[DiscardAuctionRejected, AuctionAnswer]]
 
+  /** Отмена после старта торгов. Ответ приходит после записи события и снятия лотов не ждёт. */
+  def cancel(
+      auctionId: AuctionId,
+      command: CancelAuction,
+      initiator: Initiator
+  ): Future[Either[CancelAuctionRejected, AuctionAnswer]]
+
   /** Условия торгов лоту реестра. Ответ приходит после ответа лота: событие пишет он, а не аукцион. */
   def scheduleLot(
       auctionId: AuctionId,
@@ -155,6 +162,13 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[DiscardAuctionRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Discard(command, initiator, _))
+
+      def cancel(
+          auctionId: AuctionId,
+          command: CancelAuction,
+          initiator: Initiator
+      ): Future[Either[CancelAuctionRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Cancel(command, initiator, _))
 
       def scheduleLot(
           auctionId: AuctionId,

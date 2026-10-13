@@ -87,6 +87,8 @@ object LotFixtures {
 
   def resumeLot(opN: Int): ResumeLot = ResumeLot(op(opN))
 
+  def withdrawLot(opN: Int): WithdrawLot = WithdrawLot(WithdrawnReason.AuctionCancelled, op(opN))
+
   /** Лот аукциона `auctionId(1)` в данном состоянии с пустым окном дедупликации. */
   def lotIn(state: LotState): Lot = Lot(state, Some(auctionId(1)), Map.empty)
 
@@ -229,6 +231,9 @@ object LotFixtures {
     /** Ask ведущего; производная ставка — как у возврата. */
     def ask(command: AdvanceAsk): (Either[AdvanceAskRejected, Decision], Journal) =
       record(command.opId, Lot.decide(lot, command, proxyBid(entries.size + 1), calm))
+
+    def withdrawLot(command: WithdrawLot): (Either[WithdrawLotRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command))
 
     def submitAll(commands: Seq[PlaceBid]): (Vector[Either[PlaceBidRejected, Decision]], Journal) =
       commands.zipWithIndex.foldLeft((Vector.empty[Either[PlaceBidRejected, Decision]], this)) {

@@ -99,6 +99,11 @@ function statusOf(status: AuctionSnapshot["status"]): ConsoleAuctionStatus {
       return "final";
     case "finished":
       return "finished";
+    // Отменённый аукцион (ADR-047, дополнение 2026-10-12) экраны ещё не
+    // показывают — это PER-606; до него бот не отменяет аукцион сам, и
+    // перевод бросает, как на любом статусе, которого бот не знает.
+    case "cancelled":
+      throw new Error("auction snapshot is cancelled, not shown yet");
     case undefined:
       throw new Error("auction snapshot without status");
     default: {

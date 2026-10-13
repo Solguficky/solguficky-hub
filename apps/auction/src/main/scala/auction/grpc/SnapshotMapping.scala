@@ -73,6 +73,7 @@ object SnapshotMapping {
           .withHeld(LotValues.held(held))
       case LotState.Sold(sale) => base.withSold(LotValues.sale(sale))
       case LotState.Unsold(reason) => base.withUnsold(LotValues.unsold(reason))
+      case LotState.Withdrawn(reason) => base.withWithdrawn(LotValues.withdrawn(reason))
     }
   }
 

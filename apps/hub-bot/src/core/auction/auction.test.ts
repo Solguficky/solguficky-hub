@@ -1,6 +1,7 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it } from "vitest";
 import {
+  AuctionState_CancelledSchema,
   AuctionState_DraftSchema,
   AuctionState_PrebiddingSchema,
 } from "../../../gen/auction/v1/auction_events_pb.js";
@@ -54,6 +55,22 @@ describe("auction snapshot for the root", () => {
         }),
       ),
     ).toEqual({ auctionId: AUCTION_ID, stage: "draft", final: false });
+  });
+
+  // Отменённый аукцион экраны покажут в PER-606; до него перевод не выдумывает
+  // ему стадию.
+  it("throws on a cancelled auction until the screens show it", () => {
+    expect(() =>
+      auctionSummaryViewOf(
+        create(AuctionSnapshotSchema, {
+          id: AUCTION_ID,
+          status: {
+            case: "cancelled",
+            value: create(AuctionState_CancelledSchema, {}),
+          },
+        }),
+      ),
+    ).toThrow("auction snapshot is cancelled, not shown yet");
   });
 
   // Дефект соседа — отказ перевода, а не корень с выдуманной стадией.

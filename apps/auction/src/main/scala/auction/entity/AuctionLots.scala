@@ -20,6 +20,8 @@ import auction.lot.ScheduleLot
 import auction.lot.ScheduleLotRejected
 import auction.lot.UnmarkForFinal
 import auction.lot.UnmarkForFinalRejected
+import auction.lot.WithdrawLot
+import auction.lot.WithdrawLotRejected
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.util.Timeout
 
@@ -65,6 +67,9 @@ trait AuctionLots {
 
   /** Ask ведущего лоту реестра (П-08); инициатор — ведущий, как у `mark`. */
   def advanceAsk(lot: LotId, command: AdvanceAsk, initiator: Initiator): Future[Either[AdvanceAskRejected, Unit]]
+
+  /** Снятие лота отменённым аукционом (ADR-047, дополнение 2026-10-12); подтверждение — только его `LotWithdrawn`. */
+  def withdraw(lot: LotId, command: WithdrawLot): Future[Either[WithdrawLotRejected, Unit]]
 }
 
 object AuctionLots {
@@ -124,6 +129,13 @@ object AuctionLots {
       def advanceAsk(lot: LotId, command: AdvanceAsk, initiator: Initiator): Future[Either[AdvanceAskRejected, Unit]] =
         entity(lot)
           .ask[Either[AdvanceAskRejected, Envelope]](LotEntity.Ask(command, initiator, _))
+          .map(_.map(_ => ()))(using ExecutionContext.parasitic)
+
+      // Снимает лот аукцион, а не человек, как открывает: после рестарта он доснимает лоты сам. Кто отменил аукцион,
+      // называет его строка `AuctionCancelled`; чужой `op_id` лот отклоняет `OpIdTaken`.
+      def withdraw(lot: LotId, command: WithdrawLot): Future[Either[WithdrawLotRejected, Unit]] =
+        entity(lot)
+          .ask[Either[WithdrawLotRejected, Envelope]](LotEntity.Withdraw(command, Initiator.Scheduler, _))
           .map(_.map(_ => ()))(using ExecutionContext.parasitic)
     }
 

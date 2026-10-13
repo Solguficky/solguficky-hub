@@ -75,6 +75,14 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       (live.phase, live.deadline) shouldBe (model.LotPhase.LOT_PHASE_LIVE, None)
     }
 
+    "publish the withdrawal with the reason of the cancelled auction in the state of the lot" in {
+      val withdrawal = LotEvent.LotWithdrawn(WithdrawnReason.AuctionCancelled)
+      val (_, fact) = facts(lotDrafted, lotScheduled, opened, placed, withdrawal).last
+
+      fact.map(_.subject) shouldBe Some("events.auction.lot_withdrawn")
+      message(fact).getState.status.withdrawn shouldBe Some(model.WithdrawnReason.WITHDRAWN_REASON_AUCTION_CANCELLED)
+    }
+
     "publish the ask of the auctioneer with the ask in the state of the lot" in {
       val steps = facts(lotDrafted, lotScheduled, opened, LotEvent.AskAdvanced(money(50000)))
 

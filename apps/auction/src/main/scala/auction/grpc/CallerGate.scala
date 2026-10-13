@@ -33,6 +33,7 @@ object MethodAccess {
     "ScheduleAuction" -> Set(Caller.HubBot),
     "StartPrebidding" -> Set(Caller.HubBot),
     "DiscardAuction" -> Set(Caller.HubBot),
+    "CancelAuction" -> Set(Caller.HubBot),
     "SelectForFinal" -> Set(Caller.HubBot),
     "DeselectForFinal" -> Set(Caller.HubBot),
     "FreezeFinalLineup" -> Set(Caller.HubBot),

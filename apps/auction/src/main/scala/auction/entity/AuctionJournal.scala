@@ -55,7 +55,7 @@ final case class StoredAuctionConfig(
 /**
  * `PrebiddingStarted` записан одним `kind` без секции: payload у него пуст (ADR-047). Секция `auctionScheduled`
  * добавлена в конец: строка, записанная до неё, читает её как пустую. Так же в конец добавлены секции перерыва и финала
- * (PER-334); `PrebiddingDeadlineReached` и `FinalStarted` пишутся одним `kind`.
+ * (PER-334); `PrebiddingDeadlineReached`, `FinalStarted` и `AuctionCancelled` пишутся одним `kind`.
  */
 final case class StoredAuctionEventBody(
     kind: String,
@@ -93,7 +93,8 @@ final case class StoredAuctionSeen(sequence: Long, opId: UUID, event: StoredAuct
  * Snapshot аукциона целиком, с реестром по возрастанию `lot_id` и окном дедупликации. `config` и `startedBy`
  * необязательны по форме: snapshot, записанный до планирования и открытия торгов, их не несёт и читается как черновик.
  * `config` заполнена с `Scheduled`, `startedBy` — `op_id` команды открытия — с `Prebidding`. `order` — состав финала с
- * заморозки, `activated` — возвращённые в торги лоты финала; оба добавлены в конец (PER-334).
+ * заморозки, `activated` — возвращённые в торги лоты финала; оба добавлены в конец (PER-334). `cancelledBy` — `op_id`
+ * отмены, только у `Cancelled`; добавлен в конец (PER-601).
  */
 final case class StoredAuction(
     sequence: Long,
@@ -104,7 +105,8 @@ final case class StoredAuction(
     config: Option[StoredAuctionConfig],
     startedBy: Option[UUID],
     order: Option[List[UUID]] = None,
-    activated: Option[List[UUID]] = None
+    activated: Option[List[UUID]] = None,
+    cancelledBy: Option[UUID] = None
 ) extends JournalSerializable
 
 object AuctionJournal {
@@ -135,6 +137,11 @@ object AuctionJournal {
       case AuctionState.LineupFrozen(config, startedBy, _) => ("LineupFrozen", Some(config), Some(startedBy))
       case AuctionState.Final(config, startedBy, _, _) => ("Final", Some(config), Some(startedBy))
       case AuctionState.Finished(config, startedBy) => ("Finished", Some(config), Some(startedBy))
+      case AuctionState.Cancelled(config, startedBy, _) => ("Cancelled", Some(config), Some(startedBy))
+    }
+    val cancelledBy = auction.state match {
+      case AuctionState.Cancelled(_, _, cancelledBy) => Some(cancelledBy.value)
+      case _ => None
     }
     val (order, activated) = auction.state match {
       case AuctionState.LineupFrozen(_, _, order) => (Some(order), None)
@@ -152,37 +159,41 @@ object AuctionJournal {
       config = config.map(storeConfig),
       startedBy = startedBy.map(_.value),
       order = order.map(_.map(_.value)),
-      activated = activated.map(_.map(_.value))
+      activated = activated.map(_.map(_.value)),
+      cancelledBy = cancelledBy
     )
   }
 
   /**
-   * Snapshot восстанавливается с инвариантами: сходка пуста ровно в `Initial`, а конфигурация, `op_id` открытия, состав
-   * и возвращённые лоты финала есть ровно у тех состояний, которые их несут.
+   * Snapshot восстанавливается с инвариантами: сходка пуста ровно в `Initial`, а конфигурация, `op_id` открытия,
+   * состав, возвращённые лоты финала и `op_id` отмены есть ровно у тех состояний, которые их несут.
    */
   def restoreAuction(stored: StoredAuction): Auction = {
     val lots = (ids: List[UUID]) => ids.map(LotId(_))
-    val state = (stored.state, stored.config, stored.startedBy, stored.order, stored.activated) match {
-      case ("Initial", None, None, None, None) => AuctionState.Initial
-      case ("Draft", None, None, None, None) => AuctionState.Draft
-      case ("Scheduled", Some(config), None, None, None) => AuctionState.Scheduled(restoreConfig(config))
-      case ("Prebidding", Some(config), Some(startedBy), None, None) =>
-        AuctionState.Prebidding(restoreConfig(config), OpId(startedBy))
-      case ("Settling", Some(config), Some(startedBy), None, None) =>
-        AuctionState.Settling(restoreConfig(config), OpId(startedBy))
-      case ("Break", Some(config), Some(startedBy), None, None) =>
-        AuctionState.Break(restoreConfig(config), OpId(startedBy))
-      case ("LineupFrozen", Some(config), Some(startedBy), Some(order), None) if order.nonEmpty =>
-        AuctionState.LineupFrozen(restoreConfig(config), OpId(startedBy), lots(order))
-      case ("Final", Some(config), Some(startedBy), Some(order), Some(activated)) if order.nonEmpty =>
-        AuctionState.Final(restoreConfig(config), OpId(startedBy), lots(order), lots(activated))
-      case ("Finished", Some(config), Some(startedBy), None, None) =>
-        AuctionState.Finished(restoreConfig(config), OpId(startedBy))
-      case _ =>
-        corrupted(
-          s"auction snapshot of state ${stored.state} with a config, an opening or a lineup that do not match it"
-        )
-    }
+    val state =
+      (stored.state, stored.config, stored.startedBy, stored.order, stored.activated, stored.cancelledBy) match {
+        case ("Initial", None, None, None, None, None) => AuctionState.Initial
+        case ("Draft", None, None, None, None, None) => AuctionState.Draft
+        case ("Scheduled", Some(config), None, None, None, None) => AuctionState.Scheduled(restoreConfig(config))
+        case ("Prebidding", Some(config), Some(startedBy), None, None, None) =>
+          AuctionState.Prebidding(restoreConfig(config), OpId(startedBy))
+        case ("Settling", Some(config), Some(startedBy), None, None, None) =>
+          AuctionState.Settling(restoreConfig(config), OpId(startedBy))
+        case ("Break", Some(config), Some(startedBy), None, None, None) =>
+          AuctionState.Break(restoreConfig(config), OpId(startedBy))
+        case ("LineupFrozen", Some(config), Some(startedBy), Some(order), None, None) if order.nonEmpty =>
+          AuctionState.LineupFrozen(restoreConfig(config), OpId(startedBy), lots(order))
+        case ("Final", Some(config), Some(startedBy), Some(order), Some(activated), None) if order.nonEmpty =>
+          AuctionState.Final(restoreConfig(config), OpId(startedBy), lots(order), lots(activated))
+        case ("Finished", Some(config), Some(startedBy), None, None, None) =>
+          AuctionState.Finished(restoreConfig(config), OpId(startedBy))
+        case ("Cancelled", Some(config), Some(startedBy), None, None, Some(cancelledBy)) =>
+          AuctionState.Cancelled(restoreConfig(config), OpId(startedBy), OpId(cancelledBy))
+        case _ =>
+          corrupted(
+            s"auction snapshot of state ${stored.state} with a config, an opening or a lineup that do not match it"
+          )
+      }
     val meetup = stored.meetupId.map(MeetupId(_))
     if ((state == AuctionState.Initial) != meetup.isEmpty)
       corrupted(s"auction snapshot of state ${stored.state} with meetup ${stored.meetupId}")
@@ -219,6 +230,7 @@ object AuctionJournal {
         StoredAuctionEventBody.of("AuctionScheduled").copy(auctionScheduled = Some(storeConfig(config)))
       case AuctionEvent.PrebiddingStarted => StoredAuctionEventBody.of("PrebiddingStarted")
       case AuctionEvent.AuctionDiscarded => StoredAuctionEventBody.of("AuctionDiscarded")
+      case AuctionEvent.AuctionCancelled => StoredAuctionEventBody.of("AuctionCancelled")
       case AuctionEvent.PrebiddingDeadlineReached => StoredAuctionEventBody.of("PrebiddingDeadlineReached")
       case AuctionEvent.PrebiddingEnded(finished) =>
         StoredAuctionEventBody.of("PrebiddingEnded").copy(prebiddingEnded = Some(StoredPrebiddingEnded(finished)))
@@ -246,6 +258,8 @@ object AuctionJournal {
         AuctionEvent.PrebiddingStarted
       case StoredAuctionEventBody("AuctionDiscarded", None, None, None, None, None, None, None) =>
         AuctionEvent.AuctionDiscarded
+      case StoredAuctionEventBody("AuctionCancelled", None, None, None, None, None, None, None) =>
+        AuctionEvent.AuctionCancelled
       case StoredAuctionEventBody("PrebiddingDeadlineReached", None, None, None, None, None, None, None) =>
         AuctionEvent.PrebiddingDeadlineReached
       case StoredAuctionEventBody("PrebiddingEnded", None, None, None, None, Some(ended), None, None) =>

@@ -164,6 +164,20 @@ final class LotJournalSpec
       keepsGolden("lot-unsold", storedEvent(lotUnsold, opN = 4))
     }
 
+    "keep the stored form of a withdrawal and of a withdrawn lot snapshot equal to their golden files" in {
+      val withdrawal = LotEvent.LotWithdrawn(WithdrawnReason.AuctionCancelled)
+      keepsGolden("lot-withdrawn", storedEvent(withdrawal, opN = 5))
+      LotJournal.envelope(5, storedEvent(withdrawal, opN = 5)).event shouldBe withdrawal
+
+      val withdrawnLot = Lot.apply(tradingLot, Envelope(5, op(5), withdrawal))
+      val row = write(kit.system, LotJournal.storeLot(withdrawnLot, sequence = 5))
+      row.json shouldBe mapper.readTree(golden("lot-snapshot-withdrawn"))
+      LotJournal.restoreLot(
+        read(kit.system, row.copy(bytes = golden("lot-snapshot-withdrawn"))).asInstanceOf[StoredLot]
+      ) shouldBe withdrawnLot
+      withdrawnLot.state shouldBe LotState.Withdrawn(WithdrawnReason.AuctionCancelled)
+    }
+
     "keep the stored form of a deadline extension equal to its golden file and read the golden file back" in {
       keepsGolden(
         "deadline-extended",

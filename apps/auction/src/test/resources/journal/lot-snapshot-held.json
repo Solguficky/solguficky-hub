@@ -58,7 +58,8 @@
     },
     "sold": null,
     "scheduled": null,
-    "unsold": null
+    "unsold": null,
+    "withdrawn": null
   },
   "auction": "00000000-0000-0004-0000-000000000001",
   "seen": [
@@ -77,7 +78,8 @@
         "lotUnsold": null,
         "deadlineExtended": null,
         "lotHeldForFinal": null,
-        "askAdvanced": null
+        "askAdvanced": null,
+        "lotWithdrawn": null
       }
     },
     {
@@ -134,7 +136,8 @@
         "lotUnsold": null,
         "deadlineExtended": null,
         "lotHeldForFinal": null,
-        "askAdvanced": null
+        "askAdvanced": null,
+        "lotWithdrawn": null
       }
     },
     {
@@ -193,7 +196,8 @@
         "lotUnsold": null,
         "deadlineExtended": null,
         "lotHeldForFinal": null,
-        "askAdvanced": null
+        "askAdvanced": null,
+        "lotWithdrawn": null
       }
     },
     {
@@ -222,7 +226,8 @@
         "lotUnsold": null,
         "deadlineExtended": null,
         "lotHeldForFinal": null,
-        "askAdvanced": null
+        "askAdvanced": null,
+        "lotWithdrawn": null
       }
     },
     {
@@ -246,7 +251,8 @@
         "lotUnsold": null,
         "deadlineExtended": null,
         "lotHeldForFinal": null,
-        "askAdvanced": null
+        "askAdvanced": null,
+        "lotWithdrawn": null
       }
     },
     {
@@ -264,7 +270,8 @@
         "lotUnsold": null,
         "deadlineExtended": null,
         "lotHeldForFinal": null,
-        "askAdvanced": null
+        "askAdvanced": null,
+        "lotWithdrawn": null
       }
     },
     {
@@ -284,7 +291,8 @@
         "lotHeldForFinal": {
           "at": "2026-10-07T18:00:00Z"
         },
-        "askAdvanced": null
+        "askAdvanced": null,
+        "lotWithdrawn": null
       }
     }
   ]

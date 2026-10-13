@@ -113,6 +113,23 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       }
     }
 
+    "keeps the stored form of a cancel and of a cancelled snapshot with the op_id of the cancel" in {
+      val cancel = AuctionEnvelope(7, op(7), AuctionEvent.AuctionCancelled)
+      keepsGolden("auction-cancelled", stored(cancel.event, 7))
+      val cancelled = Auction.replay(prebidding, List(deadline, ended, cancel))
+      cancelled.state shouldBe AuctionState.Cancelled(config(), op(4), op(7))
+      keepsGolden("auction-snapshot-cancelled", AuctionJournal.storeAuction(cancelled, sequence = 7))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(cancelled, sequence = 7)) shouldBe cancelled
+    }
+
+    "refuses a cancelled snapshot without the op_id of the cancel and one in another state with it" in {
+      val cancelled = Auction.replay(prebidding, List(AuctionEnvelope(5, op(5), AuctionEvent.AuctionCancelled)))
+      val snapshot = AuctionJournal.storeAuction(cancelled, sequence = 5)
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreAuction(snapshot.copy(cancelledBy = None))
+      val open = AuctionJournal.storeAuction(prebidding, sequence = 4)
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreAuction(open.copy(cancelledBy = Some(uuid(5))))
+    }
+
     "refuses a lineup with a repeated lot as a corrupted row" in {
       val twice = stored(frozen.event, 7)
       val corrupted =

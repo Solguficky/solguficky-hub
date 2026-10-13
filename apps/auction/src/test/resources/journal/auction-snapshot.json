@@ -42,5 +42,6 @@
   "config": null,
   "startedBy": null,
   "order": null,
-  "activated": null
+  "activated": null,
+  "cancelledBy": null
 }

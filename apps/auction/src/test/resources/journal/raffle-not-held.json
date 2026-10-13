@@ -11,6 +11,7 @@
     "registered": null,
     "registrationCancelled": null,
     "poolFixed": null,
-    "raffleDrawn": null
+    "raffleDrawn": null,
+    "raffleCancelled": null
   }
 }

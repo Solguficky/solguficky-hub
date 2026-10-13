@@ -545,6 +545,41 @@ final class AuctionGrpcIntegrationSpec
       eventually(meetupAuction(node, meetup).map(_.lotIds) shouldBe Some(Seq.empty))
     }
 
+    "cancels a started auction over the wire, withdraws its lot and shows it cancelled at its meetup" in withNode {
+      node =>
+        val meetup = newId()
+        val auction = enable(node, meetup).getAccepted.auctionId
+        val lot = newId()
+        asHubBot(node.client.addLot())
+          .invoke(wire.AddLotRequest(Some(administrator), auction, lot, newId()))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        asHubBot(node.client.scheduleLot()).invoke(schedule(auction, lot)).futureValue.outcome.isAccepted shouldBe true
+        asHubBot(node.client.scheduleAuction()).invoke(auctionSchedule(auction)).futureValue.outcome.isAccepted shouldBe
+          true
+        val cancel = wire.CancelAuctionRequest(Some(administrator), auction, newId())
+        asHubBot(node.client.cancelAuction())
+          .invoke(cancel)
+          .futureValue
+          .getRefused
+          .reason
+          .isAuctionNotStarted shouldBe true
+        val start = wire.StartPrebiddingRequest(Some(administrator), auction, newId())
+        asHubBot(node.client.startPrebidding()).invoke(start).futureValue.outcome.isAccepted shouldBe true
+        val accepted = cancel.withOpId(newId())
+        asHubBot(node.client.cancelAuction()).invoke(accepted).futureValue.outcome.isAccepted shouldBe true
+        // Повтор того же op_id отвечает принятием и Meetups второй раз не спрашивает.
+        val asked = node.authority.asked
+        asHubBot(node.client.cancelAuction()).invoke(accepted).futureValue.outcome.isAccepted shouldBe true
+        node.authority.asked shouldBe asked
+        eventually(meetupAuction(node, meetup).map(_.status.isCancelled) shouldBe Some(true))
+        eventually {
+          node.sharding.entityRefFor(LotEntity.TypeKey, lot).ask[Lot](LotEntity.Get(_)).futureValue.state shouldBe
+            _root_.auction.lot.LotState.Withdrawn(_root_.auction.lot.WithdrawnReason.AuctionCancelled)
+        }
+    }
+
     "refuses a lot born in another auction with FAILED_PRECONDITION and keeps it out of the feed" in withNode { node =>
       val auction = enable(node, newId()).getAccepted.auctionId
       // Лот тестового аукциона из настройки бота: рождён в нём, а не в аукционе сходки.

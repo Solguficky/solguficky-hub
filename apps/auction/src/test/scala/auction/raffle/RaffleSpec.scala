@@ -178,4 +178,51 @@ final class RaffleSpec extends AnyWordSpec with Matchers {
       Raffle.decide(open, DrawWinner(randomness, closesAt)) shouldBe Left(DrawRejected.NotAwaitingBeacon)
     }
   }
+
+  "cancelling with the auction" should {
+
+    val cancelledAt = closesAt.plusSeconds(30)
+
+    def cancelled(raffle: Raffle): Raffle =
+      Raffle.decide(raffle, CancelRaffle(op(80)), cancelledAt) match {
+        case RaffleDecision.Accepted(event) => step(raffle, op(80), event)
+        case other => fail(s"raffle not cancelled: $other")
+      }
+
+    "cancels open registration and a pool that waits for the beacon, keeping who held a registration" in {
+      val registered = register(open, 1, 2)
+      val terms = RaffleTerms(closesAt, seed, Quicknet.roundFor(closesAt))
+      cancelled(registered).state shouldBe RaffleState.Cancelled(terms, Vector(person(1)), cancelledAt)
+      cancelled(fixed(registered)).state shouldBe RaffleState.Cancelled(terms, Vector(person(1)), cancelledAt)
+    }
+
+    "takes no registration, fixes no pool and draws nothing once cancelled" in {
+      val gone = cancelled(register(open, 1, 2))
+      Raffle.decide(gone, Register(person(2), op(3)), before) shouldBe Left(RegistrationRejected.RegistrationClosed)
+      Raffle.decide(gone, CancelRegistration(person(1), op(4)), before) shouldBe
+        Left(RegistrationRejected.RegistrationClosed)
+      Raffle.decide(gone, FixPool(Set.empty), closesAt) shouldBe Left(FixPoolRejected.NotOpen)
+      Raffle.decide(gone, DrawWinner(randomness, closesAt.plusSeconds(61))) shouldBe
+        Left(DrawRejected.NotAwaitingBeacon)
+    }
+
+    "keeps a draw that took place, an empty pool, a raffle not held and one never opened" in {
+      val pool = fixed(register(open, 1, 2))
+      val drawn = Raffle.decide(pool, DrawWinner(randomness, closesAt.plusSeconds(61))) match {
+        case Right(event) => step(pool, op(91), event)
+        case Left(rejected) => fail(s"draw refused: $rejected")
+      }
+      val notHeld = step(Raffle.initial, op(1), RaffleEvent.RaffleNotHeld(closesAt))
+      List(drawn, fixed(open), notHeld, Raffle.initial).foreach { raffle =>
+        Raffle.decide(raffle, CancelRaffle(op(80)), cancelledAt) shouldBe RaffleDecision.Unchanged
+      }
+    }
+
+    "answers a repeated cancel with the original envelope and a new one without an event" in {
+      val gone = cancelled(open)
+      Raffle.decide(gone, CancelRaffle(op(80)), cancelledAt) shouldBe
+        RaffleDecision.Repeated(gone.seen(op(80)))
+      Raffle.decide(gone, CancelRaffle(op(81)), cancelledAt) shouldBe RaffleDecision.Unchanged
+    }
+  }
 }

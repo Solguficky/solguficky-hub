@@ -10,6 +10,7 @@ import auction.lot.Sale
 import auction.lot.StepPolicy
 import auction.lot.TradingState
 import auction.lot.UnsoldReason
+import auction.lot.WithdrawnReason
 import auction.v1.auction as model
 
 import java.time.Instant
@@ -72,6 +73,11 @@ object LotValues {
   def unsold(reason: UnsoldReason): model.UnsoldReason =
     reason match {
       case UnsoldReason.NoBids => model.UnsoldReason.UNSOLD_REASON_NO_BIDS
+    }
+
+  def withdrawn(reason: WithdrawnReason): model.WithdrawnReason =
+    reason match {
+      case WithdrawnReason.AuctionCancelled => model.WithdrawnReason.WITHDRAWN_REASON_AUCTION_CANCELLED
     }
 
   def money(amount: Money): model.Money = model.Money(amount.minorUnits, amount.currency.value)

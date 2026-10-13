@@ -495,5 +495,49 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         Auction.decide(auction, StartPrebidding(op(20))) shouldBe Left(StartPrebiddingRejected.AuctionNotScheduled)
       }
     }
+
+    def finished: Auction =
+      applied(settling, Auction.decide(settling, EndSettling(Set.empty, op(7))).toOption.get, 7, 7)
+
+    def cancelled(auction: Auction, sequence: Long): Auction =
+      applied(auction, Auction.decide(auction, CancelAuction(op(30))).toOption.get, sequence, 30)
+
+    "is cancelled from every phase of trading and keeps its config, its opening and the op_id of the cancel" in {
+      List(trading -> 6L, settling -> 7L, onBreak -> 8L, frozen -> 9L, inFinal -> 10L).foreach { (auction, sequence) =>
+        Auction.decide(auction, CancelAuction(op(30))) shouldBe Right(
+          AuctionDecision.Accepted(AuctionEvent.AuctionCancelled)
+        )
+        cancelled(auction, sequence).state shouldBe AuctionState.Cancelled(config(), op(5), op(30))
+        cancelled(auction, sequence).lots shouldBe Set(lot, other)
+      }
+    }
+
+    "refuses a cancel before trading, after the end and of an auction that was never born" in {
+      Auction.decide(Auction.initial, CancelAuction(op(30))) shouldBe Left(CancelAuctionRejected.AuctionNotFound)
+      Auction.decide(born, CancelAuction(op(30))) shouldBe Left(CancelAuctionRejected.AuctionNotStarted)
+      Auction.decide(scheduled, CancelAuction(op(30))) shouldBe Left(CancelAuctionRejected.AuctionNotStarted)
+      finished.state shouldBe a[AuctionState.Finished]
+      Auction.decide(finished, CancelAuction(op(30))) shouldBe Left(CancelAuctionRejected.AuctionAlreadyFinished)
+    }
+
+    "answers a repeated cancel with the original envelope and a new one on a cancelled auction without an event" in {
+      val gone = cancelled(onBreak, 8)
+      Auction.decide(gone, CancelAuction(op(30))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(8, op(30), AuctionEvent.AuctionCancelled)))
+      Auction.decide(gone, CancelAuction(op(31))) shouldBe Right(AuctionDecision.Unchanged)
+    }
+
+    "stays at its meetup for good once cancelled and refuses every step of trading" in {
+      val gone = cancelled(trading, 6)
+      Auction.decide(gone, DraftAuction(meetup, op(40))) shouldBe AuctionDecision.Unchanged
+      Auction.decide(gone, DiscardAuction(op(40))) shouldBe Left(DiscardAuctionRejected.AuctionAlreadyStarted)
+      Auction.decide(gone, StartPrebidding(op(40))) shouldBe Left(StartPrebiddingRejected.AuctionNotScheduled)
+      Auction.decide(gone, AddLot(lot, op(40))) shouldBe Left(AddLotRejected.LotsFrozen)
+      Auction.decide(gone, SelectForFinal(lot, op(40))) shouldBe Left(FinalChoiceRejected.NotInPrebidding)
+      Auction.decide(gone, EndPrebidding(op(40), closesAt)) shouldBe Left(EndPrebiddingRejected.NotInPrebidding)
+      Auction.decide(gone, StartFinal(op(40))) shouldBe Left(StartFinalRejected.LineupNotFrozen)
+      Auction.decide(gone, StartNextLot(op(40))) shouldBe Left(StartNextLotRejected.NotInFinal)
+      Auction.prebiddingDeadline(gone) shouldBe None
+    }
   }
 }

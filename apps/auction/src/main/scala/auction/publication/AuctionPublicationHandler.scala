@@ -51,7 +51,7 @@ final class AuctionPublicationHandler(json: AuctionViewJson, serialization: Seri
           AuctionView.project(row, auctionId, sequence, stored) match {
             case Left(defect) => throw new AuctionViewDefectException(defect)
             case Right(None) => (row, facts)
-            case Right(Some(after)) => (Some(after), facts ++ AuctionFacts.fact(sequence, stored, after))
+            case Right(Some(after)) => (Some(after), facts ++ AuctionFacts.fact(sequence, stored, row, after))
           }
       }
       applied match {

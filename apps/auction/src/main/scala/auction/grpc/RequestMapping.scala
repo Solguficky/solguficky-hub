@@ -35,6 +35,7 @@ import auction.v1.auction.StepPolicy as StepPolicyMessage
 import auction.v1.auction_service.AddLotRequest
 import auction.v1.auction_service.AdvanceAskRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
+import auction.v1.auction_service.CancelAuctionRequest
 import auction.v1.auction_service.CancelRaffleRegistrationRequest
 import auction.v1.auction_service.GetAuctionRequest
 import auction.v1.auction_service.GetRaffleRequest
@@ -135,6 +136,9 @@ final case class PrebiddingCommand(auctionId: AuctionId, opId: OpId, acting: Act
 
 /** Удаление аукциона до торгов. */
 final case class DiscardCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
+
+/** Отмена аукциона после старта торгов. */
+final case class CancelCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
 
 /**
  * Заморозка состава финала: `order` — лоты в порядке выхода, как их прислал пульт. Дубли и пустой список — не форма
@@ -416,6 +420,13 @@ object RequestMapping {
       auction <- meetupAuction(request.auctionId)
       opId <- uuidV7("op_id", request.opId)
     } yield DiscardCommand(auction, OpId(opId), acting)
+
+  def cancelAuction(request: CancelAuctionRequest): Either[FormError, CancelCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+    } yield CancelCommand(auction, OpId(opId), acting)
 
   def freezeFinalLineup(request: FreezeFinalLineupRequest): Either[FormError, LineupCommand] =
     for {
