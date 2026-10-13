@@ -60,7 +60,7 @@ let ``An administrator may act on behalf of an existing meetup`` () =
 
     test
         <@
-            result = Ok()
+            result = Ok(Meetup.toSnapshot Sample.published)
             && store.Loaded = [ Sample.meetupId ]
         @>
 
@@ -95,13 +95,14 @@ let ``An administrator learns that the meetup does not exist`` () =
     test <@ result = Error CheckMeetupAuthorityError.NotFound @>
 
 /// Вопрос только о праве: состояние сходки в нём не участвует, и отменённая
-/// сходка право не отнимает.
+/// сходка право не отнимает. Состояние при этом уезжает ответом как данные —
+/// его разбирает вызывающий, а не это решение.
 [<Fact>]
 let ``The right does not depend on the lifecycle of the meetup`` () =
     let result =
         run (deps (Identity(Ok true)) (Store(Some(Meetup.toSnapshot Sample.cancelled))))
 
-    test <@ result = Ok() @>
+    test <@ result = Ok(Meetup.toSnapshot Sample.cancelled) @>
 
 /// Право, которое не удалось подтвердить, не превращается ни в «нет», ни в «да», и
 /// сходка при этом не читается: ответ ещё не заслужен.
@@ -171,7 +172,7 @@ let ``The check API gives an outsider one answer for an existing and a missing m
         @>
 
 [<Fact>]
-let ``The check API grants an administrator with an empty answer and reports a missing meetup`` () =
+let ``The check API grants an administrator and reports a missing meetup`` () =
     let granted =
         codeOf (fun () -> Api.handle (deps (Identity(Ok true)) (Store stored)) (request ()))
 

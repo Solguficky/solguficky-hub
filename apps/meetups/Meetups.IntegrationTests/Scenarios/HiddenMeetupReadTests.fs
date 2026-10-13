@@ -29,6 +29,35 @@ type HiddenMeetupReadTests() =
 
     let notFound (action: unit -> unit) = Rpc.codeOf action
 
+    /// Подменяет порт Identity: «да» только администраторам из набора и только на
+    /// право ManageMeetups — так же, как ответил бы Identity на вопрос, который
+    /// задаёт Meetups. Адаптер сведения ответов проверен unit-тестами, а здесь
+    /// держится путь «граница — срез — база».
+    let identityPort (administrators: Set<string>) =
+        let ask: Meetups.Slices.CheckMeetupAuthority.AskRight =
+            fun (Meetups.Domain.PersonId person) right ->
+                Threading.Tasks.Task.FromResult(
+                    Ok(
+                        administrators.Contains(person.ToString "D")
+                        && right = Meetups.Domain.ManageMeetups
+                    )
+                )
+
+        fun (services: Microsoft.Extensions.DependencyInjection.IServiceCollection) ->
+            Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<
+                Meetups.Slices.CheckMeetupAuthority.Port
+             >(
+                services,
+                Meetups.Slices.CheckMeetupAuthority.Port.Connected(fun _ -> ask)
+            )
+            |> ignore
+
+    /// Вопрос проверки отношения так, как его задаёт второй сервис.
+    let authorityRequest identityId meetupId =
+        let request = CheckMeetupAuthorityRequest(IdentityId = identityId, Id = meetupId)
+        request.AcceptedRelations.Add MeetupRelation.CommunityAdministrator
+        request
+
     [<Fact>]
     member _.``Every contract read operation has a hidden-meetup scenario``() =
         let writeOperations =
@@ -207,11 +236,6 @@ type HiddenMeetupReadTests() =
     /// Проверка права — тоже вопрос о сходке, и ответ на него не должен выдавать
     /// скрытую: посторонний получает один и тот же отказ для скрытой и отсутствующей,
     /// а администратор — право и на свою, и на заведённую другим (PER-224).
-    ///
-    /// Identity здесь подменён портом, а не поднят: сведение его ответов проверено
-    /// unit-тестами адаптера, а этот сценарий держит путь «граница — срез — база».
-    /// Порт отвечает «да» только администраторам и только на право ManageMeetups —
-    /// так же, как ответил бы Identity на вопрос, который задаёт Meetups.
     [<Fact>]
     member _.``The authority check neither exposes a hidden meetup nor withholds it from administrators``() =
         let administrators =
@@ -221,37 +245,17 @@ type HiddenMeetupReadTests() =
                     "0199c0de-0000-7000-8000-00000000000d"
                 ]
 
-        let identity: Meetups.Slices.CheckMeetupAuthority.AskRight =
-            fun (Meetups.Domain.PersonId person) right ->
-                Threading.Tasks.Task.FromResult(
-                    Ok(
-                        administrators.Contains(person.ToString "D")
-                        && right = Meetups.Domain.ManageMeetups
-                    )
-                )
-
-        let configure (services: Microsoft.Extensions.DependencyInjection.IServiceCollection) =
-            Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<
-                Meetups.Slices.CheckMeetupAuthority.Port
-             >(
-                services,
-                Meetups.Slices.CheckMeetupAuthority.Port.Connected(fun _ -> identity)
-            )
-            |> ignore
-
-        use live = new LiveMeetupsHost(configure)
+        use live = new LiveMeetupsHost(identityPort administrators)
         let client = AuthenticatedClient.bot live.Channel
         let authority = AuthenticatedClient.notifications live.Channel
         let hiddenId, _ = createDraft client
         let missingId = (Guid.CreateVersion7()).ToString "D"
 
         let check (identityId: string) meetupId =
-            let request = CheckMeetupAuthorityRequest(IdentityId = identityId, Id = meetupId)
-
-            request.AcceptedRelations.Add MeetupRelation.CommunityAdministrator
-
             try
-                authority.CheckMeetupAuthority(request) |> ignore
+                authority.CheckMeetupAuthority(authorityRequest identityId meetupId)
+                |> ignore
+
                 None
             with :? RpcException as refused ->
                 Some refused.Status
@@ -269,4 +273,32 @@ type HiddenMeetupReadTests() =
                 && check author hiddenId = None
                 && check anotherAdministrator hiddenId = None
                 && check anotherAdministrator missingId = Some(Status(StatusCode.NotFound, "meetup not found"))
+            @>
+
+    /// Успех несёт состояние сходки, а не один факт права: отменённая приходит с
+    /// жизненным циклом «отменена», скрытая — с видимостью «скрыта» (ADR-047,
+    /// дополнение 2026-10-12; критерий PER-600). Путь настоящий — gRPC, срез и база.
+    [<Fact>]
+    member _.``The authority check carries the state of a cancelled hidden meetup``() =
+        let administrators =
+            set
+                [
+                    "0199c0de-0000-7000-8000-00000000000a"
+                ]
+
+        use live = new LiveMeetupsHost(identityPort administrators)
+        let client = AuthenticatedClient.bot live.Channel
+        let authority = AuthenticatedClient.notifications live.Channel
+        let hiddenId, version = createDraft client
+
+        client.CancelMeetup(CancelMeetupRequest(Viewer = administrator (), Id = hiddenId, ExpectedVersion = version))
+        |> ignore
+
+        let answer =
+            authority.CheckMeetupAuthority(authorityRequest (administrator ()).IdentityId hiddenId)
+
+        test
+            <@
+                answer.Lifecycle = MeetupLifecycle.Cancelled
+                && answer.Visibility = MeetupVisibility.Hidden
             @>
