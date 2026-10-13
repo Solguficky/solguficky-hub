@@ -3,10 +3,9 @@ import type { CommunityMember } from "../../identity/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   closeAccessConfirmScreen,
+  communityMemberRefusalText,
+  communityMemberScreen,
   communityScreen,
-  moderatorCandidatesScreen,
-  moderatorsScreen,
-  viewOfOrigin,
 } from "./community.js";
 import type { ShownScreen } from "./show.js";
 
@@ -17,8 +16,17 @@ function id(index: number): string {
   return `0192f3a4-b5c6-7d8e-9f0a-${index.toString(16).padStart(12, "0")}`;
 }
 
-function person(index: number, admitted: boolean): CommunityMember {
-  return { identityId: id(index), telegramUsername: `user${index}`, admitted };
+function person(
+  index: number,
+  circle: CommunityMember["circle"],
+  auctionModeration = false,
+): CommunityMember {
+  return {
+    identityId: id(index),
+    telegramUsername: `user${index}`,
+    circle,
+    auctionModeration,
+  };
 }
 
 function rows(screen: ShownScreen): string[][] {
@@ -37,149 +45,104 @@ function dataOf(screen: ShownScreen, text: string): string | undefined {
 }
 
 const nav = ["‹ Состав"];
+const members = { filter: "members", page: 0 } as const;
 
-describe("community root", () => {
-  it("shows the three counts and leads to the three lists", () => {
-    const screen = communityScreen(
-      {
-        members: [person(1, false), person(2, true), person(3, true)],
-        allowedUsernames: ["invited"],
-      },
-      { kind: "root" },
-    );
+describe("community list", () => {
+  const snapshot = {
+    members: [
+      person(1, "member"),
+      person(2, "member", true),
+      person(3, "guest"),
+      person(4, "none"),
+    ],
+    allowedUsernames: ["invited"],
+  };
+
+  it("lists the members, marks the chosen filter and opens a card", () => {
+    const screen = communityScreen(snapshot, { kind: "list", place: members });
 
     expect(screen.id).toBe("community");
     expect(screen.text).toBe(
-      "<b>Состав сообщества</b>\n\nОжидают допуска: 1\nДопущены: 2\nРазрешённые ники: 1",
+      "<b>Состав сообщества</b>\n\nУчастники: 2\n\n• @user1\n• @user2 · модерирует аукцион",
     );
     expect(rows(screen)).toEqual([
-      ["Ожидают допуска"],
-      ["Допущенные"],
-      ["Разрешённые ники"],
-      ["Модераторы аукциона"],
-      ["Обновить"],
+      ["• Участники", "Гости"],
+      ["Модераторы", "Разрешённые ники"],
+      ["@user1"],
+      ["@user2"],
       ["‹ Управление"],
     ]);
-  });
-});
-
-describe("auction moderators", () => {
-  const moderator = {
-    identityId: id(2),
-    telegramUsername: "user2",
-    telegramUserId: 2n,
-    revocable: true,
-  };
-  const admin = {
-    identityId: id(9),
-    telegramUserId: 9n,
-    revocable: false,
-  };
-
-  it("revokes only a granted right and leads to granting", () => {
-    const screen = moderatorsScreen([moderator, admin]);
-
-    expect(screen.id).toBe("community-moderators");
-    expect(screen.text).toBe(
-      "<b>Модераторы аукциона</b>\n\n• @user2\n• id 9 · администратор",
-    );
-    expect(rows(screen)).toEqual([
-      ["Отозвать @user2"],
-      ["Выдать модерацию"],
-      ["Обновить"],
-      nav,
-    ]);
-    expect(dataOf(screen, "Отозвать @user2")).toBe(
-      `v1:cm:mv:${uuidToToken(id(2))}`,
-    );
+    expect(dataOf(screen, "@user1")).toBe(`v1:cm:v:${uuidToToken(id(1))}:m0`);
+    expect(dataOf(screen, "Гости")).toBe("v1:cm:l:g0");
+    expect(dataOf(screen, "Модераторы")).toBe("v1:cm:l:o0");
+    expect(dataOf(screen, "Разрешённые ники")).toBe("v1:cm:u");
   });
 
-  it("offers the admitted members who do not moderate yet", () => {
-    const screen = moderatorCandidatesScreen(
-      {
-        members: [person(1, false), person(2, true), person(3, true)],
-        allowedUsernames: [],
-      },
-      [moderator],
-      0,
-    );
-
-    expect(screen.id).toBe("community-moderator-candidates");
-    expect(rows(screen)).toEqual([["Выдать @user3"], ["‹ Модераторы"]]);
-    expect(dataOf(screen, "Выдать @user3")).toBe(
-      `v1:cm:mg:${uuidToToken(id(3))}:0`,
-    );
-  });
-});
-
-describe("community pending queue", () => {
-  const queue = [person(1, false), person(2, false), person(3, false)];
-  const snapshot = { members: queue, allowedUsernames: [] };
-  const [first, second, third] = queue.map((member) =>
-    uuidToToken(member.identityId),
-  );
-
-  it("shows one person and carries the next one as the cursor", () => {
-    const screen = communityScreen(snapshot, { kind: "pending" });
-
-    expect(screen.text).toBe(
-      "<b>Ожидают допуска</b>\n\n@user1\n\nВ очереди: 3",
-    );
-    expect(rows(screen)).toEqual([
-      ["✔️ Допустить", "Закрыть"],
-      ["Пропустить"],
-      ["Обновить"],
-      nav,
-    ]);
-    expect(dataOf(screen, "✔️ Допустить")).toBe(`v1:cm:ad:${first}:${second}`);
-    expect(dataOf(screen, "Закрыть")).toBe(`v1:cm:bq:${first}:p${second}`);
-    expect(dataOf(screen, "Пропустить")).toBe(`v1:cm:p:${second}`);
-    expect(dataOf(screen, "Обновить")).toBe(`v1:cm:p:${first}`);
-  });
-
-  it("wraps from the last person back to the first", () => {
+  it("shows the guests apart from the members", () => {
     const screen = communityScreen(snapshot, {
-      kind: "pending",
-      cursor: id(3),
+      kind: "list",
+      place: { filter: "guests", page: 0 },
     });
 
-    expect(screen.text).toContain("@user3");
-    expect(dataOf(screen, "Пропустить")).toBe(`v1:cm:p:${first}`);
-    expect(dataOf(screen, "✔️ Допустить")).toBe(`v1:cm:ad:${third}:${first}`);
+    expect(screen.text).toBe(
+      "<b>Состав сообщества</b>\n\nГости: 1\n\n• @user3",
+    );
+    expect(rows(screen)[0]).toEqual(["Участники", "• Гости"]);
+    expect(dataOf(screen, "@user3")).toBe(`v1:cm:v:${uuidToToken(id(3))}:g0`);
   });
 
-  it("falls back to the head of the queue when the cursor is gone", () => {
+  it("lists the auction moderators", () => {
     const screen = communityScreen(snapshot, {
-      kind: "pending",
-      cursor: id(99),
+      kind: "list",
+      place: { filter: "moderators", page: 0 },
     });
 
-    expect(screen.text).toContain("@user1");
+    expect(screen.text).toBe(
+      "<b>Состав сообщества</b>\n\nМодераторы аукциона: 1\n\n• @user2",
+    );
+    expect(rows(screen)[1]).toEqual(["• Модераторы", "Разрешённые ники"]);
   });
 
-  it("has nobody to skip to in a queue of one", () => {
-    const screen = communityScreen(
-      { members: [person(1, false)], allowedUsernames: [] },
-      { kind: "pending" },
-    );
-
-    expect(rows(screen)).toEqual([
-      ["✔️ Допустить", "Закрыть"],
-      ["Обновить"],
-      nav,
-    ]);
-    expect(dataOf(screen, "✔️ Допустить")).toBe(`v1:cm:ad:${first}`);
-    expect(dataOf(screen, "Закрыть")).toBe(`v1:cm:bq:${first}:p`);
+  // Старый Identity фильтра не знает и отдаёт всех: человек без круга не
+  // попадает ни в один фильтр.
+  it("leaves out the people without a circle under every filter", () => {
+    for (const filter of ["members", "guests", "moderators"] as const) {
+      const screen = communityScreen(snapshot, {
+        kind: "list",
+        place: { filter, page: 0 },
+      });
+      expect(screen.text).not.toContain("user4");
+    }
   });
 
-  it("says the queue is empty and keeps only navigation", () => {
+  it("cuts the list into pages of eight within the row limit", () => {
+    const many = {
+      members: Array.from({ length: 20 }, (_, i) => person(i + 1, "member")),
+      allowedUsernames: [],
+    };
+    const screen = communityScreen(many, {
+      kind: "list",
+      place: { filter: "members", page: 1 },
+    });
+
+    expect(screen.text.split("\n")[0]).toBe(
+      "<b>Состав сообщества · 2 из 3</b>",
+    );
+    expect(rows(screen)).toHaveLength(12);
+    expect(dataOf(screen, "@user9")).toBe(`v1:cm:v:${uuidToToken(id(9))}:m1`);
+    expect(dataOf(screen, "←")).toBe("v1:cm:l:m0");
+    expect(dataOf(screen, "→")).toBe("v1:cm:l:m2");
+  });
+
+  it("says so when nobody is in the filter", () => {
     const screen = communityScreen(
-      { members: [person(1, true)], allowedUsernames: [] },
-      { kind: "pending" },
+      { members: [], allowedUsernames: [] },
+      { kind: "list", place: { filter: "guests", page: 0 } },
     );
 
-    expect(screen.text).toBe("<b>Ожидают допуска</b>\n\nОчередь пуста.");
-    expect(rows(screen)).toEqual([nav]);
+    expect(screen.text).toBe(
+      "<b>Состав сообщества</b>\n\nГости: 0\n\nГостей пока нет.",
+    );
   });
 
   it("names a person without a username by the code and a mention", () => {
@@ -189,80 +152,78 @@ describe("community pending queue", () => {
           {
             identityId: "01a0e306-a646-7d3a-9b21-4f8e12ab34cd",
             telegramUserId: 5001n,
-            admitted: false,
+            circle: "member",
+            auctionModeration: false,
           },
         ],
         allowedUsernames: [],
       },
-      { kind: "pending" },
+      { kind: "list", place: members },
     );
 
     expect(screen.text).toContain(
       '<a href="tg://user?id=5001">без ника</a> · 12ab34cd',
     );
     expect(screen.text).not.toContain("01a0e306");
+    expect(rows(screen)).toContainEqual(["без ника · 12ab34cd"]);
   });
 });
 
-describe("community admitted list", () => {
-  const members = Array.from({ length: 11 }, (_, index) =>
-    person(index + 1, true),
-  );
-  const snapshot = { members, allowedUsernames: [] };
+describe("community member card", () => {
+  const place = { filter: "members", page: 2 } as const;
 
-  it("cuts the list into pages of eight and keeps the page in every button", () => {
-    const screen = communityScreen(snapshot, { kind: "admitted", page: 1 });
+  it("offers moderation to a member and returns to the same page", () => {
+    const screen = communityMemberScreen(person(1, "member"), place);
+    const token = uuidToToken(id(1));
 
+    expect(screen.id).toBe("community-member");
     expect(screen.text).toBe(
-      "<b>Допущенные · 2 из 2</b>\n\n• @user9\n• @user10\n• @user11",
+      "<b>Карточка человека</b>\n\n@user1\n\nКруг: участник\nМодерация аукциона: нет",
     );
     expect(rows(screen)).toEqual([
-      ["Закрыть @user9"],
-      ["Закрыть @user10"],
-      ["Закрыть @user11"],
-      ["←"],
-      ["Обновить"],
+      ["Выдать модерацию"],
+      ["Закрыть доступ"],
       nav,
     ]);
-    expect(dataOf(screen, "Закрыть @user9")).toBe(
-      `v1:cm:bq:${uuidToToken(id(9))}:a1`,
-    );
-    expect(dataOf(screen, "←")).toBe("v1:cm:a:0");
-    expect(dataOf(screen, "Обновить")).toBe("v1:cm:a:1");
+    expect(dataOf(screen, "Выдать модерацию")).toBe(`v1:cm:mg:${token}:m2`);
+    expect(dataOf(screen, "Закрыть доступ")).toBe(`v1:cm:bq:${token}:m2`);
+    expect(dataOf(screen, "‹ Состав")).toBe("v1:cm:l:m2");
   });
 
-  it("fits a full page into the row limit", () => {
-    const screen = communityScreen(snapshot, { kind: "admitted", page: 0 });
+  it("revokes moderation from a moderator", () => {
+    const screen = communityMemberScreen(person(1, "member", true), place);
 
-    expect(rows(screen)).toHaveLength(11);
+    expect(screen.text).toContain("Модерация аукциона: есть");
+    expect(dataOf(screen, "Снять модерацию")).toBe(
+      `v1:cm:mv:${uuidToToken(id(1))}:m2`,
+    );
   });
 
-  it("names a person without a username by the code in the button", () => {
-    const screen = communityScreen(
-      {
-        members: [
-          {
-            identityId: "01a0e306-918c-7e01-8c55-0d2f6a7b9e10",
-            admitted: true,
-          },
-        ],
-        allowedUsernames: [],
-      },
-      { kind: "admitted", page: 0 },
-    );
+  it("offers no moderation to a guest", () => {
+    const screen = communityMemberScreen(person(3, "guest"), {
+      filter: "guests",
+      page: 0,
+    });
 
-    expect(screen.text).toContain("• без ника · 6a7b9e10");
-    expect(rows(screen)[0]).toEqual(["Закрыть без ника · 6a7b9e10"]);
+    expect(screen.text).toBe(
+      "<b>Карточка человека</b>\n\n@user3\n\nКруг: гость",
+    );
+    expect(rows(screen)).toEqual([["Закрыть доступ"], nav]);
   });
 
-  it("says so when nobody is admitted", () => {
-    const screen = communityScreen(
-      { members: [], allowedUsernames: [] },
-      { kind: "admitted", page: 0 },
+  it.each([
+    [{ kind: "forbidden" } as const, "без права"],
+    [{ kind: "identity-unknown" } as const, "Такого человека нет в составе."],
+    [{ kind: "blocked" } as const, "Доступ этому человеку уже закрыт."],
+    [
+      { kind: "holds-preset" } as const,
+      "Это администратор: его ведут на экране «Администраторы».",
+    ],
+    [{ kind: "invalid" } as const, "недоступно"],
+  ])("tells refusal %o as a screen text", (result, text) => {
+    expect(communityMemberRefusalText(result, "без права", "недоступно")).toBe(
+      text,
     );
-
-    expect(screen.text).toBe("<b>Допущенные</b>\n\nПока никого.");
-    expect(rows(screen)).toEqual([["Обновить"], nav]);
   });
 });
 
@@ -302,46 +263,21 @@ describe("community allowed usernames", () => {
 });
 
 describe("closing access", () => {
-  const member = person(1, true);
-  const token = uuidToToken(member.identityId);
-
-  it("asks with a red confirmation and returns to the same page", () => {
-    const screen = closeAccessConfirmScreen(member, {
-      kind: "admitted",
-      page: 2,
-    });
+  it("asks with a red confirmation and returns to the card", () => {
+    const place = { filter: "guests", page: 1 } as const;
+    const screen = closeAccessConfirmScreen(person(3, "guest"), place);
+    const token = uuidToToken(id(3));
 
     expect(screen.id).toBe("community-close-confirm");
-    expect(screen.keyboard.inline_keyboard).toEqual([
-      [
-        {
-          text: "✔️ Да, закрыть доступ",
-          callback_data: `v1:cm:by:${token}:a2`,
-          style: "danger",
-        },
-        { text: "✖️ Нет", callback_data: "v1:cm:a:2" },
-      ],
-    ]);
-  });
-
-  it("returns a refusal to the same person in the queue", () => {
-    const next = uuidToToken(id(2));
-    const screen = closeAccessConfirmScreen(member, { kind: "pending", next });
-
-    expect(dataOf(screen, "✔️ Да, закрыть доступ")).toBe(
-      `v1:cm:by:${token}:p${next}`,
+    expect(screen.text).toBe(
+      "<b>Закрыть доступ?</b>\n\n@user3 перестанет видеть сходки сообщества. Вернуть доступ из бота нельзя.",
     );
-    expect(dataOf(screen, "✖️ Нет")).toBe(`v1:cm:p:${token}`);
-  });
-
-  it("moves on to the next person once access is closed", () => {
-    expect(viewOfOrigin({ kind: "pending", next: uuidToToken(id(2)) })).toEqual(
-      { kind: "pending", cursor: id(2) },
+    expect(rows(screen)).toEqual([["✔️ Да, закрыть доступ", "✖️ Нет"]]);
+    expect(dataOf(screen, "✔️ Да, закрыть доступ")).toBe(`v1:cm:by:${token}:g1`);
+    expect(dataOf(screen, "✖️ Нет")).toBe(`v1:cm:v:${token}:g1`);
+    const yes = screen.keyboard.inline_keyboard[0]?.[0];
+    expect(yes !== undefined && "style" in yes ? yes.style : undefined).toBe(
+      "danger",
     );
-    expect(viewOfOrigin({ kind: "pending" })).toEqual({ kind: "pending" });
-    expect(viewOfOrigin({ kind: "admitted", page: 3 })).toEqual({
-      kind: "admitted",
-      page: 3,
-    });
   });
 });

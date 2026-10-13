@@ -1,18 +1,20 @@
 import { InlineKeyboard } from "grammy";
-import { admitLabel } from "../../../../core/pictograms.js";
 import { applicationCode } from "../../application/hub-access.js";
 import type {
-  AuctionModerator,
+  CommunityCircle,
+  CommunityFilter,
   CommunityMember,
+  CommunityMemberResult,
   CommunitySnapshot,
 } from "../../identity/port.js";
-import { tokenToUuid, uuidToToken } from "../meetup-deep-link.js";
+import { uuidToToken } from "../meetup-deep-link.js";
 import {
-  type BlockOrigin,
-  blockOriginData,
+  type CommunityPlace,
+  communityPlaceData,
   removableUsernamePattern,
 } from "../parse-callback.js";
 import {
+  bullet,
   confirmKeyboard,
   escapeHtml,
   nextRow,
@@ -32,11 +34,31 @@ const refreshLabel = "Обновить";
 
 /** Какой из экранов состава показать. */
 export type CommunityView =
-  | { kind: "root" }
-  /** Курсор — идентификатор человека, а не номер: очередь меняется. */
-  | { kind: "pending"; cursor?: string }
-  | { kind: "admitted"; page: number }
+  | { kind: "list"; place: CommunityPlace }
   | { kind: "usernames"; page: number };
+
+/** Первая страница участников — куда ведёт пункт «Состав сообщества». */
+export const firstCommunityPlace: CommunityPlace = {
+  filter: "members",
+  page: 0,
+};
+
+export function communityListData(place: CommunityPlace): string {
+  return `v1:cm:l:${communityPlaceData(place)}`;
+}
+
+/** Возврат к месту списка, с которого открыта карточка. */
+export function toCommunityPlace(place: CommunityPlace): Parent {
+  return { name: toCommunity.name, data: communityListData(place) };
+}
+
+function memberData(
+  verb: "v" | "mg" | "mv" | "bq" | "by",
+  member: CommunityMember,
+  place: CommunityPlace,
+): string {
+  return `v1:cm:${verb}:${uuidToToken(member.identityId)}:${communityPlaceData(place)}`;
+}
 
 // Человек без ника называется кодом заявки: тот же код он видит в кадре
 // ожидания и называет администратору, а кнопка несёт то же представление.
@@ -55,12 +77,51 @@ function memberHtml(member: CommunityMember): string {
     : escapeHtml(memberLabel(member));
 }
 
-function pendingOf(snapshot: CommunitySnapshot): readonly CommunityMember[] {
-  return snapshot.members.filter((member) => !member.admitted);
+const filterLabels: Readonly<Record<CommunityFilter, string>> = {
+  members: "Участники",
+  guests: "Гости",
+  moderators: "Модераторы",
+};
+
+const filterTitles: Readonly<Record<CommunityFilter, string>> = {
+  ...filterLabels,
+  moderators: "Модераторы аукциона",
+};
+
+const emptyTexts: Readonly<Record<CommunityFilter, string>> = {
+  members: "Участников пока нет.",
+  guests: "Гостей пока нет.",
+  moderators: "Модераторов аукциона пока нет.",
+};
+
+const circleWords: Readonly<Record<CommunityCircle, string>> = {
+  member: "участник",
+  guest: "гость",
+  none: "без круга",
+};
+
+// Фильтр сужает список и на сервере, но старый Identity его не знает и
+// отдаёт всех: бот сужает ещё раз сам, и люди без круга не попадают никуда.
+function inFilter(member: CommunityMember, filter: CommunityFilter): boolean {
+  switch (filter) {
+    case "members":
+      return member.circle === "member";
+    case "guests":
+      return member.circle === "guest";
+    case "moderators":
+      return member.circle !== "none" && member.auctionModeration;
+    default: {
+      const _exhaustive: never = filter;
+      return _exhaustive;
+    }
+  }
 }
 
-function admittedOf(snapshot: CommunitySnapshot): readonly CommunityMember[] {
-  return snapshot.members.filter((member) => member.admitted);
+/** Подпись фильтра: у выбранного — отметка «• », как у выбора частоты. */
+function filterLabel(filter: CommunityFilter, current: CommunityFilter) {
+  return filter === current
+    ? `• ${filterLabels[filter]}`
+    : filterLabels[filter];
 }
 
 export function communityScreen(
@@ -71,12 +132,8 @@ export function communityScreen(
   parent: Parent = toManage,
 ): ShownScreen {
   switch (view.kind) {
-    case "root":
-      return rootScreen(snapshot, parent);
-    case "pending":
-      return pendingScreen(snapshot, view.cursor);
-    case "admitted":
-      return admittedScreen(snapshot, view.page);
+    case "list":
+      return listScreen(snapshot, view.place, parent);
     case "usernames":
       return usernamesScreen(snapshot, view.page, notice);
     default: {
@@ -86,26 +143,60 @@ export function communityScreen(
   }
 }
 
-function rootScreen(snapshot: CommunitySnapshot, parent: Parent): ShownScreen {
+/**
+ * Список людей состава с фильтром по кругу (PER-547): участники и гости
+ * парой, под ними модераторы аукциона парой с разрешёнными никами — соседние
+ * списки состава. Человек открывает карточку. «Обновить» нет: восемь человек,
+ * листание и два ряда списков занимают все двенадцать рядов, а выбранный
+ * фильтр перечитывает список нажатием.
+ */
+function listScreen(
+  snapshot: CommunitySnapshot,
+  place: CommunityPlace,
+  parent: Parent,
+): ShownScreen {
+  const people = snapshot.members.filter((member) =>
+    inFilter(member, place.filter),
+  );
+  const page = paginate(people, place.page);
+  const shown: CommunityPlace = { filter: place.filter, page: page.page };
   const keyboard = new InlineKeyboard()
-    .text("Ожидают допуска", "v1:cm:p")
+    .text(
+      filterLabel("members", place.filter),
+      communityListData(firstCommunityPlace),
+    )
+    .text(
+      filterLabel("guests", place.filter),
+      communityListData({ filter: "guests", page: 0 }),
+    )
     .row()
-    .text("Допущенные", "v1:cm:a")
-    .row()
-    .text("Разрешённые ники", "v1:cm:u")
-    .row()
-    .text("Модераторы аукциона", toModerators.data)
-    .row()
-    .text(refreshLabel, toCommunity.data);
+    .text(
+      filterLabel("moderators", place.filter),
+      communityListData({ filter: "moderators", page: 0 }),
+    )
+    .text("Разрешённые ники", "v1:cm:u");
+  for (const member of page.items) {
+    nextRow(keyboard).text(memberLabel(member), memberData("v", member, shown));
+  }
+  withPager(keyboard, page, (target) =>
+    communityListData({ filter: place.filter, page: target }),
+  );
   return {
     id: "community",
     text: screenText(
-      "Состав сообщества",
-      [
-        `Ожидают допуска: ${pendingOf(snapshot).length}`,
-        `Допущены: ${admittedOf(snapshot).length}`,
-        `Разрешённые ники: ${snapshot.allowedUsernames.length}`,
-      ].join("\n"),
+      pagedTitle("Состав сообщества", page),
+      `${filterTitles[place.filter]}: ${people.length}`,
+      page.items.length === 0
+        ? emptyTexts[place.filter]
+        : page.items
+            .map((member) =>
+              bullet(
+                place.filter === "members" && member.auctionModeration
+                  ? `${memberHtml(member)} · модерирует аукцион`
+                  : memberHtml(member),
+              ),
+            )
+            .join("\n"),
     ),
     keyboard: withNav(keyboard, parent),
     format: "HTML",
@@ -113,88 +204,60 @@ function rootScreen(snapshot: CommunitySnapshot, parent: Parent): ShownScreen {
 }
 
 /**
- * Модерация по одному. Человека под курсором уже могли допустить или закрыть
- * с другого экрана: тогда показывается первый в очереди, а не пустота.
+ * Карточка человека (PER-547): круг и модерация аукциона. Модерацию выдают
+ * только участнику (ADR-065, п. 4): у гостя её кнопки нет. Кнопки видит
+ * держатель права управлять составом — без него экран не открывается.
+ * Карточку перечитывает каждое действие с неё, «Обновить» ей не нужно.
  */
-function pendingScreen(
-  snapshot: CommunitySnapshot,
-  cursor: string | undefined,
+export function communityMemberScreen(
+  member: CommunityMember,
+  place: CommunityPlace,
 ): ShownScreen {
-  const queue = pendingOf(snapshot);
-  const at = Math.max(
-    0,
-    queue.findIndex((member) => member.identityId === cursor),
-  );
-  const member = queue[at];
-  if (member === undefined) {
-    return {
-      id: "community-pending",
-      text: screenText("Ожидают допуска", "Очередь пуста."),
-      keyboard: withNav(new InlineKeyboard(), toCommunity),
-      format: "HTML",
-    };
+  const keyboard = new InlineKeyboard();
+  if (member.circle === "member") {
+    keyboard.text(
+      member.auctionModeration ? "Снять модерацию" : "Выдать модерацию",
+      memberData(member.auctionModeration ? "mv" : "mg", member, place),
+    );
   }
-  const token = uuidToToken(member.identityId);
-  // Следующий — по кругу: «Пропустить» с последнего возвращает к первому, и
-  // пропущенный человек не теряется. У очереди из одного следующего нет.
-  const next = queue.length > 1 ? queue[(at + 1) % queue.length] : undefined;
-  const nextToken =
-    next === undefined ? undefined : uuidToToken(next.identityId);
-  const origin: BlockOrigin = {
-    kind: "pending",
-    ...(nextToken === undefined ? {} : { next: nextToken }),
-  };
-  // Допуск и закрытие — бинарная пара выбора: одним рядом и без цвета
-  // (решение владельца 10 октября 2026 года). Закрытие красит своё «Да».
-  const keyboard = new InlineKeyboard()
-    .text(
-      admitLabel,
-      nextToken === undefined
-        ? `v1:cm:ad:${token}`
-        : `v1:cm:ad:${token}:${nextToken}`,
-    )
-    .text("Закрыть", `v1:cm:bq:${token}:${blockOriginData(origin)}`);
-  if (nextToken !== undefined) {
-    keyboard.row().text("Пропустить", `v1:cm:p:${nextToken}`);
-  }
-  keyboard.row().text(refreshLabel, `v1:cm:p:${token}`);
+  nextRow(keyboard).text("Закрыть доступ", memberData("bq", member, place));
   return {
-    id: "community-pending",
+    id: "community-member",
     text: screenText(
-      "Ожидают допуска",
+      "Карточка человека",
       memberHtml(member),
-      `В очереди: ${queue.length}`,
+      [
+        `Круг: ${circleWords[member.circle]}`,
+        member.circle === "member"
+          ? `Модерация аукциона: ${member.auctionModeration ? "есть" : "нет"}`
+          : undefined,
+      ]
+        .filter((line) => line !== undefined)
+        .join("\n"),
     ),
-    keyboard: withNav(keyboard, toCommunity),
+    keyboard: withNav(keyboard, toCommunityPlace(place)),
     format: "HTML",
   };
 }
 
-function admittedScreen(
-  snapshot: CommunitySnapshot,
-  requestedPage: number,
-): ShownScreen {
-  const page = paginate(admittedOf(snapshot), requestedPage);
-  const keyboard = new InlineKeyboard();
-  for (const member of page.items) {
-    nextRow(keyboard).text(
-      `Закрыть ${memberLabel(member)}`,
-      `v1:cm:bq:${uuidToToken(member.identityId)}:${blockOriginData({ kind: "admitted", page: page.page })}`,
-    );
+/** Отказ Identity на карточке — текстом экрана (PER-547). */
+export function communityMemberRefusalText(
+  result: Exclude<CommunityMemberResult, { kind: "ok" }>,
+  forbidden: string,
+  unavailable: string,
+): string {
+  switch (result.kind) {
+    case "forbidden":
+      return forbidden;
+    case "identity-unknown":
+      return "Такого человека нет в составе.";
+    case "blocked":
+      return "Доступ этому человеку уже закрыт.";
+    case "holds-preset":
+      return "Это администратор: его ведут на экране «Администраторы».";
+    default:
+      return unavailable;
   }
-  withPager(keyboard, page, (target) => `v1:cm:a:${target}`);
-  nextRow(keyboard).text(refreshLabel, `v1:cm:a:${page.page}`);
-  return {
-    id: "community-admitted",
-    text: screenText(
-      pagedTitle("Допущенные", page),
-      page.items.length === 0
-        ? "Пока никого."
-        : page.items.map((member) => `• ${memberHtml(member)}`).join("\n"),
-    ),
-    keyboard: withNav(keyboard, toCommunity),
-    format: "HTML",
-  };
 }
 
 function usernamesScreen(
@@ -233,109 +296,15 @@ function usernamesScreen(
   };
 }
 
-const toModerators = { name: "Модераторы", data: "v1:cm:m" };
-
-// Модератор с ником назван ником, без ника — Telegram id: кода заявки у
-// держателя права нет, а id называет человека однозначно. Ссылки по id нет:
-// карточка без `tg://user` — свой лист (ADR-064, пункт 13).
-function moderatorLabel(moderator: AuctionModerator): string {
-  return moderator.telegramUsername === undefined
-    ? `id ${moderator.telegramUserId}`
-    : `@${moderator.telegramUsername}`;
-}
-
-/**
- * Держатели права модерировать аукцион (ADR-064, пункт 7). Отзыв есть только у
- * выданного записью: администратор держит право кругом.
- */
-export function moderatorsScreen(
-  moderators: readonly AuctionModerator[],
-): ShownScreen {
-  const keyboard = new InlineKeyboard();
-  for (const moderator of moderators) {
-    if (!moderator.revocable) continue;
-    nextRow(keyboard).text(
-      `Отозвать ${moderatorLabel(moderator)}`,
-      `v1:cm:mv:${uuidToToken(moderator.identityId)}`,
-    );
-  }
-  nextRow(keyboard).text("Выдать модерацию", "v1:cm:mc:0");
-  nextRow(keyboard).text(refreshLabel, toModerators.data);
-  return {
-    id: "community-moderators",
-    text: screenText(
-      "Модераторы аукциона",
-      moderators.length === 0
-        ? "Пока никого."
-        : moderators
-            .map(
-              (moderator) =>
-                `• ${escapeHtml(moderatorLabel(moderator))}${moderator.revocable ? "" : " · администратор"}`,
-            )
-            .join("\n"),
-    ),
-    keyboard: withNav(keyboard, toCommunity),
-    format: "HTML",
-  };
-}
-
-/**
- * Кому выдать модерацию: допущенные участники без неё. Список состава уже
- * исключает администраторов и мейнтейнеров.
- */
-export function moderatorCandidatesScreen(
-  snapshot: CommunitySnapshot,
-  moderators: readonly AuctionModerator[],
-  requestedPage: number,
-): ShownScreen {
-  const holders = new Set(moderators.map((moderator) => moderator.identityId));
-  const candidates = admittedOf(snapshot).filter(
-    (member) => !holders.has(member.identityId),
-  );
-  const page = paginate(candidates, requestedPage);
-  const keyboard = new InlineKeyboard();
-  for (const member of page.items) {
-    nextRow(keyboard).text(
-      `Выдать ${memberLabel(member)}`,
-      `v1:cm:mg:${uuidToToken(member.identityId)}:${page.page}`,
-    );
-  }
-  withPager(keyboard, page, (target) => `v1:cm:mc:${target}`);
-  return {
-    id: "community-moderator-candidates",
-    text: screenText(
-      pagedTitle("Выдать модерацию", page),
-      page.items.length === 0
-        ? "Все допущенные участники уже модерируют аукцион."
-        : "Модератор решает заявки в аукцион и видит их отказанных.",
-    ),
-    keyboard: withNav(keyboard, toModerators),
-    format: "HTML",
-  };
-}
-
-/** Экран, на который возвращает закрытие доступа: откуда оно начато. */
-export function viewOfOrigin(origin: BlockOrigin): CommunityView {
-  if (origin.kind === "admitted") {
-    return { kind: "admitted", page: origin.page };
-  }
-  return origin.next === undefined
-    ? { kind: "pending" }
-    : { kind: "pending", cursor: tokenToUuid(origin.next) };
-}
-
 /**
  * Подтверждение закрытия доступа. Закрытый человек из списков уходит, и
- * вернуть его из бота нельзя: это говорит текст, а не цвет (PER-473).
+ * вернуть его из бота нельзя: это говорит текст, а не цвет (PER-473). «Нет»
+ * возвращает на карточку.
  */
 export function closeAccessConfirmScreen(
   member: CommunityMember,
-  origin: BlockOrigin,
+  place: CommunityPlace,
 ): ShownScreen {
-  const token = uuidToToken(member.identityId);
-  // «Нет» возвращает к тому же человеку в очереди или на ту же страницу.
-  const noData =
-    origin.kind === "pending" ? `v1:cm:p:${token}` : `v1:cm:a:${origin.page}`;
   return {
     id: "community-close-confirm",
     text: screenText(
@@ -344,8 +313,8 @@ export function closeAccessConfirmScreen(
     ),
     keyboard: confirmKeyboard({
       yes: "Да, закрыть доступ",
-      yesData: `v1:cm:by:${token}:${blockOriginData(origin)}`,
-      noData,
+      yesData: memberData("by", member, place),
+      noData: memberData("v", member, place),
       irreversible: true,
     }),
     format: "HTML",

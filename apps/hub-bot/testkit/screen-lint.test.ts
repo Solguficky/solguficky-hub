@@ -284,7 +284,9 @@ describe("inspectCall", () => {
     expect(tree([[key("Изменить"), key("Статус")]])).toEqual([]);
     expect(tree([[key("Программа вечера"), key("🗑 Убрать")]])).toEqual([]);
     expect(tree([[key("✔️ Допустить"), key("✖️ Отказать")]])).toEqual([]);
-    expect(tree([[key("✔️ Допустить"), key("Закрыть")]])).toEqual([]);
+    expect(tree([[key("✔️ Допустить"), key("Закрыть")]])).toEqual(["rows"]);
+    expect(tree([[key("• Участники"), key("Гости")]])).toEqual([]);
+    expect(tree([[key("Модераторы"), key("Разрешённые ники")]])).toEqual([]);
     expect(tree([[key("←"), key("→")]])).toEqual([]);
   });
 

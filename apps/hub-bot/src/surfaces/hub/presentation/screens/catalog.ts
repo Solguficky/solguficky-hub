@@ -138,7 +138,6 @@ export const screenCatalog = {
     title: "Состав сообщества",
     parent: manageMembersParent,
     backName: "Состав",
-    refresh: true,
   },
   // Держатели наборов admin и maintainer (PER-521): пункт группы «Участники»,
   // который видит держатель права назначать администраторов.
@@ -150,19 +149,13 @@ export const screenCatalog = {
     backName: "Администраторы",
     refresh: true,
   },
-  "community-pending": {
+  // Карточка человека состава (PER-547): круг, модерация аукциона и
+  // закрытие доступа.
+  "community-member": {
     class: "screen",
     nav: "tree",
-    title: "Ожидают допуска",
+    title: "Карточка человека",
     parent: "community",
-    refresh: true,
-  },
-  "community-admitted": {
-    class: "screen",
-    nav: "tree",
-    title: "Допущенные",
-    parent: "community",
-    refresh: true,
   },
   "community-usernames": {
     class: "screen",
@@ -170,20 +163,6 @@ export const screenCatalog = {
     title: "Разрешённые ники",
     parent: "community",
     refresh: true,
-  },
-  "community-moderators": {
-    class: "screen",
-    nav: "tree",
-    title: "Модераторы аукциона",
-    parent: "community",
-    backName: "Модераторы",
-    refresh: true,
-  },
-  "community-moderator-candidates": {
-    class: "screen",
-    nav: "tree",
-    title: "Выдать модерацию",
-    parent: "community-moderators",
   },
   refused: {
     class: "screen",
