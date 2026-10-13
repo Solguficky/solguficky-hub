@@ -123,6 +123,11 @@ message Notification {
     // follows the lot, does not lead it and is not blocked. No category governs
     // it: unfollowing the lot is how it is turned off.
     LotReminder lot_reminder = 25;
+
+    // The raffle among participants of an auction was drawn. One fact per
+    // ticket holder, the winner included. No category governs it: one message
+    // per raffle.
+    RaffleResult raffle_result = 26;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -165,6 +170,10 @@ message Cause {
     // event_id of the consumed Auction auction event. Stable across
     // republication, therefore a transport repeat is recognized.
     string auction_event_id = 7;
+
+    // event_id of the consumed Auction raffle event. Stable across
+    // republication, therefore a transport repeat is recognized.
+    string auction_raffle_event_id = 8;
   }
 }
 
@@ -247,6 +256,24 @@ message MeetupReminder {
 message LotReminder {
   // Canonical lowercase UUIDv7 with hyphens.
   string lot_id = 1;
+}
+
+// The result of the draw as the recipient sees it. The recipient won when
+// ticket equals winning_ticket. Names of ticket holders are not carried: the
+// channel leads the recipient to the result screen, read from AuctionService.
+message RaffleResult {
+  // Canonical lowercase UUID with hyphens, version 5 or 7: the auction of the
+  // raffle.
+  string auction_id = 1;
+
+  // The recipient's ticket number, from 1 to ticket_count.
+  uint32 ticket = 2;
+
+  // The number of the winning ticket, from 1 to ticket_count.
+  uint32 winning_ticket = 3;
+
+  // How many tickets took part in the draw. At least 1.
+  uint32 ticket_count = 4;
 }
 
 message OrganizerMessage {

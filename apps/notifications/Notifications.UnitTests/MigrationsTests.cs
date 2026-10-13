@@ -72,6 +72,7 @@ public class MigrationsTests
             "auction_final",
             "final_announcement_preference",
             "lot_reminder",
+            "raffle_result",
         ]);
 
         var main = names.IndexOf("orleans_main");

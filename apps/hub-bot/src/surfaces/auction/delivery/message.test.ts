@@ -14,6 +14,7 @@ import {
   traceFaqCallback,
   traceLotCallback,
   traceNotifyCallback,
+  traceRaffleCallback,
 } from "./message.js";
 import type { AuctionNotificationContent } from "./notification.js";
 
@@ -268,6 +269,15 @@ describe("parseTraceCallback", () => {
     expect(parseTraceCallback(traceFaqCallback())).toBe("v1:entry:faq");
   });
 
+  // «К розыгрышу» под итогом розыгрыша (PER-620) — тоже след.
+  it("carries a raffle button inside a trace", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const inner = parseTraceCallback(traceRaffleCallback(auctionId));
+    expect(inner).toBeDefined();
+    const parsed = parseAuctionCallback(inner ?? "");
+    expect(parsed.ok && parsed.intent).toEqual({ kind: "raffle", auctionId });
+  });
+
   it("refuses a trace that carries neither a lot nor an entry button", () => {
     expect(parseTraceCallback("v1:t:v1:entry:nowhere")).toBeUndefined();
     expect(parseTraceCallback(traceLotCallback(lotId).slice(0, -3))).toBe(
@@ -283,6 +293,45 @@ function reads(overrides: Partial<NotificationReads> = {}): NotificationReads {
     ...overrides,
   };
 }
+
+// Итог розыгрыша (PER-620): весть без права и без чтений, с кнопкой следа на
+// экран итога.
+describe("raffle result", () => {
+  const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+  const result = (ticket: number): AuctionNotificationContent => ({
+    kind: "raffle-result",
+    auctionId,
+    ticket,
+    winningTicket: 7,
+    ticketCount: 12,
+  });
+
+  it("tells the winner their ticket won", () => {
+    expect(renderNotification(result(7)).text).toBe(
+      "Твой билет №7 из 12 выиграл розыгрыш среди участников.",
+    );
+  });
+
+  it("tells the others the winning ticket and their own", () => {
+    const message = renderNotification(result(3));
+    expect(message.text).toBe(
+      "Розыгрыш среди участников проведён: выиграл билет №7 из 12, твой — №3.",
+    );
+    expect(message.rows).toEqual([
+      [{ text: "К розыгрышу", callback_data: traceRaffleCallback(auctionId) }],
+    ]);
+  });
+
+  it("asks Identity nothing and reads no lot", async () => {
+    const source = reads();
+    const render = createRenderMessage(source, () => {});
+    await expect(render(result(3), { recipientId })).resolves.toMatchObject({
+      kind: "ready",
+    });
+    expect(source.holdsPlaceBids).not.toHaveBeenCalled();
+    expect(source.lotTitle).not.toHaveBeenCalled();
+  });
+});
 
 describe("access granted", () => {
   it("tells the applicant they are admitted and leads into the auction", () => {

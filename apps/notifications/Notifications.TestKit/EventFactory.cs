@@ -496,6 +496,23 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Жеребьёвка розыгрыша аукциона (PER-620): владельцы билетов в порядке
+    /// билетов и номер выигравшего, с единицы.
+    /// </summary>
+    public static global::Auction.V1.RaffleEvent RaffleDrawn(string auction, uint winningTicket, params string[] tickets)
+    {
+        var message = new global::Auction.V1.RaffleEvent
+        {
+            EventId = NewId(), RaffleId = auction, Version = 9,
+            OccurredAt = Committed.AddMinutes(40).ToString("O"),
+            State = new global::Auction.V1.RaffleState { WinningTicket = winningTicket },
+            RaffleDrawn = new global::Auction.V1.RaffleDrawn(),
+        };
+        message.State.Tickets.AddRange(tickets);
+        return message;
+    }
+
     private static global::Auction.V1.AuctionEvent AuctionFact(string auction, string meetup, long version) => new()
     {
         EventId = NewId(), AuctionId = auction, Version = version,

@@ -1,5 +1,6 @@
 import { GrammyError, HttpError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
+import { encodeAuctionCallback } from "../../../auction-ui/index.js";
 import {
   createLotNoticeRender,
   type LotNotice,
@@ -94,6 +95,35 @@ function grammyError(code: number, retryAfter?: number): GrammyError {
 }
 
 describe("renderNotification", () => {
+  // Итог розыгрыша (PER-620): победителю своя фраза, остальным — номер
+  // выигравшего билета и свой; кнопка следа ведёт на экран итога.
+  it("tells the winner and the others the raffle result with a traced button", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const result = (ticket: number) =>
+      renderNotification({
+        kind: "raffle-result",
+        auctionId,
+        ticket,
+        winningTicket: 7,
+        ticketCount: 12,
+      });
+
+    expect(result(7).text).toBe(
+      "Твой билет №7 из 12 выиграл розыгрыш среди участников.",
+    );
+    expect(result(3).text).toBe(
+      "Розыгрыш среди участников проведён: выиграл билет №7 из 12, твой — №3.",
+    );
+    expect(result(3).keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К розыгрышу",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "raffle", auctionId }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
   // Записи 30 и 32 прогона 12.10: участник сообщества видит название лота, как
   // гость в боте аукциона, а под перебитием — «Частота уведомлений» вместо
   // «Реже» (PER-598).

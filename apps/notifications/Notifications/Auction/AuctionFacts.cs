@@ -18,6 +18,30 @@ public static class AuctionFacts
     public const string FinalStartedType = "auction_final_started";
     public const string AuctionCauseKind = "auction_event";
 
+    public const string RaffleResultType = "raffle_result";
+    public const string RaffleCauseKind = "auction_raffle_event";
+
+    /// <summary>
+    /// Итог жеребьёвки одному владельцу билета: свой номер, выигравший и
+    /// число билетов. Выиграл ли он, канал видит по совпадению номеров.
+    /// </summary>
+    public static Notification RaffleResult(Guid notificationId, Guid recipientId, int ticket, RaffleDraw draw,
+        DateTimeOffset now, DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = recipientId.ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionRaffleEventId = draw.EventId.ToString() },
+        RaffleResult = new RaffleResult
+        {
+            AuctionId = draw.AuctionId.ToString(),
+            Ticket = (uint)ticket,
+            WinningTicket = (uint)draw.WinningTicket,
+            TicketCount = (uint)draw.Tickets.Count,
+        },
+    };
+
     /// <summary>
     /// Анонс состава одному человеку: весь состав с ценами удержания и те его
     /// лоты, которые человек вёл на удержании. Лидер состава получает этот же
