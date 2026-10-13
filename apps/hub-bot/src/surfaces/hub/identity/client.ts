@@ -5,6 +5,7 @@ import {
   Http2SessionManager,
 } from "@connectrpc/connect-node";
 import {
+  Circle as WireCircle,
   ApplicationQueue as WireQueue,
   AccessRight as WireRight,
 } from "../../../../gen/identity/v1/access_pb.js";
@@ -14,6 +15,8 @@ import {
   IdentityService,
   AccessRequestOutcome as WireAccessRequestOutcome,
   type ApplicationCard as WireApplicationCard,
+  CommunityFilter as WireCommunityFilter,
+  type CommunityMember as WireCommunityMember,
   type RefusedApplication as WireRefusedApplication,
 } from "../../../../gen/identity/v1/identity_service_pb.js";
 import { classifyRecipientFailure as classifyDeliveryRecipientFailure } from "../../../core/delivery/index.js";
@@ -35,8 +38,9 @@ import type {
   ApplicationDecision,
   ApplicationModerator,
   AuctionModerationAdministrator,
-  AuctionModerator,
   CommunityAdministrator,
+  CommunityFilter,
+  CommunityMember,
   IdentityFailure,
   IdentityResolver,
   OrganizerResolver,
@@ -82,7 +86,7 @@ export type OrganizerRpc = Pick<
 type IdentityAdminRpc = Pick<
   Client<typeof IdentityService>,
   | "listCommunityMembers"
-  | "admitCommunityMember"
+  | "getCommunityMember"
   | "blockCommunityMember"
   | "listAllowedUsernames"
   | "addAllowedUsername"
@@ -98,7 +102,7 @@ type SourceChannelAdminRpc = Pick<
 >;
 type AuctionModerationRpc = Pick<
   Client<typeof IdentityService>,
-  "listAuctionModerators" | "grantAuctionModeration" | "revokeAuctionModeration"
+  "grantAuctionModeration" | "revokeAuctionModeration"
 >;
 type AdministratorRpc = Pick<
   Client<typeof IdentityService>,
@@ -191,27 +195,20 @@ export function createCommunityAdministrator(
     }
   };
   return {
-    async community(actor, meta) {
+    async community(actor, filter, meta) {
       try {
         const wireActor = actorMessage(actor);
         const [members, usernames] = await Promise.all([
-          rpc.listCommunityMembers({ actor: wireActor }, options(meta)),
+          rpc.listCommunityMembers(
+            { actor: wireActor, filter: wireFilter[filter] },
+            options(meta),
+          ),
           rpc.listAllowedUsernames({ actor: wireActor }, options(meta)),
         ]);
         return {
           kind: "ok",
           value: {
-            members: members.members.map((member) => ({
-              identityId: member.identityId,
-              ...(member.telegramUsername === undefined
-                ? {}
-                : { telegramUsername: member.telegramUsername }),
-              // Настоящий Telegram id всегда положителен, ноль — поле не пришло.
-              ...(member.telegramUserId > 0n
-                ? { telegramUserId: member.telegramUserId }
-                : {}),
-              admitted: member.admitted,
-            })),
+            members: members.members.map(communityMemberOf),
             allowedUsernames: usernames.usernames,
           },
         };
@@ -219,13 +216,40 @@ export function createCommunityAdministrator(
         return classifyAdminFailure(cause);
       }
     },
-    admit: (actor, identityId, meta) =>
-      change(() =>
-        rpc.admitCommunityMember(
+    async communityMember(actor, identityId, meta) {
+      let response: Awaited<ReturnType<IdentityAdminRpc["getCommunityMember"]>>;
+      try {
+        response = await rpc.getCommunityMember(
           { actor: actorMessage(actor), identityId },
           options(meta),
+        );
+      } catch (cause) {
+        return classifyAdminFailure(cause);
+      }
+      const outcome = response.outcome;
+      if (outcome.case === "found") {
+        return { kind: "ok", value: communityMemberOf(outcome.value) };
+      }
+      const unknown = {
+        kind: "unavailable" as const,
+        cause: new Error(
+          "GetCommunityMember answered an outcome the bot does not know",
         ),
-      ),
+      };
+      if (outcome.case !== "refused") return unknown;
+      switch (outcome.value.reason.case) {
+        case "notMembersManager":
+          return { kind: "forbidden" };
+        case "identityUnknown":
+          return { kind: "identity-unknown" };
+        case "identityBlocked":
+          return { kind: "blocked" };
+        case "identityHoldsPreset":
+          return { kind: "holds-preset" };
+        default:
+          return unknown;
+      }
+    },
     block: (actor, identityId, meta) =>
       change(() =>
         rpc.blockCommunityMember(
@@ -247,6 +271,34 @@ export function createCommunityAdministrator(
           options(meta),
         ),
       ),
+  };
+}
+
+const wireFilter: Readonly<Record<CommunityFilter, WireCommunityFilter>> = {
+  members: WireCommunityFilter.MEMBERS,
+  guests: WireCommunityFilter.GUESTS,
+  moderators: WireCommunityFilter.AUCTION_MODERATORS,
+};
+
+// Старый Identity круга не присылает: участника тогда называет `admitted`, а
+// гостя от человека без круга он не отличает.
+function communityMemberOf(member: WireCommunityMember): CommunityMember {
+  return {
+    identityId: member.identityId,
+    ...(member.telegramUsername === undefined
+      ? {}
+      : { telegramUsername: member.telegramUsername }),
+    // Настоящий Telegram id всегда положителен, ноль — поле не пришло.
+    ...(member.telegramUserId > 0n
+      ? { telegramUserId: member.telegramUserId }
+      : {}),
+    circle:
+      member.circle === WireCircle.MEMBER || member.admitted
+        ? "member"
+        : member.circle === WireCircle.GUEST
+          ? "guest"
+          : "none",
+    auctionModeration: member.auctionModeration,
   };
 }
 
@@ -304,8 +356,8 @@ export function createApplicationAdministrator(
   };
 }
 
-// Право модерации аукциона (ADR-064, пункт 7): список держателей, выдача и
-// отзыв. FAILED_PRECONDITION у выдачи — штатный ответ: человек не участник или
+// Право модерации аукциона (ADR-064, пункт 7): выдача и отзыв.
+// FAILED_PRECONDITION у выдачи — штатный ответ: человек не участник или
 // заблокирован.
 export function createAuctionModerationAdministrator(
   rpc: AuctionModerationRpc,
@@ -319,30 +371,6 @@ export function createAuctionModerationAdministrator(
     identityId: actor.identityId,
   });
   return {
-    async auctionModerators(actor, meta) {
-      let response: Awaited<
-        ReturnType<AuctionModerationRpc["listAuctionModerators"]>
-      >;
-      try {
-        response = await rpc.listAuctionModerators(
-          { actor: actorMessage(actor) },
-          options(meta),
-        );
-      } catch (cause) {
-        return classifyAdminFailure(cause);
-      }
-      const moderators: AuctionModerator[] = response.moderators.map(
-        (moderator) => ({
-          identityId: moderator.identityId,
-          telegramUserId: moderator.telegramUserId,
-          ...(moderator.telegramUsername === undefined
-            ? {}
-            : { telegramUsername: moderator.telegramUsername }),
-          revocable: moderator.revocable,
-        }),
-      );
-      return { kind: "ok", value: moderators };
-    },
     async grantAuctionModeration(actor, identityId, meta) {
       try {
         const response = await rpc.grantAuctionModeration(

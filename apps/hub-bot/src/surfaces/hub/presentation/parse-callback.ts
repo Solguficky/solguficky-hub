@@ -13,6 +13,7 @@ import type {
   WindowRef,
 } from "../application/types.js";
 import type { CommunityDay } from "../community-time.js";
+import type { CommunityFilter } from "../identity/port.js";
 import type {
   MeetupCategory,
   NotificationCategory,
@@ -136,17 +137,49 @@ const VersionSchema = z
 // кнопка, которую разбор потом назовёт сломанной, рисоваться не должна.
 export const removableUsernamePattern = /^[A-Za-z0-9_]{1,32}$/;
 
-// Откуда начато закрытие доступа: туда возвращают «Нет» и экран после него.
-// Из очереди — со следующим человеком, из списка допущенных — со страницей.
-export type BlockOrigin =
-  | { kind: "pending"; next?: string }
-  | { kind: "admitted"; page: number };
+// Место в списке состава (PER-547): фильтр и страница. Карточка человека и
+// действия с неё несут его, чтобы «‹ Состав» вернул на ту же страницу.
+export type CommunityPlace = { filter: CommunityFilter; page: number };
 
-/** Сегмент `callback_data`: `p`, `p<токен>` или `a<страница>`. */
-export function blockOriginData(origin: BlockOrigin): string {
-  return origin.kind === "admitted"
-    ? `a${origin.page}`
-    : `p${origin.next ?? ""}`;
+const filterCodes: Readonly<Record<CommunityFilter, string>> = {
+  members: "m",
+  guests: "g",
+  moderators: "o",
+};
+
+/** Сегмент `callback_data`: буква фильтра и страница — `m0`, `g2`, `o0`. */
+export function communityPlaceData(place: CommunityPlace): string {
+  return `${filterCodes[place.filter]}${place.page}`;
+}
+
+/** Первая страница участников — куда ведут «Состав сообщества» и прежние кнопки. */
+export const firstMembersPage: CommunityPlace = { filter: "members", page: 0 };
+
+// Кнопки до PER-547 несли место закрытия доступа: `p`, `p<токен>` — очередь,
+// которой в составе больше нет, `a<страница>` — допущенных. Они ведут в
+// участников: очередь ушла в «Заявки», допущенные стали фильтром.
+function parseCommunityPlace(
+  raw: string | undefined,
+): CommunityPlace | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const code = raw[0];
+  const page = PageSchema.safeParse(raw.slice(1));
+  const filter = (Object.keys(filterCodes) as CommunityFilter[]).find(
+    (candidate) => filterCodes[candidate] === code,
+  );
+  if (filter !== undefined) {
+    return page.success ? { filter, page: page.data } : undefined;
+  }
+  if (code === "a") {
+    return page.success ? { filter: "members", page: page.data } : undefined;
+  }
+  if (
+    raw === "p" ||
+    (code === "p" && TokenSchema.safeParse(raw.slice(1)).success)
+  ) {
+    return firstMembersPage;
+  }
+  return undefined;
 }
 
 // Место карточки заявки в кнопке: токен заявки и момент её создания в
@@ -193,23 +226,18 @@ type PlainAction =
   | { kind: "manage-menu" }
   | { kind: "manage-group"; group: ManageGroup }
   | { kind: "manage-hidden"; page?: number }
-  | { kind: "community" }
-  // Курсор очереди — токен человека, а не номер: очередь меняется.
-  | { kind: "community-pending"; cursor?: string }
-  | { kind: "community-admitted"; page: number }
+  // Состав (PER-547): список людей с фильтром; без места — первая страница
+  // участников. Карточка и действия с неё несут токен человека и место.
+  | { kind: "community"; place?: CommunityPlace }
   | { kind: "community-usernames"; page: number }
   | { kind: "ask-allowed-username" }
-  // `next` — кого показать после допуска.
-  | { kind: "admit-member"; token: string; next?: string }
-  | { kind: "ask-block-member"; token: string; origin: BlockOrigin }
-  | { kind: "block-member"; token: string; origin: BlockOrigin }
+  | { kind: "community-member"; token: string; place: CommunityPlace }
+  | { kind: "ask-block-member"; token: string; place: CommunityPlace }
+  | { kind: "block-member"; token: string; place: CommunityPlace }
   | { kind: "remove-allowed-username"; username: string; page: number }
-  // Модераторы аукциона в составе (ADR-064, пункт 7): список с отзывом,
-  // кандидаты на выдачу листаются, страница — куда вернуть список кандидатов.
-  | { kind: "auction-moderators" }
-  | { kind: "moderator-candidates"; page: number }
-  | { kind: "grant-moderation"; token: string; page: number }
-  | { kind: "revoke-moderation"; token: string }
+  // Модерация аукциона (ADR-064, пункт 7) — с карточки человека.
+  | { kind: "grant-moderation"; token: string; place: CommunityPlace }
+  | { kind: "revoke-moderation"; token: string; place: CommunityPlace }
   // Администраторы (PER-521): список, вопрос о нике, «Да» назначения с ником и
   // его «Нет», подтверждение снятия и его «Да» с токеном человека.
   | { kind: "administrators" }
@@ -927,7 +955,8 @@ export function parseCallback(raw: unknown): CallbackAction {
     return parseApplicationQueue(parts, "auction");
   }
   // Кнопки состава одним списком из прошлого релиза. «Закрыть» там исполнялось
-  // сразу; теперь та же кнопка ведёт в подтверждение, как и новая.
+  // сразу; теперь та же кнопка ведёт в подтверждение, как и новая. Допуск из
+  // состава ушёл в «Заявки» (PER-547), и его кнопка устарела.
   if (parts.length === 4 && parts[1] === "community") {
     const username = parts[3] ?? "";
     if (parts[2] === "remove" && removableUsernamePattern.test(username)) {
@@ -935,13 +964,12 @@ export function parseCallback(raw: unknown): CallbackAction {
     }
     const identityToken = TokenSchema.safeParse(parts[3]);
     if (!identityToken.success) return { kind: "malformed" };
-    if (parts[2] === "admit")
-      return { kind: "admit-member", token: identityToken.data };
+    if (parts[2] === "admit") return { kind: "outdated" };
     if (parts[2] === "block")
       return {
         kind: "ask-block-member",
         token: identityToken.data,
-        origin: { kind: "admitted", page: 0 },
+        place: firstMembersPage,
       };
   }
   // Домен `notify` разбирается до общей проверки ниже: она требует токен в
@@ -1453,19 +1481,6 @@ function pastScheduleValue(digits: string): string {
   return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4, 8)} ${digits.slice(8, 10)}:${digits.slice(10, 12)}`;
 }
 
-function parseBlockOrigin(raw: string | undefined): BlockOrigin | undefined {
-  if (raw === "p") return { kind: "pending" };
-  if (raw?.startsWith("p")) {
-    const next = TokenSchema.safeParse(raw.slice(1));
-    return next.success ? { kind: "pending", next: next.data } : undefined;
-  }
-  if (raw?.startsWith("a")) {
-    const page = PageSchema.safeParse(raw.slice(1));
-    return page.success ? { kind: "admitted", page: page.data } : undefined;
-  }
-  return undefined;
-}
-
 // Администраторы (PER-521): `l` — список, `n` — вопрос о нике, `ay` — «Да»
 // назначения с ником, `an` — его «Нет», `dq` и `dy` — подтверждение снятия и
 // его «Да» с токеном человека.
@@ -1501,13 +1516,16 @@ function parseAdministrators(parts: readonly string[]): CallbackAction {
   }
 }
 
-// Подэкраны состава: `p` — очередь, `a` — допущенные, `u` — ники, `ad` —
-// допустить, `bq` и `by` — вопрос о закрытии доступа и его «Да», `rm` — убрать
-// ник. Отказанные: `r` — список, `rq` и `ry` — вопрос о пересмотре и его «Да»;
-// токен у них — заявки, а не человека. Карточка заявки: `q` — первая или
-// следующая за курсором, `qc` — та же, `qa` — допустить, `qd` и `qy` — вопрос
-// об отказе и его «Да». Имена сжаты: `ad` и `by` несут двух людей и с длинным
-// доменом вышли бы ровно в 64 байта.
+// Состав (PER-547): `l` — список с местом, `v` — карточка человека, `mg` и
+// `mv` — выдать и снять модерацию, `bq` и `by` — вопрос о закрытии доступа и
+// его «Да»; у карточки и её действий — токен человека и место в списке. `u` —
+// ники, `rm` — убрать ник. Отказанные: `r` — список, `rq` и `ry` — вопрос о
+// пересмотре и его «Да»; токен у них — заявки, а не человека. Карточка заявки:
+// `q` — первая или следующая за курсором, `qc` — та же, `qa` — допустить, `qd`
+// и `qy` — вопрос об отказе и его «Да». Кнопки прежних подэкранов ведут на
+// новые места: `p` — очередь в «Заявки», `a` — участники, `m` — модераторы,
+// `mc` — участники, у которых модерацию выдают с карточки; `ad` — допуск из
+// очереди состава — устарел.
 function parseCommunity(parts: readonly string[]): CallbackAction {
   const malformed = { kind: "malformed" } as const;
   if (parts.length > 5) return malformed;
@@ -1522,68 +1540,67 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
     case "rq":
     case "ry":
       return parseApplicationQueue(parts, "community");
-    case "m":
-      return first === undefined ? { kind: "auction-moderators" } : malformed;
-    case "mc": {
+    case "l": {
       if (second !== undefined) return malformed;
-      const page = PageSchema.safeParse(first ?? "0");
-      return page.success
-        ? { kind: "moderator-candidates", page: page.data }
-        : malformed;
+      const place = parseCommunityPlace(first);
+      return place === undefined ? malformed : { kind: "community", place };
     }
-    case "mg": {
+    case "v":
+    case "mg":
+    case "mv":
+    case "bq":
+    case "by": {
       const token = TokenSchema.safeParse(first);
-      const page = PageSchema.safeParse(second);
-      return token.success && page.success
-        ? { kind: "grant-moderation", token: token.data, page: page.data }
-        : malformed;
+      if (!token.success) return malformed;
+      // Прежние `mg:<токен>:<страница кандидатов>` и `mv:<токен>` несли не
+      // место, а список, которого больше нет.
+      const place =
+        verb === "mg" && second !== undefined && /^\d{1,4}$/.test(second)
+          ? firstMembersPage
+          : verb === "mv" && second === undefined
+            ? { filter: "moderators" as const, page: 0 }
+            : parseCommunityPlace(second);
+      if (place === undefined) return malformed;
+      const kinds = {
+        v: "community-member",
+        mg: "grant-moderation",
+        mv: "revoke-moderation",
+        bq: "ask-block-member",
+        by: "block-member",
+      } as const;
+      return { kind: kinds[verb], token: token.data, place };
     }
-    case "mv": {
+    case "p":
       if (second !== undefined) return malformed;
-      const token = TokenSchema.safeParse(first);
-      return token.success
-        ? { kind: "revoke-moderation", token: token.data }
-        : malformed;
-    }
-    case "p": {
-      if (second !== undefined) return malformed;
-      if (first === undefined) return { kind: "community-pending" };
-      const cursor = TokenSchema.safeParse(first);
-      return cursor.success
-        ? { kind: "community-pending", cursor: cursor.data }
-        : malformed;
-    }
+      if (first !== undefined && !TokenSchema.safeParse(first).success) {
+        return malformed;
+      }
+      return { kind: "application-card", queue: "community" };
     case "a":
-    case "u": {
+    case "mc": {
       if (second !== undefined) return malformed;
       const page = PageSchema.safeParse(first ?? "0");
       if (!page.success) return malformed;
       return {
-        kind: verb === "a" ? "community-admitted" : "community-usernames",
-        page: page.data,
+        kind: "community",
+        place: { filter: "members", page: verb === "a" ? page.data : 0 },
       };
     }
-    case "ad": {
-      const token = TokenSchema.safeParse(first);
-      if (!token.success) return malformed;
-      if (second === undefined) {
-        return { kind: "admit-member", token: token.data };
-      }
-      const next = TokenSchema.safeParse(second);
-      return next.success
-        ? { kind: "admit-member", token: token.data, next: next.data }
+    case "m":
+      return first === undefined
+        ? { kind: "community", place: { filter: "moderators", page: 0 } }
         : malformed;
-    }
-    case "bq":
-    case "by": {
-      const token = TokenSchema.safeParse(first);
-      const origin = parseBlockOrigin(second);
-      if (!token.success || origin === undefined) return malformed;
-      return {
-        kind: verb === "bq" ? "ask-block-member" : "block-member",
-        token: token.data,
-        origin,
-      };
+    case "ad":
+      return TokenSchema.safeParse(first).success &&
+        (second === undefined || TokenSchema.safeParse(second).success)
+        ? { kind: "outdated" }
+        : malformed;
+    case "u": {
+      if (second !== undefined) return malformed;
+      const page = PageSchema.safeParse(first ?? "0");
+      return page.success
+        ? { kind: "community-usernames", page: page.data }
+        : malformed;
     }
     case "rm": {
       const page = PageSchema.safeParse(first);

@@ -116,13 +116,21 @@ export type OrganizerResolver = {
     meta?: RpcMetadata,
   ): Promise<OrganizerUsernameResult>;
 };
+// Круг человека состава (ADR-065, п. 1). `none` — круга нет: человек нажал
+// кнопку бота, но не допущен ни в один круг.
+export type CommunityCircle = "member" | "guest" | "none";
 export type CommunityMember = {
   identityId: string;
   telegramUsername?: string;
   // Нет у ответа старого Identity, который поле не присылает.
   telegramUserId?: bigint;
-  admitted: boolean;
+  circle: CommunityCircle;
+  // Запись admit_bidders (ADR-065, п. 4): у человека состава набора нет, и
+  // право модерации у него всегда снимается отзывом.
+  auctionModeration: boolean;
 };
+// Фильтр состава (PER-547): люди без круга не входят ни в один.
+export type CommunityFilter = "members" | "guests" | "moderators";
 export type CommunitySnapshot = {
   members: readonly CommunityMember[];
   allowedUsernames: readonly string[];
@@ -133,16 +141,26 @@ export type IdentityAdminResult<T> =
   | { kind: "invalid" }
   | { kind: "unavailable"; cause: unknown };
 
+// Карточка человека состава. Отказы — значения ответа Identity (PER-547):
+// `identity-unknown` — профиля нет, `blocked` — доступ уже закрыт,
+// `holds-preset` — человек держит набор и ведётся экраном администраторов.
+export type CommunityMemberResult =
+  | IdentityAdminResult<CommunityMember>
+  | { kind: "identity-unknown" }
+  | { kind: "blocked" }
+  | { kind: "holds-preset" };
+
 export type CommunityAdministrator = {
   community(
     actor: IdentityActor,
+    filter: CommunityFilter,
     meta?: RpcMetadata,
   ): Promise<IdentityAdminResult<CommunitySnapshot>>;
-  admit(
+  communityMember(
     actor: IdentityActor,
     identityId: string,
     meta?: RpcMetadata,
-  ): Promise<IdentityAdminResult<boolean>>;
+  ): Promise<CommunityMemberResult>;
   block(
     actor: IdentityActor,
     identityId: string,
@@ -266,15 +284,6 @@ export type ApplicationAdministrator = {
   ): Promise<ReconsiderResult>;
 };
 
-// Держатель права модерировать аукцион (ADR-064, пункт 7). `revocable` —
-// право выдано записью и снимается отзывом; у администратора оно приходит с
-// кругом, и отзыв его не снимает.
-export type AuctionModerator = {
-  identityId: string;
-  telegramUserId: bigint;
-  telegramUsername?: string;
-  revocable: boolean;
-};
 // `not-member` у выдачи — человек не участник или заблокирован: модерацию
 // получает только участник, который остаётся в своём круге.
 export type GrantModerationResult =
@@ -284,10 +293,6 @@ export type GrantModerationResult =
 // Выдача и отзыв права модерации аукциона — у держателя права управлять
 // составом; Identity решает это сам по своему хранилищу.
 export type AuctionModerationAdministrator = {
-  auctionModerators(
-    actor: IdentityActor,
-    meta?: RpcMetadata,
-  ): Promise<IdentityAdminResult<readonly AuctionModerator[]>>;
   grantAuctionModeration(
     actor: IdentityActor,
     identityId: string,

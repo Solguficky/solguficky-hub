@@ -348,15 +348,15 @@ describe("callback parser", () => {
     expect(parseCallback("v1:community:allow")).toEqual({
       kind: "ask-allowed-username",
     });
+    // Допуск из состава ушёл в «Заявки» (PER-547): прежняя кнопка устарела.
     expect(parseCallback(`v1:community:admit:${token}`)).toEqual({
-      kind: "admit-member",
-      token,
+      kind: "outdated",
     });
     // Кнопка прошлого релиза закрывала доступ сразу; теперь она спрашивает.
     expect(parseCallback(`v1:community:block:${token}`)).toEqual({
       kind: "ask-block-member",
       token,
-      origin: { kind: "admitted", page: 0 },
+      place: { filter: "members", page: 0 },
     });
     expect(parseCallback("v1:community:remove:alice_1")).toEqual({
       kind: "remove-allowed-username",
@@ -365,18 +365,107 @@ describe("callback parser", () => {
     });
   });
 
-  it("parses the community lists, the queue cursor and both people of a decision", () => {
+  it("parses the community list, the member card and its actions", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     const next = "AZKbflwdej-OSy1snwobPA";
+    const members = { filter: "members", page: 0 };
     const cases: readonly (readonly [string, unknown])[] = [
-      ["v1:cm:p", { kind: "community-pending" }],
-      [`v1:cm:p:${next}`, { kind: "community-pending", cursor: next }],
-      ["v1:cm:a", { kind: "community-admitted", page: 0 }],
-      ["v1:cm:a:12", { kind: "community-admitted", page: 12 }],
+      ["v1:cm:l:m0", { kind: "community", place: members }],
+      [
+        "v1:cm:l:g12",
+        { kind: "community", place: { filter: "guests", page: 12 } },
+      ],
+      [
+        "v1:cm:l:o9999",
+        { kind: "community", place: { filter: "moderators", page: 9999 } },
+      ],
+      [
+        `v1:cm:v:${token}:g3`,
+        {
+          kind: "community-member",
+          token,
+          place: { filter: "guests", page: 3 },
+        },
+      ],
+      [
+        `v1:cm:mg:${token}:m9999`,
+        {
+          kind: "grant-moderation",
+          token,
+          place: { filter: "members", page: 9999 },
+        },
+      ],
+      [
+        `v1:cm:mv:${token}:o1`,
+        {
+          kind: "revoke-moderation",
+          token,
+          place: { filter: "moderators", page: 1 },
+        },
+      ],
+      [
+        `v1:cm:bq:${token}:g0`,
+        {
+          kind: "ask-block-member",
+          token,
+          place: { filter: "guests", page: 0 },
+        },
+      ],
+      [
+        `v1:cm:by:${token}:o9999`,
+        {
+          kind: "block-member",
+          token,
+          place: { filter: "moderators", page: 9999 },
+        },
+      ],
       ["v1:cm:u", { kind: "community-usernames", page: 0 }],
       ["v1:cm:u:3", { kind: "community-usernames", page: 3 }],
-      [`v1:cm:ad:${token}`, { kind: "admit-member", token }],
-      [`v1:cm:ad:${token}:${next}`, { kind: "admit-member", token, next }],
+      // Кнопки прежних подэкранов (до PER-547) ведут на новые места: очередь —
+      // в «Заявки», допущенные и кандидаты — в участников, модераторы — в свой
+      // фильтр; допуск из очереди состава устарел.
+      ["v1:cm:p", { kind: "application-card", queue: "community" }],
+      [`v1:cm:p:${next}`, { kind: "application-card", queue: "community" }],
+      ["v1:cm:a", { kind: "community", place: members }],
+      [
+        "v1:cm:a:12",
+        { kind: "community", place: { filter: "members", page: 12 } },
+      ],
+      ["v1:cm:mc:3", { kind: "community", place: members }],
+      [
+        "v1:cm:m",
+        { kind: "community", place: { filter: "moderators", page: 0 } },
+      ],
+      [`v1:cm:ad:${token}`, { kind: "outdated" }],
+      [`v1:cm:ad:${token}:${next}`, { kind: "outdated" }],
+      [
+        `v1:cm:mg:${token}:3`,
+        { kind: "grant-moderation", token, place: members },
+      ],
+      [
+        `v1:cm:mv:${token}`,
+        {
+          kind: "revoke-moderation",
+          token,
+          place: { filter: "moderators", page: 0 },
+        },
+      ],
+      [
+        `v1:cm:bq:${token}:p`,
+        { kind: "ask-block-member", token, place: members },
+      ],
+      [
+        `v1:cm:bq:${token}:p${next}`,
+        { kind: "ask-block-member", token, place: members },
+      ],
+      [
+        `v1:cm:by:${token}:a9999`,
+        {
+          kind: "block-member",
+          token,
+          place: { filter: "members", page: 9999 },
+        },
+      ],
       [
         "v1:cm:r",
         { kind: "refused-applications", queue: "community", page: 0 },
@@ -405,30 +494,6 @@ describe("callback parser", () => {
         `v1:aq:ry:${token}:9999`,
         { kind: "reconsider", queue: "auction", token, page: 9999 },
       ],
-      ["v1:cm:m", { kind: "auction-moderators" }],
-      ["v1:cm:mc:3", { kind: "moderator-candidates", page: 3 }],
-      [`v1:cm:mg:${token}:3`, { kind: "grant-moderation", token, page: 3 }],
-      [`v1:cm:mv:${token}`, { kind: "revoke-moderation", token }],
-      [
-        `v1:cm:bq:${token}:p`,
-        { kind: "ask-block-member", token, origin: { kind: "pending" } },
-      ],
-      [
-        `v1:cm:bq:${token}:p${next}`,
-        { kind: "ask-block-member", token, origin: { kind: "pending", next } },
-      ],
-      [
-        `v1:cm:by:${token}:p${next}`,
-        { kind: "block-member", token, origin: { kind: "pending", next } },
-      ],
-      [
-        `v1:cm:by:${token}:a9999`,
-        {
-          kind: "block-member",
-          token,
-          origin: { kind: "admitted", page: 9999 },
-        },
-      ],
       [
         `v1:cm:rm:9999:${"a".repeat(32)}`,
         {
@@ -455,6 +520,18 @@ describe("callback parser", () => {
       "v1:cm:a:1e2",
       "v1:cm:a:-1",
       "v1:cm:u:12345",
+      "v1:cm:l",
+      "v1:cm:l:x0",
+      "v1:cm:l:m",
+      "v1:cm:l:m12345",
+      "v1:cm:l:m0:extra",
+      `v1:cm:v:${token}`,
+      `v1:cm:v:short:m0`,
+      `v1:cm:v:${token}:z0`,
+      `v1:cm:mg:${token}`,
+      `v1:cm:mv:${token}:x`,
+      "v1:cm:m:0",
+      "v1:cm:mc:x",
       "v1:cm:ad",
       `v1:cm:ad:${token}:short`,
       `v1:cm:bq:${token}`,

@@ -5,14 +5,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AccessRight,
   ApplicationQueue,
+  Circle,
 } from "../../../../gen/identity/v1/access_pb.js";
 import {
   AccessRequestOutcome,
   ApplicationCardSchema,
   ApplicationOutcome,
   AppointAdministratorResponseSchema,
+  CommunityFilter,
   DecideApplicationResponseSchema,
   DismissAdministratorResponseSchema,
+  GetCommunityMemberResponseSchema,
   ListAdministratorsResponseSchema,
   ListRefusedApplicationsResponseSchema,
   ReadApplicationQueueResponseSchema,
@@ -27,6 +30,7 @@ import {
   createApplicationAdministrator,
   createApplicationModerator,
   createAuctionModerationAdministrator,
+  createCommunityAdministrator,
   createIdentityClient,
   createIdentityResolver,
   createOrganizerResolver,
@@ -565,6 +569,165 @@ describe("application administrator", () => {
   });
 });
 
+describe("community administrator", () => {
+  const actor = {
+    identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+  };
+  const memberId = "0192f0a0-0000-7000-8000-00000000d001";
+
+  function community(
+    overrides: Partial<Parameters<typeof createCommunityAdministrator>[0]> = {},
+  ) {
+    return createCommunityAdministrator({
+      listCommunityMembers: vi.fn(),
+      getCommunityMember: vi.fn(),
+      blockCommunityMember: vi.fn(),
+      listAllowedUsernames: vi.fn().mockResolvedValue({ usernames: [] }),
+      addAllowedUsername: vi.fn(),
+      removeAllowedUsername: vi.fn(),
+      ...overrides,
+    });
+  }
+
+  it("sends the filter and maps the circle and the moderation record", async () => {
+    const listCommunityMembers = vi.fn().mockResolvedValue({
+      members: [
+        {
+          identityId: memberId,
+          telegramUsername: "moder",
+          telegramUserId: 42n,
+          admitted: true,
+          circle: Circle.MEMBER,
+          auctionModeration: true,
+        },
+        {
+          identityId: "guest",
+          telegramUserId: 43n,
+          admitted: false,
+          circle: Circle.GUEST,
+          auctionModeration: false,
+        },
+        {
+          identityId: "newcomer",
+          telegramUserId: 0n,
+          admitted: false,
+          circle: Circle.UNSPECIFIED,
+          auctionModeration: false,
+        },
+        // Старый Identity круга не присылает, участника называет admitted.
+        {
+          identityId: "older",
+          telegramUserId: 44n,
+          admitted: true,
+          circle: Circle.UNSPECIFIED,
+          auctionModeration: false,
+        },
+      ],
+    });
+
+    await expect(
+      community({ listCommunityMembers }).community(actor, "moderators"),
+    ).resolves.toEqual({
+      kind: "ok",
+      value: {
+        members: [
+          {
+            identityId: memberId,
+            telegramUsername: "moder",
+            telegramUserId: 42n,
+            circle: "member",
+            auctionModeration: true,
+          },
+          {
+            identityId: "guest",
+            telegramUserId: 43n,
+            circle: "guest",
+            auctionModeration: false,
+          },
+          { identityId: "newcomer", circle: "none", auctionModeration: false },
+          {
+            identityId: "older",
+            telegramUserId: 44n,
+            circle: "member",
+            auctionModeration: false,
+          },
+        ],
+        allowedUsernames: [],
+      },
+    });
+    expect(listCommunityMembers).toHaveBeenCalledWith(
+      {
+        actor: { identityId: actor.identityId },
+        filter: CommunityFilter.AUCTION_MODERATORS,
+      },
+      expect.anything(),
+    );
+  });
+
+  it("reads one member", async () => {
+    const getCommunityMember = vi.fn().mockResolvedValue(
+      create(GetCommunityMemberResponseSchema, {
+        outcome: {
+          case: "found",
+          value: {
+            identityId: memberId,
+            telegramUserId: 42n,
+            admitted: true,
+            circle: Circle.MEMBER,
+            auctionModeration: false,
+          },
+        },
+      }),
+    );
+
+    await expect(
+      community({ getCommunityMember }).communityMember(actor, memberId),
+    ).resolves.toEqual({
+      kind: "ok",
+      value: {
+        identityId: memberId,
+        telegramUserId: 42n,
+        circle: "member",
+        auctionModeration: false,
+      },
+    });
+    expect(getCommunityMember).toHaveBeenCalledWith(
+      { actor: { identityId: actor.identityId }, identityId: memberId },
+      expect.anything(),
+    );
+  });
+
+  it.each([
+    ["notMembersManager", "forbidden"],
+    ["identityUnknown", "identity-unknown"],
+    ["identityBlocked", "blocked"],
+    ["identityHoldsPreset", "holds-preset"],
+  ] as const)("maps refusal %s to %s", async (reason, kind) => {
+    const getCommunityMember = vi.fn().mockResolvedValue(
+      create(GetCommunityMemberResponseSchema, {
+        outcome: {
+          case: "refused",
+          value: { reason: { case: reason, value: {} } },
+        },
+      }),
+    );
+
+    await expect(
+      community({ getCommunityMember }).communityMember(actor, memberId),
+    ).resolves.toEqual({ kind });
+  });
+
+  it("answers unavailable to an outcome it does not know", async () => {
+    const getCommunityMember = vi
+      .fn()
+      .mockResolvedValue(create(GetCommunityMemberResponseSchema, {}));
+
+    await expect(
+      community({ getCommunityMember }).communityMember(actor, memberId),
+    ).resolves.toMatchObject({ kind: "unavailable" });
+  });
+});
+
 describe("auction moderation administrator", () => {
   const actor = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
@@ -577,45 +740,11 @@ describe("auction moderation administrator", () => {
     > = {},
   ) {
     return createAuctionModerationAdministrator({
-      listAuctionModerators: vi.fn(),
       grantAuctionModeration: vi.fn(),
       revokeAuctionModeration: vi.fn(),
       ...overrides,
     });
   }
-
-  it("maps the holders and tells a granted right from the circle", async () => {
-    const administrator = moderation({
-      listAuctionModerators: vi.fn().mockResolvedValue({
-        moderators: [
-          {
-            identityId: memberId,
-            telegramUsername: "moder",
-            telegramUserId: 42n,
-            revocable: true,
-          },
-          {
-            identityId: actor.identityId,
-            telegramUserId: 7n,
-            revocable: false,
-          },
-        ],
-      }),
-    });
-
-    await expect(administrator.auctionModerators(actor)).resolves.toEqual({
-      kind: "ok",
-      value: [
-        {
-          identityId: memberId,
-          telegramUsername: "moder",
-          telegramUserId: 42n,
-          revocable: true,
-        },
-        { identityId: actor.identityId, telegramUserId: 7n, revocable: false },
-      ],
-    });
-  });
 
   it("sends the actor and the member on grant and revoke", async () => {
     const grantAuctionModeration = vi.fn().mockResolvedValue({ changed: true });

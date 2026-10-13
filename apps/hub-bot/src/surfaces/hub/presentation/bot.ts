@@ -108,8 +108,8 @@ import {
   type ApplicationModerator,
   type ApplicationQueueRead,
   type AuctionModerationAdministrator,
-  type AuctionModerator,
   type CommunityAdministrator,
+  type CommunityMemberResult,
   type CommunitySnapshot,
   type GrantModerationResult,
   type IdentityAdminResult,
@@ -166,6 +166,7 @@ import {
   auctionFaqData,
   type CallbackAction,
   type CardCursor,
+  type CommunityPlace,
   consoleAskData,
   consoleRaffleData,
   consoleViewData,
@@ -235,10 +236,11 @@ import type { ScreenId } from "./screens/catalog.js";
 import {
   type CommunityView,
   closeAccessConfirmScreen,
+  communityMemberRefusalText,
+  communityMemberScreen,
   communityScreen,
-  moderatorCandidatesScreen,
-  moderatorsScreen,
-  viewOfOrigin,
+  firstCommunityPlace,
+  toCommunityPlace,
 } from "./screens/community.js";
 import {
   auctionEnabledScreen,
@@ -2455,57 +2457,34 @@ async function handleCallback(
       };
       return;
     }
-    if (
-      action.kind === "community" ||
-      action.kind === "community-pending" ||
-      action.kind === "community-admitted" ||
-      action.kind === "community-usernames"
-    ) {
+    if (action.kind === "community" || action.kind === "community-usernames") {
       const result = await renderCommunity(
         ctx,
         runtime,
         person,
         action.kind === "community"
-          ? { kind: "root" }
-          : action.kind === "community-pending"
-            ? pendingView(action.cursor)
-            : action.kind === "community-admitted"
-              ? { kind: "admitted", page: action.page }
-              : { kind: "usernames", page: action.page },
+          ? { kind: "list", place: action.place ?? firstCommunityPlace }
+          : { kind: "usernames", page: action.page },
       );
       outcome = adminOutcome(result, person.identityId);
       return;
     }
-    if (action.kind === "ask-block-member") {
-      const result = await readCommunity(ctx, runtime, person);
-      const origin = viewOfOrigin(action.origin);
-      if (result.kind !== "ok") {
-        await showCommunityRefusal(ctx, result, origin);
-      } else {
-        const identityId = tokenToUuid(action.token);
-        const member = result.value.members.find(
-          (candidate) => candidate.identityId === identityId,
-        );
-        if (member === undefined) {
-          // Человека закрыли с другого экрана, пока этот был открыт.
-          await waiting.answer("Этого человека уже нет в списке.");
-          await showScreen(
-            ctx,
-            communityScreen(
-              result.value,
-              origin,
-              undefined,
-              manageItemParent(person, "members"),
-            ),
-          );
-        } else {
-          await showScreen(
-            ctx,
-            closeAccessConfirmScreen(member, action.origin),
-          );
-        }
-      }
-      outcome = adminOutcome(result, person.identityId);
+    // Карточка и вопрос о закрытии доступа читают человека заново: его могли
+    // закрыть или назначить администратором, пока экран висел. Право решает
+    // Identity и отказывает значением ответа (PER-547).
+    if (
+      action.kind === "community-member" ||
+      action.kind === "ask-block-member"
+    ) {
+      const result = await renderCommunityMember(
+        ctx,
+        runtime,
+        person,
+        tokenToUuid(action.token),
+        action.place,
+        action.kind === "ask-block-member" ? "close-access" : "card",
+      );
+      outcome = memberOutcome(result, person.identityId);
       return;
     }
     if (
@@ -2586,19 +2565,6 @@ async function handleCallback(
       return;
     }
     if (
-      action.kind === "auction-moderators" ||
-      action.kind === "moderator-candidates"
-    ) {
-      const result = await renderModerators(
-        ctx,
-        runtime,
-        person,
-        action.kind === "auction-moderators" ? undefined : action.page,
-      );
-      outcome = adminOutcome(result, person.identityId);
-      return;
-    }
-    if (
       action.kind === "grant-moderation" ||
       action.kind === "revoke-moderation"
     ) {
@@ -2627,13 +2593,15 @@ async function handleCallback(
                 rpcCall(ctx, "manage_community"),
               );
       await waiting.answer(moderationToast(action.kind, result));
-      // После команды экран перечитывается из Identity: выданный уходит из
-      // кандидатов, отозванный — из модераторов.
-      await renderModerators(
+      // После команды карточка перечитывается из Identity: она показывает то,
+      // что сохранилось, а не то, что нажали.
+      await renderCommunityMember(
         ctx,
         runtime,
         person,
-        action.kind === "grant-moderation" ? action.page : undefined,
+        identityId,
+        action.place,
+        "card",
       );
       // Не участник или заблокирован — штатный ответ контракта, а не сбой.
       outcome =
@@ -2918,81 +2886,68 @@ async function handleCallback(
       return;
     }
     if (
-      action.kind === "admit-member" ||
       action.kind === "block-member" ||
       action.kind === "remove-allowed-username"
     ) {
       const result =
-        action.kind === "admit-member"
-          ? runtime.identity.admit === undefined
+        action.kind === "block-member"
+          ? runtime.identity.block === undefined
             ? {
                 kind: "unavailable" as const,
                 cause: new Error("community administration is not configured"),
               }
-            : await runtime.identity.admit(
+            : await runtime.identity.block(
                 person,
                 tokenToUuid(action.token),
                 rpcCall(ctx, "manage_community"),
               )
-          : action.kind === "block-member"
-            ? runtime.identity.block === undefined
-              ? {
-                  kind: "unavailable" as const,
-                  cause: new Error(
-                    "community administration is not configured",
-                  ),
-                }
-              : await runtime.identity.block(
-                  person,
-                  tokenToUuid(action.token),
-                  rpcCall(ctx, "manage_community"),
-                )
-            : runtime.identity.removeAllowedUsername === undefined
-              ? {
-                  kind: "unavailable" as const,
-                  cause: new Error(
-                    "community administration is not configured",
-                  ),
-                }
-              : await runtime.identity.removeAllowedUsername(
-                  person,
-                  action.username,
-                  rpcCall(ctx, "manage_community"),
-                );
+          : runtime.identity.removeAllowedUsername === undefined
+            ? {
+                kind: "unavailable" as const,
+                cause: new Error("community administration is not configured"),
+              }
+            : await runtime.identity.removeAllowedUsername(
+                person,
+                action.username,
+                rpcCall(ctx, "manage_community"),
+              );
       // Чем кончилось нажатие, говорит ответ на него: экран после действия
-      // показывает уже следующего человека или ту же страницу.
+      // показывает уже ту же страницу списка.
       const toast =
         result.kind === "ok"
           ? result.value
-            ? action.kind === "admit-member"
-              ? "Человек допущен."
-              : action.kind === "block-member"
-                ? "Доступ закрыт."
-                : "Ник убран."
+            ? action.kind === "block-member"
+              ? "Доступ закрыт."
+              : "Ник убран."
             : "Состояние уже было актуальным."
           : result.kind === "invalid"
-            ? "Изменение не сохранилось. Состав перечитан заново."
+            ? "Изменение не сохранилось. Экран перечитан заново."
             : result.kind === "forbidden"
               ? "Это может только администратор."
               : "Не получилось сохранить. Попробуй ещё раз.";
       await waiting.answer(toast);
-      // Отказ оставляет на экране того же человека: уйди очередь к следующему,
-      // несохранённое решение выглядело бы принятым.
-      const saved = result.kind === "ok";
-      await renderCommunity(
-        ctx,
-        runtime,
-        person,
-        action.kind === "admit-member"
-          ? pendingView(saved ? action.next : action.token)
-          : action.kind === "block-member"
-            ? saved || action.origin.kind === "admitted"
-              ? viewOfOrigin(action.origin)
-              : pendingView(action.token)
+      // Закрытый уходит из списка, и экран возвращается на его страницу.
+      // Отказ оставляет карточку того же человека: список без него выглядел бы
+      // так, будто доступ закрыт.
+      if (action.kind === "block-member" && result.kind !== "ok") {
+        await renderCommunityMember(
+          ctx,
+          runtime,
+          person,
+          tokenToUuid(action.token),
+          action.place,
+          "card",
+        );
+      } else {
+        await renderCommunity(
+          ctx,
+          runtime,
+          person,
+          action.kind === "block-member"
+            ? { kind: "list", place: action.place }
             : { kind: "usernames", page: action.page },
-      );
-      // Сообщение допущенному идёт не отсюда: допуск по заявке Identity
-      // объявляет событием, и его доставляет канал Notifications (PER-442).
+        );
+      }
       outcome = adminOutcome(result, person.identityId);
       return;
     }
@@ -4458,27 +4413,26 @@ async function renderBroadcastResult(
   );
 }
 
-function pendingView(cursor: string | undefined): CommunityView {
-  return cursor === undefined
-    ? { kind: "pending" }
-    : { kind: "pending", cursor: tokenToUuid(cursor) };
-}
-
 function readCommunity(
   ctx: UpdateContext,
   runtime: BotRuntime,
   actor: Person,
+  view: CommunityView,
 ): Promise<IdentityAdminResult<CommunitySnapshot>> {
   return runtime.identity.community === undefined
     ? Promise.resolve({
         kind: "unavailable" as const,
         cause: new Error("community administration is not configured"),
       })
-    : runtime.identity.community(actor, rpcCall(ctx, "manage_community"));
+    : runtime.identity.community(
+        actor,
+        view.kind === "list" ? view.place.filter : "members",
+        rpcCall(ctx, "manage_community"),
+      );
 }
 
-// Отказ возвращает на уровень выше экрана, который не открылся: с корня — в
-// управление, с подэкрана — в состав.
+// Отказ возвращает на уровень выше экрана, который не открылся: со списка — в
+// управление, с ников — в состав.
 function showCommunityRefusal(
   ctx: UpdateContext,
   result: Exclude<IdentityAdminResult<unknown>, { kind: "ok" }>,
@@ -4489,7 +4443,7 @@ function showCommunityRefusal(
     result.kind === "forbidden" ? communityForbiddenText : unavailableText,
     withNav(
       new InlineKeyboard(),
-      view.kind === "root" ? toManage : toCommunity,
+      view.kind === "list" ? toManage : toCommunity,
     ),
   );
 }
@@ -4501,7 +4455,7 @@ async function renderCommunity(
   view: CommunityView,
   notice?: string,
 ): Promise<IdentityAdminResult<CommunitySnapshot>> {
-  const result = await readCommunity(ctx, runtime, actor);
+  const result = await readCommunity(ctx, runtime, actor, view);
   if (result.kind !== "ok") {
     await showCommunityRefusal(ctx, result, view);
     return result;
@@ -4516,6 +4470,70 @@ async function renderCommunity(
     ),
   );
   return result;
+}
+
+// Карточка человека или вопрос о закрытии его доступа. Отказ Identity — текстом
+// экрана с возвратом на то же место списка (PER-547).
+async function renderCommunityMember(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+  identityId: string,
+  place: CommunityPlace,
+  screen: "card" | "close-access",
+): Promise<CommunityMemberResult> {
+  const result: CommunityMemberResult =
+    runtime.identity.communityMember === undefined
+      ? {
+          kind: "unavailable",
+          cause: new Error("community administration is not configured"),
+        }
+      : await runtime.identity.communityMember(
+          actor,
+          identityId,
+          rpcCall(ctx, "manage_community"),
+        );
+  if (result.kind !== "ok") {
+    await showRefusal(
+      ctx,
+      communityMemberRefusalText(
+        result,
+        communityForbiddenText,
+        unavailableText,
+      ),
+      withNav(new InlineKeyboard(), toCommunityPlace(place)),
+    );
+    return result;
+  }
+  await showScreen(
+    ctx,
+    screen === "card"
+      ? communityMemberScreen(result.value, place)
+      : closeAccessConfirmScreen(result.value, place),
+  );
+  return result;
+}
+
+// Человек ушёл из состава, пока карточка висела, — штатный ответ контракта, а
+// не сбой: метрика отказов на нём не растёт.
+function memberOutcome(
+  result: CommunityMemberResult,
+  identityId: string,
+): BoundaryOutcome {
+  switch (result.kind) {
+    case "identity-unknown":
+    case "blocked":
+    case "holds-preset":
+      return {
+        level: "info",
+        message: "community member not shown",
+        result: "ok",
+        use_case: "manage_community",
+        identity_id: identityId,
+      };
+    default:
+      return adminOutcome(result, identityId);
+  }
 }
 
 // Какой отказ бот даёт сам, до сервиса: пункт управления, на который у
@@ -4541,11 +4559,6 @@ function managementRefusal(
     case "source-channels":
     case "ask-source-channel":
       return canManageMembers(person) ? undefined : sourceChannelsForbiddenText;
-    case "auction-moderators":
-    case "moderator-candidates":
-    case "grant-moderation":
-    case "revoke-moderation":
-      return canManageMembers(person) ? undefined : moderatorsForbiddenText;
     case "application-card":
     case "admit-application":
     case "ask-decline-application":
@@ -4616,57 +4629,6 @@ function moderationToast(
     default:
       return "Не получилось сохранить. Попробуй ещё раз.";
   }
-}
-
-// Модераторы и кандидаты читаются заново на каждое действие: состав меняется
-// без участия того, кто выдаёт. `candidatesPage` — экран выдачи, без него —
-// список модераторов. Отказ возвращает в состав.
-async function renderModerators(
-  ctx: UpdateContext,
-  runtime: BotRuntime,
-  actor: Person,
-  candidatesPage: number | undefined,
-): Promise<IdentityAdminResult<unknown>> {
-  const moderators: IdentityAdminResult<readonly AuctionModerator[]> =
-    runtime.identity.auctionModerators === undefined
-      ? {
-          kind: "unavailable",
-          cause: new Error("auction moderation is not configured"),
-        }
-      : await runtime.identity.auctionModerators(
-          actor,
-          rpcCall(ctx, "manage_community"),
-        );
-  const refuse = (
-    result: Exclude<IdentityAdminResult<unknown>, { kind: "ok" }>,
-  ) =>
-    showRefusal(
-      ctx,
-      result.kind === "forbidden" ? moderatorsForbiddenText : unavailableText,
-      withNav(new InlineKeyboard(), toCommunity),
-    );
-  if (moderators.kind !== "ok") {
-    await refuse(moderators);
-    return moderators;
-  }
-  if (candidatesPage === undefined) {
-    await showScreen(ctx, moderatorsScreen(moderators.value));
-    return moderators;
-  }
-  const community = await readCommunity(ctx, runtime, actor);
-  if (community.kind !== "ok") {
-    await refuse(community);
-    return community;
-  }
-  await showScreen(
-    ctx,
-    moderatorCandidatesScreen(
-      community.value,
-      moderators.value,
-      candidatesPage,
-    ),
-  );
-  return community;
 }
 
 // Держатели наборов читаются заново на каждый показ: состав меняет и другой
@@ -8699,19 +8661,15 @@ function callbackUseCase(
     | "manage-menu"
     | "manage-hidden"
     | "community"
-    | "community-pending"
-    | "community-admitted"
     | "community-usernames"
     | "ask-allowed-username"
-    | "admit-member"
+    | "community-member"
     | "ask-block-member"
     | "block-member"
     | "remove-allowed-username"
     | "refused-applications"
     | "ask-reconsider"
     | "reconsider"
-    | "auction-moderators"
-    | "moderator-candidates"
     | "grant-moderation"
     | "revoke-moderation"
     | "administrators"
@@ -8853,16 +8811,12 @@ function callbackUseCase(
     case "ask-decline-application":
     case "decline-application":
     case "community":
-    case "community-pending":
-    case "community-admitted":
     case "community-usernames":
     case "ask-allowed-username":
-    case "admit-member":
+    case "community-member":
     case "ask-block-member":
     case "block-member":
     case "remove-allowed-username":
-    case "auction-moderators":
-    case "moderator-candidates":
     case "grant-moderation":
     case "revoke-moderation":
     case "administrators":
