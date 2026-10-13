@@ -23,10 +23,15 @@ final case class LotSnapshotView(
 )
 
 /**
- * Статистика лота реестра для ручного отбора финалистов (PER-481): только агрегаты, без участников и лимитов.
- * `bidCount` считается тем же выражением по `lot_bid`, что `LotSnapshotView.bidCount`, `participantCount` — по
- * `lot_participant`, `lastBidAt` — время последней строки `lot_bid` по номеру события. `startingPrice` — из
- * `LotOpened`: строки нет, пока лот не открывался.
+ * Статистика лота реестра для ручного отбора финалистов (PER-481) и метрики финала для прогнозов (PER-608, ADR-067 п.
+ * 6): только агрегаты, без участников и лимитов. `bidCount` считается тем же выражением по `lot_bid`, что
+ * `LotSnapshotView.bidCount`, `participantCount` — по `lot_participant`, `lastBidAt` — время последней строки `lot_bid`
+ * по номеру события. `startingPrice` — из `LotOpened`: строки нет, пока лот не открывался.
+ *
+ * `heldPrice` — цена, с которой лот удержан в D 00:00 (`HeldState.currentPrice` на `LotHeldForFinal`), а
+ * `finalBidCount` — принятые ставки лота состава после его возврата в торги: строки `lot_bid` с номером события больше
+ * `LotResumed`. Состав — заморозка `FinalLineupFrozen` (`auction_lineup`), а не признак удержания: удержанный лот,
+ * проданный или снятый до заморозки, в состав не входит. У лота вне состава обеих метрик нет — `None`, а не ноль.
  */
 final case class LotStatisticsView(
     lotId: UUID,
@@ -34,7 +39,9 @@ final case class LotStatisticsView(
     startingPrice: Option[Money],
     bidCount: Long,
     participantCount: Long,
-    lastBidAt: Option[Instant]
+    lastBidAt: Option[Instant],
+    heldPrice: Option[Money] = None,
+    finalBidCount: Option[Long] = None
 ) {
 
   /**
@@ -50,6 +57,23 @@ final case class LotStatisticsView(
       case LotState.Held(state) => startingPrice.map(growth(state.currentPrice, _))
       case LotState.Sold(sale) => startingPrice.map(growth(sale.price, _))
       case LotState.Unsold(_) => startingPrice.map(_.copy(minorUnits = 0))
+    }
+
+  /**
+   * Рост лота состава в финале — от цены удержания, а не от стартовой: у лота без ставок в финале ведущий продаёт его
+   * по цене удержания, и рост нулевой. На момент подсчёта прогнозов (переход в `Finished`) лот состава продан или
+   * закрыт без продажи, поэтому промежуточные состояния для итога нерелевантны, но считаются так же, как `priceGrowth`.
+   * У лота вне состава цены удержания нет, и роста в финале у него нет.
+   */
+  def finalGrowth: Option[Money] =
+    heldPrice.flatMap { held =>
+      lot.state match {
+        case LotState.Trading(state) => Some(growth(state.currentPrice, held))
+        case LotState.Held(state) => Some(growth(state.currentPrice, held))
+        case LotState.Sold(sale) => Some(growth(sale.price, held))
+        case LotState.Unsold(_) => Some(held.copy(minorUnits = 0))
+        case _ => None
+      }
     }
 
   private def growth(current: Money, start: Money): Money =

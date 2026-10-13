@@ -70,6 +70,38 @@ final class AuctionViewSpec extends AnyWordSpec with Matchers {
       AuctionViews.statuses(AuctionListing.Active) should not contain "cancelled"
     }
 
+    "carries the frozen lineup of the final and drops it from the snapshot once finished" in {
+      val frozen = AuctionView.fold(
+        None,
+        auctionId,
+        journal ++ List(
+          5L -> stored(AuctionEvent.PrebiddingDeadlineReached, 5),
+          6L -> stored(AuctionEvent.PrebiddingEnded(finished = false), 6),
+          7L -> stored(AuctionEvent.FinalLineupFrozen(List(lot)), 7)
+        )
+      ) match {
+        case Right(Some(row)) => row
+        case other => fail(s"expected a row, got $other")
+      }
+
+      // Состав есть с заморозки, до неё пуст, а снимок `Finished` его уже не несёт — поэтому строка `auction_lineup`.
+      rowAfter(4).lineup shouldBe empty
+      frozen.lineup shouldBe Set(lot.value)
+
+      val finished = AuctionView.fold(
+        None,
+        auctionId,
+        journal ++ List(
+          5L -> stored(AuctionEvent.PrebiddingDeadlineReached, 5),
+          6L -> stored(AuctionEvent.PrebiddingEnded(finished = true), 6)
+        )
+      ) match {
+        case Right(Some(row)) => row
+        case other => fail(s"expected a row, got $other")
+      }
+      finished.lineup shouldBe empty
+    }
+
     "lists an auction as active from scheduling on and never as a draft" in {
       val active = AuctionViews.statuses(AuctionListing.Active)
       active should contain allOf (

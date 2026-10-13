@@ -129,20 +129,45 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
   private given GetResult[LotStatisticsView] = GetResult { row =>
     val lotId = UUID.fromString(row.nextString())
     val lot = LotJournal.restoreLot(json.read(row.nextString()))
-    val start = (row.nextLongOption(), row.nextStringOption()) match {
+    val start = money(row.nextLongOption(), row.nextStringOption())
+    val bidCount = row.nextLong()
+    val participantCount = row.nextLong()
+    val lastBidAt = row.nextTimestampOption().map(_.toInstant)
+    val heldPrice = money(row.nextLongOption(), row.nextStringOption())
+    val inLineup = row.nextBoolean()
+    val finalBidCount = row.nextLong()
+    // Обеих метрик финала нет у лота вне состава, даже если он был удержан и в состав не попал (PER-608).
+    LotStatisticsView(
+      lotId,
+      lot,
+      start,
+      bidCount,
+      participantCount,
+      lastBidAt,
+      if (inLineup) heldPrice else None,
+      if (inLineup) Some(finalBidCount) else None
+    )
+  }
+
+  private def money(minorUnits: Option[Long], currency: Option[String]): Option[Money] =
+    (minorUnits, currency) match {
       case (Some(minorUnits), Some(currency)) => Some(Money(minorUnits, CurrencyCode(currency)))
       case _ => None
     }
-    LotStatisticsView(lotId, lot, start, row.nextLong(), row.nextLong(), row.nextTimestampOption().map(_.toInstant))
-  }
 
   def statistics(auctionId: UUID): Future[List[LotStatisticsView]] =
     database.run(
       sql"""SELECT v.lot_id::text, v.state::text, s.minor_units, s.currency, #$BidCountSql,
                    (SELECT COUNT(*) FROM lot_participant p WHERE p.lot_id = v.lot_id),
-                   (SELECT b.occurred_at FROM lot_bid b WHERE b.lot_id = v.lot_id ORDER BY b.sequence DESC LIMIT 1)
+                   (SELECT b.occurred_at FROM lot_bid b WHERE b.lot_id = v.lot_id ORDER BY b.sequence DESC LIMIT 1),
+                   h.minor_units, h.currency, (l.lot_id IS NOT NULL),
+                   (SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id
+                      AND res.sequence IS NOT NULL AND b.sequence > res.sequence)
             FROM auction_lot r JOIN lot_view v ON v.lot_id = r.lot_id
             LEFT JOIN lot_starting_price s ON s.lot_id = v.lot_id
+            LEFT JOIN lot_hold h ON h.lot_id = v.lot_id
+            LEFT JOIN lot_resume res ON res.lot_id = v.lot_id
+            LEFT JOIN auction_lineup l ON l.auction_id = r.auction_id AND l.lot_id = v.lot_id
             WHERE r.auction_id = ${auctionId.toString}::uuid
             ORDER BY r.lot_id""".as[LotStatisticsView].map(_.toList)
     )

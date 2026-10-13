@@ -35,13 +35,17 @@ final case class BidRecord(
  * Что пишет свёртка нескольких событий лота: строку после последнего применённого события и факты статистики из
  * применённых событий. `participants` — авторы ставок и владельцы принятых прокси-лимитов в порядке журнала, с
  * повторами: отзыв лимита участника не снимает, поэтому строки только добавляются. `startingPrice` — стартовая цена из
- * `LotOpened`: в состоянии лота после открытия её нет, а рост цены статистики считается от неё.
+ * `LotOpened`: в состоянии лота после открытия её нет, а рост цены статистики считается от неё. `heldPrice` — цена
+ * удержания из `LotHeldForFinal`, которую состояние `Held` теряет при `LotResumed`; `resumedSequence` — номер события
+ * `LotResumed`: по нему ставки финала отделяются от ставок недели (PER-608).
  */
 final case class LotViewFold(
     row: Option[LotViewRow],
     bids: List[BidRecord],
     participants: List[UUID],
-    startingPrice: Option[StoredMoney]
+    startingPrice: Option[StoredMoney],
+    heldPrice: Option[StoredMoney] = None,
+    resumedSequence: Option[Long] = None
 )
 
 /** Событие, которое свёртка применила, и строка лота сразу после него. */
@@ -104,8 +108,9 @@ object LotView {
 
   /**
    * Свёртка нескольких событий лота подряд — догонка пропуска вместе с доставленным событием. Итог — строка после
-   * последнего применённого события, если хоть одно применилось, и факты всех применённых: ставки, участники и
-   * стартовая цена. Повторно доставленное событие фактов не даёт, как и строки.
+   * последнего применённого события, если хоть одно применилось, и факты всех применённых: ставки, участники, стартовая
+   * цена, цена удержания для финала и номер возврата в торги. Повторно доставленное событие фактов не даёт, как и
+   * строки.
    */
   def fold(
       current: Option[LotViewRow],
@@ -117,9 +122,18 @@ object LotView {
         row = applied.lastOption.map(_.row),
         bids = applied.flatMap(step => bid(lotId, step.sequence, step.stored)),
         participants = applied.flatMap(step => participant(step.stored)),
-        startingPrice = applied.flatMap(step => step.stored.event.lotOpened.map(_.startingPrice)).lastOption
+        startingPrice = applied.flatMap(step => step.stored.event.lotOpened.map(_.startingPrice)).lastOption,
+        heldPrice = applied.flatMap(heldPrice).lastOption,
+        resumedSequence = applied.filter(step => step.stored.event.kind == "LotResumed").lastOption.map(_.sequence)
       )
     }
+
+  /**
+   * Цена, с которой лот удержан для финала (PER-608): состояние строки после `LotHeldForFinal`. Событие времени цены не
+   * несёт (ADR-047), а цена есть в состоянии `Held`, которое следующий `LotResumed` теряет.
+   */
+  private def heldPrice(step: AppliedEvent): Option[StoredMoney] =
+    step.stored.event.lotHeldForFinal.flatMap(_ => step.row.stored.state.held.map(_.currentPrice))
 
   /**
    * Участник лота для статистики (`LotStatistics.unique_participant_count`): автор принятой ставки, ручной или

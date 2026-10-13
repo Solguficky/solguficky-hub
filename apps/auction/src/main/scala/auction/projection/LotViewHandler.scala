@@ -71,6 +71,8 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
           folded.bids.foreach(record(connection, _))
           folded.participants.distinct.foreach(addParticipant(connection, lotId, _))
           folded.startingPrice.foreach(recordStartingPrice(connection, lotId, _))
+          folded.heldPrice.foreach(recordHeldPrice(connection, lotId, _))
+          folded.resumedSequence.foreach(recordResumed(connection, lotId, _))
       }
     }
   }
@@ -98,6 +100,33 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
       statement.setObject(1, lotId)
       statement.setLong(2, price.minorUnits)
       statement.setString(3, price.currency)
+      statement.executeUpdate()
+    }
+
+  // `LotHeldForFinal` у лота один (в `Held` лот приходит из торгов один раз), а `ON CONFLICT` — на случай перестройки.
+  private def recordHeldPrice(connection: Connection, lotId: UUID, price: StoredMoney): Unit =
+    Using.resource(
+      connection.prepareStatement(
+        """INSERT INTO lot_hold (lot_id, minor_units, currency) VALUES (?, ?, ?)
+          |ON CONFLICT (lot_id) DO UPDATE SET minor_units = EXCLUDED.minor_units, currency = EXCLUDED.currency""".stripMargin
+      )
+    ) { statement =>
+      statement.setObject(1, lotId)
+      statement.setLong(2, price.minorUnits)
+      statement.setString(3, price.currency)
+      statement.executeUpdate()
+    }
+
+  // Номер `LotResumed`: ставки финала — строки `lot_bid` с номером больше него. Возврат в торги у лота один.
+  private def recordResumed(connection: Connection, lotId: UUID, sequence: Long): Unit =
+    Using.resource(
+      connection.prepareStatement(
+        """INSERT INTO lot_resume (lot_id, sequence) VALUES (?, ?)
+          |ON CONFLICT (lot_id) DO UPDATE SET sequence = EXCLUDED.sequence""".stripMargin
+      )
+    ) { statement =>
+      statement.setObject(1, lotId)
+      statement.setLong(2, sequence)
       statement.executeUpdate()
     }
 

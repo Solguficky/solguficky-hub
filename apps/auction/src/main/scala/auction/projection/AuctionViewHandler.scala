@@ -61,10 +61,11 @@ object AuctionViewHandler {
 }
 
 /**
- * Обработчик проекции аукциона: строка `auction_view` и реестр `auction_lot` одной транзакцией `JdbcSession` вместе с
- * offset (ADR-045). Реестр пишется разностью до и после события: лот, добавленный в реестр, — новая строка, снятый —
- * удалённая. Пишет только соединение сессии, как у лота, и тем же соединением объявляет аукцион потокам `WatchAuction`
- * ([[AuctionChanges.announce]]).
+ * Обработчик проекции аукциона: строка `auction_view`, реестр `auction_lot` и состав финала `auction_lineup` одной
+ * транзакцией `JdbcSession` вместе с offset (ADR-045). Реестр пишется разностью до и после события: лот, добавленный в
+ * реестр, — новая строка, снятый — удалённая. Состав только добавляется (PER-608): заморозка у аукциона одна, а снимок
+ * `Finished` состав уже не несёт, и подсчёт прогнозов по `Finished` берёт его отсюда. Пишет только соединение сессии,
+ * как у лота, и тем же соединением объявляет аукцион потокам `WatchAuction` ([[AuctionChanges.announce]]).
  */
 final class AuctionViewHandler(json: AuctionViewJson, serialization: Serialization)
     extends JdbcHandler[EventEnvelope[StoredAuctionEvent], JdbcSession] {
@@ -88,6 +89,9 @@ final class AuctionViewHandler(json: AuctionViewJson, serialization: Serializati
           val previous = before.fold(Set.empty[UUID])(_.lots)
           (after.lots -- previous).foreach(insertLot(connection, auctionId, _))
           (previous -- after.lots).foreach(deleteLot(connection, auctionId, _))
+          // Состав финала только добавляется: заморозка у аукциона одна, а снимок `Finished` состав уже не несёт.
+          val previousLineup = before.fold(Set.empty[UUID])(_.lineup)
+          (after.lineup -- previousLineup).foreach(insertLineup(connection, auctionId, _))
           AuctionChanges.announce(connection, auctionId)
         case Right(_) => ()
       }
@@ -141,5 +145,17 @@ final class AuctionViewHandler(json: AuctionViewJson, serialization: Serializati
         statement.setObject(1, auctionId)
         statement.setObject(2, lotId)
         statement.executeUpdate()
+    }
+
+  /** Лот состава финала (PER-608): строка нужна статистике после `Finished`, когда снимок состав уже не несёт. */
+  private def insertLineup(connection: Connection, auctionId: UUID, lotId: UUID): Unit =
+    Using.resource(
+      connection.prepareStatement(
+        "INSERT INTO auction_lineup (auction_id, lot_id) VALUES (?, ?) ON CONFLICT (auction_id, lot_id) DO NOTHING"
+      )
+    ) { statement =>
+      statement.setObject(1, auctionId)
+      statement.setObject(2, lotId)
+      statement.executeUpdate()
     }
 }
