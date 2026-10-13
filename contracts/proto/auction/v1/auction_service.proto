@@ -979,11 +979,18 @@ message StartPrebiddingRefusal {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
     AuctionNotScheduled auction_not_scheduled = 3;
+    AnotherAuctionActive another_auction_active = 4;
   }
 }
 
 // The auction has no configuration yet: ScheduleAuction comes first.
 message AuctionNotScheduled {}
+
+message AnotherAuctionActive {
+  // The auction whose prebidding holds the community trading slot.
+  // Canonical lowercase UUID with hyphens.
+  string auction_id = 1;
+}
 
 message DiscardAuctionRequest {
   // The administrator of the meetup of the auction, checked with the meetup.

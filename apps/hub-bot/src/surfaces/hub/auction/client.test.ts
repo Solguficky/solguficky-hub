@@ -930,6 +930,28 @@ describe("auction console adapter", () => {
     ).resolves.toEqual({ kind: "refused", reason: "deadline-passed" });
   });
 
+  it("reads a start refused for the trading auction with the id of that auction", async () => {
+    const holder = "0190f2a0-0000-7000-8000-000000000021";
+    const started = adapter({
+      startPrebidding: async () =>
+        create(StartPrebiddingResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: {
+              reason: {
+                case: "anotherAuctionActive",
+                value: { auctionId: holder },
+              },
+            },
+          },
+        }),
+    });
+
+    await expect(
+      started.startPrebidding(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "another-auction-active", auctionId: holder });
+  });
+
   it("reads a discarded auction, a started week and a missing auction as answers", async () => {
     const sent: unknown[] = [];
     const accepted = adapter({

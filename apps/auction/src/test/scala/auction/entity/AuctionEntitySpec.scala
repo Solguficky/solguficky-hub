@@ -36,6 +36,7 @@ import auction.lot.UnsoldReason
 import auction.lot.WithdrawLot
 import auction.lot.WithdrawLotRejected
 import auction.lot.WithdrawnReason
+import auction.slot.TradingSlotEntity
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
@@ -280,13 +281,40 @@ final class AuctionEntitySpec
       snapshotEvery: Int = AuctionEntity.DefaultSnapshotEvery,
       recheckEvery: FiniteDuration = AuctionEntity.DefaultRecheckEvery,
       shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None,
-      raffle: AuctionRaffle = AuctionRaffle.none
+      raffle: AuctionRaffle = AuctionRaffle.none,
+      slot: AuctionSlot = AuctionSlot.none
   ): Kit =
     EventSourcedBehaviorTestKit(
       kit.system,
-      AuctionEntity("auction-1", time, sequentialIds(), lots, snapshotEvery, recheckEvery, shard, raffle),
+      AuctionEntity("auction-1", time, sequentialIds(), lots, snapshotEvery, recheckEvery, shard, raffle, slot),
       serialization
     )
+
+  /**
+   * Слот-подмена: занятие отвечает тем, что задал тест, освобождение — отказом, пока не исчерпаны `releaseFailures`, а
+   * дальше `Done`. Каждый вызов считается.
+   */
+  private final class Slot extends AuctionSlot {
+    @volatile var claimed: Future[TradingSlotEntity.Claimed] = Future.successful(TradingSlotEntity.Claimed.Granted)
+    @volatile var releaseFailures: Int = 0
+    val claims = new java.util.concurrent.atomic.AtomicInteger(0)
+    val releases = new java.util.concurrent.atomic.AtomicInteger(0)
+    def claim(auctionId: String): Future[TradingSlotEntity.Claimed] = {
+      claims.incrementAndGet()
+      claimed
+    }
+    def release(auctionId: String): Future[org.apache.pekko.Done] = synchronized {
+      releases.incrementAndGet()
+      if (releaseFailures > 0) {
+        releaseFailures -= 1
+        Future.failed(new java.util.concurrent.TimeoutException("the slot did not answer"))
+      } else Future.successful(org.apache.pekko.Done)
+    }
+  }
+
+  private val holder = auction.lot.AuctionId(uuid(32))
+
+  private def trading: Boolean = entity.runCommand[Boolean](AuctionEntity.Trading(_)).reply
 
   /** `lot` с условиями торгов, `other` — без них: первый откроется, второй отклонит открытие. */
   override protected def beforeEach(): Unit = {
@@ -311,7 +339,7 @@ final class AuctionEntitySpec
     )
 
   private def start(opN: Int) =
-    entity.runCommand[Either[StartPrebiddingRejected, AuctionAnswer]](
+    entity.runCommand[Either[OpeningRejected, AuctionAnswer]](
       AuctionEntity.Start(StartPrebidding(op(opN)), administrator, _)
     )
 
@@ -489,6 +517,143 @@ final class AuctionEntitySpec
       start(4).reply.isRight shouldBe true
       Thread.sleep(200)
       opened.get shouldBe 0
+    }
+
+    "writes the opening only after the slot is given and answers that it trades while the claim is in flight" in {
+      val slot = Slot()
+      val granted = Promise[TradingSlotEntity.Claimed]()
+      slot.claimed = granted.future
+      entity = entityOf(lots, slot = slot)
+      val opening = scheduledWith(lot)
+      trading shouldBe false
+      val answer = kit.createTestProbe[Either[OpeningRejected, AuctionAnswer]]()
+      entity.runCommand(AuctionEntity.Start(StartPrebidding(op(opening)), administrator, answer.ref))
+      answer.expectNoMessage(100.millis)
+      entity.getState().auction.state shouldBe AuctionState.Scheduled(config())
+      trading shouldBe true
+      granted.success(TradingSlotEntity.Claimed.Granted)
+      answer.expectMessage(
+        Right(AuctionAnswer.Written(AuctionEnvelope(4, op(opening), AuctionEvent.PrebiddingStarted)))
+      )
+      trading shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+    }
+
+    "writes one opening for a start repeated while its claim is in flight" in {
+      val slot = Slot()
+      val granted = Promise[TradingSlotEntity.Claimed]()
+      slot.claimed = granted.future
+      entity = entityOf(lots, slot = slot)
+      val opening = scheduledWith(lot)
+      val first = kit.createTestProbe[Either[OpeningRejected, AuctionAnswer]]()
+      val repeated = kit.createTestProbe[Either[OpeningRejected, AuctionAnswer]]()
+      entity.runCommand(AuctionEntity.Start(StartPrebidding(op(opening)), administrator, first.ref))
+      entity.runCommand(AuctionEntity.Start(StartPrebidding(op(opening)), administrator, repeated.ref))
+      granted.success(TradingSlotEntity.Claimed.Granted)
+      val written = Right(AuctionAnswer.Written(AuctionEnvelope(4, op(opening), AuctionEvent.PrebiddingStarted)))
+      first.expectMessage(written)
+      repeated.expectMessage(written)
+      entity.getState().sequence shouldBe 4
+      slot.claims.get shouldBe 2
+    }
+
+    "asks the slot again when the auction changed while the claim was in flight and opens on the fresh decision" in {
+      val slot = Slot()
+      val granted = Promise[TradingSlotEntity.Claimed]()
+      slot.claimed = granted.future
+      entity = entityOf(lots, slot = slot)
+      val opening = scheduledWith(lot)
+      val answer = kit.createTestProbe[Either[OpeningRejected, AuctionAnswer]]()
+      entity.runCommand(AuctionEntity.Start(StartPrebidding(op(opening)), administrator, answer.ref))
+      val replanned = AuctionFixtures.week.copy(closesAt = Some(closesAt.plusSeconds(3600)))
+      schedule(opening + 1, configInput(Some(replanned))).reply.isRight shouldBe true
+      granted.success(TradingSlotEntity.Claimed.Granted)
+      answer.expectMessage(
+        Right(AuctionAnswer.Written(AuctionEnvelope(5, op(opening), AuctionEvent.PrebiddingStarted)))
+      )
+      slot.claims.get shouldBe 2
+      entity.getState().auction.state shouldBe AuctionState.Prebidding(
+        config(configInput(Some(replanned))),
+        op(opening)
+      )
+    }
+
+    "confirms the slot of a trading auction after a restart until the slot answers and only once" in {
+      val slot = Slot()
+      entity = entityOf(lots, recheckEvery = 50.millis, slot = slot)
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      Thread.sleep(200)
+      slot.claims.get shouldBe 1
+      slot.claimed = Future.failed(new java.util.concurrent.TimeoutException("the slot did not answer"))
+      entity.restart()
+      eventually(slot.claims.get should be >= 3)
+      slot.claimed = Future.successful(TradingSlotEntity.Claimed.Granted)
+      // Подтверждение уходит на ближайшем тике, а после ответа слота повторов больше нет.
+      Thread.sleep(300)
+      val confirmed = slot.claims.get
+      Thread.sleep(300)
+      slot.claims.get shouldBe confirmed
+      slot.releases.get shouldBe 0
+    }
+
+    "refuses the opening with the auction that holds the slot and writes nothing" in {
+      val slot = Slot()
+      slot.claimed = Future.successful(TradingSlotEntity.Claimed.Taken(holder))
+      entity = entityOf(lots, slot = slot)
+      val opening = scheduledWith(lot)
+      start(opening).reply shouldBe Left(OpeningRejected.AnotherAuctionActive(holder))
+      entity.getState().auction.state shouldBe AuctionState.Scheduled(config())
+      trading shouldBe false
+      lots.asked shouldBe empty
+    }
+
+    "answers the opening that the slot is unavailable when the slot or its holder do not answer" in {
+      val slot = Slot()
+      entity = entityOf(lots, slot = slot)
+      val opening = scheduledWith(lot)
+      slot.claimed = Future.failed(new java.util.concurrent.TimeoutException("the slot did not answer"))
+      start(opening).reply shouldBe Left(OpeningRejected.SlotUnavailable)
+      slot.claimed = Future.successful(TradingSlotEntity.Claimed.Unavailable)
+      start(opening).reply shouldBe Left(OpeningRejected.SlotUnavailable)
+      entity.getState().auction.state shouldBe AuctionState.Scheduled(config())
+      trading shouldBe false
+    }
+
+    "releases the slot when it finishes without a final, again until the slot confirms and again after a restart" in {
+      val slot = Slot()
+      slot.releaseFailures = 1
+      entity = entityOf(lots, recheckEvery = 50.millis, slot = slot)
+      val opening = scheduledWith(lot)
+      time.instant0 = closesAt.plusSeconds(1)
+      start(opening).reply.isRight shouldBe true
+      eventually(entity.getState().auction.state shouldBe a[AuctionState.Finished])
+      trading shouldBe false
+      eventually(slot.releases.get shouldBe 2)
+      Thread.sleep(200)
+      slot.releases.get shouldBe 2
+      entity.restart()
+      eventually(slot.releases.get shouldBe 3)
+    }
+
+    "holds the slot of a cancelled auction until every lot answered the withdrawal, across a restart" in {
+      val slot = Slot()
+      entity = entityOf(lots, recheckEvery = 50.millis, slot = slot)
+      val opening = scheduledWith(lot, other)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+      lots.numb = Set(lot)
+      cancel(opening + 1).reply.isRight shouldBe true
+      eventually(roster.lots(other) shouldBe LotStanding.Withdrawn)
+      trading shouldBe true
+      Thread.sleep(200)
+      slot.releases.get shouldBe 0
+      entity.restart()
+      trading shouldBe true
+      lots.numb = Set.empty
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Withdrawn, other -> LotStanding.Withdrawn))
+      trading shouldBe false
+      eventually(slot.releases.get shouldBe 1)
     }
 
     "cancels an auction in prebidding: the sold lot stays sold, the others are withdrawn and refuse bids" in {
@@ -750,7 +915,7 @@ final class AuctionEntitySpec
       repeated.reply shouldBe first.reply
       eventually(roster.lots(other) shouldBe LotStanding.Declined(OpenLotRejected.LotNotScheduled))
       lots.opens.map(_._1) shouldBe Vector(lot, other)
-      start(opening + 1).reply shouldBe Left(StartPrebiddingRejected.AuctionNotScheduled)
+      start(opening + 1).reply shouldBe Left(OpeningRejected.ByAuction(StartPrebiddingRejected.AuctionNotScheduled))
     }
 
     "asks no lot after a restart before prebidding" in {

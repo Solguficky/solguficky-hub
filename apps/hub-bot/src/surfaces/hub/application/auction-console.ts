@@ -637,6 +637,17 @@ export function createAuctionConsole(
               : "week-already-open",
         };
       }
+      // Торги идут у другого аукциона сообщества. Кадр с ним и возвратом —
+      // PER-606; до него пульт называет отказ строкой исхода.
+      case "another-auction-active": {
+        const current = await read(request);
+        if (current.kind === "refused") return current.result;
+        return {
+          kind: "auction-console",
+          console: current.console,
+          note: "another-auction-active",
+        };
+      }
       case "not-administrator":
       case "meetup-not-found":
         return notAdministrator;

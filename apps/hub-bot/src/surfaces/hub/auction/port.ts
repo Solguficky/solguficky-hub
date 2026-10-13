@@ -191,11 +191,14 @@ export type ScheduleAuctionResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
+// `another-auction-active` — торги идут у другого аукциона сообщества: слот
+// торгов один (ADR-047, дополнение 2026-10-12).
 export type StartPrebiddingResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
   | { kind: "not-scheduled" }
+  | { kind: "another-auction-active"; auctionId: string }
   | { kind: "auction-not-found" }
   | AuctionFailure;
 

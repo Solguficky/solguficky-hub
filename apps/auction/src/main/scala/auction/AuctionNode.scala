@@ -7,11 +7,13 @@ import auction.entity.AuctionEntity
 import auction.entity.AuctionGateway
 import auction.entity.AuctionLots
 import auction.entity.AuctionRaffle
+import auction.entity.AuctionSlot
 import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.grpc.AuctionGrpcService
 import auction.grpc.CallerTable
 import auction.grpc.GrpcBoundary
+import auction.lot.AuctionId
 import auction.naming.DisplayNameCommands
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalDatabase
@@ -41,6 +43,8 @@ import auction.raffle.RaffleEntity
 import auction.raffle.RaffleGateway
 import auction.raffle.RaffleTickets
 import auction.raffle.Seed
+import auction.slot.SlotHolders
+import auction.slot.TradingSlotEntity
 import auction.watch.AuctionChanges
 import auction.watch.ChangeRegistry
 import auction.watch.PgChangeListener
@@ -60,6 +64,7 @@ import org.apache.pekko.cluster.sharding.typed.scaladsl.Entity
 import org.apache.pekko.cluster.typed.Cluster
 import org.apache.pekko.cluster.typed.Join
 import org.apache.pekko.persistence.jdbc.db.SlickExtension
+import org.apache.pekko.util.Timeout
 import org.slf4j.LoggerFactory
 
 import java.security.SecureRandom
@@ -116,15 +121,37 @@ object AuctionNode {
       clock: Clock,
       newId: () => UUID,
       askTimeout: FiniteDuration,
-      raffle: AuctionRaffle = AuctionRaffle.none
+      raffle: AuctionRaffle = AuctionRaffle.none,
+      slot: AuctionSlot = AuctionSlot.none
   ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] = {
     val lots = AuctionLots.sharded(sharding, askTimeout)
     sharding.init(
       Entity(AuctionEntity.TypeKey) { context =>
-        AuctionEntity(context.entityId, clock, newId, lots, shard = Some(context.shard), raffle = raffle)
+        AuctionEntity(context.entityId, clock, newId, lots, shard = Some(context.shard), raffle = raffle, slot = slot)
       }
         .withSettings(remembered(system))
     )
+  }
+
+  /**
+   * Регистрирует слот торгов сообщества (ADR-047, дополнение 2026-10-12) и отдаёт порт к нему для аукционов. Держателя
+   * слот спрашивает у entity аукциона через тот же шардинг; ссылка на неё берётся в момент вопроса, поэтому слот
+   * регистрируется раньше аукциона. `holderTimeout` — срок ответа держателя, `askTimeout` — срок ответа слота аукциону:
+   * первый короче второго, второй — короче срока команды открытия у шлюза ([[SlotSettings]]).
+   */
+  def registerSlot(
+      sharding: ClusterSharding,
+      clock: Clock,
+      newId: () => UUID,
+      settings: SlotSettings
+  ): AuctionSlot = {
+    val holders: SlotHolders = new SlotHolders {
+      private given Timeout = Timeout(settings.holderTimeout)
+      def busy(auction: AuctionId): Future[Boolean] =
+        sharding.entityRefFor(AuctionEntity.TypeKey, auction.value.toString).ask[Boolean](AuctionEntity.Trading(_))
+    }
+    sharding.init(Entity(TradingSlotEntity.TypeKey)(_ => TradingSlotEntity(clock, newId, holders)))
+    AuctionSlot.sharded(sharding, settings.askTimeout)
   }
 
   /** Запоминание entity в журнале — у аукциона и у розыгрыша: их таймеры обязаны пережить рестарт процесса. */

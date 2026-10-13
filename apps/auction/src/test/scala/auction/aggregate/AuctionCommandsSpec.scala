@@ -7,6 +7,7 @@ import auction.entity.AuctionAnswer
 import auction.entity.AuctionGateway
 import auction.entity.Initiator
 import auction.entity.LotGateway
+import auction.entity.OpeningRejected
 import auction.lot.*
 import auction.lot.LotFixtures.*
 import org.scalatest.concurrent.ScalaFutures
@@ -56,7 +57,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
     }
 
     var scheduleAnswer: Either[ScheduleAuctionRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
-    var startAnswer: Either[StartPrebiddingRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+    var startAnswer: Either[OpeningRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
 
     def schedule(auctionId: AuctionId, command: ScheduleAuction, initiator: Initiator) = {
       commands :+= command
@@ -326,7 +327,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       auctions.commands shouldBe List(ScheduleAuction(configInput(), op(2)), StartPrebidding(op(3)))
     }
 
-    "passes the refusals of the auction through as refusals of scheduling and opening" in {
+    "passes the refusals of the auction and of the trading slot through as refusals of scheduling and opening" in {
       val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
       val commands = AuctionCommands(auctions, noLots, granted)
       auctions.scheduleAnswer = Left(ScheduleAuctionRejected.ConfigInvalid(ConfigInvalid.ClosesAtMissing))
@@ -335,9 +336,15 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       auctions.scheduleAnswer = Left(ScheduleAuctionRejected.AuctionAlreadyStarted)
       commands.schedule(auctionOfMeetup, configInput(), op(3), person).futureValue shouldBe
         Left(SchedulingRefusal.AuctionAlreadyStarted)
-      auctions.startAnswer = Left(StartPrebiddingRejected.AuctionNotScheduled)
+      auctions.startAnswer = Left(OpeningRejected.ByAuction(StartPrebiddingRejected.AuctionNotScheduled))
       commands.startPrebidding(auctionOfMeetup, op(4), person).futureValue shouldBe
         Left(OpeningRefusal.AuctionNotScheduled)
+      val holder = AuctionId(java.util.UUID.fromString("0190f2a0-0000-7000-8000-000000000021"))
+      auctions.startAnswer = Left(OpeningRejected.AnotherAuctionActive(holder))
+      commands.startPrebidding(auctionOfMeetup, op(5), person).futureValue shouldBe
+        Left(OpeningRefusal.AnotherAuctionActive(holder))
+      auctions.startAnswer = Left(OpeningRejected.SlotUnavailable)
+      commands.startPrebidding(auctionOfMeetup, op(6), person).futureValue shouldBe Left(OpeningRefusal.SlotUnavailable)
     }
 
     "answers a discard of an auction without a journal with AuctionNotFound before meetups" in {

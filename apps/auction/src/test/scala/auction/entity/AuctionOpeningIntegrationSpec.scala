@@ -230,7 +230,7 @@ final class AuctionOpeningIntegrationSpec
         val planned = entity.ask[Either[ScheduleAuctionLotRejected, Unit]](
           AuctionEntity.PlanLot(ScheduleAuctionLot(auction.bare, money(900), step, newOp()), operator, _)
         )
-        val started = entity.ask[Either[StartPrebiddingRejected, AuctionAnswer]](
+        val started = entity.ask[Either[OpeningRejected, AuctionAnswer]](
           AuctionEntity.Start(StartPrebidding(newOp()), operator, _)
         )
         planned.futureValue shouldBe Right(())

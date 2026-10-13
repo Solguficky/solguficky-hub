@@ -3,6 +3,7 @@ package auction.entity
 import auction.aggregate.*
 import auction.catalog.LotId
 import auction.lot.AdvanceAskRejected
+import auction.lot.AuctionId
 import auction.lot.CloseLotRejected
 import auction.lot.Envelope
 import auction.lot.LotState
@@ -13,6 +14,7 @@ import auction.lot.ResumeLotRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.UnmarkForFinalRejected
 import auction.lot.WithdrawLotRejected
+import auction.slot.TradingSlotEntity
 import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.Done
 import org.apache.pekko.actor.typed.ActorRef
@@ -31,6 +33,7 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
+import scala.concurrent.Future
 import scala.concurrent.duration.*
 import scala.jdk.DurationConverters.*
 import scala.util.Failure
@@ -43,6 +46,17 @@ import scala.util.Try
 enum AuctionAnswer {
   case Written(envelope: AuctionEnvelope)
   case Unchanged
+}
+
+/**
+ * Отказ открытия торгов у entity: решение агрегата либо ответ слота торгов сообщества (ADR-047, дополнение 2026-10-12).
+ * Слот — не правило агрегата, а соседняя entity, поэтому её ответы живут здесь, а не в `StartPrebiddingRejected`.
+ * `SlotUnavailable` — слот или его держатель не ответили в срок.
+ */
+enum OpeningRejected {
+  case ByAuction(rejected: StartPrebiddingRejected)
+  case AnotherAuctionActive(holder: AuctionId)
+  case SlotUnavailable
 }
 
 /**
@@ -77,6 +91,17 @@ enum AuctionAnswer {
  * Отмена после старта торгов (ADR-047, дополнение 2026-10-12) пишет `AuctionCancelled` и дальше идёт тем же протоколом:
  * каждому лоту реестра — `WithdrawLot`, розыгрышу — отмена, обе с `op_id` от `op_id` отмены и с переспросом на тике и
  * после recovery. Знание «лот ответил» и «розыгрыш ответил» несохраняемо, как знание об открытии.
+ *
+ * Слот торгов сообщества (ADR-047, дополнение 2026-10-12). Принятое открытие entity не пишет сразу, а сначала занимает
+ * слот и решает заново по ответу слота: отдан — пишет `PrebiddingStarted`, занят другим — отказ с его `auction_id`.
+ * Пока ответ слота в пути, открытие «в полёте»: на вопрос слота `Trading` entity отвечает «занят», и вопрос с записью
+ * открытия не перекрываются, потому что entity обрабатывает сообщения по одному. Другие команды в это время не
+ * откладываются — решение по ответу слота принимается по свежему состоянию. Рестарт сбрасывает открытие в полёте вместе
+ * с ответом, которого вызывающий уже не дождётся. Освобождает слот entity сама, когда торгов у неё больше нет
+ * ([[LotRoster.trading]]): в `Finished` и в `Cancelled` после ответа каждого лота на `WithdrawLot`. Освобождение
+ * повторяется на тике переспроса и после recovery, пока слот не подтвердит; знание «слот освобождён» несохраняемо.
+ * Торгующий аукцион ([[LotRoster.holding]]) так же подтверждает слот занятием после recovery и на тике: торги, открытые
+ * до появления слота, иначе отдали бы его второму аукциону.
  *
  * `ScheduleLot`, отметку для финала и её снятие entity передаёт лоту, ничего не записав: условия торгов и отметка живут
  * в журнале лота, а аукцион только решает, можно ли сейчас их менять ([[Auction.decide]]), и для условий подставляет
@@ -133,12 +158,18 @@ object AuctionEntity {
       replyTo: ActorRef[Either[ScheduleAuctionRejected, AuctionAnswer]]
   ) extends Command
 
-  /** Открытие онлайн-торгов. Повтор того же `op_id` события не пишет, но доспрашивает лоты, не ответившие раньше. */
+  /**
+   * Открытие онлайн-торгов. Ответ — после ответа слота и записи события. Повтор того же `op_id` события не пишет, но
+   * доспрашивает лоты, не ответившие раньше.
+   */
   final case class Start(
       command: StartPrebidding,
       initiator: Initiator,
-      replyTo: ActorRef[Either[StartPrebiddingRejected, AuctionAnswer]]
+      replyTo: ActorRef[Either[OpeningRejected, AuctionAnswer]]
   ) extends Command
+
+  /** Вопрос слота держателю: идут ли торги — в том числе открытие в полёте. Ничего не пишет. */
+  final case class Trading(replyTo: ActorRef[Boolean]) extends Command
 
   /**
    * Отмена после старта торгов: событие `AuctionCancelled`. Ответ — после записи; лоты и розыгрыш снимаются после него.
@@ -285,6 +316,24 @@ object AuctionEntity {
   /** Ответ розыгрыша на отмену; неудача — ответа нет, и отмена повторится на тике переспроса. */
   private[entity] final case class RaffleCancelAnswered(answer: Try[Done]) extends Command
 
+  /**
+   * Ответ слота на занятие вместе с командой открытия, которая его ждёт, и номером события аукциона на момент занятия;
+   * неудача — ответа нет.
+   */
+  private[entity] final case class SlotAnswered(
+      command: StartPrebidding,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[OpeningRejected, AuctionAnswer]],
+      sequence: Long,
+      answer: Try[TradingSlotEntity.Claimed]
+  ) extends Command
+
+  /** Ответ слота на подтверждение торгующим аукционом; неудача — ответа нет, и подтверждение повторится на тике. */
+  private[entity] final case class SlotConfirmed(answer: Try[TradingSlotEntity.Claimed]) extends Command
+
+  /** Ответ слота на освобождение; неудача — ответа нет, и освобождение повторится на тике переспроса. */
+  private[entity] final case class SlotReleased(answer: Try[Done]) extends Command
+
   private final case class DeadlineKey(lot: LotId)
 
   private case object RecheckKey
@@ -321,6 +370,8 @@ object AuctionEntity {
    *   серверное время конверта и отсчёт задержки таймера до дедлайна лота
    * @param raffle
    *   розыгрыш аукциона: открытие регистрации после старта торгов
+   * @param slot
+   *   слот торгов сообщества: занятие до открытия торгов и освобождение в конечном состоянии
    */
   def apply(
       auctionId: String,
@@ -330,7 +381,8 @@ object AuctionEntity {
       snapshotEvery: Int = DefaultSnapshotEvery,
       recheckEvery: FiniteDuration = DefaultRecheckEvery,
       shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None,
-      raffle: AuctionRaffle = AuctionRaffle.none
+      raffle: AuctionRaffle = AuctionRaffle.none,
+      slot: AuctionSlot = AuctionSlot.none
   ): Behavior[Command] =
     Behaviors.withTimers[Command] { timers =>
       Behaviors.setup { context =>
@@ -397,6 +449,63 @@ object AuctionEntity {
             case _ => ()
           }
 
+        // Сколько занятий слота в пути: повтор открытия в полёте шлёт своё занятие, и «занят» держится до последнего
+        // ответа. Рестарт начинает с нуля.
+        var claimsInFlight = 0
+
+        // Синхронный отказ порта — идентификатор не UUID — приходит неудачей, а не роняет entity в обработке сообщения.
+        def claimOf(id: String): Future[TradingSlotEntity.Claimed] =
+          Try(slot.claim(id)).fold(Future.failed, answer => answer)
+
+        def claimFor(
+            start: StartPrebidding,
+            initiator: Initiator,
+            replyTo: ActorRef[Either[OpeningRejected, AuctionAnswer]],
+            sequence: Long
+        ): Unit = {
+          claimsInFlight += 1
+          context.pipeToSelf(claimOf(auctionId))(SlotAnswered(start, initiator, replyTo, sequence, _))
+        }
+
+        // Знает ли торгующий аукцион в этой инкарнации, что слот за ним. Торги, открытые до появления слота или до
+        // рестарта, подтверждают его тем же идемпотентным занятием: иначе слот, выложенный поверх идущих торгов, отдал бы
+        // себя второму аукциону.
+        var slotConfirmed = false
+
+        def confirmSlot(auction: Auction): Unit =
+          if (!slotConfirmed && LotRoster.holding(auction.state))
+            context.pipeToSelf(claimOf(auctionId))(SlotConfirmed(_))
+
+        // Подтвердил ли слот освобождение в этой инкарнации; рестарт освобождает снова — освобождение идемпотентно.
+        var slotReleased = false
+
+        def releaseSlot(auction: Auction): Unit =
+          if (!slotReleased && auction.state.started.isDefined && !LotRoster.trading(auction, roster))
+            context.pipeToSelf(Try(slot.release(auctionId)).fold(Future.failed, released => released))(SlotReleased(_))
+
+        def warnSlot(message: String, failure: Throwable): Unit =
+          context.log.warn(
+            message,
+            StructuredArguments.keyValue("auction_id", auctionId),
+            StructuredArguments.keyValue("error_category", "dependency_unavailable"),
+            StructuredArguments.keyValue("error", failure.getClass.getName)
+          )
+
+        def open(
+            auction: Auction,
+            decision: AuctionDecision,
+            start: StartPrebidding,
+            initiator: Initiator,
+            replyTo: ActorRef[Either[OpeningRejected, AuctionAnswer]]
+        ): Effect[StoredAuctionEvent, State] =
+          record(auction, decision, start.opId, initiator, clock, newId) { (after, answer) =>
+            replyTo ! Right(answer)
+            if (LotRoster.holding(after.state)) slotConfirmed = true
+            follow(LotRoster.started(after, roster, decision))
+            openRaffle(after)
+            armPrebidding(after)
+          }
+
         // Ожидаемый отказ зависимости: лот не ответил в срок. Сообщение исключения в запись не идёт — только его класс.
         def logUnanswered(lot: LotId, failure: Throwable): Unit =
           context.log.warn(
@@ -434,15 +543,59 @@ object AuctionEntity {
           command match {
             case Start(start, initiator, replyTo) =>
               Auction.decide(state.auction, start) match {
-                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
-                case Right(decision) =>
-                  record(state.auction, decision, start.opId, initiator, clock, newId) { (auction, answer) =>
-                    replyTo ! Right(answer)
-                    follow(LotRoster.started(auction, roster, decision))
-                    openRaffle(auction)
-                    armPrebidding(auction)
+                case Left(rejected) => Effect.reply(replyTo)(Left(OpeningRejected.ByAuction(rejected)))
+                // Принятое открытие сначала занимает слот: событие пишется только по его ответу.
+                case Right(AuctionDecision.Accepted(_)) =>
+                  Effect.none.thenRun(_ => claimFor(start, initiator, replyTo, state.sequence))
+                case Right(decision) => open(state.auction, decision, start, initiator, replyTo)
+              }
+            case SlotAnswered(start, initiator, replyTo, sequence, answer) =>
+              claimsInFlight -= 1
+              answer match {
+                case Success(TradingSlotEntity.Claimed.Granted) =>
+                  Auction.decide(state.auction, start) match {
+                    case Left(rejected) => Effect.reply(replyTo)(Left(OpeningRejected.ByAuction(rejected)))
+                    // Пока ответ слота был в пути, аукцион записал другие события — удаление и новое включение, новое
+                    // планирование. Решение о старте принималось о прежнем аукционе, поэтому слот спрашивается заново.
+                    case Right(AuctionDecision.Accepted(_)) if sequence != state.sequence =>
+                      Effect.none.thenRun(_ => claimFor(start, initiator, replyTo, state.sequence))
+                    case Right(decision) => open(state.auction, decision, start, initiator, replyTo)
+                  }
+                case Success(TradingSlotEntity.Claimed.Taken(holder)) =>
+                  Effect.reply(replyTo)(Left(OpeningRejected.AnotherAuctionActive(holder)))
+                case Success(TradingSlotEntity.Claimed.Unavailable) =>
+                  Effect.reply(replyTo)(Left(OpeningRejected.SlotUnavailable))
+                case Failure(failure) =>
+                  Effect.none.thenRun { _ =>
+                    warnSlot("trading slot did not answer the opening", failure)
+                    replyTo ! Left(OpeningRejected.SlotUnavailable)
                   }
               }
+            case Trading(replyTo) =>
+              Effect.reply(replyTo)(claimsInFlight > 0 || LotRoster.trading(state.auction, roster))
+            case SlotConfirmed(Success(TradingSlotEntity.Claimed.Granted)) =>
+              slotConfirmed = true
+              Effect.none
+            // Слот у другого торгующего аукциона: два аукциона торговали до появления слота. Отнять торги у одного из них
+            // слот не может, и запись об этом — одна на инкарнацию.
+            case SlotConfirmed(Success(TradingSlotEntity.Claimed.Taken(holder))) =>
+              slotConfirmed = true
+              Effect.none.thenRun { _ =>
+                context.log.warn(
+                  "trading slot is held by another trading auction",
+                  StructuredArguments.keyValue("auction_id", auctionId),
+                  StructuredArguments.keyValue("holder_id", holder.value.toString),
+                  StructuredArguments.keyValue("error_category", "unexpected")
+                )
+              }
+            case SlotConfirmed(Success(TradingSlotEntity.Claimed.Unavailable)) => Effect.none
+            case SlotConfirmed(Failure(failure)) =>
+              Effect.none.thenRun(_ => warnSlot("trading slot did not answer the confirmation", failure))
+            case SlotReleased(Success(_)) =>
+              slotReleased = true
+              Effect.none
+            case SlotReleased(Failure(failure)) =>
+              Effect.none.thenRun(_ => warnSlot("trading slot did not answer the release", failure))
             case Cancel(cancel, initiator, replyTo) =>
               Auction.decide(state.auction, cancel, LotRoster.lineup(state.auction, roster)) match {
                 case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
@@ -452,10 +605,14 @@ object AuctionEntity {
                     timers.cancel(PrebiddingKey)
                     follow(LotRoster.cancelled(auction, roster, decision))
                     cancelRaffle(auction)
+                    releaseSlot(auction)
                   }
               }
             case LotWithdrew(lot, Success(answer)) =>
-              Effect.none.thenRun(_ => roster = LotRoster.withdrawn(roster, lot, answer))
+              Effect.none.thenRun { after =>
+                roster = LotRoster.withdrawn(roster, lot, answer)
+                releaseSlot(after.auction)
+              }
             case LotWithdrew(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
             case RaffleCancelAnswered(Success(_)) =>
               raffleCancelled = true
@@ -491,6 +648,8 @@ object AuctionEntity {
                     follow(LotRoster.recheck(after.auction, roster))
                     openRaffle(after.auction)
                     cancelRaffle(after.auction)
+                    confirmSlot(after.auction)
+                    releaseSlot(after.auction)
                 }
               }
             case PrebiddingDue =>
@@ -517,7 +676,9 @@ object AuctionEntity {
                   Auction.decide(state.auction, end) match {
                     case Left(EndSettlingRejected.NotSettling) => Effect.none
                     case Right(decision) =>
-                      record(state.auction, decision, end.opId, Initiator.Scheduler, clock, newId)((_, _) => ())
+                      record(state.auction, decision, end.opId, Initiator.Scheduler, clock, newId) { (auction, _) =>
+                        releaseSlot(auction)
+                      }
                   }
               }
             case Freeze(freeze, initiator, replyTo) =>
@@ -605,7 +766,9 @@ object AuctionEntity {
                   Auction.decide(state.auction, finish, LotRoster.lineup(state.auction, roster)) match {
                     case Left(_) => Effect.none
                     case Right(decision) =>
-                      record(state.auction, decision, finish.opId, Initiator.Scheduler, clock, newId)((_, _) => ())
+                      record(state.auction, decision, finish.opId, Initiator.Scheduler, clock, newId) { (auction, _) =>
+                        releaseSlot(auction)
+                      }
                   }
               }
             case RaffleAnswered(Success(_)) =>
@@ -702,6 +865,8 @@ object AuctionEntity {
             follow(LotRoster.survey(state.auction))
             openRaffle(state.auction)
             cancelRaffle(state.auction)
+            confirmSlot(state.auction)
+            releaseSlot(state.auction)
             armPrebidding(state.auction)
           }
       }
