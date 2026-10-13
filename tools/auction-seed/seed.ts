@@ -151,7 +151,7 @@ export async function seedAuction(
         lotId,
         opId: newId(),
         startingPrice: rub(lot.startingPriceRubles),
-        step: rub(lot.stepRubles),
+        stepPolicy: { kind: "fixed", step: rub(lot.stepRubles) },
       }),
     );
     seeded.push({ title: lot.title, lotId });

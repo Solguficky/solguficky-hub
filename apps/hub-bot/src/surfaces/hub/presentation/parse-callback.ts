@@ -8,6 +8,7 @@ import type {
   CloseQuote,
   ConsoleSort,
   FormField,
+  LotStepMode,
   LotTextField,
   WindowRef,
 } from "../application/types.js";
@@ -268,6 +269,9 @@ type PlainAction =
   | { kind: "lot-new"; auction: string }
   | { kind: "lot-form"; lot: string }
   | { kind: "lot-ask"; lot: string; field: LotFormField }
+  // Выбор способа шага (PER-491): цена и режим едут в кнопке, чтобы рестарт
+  // не терял цену.
+  | { kind: "lot-step-mode"; lot: string; price: number; mode: LotStepMode }
   // «Глазами участника» на экране правки (PER-512): карточка лота без кнопок.
   | { kind: "lot-view"; lot: string }
   // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
@@ -461,7 +465,7 @@ export type QuestionStep =
   | { kind: "lot-new"; auction: string; key: string }
   | { kind: "lot-text"; lot: string; field: LotTextField }
   | { kind: "lot-price"; lot: string }
-  | { kind: "lot-step"; lot: string; price: number }
+  | { kind: "lot-step"; lot: string; price: number; mode: LotStepMode }
   | { kind: "lot-image"; lot: string }
   // Сроки онлайн-недели на пульте (PER-320): аукцион, а финал и текущие сроки
   // ответ читает у Auction заново.
@@ -487,6 +491,8 @@ const RublesSchema = z
   .string()
   .regex(/^[1-9]\d{0,6}$/)
   .transform(Number);
+// Способ шага в кнопке выбора (PER-491): один шаг или пороги.
+const LotStepModeSchema = z.enum(["single", "tiered"]);
 
 /** Данные кнопки «Добавить лот» в ленте аукциона; аргумент — токен аукциона. */
 export function lotNewData(auction: string): string {
@@ -506,6 +512,18 @@ export function lotPreviewData(lot: string): string {
 /** Данные кнопки ряда на экране правки лота. */
 export function lotAskData(lot: string, field: LotFormField): string {
   return `v1:lot:ask:${lot}:${field}`;
+}
+
+/**
+ * Данные кнопки выбора способа шага (PER-491). Цена едет в кнопке: вопрос о
+ * шаге задаётся после неё, и рестарт между ними не должен её терять.
+ */
+export function lotStepModeData(
+  lot: string,
+  price: number,
+  mode: LotStepMode,
+): string {
+  return `v1:lot:sm:${lot}:${price}:${mode}`;
 }
 
 // Кнопки пульта аукциона: `v1:ac:<действие>:<аукцион>[:…]`. Самая длинная —
@@ -690,7 +708,8 @@ function stepData(step: QuestionStep): string {
     case "lot-price":
       return `v1:q:lp:${step.lot}`;
     case "lot-step":
-      return `v1:q:ls:${step.lot}:${step.price}`;
+      // `ls` — один шаг, `ly` — пороги: способ восстанавливается из кнопки.
+      return `v1:q:${step.mode === "single" ? "ls" : "ly"}:${step.lot}:${step.price}`;
     case "lot-image":
       return `v1:q:li:${step.lot}`;
     case "console-week":
@@ -1103,6 +1122,18 @@ function parseLot(parts: readonly string[]): CallbackAction {
       ? { kind: "lot-ask", lot: token.data, field: field.data }
       : { kind: "malformed" };
   }
+  if (parts.length === 6 && parts[2] === "sm") {
+    const price = RublesSchema.safeParse(parts[4]);
+    const mode = LotStepModeSchema.safeParse(parts[5]);
+    return price.success && mode.success
+      ? {
+          kind: "lot-step-mode",
+          lot: token.data,
+          price: price.data,
+          mode: mode.data,
+        }
+      : { kind: "malformed" };
+  }
   return { kind: "malformed" };
 }
 
@@ -1344,10 +1375,15 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
       ? { kind: "lot-new", auction: token.data, key: key.data }
       : undefined;
   }
-  if (parts[2] === "ls") {
+  if (parts[2] === "ls" || parts[2] === "ly") {
     const price = RublesSchema.safeParse(parts[4]);
     return price.success
-      ? { kind: "lot-step", lot: token.data, price: price.data }
+      ? {
+          kind: "lot-step",
+          lot: token.data,
+          price: price.data,
+          mode: parts[2] === "ls" ? "single" : "tiered",
+        }
       : undefined;
   }
   if (parts[2] === "fa") {

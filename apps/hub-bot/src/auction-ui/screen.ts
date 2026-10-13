@@ -10,6 +10,7 @@ import type {
   OwnDisplayName,
   ProxyLimitRefusal,
   RaffleView,
+  StepTierView,
   StepWindowView,
 } from "./ports.js";
 
@@ -74,6 +75,9 @@ export type AuctionBlock =
       card?: LotCardView;
       nextPrice?: Money;
       fixedStep?: Money;
+      // Пороги шага, когда он задан по цене (PER-491): объявленные условия
+      // лота, а не вычисленная сетка.
+      tiers?: readonly StepTierView[];
       // Обычный шаг при текущей цене и окна «Счастливых часов» (PER-505):
       // действующее — с шагом в силе, будущее — только то, что снизит шаг
       // при текущей цене.

@@ -273,6 +273,7 @@ import {
   lotRefusalText,
   lotSavedNote,
   lotSavedScreen,
+  lotStepModeScreen,
   toLot,
   toLots,
 } from "./screens/lot-form.js";
@@ -2064,7 +2065,8 @@ async function handleCallback(
     if (
       action.kind === "lot-new" ||
       action.kind === "lot-form" ||
-      action.kind === "lot-ask"
+      action.kind === "lot-ask" ||
+      action.kind === "lot-step-mode"
     ) {
       outcome = canManageMeetups(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
@@ -5753,7 +5755,10 @@ async function handleLotFormCallback(
   runtime: BotRuntime,
   questions: Map<string, PendingInput>,
   person: Person,
-  action: Extract<CallbackAction, { kind: "lot-new" | "lot-form" | "lot-ask" }>,
+  action: Extract<
+    CallbackAction,
+    { kind: "lot-new" | "lot-form" | "lot-ask" | "lot-step-mode" }
+  >,
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "manage_lot";
   const sent = (message: string): BoundaryOutcome => ({
@@ -5773,6 +5778,8 @@ async function handleLotFormCallback(
     });
     return sent("lot title requested");
   }
+  // Способ шага выбран (PER-491): цена уже принята и едет в кнопке, поэтому
+  // лот читать не нужно — спрашивается сам шаг.
   const lotId = tokenToUuid(action.lot);
   const result = await runtime.dispatcher.execute({
     identity: person,
@@ -5789,6 +5796,28 @@ async function handleLotFormCallback(
   if (action.kind === "lot-form") {
     await showScreen(ctx, lotFormScreen(result.lot));
     return sent("lot form sent");
+  }
+  // Способ шага выбран (PER-491): цена едет в кнопке. Условия могли замерзнуть
+  // между ценой и этим нажатием — отказ приходит здесь, до вопроса, а не после
+  // ответа, как у ряда цены.
+  if (action.kind === "lot-step-mode") {
+    if (result.lot.terms.kind === "closed") {
+      return showLotFailure(
+        ctx,
+        { kind: "lot-refused", reason: "terms-closed", lotId },
+        { person },
+      );
+    }
+    await askLotQuestion(ctx, questions, {
+      question: {
+        kind: "step",
+        lotId,
+        priceRubles: action.price,
+        mode: action.mode,
+      },
+      lot: result.lot,
+    });
+    return sent("lot step requested");
   }
   // Ряд цены на экране правки стоит, пока условия открыты; старая кнопка под
   // лотом в торгах получает отказ до вопроса, а не после двух ответов.
@@ -5955,6 +5984,7 @@ function lotAnswerRequest(
         intent: "set-lot-terms",
         lotId: question.lotId,
         priceRubles: question.priceRubles,
+        mode: question.mode,
         value,
         opId: createUuidV7(),
       };
@@ -5989,6 +6019,12 @@ async function renderLotAnswer(
         : lotSavedScreen(result.lot, lotSavedNote[result.saved]),
     );
     return handled("lot form answer saved");
+  }
+  // Цена принята — спрашивается способ шага (PER-491) отдельным экраном:
+  // вопрос о шаге предполагает текст, а способ — выбор кнопкой.
+  if (result.kind === "lot-step-mode") {
+    await showScreen(ctx, lotStepModeScreen(result.lot, result.priceRubles));
+    return handled("lot step mode requested");
   }
   if (result.kind === "lot-ask") {
     await askLotQuestion(ctx, questions, {
@@ -8079,7 +8115,12 @@ function lotStepOf(question: LotQuestion): QuestionStep {
     case "price":
       return { kind: "lot-price", lot };
     case "step":
-      return { kind: "lot-step", lot, price: question.priceRubles };
+      return {
+        kind: "lot-step",
+        lot,
+        price: question.priceRubles,
+        mode: question.mode,
+      };
     case "image":
       return { kind: "lot-image", lot };
     default: {
@@ -8106,7 +8147,12 @@ function lotQuestionOf(
     case "lot-price":
       return { kind: "price", lotId };
     case "lot-step":
-      return { kind: "step", lotId, priceRubles: step.price };
+      return {
+        kind: "step",
+        lotId,
+        priceRubles: step.price,
+        mode: step.mode,
+      };
     case "lot-image":
       return { kind: "image", lotId };
     default: {
@@ -8691,6 +8737,7 @@ function callbackUseCase(
     | "lot-form"
     | "lot-view"
     | "lot-ask"
+    | "lot-step-mode"
     | "console-view"
     | "console-week"
     | "console-raffle"
@@ -8844,6 +8891,7 @@ function callbackUseCase(
     case "lot-form":
     case "lot-view":
     case "lot-ask":
+    case "lot-step-mode":
       return "manage_lot";
     case "console-view":
     case "console-week":

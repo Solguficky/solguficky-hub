@@ -9,7 +9,12 @@ import type {
   LotTermsView,
 } from "../../application/types.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { lotAskData, lotFormData, lotPreviewData } from "../parse-callback.js";
+import {
+  lotAskData,
+  lotFormData,
+  lotPreviewData,
+  lotStepModeData,
+} from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
 import {
   escapeHtml,
@@ -62,6 +67,22 @@ export const lotSavedNote: Record<
   image: "Фото сохранено.",
 };
 
+function stepTermsLines(
+  terms: Extract<LotTermsView, { kind: "set" }>,
+): string[] {
+  if (terms.tiers !== undefined) {
+    return [
+      "Шаг по порогам:",
+      ...terms.tiers.map(
+        (tier) => `от ${money(tier.lowerBound)} — ${money(tier.step)}`,
+      ),
+    ];
+  }
+  return [
+    `Шаг: ${terms.step === undefined ? "зависит от цены" : money(terms.step)}`,
+  ];
+}
+
 function termsLines(terms: LotTermsView): string[] {
   switch (terms.kind) {
     case "unset":
@@ -69,8 +90,7 @@ function termsLines(terms: LotTermsView): string[] {
     case "set":
       return [
         `Стартовая цена: ${money(terms.startingPrice)}`,
-        // Шаг по сетке цен форма не задаёт и не пересказывает.
-        `Шаг: ${terms.step === undefined ? "зависит от цены" : money(terms.step)}`,
+        ...stepTermsLines(terms),
       ];
     case "closed":
       return ["Торги по лоту начались: цену и шаг изменить нельзя."];
@@ -79,6 +99,41 @@ function termsLines(terms: LotTermsView): string[] {
       return _exhaustive;
     }
   }
+}
+
+/**
+ * Экран выбора способа шага (PER-491): цена уже принята, шаг ещё нет. Кнопка
+ * несёт цену, чтобы вопрос о шаге задавался и после рестарта.
+ */
+export function lotStepModeScreen(
+  lot: LotFormView,
+  priceRubles: number,
+): ShownScreen {
+  const token = uuidToToken(lot.lotId);
+  // Бинарная пара выбора — одним рядом (дизайн-код, «Клавиатура»).
+  const keyboard = new InlineKeyboard()
+    .text("Один шаг", lotStepModeData(token, priceRubles, "single"))
+    .text("По порогам", lotStepModeData(token, priceRubles, "tiered"));
+  return {
+    id: "lot-step-mode",
+    text: screenText(
+      "Шаг ставки",
+      [
+        `Стартовая цена: ${rublesOf(priceRubles)}.`,
+        "Как задать шаг?",
+        "Один шаг — на столько поднимается ставка при любой цене.",
+        "По порогам — шаг растёт вместе с ценой.",
+      ]
+        .map(escapeHtml)
+        .join("\n"),
+    ),
+    // Возврат — в форму лота, а не на карточку: сюда человек попал из неё.
+    keyboard: withNav(keyboard, {
+      name: "Изменить лот",
+      data: lotFormData(token),
+    }),
+    format: "HTML",
+  };
 }
 
 /**
@@ -138,7 +193,10 @@ const lotAskErrors: Record<LotAskError, string> = {
   "empty-description": "Описание не может быть пустым.",
   "amount-format": "Нужно целое число рублей. Только цифры, без копеек.",
   "amount-range": "Сумма — от 1 до 9 999 999 рублей.",
-  "step-refused": "Такой шаг аукцион не принимает. Пришли другой.",
+  "step-format":
+    "Порог — строка «от суммы — шаг», целыми рублями. Например: 0 — 100.",
+  "step-order": "Пороги идут по возрастанию, и первый начинается с 0.",
+  "step-refused": "Аукцион отклонил такой шаг. Проверь шаг и пришли заново.",
   "image-too-large": "Фото слишком большое, аукцион его не принял.",
   "unsupported-image": "Аукцион не узнал в этом файле изображение.",
   "photo-needed": "Нужна фотография, а не текст, файл или стикер.",
@@ -184,7 +242,9 @@ function prompt(question: LotQuestion): string {
     case "price":
       return "Стартовая цена в рублях, целым числом. Например: 1500";
     case "step":
-      return "Шаг ставки в рублях, целым числом: на столько новая ставка обязана быть выше текущей цены. Например: 100";
+      return question.mode === "single"
+        ? "Шаг ставки в рублях, целым числом: на столько новая ставка обязана быть выше текущей цены. Например: 100"
+        : "Пороги шага строками «от суммы — шаг». Первый — от 0, дальше границы возрастают, шаг растёт. Например:\n0 — 100\n5000 — 250";
     case "image":
       return "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота.";
     default: {
@@ -216,9 +276,14 @@ function current(
         ? money(lot.terms.startingPrice)
         : undefined;
     case "step":
-      return lot.terms.kind === "set" && lot.terms.step !== undefined
-        ? money(lot.terms.step)
-        : undefined;
+      if (lot.terms.kind !== "set") return undefined;
+      return lot.terms.tiers !== undefined
+        ? lot.terms.tiers
+            .map((tier) => `от ${money(tier.lowerBound)} — ${money(tier.step)}`)
+            .join(", ")
+        : lot.terms.step === undefined
+          ? undefined
+          : money(lot.terms.step);
     case "image":
       return lot.hasImage ? "фото есть, новое его заменит" : "нет";
     default: {

@@ -79,6 +79,7 @@ export type {
   RaffleTicketView,
   RaffleView,
   ResolvedIdentity,
+  StepTierView,
   StepWindowView,
   TelegramUser,
   TradingPhase,

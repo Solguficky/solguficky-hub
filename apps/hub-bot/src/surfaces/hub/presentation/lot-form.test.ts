@@ -153,7 +153,9 @@ function fakeAuction(
       if (lot === undefined) return { kind: "lot-not-in-auction" };
       lots.set(terms.lotId, {
         ...lot,
-        fixedStep: terms.step,
+        ...(terms.stepPolicy.kind === "fixed"
+          ? { fixedStep: terms.stepPolicy.step }
+          : { tiers: terms.stepPolicy.tiers }),
         status: { kind: "scheduled", startingPrice: terms.startingPrice },
       });
       return { kind: "ok" };
@@ -583,13 +585,22 @@ describe("lot form", () => {
     await next(() => press(`v1:lot:ask:${uuidToToken(lotId)}:price`));
     await next((history) => answer(history, "1 500"));
 
-    // Цена ушла в кнопку вопроса о шаге, а не в память и не в Auction.
+    // Цена ушла в кнопку выбора способа шага, а не в память и не в Auction.
+    const mode = last(calls);
+    expect(labels(mode)).toEqual([
+      ["Один шаг", "По порогам"],
+      ["‹ Изменить лот"],
+    ]);
+    expect(plain(mode)).toContain("Как задать шаг?");
+    expect(auction.methods()).toEqual(["createLotCard", "addLot"]);
+
+    // Способ едет в кнопке: вопрос о шаге задаётся и после рестарта.
+    await next((history) => press(dataOf(last(history), "Один шаг")));
     const step = question(calls).payload;
     expect(dataOf(step, "Отмена")).toBe(
       `v1:q:ls:${uuidToToken(lotId)}:1500:42`,
     );
-    expect(step.text).toContain("Стартовая цена: 1 500 ₽.");
-    expect(auction.methods()).toEqual(["createLotCard", "addLot"]);
+    expect(step.text).toContain("Шаг ставки в рублях");
 
     await next((history) => answer(history, "100"));
 
@@ -600,7 +611,7 @@ describe("lot form", () => {
         lotId,
         opId: expect.any(String),
         startingPrice: rub(150_000),
-        step: rub(10_000),
+        stepPolicy: { kind: "fixed", step: rub(10_000) },
       },
     });
     const form = last(calls);
@@ -675,6 +686,8 @@ describe("lot form", () => {
     expect(dataOf(again, "Отмена")).toBe(`v1:q:lp:${lot}:42`);
 
     await bot.handleUpdate(answer(calls, "700"));
+    // Цена принята: способ шага выбирается кнопкой (PER-491).
+    await bot.handleUpdate(press(dataOf(last(calls), "Один шаг")));
     await bot.handleUpdate(answer(calls, "0"));
 
     // «Ввести заново» после шага ведёт к вопросу о цене с начала цепочки.
@@ -767,6 +780,7 @@ describe("lot form", () => {
       press(`v1:lot:ask:${uuidToToken(existingLot)}:price`),
     );
     await bot.handleUpdate(answer(calls, "700"));
+    await bot.handleUpdate(press(dataOf(last(calls), "Один шаг")));
     await bot.handleUpdate(answer(calls, "50"));
 
     const refusal = last(calls);

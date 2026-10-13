@@ -196,6 +196,7 @@ function lotBlock(
     ...(lot.card === undefined ? {} : { card: lot.card }),
     ...(lot.nextPrice === undefined ? {} : { nextPrice: lot.nextPrice }),
     ...(lot.fixedStep === undefined ? {} : { fixedStep: lot.fixedStep }),
+    ...(lot.tiers === undefined ? {} : { tiers: lot.tiers }),
     ...(lot.baseStep === undefined ? {} : { baseStep: lot.baseStep }),
     ...(lot.activeWindow === undefined
       ? {}

@@ -6,6 +6,8 @@ import {
   type Money,
   MoneySchema,
   StepPolicySchema,
+  StepTierSchema,
+  TieredStepsSchema,
   UnsoldReason,
   WithdrawnReason,
 } from "../../../gen/auction/v1/auction_pb.js";
@@ -161,6 +163,42 @@ describe("lotViewOf", () => {
       minorUnits: 5_000,
       currency: "RUB",
     });
+
+    const tiered = create(LotSnapshotSchema, {
+      id: "lot-1",
+      auctionId: "auc-1",
+      version: 1n,
+      config: create(LotConfigSchema, {
+        currency: "RUB",
+        stepPolicy: create(StepPolicySchema, {
+          policy: {
+            case: "tiered",
+            value: create(TieredStepsSchema, {
+              tiers: [
+                create(StepTierSchema, { lowerBound: rub(0n), step: rub(10n) }),
+                create(StepTierSchema, {
+                  lowerBound: rub(500n),
+                  step: rub(25n),
+                }),
+              ],
+            }),
+          },
+        }),
+      }),
+      status: { case: "unsold", value: UnsoldReason.NO_BIDS },
+    });
+    const view = lotViewOf(tiered);
+    expect(view.fixedStep).toBeUndefined();
+    expect(view.tiers).toEqual([
+      {
+        lowerBound: { minorUnits: 0, currency: "RUB" },
+        step: { minorUnits: 1_000, currency: "RUB" },
+      },
+      {
+        lowerBound: { minorUnits: 50_000, currency: "RUB" },
+        step: { minorUnits: 2_500, currency: "RUB" },
+      },
+    ]);
   });
 
   // «Счастливые часы» (PER-505): обычный шаг и оба окна снимка доходят до

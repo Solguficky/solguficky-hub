@@ -1,6 +1,7 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import {
   LotPhase,
+  type StepTier,
   type Money as WireMoney,
 } from "../../../gen/auction/v1/auction_pb.js";
 import type {
@@ -11,6 +12,7 @@ import type {
   LotStatusView,
   LotView,
   Money,
+  StepTierView,
   StepWindowView,
 } from "../../auction-ui/index.js";
 
@@ -57,6 +59,7 @@ export function lotViewOf(snapshot: LotSnapshot): LotView {
       ? {}
       : { nextPrice: moneyOf(snapshot.nextPrice) }),
     ...(step?.case === "fixed" ? { fixedStep: moneyOf(step.value) } : {}),
+    ...(step?.case === "tiered" ? { tiers: step.value.tiers.map(tierOf) } : {}),
     ...(snapshot.baseStep === undefined
       ? {}
       : { baseStep: moneyOf(snapshot.baseStep) }),
@@ -130,6 +133,11 @@ function statusOf(status: LotSnapshot["status"]): LotStatusView {
       return _exhaustive;
     }
   }
+}
+
+// Порог без границы или шага — дефект соседа: показать порог без суммы нельзя.
+function tierOf(tier: StepTier): StepTierView {
+  return { lowerBound: required(tier.lowerBound), step: required(tier.step) };
 }
 
 // Окно без шага — дефект соседа: показать сниженный шаг без суммы нельзя.

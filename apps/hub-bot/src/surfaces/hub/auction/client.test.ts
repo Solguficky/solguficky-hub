@@ -349,7 +349,10 @@ describe("auction adapter of the lot form", () => {
         lotId,
         opId,
         startingPrice: { minorUnits: 150_000, currency: "RUB" },
-        step: { minorUnits: 10_000, currency: "RUB" },
+        stepPolicy: {
+          kind: "fixed",
+          step: { minorUnits: 10_000, currency: "RUB" },
+        },
       }),
     ).resolves.toEqual({ kind: "ok" });
     expect(scheduleLot).toHaveBeenCalledWith(
@@ -391,7 +394,10 @@ describe("auction adapter of the lot form", () => {
           lotId,
           opId,
           startingPrice: { minorUnits: 100, currency: "RUB" },
-          step: { minorUnits: 100, currency: "RUB" },
+          stepPolicy: {
+            kind: "fixed",
+            step: { minorUnits: 100, currency: "RUB" },
+          },
         }),
       ).resolves.toEqual({ kind });
     },
@@ -412,7 +418,10 @@ describe("auction adapter of the lot form", () => {
         lotId,
         opId,
         startingPrice: { minorUnits: 100, currency: "RUB" },
-        step: { minorUnits: 100, currency: "RUB" },
+        stepPolicy: {
+          kind: "fixed",
+          step: { minorUnits: 100, currency: "RUB" },
+        },
       }),
     ).resolves.toMatchObject({ kind: "invalid" });
   });
@@ -435,7 +444,10 @@ describe("auction adapter of the lot form", () => {
         lotId,
         opId,
         startingPrice: { minorUnits: 100, currency: "RUB" },
-        step: { minorUnits: 100, currency: "RUB" },
+        stepPolicy: {
+          kind: "fixed",
+          step: { minorUnits: 100, currency: "RUB" },
+        },
       }),
     ).resolves.toMatchObject({ kind: "invalid" });
   });

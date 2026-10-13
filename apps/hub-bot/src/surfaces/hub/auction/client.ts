@@ -1,9 +1,11 @@
+import type { MessageInitShape } from "@bufbuild/protobuf";
 import type { Client } from "@connectrpc/connect";
 import { Code, ConnectError, createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
+import type { StepPolicySchema } from "../../../../gen/auction/v1/auction_pb.js";
 import type { AuctionSnapshot } from "../../../../gen/auction/v1/auction_service_pb.js";
 import {
   AuctionListing,
@@ -57,6 +59,7 @@ import {
   type LotAdministration,
   type LotCardResult,
   type LotStatisticsReadResult,
+  type LotStepPolicyInput,
   type MeetupAuctions,
   type ScheduleAuctionResult,
   type ScheduleLotResult,
@@ -334,9 +337,7 @@ export function createAuctionAdapter(
             lotId: terms.lotId,
             opId: terms.opId,
             startingPrice: wireMoney(terms.startingPrice),
-            stepPolicy: {
-              policy: { case: "fixed", value: wireMoney(terms.step) },
-            },
+            stepPolicy: stepPolicyWire(terms.stepPolicy),
           },
           options(meta),
         );
@@ -931,6 +932,25 @@ function addLotResult(
       return _exhaustive;
     }
   }
+}
+
+// Условия шага в форму сообщения: один шаг — `fixed`, пороги — `tiered`.
+function stepPolicyWire(
+  policy: LotStepPolicyInput,
+): MessageInitShape<typeof StepPolicySchema> {
+  return policy.kind === "fixed"
+    ? { policy: { case: "fixed", value: wireMoney(policy.step) } }
+    : {
+        policy: {
+          case: "tiered",
+          value: {
+            tiers: policy.tiers.map((tier) => ({
+              lowerBound: wireMoney(tier.lowerBound),
+              step: wireMoney(tier.step),
+            })),
+          },
+        },
+      };
 }
 
 function scheduleLotResult(

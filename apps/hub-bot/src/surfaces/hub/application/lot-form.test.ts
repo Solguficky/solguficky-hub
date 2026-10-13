@@ -620,8 +620,8 @@ describe("lot form", () => {
         value: "1 500",
       }),
     ).resolves.toMatchObject({
-      kind: "lot-ask",
-      question: { kind: "step", lotId, priceRubles: 1500 },
+      kind: "lot-step-mode",
+      priceRubles: 1500,
     });
     await expect(
       dispatcher.execute({
@@ -646,6 +646,7 @@ describe("lot form", () => {
       intent: "set-lot-terms",
       lotId,
       priceRubles: 1500,
+      mode: "single",
       value: "100",
       opId,
     });
@@ -657,7 +658,10 @@ describe("lot form", () => {
         lotId,
         opId,
         startingPrice: { minorUnits: 150_000, currency: "RUB" },
-        step: { minorUnits: 10_000, currency: "RUB" },
+        stepPolicy: {
+          kind: "fixed",
+          step: { minorUnits: 10_000, currency: "RUB" },
+        },
       },
     });
     expect(result).toMatchObject({
@@ -673,6 +677,101 @@ describe("lot form", () => {
     });
   });
 
+  it("sends thresholds to Auction as a tiered policy and shows them on the lot", async () => {
+    const { dispatcher, calls } = fakeLots();
+    const tiers = [
+      {
+        lowerBound: { minorUnits: 0, currency: "RUB" },
+        step: { minorUnits: 10_000, currency: "RUB" },
+      },
+      {
+        lowerBound: { minorUnits: 500_000, currency: "RUB" },
+        step: { minorUnits: 25_000, currency: "RUB" },
+      },
+      {
+        lowerBound: { minorUnits: 2_000_000, currency: "RUB" },
+        step: { minorUnits: 50_000, currency: "RUB" },
+      },
+    ];
+
+    const result = await dispatcher.execute({
+      identity: admin,
+      intent: "set-lot-terms",
+      lotId,
+      priceRubles: 1000,
+      mode: "tiered",
+      value: "0 — 100\n5000 — 250\n20000 — 500",
+      opId,
+    });
+
+    expect(calls.at(-1)).toEqual({
+      method: "scheduleLot",
+      args: {
+        auctionId,
+        lotId,
+        opId,
+        startingPrice: { minorUnits: 100_000, currency: "RUB" },
+        stepPolicy: { kind: "tiered", tiers },
+      },
+    });
+    expect(result).toMatchObject({
+      kind: "lot-form",
+      lot: {
+        terms: {
+          kind: "set",
+          startingPrice: { minorUnits: 100_000, currency: "RUB" },
+          tiers,
+        },
+      },
+      saved: "terms",
+    });
+  });
+
+  it("refuses thresholds that do not start at zero or do not ascend", async () => {
+    const { dispatcher, methods } = fakeLots();
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "set-lot-terms",
+        lotId,
+        priceRubles: 1000,
+        mode: "tiered",
+        value: "100 — 10\n0 — 20",
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "lot-ask", error: "step-order" });
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "set-lot-terms",
+        lotId,
+        priceRubles: 1000,
+        mode: "tiered",
+        value: "0 — 10\n5000 — 20\n3000 — 30",
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "lot-ask", error: "step-order" });
+    expect(methods()).toEqual(["getLot", "getLot"]);
+  });
+
+  it("refuses a threshold line without a dash separator", async () => {
+    const { dispatcher, methods } = fakeLots();
+
+    await expect(
+      dispatcher.execute({
+        identity: admin,
+        intent: "set-lot-terms",
+        lotId,
+        priceRubles: 1000,
+        mode: "tiered",
+        value: "0 100",
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "lot-ask", error: "step-format" });
+    expect(methods()).toEqual(["getLot"]);
+  });
+
   it("asks the step again with the same price when it is not a number and sends no command", async () => {
     const { dispatcher, methods } = fakeLots();
 
@@ -682,6 +781,7 @@ describe("lot form", () => {
         intent: "set-lot-terms",
         lotId,
         priceRubles: 1500,
+        mode: "single",
         value: "0",
         opId,
       }),
@@ -707,6 +807,7 @@ describe("lot form", () => {
         intent: "set-lot-terms",
         lotId,
         priceRubles: 1500,
+        mode: "single",
         value: "100",
         opId,
       }),
@@ -724,6 +825,7 @@ describe("lot form", () => {
         intent: "set-lot-terms",
         lotId,
         priceRubles: 1500,
+        mode: "single",
         value: "100",
         opId,
       }),
