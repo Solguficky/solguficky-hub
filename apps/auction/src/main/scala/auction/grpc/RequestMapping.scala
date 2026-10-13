@@ -37,6 +37,7 @@ import auction.v1.auction_service.AdvanceAskRequest
 import auction.v1.auction_service.AuctionListing as AuctionListingMessage
 import auction.v1.auction_service.CancelAuctionRequest
 import auction.v1.auction_service.CancelRaffleRegistrationRequest
+import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
 import auction.v1.auction_service.GetRaffleRequest
 import auction.v1.auction_service.RegisterForRaffleRequest
@@ -357,6 +358,10 @@ object RequestMapping {
       command <- registry(request.viewer, request.auctionId, request.lotId, request.opId)
       newAsk <- money("new_ask", request.newAsk)
     } yield AskCommand(command, newAsk)
+
+  /** Закрытие лота ведущим: та же форма, что команда реестра; причины закрытия в запросе нет по контракту. */
+  def closeLot(request: CloseLotRequest): Either[FormError, RegistryCommand] =
+    registry(request.viewer, request.auctionId, request.lotId, request.opId)
 
   def getAuctionConsole(request: GetAuctionConsoleRequest): Either[FormError, ConsoleQuery] =
     administered(request.viewer, request.auctionId)

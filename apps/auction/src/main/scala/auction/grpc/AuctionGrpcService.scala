@@ -689,8 +689,19 @@ final class AuctionGrpcService(
           .flatMap(outcome => ResponseMapping.advanceAsk(outcome).fold(refuse, Future.successful))
     }
 
-  // Закрытие лота ведущим — отдельная задача: в постановке PER-293 его нет (ADR-047, дополнение 2026-10-11).
-  def closeLot(in: wire.CloseLotRequest): Future[wire.CloseLotResponse] = unimplemented
+  /**
+   * Закрытие лота ведущим (PER-607): право у Meetups, фаза и реестр — у аукциона, исход — у лота. У активного лота
+   * финала ответ приходит после записи его завершения, поэтому один срок ожидания накрывает оба перехода.
+   */
+  def closeLot(in: wire.CloseLotRequest): Future[wire.CloseLotResponse] =
+    RequestMapping.closeLot(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .closeLot(command.auctionId, command.lotId, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.closeLot(outcome).fold(refuse, Future.successful))
+    }
 
   /**
    * Поток аукциона (PER-335): каждое сообщение — состояние целиком из read model, первое — при подписке, следующие —

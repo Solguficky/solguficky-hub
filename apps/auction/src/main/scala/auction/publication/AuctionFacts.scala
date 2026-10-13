@@ -75,6 +75,13 @@ object AuctionFacts {
         Some("final_started" -> bus.AuctionEvent.Occasion.FinalStarted(bus.FinalStarted()))
       case AuctionEvent.FinalLotActivated(_) =>
         Some("final_lot_activated" -> bus.AuctionEvent.Occasion.FinalLotActivated(bus.FinalLotActivated()))
+      case AuctionEvent.FinalLotCompleted(lot) =>
+        Some(
+          "final_lot_completed" ->
+            bus.AuctionEvent.Occasion.FinalLotCompleted(bus.FinalLotCompleted(lot.value.toString))
+        )
+      case AuctionEvent.AuctionFinished =>
+        Some("auction_finished" -> bus.AuctionEvent.Occasion.AuctionFinished(bus.AuctionFinished()))
       case AuctionEvent.AuctionDiscarded =>
         Some("auction_discarded" -> bus.AuctionEvent.Occasion.AuctionDiscarded(bus.AuctionDiscarded()))
       case AuctionEvent.AuctionCancelled =>
@@ -94,7 +101,8 @@ object AuctionFacts {
       case AuctionState.Settling(_, _) => base.withSettling(bus.AuctionState.Settling())
       case AuctionState.Break(_, _) => base.withOnBreak(bus.AuctionState.Break())
       case AuctionState.LineupFrozen(_, _, order) => base.withLineupFrozen(AuctionValues.lineupFrozen(order))
-      case AuctionState.Final(_, _, order, activated) => base.withInFinal(AuctionValues.inFinal(order, activated))
+      case final_ @ AuctionState.Final(_, _, order, _, _) =>
+        base.withInFinal(AuctionValues.inFinal(order, final_.activeLot))
       case AuctionState.Finished(_, _) => base.withFinished(bus.AuctionState.Finished())
       case AuctionState.Cancelled(_, _, _) => base.withCancelled(bus.AuctionState.Cancelled())
     }

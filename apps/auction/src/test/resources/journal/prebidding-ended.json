@@ -17,6 +17,7 @@
       "finished": false
     },
     "finalLineupFrozen": null,
-    "finalLotActivated": null
+    "finalLotActivated": null,
+    "finalLotCompleted": null
   }
 }

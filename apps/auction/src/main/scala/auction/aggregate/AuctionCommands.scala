@@ -156,6 +156,15 @@ enum NextLotRefusal {
 }
 
 /**
+ * Отказ закрытия лота ведущим: проверка до агрегата, решение аукциона о фазе и реестре или ответ лота;
+ * `Rejected(OpIdTaken)` — `op_id` уже записан другой командой аукциона или лота.
+ */
+enum ClosingRefusal {
+  case Denied(denial: Denial)
+  case Rejected(rejected: CloseAuctionLotRejected)
+}
+
+/**
  * Команды администратора аукциону (ADR-047, дополнение 2026-10-03). Порядок фиксирован:
  *
  *   1. повтор того же `op_id` получает исходный ответ раньше проверки права; 2. у всех команд, кроме рождения, аукцион
@@ -458,6 +467,30 @@ final class AuctionCommands(
     }
 
   /**
+   * Закрытие лота ведущим (PER-607). Своего события под `op_id` ведущего аукцион не пишет: повтор узнаёт лот, поэтому
+   * `op_id`, найденный в окне аукциона, — заведомо другая команда, как у ask.
+   */
+  def closeLot(
+      auctionId: AuctionId,
+      lot: LotId,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[ClosingRefusal, LotEnding]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) =>
+        Future.successful(Left(ClosingRefusal.Rejected(CloseAuctionLotRejected.OpIdTaken)))
+      case Inspection.Absent => Future.successful(Left(ClosingRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, ClosingRefusal.Denied(_)) {
+          auctions.closeLot(auctionId, CloseAuctionLot(lot, opId), Initiator.Operator(person)).map {
+            case Right(ending) => Right(ending)
+            case Left(CloseAuctionLotRejected.AuctionNotFound) => Left(ClosingRefusal.Denied(Denial.AuctionNotFound))
+            case Left(rejected) => Left(ClosingRefusal.Rejected(rejected))
+          }
+        }
+    }
+
+  /**
    * Право на чтение пульта администратора (PER-320): тот же вопрос Meetups, что у команд, но без записи и без окна
    * `seen` — чтению нечего повторять.
    */
@@ -550,7 +583,8 @@ final class AuctionCommands(
       case AuctionEvent.LotAdded(_) | AuctionEvent.LotRemoved(_) | AuctionEvent.AuctionScheduled(_) |
           AuctionEvent.PrebiddingStarted | AuctionEvent.AuctionDiscarded | AuctionEvent.AuctionCancelled |
           AuctionEvent.PrebiddingDeadlineReached | AuctionEvent.PrebiddingEnded(_) | AuctionEvent.FinalLineupFrozen(_) |
-          AuctionEvent.FinalStarted | AuctionEvent.FinalLotActivated(_) =>
+          AuctionEvent.FinalStarted | AuctionEvent.FinalLotActivated(_) | AuctionEvent.FinalLotCompleted(_) |
+          AuctionEvent.AuctionFinished =>
         false
     }
 }

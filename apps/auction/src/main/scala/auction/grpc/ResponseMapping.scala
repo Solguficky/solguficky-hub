@@ -3,11 +3,14 @@ package auction.grpc
 import auction.aggregate.AskRefusal
 import auction.aggregate.AuctionState
 import auction.aggregate.CancellationRefusal
+import auction.aggregate.CloseAuctionLotRejected
+import auction.aggregate.ClosingRefusal
 import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
 import auction.aggregate.DiscardRefusal
 import auction.aggregate.FinalStartRefusal
 import auction.aggregate.LineupRefusal
+import auction.aggregate.LotEnding
 import auction.aggregate.NextLotRefusal
 import auction.aggregate.Drafted
 import auction.aggregate.FinalChoiceRefusal
@@ -19,6 +22,7 @@ import auction.catalog.CatalogRefusal
 import auction.catalog.LotCard
 import auction.catalog.LotId
 import auction.contract.AuctionValues
+import auction.contract.LotValues
 import auction.entity.LotEntity
 import auction.lot.AdvanceAskRejected
 import auction.lot.Envelope
@@ -568,6 +572,35 @@ object ResponseMapping {
   }
 
   /**
+   * Закрытие лота ведущим (PER-607): исход лота — `LotClosure`, отказы аукциона и лота — значения ответа, как у ask.
+   * `OpIdTaken` — статус, как у остальных команд с `op_id`.
+   */
+  def closeLot(outcome: Either[ClosingRefusal, LotEnding]): Either[Status, wire.CloseLotResponse] = {
+    import wire.CloseLotRefusal.Reason
+    def refused(reason: Reason) = Right(wire.CloseLotResponse().withRefused(wire.CloseLotRefusal(reason)))
+    def accepted(closure: wire.LotClosure) = Right(wire.CloseLotResponse().withAccepted(closure))
+    outcome match {
+      case Right(LotEnding.Sold(sale)) => accepted(wire.LotClosure().withSold(LotValues.sale(sale)))
+      case Right(LotEnding.Unsold(reason)) => accepted(wire.LotClosure().withUnsold(LotValues.unsold(reason)))
+      case Left(ClosingRefusal.Rejected(CloseAuctionLotRejected.LotNotInAuction)) =>
+        refused(Reason.LotNotInAuction(wire.LotNotInAuction()))
+      case Left(ClosingRefusal.Rejected(CloseAuctionLotRejected.LotNotOpen)) =>
+        refused(Reason.LotNotOpen(wire.LotNotOpen()))
+      case Left(ClosingRefusal.Rejected(CloseAuctionLotRejected.DeadlineNotReached)) =>
+        refused(Reason.DeadlineNotReached(wire.DeadlineNotReached()))
+      case Left(ClosingRefusal.Rejected(CloseAuctionLotRejected.OpIdTaken)) => Left(opIdTaken)
+      case Left(ClosingRefusal.Rejected(CloseAuctionLotRejected.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(ClosingRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(ClosingRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(ClosingRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(ClosingRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(ClosingRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"close answered $denial")
+    }
+  }
+
+  /**
    * Отметка для финала (ADR-047, дополнение 2026-10-06). Отказы аукциона и лота — значения ответа: `DeadlinePassed`
    * администратор видит на пульте как отказ, а не как сбой. Лот реестра без журнала, как у `scheduleLot`, — дефект.
    */
@@ -678,8 +711,8 @@ object ResponseMapping {
         (wire.AuctionSnapshot.Status.OnBreak(AuctionStateMessage.Break()), Some(config))
       case AuctionState.LineupFrozen(config, _, order) =>
         (wire.AuctionSnapshot.Status.LineupFrozen(AuctionValues.lineupFrozen(order)), Some(config))
-      case AuctionState.Final(config, _, order, activated) =>
-        (wire.AuctionSnapshot.Status.InFinal(AuctionValues.inFinal(order, activated)), Some(config))
+      case final_ @ AuctionState.Final(config, _, order, _, _) =>
+        (wire.AuctionSnapshot.Status.InFinal(AuctionValues.inFinal(order, final_.activeLot)), Some(config))
       case AuctionState.Finished(config, _) =>
         (wire.AuctionSnapshot.Status.Finished(AuctionStateMessage.Finished()), Some(config))
       case AuctionState.Cancelled(config, _, _) =>
