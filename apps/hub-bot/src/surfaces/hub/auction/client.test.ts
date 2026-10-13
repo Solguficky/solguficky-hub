@@ -128,10 +128,27 @@ describe("auction adapter", () => {
     // Стадия нужна строке аукциона на карточке сходки (PER-594).
     await expect(found.getMeetupAuction(admin, meetupId)).resolves.toEqual({
       kind: "ok",
+      auctionId,
       auction: { auctionId, stage: "draft", final: false },
     });
     await expect(absent.getMeetupAuction(admin, meetupId)).resolves.toEqual({
       kind: "ok",
+    });
+  });
+
+  // Снимок без статуса — дефект соседа: строки на карточке не будет, но меню
+  // «Расширения» по-прежнему открывает аукцион по идентификатору (PER-594).
+  it("keeps the auction of the meetup when its snapshot has no status", async () => {
+    const broken = adapter({
+      getMeetupAuction: async () =>
+        create(GetMeetupAuctionResponseSchema, {
+          auction: create(AuctionSnapshotSchema, { id: auctionId }),
+        }),
+    });
+
+    await expect(broken.getMeetupAuction(admin, meetupId)).resolves.toEqual({
+      kind: "ok",
+      auctionId,
     });
   });
 

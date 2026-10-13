@@ -38,10 +38,10 @@ import {
   commandResultScreen,
   confirmScreen,
   followRefusedScreen,
+  lotSubject,
   nameChoiceScreen,
   oneLine,
   questionScreen,
-  quoted,
 } from "./auction-bid.js";
 import {
   raffleAnswerRefusedScreen,
@@ -668,7 +668,7 @@ function favoritesLabelOf(
   }
 }
 
-// Хронология ставок лота (PER-309): название лота в кавычках, строки «• …» по
+// Хронология ставок лота (PER-309): название лота жирным, строки «• …» по
 // порядку журнала, листание «←» и «→», а возврат тела на карточку оболочка
 // ставит рядом навигации.
 function historyScreen(
@@ -700,7 +700,7 @@ function historyScreen(
         page: history.page,
         pageCount: history.pageCount,
       }),
-      quoted(truncate(history.title ?? untitled, titleLimit)),
+      lotSubject(truncate(history.title ?? untitled, titleLimit)),
       history.entries.length === 0
         ? "Ставок пока нет."
         : history.entries

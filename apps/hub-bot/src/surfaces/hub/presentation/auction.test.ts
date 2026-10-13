@@ -443,12 +443,19 @@ describe("meetup card extensions entry", () => {
     const auction = fakeAuction({
       lookup: () => ({ kind: "unavailable", cause: new Error("down") }),
     });
-    const { bot, calls } = harness("admin", auction);
+    const { bot, calls, records } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(`v1:view:${meetupToken}`));
 
     const card = lastScreen(calls);
     expect(card.rich_message?.html ?? card.text).toContain("Ярмарка");
+    // Карточка верна, но для записи границы это сбой соседа: иначе его не
+    // отличить от сходки без аукциона (PER-594).
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      error_category: "dependency_unavailable",
+      error: "auction_unavailable",
+    });
     // Сбой Auction убирает только строку аукциона (PER-594).
     expect(card.rich_message?.html ?? card.text).not.toContain("Аукцион:");
     expect(labels(card)).toContainEqual(["Материалы (0)", "🧩 Расширения"]);

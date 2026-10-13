@@ -37,7 +37,7 @@ export type MeetupAuthor =
 // говорит об этом, а не прячет аукцион, а карточка остаётся без строки.
 export type MeetupAuctionView =
   | { kind: "none" }
-  | { kind: "open"; auctionId: string; auction: AuctionSummaryView }
+  | { kind: "open"; auctionId: string; auction?: AuctionSummaryView }
   | { kind: "unavailable" };
 // `source` — ссылка канала прихода `s_<код>` (ADR-060, пункт 17). Код —
 // недоверенный хвост без префикса: Identity сам решает, известен ли канал, и

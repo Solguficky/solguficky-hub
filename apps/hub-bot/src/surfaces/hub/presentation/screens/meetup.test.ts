@@ -441,30 +441,46 @@ describe("cardScreen", () => {
     });
   });
 
-  // Фото уже стоят постерами над заголовком: «(файл)» — только у документа
-  // (PER-594).
-  it("marks a document as a file in the material list and a photo not", () => {
+  // Фото, которое стоит постером над заголовком, пометки не несёт; фото без
+  // постера — в обычной карточке — «(фото)», документ — «(файл)» (PER-594).
+  const photoAndDocument = meetup({
+    materials: [
+      {
+        id: "0199c0de-0000-7000-8000-000000000001",
+        title: "Афиша",
+        source: { kind: "file", fileId: "photo-1", fileKind: "photo" },
+      },
+      {
+        id: "0199c0de-0000-7000-8000-000000000002",
+        title: "Регламент",
+        source: { kind: "file", fileId: "doc-2", fileKind: "document" },
+      },
+    ],
+  });
+
+  it("marks a document as a file in the material list and a poster photo not", () => {
     const screen = cardScreen({
       ...view,
-      meetup: meetup({
-        materials: [
-          {
-            id: "0199c0de-0000-7000-8000-000000000001",
-            title: "Афиша",
-            source: { kind: "file", fileId: "photo-1", fileKind: "photo" },
-          },
-          {
-            id: "0199c0de-0000-7000-8000-000000000002",
-            title: "Регламент",
-            source: { kind: "file", fileId: "doc-2", fileKind: "document" },
-          },
-        ],
-      }),
+      presentation: "rich",
+      meetup: photoAndDocument,
       subscribed: true,
     });
 
     expect(screen.text).toContain(
-      "📎 Материалы:\n1. Афиша\n2. Регламент (файл)",
+      "📎 Материалы:<br>1. Афиша<br>2. Регламент (файл)",
+    );
+  });
+
+  it("marks a photo without a poster as a photo", () => {
+    const screen = cardScreen({
+      ...view,
+      presentation: "plain",
+      meetup: photoAndDocument,
+      subscribed: true,
+    });
+
+    expect(screen.text).toContain(
+      "📎 Материалы:\n1. Афиша (фото)\n2. Регламент (файл)",
     );
   });
 

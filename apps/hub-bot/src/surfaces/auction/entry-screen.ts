@@ -224,14 +224,14 @@ function screenText(
 }
 
 // Название лота в одну строку: Auction переносы строк в названии не режет, а
-// в строке списка и в кавычках второй строкой оно читалось бы как чужая
+// в строке списка и в предмете экрана второй строкой оно читалось бы как чужая
 // запись.
 const oneLine = (title: string) =>
   truncate(title.replace(/\s+/g, " ").trim(), TITLE_LIMIT);
 
 // Название лота на экранах листа ставки и хронологии — предмет экрана:
 // жирный абзац без кавычек (дизайн-код, «Формат»; PER-594).
-const quoted = (title: string | undefined) =>
+const lotSubject = (title: string | undefined) =>
   title === undefined ? undefined : `<b>${escapeHtml(oneLine(title))}</b>`;
 
 // Строка списка в теле (дизайн-код, «Списки»): маркер, затем поля через «—».
@@ -908,19 +908,19 @@ function renderLeaf(
 }
 
 // Подтверждение (дизайн-код, «Подтверждение»): заголовок-вопрос с суммой,
-// название лота в кавычках, затем что нельзя отменить.
+// название лота жирным, затем что нельзя отменить.
 function confirmText(
   block: Extract<AuctionBlock, { kind: "confirm" }>,
 ): string {
   return block.command === "bid"
     ? screenText(
         `Поставить ${money(block.amount)}?`,
-        quoted(block.title),
+        lotSubject(block.title),
         "Отменить ставку нельзя.",
       )
     : screenText(
         `Включить автоставку до ${money(block.amount)}?`,
-        quoted(block.title),
+        lotSubject(block.title),
         `${proxyGap(block.currentPrice, block.amount)}\nЛимит видишь только ты.`,
       );
 }
@@ -931,10 +931,13 @@ function acceptedText(
   block: Extract<AuctionBlock, { kind: "accepted" }>,
 ): string {
   return block.command === "bid"
-    ? screenText(`Ставка ${money(block.amount)} принята`, quoted(block.title))
+    ? screenText(
+        `Ставка ${money(block.amount)} принята`,
+        lotSubject(block.title),
+      )
     : screenText(
         `Автоставка до ${money(block.amount)} включена`,
-        quoted(block.title),
+        lotSubject(block.title),
         "Лимит видишь только ты.",
       );
 }
@@ -1037,14 +1040,14 @@ function proxyGap(currentPrice: Money, limit: Money): string {
 }
 
 // Исход — свой экран (дизайн-код, «Экран исхода», PER-472): исход в
-// заголовке без точки, название лота в кавычках, затем пояснение. Отказ
+// заголовке без точки, название лота жирным, затем пояснение. Отказ
 // называет цену сам; принятая команда — экран `accepted`.
 type Outcome = { title: string; detail?: string };
 
 function outcomeText(outcome: Outcome, lotTitle: string | undefined): string {
   return screenText(
     outcome.title,
-    quoted(lotTitle),
+    lotSubject(lotTitle),
     outcome.detail === undefined ? undefined : escapeHtml(outcome.detail),
   );
 }
@@ -1122,7 +1125,7 @@ export function resultOutcome(result: CommandResult): Outcome {
 }
 
 // Хронология ставок лота (PER-309): жирный заголовок с номером страницы,
-// название лота в кавычках и строки ставок по порядку журнала. Восемь строк
+// название лота жирным и строки ставок по порядку журнала. Восемь строк
 // на странице держат текст далеко под лимитом сообщения при любом названии.
 function renderHistory(
   block: HistoryBlock,
@@ -1132,7 +1135,7 @@ function renderHistory(
     format: "html",
     text: screenText(
       paged("Ставки", block),
-      quoted(block.title ?? untitled),
+      lotSubject(block.title ?? untitled),
       block.entries.length === 0
         ? "Ставок пока нет."
         : block.entries

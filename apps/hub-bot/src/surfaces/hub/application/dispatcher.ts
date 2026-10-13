@@ -117,10 +117,10 @@ export function createDispatcher(
       : { kind: "dependency-rejected", reason: result.kind };
   }
 
-  // Карточка, которую вернула команда на ней же — публикация, правка поля,
-  // смена состояния, — несёт и строку аукциона (PER-594): иначе после правки
-  // она пропадала бы до следующего открытия. Подписка отвечает экраном исхода,
-  // а не карточкой, и аукцион ей не нужен.
+  // Карточка, которую команда показывает сразу, — после публикации и смены
+  // состояния из «Статуса», — несёт и строку аукциона (PER-594): иначе она
+  // пропадала бы до следующего открытия. Остальные команды формы и подписка
+  // отвечают экраном исхода, а не карточкой, и аукцион им не нужен.
   // Скрытый черновик и вопросы формы карточкой не показываются, и аукцион им
   // не нужен.
   async function withCardAuction(
@@ -130,19 +130,8 @@ export function createDispatcher(
     if (meetupAuction === undefined) return result;
     switch (result.kind) {
       case "published":
-      case "publication-scheduled":
-      case "publication-unavailable":
-      case "meetup-updated":
       case "meetup-state-changed":
         return result.auction === undefined
-          ? meetupAuction.withAuction(result, request)
-          : result;
-      // Ответ на вопрос черновика, когда сходку уже опубликовали: бот покажет
-      // её карточкой. Скрытый черновик показывается формой, и за аукционом
-      // для него не ходят.
-      case "draft":
-        return result.meetup.visibility === "visible" &&
-          result.auction === undefined
           ? meetupAuction.withAuction(result, request)
           : result;
       default:
@@ -220,7 +209,7 @@ export function createDispatcher(
         case "set-meetup-category":
           if (settings === undefined)
             return { kind: "rejected", reason: "notifications-not-configured" };
-          return withCardAuction(await settings(request), request);
+          return settings(request);
         case "attach-material":
         case "remove-material":
           return materials === undefined

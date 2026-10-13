@@ -43,11 +43,11 @@ function dataOf(
 
 // Название лота на экранах листа ставки и хронологии — предмет экрана:
 // жирный абзац без кавычек (дизайн-код, «Формат»; PER-594).
-export const quoted = (title: string | undefined) =>
+export const lotSubject = (title: string | undefined) =>
   title === undefined ? undefined : subjectLine(oneLine(title));
 
 // Название лота в одну строку: Auction переносы строк в названии не режет, а
-// в строке списка и в кавычках второй строкой оно читалось бы как чужая
+// в строке списка и в предмете экрана второй строкой оно читалось бы как чужая
 // запись.
 export const oneLine = (title: string) => title.replace(/\s+/g, " ").trim();
 
@@ -64,12 +64,12 @@ export function confirmScreen(
     text: bid
       ? screenText(
           `Поставить ${money(block.amount)}?`,
-          quoted(block.title),
+          lotSubject(block.title),
           "Отменить ставку нельзя.",
         )
       : screenText(
           `Включить автоставку до ${money(block.amount)}?`,
-          quoted(block.title),
+          lotSubject(block.title),
           `${proxyGap(block.currentPrice, block.amount, money)}\nЛимит видишь только ты.`,
         ),
     keyboard: confirmKeyboard({
@@ -96,10 +96,13 @@ export function acceptedScreen(
   return {
     id: bid ? "bid-accepted" : "proxy-accepted",
     text: bid
-      ? screenText(`Ставка ${money(block.amount)} принята`, quoted(block.title))
+      ? screenText(
+          `Ставка ${money(block.amount)} принята`,
+          lotSubject(block.title),
+        )
       : screenText(
           `Автоставка до ${money(block.amount)} включена`,
-          quoted(block.title),
+          lotSubject(block.title),
           "Лимит видишь только ты.",
         ),
     keyboard: new InlineKeyboard().text(
@@ -255,14 +258,14 @@ export function nameChoiceScreen(
 }
 
 // Исход — свой экран (дизайн-код, «Экран исхода», PER-472): исход в заголовке
-// без точки, название лота в кавычках, затем пояснение; выход — «К лоту», у
+// без точки, название лота жирным, затем пояснение; выход — «К лоту», у
 // непринятого ответа над ним — «Ввести заново».
 type Outcome = { title: string; detail?: string };
 
 function outcomeText(outcome: Outcome, lotTitle: string | undefined): string {
   return screenText(
     outcome.title,
-    quoted(lotTitle),
+    lotSubject(lotTitle),
     outcome.detail === undefined ? undefined : escapeHtml(outcome.detail),
   );
 }

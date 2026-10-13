@@ -32,15 +32,18 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
     );
     if (result.kind !== "ok")
       return { ...card, auction: { kind: "unavailable" } };
+    const auctionId = result.auctionId ?? result.auction?.auctionId;
     return {
       ...card,
       auction:
-        result.auction === undefined
+        auctionId === undefined
           ? { kind: "none" }
           : {
               kind: "open",
-              auctionId: result.auction.auctionId,
-              auction: result.auction,
+              auctionId,
+              ...(result.auction === undefined
+                ? {}
+                : { auction: result.auction }),
             },
     };
   }

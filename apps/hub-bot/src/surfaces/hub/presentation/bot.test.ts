@@ -486,13 +486,15 @@ describe("presentation adapter", () => {
       const shown = JSON.stringify(calls.at(-1)?.payload);
       expect(shown).not.toContain("tg://photo");
       expect(shown).not.toContain("rich_message");
-      // Фото уже стоят постерами: пометки «(файл)» у них нет (PER-594).
-      expect(shown).toContain("1. Афиша 1\\n2. Афиша 2");
+      // В обычной карточке постеров нет: фото помечено «(фото)», а не
+      // «(файл)» (PER-594).
+      expect(shown).toContain("1. Афиша 1 (фото)\\n2. Афиша 2 (фото)");
       expect(shown).not.toContain("(файл)");
     });
 
-    // Пометка «(файл)» остаётся у документа, у фото её нет (PER-594).
-    it("marks a document as a file in the material list and a photo not", async () => {
+    // Пометка «(файл)» остаётся у документа, фото без постера — «(фото)»
+    // (PER-594).
+    it("marks a document as a file and a photo without a poster as a photo", async () => {
       const document = {
         id: "0199c0de-0000-7000-8000-000000000009",
         title: "Регламент",
@@ -519,7 +521,7 @@ describe("presentation adapter", () => {
       await bot.handleUpdate(callbackUpdate(view));
 
       expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-        "📎 Материалы:\\n1. Афиша 1\\n2. Регламент (файл)",
+        "📎 Материалы:\\n1. Афиша 1 (фото)\\n2. Регламент (файл)",
       );
     });
 
@@ -551,7 +553,7 @@ describe("presentation adapter", () => {
       expect(last?.method).toBe("sendRichMessage");
       expect(JSON.stringify(last?.payload)).not.toContain("tg://photo");
       expect(JSON.stringify(last?.payload)).toContain(
-        "1. Афиша 1<br>2. Афиша 2",
+        "1. Афиша 1 (фото)<br>2. Афиша 2 (фото)",
       );
       // Деградация видна оператору: причина едет в запись границы.
       expect(JSON.stringify(records)).toContain(

@@ -326,6 +326,18 @@ function cardLines(
   ];
 }
 
+// Пометка файла в списке материалов карточки (PER-594): фото, которое уже стоит
+// постером над заголовком, пометки не несёт; фото без постера — в обычной
+// карточке, после отказа Telegram или сверх предела постеров — «(фото)»,
+// документ — «(файл)».
+function fileMark(
+  source: Extract<MeetupMaterial["source"], { kind: "file" }>,
+  shown: ReadonlySet<string>,
+): string {
+  if (source.fileKind !== "photo") return " (файл)";
+  return shown.has(source.fileId) ? "" : " (фото)";
+}
+
 // Строки расширений сходки — блок после «Когда» и «Где»: сейчас одна, строка
 // аукциона (PER-594). Без аукциона блока нет.
 function auctionLines(view: CardView): string[] {
@@ -338,7 +350,11 @@ function auctionLines(view: CardView): string[] {
       ];
 }
 
-function materialLines(meetup: MeetupSnapshot): string[] {
+// `shown` — файлы, которые карточка показала постерами над заголовком.
+function materialLines(
+  meetup: MeetupSnapshot,
+  shown: ReadonlySet<string> = new Set(),
+): string[] {
   if (meetup.materials.length === 0) return [];
   const hidden = meetup.materials.length - materialCardLimit;
   return [
@@ -348,11 +364,7 @@ function materialLines(meetup: MeetupSnapshot): string[] {
       const label = escapeHtml(displayMaterialTitle(material, index + 1));
       return material.source.kind === "message-link"
         ? `${index + 1}. <a href="${escapeHtml(material.source.url)}">${label}</a>`
-        : // Фото уже стоят постерами над заголовком: пометка «(файл)» им
-          // лишняя, она остаётся у документа (PER-594).
-          material.source.fileKind === "photo"
-          ? `${index + 1}. ${label}`
-          : `${index + 1}. ${label} (файл)`;
+        : `${index + 1}. ${label}${fileMark(material.source, shown)}`;
     }),
     ...(hidden > 0 ? [`…и ещё ${hidden}. Открой раздел «Материалы».`] : []),
   ];
@@ -462,17 +474,22 @@ export function cardScreen(view: CardView): ShownScreen {
     }
     keyboard.text("Уведомления сходки", `v1:notify:settings:${token}`).row();
   }
-  const title = escapeHtml(meetupTitleLabel(meetup.title));
-  const body = [
-    ...cardLines(meetup, view.author, today, manageable, auctionLines(view)),
-    ...materialLines(meetup),
-  ];
-  // Подсказка о подписке стоит под карточкой.
-  const hint = view.subscribed === false ? unsubscribedHint : undefined;
   // Постеры — только в богатой карточке: обычное сообщение несёт либо текст,
   // либо файл, и с файлом оно перестало бы правиться на месте.
   const photos =
     presentation === "rich" && view.posters !== false ? posters(meetup) : [];
+  const title = escapeHtml(meetupTitleLabel(meetup.title));
+  const body = [
+    ...cardLines(meetup, view.author, today, manageable, auctionLines(view)),
+    ...materialLines(
+      meetup,
+      new Set(
+        photos.flatMap((photo) => ("fileId" in photo ? [photo.fileId] : [])),
+      ),
+    ),
+  ];
+  // Подсказка о подписке стоит под карточкой.
+  const hint = view.subscribed === false ? unsubscribedHint : undefined;
   return {
     id: "card",
     text: cardText({

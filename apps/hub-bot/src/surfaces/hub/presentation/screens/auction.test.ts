@@ -77,7 +77,7 @@ describe("lot card in the hub shell", () => {
 
   // Свой лимит — строка хода торгов; над названием ничего нет (PER-472,
   // PER-594). Пустое описание — заглушка.
-  it("shows the own limit among the facts and nothing above the title", () => {
+  it("shows the own limit in the trading course and nothing above the title", () => {
     const { screen } = auctionScreen(
       view(
         [

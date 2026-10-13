@@ -7323,7 +7323,8 @@ async function renderMeetupCard(
       manageable,
       presentation,
       today: communityToday(ctx),
-      ...(result.auction?.kind === "open"
+      ...(result.auction?.kind === "open" &&
+      result.auction.auction !== undefined
         ? { auction: result.auction.auction }
         : {}),
       timeZone: ctx.communityTimeZone ?? "UTC",
@@ -7548,7 +7549,7 @@ async function renderStateResult(
 
 async function denyHubAccessIfNeeded(
   ctx: UpdateContext,
-  _runtime: BotRuntime,
+  runtime: BotRuntime,
   identity: { person: Person; blocked: boolean },
   useCase: ProductUseCase | undefined,
   edit: boolean,
@@ -8874,6 +8875,20 @@ function screenBoundary(
 ): BoundaryOutcome {
   const meetup =
     screen.meetupId === undefined ? {} : { meetup_id: screen.meetupId };
+  // Карточка ушла без строки аукциона, потому что Auction не ответил
+  // (PER-594): человек видит верную карточку, но для записи границы это
+  // сбой соседа, а не успех, — иначе его не отличить от сходки без аукциона.
+  if (result.kind === "meetup-card" && result.auction?.kind === "unavailable") {
+    return {
+      level: "warn",
+      message: `${screen.okMessage} without the auction`,
+      result: "error",
+      use_case: screen.useCase,
+      ...meetup,
+      error_category: "dependency_unavailable",
+      error: "auction_unavailable",
+    };
+  }
   if (result.kind === "meetup-not-found") {
     return {
       level: "warn",
