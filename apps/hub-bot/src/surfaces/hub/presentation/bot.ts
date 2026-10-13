@@ -7199,7 +7199,7 @@ async function editLiveLotCard(
   const { card, runtime } = input;
   const view: AuctionView = {
     body: input.body,
-    feedParent: toMeetups,
+    rootParent: toMeetups,
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: (runtime.today ?? utcToday)(),
