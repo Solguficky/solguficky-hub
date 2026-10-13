@@ -165,7 +165,7 @@ export function tradingElsewhere(
 ): string {
   const where =
     holder.meetupTitle !== undefined
-      ? `у «${holder.meetupTitle.replace(/\s+/g, " ").trim()}»`
+      ? `у сходки «${holder.meetupTitle.replace(/\s+/g, " ").trim()}»`
       : holder.opensAt !== undefined && holder.closesAt !== undefined
         ? `у аукциона с онлайн-неделей с ${localMoment(holder.opensAt, view)} до ${localMoment(holder.closesAt, view)}`
         : "у другого аукциона";

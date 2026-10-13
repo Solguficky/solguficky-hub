@@ -1368,7 +1368,7 @@ describe("opening the week while another auction is trading", () => {
     await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
 
     expect(last(calls).text).toBe(
-      "<b>Торги уже идут у «Осенняя сходка»: открыть неделю можно, когда они закончатся</b>",
+      "<b>Торги уже идут у сходки «Осенняя сходка»: открыть неделю можно, когда они закончатся</b>",
     );
   });
 
