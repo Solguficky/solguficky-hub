@@ -213,9 +213,13 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
         // Лидер лота стал им ставкой, но ставка могла прийти раньше, чем круг
         // завёлся: лидер состава в анонс попадает в любом случае.
-        var audience = (await FinalStore.Bidders(work, final.AuctionId, cancellationToken))
+        var bidders = (await FinalStore.Bidders(work, final.AuctionId, cancellationToken))
             .Union(lineup.Select(lot => lot.Leader).OfType<Guid>())
             .ToArray();
+        // Выключивший анонс финала (PER-539) не получает ни состава, ни старта:
+        // настройку читает та же транзакция, что пишет факты.
+        var silenced = await FinalStore.Silenced(work, bidders, cancellationToken);
+        var audience = bidders.Where(recipient => !silenced.Contains(recipient)).ToArray();
 
         var notAfter = now + options.Value.StaleAfter;
         var type = lineupFrozen ? AuctionFacts.FinalLineupType : AuctionFacts.FinalStartedType;

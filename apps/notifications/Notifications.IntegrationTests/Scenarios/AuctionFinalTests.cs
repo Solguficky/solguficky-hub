@@ -150,6 +150,40 @@ public class AuctionFinalTests
         (await Count(db, "lot_hold")).ShouldBe(0);
     }
 
+    /// <summary>
+    /// Выключивший анонс финала (PER-539) не получает ни состава, ни старта,
+    /// даже лидером лота состава; включённый выключатель анонс не меняет.
+    /// </summary>
+    [Fact]
+    public async Task When_BidderSilencedFinal_Expect_NoLineupAndNoStartForThem()
+    {
+        using var db = Database();
+        await using var nats = await NatsUnderTest.Start();
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var auction = EventFactory.AuctionOfMeetup();
+        var meetup = EventFactory.NewId();
+        var (silenced, bidder, lot) = (EventFactory.NewId(), EventFactory.NewId(), EventFactory.NewId());
+        await SetFinalAnnouncements(db, silenced, enabled: false);
+        await SetFinalAnnouncements(db, bidder, enabled: true);
+
+        await nats.Publish(AuctionFeed.BidPlacedSubject, EventFactory.Bid(lot, leader: silenced, auction: auction));
+        await nats.Publish(AuctionFeed.BidPlacedSubject,
+            EventFactory.Bid(EventFactory.NewId(), leader: bidder, auction: auction));
+        await nats.Publish(HeldSubject, EventFactory.HeldForFinal(lot, auction: auction, leader: silenced));
+        await nats.Publish(LineupSubject, EventFactory.LineupFrozen(auction, meetup, lot));
+        await nats.Publish(StartedSubject, EventFactory.FinalStarted(auction, meetup, lot));
+
+        var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
+        var facts = published.Select(entry => entry.Fact).ToList();
+        facts.ShouldAllBe(fact => fact.RecipientId == bidder);
+        facts.Select(fact => fact.TypeCase).ShouldBe(
+            new[] { Notification.TypeOneofCase.AuctionFinalLineup, Notification.TypeOneofCase.AuctionFinalStarted },
+            ignoreOrder: true);
+        await Eventually(() => Task.FromResult(silo.Service<AuctionTelemetry>().Total("final_announced")),
+            count => count == 2);
+        (await Count(db, "notification")).ShouldBe(2);
+    }
+
     [Theory]
     [InlineData("member", "events.notifications.notification_created.hub")]
     [InlineData("guest", "events.notifications.notification_created.auction")]

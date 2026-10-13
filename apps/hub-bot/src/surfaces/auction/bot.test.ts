@@ -21,8 +21,10 @@ import type {
 import type { EditLimiter } from "../../core/bot/edit-limiter.js";
 import { createLogger, type Logger } from "../../core/logging.js";
 import type {
+  AuctionNotificationChange,
+  AuctionNotificationSettings,
+  AuctionNotificationsPort,
   OutbidFrequency,
-  OutbidPreferencePort,
 } from "../../core/notifications/outbid.js";
 import { noopTracing } from "../../core/tracing.js";
 import type { AuctionListing, AuctionSummary } from "./auctions.js";
@@ -2147,43 +2149,60 @@ describe("bid leaf delivery", () => {
   });
 });
 
-// Настройка «перебили» (PER-515): пункт меню, выбор с подтверждением,
-// отказ Notifications и «Реже» под уведомлением.
-describe("outbid frequency", () => {
+// Настройки уведомлений аукциона (PER-515, PER-539): пункт меню, выбор с
+// подтверждением, выключатель анонса финала, отказ Notifications и «Реже» под
+// уведомлением.
+describe("auction notification settings", () => {
+  const mode = (frequency: OutbidFrequency) =>
+    notifyCallback({ kind: "frequency", frequency });
+
   // Хранилище Notifications вне бота: оно переживает пересоздание бота, как
   // база сервиса переживает рестарт процесса.
   function withOutbid(
-    store: { frequency: OutbidFrequency | undefined },
-    port: Partial<OutbidPreferencePort> = {},
-  ): PortsFactory & { chosen: OutbidFrequency[] } {
-    const chosen: OutbidFrequency[] = [];
+    store: { settings: AuctionNotificationSettings | undefined },
+    port: Partial<AuctionNotificationsPort> = {},
+  ): PortsFactory & { chosen: AuctionNotificationChange[] } {
+    const chosen: AuctionNotificationChange[] = [];
     const ports: PortsFactory = (requestId) => ({
       ...publicPorts(requestId),
       outbid: {
-        get: async () => store.frequency,
-        set: async (_viewer, frequency) => {
-          chosen.push(frequency);
-          store.frequency = frequency;
-          return frequency;
+        get: async () => store.settings,
+        set: async (_viewer, change) => {
+          chosen.push(change);
+          const current = store.settings ?? {
+            frequency: "every",
+            finalAnnouncements: true,
+          };
+          store.settings =
+            change.kind === "frequency"
+              ? { ...current, frequency: change.frequency }
+              : { ...current, finalAnnouncements: change.enabled };
+          return store.settings;
         },
         ...port,
       },
     });
     return Object.assign(ports, { chosen });
   }
+  const stored = (
+    frequency: OutbidFrequency,
+    finalAnnouncements = true,
+  ): { settings: AuctionNotificationSettings | undefined } => ({
+    settings: { frequency, finalAnnouncements },
+  });
 
-  // Настройку открывает команда `/notifications` новым сообщением; это
-  // подраздел «Настроек» (PER-595): пять режимов и последним рядом
-  // «‹ Настройки».
+  // Настройки открывает команда `/notifications` новым сообщением; это
+  // подраздел «Настроек» (PER-595): пять режимов, выключатель финала и
+  // последним рядом «‹ Настройки».
   it("opens the settings by the command with the way back to the settings", async () => {
-    const { bot, calls } = makeBot(withOutbid({ frequency: "every" }));
+    const { bot, calls } = makeBot(withOutbid(stored("every")));
     await bot.handleUpdate(commandUpdate("/notifications"));
     expect(calls.at(-1)?.method).toBe("sendMessage");
     const rows = keyboardOf(calls.at(-1)?.payload);
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("<b>Уведомления</b>"),
     });
-    expect(rows).toHaveLength(6);
+    expect(rows).toHaveLength(7);
     expect(rows.at(-1)).toEqual([
       { text: "‹ Настройки", callback_data: entryCallback("settings") },
     ]);
@@ -2198,37 +2217,29 @@ describe("outbid frequency", () => {
   });
 
   // Запись 33 прогона 12.10: выбранный режим отмечен на своей кнопке, а
-  // пояснение говорит о сводке и о том, что покупку настройка не трогает.
-  it("marks the current frequency and explains the digest", async () => {
-    const { bot, calls } = makeBot(withOutbid({ frequency: "15" }));
+  // пояснение говорит о сводке, об анонсе финала и о том, что покупку
+  // настройки не трогают.
+  it("marks the current frequency, shows the final switch and explains both", async () => {
+    const { bot, calls } = makeBot(withOutbid(stored("15")));
     await bot.handleUpdate(lotPress({ data: notifyCallback() }));
     expect(calls.at(-1)?.method).toBe("editMessageText");
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringMatching(
-        /одной сводкой[\s\S]*О покупке лота пишу всегда/,
+        /одной сводкой[\s\S]*Анонс финала[\s\S]*О покупке лота пишу всегда/,
       ),
       reply_markup: {
         inline_keyboard: [
+          [{ text: "О каждом перебитии", callback_data: mode("every") }],
+          [{ text: "Не чаще раза в 5 минут", callback_data: mode("5") }],
+          [{ text: "• Не чаще раза в 15 минут", callback_data: mode("15") }],
+          [{ text: "Не чаще раза в час", callback_data: mode("60") }],
+          [{ text: "Не присылать", callback_data: mode("off") }],
           [
             {
-              text: "О каждом перебитии",
-              callback_data: notifyCallback("every"),
+              text: "🔔 Вкл · Анонс финала",
+              callback_data: notifyCallback({ kind: "final", enabled: false }),
             },
           ],
-          [
-            {
-              text: "Не чаще раза в 5 минут",
-              callback_data: notifyCallback("5"),
-            },
-          ],
-          [
-            {
-              text: "• Не чаще раза в 15 минут",
-              callback_data: notifyCallback("15"),
-            },
-          ],
-          [{ text: "Не чаще раза в час", callback_data: notifyCallback("60") }],
-          [{ text: "Не присылать", callback_data: notifyCallback("off") }],
           [{ text: "‹ Настройки", callback_data: entryCallback("settings") }],
         ],
       },
@@ -2238,10 +2249,10 @@ describe("outbid frequency", () => {
   // Подтверждение — ответ на нажатие, и уходит он раньше правки экрана:
   // показ ответил бы на нажатие сам, без текста.
   it("stores the chosen frequency and confirms it with a toast", async () => {
-    const ports = withOutbid({ frequency: "every" });
+    const ports = withOutbid(stored("every"));
     const { bot, calls } = makeBot(ports);
-    await bot.handleUpdate(lotPress({ data: notifyCallback("off") }));
-    expect(ports.chosen).toEqual(["off"]);
+    await bot.handleUpdate(lotPress({ data: mode("off") }));
+    expect(ports.chosen).toEqual([{ kind: "frequency", frequency: "off" }]);
     expect(calls.map((call) => call.method)).toEqual([
       "answerCallbackQuery",
       "editMessageText",
@@ -2253,14 +2264,35 @@ describe("outbid frequency", () => {
     expect(shown).toContain('"О каждом перебитии"');
   });
 
+  // Выключатель финала (PER-539) — целевое состояние: частоту он не трогает.
+  it("switches the final announcements off without touching the frequency", async () => {
+    const ports = withOutbid(stored("15"));
+    const { bot, calls } = makeBot(ports);
+    await bot.handleUpdate(
+      lotPress({ data: notifyCallback({ kind: "final", enabled: false }) }),
+    );
+    expect(ports.chosen).toEqual([{ kind: "final", enabled: false }]);
+    expect(calls[0]?.payload).toMatchObject({
+      text: "Выключено: анонс финала.",
+    });
+    const shown = JSON.stringify(calls[1]?.payload);
+    expect(shown).toContain('"🔕 Выкл · Анонс финала"');
+    expect(shown).toContain('"• Не чаще раза в 15 минут"');
+  });
+
+  it("treats a final switch outside the dictionary as unknown data", async () => {
+    const ports = withOutbid(stored("every"));
+    const { bot } = makeBot(ports);
+    await bot.handleUpdate(lotPress({ data: "v1:entry:notify:final:2" }));
+    expect(ports.chosen).toEqual([]);
+  });
+
   // Критерий PER-515: выбор переживает рестарт бота — бот его не помнит, а
   // читает у Notifications.
   it("shows the stored choice after the bot restarts", async () => {
-    const store: { frequency: OutbidFrequency | undefined } = {
-      frequency: "every",
-    };
+    const store = stored("every");
     await makeBot(withOutbid(store)).bot.handleUpdate(
-      lotPress({ data: notifyCallback("60") }),
+      lotPress({ data: mode("60") }),
     );
     const restarted = makeBot(withOutbid(store));
     await restarted.bot.handleUpdate(lotPress({ data: notifyCallback() }));
@@ -2272,12 +2304,11 @@ describe("outbid frequency", () => {
   // Критерий PER-515: недоступный Notifications — отказ, а не молчаливое
   // сохранение; повтор несёт тот же выбор.
   it("refuses without a toast when Notifications is down", async () => {
-    const ports = withOutbid(
-      { frequency: "every" },
-      { set: () => Promise.reject(new ConnectError("down", Code.Unavailable)) },
-    );
+    const ports = withOutbid(stored("every"), {
+      set: () => Promise.reject(new ConnectError("down", Code.Unavailable)),
+    });
     const { bot, calls } = makeBot(ports);
-    await bot.handleUpdate(lotPress({ data: notifyCallback("off") }));
+    await bot.handleUpdate(lotPress({ data: mode("off") }));
     expect(calls.map((call) => call.method)).toEqual([
       "answerCallbackQuery",
       "editMessageText",
@@ -2288,7 +2319,7 @@ describe("outbid frequency", () => {
       reply_markup: {
         inline_keyboard: [
           [
-            { text: "Повторить", callback_data: notifyCallback("off") },
+            { text: "Повторить", callback_data: mode("off") },
             { text: "‹ Аукционы", callback_data: entryCallback("auctions") },
           ],
         ],
@@ -2302,7 +2333,7 @@ describe("outbid frequency", () => {
       service: "auction-bot",
       out: (line) => lines.push(line),
     });
-    const { bot, calls } = makeBot(withOutbid({ frequency: undefined }), {
+    const { bot, calls } = makeBot(withOutbid({ settings: undefined }), {
       logger,
     });
     await bot.handleUpdate(lotPress({ data: notifyCallback() }));
@@ -2318,7 +2349,7 @@ describe("outbid frequency", () => {
   // «Частота уведомлений» под перебитием открывает экран новым сообщением:
   // уведомление остаётся в истории целым.
   it("opens the settings from the outbid notification as a new message", async () => {
-    const { bot, calls } = makeBot(withOutbid({ frequency: "every" }));
+    const { bot, calls } = makeBot(withOutbid(stored("every")));
     await bot.handleUpdate(lotPress({ data: traceNotifyCallback() }));
     expect(calls.map((call) => call.method)).not.toContain("editMessageText");
     expect(calls.at(-1)).toMatchObject({
@@ -2330,7 +2361,7 @@ describe("outbid frequency", () => {
   // Участник сообщества настройки здесь не получает: его перебития приходят
   // в бот хаба (ADR-064), и Notifications не зовётся.
   it("sends a community member to the hub bot without touching Notifications", async () => {
-    const ports = withOutbid({ frequency: "every" });
+    const ports = withOutbid(stored("every"));
     const member: PortsFactory = (requestId) => ({
       ...ports(requestId),
       identity: {
@@ -2344,7 +2375,7 @@ describe("outbid frequency", () => {
       },
     });
     const { bot, calls } = makeBot(member);
-    await bot.handleUpdate(lotPress({ data: notifyCallback("off") }));
+    await bot.handleUpdate(lotPress({ data: mode("off") }));
     expect(ports.chosen).toEqual([]);
     expect(calls.at(-1)?.payload).toMatchObject({
       text: deniedTexts["in-community"],
@@ -2353,7 +2384,7 @@ describe("outbid frequency", () => {
 
   it("treats the settings button as outdated in a bot without Notifications", async () => {
     const { bot, calls } = makeBot(publicPorts);
-    await bot.handleUpdate(lotPress({ data: notifyCallback("off") }));
+    await bot.handleUpdate(lotPress({ data: mode("off") }));
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("Этот экран устарел."),
     });

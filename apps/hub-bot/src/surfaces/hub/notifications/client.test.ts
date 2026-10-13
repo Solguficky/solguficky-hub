@@ -239,35 +239,66 @@ describe("notifications client", () => {
   });
 });
 
-describe("outbid frequency", () => {
-  it("sends the chosen mode and answers with the stored one", async () => {
-    const setOutbidPreference = vi.fn().mockResolvedValue({
-      frequency: WireOutbidFrequency.AT_MOST_EVERY_60_MINUTES,
+describe("auction notification settings", () => {
+  it("sends the chosen mode alone and answers with the stored settings", async () => {
+    const setAuctionNotificationPreferences = vi.fn().mockResolvedValue({
+      outbidFrequency: WireOutbidFrequency.AT_MOST_EVERY_60_MINUTES,
+      finalAnnouncements: true,
     });
-    const notifications = adapter({ setOutbidPreference });
+    const notifications = adapter({ setAuctionNotificationPreferences });
 
-    const result = await notifications.setOutbidFrequency("identity-id", "60");
+    const result = await notifications.setAuctionNotifications("identity-id", {
+      kind: "frequency",
+      frequency: "60",
+    });
 
-    expect(setOutbidPreference).toHaveBeenCalledWith(
+    expect(setAuctionNotificationPreferences).toHaveBeenCalledWith(
       {
         identityId: "identity-id",
-        frequency: WireOutbidFrequency.AT_MOST_EVERY_60_MINUTES,
+        outbidFrequency: WireOutbidFrequency.AT_MOST_EVERY_60_MINUTES,
       },
       expect.anything(),
     );
-    expect(result).toEqual({ kind: "ok", frequency: "60" });
+    expect(result).toEqual({
+      kind: "ok",
+      settings: { frequency: "60", finalAnnouncements: true },
+    });
+  });
+
+  // Выключатель финала уходит один: частоту сервер не трогает.
+  it("sends the final switch alone", async () => {
+    const setAuctionNotificationPreferences = vi.fn().mockResolvedValue({
+      outbidFrequency: WireOutbidFrequency.EVERY,
+      finalAnnouncements: false,
+    });
+    const notifications = adapter({ setAuctionNotificationPreferences });
+
+    const result = await notifications.setAuctionNotifications("identity-id", {
+      kind: "final",
+      enabled: false,
+    });
+
+    expect(setAuctionNotificationPreferences).toHaveBeenCalledWith(
+      { identityId: "identity-id", finalAnnouncements: false },
+      expect.anything(),
+    );
+    expect(result).toEqual({
+      kind: "ok",
+      settings: { frequency: "every", finalAnnouncements: false },
+    });
   });
 
   // Умолчание `EVERY` отдаёт сервер, и бот его не додумывает: незнакомое
   // значение — ответ вне контракта, а не недоступность.
   it("reports a mode outside the dictionary as unknown", async () => {
     const notifications = adapter({
-      getOutbidPreference: vi
-        .fn()
-        .mockResolvedValue({ frequency: WireOutbidFrequency.UNSPECIFIED }),
+      getAuctionNotificationPreferences: vi.fn().mockResolvedValue({
+        outbidFrequency: WireOutbidFrequency.UNSPECIFIED,
+        finalAnnouncements: true,
+      }),
     });
 
-    expect(await notifications.getOutbidFrequency("identity-id")).toEqual({
+    expect(await notifications.getAuctionNotifications("identity-id")).toEqual({
       kind: "unknown",
       value: WireOutbidFrequency.UNSPECIFIED,
     });
@@ -275,13 +306,13 @@ describe("outbid frequency", () => {
 
   it("reports an unreachable Notifications as unavailable", async () => {
     const notifications = adapter({
-      getOutbidPreference: vi
+      getAuctionNotificationPreferences: vi
         .fn()
         .mockRejectedValue(new ConnectError("down", Code.Unavailable)),
     });
 
-    expect(await notifications.getOutbidFrequency("identity-id")).toMatchObject(
-      { kind: "unavailable" },
-    );
+    expect(
+      await notifications.getAuctionNotifications("identity-id"),
+    ).toMatchObject({ kind: "unavailable" });
   });
 });

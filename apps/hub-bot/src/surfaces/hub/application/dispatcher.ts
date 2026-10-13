@@ -202,8 +202,8 @@ export function createDispatcher(
             : withCardAuction(await form(request), request);
         case "view-global-notifications":
         case "set-global-category":
-        case "view-outbid-frequency":
-        case "set-outbid-frequency":
+        case "view-auction-notifications":
+        case "set-auction-notifications":
         case "view-meetup-notifications":
         case "set-meetup-subscription":
         case "set-meetup-category":

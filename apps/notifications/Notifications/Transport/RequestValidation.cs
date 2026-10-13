@@ -104,7 +104,24 @@ public static class RequestValidation
     public static OutbidFrequency OutbidFrequency(OutbidFrequency frequency) =>
         OutbidFrequencies.IsKnown(frequency)
             ? frequency
-            : throw Invalid("frequency", "must be a known outbid frequency other than unspecified");
+            : throw Invalid("outbid_frequency", "must be a known outbid frequency other than unspecified");
+
+    /// <summary>
+    /// Названные настройки аукциона (PER-539): отсутствующее поле не меняется,
+    /// а запрос без единого поля ничего не меняет и отвергается, как команда
+    /// без цели.
+    /// </summary>
+    public static (OutbidFrequency? Frequency, bool? FinalAnnouncements) AuctionPreferences(
+        SetAuctionNotificationPreferencesRequest request)
+    {
+        if (!request.HasOutbidFrequency && !request.HasFinalAnnouncements)
+        {
+            throw Invalid("outbid_frequency", "or final_announcements must be set");
+        }
+
+        return (request.HasOutbidFrequency ? OutbidFrequency(request.OutbidFrequency) : null,
+            request.HasFinalAnnouncements ? request.FinalAnnouncements : null);
+    }
 
     /// <summary>
     /// Канонический UUIDv7: строчные буквы, дефисы, версия и вариант по RFC 9562.

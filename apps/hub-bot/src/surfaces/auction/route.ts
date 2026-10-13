@@ -12,8 +12,9 @@ import {
   type Viewer,
 } from "../../auction-ui/index.js";
 import {
-  type OutbidFrequency,
-  outbidToast,
+  type AuctionNotificationChange,
+  type AuctionNotificationSettings,
+  auctionNotificationsToast,
 } from "../../core/notifications/outbid.js";
 import { type AuctionListing, listPage, readAuctions } from "./auctions.js";
 import type { EntryPorts } from "./entry-ports.js";
@@ -404,16 +405,16 @@ async function routeEntry(input: {
   }
 }
 
-// Экран частоты «перебили» и выбор на нём (PER-515). Выбор — целевое
-// значение: экран и подтверждение показывают то, что ответил Notifications, а
-// не то, что нажато. Notifications недоступен — кадр отказа с повтором того
+// Экран настроек уведомлений аукциона и выбор на нём (PER-515, PER-539):
+// частота «перебили» и анонс финала. Выбор — целевое значение: экран и
+// подтверждение показывают то, что ответил Notifications, а не то, что нажато. Notifications недоступен — кадр отказа с повтором того
 // же действия и без подтверждения. Выбор, который сервис успел записать до
 // таймаута, этим не отменяется: повтор целевым значением его не меняет.
 async function outbidSettings(input: {
   ports: EntryPorts;
   viewer: Viewer;
   exit: UnavailableExit;
-  choose?: OutbidFrequency;
+  choose?: AuctionNotificationChange;
 }): Promise<RouteOutcome> {
   const { outbid } = input.ports;
   const identityId = input.viewer.identityId;
@@ -424,7 +425,7 @@ async function outbidSettings(input: {
     exit: input.exit,
     subject: "notifications",
   } as const;
-  let current: OutbidFrequency | undefined;
+  let current: AuctionNotificationSettings | undefined;
   try {
     current =
       input.choose === undefined
@@ -446,7 +447,9 @@ async function outbidSettings(input: {
   return {
     screen: { kind: "notify", current },
     identityId,
-    ...(input.choose === undefined ? {} : { toast: outbidToast(current) }),
+    ...(input.choose === undefined
+      ? {}
+      : { toast: auctionNotificationsToast(input.choose, current) }),
   };
 }
 

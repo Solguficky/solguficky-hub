@@ -16,6 +16,13 @@ public abstract record OutbidDecision
 }
 
 /// <summary>
+/// Настройки уведомлений аукциона целиком (PER-539): частота перебитий и
+/// ответов автоставки и выключатель анонса финала. Покупку и допуск не
+/// выключает ни одна из них.
+/// </summary>
+public sealed record AuctionPreferences(OutbidFrequency OutbidFrequency, bool FinalAnnouncements);
+
+/// <summary>
 /// Словарь настройки перебитий: хранение, умолчание и решение. Правило живёт
 /// здесь, а не в SQL, чтобы проверяться юнит-тестом без живой базы.
 /// </summary>

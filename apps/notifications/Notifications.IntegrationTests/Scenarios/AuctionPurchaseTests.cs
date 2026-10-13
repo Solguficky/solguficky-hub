@@ -39,6 +39,28 @@ public class AuctionPurchaseTests
     }
 
     /// <summary>
+    /// Покупку не выключает ни одна настройка уведомлений аукциона (PER-539):
+    /// победитель, выключивший анонс финала и перебития, получает её всё равно.
+    /// </summary>
+    [Fact]
+    public async Task When_WinnerSilencedFinalAndOutbids_Expect_PurchaseStillAddressed()
+    {
+        using var db = Database();
+        await using var nats = await NatsUnderTest.Start();
+        await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
+        var winner = EventFactory.NewId();
+        await SetFinalAnnouncements(db, winner, enabled: false);
+        await SetOutbid(db, winner, OutbidFrequency.Off);
+
+        await nats.Publish(AuctionFeed.LotSoldSubject, EventFactory.Sold(EventFactory.NewId(), winner));
+
+        var published = await Eventually(nats.PublishedFacts, facts => facts.Count == 1);
+        var fact = published.Single().Fact;
+        fact.TypeCase.ShouldBe(Notification.TypeOneofCase.LotPurchased);
+        fact.RecipientId.ShouldBe(winner);
+    }
+
+    /// <summary>
     /// Непроданный и удержанный для финала лот повода не дают, но ведут реплику
     /// лота избранного (ADR-063): ключ события и снимок, без факта.
     /// </summary>

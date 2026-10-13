@@ -604,9 +604,24 @@ const shown: readonly {
   faq?: typeof urls;
   presentation?: "plain";
 }[] = [
-  { screen: { kind: "notify", current: "every" } },
-  { screen: { kind: "notify", current: "15" } },
-  { screen: { kind: "notify", current: "off" } },
+  {
+    screen: {
+      kind: "notify",
+      current: { frequency: "every", finalAnnouncements: true },
+    },
+  },
+  {
+    screen: {
+      kind: "notify",
+      current: { frequency: "15", finalAnnouncements: false },
+    },
+  },
+  {
+    screen: {
+      kind: "notify",
+      current: { frequency: "off", finalAnnouncements: true },
+    },
+  },
   { screen: { kind: "faq" } },
   { screen: { kind: "faq" }, faq: urls },
   // «Настройки» (PER-595): с уведомлениями и именем, только с одним и пустые.

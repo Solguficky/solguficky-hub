@@ -1,9 +1,10 @@
 import { InlineKeyboard } from "grammy";
 import {
+  type AuctionNotificationSettings,
+  auctionNotificationsExplanation,
+  finalAnnouncementsButtonLabel,
   OUTBID_FREQUENCIES,
-  type OutbidFrequency,
   outbidButtonLabel,
-  outbidExplanation,
 } from "../../../../core/notifications/outbid.js";
 import type { NotificationCategoryView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
@@ -140,29 +141,43 @@ export function meetupNotificationsScreen(settings: {
   };
 }
 
+/** Данные переключателя анонса финала: целевое состояние, а не шаг. */
+export function finalAnnouncementsData(enabled: boolean): string {
+  return `v1:notify:final:${enabled ? "1" : "0"}`;
+}
+
 /**
- * Частота «перебили» (PER-552): пять режимов по одному в ряд, текущий
- * отмечен на своей кнопке маркером «• », как у бота аукциона (PER-598;
- * дизайн-код, «Уведомления»). Выбор отменяется с того же экрана, поэтому
- * подтверждения «Да» нет: что сработало, говорит ответ на нажатие. Это
- * настройки расширения «Аукцион» в «Настройках» → «Расширения»: в
+ * Настройки уведомлений аукциона (PER-552, PER-539) — самодостаточные, как у
+ * бота аукциона: пять режимов частоты «перебили» по одному в ряд, текущий
+ * отмечен на своей кнопке маркером «• » (PER-598; дизайн-код, «Уведомления»),
+ * и под ними переключатель анонса финала. Выбор отменяется с того же экрана,
+ * поэтому подтверждения «Да» нет: что сработало, говорит ответ на нажатие.
+ * Это настройки расширения «Аукцион» в «Настройках» → «Расширения»: в
  * «Уведомлениях» остаются только категории ядра (PER-605). Данные кнопок
- * прежние, поэтому «Реже» и «Перебитые ставки» из старых сообщений и
+ * частоты прежние, поэтому «Реже» и «Перебитые ставки» из старых сообщений и
  * «Частота уведомлений» из новых открывают этот экран на новом месте.
  */
-export function outbidFrequencyScreen(current: OutbidFrequency): ShownScreen {
+export function auctionNotificationsScreen(
+  current: AuctionNotificationSettings,
+): ShownScreen {
   const keyboard = new InlineKeyboard();
   for (const frequency of OUTBID_FREQUENCIES) {
     keyboard
       .text(
-        outbidButtonLabel(frequency, current),
+        outbidButtonLabel(frequency, current.frequency),
         `v1:notify:outbid:${frequency}`,
       )
       .row();
   }
+  keyboard
+    .text(
+      finalAnnouncementsButtonLabel(current.finalAnnouncements),
+      finalAnnouncementsData(!current.finalAnnouncements),
+    )
+    .row();
   return {
     id: "notify-outbid",
-    text: screenText("Аукцион", ...outbidExplanation),
+    text: screenText("Аукцион", ...auctionNotificationsExplanation),
     keyboard: withNav(keyboard, toSettingsExtensions),
     format: "HTML",
   };

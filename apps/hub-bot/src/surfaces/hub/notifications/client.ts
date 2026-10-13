@@ -6,8 +6,8 @@ import {
 } from "@connectrpc/connect-node";
 import {
   NotificationsService,
+  type AuctionNotificationPreferences as WireAuctionPreferences,
   NotificationCategory as WireCategory,
-  type OutbidFrequency as WireOutbidFrequency,
 } from "../../../../gen/notifications/v1/notifications_service_pb.js";
 import type {
   FavoritesPort,
@@ -15,8 +15,8 @@ import type {
 } from "../../../auction-ui/index.js";
 import { createFavoritesPort } from "../../../core/notifications/favorites.js";
 import {
-  outbidFrequencyOf,
-  outbidFrequencyToWire,
+  auctionNotificationsOf,
+  auctionNotificationsToWire,
 } from "../../../core/notifications/outbid.js";
 import { createProxyExplainerPort } from "../../../core/notifications/proxy-explainer.js";
 import {
@@ -27,6 +27,7 @@ import {
 } from "../../../core/rpc-metadata.js";
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import type {
+  AuctionNotificationsResult,
   BroadcastResult,
   CategoryState,
   GlobalPreferences,
@@ -37,7 +38,6 @@ import type {
   NotificationCategory,
   NotificationFailure,
   Notifications,
-  OutbidFrequencyResult,
 } from "./port.js";
 
 type NotificationsRpc = Pick<
@@ -48,8 +48,8 @@ type NotificationsRpc = Pick<
   | "setMeetupCategoryPreference"
   | "getGlobalNotificationPreferences"
   | "getMeetupNotificationPreferences"
-  | "getOutbidPreference"
-  | "setOutbidPreference"
+  | "getAuctionNotificationPreferences"
+  | "setAuctionNotificationPreferences"
   | "broadcastToMeetupSubscribers"
   | "broadcastToCommunity"
 >;
@@ -153,28 +153,30 @@ export function createNotificationsAdapter(
       return toFailure(cause);
     }
   };
-  // Значение вне словаря — `UNSPECIFIED` или число новее бота — ответ вне
+  // Частота вне словаря — `UNSPECIFIED` или число новее бота — ответ вне
   // контракта: сервер отдаёт умолчание `EVERY` сам, и бот его не додумывает.
-  const outbid = async (
-    operation: () => Promise<{ frequency: WireOutbidFrequency }>,
-  ): Promise<OutbidFrequencyResult> => {
+  const auctionSettings = async (
+    operation: () => Promise<WireAuctionPreferences>,
+  ): Promise<AuctionNotificationsResult> => {
     try {
       const response = await operation();
-      const frequency = outbidFrequencyOf(response.frequency);
-      return frequency === undefined
-        ? { kind: "unknown", value: response.frequency }
-        : { kind: "ok", frequency };
+      const settings = auctionNotificationsOf(response);
+      return settings === undefined
+        ? { kind: "unknown", value: response.outbidFrequency }
+        : { kind: "ok", settings };
     } catch (cause) {
       return toFailure(cause);
     }
   };
   return {
-    getOutbidFrequency: (identityId, meta) =>
-      outbid(() => rpc.getOutbidPreference({ identityId }, options(meta))),
-    setOutbidFrequency: (identityId, frequency, meta) =>
-      outbid(() =>
-        rpc.setOutbidPreference(
-          { identityId, frequency: outbidFrequencyToWire(frequency) },
+    getAuctionNotifications: (identityId, meta) =>
+      auctionSettings(() =>
+        rpc.getAuctionNotificationPreferences({ identityId }, options(meta)),
+      ),
+    setAuctionNotifications: (identityId, change, meta) =>
+      auctionSettings(() =>
+        rpc.setAuctionNotificationPreferences(
+          { identityId, ...auctionNotificationsToWire(change) },
           options(meta),
         ),
       ),

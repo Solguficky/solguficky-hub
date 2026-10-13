@@ -45,8 +45,8 @@ function notificationsStub(overrides: Partial<Notifications>): Notifications {
     setSubscription: vi.fn(),
     setGlobalCategory: vi.fn(),
     setMeetupCategory: vi.fn(),
-    getOutbidFrequency: vi.fn(),
-    setOutbidFrequency: vi.fn(),
+    getAuctionNotifications: vi.fn(),
+    setAuctionNotifications: vi.fn(),
     broadcastToMeetupSubscribers: vi.fn(),
     broadcastToCommunity: vi.fn(),
     ...overrides,
@@ -286,55 +286,57 @@ describe("global notification settings", () => {
   });
 });
 
-describe("outbid frequency", () => {
-  it("shows the mode Notifications holds for the person", async () => {
-    const getOutbidFrequency = vi
+describe("auction notification settings", () => {
+  it("shows the settings Notifications holds for the person", async () => {
+    const stored = { frequency: "off", finalAnnouncements: false } as const;
+    const getAuctionNotifications = vi
       .fn()
-      .mockResolvedValue({ kind: "ok", frequency: "off" });
-    const notifications = notificationsStub({ getOutbidFrequency });
+      .mockResolvedValue({ kind: "ok", settings: stored });
+    const notifications = notificationsStub({ getAuctionNotifications });
     const settings = createNotificationSettings(meetupsStub(), notifications);
 
     const result = await settings({
       identity,
-      intent: "view-outbid-frequency",
+      intent: "view-auction-notifications",
     });
 
-    expect(getOutbidFrequency).toHaveBeenCalledWith(
+    expect(getAuctionNotifications).toHaveBeenCalledWith(
       identity.identityId,
       undefined,
     );
-    expect(result).toEqual({ kind: "outbid-frequency", frequency: "off" });
+    expect(result).toEqual({ kind: "auction-notifications", settings: stored });
   });
 
   // Экран рисует ответ сервиса, а не нажатую кнопку.
   it("answers a choice with what Notifications stored", async () => {
-    const setOutbidFrequency = vi
+    const stored = { frequency: "15", finalAnnouncements: true } as const;
+    const setAuctionNotifications = vi
       .fn()
-      .mockResolvedValue({ kind: "ok", frequency: "15" });
+      .mockResolvedValue({ kind: "ok", settings: stored });
     const settings = createNotificationSettings(
       meetupsStub(),
-      notificationsStub({ setOutbidFrequency }),
+      notificationsStub({ setAuctionNotifications }),
     );
 
     const result = await settings({
       identity,
-      intent: "set-outbid-frequency",
-      frequency: "15",
+      intent: "set-auction-notifications",
+      change: { kind: "frequency", frequency: "15" },
     });
 
-    expect(setOutbidFrequency).toHaveBeenCalledWith(
+    expect(setAuctionNotifications).toHaveBeenCalledWith(
       identity.identityId,
-      "15",
+      { kind: "frequency", frequency: "15" },
       undefined,
     );
-    expect(result).toEqual({ kind: "outbid-frequency", frequency: "15" });
+    expect(result).toEqual({ kind: "auction-notifications", settings: stored });
   });
 
   it("rejects a mode outside the dictionary with its value", async () => {
     const settings = createNotificationSettings(
       meetupsStub(),
       notificationsStub({
-        getOutbidFrequency: vi
+        getAuctionNotifications: vi
           .fn()
           .mockResolvedValue({ kind: "unknown", value: 7 }),
       }),
@@ -342,7 +344,7 @@ describe("outbid frequency", () => {
 
     const result = await settings({
       identity,
-      intent: "view-outbid-frequency",
+      intent: "view-auction-notifications",
     });
 
     expect(result).toEqual({
@@ -355,7 +357,7 @@ describe("outbid frequency", () => {
     const settings = createNotificationSettings(
       meetupsStub(),
       notificationsStub({
-        setOutbidFrequency: vi
+        setAuctionNotifications: vi
           .fn()
           .mockResolvedValue({ kind: "unavailable", cause: new Error("down") }),
       }),
@@ -363,8 +365,8 @@ describe("outbid frequency", () => {
 
     const result = await settings({
       identity,
-      intent: "set-outbid-frequency",
-      frequency: "off",
+      intent: "set-auction-notifications",
+      change: { kind: "final", enabled: false },
     });
 
     expect(result).toEqual({

@@ -3,7 +3,10 @@ import type {
   AuctionSummaryView,
   LotView,
 } from "../../../auction-ui/index.js";
-import type { OutbidFrequency } from "../../../core/notifications/outbid.js";
+import type {
+  AuctionNotificationChange,
+  AuctionNotificationSettings,
+} from "../../../core/notifications/outbid.js";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
@@ -659,18 +662,19 @@ export type NotificationRequest =
       useCase?: string;
       deadlineAt?: number;
     }
-  // Частота «перебили» (PER-552): режим целиком, а не переключатель.
+  // Настройки уведомлений аукциона (PER-552, PER-539): частота — режим
+  // целиком, финал — целевое состояние; одна настройка за нажатие.
   | {
       identity: Person;
-      intent: "view-outbid-frequency";
+      intent: "view-auction-notifications";
       requestId?: string;
       useCase?: string;
       deadlineAt?: number;
     }
   | {
       identity: Person;
-      intent: "set-outbid-frequency";
-      frequency: OutbidFrequency;
+      intent: "set-auction-notifications";
+      change: AuctionNotificationChange;
       requestId?: string;
       useCase?: string;
       deadlineAt?: number;
@@ -900,7 +904,7 @@ export type ExecuteResult =
       kind: "global-notification-settings";
       categories: readonly CategoryState<NotificationCategory>[];
     }
-  | { kind: "outbid-frequency"; frequency: OutbidFrequency }
+  | { kind: "auction-notifications"; settings: AuctionNotificationSettings }
   | { kind: "meetup-not-found" }
   // `error` — текст для человека. `rejected` — отказ Meetups, из-за которого
   // вопрос задан заново: он идёт в запись границы, а не в ответ (PER-397).

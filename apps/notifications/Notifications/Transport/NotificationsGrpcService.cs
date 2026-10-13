@@ -120,25 +120,25 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
         return Map(preferences);
     }
 
-    public override async Task<OutbidPreference> GetOutbidPreference(
-        GetOutbidPreferenceRequest request,
+    public override async Task<AuctionNotificationPreferences> GetAuctionNotificationPreferences(
+        GetAuctionNotificationPreferencesRequest request,
         ServerCallContext context)
     {
         var identityId = RequestValidation.IdentityId(request.IdentityId);
 
-        var frequency = await operations.ReadOutbid(identityId, context.CancellationToken);
+        var preferences = await operations.ReadAuction(identityId, context.CancellationToken);
 
-        return Map(identityId, frequency);
+        return Map(identityId, preferences);
     }
 
-    public override async Task<OutbidPreference> SetOutbidPreference(
-        SetOutbidPreferenceRequest request,
+    public override async Task<AuctionNotificationPreferences> SetAuctionNotificationPreferences(
+        SetAuctionNotificationPreferencesRequest request,
         ServerCallContext context)
     {
         var identityId = RequestValidation.IdentityId(request.IdentityId);
-        var frequency = RequestValidation.OutbidFrequency(request.Frequency);
+        var (frequency, finalAnnouncements) = RequestValidation.AuctionPreferences(request);
 
-        var stored = await operations.SetOutbid(identityId, frequency, context.CancellationToken);
+        var stored = await operations.SetAuction(identityId, frequency, finalAnnouncements, context.CancellationToken);
 
         return Map(identityId, stored);
     }
@@ -325,6 +325,11 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
     private static LotFollowing Following(Guid identityId, Guid lotId, bool following) =>
         new() { IdentityId = identityId.ToString("D"), LotId = lotId.ToString("D"), Following = following };
 
-    private static OutbidPreference Map(Guid identityId, OutbidFrequency frequency) =>
-        new() { IdentityId = identityId.ToString("D"), Frequency = frequency };
+    private static AuctionNotificationPreferences Map(Guid identityId, AuctionPreferences preferences) =>
+        new()
+        {
+            IdentityId = identityId.ToString("D"),
+            OutbidFrequency = preferences.OutbidFrequency,
+            FinalAnnouncements = preferences.FinalAnnouncements,
+        };
 }

@@ -52,10 +52,11 @@ import {
 } from "../../core/entry.js";
 import { money, truncate } from "../../core/format.js";
 import {
+  type AuctionNotificationSettings,
+  auctionNotificationsExplanation,
+  finalAnnouncementsButtonLabel,
   OUTBID_FREQUENCIES,
-  type OutbidFrequency,
   outbidButtonLabel,
-  outbidExplanation,
 } from "../../core/notifications/outbid.js";
 import {
   confirmNoLabel,
@@ -103,10 +104,10 @@ export type AuctionEntryScreen =
   // Подсказка на сообщение вне вопроса (PER-592).
   | { kind: "hint"; openQuestion: boolean }
   | { kind: "faq" }
-  // «Настройки» (PER-595): частота «перебили», у бота с Notifications, и имя в
-  // идущем аукционе, если такой есть.
+  // «Настройки» (PER-595): настройки уведомлений аукциона, у бота с
+  // Notifications, и имя в идущем аукционе, если такой есть.
   | { kind: "settings"; notifications: boolean; auctionId?: string }
-  | { kind: "notify"; current: OutbidFrequency }
+  | { kind: "notify"; current: AuctionNotificationSettings }
   | { kind: "auctions"; list: AuctionListPage }
   | { kind: "past"; list: AuctionListPage }
   | { kind: "details" }
@@ -382,23 +383,35 @@ export function renderEntryScreen(
         ],
       };
     }
-    // Частота «перебили» (PER-515): пять режимов по одному в ряд, текущий
-    // отмечен на своей кнопке маркером «• » (PER-598; дизайн-код,
-    // «Уведомления»). Выбор отменяется с того же экрана, поэтому
+    // Настройки уведомлений аукциона (PER-515, PER-539): пять режимов
+    // частоты «перебили» по одному в ряд, текущий отмечен на своей кнопке
+    // маркером «• » (PER-598; дизайн-код, «Уведомления»), и под ними
+    // переключатель анонса финала. Выбор отменяется с того же экрана, поэтому
     // подтверждения «Да» у него нет: что сработало, говорит ответ на нажатие.
     // Экран — подраздел «Настроек»: последний ряд — «‹ Настройки» (PER-595).
     case "notify":
       return {
         id: "notify",
         format: "html",
-        text: screenText(notifyTitle, ...outbidExplanation),
+        text: screenText(notifyTitle, ...auctionNotificationsExplanation),
         keyboard: [
           ...OUTBID_FREQUENCIES.map((frequency) => [
             {
-              text: outbidButtonLabel(frequency, screen.current),
-              callback_data: notifyCallback(frequency),
+              text: outbidButtonLabel(frequency, screen.current.frequency),
+              callback_data: notifyCallback({ kind: "frequency", frequency }),
             },
           ]),
+          [
+            {
+              text: finalAnnouncementsButtonLabel(
+                screen.current.finalAnnouncements,
+              ),
+              callback_data: notifyCallback({
+                kind: "final",
+                enabled: !screen.current.finalAnnouncements,
+              }),
+            },
+          ],
           [toSettings],
         ],
       };

@@ -135,36 +135,51 @@ public sealed class PreferenceOperations(
         CancellationToken cancellationToken) =>
         InMeetupScope(identityId, meetupId, static (_, _) => Task.CompletedTask, cancellationToken);
 
-    /// <summary>Действующая частота перебитий: заданная или умолчание продукта.</summary>
-    public async Task<OutbidFrequency> ReadOutbid(Guid identityId, CancellationToken cancellationToken)
+    /// <summary>Действующие настройки уведомлений аукциона: заданные или умолчание продукта.</summary>
+    public async Task<AuctionPreferences> ReadAuction(Guid identityId, CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
 
-        var frequency = await OutbidStore.ReadPreference(work, identityId, cancellationToken);
+        var preferences = await ReadAuction(work, identityId, cancellationToken);
 
         await work.Commit(cancellationToken);
 
-        return frequency ?? OutbidFrequencies.Default;
+        return preferences;
     }
 
     /// <summary>
-    /// Ставит частоту перебитий. Открытые окна не трогаются: на закрытии окно
-    /// само перечитывает настройку, и выключивший перебития сообщения не получит.
+    /// Ставит названные настройки аукциона, неназванные не трогает (PER-539).
+    /// Открытые окна частоты не трогаются: на закрытии окно само перечитывает
+    /// настройку, и выключивший перебития сообщения не получит.
     /// </summary>
-    public async Task<OutbidFrequency> SetOutbid(
+    public async Task<AuctionPreferences> SetAuction(
         Guid identityId,
-        OutbidFrequency frequency,
+        OutbidFrequency? frequency,
+        bool? finalAnnouncements,
         CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
 
-        await OutbidStore.SetPreference(work, identityId, frequency, DateTimeOffset.UtcNow, cancellationToken);
-        var stored = await OutbidStore.ReadPreference(work, identityId, cancellationToken);
+        var now = DateTimeOffset.UtcNow;
+        if (frequency is { } target)
+        {
+            await OutbidStore.SetPreference(work, identityId, target, now, cancellationToken);
+        }
+        if (finalAnnouncements is { } enabled)
+        {
+            await FinalStore.SetAnnouncements(work, identityId, enabled, now, cancellationToken);
+        }
+        var stored = await ReadAuction(work, identityId, cancellationToken);
 
         await work.Commit(cancellationToken);
 
-        return stored ?? OutbidFrequencies.Default;
+        return stored;
     }
+
+    private static async Task<AuctionPreferences> ReadAuction(UnitOfWork work, Guid identityId,
+        CancellationToken cancellationToken) =>
+        new(await OutbidStore.ReadPreference(work, identityId, cancellationToken) ?? OutbidFrequencies.Default,
+            await FinalStore.ReadAnnouncements(work, identityId, cancellationToken) ?? true);
 
     /// <summary>Видел ли человек пояснение автоставки (PER-517).</summary>
     public async Task<bool> ReadProxyExplainer(Guid identityId, CancellationToken cancellationToken)

@@ -64,6 +64,15 @@ public static class AuctionFixtures
         await work.Commit(Cancellation);
     }
 
+    /// <summary>Выключатель анонса финала участника, как его записала бы команда.</summary>
+    public static async Task SetFinalAnnouncements(IsolatedDatabase db, string identityId, bool enabled)
+    {
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        await using var work = await UnitOfWork.Begin(source, Cancellation);
+        await FinalStore.SetAnnouncements(work, Guid.Parse(identityId), enabled, EventFactory.Committed, Cancellation);
+        await work.Commit(Cancellation);
+    }
+
     /// <summary>Закрывает все окна, наступившие к моменту, как это сделал бы проход.</summary>
     public static async Task<int> CloseDueWindows(AuctionStore store, DateTimeOffset now)
     {

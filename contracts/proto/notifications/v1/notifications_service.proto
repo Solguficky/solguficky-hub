@@ -21,10 +21,11 @@ service NotificationsService {
   rpc GetGlobalNotificationPreferences(GetGlobalNotificationPreferencesRequest) returns (GlobalNotificationPreferences);
   rpc GetMeetupNotificationPreferences(GetMeetupNotificationPreferencesRequest) returns (MeetupNotificationPreferences);
 
-  // How often the person hears that their lead on a lot was taken. This is
-  // not one of the categories below.
-  rpc GetOutbidPreference(GetOutbidPreferenceRequest) returns (OutbidPreference);
-  rpc SetOutbidPreference(SetOutbidPreferenceRequest) returns (OutbidPreference);
+  // The person's auction notification settings, whole: how often they hear
+  // about outbids and proxy answers, and whether they hear about the final.
+  // None of them is one of the categories below.
+  rpc GetAuctionNotificationPreferences(GetAuctionNotificationPreferencesRequest) returns (AuctionNotificationPreferences);
+  rpc SetAuctionNotificationPreferences(SetAuctionNotificationPreferencesRequest) returns (AuctionNotificationPreferences);
 
   // Favorite lots: "the person follows this lot".
   rpc FollowLot(FollowLotRequest) returns (LotFollowing);
@@ -141,26 +142,34 @@ message CategoryPreference {
   bool enabled = 2;
 }
 
-message GetOutbidPreferenceRequest {
+message GetAuctionNotificationPreferencesRequest {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 }
 
-message SetOutbidPreferenceRequest {
+// Changes one or both settings. An absent field leaves its setting as it is.
+message SetAuctionNotificationPreferencesRequest {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 
   // Target value, never a step from the current one.
-  OutbidFrequency frequency = 2;
+  optional OutbidFrequency outbid_frequency = 2;
+
+  // Target state, never a toggle of the current value.
+  optional bool final_announcements = 3;
 }
 
-// Server-produced state. A person who never set the value gets the product
-// default, EVERY, not UNSPECIFIED.
-message OutbidPreference {
+// Server-produced state, total: a setting the person never touched carries the
+// product default — EVERY and true — not UNSPECIFIED or an absent value.
+message AuctionNotificationPreferences {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 
-  OutbidFrequency frequency = 2;
+  OutbidFrequency outbid_frequency = 2;
+
+  // Whether the announcements of an auction final — auction_final_lineup and
+  // auction_final_started — reach the person.
+  bool final_announcements = 3;
 }
 
 // A fixed list rather than a number of minutes: only these intervals exist.
