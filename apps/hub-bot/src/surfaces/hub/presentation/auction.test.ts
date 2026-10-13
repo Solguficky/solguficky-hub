@@ -1549,7 +1549,10 @@ describe("raffle screens in the hub", () => {
     await bot.handleUpdate(press(`v1:t:${raffleData.slice("v1:".length)}`));
     const screen = lastScreen(calls);
     expect(screen.text).toContain("Выиграл билет №2.");
-    expect(labels(screen)).toEqual([["‹ Аукцион"]]);
+    expect(labels(screen)).toEqual([
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
     expect(calls.some((call) => call.method === "editMessageText")).toBe(false);
   });
 
