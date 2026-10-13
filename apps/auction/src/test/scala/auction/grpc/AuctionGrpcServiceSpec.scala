@@ -40,6 +40,16 @@ import auction.catalog.LotCard
 import auction.catalog.LotCatalogCommands
 import auction.catalog.LotCatalogStore
 import auction.catalog.LotId
+import auction.prediction.Answer
+import auction.prediction.Forecast
+import auction.prediction.MyPredictions
+import auction.prediction.Nomination
+import auction.prediction.PredictionGateway
+import auction.prediction.PredictionRound
+import auction.prediction.Predictions
+import auction.prediction.RoundStatus
+import auction.prediction.SubmitForecast
+import auction.prediction.SubmitRejected
 import auction.catalog.LotImage
 import auction.catalog.NewCard
 import auction.entity.AuctionAnswer
@@ -372,7 +382,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       raffleNames: AuctionId => Future[Map[Int, String]] = _ => Future.successful(Map.empty),
       watchViews: AuctionWatchViews = _ => fail("the watch read model was touched"),
       changes: AuctionChanges = AuctionGrpcService.NoChanges,
-      caller: Option[Caller] = None
+      caller: Option[Caller] = None,
+      predictions: PredictionGateway = AuctionGrpcService.NoPredictions
   ) =
     AuctionGrpcService(
       lots,
@@ -388,7 +399,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       raffleNames = raffleNames,
       watchViews = watchViews,
       changes = changes,
-      caller = caller
+      caller = caller,
+      predictions = predictions
     )
 
   /**
@@ -478,6 +490,135 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   private def raffleAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
   private val raffleOp = "01890a5d-ac98-7c2b-9f3a-0d1b2c3d4e07"
   private def registration = wire.RegisterForRaffleRequest(Some(viewer), raffleAuction, raffleOp)
+
+  /** Игра в памяти: отвечает тем, что задал тест, и помнит, что до неё дошло и чьи прогнозы у неё спросили. */
+  private final class Games(answer: Either[SubmitRejected, Forecast]) extends PredictionGateway {
+    var reached: Vector[SubmitForecast] = Vector.empty
+    var asked: Vector[ParticipantId] = Vector.empty
+    def submit(auction: AuctionId, command: SubmitForecast) = {
+      reached :+= command
+      Future.successful(answer)
+    }
+    def mine(auction: AuctionId, participant: ParticipantId) = {
+      asked :+= participant
+      val open = Predictions(RoundStatus.Open, RoundStatus.NotOpen, cancelled = false)
+      Future.successful(MyPredictions(open, answer.toOption.map(found => found.round -> found).toMap))
+    }
+  }
+
+  /** Аукцион сходки, запланированный с `lot` в реестре: раунд каталога может быть открыт. */
+  private def scheduledWithLot: AuctionCommands = {
+    val planned = Auction.replay(
+      Auction.initial,
+      List(
+        AuctionEnvelope(1, LotFixtures.op(1), AuctionEvent.AuctionDrafted(MeetupId(UUID.fromString(meetupId)))),
+        AuctionEnvelope(2, LotFixtures.op(2), AuctionEvent.LotAdded(LotId(UUID.fromString(lot)))),
+        AuctionEnvelope(3, LotFixtures.op(3), AuctionEvent.AuctionScheduled(AuctionFixtures.config()))
+      )
+    )
+    AuctionCommands(
+      new Auctions { override def get(auctionId: AuctionId) = Future.successful(planned) },
+      Unreachable,
+      NoMeetups
+    )
+  }
+
+  private val guess = Forecast
+    .parse(
+      PredictionRound.Catalog,
+      List(
+        Nomination.MostExpensiveLot -> Answer.Lot(LotId(UUID.fromString(lot))),
+        Nomination.TotalBids -> Answer.Number(120)
+      )
+    )
+    .toOption
+    .get
+
+  private def predictionOf(lotId: String) = wire.SubmitPredictionRequest(
+    Some(viewer),
+    raffleAuction,
+    wire.PredictionRound.PREDICTION_ROUND_CATALOG,
+    List(
+      wire.PredictionAnswer(
+        wire.PredictionNomination.PREDICTION_NOMINATION_TOTAL_BIDS,
+        wire.PredictionAnswer.Answer.Number(120)
+      ),
+      wire.PredictionAnswer(
+        wire.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT,
+        wire.PredictionAnswer.Answer.LotId(lotId)
+      )
+    ),
+    raffleOp
+  )
+
+  "the predictions at the grpc boundary" should {
+
+    "refuses a viewer without the right to bid, a malformed answer, a foreign lot and a missing name before the game" in {
+      val games = Games(Right(guess))
+      def call(names: DisplayNameStore = Names(named)) =
+        service(Unreachable, auctions = scheduledWithLot, names = names, predictions = games)
+      val hubOnly = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_ACCESS_HUB))
+      statusOf(call().submitPrediction(predictionOf(lot).withViewer(hubOnly))) shouldBe Status.Code.PERMISSION_DENIED
+      statusOf(call().getMyPredictions(wire.GetMyPredictionsRequest(Some(hubOnly), raffleAuction))) shouldBe
+        Status.Code.PERMISSION_DENIED
+      val numberForLot = predictionOf(lot).withAnswers(
+        List(
+          wire.PredictionAnswer(
+            wire.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT,
+            wire.PredictionAnswer.Answer.Number(5)
+          )
+        )
+      )
+      statusOf(call().submitPrediction(numberForLot)) shouldBe Status.Code.INVALID_ARGUMENT
+      val finalInCatalog = predictionOf(lot).withRound(wire.PredictionRound.PREDICTION_ROUND_FINAL)
+      statusOf(call().submitPrediction(finalInCatalog)) shouldBe Status.Code.INVALID_ARGUMENT
+      val stranger = "01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e60"
+      val foreign = call().submitPrediction(predictionOf(stranger)).futureValue.getRefused.getLotNotInRound
+      foreign.lotId shouldBe stranger
+      foreign.nomination shouldBe wire.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT
+      call(names = Names())
+        .submitPrediction(predictionOf(lot))
+        .futureValue
+        .getRefused
+        .reason
+        .isDisplayNameNotChosen shouldBe
+        true
+      games.reached shouldBe empty
+    }
+
+    "accepts the viewer's prediction in nomination order and reads back only the viewer's own" in {
+      val games = Games(Right(guess))
+      val answered = service(Unreachable, auctions = scheduledWithLot, predictions = games)
+      val accepted = answered.submitPrediction(predictionOf(lot)).futureValue.getAccepted
+      accepted.round shouldBe wire.PredictionRound.PREDICTION_ROUND_CATALOG
+      accepted.answers.map(_.nomination) shouldBe List(
+        wire.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT,
+        wire.PredictionNomination.PREDICTION_NOMINATION_TOTAL_BIDS
+      )
+      games.reached shouldBe Vector(SubmitForecast(ViewerId, guess, OpId(UUID.fromString(raffleOp))))
+
+      val mine = answered.getMyPredictions(wire.GetMyPredictionsRequest(Some(viewer), raffleAuction)).futureValue
+      mine.rounds.map(round => round.round -> round.status) shouldBe List(
+        wire.PredictionRound.PREDICTION_ROUND_CATALOG -> wire.PredictionRoundStatus.PREDICTION_ROUND_STATUS_OPEN,
+        wire.PredictionRound.PREDICTION_ROUND_FINAL -> wire.PredictionRoundStatus.PREDICTION_ROUND_STATUS_NOT_OPEN
+      )
+      mine.rounds.head.answers should have size 2
+      games.asked shouldBe Vector(ViewerId)
+    }
+
+    "answers a closed round as a value and a foreign op_id as already existing" in {
+      service(Unreachable, auctions = scheduledWithLot, predictions = Games(Left(SubmitRejected.RoundClosed)))
+        .submitPrediction(predictionOf(lot))
+        .futureValue
+        .getRefused
+        .reason
+        .isRoundClosed shouldBe true
+      statusOf(
+        service(Unreachable, auctions = scheduledWithLot, predictions = Games(Left(SubmitRejected.OpIdTaken)))
+          .submitPrediction(predictionOf(lot))
+      ) shouldBe Status.Code.ALREADY_EXISTS
+    }
+  }
 
   "the raffle at the grpc boundary" should {
 

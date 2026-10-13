@@ -12,7 +12,7 @@ import "identity/v1/access.proto";
 // for the final, the commands of the live final and its stream, reads of a lot,
 // of its history, of its image, of the display names of participants and of
 // auctions, the console and lot statistics of the meetup administrator, the
-// raffle among participants, and the invoices of sold lots: the commands of the
+// raffle among participants, the predictions game, and the invoices of sold lots: the commands of the
 // organizer and of the winner and their reads.
 //
 // A named refusal is a value of the response, not a gRPC status: a command
@@ -62,6 +62,8 @@ service AuctionService {
   rpc RegisterForRaffle(RegisterForRaffleRequest) returns (RegisterForRaffleResponse);
   rpc CancelRaffleRegistration(CancelRaffleRegistrationRequest) returns (CancelRaffleRegistrationResponse);
   rpc GetRaffle(GetRaffleRequest) returns (GetRaffleResponse);
+  rpc SubmitPrediction(SubmitPredictionRequest) returns (SubmitPredictionResponse);
+  rpc GetMyPredictions(GetMyPredictionsRequest) returns (GetMyPredictionsResponse);
   rpc MarkInvoicePaid(MarkInvoicePaidRequest) returns (MarkInvoicePaidResponse);
   rpc MarkInvoiceHandedOver(MarkInvoiceHandedOverRequest) returns (MarkInvoiceHandedOverResponse);
   rpc ChooseFulfillment(ChooseFulfillmentRequest) returns (ChooseFulfillmentResponse);
@@ -1760,6 +1762,169 @@ message RaffleReveal {
   // value read as an unsigned big-endian number, modulo N, plus one. Unset with
   // NO_TICKETS.
   optional uint32 winning_ticket = 4;
+}
+
+message SubmitPredictionRequest {
+  // The participant who predicts: there is no separate participant field. The
+  // viewer must hold place_bids.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: the auction of a meetup.
+  string auction_id = 2;
+
+  // UNSPECIFIED is not a value.
+  PredictionRound round = 3;
+
+  // The whole prediction of the round: it replaces the previous one. Each
+  // nomination at most once and only nominations of the round. An empty list
+  // clears the prediction.
+  repeated PredictionAnswer answers = 4;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 5;
+}
+
+message SubmitPredictionResponse {
+  // Exactly one is set. A repeat of the same op_id is accepted and returns the
+  // viewer's prediction of the round as it is now.
+  oneof outcome {
+    Prediction accepted = 1;
+    PredictionRefusal refused = 2;
+  }
+}
+
+message PredictionRefusal {
+  // Exactly one is set.
+  oneof reason {
+    PredictionRoundNotOpen round_not_open = 1;
+    PredictionRoundClosed round_closed = 2;
+    PredictionsCancelled predictions_cancelled = 3;
+    DisplayNameNotChosen display_name_not_chosen = 4;
+    PredictionLotNotInRound lot_not_in_round = 5;
+  }
+}
+
+message PredictionRoundNotOpen {}
+
+message PredictionRoundClosed {}
+
+message PredictionsCancelled {}
+
+// The first answer, in request order, whose lot is not a lot of the round.
+message PredictionLotNotInRound {
+  PredictionNomination nomination = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 2;
+}
+
+message GetMyPredictionsRequest {
+  // The viewer must hold place_bids. The response is about them only: there is
+  // no way to read the prediction of another participant.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+}
+
+message GetMyPredictionsResponse {
+  // Both rounds, catalog first. Carries no other participant and no count of
+  // predictions.
+  repeated PredictionRoundView rounds = 1;
+}
+
+message PredictionRoundView {
+  PredictionRound round = 1;
+
+  // UNSPECIFIED is not a value.
+  PredictionRoundStatus status = 2;
+
+  // The viewer's prediction of the round. Empty when there is none.
+  repeated PredictionAnswer answers = 3;
+}
+
+// The viewer's own prediction of one round.
+message Prediction {
+  PredictionRound round = 1;
+
+  // In nomination order. Empty when the prediction is cleared.
+  repeated PredictionAnswer answers = 2;
+}
+
+message PredictionAnswer {
+  // UNSPECIFIED is not a value.
+  PredictionNomination nomination = 1;
+
+  // Exactly one is set, the one the nomination asks for.
+  oneof answer {
+    // Canonical lowercase UUIDv7 with hyphens.
+    string lot_id = 2;
+
+    // Not negative. A sum is in minor units of the auction currency; a count is
+    // a number of bids.
+    int64 number = 3;
+  }
+}
+
+enum PredictionRound {
+  PREDICTION_ROUND_UNSPECIFIED = 0;
+
+  // From scheduling until prebidding starts; lots of the registry.
+  PREDICTION_ROUND_CATALOG = 1;
+
+  // From the frozen lineup until the final starts; lots of the lineup.
+  PREDICTION_ROUND_FINAL = 2;
+}
+
+enum PredictionRoundStatus {
+  PREDICTION_ROUND_STATUS_UNSPECIFIED = 0;
+
+  // The round has not opened yet.
+  PREDICTION_ROUND_STATUS_NOT_OPEN = 1;
+
+  PREDICTION_ROUND_STATUS_OPEN = 2;
+
+  // The round is closed and the prediction is fixed.
+  PREDICTION_ROUND_STATUS_CLOSED = 3;
+
+  // The auction was cancelled: the game has no results.
+  PREDICTION_ROUND_STATUS_CANCELLED = 4;
+}
+
+// The ten nominations: which round each belongs to and whether it asks for a
+// lot or a number is fixed by the nomination.
+enum PredictionNomination {
+  PREDICTION_NOMINATION_UNSPECIFIED = 0;
+
+  // Catalog round, a lot: the highest sale price.
+  PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT = 1;
+
+  // Catalog round, a number: the sum of sale prices.
+  PREDICTION_NOMINATION_TOTAL_SALES = 2;
+
+  // Catalog round, a lot: the most bids.
+  PREDICTION_NOMINATION_MOST_BIDS_LOT = 3;
+
+  // Catalog round, a lot: the largest growth from the starting price.
+  PREDICTION_NOMINATION_BIGGEST_GROWTH_LOT = 4;
+
+  // Catalog round, a lot: the most distinct participants.
+  PREDICTION_NOMINATION_MOST_BIDDERS_LOT = 5;
+
+  // Catalog round, a number: the number of bids.
+  PREDICTION_NOMINATION_TOTAL_BIDS = 6;
+
+  // Final round, a lot: the highest sale price in the final.
+  PREDICTION_NOMINATION_FINAL_MOST_EXPENSIVE_LOT = 7;
+
+  // Final round, a number: the sum of sale prices in the final.
+  PREDICTION_NOMINATION_FINAL_TOTAL_SALES = 8;
+
+  // Final round, a lot: the largest growth in the final.
+  PREDICTION_NOMINATION_FINAL_BIGGEST_GROWTH_LOT = 9;
+
+  // Final round, a number: the number of bids in the final.
+  PREDICTION_NOMINATION_FINAL_TOTAL_BIDS = 10;
 }
 
 message MarkInvoicePaidRequest {
