@@ -113,11 +113,19 @@ export async function hasRaffle(input: {
   }
 }
 
-// Торги аукциона ещё не открыты: лоты есть, и ни один не торговался
-// (PER-618). Снятый лот торгов не доказывает — его снимают и из черновика, —
-// а пустая лента своё говорит сама.
+// Торги аукциона ещё не открыты: ни один лот не торговался и хотя бы один
+// ещё ждёт торгов (PER-618). Снятый лот торгов не доказывает в обе стороны —
+// его снимают и из черновика, и при отмене идущего аукциона, — поэтому лента
+// из одних снятых лотов ничего не обещает, а пустая своё говорит сама.
 function beforeTrading(lots: readonly LotView[]): boolean {
-  return lots.length > 0 && lots.every((lot) => !hasOpened(lot.status));
+  return (
+    lots.some((lot) => awaitsTrading(lot.status)) &&
+    lots.every((lot) => !hasOpened(lot.status))
+  );
+}
+
+function awaitsTrading(status: LotStatusView): boolean {
+  return status.kind === "draft" || status.kind === "scheduled";
 }
 
 function hasOpened(status: LotStatusView): boolean {

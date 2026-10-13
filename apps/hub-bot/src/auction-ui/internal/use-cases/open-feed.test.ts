@@ -226,6 +226,12 @@ describe("feed before trading", () => {
     );
   });
 
+  // Отмена идущего аукциона снимает и лоты в торгах: лента из одних снятых
+  // лотов о начале торгов ничего не знает.
+  it("leaves a feed of withdrawn lots only without the mark", async () => {
+    expect((await blockOf([withdrawn])).beforeTrading).toBeUndefined();
+  });
+
   it("leaves an empty feed without the mark", async () => {
     expect((await blockOf([])).beforeTrading).toBeUndefined();
   });
