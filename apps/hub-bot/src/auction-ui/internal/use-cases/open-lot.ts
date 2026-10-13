@@ -18,6 +18,7 @@ import type {
   FinalBidOutcome,
 } from "../../screen.js";
 import { namesOf } from "./names.js";
+import { standingOf } from "./standing.js";
 
 // Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
 // Войти в него можно только через `handleAuctionUpdate`, после шлюза. Из этого
@@ -104,6 +105,7 @@ function lotBody(input: {
   finalBid?: FinalBidOutcome;
 }): AuctionScreenBody {
   const { lot, participantName, following } = input;
+  const standing = standingOf(lot.status, input.viewer);
   // Хронология открывается на последней странице — со свежими ставками:
   // страницу за пределом юзкейс хронологии прижимает к последней.
   const history: AuctionButton[] = hasTraded(lot.status)
@@ -138,6 +140,7 @@ function lotBody(input: {
     blocks: [
       {
         ...lotBlock(lot, participantName),
+        ...(standing === undefined ? {} : { standing }),
         ...(lot.viewerProxyLimit === undefined
           ? {}
           : { viewerProxyLimit: lot.viewerProxyLimit }),
@@ -250,16 +253,20 @@ async function followingOf(
 }
 
 // Кнопка избранного стоит над возвратом: это действие экрана, а не
-// навигация. Состояния нет — нет и кнопки. У закрытого лота «В избранное»
-// нет: следить за ним уже не за чем, а Notifications вычищает его реплику
-// через 30 дней, и поздняя отметка отказывала бы вечным «попробуй позже».
-// Отмеченный закрытый лот снимается «Убрать», как любой.
+// навигация. Состояния нет — нет и кнопки. У закрытого лота «Добавить в
+// избранное» нет: следить за ним уже не за чем, а Notifications вычищает его
+// реплику через 30 дней, и поздняя отметка отказывала бы вечным «попробуй
+// позже». У проданного нет и «Убрать из избранного» (PER-595): итог известен, а
+// список избранного очищается сам, когда аукцион закончен (ADR-063,
+// дополнение 2026-10-12). Отмеченный непроданный или снятый лот снимается
+// как любой.
 function followRows(
   lot: LotView,
   page: number,
   following: boolean | undefined,
 ): AuctionButton[][] {
   if (following === undefined) return [];
+  if (lot.status.kind === "sold") return [];
   if (!following && isClosed(lot.status)) return [];
   const { lotId } = lot;
   return [

@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 import { MoneySchema } from "../../../gen/auction/v1/auction_pb.js";
 import {
   ChooseDisplayNameResponseSchema,
+  DisplayNameKind,
+  GetDisplayNamesResponseSchema,
   type PlaceBidRefusal,
   PlaceBidResponseSchema,
   SetProxyLimitResponseSchema,
@@ -12,6 +14,7 @@ import {
   bidOutcomeOf,
   displayNameOutcomeOf,
   limitOutcomeOf,
+  ownDisplayNameOf,
   unansweredOn,
 } from "./commands.js";
 
@@ -151,4 +154,32 @@ describe("participant command answers", () => {
       );
     },
   );
+});
+
+// Своё имя (PER-595): заглушка — имя не выбрано, иначе текст и заморозка.
+describe("own display name", () => {
+  const me = "01926f3c-8b7a-7cde-8f00-00000000000a";
+  const answer = (kind: DisplayNameKind, frozen = false) =>
+    create(GetDisplayNamesResponseSchema, {
+      names: { [me]: { text: "Сова*", kind, frozen } },
+    });
+
+  it("reads a placeholder as no chosen name", () => {
+    expect(
+      ownDisplayNameOf(answer(DisplayNameKind.PLACEHOLDER), me),
+    ).toBeUndefined();
+  });
+
+  it("carries the text and the freeze of a chosen name", () => {
+    expect(ownDisplayNameOf(answer(DisplayNameKind.ALIAS, true), me)).toEqual({
+      text: "Сова*",
+      frozen: true,
+    });
+  });
+
+  it("throws on an answer without the requested participant", () => {
+    expect(() =>
+      ownDisplayNameOf(create(GetDisplayNamesResponseSchema, {}), me),
+    ).toThrow();
+  });
 });

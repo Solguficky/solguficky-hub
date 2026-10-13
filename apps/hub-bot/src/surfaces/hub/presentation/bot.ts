@@ -3004,12 +3004,21 @@ async function handleCallback(
       outcome = await openHelp(ctx, runtime, person, useCase);
       return;
     }
-    // «Расширения» в «Настройках» (PER-605): статичный экран, Notifications
-    // он не зовёт — частоту читает экран аукциона за ним.
+    // «Расширения» в «Настройках» (PER-605): Notifications экран не зовёт —
+    // частоту читает экран аукциона за ним. Идущий аукцион для пункта «Имя в
+    // аукционе» (PER-595) читается у Auction; отказ убирает пункт, а не
+    // роняет экран: частота от него не зависит.
     if (action.kind === "settings-extensions") {
+      const current =
+        runtime.auction === undefined
+          ? undefined
+          : await runtime.auction.currentAuction(person, rpcCall(ctx, useCase));
       await showScreen(
         ctx,
-        settingsExtensionsScreen(runtime.auction !== undefined),
+        settingsExtensionsScreen(
+          runtime.auction !== undefined,
+          current?.kind === "ok" ? current.auctionId : undefined,
+        ),
       );
       outcome = {
         level: "info",

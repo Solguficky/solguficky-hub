@@ -589,6 +589,10 @@ message DisplayName {
   string text = 1;
 
   DisplayNameKind kind = 2;
+
+  // True when the choice of the participant no longer changes in this auction.
+  // False for a placeholder.
+  bool frozen = 3;
 }
 
 enum DisplayNameKind {

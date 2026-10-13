@@ -238,6 +238,7 @@ function portsWith(
         entries: overrides.history ?? [],
         nextPageToken: "",
       }),
+      getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
       getDisplayNames: async () => overrides.names ?? {},
       placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
       setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
@@ -855,7 +856,7 @@ describe("auction bot", () => {
         }),
       );
       expect(calls[0]?.payload).toMatchObject({
-        text: "<b>Аукционы</b>\n\n• 10 октября, сб — идут ставки, 3 лота, до финала 3 дня",
+        text: "<b>Аукционы</b>\n\n• Торги с 10 октября, сб — <b>идут ставки</b>, 3 лота, <b>до финала 3 дня</b>",
         reply_markup: {
           inline_keyboard: [
             [
@@ -1812,7 +1813,7 @@ describe("bid leaf delivery", () => {
     } as Update);
     const sent = calls.find((call) => call.method === "sendMessage");
     expect(sent?.payload).toMatchObject({
-      text: expect.not.stringContaining("Подскажу"),
+      text: expect.not.stringContaining("Подсказка"),
       reply_markup: {
         force_reply: true,
         inline_keyboard: [[{ text: "Как это работает" }], [{ text: "Отмена" }]],
@@ -1848,7 +1849,9 @@ describe("bid leaf delivery", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "sendMessage",
       payload: {
-        text: expect.stringContaining("Подскажу: платишь цену, а не лимит."),
+        text: expect.stringContaining(
+          "💡 Подсказка: платишь цену, а не лимит.",
+        ),
         reply_markup: { force_reply: true },
       },
     });
@@ -1995,7 +1998,7 @@ describe("bid leaf delivery", () => {
         inline_keyboard: [
           [
             {
-              text: "К лоту",
+              text: "‹ Лот",
               callback_data: encodeAuctionCallback({
                 kind: "lot",
                 lotId,
@@ -2003,6 +2006,7 @@ describe("bid leaf delivery", () => {
               }),
             },
           ],
+          [{ text: "‹ Лоты" }],
         ],
       },
     });
@@ -2038,7 +2042,7 @@ describe("bid leaf delivery", () => {
             ],
             [
               {
-                text: "К лоту",
+                text: "‹ Лот",
                 callback_data: encodeAuctionCallback({
                   kind: "lot",
                   lotId,
@@ -2168,9 +2172,10 @@ describe("outbid frequency", () => {
     return Object.assign(ports, { chosen });
   }
 
-  // Настройку открывает команда `/notifications` новым сообщением; это раздел
-  // под меню (PER-592): пять режимов и последним рядом «‹ Меню».
-  it("opens the settings by the command with the way back to the menu", async () => {
+  // Настройку открывает команда `/notifications` новым сообщением; это
+  // подраздел «Настроек» (PER-595): пять режимов и последним рядом
+  // «‹ Настройки».
+  it("opens the settings by the command with the way back to the settings", async () => {
     const { bot, calls } = makeBot(withOutbid({ frequency: "every" }));
     await bot.handleUpdate(commandUpdate("/notifications"));
     expect(calls.at(-1)?.method).toBe("sendMessage");
@@ -2180,7 +2185,7 @@ describe("outbid frequency", () => {
     });
     expect(rows).toHaveLength(6);
     expect(rows.at(-1)).toEqual([
-      { text: "‹ Меню", callback_data: entryCallback("menu") },
+      { text: "‹ Настройки", callback_data: entryCallback("settings") },
     ]);
   });
 
@@ -2224,7 +2229,7 @@ describe("outbid frequency", () => {
           ],
           [{ text: "Не чаще раза в час", callback_data: notifyCallback("60") }],
           [{ text: "Не присылать", callback_data: notifyCallback("off") }],
-          [{ text: "‹ Меню", callback_data: entryCallback("menu") }],
+          [{ text: "‹ Настройки", callback_data: entryCallback("settings") }],
         ],
       },
     });
@@ -2498,16 +2503,22 @@ describe("favorite lots", () => {
 
     await first.bot.handleUpdate(lotPress());
     const card = lastScreen(first.calls);
-    expect(card.keyboard.flat().map((b) => b.text)).toContain("В избранное");
+    expect(card.keyboard.flat().map((b) => b.text)).toContain(
+      "Добавить в избранное",
+    );
 
-    await first.bot.handleUpdate(press(buttonData(card, "В избранное")));
+    await first.bot.handleUpdate(
+      press(buttonData(card, "Добавить в избранное")),
+    );
     expect(
       lastScreen(first.calls)
         .keyboard.flat()
         .map((b) => b.text),
-    ).toContain("Убрать");
+    ).toContain("Убрать из избранного");
     // Повторное нажатие той же кнопки со старого экрана дубля не создаёт.
-    await first.bot.handleUpdate(press(buttonData(card, "В избранное")));
+    await first.bot.handleUpdate(
+      press(buttonData(card, "Добавить в избранное")),
+    );
     expect(favorites.marks).toEqual([lotId]);
 
     // Рестарт процесса: память бота пропала, отметка осталась в сервисе.
@@ -2515,7 +2526,7 @@ describe("favorite lots", () => {
     await second.bot.handleUpdate(commandUpdate("/favorites"));
     const list = lastScreen(second.calls);
     expect(list.text).toContain("<b>Избранное</b>");
-    expect(list.text.match(/Кружка/g)).toHaveLength(1);
+    expect(list.text).toContain("Лотов в избранном: 1.");
     // Избранное — раздел под меню: последним рядом «‹ Меню» (PER-592).
     expect(list.keyboard.flat().map((b) => b.text)).toEqual([
       "Кружка · старт 500 ₽",
@@ -2526,7 +2537,7 @@ describe("favorite lots", () => {
       press(buttonData(list, "Кружка · старт 500 ₽")),
     );
     await second.bot.handleUpdate(
-      press(buttonData(lastScreen(second.calls), "Убрать")),
+      press(buttonData(lastScreen(second.calls), "Убрать из избранного")),
     );
     expect(favorites.marks).toEqual([]);
     await second.bot.handleUpdate(commandUpdate("/favorites"));
@@ -2562,7 +2573,7 @@ describe("favorite lots", () => {
       [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
       ["Обновить", "Ставки"],
-      ["В избранное"],
+      ["Добавить в избранное"],
       ["‹ Лоты"],
     ]);
     expect(card.text).toContain("Описание пока не добавлено.");
@@ -2578,7 +2589,7 @@ describe("favorite lots", () => {
     );
     await bot.handleUpdate(lotPress());
     expect(JSON.stringify(lastScreen(calls).keyboard)).not.toContain(
-      "В избранное",
+      "Добавить в избранное",
     );
   });
 

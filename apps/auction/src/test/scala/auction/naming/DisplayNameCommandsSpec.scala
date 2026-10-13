@@ -25,7 +25,7 @@ final class DisplayNameCommandsSpec extends AnyWordSpec with Matchers with Scala
     private def touched = fail("the store was touched")
     def choose(auction: AuctionId, participant: ParticipantId, name: ChosenName): Future[ChooseResult] = touched
     def freeze(auction: AuctionId, participant: ParticipantId): Future[Boolean] = touched
-    def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, ChosenName]] = touched
+    def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, StoredName]] = touched
   }
 
   /** Модель таблицы: уникальность псевдонима в аукционе и заморозка — те же правила, что держит база. */
@@ -62,9 +62,11 @@ final class DisplayNameCommandsSpec extends AnyWordSpec with Matchers with Scala
         }
       }
 
-    def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, ChosenName]] =
+    def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, StoredName]] =
       synchronized {
-        Future.successful(rows.collect { case ((a, p), (name, _)) if a == auction && participants(p) => p -> name })
+        Future.successful(rows.collect {
+          case ((a, p), (name, frozen)) if a == auction && participants(p) => p -> StoredName(name, frozen)
+        })
       }
   }
 
@@ -106,7 +108,8 @@ final class DisplayNameCommandsSpec extends AnyWordSpec with Matchers with Scala
 
       commands.choose(auction, someone, NameChoice.Pseudonym("Кот")).futureValue shouldBe
         Right(DisplayName("Кот*", DisplayKind.Pseudonym))
-      commands.names(auction, Set(someone)).futureValue.apply(someone).text shouldBe "Кот*"
+      commands.names(auction, Set(someone)).futureValue.apply(someone) shouldBe
+        DisplayName("Кот*", DisplayKind.Pseudonym, frozen = false)
     }
 
     "keeps the name after the first accepted bid and accepts a repetition of the same choice" in {
@@ -120,8 +123,9 @@ final class DisplayNameCommandsSpec extends AnyWordSpec with Matchers with Scala
       commands.choose(auction, someone, NameChoice.Pseudonym(" кот ")).futureValue shouldBe
         Left(NamingRefusal.NameFrozen)
       commands.choose(auction, someone, NameChoice.Pseudonym("Кот")).futureValue shouldBe
-        Right(DisplayName("Кот*", DisplayKind.Pseudonym))
-      commands.names(auction, Set(someone)).futureValue.apply(someone).text shouldBe "Кот*"
+        Right(DisplayName("Кот*", DisplayKind.Pseudonym, frozen = true))
+      commands.names(auction, Set(someone)).futureValue.apply(someone) shouldBe
+        DisplayName("Кот*", DisplayKind.Pseudonym, frozen = true)
     }
 
     "admits a bid only from a participant who chose a name in that auction" in {

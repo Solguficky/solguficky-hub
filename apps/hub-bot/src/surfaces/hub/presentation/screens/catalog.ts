@@ -81,6 +81,16 @@ export const screenCatalog = {
     title: "Аукцион",
     parent: "settings-extensions",
   },
+  // Имя в идущем аукционе (PER-595): тело аукционного дерева, общее с ботом
+  // аукциона; вход и возврат — «Расширения» настроек. Вопрос псевдонима и
+  // непринятый ответ — общие записи `question` и `answer-refused`.
+  "name-settings": {
+    class: "screen",
+    nav: "tree",
+    title: "Имя в аукционе",
+    parent: "settings-extensions",
+    backName: "Имя в аукционе",
+  },
   help: {
     class: "screen",
     nav: "tree",
@@ -281,7 +291,7 @@ export const screenCatalog = {
     title: "Избранное",
     parent: "auction-root",
   },
-  // Notifications ещё не знает лот — кадр исхода с «К лоту» и «Меню».
+  // Notifications ещё не знает лот — кадр исхода с «‹ Лот».
   "follow-refused": {
     class: "screen",
     nav: "exit",
@@ -368,7 +378,7 @@ export const screenCatalog = {
   // Лист ставки (PER-317): тело — аукционное дерево, тексты — оболочка хаба.
   // Подтверждение — без ряда навигации, выбор имени — под карточкой лота.
   // Ставка и автоставка — траты денег: их «Да» красное (PER-473). Принятая
-  // команда — кадр исхода с «К лоту». Заголовок
+  // команда — кадр исхода с «‹ Лот» и «‹ Лоты» (PER-595). Заголовок
   // подтверждения — вопрос с суммой (PER-472), линтер сверяет его по началу.
   "bid-confirm": {
     class: "screen",

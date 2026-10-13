@@ -77,6 +77,7 @@ function adapter(rpc: {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
     getMeetupAuction: (rpc.getMeetupAuction ?? notUsed) as never,
+    listAuctions: notUsed,
     createLotCard: (rpc.createLotCard ?? notUsed) as never,
     editLotCard: (rpc.editLotCard ?? notUsed) as never,
     addLot: (rpc.addLot ?? notUsed) as never,

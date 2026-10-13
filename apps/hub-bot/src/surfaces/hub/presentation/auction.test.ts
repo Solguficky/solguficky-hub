@@ -201,6 +201,7 @@ function fakeAuction(
       auctions.set(id, auctionId);
       return { kind: "enabled", auctionId, alreadyExisted };
     },
+    currentAuction: async () => ({ kind: "ok" as const }),
     screenPorts(): AuctionScreenPorts {
       return {
         auction: {
@@ -231,6 +232,7 @@ function fakeAuction(
             ],
             nextPageToken: "",
           }),
+          getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
           getDisplayNames: async () => ({}),
           placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
           setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
@@ -814,11 +816,11 @@ describe("favorite lots in the hub", () => {
     expect(labels(root)[1]).toEqual(["Избранное", "Правила и FAQ"]);
 
     await bot.handleUpdate(press(lotData));
-    const follow = data(lastScreen(calls), "В избранное");
+    const follow = data(lastScreen(calls), "Добавить в избранное");
     if (follow === undefined) throw new Error("no follow button on the card");
     await bot.handleUpdate(press(follow));
     expect(favorites.marks).toEqual([lotId]);
-    expect(data(lastScreen(calls), "Убрать")).toBeDefined();
+    expect(data(lastScreen(calls), "Убрать из избранного")).toBeDefined();
 
     const open = data(root, "Избранное");
     if (open === undefined) throw new Error("no favorites in the auction root");
@@ -839,7 +841,7 @@ describe("favorite lots in the hub", () => {
     expect(labels(lastScreen(calls))[1]).toEqual(["Правила и FAQ"]);
     await bot.handleUpdate(press(lotData));
     expect(JSON.stringify(labels(lastScreen(calls)))).not.toContain(
-      "В избранное",
+      "Добавить в избранное",
     );
   });
 });
@@ -1160,7 +1162,7 @@ describe("bid leaf in the hub", () => {
       [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
       ["Обновить", "Ставки"],
-      ["В избранное"],
+      ["Добавить в избранное"],
       ["‹ Лоты"],
     ]);
   });
@@ -1212,7 +1214,7 @@ describe("bid leaf in the hub", () => {
     );
     const asked = calls.find((call) => call.method === "sendMessage");
     expect(asked?.payload).toMatchObject({
-      text: expect.not.stringContaining("Подскажу"),
+      text: expect.not.stringContaining("Подсказка"),
       reply_markup: {
         force_reply: true,
         inline_keyboard: [[{ text: "Как это работает" }], [{ text: "Отмена" }]],
@@ -1239,7 +1241,9 @@ describe("bid leaf in the hub", () => {
     expect(calls.at(-1)).toMatchObject({
       method: "sendMessage",
       payload: {
-        text: expect.stringContaining("Подскажу: платишь цену, а не лимит."),
+        text: expect.stringContaining(
+          "💡 Подсказка: платишь цену, а не лимит.",
+        ),
         reply_markup: { force_reply: true },
       },
     });
@@ -1270,8 +1274,8 @@ describe("bid leaf in the hub", () => {
     });
   });
 
-  // PER-473: принятая ставка — свой экран с «К лоту» и «Меню», а не строка
-  // над карточкой с прежней ценой.
+  // PER-473: принятая ставка — свой экран с «‹ Лот» и «‹ Лоты» (PER-595), а не
+  // строка над карточкой с прежней ценой.
   it("answers an accepted bid with its own screen and the lot button", async () => {
     const { bot, calls } = await setup();
     await bot.handleUpdate(
@@ -1293,7 +1297,7 @@ describe("bid leaf in the hub", () => {
         inline_keyboard: [
           [
             {
-              text: "К лоту",
+              text: "‹ Лот",
               callback_data: encodeAuctionCallback({
                 kind: "lot",
                 lotId,
@@ -1301,6 +1305,7 @@ describe("bid leaf in the hub", () => {
               }),
             },
           ],
+          [{ text: "‹ Лоты" }],
         ],
       },
     });
@@ -1329,7 +1334,7 @@ describe("bid leaf in the hub", () => {
         payload?.reply_markup?.inline_keyboard?.map((row) =>
           row.map((button) => button.text),
         ),
-      ).toEqual([["Ввести заново"], ["К лоту"]]);
+      ).toEqual([["Ввести заново"], ["‹ Лот"]]);
     },
   );
 

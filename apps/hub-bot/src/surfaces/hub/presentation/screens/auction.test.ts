@@ -216,7 +216,9 @@ describe("feed and history in the hub shell", () => {
     expect(rows.at(-1)).toEqual(["‹ Аукцион"]);
   });
 
-  it("lists every lot as a line of the body and as a button", () => {
+  // Текст ленты не повторяет кнопки (PER-595): своих лотов нет — сводка так
+  // и говорит, а все лоты — кнопками.
+  it("lists every lot as a button and says the text is not the full list", () => {
     const { screen } = auctionScreen({
       ...view([]),
       body: {
@@ -244,22 +246,26 @@ describe("feed and history in the hub shell", () => {
       },
     });
     expect(plain(screen.text)).toBe(
-      "<b>Лоты · 1 из 2</b>\n\n• Носки — старт 500 ₽\n• Лот без названия — не продан",
+      "<b>Лоты · 1 из 2</b>\n\nТы пока не лидируешь ни в одном лоте этого аукциона. Все лоты — кнопками ниже.",
     );
-    const lines = screen.text
-      .split("\n")
-      .filter((line) => line.startsWith("• "));
-    const content = screen.keyboard.inline_keyboard
-      .flat()
-      .filter(
-        (button) => !/^(‹ |←$|→$|Меню$|Правила и FAQ$)/.test(button.text),
-      );
-    expect(lines.length).toBe(content.length);
+    expect(
+      screen.keyboard.inline_keyboard
+        .flat()
+        .filter((button) => !/^(‹ |←$|→$)/.test(button.text))
+        .map((button) => plain(button.text)),
+    ).toEqual(["Носки · старт 500 ₽", "Лот без названия · не продан"]);
   });
 
-  // Перенос строки в названии не плодит строк списка: вторая выглядела бы
-  // чужим лотом с чужой ценой.
+  // Перенос строки в названии не плодит строк сводки: вторая выглядела бы
+  // чужим лотом с чужой ценой. Свой проданный лот сводка отмечает «✅ твой
+  // лот» (PER-595).
   it("keeps a lot title with line breaks on one line of the feed", () => {
+    const won = {
+      lotId: "a",
+      title: "Ваза\n• Другой лот",
+      status: { kind: "sold" as const, winnerId: "me", price: rub(3000) },
+      standing: "won" as const,
+    };
     const { screen } = auctionScreen({
       ...view([]),
       body: {
@@ -269,13 +275,8 @@ describe("feed and history in the hub shell", () => {
             auctionId: auctionId,
             page: 0,
             pageCount: 1,
-            lots: [
-              {
-                lotId: "a",
-                title: "Ваза\n• Другой лот",
-                status: { kind: "unsold" },
-              },
-            ],
+            lots: [won],
+            mine: [won],
           },
         ],
         keyboard: [
@@ -283,7 +284,9 @@ describe("feed and history in the hub shell", () => {
         ],
       },
     });
-    expect(screen.text).toBe("<b>Лоты</b>\n\n• Ваза • Другой лот — не продан");
+    expect(plain(screen.text)).toBe(
+      "<b>Лоты</b>\n\nЗдесь только твои лоты: где ты лидер и что ты купил. Все лоты аукциона — кнопками ниже.\n\n• Ваза • Другой лот — ✅ твой лот за 3 000 ₽",
+    );
   });
 
   it("lists the bids as lines under the lot in quotes with the foreign year", () => {
@@ -375,7 +378,7 @@ describe("bid sheet in the hub shell", () => {
       current: rub(1600),
     });
     expect(plain(screen.text)).toBe(
-      "<b>Своя сумма</b>\n\nПришли сумму ставки в рублях.\nСейчас: от 1 600 ₽\nНапример: 1 500",
+      "<b>Своя сумма</b>\n\nПришли сумму ставки в рублях.\nМинимальная ставка: 1 600 ₽\nНапример: 1 500",
     );
     expect(asks).toBe(true);
   });
@@ -401,11 +404,11 @@ describe("bid sheet in the hub shell", () => {
       [
         "<b>Автоставка</b>",
         "",
-        "Подскажу: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
+        "💡 Подсказка: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
         "Например: цена сейчас 1 200 ₽, шаг 50 ₽, твой лимит 1 350 ₽. Бот сразу поставит за тебя 1 250 ₽ и будет отвечать на чужие ставки, но не выше 1 350 ₽. Никто не перебьёт — заплатишь 1 250 ₽, а не 1 350 ₽.",
         "",
         "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
-        "Сейчас: 1 250 ₽",
+        "Минимальная ставка: 1 250 ₽",
         "Например: 3 000",
       ].join("\n"),
     );
@@ -432,7 +435,7 @@ describe("bid sheet in the hub shell", () => {
         ],
       },
     });
-    expect(screen.text).not.toContain("Подскажу");
+    expect(screen.text).not.toContain("Подсказка");
     expect(
       screen.keyboard?.inline_keyboard.map((row) =>
         row.map((button) => button.text),
@@ -470,7 +473,7 @@ describe("bid sheet in the hub shell", () => {
     );
     expect(
       screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
-    ).toEqual([["К лоту"]]);
+    ).toEqual([["‹ Лот"]]);
   });
 
   // Непринятый ответ — свой экран с «Ввести заново» над «К лоту» (PER-472).
@@ -498,7 +501,7 @@ describe("bid sheet in the hub shell", () => {
     expect(plain(screen.text)).toBe("<b>Это не сумма</b>\n\n<b>Кружка</b>");
     expect(
       screen.keyboard.inline_keyboard.map((row) => row.map((b) => b.text)),
-    ).toEqual([["Ввести заново"], ["К лоту"]]);
+    ).toEqual([["Ввести заново"], ["‹ Лот"]]);
   });
 });
 
@@ -587,6 +590,7 @@ describe("happy hours in the hub shell", () => {
       ...feed,
       body: { ...feed.body, keyboard: [] },
     });
-    expect(plain(screen.text)).toContain("• Кружка — 1 200 ₽, счастливые часы");
+    // Отметка окна — строкой сводки (PER-595): строк лотов в теле больше нет.
+    expect(plain(screen.text)).toContain("Счастливые часы сейчас: Кружка.");
   });
 });

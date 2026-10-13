@@ -75,6 +75,7 @@ function surfaceFor(
           calls.auction += 1;
           return { entries: [], nextPageToken: "" };
         },
+        getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
         async getDisplayNames() {
           calls.auction += 1;
           return {};

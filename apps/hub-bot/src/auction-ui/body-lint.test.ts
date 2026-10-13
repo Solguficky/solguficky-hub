@@ -99,6 +99,7 @@ const surface: AuctionSurface = {
           nextPageToken: "",
         };
       },
+      getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
       async getDisplayNames() {
         return {};
       },

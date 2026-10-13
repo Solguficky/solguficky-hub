@@ -102,6 +102,7 @@ function ports(
       })),
       listAuctionLots: vi.fn(async () => ({ lots: [], nextPageToken: "" })),
       listLotHistory: vi.fn(async () => ({ entries: [], nextPageToken: "" })),
+      getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
       getDisplayNames: vi.fn(async () => ({})),
       placeBid: vi.fn(async () => ({
         kind: "accepted" as const,
@@ -299,7 +300,7 @@ describe("FAQ entry", () => {
     const p = ports(identity({ rights: GUEST }));
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
-    ).toEqual({ kind: "menu", favorites: false, notifications: false });
+    ).toEqual({ kind: "menu", favorites: false });
   });
 
   it("records completion on the return from FAQ and allows its repetition", async () => {
@@ -329,7 +330,7 @@ describe("FAQ entry", () => {
     const p = ports(identity({ rights: GUEST }));
     const menu = () =>
       routeAuctionCallback({ ports: p, user, data: entryCallback("menu") });
-    const shown = { kind: "menu", favorites: false, notifications: false };
+    const shown = { kind: "menu", favorites: false };
     expect((await menu()).screen).toEqual(shown);
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
     expect((await menu()).screen).toEqual(shown);
@@ -450,6 +451,44 @@ describe("auction lists", () => {
       pageToken: "",
     });
     expect(p.auction.listAuctionLots).not.toHaveBeenCalled();
+  });
+
+  // «Настройки» (PER-595): имя выбирается в идущем аукционе — ближайшем
+  // активном; без активного пункта имени нет, а без Notifications — частоты.
+  it("opens the settings with the name in the nearest active auction", async () => {
+    const later = {
+      ...summary(2, "scheduled"),
+      opensAt: "2026-11-01T09:00:00Z",
+    };
+    const nearest = summary(1, "prebidding");
+    const withAuctions = await routeAuctionCallback({
+      ports: ports(admitted, { active: [later, nearest] }),
+      user,
+      data: entryCallback("settings"),
+    });
+    expect(withAuctions.screen).toEqual({
+      kind: "settings",
+      notifications: false,
+      auctionId: nearest.auctionId,
+    });
+    const without = await routeAuctionCallback({
+      ports: ports(admitted),
+      user,
+      data: entryCallback("settings"),
+    });
+    expect(without.screen).toEqual({ kind: "settings", notifications: false });
+    // Сбой списка убирает пункт имени, а не раздел: частота от Auction не
+    // зависит.
+    const failing = ports(admitted, { active: [nearest] });
+    failing.catalog.listAuctions = vi.fn(async () => {
+      throw new Error("auction is down");
+    });
+    const degraded = await routeAuctionCallback({
+      ports: failing,
+      user,
+      data: entryCallback("settings"),
+    });
+    expect(degraded.screen).toEqual({ kind: "settings", notifications: false });
   });
 
   it("reads finished auctions for the past list, freshest first", async () => {
@@ -718,7 +757,7 @@ describe("routeAuctionStart", () => {
     const p = ports(identity({ rights: GUEST }));
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
-    ).toEqual({ kind: "menu", favorites: false, notifications: false });
+    ).toEqual({ kind: "menu", favorites: false });
   });
 
   it("fails closed when Identity is unavailable", async () => {
@@ -795,7 +834,7 @@ describe("apply", () => {
           data: applyCallback(),
         })
       ).screen,
-    ).toEqual({ kind: "menu", favorites: false, notifications: false });
+    ).toEqual({ kind: "menu", favorites: false });
   });
 
   it("answers a declined application with a refusal of its own", async () => {

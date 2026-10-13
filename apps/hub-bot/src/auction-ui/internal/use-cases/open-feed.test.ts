@@ -33,6 +33,7 @@ function auctionOf(pages: Record<string, LotPage>): AuctionPort {
     getLot: async () => {
       throw new Error("not used");
     },
+    getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
     getDisplayNames: async () => {
       throw new Error("not used");
     },

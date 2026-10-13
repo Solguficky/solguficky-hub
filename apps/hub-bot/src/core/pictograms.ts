@@ -29,6 +29,10 @@ export const pictogram = {
   leader: "👤",
   /** Поле срока торгов карточки лота (PER-594). */
   deadline: "⏳",
+  /** Лот, который смотрящий купил: на карточке и в списках (PER-595). */
+  won: "✅",
+  /** Пояснение автоставки голосом помощника (PER-595). */
+  hint: "💡",
 } as const;
 
 export type Pictogram = (typeof pictogram)[keyof typeof pictogram];
@@ -50,6 +54,8 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.price]: ["Цена: ", "Стартовая цена: ", "Цена продажи: "],
   [pictogram.leader]: ["Лидер: ", "Победитель: "],
   [pictogram.deadline]: ["Торги до: "],
+  [pictogram.won]: ["Твой лот", "твой лот"],
+  [pictogram.hint]: ["Подсказка:"],
 };
 
 /**

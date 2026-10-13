@@ -551,6 +551,53 @@ const raffleAnswerRefused: AuctionScreenBody = {
   ],
 };
 
+// Имя в аукционе из «Настроек» (PER-595): не выбрано, выбрано и
+// закреплено; вопрос и непринятый псевдоним.
+const nameSettings = (
+  name: { text: string; frozen: boolean } | undefined,
+  username?: string,
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "name-settings",
+      auctionId: "auc-1",
+      ...(name === undefined ? {} : { name }),
+      ...(username === undefined ? {} : { username }),
+    },
+  ],
+  keyboard:
+    name?.frozen === true
+      ? []
+      : [
+          ...(username === undefined
+            ? []
+            : [
+                [
+                  {
+                    action: "name.username" as const,
+                    callbackData: "v1:auc:nn:a",
+                  },
+                ],
+              ]),
+          [{ action: "name.alias", callbackData: "v1:auc:na:a" }],
+        ],
+});
+
+const nameQuestion: AuctionScreenBody = {
+  blocks: [{ kind: "name-question", auctionId: "auc-1" }],
+  keyboard: [[{ action: "question.cancel", callbackData: "v1:auc:nq:a:42" }]],
+};
+
+const nameRefused: AuctionScreenBody = {
+  blocks: [
+    { kind: "name-answer-refused", auctionId: "auc-1", refusal: "alias-taken" },
+  ],
+  keyboard: [
+    [{ action: "answer.retry", callbackData: "v1:auc:na:a" }],
+    [{ action: "name.return", callbackData: "v1:auc:nm:a" }],
+  ],
+};
+
 // Каждый вид каждого экрана, который оболочка умеет отдать.
 const shown: readonly {
   screen: AuctionEntryScreen;
@@ -562,9 +609,35 @@ const shown: readonly {
   { screen: { kind: "notify", current: "off" } },
   { screen: { kind: "faq" } },
   { screen: { kind: "faq" }, faq: urls },
+  // «Настройки» (PER-595): с уведомлениями и именем, только с одним и пустые.
+  {
+    screen: {
+      kind: "settings",
+      notifications: true,
+      auctionId: "01926f3c-8b7a-5cde-8f00-000000000001",
+    },
+  },
+  { screen: { kind: "settings", notifications: true } },
+  { screen: { kind: "settings", notifications: false } },
+  { screen: { kind: "auction", body: nameSettings(undefined, "owl_fan") } },
+  { screen: { kind: "auction", body: nameSettings(undefined) } },
+  {
+    screen: {
+      kind: "auction",
+      body: nameSettings({ text: "Сова*", frozen: false }, "owl_fan"),
+    },
+  },
+  {
+    screen: {
+      kind: "auction",
+      body: nameSettings({ text: "Сова*", frozen: true }),
+    },
+  },
+  { screen: { kind: "auction", body: nameQuestion } },
+  { screen: { kind: "auction", body: nameRefused } },
   // Корневое меню, приветствие и подсказка (PER-592).
-  { screen: { kind: "menu", favorites: false, notifications: false } },
-  { screen: { kind: "menu", favorites: true, notifications: true } },
+  { screen: { kind: "menu", favorites: false } },
+  { screen: { kind: "menu", favorites: true } },
   { screen: { kind: "welcome" } },
   { screen: { kind: "welcome", sourceCode: "chat" } },
   { screen: { kind: "hint", openQuestion: true } },
@@ -853,9 +926,11 @@ describe("auction screens beyond the linter", () => {
 
   // Список в теле повторяет кнопки содержимого строками «• …» (дизайн-код,
   // «Списки»): экран над вопросом теряет клавиатуру, и без строк он пуст.
+  // Лента и избранное — сводка своих лотов, а не повтор кнопок (PER-595):
+  // строка на кнопку осталась у списков аукционов.
   it("lists every content button of a list as a line of the body", () => {
     const lists = rendered.filter((screen) =>
-      ["auctions", "past", "feed"].includes(screen.id),
+      ["auctions", "past"].includes(screen.id),
     );
     expect(lists.length).toBeGreaterThan(0);
     // Среди видов есть непустые списки: на одних пустых проверка молчала бы.

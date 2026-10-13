@@ -117,7 +117,7 @@ object ResponseMapping {
       case DisplayKind.Pseudonym => wire.DisplayNameKind.DISPLAY_NAME_KIND_ALIAS
       case DisplayKind.Placeholder => wire.DisplayNameKind.DISPLAY_NAME_KIND_PLACEHOLDER
     }
-    wire.DisplayName(name.text, kind)
+    wire.DisplayName(name.text, kind, name.frozen)
   }
 
   /**
