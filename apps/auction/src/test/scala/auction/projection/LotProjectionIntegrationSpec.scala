@@ -473,8 +473,9 @@ final class LotProjectionIntegrationSpec
     "counts the final growth and final bids of a held lot of the lineup and leaves them absent outside it" in {
       val database = migrated()
       val auctionId = UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000020")
-      val time = new ProjectionClock(Instant.parse("2026-10-07T18:00:00Z"))
-      val deadline = time.now.plusSeconds(600)
+      val base = Instant.parse("2026-10-07T18:00:00Z")
+      val time = new ProjectionClock(base)
+      val deadline = base.plusSeconds(600)
       val (lineup, excluded, plain) =
         (
           UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000021"),
@@ -484,8 +485,12 @@ final class LotProjectionIntegrationSpec
 
       withNode(database, time) { node =>
         lineupLot(node, time, lineup, deadline)
+        // Часы узла тест двигает сам, и удержание оставляет их на дедлайне: перед следующим лотом время возвращается к
+        // началу, иначе лот открылся бы уже на своём дедлайне, а его ставка продлила бы дедлайн анти-снайпом.
+        time.now = base
         // Удержан, но продан ведущим до заморозки: в состав не входит, и обеих метрик у него нет.
         heldLotSoldBeforeLineup(node, time, excluded, deadline)
+        time.now = base
         tradingLot(node, plain)
         registered(database, auctionId, Set(lineup), lineup, excluded, plain)
         eventually(version(database, lineup) shouldBe Some(9L))
