@@ -31,6 +31,7 @@ import {
   menuTitle,
   strayHintText,
 } from "../../core/entry.js";
+import { money, truncate } from "../../core/format.js";
 import {
   OUTBID_FREQUENCIES,
   type OutbidFrequency,
@@ -53,6 +54,10 @@ import {
   notifyCallback,
 } from "./faq.js";
 import type { ScreenId } from "./screen-catalog.js";
+
+// Цена и обрезка — общие у двух ботов (`src/core/format.ts`); имена
+// остаются здесь для прежних потребителей.
+export { money, truncate };
 
 // Оболочка бота аукциона (ADR-044, «Один аукцион, две оболочки»). Экран здесь
 // корневой: короткий контекст для пришедшего по пересланной ссылке и тело из
@@ -1376,19 +1381,6 @@ function escapeHtml(text: string): string {
     .replaceAll(">", "&gt;");
 }
 
-// Обрезка по кодовым точкам: срез по UTF-16 разрезал бы суррогатную пару, и
-// Telegram получил бы битую строку. Кодовая точка длиннее единицы UTF-16 не
-// бывает короче, поэтому результат укладывается в `limit` единиц.
-export function truncate(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-  let kept = "";
-  for (const point of text) {
-    if (kept.length + point.length > limit - 1) break;
-    kept += point;
-  }
-  return `${kept}…`;
-}
-
 function renderButton(
   button: AuctionButton,
   items: ReadonlyMap<string, FeedItem>,
@@ -1523,18 +1515,6 @@ function priceLabel(status: LotStatusView): string {
 
 function shorten(title: string): string {
   return truncate(title, BUTTON_TITLE_LIMIT);
-}
-
-// Валюта у платформы одна — рубль, и у неё две цифры после запятой. Копейки
-// показываются, только когда они есть.
-export function money(amount: Money): string {
-  const whole = amount.minorUnits % 100 === 0;
-  return new Intl.NumberFormat("ru-RU", {
-    style: "currency",
-    currency: amount.currency,
-    minimumFractionDigits: whole ? 0 : 2,
-    maximumFractionDigits: 2,
-  }).format(amount.minorUnits / 100);
 }
 
 // Дата для чтения по дизайн-коду: «12 июня, сб, 19:04»; чужой год называется.

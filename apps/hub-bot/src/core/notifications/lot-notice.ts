@@ -8,6 +8,8 @@ import {
   type RenderContext,
   type RenderResult,
 } from "../delivery/index.js";
+import { type FormattedMoney, money, truncate } from "../format.js";
+import type { Logger } from "../logging.js";
 
 // Уведомления о лотах — перебитие, ответ автоставки, покупка и сводка за окно
 // частоты (PER-596) — у двух ботов одни (PER-598): участнику их доставляет бот
@@ -15,7 +17,7 @@ import {
 // названия лота, текст и ряды кнопок; данные кнопок каждая поверхность кодирует
 // сама — у них разный префикс следа и разный путь к экрану частоты.
 
-export type NoticeMoney = { minorUnits: number; currency: string };
+export type NoticeMoney = FormattedMoney;
 
 export type LotActivityLine = {
   lotId: string;
@@ -83,17 +85,16 @@ export function lotNoticeOf(type: LotBranch): LotNotice | undefined {
     }
     case "lotActivityDigest": {
       // Сводка без строк контракт запрещает: окно без событий её не рождает.
-      if (type.value.lines.length === 0) return undefined;
+      // Строка вида, которого эта сборка не знает, — из схемы новее: она
+      // пропускается, а не роняет остальные; сводка без знакомых строк —
+      // показать в ней нечего.
       const lines: LotActivityLine[] = [];
       for (const line of type.value.lines) {
+        const kind = activityKind(line.kind);
+        if (kind === undefined) continue;
         const lotId = canonical(line.lotId);
         const currentPrice = toMoney(line.currentPrice);
-        const kind = activityKind(line.kind);
-        if (
-          lotId === undefined ||
-          currentPrice === undefined ||
-          kind === undefined
-        ) {
+        if (lotId === undefined || currentPrice === undefined) {
           return undefined;
         }
         lines.push({
@@ -103,7 +104,9 @@ export function lotNoticeOf(type: LotBranch): LotNotice | undefined {
           recipientLeads: line.recipientLeads,
         });
       }
-      return { kind: "lot-activity-digest", lines };
+      return lines.length === 0
+        ? undefined
+        : { kind: "lot-activity-digest", lines };
     }
     default: {
       const _exhaustive: never = type;
@@ -166,10 +169,10 @@ export type LotNoticeView = {
   rows: readonly (readonly LotNoticeButton[])[];
 };
 
-export const toLotLabel = "К лоту";
+const toLotLabel = "К лоту";
 // Вход в частоту под тем, чем она управляет: перебитием, ответом автоставки и
 // сводкой; покупку она не трогает (PER-596), и под покупкой кнопки нет.
-export const frequencyLabel = "Частота уведомлений";
+const frequencyLabel = "Частота уведомлений";
 
 // Название лота у Auction ничем не ограничено, а сообщение длиннее предела
 // Telegram отвергается окончательно: уведомление потерялось бы целиком.
@@ -178,54 +181,76 @@ const TITLE_LIMIT = 200;
 const LINE_TITLE_LIMIT = 60;
 const BUTTON_TITLE_LIMIT = 32;
 // Сводка за час может набрать много лотов: текст ограничен 4096 символами,
-// клавиатура — сотней кнопок. Остальное называется числом.
-export const DIGEST_LINE_LIMIT = 10;
+// клавиатура — сотней кнопок. Лоты сверх предела называются числом.
+export const DIGEST_LOT_LIMIT = 10;
 
-// Сборка уведомления о лоте. Без права `place-bids` уведомление не уходит: кнопка
-// упёрлась бы в тот же отказ, а человек, у которого право сняли, о торгах больше
-// не слышит. Недоступный Auction названия не роняет: весть ценна вовремя, а
-// название видно в карточке по кнопке. У одиночного уведомления отказ, который
-// повтор не изменит, — дефект: оно снимается, а не уходит с кнопкой в тот же
-// отказ. У сводки такой отказ по одному лоту остальные строки не роняет: строка
-// уходит без названия, а отказ пишется в лог.
-//
-// `reads` нет — бот без Auction: текст без названий. `frequency` — у бота есть
-// Notifications, и кнопка частоты стоит под тем, чем она управляет.
-export function createLotNoticeRender(
-  reads: LotNoticeReads | undefined,
-  onTitleMissing: (cause: unknown, requestId?: string) => void,
-  frequency: boolean,
-): (
+export type LotNoticeRenderOptions = {
+  // Нет — бот без Auction: текст без названий и без проверки права, которое
+  // некому подтвердить.
+  reads: LotNoticeReads | undefined;
+  onTitleMissing: (cause: unknown, requestId?: string) => void;
+  // У бота есть Notifications: кнопка частоты стоит под тем, чем она управляет.
+  frequencyButton: boolean;
+};
+
+// Право `place-bids` получателя перед вестью о торгах: без него кнопка упёрлась
+// бы в тот же отказ, а человек, у которого право сняли, о торгах больше не
+// слышит. `undefined` — право есть; иначе — исход, которым весть кончается.
+export async function checkPlaceBids(
+  reads: LotNoticeReads,
+  { recipientId, requestId }: RenderContext,
+): Promise<Exclude<RenderResult<never>, { kind: "ready" }> | undefined> {
+  let eligible: boolean;
+  try {
+    eligible = await reads.holdsPlaceBids(recipientId, requestId);
+  } catch (cause) {
+    return isPermanentFailure(cause)
+      ? { kind: "rejected", cause }
+      : { kind: "unavailable", cause };
+  }
+  return eligible ? undefined : { kind: "ineligible" };
+}
+
+// Сборка уведомления о лоте. Недоступный Auction названия не роняет: весть
+// ценна вовремя, а название видно в карточке по кнопке. У одиночного
+// уведомления отказ, который повтор не изменит, — дефект: оно снимается, а не
+// уходит с кнопкой в тот же отказ. У сводки такой отказ по одному лоту
+// остальные строки не роняет: его строка уходит без названия и без кнопки, а
+// отказ пишется в лог.
+export function createLotNoticeRender({
+  reads,
+  onTitleMissing,
+  frequencyButton,
+}: LotNoticeRenderOptions): (
   notice: LotNotice,
   context: RenderContext,
 ) => Promise<RenderResult<LotNoticeView>> {
-  return async (notice, { recipientId, requestId }) => {
+  return async (notice, context) => {
+    const titles = new Map<string, string>();
+    const refused = new Set<string>();
     if (reads === undefined) {
       return {
         kind: "ready",
-        message: renderLotNotice(notice, new Map(), frequency),
+        message: renderLotNotice(notice, { titles, refused, frequencyButton }),
       };
     }
-    let eligible: boolean;
-    try {
-      eligible = await reads.holdsPlaceBids(recipientId, requestId);
-    } catch (cause) {
-      return isPermanentFailure(cause)
-        ? { kind: "rejected", cause }
-        : { kind: "unavailable", cause };
-    }
-    if (!eligible) return { kind: "ineligible" };
-    const titles = new Map<string, string>();
+    const { recipientId, requestId } = context;
+    const stop = await checkPlaceBids(reads, context);
+    if (stop !== undefined) return stop;
     if (notice.kind === "lot-activity-digest") {
-      const lotIds = shownLotIds(notice.lines);
+      const lotIds = shownLots(notice.lines);
       const settled = await Promise.allSettled(
         lotIds.map((lotId) => reads.lotTitle(recipientId, lotId, requestId)),
       );
       settled.forEach((result, index) => {
         const lotId = lotIds[index];
         if (lotId === undefined) return;
-        if (result.status === "fulfilled") titles.set(lotId, result.value);
-        else onTitleMissing(result.reason, requestId);
+        if (result.status === "fulfilled") {
+          titles.set(lotId, result.value);
+          return;
+        }
+        if (isPermanentFailure(result.reason)) refused.add(lotId);
+        onTitleMissing(result.reason, requestId);
       });
     } else {
       try {
@@ -240,52 +265,83 @@ export function createLotNoticeRender(
     }
     return {
       kind: "ready",
-      message: renderLotNotice(notice, titles, frequency),
+      message: renderLotNotice(notice, { titles, refused, frequencyButton }),
     };
   };
 }
 
-// Лоты показанных строк сводки — в порядке первого появления, без повторов:
-// у лота могут быть две строки, перебитие и ответ автоставки.
-function shownLotIds(lines: readonly LotActivityLine[]): string[] {
-  return [
-    ...new Set(lines.slice(0, DIGEST_LINE_LIMIT).map((line) => line.lotId)),
-  ];
+// Запись о названии, которого текст не получил. Окончательный отказ по лоту —
+// нарушение инварианта у соседа, а не его недоступность, и в логе они
+// различимы.
+export function logMissingTitle(
+  logger: Pick<Logger, "warn">,
+): (cause: unknown, requestId?: string) => void {
+  return (cause, requestId) =>
+    logger.warn("lot title unavailable", {
+      ...(requestId === undefined ? {} : { request_id: requestId }),
+      error_category: isPermanentFailure(cause)
+        ? "invariant"
+        : "dependency_unavailable",
+      error: cause instanceof Error ? cause.message : String(cause),
+    });
 }
 
-// Пустое название — у лота нет карточки: текст обходится без него.
+// Лоты сводки в порядке первого появления, без повторов — у лота могут быть две
+// строки, перебитие и ответ автоставки, — и не больше предела.
+function shownLots(lines: readonly LotActivityLine[]): string[] {
+  return [...new Set(lines.map((line) => line.lotId))].slice(
+    0,
+    DIGEST_LOT_LIMIT,
+  );
+}
+
+export type LotNoticeRenderInput = {
+  // Пустое название — у лота нет карточки: текст обходится без него.
+  titles: ReadonlyMap<string, string>;
+  // Лоты, которые Auction окончательно отказался отдать: кнопка к ним упёрлась
+  // бы в тот же отказ.
+  refused?: ReadonlySet<string>;
+  frequencyButton: boolean;
+};
+
 export function renderLotNotice(
   notice: LotNotice,
-  titles: ReadonlyMap<string, string>,
-  frequency: boolean,
+  { titles, refused = new Set(), frequencyButton }: LotNoticeRenderInput,
 ): LotNoticeView {
-  const frequencyButton: LotNoticeButton = {
+  const frequency: LotNoticeButton = {
     kind: "frequency",
     text: frequencyLabel,
   };
   if (notice.kind === "lot-activity-digest") {
-    const shown = notice.lines.slice(0, DIGEST_LINE_LIMIT);
-    const hidden = notice.lines.length - shown.length;
+    const lots = shownLots(notice.lines);
+    const shown = new Set(lots);
+    const hidden = new Set(notice.lines.map((line) => line.lotId)).size;
     const text = [
       "Сводка по твоим ставкам:",
       "",
-      ...shown.map((line) => digestLine(line, titles.get(line.lotId))),
-      ...(hidden > 0 ? [`…и ещё ${hidden}.`] : []),
+      ...notice.lines
+        .filter((line) => shown.has(line.lotId))
+        .map((line) => digestLine(line, titles.get(line.lotId))),
+      ...(hidden > lots.length
+        ? [`…и ещё лотов: ${hidden - lots.length}.`]
+        : []),
     ].join("\n");
-    const rows: LotNoticeButton[][] = shownLotIds(notice.lines).map((lotId) => {
-      const title = titles.get(lotId);
-      return [
-        {
-          kind: "lot",
-          lotId,
-          text:
-            title === undefined || title === ""
-              ? toLotLabel
-              : truncate(title, BUTTON_TITLE_LIMIT),
-        },
-      ];
-    });
-    if (frequency) rows.push([frequencyButton]);
+    const rows: LotNoticeButton[][] = lots
+      .filter((lotId) => !refused.has(lotId))
+      .map((lotId) => {
+        const title = titles.get(lotId);
+        return [
+          {
+            kind: "lot",
+            lotId,
+            text:
+              title === undefined || title === ""
+                ? toLotLabel
+                : truncate(title, BUTTON_TITLE_LIMIT),
+          },
+        ];
+      });
+    if (frequencyButton) rows.push([frequency]);
     return { text, rows };
   }
   const lot = quoted(titles.get(notice.lotId), TITLE_LIMIT);
@@ -297,8 +353,8 @@ export function renderLotNotice(
   return {
     text: singleText(notice, lot),
     rows: [
-      frequency && notice.kind !== "lot-purchased"
-        ? [lotButton, frequencyButton]
+      frequencyButton && notice.kind !== "lot-purchased"
+        ? [lotButton, frequency]
         : [lotButton],
     ],
   };
@@ -310,13 +366,13 @@ function singleText(
 ): string {
   switch (notice.kind) {
     case "lot-outbid":
-      return `Твою ставку на ${lot ?? "лот"} перебили. Текущая цена — ${noticeMoney(notice.currentPrice)}.`;
+      return `Твою ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(notice.currentPrice)}.`;
     case "lot-proxy-raised":
-      return `Твоя автоставка на ${lot ?? "лот"} подняла цену до ${noticeMoney(notice.currentPrice)}: лидируешь ты.`;
+      return `Твоя автоставка на ${lot ?? "лот"} подняла цену до ${money(notice.currentPrice)}: лидируешь ты.`;
     case "lot-purchased":
       // Оплаты и получения в продукте нет: их ведёт организатор аукциона, и
       // сообщение говорит только это (решение владельца 13 октября 2026 года).
-      return `Лот ${lot === undefined ? "" : `${lot} `}твой за ${noticeMoney(notice.price)}. Как оплатить и забрать — напишет организатор аукциона.`;
+      return `Лот ${lot === undefined ? "" : `${lot} `}твой за ${money(notice.price)}. Как оплатить и забрать — напишет организатор аукциона.`;
     default: {
       const _exhaustive: never = notice;
       return _exhaustive;
@@ -324,16 +380,18 @@ function singleText(
   }
 }
 
+// «Лот за тобой» верно и для лидера торгов, и для купившего: лот, проданный в
+// окне, приходит в сводку с ценой продажи, а факт не говорит, продан ли он.
 function digestLine(line: LotActivityLine, title: string | undefined): string {
   const lot = quoted(title, LINE_TITLE_LIMIT) ?? "Лот";
-  const price = noticeMoney(line.currentPrice);
+  const price = money(line.currentPrice);
   if (line.kind === "outbid") {
     return line.recipientLeads
-      ? `• ${lot} — перебивали, но лидируешь ты: ${price}`
+      ? `• ${lot} — перебивали, но лот за тобой: ${price}`
       : `• ${lot} — перебили, цена ${price}`;
   }
   return line.recipientLeads
-    ? `• ${lot} — автоставка подняла цену до ${price}, лидируешь ты`
+    ? `• ${lot} — автоставка подняла цену до ${price}, лот за тобой`
     : `• ${lot} — автоставка отвечала, но тебя перебили: ${price}`;
 }
 
@@ -341,24 +399,4 @@ function quoted(title: string | undefined, limit: number): string | undefined {
   return title === undefined || title === ""
     ? undefined
     : `«${truncate(title, limit)}»`;
-}
-
-function truncate(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-  let kept = "";
-  for (const point of text) {
-    if (kept.length + point.length > limit - 1) break;
-    kept += point;
-  }
-  return `${kept}…`;
-}
-
-export function noticeMoney(amount: NoticeMoney): string {
-  const whole = amount.minorUnits % 100 === 0;
-  return new Intl.NumberFormat("ru-RU", {
-    style: "currency",
-    currency: amount.currency,
-    minimumFractionDigits: whole ? 0 : 2,
-    maximumFractionDigits: 2,
-  }).format(amount.minorUnits / 100);
 }

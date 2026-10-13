@@ -2292,8 +2292,7 @@ describe("outbid frequency", () => {
   });
 
   // «Частота уведомлений» под перебитием открывает экран новым сообщением:
-  // уведомление
-  // остаётся в истории целым.
+  // уведомление остаётся в истории целым.
   it("opens the settings from the outbid notification as a new message", async () => {
     const { bot, calls } = makeBot(withOutbid({ frequency: "every" }));
     await bot.handleUpdate(lotPress({ data: traceNotifyCallback() }));

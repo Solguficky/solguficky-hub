@@ -6,6 +6,7 @@ import { countFailure } from "../../core/failures.js";
 import {
   createLotNoticeRender,
   isLotNotice,
+  logMissingTitle,
 } from "../../core/notifications/lot-notice.js";
 import type { SurfaceDefinition } from "../../core/process.js";
 import { rpcMeta } from "../../core/rpc-metadata.js";
@@ -138,30 +139,26 @@ export const hubSurface: SurfaceDefinition = ({
   });
   // Без Auction аукционных фактов нет, а пришедший всё равно уходит — без
   // названия и без кнопки частоты: её экран живёт в расширении аукциона.
-  const renderLot = createLotNoticeRender(
-    auction === undefined
-      ? undefined
-      : {
-          holdsPlaceBids: (identityId, requestId) =>
-            identity.holdsPlaceBids(
-              identityId,
-              requestId === undefined ? undefined : rpcMeta({ requestId }),
-            ),
-          lotTitle: (identityId, lotId, requestId) =>
-            auction.lotTitle(
-              identityId,
-              lotId,
-              requestId === undefined ? undefined : rpcMeta({ requestId }),
-            ),
-        },
-    (cause, requestId) =>
-      logger.warn("lot title unavailable", {
-        ...(requestId === undefined ? {} : { request_id: requestId }),
-        error_category: "dependency_unavailable",
-        error: cause instanceof Error ? cause.message : String(cause),
-      }),
-    auction !== undefined,
-  );
+  const renderLot = createLotNoticeRender({
+    reads:
+      auction === undefined
+        ? undefined
+        : {
+            holdsPlaceBids: (identityId, requestId) =>
+              identity.holdsPlaceBids(
+                identityId,
+                requestId === undefined ? undefined : rpcMeta({ requestId }),
+              ),
+            lotTitle: (identityId, lotId, requestId) =>
+              auction.lotTitle(
+                identityId,
+                lotId,
+                requestId === undefined ? undefined : rpcMeta({ requestId }),
+              ),
+          },
+    onTitleMissing: logMissingTitle(logger),
+    frequencyButton: auction !== undefined,
+  });
   const sender = createNotificationSender(
     createNotificationApi(token, environment),
     hub.auctionBotUsername,

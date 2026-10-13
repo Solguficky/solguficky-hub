@@ -80,9 +80,6 @@ export function disableMeetupCategoryCallback(
   return `v1:notify:moff:${uuidToToken(meetupId)}:${category}`;
 }
 
-// Кадр по образцу P-11: заголовок называет повод и сходку, строки ниже — что
-// нужно знать, не открывая карточку. Одно сообщение на повод, карточка целиком
-// не повторяется: описание и ссылка на календарь только называются.
 // Что уходит отправителю. Вести хаба он рисует сам, а весть о лоте приходит уже
 // собранной общим рендером двух ботов (`lot-notice.ts`, PER-598): ему нужны
 // право получателя и название лота у соседей, а соседей отправитель не зовёт.
@@ -90,6 +87,9 @@ export type OutgoingNotification =
   | Exclude<RenderableContent, LotNotice>
   | { kind: "lot-notice"; view: LotNoticeView };
 
+// Кадр по образцу P-11: заголовок называет повод и сходку, строки ниже — что
+// нужно знать, не открывая карточку. Одно сообщение на повод, карточка целиком
+// не повторяется: описание и ссылка на календарь только называются.
 export function renderNotification(
   content: OutgoingNotification,
   auctionBotUsername?: string,

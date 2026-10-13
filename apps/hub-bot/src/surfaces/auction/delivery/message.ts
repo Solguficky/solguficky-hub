@@ -6,11 +6,11 @@ import {
 import type { TelegramEnvironment } from "../../../core/config.js";
 import {
   classifyTelegramFailure,
-  isPermanentFailure,
   type NotificationSender,
   type RenderMessage,
 } from "../../../core/delivery/index.js";
 import {
+  checkPlaceBids,
   createLotNoticeRender,
   type LotNoticeReads,
   type LotNoticeView,
@@ -80,18 +80,18 @@ export type NotificationReads = LotNoticeReads;
 // Auction роняет только название. Допуск к аукциону тоже требует права: кнопка
 // ведёт в FAQ, который без него не откроется.
 //
-// `outbidSettings` — у бота есть Notifications, и под вестью о торгах стоит
+// `frequencyButton` — у бота есть Notifications, и под вестью о торгах стоит
 // «Частота уведомлений».
 export function createRenderMessage(
   reads: NotificationReads,
   onTitleMissing: (cause: unknown, requestId?: string) => void,
-  outbidSettings = false,
+  frequencyButton = false,
 ): RenderMessage<AuctionNotificationContent, NotificationMessage> {
-  const renderLot = createLotNoticeRender(
+  const renderLot = createLotNoticeRender({
     reads,
     onTitleMissing,
-    outbidSettings,
-  );
+    frequencyButton,
+  });
   return async (content, context) => {
     // Весть о смене круга (PER-537) — не о торгах: право ставить бот для неё не
     // спрашивает, и кнопки, которая упёрлась бы в тот же отказ, у неё нет.
@@ -99,19 +99,12 @@ export function createRenderMessage(
       return { kind: "ready", message: renderNotification(content) };
     }
     if (content.kind === "access-granted") {
-      let eligible: boolean;
-      try {
-        eligible = await reads.holdsPlaceBids(
-          context.recipientId,
-          context.requestId,
-        );
-      } catch (cause) {
-        return isPermanentFailure(cause)
-          ? { kind: "rejected", cause }
-          : { kind: "unavailable", cause };
-      }
-      if (!eligible) return { kind: "ineligible" };
-      return { kind: "ready", message: renderNotification(content) };
+      return (
+        (await checkPlaceBids(reads, context)) ?? {
+          kind: "ready",
+          message: renderNotification(content),
+        }
+      );
     }
     const rendered = await renderLot(content, context);
     return rendered.kind === "ready"
@@ -123,7 +116,7 @@ export function createRenderMessage(
 export function renderNotification(
   content: AuctionNotificationContent,
   titles: ReadonlyMap<string, string> = new Map(),
-  outbidSettings = false,
+  frequencyButton = false,
 ): NotificationMessage {
   if (content.kind === "access-granted") {
     return {
@@ -137,7 +130,7 @@ export function renderNotification(
   if (content.kind === "circle-promoted") {
     return { text: "Тебя приняли в сообщество." };
   }
-  return traceMessage(renderLotNotice(content, titles, outbidSettings));
+  return traceMessage(renderLotNotice(content, { titles, frequencyButton }));
 }
 
 // Кнопки общего рендера — следы этой поверхности: лот — кнопка лота дерева,

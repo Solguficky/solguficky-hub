@@ -16,7 +16,7 @@ export const OUTBID_FREQUENCIES = ["every", "5", "15", "60", "off"] as const;
 export type OutbidFrequency = (typeof OUTBID_FREQUENCIES)[number];
 
 // Порт настройки у Notifications. Его нет, когда бот настройку не показывает:
-// тогда нет ни экрана, ни кнопки «Реже» под уведомлением. Значения, которого
+// тогда нет ни экрана, ни кнопки «Частота уведомлений» под вестью о торгах. Значения, которого
 // бот не знает, порт не выдумывает: `undefined` — ответ вне контракта.
 export type OutbidPreferencePort = {
   get(viewer: Viewer): Promise<OutbidFrequency | undefined>;

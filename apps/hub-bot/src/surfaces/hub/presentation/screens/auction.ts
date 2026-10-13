@@ -13,6 +13,7 @@ import {
   type Money,
   parseAuctionCallback,
 } from "../../../../auction-ui/index.js";
+import { money, truncate } from "../../../../core/format.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";
@@ -53,6 +54,10 @@ import {
   withNav,
 } from "./kit.js";
 import type { ScreenPhoto, ShownScreen } from "./show.js";
+
+// Цена и обрезка — общие у двух ботов (`src/core/format.ts`); имена
+// остаются здесь для прежних потребителей.
+export { money, truncate };
 
 // Оболочка хаба для тела аукциона (ADR-044, «Один аукцион, две оболочки»;
 // дизайн-код, «Аукцион: тело, шлюз, оболочка»). Тело — блоки и кнопки-действия
@@ -914,27 +919,4 @@ function priceLabel(status: LotStatusView): string {
       return _exhaustive;
     }
   }
-}
-
-// Валюта у платформы одна — рубль, и у неё две цифры после запятой. Копейки
-// показываются, только когда они есть.
-export function money(amount: Money): string {
-  const whole = amount.minorUnits % 100 === 0;
-  return new Intl.NumberFormat("ru-RU", {
-    style: "currency",
-    currency: amount.currency,
-    minimumFractionDigits: whole ? 0 : 2,
-    maximumFractionDigits: 2,
-  }).format(amount.minorUnits / 100);
-}
-
-// Обрезка по кодовым точкам: срез по UTF-16 разрезал бы суррогатную пару.
-export function truncate(text: string, limit: number): string {
-  if (text.length <= limit) return text;
-  let kept = "";
-  for (const point of text) {
-    if (kept.length + point.length > Math.max(0, limit - 1)) break;
-    kept += point;
-  }
-  return `${kept}…`;
 }

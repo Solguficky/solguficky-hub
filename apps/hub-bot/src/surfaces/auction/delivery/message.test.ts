@@ -193,7 +193,7 @@ describe("activity digest", () => {
         "Сводка по твоим ставкам:",
         "",
         `• «Кружка» — перебили, цена 1${nbsp}500${nbsp}₽`,
-        `• «Плакат» — автоставка подняла цену до 900${nbsp}₽, лидируешь ты`,
+        `• «Плакат» — автоставка подняла цену до 900${nbsp}₽, лот за тобой`,
       ].join("\n"),
     );
     expect(notificationMarkup(rendered.message)).toEqual({
@@ -207,7 +207,7 @@ describe("activity digest", () => {
   });
 
   // Отказ по одному лоту остальные строки не роняет: строка уходит без
-  // названия, а отказ виден в логе.
+  // названия и кнопки, а отказ виден в логе.
   it("keeps the other lines when one title is refused for good", async () => {
     const missing = vi.fn();
     const notFound = Object.assign(new Error("lot not found"), { code: 5 });
@@ -223,7 +223,9 @@ describe("activity digest", () => {
     if (rendered.kind !== "ready") throw new Error("the digest must render");
     expect(rendered.message.text).toContain("• Лот — перебили");
     expect(rendered.message.text).toContain("• «Плакат» —");
-    expect(rendered.message.rows?.[0]?.[0]?.text).toBe("К лоту");
+    // Кнопки к лоту, который Auction не отдаёт, нет: она упёрлась бы в тот же
+    // отказ.
+    expect(rendered.message.rows?.[0]?.[0]?.text).toBe("Плакат");
     expect(missing).toHaveBeenCalledWith(notFound, undefined);
   });
 

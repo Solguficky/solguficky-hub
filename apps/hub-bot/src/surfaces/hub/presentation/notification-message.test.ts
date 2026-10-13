@@ -68,11 +68,11 @@ function buttons(content: OutgoingNotification): unknown[] {
 // Весть о лоте собирает общий рендер двух ботов, отправитель хаба рисует её
 // своими следами (PER-598).
 async function lotNotice(notice: LotNotice) {
-  const rendered = await createLotNoticeRender(
-    { holdsPlaceBids: async () => true, lotTitle: async () => "Кружка" },
-    () => {},
-    true,
-  )(notice, { recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd" });
+  const rendered = await createLotNoticeRender({
+    reads: { holdsPlaceBids: async () => true, lotTitle: async () => "Кружка" },
+    onTitleMissing: () => {},
+    frequencyButton: true,
+  })(notice, { recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd" });
   if (rendered.kind !== "ready") throw new Error("the notice must render");
   return renderNotification({ kind: "lot-notice", view: rendered.message });
 }

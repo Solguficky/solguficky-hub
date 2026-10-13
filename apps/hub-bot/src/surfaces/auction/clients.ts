@@ -520,7 +520,7 @@ export function createDeliveryPorts(
 export type Clients = {
   ports: PortsFactory;
   delivery: DeliveryPorts;
-  // Есть ли у бота настройка «перебили»: по ней под перебитием стоит «Реже».
+  // Есть ли у бота настройка «перебили»: по ней под вестью о торгах стоит «Частота уведомлений».
   outbidSettings: boolean;
   close(): void;
 };
