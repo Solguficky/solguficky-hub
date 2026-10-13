@@ -696,7 +696,7 @@ final class AuctionGrpcService(
    * Поток аукциона (PER-335): каждое сообщение — состояние целиком из read model, первое — при подписке, следующие —
    * после коммита проекции, тронувшего аукцион или лот в нём. Право — то же, что у чтения лота: поток несёт снимки
    * лотов. Аукциона нет в read model — `NOT_FOUND`, и сразу, и когда его удалили посреди потока. После сообщения, где
-   * аукцион завершён или отменён, поток закрывается: изменений у него больше не будет.
+   * аукцион завершён, или отменён и лоты состава сняты, поток закрывается: изменений у него больше не будет.
    *
    * Чтение идёт по одному на подписчика и только по его спросу: медленный клиент получает свежее состояние, а не
    * очередь, и ставки не ждут ни его, ни поток. Повод, после которого состояние не изменилось, сообщения не даёт.
@@ -716,7 +716,7 @@ final class AuctionGrpcService(
             case None => throw new GrpcServiceException(Status.NOT_FOUND.withDescription("auction not found"))
           }
           .via(AuctionGrpcService.changed)
-          .takeWhile(message => !AuctionGrpcService.terminal(message.getAuction.status), inclusive = true)
+          .takeWhile(message => !AuctionGrpcService.terminal(message), inclusive = true)
     }
 
   // Счета: контракт есть (PER-308), выставление, статусы и чтения приносит лист счёта (PER-338).
@@ -769,8 +769,17 @@ object AuctionGrpcService {
   /** Изменений нет: поток читает состояние один раз, при подписке. */
   val NoChanges: AuctionChanges = _ => Source.single(())
 
-  /** Аукцион в конечном состоянии — законченный или отменённый: после него поток закрывается. */
-  private def terminal(status: wire.AuctionSnapshot.Status): Boolean = status.isFinished || status.isCancelled
+  /**
+   * Последнее сообщение потока: аукцион закончен — или отменён, и ни один лот состава уже не торгуется и не удержан.
+   * Лоты отменённого аукциона снимаются после `AuctionCancelled` своими событиями, и поток ждёт их, чтобы последнее
+   * сообщение несло состав, каким он остался.
+   */
+  private[grpc] def terminal(message: wire.AuctionWatch): Boolean = {
+    val status = message.getAuction.status
+    status.isFinished || (status.isCancelled && message.lineup.forall(lot =>
+      !lot.status.isTrading && !lot.status.isHeld
+    ))
+  }
 
   /** Сообщение потока проходит, только если отличается от предыдущего отправленного. */
   private def changed[T]: Flow[T, T, NotUsed] =

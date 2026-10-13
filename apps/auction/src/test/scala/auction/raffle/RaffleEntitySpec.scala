@@ -49,7 +49,7 @@ final class RaffleEntitySpec extends AnyWordSpec with Matchers with BeforeAndAft
   }
 
   /** Таблица имён в памяти: что записано и на какой момент назначено стирание. */
-  private final class Tickets extends RaffleTickets {
+  private class Tickets extends RaffleTickets {
     val recorded = new AtomicReference(Vector.empty[ParticipantId])
     val expiry = new AtomicReference(Option.empty[Instant])
     def record(auction: AuctionId, tickets: Vector[ParticipantId]): Future[Unit] = {
@@ -189,6 +189,50 @@ final class RaffleEntitySpec extends AnyWordSpec with Matchers with BeforeAndAft
           case other => fail(s"unexpected $other")
         }
       }
+    }
+
+    "cancels open registration with the auction, refuses registrations after it and sets the names to expire" in {
+      val clock = new MovableClock(closesAt.minusSeconds(60))
+      val tickets = new Tickets
+      val raffle = entity(clock, _ => Future.successful(true), _ => Future.successful(None), tickets)
+      raffle.runCommand[Done](RaffleEntity.Open(OpenRaffle(closesAt), _))
+      register(raffle, 1, 1)
+      raffle.runCommand[Done](RaffleEntity.Cancel(CancelRaffle(OpId(uuid(500))), _)).reply shouldBe Done
+      raffle.getState().raffle.state shouldBe a[RaffleState.Cancelled]
+      raffle.runCommand[Done](RaffleEntity.Cancel(CancelRaffle(OpId(uuid(501))), _)).events shouldBe empty
+      register(raffle, 2, 2).reply shouldBe Left(RegistrationRejected.RegistrationClosed)
+      eventually(tickets.expiry.get shouldBe Some(clock.now.plus(java.time.Duration.ofDays(30))))
+    }
+
+    // Отмена, пришедшая, пока снимок имён записывается, ставит срок хранения только после записи.
+    "sets the names of a cancelled pool to expire only after their recording that was in flight" in {
+      val clock = new MovableClock(closesAt.minusSeconds(60))
+      val calls = new java.util.concurrent.ConcurrentLinkedQueue[String]()
+      val recording = scala.concurrent.Promise[Unit]()
+      val tickets = new Tickets {
+        override def record(auction: AuctionId, fixed: Vector[ParticipantId]): Future[Unit] = {
+          calls.add("record")
+          recording.future.map { _ =>
+            calls.add("recorded")
+            ()
+          }(scala.concurrent.ExecutionContext.parasitic)
+        }
+        override def expireAt(auction: AuctionId, at: Instant): Future[Unit] = {
+          calls.add("expire")
+          super.expireAt(auction, at)
+        }
+      }
+      val raffle = entity(clock, _ => Future.successful(true), _ => Future.successful(None), tickets)
+      raffle.runCommand[Done](RaffleEntity.Open(OpenRaffle(closesAt), _))
+      register(raffle, 1, 1)
+      clock.now = closesAt.plusSeconds(1)
+      raffle.runCommand(RaffleEntity.CloseDue)
+      eventually(calls.toArray.toList shouldBe List("record"))
+      raffle.runCommand[Done](RaffleEntity.Cancel(CancelRaffle(OpId(uuid(500))), _)).reply shouldBe Done
+      Thread.sleep(200)
+      tickets.expiry.get shouldBe None
+      recording.success(())
+      eventually(calls.toArray.toList shouldBe List("record", "recorded", "expire"))
     }
 
     "fixes an empty pool without asking the beacon" in {
