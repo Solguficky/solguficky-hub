@@ -39,6 +39,15 @@ function targetOf(person: Person, label: string): string {
   return button.target;
 }
 
+// Список состава листается по восемь, и общий контур копит людей из других
+// сценариев: держатели наборов в списке тоже (PER-618). Человек, заведённый
+// последним, может оказаться не на первой странице.
+async function pagesTo(person: Person, label: string): Promise<void> {
+  while (!person.buttons().includes(label) && person.buttons().includes("→")) {
+    await person.presses("→");
+  }
+}
+
 describe("состав сообщества", () => {
   it("администратор выдаёт и снимает модерацию с карточки, а поддельное нажатие получает отказ Identity", async () => {
     const { adminId, person: admin } = await organizerAtStart(wire, direct);
@@ -53,10 +62,12 @@ describe("состав сообщества", () => {
     await admin.says("/manage");
     await admin.presses("Участники");
     await admin.presses("Состав сообщества");
+    await pagesTo(admin, name);
     expect(admin.buttons()).toContain(name);
     await admin.presses("Гости");
     expect(admin.buttons()).not.toContain(name);
     await admin.presses("Участники");
+    await pagesTo(admin, name);
 
     await admin.presses(name);
     expect(admin.sees()).toContain("Круг: участник");
