@@ -241,6 +241,7 @@ function toContent(message: Notification): NotificationContent | undefined {
     case "lotProxyRaised":
     case "lotPurchased":
     case "lotActivityDigest":
+    case "lotReminder":
       return lotNoticeOf(type);
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };

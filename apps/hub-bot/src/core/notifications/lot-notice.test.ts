@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   LotActivityDigestSchema,
   LotActivityKind,
+  LotReminderSchema,
 } from "../../../gen/notifications/v1/notifications_pb.js";
 import {
   createLotNoticeRender,
@@ -60,6 +61,16 @@ describe("lotNoticeOf", () => {
     });
     expect(lotNoticeOf({ case: "lotActivityDigest", value })).toBeUndefined();
   });
+
+  // Напоминание о дедлайне (PER-496) несёт только лот: имени, цены и самого
+  // дедлайна у продюсера нет.
+  it("carries a reminder as its lot id alone", () => {
+    const value = create(LotReminderSchema, { lotId: lotOf(3) });
+    expect(lotNoticeOf({ case: "lotReminder", value })).toEqual({
+      kind: "lot-reminder",
+      lotId: lotOf(3),
+    });
+  });
 });
 
 describe("renderLotNotice", () => {
@@ -109,6 +120,18 @@ describe("renderLotNotice", () => {
       [{ kind: "lot", lotId, text: "Кружка" }],
       [{ kind: "frequency", text: "Частота уведомлений" }],
     ]);
+  });
+
+  // Напоминание о дедлайне выключается снятием отметки (ADR-063, п.5), а не
+  // частотой перебитий: кнопка частоты под ним не ставится.
+  it("names the followed lot and offers only its button", () => {
+    const lotId = lotOf(3);
+    const view = renderLotNotice(
+      { kind: "lot-reminder", lotId },
+      { titles: new Map([[lotId, "Кружка"]]), frequencyButton: true },
+    );
+    expect(view.text).toContain("Скоро дедлайн у избранного лота «Кружка»");
+    expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
   });
 
   // Сводка за час может набрать много лотов: текст и клавиатура держатся в
@@ -246,6 +269,7 @@ describe("isLotNotice", () => {
   it("tells a lot notice from other branches", () => {
     expect(isLotNotice({ kind: "lot-activity-digest" })).toBe(true);
     expect(isLotNotice({ kind: "lot-purchased" })).toBe(true);
+    expect(isLotNotice({ kind: "lot-reminder" })).toBe(true);
     expect(isLotNotice({ kind: "access-granted" })).toBe(false);
   });
 });

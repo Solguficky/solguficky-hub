@@ -8,9 +8,6 @@ namespace Notifications.Infrastructure;
 /// <summary>Живое задание сходки: то, что нужно ядру для решения.</summary>
 public sealed record LiveReminderTask(Guid TaskId, DateTimeOffset StartsAt, DateTimeOffset DueAt);
 
-/// <summary>Наступившее задание, которое предстоит исполнить.</summary>
-public sealed record DueReminderTask(Guid TaskId, string MeetupId);
-
 /// <summary>
 /// Доступ к таблице заданий напоминания. Dapper поверх Npgsql — набор
 /// <c>docs/standards/data/postgresql.md</c>, тот же, что у соседней
@@ -50,20 +47,6 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source, ReminderTelemetry
         UPDATE reminder_task
         SET state = 'cancelled', reason = @Reason
         WHERE meetup_id = @MeetupId AND state = 'scheduled';
-        """;
-
-    private const string DueSql = """
-        SELECT task_id, meetup_id
-        FROM reminder_task
-        WHERE state = 'scheduled' AND due_at <= @Now
-        ORDER BY due_at
-        LIMIT @Limit;
-        """;
-
-    private const string OldestDueSql = """
-        SELECT MIN(due_at)
-        FROM reminder_task
-        WHERE state = 'scheduled' AND due_at <= @Now;
         """;
 
     private const string FireSql = """
@@ -203,37 +186,6 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source, ReminderTelemetry
         return removed;
     }
 
-    /// <summary>Наступившие задания среди живых.</summary>
-    public async Task<IReadOnlyList<DueReminderTask>> Due(
-        DateTimeOffset now,
-        int limit,
-        CancellationToken cancellationToken)
-    {
-        await using var connection = await source.OpenConnectionAsync(cancellationToken);
-
-        var rows = await connection.QueryAsync<DueRow>(
-            new CommandDefinition(
-                DueSql,
-                new { Now = now.UtcDateTime, Limit = limit },
-                cancellationToken: cancellationToken));
-
-        return rows.Select(row => new DueReminderTask(row.task_id, row.meetup_id)).ToList();
-    }
-
-    /// <summary>Возраст самого старого наступившего, но ещё живого задания.</summary>
-    public async Task<double> OldestDueAgeSeconds(DateTimeOffset now, CancellationToken cancellationToken)
-    {
-        await using var connection = await source.OpenConnectionAsync(cancellationToken);
-
-        var oldest = await connection.ExecuteScalarAsync<DateTime?>(
-            new CommandDefinition(
-                OldestDueSql,
-                new { Now = now.UtcDateTime },
-                cancellationToken: cancellationToken));
-
-        return oldest is null ? 0 : Math.Max(0, (now.UtcDateTime - oldest.Value.ToUniversalTime()).TotalSeconds);
-    }
-
     /// <summary>
     /// Исполняет задание: переводит в «сработало», порождает повод и
     /// разворачивает его на подписчиков адресными фактами. Возвращает число
@@ -291,8 +243,6 @@ public sealed class ReminderTaskStore(NpgsqlDataSource source, ReminderTelemetry
     // Npgsql, и запись с DateTimeOffset Dapper материализовать не может вовсе.
     // Перевод идёт через ToUniversalTime, как в GrainActivationStore.
     private sealed record LiveRow(Guid task_id, DateTime starts_at, DateTime due_at);
-
-    private sealed record DueRow(Guid task_id, string meetup_id);
 
     private static DateTimeOffset Moment(DateTime value) => new(value.ToUniversalTime());
 }

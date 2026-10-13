@@ -1,13 +1,15 @@
 using System.Diagnostics;
 using Notifications.Facts;
+using Notifications.Grains;
 using Notifications.Messaging;
 using Notifications.Observability;
+using Orleans;
 
 namespace Notifications.Auction;
 
 /// <summary>Граница аукционных поводов и реплики лота со своими исходами и логами.</summary>
 public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetry, FactTelemetry facts,
-    TimeProvider clock, ILogger<AuctionHandler> logger) : IEventHandler
+    IGrainFactory grains, TimeProvider clock, ILogger<AuctionHandler> logger) : IEventHandler
 {
     // Факт лота несёт лот, факт аукциона — аукцион: в лог идёт свой ключ.
     private sealed record EventRef(Guid EventId, Guid? LotId, Guid? AuctionId, long Version, DateTimeOffset OccurredAt);
@@ -74,6 +76,31 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
         {
             facts.Record(type, new FactCount(created, 0));
         }
+
+        // Факт лота двигает реплику, а её последнее слово решает задание
+        // напоминания о дедлайне (PER-496). Ставка дедлайна не меняет, поэтому
+        // на неё грин не зовётся: иначе горячий путь ставок платил бы за
+        // напоминание, от ставки не зависящее. Грин читает реплику после
+        // коммита, а упавший вызов возвращает сообщение в поток — повтор доводит
+        // задание до реплики.
+        if (source.LotId is { } lotId && decoded is not AuctionDecoded.Bid)
+        {
+            try
+            {
+                await grains.GetGrain<ILotNotificationGrain>(lotId.ToString()).ApplyReplica();
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                await message.Retry(stoppingToken);
+                Record(message, started, source, "reminder_failed", 0, "dependency_unavailable", "lot reminder schedule failed; message returned to the stream", ex);
+                return;
+            }
+        }
+
         await message.Accept(stoppingToken);
         Record(message, started, source, application.Outcome switch
         {

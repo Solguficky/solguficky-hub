@@ -11,11 +11,12 @@ import {
 import { type FormattedMoney, money, truncate } from "../format.js";
 import type { Logger } from "../logging.js";
 
-// Уведомления о лотах — перебитие, ответ автоставки, покупка и сводка за окно
-// частоты (PER-596) — у двух ботов одни (PER-598): участнику их доставляет бот
-// хаба, гостю — бот аукциона (ADR-064). Здесь разбор этих веток, чтения для
-// названия лота, текст и ряды кнопок; данные кнопок каждая поверхность кодирует
-// сама — у них разный префикс следа и разный путь к экрану частоты.
+// Уведомления о лотах — перебитие, ответ автоставки, покупка, сводка за окно
+// частоты (PER-596) и напоминание о дедлайне избранного лота (PER-496) — у двух
+// ботов одни (PER-598): участнику их доставляет бот хаба, гостю — бот аукциона
+// (ADR-064). Здесь разбор этих веток, чтения для названия лота, текст и ряды
+// кнопок; данные кнопок каждая поверхность кодирует сама — у них разный
+// префикс следа и разный путь к экрану частоты.
 
 export type NoticeMoney = FormattedMoney;
 
@@ -35,13 +36,16 @@ export type LotNotice =
   | { kind: "lot-proxy-raised"; lotId: string; currentPrice: NoticeMoney }
   | { kind: "lot-purchased"; lotId: string; price: NoticeMoney }
   // Сводка окна частоты (PER-596): минимум одна строка, по строке на лот и вид.
-  | { kind: "lot-activity-digest"; lines: readonly LotActivityLine[] };
+  | { kind: "lot-activity-digest"; lines: readonly LotActivityLine[] }
+  // Дедлайн избранного лота подходит (PER-496); данные — только идентификатор.
+  | { kind: "lot-reminder"; lotId: string };
 
 const lotNoticeKinds: ReadonlySet<string> = new Set<LotNotice["kind"]>([
   "lot-outbid",
   "lot-proxy-raised",
   "lot-purchased",
   "lot-activity-digest",
+  "lot-reminder",
 ]);
 
 /** Весть о лоте среди веток канала: её рисует общий рендер. */
@@ -54,7 +58,12 @@ export function isLotNotice<C extends { kind: string }>(
 type LotBranch = Extract<
   Notification["type"],
   {
-    case: "lotOutbid" | "lotProxyRaised" | "lotPurchased" | "lotActivityDigest";
+    case:
+      | "lotOutbid"
+      | "lotProxyRaised"
+      | "lotPurchased"
+      | "lotActivityDigest"
+      | "lotReminder";
   }
 >;
 
@@ -107,6 +116,12 @@ export function lotNoticeOf(type: LotBranch): LotNotice | undefined {
       return lines.length === 0
         ? undefined
         : { kind: "lot-activity-digest", lines };
+    }
+    case "lotReminder": {
+      // Напоминание несёт только лот: названия, цены и дедлайна у продюсера
+      // нет, канал читает их у Auction по идентификатору.
+      const lotId = canonical(type.value.lotId);
+      return lotId === undefined ? undefined : { kind: "lot-reminder", lotId };
     }
     default: {
       const _exhaustive: never = type;
@@ -353,7 +368,12 @@ export function renderLotNotice(
   return {
     text: singleText(notice, lot),
     rows: [
-      frequencyButton && notice.kind !== "lot-purchased"
+      // Частота управляет перебитием, ответом автоставки и сводкой; покупки и
+      // напоминания о дедлайне она не касается — напоминание выключается
+      // снятием отметки (ADR-063, п.5).
+      frequencyButton &&
+      notice.kind !== "lot-purchased" &&
+      notice.kind !== "lot-reminder"
         ? [lotButton, frequency]
         : [lotButton],
     ],
@@ -373,6 +393,11 @@ function singleText(
       // Оплаты и получения в продукте нет: их ведёт организатор аукциона, и
       // сообщение говорит только это (решение владельца 13 октября 2026 года).
       return `Лот ${lot === undefined ? "" : `${lot} `}твой за ${money(notice.price)}. Как оплатить и забрать — напишет организатор аукциона.`;
+    case "lot-reminder":
+      // Точного дедлайна в факте нет, а напоминание приходит не позже часа до
+      // него — в том числе когда лот открыли с дедлайном ближе часа. Названный
+      // «час» в этом случае был бы неправдой, поэтому текст говорит «скоро».
+      return `Скоро дедлайн у избранного лота${lot === undefined ? "" : ` ${lot}`}. Успей сделать ставку.`;
     default: {
       const _exhaustive: never = notice;
       return _exhaustive;

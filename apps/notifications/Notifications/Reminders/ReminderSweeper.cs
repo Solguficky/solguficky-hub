@@ -7,27 +7,33 @@ using Notifications.Observability;
 namespace Notifications.Reminders;
 
 /// <summary>
-/// Проход по таблице заданий: при старте силоса и периодически.
+/// Проход по таблицам заданий напоминания — сходок и лота — одним процессом.
 /// </summary>
 /// <remarks>
-/// Sweeper обязателен для корректности, а не желателен (ADR-029). Orleans
+/// Sweeper обязателен для корректности, а не желателен (ADR-029): Orleans
 /// пишет в хранилище определение напоминания, но не конкретное срабатывание,
 /// поэтому тик, пришедшийся на простой кластера, теряется и приходит только
-/// следующий; для напоминания за сутки «следующий период» смысла не имеет.
-/// Пропущенное таким образом задание подбирает только этот проход.
+/// следующий. Пропущенное таким образом задание подбирает только этот проход.
 ///
-/// Сам он ничего не исполняет: находит наступившие задания и зовёт грин
-/// сходки. Исполнять здесь означало бы завести второго владельца задания рядом
-/// с гринами, и единственность, которую даёт рантайм, перестала бы что-либо
+/// Обе таблицы обходит один процесс и одним чтением: <see cref="ReminderDueStore" />
+/// отдаёт наступившие сразу из обеих. Второй процесс у лота означал бы второго
+/// периодического потребителя соединений в каждом силосе, а это цена, которую
+/// подтвердил интеграционный набор: при общем контейнере PostgreSQL число
+/// соединений доходило до предела.
+///
+/// Сам он ничего не исполняет: находит наступившие задания и зовёт грин.
+/// Исполнять здесь означало бы завести второго владельца задания рядом с
+/// гринами, и единственность, которую даёт рантайм, перестала бы что-либо
 /// значить.
 /// </remarks>
 public sealed class ReminderSweeper(
-    ReminderTaskStore tasks,
+    ReminderDueStore due,
     IGrainFactory grains,
     IOptions<MeetupReminderOptions> options,
     TimeProvider clock,
     IHostApplicationLifetime lifetime,
     ReminderTelemetry telemetry,
+    LotReminderTelemetry lotTelemetry,
     ILogger<ReminderSweeper> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -91,11 +97,12 @@ public sealed class ReminderSweeper(
         var requestId = Guid.NewGuid().ToString("N");
         using var scope = logger.BeginScope(new Dictionary<string, object> { ["request_id"] = requestId });
         telemetry.Tick();
-        IReadOnlyList<DueReminderTask> due;
+        lotTelemetry.Tick();
+        IReadOnlyList<DueReminder> pending;
 
         try
         {
-            due = await tasks.Due(clock.GetUtcNow(), options.Value.SweepBatchSize, stoppingToken);
+            pending = await due.Due(clock.GetUtcNow(), options.Value.SweepBatchSize, stoppingToken);
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
@@ -109,50 +116,52 @@ public sealed class ReminderSweeper(
             // reminder, наблюдаемость которого заводит PER-223.
             logger.LogError(ex, "Reminder sweep failed to read due tasks");
             LogSnapshot("failed", 0, 1, null, "dependency_unavailable", requestId, startedAt);
+            LogLotSnapshot("failed", 0, 1, null, "dependency_unavailable", requestId, startedAt);
             return;
         }
 
-        var failed = 0;
-        string? errorCategory = null;
+        var meetups = pending.Where(task => task.MeetupId is not null).ToArray();
+        var lots = pending.Where(task => task.LotId is not null).ToArray();
 
-        foreach (var task in due)
+        int meetupFailed;
+        int lotFailed;
+        string? meetupCategory;
+        string? lotCategory;
+
+        try
         {
-            if (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-
             // Отказ ловится на каждом задании отдельно, а не на всём проходе.
             // Иначе одно ядовитое задание останавливает проход на себе, а
             // следующий проход берёт ту же выборку в том же порядке и встаёт
             // на нём же: все остальные наступившие напоминания не уходят
             // никогда, и в логе об этом одна строка про упавший проход.
-            try
-            {
-                await grains.GetGrain<IMeetupNotificationGrain>(task.MeetupId).FireDue();
-            }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                return;
-            }
-            catch (Exception ex)
-            {
-                failed++;
-                errorCategory = "unexpected";
-                logger.LogError(ex, "Reminder task {task_id} {meetup_id} failed to fire", task.TaskId, task.MeetupId);
-            }
+            (meetupFailed, meetupCategory) = await FireMeetups(meetups, stoppingToken);
+            (lotFailed, lotCategory) = await FireLots(lots, stoppingToken);
+        }
+        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+        {
+            return;
         }
 
-        double? oldestDueAge = null;
+        double? meetupOldest = null;
+        double? lotOldest = null;
         try
         {
             var now = clock.GetUtcNow();
-            oldestDueAge = await tasks.OldestDueAgeSeconds(now, stoppingToken);
-            telemetry.ObserveOldestDue(oldestDueAge.Value);
+            var oldest = await due.OldestDueAgeSeconds(now, stoppingToken);
+            meetupOldest = oldest.MeetupSeconds;
+            lotOldest = oldest.LotSeconds;
+            telemetry.ObserveOldestDue(meetupOldest.Value);
+            lotTelemetry.ObserveOldestDue(lotOldest.Value);
 
-            if (failed == 0)
+            if (meetupFailed == 0)
             {
                 telemetry.Complete(now);
+            }
+
+            if (lotFailed == 0)
+            {
+                lotTelemetry.Complete(now);
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -161,12 +170,77 @@ public sealed class ReminderSweeper(
         }
         catch (Exception ex)
         {
-            failed++;
-            errorCategory ??= "dependency_unavailable";
+            meetupFailed++;
+            lotFailed++;
+            meetupCategory ??= "dependency_unavailable";
+            lotCategory ??= "dependency_unavailable";
             logger.LogError(ex, "Reminder sweep failed to read oldest due task");
         }
 
-        LogSnapshot(failed == 0 ? "success" : "partial", due.Count, failed, oldestDueAge, errorCategory, requestId, startedAt);
+        LogSnapshot(meetupFailed == 0 ? "success" : "partial", meetups.Length, meetupFailed, meetupOldest, meetupCategory, requestId, startedAt);
+        LogLotSnapshot(lotFailed == 0 ? "success" : "partial", lots.Length, lotFailed, lotOldest, lotCategory, requestId, startedAt);
+    }
+
+    private async Task<(int Failed, string? Category)> FireMeetups(
+        IReadOnlyList<DueReminder> tasks,
+        CancellationToken stoppingToken)
+    {
+        var failed = 0;
+        string? category = null;
+
+        foreach (var task in tasks)
+        {
+            stoppingToken.ThrowIfCancellationRequested();
+            var meetupId = task.MeetupId!;
+
+            try
+            {
+                await grains.GetGrain<IMeetupNotificationGrain>(meetupId).FireDue();
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                category = "unexpected";
+                logger.LogError(ex, "Reminder task {task_id} {meetup_id} failed to fire", task.TaskId, meetupId);
+            }
+        }
+
+        return (failed, category);
+    }
+
+    private async Task<(int Failed, string? Category)> FireLots(
+        IReadOnlyList<DueReminder> tasks,
+        CancellationToken stoppingToken)
+    {
+        var failed = 0;
+        string? category = null;
+
+        foreach (var task in tasks)
+        {
+            stoppingToken.ThrowIfCancellationRequested();
+            var lotId = task.LotId!.Value;
+
+            try
+            {
+                await grains.GetGrain<ILotNotificationGrain>(lotId.ToString()).FireDue();
+            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                failed++;
+                category = "unexpected";
+                logger.LogError(ex, "Lot reminder task {task_id} {lot_id} failed to fire", task.TaskId, lotId);
+            }
+        }
+
+        return (failed, category);
     }
 
     private void LogSnapshot(
@@ -205,6 +279,45 @@ public sealed class ReminderSweeper(
         {
             fields["error_category"] = errorCategory;
             fields["error"] = "Reminder sweep incomplete";
+        }
+
+        OperationLog.Write(logger, LogLevel.Information, null, fields);
+    }
+
+    private void LogLotSnapshot(
+        string status,
+        int dueCount,
+        int failedCount,
+        double? oldestDueAgeSeconds,
+        string? errorCategory,
+        string requestId,
+        long startedAt)
+    {
+        var fields = new Dictionary<string, object>
+        {
+            ["service"] = NotificationsHost.ServiceId,
+            ["operation"] = "lot_reminder_sweep",
+            ["result"] = status == "success" ? "ok" : "error",
+            ["request_id"] = requestId,
+            ["sweep_status"] = status,
+            ["duration_us"] = (long)Stopwatch.GetElapsedTime(startedAt).TotalMicroseconds,
+            ["sweep_at_unix_seconds"] = clock.GetUtcNow().ToUnixTimeSeconds(),
+            ["last_successful_sweep_unix_seconds"] = lotTelemetry.LastSuccessfulSweepUnixSeconds,
+            ["due_count"] = dueCount,
+            ["failed_count"] = failedCount,
+            ["fired_total"] = lotTelemetry.FiredTotal,
+            ["removed_total"] = lotTelemetry.RemovedTotal,
+        };
+
+        if (oldestDueAgeSeconds is not null)
+        {
+            fields["oldest_due_age_seconds"] = oldestDueAgeSeconds.Value;
+        }
+
+        if (errorCategory is not null)
+        {
+            fields["error_category"] = errorCategory;
+            fields["error"] = "Lot reminder sweep incomplete";
         }
 
         OperationLog.Write(logger, LogLevel.Information, null, fields);
