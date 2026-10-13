@@ -356,7 +356,8 @@ export function createApplicationAdministrator(
   };
 }
 
-// Право модерации аукциона (ADR-064, пункт 7): выдача и отзыв. FAILED_PRECONDITION у выдачи — штатный ответ: человек не участник или
+// Право модерации аукциона (ADR-064, пункт 7): выдача и отзыв.
+// FAILED_PRECONDITION у выдачи — штатный ответ: человек не участник или
 // заблокирован.
 export function createAuctionModerationAdministrator(
   rpc: AuctionModerationRpc,

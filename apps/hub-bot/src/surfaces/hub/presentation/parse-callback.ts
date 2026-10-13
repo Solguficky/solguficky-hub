@@ -152,7 +152,8 @@ export function communityPlaceData(place: CommunityPlace): string {
   return `${filterCodes[place.filter]}${place.page}`;
 }
 
-const firstMembersPage: CommunityPlace = { filter: "members", page: 0 };
+/** Первая страница участников — куда ведут «Состав сообщества» и прежние кнопки. */
+export const firstMembersPage: CommunityPlace = { filter: "members", page: 0 };
 
 // Кнопки до PER-547 несли место закрытия доступа: `p`, `p<токен>` — очередь,
 // которой в составе больше нет, `a<страница>` — допущенных. Они ведут в

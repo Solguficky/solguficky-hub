@@ -11,6 +11,7 @@ import { uuidToToken } from "../meetup-deep-link.js";
 import {
   type CommunityPlace,
   communityPlaceData,
+  firstMembersPage,
   removableUsernamePattern,
 } from "../parse-callback.js";
 import {
@@ -38,10 +39,7 @@ export type CommunityView =
   | { kind: "usernames"; page: number };
 
 /** Первая страница участников — куда ведёт пункт «Состав сообщества». */
-export const firstCommunityPlace: CommunityPlace = {
-  filter: "members",
-  page: 0,
-};
+export const firstCommunityPlace: CommunityPlace = firstMembersPage;
 
 export function communityListData(place: CommunityPlace): string {
   return `v1:cm:l:${communityPlaceData(place)}`;
