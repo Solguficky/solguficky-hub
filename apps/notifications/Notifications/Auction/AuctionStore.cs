@@ -11,7 +11,7 @@ namespace Notifications.Auction;
 public enum AuctionOutcome
 {
     Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected, LotReplicated,
-    FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten,
+    FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced,
 }
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
@@ -257,6 +257,37 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.AuctionForgotten, new Dictionary<string, int>());
+    }
+
+    /// <summary>
+    /// Итог жеребьёвки (PER-620): по факту на каждого владельца билета,
+    /// победителю — тот же факт со своим номером. Настройки и категории его не
+    /// фильтруют: сообщение одно на розыгрыш. Повтор отсекает ключ события, а
+    /// после его чистки — уникальность (тип, повод, получатель).
+    /// </summary>
+    public async Task<AuctionApplication> Apply(RaffleDraw draw, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, draw.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        var notAfter = now + options.Value.StaleAfter;
+        var created = 0;
+        for (var index = 0; index < draw.Tickets.Count; index++)
+        {
+            var recipient = draw.Tickets[index];
+            var notification = AuctionFacts.RaffleResult(Guid.CreateVersion7(now), recipient, index + 1, draw, now,
+                notAfter);
+            created += await NotificationStore.AddAddressed(work, notification, AuctionFacts.RaffleResultType,
+                AuctionFacts.RaffleCauseKind, draw.EventId.ToString(), now, notAfter, cancellationToken,
+                await NotificationStore.DeliverySurface(work, recipient, cancellationToken));
+        }
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.RaffleAnnounced,
+            new Dictionary<string, int> { [AuctionFacts.RaffleResultType] = created });
     }
 
     /// <summary>Люди, чьи окна сводки наступили, для прохода.</summary>

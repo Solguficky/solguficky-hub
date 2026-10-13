@@ -35,7 +35,11 @@ import {
   type IdentityRpc,
   type PortsFactory,
 } from "./clients.js";
-import { traceLotCallback, traceNotifyCallback } from "./delivery/message.js";
+import {
+  traceLotCallback,
+  traceNotifyCallback,
+  traceRaffleCallback,
+} from "./delivery/message.js";
 import { deniedTexts } from "./entry-screen.js";
 import { entryCallback, notifyCallback, startCallback } from "./faq.js";
 import { commandsFor } from "./menu-commands.js";
@@ -2824,6 +2828,27 @@ describe("raffle among the participants", () => {
         .keyboard.flat()
         .map((b) => b.text),
     ).toEqual(["‹ Лоты"]);
+  });
+
+  // «К розыгрышу» под итогом (PER-620) — кнопка следа: экран итога приходит
+  // новым сообщением, весть не правится и не удаляется.
+  it("opens the raffle under a result notification as a new message", async () => {
+    const service = raffleService({
+      ...openRaffle,
+      status: "drawn",
+      registered: true,
+      tickets: [{ number: 1 }, { number: 2 }],
+      myTicket: 1,
+      reveal: { seed: "cd".repeat(32), winningTicket: 2 },
+    });
+    const { bot, calls } = makeBot(withRaffle(publicPorts, service));
+
+    await bot.handleUpdate(lotPress({ data: traceRaffleCallback(auctionId) }));
+    const methods = calls.map((call) => call.method);
+    expect(methods).toContain("sendMessage");
+    expect(methods).not.toContain("editMessageText");
+    expect(methods).not.toContain("deleteMessage");
+    expect(lastScreen(calls).text).toContain("Выиграл билет №2.");
   });
 
   it("shows no raffle button on the feed of an auction without a raffle", async () => {

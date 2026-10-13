@@ -11,6 +11,7 @@ import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
 import org.apache.pekko.cluster.sharding.typed.scaladsl.EntityTypeKey
 import org.apache.pekko.pattern.after
+import org.apache.pekko.persistence.Persistence
 import org.apache.pekko.persistence.typed.PersistenceId
 import org.apache.pekko.persistence.typed.RecoveryCompleted
 import org.apache.pekko.persistence.typed.scaladsl.Effect
@@ -357,8 +358,11 @@ object RaffleEntity {
               }
           }
 
+        val persistenceId = PersistenceId(TypeKey.name, auctionId)
+        // Тег один на розыгрыш: срез зависит только от persistence id (RaffleTags).
+        val tag = Set(RaffleTags.of(Persistence(context.system.classicSystem).sliceForPersistenceId(persistenceId.id)))
         EventSourcedBehavior[Command, StoredRaffleEvent, State](
-          persistenceId = PersistenceId(TypeKey.name, auctionId),
+          persistenceId = persistenceId,
           emptyState = State(Raffle.initial, 0),
           commandHandler = onCommand,
           eventHandler = (state, stored) => {
@@ -367,6 +371,7 @@ object RaffleEntity {
           }
         ).snapshotAdapter(RaffleJournal.snapshotAdapter)
           .withRetention(RetentionCriteria.snapshotEvery(snapshotEvery, keepNSnapshots = 2))
+          .withTagger(_ => tag)
           .receiveSignal { case (state, RecoveryCompleted) => follow(state.raffle) }
       }
     }

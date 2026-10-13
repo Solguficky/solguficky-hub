@@ -11,6 +11,7 @@ import type {
   LotNotice,
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
+import { renderRaffleNotice } from "../../../core/notifications/raffle-notice.js";
 import type {
   LocalDate,
   LocalDateTime,
@@ -157,6 +158,20 @@ export function renderNotification(
           ? "Аукцион теперь в боте аукциона."
           : `Аукцион теперь в боте аукциона: https://t.me/${auctionBotUsername}`,
       keyboard: undefined,
+    };
+  }
+  if (content.kind === "raffle-result") {
+    // Итог розыгрыша (PER-620): кнопка следа — экран итога розыгрыша аукционного
+    // дерева придёт новым сообщением, весть останется в истории.
+    const view = renderRaffleNotice(content);
+    return {
+      text: view.text,
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({ kind: "raffle", auctionId: view.button.auctionId }).slice(3)}`,
+        ),
+      ),
     };
   }
   if (content.kind === "lot-notice") {

@@ -8,6 +8,12 @@ public static class AuctionFeed
     public const string Source = "auction";
     public const string BidPlacedSubject = "events.auction.bid_placed";
     public const string LotSoldSubject = "events.auction.lot_sold";
+
+    /// <summary>
+    /// Жеребьёвка розыгрыша среди участников (ADR-066, PER-620): единственный
+    /// факт журнала розыгрыша на шине, сообщение — <c>RaffleEvent</c>.
+    /// </summary>
+    public const string RaffleDrawnSubject = "events.auction.raffle_drawn";
     public static readonly EventFeed Feed = new(Source, "AUCTION_EVENTS", "notifications-auction-events");
 
     /// <summary>

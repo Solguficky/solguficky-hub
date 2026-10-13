@@ -274,6 +274,51 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Итог розыгрыша (PER-620) участнику доставляет бот хаба, как вести о лотах.
+  describe("a raffle result", () => {
+    const raffle = (value: {
+      auctionId: string;
+      ticket: number;
+      winningTicket: number;
+      ticketCount: number;
+    }) =>
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type: { case: "raffleResult", value },
+          }),
+        ),
+      );
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+
+    it("decodes the recipient's ticket, the winning ticket and the pool", () => {
+      expect(
+        raffle({ auctionId, ticket: 3, winningTicket: 7, ticketCount: 12 }),
+      ).toMatchObject({
+        kind: "ok",
+        notification: {
+          content: {
+            kind: "raffle-result",
+            auctionId,
+            ticket: 3,
+            winningTicket: 7,
+            ticketCount: 12,
+          },
+        },
+      });
+    });
+
+    it("rejects a ticket outside the pool", () => {
+      expect(
+        raffle({ auctionId, ticket: 13, winningTicket: 7, ticketCount: 12 }),
+      ).toMatchObject({ kind: "malformed" });
+    });
+  });
+
   describe("a manual broadcast", () => {
     const senderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce";
     // Сходка берётся из готового факта о публикации: карточка у сообщения

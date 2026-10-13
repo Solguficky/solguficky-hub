@@ -27,6 +27,10 @@ import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
+import {
+  type RaffleNotice,
+  raffleNoticeOf,
+} from "../../../core/notifications/raffle-notice.js";
 
 export type LocalDate = { year: number; month: number; day: number };
 export type LocalDateTime = LocalDate & { hours: number; minutes: number };
@@ -104,6 +108,8 @@ export type RenderableContent =
   // перебитие, ответ автоставки, покупку и сводку — те же, что у бота аукциона
   // (PER-598).
   | LotNotice
+  // Итог розыгрыша среди участников (PER-620) — тот же, что у бота аукциона.
+  | RaffleNotice
   // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
   // — этот (RFC-015, С-12). Ссылку на бот аукциона он вручает сам; факт её не
   // несёт (PER-536), и она приходит не из ветки, а из настройки бота.
@@ -243,6 +249,8 @@ function toContent(message: Notification): NotificationContent | undefined {
     case "lotActivityDigest":
     case "lotReminder":
       return lotNoticeOf(type);
+    case "raffleResult":
+      return raffleNoticeOf(type.value);
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };
   }

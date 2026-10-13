@@ -16,6 +16,10 @@ import {
   type LotNoticeView,
   renderLotNotice,
 } from "../../../core/notifications/lot-notice.js";
+import {
+  type RaffleNotice,
+  renderRaffleNotice,
+} from "../../../core/notifications/raffle-notice.js";
 import { entryCallback, notifyCallback, parseEntryCallback } from "../faq.js";
 import { screenMark } from "../screen-catalog.js";
 import type { AuctionNotificationContent } from "./notification.js";
@@ -48,6 +52,12 @@ export function traceLotCallback(lotId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({ kind: "lot", lotId, page: 0 })}`;
 }
 
+// «К розыгрышу» под итогом розыгрыша (PER-620) — экран розыгрыша аукционного
+// дерева тем же путём, что кнопка «Розыгрыш» ленты.
+export function traceRaffleCallback(auctionId: string): string {
+  return `${tracePrefix}${encodeAuctionCallback({ kind: "raffle", auctionId })}`;
+}
+
 // Вход в аукцион из следа сообщения о допуске — FAQ, тем же путём, что
 // команда `/faq`: впереди у допущенного правила, и подпись это и обещает
 // (PER-592). «Аукционы» под FAQ ставят отметку и открывают список.
@@ -61,14 +71,17 @@ export function traceNotifyCallback(): string {
   return `${tracePrefix}${notifyCallback()}`;
 }
 
-// Кнопка внутри следа: лот или пункт входа. Не след или след без читаемой
-// кнопки — undefined: такую кнопку край разбирает как обычную.
+// Кнопка внутри следа: лот, розыгрыш или пункт входа. Не след или след без
+// читаемой кнопки — undefined: такую кнопку край разбирает как обычную.
 export function parseTraceCallback(data: string): string | undefined {
   if (!data.startsWith(tracePrefix)) return undefined;
   const inner = data.slice(tracePrefix.length);
   if (parseEntryCallback(inner) !== undefined) return inner;
   const parsed = parseAuctionCallback(inner);
-  return parsed.ok && parsed.intent.kind === "lot" ? inner : undefined;
+  return parsed.ok &&
+    (parsed.intent.kind === "lot" || parsed.intent.kind === "raffle")
+    ? inner
+    : undefined;
 }
 
 // Чтения, которые нужны тексту уведомления о лоте: право получателя и название
@@ -96,6 +109,11 @@ export function createRenderMessage(
     // Весть о смене круга (PER-537) — не о торгах: право ставить бот для неё не
     // спрашивает, и кнопки, которая упёрлась бы в тот же отказ, у неё нет.
     if (content.kind === "circle-promoted") {
+      return { kind: "ready", message: renderNotification(content) };
+    }
+    // Итог розыгрыша (PER-620) права не спрашивает: жеребьёвка уже прошла, и
+    // о ней знать нужно и тому, у кого право сняли после (raffle-notice.ts).
+    if (content.kind === "raffle-result") {
       return { kind: "ready", message: renderNotification(content) };
     }
     if (content.kind === "access-granted") {
@@ -130,6 +148,7 @@ export function renderNotification(
   if (content.kind === "circle-promoted") {
     return { text: "Тебя приняли в сообщество." };
   }
+  if (content.kind === "raffle-result") return raffleMessage(content);
   return traceMessage(renderLotNotice(content, { titles, frequencyButton }));
 }
 
@@ -147,6 +166,21 @@ function traceMessage(view: LotNoticeView): NotificationMessage {
             : traceNotifyCallback(),
       })),
     ),
+  };
+}
+
+function raffleMessage(notice: RaffleNotice): NotificationMessage {
+  const view = renderRaffleNotice(notice);
+  return {
+    text: view.text,
+    rows: [
+      [
+        {
+          text: view.button.text,
+          callback_data: traceRaffleCallback(view.button.auctionId),
+        },
+      ],
+    ],
   };
 }
 

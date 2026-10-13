@@ -66,6 +66,14 @@ public enum FinalOccasion { LineupFrozen, Started }
 public sealed record AuctionFinal(Guid EventId, Guid AuctionId, Guid MeetupId, long Version, DateTimeOffset OccurredAt,
     FinalOccasion Occasion, IReadOnlyList<Guid> Lineup);
 
+/// <summary>
+/// Проверенная жеребьёвка розыгрыша (PER-620): владельцы билетов в порядке
+/// билетов — билет k у <c>Tickets[k - 1]</c> — и номер выигравшего. Розыгрыш
+/// называется своим аукционом.
+/// </summary>
+public sealed record RaffleDraw(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
+    IReadOnlyList<Guid> Tickets, int WinningTicket);
+
 /// <summary>Аукцион пришёл в конечное положение: круг анонса больше не нужен.</summary>
 public sealed record AuctionClosed(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt);
 
@@ -76,6 +84,7 @@ public abstract record AuctionDecoded
     public sealed record Lot(AuctionLotFact Value) : AuctionDecoded;
     public sealed record Final(AuctionFinal Value) : AuctionDecoded;
     public sealed record Closed(AuctionClosed Value) : AuctionDecoded;
+    public sealed record Raffle(RaffleDraw Value) : AuctionDecoded;
     public sealed record Poison(string Reason) : AuctionDecoded;
     public sealed record Ignored : AuctionDecoded;
 }
@@ -89,9 +98,14 @@ public static class AuctionMapping
 {
     public static AuctionDecoded Decode(string subject, ReadOnlyMemory<byte> payload)
     {
-        // В доменном стриме есть LotEvent, AuctionEvent и InvoiceEvent. Этот
-        // модуль ведёт реплику лота по каждому его факту, а поводы дают
-        // ставка, продажа и факты финала аукциона; счёт он не читает.
+        // В доменном стриме есть LotEvent, AuctionEvent, InvoiceEvent и
+        // RaffleEvent. Этот модуль ведёт реплику лота по каждому его факту, а
+        // поводы дают ставка, продажа, факты финала аукциона и жеребьёвка
+        // розыгрыша; счёт он не читает.
+        if (subject == AuctionFeed.RaffleDrawnSubject)
+        {
+            return DecodeRaffle(payload);
+        }
         if (AuctionFeed.AuctionSubjects.TryGetValue(subject, out var auctionOccasion))
         {
             return DecodeAuction(subject, auctionOccasion, payload);
@@ -221,6 +235,50 @@ public static class AuctionMapping
         }
         return new AuctionDecoded.Final(new AuctionFinal(eventId, auctionId, meetupId, message.Version, occurredAt,
             final, lineup));
+    }
+
+    // Пустой пул и непроведённый розыгрыш жеребьёвки не дают, поэтому факт без
+    // билетов или без выигравшего номера — яд, а не «никому не писать».
+    private static AuctionDecoded DecodeRaffle(ReadOnlyMemory<byte> payload)
+    {
+        RaffleEvent message;
+        try
+        {
+            message = RaffleEvent.Parser.ParseFrom(payload.Span);
+        }
+        catch (InvalidProtocolBufferException)
+        {
+            return new AuctionDecoded.Poison("not an auction.v1.RaffleEvent");
+        }
+
+        if (!Id(message.EventId, out var eventId) || !AuctionId(message.RaffleId) || message.Version < 1)
+        {
+            return new AuctionDecoded.Poison("event_id, raffle_id or version is invalid");
+        }
+        if (!Instant(message.OccurredAt, out var occurredAt))
+        {
+            return new AuctionDecoded.Poison("occurred_at is not an RFC 3339 UTC instant");
+        }
+        if (message.OccasionCase != RaffleEvent.OccasionOneofCase.RaffleDrawn)
+        {
+            return new AuctionDecoded.Poison($"{AuctionFeed.RaffleDrawnSubject} subject does not match occasion");
+        }
+        if (message.State is not { } state || state.Tickets.Count == 0 ||
+            state.WinningTicket < 1 || state.WinningTicket > state.Tickets.Count)
+        {
+            return new AuctionDecoded.Poison("raffle state has no tickets or the winning ticket is out of range");
+        }
+        var tickets = new List<Guid>(state.Tickets.Count);
+        foreach (var holder in state.Tickets)
+        {
+            if (!Id(holder, out var holderId) || tickets.Contains(holderId))
+            {
+                return new AuctionDecoded.Poison("ticket holder id is invalid or repeated");
+            }
+            tickets.Add(holderId);
+        }
+        return new AuctionDecoded.Raffle(new RaffleDraw(eventId, Guid.Parse(message.RaffleId), message.Version,
+            occurredAt, tickets, (int)state.WinningTicket));
     }
 
     // Неизвестное положение — яд, а не «ничего не менять»: снимок без

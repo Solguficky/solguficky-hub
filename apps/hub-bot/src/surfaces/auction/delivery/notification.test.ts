@@ -231,6 +231,46 @@ describe("decodeNotification", () => {
   });
 
   // Общий поток несёт ветки бота хаба и сюда: это не отказ.
+  // Итог розыгрыша (PER-620) гостю доставляет бот аукциона, как вести о лотах.
+  it("decodes a raffle result with the tickets and the pool", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        fact({
+          case: "raffleResult",
+          value: { auctionId, ticket: 7, winningTicket: 7, ticketCount: 12 },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "raffle-result",
+          auctionId,
+          ticket: 7,
+          winningTicket: 7,
+          ticketCount: 12,
+        },
+      },
+    });
+  });
+
+  it("rejects a raffle result with an empty pool", () => {
+    expect(
+      decodeNotification(
+        fact({
+          case: "raffleResult",
+          value: {
+            auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+            ticket: 1,
+            winningTicket: 1,
+            ticketCount: 0,
+          },
+        }),
+      ),
+    ).toMatchObject({ kind: "malformed" });
+  });
+
   it("hands a meetup branch over as another channel's", () => {
     expect(
       decodeNotification(

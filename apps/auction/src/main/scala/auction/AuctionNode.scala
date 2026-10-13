@@ -25,12 +25,14 @@ import auction.projection.AuctionProjection
 import auction.projection.AuctionViewHandler
 import auction.projection.LotProjection
 import auction.projection.LotViewHandler
+import auction.projection.RaffleProjection
 import auction.publication.AuctionPublicationHandler
 import auction.publication.JetStreamPublisher
 import auction.publication.LotOutbox
 import auction.publication.LotPublicationHandler
 import auction.publication.OutboxRelay
 import auction.publication.PublicationSettings
+import auction.publication.RafflePublicationHandler
 import auction.telemetry.DeadlineMetrics
 import auction.telemetry.ProjectionMetrics
 import auction.telemetry.PublicationMetrics
@@ -280,10 +282,10 @@ object AuctionNode {
     metrics.watchOverdue(LotProjection.overdue(system, clock, grace, timeout))
 
   /**
-   * Публикация фактов лота и аукциона в шину (integration.md, «Auction NATS»): по своей проекции журнала лотов и
-   * журнала аукционов, каждая со своим offset, пишут общий outbox, а релей выносит его в JetStream. Проекция работает и
-   * без адреса шины — факты ждут в outbox; релей стартует, только когда адрес задан. Отставание видно дважды:
-   * `events_behind` проекции и очередь outbox.
+   * Публикация фактов лота, аукциона и итога розыгрыша в шину (integration.md, «Auction NATS»): по своей проекции
+   * журнала лотов, аукционов и розыгрышей, каждая со своим offset, пишут общий outbox, а релей выносит его в JetStream.
+   * Проекция работает и без адреса шины — факты ждут в outbox; релей стартует, только когда адрес задан. Отставание
+   * видно дважды: `events_behind` проекции и очередь outbox.
    */
   def startPublication(
       system: ActorSystem[?],
@@ -301,6 +303,11 @@ object AuctionNode {
     metrics.watchBacklog(
       AuctionProjection.PublicationName,
       AuctionProjection.backlog(system, AuctionProjection.PublicationName, backlogTimeout)
+    )
+    RaffleProjection.init(system, RaffleProjection.PublicationName, metrics, () => RafflePublicationHandler(system))
+    metrics.watchBacklog(
+      RaffleProjection.PublicationName,
+      RaffleProjection.backlog(system, RaffleProjection.PublicationName, backlogTimeout)
     )
     val pool = SlickExtension(system).database(system.settings.config.getConfig("jdbc-journal")).database.source
     val outbox = LotOutbox(() => pool.createConnection())

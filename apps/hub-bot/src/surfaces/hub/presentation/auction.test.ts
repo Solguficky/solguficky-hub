@@ -1532,6 +1532,30 @@ describe("raffle screens in the hub", () => {
     expect(labels(screen)).toEqual([["‹ Розыгрыш"]]);
   });
 
+  // «К розыгрышу» под итогом (PER-620) — кнопка следа: экран итога приходит
+  // новым сообщением, весть в истории не правится.
+  it("opens the raffle from a result notification as a new message", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      raffle: {
+        ...base,
+        ...pool,
+        status: "drawn",
+        reveal: { seed: "cd".repeat(32), winningTicket: 2 },
+      },
+    });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(press(`v1:t:${raffleData.slice("v1:".length)}`));
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("Выиграл билет №2.");
+    expect(labels(screen)).toEqual([
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
+    expect(calls.some((call) => call.method === "editMessageText")).toBe(false);
+  });
+
   it("chooses a name before the registration and returns to the raffle", async () => {
     const auction = fakeAuction({ existing: true, raffle: base, nameless: {} });
     const { bot, calls } = harness("member", auction);

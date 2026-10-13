@@ -17,6 +17,10 @@ import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
+import {
+  type RaffleNotice,
+  raffleNoticeOf,
+} from "../../../core/notifications/raffle-notice.js";
 
 // Ветки, которые доставляет бот аукциона (integration.md, «потребитель
 // выбирается по ветке `oneof type`»). Факт несёт только лот и сумму: название
@@ -25,6 +29,8 @@ import {
 // ботом хаба (PER-598).
 export type AuctionNotificationContent =
   | LotNotice
+  // Итог розыгрыша среди участников (PER-620) — тот же, что у бота хаба.
+  | RaffleNotice
   // Допуск к аукциону получает сам заявитель (PER-442). Круг здесь всегда
   // public: допуск в хаб доставляет бот хаба.
   | { kind: "access-granted" }
@@ -66,6 +72,8 @@ function toContent(
     case "lotActivityDigest":
     case "lotReminder":
       return lotNoticeOf(type);
+    case "raffleResult":
+      return raffleNoticeOf(type.value);
     // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
     // заявку в аукцион, а допуск в хаб для аукциона чужой.
     case "accessGranted": {
