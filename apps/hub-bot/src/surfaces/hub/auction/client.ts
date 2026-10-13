@@ -6,6 +6,7 @@ import {
 } from "@connectrpc/connect-node";
 import type { AuctionSnapshot } from "../../../../gen/auction/v1/auction_service_pb.js";
 import {
+  AuctionListing,
   AuctionService,
   type ConfigInvalid,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
@@ -15,6 +16,7 @@ import {
   bidOutcomeOf,
   displayNameOutcomeOf,
   limitOutcomeOf,
+  ownDisplayNameOf,
   unansweredOn,
 } from "../../../core/auction/commands.js";
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
@@ -72,6 +74,7 @@ type AuctionRpc = Pick<
   Client<typeof AuctionService>,
   | "draftAuction"
   | "getMeetupAuction"
+  | "listAuctions"
   | "createLotCard"
   | "editLotCard"
   | "addLot"
@@ -103,6 +106,15 @@ type AuctionRpc = Pick<
 
 // Сколько страниц хронологии пульт ведущего читает в поисках последних ставок.
 const historyPageLimit = 20;
+
+// Активных аукционов единицы: обход страниц — предохранитель от соседа,
+// который повторяет токен.
+const currentAuctionPageLimit = 20;
+
+// Ближайший по началу онлайн-торгов; без онлайн-фазы — последним.
+function openingOf(opensAt: string | undefined): number {
+  return opensAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(opensAt);
+}
 
 export type AuctionClient = MeetupAuctions &
   AuctionScreens &
@@ -224,6 +236,35 @@ export function createAuctionAdapter(
           auctionId: response.auction.id,
           ...summaryOrNothing(response.auction),
         };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async currentAuction(person, meta) {
+      try {
+        const auctions = [];
+        let pageToken = "";
+        for (let pages = 0; pages < currentAuctionPageLimit; pages += 1) {
+          const page = await rpc.listAuctions(
+            {
+              viewer: wireViewer(viewerOf(person)),
+              listing: AuctionListing.ACTIVE,
+              pageToken,
+            },
+            options(meta),
+          );
+          auctions.push(...page.auctions.map(auctionSummaryViewOf));
+          if (page.nextPageToken === "" || page.nextPageToken === pageToken) {
+            break;
+          }
+          pageToken = page.nextPageToken;
+        }
+        const [current] = auctions.sort(
+          (a, b) => openingOf(a.opensAt) - openingOf(b.opensAt),
+        );
+        return current === undefined
+          ? { kind: "ok" }
+          : { kind: "ok", auctionId: current.auctionId };
       } catch (cause) {
         return toFailure(cause);
       }
@@ -630,6 +671,17 @@ export function createAuctionAdapter(
               onNamesRefused?.(cause, meta);
               throw cause;
             }
+          },
+          async getOwnDisplayName(request) {
+            const response = await rpc.getDisplayNames(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+                participantIds: [request.viewer.identityId],
+              },
+              options(meta),
+            );
+            return ownDisplayNameOf(response, request.viewer.identityId);
           },
           // Команды участника (PER-317). Повтор тем же `op_id` решает пакет;
           // порт лишь отличает «ответа не было» от прочих отказов транспорта.

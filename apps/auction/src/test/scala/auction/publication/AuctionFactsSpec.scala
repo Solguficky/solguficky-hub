@@ -97,6 +97,29 @@ final class AuctionFactsSpec extends AnyWordSpec with Matchers {
       published(9).getState.config shouldBe defined
     }
 
+    "publish the completion of each lot of the final with no active lot and the end of the final once" in {
+      val ended = journal ++ List(
+        AuctionEvent.FinalLotCompleted(other),
+        AuctionEvent.FinalLotActivated(lot),
+        AuctionEvent.FinalLotCompleted(lot),
+        AuctionEvent.AuctionFinished
+      ).zipWithIndex.map((event, index) => (index + 11).toLong -> stored(event, index + 11))
+      val published = facts(ended).drop(10)
+      published.map(_.map(_.subject)) shouldBe List(
+        "final_lot_completed",
+        "final_lot_activated",
+        "final_lot_completed",
+        "auction_finished"
+      ).map(name => Some(LotFacts.SubjectPrefix + name))
+      val bodies = published.map(message)
+      bodies.head.getFinalLotCompleted.lotId shouldBe other.value.toString
+      bodies.head.getState.getInFinal.activeLotId shouldBe None
+      bodies(1).getState.getInFinal.activeLotId shouldBe Some(lot.value.toString)
+      bodies(2).getFinalLotCompleted.lotId shouldBe lot.value.toString
+      bodies(3).getState.status.isFinished shouldBe true
+      facts(ended).flatten.count(_.subject == LotFacts.SubjectPrefix + "auction_finished") shouldBe 1
+    }
+
     "finish an auction without finalists with the end of prebidding itself" in {
       val withoutFinal = journal.take(6) :+ (7L -> stored(AuctionEvent.PrebiddingEnded(finished = true), 7))
       val ended = facts(withoutFinal).last

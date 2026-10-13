@@ -1,6 +1,8 @@
 package auction.entity
 
+import auction.aggregate.CloseAuctionLotRejected
 import auction.aggregate.Closure
+import auction.aggregate.LotEnding
 import auction.catalog.LotId
 import auction.lot.AdvanceAsk
 import auction.lot.AdvanceAskRejected
@@ -16,6 +18,7 @@ import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.ResumeLot
 import auction.lot.ResumeLotRejected
+import auction.lot.Sale
 import auction.lot.ScheduleLot
 import auction.lot.ScheduleLotRejected
 import auction.lot.UnmarkForFinal
@@ -50,6 +53,12 @@ trait AuctionLots {
 
   /** Подтверждение закрытия различает продажу или закрытие без продажи и удержание отмеченного лота для финала. */
   def close(lot: LotId, command: CloseLot): Future[Either[CloseLotRejected, Closure]]
+
+  /**
+   * Закрытие ведущим (PER-607); инициатор — ведущий, как у `advanceAsk`. Ответ — конверт лота как есть: исход закрытия
+   * и чужой `op_id` различает [[AuctionLots.ending]].
+   */
+  def closeByAuctioneer(lot: LotId, command: CloseLot, initiator: Initiator): Future[Either[CloseLotRejected, Envelope]]
 
   /** Возврат удержанного лота в торги финала (П-09); подтверждение — только его `LotResumed`. */
   def resume(lot: LotId, command: ResumeLot): Future[Either[ResumeLotRejected, Unit]]
@@ -97,6 +106,13 @@ object AuctionLots {
         entity(lot)
           .ask[Either[CloseLotRejected, Envelope]](LotEntity.Close(command, Initiator.Scheduler, _))
           .flatMap(answer => Future.fromTry(closure(answer)))(using ExecutionContext.parasitic)
+
+      def closeByAuctioneer(
+          lot: LotId,
+          command: CloseLot,
+          initiator: Initiator
+      ): Future[Either[CloseLotRejected, Envelope]] =
+        entity(lot).ask[Either[CloseLotRejected, Envelope]](LotEntity.Close(command, initiator, _))
 
       // Возвращает лот в финал аукцион, а не человек: ведущий нажал «следующий лот», но команду лоту решает аукцион.
       def resume(lot: LotId, command: ResumeLot): Future[Either[ResumeLotRejected, Unit]] =
@@ -163,6 +179,23 @@ object AuctionLots {
       case Right(Envelope(_, _, _: LotEvent.LotHeldForFinal)) => Success(Right(Closure.Held))
       case Right(other) =>
         Failure(new IllegalStateException(s"lot answered CloseLot with ${other.event.getClass.getSimpleName}"))
+    }
+
+  /**
+   * Исход закрытия ведущим: продажа или закрытие без продажи — и на повтор того же `op_id` тоже, исходным конвертом.
+   * Конверт другого события значит, что `op_id` ведущего лот уже записал под другой командой. Лот реестра без журнала —
+   * дефект, а не отказ: `AddLot` рождает лот раньше, чем пишет его в реестр.
+   */
+  def ending(answer: Either[CloseLotRejected, Envelope]): Try[Either[CloseAuctionLotRejected, LotEnding]] =
+    answer match {
+      case Right(Envelope(_, _, LotEvent.LotSold(winner, price, bidId, at))) =>
+        Success(Right(LotEnding.Sold(Sale(winner, price, bidId, at))))
+      case Right(Envelope(_, _, LotEvent.LotUnsold(reason))) => Success(Right(LotEnding.Unsold(reason)))
+      case Right(_) => Success(Left(CloseAuctionLotRejected.OpIdTaken))
+      case Left(CloseLotRejected.LotNotOpen) => Success(Left(CloseAuctionLotRejected.LotNotOpen))
+      case Left(CloseLotRejected.DeadlineNotReached) => Success(Left(CloseAuctionLotRejected.DeadlineNotReached))
+      case Left(CloseLotRejected.LotNotFound) =>
+        Failure(new IllegalStateException("a lot of the registry has no journal"))
     }
 
   /** Возврат в торги подтверждает только конверт `LotResumed` — по той же причине, что и открытие. */

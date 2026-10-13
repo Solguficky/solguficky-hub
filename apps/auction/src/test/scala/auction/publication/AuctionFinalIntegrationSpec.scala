@@ -21,6 +21,7 @@ import auction.lot.OpId
 import auction.lot.ParticipantId
 import auction.lot.ScheduleLotRejected
 import auction.lot.Phase
+import auction.lot.UnsoldReason
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
 import auction.telemetry.ProjectionMetrics
@@ -51,7 +52,8 @@ import scala.concurrent.duration.*
  * Перерыв и финал аукциона (PER-334) на узле, собранном так же, как в `Main`: настоящие entity аукциона и лотов под
  * шардингом, журнал на PostgreSQL, настоящие часы и публикация фактов в настоящий JetStream. L0 entity доказывает
  * протокол на подмене лотов; этот сьют — что удержание настоящего лота доходит до аукциона подтверждением закрытия,
- * `ResumeLot` возвращает настоящий лот в живой финал, а анонс состава и старта финала выходит на шину.
+ * `ResumeLot` возвращает настоящий лот в живой финал, а анонс состава и старта финала выходит на шину. Закрытие лота
+ * ведущим (PER-607) завершает лот финала и аукцион, и конец аукциона выходит на шину ровно одним фактом.
  */
 final class AuctionFinalIntegrationSpec
     extends AnyWordSpec
@@ -127,7 +129,7 @@ final class AuctionFinalIntegrationSpec
 
   "the break and the final of an auction" should {
 
-    "hold the marked lot at the common deadline, freeze it as the lineup, return it to a live final and announce it" in {
+    "hold the marked lot at the common deadline, freeze it as the lineup, return it to a live final, announce it and finish the auction once it is closed" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
       freshStream()
@@ -202,6 +204,24 @@ final class AuctionFinalIntegrationSpec
         facts(7).getState.getLineupFrozen.order shouldBe List(finalist.value.toString)
         facts(8).getState.status.isInFinal shouldBe true
         facts(9).getState.getInFinal.activeLotId shouldBe Some(finalist.value.toString)
+
+        // Последний лот состава закрыт ведущим: лот финала завершён, аукцион закончен, и конец — один факт.
+        val hammer = newOp()
+        node.commands.closeLot(auction, finalist, hammer, person).futureValue shouldBe
+          Right(LotEnding.Unsold(UnsoldReason.NoBids))
+        lotState(node, finalist) shouldBe a[LotState.Unsold]
+        eventually(auctionState(node, auction) shouldBe a[AuctionState.Finished])
+        node.commands.closeLot(auction, finalist, hammer, person).futureValue shouldBe
+          Right(LotEnding.Unsold(UnsoldReason.NoBids))
+        eventually {
+          auctionFacts().map(_._1.stripPrefix(LotFacts.SubjectPrefix)).drop(10) shouldBe
+            List("final_lot_completed", "auction_finished")
+        }
+        val ended = auctionFacts().map(_._2)
+        ended.map(_.version) shouldBe (1L to 12L).toList
+        ended(10).getFinalLotCompleted.lotId shouldBe finalist.value.toString
+        ended(10).getState.getInFinal.activeLotId shouldBe None
+        ended(11).getState.status.isFinished shouldBe true
       }
     }
 

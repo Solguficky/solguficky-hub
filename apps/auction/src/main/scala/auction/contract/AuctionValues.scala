@@ -37,11 +37,11 @@ object AuctionValues {
     AuctionStateMessage.LineupFrozen(order.map(_.value.toString))
 
   /**
-   * Идущий финал: состав и активный лот — последний возвращённый в торги. Завершения лота финала аукцион ещё не знает:
-   * его приносит закрытие лота ведущим, поэтому возвращённый лот остаётся активным.
+   * Идущий финал: состав и активный лот — последний возвращённый в торги, пока он не завершён закрытием ведущим
+   * (PER-607). Между лотами активного нет.
    */
-  def inFinal(order: List[LotId], activated: List[LotId]): AuctionStateMessage.Final =
-    AuctionStateMessage.Final(order.map(_.value.toString), activated.lastOption.map(_.value.toString))
+  def inFinal(order: List[LotId], active: Option[LotId]): AuctionStateMessage.Final =
+    AuctionStateMessage.Final(order.map(_.value.toString), active.map(_.value.toString))
 
   private def closingPolicy(policy: ClosingPolicy): model.ClosingPolicy =
     policy match {

@@ -6,6 +6,15 @@ import {
 } from "../../../../auction-final.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
 import {
+  favoritesEmpty,
+  favoritesSummary,
+  feedSummary,
+  followLabel,
+  leaderLine,
+  ownLotLine,
+  unfollowLabel,
+} from "../../../../auction-standing.js";
+import {
   type AuctionBlock,
   type AuctionButton,
   type AuctionScreenBody,
@@ -14,7 +23,6 @@ import {
   type FeedItem,
   type HistoryItem,
   type LotStatusView,
-  type Money,
   parseAuctionCallback,
 } from "../../../../auction-ui/index.js";
 import { money, truncate } from "../../../../core/format.js";
@@ -40,6 +48,8 @@ import {
   followRefusedScreen,
   lotSubject,
   nameChoiceScreen,
+  nameRefusedScreen,
+  nameSettingsScreen,
   oneLine,
   questionScreen,
 } from "./auction-bid.js";
@@ -50,6 +60,7 @@ import {
   raffleScreen,
 } from "./auction-raffle.js";
 import { stageWords } from "./auction-stage.js";
+import { toSettingsExtensions } from "./extensions.js";
 import {
   bullet,
   buttonText,
@@ -193,6 +204,24 @@ export function auctionScreen(view: AuctionView): AuctionShown {
         return {
           screen: raffleAnswerRefusedScreen(block, view.body.keyboard),
         };
+      // Имя в аукционе из «Настроек» (PER-595): вход — в «Расширениях».
+      case "name-settings":
+        return {
+          screen: nameSettingsScreen(
+            block,
+            view.body.keyboard,
+            toSettingsExtensions,
+          ),
+        };
+      case "name-question":
+        return {
+          screen: raffleQuestionScreen(view.body.keyboard),
+          asks: true,
+        };
+      case "name-answer-refused":
+        return {
+          screen: nameRefusedScreen(block, view.body.keyboard, money),
+        };
       default:
         break;
     }
@@ -259,26 +288,29 @@ function feedScreen(
       keyboard.text(feedLabel(button, items), button.callbackData);
     }
   }
-  // Строки лотов в теле повторяют кнопки в порядке ленты — по возрастанию
-  // цены (дизайн-код, «Списки»).
+  // Текст не повторяет кнопки (PER-595): в нём сводка своих лотов — где
+  // смотрящий лидер и что он купил, — а все лоты стоят кнопками в порядке
+  // ленты.
   return {
     id: "lots",
     text: screenText(
       pagedTitle("Лоты", { items: feed.lots, ...feed }),
-      feed.lots.length === 0
-        ? "Лотов пока нет."
-        : feed.lots
-            .map((item) =>
-              bullet(
-                `${escapeHtml(truncate(oneLine(item.title ?? untitled), titleLimit))} — ${priceLabel(item.status)}${item.activeWindow === undefined ? "" : ", счастливые часы"}`,
-              ),
-            )
-            .join("\n"),
+      ...(feed.lots.length === 0
+        ? ["Лотов пока нет."]
+        : feedSummary(feed.mine ?? [], feed.lots, mineOptions)),
     ),
     keyboard: withNav(keyboard, toAuctionRoot(feed.auctionId)),
     format: "HTML",
   };
 }
+
+// Строка своего лота в сводке: название и цена, как у кнопки ленты.
+const mineOptions = {
+  title: (item: FeedItem) =>
+    escapeHtml(truncate(oneLine(item.title ?? untitled), titleLimit)),
+  price: (item: FeedItem) =>
+    `${priceLabel(item.status)}${item.activeWindow === undefined ? "" : ", счастливые часы"}`,
+};
 
 /** Аукцион кнопки ленты, которой тело дерева ведёт назад. */
 function auctionOfFeedButton(data: string): string | undefined {
@@ -395,8 +427,10 @@ function feedLabel(
     case "name.alias":
     case "name.back":
     case "accepted.lot":
+    case "accepted.feed":
     case "result.lot":
     case "answer.retry":
+    case "name.return":
     case "lot.follow":
     case "lot.unfollow":
     case "favorites.open-lot":
@@ -546,9 +580,9 @@ function lotLabel(button: AuctionButton): string {
     case "lot.proxy":
       return "Автоставка";
     case "lot.follow":
-      return "В избранное";
+      return followLabel;
     case "lot.unfollow":
-      return "Убрать";
+      return unfollowLabel;
     case "favorites.open-lot":
     case "favorites.prev":
     case "favorites.next":
@@ -568,8 +602,10 @@ function lotLabel(button: AuctionButton): string {
     case "name.alias":
     case "name.back":
     case "accepted.lot":
+    case "accepted.feed":
     case "result.lot":
     case "answer.retry":
+    case "name.return":
     case "feed.raffle":
     case "raffle.register":
     case "raffle.cancel":
@@ -622,15 +658,16 @@ function favoritesScreen(
     id: "favorites",
     text: screenText(
       pagedTitle(favoritesLabel, { items: favorites.lots, ...favorites }),
-      favorites.lots.length === 0
-        ? "Лотов в избранном пока нет. Отметь лот кнопкой «В избранное» на его карточке."
-        : favorites.lots
-            .map((item) =>
-              bullet(
-                `${escapeHtml(truncate(oneLine(item.title ?? untitled), titleLimit))} — ${favoriteState(item.status, view)}`,
-              ),
-            )
-            .join("\n"),
+      ...((favorites.total ?? favorites.lots.length) === 0
+        ? [favoritesEmpty]
+        : favoritesSummary(
+            favorites.total ?? favorites.lots.length,
+            favorites.mine ?? [],
+            {
+              ...mineOptions,
+              price: (item) => favoriteState(item.status, view),
+            },
+          )),
     ),
     keyboard: withNav(keyboard, back),
     format: "HTML",
@@ -737,8 +774,10 @@ function historyLabel(button: AuctionButton): string {
     case "name.alias":
     case "name.back":
     case "accepted.lot":
+    case "accepted.feed":
     case "result.lot":
     case "answer.retry":
+    case "name.return":
     case "lot.follow":
     case "lot.unfollow":
     case "favorites.open-lot":
@@ -838,7 +877,7 @@ function statusGroups(
           marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
           marked(
             pictogram.leader,
-            leaderLine(status.leaderId, participantName),
+            leaderLine(status.leaderId, participantName, block.standing),
           ),
           ...(status.deadline === undefined
             ? []
@@ -862,13 +901,14 @@ function statusGroups(
           marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
           marked(
             pictogram.leader,
-            leaderLine(status.leaderId, participantName),
+            leaderLine(status.leaderId, participantName, block.standing),
           ),
         ],
       ];
+    // Покупатель видит, что лот его (PER-595).
     case "sold":
       return [
-        ["Статус: продан"],
+        ["Статус: продан", ...(block.standing === "won" ? [ownLotLine] : [])],
         [
           marked(pictogram.price, `Цена продажи: ${money(status.price)}`),
           marked(
@@ -927,18 +967,6 @@ function stepLines(
       sameDay ? `${pad(until.hours)}:${pad(until.minutes)}` : at(next.until)
     }, шаг ${money(next.step)}`,
   ];
-}
-
-// Имени нет, а лидер есть — Auction не отдал имя. Идентификатор вместо имени
-// человеку не показывается.
-function leaderLine(
-  leaderId: string | undefined,
-  participantName: string | undefined,
-): string {
-  if (leaderId === undefined) return "Лидер: пока нет";
-  return participantName === undefined
-    ? "Лидер: есть"
-    : `Лидер: ${participantName}`;
 }
 
 function priceLabel(status: LotStatusView): string {

@@ -112,17 +112,33 @@ export type AuctionIntent =
   | { kind: "raffle-cancel"; auctionId: string }
   | { kind: "raffle-username"; auctionId: string }
   | { kind: "raffle-ask-alias"; auctionId: string }
-  | { kind: "raffle-question"; auctionId: string; addressee: number };
+  | { kind: "raffle-question"; auctionId: string; addressee: number }
+  // Имя в аукционе из настроек (PER-595): экран имени, ник, вопрос псевдонима
+  // и его шаг с адресатом. Аукцион — идущий: его находит оболочка.
+  | { kind: "name"; auctionId: string }
+  | { kind: "name-username"; auctionId: string }
+  | { kind: "name-ask-alias"; auctionId: string }
+  | { kind: "name-question"; auctionId: string; addressee: number };
 
-const RAFFLE_ACTION = {
+// Действия с одним токеном аукциона и шаг вопроса с адресатом — у розыгрыша и
+// у имени из настроек.
+const AUCTION_ACTION = {
   raffle: "rf",
   "raffle-register": "rr",
   "raffle-cancel": "rc",
   "raffle-username": "ru",
   "raffle-ask-alias": "ra",
+  name: "nm",
+  "name-username": "nn",
+  "name-ask-alias": "na",
 } as const;
 
-type RaffleKind = keyof typeof RAFFLE_ACTION;
+type AuctionActionKind = keyof typeof AUCTION_ACTION;
+
+const AUCTION_QUESTION = {
+  rq: "raffle-question",
+  nq: "name-question",
+} as const;
 
 // Страница — десятичное число без ведущих нулей: у одной кнопки одно
 // написание, как у токена. Тысяча страниц по восемь лотов — с запасом выше
@@ -335,9 +351,14 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
     case "raffle-cancel":
     case "raffle-username":
     case "raffle-ask-alias":
-      return `${prefix}:${RAFFLE_ACTION[intent.kind]}:${uuidToToken(intent.auctionId)}`;
+    case "name":
+    case "name-username":
+    case "name-ask-alias":
+      return `${prefix}:${AUCTION_ACTION[intent.kind]}:${uuidToToken(intent.auctionId)}`;
     case "raffle-question":
       return `${prefix}:rq:${uuidToToken(intent.auctionId)}:${addresseeArgument(intent.addressee)}`;
+    case "name-question":
+      return `${prefix}:nq:${uuidToToken(intent.auctionId)}:${addresseeArgument(intent.addressee)}`;
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;
@@ -368,8 +389,8 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   if (command !== undefined) return command;
   if (action === "fav") return favoritesAction(args);
   if (action === "rt") return rootAction(args);
-  const raffle = raffleAction(action, args);
-  if (raffle !== undefined) return raffle;
+  const byAuction = auctionAction(action, args);
+  if (byAuction !== undefined) return byAuction;
   // Аргументов у действия ровно столько, сколько пишет его кодировщик: лишний
   // аргумент — не та строка, а не страница, которую можно молча отбросить.
   const [token, rawPage, ...rest] = args;
@@ -425,7 +446,8 @@ export function isAuctionQuestion(raw: unknown): boolean {
   return (
     parsed.ok &&
     (parsed.intent.kind === "question" ||
-      parsed.intent.kind === "raffle-question")
+      parsed.intent.kind === "raffle-question" ||
+      parsed.intent.kind === "name-question")
   );
 }
 
@@ -441,16 +463,18 @@ function accept(intent: AuctionIntent): ParsedAuctionCallback {
   return { ok: true, intent };
 }
 
-// Действия розыгрыша: токен аукциона и, у шага вопроса, адресат. `undefined` —
-// действие не отсюда.
-function raffleAction(
+// Действия розыгрыша и имени из настроек: токен аукциона и, у шага вопроса,
+// адресат. `undefined` — действие не отсюда.
+function auctionAction(
   action: string,
   args: readonly string[],
 ): ParsedAuctionCallback | undefined {
-  const kind = (Object.keys(RAFFLE_ACTION) as RaffleKind[]).find(
-    (each) => RAFFLE_ACTION[each] === action,
+  const kind = (Object.keys(AUCTION_ACTION) as AuctionActionKind[]).find(
+    (each) => AUCTION_ACTION[each] === action,
   );
-  if (kind === undefined && action !== "rq") return undefined;
+  const question =
+    action === "rq" || action === "nq" ? AUCTION_QUESTION[action] : undefined;
+  if (kind === undefined && question === undefined) return undefined;
   const [token, rawAddressee, ...rest] = args;
   const auctionId = token === undefined ? undefined : tokenToUuid(token);
   if (auctionId === undefined || rest.length !== 0) return refuse("malformed");
@@ -460,9 +484,9 @@ function raffleAction(
       : refuse("malformed");
   }
   const addressee = addresseeOf(rawAddressee);
-  return addressee === undefined
+  return addressee === undefined || question === undefined
     ? refuse("malformed")
-    : accept({ kind: "raffle-question", auctionId, addressee });
+    : accept({ kind: question, auctionId, addressee });
 }
 
 // Корень аукциона: ровно один токен аукциона.

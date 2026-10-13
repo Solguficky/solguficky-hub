@@ -14,13 +14,11 @@ import scala.concurrent.Future
  */
 final case class AuctionWatchView(auction: AuctionSnapshotView, lineup: List[LotSnapshotView]) {
 
-  /** Активный лот финала — последний возвращённый в торги, как в `AuctionState.Final` контракта. */
+  /**
+   * Активный лот финала — последний возвращённый в торги и ещё не завершённый, как в `AuctionState.Final` контракта.
+   */
   def activeLot: Option[LotSnapshotView] =
-    auction.auction.state match {
-      case AuctionState.Final(_, _, _, activated) =>
-        activated.lastOption.flatMap(active => lineup.find(_.lotId == active.value))
-      case _ => None
-    }
+    auction.auction.state.activeLot.flatMap(active => lineup.find(_.lotId == active.value))
 }
 
 object AuctionWatchView {
@@ -29,7 +27,7 @@ object AuctionWatchView {
   def lineupOf(auction: Auction): List[LotId] =
     auction.state match {
       case AuctionState.LineupFrozen(_, _, order) => order
-      case AuctionState.Final(_, _, order, _) => order
+      case AuctionState.Final(_, _, order, _, _) => order
       case AuctionState.Initial | AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _) |
           AuctionState.Settling(_, _) | AuctionState.Break(_, _) | AuctionState.Finished(_, _) |
           AuctionState.Cancelled(_, _, _) =>

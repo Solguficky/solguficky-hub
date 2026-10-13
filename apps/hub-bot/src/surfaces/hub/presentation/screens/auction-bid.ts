@@ -1,5 +1,12 @@
 import { InlineKeyboard } from "grammy";
 import {
+  autoFollowNote,
+  currentValueLine,
+  nameSettingsParagraphs,
+  nameSettingsTitle,
+  proxyHintLead,
+} from "../../../../auction-standing.js";
+import {
   type AnswerRefusal,
   type AuctionBlock,
   type AuctionButton,
@@ -31,6 +38,8 @@ type ResultBlock = Extract<AuctionBlock, { kind: "result" }>;
 type AnswerRefusedBlock = Extract<AuctionBlock, { kind: "answer-refused" }>;
 
 const cancelLabel = "Отмена";
+// Выход кадра исхода и принятой команды — к лоту (PER-595).
+const toLotLabel = "‹ Лот";
 
 function dataOf(
   keyboard: readonly (readonly AuctionButton[])[],
@@ -85,30 +94,34 @@ export function confirmScreen(
 }
 
 // Принятая команда — свой экран (PER-473): сумма в заголовке, карточку с новой
-// ценой открывает «К лоту» — единственный выход, как у кадра исхода: кнопки
-// «Меню» нет (решение владельца 10 октября 2026 года).
+// ценой открывает «‹ Лот», ленту — «‹ Лоты» (PER-595); кнопки «Меню» нет
+// (решение владельца 10 октября 2026 года). У бота с избранным экран
+// говорит, что ставка кладёт лот туда сама (ADR-063).
 export function acceptedScreen(
   block: AcceptedBlock,
   keyboard: readonly (readonly AuctionButton[])[],
   money: (amount: Money) => string,
 ): ShownScreen {
   const bid = block.command === "bid";
+  const note = block.favorites === true ? autoFollowNote : undefined;
   return {
     id: bid ? "bid-accepted" : "proxy-accepted",
     text: bid
       ? screenText(
           `Ставка ${money(block.amount)} принята`,
           lotSubject(block.title),
+          note,
         )
       : screenText(
           `Автоставка до ${money(block.amount)} включена`,
           lotSubject(block.title),
           "Лимит видишь только ты.",
+          note,
         ),
-    keyboard: new InlineKeyboard().text(
-      "К лоту",
-      dataOf(keyboard, "accepted.lot"),
-    ),
+    keyboard: new InlineKeyboard()
+      .text(toLotLabel, dataOf(keyboard, "accepted.lot"))
+      .row()
+      .text("‹ Лоты", dataOf(keyboard, "accepted.feed")),
     format: "HTML",
   };
 }
@@ -128,17 +141,22 @@ function proxyGap(
 
 // Вопрос уходит новым сообщением с `force_reply`: режим ответа ставит
 // отправка, экран несёт только текст и «Отмену». Текст — по правилу вопросов
-// дизайн-кода: под заголовком одним абзацем — что прислать, «Сейчас: …» и
-// образец. Непринятый ответ — свой экран.
+// дизайн-кода: под заголовком одним абзацем — что прислать, подписанное
+// текущее значение (PER-595) и образец. Непринятый ответ — свой экран.
 export function questionScreen(
   block: QuestionBlock,
   keyboard: readonly (readonly AuctionButton[])[],
   money: (amount: Money) => string,
 ): ShownScreen {
-  const current = (prefix: string) =>
-    block.current === undefined
-      ? []
-      : [`Сейчас: ${prefix}${money(block.current)}`];
+  const current = () =>
+    currentValueLine(
+      block.current === undefined
+        ? undefined
+        : {
+            amount: money(block.current),
+            limit: block.currentIsLimit === true,
+          },
+    );
   const text = (() => {
     switch (block.question) {
       case "bid":
@@ -146,7 +164,7 @@ export function questionScreen(
           "Своя сумма",
           [
             "Пришли сумму ставки в рублях.",
-            ...current("от "),
+            ...current(),
             "Например: 1 500",
           ].join("\n"),
         );
@@ -158,7 +176,7 @@ export function questionScreen(
             : proxyExplainer(block.explainer, money),
           [
             "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
-            ...current(""),
+            ...current(),
             "Например: 3 000",
           ].join("\n"),
         );
@@ -204,9 +222,7 @@ function proxyExplainer(
   explainer: NonNullable<QuestionBlock["explainer"]>,
   money: (amount: Money) => string,
 ): string {
-  const lines = [
-    "Подскажу: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
-  ];
+  const lines = [proxyHintLead];
   const { example } = explainer;
   if (example !== undefined) {
     const price = money(example.currentPrice);
@@ -258,7 +274,7 @@ export function nameChoiceScreen(
 }
 
 // Исход — свой экран (дизайн-код, «Экран исхода», PER-472): исход в заголовке
-// без точки, название лота жирным, затем пояснение; выход — «К лоту», у
+// без точки, название лота жирным, затем пояснение; выход — «‹ Лот», у
 // непринятого ответа над ним — «Ввести заново».
 type Outcome = { title: string; detail?: string };
 
@@ -274,7 +290,7 @@ function toLotRow(
   rows: InlineKeyboard,
   keyboard: readonly (readonly AuctionButton[])[],
 ): InlineKeyboard {
-  return nextRow(rows).text("К лоту", dataOf(keyboard, "result.lot"));
+  return nextRow(rows).text(toLotLabel, dataOf(keyboard, "result.lot"));
 }
 
 export function commandResultScreen(
@@ -291,7 +307,7 @@ export function commandResultScreen(
 }
 
 // Notifications ещё не знает лот (PER-495): факт аукциона до него не дошёл,
-// и отметка не поставлена. Кадр исхода, как отказ команды: «К лоту» и «Меню».
+// и отметка не поставлена. Кадр исхода, как отказ команды: «‹ Лот».
 export function followRefusedScreen(
   block: Extract<AuctionBlock, { kind: "follow-refused" }>,
   keyboard: readonly (readonly AuctionButton[])[],
@@ -426,4 +442,57 @@ function resultOutcome(
       return _exhaustive;
     }
   }
+}
+
+type NameSettingsBlock = Extract<AuctionBlock, { kind: "name-settings" }>;
+type NameRefusedBlock = Extract<AuctionBlock, { kind: "name-answer-refused" }>;
+
+// Имя в аукционе из «Настроек» (PER-595): тело дерева, тексты общие с ботом
+// аукциона. Возврат ставит вызывающий: вход стоит в «Расширениях» настроек.
+export function nameSettingsScreen(
+  block: NameSettingsBlock,
+  keyboard: readonly (readonly AuctionButton[])[],
+  back: Parent,
+): ShownScreen {
+  const rows = new InlineKeyboard();
+  for (const button of keyboard.flat()) {
+    if (button.action === "name.username" && block.username !== undefined) {
+      nextRow(rows).text(`Ник @${block.username}`, button.callbackData);
+    }
+    if (button.action === "name.alias") {
+      nextRow(rows).text("Взять псевдоним", button.callbackData);
+    }
+  }
+  return {
+    id: "name-settings",
+    text: screenText(
+      nameSettingsTitle,
+      ...nameSettingsParagraphs(block.name, block.username),
+    ),
+    keyboard: withNav(rows, back),
+    format: "HTML",
+  };
+}
+
+// Непринятый псевдоним из настроек: «Ввести заново» и возврат на экран имени.
+export function nameRefusedScreen(
+  block: NameRefusedBlock,
+  keyboard: readonly (readonly AuctionButton[])[],
+  money: (amount: Money) => string,
+): ShownScreen {
+  const rows = new InlineKeyboard();
+  for (const button of keyboard.flat()) {
+    if (button.action === "answer.retry") {
+      rows.text("Ввести заново", button.callbackData);
+    }
+  }
+  return {
+    id: "answer-refused",
+    text: outcomeText(answerRefusalOutcome(block.refusal, money), undefined),
+    keyboard: withNav(rows, {
+      name: nameSettingsTitle,
+      data: dataOf(keyboard, "name.return"),
+    }),
+    format: "HTML",
+  };
 }

@@ -9,6 +9,12 @@ import {
   placeFinalBid,
 } from "./internal/use-cases/commands.js";
 import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
+import {
+  answerNameQuestion,
+  askNameAlias,
+  chooseNameUsername,
+  openName,
+} from "./internal/use-cases/name-settings.js";
 import { openFeed } from "./internal/use-cases/open-feed.js";
 import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
@@ -148,6 +154,17 @@ export function dispatchAuctionIntent(input: {
       return input.answer === undefined
         ? Promise.resolve(cancelRaffleQuestion(context, intent.auctionId))
         : answerRaffleQuestion(context, intent.auctionId, input.answer.text);
+    case "name":
+      return openName(context, intent.auctionId);
+    case "name-username":
+      return chooseNameUsername(context, intent.auctionId);
+    case "name-ask-alias":
+      return Promise.resolve(askNameAlias(context, intent.auctionId));
+    // «Отмена» под вопросом возвращает на экран имени.
+    case "name-question":
+      return input.answer === undefined
+        ? openName(context, intent.auctionId)
+        : answerNameQuestion(context, intent.auctionId, input.answer.text);
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;

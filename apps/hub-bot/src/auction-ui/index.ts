@@ -68,6 +68,7 @@ export type {
   LotView,
   Money,
   OperationIdPort,
+  OwnDisplayName,
   ProxyExplainerPort,
   ProxyLimitRefusal,
   RaffleCancellationRefusal,
@@ -92,5 +93,6 @@ export type {
   FeedItem,
   FinalBidOutcome,
   HistoryItem,
+  LotStanding,
   ProxyExample,
 } from "./screen.js";

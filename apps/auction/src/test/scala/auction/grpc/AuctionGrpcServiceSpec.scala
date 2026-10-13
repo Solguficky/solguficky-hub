@@ -13,6 +13,8 @@ import auction.aggregate.Authority
 import auction.aggregate.Correlation
 import auction.aggregate.DeselectForFinal
 import auction.aggregate.CancelAuction
+import auction.aggregate.CloseAuctionLot
+import auction.aggregate.CloseAuctionLotRejected
 import auction.aggregate.DiscardAuction
 import auction.aggregate.DraftAuction
 import auction.aggregate.FinalChoiceRejected
@@ -20,6 +22,7 @@ import auction.aggregate.FreezeFinalLineup
 import auction.aggregate.FreezeFinalLineupRejected
 import auction.aggregate.Inspection
 import auction.aggregate.MeetupAuthority
+import auction.aggregate.LotEnding
 import auction.aggregate.MeetupId
 import auction.aggregate.RemoveLot
 import auction.aggregate.RemoveLotRejected
@@ -48,6 +51,7 @@ import auction.contract.LotValues
 import auction.lot.AdvanceAsk
 import auction.lot.AdvanceAskRejected
 import auction.lot.AuctionId
+import auction.lot.BidId
 import auction.lot.BidSource
 import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
@@ -64,10 +68,12 @@ import auction.lot.PlaceBid
 import auction.lot.PlaceBidRejected
 import auction.lot.CurrencyCode
 import auction.lot.Money
+import auction.lot.Sale
 import auction.lot.ScheduleLotRejected
 import auction.lot.SetProxyLimit
 import auction.lot.SetProxyLimitRejected
 import auction.lot.StepPolicyInput
+import auction.lot.UnsoldReason
 import auction.lot.WithdrawProxyLimit
 import auction.lot.WithdrawProxyLimitRejected
 import auction.naming.Alias
@@ -75,6 +81,7 @@ import auction.naming.ChooseResult
 import auction.naming.ChosenName
 import auction.naming.DisplayNameCommands
 import auction.naming.DisplayNameStore
+import auction.naming.StoredName
 import auction.naming.TelegramUsername
 import auction.onboarding.FaqAcknowledgements
 import auction.projection.AuctionListing
@@ -207,8 +214,13 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       }
     }
 
-    def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, ChosenName]] =
-      Future.successful(chosen.view.filterKeys(participants).toMap)
+    def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, StoredName]] =
+      Future.successful(
+        chosen.view
+          .filterKeys(participants)
+          .map((participant, name) => participant -> StoredName(name, frozen(participant)))
+          .toMap
+      )
 
     private def sameAlias(held: ChosenName, wanted: ChosenName): Boolean =
       (held, wanted) match {
@@ -318,6 +330,11 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         command: AdvanceLotAsk,
         initiator: Initiator
     ): Future[Either[AdvanceLotAskRejected, Unit]] = fail("the auction was reached")
+    def closeLot(
+        auctionId: AuctionId,
+        command: CloseAuctionLot,
+        initiator: Initiator
+    ): Future[Either[CloseAuctionLotRejected, LotEnding]] = fail("the auction was reached")
   }
 
   private val NoMeetups: MeetupAuthority = (_, _, _) => fail("meetups was asked")
@@ -613,7 +630,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val second = LotId(UUID.fromString("01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e02"))
       val watcher = ParticipantId(UUID.fromString(identity))
       val live = trading(price = 700, phase = Phase.Live, closesAt = None, limits = Map(watcher -> limit(900, 3)))
-      val state = AuctionState.Final(AuctionFixtures.config(), LotFixtures.op(9), List(second, first), List(second))
+      val state =
+        AuctionState.Final(AuctionFixtures.config(), LotFixtures.op(9), List(second, first), List(second), Nil)
       val view = AuctionWatchView(
         watchedIn(state, Set(first, second)),
         List(
@@ -1478,7 +1496,13 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       auction.placeBid(validBid).futureValue.outcome.isAccepted shouldBe true
       val choose = wire.ChooseDisplayNameRequest(Some(viewer), lot)
       auction.chooseDisplayName(choose.withAlias("Кот")).futureValue.getRefused.reason.isNameFrozen shouldBe true
-      auction.chooseDisplayName(choose.withTelegramUsername("vasya")).futureValue.getAccepted.text shouldBe "@vasya"
+      auction.chooseDisplayName(choose.withTelegramUsername("vasya")).futureValue.getAccepted shouldBe
+        wire.DisplayName("@vasya", wire.DisplayNameKind.DISPLAY_NAME_KIND_TELEGRAM_USERNAME, frozen = true)
+      auction
+        .getDisplayNames(wire.GetDisplayNamesRequest(Some(viewer), lot, Seq(identity)))
+        .futureValue
+        .names(identity)
+        .frozen shouldBe true
     }
 
     "answers every requested participant and a placeholder for one without a choice" in {
@@ -1570,8 +1594,46 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       statusOf(auction.listAuctionInvoices(wire.ListAuctionInvoicesRequest())) shouldBe Status.Code.UNIMPLEMENTED
     }
 
-    "answers UNIMPLEMENTED on the closing of the auctioneer until its slice" in {
-      statusOf(service(Unreachable).closeLot(wire.CloseLotRequest())) shouldBe Status.Code.UNIMPLEMENTED
+    "refuses a malformed closing of the auctioneer before reaching meetups or the auction" in {
+      statusOf(service(Unreachable).closeLot(wire.CloseLotRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers the closing of the auctioneer with the sale, the closing without a sale and the refusals as values" in {
+      val answers = new java.util.concurrent.ConcurrentLinkedQueue[Either[CloseAuctionLotRejected, LotEnding]]()
+      val closing = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId)), registryOpen = false))
+        override def closeLot(auctionId: AuctionId, command: CloseAuctionLot, initiator: Initiator) =
+          Future.successful(answers.poll())
+      }
+      val auction = service(Unreachable, auctions = AuctionCommands(closing, Unreachable, granted))
+      val request = wire.CloseLotRequest(Some(viewer), meetupAuctionId, lot, op)
+      val sale =
+        Sale(RoomId, Money(150, CurrencyCode("RUB")), BidId(UUID.fromString(op)), Instant.parse("2026-10-13T10:00:00Z"))
+      answers.add(Right(LotEnding.Sold(sale)))
+      val sold = auction.closeLot(request).futureValue.getAccepted.getSold
+      sold.winnerId shouldBe RoomId.value.toString
+      sold.price.map(_.minorUnits) shouldBe Some(150)
+      sold.soldAt shouldBe "2026-10-13T10:00:00Z"
+
+      answers.add(Right(LotEnding.Unsold(UnsoldReason.NoBids)))
+      auction.closeLot(request).futureValue.getAccepted.result.isUnsold shouldBe true
+      answers.add(Left(CloseAuctionLotRejected.LotNotOpen))
+      auction.closeLot(request).futureValue.getRefused.reason.isLotNotOpen shouldBe true
+      answers.add(Left(CloseAuctionLotRejected.DeadlineNotReached))
+      auction.closeLot(request).futureValue.getRefused.reason.isDeadlineNotReached shouldBe true
+      answers.add(Left(CloseAuctionLotRejected.LotNotInAuction))
+      auction.closeLot(request).futureValue.getRefused.reason.isLotNotInAuction shouldBe true
+      answers.add(Left(CloseAuctionLotRejected.OpIdTaken))
+      statusOf(auction.closeLot(request)) shouldBe Status.Code.ALREADY_EXISTS
+
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      service(Unreachable, auctions = AuctionCommands(closing, Unreachable, stranger))
+        .closeLot(request)
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
     }
 
     "answers the ask of the auctioneer after the right and the registry, with the operator on the lot" in {

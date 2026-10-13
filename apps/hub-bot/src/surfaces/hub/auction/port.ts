@@ -407,6 +407,13 @@ export type AuctionScreenPorts = {
 
 export type AuctionScreens = {
   screenPorts(meta?: RpcMetadata): AuctionScreenPorts;
+  // Идущий аукцион — ближайший активный (PER-595): в нём человек выбирает имя
+  // из «Настроек». Торги открыты у одного аукциона (RFC-017); нет активного —
+  // `auctionId` нет.
+  currentAuction(
+    person: Person,
+    meta?: RpcMetadata,
+  ): Promise<MeetupAuctionResult>;
 };
 
 // Смотрящий пакета — права, которые Identity вывел этому человеку (RFC-016):

@@ -14,6 +14,20 @@ import {
   registerLabel,
 } from "../../auction-raffle.js";
 import {
+  autoFollowNote,
+  currentValueLine,
+  favoritesEmpty,
+  favoritesSummary,
+  feedSummary,
+  followLabel,
+  leaderLine,
+  nameSettingsParagraphs,
+  nameSettingsTitle,
+  ownLotLine,
+  proxyHintLead,
+  unfollowLabel,
+} from "../../auction-standing.js";
+import {
   type AnswerRefusal,
   type AuctionBlock,
   type AuctionButton,
@@ -79,16 +93,19 @@ export { money, truncate };
 // лота — тело аукционного дерева (PER-306), лист ставки — PER-317. Правила экрана
 // — дизайн-код (docs/design/bot/design-code.md): жирный заголовок, HTML,
 // последний ряд `[‹ Родитель]`, кадр отказа с выходом. Корень один — «Меню»
-// (PER-592): «Аукционы» с «Прошедшими» внутри, FAQ и, у бота с Notifications,
-// «Избранное» (PER-495) и «Уведомления» (PER-515) — его разделы, их же
-// открывают команды.
+// (PER-592): «Аукционы» с «Прошедшими» внутри, FAQ, «Настройки» с
+// «Уведомлениями» (PER-515) и «Именем в аукционе» (PER-595) и, у бота с
+// Notifications, «Избранное» (PER-495) — его разделы, их же открывают команды.
 export type AuctionEntryScreen =
-  | { kind: "menu"; favorites: boolean; notifications: boolean }
+  | { kind: "menu"; favorites: boolean }
   // Приветствие человека без права: заявку ставит только его кнопка.
   | { kind: "welcome"; sourceCode?: string }
   // Подсказка на сообщение вне вопроса (PER-592).
   | { kind: "hint"; openQuestion: boolean }
   | { kind: "faq" }
+  // «Настройки» (PER-595): частота «перебили», у бота с Notifications, и имя в
+  // идущем аукционе, если такой есть.
+  | { kind: "settings"; notifications: boolean; auctionId?: string }
   | { kind: "notify"; current: OutbidFrequency }
   | { kind: "auctions"; list: AuctionListPage }
   | { kind: "past"; list: AuctionListPage }
@@ -202,7 +219,13 @@ const welcomeParagraphs = [
   `Чтобы участвовать, подай заявку. ${admittersLine} Если заявка уже подана, кнопка покажет, что с ней.`,
 ];
 const notifyTitle = "Уведомления";
+const settingsTitle = "Настройки";
 const favoritesTitle = "Избранное";
+// Возврат подразделов «Настроек» (PER-595).
+const toSettings = {
+  text: `‹ ${settingsTitle}`,
+  callback_data: entryCallback("settings"),
+};
 const linkSign = " ↗";
 
 const heading = (text: string) => `<b>${escapeHtml(text)}</b>`;
@@ -267,12 +290,42 @@ export function renderEntryScreen(
                 ],
               ]
             : []),
-          ...(screen.notifications
-            ? [[{ text: notifyTitle, callback_data: notifyCallback() }]]
-            : []),
+          [{ text: settingsTitle, callback_data: entryCallback("settings") }],
           [{ text: faqTitle, callback_data: entryCallback("faq") }],
         ],
       };
+    // «Настройки» — раздел под меню (PER-595): частота «перебили» и имя в
+    // идущем аукционе. Нет ни того, ни другого — текст говорит, что
+    // настраивать пока нечего.
+    case "settings": {
+      const rows = [
+        ...(screen.notifications
+          ? [[{ text: notifyTitle, callback_data: notifyCallback() }]]
+          : []),
+        ...(screen.auctionId === undefined
+          ? []
+          : [
+              [
+                {
+                  text: nameSettingsTitle,
+                  callback_data: encodeAuctionCallback({
+                    kind: "name",
+                    auctionId: screen.auctionId,
+                  }),
+                },
+              ],
+            ]),
+      ];
+      return {
+        id: "settings",
+        format: "html",
+        text: screenText(
+          settingsTitle,
+          settingsText(screen.notifications, screen.auctionId !== undefined),
+        ),
+        keyboard: [...rows, [toMenu]],
+      };
+    }
     case "welcome":
       return {
         id: "welcome",
@@ -333,7 +386,7 @@ export function renderEntryScreen(
     // отмечен на своей кнопке маркером «• » (PER-598; дизайн-код,
     // «Уведомления»). Выбор отменяется с того же экрана, поэтому
     // подтверждения «Да» у него нет: что сработало, говорит ответ на нажатие.
-    // Экран — раздел под меню: последний ряд — «‹ Меню».
+    // Экран — подраздел «Настроек»: последний ряд — «‹ Настройки» (PER-595).
     case "notify":
       return {
         id: "notify",
@@ -346,7 +399,7 @@ export function renderEntryScreen(
               callback_data: notifyCallback(frequency),
             },
           ]),
-          [toMenu],
+          [toSettings],
         ],
       };
     case "auctions":
@@ -371,6 +424,11 @@ export function renderEntryScreen(
       // оболочка (PER-592).
       if (body.id === "favorites") {
         return { ...body, keyboard: [...body.keyboard, [toMenu]] };
+      }
+      // Имя в аукционе — подраздел «Настроек» (PER-595): возврат ставит
+      // оболочка, у хаба родитель другой.
+      if (body.id === "name-settings") {
+        return { ...body, keyboard: [...body.keyboard, [toSettings]] };
       }
       // Родителя ленты тело не знает: возврат в её список ставит оболочка.
       // Корень аукциона (PER-605) входа в этом боте не имеет, но нарисовать
@@ -445,6 +503,18 @@ export function renderEntryScreen(
       return _exhaustive;
     }
   }
+}
+
+// Пояснение «Настроек» называет только пункты, которые на экране есть.
+function settingsText(notifications: boolean, name: boolean): string {
+  if (notifications && name) {
+    return "Уведомления о торгах и имя, под которым ты ставишь в идущем аукционе.";
+  }
+  if (notifications) {
+    return "Уведомления о торгах. Имя в аукционе появится здесь, когда пойдёт аукцион.";
+  }
+  if (name) return "Имя, под которым ты ставишь в идущем аукционе.";
+  return "Настраивать пока нечего: имя выбирается, когда идёт аукцион.";
 }
 
 function faqState(id: "details" | "question", text: string): RenderedScreen {
@@ -555,14 +625,19 @@ export function auctionLabel(
 
 // Строка аукциона в теле списка: те же поля, день отделён от остального «—».
 // Отсчёт до финала стоит хвостом только здесь, кнопка остаётся короткой
-// (дизайн-код, «Списки аукционов и лента лотов»).
+// (дизайн-код, «Списки аукционов и лента лотов»). День подписан — это начало
+// онлайн-торгов, — а этап и отсчёт до финала выделены (PER-595).
 export function auctionLine(
   auction: AuctionSummary,
   timeZone: string,
   now?: Date,
 ): string {
   const finale = finaleCountdown(auction, timeZone, now);
-  return `${auctionDay(auction, timeZone, now)} — ${stageLabels[auction.stage]}, ${lotCount(auction.lotCount)}${finale === undefined ? "" : `, ${finale}`}`;
+  const day =
+    auction.opensAt === undefined
+      ? auctionDay(auction, timeZone, now)
+      : `Торги с ${auctionDay(auction, timeZone, now)}`;
+  return `${day} — <b>${stageLabels[auction.stage]}</b>, ${lotCount(auction.lotCount)}${finale === undefined ? "" : `, <b>${finale}</b>`}`;
 }
 
 // Отсчёт до финала (PER-518): день финала — день общего дедлайна лотов в поясе
@@ -719,26 +794,28 @@ function renderBody(
   if (feed === undefined) {
     throw new Error("auction body without a feed, a lot or a history block");
   }
-  // Пустая лента несёт заголовок так же, как заполненная; строки лотов в теле
-  // идут в порядке ленты — по возрастанию цены.
+  // Пустая лента несёт заголовок так же, как заполненная. Текст не повторяет
+  // кнопки: в нём сводка своих лотов — где смотрящий лидер и что он купил
+  // (PER-595), а все лоты — кнопками в порядке ленты.
   return {
     id,
     keyboard,
     format: "html",
     text: screenText(
       paged("Лоты", feed),
-      feed.lots.length === 0
-        ? "Лотов пока нет."
-        : feed.lots
-            .map((item) =>
-              bullet(
-                `${escapeHtml(oneLine(item.title ?? untitled))} — ${priceLabel(item.status)}${item.activeWindow === undefined ? "" : ", счастливые часы"}`,
-              ),
-            )
-            .join("\n"),
+      ...(feed.lots.length === 0
+        ? ["Лотов пока нет."]
+        : feedSummary(feed.mine ?? [], feed.lots, mineOptions)),
     ),
   };
 }
+
+// Строка своего лота в сводке: название и цена, как у строки ленты.
+const mineOptions = {
+  title: (item: FeedItem) => escapeHtml(oneLine(item.title ?? untitled)),
+  price: (item: FeedItem) =>
+    `${priceLabel(item.status)}${item.activeWindow === undefined ? "" : ", счастливые часы"}`,
+};
 
 // Запись каталога для тела: тело с карточкой — экран лота, с лентой — лента.
 // Новый вид блока не становится лентой молча: без своей ветки он не собирается.
@@ -777,7 +854,12 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "raffle-name-choice":
         return "raffle-name-choice";
       case "raffle-question":
+      case "name-question":
         return "alias-question";
+      case "name-settings":
+        return "name-settings";
+      case "name-answer-refused":
+        return "answer-refused";
       case "feed":
         break;
       default: {
@@ -894,11 +976,22 @@ function renderLeaf(
           ),
         };
       case "raffle-question":
+      case "name-question":
         return { format: "html", text: aliasQuestionText(), asks: true };
       case "raffle-answer-refused":
+      case "name-answer-refused":
         return {
           format: "html",
           text: outcomeText(answerRefusals[block.refusal], undefined),
+        };
+      // Имя в аукционе из настроек (PER-595): тексты общие с хабом.
+      case "name-settings":
+        return {
+          format: "html",
+          text: screenText(
+            nameSettingsTitle,
+            ...nameSettingsParagraphs(block.name, block.username),
+          ),
         };
       default:
         break;
@@ -926,19 +1019,23 @@ function confirmText(
 }
 
 // Принятая команда — свой экран (PER-473): сумма в заголовке, карточку с
-// новой ценой открывает «К лоту».
+// новой ценой открывает «‹ Лот», ленту — «‹ Лоты» (PER-595). У бота с
+// избранным экран говорит, что ставка кладёт лот туда сама (ADR-063).
 function acceptedText(
   block: Extract<AuctionBlock, { kind: "accepted" }>,
 ): string {
+  const note = block.favorites === true ? autoFollowNote : undefined;
   return block.command === "bid"
     ? screenText(
         `Ставка ${money(block.amount)} принята`,
         lotSubject(block.title),
+        note,
       )
     : screenText(
         `Автоставка до ${money(block.amount)} включена`,
         lotSubject(block.title),
         "Лимит видишь только ты.",
+        note,
       );
 }
 
@@ -946,20 +1043,24 @@ function questionText(
   block: Extract<AuctionBlock, { kind: "question" }>,
 ): string {
   // Вопрос (дизайн-код, «Вопросы»): под заголовком одним абзацем — что
-  // прислать, «Сейчас: …» и образец. Непринятый ответ — свой экран.
-  const current = (prefix: string) =>
-    block.current === undefined
-      ? []
-      : [`Сейчас: ${prefix}${money(block.current)}`];
+  // прислать, подписанное текущее значение (PER-595) и образец. Непринятый
+  // ответ — свой экран.
+  const current = () =>
+    currentValueLine(
+      block.current === undefined
+        ? undefined
+        : {
+            amount: money(block.current),
+            limit: block.currentIsLimit === true,
+          },
+    );
   switch (block.question) {
     case "bid":
       return screenText(
         "Своя сумма",
-        [
-          "Пришли сумму ставки в рублях.",
-          ...current("от "),
-          "Например: 1 500",
-        ].join("\n"),
+        ["Пришли сумму ставки в рублях.", ...current(), "Например: 1 500"].join(
+          "\n",
+        ),
       );
     case "proxy":
       return screenText(
@@ -969,7 +1070,7 @@ function questionText(
           : proxyExplainer(block.explainer),
         [
           "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
-          ...current(""),
+          ...current(),
           "Например: 3 000",
         ].join("\n"),
       );
@@ -1014,9 +1115,7 @@ function proxyExplainer(
     Extract<AuctionBlock, { kind: "question" }>["explainer"]
   >,
 ): string {
-  const lines = [
-    "Подскажу: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
-  ];
+  const lines = [proxyHintLead];
   const { example } = explainer;
   if (example !== undefined) {
     const price = money(example.currentPrice);
@@ -1145,9 +1244,10 @@ function renderHistory(
   };
 }
 
-// Избранное (PER-495): свои отмеченные лоты по порядку отметки. Строка —
-// название и цена, у лота в торгах — ещё и дедлайн; закрытый лот остаётся в
-// списке со своим итогом. Пустой список говорит, как его пополнить.
+// Избранное (PER-495): свои отмеченные лоты по порядку отметки — кнопками.
+// Текст не повторяет кнопки (PER-595): сколько лотов в избранном и сводка
+// своих — где смотрящий лидер и что он купил; у лота в торгах строка несёт
+// ещё и дедлайн. Пустой список говорит, как его пополнить.
 function renderFavorites(
   block: FavoritesBlock,
   options: RenderOptions,
@@ -1156,15 +1256,12 @@ function renderFavorites(
     format: "html",
     text: screenText(
       paged(favoritesTitle, block),
-      block.lots.length === 0
-        ? "Лотов в избранном пока нет. Отметь лот кнопкой «В избранное» на его карточке."
-        : block.lots
-            .map((item) =>
-              bullet(
-                `${escapeHtml(oneLine(item.title ?? untitled))} — ${favoriteState(item.status, options)}`,
-              ),
-            )
-            .join("\n"),
+      ...((block.total ?? block.lots.length) === 0
+        ? [favoritesEmpty]
+        : favoritesSummary(block.total ?? block.lots.length, block.mine ?? [], {
+            ...mineOptions,
+            price: (item) => favoriteState(item.status, options),
+          })),
     ),
   };
 }
@@ -1303,7 +1400,7 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
           marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
           marked(
             pictogram.leader,
-            leaderLine(status.leaderId, participantName),
+            leaderLine(status.leaderId, participantName, block.standing),
           ),
           ...(status.deadline === undefined
             ? []
@@ -1324,13 +1421,14 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
           marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
           marked(
             pictogram.leader,
-            leaderLine(status.leaderId, participantName),
+            leaderLine(status.leaderId, participantName, block.standing),
           ),
         ],
       ];
+    // Покупатель видит, что лот его (PER-595).
     case "sold":
       return [
-        ["Статус: продан"],
+        ["Статус: продан", ...(block.standing === "won" ? [ownLotLine] : [])],
         [
           marked(pictogram.price, `Цена продажи: ${money(status.price)}`),
           marked(
@@ -1400,18 +1498,6 @@ function proxyLine(block: LotBlock): string[] {
       ];
 }
 
-// Имени нет, а лидер есть — Auction не отдал имя. Идентификатор вместо имени
-// человеку не показывается.
-function leaderLine(
-  leaderId: string | undefined,
-  participantName: string | undefined,
-): string {
-  if (leaderId === undefined) return "Лидер: пока нет";
-  return participantName === undefined
-    ? "Лидер: есть"
-    : `Лидер: ${participantName}`;
-}
-
 // Описание — единственная часть карточки произвольной длины, поэтому под лимит
 // Telegram режется оно. Длина считается по видимому тексту до экранирования:
 // лимит Bot API действует после разбора разметки. Название и строки статуса
@@ -1473,9 +1559,9 @@ function renderButton(
     case "history.back":
       return text("‹ Лот");
     case "lot.follow":
-      return text("В избранное");
+      return text(followLabel);
     case "lot.unfollow":
-      return text("Убрать");
+      return text(unfollowLabel);
     case "favorites.prev":
       return text("←");
     case "favorites.next":
@@ -1501,11 +1587,14 @@ function renderButton(
     case "name.username": {
       const choice = blocks.find(
         (block) =>
-          block.kind === "name-choice" || block.kind === "raffle-name-choice",
+          block.kind === "name-choice" ||
+          block.kind === "raffle-name-choice" ||
+          block.kind === "name-settings",
       );
       return text(
         (choice?.kind === "name-choice" ||
-          choice?.kind === "raffle-name-choice") &&
+          choice?.kind === "raffle-name-choice" ||
+          choice?.kind === "name-settings") &&
           choice.username !== undefined
           ? `Ник @${choice.username}`
           : "Ник",
@@ -1514,10 +1603,13 @@ function renderButton(
     case "name.alias":
       return text("Взять псевдоним");
     case "name.back":
-      return text("‹ Лот");
     case "accepted.lot":
     case "result.lot":
-      return text("К лоту");
+      return text("‹ Лот");
+    case "accepted.feed":
+      return text("‹ Лоты");
+    case "name.return":
+      return text(`‹ ${nameSettingsTitle}`);
     case "answer.retry":
       return text("Ввести заново");
     case "root.lots":

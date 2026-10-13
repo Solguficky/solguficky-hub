@@ -8,6 +8,7 @@ import type {
 } from "../../ports.js";
 import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
 import { collectPages } from "./collect-pages.js";
+import { feedItemOf, mineOf, withMine } from "./standing.js";
 
 // Лотов на странице ленты. Восемь — как у списка материалов в хабе: кнопки
 // лотов и строка листания помещаются в один экран телефона.
@@ -55,14 +56,8 @@ export async function openFeed(input: {
         auctionId: input.auctionId,
         page,
         pageCount,
-        lots: shown.map((lot) => ({
-          lotId: lot.lotId,
-          ...(lot.card === undefined ? {} : { title: lot.card.title }),
-          status: lot.status,
-          ...(lot.activeWindow === undefined
-            ? {}
-            : { activeWindow: lot.activeWindow }),
-        })),
+        lots: shown.map((lot) => feedItemOf(lot, input.viewer)),
+        ...withMine(mineOf(lots, input.viewer)),
       },
     ],
     keyboard: [

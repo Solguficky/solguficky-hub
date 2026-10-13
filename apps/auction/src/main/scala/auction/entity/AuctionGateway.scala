@@ -105,6 +105,13 @@ trait AuctionGateway {
       command: StartNextLot,
       initiator: Initiator
   ): Future[Either[StartNextLotRejected, LotId]]
+
+  /** Закрытие лота ведущим. Ответ — исход лота, у активного лота финала — после записи его завершения. */
+  def closeLot(
+      auctionId: AuctionId,
+      command: CloseAuctionLot,
+      initiator: Initiator
+  ): Future[Either[CloseAuctionLotRejected, LotEnding]]
 }
 
 object AuctionGateway {
@@ -218,5 +225,12 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[StartNextLotRejected, LotId]] =
         entity(auctionId).ask(AuctionEntity.Next(command, initiator, _))
+
+      def closeLot(
+          auctionId: AuctionId,
+          command: CloseAuctionLot,
+          initiator: Initiator
+      ): Future[Either[CloseAuctionLotRejected, LotEnding]] =
+        entity(auctionId).ask(AuctionEntity.CloseByAuctioneer(command, initiator, _))
     }
 }

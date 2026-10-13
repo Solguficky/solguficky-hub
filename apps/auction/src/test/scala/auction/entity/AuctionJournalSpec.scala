@@ -98,7 +98,34 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
     "keeps the stored form of a snapshot in the final with its lineup and the lots returned to trading" in {
       keepsGolden("auction-snapshot-final", AuctionJournal.storeAuction(inFinal, sequence = 9))
       AuctionJournal.restoreAuction(AuctionJournal.storeAuction(inFinal, sequence = 9)) shouldBe inFinal
-      inFinal.state shouldBe AuctionState.Final(config(), op(4), List(lot), List(lot))
+      inFinal.state shouldBe AuctionState.Final(config(), op(4), List(lot), List(lot), Nil)
+    }
+
+    "keeps the stored form of the end of the final and of a snapshot with a completed lot equal to their golden files" in {
+      val completed = AuctionEnvelope(10, op(10), AuctionEvent.FinalLotCompleted(lot))
+      keepsGolden("final-lot-completed", stored(completed.event, 10))
+      keepsGolden("auction-finished", stored(AuctionEvent.AuctionFinished, 11))
+      val over = Auction.apply(inFinal, completed)
+      over.state shouldBe AuctionState.Final(config(), op(4), List(lot), List(lot), List(lot))
+      keepsGolden("auction-snapshot-final-completed", AuctionJournal.storeAuction(over, sequence = 10))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(over, sequence = 10)) shouldBe over
+      val finished = Auction.apply(over, AuctionEnvelope(11, op(11), AuctionEvent.AuctionFinished))
+      finished.state shouldBe AuctionState.Finished(config(), op(4))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(finished, sequence = 11)) shouldBe finished
+    }
+
+    "reads a snapshot of the final written before lots of the final completed as a final without completed lots" in {
+      val snapshot = legacy("auction-snapshot-final", AuctionJournal.storeAuction(inFinal, sequence = 9))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]) shouldBe inFinal
+    }
+
+    "refuses completed lots of a final in a snapshot of another state and a completed lot never returned to trading" in {
+      val open = AuctionJournal.storeAuction(prebidding, sequence = 4)
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreAuction(open.copy(completed = Some(List(lot.value))))
+      val running = AuctionJournal.storeAuction(inFinal, sequence = 9)
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreAuction(
+        running.copy(completed = Some(List(uuid(12))))
+      )
     }
 
     "restores every state of the break and the final from its snapshot" in {

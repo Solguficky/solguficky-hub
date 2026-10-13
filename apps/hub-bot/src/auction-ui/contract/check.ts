@@ -22,6 +22,7 @@ import type {
   LotPage,
   LotView,
   Money,
+  OwnDisplayName,
   ProxyLimitRefusal,
   RaffleCancellationRefusal,
   RaffleOutcome,
@@ -89,6 +90,11 @@ export type PortCall =
     }
   | {
       port: "auction";
+      method: "getOwnDisplayName";
+      request: Parameters<AuctionMethods["getOwnDisplayName"]>[0];
+    }
+  | {
+      port: "auction";
       method: "placeBid";
       request: Parameters<AuctionMethods["placeBid"]>[0];
     }
@@ -142,6 +148,9 @@ export type ContractAuction = {
   history?: Readonly<Record<string, Readonly<Record<string, LotHistoryPage>>>>;
   // Нет — `GetDisplayNames` отказывает, как Auction отвечает до PER-434.
   names?: Readonly<Record<string, string>>;
+  // Своё имя смотрящего (PER-595). Нет — имя выбрано и не закреплено;
+  // `none` — не выбрано; `unavailable` — чтение отказывает.
+  ownName?: OwnDisplayName | "none" | "unavailable";
   // Ответы команд участника по порядку вызовов. Нет ответа — команду в этом
   // намерении звать не должны, и шпион падает.
   bids?: readonly CommandOutcome<BidRefusal>[];
@@ -828,9 +837,16 @@ const answerRefusedBody = (
   ],
 });
 
-// Принятая команда — свой экран с «К лоту» (PER-473); карточку перечитывает
-// кнопка, поэтому после ответа Auction лот не читается.
-// «К лоту» несёт версию из ответа команды: карточка дочитает лот до неё.
+// Принятая команда — свой экран с «‹ Лот» и «‹ Лоты» (PER-473, PER-595);
+// карточку перечитывает кнопка, поэтому после ответа Auction лот не читается.
+// «‹ Лот» несёт версию из ответа команды: карточка дочитает лот до неё.
+const acceptedFeedRow = [
+  {
+    action: "accepted.feed" as const,
+    callbackData: feedCallback(CONTRACT_AUCTION_ID, 2),
+  },
+];
+
 const acceptedBody = (
   command: "bid" | "proxy",
   amount: number,
@@ -853,6 +869,7 @@ const acceptedBody = (
         callbackData: lotCallback(CONTRACT_LOT.lotId, 2, lotVersion),
       },
     ],
+    acceptedFeedRow,
   ],
 });
 
@@ -963,6 +980,14 @@ const chooseCall = (
 
 const LOT_CALL = getLotCall(CONTRACT_LOT.lotId);
 
+// Имя спрашивается до подтверждения (PER-595): свое имя смотрящего в
+// аукционе лота.
+const OWN_NAME_CALL: PortCall = {
+  port: "auction",
+  method: "getOwnDisplayName",
+  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
+};
+
 // Пояснение автоставки (PER-517): чтение и отметка — у Notifications.
 const explainerCall = (method: "seen" | "markSeen"): PortCall => ({
   port: "proxyExplainer",
@@ -1000,7 +1025,38 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
       page: 2,
     }),
     auction: AUCTION,
-    auctionCalls: [LOT_CALL],
+    auctionCalls: [LOT_CALL, OWN_NAME_CALL],
+    body: confirmBody("bid", 125000),
+  },
+  // Первая ставка без имени: экран имени до подтверждения, и подтверждение
+  // после выбора будет одно (PER-595).
+  {
+    intent: "bid: name asked before the confirmation",
+    callbackData: callback({
+      kind: "confirm",
+      command: "bid",
+      lotId: CONTRACT_LOT.lotId,
+      amount: 125000,
+      page: 2,
+    }),
+    from: USER_WITH_USERNAME,
+    auction: { ...AUCTION, ownName: "none" },
+    auctionCalls: [LOT_CALL, OWN_NAME_CALL],
+    body: nameChoiceBody(125000, { username: "owl_fan" }),
+  },
+  // Чтение имени отказало: ставка не прячется, подтверждение показывается, а
+  // без имени Auction отклонит её, и выбор имени придёт после «Да».
+  {
+    intent: "bid: name read refused, confirmation shown",
+    callbackData: callback({
+      kind: "confirm",
+      command: "bid",
+      lotId: CONTRACT_LOT.lotId,
+      amount: 125000,
+      page: 2,
+    }),
+    auction: { ...AUCTION, ownName: "unavailable" },
+    auctionCalls: [LOT_CALL, OWN_NAME_CALL],
     body: confirmBody("bid", 125000),
   },
   // «Да»: принятая ставка — экран «принята» с «К лоту», а не карточка.
@@ -1026,6 +1082,7 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
             callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
           },
         ],
+        acceptedFeedRow,
       ],
     },
   },
@@ -1141,6 +1198,27 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     ],
     body: confirmBody("bid", 130000),
   },
+  // Имя закрепила ставка из другого окна, пока висел экран выбора: оно уже
+  // есть, и человек идёт к подтверждению, а не к отказу.
+  {
+    intent: "name: frozen meanwhile, confirmation shown",
+    callbackData: callback({
+      kind: "username",
+      lotId: CONTRACT_LOT.lotId,
+      page: 2,
+      pending: pending("bid", 130000),
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "refused", refusal: "name-frozen" }],
+    },
+    auctionCalls: [
+      LOT_CALL,
+      chooseCall({ kind: "username", username: "owl_fan" }),
+    ],
+    body: confirmBody("bid", 130000),
+  },
   {
     intent: "name: alias taken",
     callbackData: questionCallback("alias", pending("bid", 130000)),
@@ -1169,7 +1247,7 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     callbackData: questionCallback("bid"),
     reply: { text: "1 300 ₽" },
     auction: AUCTION,
-    auctionCalls: [LOT_CALL],
+    auctionCalls: [LOT_CALL, OWN_NAME_CALL],
     body: confirmBody("bid", 130000),
   },
   // Сумма ниже порога и ответ лидера — экран отказа, без «Да».
@@ -1311,7 +1389,7 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     callbackData: questionCallback("proxy"),
     reply: { text: "2000" },
     auction: AUCTION,
-    auctionCalls: [LOT_CALL],
+    auctionCalls: [LOT_CALL, OWN_NAME_CALL],
     body: confirmBody("proxy", 200000),
   },
   {
@@ -1435,18 +1513,12 @@ const scheduledWithFollow = (following: boolean): AuctionScreenBody => ({
   ],
 });
 
-// Проданный лот: «Ставки», «Убрать», только пока отмечен, и возврат.
-const soldWithFollow = (following: boolean): AuctionScreenBody => {
-  const [history, back] = settledKeyboard(SOLD_LOT.lotId, 0);
-  return {
-    blocks: [{ ...SOLD_BLOCK, following }],
-    keyboard: [
-      ...(history === undefined ? [] : [history]),
-      ...(following ? [followRow(SOLD_LOT.lotId, 0, true)] : []),
-      ...(back === undefined ? [] : [back]),
-    ],
-  };
-};
+// Проданный лот: «Ставки» и возврат; кнопки избранного у него нет, даже
+// отмеченного (PER-595).
+const soldWithFollow = (following: boolean): AuctionScreenBody => ({
+  blocks: [{ ...SOLD_BLOCK, following }],
+  keyboard: settledKeyboard(SOLD_LOT.lotId, 0),
+});
 
 const favoritesCallback = (page: number, auctionId?: string) =>
   callback({
@@ -1471,6 +1543,14 @@ const FAVORITE_ITEMS = [
 const FAVORITE_CASES: readonly AuctionContractCase[] = [
   {
     intent: "lot: in favorites",
+    callbackData: lotCallback(SCHEDULED_LOT.lotId, 0),
+    auction: { ...AUCTION, followed: [SCHEDULED_LOT.lotId] },
+    auctionCalls: [getLotCall(SCHEDULED_LOT.lotId), listFollowedCall],
+    body: scheduledWithFollow(true),
+  },
+  // Проданный лот из избранного: итог известен, кнопки нет (PER-595).
+  {
+    intent: "lot: sold, in favorites",
     callbackData: lotCallback(SOLD_LOT.lotId, 0),
     auction: { ...AUCTION, followed: [SOLD_LOT.lotId] },
     auctionCalls: [
@@ -1564,25 +1644,24 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
       ],
     },
   },
-  // Снятая отметка закрытого лота: кнопки больше нет, вернуть её нечем.
+  // Снятая отметка: карточка с кнопкой «Добавить в избранное».
   {
     intent: "unfollow",
     callbackData: callback({
       kind: "unfollow",
-      lotId: SOLD_LOT.lotId,
+      lotId: SCHEDULED_LOT.lotId,
       page: 0,
     }),
     auction: {
       ...AUCTION,
-      followed: [SOLD_LOT.lotId],
+      followed: [SCHEDULED_LOT.lotId],
       follows: [{ kind: "done", following: false }],
     },
     auctionCalls: [
-      getLotCall(SOLD_LOT.lotId),
-      followCall("unfollowLot", SOLD_LOT.lotId),
-      namesCall(WINNER_ID),
+      getLotCall(SCHEDULED_LOT.lotId),
+      followCall("unfollowLot", SCHEDULED_LOT.lotId),
     ],
-    body: soldWithFollow(false),
+    body: scheduledWithFollow(false),
   },
   // Список из команды бота аукциона: возврата у тела нет, это корень.
   // Лот, которого Auction не знает, выпадает до нарезки страниц.
@@ -1601,7 +1680,13 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
     ],
     body: {
       blocks: [
-        { kind: "favorites", page: 0, pageCount: 1, lots: FAVORITE_ITEMS },
+        {
+          kind: "favorites",
+          page: 0,
+          pageCount: 1,
+          lots: FAVORITE_ITEMS,
+          total: 2,
+        },
       ],
       keyboard: [openFavoriteRow(UNSOLD_LOT), openFavoriteRow(SOLD_LOT)],
     },
@@ -1618,7 +1703,13 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
     ],
     body: {
       blocks: [
-        { kind: "favorites", page: 0, pageCount: 1, lots: FAVORITE_ITEMS },
+        {
+          kind: "favorites",
+          page: 0,
+          pageCount: 1,
+          lots: FAVORITE_ITEMS,
+          total: 2,
+        },
       ],
       keyboard: [
         openFavoriteRow(UNSOLD_LOT),
@@ -1638,7 +1729,9 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
     auction: { ...AUCTION, followed: [] },
     auctionCalls: [listFollowedCall],
     body: {
-      blocks: [{ kind: "favorites", page: 0, pageCount: 1, lots: [] }],
+      blocks: [
+        { kind: "favorites", page: 0, pageCount: 1, lots: [], total: 0 },
+      ],
       keyboard: [],
     },
   },
@@ -1729,6 +1822,7 @@ const liveBody = (input: {
       fixedStep: rub(50),
       status: input.lot.status,
       participantName: input.participantName,
+      ...(input.button === undefined ? { standing: "leader" as const } : {}),
       live: { page: 2 },
       ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
     },
@@ -2346,6 +2440,263 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
+// Имя в аукционе из «Настроек» и положение смотрящего на лоте (PER-595).
+const nameCallback = (
+  kind: "name" | "name-username" | "name-ask-alias",
+): string => callback({ kind, auctionId: CONTRACT_AUCTION_ID });
+
+const nameQuestionCallback = callback({
+  kind: "name-question",
+  auctionId: CONTRACT_AUCTION_ID,
+  addressee: CONTRACT_USER.telegramUserId,
+});
+
+const nameSettingsBody = (
+  name: { text: string; frozen: boolean } | undefined,
+  username?: string,
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "name-settings",
+      auctionId: CONTRACT_AUCTION_ID,
+      ...(name === undefined ? {} : { name }),
+      ...(username === undefined ? {} : { username }),
+    },
+  ],
+  keyboard:
+    name?.frozen === true
+      ? []
+      : [
+          ...(username === undefined
+            ? []
+            : [
+                [
+                  {
+                    action: "name.username" as const,
+                    callbackData: nameCallback("name-username"),
+                  },
+                ],
+              ]),
+          [
+            {
+              action: "name.alias",
+              callbackData: nameCallback("name-ask-alias"),
+            },
+          ],
+        ],
+});
+
+// Смотрящий ведёт лот контракта: лента отмечает его своим.
+const FEED_LED_BY_VIEWER: ContractAuction = {
+  ...LED_BY_VIEWER,
+  pages: { "": { lots: [LOT_LED_BY_VIEWER], nextPageToken: "" } },
+};
+
+const LED_ITEM = {
+  lotId: LOT_LED_BY_VIEWER.lotId,
+  title: "Кружка с совой",
+  status: LOT_LED_BY_VIEWER.status,
+  standing: "leader" as const,
+};
+
+// Плакат куплен смотрящим.
+const LOT_WON_BY_VIEWER: LotView = {
+  ...SOLD_LOT,
+  status: {
+    kind: "sold",
+    winnerId: CONTRACT_VIEWER.identityId,
+    price: rub(3000),
+  },
+};
+
+const PER595_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "name settings: not chosen",
+    callbackData: nameCallback("name"),
+    from: USER_WITH_USERNAME,
+    auction: { ...AUCTION, ownName: "none" },
+    auctionCalls: [OWN_NAME_CALL],
+    body: nameSettingsBody(undefined, "owl_fan"),
+  },
+  {
+    intent: "name settings: chosen, not frozen",
+    callbackData: nameCallback("name"),
+    auction: { ...AUCTION, ownName: { text: "Сова*", frozen: false } },
+    auctionCalls: [OWN_NAME_CALL],
+    body: nameSettingsBody({ text: "Сова*", frozen: false }),
+  },
+  // После первой ставки экран только называет имя: выбора нет.
+  {
+    intent: "name settings: frozen",
+    callbackData: nameCallback("name"),
+    from: USER_WITH_USERNAME,
+    auction: { ...AUCTION, ownName: { text: "Сова*", frozen: true } },
+    auctionCalls: [OWN_NAME_CALL],
+    body: nameSettingsBody({ text: "Сова*", frozen: true }),
+  },
+  {
+    intent: "name settings: username",
+    callbackData: nameCallback("name-username"),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+    },
+    auctionCalls: [chooseCall({ kind: "username", username: "owl_fan" })],
+    body: nameSettingsBody({ text: "@owl_fan", frozen: false }, "owl_fan"),
+  },
+  // Повтор того же ника после первой ставки Auction принимает: экран
+  // показывает имя закреплённым, без выбора.
+  {
+    intent: "name settings: same name after the freeze",
+    callbackData: nameCallback("name-username"),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "accepted", name: "@owl_fan", frozen: true }],
+    },
+    auctionCalls: [chooseCall({ kind: "username", username: "owl_fan" })],
+    body: nameSettingsBody({ text: "@owl_fan", frozen: true }),
+  },
+  // Имя закрепила ставка из другого окна: экран перечитывает и называет его.
+  {
+    intent: "name settings: frozen meanwhile",
+    callbackData: nameCallback("name-username"),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "refused", refusal: "name-frozen" }],
+      ownName: { text: "Сова*", frozen: true },
+    },
+    auctionCalls: [
+      chooseCall({ kind: "username", username: "owl_fan" }),
+      OWN_NAME_CALL,
+    ],
+    body: nameSettingsBody({ text: "Сова*", frozen: true }),
+  },
+  {
+    intent: "name settings: ask alias",
+    callbackData: nameCallback("name-ask-alias"),
+    auction: AUCTION,
+    auctionCalls: [],
+    body: {
+      blocks: [{ kind: "name-question", auctionId: CONTRACT_AUCTION_ID }],
+      keyboard: [
+        [{ action: "question.cancel", callbackData: nameQuestionCallback }],
+      ],
+    },
+  },
+  {
+    intent: "name settings: alias taken",
+    callbackData: nameQuestionCallback,
+    reply: { text: "Сыч" },
+    auction: {
+      ...AUCTION,
+      displayNames: [{ kind: "refused", refusal: "alias-taken" }],
+    },
+    auctionCalls: [chooseCall({ kind: "alias", alias: "Сыч" })],
+    body: {
+      blocks: [
+        {
+          kind: "name-answer-refused",
+          auctionId: CONTRACT_AUCTION_ID,
+          refusal: "alias-taken",
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "answer.retry",
+            callbackData: nameCallback("name-ask-alias"),
+          },
+        ],
+        [{ action: "name.return", callbackData: nameCallback("name") }],
+      ],
+    },
+  },
+  // Лента отмечает свои лоты сводкой (PER-595).
+  {
+    intent: "feed: the viewer leads",
+    callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
+    auction: FEED_LED_BY_VIEWER,
+    auctionCalls: feedCalls(CONTRACT_AUCTION_ID, [""]),
+    body: {
+      blocks: [
+        {
+          kind: "feed",
+          auctionId: CONTRACT_AUCTION_ID,
+          page: 0,
+          pageCount: 1,
+          lots: [LED_ITEM],
+          mine: [LED_ITEM],
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "feed.open-lot",
+            lotId: LOT_LED_BY_VIEWER.lotId,
+            callbackData: lotCallback(LOT_LED_BY_VIEWER.lotId, 0),
+          },
+        ],
+      ],
+    },
+  },
+  // Покупатель видит «твой лот» на карточке, а кнопки избранного у
+  // проданного лота нет.
+  {
+    intent: "lot: sold to the viewer",
+    callbackData: lotCallback(LOT_WON_BY_VIEWER.lotId, 0),
+    auction: {
+      ...AUCTION,
+      lots: [LOT_WON_BY_VIEWER],
+      names: { ...NAMES, [CONTRACT_VIEWER.identityId]: "@me" },
+      followed: [LOT_WON_BY_VIEWER.lotId],
+    },
+    auctionCalls: [
+      getLotCall(LOT_WON_BY_VIEWER.lotId),
+      namesCall(CONTRACT_VIEWER.identityId),
+      listFollowedCall,
+    ],
+    body: {
+      blocks: [
+        {
+          ...SOLD_BLOCK,
+          status: LOT_WON_BY_VIEWER.status,
+          participantName: "@me",
+          standing: "won",
+          following: true,
+        },
+      ],
+      keyboard: settledKeyboard(LOT_WON_BY_VIEWER.lotId, 0),
+    },
+  },
+  // У бота с избранным экран принятой ставки говорит, что лот уже там.
+  {
+    intent: "bid: accepted with favorites",
+    callbackData: commitCallback("bid", 130000),
+    auction: {
+      ...AUCTION,
+      followed: [],
+      bids: [{ kind: "accepted", lotVersion: 4 }],
+    },
+    auctionCalls: [LOT_CALL, bidCall(130000)],
+    body: (() => {
+      const body = acceptedBody("bid", 130000, 4);
+      const [accepted] = body.blocks;
+      return {
+        ...body,
+        blocks: [
+          {
+            ...accepted,
+            favorites: true,
+          } as AuctionScreenBody["blocks"][number],
+        ],
+      };
+    })(),
+  },
+];
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...ROOT_CASES,
   {
@@ -2645,6 +2996,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...FINAL_CASES,
   ...FAVORITE_CASES,
   ...RAFFLE_CASES,
+  ...PER595_CASES,
 ];
 
 export function spyPorts(
@@ -2723,6 +3075,13 @@ export function spyPorts(
             return name === undefined ? [] : [[id, name]];
           }),
         );
+      },
+      async getOwnDisplayName(request) {
+        calls.push({ port: "auction", method: "getOwnDisplayName", request });
+        const { ownName } = snapshot;
+        if (ownName === "unavailable") throw new Error("own name unavailable");
+        if (ownName === "none") return undefined;
+        return ownName ?? { text: "@contract", frozen: false };
       },
       async placeBid(request) {
         calls.push({ port: "auction", method: "placeBid", request });

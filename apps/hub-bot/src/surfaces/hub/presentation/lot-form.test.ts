@@ -167,6 +167,7 @@ function fakeAuction(
       const lot = lots.get(lotId);
       return lot === undefined ? { kind: "not-found" } : { kind: "ok", lot };
     },
+    currentAuction: async () => ({ kind: "ok" as const }),
     screenPorts() {
       return {
         auction: {
@@ -181,6 +182,7 @@ function fakeAuction(
             nextPageToken: "",
           }),
           listLotHistory: async () => ({ entries: [], nextPageToken: "" }),
+          getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
           getDisplayNames: async () => ({}),
           placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
           setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),

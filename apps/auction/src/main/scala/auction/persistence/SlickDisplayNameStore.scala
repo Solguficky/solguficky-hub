@@ -6,6 +6,7 @@ import auction.naming.Alias
 import auction.naming.ChooseResult
 import auction.naming.ChosenName
 import auction.naming.DisplayNameStore
+import auction.naming.StoredName
 import auction.naming.TelegramUsername
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.persistence.jdbc.db.SlickExtension
@@ -45,7 +46,7 @@ final class SlickDisplayNameStore(database: Database)(using ExecutionContext) ex
           case _ =>
             select(auction, Set(participant)).flatMap { rows =>
               rows.get(participant) match {
-                case Some(current) => DBIO.successful(ChooseResult.Frozen(current))
+                case Some(current) => DBIO.successful(ChooseResult.Frozen(current.name))
                 case None =>
                   DBIO.failed(
                     IllegalStateException(
@@ -69,18 +70,18 @@ final class SlickDisplayNameStore(database: Database)(using ExecutionContext) ex
       )
       .map(_ == 1)
 
-  def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, ChosenName]] =
+  def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, StoredName]] =
     if (participants.isEmpty) Future.successful(Map.empty) else database.run(select(auction, participants))
 
   // UUID приходят типом, а не текстом вызывающего, поэтому литерал массива собирается из их канонической формы.
   private def select(auction: AuctionId, participants: Set[ParticipantId]) = {
     val ids = participants.map(_.value.toString).mkString("{", ",", "}")
-    sql"""SELECT participant_id::text, telegram_username, alias, alias_key FROM auction_display_name
+    sql"""SELECT participant_id::text, telegram_username, alias, alias_key, frozen FROM auction_display_name
           WHERE auction_id = ${auction.value.toString}::uuid AND participant_id = ANY($ids::uuid[])"""
-      .as[(String, Option[String], Option[String], Option[String])]
-      .map(_.map { (id, username, alias, key) =>
+      .as[(String, Option[String], Option[String], Option[String], Boolean)]
+      .map(_.map { (id, username, alias, key, frozen) =>
         val participant = ParticipantId(UUID.fromString(id))
-        participant -> restored(auction, participant, username, alias, key)
+        participant -> StoredName(restored(auction, participant, username, alias, key), frozen)
       }.toMap)
   }
 
