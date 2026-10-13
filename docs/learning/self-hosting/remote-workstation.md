@@ -78,6 +78,24 @@ tmux держит только интерактивную сессию. Долг
 
 Через консоль под `ops` временный публичный ключ дописывается в `authorized_keys` разработчика, с чужой машины выполняется вход, сессия tmux на месте. Уборку делает сам playbook. `authorized_key` с `exclusive: true` при следующем прогоне `--tags dev` оставляет только ключи из репозитория, и `--diff` показывает снятую строку. Забудешь прогнать — `verify.yml` упадёт на «на хосте лишний ключ». В лаборатории процедура прошла целиком, живой прогон — [PER-474](https://linear.app/anticnvm/issue/per-474).
 
+### Токен агента: как git доказывает право записи
+
+У агента своя учётка `agent-solguficky` и своё дерево, а работу он отдаёт push'ем ветки на GitHub ([memory-accounting.md](memory-accounting.md#чья-это-сессия-machinectl-shell-против-sudo--u) — как в эту учётку входят). Для push нужен секрет. По HTTPS GitHub паролей не принимает, вместо пароля идёт токен.
+
+**Fine-grained personal access token** — токен, который выпускает человек, но с явной областью. В нём задаются владелец ресурса (здесь организация `Solguficky`), список репозиториев (только `solguficky-hub`), набор прав (Contents и Pull requests на запись, Workflows — нет) и срок жизни. Организация может требовать одобрения таких токенов. Действует токен от имени выпустившего: коммиты и pull request'ы агента — ваши. Аналог в .NET-мире — client secret приложения в Entra ID с ограниченными scope'ами и сроком, а не пароль администратора. Свойства токена описаны по документации GitHub: живым токеном в этом разборе ничего не проверялось.
+
+**Credential helper** — программа, которую git спрашивает о секрете для адреса, прежде чем спросить человека. Протокол — строки `ключ=значение` на stdin. После успешного запроса git отдаёт секрет helper'у на хранение (`approve`), а после отказа сервера просит его стереть (`reject`). Helper `store` хранит секреты в `~/.git-credentials` **открытым текстом**, по строке на адрес. Его защищают только права файла и закрытый home агента: home 0700 закрывает файл и от разработчика. Опыт с git 2.53 под временным `HOME`:
+
+```text
+approve u/p1           ->  600 ~/.git-credentials:  https://u:p1@github.com
+push, неверный токен   ->  remote: Invalid username or token. … Authentication failed
+                           ~/.git-credentials после: пусто  (reject стёр запись)
+```
+
+Второй вывод — ловушка с обратной стороны. Ошибся при вставке токена — git сам стёр неверную запись, и следующий push спросит заново, а не будет вечно отправлять плохой секрет.
+
+**Чтение не доказывает права на запись.** `solguficky-hub` публичный, поэтому `git ls-remote` и `git fetch` проходят вовсе без токена. Агент мог бы месяц тянуть `develop` и только на первом push узнать, что токен не работает. Проверка права записи — `git push --dry-run origin HEAD:refs/heads/agent-push-check`. Он ходит в ту же точку приёма push, что и настоящий push, и требует учётных данных: без них — `fatal: unable to get password from user`. Ветку при этом он не создаёт. Сохраняет ли git токен в store после успешного `--dry-run`, проверь сам, когда будет токен: `git push --dry-run …`, затем `cat ~/.git-credentials` под агентом.
+
 ## Урок
 
 - Учётка — единица доверия: всё, что работает под ней, видит одно и то же. Раскладка учёток — первое решение рабочего места, а не последнее.
@@ -85,6 +103,9 @@ tmux держит только интерактивную сессию. Долг
 - Устойчивость сессии держится на разнесении процессов: интерфейс, который можно потерять, и сервер, который живёт сам. Так устроены и tmux, и remote server редактора. Проверяется это в обе стороны: сервер на хосте есть, и после потери клиента он на месте.
 - Смену ключа хоста не принимают на веру. Его сверяют с источником, которому уже доверяют, и только после совпадения удаляют старую запись.
 - Восстановление проектируется вместе с уборкой. Ручной ключ, который никто не снимет, — постоянная дыра. Декларация, которая сама убирает лишнее, превращает аварийную правку во временную.
+- Секрет для автоматического процесса выпускается под его задачу: один репозиторий, нужные права, срок. Широкий токен «на всё» превращает компрометацию агента в компрометацию владельца.
+- Право проверяется тем действием, ради которого его выдавали. На публичном ресурсе успешное чтение ничего не говорит о записи; пробу записи делает `--dry-run`, который не меняет состояние.
+- Секрет открытым текстом защищён ровно настолько, насколько закрыт его каталог. Поэтому место хранения выбирают вместе с правами учётки, а не отдельно от них.
 
 ## Почему так, а не иначе
 
@@ -95,6 +116,15 @@ tmux держит только интерактивную сессию. Долг
 - **Агенты в панели редактора.** Удобно, но агент умирает вместе с remote server редактора и делит его жизненный цикл.
 - **herdr вместо tmux.** Даёт статусы агентов, но это отдельный бинарь с ручным закреплением версии, а tmux приходит из apt вместе с обновлениями безопасности. Отложен владельцем.
 - **Пароль у `dev-solguficky` для консоли.** Дал бы ещё один путь входа. Консоль уже есть у `ops`, а через неё и в `dev-solguficky`.
+
+Для секрета, которым агент пушит:
+
+- **Classic personal access token.** Права задаются грубо, областью вроде `repo`, на все репозитории владельца. Токен агента получил бы и приватный ops-репозиторий.
+- **Deploy key с правом записи.** Узок, один репозиторий, но это SSH-ключ без срока жизни и без привязки к человеку ([autodeploy.md](autodeploy.md)). Pull request им не открыть: deploy key не ходит в API GitHub, а агенту нужен `gh pr create`.
+- **SSH-ключ агента в аккаунте владельца.** Даёт доступ ко всем репозиториям владельца, как classic token, и срока жизни не имеет.
+- **Helper `cache` вместо `store`.** Держит секрет в памяти процесса-демона с таймаутом и стирает его по истечении. Тогда агент спрашивал бы токен после каждого перерыва — а агент работает без человека за клавиатурой.
+- **libsecret или Git Credential Manager.** Шифруют хранилище, но им нужен связка ключей рабочего стола или отдельный бинарь. На безголовом хосте разблокировать связку некому, а шифр с ключом рядом защищает не больше, чем права файла.
+- **Выбрано:** fine-grained token на один репозиторий с правами Contents и Pull requests и сроком до 90 дней, helper `store` в закрытом home агента. Цена — секрет открытым текстом на диске и ручная ротация по сроку.
 
 ## Схема
 
@@ -134,6 +164,29 @@ flowchart LR
 
 Закрылось окно Zed — рвётся всё слева от сервера tmux, а справа всё продолжает работать.
 
+Откуда git берёт токен при push:
+
+```mermaid
+sequenceDiagram
+  participant G as git push
+  participant H as helper store (~/.git-credentials)
+  participant U as человек
+  participant S as github.com
+  G->>H: get для https://github.com
+  alt запись есть
+    H-->>G: username и токен
+  else записи нет
+    G->>U: Username / Password
+    U-->>G: логин и токен
+  end
+  G->>S: запрос с токеном
+  alt 200
+    G->>H: approve — сохранить
+  else 401
+    G->>H: reject — стереть
+  end
+```
+
 ## Первоисточники
 
 - [RFC-010, «Доверительные зоны и аккаунты»](../../rfcs/RFC-010-remote-development-and-self-hosting-platform.md#доверительные-зоны-и-аккаунты) — какие учётки предполагались и что каждой запрещено; решения PER-257 — баннер в шапке того же RFC.
@@ -145,6 +198,11 @@ flowchart LR
 - [tmux(1)](https://man7.org/linux/man-pages/man1/tmux.1.html) — клиент, сервер и сокет в `/tmp/tmux-<uid>/`.
 - [logind.conf(5)](https://www.freedesktop.org/software/systemd/man/latest/logind.conf.html) — `KillUserProcesses` и чем он грозит tmux.
 - [loginctl(1), enable-linger](https://www.freedesktop.org/software/systemd/man/latest/loginctl.html) — почему user units без linger не переживают выход.
+- [gitcredentials(7)](https://git-scm.com/docs/gitcredentials) — порядок «helper, потом человек», протокол helper'а и действия `get`, `store`, `erase`.
+- [git-credential-store(1)](https://git-scm.com/docs/git-credential-store) — формат `~/.git-credentials` и предупреждение, что секрет лежит открытым текстом.
+- [git-credential-cache(1)](https://git-scm.com/docs/git-credential-cache) — хранение в памяти с таймаутом, отвергнутый вариант.
+- [GitHub: Managing your personal access tokens](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens) — fine-grained против classic: владелец ресурса, выбор репозиториев, права, срок.
+- [GitHub: Setting a personal access token policy for your organization](https://docs.github.com/en/organizations/managing-programmatic-access-to-your-organization/setting-a-personal-access-token-policy-for-your-organization) — одобрение fine-grained токенов организацией.
 
 ## Проверь себя
 
@@ -154,3 +212,6 @@ flowchart LR
 4. **Прочитает ли `dev-solguficky` kubeconfig `ops`?** На хосте `sudo runuser -u dev-solguficky -- test -r /home/ops/.kube/test.yaml; echo $?` даёт `1`. Контроль: `sudo runuser -u dev-solguficky -- test -r /home/dev-solguficky/src/solguficky-hub/.git/HEAD; echo $?` — `0`.
 5. **Где сейчас работает редактор?** Пока Zed открыт: `pgrep -u dev-solguficky -af zed-remote-server | cut -c1-100` на хосте показывает сервер и `proxy`.
 6. **Убьёт ли logind tmux на выходе?** `busctl get-property org.freedesktop.login1 /org/freedesktop/login1 org.freedesktop.login1.Manager KillUserProcesses` — `b false`. Где лежит сокет tmux, проверь сам: `ls -l /tmp/tmux-$(id -u)/` под `dev-solguficky`.
+7. **Доказывает ли чтение публичного репозитория, что токен годен?** `GIT_TERMINAL_PROMPT=0 git ls-remote https://github.com/Solguficky/solguficky-hub.git HEAD` проходит без всяких учётных данных. А `GIT_TERMINAL_PROMPT=0 git push --dry-run origin HEAD:refs/heads/agent-push-check` в клоне без токена отвечает `fatal: unable to get password from user`.
+8. **Где и как лежит токен агента?** Под агентом: `stat -c '%a %U' ~/.git-credentials` — `600 agent-solguficky`; строка в файле вида `https://<логин>:<токен>@github.com`. Под разработчиком: `cat /home/agent-solguficky/.git-credentials` — `Permission denied`.
+9. **Что git делает с неверным токеном?** Под временным `HOME` положи в `~/.git-credentials` строку с выдуманным токеном и выполни `git -c credential.helper=store push --dry-run …`. Ответ: `Invalid username or token`, а файл после этого пуст.
