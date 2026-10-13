@@ -48,11 +48,11 @@ public class ReminderTaskTests
         await scenario.Meetup.ApplySchedule(startsAt);
 
         await using var source = NpgsqlDataSource.Create(scenario.ConnectionString);
-        var store = new ReminderTaskStore(source, new ReminderTelemetry());
+        var store = new ReminderDueStore(source);
         var dueAt = startsAt - Lead;
 
-        (await store.OldestDueAgeSeconds(dueAt.AddSeconds(-1), TestContext.Current.CancellationToken)).ShouldBe(0);
-        (await store.OldestDueAgeSeconds(dueAt.AddMinutes(9), TestContext.Current.CancellationToken))
+        (await store.OldestDueAgeSeconds(dueAt.AddSeconds(-1), TestContext.Current.CancellationToken)).MeetupSeconds.ShouldBe(0);
+        (await store.OldestDueAgeSeconds(dueAt.AddMinutes(9), TestContext.Current.CancellationToken)).MeetupSeconds
             .ShouldBe(9 * 60, tolerance: 0.01);
     }
 

@@ -1,5 +1,6 @@
 using Dapper;
 using Google.Protobuf;
+using Notifications.Auction;
 using Notifications.Domain;
 using Notifications.Facts;
 using Notifications.Replica;
@@ -66,6 +67,23 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             AND person.rights && @Rights
             AND person.identity_id IS DISTINCT FROM @Performer
         ORDER BY person.identity_id;
+        """;
+
+    // Следящие за лотом с живой отметкой, кроме лидера и заблокированных
+    // (ADR-063, п.3). Категории у повода нет, поэтому настройки не читаются;
+    // права не фильтруют — отметку человек ставил себе сам. Круг решает только
+    // бот доставки.
+    private const string FollowersSql = """
+        SELECT follower.identity_id AS IdentityId,
+               TRUE AS Enabled,
+               CASE WHEN person.circle = 'guest' THEN 'auction' ELSE 'hub' END AS DeliverySurface
+        FROM lot_favorite AS follower
+        JOIN identity_replica AS person ON person.identity_id = follower.identity_id
+        WHERE follower.lot_id = @LotId
+            AND follower.removed_at IS NULL
+            AND NOT person.blocked
+            AND person.identity_id IS DISTINCT FROM @Leader
+        ORDER BY follower.identity_id;
         """;
 
     // Реплика уже обновлена этой же транзакцией, поэтому здесь её последнее
@@ -616,6 +634,61 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             (id, recipient) => NotificationFacts.MeetupReminder(id, recipient, taskId, card, now, startsAt),
             now,
             startsAt,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Разворачивает сработавшее напоминание о лоте на следящих за ним и пишет
+    /// факты в транзакции <paramref name="work" /> — той же, что переводит
+    /// задание в «сработало».
+    /// </summary>
+    /// <param name="deadline">Дедлайн лота — срок годности факта.</param>
+    /// <returns>
+    /// Число фактов; <c>null</c> — реплика ушла вперёд и задание исполнять
+    /// нельзя. Тогда вызывающий откатывает захват: оставленное в «сработало»
+    /// задание погасило бы напоминание по новому дедлайну навсегда.
+    /// </returns>
+    /// <remarks>
+    /// Перед разворотом срабатывание сверяет реплику (ADR-063, п.3): по лоту в
+    /// конечном положении, удержанному для финала, без дедлайна или с уже
+    /// прошедшим дедлайном фактов не будет. Аудитория — живые отметки на момент
+    /// срабатывания; лидеру напоминание не шлётся. Повтор срабатывания до сюда
+    /// не доходит: его отсекает захват задания, а дошедший всё равно упрётся в
+    /// ключ повода.
+    /// </remarks>
+    internal static async Task<FactCount?> AddLotReminder(
+        UnitOfWork work,
+        Guid taskId,
+        Guid lotId,
+        DateTimeOffset deadline,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var replica = await LotReplicaStore.Read(work, lotId, cancellationToken);
+
+        if (replica is null
+            || replica.Deadline is not { } current
+            || current != deadline
+            || deadline <= now
+            || replica.Status is LotStatus.Sold or LotStatus.Unsold or LotStatus.Withdrawn or LotStatus.Held)
+        {
+            // Не «нет получателей», а «исполнять нечего»: различие несёт
+            // вызывающий — от него зависит, останется задание сработавшим.
+            return null;
+        }
+
+        var audience = await work.Query<AudienceRow>(
+            FollowersSql,
+            new { LotId = lotId, Leader = replica.Leader },
+            cancellationToken);
+
+        return await Insert(
+            work,
+            new FactCause(NotificationFacts.LotReminderType, NotificationFacts.ReminderTaskCause, taskId.ToString(), null, null),
+            audience,
+            (id, recipient) => NotificationFacts.LotReminder(id, recipient, taskId, lotId, now, deadline),
+            now,
+            deadline,
             cancellationToken);
     }
 

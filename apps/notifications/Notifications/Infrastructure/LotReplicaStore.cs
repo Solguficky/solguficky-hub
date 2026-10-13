@@ -1,4 +1,6 @@
+using Dapper;
 using Notifications.Auction;
+using Npgsql;
 
 namespace Notifications.Infrastructure;
 
@@ -60,9 +62,22 @@ public static class LotReplicaStore
     public static async Task<LotReplica?> Read(UnitOfWork work, Guid lotId, CancellationToken cancellationToken)
     {
         var rows = await work.Query<Row>(ReadSql, new { LotId = lotId }, cancellationToken);
-        return rows.Select(row => new LotReplica(row.LotId, row.Version, FromStorage(row.Status),
-            Utc(row.Deadline), row.Leader, Utc(row.TerminalAt))).SingleOrDefault();
+        return rows.Select(Map).SingleOrDefault();
     }
+
+    /// <summary>
+    /// Снимок вне чужой транзакции: грин напоминания читает реплику на своём
+    /// ходу, а не в транзакции применения события.
+    /// </summary>
+    public static async Task<LotReplica?> Read(NpgsqlDataSource source, Guid lotId, CancellationToken cancellationToken)
+    {
+        await using var connection = await source.OpenConnectionAsync(cancellationToken);
+        var rows = await connection.QueryAsync<Row>(ReadSql, new { LotId = lotId });
+        return rows.Select(Map).SingleOrDefault();
+    }
+
+    private static LotReplica Map(Row row) =>
+        new(row.LotId, row.Version, FromStorage(row.Status), Utc(row.Deadline), row.Leader, Utc(row.TerminalAt));
 
     public static string Storage(LotStatus status) => status switch
     {

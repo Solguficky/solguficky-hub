@@ -118,6 +118,11 @@ message Notification {
 
     // The live final of an auction started.
     AuctionFinalStarted auction_final_started = 24;
+
+    // The deadline of a followed lot is an hour away. One fact per recipient who
+    // follows the lot, does not lead it and is not blocked. No category governs
+    // it: unfollowing the lot is how it is turned off.
+    LotReminder lot_reminder = 25;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -234,6 +239,14 @@ message MeetupMaterial {
 
 message MeetupReminder {
   MeetupCard meetup = 1;
+}
+
+// The deadline of a lot the recipient follows is an hour away. Nothing else is
+// carried: the price, the exact deadline and the title are read by the channel
+// from Auction by lot_id, as for the other lot types.
+message LotReminder {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
 }
 
 message OrganizerMessage {

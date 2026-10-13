@@ -219,6 +219,17 @@ describe("decodeNotification", () => {
     });
   });
 
+  it("decodes a favorite-lot reminder with its lot", () => {
+    expect(
+      decodeNotification(fact({ case: "lotReminder", value: { lotId } })),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "lot-reminder", lotId },
+      },
+    });
+  });
+
   // Общий поток несёт ветки бота хаба и сюда: это не отказ.
   it("hands a meetup branch over as another channel's", () => {
     expect(

@@ -31,6 +31,9 @@ public static class NotificationFacts
     public const string MeetupReminderType = "meetup_reminder";
 
     /// <inheritdoc cref="MeetupPublishedType" />
+    public const string LotReminderType = "lot_reminder";
+
+    /// <inheritdoc cref="MeetupPublishedType" />
     public const string OrganizerMessageType = "organizer_message";
 
     /// <inheritdoc cref="MeetupPublishedType" />
@@ -218,6 +221,37 @@ public static class NotificationFacts
             now,
             notAfter);
         notification.MeetupReminder = new V1.MeetupReminder { Meetup = card.Clone() };
+
+        return notification;
+    }
+
+    /// <summary>Напоминание о дедлайне избранного лота одному получателю.</summary>
+    /// <param name="taskId">Сработавшее задание — повод факта.</param>
+    /// <param name="lotId">Лот, за которым человек следит; название канал читает у Auction.</param>
+    /// <param name="notAfter">
+    /// Дедлайн лота: напоминание, не ушедшее до дедлайна, уже шум, и релей снимет
+    /// его по сроку.
+    /// </param>
+    /// <remarks>
+    /// <c>request_id</c> у факта нет: у срабатывания таймера нет цепочки, которую
+    /// начал человек. Цены и дедлайна в сообщении нет — их канал читает у Auction.
+    /// </remarks>
+    public static Notification LotReminder(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        Guid lotId,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        notification.LotReminder = new V1.LotReminder { LotId = lotId.ToString() };
 
         return notification;
     }

@@ -64,6 +64,7 @@ function toContent(
     case "lotProxyRaised":
     case "lotPurchased":
     case "lotActivityDigest":
+    case "lotReminder":
       return lotNoticeOf(type);
     // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
     // заявку в аукцион, а допуск в хаб для аукциона чужой.

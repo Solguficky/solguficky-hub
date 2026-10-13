@@ -208,6 +208,8 @@ public static class NotificationsHost
             NpgsqlDataSource.Create(StorageAvailability.WithConnectTimeout(connectionString)));
         builder.Services.AddSingleton<GrainActivationStore>();
         builder.Services.AddSingleton<ReminderTaskStore>();
+        builder.Services.AddSingleton<LotReminderTaskStore>();
+        builder.Services.AddSingleton<ReminderDueStore>();
 
         // Часы — зависимость, а не вызов DateTimeOffset.UtcNow по коду:
         // standards/testing/testing-strategy.md требует, чтобы тест не зависел
@@ -223,6 +225,14 @@ public static class NotificationsHost
             builder.Configuration.GetSection(MeetupReminderOptions.SectionName));
 
         builder.Services.AddHostedService<ReminderSweeper>();
+
+        // Напоминание о дедлайне избранного лота (PER-496) — отдельная пара
+        // «таблица + грин» по образцу сходки: свой ключ и своё правило
+        // срабатывания. Обходит обе таблицы один проход sweeper'а: второй
+        // процесс в каждом силосе множил соединения к общей базе.
+        builder.Services.Configure<LotReminderOptions>(
+            builder.Configuration.GetSection(LotReminderOptions.SectionName));
+        builder.Services.AddSingleton<LotReminderTelemetry>();
 
         // Реплика чужих фактов (PER-215). Хранилище и чистка ключей не зависят
         // от шины: таблица ключей существует и без неё.
