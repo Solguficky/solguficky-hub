@@ -690,9 +690,38 @@ describe("lot form", () => {
     await bot.handleUpdate(press(dataOf(last(calls), "Один шаг")));
     await bot.handleUpdate(answer(calls, "0"));
 
-    // «Ввести заново» после шага ведёт к вопросу о цене с начала цепочки.
+    // «Ввести заново» после шага задаёт тот же вопрос о шаге: цена уже в нём.
     const step = await reasked(bot, calls, "Сумма — от 1 до 9 999 999 рублей.");
-    expect(dataOf(step, "Отмена")).toBe(`v1:q:lp:${lot}:42`);
+    expect(step.text).toContain("Шаг ставки в рублях");
+    expect(dataOf(step, "Отмена")).toBe(`v1:q:ls:${lot}:700:42`);
+
+    await bot.handleUpdate(answer(calls, "50"));
+    expect(auction.commands.map((command) => command.method)).toEqual([
+      "scheduleLot",
+    ]);
+    expect(records.every((record) => record.level !== "error")).toBe(true);
+  });
+
+  it("asks the thresholds again after a refused threshold answer, keeping the price", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const { bot, calls, records } = harness("admin", auction);
+    await bot.init();
+    const lot = uuidToToken(existingLot);
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:price`));
+    await bot.handleUpdate(answer(calls, "1000"));
+    await bot.handleUpdate(press(dataOf(last(calls), "По порогам")));
+    await bot.handleUpdate(answer(calls, "1000 - 50"));
+
+    // Повтор — снова пороги при цене 1 000 ₽, а не вопрос о стартовой цене.
+    const again = await reasked(
+      bot,
+      calls,
+      "Пороги идут по возрастанию, и первый начинается с 0.",
+    );
+    expect(again.text).toContain("Пороги шага строками");
+    expect(again.text).toMatch(/^Стартовая цена: 1\s000\s₽\./);
+    expect(dataOf(again, "Отмена")).toBe(`v1:q:ly:${lot}:1000:42`);
     expect(auction.commands).toEqual([]);
     expect(records.every((record) => record.level !== "error")).toBe(true);
   });

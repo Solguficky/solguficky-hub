@@ -2739,6 +2739,41 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [getLotCall(CONTRACT_LOT.lotId), namesCall(LEADER_ID)],
     body: TRADING_LOT_BODY,
   },
+  // Лидеру онлайна ставить против себя нечего: из рядов ставки остаётся
+  // только лимит автоставки, как в финале — ни одной кнопки (прогон 13.10).
+  {
+    intent: "lot: trading, led by the viewer",
+    callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
+    auction: LED_BY_VIEWER,
+    auctionCalls: [
+      getLotCall(CONTRACT_LOT.lotId),
+      namesCall(CONTRACT_VIEWER.identityId),
+    ],
+    body: {
+      blocks: [
+        {
+          ...TRADING_LOT_BODY.blocks[0],
+          status: LOT_LED_BY_VIEWER.status,
+          participantName: "@me",
+          standing: "leader",
+        } as AuctionScreenBody["blocks"][number],
+      ],
+      keyboard: [
+        [
+          {
+            action: "lot.proxy",
+            callbackData: callback({
+              kind: "ask",
+              question: "proxy",
+              lotId: CONTRACT_LOT.lotId,
+              page: 2,
+            }),
+          },
+        ],
+        ...lotKeyboard(CONTRACT_LOT.lotId, 2),
+      ],
+    },
+  },
   // «К лоту» после принятой команды, пока read model отстаёт (PER-470):
   // карточка просит лот не старее версии из кнопки и показывает новую цену, а
   // не прежнюю.

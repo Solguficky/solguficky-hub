@@ -177,6 +177,7 @@ import {
   lotAskData,
   lotFormData,
   lotNewData,
+  lotStepModeData,
   type NotifiedMeetupCategory,
   type PublishOrigin,
   parseCallback,
@@ -8418,8 +8419,11 @@ function reopenData(step: QuestionStep): string {
     case "lot-text":
       return lotAskData(step.lot, step.field);
     case "lot-price":
-    case "lot-step":
       return lotAskData(step.lot, "price");
+    // Цена уже в шаге, как в кнопке выбора способа (PER-491): повтор задаёт
+    // тот же вопрос о шаге, а не цену заново.
+    case "lot-step":
+      return lotStepModeData(step.lot, step.price, step.mode);
     case "lot-image":
       return lotAskData(step.lot, "image");
     case "console-week":

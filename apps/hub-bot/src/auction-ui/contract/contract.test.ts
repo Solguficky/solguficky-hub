@@ -183,6 +183,7 @@ describe("auction contract self-check", () => {
       "feed: stale page",
       "feed: empty",
       "lot: trading",
+      "lot: trading, led by the viewer",
       "lot: after an accepted command while the read model lags",
       "lot: after an accepted command when the read model does not catch up",
       "lot: sold",
