@@ -53,9 +53,15 @@ enum MeetupRelation {
   MEETUP_RELATION_COMMUNITY_ADMINISTRATOR = 1;
 }
 
-// Deliberately empty: the call status is the whole answer, and there is no
-// cacheable grant or expiry in the body.
-message MeetupAuthority {}
+// The status is the whole answer to "does the relation hold"; the body carries
+// the meetup's state so a caller that decides on that state does not read the
+// meetup a second time (ADR-047, addition 2026-10-12). There is no cacheable
+// grant or expiry here. An UNSPECIFIED state value means the producer did not
+// supply it.
+message MeetupAuthority {
+  MeetupLifecycle lifecycle = 1;
+  MeetupVisibility visibility = 2;
+}
 
 message ListMeetupStatesRequest {
   // Opaque token returned as next_page_token. Empty starts an enumeration.

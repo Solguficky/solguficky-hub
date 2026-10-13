@@ -1,6 +1,8 @@
 /// Срез «стоит ли человек в одном из принимаемых отношений к сходке». Отвечает
-/// только о праве: сценарий вызывающей стороны — рассылка Notifications или что-то
-/// следующее — сюда не входит, поэтому ни в запросе, ни в ответе его нет (PER-224).
+/// о праве и отдаёт состояние сходки: сценарий вызывающей стороны — рассылка
+/// Notifications или ворота аукциона — сюда не входит, поэтому ни в запросе, ни
+/// в ответе его нет (PER-224); оси состояния — данные ответа, по которым
+/// вызывающий решает свои ворота сам (ADR-047, дополнение 2026-10-12).
 ///
 /// Вызывающий приносит человека и набор отношений, но не права: право для
 /// отношения «администратор» Meetups спрашивает у Identity сам, на каждом запросе и
@@ -97,7 +99,13 @@ let private holdsAny (ask: AskRight) (person: PersonId) (rights: Set<AccessRight
 
 /// Ответ свежий на каждый вызов: кэша нет ни здесь, ни в контракте, потому что
 /// устаревшее разрешение равносильно пропущенной проверке (ADR-026).
-let execute (deps: Deps) (query: Query) : Task<Result<unit, CheckMeetupAuthorityError>> =
+///
+/// Успех несёт снимок сходки, а не один факт права: вызывающий, чьи собственные
+/// ворота зависят от её состояния, получает обе оси той же загрузкой, которой
+/// подтверждённое существование и так отвечает (ADR-047, дополнение 2026-10-12).
+/// Решение о праве от состояния не зависит; состояние — данные ответа, а не
+/// второе правило отказа.
+let execute (deps: Deps) (query: Query) : Task<Result<MeetupSnapshot, CheckMeetupAuthorityError>> =
     task {
         match deps.AskRight with
         | None -> return Error(CheckMeetupAuthorityError.IdentityUnavailable "identity is not configured")
@@ -109,7 +117,7 @@ let execute (deps: Deps) (query: Query) : Task<Result<unit, CheckMeetupAuthority
             | Ok false -> return Error CheckMeetupAuthorityError.Forbidden
             | Ok true ->
                 match! deps.Load query.Id with
-                | Some _ -> return Ok()
+                | Some meetup -> return Ok meetup
                 | None -> return Error CheckMeetupAuthorityError.NotFound
     }
 
@@ -175,6 +183,14 @@ module Api =
             | Error invalid -> return raise (RpcException(toStatus (CheckMeetupAuthorityError.Malformed invalid)))
             | Ok query ->
                 match! execute deps query with
-                | Ok() -> return Meetups.V1.MeetupAuthority()
+                | Ok meetup ->
+                    // Состояние уезжает тем же ответом, что и статус: правило
+                    // «пустое поле — UNAVAILABLE» живёт у потребителя (ADR-047,
+                    // дополнение 2026-10-12), а производитель заполняет обе оси.
+                    return
+                        Meetups.V1.MeetupAuthority(
+                            Lifecycle = Contract.Outbound.lifecycle meetup.Lifecycle,
+                            Visibility = Contract.Outbound.visibility meetup.Visibility
+                        )
                 | Error error -> return raise (RpcException(toStatus error))
         }

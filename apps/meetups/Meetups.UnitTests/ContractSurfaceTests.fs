@@ -163,9 +163,12 @@ let ``Cancelling a scheduled publication takes only the viewer and the id`` () =
 
 /// Вопрос о праве не несёт ни сценария вызывающей стороны, ни прав человека —
 /// право Meetups спрашивает у Identity сам (ADR-051), — а ответ не несёт готового
-/// разрешения для кэша: решение передаёт статус, тело пустое (PER-224).
+/// разрешения для кэша: решение передаёт статус, а тело несёт состояние сходки —
+/// жизненный цикл и видимость, по которым вызывающий решает свои ворота
+/// (ADR-047, дополнение 2026-10-12, PER-600). Правило «пустое поле — UNAVAILABLE»
+/// живёт у потребителя, поэтому `UNSPECIFIED` остаётся значением ответа.
 [<Fact>]
-let ``The authority check asks about a person and a meetup and answers with the status alone`` () =
+let ``The authority check asks about a person and a meetup and answers with the status and the meetup state`` () =
     let request = fieldNames CheckMeetupAuthorityRequest.Descriptor
     let response = fieldNames MeetupAuthority.Descriptor
 
@@ -177,7 +180,7 @@ let ``The authority check asks about a person and a meetup and answers with the 
                     "identity_id"
                     "accepted_relations"
                 ]
-            && response = Set.empty
+            && response = set [ "lifecycle"; "visibility" ]
         @>
 
 /// Запрос сверяется целиком, а не «содержит page_token»: равенство множеств и
