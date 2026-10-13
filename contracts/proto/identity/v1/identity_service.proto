@@ -39,7 +39,12 @@ service IdentityService {
   // Revokes PRESET_ADMIN, on behalf of a holder of ACCESS_RIGHT_GRANT_ADMINS.
   // Rights the person holds apart from the preset are untouched.
   rpc DismissAdministrator(DismissAdministratorRequest) returns (DismissAdministratorResponse);
+  // Lists the people not blocked and holding no preset, on behalf of a holder
+  // of ACCESS_RIGHT_MANAGE_MEMBERS.
   rpc ListCommunityMembers(ListCommunityMembersRequest) returns (ListCommunityMembersResponse);
+  // Reads one person of that list, on behalf of a holder of
+  // ACCESS_RIGHT_MANAGE_MEMBERS.
+  rpc GetCommunityMember(GetCommunityMemberRequest) returns (GetCommunityMemberResponse);
   rpc AdmitCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   rpc BlockCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
   // Demotes a member to the guest circle, on behalf of a holder of
@@ -91,15 +96,66 @@ message IdentityActor {
 message CommunityMember {
   string identity_id = 1;
   optional string telegram_username = 2;
+  // True when circle is CIRCLE_MEMBER. Superseded by circle and kept for
+  // consumers that do not read it.
   bool admitted = 3;
 
   // Telegram user id of the profile. Zero means an older server that does not
   // send it: a real id is always positive.
   int64 telegram_user_id = 4;
+
+  // CIRCLE_UNSPECIFIED means no circle, or an older server that does not send
+  // it; admitted tells a member apart in both cases.
+  Circle circle = 5;
+
+  // True when ACCESS_RIGHT_ADMIT_BIDDERS is granted one by one, so that
+  // RevokeAuctionModeration takes it away. A person of the list holds no
+  // preset, so the right never comes with one here. Always false from an
+  // older server.
+  bool auction_moderation = 6;
 }
 
-message ListCommunityMembersRequest { IdentityActor actor = 1; }
+// Narrows the list. Every value but COMMUNITY_FILTER_UNSPECIFIED leaves out
+// the people without a circle.
+enum CommunityFilter {
+  // Everyone of the list, the people without a circle included.
+  COMMUNITY_FILTER_UNSPECIFIED = 0;
+  COMMUNITY_FILTER_MEMBERS = 1;
+  COMMUNITY_FILTER_GUESTS = 2;
+  // The people with auction_moderation.
+  COMMUNITY_FILTER_AUCTION_MODERATORS = 3;
+}
+
+message ListCommunityMembersRequest {
+  IdentityActor actor = 1;
+  // An older server ignores it and lists everyone.
+  CommunityFilter filter = 2;
+}
 message ListCommunityMembersResponse { repeated CommunityMember members = 1; }
+
+message GetCommunityMemberRequest {
+  IdentityActor actor = 1;
+  // Canonical lowercase UUID string.
+  string identity_id = 2;
+}
+
+message GetCommunityMemberResponse {
+  // Exactly one is set.
+  oneof outcome {
+    CommunityMember found = 1;
+    GetCommunityMemberRefusal refused = 2;
+  }
+}
+
+message GetCommunityMemberRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMembersManager not_members_manager = 1;
+    IdentityUnknown identity_unknown = 2;
+    IdentityBlocked identity_blocked = 3;
+    IdentityHoldsPreset identity_holds_preset = 4;
+  }
+}
 
 message ChangeCommunityMemberRequest {
   IdentityActor actor = 1;
@@ -634,3 +690,10 @@ message UsernameUnresolved {}
 
 // No profile has this identity_id.
 message IdentityUnknown {}
+
+// The actor may not manage the community composition. Carries no cause: the
+// causes are not told apart.
+message NotMembersManager {}
+
+// The person holds a preset and so is not in the community list.
+message IdentityHoldsPreset {}

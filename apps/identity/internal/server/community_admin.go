@@ -14,15 +14,65 @@ import (
 
 // Состав сообщества ведёт держатель manage_members (ADR о наборах, п. 2 и 6).
 // Держатели наборов в список не входят: их ведёт экран администраторов, а
-// понизить или заблокировать их отсюда нельзя (п. 8).
+// понизить или заблокировать их отсюда нельзя (п. 8). Поэтому admit_bidders у
+// человека списка — всегда запись, и её отзывает RevokeAuctionModeration.
+// Круг у человека один или никакого (п. 1): индекс identity_circles_one_active.
+const communityMemberColumnsSQL = `
+SELECT p.id, p.username, p.telegram_user_id, p.created_at, p.blocked,
+       (SELECT c.circle FROM identity_circles c
+        WHERE c.identity_id = p.id AND c.revoked_at IS NULL) AS circle,
+       EXISTS (SELECT 1 FROM identity_rights r
+               WHERE r.identity_id = p.id AND r.access_right = 'admit_bidders'
+                 AND r.revoked_at IS NULL) AS moderation,
+       cardinality(identity_active_presets(p.id)) > 0 AS holds_preset
+FROM profiles p`
+
+// Фильтр $1: пустая строка — весь список, как до фильтров, включая людей без
+// круга; имя круга — его держатели; moderators — держатели записи с кругом.
 const listCommunityMembersSQL = `
-SELECT p.id, p.username, p.telegram_user_id,
-       EXISTS (SELECT 1 FROM identity_circles c
-               WHERE c.identity_id = p.id AND c.circle = 'member' AND c.revoked_at IS NULL)
-FROM profiles p
-WHERE NOT p.blocked
-  AND cardinality(identity_active_presets(p.id)) = 0
-ORDER BY p.created_at, p.id`
+SELECT id, username, telegram_user_id, circle, moderation
+FROM (` + communityMemberColumnsSQL + `) m
+WHERE NOT m.blocked AND NOT m.holds_preset
+  AND ($1 = '' OR m.circle = $1 OR ($1 = 'moderators' AND m.circle IS NOT NULL AND m.moderation))
+ORDER BY m.created_at, m.id`
+
+const getCommunityMemberSQL = `
+SELECT id, username, telegram_user_id, circle, moderation, blocked, holds_preset
+FROM (` + communityMemberColumnsSQL + ` WHERE p.id = $1) m`
+
+// communityFilterValue — значение фильтра для listCommunityMembersSQL.
+// Незнакомое значение отвечает отказом, а не весь список: новый фильтр,
+// которого сервер не знает, не должен молча расширять выборку.
+func communityFilterValue(filter identityv1.CommunityFilter) (string, error) {
+	switch filter {
+	case identityv1.CommunityFilter_COMMUNITY_FILTER_UNSPECIFIED:
+		return "", nil
+	case identityv1.CommunityFilter_COMMUNITY_FILTER_MEMBERS:
+		return circleMember, nil
+	case identityv1.CommunityFilter_COMMUNITY_FILTER_GUESTS:
+		return circleGuest, nil
+	case identityv1.CommunityFilter_COMMUNITY_FILTER_AUCTION_MODERATORS:
+		return "moderators", nil
+	default:
+		return "", status.Error(codes.InvalidArgument, "community filter is unknown")
+	}
+}
+
+// communityMember собирает человека списка из строки выборки.
+func communityMember(id string, username sql.NullString, telegramUserID int64, circle sql.NullString, moderation bool) *identityv1.CommunityMember {
+	value, _ := circleValue(circle.String)
+	member := &identityv1.CommunityMember{
+		IdentityId:        id,
+		Admitted:          value == identityv1.Circle_CIRCLE_MEMBER,
+		TelegramUserId:    telegramUserID,
+		Circle:            value,
+		AuctionModeration: moderation,
+	}
+	if username.Valid {
+		member.TelegramUsername = &username.String
+	}
+	return member
+}
 
 const listAllowedUsernamesSQL = `
 SELECT normalized_username FROM allowed_usernames
@@ -39,7 +89,11 @@ func (s identityService) ListCommunityMembers(ctx context.Context, req *identity
 	if _, err := authorizeMembers(ctx, s.db, req.GetActor()); err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, listCommunityMembersSQL)
+	filter, err := communityFilterValue(req.GetFilter())
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, listCommunityMembersSQL, filter)
 	if err != nil {
 		return nil, internal("list community members", err)
 	}
@@ -47,22 +101,65 @@ func (s identityService) ListCommunityMembers(ctx context.Context, req *identity
 	response := &identityv1.ListCommunityMembersResponse{}
 	for rows.Next() {
 		var id string
-		var username sql.NullString
+		var username, circle sql.NullString
 		var telegramUserID int64
-		var admitted bool
-		if err := rows.Scan(&id, &username, &telegramUserID, &admitted); err != nil {
+		var moderation bool
+		if err := rows.Scan(&id, &username, &telegramUserID, &circle, &moderation); err != nil {
 			return nil, internal("scan community member", err)
 		}
-		member := &identityv1.CommunityMember{IdentityId: id, Admitted: admitted, TelegramUserId: telegramUserID}
-		if username.Valid {
-			member.TelegramUsername = &username.String
-		}
-		response.Members = append(response.Members, member)
+		response.Members = append(response.Members, communityMember(id, username, telegramUserID, circle, moderation))
 	}
 	if err := rows.Err(); err != nil {
 		return nil, internal("iterate community members", err)
 	}
 	return response, nil
+}
+
+// GetCommunityMember читает одного человека списка для карточки. Ожидаемый
+// отказ — значением ответа, как у методов администраторов (PER-521): карточка
+// отличает «заблокирован» и «держит набор» от сбоя. Отказ по праву не
+// различает причин и о цели ничего не говорит.
+func (s identityService) GetCommunityMember(ctx context.Context, req *identityv1.GetCommunityMemberRequest) (*identityv1.GetCommunityMemberResponse, error) {
+	identityID, err := canonicalIdentityID(req.GetIdentityId())
+	if err != nil {
+		return nil, err
+	}
+	refused := func(refusal *identityv1.GetCommunityMemberRefusal) *identityv1.GetCommunityMemberResponse {
+		return &identityv1.GetCommunityMemberResponse{Outcome: &identityv1.GetCommunityMemberResponse_Refused{Refused: refusal}}
+	}
+	if _, err := authorizeMembers(ctx, s.db, req.GetActor()); err != nil {
+		if status.Code(err) == codes.PermissionDenied {
+			return refused(&identityv1.GetCommunityMemberRefusal{Reason: &identityv1.GetCommunityMemberRefusal_NotMembersManager{
+				NotMembersManager: &identityv1.NotMembersManager{},
+			}}), nil
+		}
+		return nil, err
+	}
+	var id string
+	var username, circle sql.NullString
+	var telegramUserID int64
+	var moderation, blocked, holdsPreset bool
+	err = s.db.QueryRowContext(ctx, getCommunityMemberSQL, identityID).
+		Scan(&id, &username, &telegramUserID, &circle, &moderation, &blocked, &holdsPreset)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return refused(&identityv1.GetCommunityMemberRefusal{Reason: &identityv1.GetCommunityMemberRefusal_IdentityUnknown{
+			IdentityUnknown: &identityv1.IdentityUnknown{},
+		}}), nil
+	case err != nil:
+		return nil, internal("get community member", err)
+	case blocked:
+		return refused(&identityv1.GetCommunityMemberRefusal{Reason: &identityv1.GetCommunityMemberRefusal_IdentityBlocked{
+			IdentityBlocked: &identityv1.IdentityBlocked{},
+		}}), nil
+	case holdsPreset:
+		return refused(&identityv1.GetCommunityMemberRefusal{Reason: &identityv1.GetCommunityMemberRefusal_IdentityHoldsPreset{
+			IdentityHoldsPreset: &identityv1.IdentityHoldsPreset{},
+		}}), nil
+	}
+	return &identityv1.GetCommunityMemberResponse{Outcome: &identityv1.GetCommunityMemberResponse_Found{
+		Found: communityMember(id, username, telegramUserID, circle, moderation),
+	}}, nil
 }
 
 func (s identityService) AdmitCommunityMember(ctx context.Context, req *identityv1.ChangeCommunityMemberRequest) (*identityv1.ChangeCommunityMemberResponse, error) {

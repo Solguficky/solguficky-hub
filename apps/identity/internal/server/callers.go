@@ -44,6 +44,7 @@ var methodAccess = map[string][]Caller{
 	identityv1.IdentityService_CheckAccessRight_FullMethodName:         {CallerMeetups, CallerNotifications, CallerHubBot, CallerAuctionBot, CallerAuction},
 	identityv1.IdentityService_ResolveOrganizerUsername_FullMethodName: {CallerHubBot},
 	identityv1.IdentityService_ListCommunityMembers_FullMethodName:     {CallerHubBot},
+	identityv1.IdentityService_GetCommunityMember_FullMethodName:       {CallerHubBot},
 	identityv1.IdentityService_AdmitCommunityMember_FullMethodName:     {CallerHubBot},
 	identityv1.IdentityService_BlockCommunityMember_FullMethodName:     {CallerHubBot},
 	identityv1.IdentityService_DemoteCommunityMember_FullMethodName:    {CallerHubBot},
