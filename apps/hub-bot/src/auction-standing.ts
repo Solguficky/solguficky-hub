@@ -53,13 +53,20 @@ function standingText(item: FeedItem, options: MineOptions): string {
  * лоты, а только свои — где смотрящий лидер или покупатель; все лоты — кнопки.
  * Лоты страницы, на которых действуют «Счастливые часы» (PER-505), сводка
  * называет отдельной строкой: строк лотов в теле больше нет, а кнопка короткая.
+ * До торгов лидерства нет ни у кого, и сводка говорит, что торги не начались
+ * (PER-618).
  */
 export function feedSummary(
-  mine: readonly FeedItem[],
-  page: readonly FeedItem[],
+  feed: {
+    lots: readonly FeedItem[];
+    mine?: readonly FeedItem[];
+    beforeTrading?: true;
+  },
   options: MineOptions,
 ): string[] {
-  const happy = page.filter((item) => item.activeWindow !== undefined);
+  if (feed.beforeTrading === true) return [beforeTradingLine];
+  const mine = feed.mine ?? [];
+  const happy = feed.lots.filter((item) => item.activeWindow !== undefined);
   const happyLine =
     happy.length === 0
       ? []
@@ -76,6 +83,9 @@ export function feedSummary(
     ...happyLine,
   ];
 }
+
+/** Сводка ленты, пока аукцион не открыл торги (PER-618). */
+export const beforeTradingLine = "Торги ещё не начались. Лоты — кнопками ниже.";
 
 /** Абзацы сводки над «Избранным»: сколько лотов, затем свои — как у ленты. */
 export function favoritesSummary(

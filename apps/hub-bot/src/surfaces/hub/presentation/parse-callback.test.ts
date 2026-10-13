@@ -27,6 +27,8 @@ import {
   lotFormData,
   lotNewData,
   lotPreviewData,
+  lotSkipData,
+  lotStepModeData,
   parseCallback,
   type QuestionStep,
   questionData,
@@ -1036,6 +1038,31 @@ describe("lot form callbacks", () => {
         { kind: "lot-ask", lot, field: "description" },
       ],
       [lotAskData(lot, "price"), { kind: "lot-ask", lot, field: "price" }],
+      // Цепочка нового лота (PER-618): «Ввести заново», способ шага и
+      // «Пропустить» фото несут её признак.
+      [
+        lotAskData(lot, "price", true),
+        { kind: "lot-ask", lot, field: "price", chain: true },
+      ],
+      [
+        lotAskData(lot, "image", true),
+        { kind: "lot-ask", lot, field: "image", chain: true },
+      ],
+      [
+        lotStepModeData(lot, maxLotRubles, "tiered", true),
+        {
+          kind: "lot-step-mode",
+          lot,
+          price: maxLotRubles,
+          mode: "tiered",
+          chain: true,
+        },
+      ],
+      [
+        lotStepModeData(lot, 1, "single"),
+        { kind: "lot-step-mode", lot, price: 1, mode: "single" },
+      ],
+      [lotSkipData(lot), { kind: "lot-skip", lot }],
     ] as const;
     for (const [data, expected] of cases) {
       expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
@@ -1056,6 +1083,23 @@ describe("lot form callbacks", () => {
       ],
       [`v1:q:ls:${lot}:1`, { kind: "lot-step", lot, price: 1, mode: "single" }],
       [`v1:q:ly:${lot}:1`, { kind: "lot-step", lot, price: 1, mode: "tiered" }],
+      // Вопросы цепочки нового лота (PER-618).
+      [`v1:q:cp:${lot}`, { kind: "lot-price", lot, chain: true }],
+      [
+        `v1:q:cs:${lot}:${maxLotRubles}`,
+        {
+          kind: "lot-step",
+          lot,
+          price: maxLotRubles,
+          mode: "single",
+          chain: true,
+        },
+      ],
+      [
+        `v1:q:cy:${lot}:1`,
+        { kind: "lot-step", lot, price: 1, mode: "tiered", chain: true },
+      ],
+      [`v1:q:ci:${lot}`, { kind: "lot-image", lot, chain: true }],
     ];
     // Самый длинный Telegram id — 16 цифр; с ним шаг обязан уложиться в кнопку.
     const askedBy = 9007199254740991;
@@ -1077,6 +1121,12 @@ describe("lot form callbacks", () => {
       `v1:lot:view:${lot}:extra`,
       `v1:lot:ask:${lot}`,
       `v1:lot:ask:${lot}:step`,
+      // Цепочки у названия и описания нет, а хвост — только `c`.
+      `v1:lot:ask:${lot}:title:c`,
+      `v1:lot:ask:${lot}:price:x`,
+      `v1:lot:sm:${lot}:700:single:x`,
+      `v1:lot:sm:${lot}:700:single:c:c`,
+      `v1:lot:skip:${lot}:extra`,
       `v1:lot:drop:${lot}`,
       `v1:q:ln:${auction}`,
       `v1:q:ln:${auction}:short`,

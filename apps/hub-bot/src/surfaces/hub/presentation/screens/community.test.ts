@@ -78,6 +78,21 @@ describe("community list", () => {
     expect(dataOf(screen, "Разрешённые ники")).toBe("v1:cm:u");
   });
 
+  // Как на экране «Администраторы»: смотрящий видит себя «(ты)» в тексте, а
+  // кнопка остаётся ником (PER-618).
+  it("marks the viewer in the text", () => {
+    const screen = communityScreen(
+      snapshot,
+      { kind: "list", place: members },
+      { viewerId: id(2) },
+    );
+
+    expect(screen.text).toBe(
+      "<b>Состав сообщества</b>\n\nУчастники: 2\n\n• @user1\n• @user2 (ты) · модерирует аукцион",
+    );
+    expect(rows(screen)).toContainEqual(["@user2"]);
+  });
+
   it("shows the guests apart from the members", () => {
     const screen = communityScreen(snapshot, {
       kind: "list",
@@ -217,7 +232,7 @@ describe("community member card", () => {
     [{ kind: "blocked" } as const, "Доступ этому человеку уже закрыт."],
     [
       { kind: "holds-preset" } as const,
-      "Это администратор: его ведут на экране «Администраторы».",
+      "Это администратор: закрыть доступ или поменять модерацию отсюда нельзя. Правами администратора управляет мейнтейнер в «Участники → Администраторы».",
     ],
     [{ kind: "invalid" } as const, "недоступно"],
   ])("tells refusal %o as a screen text", (result, text) => {
@@ -233,7 +248,7 @@ describe("community allowed usernames", () => {
     const screen = communityScreen(
       { members: [], allowedUsernames: ["alice_1", long] },
       { kind: "usernames", page: 0 },
-      "Ник добавлен.",
+      { notice: "Ник добавлен." },
     );
 
     expect(screen.text).toBe(

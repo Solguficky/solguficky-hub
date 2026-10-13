@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { Money } from "../../../auction-ui/index.js";
 import type {
+  AuctionSummaryView,
+  Money,
+  RaffleView,
+} from "../../../auction-ui/index.js";
+import type {
+  ActiveAuctionsResult,
   AdvanceAskResult,
   AuctionConsoles,
   AuctionWeekConfig,
   CloseLotResult,
+  ConsoleRaffleResult,
   ConsoleReadResult,
   DiscardAuctionResult,
   DisplayNamesResult,
@@ -74,8 +80,11 @@ function fake(answers: {
   close?: CloseLotResult;
   bids?: FinalBidsResult;
   names?: DisplayNamesResult;
+  raffle?: ConsoleRaffleResult;
+  active?: ActiveAuctionsResult;
 }) {
   const scheduled: AuctionWeekConfig[] = [];
+  const reads = { raffle: 0, active: 0 };
   const asks: Money[] = [];
   const closes: FinalLotCommand[] = [];
   const port: AuctionConsoles = {
@@ -108,9 +117,18 @@ function fake(answers: {
     },
     recentBids: async () => answers.bids ?? { kind: "ok", bids: [], names: {} },
     displayNames: async () => answers.names ?? { kind: "ok", names: {} },
+    consoleRaffle: async () => {
+      reads.raffle += 1;
+      return answers.raffle ?? { kind: "ok" };
+    },
+    activeAuctions: async () => {
+      reads.active += 1;
+      return answers.active ?? { kind: "ok", auctions: [] };
+    },
   };
   return {
     run: createAuctionConsole(port, zone, () => now),
+    reads,
     scheduled,
     asks,
     closes,
@@ -271,6 +289,61 @@ describe("auction console", () => {
     ).resolves.toMatchObject({
       kind: "auction-console",
       note: "another-auction-active",
+      holder: { auctionId: "0190f2a0-0000-7000-8000-000000000021" },
+    });
+  });
+
+  // PER-618: отказ называет аукцион, у которого идут торги, его сроками из
+  // чтения активных аукционов.
+  it("names the trading auction of a refused start by its week", async () => {
+    const holder = "0190f2a0-0000-7000-8000-000000000021";
+    const { run } = fake({
+      start: { kind: "another-auction-active", auctionId: holder },
+      read: { kind: "ok", console: view("scheduled") },
+      statistics: noLotStatistics,
+      active: {
+        kind: "ok",
+        auctions: [
+          {
+            auctionId: holder,
+            stage: "prebidding",
+            opensAt: "2026-10-05T15:00:00Z",
+            closesAt: "2026-10-12T15:00:00Z",
+            final: true,
+          },
+        ],
+      },
+    });
+
+    await expect(
+      run({ ...call, intent: "start-auction-week", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console",
+      console: view("scheduled"),
+      note: "another-auction-active",
+      holder: {
+        auctionId: holder,
+        opensAt: "2026-10-05T15:00:00Z",
+        closesAt: "2026-10-12T15:00:00Z",
+      },
+    });
+  });
+
+  // Чтение активных отказало: отказ всё равно называет исход, без сроков.
+  it("keeps the refusal when the active auctions cannot be read", async () => {
+    const holder = "0190f2a0-0000-7000-8000-000000000021";
+    const { run } = fake({
+      start: { kind: "another-auction-active", auctionId: holder },
+      read: { kind: "ok", console: view("scheduled") },
+      statistics: noLotStatistics,
+      active: { kind: "unavailable", cause: new Error("down") },
+    });
+
+    await expect(
+      run({ ...call, intent: "start-auction-week", opId }),
+    ).resolves.toMatchObject({
+      note: "another-auction-active",
+      holder: { auctionId: holder },
     });
   });
 
@@ -357,8 +430,12 @@ describe("auction week start", () => {
   const unpriced = lot("01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d", {
     kind: "draft",
   });
-  const prepare = (console: AuctionConsoleView) =>
+  const prepare = (
+    console: AuctionConsoleView,
+    active?: ActiveAuctionsResult,
+  ) =>
     fake({
+      ...(active === undefined ? {} : { active }),
       read: { kind: "ok", console },
       statistics: {
         kind: "ok",
@@ -421,6 +498,63 @@ describe("auction week start", () => {
     },
   );
 
+  // PER-618: идущие торги другого аукциона пульт называет до подтверждения,
+  // и «Да, открыть» не показывает.
+  const other = (
+    stage: AuctionSummaryView["stage"],
+    auction = "0190f2a0-0000-7000-8000-000000000021",
+  ): AuctionSummaryView => ({
+    auctionId: auction,
+    stage,
+    opensAt: "2026-10-05T15:00:00Z",
+    closesAt: "2026-10-12T15:00:00Z",
+    final: true,
+  });
+  const ready = view("scheduled", {
+    week: { ...week, final: true },
+    lots: [priced],
+  });
+
+  it.each([
+    "prebidding",
+    "settling",
+    "on-break",
+    "lineup-frozen",
+    "in-final",
+  ] as const)(
+    "warns before the confirmation while another auction is %s",
+    async (stage) => {
+      await expect(
+        prepare(ready, { kind: "ok", auctions: [other(stage)] }),
+      ).resolves.toEqual({
+        kind: "auction-console",
+        console: ready,
+        note: "another-auction-active",
+        holder: {
+          auctionId: "0190f2a0-0000-7000-8000-000000000021",
+          opensAt: "2026-10-05T15:00:00Z",
+          closesAt: "2026-10-12T15:00:00Z",
+        },
+      });
+    },
+  );
+
+  // Запланированный аукцион слот не держит, а свой — не другой; отказ чтения
+  // подтверждение не прячет: страховкой остаётся отказ команды.
+  it.each([
+    ["a scheduled auction", { kind: "ok", auctions: [other("scheduled")] }],
+    [
+      "the auction itself",
+      { kind: "ok", auctions: [other("prebidding", auctionId)] },
+    ],
+    ["a refused read", { kind: "unavailable", cause: new Error("down") }],
+  ] as const)("confirms the start beside %s", async (_name, active) => {
+    await expect(prepare(ready, active)).resolves.toMatchObject({
+      kind: "auction-week-confirm",
+      opening: 1,
+    });
+  });
+
   it("asks the dates only while they can change", async () => {
     const draft = fake({ statistics: noLotStatistics });
     const opened = fake({
@@ -434,6 +568,75 @@ describe("auction week start", () => {
     await expect(
       opened.run({ ...call, intent: "ask-auction-week" }),
     ).resolves.toMatchObject({ kind: "auction-console", note: "week-frozen" });
+  });
+});
+
+// PER-618: строка розыгрыша пульта после закрытия регистрации — из
+// `GetRaffle`; до момента закрытия розыгрыш не читается.
+describe("auction console raffle", () => {
+  const call = { identity: admin, auctionId };
+  const raffle: RaffleView = {
+    auctionId,
+    status: "drawn",
+    closesAt: "2026-10-05T16:12:00Z",
+    commitment: "ab".repeat(32),
+    beaconRound: 1,
+    registered: false,
+    tickets: [{ number: 1, displayName: "Сова*" }],
+    reveal: { seed: "cd".repeat(32), winningTicket: 1 },
+  };
+  const opened = (raffleClosesAt: string) =>
+    view("prebidding", {
+      week: {
+        opensAt: "2026-10-05T15:00:00Z",
+        closesAt: "2026-10-12T15:00:00Z",
+        final: true,
+        windows: [],
+        raffleClosesAt,
+      },
+    });
+
+  it("reads the raffle once its registration has closed", async () => {
+    const console = opened("2026-10-05T16:12:00Z");
+    const { run, reads } = fake({
+      read: { kind: "ok", console },
+      statistics: noLotStatistics,
+      raffle: { kind: "ok", raffle },
+    });
+
+    await expect(
+      run({ ...call, intent: "view-auction-console" }),
+    ).resolves.toEqual({
+      kind: "auction-console",
+      console: { ...console, raffle },
+    });
+    expect(reads.raffle).toBe(1);
+  });
+
+  it("does not read the raffle before its registration closes", async () => {
+    const { run, reads } = fake({
+      read: { kind: "ok", console: opened("2026-10-10T16:12:00Z") },
+      statistics: noLotStatistics,
+      raffle: { kind: "ok", raffle },
+    });
+
+    await expect(
+      run({ ...call, intent: "view-auction-console" }),
+    ).resolves.not.toHaveProperty("console.raffle");
+    expect(reads.raffle).toBe(0);
+  });
+
+  it("keeps the console when the raffle cannot be read", async () => {
+    const console = opened("2026-10-05T16:12:00Z");
+    const { run } = fake({
+      read: { kind: "ok", console },
+      statistics: noLotStatistics,
+      raffle: { kind: "unavailable", cause: new Error("down") },
+    });
+
+    await expect(
+      run({ ...call, intent: "view-auction-console" }),
+    ).resolves.toEqual({ kind: "auction-console", console });
   });
 });
 

@@ -13,9 +13,13 @@ import (
 )
 
 // Состав сообщества ведёт держатель manage_members (ADR о наборах, п. 2 и 6).
-// Держатели наборов в список не входят: их ведёт экран администраторов, а
-// понизить или заблокировать их отсюда нельзя (п. 8). Поэтому admit_bidders у
-// человека списка — всегда запись, и её отзывает RevokeAuctionModeration.
+// Список полный: держатели наборов входят в него в своём круге (решение
+// владельца 14 октября 2026 года, PER-618), но карточку их отдаёт отказом
+// «держит набор», а понизить или заблокировать их отсюда нельзя (п. 8) — их
+// ведёт экран администраторов. admit_bidders набора admin записью не
+// хранится, поэтому auction_moderation у держателя набора ложно, и фильтр
+// модераторов показывает только тех, у кого запись отзывает
+// RevokeAuctionModeration.
 // Круг у человека один или никакого (п. 1): индекс identity_circles_one_active.
 const communityMemberColumnsSQL = `
 SELECT p.id, p.username, p.telegram_user_id, p.created_at, p.blocked,
@@ -32,7 +36,7 @@ FROM profiles p`
 const listCommunityMembersSQL = `
 SELECT id, username, telegram_user_id, circle, moderation
 FROM (` + communityMemberColumnsSQL + `) m
-WHERE NOT m.blocked AND NOT m.holds_preset
+WHERE NOT m.blocked
   AND ($1 = '' OR m.circle = $1 OR ($1 = 'moderators' AND m.circle IS NOT NULL AND m.moderation))
 ORDER BY m.created_at, m.id`
 
@@ -117,8 +121,11 @@ func (s identityService) ListCommunityMembers(ctx context.Context, req *identity
 
 // GetCommunityMember читает одного человека списка для карточки. Ожидаемый
 // отказ — значением ответа, как у методов администраторов (PER-521): карточка
-// отличает «заблокирован» и «держит набор» от сбоя. Отказ по праву не
-// различает причин и о цели ничего не говорит.
+// отличает «заблокирован» и «держит набор» от сбоя. Держатель набора в списке
+// есть (PER-618), но карточка его остаётся отказом: CommunityMember не несёт
+// признака набора, и найденная карточка дала бы боту кнопки закрытия доступа
+// и модерации, которые сервер всё равно отвергнет. Отказ по праву не различает
+// причин и о цели ничего не говорит.
 func (s identityService) GetCommunityMember(ctx context.Context, req *identityv1.GetCommunityMemberRequest) (*identityv1.GetCommunityMemberResponse, error) {
 	identityID, err := canonicalIdentityID(req.GetIdentityId())
 	if err != nil {

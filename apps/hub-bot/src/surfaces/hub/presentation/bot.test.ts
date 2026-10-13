@@ -1594,6 +1594,7 @@ describe("presentation adapter", () => {
     expect(sendMessageText(calls[0])).toBe(menuText);
   });
 
+  // Состав полный (PER-618): смотрящий администратор в нём и помечен «(ты)».
   it("renders the community list from current Identity state", async () => {
     const community = vi
       .fn<CommunityAdministrator["community"]>()
@@ -1601,6 +1602,12 @@ describe("presentation adapter", () => {
         kind: "ok",
         value: {
           members: [
+            {
+              identityId: resolvedId,
+              telegramUsername: "admin",
+              circle: "member",
+              auctionModeration: false,
+            },
             {
               identityId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
               telegramUsername: "member",
@@ -1624,7 +1631,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Состав сообщества</b>\n\nУчастники: 1\n\n• @member",
+        text: "<b>Состав сообщества</b>\n\nУчастники: 2\n\n• @admin (ты)\n• @member",
       },
     });
     expect(labelsOf(calls[1]?.payload)).toEqual([
@@ -1632,6 +1639,7 @@ describe("presentation adapter", () => {
       "Гости",
       "Модераторы",
       "Разрешённые ники",
+      "@admin",
       "@member",
       "‹ Участники",
     ]);
@@ -1762,6 +1770,35 @@ describe("presentation adapter", () => {
         "✔️ Да, закрыть доступ",
       );
     });
+
+    // Администратор в составе есть (PER-618), но его карточка — отказ
+    // Identity: кнопок закрытия и модерации нет, а «Администраторы» видит
+    // тот, кто их ведёт.
+    it.each([
+      [ADMIN_RIGHTS, ["‹ Состав"]],
+      [
+        [...ADMIN_RIGHTS, "grant-admins"] as const,
+        ["Администраторы", "‹ Состав"],
+      ],
+    ])(
+      "answers an administrator's card without its buttons",
+      async (rights, labels) => {
+        const identity = {
+          ...closing({ kind: "holds-preset" }),
+          ...resolvedIdentity("admin", false, rights),
+        };
+        const { bot, calls } = createHarness(identity);
+        await bot.init();
+
+        await bot.handleUpdate(callbackUpdate(`v1:cm:v:${memberToken}:m0`));
+
+        expect(identity.block).not.toHaveBeenCalled();
+        expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+          "Правами администратора управляет мейнтейнер в «Участники → Администраторы».",
+        );
+        expect(labelsOf(calls.at(-1)?.payload)).toEqual(labels);
+      },
+    );
 
     it("closes access on the confirmation and returns to the same page", async () => {
       const identity = closing(leaving);
@@ -7300,7 +7337,7 @@ describe("deferred publication frames", () => {
       expect(labels(screen)).toEqual([
         ["чт 1", "пт 2", "сб 3", "вс 4"],
         ["сб 10", "вс 11"],
-        ["Другая дата"],
+        ["Ввести дату"],
         ["Отмена"],
       ]);
     });
@@ -7455,8 +7492,8 @@ describe("deferred publication frames", () => {
       expect(labels(edited)).toEqual([
         ["12:00", "15:00", "17:00", "18:00"],
         ["19:00", "19:30", "20:00", "21:00"],
-        ["Другой день"],
-        ["Другая дата"],
+        ["‹ День"],
+        ["Ввести дату"],
         ["Отмена"],
       ]);
       expect(JSON.stringify(edited?.payload)).toContain(
@@ -7606,7 +7643,7 @@ describe("deferred publication frames", () => {
     expect(payloadText(calls.at(-1))).not.toContain("v1:manage:unschedule");
 
     // Момент выбирают кнопками на экране без режима ответа; текстом его
-    // спрашивает «Другая дата».
+    // спрашивает «Ввести дату».
     await bot.handleUpdate(callbackUpdate(`v1:manage:publish-later:${token}`));
     expect(calls.at(-1)?.method).toBe("editMessageText");
     expect(payloadText(calls.at(-1))).toContain("Когда опубликовать сходку?");

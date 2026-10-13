@@ -26,9 +26,11 @@ import {
 import type { ShownScreen } from "./show.js";
 
 // Форма лота администратора в боте хаба (PER-319; ADR-057, дополнение
-// 2026-10-05). Форма устроена как у сходки (дизайн-код, «Форма создания»): бот
-// спрашивает только название, а дальше человек сам выбирает, что заполнить, с
-// этого экрана. Цена и шаг — один ряд: Auction принимает их только парой.
+// 2026-10-05). Новый лот бот ведёт цепочкой (PER-618, решение владельца
+// 14 октября 2026 года): название, стартовая цена, способ шага, шаг или пороги
+// и фото по порядку, затем «Лот готов». Описание — по желанию, с экрана правки,
+// где человек сам выбирает, что поменять. Цена и шаг — один ряд: Auction
+// принимает их только парой.
 // Фото (PER-452) меняется, как тексты, и после старта торгов: это каталог, а не
 // условия торгов (ADR-057).
 
@@ -58,14 +60,28 @@ export function toLots(auctionId: string): Parent {
 }
 
 export const lotSavedNote: Record<
-  "created" | "text" | "terms" | "image",
+  "created" | "text" | "terms" | "image" | "ready",
   string
 > = {
   created: "Лот добавлен. Задай цену и шаг: без них он не выйдет на торги.",
   text: "Изменение сохранено.",
   terms: "Цена и шаг сохранены.",
   image: "Фото сохранено.",
+  // Конец цепочки нового лота (PER-618): фото принято или пропущено.
+  ready: "Лот готов. Описание — по желанию: его добавляет «Изменить лот».",
 };
+
+/**
+ * Строки над вопросом цепочки нового лота (PER-618): что уже сделано. Они
+ * стоят только на переходе — вопрос, заданный заново, их не несёт.
+ */
+export const lotChainLead = {
+  created: "Лот добавлен. Без цены и шага он не выйдет на торги.",
+  terms: "Цена и шаг сохранены.",
+} as const;
+
+/** «Пропустить» под вопросом о фото в цепочке нового лота (PER-618). */
+export const skipPhotoLabel = "Пропустить";
 
 function stepTermsLines(
   terms: Extract<LotTermsView, { kind: "set" }>,
@@ -103,17 +119,19 @@ function termsLines(terms: LotTermsView): string[] {
 
 /**
  * Экран выбора способа шага (PER-491): цена уже принята, шаг ещё нет. Кнопка
- * несёт цену, чтобы вопрос о шаге задавался и после рестарта.
+ * несёт цену, чтобы вопрос о шаге задавался и после рестарта, а в цепочке
+ * нового лота (PER-618) — и признак цепочки.
  */
 export function lotStepModeScreen(
   lot: LotFormView,
   priceRubles: number,
+  chain?: boolean,
 ): ShownScreen {
   const token = uuidToToken(lot.lotId);
   // Бинарная пара выбора — одним рядом (дизайн-код, «Клавиатура»).
   const keyboard = new InlineKeyboard()
-    .text("Один шаг", lotStepModeData(token, priceRubles, "single"))
-    .text("По порогам", lotStepModeData(token, priceRubles, "tiered"));
+    .text("Один шаг", lotStepModeData(token, priceRubles, "single", chain))
+    .text("По порогам", lotStepModeData(token, priceRubles, "tiered", chain));
   return {
     id: "lot-step-mode",
     text: screenText(
@@ -246,7 +264,9 @@ function prompt(question: LotQuestion): string {
         ? "Шаг ставки в рублях, целым числом: на столько новая ставка обязана быть выше текущей цены. Например: 100"
         : "Пороги шага строками «от суммы — шаг». Первый — от 0, дальше границы возрастают, шаг растёт. Например:\n0 — 100\n5000 — 250";
     case "image":
-      return "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота.";
+      return question.chain === true
+        ? "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота. Нет фото под рукой — «Пропустить», его можно добавить потом."
+        : "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота.";
     default: {
       const _exhaustive: never = question;
       return _exhaustive;
@@ -294,16 +314,23 @@ function current(
 }
 
 /**
- * Текст вопроса формы лота (дизайн-код, «Вопросы»): причина отказа первой
- * строкой, затем текущее значение и то, что нужно прислать. Вопрос о шаге
- * называет принятую цену: в Auction она уйдёт вместе с шагом.
+ * Текст вопроса формы лота (дизайн-код, «Вопросы»): что уже сделано на
+ * переходе цепочки, затем текущее значение и то, что нужно прислать. Вопрос о
+ * шаге называет принятую цену: в Auction она уйдёт вместе с шагом. У вопроса
+ * цепочки нового лота (PER-618) строки «Сейчас» нет: значение ещё не задано.
  */
 export function lotQuestionText(
   question: LotQuestion,
   lot?: LotFormView,
+  lead?: string,
 ): string {
-  const now = current(question, lot);
+  const chained =
+    question.kind !== "new" &&
+    question.kind !== "text" &&
+    question.chain === true;
+  const now = chained ? undefined : current(question, lot);
   return [
+    ...(lead === undefined ? [] : [lead]),
     ...(question.kind === "step"
       ? [`Стартовая цена: ${rublesOf(question.priceRubles)}.`]
       : []),

@@ -189,21 +189,43 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       (replayed.state, replayed.auction) shouldBe (LotState.Initial, None)
     }
 
-    "accept a first bid at the starting price plus the step (Т-01)" in {
-      val (result, journal) = Journal.of(trading(price = 100)).submit(placeBid(who = 1, amount = 110, opN = 1), bid(1))
+    "accept a first bid at the starting price itself (Т-01, PER-618)" in {
+      val (result, journal) = Journal.of(trading(price = 100)).submit(placeBid(who = 1, amount = 100, opN = 1), bid(1))
 
       result shouldBe Right(
         Decision.Accepted(
-          LotEvent.BidPlaced(bid(1), participant(1), money(110), None, BidOrigin.Manual(BidSource.Bot))
+          LotEvent.BidPlaced(bid(1), participant(1), money(100), None, BidOrigin.Manual(BidSource.Bot))
         )
       )
-      tradingOf(journal.lot).currentPrice shouldBe money(110)
+      tradingOf(journal.lot).currentPrice shouldBe money(100)
       tradingOf(journal.lot).leader shouldBe Some(participant(1))
       tradingOf(journal.lot).leadingBidId shouldBe Some(bid(1))
     }
 
-    "reject a bid below the next price and leave the lot unchanged (Т-02)" in {
+    "name the starting price as the next price of a lot without bids" in {
+      Lot.minRequired(tradingOf(trading(price = 100)), calm) shouldBe money(100)
+    }
+
+    "reject a first bid below the starting price and name the starting price (Т-02, PER-618)" in {
       val before = Journal.of(trading(price = 100))
+
+      val (result, after) = before.submit(placeBid(who = 1, amount = 95, opN = 1), bid(1))
+
+      result shouldBe Left(PlaceBidRejected.BidBelowMinimum(money(100)))
+      after shouldBe before
+    }
+
+    "ask the step above the first bid from the second one" in {
+      val (_, journal) = Journal.of(trading(price = 100)).submit(placeBid(who = 1, amount = 100, opN = 1), bid(1))
+
+      journal.submit(placeBid(who = 2, amount = 105, opN = 2), bid(2))._1 shouldBe
+        Left(PlaceBidRejected.BidBelowMinimum(money(110)))
+      accepted(journal.submit(placeBid(who = 2, amount = 110, opN = 2), bid(2))._1).map(_.amount) shouldBe
+        Some(money(110))
+    }
+
+    "reject a bid below the next price of a lot with a leader and leave the lot unchanged" in {
+      val before = Journal.of(trading(price = 100, leader = Some(participant(9))))
 
       val (result, after) = before.submit(placeBid(who = 1, amount = 105, opN = 1), bid(1))
 
@@ -245,7 +267,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     }
 
     "answer a bid above the last tier bound with the step of that tier (Т-32)" in {
-      val lot = trading(price = 300, policy = tiered(0L -> 10L, 200L -> 20L))
+      val lot = trading(price = 300, policy = tiered(0L -> 10L, 200L -> 20L), leader = Some(participant(9)))
 
       Lot.decide(lot, placeBid(who = 1, amount = 310, opN = 1), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.BidBelowMinimum(money(320)))
@@ -268,26 +290,35 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     }
 
     "reject a live bid above the next price and name that price (Т-40)" in {
-      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live)
+      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live, leader = Some(participant(9)))
 
       Lot.decide(lot, placeBid(who = 1, amount = 1150, opN = 1), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.BidNotAtNextPrice(money(1100)))
     }
 
     "reject a live bid below the next price with the same refusal" in {
-      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live)
+      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live, leader = Some(participant(9)))
 
       Lot.decide(lot, placeBid(who = 1, amount = 1050, opN = 1), bid(1), proxyBid(1), calm) shouldBe
         Left(PlaceBidRejected.BidNotAtNextPrice(money(1100)))
     }
 
     "turn the second of two equal live bids into a refusal with the new price (Т-41)" in {
-      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live)
+      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live, leader = Some(participant(9)))
 
       val (results, _) = Journal.of(lot).submitAll(Seq(placeBid(1, 1100, 1), placeBid(2, 1100, 2)))
 
       accepted(results(0)).map(_.participant) shouldBe Some(participant(1))
       results(1) shouldBe Left(PlaceBidRejected.BidNotAtNextPrice(money(1200)))
+    }
+
+    "take the starting price as the only live bid of a lot without bids, not the price plus the step" in {
+      val lot = trading(price = 1000, policy = fixedHundred, phase = Phase.Live)
+
+      Lot.decide(lot, placeBid(who = 1, amount = 1100, opN = 1), bid(1), proxyBid(1), calm) shouldBe
+        Left(PlaceBidRejected.BidNotAtNextPrice(money(1000)))
+      accepted(Lot.decide(lot, placeBid(who = 1, amount = 1000, opN = 1), bid(1), proxyBid(1), calm))
+        .map(_.amount) shouldBe Some(money(1000))
     }
 
     "reject a bid after the lot is sold and write nothing (Т-17)" in {

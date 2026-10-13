@@ -497,7 +497,7 @@ describe("lot form", () => {
     vi.useRealTimers();
   });
 
-  it("asks only the title, adds the lot to the auction and opens its form with the rest left to fill", async () => {
+  it("asks the title, adds the lot to the auction and goes on with the price instead of an outcome screen", async () => {
     const auction = fakeAuction();
     const { bot, calls } = harness("admin", auction);
     await bot.init();
@@ -527,19 +527,19 @@ describe("lot form", () => {
         args: { auctionId, lotId, opId: lotId },
       },
     ]);
-    const form = last(calls);
-    // Исход — свой экран: заголовок, название лота в кавычках и остаток.
-    expect(form.text).toBe(
+    // Цепочка нового лота (PER-618): после названия форма сама спрашивает
+    // цену, а не обрывается экраном «Лот добавлен».
+    const price = question(calls).payload;
+    expect(price.text).toBe(
       [
-        "<b>Лот добавлен</b>",
-        "<b>Ваза синяя</b>",
-        "Задай цену и шаг: без них он не выйдет на торги.",
-      ].join("\n\n"),
+        "Лот добавлен. Без цены и шага он не выйдет на торги.",
+        "Стартовая цена в рублях, целым числом. Например: 1500",
+      ].join("\n"),
     );
-    expect(labels(form)).toEqual([["Изменить лот"], ["‹ Лот"]]);
-    expect(dataOf(form, "‹ Лот")).toBe(lotData(lotId));
-    // Форма с недостающими полями открывается кнопкой «Изменить лот».
-    await bot.handleUpdate(press(dataOf(form, "Изменить лот")));
+    expect(labels(price)).toEqual([["Отмена"]]);
+    expect(dataOf(price, "Отмена")).toBe(`v1:q:cp:${uuidToToken(lotId)}:42`);
+    // Форма с недостающими полями — «Отмена» под вопросом цепочки.
+    await bot.handleUpdate(press(dataOf(price, "Отмена")));
     const opened = last(calls);
     expect(opened.text).toBe(
       [
@@ -849,7 +849,7 @@ describe("lot form", () => {
     // Отказ вопросом не был, поэтому последний вопрос в чате — тот же.
     await bot.handleUpdate(answer(calls, "Ваза"));
 
-    expect(last(calls).text).toContain("<b>Лот добавлен</b>");
+    expect(question(calls).payload.text).toContain("Лот добавлен.");
     expect(closed()).toBe(true);
     // Повтор создал тот же лот: идентификатор взят из кнопки вопроса.
     const created = auction.commands.map(
@@ -917,7 +917,7 @@ describe("lot form", () => {
     });
   });
 
-  // Read model Auction отстаёт от команды: нажатие сразу после «Лот добавлен»
+  // Read model Auction отстаёт от команды: нажатие сразу после названия
   // читает лот, которого она ещё не знает (PER-471).
   it.each([
     ["image", "Пришли фото лота"],
@@ -933,7 +933,7 @@ describe("lot form", () => {
       const step = dataOf(question(calls).payload, "Отмена");
       const lotId = newLotIdOf(step.split(":")[4] ?? "");
       await bot.handleUpdate(answer(calls, "Ваза синяя"));
-      expect(last(calls).text).toContain("<b>Лот добавлен</b>");
+      expect(question(calls).payload.text).toContain("Лот добавлен.");
 
       vi.useFakeTimers();
       const handled = bot.handleUpdate(
@@ -1274,5 +1274,186 @@ describe("lot preview", () => {
 
     await bot.handleUpdate(press(dataOf(preview, "‹ Изменить лот")));
     expect(last(calls).text).toContain("<b>Изменить лот</b>");
+  });
+});
+
+// Цепочка нового лота (PER-618, решение владельца 14 октября 2026 года): после
+// названия форма сама спрашивает цену, способ шага, шаг и фото по порядку, а
+// итог — «Лот готов». Шаг цепочки лежит в кнопке вопроса и экрана выбора
+// способа, поэтому цепочка переживает рестарт посреди.
+describe("new lot chain", () => {
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3]);
+  const photo = {
+    photo: [{ file_id: "large", file_unique_id: "l", width: 800, height: 800 }],
+  };
+  const photoPrompt =
+    "Пришли фото лота ответом на это сообщение. Его увидят участники на карточке лота. Нет фото под рукой — «Пропустить», его можно добавить потом.";
+  const readyText = [
+    "<b>Лот готов</b>",
+    "<b>Ваза</b>",
+    "Описание — по желанию: его добавляет «Изменить лот».",
+  ].join("\n\n");
+
+  // Каждый шаг ведёт новый бот: память процесса между шагами не доживает.
+  function restarting(auction: ReturnType<typeof fakeAuction>) {
+    const calls: RecordedCall[] = [];
+    const telegram = fakeTelegramFiles({ large: jpeg });
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls, { telegram });
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+    return { calls, next };
+  }
+
+  async function titled(
+    next: (update: (history: RecordedCall[]) => Update) => Promise<void>,
+    auction: ReturnType<typeof fakeAuction>,
+  ): Promise<string> {
+    await next(() => press(`v1:lot:new:${auctionToken}`));
+    await next((history) => answer(history, "Ваза"));
+    return [...auction.lots.keys()][0] ?? "";
+  }
+
+  it("asks the price, the step and the photo in turn over restarts and ends with the lot ready", async () => {
+    const auction = fakeAuction();
+    const { calls, next } = restarting(auction);
+    const lotId = await titled(next, auction);
+    const lot = uuidToToken(lotId);
+
+    expect(dataOf(question(calls).payload, "Отмена")).toBe(`v1:q:cp:${lot}:42`);
+    await next((history) => answer(history, "1 500"));
+
+    // Способ шага — тот же экран, кнопки несут цену и признак цепочки.
+    const mode = last(calls);
+    expect(labels(mode)).toEqual([
+      ["Один шаг", "По порогам"],
+      ["‹ Изменить лот"],
+    ]);
+    expect(dataOf(mode, "По порогам")).toBe(`v1:lot:sm:${lot}:1500:tiered:c`);
+    await next((history) => press(dataOf(last(history), "По порогам")));
+    const step = question(calls).payload;
+    expect(dataOf(step, "Отмена")).toBe(`v1:q:cy:${lot}:1500:42`);
+    expect(step.text).toContain("Пороги шага строками");
+
+    await next((history) => answer(history, "0 — 100\n5000 — 250"));
+    expect(auction.commands.at(-1)).toMatchObject({
+      method: "scheduleLot",
+      args: {
+        startingPrice: rub(150_000),
+        stepPolicy: {
+          kind: "tiered",
+          tiers: [
+            { lowerBound: rub(0), step: rub(10_000) },
+            { lowerBound: rub(500_000), step: rub(25_000) },
+          ],
+        },
+      },
+    });
+
+    // Условия сохранены — сразу вопрос о фото, без экрана исхода.
+    const asked = question(calls).payload;
+    expect(asked.text).toBe(["Цена и шаг сохранены.", photoPrompt].join("\n"));
+    expect(labels(asked)).toEqual([["Пропустить"], ["Отмена"]]);
+    expect(dataOf(asked, "Пропустить")).toBe(`v1:lot:skip:${lot}`);
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:ci:${lot}:42`);
+
+    await next((history) => reply(history, photo));
+    const ready = last(calls);
+    expect(ready.text).toBe(readyText);
+    expect(labels(ready)).toEqual([["Изменить лот"], ["‹ Лот"]]);
+    expect(dataOf(ready, "‹ Лот")).toBe(lotData(lotId));
+    expect(auction.images.has(lotId)).toBe(true);
+  });
+
+  it("skips the photo with a button that removes the question and ends with the lot ready", async () => {
+    const auction = fakeAuction();
+    const { calls, next } = restarting(auction);
+    await titled(next, auction);
+    await next((history) => answer(history, "700"));
+    await next((history) => press(dataOf(last(history), "Один шаг")));
+    await next((history) => answer(history, "50"));
+    const asked = question(calls).payload;
+
+    await next(() => press(dataOf(asked, "Пропустить")));
+
+    // Вопрос удалён, как под «Отменой», а итог пришёл новым сообщением.
+    expect(calls.map((call) => call.method)).toContain("deleteMessage");
+    expect(calls.at(-1)?.method).toBe("sendMessage");
+    expect(last(calls).text).toBe(readyText);
+    expect(auction.methods()).not.toContain("editLotCard");
+  });
+
+  it("returns to the lot form when a question in the middle of the chain is cancelled", async () => {
+    const auction = fakeAuction();
+    const { calls, next } = restarting(auction);
+    await titled(next, auction);
+    await next((history) => answer(history, "700"));
+    await next((history) => press(dataOf(last(history), "Один шаг")));
+
+    await next((history) => press(dataOf(question(history).payload, "Отмена")));
+
+    expect(last(calls).text).toContain("<b>Изменить лот</b>");
+    expect(last(calls).text).toContain("Стартовая цена: не задана");
+    expect(auction.methods()).toEqual(["createLotCard", "addLot"]);
+  });
+
+  it("keeps the chain when a price of the chain is refused and asked again", async () => {
+    const auction = fakeAuction();
+    const { calls, next } = restarting(auction);
+    const lot = uuidToToken(await titled(next, auction));
+    await next((history) => answer(history, "дорого"));
+
+    const refusal = last(calls);
+    expect(dataOf(refusal, "Ввести заново")).toBe(`v1:lot:ask:${lot}:price:c`);
+    await next(() => press(dataOf(refusal, "Ввести заново")));
+    // Повтор — вопрос цепочки без строки о добавленном лоте.
+    const again = question(calls).payload;
+    expect(again.text).toBe(
+      "Стартовая цена в рублях, целым числом. Например: 1500",
+    );
+    expect(dataOf(again, "Отмена")).toBe(`v1:q:cp:${lot}:42`);
+    await next((history) => answer(history, "700"));
+    expect(dataOf(last(calls), "Один шаг")).toBe(
+      `v1:lot:sm:${lot}:700:single:c`,
+    );
+  });
+
+  it("refuses the step of the chain once trading froze the terms, as outside the chain", async () => {
+    const auction = fakeAuction();
+    const { calls, next } = restarting(auction);
+    const lotId = await titled(next, auction);
+    await next((history) => answer(history, "700"));
+    const mode = last(calls);
+    const lot = auction.lots.get(lotId);
+    if (lot === undefined) throw new Error("lot expected");
+    auction.lots.set(lotId, {
+      ...lot,
+      status: { kind: "trading", currentPrice: rub(70_000), phase: "online" },
+    });
+
+    await next(() => press(dataOf(mode, "Один шаг")));
+
+    expect(plain(last(calls))).toBe(
+      "Торги уже начались. Цену и шаг лота изменить нельзя.",
+    );
+    expect(auction.methods()).not.toContain("scheduleLot");
+  });
+
+  it("does not chain a price or a photo asked from the form", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const { calls, next } = restarting(auction);
+    const lot = uuidToToken(existingLot);
+
+    await next(() => press(`v1:lot:ask:${lot}:image`));
+    expect(labels(question(calls).payload)).toEqual([["Отмена"]]);
+    await next(() => press(`v1:lot:ask:${lot}:price`));
+    await next((history) => answer(history, "700"));
+    expect(dataOf(last(calls), "Один шаг")).toBe(`v1:lot:sm:${lot}:700:single`);
+    await next((history) => press(dataOf(last(history), "Один шаг")));
+    await next((history) => answer(history, "50"));
+    expect(last(calls).text).toBe(
+      ["<b>Цена и шаг сохранены</b>", "<b>Кружка с совой</b>"].join("\n\n"),
+    );
   });
 });

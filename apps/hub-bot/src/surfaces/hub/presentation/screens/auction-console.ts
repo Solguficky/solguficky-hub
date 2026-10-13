@@ -18,6 +18,7 @@ import type {
   LotAmount,
   RaffleAskError,
   StepWindow,
+  TradingHolder,
   WeekAskError,
   WindowAskError,
   WindowNote,
@@ -80,6 +81,8 @@ const titleLimit = 120;
 export type ConsoleScreenView = {
   console: AuctionConsoleView;
   note?: ConsoleNote;
+  // Аукцион, у которого идут торги: его называет `another-auction-active`.
+  holder?: TradingHolder;
   page: number;
   sort: ConsoleSort;
   timeZone: string;
@@ -125,6 +128,57 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "final-finished": "Финал завершён. Все лоты закрыты, итоги — в пульте.",
 };
 
+// Исход, который повторяет сохранённое или называет аукцион с торгами
+// (PER-618), — одной строкой заголовка: даты и название сходки несут точки и
+// двоеточия, и делить их на заголовок и пояснение нельзя.
+function noteText(view: ConsoleScreenView, note: ConsoleNote): string {
+  const week = view.console.week;
+  switch (note) {
+    case "week-saved":
+      return week?.opensAt === undefined || week.closesAt === undefined
+        ? outcomeText(consoleNoteText[note])
+        : screenText(
+            `Сроки недели сохранены: с ${moment(week.opensAt, view)} до ${moment(week.closesAt, view)}`,
+          );
+    case "raffle-saved":
+      return week?.raffleClosesAt === undefined
+        ? outcomeText(consoleNoteText[note])
+        : screenText(
+            `Регистрация в розыгрыше закроется ${moment(week.raffleClosesAt, view)}`,
+          );
+    case "another-auction-active":
+      return view.holder === undefined
+        ? outcomeText(consoleNoteText[note])
+        : screenText(tradingElsewhere(view.holder, view));
+    default:
+      return outcomeText(consoleNoteText[note]);
+  }
+}
+
+/**
+ * Торги идут у другого аукциона (PER-603): исход называет его сходкой, если
+ * бот её знает, иначе — сроками его онлайн-недели (PER-618).
+ */
+export function tradingElsewhere(
+  holder: TradingHolder,
+  view: { timeZone: string; today: CommunityDay },
+): string {
+  const where =
+    holder.meetupTitle !== undefined
+      ? `у «${holder.meetupTitle.replace(/\s+/g, " ").trim()}»`
+      : holder.opensAt !== undefined && holder.closesAt !== undefined
+        ? `у аукциона с онлайн-неделей с ${localMoment(holder.opensAt, view)} до ${localMoment(holder.closesAt, view)}`
+        : "у другого аукциона";
+  return `Торги уже идут ${where}: открыть неделю можно, когда они закончатся`;
+}
+
+function localMoment(
+  instant: string,
+  view: { timeZone: string; today: CommunityDay },
+): string {
+  return readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+}
+
 /** Всплывающий текст принятого переключателя финала (кадр P-08). */
 export function finalToast(final: boolean): string {
   return final ? "Включено: финал." : "Выключено: финал.";
@@ -146,11 +200,48 @@ function windowsLines(week: AuctionWeek): string[] {
 }
 
 // Розыгрыш (PER-593) виден строкой всегда: без момента у участников нет
-// кнопки «Розыгрыш», и администратор видит почему.
+// кнопки «Розыгрыш», и администратор видит почему. После закрытия регистрации
+// строка идёт по статусу из `GetRaffle` (PER-618): жеребьёвка и её итог.
 function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
-  return week.raffleClosesAt === undefined
-    ? "Розыгрыш: нет."
-    : `Розыгрыш: регистрация до ${moment(week.raffleClosesAt, view)}.`;
+  if (week.raffleClosesAt === undefined) return "Розыгрыш: нет.";
+  const raffle = view.console.raffle;
+  if (raffle === undefined) {
+    return `Розыгрыш: регистрация до ${moment(week.raffleClosesAt, view)}.`;
+  }
+  switch (raffle.status) {
+    case "open":
+      return `Розыгрыш: регистрация до ${moment(week.raffleClosesAt, view)}.`;
+    case "closing":
+    case "awaiting-beacon":
+      return "Розыгрыш: регистрация закрыта, жеребьёвка идёт.";
+    case "drawn": {
+      const tickets = `билетов: ${raffle.tickets.length}`;
+      const number = raffle.reveal?.winningTicket;
+      if (number === undefined) {
+        return `Розыгрыш: жеребьёвка прошла, ${tickets}.`;
+      }
+      const name = raffle.tickets.find(
+        (ticket) => ticket.number === number,
+      )?.displayName;
+      return `Розыгрыш: выиграл билет №${number}${
+        name === undefined ? "" : ` — ${name}`
+      }, ${tickets}.`;
+    }
+    case "no-tickets":
+      return "Розыгрыш: не состоялся, никто не зарегистрировался.";
+    case "not-held":
+      return "Розыгрыш: не проводился, неделя открылась после закрытия регистрации.";
+    default: {
+      const _exhaustive: never = raffle.status;
+      return _exhaustive;
+    }
+  }
+}
+
+// Розыгрыш после онлайн-торгов: итог виден, пока пульт открыт (PER-618).
+function raffleLines(view: ConsoleScreenView): string[] {
+  const week = view.console.week;
+  return week?.raffleClosesAt === undefined ? [] : [raffleLine(week, view)];
 }
 
 function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
@@ -184,15 +275,21 @@ function statusLines(view: ConsoleScreenView): string[] {
           : [finalLine(week), ...windowsLines(week), raffleLine(week, view)]),
       ];
     case "settling":
-      return ["Общий дедлайн прошёл: аукцион ждёт закрытия лотов."];
+      return [
+        "Общий дедлайн прошёл: аукцион ждёт закрытия лотов.",
+        ...raffleLines(view),
+      ];
     case "break":
-      return ["Онлайн-торги закончились: перерыв перед финалом."];
+      return [
+        "Онлайн-торги закончились: перерыв перед финалом.",
+        ...raffleLines(view),
+      ];
     case "lineup-frozen":
       return ["Состав финала объявлен."];
     case "final":
       return ["Идёт финал."];
     case "finished":
-      return ["Аукцион завершён."];
+      return ["Аукцион завершён.", ...raffleLines(view)];
     default: {
       const _exhaustive: never = status;
       return _exhaustive;
@@ -447,7 +544,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   if (view.note !== undefined) {
     return {
       id: "outcome",
-      text: outcomeText(consoleNoteText[view.note]),
+      text: noteText(view, view.note),
       keyboard: withNav(new InlineKeyboard(), {
         name: "Пульт",
         data: consoleViewData(auction, view.page, view.sort),

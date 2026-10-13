@@ -324,7 +324,7 @@ describe("inspectCall", () => {
       });
     const rows = [
       [key("чт 1"), key("пт 2"), key("сб 3"), key("вс 4")],
-      [key("Другая дата")],
+      [key("Ввести дату")],
     ];
 
     expect(choice({ inline_keyboard: [...rows, [key("Отмена")]] })).toEqual([]);

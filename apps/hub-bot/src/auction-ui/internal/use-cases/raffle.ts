@@ -23,7 +23,8 @@ const toRaffle = (auctionId: string): AuctionButton => ({
 });
 
 // Экран розыгрыша. Кнопка регистрации или отмены есть только в окне
-// регистрации; вне окна текст объясняет, где розыгрыш. Возврат — в ленту
+// регистрации; вне окна текст объясняет, где розыгрыш. Под ней — «Как
+// проверить честность», пока проверять есть что (PER-618). Возврат — в ленту
 // аукциона, на первую её страницу.
 export function raffleBody(
   auctionId: string,
@@ -57,6 +58,19 @@ export function raffleBody(
     ],
     keyboard: [
       ...(action === undefined ? [] : [[action]]),
+      ...(provable(raffle)
+        ? [
+            [
+              {
+                action: "raffle.proof" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "raffle-proof",
+                  auctionId,
+                }),
+              },
+            ],
+          ]
+        : []),
       [
         {
           action: "raffle.back",
@@ -68,6 +82,38 @@ export function raffleBody(
         },
       ],
     ],
+  };
+}
+
+// Проверять есть что, пока у розыгрыша есть отпечаток или раскрытие: у
+// непроведённого их нет, и кнопки «Как проверить честность» тоже.
+function provable(raffle: RaffleView | undefined): boolean {
+  return (
+    raffle !== undefined &&
+    raffle.status !== "not-held" &&
+    (raffle.commitment !== undefined || raffle.reveal !== undefined)
+  );
+}
+
+// Как проверить честность (PER-618): тот же розыгрыш, прочитанный заново, —
+// техника, которую экран участника не показывает. Возврат — в розыгрыш.
+export async function openRaffleProof(
+  context: CommandContext,
+  auctionId: string,
+): Promise<AuctionScreenBody> {
+  const raffle = await context.auction.getRaffle({
+    viewer: context.viewer,
+    auctionId,
+  });
+  return {
+    blocks: [
+      {
+        kind: "raffle-proof",
+        auctionId,
+        ...(raffle === undefined ? {} : { raffle }),
+      },
+    ],
+    keyboard: [[toRaffle(auctionId)]],
   };
 }
 

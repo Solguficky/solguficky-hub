@@ -2,6 +2,7 @@ import type {
   AccessRight,
   AuctionSummaryView,
   LotView,
+  RaffleView,
 } from "../../../auction-ui/index.js";
 import type {
   AuctionNotificationChange,
@@ -69,13 +70,23 @@ export type NewLotId = string & { readonly __newLot: true };
 // вопроса, поэтому повторный ответ создаёт тот же лот, а не второй. Вопрос о
 // шаге несёт цену из предыдущего ответа, в целых рублях. Ответ на вопрос о
 // фото — фотография, а не текст (PER-452).
+//
+// `chain` — вопрос задан цепочкой нового лота (PER-618): после названия форма
+// сама спрашивает цену, шаг и фото по порядку. Признак едет в кнопке вопроса
+// и переживает рестарт; юзкейс его не читает — следующий шаг выбирает край.
 export type LotQuestion =
   | { kind: "new"; auctionId: string; lotId: NewLotId }
   | { kind: "text"; field: LotTextField; lotId: string }
-  | { kind: "price"; lotId: string }
+  | { kind: "price"; lotId: string; chain?: true }
   // Способ шага выбирается до вопроса о нём (PER-491): один шаг или пороги.
-  | { kind: "step"; lotId: string; priceRubles: number; mode: LotStepMode }
-  | { kind: "image"; lotId: string };
+  | {
+      kind: "step";
+      lotId: string;
+      priceRubles: number;
+      mode: LotStepMode;
+      chain?: true;
+    }
+  | { kind: "image"; lotId: string; chain?: true };
 
 // Почему вопрос формы лота задан заново.
 export type LotAskError =
@@ -431,6 +442,20 @@ export type AuctionConsoleView = Omit<AuctionConsoleSnapshot, "lots"> & {
   lots: readonly ConsoleLot[];
   // Есть, только пока в финале торгуется лот.
   trading?: FinalTrading;
+  // Розыгрыш после закрытия регистрации (PER-618): статус и итог для строки
+  // пульта. Нет — момент не прошёл, розыгрыша нет или чтение отказало, и
+  // строка называет момент закрытия.
+  raffle?: RaffleView;
+};
+
+// Аукцион, у которого идут торги сообщества (PER-603, PER-618): слот один, и
+// открыть неделю другого нельзя. Сроки — из чтения активных аукционов;
+// `meetupTitle` — его сходка, если бот её знает.
+export type TradingHolder = {
+  auctionId: string;
+  opensAt?: string;
+  closesAt?: string;
+  meetupTitle?: string;
 };
 
 // Строка исхода команды пульта: принятая команда и именованный отказ Auction,
@@ -812,6 +837,9 @@ export type ExecuteResult =
       kind: "auction-console";
       console: AuctionConsoleView;
       note?: ConsoleNote;
+      // Торги идут у другого аукциона: его называет заметка
+      // `another-auction-active`.
+      holder?: TradingHolder;
       // Переключатель финала принят: исход — всплывающий текст, а не строка.
       toggled?: true;
     }

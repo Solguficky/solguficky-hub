@@ -177,3 +177,56 @@ describe("feed", () => {
     ]);
   });
 });
+
+// Торги не начались (PER-618): ни один лот всей ленты не торговался —
+// запланированные, черновики и снятые. Один лот в торгах на любой странице
+// снимает признак.
+describe("feed before trading", () => {
+  const scheduled = (n: number, rubles: number): LotView => ({
+    ...lot(n),
+    status: {
+      kind: "scheduled",
+      startingPrice: { minorUnits: rubles * 100, currency: "RUB" },
+    },
+  });
+  const withdrawn: LotView = { ...lot(90), status: { kind: "withdrawn" } };
+  const draft: LotView = { ...lot(91), status: { kind: "draft" } };
+
+  const blockOf = async (lots: LotView[]) => {
+    const body = await openFeed({
+      auction: oneServerPage(lots),
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    if (block?.kind !== "feed") throw new Error("feed block expected");
+    return block;
+  };
+
+  it("marks the feed whose lots have not traded yet", async () => {
+    const block = await blockOf([scheduled(1, 500), withdrawn, draft]);
+    expect(block.beforeTrading).toBe(true);
+  });
+
+  it("drops the mark once any lot of the whole feed has traded", async () => {
+    const early = Array.from({ length: FEED_PAGE_SIZE }, (_, i) =>
+      scheduled(i + 1, 100 + i),
+    );
+    const block = await blockOf([...early, lot(50, 9000)]);
+    expect(block.lots.every((item) => item.status.kind === "scheduled")).toBe(
+      true,
+    );
+    expect(block.beforeTrading).toBeUndefined();
+  });
+
+  it("drops the mark once the auction has a closed lot", async () => {
+    expect((await blockOf([scheduled(1, 500), lot(2)])).beforeTrading).toBe(
+      undefined,
+    );
+  });
+
+  it("leaves an empty feed without the mark", async () => {
+    expect((await blockOf([])).beforeTrading).toBeUndefined();
+  });
+});

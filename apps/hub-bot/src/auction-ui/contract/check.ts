@@ -268,6 +268,7 @@ function withViewer(call: PortCall, viewer: Viewer): unknown {
 
 export const CONTRACT_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
 const EMPTY_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a2";
+const PRE_TRADING_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a3";
 const LEADER_ID = "01929b7e-5c1d-7a3f-8e4b-000000000002";
 const WINNER_ID = "01929b7e-5c1d-7a3f-8e4b-000000000003";
 const RIVAL_ID = "01929b7e-5c1d-7a3f-8e4b-000000000004";
@@ -331,6 +332,8 @@ const SCHEDULED_LOT: LotView = {
   auctionId: CONTRACT_AUCTION_ID,
   version: 2,
   card: { title: "Носки", description: "" },
+  // Условия Auction отдаёт с первого планирования: шаг виден до торгов.
+  fixedStep: rub(50),
   proxyEnabled: false,
   status: { kind: "scheduled", startingPrice: rub(500) },
 };
@@ -411,6 +414,50 @@ const EMPTY_AUCTION: ContractAuction = {
   lots: [],
   pages: { "": { lots: [], nextPageToken: "" } },
 };
+
+// Аукцион до торгов (PER-618): лот с шагом по порогам, черновик и снятый —
+// ни один не торговался.
+const TIERED_SCHEDULED_LOT: LotView = {
+  lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b43",
+  auctionId: PRE_TRADING_AUCTION_ID,
+  version: 2,
+  card: { title: "Свеча", description: "" },
+  tiers: [
+    { lowerBound: rub(0), step: rub(50) },
+    { lowerBound: rub(5000), step: rub(250) },
+  ],
+  proxyEnabled: false,
+  status: { kind: "scheduled", startingPrice: rub(700) },
+};
+
+const PRE_TRADING_DRAFT: LotView = {
+  ...DRAFT_LOT,
+  lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b45",
+  auctionId: PRE_TRADING_AUCTION_ID,
+};
+
+const PRE_TRADING_WITHDRAWN: LotView = {
+  ...WITHDRAWN_LOT,
+  lotId: "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b44",
+  auctionId: PRE_TRADING_AUCTION_ID,
+};
+
+const PRE_TRADING_AUCTION: ContractAuction = {
+  lots: [TIERED_SCHEDULED_LOT, PRE_TRADING_DRAFT, PRE_TRADING_WITHDRAWN],
+  pages: {
+    "": {
+      lots: [PRE_TRADING_DRAFT, PRE_TRADING_WITHDRAWN, TIERED_SCHEDULED_LOT],
+      nextPageToken: "",
+    },
+  },
+};
+
+// По цене: стартовая 700; без цены — по `lotId`.
+const PRE_TRADING_ORDER = [
+  TIERED_SCHEDULED_LOT,
+  PRE_TRADING_WITHDRAWN,
+  PRE_TRADING_DRAFT,
+];
 
 const listCalls = (auctionId: string, tokens: readonly string[]): PortCall[] =>
   tokens.map((pageToken) => ({
@@ -1500,6 +1547,7 @@ const SCHEDULED_BLOCK = {
   auctionId: CONTRACT_AUCTION_ID,
   version: 2,
   card: { title: "Носки", description: "" },
+  fixedStep: rub(50),
   status: { kind: "scheduled" as const, startingPrice: rub(500) },
 };
 
@@ -2058,6 +2106,18 @@ const raffleScreen = (raffle: RaffleView | undefined): AuctionScreenBody => {
               },
             ],
           ];
+  // «Как проверить честность» (PER-618) — пока у розыгрыша есть отпечаток.
+  const proof =
+    raffle === undefined || raffle.status === "not-held"
+      ? []
+      : [
+          [
+            {
+              action: "raffle.proof" as const,
+              callbackData: raffleProofCallback,
+            },
+          ],
+        ];
   return {
     blocks: [
       {
@@ -2066,9 +2126,28 @@ const raffleScreen = (raffle: RaffleView | undefined): AuctionScreenBody => {
         ...(raffle === undefined ? {} : { raffle }),
       },
     ],
-    keyboard: [...action, toFeedRow],
+    keyboard: [...action, ...proof, toFeedRow],
   };
 };
+
+const raffleProofCallback = callback({
+  kind: "raffle-proof",
+  auctionId: CONTRACT_AUCTION_ID,
+});
+
+// Экран проверки честности: тот же розыгрыш и возврат в него.
+const raffleProofScreen = (
+  raffle: RaffleView | undefined,
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "raffle-proof",
+      auctionId: CONTRACT_AUCTION_ID,
+      ...(raffle === undefined ? {} : { raffle }),
+    },
+  ],
+  keyboard: [toRaffleRow],
+});
 
 const askAliasButton = (action: "name.alias" | "answer.retry") => ({
   action,
@@ -2185,6 +2264,30 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
     auction: AUCTION,
     auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
     body: raffleScreen(undefined),
+  },
+  // Техника розыгрыша — отдельным экраном (PER-618): до жеребьёвки отпечаток
+  // и раунд, после — раскрытие и пересчёт; что показать, решает оболочка.
+  {
+    intent: "raffle: proof before the draw",
+    callbackData: raffleProofCallback,
+    auction: { ...AUCTION, raffle: OPEN_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleProofScreen(OPEN_RAFFLE),
+  },
+  {
+    intent: "raffle: proof after the draw",
+    callbackData: raffleProofCallback,
+    auction: { ...AUCTION, raffle: DRAWN_RAFFLE },
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleProofScreen(DRAWN_RAFFLE),
+  },
+  // Кнопка устарела: розыгрыша нет — экран говорит это, а не падает.
+  {
+    intent: "raffle: proof without a raffle",
+    callbackData: raffleProofCallback,
+    auction: AUCTION,
+    auctionCalls: [raffleCall(CONTRACT_AUCTION_ID)],
+    body: raffleProofScreen(undefined),
   },
   {
     intent: "raffle: register",
@@ -2732,6 +2835,37 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       keyboard: [],
     },
   },
+  // Ни один лот не торговался: сводка не о лидерстве, а о том, что торги не
+  // начались (PER-618). Снятый лот торгов не доказывает.
+  {
+    intent: "feed: before trading",
+    callbackData: feedCallback(PRE_TRADING_AUCTION_ID, 0),
+    auction: PRE_TRADING_AUCTION,
+    auctionCalls: feedCalls(PRE_TRADING_AUCTION_ID, [""]),
+    body: {
+      blocks: [
+        {
+          kind: "feed",
+          auctionId: PRE_TRADING_AUCTION_ID,
+          page: 0,
+          pageCount: 1,
+          lots: PRE_TRADING_ORDER.map((lot) => ({
+            lotId: lot.lotId,
+            ...(lot.card === undefined ? {} : { title: lot.card.title }),
+            status: lot.status,
+          })),
+          beforeTrading: true,
+        },
+      ],
+      keyboard: PRE_TRADING_ORDER.map((lot) => [
+        {
+          action: "feed.open-lot",
+          lotId: lot.lotId,
+          callbackData: lotCallback(lot.lotId, 0),
+        },
+      ]),
+    },
+  },
   {
     intent: "lot: trading",
     callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
@@ -2908,10 +3042,44 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           auctionId: CONTRACT_AUCTION_ID,
           version: 2,
           card: { title: "Носки", description: "" },
+          fixedStep: rub(50),
           status: { kind: "scheduled", startingPrice: rub(500) },
         },
       ],
       keyboard: [refreshRow(SCHEDULED_LOT.lotId, 0), backRow(0)],
+    },
+  },
+  // Шаг по порогам до торгов — те же пороги, что карточка покажет в торгах
+  // (PER-618).
+  {
+    intent: "lot: scheduled, step by thresholds",
+    callbackData: lotCallback(TIERED_SCHEDULED_LOT.lotId, 0),
+    auction: PRE_TRADING_AUCTION,
+    auctionCalls: [getLotCall(TIERED_SCHEDULED_LOT.lotId)],
+    body: {
+      blocks: [
+        {
+          kind: "lot",
+          lotId: TIERED_SCHEDULED_LOT.lotId,
+          auctionId: PRE_TRADING_AUCTION_ID,
+          version: 2,
+          card: { title: "Свеча", description: "" },
+          tiers: [
+            { lowerBound: rub(0), step: rub(50) },
+            { lowerBound: rub(5000), step: rub(250) },
+          ],
+          status: { kind: "scheduled", startingPrice: rub(700) },
+        },
+      ],
+      keyboard: [
+        refreshRow(TIERED_SCHEDULED_LOT.lotId, 0),
+        [
+          {
+            action: "lot.back",
+            callbackData: feedCallback(PRE_TRADING_AUCTION_ID, 0),
+          },
+        ],
+      ],
     },
   },
   // Отложенный в финал лот итога ещё не имеет: «Обновить» под ним стоит.

@@ -10,6 +10,9 @@ import {
   raffleButtonLabel,
   raffleNameChoiceText,
   raffleParagraphs,
+  raffleProofLabel,
+  raffleProofParagraphs,
+  raffleProofTitle,
   raffleTitle,
   registerLabel,
 } from "../../auction-raffle.js";
@@ -818,7 +821,7 @@ function renderBody(
       paged("Лоты", feed),
       ...(feed.lots.length === 0
         ? ["Лотов пока нет."]
-        : feedSummary(feed.mine ?? [], feed.lots, mineOptions)),
+        : feedSummary(feed, mineOptions)),
     ),
   };
 }
@@ -864,6 +867,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         return "answer-refused";
       case "raffle":
         return "raffle";
+      case "raffle-proof":
+        return "raffle-proof";
       case "raffle-name-choice":
         return "raffle-name-choice";
       case "raffle-question":
@@ -988,6 +993,14 @@ function renderLeaf(
             }),
           ),
         };
+      case "raffle-proof":
+        return {
+          format: "html",
+          text: screenText(
+            raffleProofTitle,
+            ...raffleProofParagraphs(block.raffle),
+          ),
+        };
       case "raffle-question":
       case "name-question":
         return { format: "html", text: aliasQuestionText(), asks: true };
@@ -1027,7 +1040,7 @@ function confirmText(
     : screenText(
         `Включить автоставку до ${money(block.amount)}?`,
         lotSubject(block.title),
-        `${proxyGap(block.currentPrice, block.amount)}\nЛимит видишь только ты.`,
+        `${proxyGap(block.currentPrice, block.amount, block.firstBid)}\nЛимит видишь только ты.`,
       );
 }
 
@@ -1146,11 +1159,19 @@ function proxyExplainer(
 
 // Автоставка объясняется разницей цены и лимита (RFC-007): на столько бот
 // может поднять цену за человека, перебивая чужие ставки по шагу.
-function proxyGap(currentPrice: Money, limit: Money): string {
+// Лимит, равный стартовой цене лота без ставок, — тоже первая ставка (П-01).
+function proxyGap(
+  currentPrice: Money,
+  limit: Money,
+  firstBid: Money | undefined,
+): string {
   const gap = limit.minorUnits - currentPrice.minorUnits;
-  return gap > 0
-    ? `Цена сейчас ${money(currentPrice)}: бот будет перебивать чужие ставки по шагу и поднимет её не больше чем на ${money({ minorUnits: gap, currency: limit.currency })}.`
-    : `Цена сейчас ${money(currentPrice)}: лимит не выше неё, и перебивать бот не будет.`;
+  if (gap > 0) {
+    return `Цена сейчас ${money(currentPrice)}: бот будет перебивать чужие ставки по шагу и поднимет её не больше чем на ${money({ minorUnits: gap, currency: limit.currency })}.`;
+  }
+  return firstBid === undefined
+    ? `Цена сейчас ${money(currentPrice)}: лимит не выше неё, и перебивать бот не будет.`
+    : `Ставок ещё нет: бот сразу поставит за тебя ${money(firstBid)}, а перебивать выше лимита не будет.`;
 }
 
 // Исход — свой экран (дизайн-код, «Экран исхода», PER-472): исход в
@@ -1382,7 +1403,10 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
   switch (status.kind) {
     case "draft":
       return [["Статус: готовится к торгам"]];
-    case "scheduled":
+    // Шаг до торгов — тем же форматом, что в торгах (PER-618): условия
+    // Auction отдаёт с первого планирования, и участник видит их заранее.
+    case "scheduled": {
+      const step = stepLines(block, options);
       return [
         ["Статус: торги ещё не начались"],
         [
@@ -1391,7 +1415,9 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
             `Стартовая цена: ${money(status.startingPrice)}`,
           ),
         ],
+        ...(step.length === 0 ? [] : [step]),
       ];
+    }
     case "trading": {
       // Ход торгов: в финале — объявленная цена и следующая ставка ровно по
       // ней (PER-336), в онлайн-торгах — порог следующей ставки; затем шаг и
@@ -1465,9 +1491,10 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
   }
 }
 
-// Шаг лота в торгах (дизайн-код, «Карточка лота»). В окне «Счастливых часов»
-// — шаг окна до его конца и обычный шаг рядом, иначе строка «Шаг», когда шаг
-// один на все цены. Будущее окно — отдельной строкой: когда и какой шаг.
+// Шаг лота до торгов и в торгах (дизайн-код, «Карточка лота»). В окне
+// «Счастливых часов» — шаг окна до его конца и обычный шаг рядом, иначе строка
+// «Шаг», когда шаг один на все цены, или «Шаг по порогам». Будущее окно —
+// отдельной строкой: когда и какой шаг; окна Auction отдаёт только в торгах.
 function stepLines(block: LotBlock, options: RenderOptions): string[] {
   const at = (instant: string) =>
     readableMoment(instant, options.timeZone, options.now);
@@ -1643,6 +1670,8 @@ function renderButton(
       return text(registerLabel);
     case "raffle.cancel":
       return text(cancelRegistrationLabel);
+    case "raffle.proof":
+      return text(raffleProofLabel);
     case "raffle.back":
       return text("‹ Лоты");
     case "raffle.return":

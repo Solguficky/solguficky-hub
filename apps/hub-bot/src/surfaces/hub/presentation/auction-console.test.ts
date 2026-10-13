@@ -6,11 +6,16 @@ import {
 } from "../../../../testkit/harness.js";
 import {
   type AccessRight,
+  type AuctionSummaryView,
   encodeAuctionCallback,
   type LotView,
   type Money,
+  type RaffleView,
 } from "../../../auction-ui/index.js";
-import { createDispatcher } from "../application/dispatcher.js";
+import {
+  createDispatcher,
+  type Dispatcher,
+} from "../application/dispatcher.js";
 import type {
   AuctionConsoleView,
   ConsoleAuctionStatus,
@@ -27,6 +32,7 @@ import type {
   MeetupAuctions,
 } from "../auction/port.js";
 import type { IdentityResolver } from "../identity/port.js";
+import { createAuctionParents } from "./auction-parents.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 
 // Пульт аукциона администратора в боте хаба (PER-320): вход из ленты, сроки
@@ -114,6 +120,11 @@ function fakeAuction(
     lineup?: readonly string[];
     bids?: readonly { amount: Money; participantId: string }[];
     names?: Readonly<Record<string, string>>;
+    // Слот торгов держит другой аукцион (PER-603): открытие недели получает
+    // отказ, а чтение активных аукционов — его сроки (PER-618).
+    busy?: AuctionSummaryView;
+    // Розыгрыш глазами администратора после закрытия регистрации (PER-618).
+    consoleRaffle?: RaffleView;
   } = {},
 ) {
   const state: {
@@ -239,6 +250,12 @@ function fakeAuction(
     },
     async startPrebidding(_person, start) {
       commands.push({ method: "startPrebidding", args: start });
+      if (options.busy !== undefined) {
+        return {
+          kind: "another-auction-active",
+          auctionId: options.busy.auctionId,
+        };
+      }
       if (state.status === "scheduled") {
         state.status = "prebidding";
         state.startedBy = start.opId;
@@ -351,6 +368,17 @@ function fakeAuction(
     },
     async displayNames() {
       return { kind: "ok" as const, names: options.names ?? {} };
+    },
+    async activeAuctions() {
+      return {
+        kind: "ok" as const,
+        auctions: options.busy === undefined ? [] : [options.busy],
+      };
+    },
+    async consoleRaffle() {
+      return options.consoleRaffle === undefined
+        ? { kind: "ok" as const }
+        : { kind: "ok" as const, raffle: options.consoleRaffle };
     },
     currentAuction: async () => ({ kind: "ok" as const }),
     screenPorts() {
@@ -974,8 +1002,11 @@ describe("week of the auction", () => {
         },
       },
     ]);
-    // Исход сохранения — свой экран; сроки и кнопки пульта за «‹ Пульт».
-    expect(last(calls).text).toBe("<b>Сроки недели сохранены</b>");
+    // Исход сохранения — свой экран и называет сохранённое (PER-618); кнопки
+    // пульта — за «‹ Пульт».
+    expect(last(calls).text).toBe(
+      "<b>Сроки недели сохранены: с 20 октября, вт, 18:00 до 27 октября, вт, 00:00</b>",
+    );
     expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
     await next((history) => press(dataOf(last(history), "‹ Пульт")));
     const screen = last(calls);
@@ -1153,7 +1184,9 @@ describe("raffle of the week", () => {
         },
       },
     ]);
-    expect(last(calls).text).toBe("<b>Момент розыгрыша сохранён</b>");
+    expect(last(calls).text).toBe(
+      "<b>Регистрация в розыгрыше закроется 22 октября, чт, 18:00</b>",
+    );
     await next((history) => press(dataOf(last(history), "‹ Пульт")));
     expect(plain(last(calls))).toContain(
       "Розыгрыш: регистрация до 22 октября, чт, 18:00.",
@@ -1247,6 +1280,205 @@ describe("raffle of the week", () => {
     // Неделя без момента открывается без розыгрыша, как раньше.
     await bot.handleUpdate(press(feedData));
     expect(labels(last(calls)).flat()).not.toContain("Розыгрыш");
+  });
+});
+
+// PER-618: торги другого аукциона пульт называет до подтверждения, а отказ
+// после «Да» — тоже называет аукцион.
+describe("opening the week while another auction is trading", () => {
+  const busy: AuctionSummaryView = {
+    auctionId: "0190f2a0-0000-7000-8000-000000000021",
+    stage: "prebidding",
+    opensAt: "2026-10-05T15:00:00Z",
+    closesAt: "2026-10-12T15:00:00Z",
+    final: true,
+  };
+  const scheduled = () =>
+    fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced],
+      busy,
+    });
+
+  it("warns before the confirmation and offers no «Yes»", async () => {
+    const auction = scheduled();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Открыть онлайн-неделю")));
+
+    expect(last(calls).text).toBe(
+      "<b>Торги уже идут у аукциона с онлайн-неделей с 5 октября, пн, 18:00 до 12 октября, пн, 18:00: открыть неделю можно, когда они закончатся</b>",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+    expect(auction.sent("startPrebidding")).toEqual([]);
+  });
+
+  it("names the meetup of the trading auction when the bot knows it", async () => {
+    const auction = scheduled();
+    const parents = createAuctionParents();
+    const meetupId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3400";
+    parents.remember(busy.auctionId, meetupId);
+    const dispatcher = createDispatcher(
+      undefined,
+      undefined,
+      today,
+      auction.port,
+      auction.port,
+      { auctions: auction.port, timeZone, now: () => now },
+    );
+    const withMeetup: Dispatcher = {
+      execute: (request) =>
+        request.intent === "view-meetup-extensions" &&
+        request.meetupId === meetupId
+          ? {
+              kind: "meetup-card",
+              meetup: {
+                id: meetupId,
+                author: identityId,
+                title: "Осенняя сходка",
+                description: "",
+                venue: "",
+                lifecycle: "planned",
+                visibility: "visible",
+                version: 1,
+                materials: [],
+              },
+            }
+          : dispatcher.execute(request),
+    };
+    const calls: RecordedCall[] = [];
+    const { bot } = createHarness(
+      identity("admin"),
+      withMeetup,
+      calls,
+      undefined,
+      "plain",
+      today,
+      {
+        auction: auction.port,
+        communityTimeZone: timeZone,
+        auctionParents: parents,
+      },
+    );
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
+
+    expect(last(calls).text).toBe(
+      "<b>Торги уже идут у «Осенняя сходка»: открыть неделю можно, когда они закончатся</b>",
+    );
+  });
+
+  // Слот заняли между подтверждением и «Да»: отказ Auction называет аукцион.
+  it("names the trading auction when the start is refused after «Yes»", async () => {
+    const free = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced],
+    });
+    const { bot, calls } = harness("admin", free);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:o:${auctionToken}`));
+    const yes = dataOf(last(calls), "✔️ Да, открыть неделю");
+
+    const taken = scheduled();
+    const after = harness("admin", taken, calls);
+    await after.bot.init();
+    await after.bot.handleUpdate(press(yes));
+
+    expect(taken.sent("startPrebidding")).toHaveLength(1);
+    expect(last(calls).text).toBe(
+      "<b>Торги уже идут у аукциона с онлайн-неделей с 5 октября, пн, 18:00 до 12 октября, пн, 18:00: открыть неделю можно, когда они закончатся</b>",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+  });
+});
+
+// PER-618: строка розыгрыша пульта идёт по статусу после закрытия регистрации.
+describe("the raffle line of the console", () => {
+  const raffleWeek = {
+    opensAt: "2026-10-05T15:00:00Z",
+    closesAt: "2026-10-12T15:00:00Z",
+    final: true,
+    windows: [],
+    raffleClosesAt: "2026-10-05T16:12:00Z",
+  };
+  const raffle = (extra: Partial<RaffleView>): RaffleView => ({
+    auctionId,
+    status: "open",
+    closesAt: raffleWeek.raffleClosesAt,
+    commitment: "ab".repeat(32),
+    beaconRound: 1,
+    registered: false,
+    tickets: [],
+    ...extra,
+  });
+
+  it.each([
+    [undefined, "Розыгрыш: регистрация до 5 октября, пн, 19:12."],
+    [
+      raffle({ status: "awaiting-beacon", tickets: [{ number: 1 }] }),
+      "Розыгрыш: регистрация закрыта, жеребьёвка идёт.",
+    ],
+    [
+      raffle({ status: "closing" }),
+      "Розыгрыш: регистрация закрыта, жеребьёвка идёт.",
+    ],
+    [
+      raffle({
+        status: "drawn",
+        tickets: [{ number: 1, displayName: "Сова*" }, { number: 2 }],
+        reveal: { seed: "cd".repeat(32), winningTicket: 1 },
+      }),
+      "Розыгрыш: выиграл билет №1 — Сова*, билетов: 2.",
+    ],
+    [
+      raffle({
+        status: "drawn",
+        tickets: [{ number: 1 }, { number: 2 }],
+        reveal: { seed: "cd".repeat(32), winningTicket: 2 },
+      }),
+      "Розыгрыш: выиграл билет №2, билетов: 2.",
+    ],
+    [
+      raffle({ status: "no-tickets" }),
+      "Розыгрыш: не состоялся, никто не зарегистрировался.",
+    ],
+  ] as const)("shows the raffle %# by its status", async (read, line) => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: raffleWeek,
+      ...(read === undefined ? {} : { consoleRaffle: read }),
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+
+    expect(plain(last(calls))).toContain(line);
+  });
+
+  it("keeps the drawn raffle on the console of a finished auction", async () => {
+    const auction = fakeAuction({
+      status: "finished",
+      week: raffleWeek,
+      consoleRaffle: raffle({
+        status: "drawn",
+        tickets: [{ number: 1, displayName: "Сова*" }],
+        reveal: { seed: "cd".repeat(32), winningTicket: 1 },
+      }),
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+
+    expect(plain(last(calls))).toContain(
+      "Аукцион завершён.\nРозыгрыш: выиграл билет №1 — Сова*, билетов: 1.",
+    );
   });
 });
 

@@ -1,7 +1,11 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it, vi } from "vitest";
-import { AuctionState_DraftSchema } from "../../../../gen/auction/v1/auction_events_pb.js";
+import {
+  AuctionState_DraftSchema,
+  AuctionState_PrebiddingSchema,
+  AuctionState_ScheduledSchema,
+} from "../../../../gen/auction/v1/auction_events_pb.js";
 import { BidSource } from "../../../../gen/auction/v1/auction_pb.js";
 import {
   AddLotResponseSchema,
@@ -15,8 +19,12 @@ import {
   GetAuctionConsoleResponseSchema,
   GetAuctionLotStatisticsResponseSchema,
   GetMeetupAuctionResponseSchema,
+  GetRaffleResponseSchema,
+  ListAuctionsResponseSchema,
   ListLotHistoryResponseSchema,
   LotSnapshotSchema,
+  RaffleSchema,
+  RaffleStatus,
   ScheduleAuctionResponseSchema,
   ScheduleLotResponseSchema,
   SelectForFinalResponseSchema,
@@ -73,11 +81,13 @@ function adapter(rpc: {
   closeLot?: Call;
   listLotHistory?: Call;
   getDisplayNames?: Call;
+  listAuctions?: Call;
+  getRaffle?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
     getMeetupAuction: (rpc.getMeetupAuction ?? notUsed) as never,
-    listAuctions: notUsed,
+    listAuctions: (rpc.listAuctions ?? notUsed) as never,
     createLotCard: (rpc.createLotCard ?? notUsed) as never,
     editLotCard: (rpc.editLotCard ?? notUsed) as never,
     addLot: (rpc.addLot ?? notUsed) as never,
@@ -90,7 +100,7 @@ function adapter(rpc: {
     setProxyLimit: notUsed,
     chooseDisplayName: notUsed,
     getAuction: notUsed,
-    getRaffle: notUsed,
+    getRaffle: (rpc.getRaffle ?? notUsed) as never,
     registerForRaffle: notUsed,
     cancelRaffleRegistration: notUsed,
     getLotImage: notUsed,
@@ -962,6 +972,96 @@ describe("auction console adapter", () => {
     await expect(
       started.startPrebidding(admin, { auctionId, opId }),
     ).resolves.toEqual({ kind: "another-auction-active", auctionId: holder });
+  });
+
+  // PER-618: пульт читает активные аукционы целиком, страница за страницей,
+  // чтобы назвать торги другого аукциона до подтверждения.
+  it("reads every page of the active auctions", async () => {
+    const holder = "0190f2a0-0000-7000-8000-000000000021";
+    const tokens: unknown[] = [];
+    const reading = adapter({
+      listAuctions: async (request: unknown) => {
+        const { pageToken } = request as { pageToken: string };
+        tokens.push(pageToken);
+        return create(ListAuctionsResponseSchema, {
+          auctions: [
+            pageToken === ""
+              ? create(AuctionSnapshotSchema, {
+                  id: auctionId,
+                  status: {
+                    case: "scheduled",
+                    value: create(AuctionState_ScheduledSchema, {}),
+                  },
+                })
+              : create(AuctionSnapshotSchema, {
+                  id: holder,
+                  status: {
+                    case: "prebidding",
+                    value: create(AuctionState_PrebiddingSchema, {}),
+                  },
+                }),
+          ],
+          nextPageToken: pageToken === "" ? "next" : "",
+        });
+      },
+    });
+
+    await expect(reading.activeAuctions(admin)).resolves.toEqual({
+      kind: "ok",
+      auctions: [
+        { auctionId, stage: "scheduled", final: false },
+        { auctionId: holder, stage: "prebidding", final: false },
+      ],
+    });
+    expect(tokens).toEqual(["", "next"]);
+  });
+
+  it("reads a refused list of the active auctions as a failure", async () => {
+    const reading = adapter({
+      listAuctions: () =>
+        Promise.reject(new ConnectError("down", Code.Unavailable)),
+    });
+
+    await expect(reading.activeAuctions(admin)).resolves.toMatchObject({
+      kind: "unavailable",
+    });
+  });
+
+  it("reads the raffle of the console, its absence and a refusal", async () => {
+    const drawn = adapter({
+      getRaffle: async () =>
+        create(GetRaffleResponseSchema, {
+          raffle: create(RaffleSchema, {
+            auctionId,
+            status: RaffleStatus.DRAWN,
+            closesAt: "2026-10-05T16:12:00Z",
+            tickets: [{ number: 1, displayName: "Сова*" }],
+            reveal: { seed: "cd".repeat(32), winningTicket: 1 },
+          }),
+        }),
+    });
+    const absent = adapter({
+      getRaffle: async () => create(GetRaffleResponseSchema, {}),
+    });
+    const refused = adapter({
+      getRaffle: () =>
+        Promise.reject(new ConnectError("no", Code.PermissionDenied)),
+    });
+
+    await expect(drawn.consoleRaffle(admin, auctionId)).resolves.toMatchObject({
+      kind: "ok",
+      raffle: {
+        status: "drawn",
+        tickets: [{ number: 1, displayName: "Сова*" }],
+        reveal: { winningTicket: 1 },
+      },
+    });
+    await expect(absent.consoleRaffle(admin, auctionId)).resolves.toEqual({
+      kind: "ok",
+    });
+    await expect(
+      refused.consoleRaffle(admin, auctionId),
+    ).resolves.not.toHaveProperty("raffle");
   });
 
   it("reads a discarded auction, a started week and a missing auction as answers", async () => {
