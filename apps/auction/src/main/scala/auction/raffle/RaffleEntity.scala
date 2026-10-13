@@ -35,7 +35,8 @@ import scala.util.Try
  * [[Raffle.apply]], `onPersistFailure` не задан (ADR-045).
  *
  * Торгов entity не знает по построению: ни порта лотов, ни состояния аукциона она не получает (ADR-066, п. 1).
- * Открывает её аукцион командой `Open` после записи `PrebiddingStarted` и повторяет её, пока не получит ответ.
+ * Открывает её аукцион командой `Open` после записи `PrebiddingStarted` и повторяет её, пока не получит ответ. Так же
+ * аукцион, отменённый после старта торгов, отменяет её командой `Cancel` (ADR-066, дополнение 2026-10-12).
  *
  * Три шага после открытия идут без человека и переживают рестарт: entity помнится шардингом, а таймеры взводятся заново
  * на `RecoveryCompleted` по тому, что лежит в журнале.
@@ -71,6 +72,9 @@ object RaffleEntity {
 
   final case class Leave(command: CancelRegistration, replyTo: ActorRef[Either[RegistrationRejected, Raffle]])
       extends Command
+
+  /** Отмена по команде отменённого аукциона. Ответ — после записи или сразу, если отменять нечего. */
+  final case class Cancel(command: CancelRaffle, replyTo: ActorRef[Done]) extends Command
 
   final case class Get(replyTo: ActorRef[Raffle]) extends Command
 
@@ -120,6 +124,8 @@ object RaffleEntity {
         // по журналу. Каждый шаг идемпотентен — фиксацию решает ядро, снимок не перезаписывается, срок не сдвигается.
         var screening = false
         var namesRecorded = false
+        // Запись снимка имён в полёте: отмена ждёт её конца, иначе срок хранения лёг бы раньше самих имён.
+        var recording = false
         var expiring = false
 
         def arm(key: Any, message: Command, at: Instant): Unit =
@@ -156,6 +162,14 @@ object RaffleEntity {
             case RaffleState.Drawn(_, _, _, _) =>
               if (!namesRecorded) context.self ! RecordNames
               else if (!expiring) context.self ! ExpireNames
+            // Отменённому розыгрышу ждать нечего: таймеры закрытия и маяка гаснут, а снимок имён, если пул успели
+            // зафиксировать, получает срок хранения от момента отмены — иначе имена лежали бы бессрочно. Запись
+            // снимка, начатая до отмены, сначала заканчивается: её ответ зовёт `follow` снова.
+            case RaffleState.Cancelled(_, _, _) =>
+              timers.cancel(CloseKey)
+              timers.cancel(BeaconKey)
+              timers.cancel(NamesKey)
+              if (!recording && !expiring) context.self ! ExpireNames
           }
 
         def persist(opId: OpId, event: RaffleEvent): EffectBuilder[StoredRaffleEvent, State] =
@@ -200,6 +214,19 @@ object RaffleEntity {
               registration(state, Raffle.decide(state.raffle, register, clock.instant()), register.opId, replyTo)
             case Leave(cancel, replyTo) =>
               registration(state, Raffle.decide(state.raffle, cancel, clock.instant()), cancel.opId, replyTo)
+            case Cancel(cancel, replyTo) =>
+              Raffle.decide(state.raffle, cancel, clock.instant()) match {
+                case RaffleDecision.Accepted(event) =>
+                  persist(cancel.opId, event).thenRun { after =>
+                    replyTo ! Done
+                    follow(after.raffle)
+                  }
+                case RaffleDecision.Repeated(_) | RaffleDecision.Unchanged =>
+                  Effect.none.thenRun { after =>
+                    replyTo ! Done
+                    forgetIfAbsent(after)
+                  }
+              }
             case Get(replyTo) =>
               Effect.none.thenRun { after =>
                 replyTo ! after.raffle
@@ -256,18 +283,26 @@ object RaffleEntity {
                   namesRecorded = true
                   Effect.none
                 case RaffleState.Fixed(_, fixed) =>
+                  recording = true
                   Effect.none.thenRun(_ => context.pipeToSelf(tickets.record(auction, fixed))(NamesRecorded(_)))
                 case RaffleState.Drawn(_, fixed, _, _) =>
+                  recording = true
                   Effect.none.thenRun(_ => context.pipeToSelf(tickets.record(auction, fixed))(NamesRecorded(_)))
                 case _ => Effect.none
               }
             case NamesRecorded(Success(())) =>
+              recording = false
               namesRecorded = true
               Effect.none.thenRun(after => follow(after.raffle))
             case NamesRecorded(Failure(failure)) =>
-              Effect.none.thenRun { _ =>
+              recording = false
+              Effect.none.thenRun { after =>
                 warn("raffle ticket names were not recorded", Some(failure))
-                timers.startSingleTimer(NamesKey, RecordNames, settings.retryEvery)
+                after.raffle.state match {
+                  // Отменённому розыгрышу снимок не нужен: срок хранения ляжет на то, что успело записаться.
+                  case RaffleState.Cancelled(_, _, _) => follow(after.raffle)
+                  case _ => timers.startSingleTimer(NamesKey, RecordNames, settings.retryEvery)
+                }
               }
             case PollBeacon =>
               state.raffle.state match {
@@ -304,6 +339,10 @@ object RaffleEntity {
             case ExpireNames =>
               state.raffle.state match {
                 case RaffleState.Drawn(_, _, _, at) if !expiring =>
+                  expiring = true
+                  val expiry = tickets.expireAt(auction, at.plus(settings.nameRetention))
+                  Effect.none.thenRun(_ => context.pipeToSelf(expiry)(NamesExpiring(_)))
+                case RaffleState.Cancelled(_, _, at) if !expiring =>
                   expiring = true
                   val expiry = tickets.expireAt(auction, at.plus(settings.nameRetention))
                   Effect.none.thenRun(_ => context.pipeToSelf(expiry)(NamesExpiring(_)))

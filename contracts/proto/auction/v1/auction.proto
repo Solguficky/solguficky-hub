@@ -270,6 +270,9 @@ enum WithdrawnReason {
   WITHDRAWN_REASON_BY_ORGANIZER = 1;
   WITHDRAWN_REASON_BY_AUTHOR = 2;
   WITHDRAWN_REASON_DUPLICATE = 3;
+
+  // The auction of the lot was cancelled while the lot was not sold or closed.
+  WITHDRAWN_REASON_AUCTION_CANCELLED = 4;
 }
 
 // Channel a manual bid came through.

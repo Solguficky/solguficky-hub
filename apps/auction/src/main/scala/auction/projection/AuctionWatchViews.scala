@@ -31,7 +31,8 @@ object AuctionWatchView {
       case AuctionState.LineupFrozen(_, _, order) => order
       case AuctionState.Final(_, _, order, _) => order
       case AuctionState.Initial | AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _) |
-          AuctionState.Settling(_, _) | AuctionState.Break(_, _) | AuctionState.Finished(_, _) =>
+          AuctionState.Settling(_, _) | AuctionState.Break(_, _) | AuctionState.Finished(_, _) |
+          AuctionState.Cancelled(_, _, _) =>
         Nil
     }
 

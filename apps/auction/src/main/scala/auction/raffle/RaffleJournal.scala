@@ -26,6 +26,8 @@ final case class StoredPoolFixed(tickets: List[UUID])
 
 final case class StoredRaffleDrawn(randomness: String, at: Instant)
 
+final case class StoredRaffleCancelled(at: Instant)
+
 final case class StoredRaffleEventBody(
     kind: String,
     raffleOpened: Option[StoredRaffleOpened],
@@ -33,7 +35,8 @@ final case class StoredRaffleEventBody(
     registered: Option[StoredRaffleParticipant],
     registrationCancelled: Option[StoredRaffleParticipant],
     poolFixed: Option[StoredPoolFixed],
-    raffleDrawn: Option[StoredRaffleDrawn]
+    raffleDrawn: Option[StoredRaffleDrawn],
+    raffleCancelled: Option[StoredRaffleCancelled] = None
 )
 
 object StoredRaffleEventBody {
@@ -50,7 +53,8 @@ final case class StoredRaffleTerms(closesAt: Instant, seed: String, round: Long)
 
 /**
  * Snapshot розыгрыша. `closesAt` заполнен только у непроведённого, `terms` — с открытия, `participants` — регистрации
- * открытого или билеты зафиксированного пула по порядку, `drawn` — только после жеребьёвки.
+ * открытого или билеты зафиксированного пула по порядку, `drawn` — только после жеребьёвки, `cancelledAt` — только у
+ * отменённого; он добавлен в конец, и snapshot прежней формы читает его пустым.
  */
 final case class StoredRaffle(
     sequence: Long,
@@ -59,7 +63,8 @@ final case class StoredRaffle(
     terms: Option[StoredRaffleTerms],
     participants: List[UUID],
     drawn: Option[StoredRaffleDrawn],
-    seen: List[StoredRaffleSeen]
+    seen: List[StoredRaffleSeen],
+    cancelledAt: Option[Instant] = None
 ) extends JournalSerializable
 
 object RaffleJournal {
@@ -88,23 +93,27 @@ object RaffleJournal {
         StoredRaffleEventBody.of("PoolFixed").copy(poolFixed = Some(StoredPoolFixed(tickets.toList.map(_.value))))
       case RaffleEvent.RaffleDrawn(randomness, at) =>
         StoredRaffleEventBody.of("RaffleDrawn").copy(raffleDrawn = Some(StoredRaffleDrawn(randomness.hex, at)))
+      case RaffleEvent.RaffleCancelled(at) =>
+        StoredRaffleEventBody.of("RaffleCancelled").copy(raffleCancelled = Some(StoredRaffleCancelled(at)))
     }
 
   /** Ровно одна секция, и та, что названа `kind`. Иначе строка испорчена. */
   def restoreEvent(stored: StoredRaffleEventBody): RaffleEvent =
     stored match {
-      case StoredRaffleEventBody("RaffleOpened", Some(opened), None, None, None, None, None) =>
+      case StoredRaffleEventBody("RaffleOpened", Some(opened), None, None, None, None, None, None) =>
         RaffleEvent.RaffleOpened(opened.closesAt, seed(opened.seed), opened.round)
-      case StoredRaffleEventBody("RaffleNotHeld", None, Some(notHeld), None, None, None, None) =>
+      case StoredRaffleEventBody("RaffleNotHeld", None, Some(notHeld), None, None, None, None, None) =>
         RaffleEvent.RaffleNotHeld(notHeld.closesAt)
-      case StoredRaffleEventBody("Registered", None, None, Some(registered), None, None, None) =>
+      case StoredRaffleEventBody("Registered", None, None, Some(registered), None, None, None, None) =>
         RaffleEvent.Registered(ParticipantId(registered.participantId))
-      case StoredRaffleEventBody("RegistrationCancelled", None, None, None, Some(cancelled), None, None) =>
+      case StoredRaffleEventBody("RegistrationCancelled", None, None, None, Some(cancelled), None, None, None) =>
         RaffleEvent.RegistrationCancelled(ParticipantId(cancelled.participantId))
-      case StoredRaffleEventBody("PoolFixed", None, None, None, None, Some(fixed), None) =>
+      case StoredRaffleEventBody("PoolFixed", None, None, None, None, Some(fixed), None, None) =>
         RaffleEvent.PoolFixed(fixed.tickets.map(ParticipantId(_)).toVector)
-      case StoredRaffleEventBody("RaffleDrawn", None, None, None, None, None, Some(drawn)) =>
+      case StoredRaffleEventBody("RaffleDrawn", None, None, None, None, None, Some(drawn), None) =>
         RaffleEvent.RaffleDrawn(randomness(drawn.randomness), drawn.at)
+      case StoredRaffleEventBody("RaffleCancelled", None, None, None, None, None, None, Some(cancelled)) =>
+        RaffleEvent.RaffleCancelled(cancelled.at)
       case other => corrupted(s"raffle event of kind ${other.kind} with sections that do not match it")
     }
 
@@ -123,6 +132,8 @@ object RaffleJournal {
         StoredRaffle(sequence, "Fixed", None, terms(value), ids(tickets), None, seen)
       case RaffleState.Drawn(value, tickets, drawn, at) =>
         StoredRaffle(sequence, "Drawn", None, terms(value), ids(tickets), Some(StoredRaffleDrawn(drawn.hex, at)), seen)
+      case RaffleState.Cancelled(value, participants, at) =>
+        StoredRaffle(sequence, "Cancelled", None, terms(value), ids(participants), None, seen, cancelledAt = Some(at))
     }
   }
 
@@ -130,13 +141,15 @@ object RaffleJournal {
   def restoreRaffle(stored: StoredRaffle): Raffle = {
     def participants = stored.participants.map(ParticipantId(_)).toVector
     def terms(value: StoredRaffleTerms) = RaffleTerms(value.closesAt, seed(value.seed), value.round)
-    val state = (stored.state, stored.closesAt, stored.terms, stored.drawn) match {
-      case ("Initial", None, None, None) if stored.participants.isEmpty => RaffleState.Initial
-      case ("NotHeld", Some(closesAt), None, None) if stored.participants.isEmpty => RaffleState.NotHeld(closesAt)
-      case ("Open", None, Some(value), None) => RaffleState.Open(terms(value), participants)
-      case ("Fixed", None, Some(value), None) => RaffleState.Fixed(terms(value), participants)
-      case ("Drawn", None, Some(value), Some(drawn)) =>
+    val state = (stored.state, stored.closesAt, stored.terms, stored.drawn, stored.cancelledAt) match {
+      case ("Initial", None, None, None, None) if stored.participants.isEmpty => RaffleState.Initial
+      case ("NotHeld", Some(closesAt), None, None, None) if stored.participants.isEmpty =>
+        RaffleState.NotHeld(closesAt)
+      case ("Open", None, Some(value), None, None) => RaffleState.Open(terms(value), participants)
+      case ("Fixed", None, Some(value), None, None) => RaffleState.Fixed(terms(value), participants)
+      case ("Drawn", None, Some(value), Some(drawn), None) =>
         RaffleState.Drawn(terms(value), participants, randomness(drawn.randomness), drawn.at)
+      case ("Cancelled", None, Some(value), None, Some(at)) => RaffleState.Cancelled(terms(value), participants, at)
       case _ => corrupted(s"raffle snapshot of state ${stored.state} with sections that do not match it")
     }
     Raffle(

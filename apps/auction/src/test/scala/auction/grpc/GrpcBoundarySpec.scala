@@ -105,6 +105,7 @@ final class GrpcBoundarySpec
     def scheduleAuction(in: wire.ScheduleAuctionRequest) = unused
     def startPrebidding(in: wire.StartPrebiddingRequest) = unused
     def discardAuction(in: wire.DiscardAuctionRequest) = unused
+    def cancelAuction(in: wire.CancelAuctionRequest) = unused
     def getMeetupAuction(in: wire.GetMeetupAuctionRequest) = unused
     def getAuction(in: wire.GetAuctionRequest) = unused
     def listAuctions(in: wire.ListAuctionsRequest) = unused

@@ -1,9 +1,16 @@
 import { create } from "@bufbuild/protobuf";
 import { Code, ConnectError } from "@connectrpc/connect";
 import { describe, expect, it } from "vitest";
-import { WithdrawnReason } from "../../../gen/auction/v1/auction_pb.js";
+import {
+  LotHeldSchema,
+  LotPhase,
+  LotTradingSchema,
+  MoneySchema,
+  WithdrawnReason,
+} from "../../../gen/auction/v1/auction_pb.js";
 import {
   AuctionWatchSchema,
+  type LotSnapshot,
   LotSnapshotSchema,
 } from "../../../gen/auction/v1/auction_service_pb.js";
 import type { Viewer } from "../../auction-ui/index.js";
@@ -247,6 +254,50 @@ describe("watch state of an AuctionWatch message", () => {
     expect(parsed.finished).toBe(true);
     expect(parsed.activeLot?.version).toBe(5);
     expect(parsed.lineup).toHaveLength(1);
+  });
+
+  // Отменённый аукцион конечный, когда лоты состава сняты: тогда сервер
+  // закрывает поток, и подписка не переподключается к нему по кругу.
+  it("reads a cancelled auction as finished once no lot of the lineup trades", () => {
+    const price = create(MoneySchema, { minorUnits: 50000n, currency: "RUB" });
+    const lot = (status: LotSnapshot["status"]) =>
+      create(LotSnapshotSchema, {
+        id: AUCTION_ID,
+        auctionId: AUCTION_ID,
+        status,
+      });
+    const cancelled = (lineup: LotSnapshot[]) =>
+      watchStateOf(
+        create(AuctionWatchSchema, {
+          auction: { id: AUCTION_ID, status: { case: "cancelled", value: {} } },
+          lineup,
+        }),
+      ).finished;
+    expect(cancelled([])).toBe(true);
+    expect(
+      cancelled([
+        lot({ case: "withdrawn", value: WithdrawnReason.AUCTION_CANCELLED }),
+      ]),
+    ).toBe(true);
+    expect(
+      cancelled([
+        lot({
+          case: "trading",
+          value: create(LotTradingSchema, {
+            currentPrice: price,
+            phase: LotPhase.ONLINE,
+          }),
+        }),
+      ]),
+    ).toBe(false);
+    expect(
+      cancelled([
+        lot({
+          case: "held",
+          value: create(LotHeldSchema, { currentPrice: price }),
+        }),
+      ]),
+    ).toBe(false);
   });
 
   it("refuses a message without an auction", () => {

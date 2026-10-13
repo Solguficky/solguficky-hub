@@ -32,6 +32,9 @@ import auction.lot.StepPolicyInvalid
 import auction.lot.UnmarkForFinal
 import auction.lot.UnmarkForFinalRejected
 import auction.lot.UnsoldReason
+import auction.lot.WithdrawLot
+import auction.lot.WithdrawLotRejected
+import auction.lot.WithdrawnReason
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.cluster.sharding.typed.scaladsl.ClusterSharding
@@ -76,8 +79,8 @@ final class AuctionEntitySpec
   /**
    * Лоты аукциона: состояние меняет настоящее [[Lot.decide]], поэтому отказ лота в тесте — настоящий. Лот, которого
    * тест не завёл, роняет вопрос. `silent` принимает `OpenLot`, но ответа не отдаёт; `lost` теряет команду целиком;
-   * `deaf` не отвечает на вопрос о состоянии; `mute` не отвечает на `CloseLot`. Закрытие лот решает по тем же часам,
-   * что и аукцион.
+   * `deaf` не отвечает на вопрос о состоянии; `mute` не отвечает на `CloseLot`, а `numb` — на `WithdrawLot`, приняв
+   * его. Закрытие лот решает по тем же часам, что и аукцион.
    */
   private final class Lots(initial: Map[LotId, Lot], now: () => Instant) extends AuctionLots {
     private var lots = initial
@@ -88,6 +91,7 @@ final class AuctionEntitySpec
     @volatile var lost: Set[LotId] = Set.empty
     @volatile var deaf: Set[LotId] = Set.empty
     @volatile var mute: Set[LotId] = Set.empty
+    @volatile var numb: Set[LotId] = Set.empty
 
     def asked: Vector[LotId] = synchronized(questions)
     def opens: Vector[(LotId, OpenLot)] = synchronized(commands)
@@ -205,6 +209,17 @@ final class AuctionEntitySpec
         )
       }
 
+    private var withdrawals = Vector.empty[(LotId, WithdrawLot)]
+
+    def withdraws: Vector[(LotId, WithdrawLot)] = synchronized(withdrawals)
+
+    def withdraw(lot: LotId, command: WithdrawLot): Future[Either[WithdrawLotRejected, Unit]] = synchronized {
+      withdrawals :+= lot -> command
+      val answer = Lot.decide(lots(lot), command).map(decision => written(lot, command.opId, decision)).map(_ => ())
+      if (numb(lot)) Future.failed(new java.util.concurrent.TimeoutException("the lot did not answer"))
+      else Future.successful(answer)
+    }
+
     private def opening(event: LotEvent): Option[Instant] =
       event match {
         case opened: LotEvent.LotOpened => opened.deadline
@@ -284,7 +299,26 @@ final class AuctionEntitySpec
       AuctionEntity.Discard(DiscardAuction(op(opN)), administrator, _)
     )
 
+  private def cancel(opN: Int) =
+    entity.runCommand[Either[CancelAuctionRejected, AuctionAnswer]](
+      AuctionEntity.Cancel(CancelAuction(op(opN)), administrator, _)
+    )
+
   private def roster: LotRoster = entity.runCommand[LotRoster](AuctionEntity.Roster(_)).reply
+
+  /** Розыгрыш-подмена: открытие и отмена зовут свои функции. */
+  private def raffleOf(
+      open: (String, Instant) => Future[org.apache.pekko.Done],
+      cancel: (String, auction.lot.OpId) => Future[org.apache.pekko.Done] = (_, _) =>
+        Future.successful(org.apache.pekko.Done)
+  ): AuctionRaffle = {
+    val opening = open
+    val cancelling = cancel
+    new AuctionRaffle {
+      def open(auctionId: String, closesAt: Instant): Future[org.apache.pekko.Done] = opening(auctionId, closesAt)
+      def cancel(auctionId: String, opId: auction.lot.OpId): Future[org.apache.pekko.Done] = cancelling(auctionId, opId)
+    }
+  }
 
   private val step = StepPolicyInput.Fixed(LotFixtures.money(250))
 
@@ -346,7 +380,7 @@ final class AuctionEntitySpec
       val closesAt = AuctionFixtures.opensAt.plusSeconds(3600)
       val opened = new java.util.concurrent.ConcurrentLinkedQueue[(String, java.time.Instant)]()
       val failures = new java.util.concurrent.atomic.AtomicInteger(1)
-      val raffle: AuctionRaffle = (auctionId, at) => {
+      val raffle = raffleOf { (auctionId, at) =>
         opened.add(auctionId -> at)
         if (failures.getAndDecrement() > 0) Future.failed(new RuntimeException("raffle did not answer"))
         else Future.successful(org.apache.pekko.Done)
@@ -373,7 +407,7 @@ final class AuctionEntitySpec
       entity = entityOf(
         lots,
         recheckEvery = 50.millis,
-        raffle = (_, _) => {
+        raffle = raffleOf { (_, _) =>
           opened.incrementAndGet()
           Future.successful(org.apache.pekko.Done)
         }
@@ -382,6 +416,123 @@ final class AuctionEntitySpec
       start(4).reply.isRight shouldBe true
       Thread.sleep(200)
       opened.get shouldBe 0
+    }
+
+    "cancels an auction in prebidding: the sold lot stays sold, the others are withdrawn and refuse bids" in {
+      val sold = LotId(uuid(13))
+      lots = Lots(
+        Map(
+          lot -> LotFixtures.scheduled(),
+          other -> LotFixtures.scheduled(),
+          sold -> LotFixtures.sold(700, participant(2))
+        ),
+        () => time.instant()
+      )
+      entity = entityOf(lots)
+      val opening = scheduledWith(lot, other, sold)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot, other))
+      val cancelled = cancel(opening + 1)
+      cancelled.reply shouldBe
+        Right(AuctionAnswer.Written(AuctionEnvelope(7, op(opening + 1), AuctionEvent.AuctionCancelled)))
+      cancelled.state.auction.state shouldBe AuctionState.Cancelled(config(), op(opening), op(opening + 1))
+      eventually {
+        roster.lots shouldBe Map(
+          lot -> LotStanding.Withdrawn,
+          other -> LotStanding.Withdrawn,
+          sold -> LotStanding.Closed
+        )
+      }
+      lots.withdraws.map(_._2) should contain theSameElementsAs List(lot, other, sold).map(
+        LotRoster.withdrawalOf(op(opening + 1), _)
+      )
+      lots.stateNow(lot) shouldBe LotState.Withdrawn(WithdrawnReason.AuctionCancelled)
+      lots.stateNow(other) shouldBe LotState.Withdrawn(WithdrawnReason.AuctionCancelled)
+      lots.stateNow(sold) shouldBe a[LotState.Sold]
+      Lot.decide(
+        Lot(lots.stateNow(lot), None, Map.empty),
+        PlaceBid(participant(3), LotFixtures.money(5000), op(90), auction.lot.BidSource.Bot),
+        LotFixtures.bid(90),
+        LotFixtures.proxyBid(90),
+        time.instant()
+      ) shouldBe Left(auction.lot.PlaceBidRejected.LotNotOpen)
+    }
+
+    "finishes the withdrawal after a restart between the cancel and the answers without a second event" in {
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+      lots.numb = Set(lot)
+      cancel(opening + 1).reply.isRight shouldBe true
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Unanswered))
+      lots.numb = Set.empty
+      val restarted = entity.restart().state
+      restarted.sequence shouldBe 5
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Withdrawn))
+      lots.withdraws.map(_._2) shouldBe Vector.fill(2)(LotRoster.withdrawalOf(op(opening + 1), lot))
+      entity.getState().sequence shouldBe 5
+      lots.opens should have size 1
+    }
+
+    "sends no late opening after the cancel to a lot whose opening went unanswered and withdraws it" in {
+      lots.lost = Set(lot)
+      entity = entityOf(lots, recheckEvery = 50.millis)
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Opening))
+      lots.lost = Set.empty
+      cancel(opening + 1).reply.isRight shouldBe true
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Withdrawn))
+      lots.stateNow(lot) shouldBe LotState.Withdrawn(WithdrawnReason.AuctionCancelled)
+      Thread.sleep(200)
+      lots.opens should have size 1
+      lots.closes shouldBe empty
+    }
+
+    "refuses a cancel before trading and writes no event for a second cancel of a cancelled auction" in {
+      val opening = scheduledWith(lot)
+      val early = cancel(opening)
+      early.reply shouldBe Left(CancelAuctionRejected.AuctionNotStarted)
+      early.events shouldBe empty
+      start(opening).reply.isRight shouldBe true
+      val first = cancel(opening + 1)
+      val repeated = cancel(opening + 1)
+      repeated.events shouldBe empty
+      repeated.reply shouldBe first.reply
+      val again = cancel(opening + 2)
+      again.events shouldBe empty
+      again.reply shouldBe Right(AuctionAnswer.Unchanged)
+      cancel(opening + 3).state.sequence shouldBe 5
+    }
+
+    "cancels the raffle with an op_id of the cancel, asks again until it answers and again after a restart" in {
+      val closesAt = AuctionFixtures.opensAt.plusSeconds(3600)
+      val cancelled = new java.util.concurrent.ConcurrentLinkedQueue[(String, auction.lot.OpId)]()
+      val failures = new java.util.concurrent.atomic.AtomicInteger(1)
+      val raffle = raffleOf(
+        (_, _) => Future.successful(org.apache.pekko.Done),
+        (auctionId, opId) => {
+          cancelled.add(auctionId -> opId)
+          if (failures.getAndDecrement() > 0) Future.failed(new RuntimeException("raffle did not answer"))
+          else Future.successful(org.apache.pekko.Done)
+        }
+      )
+      entity = entityOf(lots, recheckEvery = 50.millis, raffle = raffle)
+      draft(1)
+      add(2)
+      schedule(3, configInput(Some(AuctionFixtures.week.copy(raffleClosesAt = Some(closesAt))))).reply.isRight shouldBe
+        true
+      start(4).reply.isRight shouldBe true
+      cancelled shouldBe empty
+      cancel(5).reply.isRight shouldBe true
+      eventually(cancelled.size should be >= 2)
+      Thread.sleep(200)
+      val settled = cancelled.size
+      Thread.sleep(200)
+      cancelled.size shouldBe settled
+      entity.restart()
+      eventually(cancelled.size shouldBe settled + 1)
+      cancelled.toArray.toSet shouldBe Set("auction-1" -> LotRoster.stepOpId(op(5), "raffle-cancelled"))
     }
 
     "records the birth once and answers a repeated op_id with the original envelope" in {

@@ -93,6 +93,9 @@ final case class StoredLotHeldForFinal(at: Instant)
 /** Секция `AskAdvanced`: объявленная сумма; ведущий — инициатор конверта, в секцию он не входит. */
 final case class StoredAskAdvanced(ask: StoredMoney)
 
+/** Секция `LotWithdrawn`: причина именем варианта `WithdrawnReason`; снявший — инициатор конверта. */
+final case class StoredLotWithdrawn(reason: String)
+
 /**
  * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а аукцион лежит в конверте строки. Так
  * же без секции `LotMarkedForFinal` и `LotResumed`. Секции добавлялись в конец: строка, записанная до них, читает
@@ -109,7 +112,8 @@ final case class StoredEvent(
     lotUnsold: Option[StoredLotUnsold],
     deadlineExtended: Option[StoredDeadlineExtended],
     lotHeldForFinal: Option[StoredLotHeldForFinal],
-    askAdvanced: Option[StoredAskAdvanced] = None
+    askAdvanced: Option[StoredAskAdvanced] = None,
+    lotWithdrawn: Option[StoredLotWithdrawn] = None
 )
 
 object StoredEvent {
@@ -175,14 +179,18 @@ final case class StoredHeld(
 /** Продажа: секция события `LotSold` и состояния `Sold` — одни и те же поля (ADR-047). */
 final case class StoredSale(winner: UUID, price: StoredMoney, bidId: UUID, at: Instant)
 
-/** `unsold` — причина закрытия без продажи; добавлена в конец, и snapshot, записанный до неё, читает её пустой. */
+/**
+ * `unsold` — причина закрытия без продажи, `withdrawn` — причина снятия; обе добавлены в конец, и snapshot, записанный
+ * до них, читает их пустыми.
+ */
 final case class StoredLotState(
     kind: String,
     trading: Option[StoredTrading],
     held: Option[StoredHeld],
     sold: Option[StoredSale],
     scheduled: Option[StoredSchedule],
-    unsold: Option[String]
+    unsold: Option[String],
+    withdrawn: Option[String] = None
 )
 
 /** Конверт окна дедупликации несёт аукцион строки: без неё `LotDrafted` из snapshot не восстановить. */
@@ -352,6 +360,8 @@ object LotJournal {
       case LotEvent.LotUnmarkedForFinal => StoredEvent.of("LotUnmarkedForFinal")
       case LotEvent.AskAdvanced(ask) =>
         StoredEvent.of("AskAdvanced").copy(askAdvanced = Some(StoredAskAdvanced(storeMoney(ask))))
+      case LotEvent.LotWithdrawn(reason) =>
+        StoredEvent.of("LotWithdrawn").copy(lotWithdrawn = Some(StoredLotWithdrawn(reason.toString)))
     }
 
   /**
@@ -369,7 +379,8 @@ object LotJournal {
       stored.lotUnsold,
       stored.deadlineExtended,
       stored.lotHeldForFinal,
-      stored.askAdvanced
+      stored.askAdvanced,
+      stored.lotWithdrawn
     ).count(_.isDefined)
     def mismatch: Nothing = corrupted(s"lot event of kind ${stored.kind} with sections that do not match it")
     (stored.kind, sections) match {
@@ -427,6 +438,10 @@ object LotJournal {
       case ("LotUnmarkedForFinal", 0) => LotEvent.LotUnmarkedForFinal
       case ("AskAdvanced", 1) =>
         stored.askAdvanced.fold(mismatch)(advanced => LotEvent.AskAdvanced(restoreMoney(advanced.ask)))
+      case ("LotWithdrawn", 1) =>
+        stored.lotWithdrawn.fold(mismatch) { withdrawn =>
+          LotEvent.LotWithdrawn(restoreEnum("withdrawn reason", withdrawn.reason)(WithdrawnReason.valueOf))
+        }
       case _ => mismatch
     }
   }
@@ -518,14 +533,16 @@ object LotJournal {
         )
       case LotState.Unsold(reason) =>
         StoredLotState("Unsold", None, None, None, None, unsold = Some(reason.toString))
+      case LotState.Withdrawn(reason) =>
+        StoredLotState("Withdrawn", None, None, None, None, None, withdrawn = Some(reason.toString))
     }
 
   private def restoreState(stored: StoredLotState): LotState =
-    (stored.kind, stored.trading, stored.held, stored.sold, stored.scheduled, stored.unsold) match {
-      case ("Initial", None, None, None, None, None) => LotState.Initial
-      case ("Draft", None, None, None, None, None) => LotState.Draft
-      case ("Scheduled", None, None, None, Some(schedule), None) => LotState.Scheduled(restoreSchedule(schedule))
-      case ("Trading", Some(trading), None, None, None, None) =>
+    (stored.kind, stored.trading, stored.held, stored.sold, stored.scheduled, stored.unsold, stored.withdrawn) match {
+      case ("Initial", None, None, None, None, None, None) => LotState.Initial
+      case ("Draft", None, None, None, None, None, None) => LotState.Draft
+      case ("Scheduled", None, None, None, Some(schedule), None, None) => LotState.Scheduled(restoreSchedule(schedule))
+      case ("Trading", Some(trading), None, None, None, None, None) =>
         val config = restoreConfig(trading.config)
         LotState.Trading(
           TradingState(
@@ -542,7 +559,7 @@ object LotJournal {
             stepWindows = restoreWindows(trading.stepWindows, config)
           )
         )
-      case ("Held", None, Some(held), None, None, None) =>
+      case ("Held", None, Some(held), None, None, None, None) =>
         val config = restoreConfig(held.config)
         LotState.Held(
           HeldState(
@@ -554,10 +571,12 @@ object LotJournal {
             extensionsUsed = held.extensionsUsed.getOrElse(0)
           )
         )
-      case ("Sold", None, None, Some(sale), None, None) =>
+      case ("Sold", None, None, Some(sale), None, None, None) =>
         LotState.Sold(Sale(ParticipantId(sale.winner), restoreMoney(sale.price), BidId(sale.bidId), sale.at))
-      case ("Unsold", None, None, None, None, Some(reason)) =>
+      case ("Unsold", None, None, None, None, Some(reason), None) =>
         LotState.Unsold(restoreEnum("unsold reason", reason)(UnsoldReason.valueOf))
+      case ("Withdrawn", None, None, None, None, None, Some(reason)) =>
+        LotState.Withdrawn(restoreEnum("withdrawn reason", reason)(WithdrawnReason.valueOf))
       case _ => corrupted(s"lot state of kind ${stored.kind} with sections that do not match it")
     }
 

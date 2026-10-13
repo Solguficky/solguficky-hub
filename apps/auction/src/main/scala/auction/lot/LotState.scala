@@ -156,6 +156,14 @@ enum UnsoldReason {
 }
 
 /**
+ * Почему лот снят с торгов (ADR-047, `LotWithdrawn`). Причина пока одна — отмена аукциона (дополнение 2026-10-12):
+ * снятие лота организатором, автором и как дубля придёт вместе со своими командами.
+ */
+enum WithdrawnReason {
+  case AuctionCancelled
+}
+
+/**
  * Состояния лота (RFC-011, «Состояние лота»). Сумма запечатана: остальные терминальные добавятся случаями, а
  * исчерпывающий `match` в [[Lot.decide]] покажет, где их обработать.
  *
@@ -171,6 +179,7 @@ enum LotState {
   case Held(state: HeldState)
   case Sold(sale: Sale)
   case Unsold(reason: UnsoldReason)
+  case Withdrawn(reason: WithdrawnReason)
 }
 
 /**
@@ -239,6 +248,12 @@ final case class MarkForFinal(opId: OpId)
  */
 final case class UnmarkForFinal(opId: OpId)
 
+/**
+ * Снятие лота с торгов (ADR-047, дополнение 2026-10-12). Шлёт аукцион, отменённый после старта торгов: снимается лот,
+ * который ещё не продан и не закрыт, в том числе не открытый и удержанный. `Withdrawn` терминален, как продажа.
+ */
+final case class WithdrawLot(reason: WithdrawnReason, opId: OpId)
+
 /** Возврат удержанного лота в торги живого финала (П-09): без дедлайна и ask, в фазе `Live`. */
 final case class ResumeLot(opId: OpId)
 
@@ -265,6 +280,7 @@ final case class AdvanceAsk(newAsk: Money, opId: OpId)
  * без payload (дополнение 2026-10-06): он только снимает признак.
  *
  * `AskAdvanced` несёт только объявленную сумму: кто её объявил, лежит в конверте инициатором, как в контракте шины.
+ * `LotWithdrawn` — только причину: снявший лежит там же (ADR-047, `actor`).
  *
  * `overtakenByProxy` у ручной ставки — её той же командой перебила производная ставка другого участника, и лидерство,
  * взятое ею, команду не пережило. Свёртка его не читает: это знание о транзакции для потребителей факта, которое
@@ -297,6 +313,7 @@ enum LotEvent {
   case LotResumed
   case LotUnmarkedForFinal
   case AskAdvanced(ask: Money)
+  case LotWithdrawn(reason: WithdrawnReason)
 }
 
 /**
@@ -427,6 +444,16 @@ enum AdvanceAskRejected {
   case LotNotOpen
   case CurrencyMismatch
   case AskBelowCurrentPrice(mustExceed: Money)
+}
+
+/**
+ * Отказы `WithdrawLot`. `LotAlreadyClosed` — лот продан, закрыт без продажи или уже снят под другим `op_id`: что
+ * завершилось, остаётся (ADR-047, дополнение 2026-10-12). `OpIdTaken` — `op_id` уже записан под другим событием лота.
+ */
+enum WithdrawLotRejected {
+  case LotNotFound
+  case OpIdTaken
+  case LotAlreadyClosed
 }
 
 /** Отказы `WithdrawProxyLimit`: у участника нет действующего лимита на этот лот. */

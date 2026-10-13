@@ -44,7 +44,7 @@ final class AuctionFactsSpec extends AnyWordSpec with Matchers {
     events
       .foldLeft((Option.empty[AuctionViewRow], List.empty[Option[Fact]])) { case ((row, out), (sequence, event)) =>
         AuctionView.project(row, auctionId, sequence, event) match {
-          case Right(Some(after)) => (Some(after), out :+ AuctionFacts.fact(sequence, event, after))
+          case Right(Some(after)) => (Some(after), out :+ AuctionFacts.fact(sequence, event, row, after))
           case other => fail(s"expected a row, got $other")
         }
       }
@@ -104,10 +104,26 @@ final class AuctionFactsSpec extends AnyWordSpec with Matchers {
       message(ended).getState.status.isFinished shouldBe true
     }
 
-    "keep the discard of an auction off the bus: the contract has no branch for it" in {
-      AuctionFacts.occasion(AuctionEvent.AuctionDiscarded) shouldBe None
+    // Удалённый аукцион свёрнут в `Initial`, и снимок после события его не опишет: снимок факта — строка до удаления.
+    "publish the discard with the auction as it was before it and the status discarded" in {
       val discarded = journal.take(4) :+ (5L -> stored(AuctionEvent.AuctionDiscarded, 5))
-      facts(discarded).last shouldBe None
+      val fact = facts(discarded).last
+      fact.map(_.subject) shouldBe Some(LotFacts.SubjectPrefix + "auction_discarded")
+      val state = message(fact).getState
+      state.status.isDiscarded shouldBe true
+      state.meetupId shouldBe meetup.value.toString
+      state.lotIds shouldBe List(lot, other).map(_.value).sorted.map(_.toString)
+      state.config shouldBe defined
+    }
+
+    "publish the cancellation with the frozen config, the registry and the status cancelled" in {
+      val cancelled = journal.take(7) :+ (8L -> stored(AuctionEvent.AuctionCancelled, 8))
+      val fact = facts(cancelled).last
+      fact.map(_.subject) shouldBe Some(LotFacts.SubjectPrefix + "auction_cancelled")
+      val state = message(fact).getState
+      state.status.isCancelled shouldBe true
+      state.lotIds shouldBe List(lot, other).map(_.value).sorted.map(_.toString)
+      state.config shouldBe defined
     }
   }
 }

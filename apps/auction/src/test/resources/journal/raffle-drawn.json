@@ -12,6 +12,7 @@
     "raffleDrawn": {
       "randomness": "d7941e7b5bcaf8742bfc7136d38c5ab8274286629ffe43081dbda1f05d798300",
       "at": "2026-10-28T18:01:02Z"
-    }
+    },
+    "raffleCancelled": null
   }
 }

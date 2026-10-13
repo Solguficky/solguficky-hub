@@ -54,6 +54,7 @@ object AuctionViewHandler {
       case "LineupFrozen" => "lineup_frozen"
       case "Final" => "in_final"
       case "Finished" => "finished"
+      case "Cancelled" => "cancelled"
       case "Initial" => Discarded
       case other => throw new IllegalStateException(s"auction view of state $other has no status")
     }

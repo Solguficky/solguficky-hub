@@ -12,6 +12,7 @@ import auction.aggregate.AuctionState
 import auction.aggregate.Authority
 import auction.aggregate.Correlation
 import auction.aggregate.DeselectForFinal
+import auction.aggregate.CancelAuction
 import auction.aggregate.DiscardAuction
 import auction.aggregate.DraftAuction
 import auction.aggregate.FinalChoiceRejected
@@ -279,6 +280,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def startPrebidding(auctionId: AuctionId, command: StartPrebidding, initiator: Initiator) =
       fail("the auction was reached")
     def discard(auctionId: AuctionId, command: DiscardAuction, initiator: Initiator) =
+      fail("the auction was reached")
+    def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) =
       fail("the auction was reached")
     def scheduleLot(
         auctionId: AuctionId,

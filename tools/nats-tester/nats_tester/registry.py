@@ -79,6 +79,8 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.auction.final_lot_activated': auction_events_pb2.AuctionEvent,
     'events.auction.final_lot_completed': auction_events_pb2.AuctionEvent,
     'events.auction.auction_finished': auction_events_pb2.AuctionEvent,
+    'events.auction.auction_discarded': auction_events_pb2.AuctionEvent,
+    'events.auction.auction_cancelled': auction_events_pb2.AuctionEvent,
     'events.auction.invoice_issued': auction_events_pb2.InvoiceEvent,
     'events.auction.invoice_paid': auction_events_pb2.InvoiceEvent,
     'events.auction.invoice_handed_over': auction_events_pb2.InvoiceEvent,

@@ -9,6 +9,9 @@ import auction.lot.OpId
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
 import auction.lot.ResumeLot
+import auction.lot.WithdrawLot
+import auction.lot.WithdrawLotRejected
+import auction.lot.WithdrawnReason
 
 import java.time.Instant
 import java.util.UUID
@@ -18,7 +21,8 @@ import java.util.UUID
  * ещё нет. `Active` — лот подтвердил открытие; только такой лот аукцион считает активным (И-14) и только его закрывает
  * по дедлайну. `Declined` — лот отклонил `OpenLot`. `NotOpened` — лот так и не открыт, а открывать поздно: общий
  * дедлайн прошёл. `Unanswered` — ответ не пришёл. `Held` — лот удержан для финала (П-09). `Closed` — лот продан или
- * закрыт без продажи.
+ * закрыт без продажи. В отменённом аукционе (ADR-047, дополнение 2026-10-12): `Withdrawing` — `WithdrawLot` ушёл,
+ * ответа нет; `Withdrawn` — лот снят; `Closed` — лот ответил, что уже завершён, и остался как был.
  */
 enum LotStanding {
   case Asked
@@ -30,6 +34,8 @@ enum LotStanding {
   case Unanswered
   case Held
   case Closed
+  case Withdrawing
+  case Withdrawn
 
   /**
    * Лот больше не держит конец онлайн-торгов (RFC-011, `awaiting`): закрыт, удержан или так и не открывался. Лот без
@@ -37,8 +43,8 @@ enum LotStanding {
    */
   def settled: Boolean =
     this match {
-      case Closed | Held | Declined(_) | NotOpened => true
-      case Asked | Opening | Active | Closing | Unanswered => false
+      case Closed | Held | Declined(_) | NotOpened | Withdrawn => true
+      case Asked | Opening | Active | Closing | Unanswered | Withdrawing => false
     }
 }
 
@@ -63,6 +69,9 @@ enum LotInstruction {
    * удержанные лоты по ответам; журнал их не хранит (RFC-011, «Чего сессия в журнал не пишет»).
    */
   case Settle(held: Set[LotId])
+
+  /** Снять лот с торгов: аукцион отменён (ADR-047, дополнение 2026-10-12). */
+  case Withdraw(lot: LotId, command: WithdrawLot)
 }
 
 /**
@@ -125,12 +134,31 @@ object LotRoster {
   def stepOpId(startedBy: OpId, step: String): OpId =
     OpId(Auction.nameBased(StepNamespace, s"${startedBy.value}/$step"))
 
+  /** Пространство имён `op_id` снятия лота отменённым аукционом (UUIDv5). */
+  val WithdrawNamespace: UUID = UUID.fromString("9e3c5a71-2b8d-4f06-a1e4-6d0b7c93f852")
+
+  /**
+   * `WithdrawLot` лоту отменённого аукциона. `op_id` — UUIDv5 от `op_id` отмены и лота (ADR-047, дополнение
+   * 2026-10-12): одинаков после любого рестарта, и снятый лот на повтор отвечает исходным `LotWithdrawn`.
+   */
+  def withdrawalOf(cancelledBy: OpId, lot: LotId): WithdrawLot =
+    WithdrawLot(
+      WithdrawnReason.AuctionCancelled,
+      OpId(Auction.nameBased(WithdrawNamespace, s"${cancelledBy.value}/${lot.value}"))
+    )
+
   /**
    * Опрос всего реестра. Спрашивает аукцион в онлайн-торгах, в ожидании их конца и в перерыве; до старта лоты не
-   * открыты, а с заморозки состава аукцион знает финалистов из своего журнала.
+   * открыты, а с заморозки состава аукцион знает финалистов из своего журнала. Отменённый аукцион не спрашивает, а
+   * снимает каждый лот реестра: что ответить, решает лот, и проданный остаётся проданным. Других команд лотам
+   * отменённый аукцион больше не шлёт — ни открытия, ни закрытия.
    */
   def survey(auction: Auction): (LotRoster, List[LotInstruction]) =
-    if (asking(auction.state)) settling(auction, ask(empty, auction.lots.toList)) else (empty, Nil)
+    auction.state match {
+      case AuctionState.Cancelled(_, _, cancelledBy) => withdraw(empty, auction.lots.toList, cancelledBy)
+      case current if asking(current) => settling(auction, ask(empty, auction.lots.toList))
+      case _ => (empty, Nil)
+    }
 
   /**
    * Доспрос на повторе команды открытия: лоты, чей ответ не пришёл, и лоты реестра, о которых знания нет. Лот с
@@ -154,9 +182,14 @@ object LotRoster {
    * (ADR-045, дополнение 2026-10-05), поэтому следующего пробуждения, которое переспросило бы их, может не быть: без
    * переспроса лот, не ответивший на закрытие, остался бы в торгах после дедлайна.
    */
-  def recheck(auction: Auction, roster: LotRoster): (LotRoster, List[LotInstruction]) =
-    if (asking(auction.state)) ask(roster, roster.lots.collect { case (lot, LotStanding.Unanswered) => lot }.toList)
-    else (roster, Nil)
+  def recheck(auction: Auction, roster: LotRoster): (LotRoster, List[LotInstruction]) = {
+    val silent = roster.lots.collect { case (lot, LotStanding.Unanswered) => lot }.toList
+    auction.state match {
+      case AuctionState.Cancelled(_, _, cancelledBy) => withdraw(roster, silent, cancelledBy)
+      case current if asking(current) => ask(roster, silent)
+      case _ => (roster, Nil)
+    }
+  }
 
   /**
    * Шаг протокола после команды открытия: записанное событие начинает опрос заново, повтор самой команды открытия
@@ -171,6 +204,39 @@ object LotRoster {
     }
 
   /**
+   * Шаг протокола после команды отмены — та же форма, что [[started]]: записанное событие снимает весь реестр заново,
+   * повтор самой отмены доснимает лоты без ответа, а `op_id` под другим событием и отмена уже отменённого аукциона
+   * лотов не трогают — неответившие лоты переспросит таймер.
+   */
+  def cancelled(auction: Auction, roster: LotRoster, decision: AuctionDecision): (LotRoster, List[LotInstruction]) =
+    (auction.state, decision) match {
+      case (_, AuctionDecision.Accepted(_)) => survey(auction)
+      case (
+            AuctionState.Cancelled(_, _, cancelledBy),
+            AuctionDecision.Repeated(AuctionEnvelope(_, _, AuctionEvent.AuctionCancelled))
+          ) =>
+        val pending = auction.lots.toList.filter { lot =>
+          roster.lots.get(lot) match {
+            case None | Some(LotStanding.Unanswered) => true
+            case Some(_) => false
+          }
+        }
+        withdraw(roster, pending, cancelledBy)
+      case _ => (roster, Nil)
+    }
+
+  /**
+   * Лот ответил на `WithdrawLot`: снят — `Withdrawn`; отказ — лот уже завершён или его нет, и снимать нечего. Ответ,
+   * которого аукцион не ждёт, знания не меняет.
+   */
+  def withdrawn(roster: LotRoster, lot: LotId, answer: Either[WithdrawLotRejected, Unit]): LotRoster =
+    roster.lots.get(lot) match {
+      case Some(LotStanding.Withdrawing) =>
+        roster.mark(lot, answer.fold(_ => LotStanding.Closed, _ => LotStanding.Withdrawn))
+      case _ => roster
+    }
+
+  /**
    * Лот ответил на вопрос о состоянии. Ответ, которого аукцион не ждёт, — опоздавший или повторный — знания не меняет.
    * Лот в торгах с дедлайном получает таймер; лот, которого ведёт человек, — нет. Не открытый лот аукцион открывает
    * только в онлайн-торгах: после общего дедлайна открывать поздно, и такой лот конца торгов не держит.
@@ -181,7 +247,8 @@ object LotRoster {
         val step = state match {
           case LotState.Trading(trading) => (roster.mark(lot, LotStanding.Active), armed(lot, trading.deadline))
           case LotState.Held(_) => (roster.mark(lot, LotStanding.Held), Nil)
-          case LotState.Sold(_) | LotState.Unsold(_) => (roster.mark(lot, LotStanding.Closed), Nil)
+          case LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
+            (roster.mark(lot, LotStanding.Closed), Nil)
           case LotState.Initial | LotState.Draft | LotState.Scheduled(_) =>
             current match {
               case AuctionState.Prebidding(config, startedBy) =>
@@ -277,7 +344,7 @@ object LotRoster {
     state match {
       case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) => true
       case AuctionState.Initial | AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.LineupFrozen(_, _, _) |
-          AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) =>
+          AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) | AuctionState.Cancelled(_, _, _) =>
         false
     }
 
@@ -292,7 +359,7 @@ object LotRoster {
    */
   def unanswered(roster: LotRoster, lot: LotId): LotRoster =
     roster.lots.get(lot) match {
-      case Some(LotStanding.Asked | LotStanding.Opening | LotStanding.Closing) =>
+      case Some(LotStanding.Asked | LotStanding.Opening | LotStanding.Closing | LotStanding.Withdrawing) =>
         roster.mark(lot, LotStanding.Unanswered)
       case _ => roster
     }
@@ -302,6 +369,12 @@ object LotRoster {
 
   private def ask(roster: LotRoster, lots: List[LotId]): (LotRoster, List[LotInstruction]) =
     (lots.foldLeft(roster)(_.mark(_, LotStanding.Asked)), lots.map(LotInstruction.Ask(_)))
+
+  private def withdraw(roster: LotRoster, lots: List[LotId], cancelledBy: OpId): (LotRoster, List[LotInstruction]) =
+    (
+      lots.foldLeft(roster)(_.mark(_, LotStanding.Withdrawing)),
+      lots.map(lot => LotInstruction.Withdraw(lot, withdrawalOf(cancelledBy, lot)))
+    )
 
   extension (roster: LotRoster) {
     private def mark(lot: LotId, standing: LotStanding): LotRoster = LotRoster(roster.lots.updated(lot, standing))

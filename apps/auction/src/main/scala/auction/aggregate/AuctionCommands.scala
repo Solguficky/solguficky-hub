@@ -83,6 +83,13 @@ enum DiscardRefusal {
   case AuctionAlreadyStarted
 }
 
+/** Отказ `CancelAuction`: проверка до агрегата или решение агрегата. */
+enum CancellationRefusal {
+  case Denied(denial: Denial)
+  case AuctionNotStarted
+  case AuctionAlreadyFinished
+}
+
 /** Отказ `StartPrebidding`: проверка до агрегата или решение агрегата. */
 enum OpeningRefusal {
   case Denied(denial: Denial)
@@ -305,6 +312,23 @@ final class AuctionCommands(
         }
     }
 
+  /**
+   * Отмена аукциона после старта торгов (ADR-047, дополнение 2026-10-12). Порядок тот же, что у остальных команд. Как у
+   * открытия, мимо Meetups в entity идёт только повтор самой отмены: он события не пишет, но доснимает лоты, не
+   * ответившие в прошлый раз; `op_id` другой команды до entity не доходит.
+   */
+  def cancel(auctionId: AuctionId, opId: OpId, person: ParticipantId): Future[Either[CancellationRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(original) =>
+        original.event match {
+          case AuctionEvent.AuctionCancelled => cancelled(auctionId, opId, person)
+          case _ => Future.successful(Right(()))
+        }
+      case Inspection.Absent => Future.successful(Left(CancellationRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, CancellationRefusal.Denied(_))(cancelled(auctionId, opId, person))
+    }
+
   def scheduleLot(
       auctionId: AuctionId,
       lot: LotId,
@@ -485,6 +509,18 @@ final class AuctionCommands(
       case Right(_) => Right(())
     }
 
+  private def cancelled(
+      auctionId: AuctionId,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[CancellationRefusal, Unit]] =
+    auctions.cancel(auctionId, CancelAuction(opId), Initiator.Operator(person)).map {
+      case Left(CancelAuctionRejected.AuctionNotFound) => Left(CancellationRefusal.Denied(Denial.AuctionNotFound))
+      case Left(CancelAuctionRejected.AuctionNotStarted) => Left(CancellationRefusal.AuctionNotStarted)
+      case Left(CancelAuctionRejected.AuctionAlreadyFinished) => Left(CancellationRefusal.AuctionAlreadyFinished)
+      case Right(_) => Right(())
+    }
+
   /** Любой ответ Meetups, кроме `Granted`, — отказ, и до агрегата команда не доходит. */
   private def authorized[L, R](meetup: MeetupId, person: ParticipantId, deny: Denial => L)(
       run: => Future[Either[L, R]]
@@ -512,9 +548,9 @@ final class AuctionCommands(
     event match {
       case AuctionEvent.AuctionDrafted(_) => true
       case AuctionEvent.LotAdded(_) | AuctionEvent.LotRemoved(_) | AuctionEvent.AuctionScheduled(_) |
-          AuctionEvent.PrebiddingStarted | AuctionEvent.AuctionDiscarded | AuctionEvent.PrebiddingDeadlineReached |
-          AuctionEvent.PrebiddingEnded(_) | AuctionEvent.FinalLineupFrozen(_) | AuctionEvent.FinalStarted |
-          AuctionEvent.FinalLotActivated(_) =>
+          AuctionEvent.PrebiddingStarted | AuctionEvent.AuctionDiscarded | AuctionEvent.AuctionCancelled |
+          AuctionEvent.PrebiddingDeadlineReached | AuctionEvent.PrebiddingEnded(_) | AuctionEvent.FinalLineupFrozen(_) |
+          AuctionEvent.FinalStarted | AuctionEvent.FinalLotActivated(_) =>
         false
     }
 }

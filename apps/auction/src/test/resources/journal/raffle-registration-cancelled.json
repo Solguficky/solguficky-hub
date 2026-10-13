@@ -11,6 +11,7 @@
       "participantId": "0190f2a0-0000-7000-8000-000000000065"
     },
     "poolFixed": null,
-    "raffleDrawn": null
+    "raffleDrawn": null,
+    "raffleCancelled": null
   }
 }

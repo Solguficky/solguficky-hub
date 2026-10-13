@@ -2,6 +2,7 @@ package auction.grpc
 
 import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
+import auction.aggregate.CancellationRefusal
 import auction.aggregate.DiscardRefusal
 import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.OpeningRefusal
@@ -213,6 +214,24 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       ResponseMapping.discardAuction(Left(DiscardRefusal.Denied(Denial.Unavailable))).left.value.getCode shouldBe
         Status.Code.UNAVAILABLE
       ResponseMapping.discardAuction(Left(DiscardRefusal.Denied(Denial.AuctionNotFound))).left.value.getCode shouldBe
+        Status.Code.NOT_FOUND
+    }
+
+    "answers a cancel without data and every refusal of the right and of the state as a value" in {
+      def reason(refusal: CancellationRefusal): wire.CancelAuctionRefusal.Reason =
+        ResponseMapping.cancelAuction(Left(refusal)).value.getRefused.reason
+      ResponseMapping.cancelAuction(Right(())).value.outcome.isAccepted shouldBe true
+      reason(CancellationRefusal.Denied(Denial.NotAdministrator)).isNotMeetupAdministrator shouldBe true
+      reason(CancellationRefusal.Denied(Denial.MeetupNotFound)).isMeetupNotFound shouldBe true
+      reason(CancellationRefusal.AuctionNotStarted).isAuctionNotStarted shouldBe true
+      reason(CancellationRefusal.AuctionAlreadyFinished).isAuctionAlreadyFinished shouldBe true
+      ResponseMapping.cancelAuction(Left(CancellationRefusal.Denied(Denial.Unavailable))).left.value.getCode shouldBe
+        Status.Code.UNAVAILABLE
+      ResponseMapping
+        .cancelAuction(Left(CancellationRefusal.Denied(Denial.AuctionNotFound)))
+        .left
+        .value
+        .getCode shouldBe
         Status.Code.NOT_FOUND
     }
 

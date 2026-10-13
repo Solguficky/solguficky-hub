@@ -11,6 +11,7 @@ import auction.lot.OpenLotRejected
 import auction.lot.ResumeLotRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.UnmarkForFinalRejected
+import auction.lot.WithdrawLotRejected
 import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.Done
 import org.apache.pekko.actor.typed.ActorRef
@@ -72,6 +73,10 @@ enum AuctionAnswer {
  * после recovery, пока не получит ответ. Знание «розыгрыш открыт» несохраняемо, как знание о лотах: открытие
  * идемпотентно, и лишний повтор ничего не меняет.
  *
+ * Отмена после старта торгов (ADR-047, дополнение 2026-10-12) пишет `AuctionCancelled` и дальше идёт тем же протоколом:
+ * каждому лоту реестра — `WithdrawLot`, розыгрышу — отмена, обе с `op_id` от `op_id` отмены и с переспросом на тике и
+ * после recovery. Знание «лот ответил» и «розыгрыш ответил» несохраняемо, как знание об открытии.
+ *
  * `ScheduleLot`, отметку для финала и её снятие entity передаёт лоту, ничего не записав: условия торгов и отметка живут
  * в журнале лота, а аукцион только решает, можно ли сейчас их менять ([[Auction.decide]]), и для условий подставляет
  * незаданное.
@@ -124,6 +129,16 @@ object AuctionEntity {
       command: StartPrebidding,
       initiator: Initiator,
       replyTo: ActorRef[Either[StartPrebiddingRejected, AuctionAnswer]]
+  ) extends Command
+
+  /**
+   * Отмена после старта торгов: событие `AuctionCancelled`. Ответ — после записи; лоты и розыгрыш снимаются после него.
+   * Повтор того же `op_id` события не пишет, но доснимает лоты, не ответившие раньше.
+   */
+  final case class Cancel(
+      command: CancelAuction,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[CancelAuctionRejected, AuctionAnswer]]
   ) extends Command
 
   /** Удаление до торгов: событие `AuctionDiscarded`, после него аукцион — снова `Initial`. */
@@ -230,6 +245,13 @@ object AuctionEntity {
   /** Ответ розыгрыша на открытие; неудача — ответа нет, и открытие повторится на тике переспроса. */
   private[entity] final case class RaffleAnswered(answer: Try[Done]) extends Command
 
+  /** Ответ лота на `WithdrawLot`; неудача — ответа нет. */
+  private[entity] final case class LotWithdrew(lot: LotId, answer: Try[Either[WithdrawLotRejected, Unit]])
+      extends Command
+
+  /** Ответ розыгрыша на отмену; неудача — ответа нет, и отмена повторится на тике переспроса. */
+  private[entity] final case class RaffleCancelAnswered(answer: Try[Done]) extends Command
+
   private final case class DeadlineKey(lot: LotId)
 
   private case object RecheckKey
@@ -298,6 +320,10 @@ object AuctionEntity {
               timers.startSingleTimer(DeadlineKey(lot), DeadlineDue(lot), delay)
             case LotInstruction.Close(lot, command) => context.pipeToSelf(lots.close(lot, command))(LotClosed(lot, _))
             case LotInstruction.Settle(held) => context.self ! Settled(held)
+            case LotInstruction.Withdraw(lot, command) =>
+              // Таймер дедлайна снятого лота больше не нужен: отменённый аукцион лотов не закрывает.
+              timers.cancel(DeadlineKey(lot))
+              context.pipeToSelf(lots.withdraw(lot, command))(LotWithdrew(lot, _))
           }
         }
 
@@ -319,6 +345,19 @@ object AuctionEntity {
               config.raffleClosesAt.foreach { closesAt =>
                 context.pipeToSelf(raffle.open(auctionId, closesAt))(RaffleAnswered(_))
               }
+            case _ => ()
+          }
+
+        // Отменил ли розыгрыш отменённый аукцион в этой инкарнации; рестарт спрашивает снова — отмена идемпотентна.
+        var raffleCancelled = false
+
+        def cancelRaffle(auction: Auction): Unit =
+          auction.state match {
+            case AuctionState.Cancelled(config, _, cancelledBy)
+                if !raffleCancelled && config.raffleClosesAt.isDefined =>
+              context.pipeToSelf(raffle.cancel(auctionId, LotRoster.stepOpId(cancelledBy, "raffle-cancelled")))(
+                RaffleCancelAnswered(_)
+              )
             case _ => ()
           }
 
@@ -350,6 +389,32 @@ object AuctionEntity {
                     armPrebidding(auction)
                   }
               }
+            case Cancel(cancel, initiator, replyTo) =>
+              Auction.decide(state.auction, cancel) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(decision) =>
+                  record(state.auction, decision, cancel.opId, initiator, clock, newId) { (auction, answer) =>
+                    replyTo ! Right(answer)
+                    timers.cancel(PrebiddingKey)
+                    follow(LotRoster.cancelled(auction, roster, decision))
+                    cancelRaffle(auction)
+                  }
+              }
+            case LotWithdrew(lot, Success(answer)) =>
+              Effect.none.thenRun(_ => roster = LotRoster.withdrawn(roster, lot, answer))
+            case LotWithdrew(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
+            case RaffleCancelAnswered(Success(_)) =>
+              raffleCancelled = true
+              Effect.none
+            case RaffleCancelAnswered(Failure(failure)) =>
+              Effect.none.thenRun { _ =>
+                context.log.warn(
+                  "raffle did not answer the cancellation",
+                  StructuredArguments.keyValue("auction_id", auctionId),
+                  StructuredArguments.keyValue("error_category", "dependency_unavailable"),
+                  StructuredArguments.keyValue("error", failure.getClass.getName)
+                )
+              }
             case Roster(replyTo) => Effect.reply(replyTo)(roster)
             case LotObserved(lot, Success(lotState)) =>
               Effect.none.thenRun(after => follow(LotRoster.observed(after.auction, roster, lot, lotState)))
@@ -367,9 +432,10 @@ object AuctionEntity {
                   case AuctionState.Initial => shard.foreach(_ ! ClusterSharding.Passivate(context.self))
                   case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _) |
                       AuctionState.Settling(_, _) | AuctionState.Break(_, _) | AuctionState.LineupFrozen(_, _, _) |
-                      AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) =>
+                      AuctionState.Final(_, _, _, _) | AuctionState.Finished(_, _) | AuctionState.Cancelled(_, _, _) =>
                     follow(LotRoster.recheck(after.auction, roster))
                     openRaffle(after.auction)
+                    cancelRaffle(after.auction)
                 }
               }
             case PrebiddingDue =>
@@ -542,6 +608,7 @@ object AuctionEntity {
           .receiveSignal { case (state, RecoveryCompleted) =>
             follow(LotRoster.survey(state.auction))
             openRaffle(state.auction)
+            cancelRaffle(state.auction)
             armPrebidding(state.auction)
           }
       }

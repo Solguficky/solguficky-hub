@@ -2,6 +2,7 @@ package auction.grpc
 
 import auction.aggregate.AskRefusal
 import auction.aggregate.AuctionState
+import auction.aggregate.CancellationRefusal
 import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
 import auction.aggregate.DiscardRefusal
@@ -453,6 +454,26 @@ object ResponseMapping {
   private def discardRefused(reason: wire.DiscardAuctionRefusal.Reason): wire.DiscardAuctionResponse =
     wire.DiscardAuctionResponse().withRefused(wire.DiscardAuctionRefusal(reason))
 
+  def cancelAuction(outcome: Either[CancellationRefusal, Unit]): Either[Status, wire.CancelAuctionResponse] =
+    outcome match {
+      case Right(()) => Right(wire.CancelAuctionResponse().withAccepted(wire.AuctionCancelAccepted()))
+      case Left(CancellationRefusal.AuctionNotStarted) =>
+        Right(cancelRefused(wire.CancelAuctionRefusal.Reason.AuctionNotStarted(wire.AuctionNotStarted())))
+      case Left(CancellationRefusal.AuctionAlreadyFinished) =>
+        Right(cancelRefused(wire.CancelAuctionRefusal.Reason.AuctionAlreadyFinished(wire.AuctionAlreadyFinished())))
+      case Left(CancellationRefusal.Denied(Denial.NotAdministrator)) =>
+        Right(cancelRefused(wire.CancelAuctionRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
+      case Left(CancellationRefusal.Denied(Denial.MeetupNotFound)) =>
+        Right(cancelRefused(wire.CancelAuctionRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(CancellationRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(CancellationRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(CancellationRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"auction cancellation answered $denial")
+    }
+
+  private def cancelRefused(reason: wire.CancelAuctionRefusal.Reason): wire.CancelAuctionResponse =
+    wire.CancelAuctionResponse().withRefused(wire.CancelAuctionRefusal(reason))
+
   /**
    * Заморозка состава (RFC-011). `LineupMismatch` несёт удержанных на момент решения — пульт пересобирает порядок без
    * отдельного чтения. `LineupUnknown` — аукцион ещё переспрашивает лоты после рестарта: `UNAVAILABLE`, повтор с тем же
@@ -661,6 +682,8 @@ object ResponseMapping {
         (wire.AuctionSnapshot.Status.InFinal(AuctionValues.inFinal(order, activated)), Some(config))
       case AuctionState.Finished(config, _) =>
         (wire.AuctionSnapshot.Status.Finished(AuctionStateMessage.Finished()), Some(config))
+      case AuctionState.Cancelled(config, _, _) =>
+        (wire.AuctionSnapshot.Status.Cancelled(AuctionStateMessage.Cancelled()), Some(config))
       case AuctionState.Initial =>
         throw new IllegalStateException(s"auction view ${view.auctionId} holds an unborn auction")
     }

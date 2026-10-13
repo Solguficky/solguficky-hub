@@ -43,7 +43,7 @@ final class AuctionViewSpec extends AnyWordSpec with Matchers {
       }
     }
 
-    "gives the row the status of the break and the final, each of them active, and finished as past" in {
+    "gives the row the status of the break and the final, each of them active, and finished and cancelled as past" in {
       val tail = List(
         AuctionEvent.PrebiddingDeadlineReached,
         AuctionEvent.PrebiddingEnded(finished = false),
@@ -64,7 +64,10 @@ final class AuctionViewSpec extends AnyWordSpec with Matchers {
         6L -> stored(AuctionEvent.PrebiddingEnded(finished = true), 6)
       )
       statusAfter(finished) shouldBe "finished"
-      AuctionViews.statuses(AuctionListing.Finished) shouldBe List("finished")
+      val cancelled = journal ++ List(5L -> stored(AuctionEvent.AuctionCancelled, 5))
+      statusAfter(cancelled) shouldBe "cancelled"
+      AuctionViews.statuses(AuctionListing.Finished) shouldBe List("finished", "cancelled")
+      AuctionViews.statuses(AuctionListing.Active) should not contain "cancelled"
     }
 
     "lists an auction as active from scheduling on and never as a draft" in {

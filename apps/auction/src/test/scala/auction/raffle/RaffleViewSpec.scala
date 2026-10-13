@@ -60,5 +60,15 @@ final class RaffleViewSpec extends AnyWordSpec with Matchers {
       view(RaffleState.Initial) shouldBe None
       view(RaffleState.NotHeld(closesAt)).get.commitment shouldBe None
     }
+
+    "shows a cancelled raffle with the registration of the viewer, without tickets and never with the seed" in {
+      val cancelled = view(RaffleState.Cancelled(terms, Vector(person(2), person(1)), closesAt.plusSeconds(30))).get
+      cancelled.status shouldBe RaffleStatus.Cancelled
+      cancelled.registered shouldBe true
+      cancelled.tickets shouldBe empty
+      cancelled.myTicket shouldBe None
+      cancelled.reveal shouldBe None
+      cancelled.toString should not include seed.hex
+    }
   }
 }

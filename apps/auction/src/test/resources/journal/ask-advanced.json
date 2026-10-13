@@ -24,6 +24,7 @@
         "minorUnits": 50000,
         "currency": "RUB"
       }
-    }
+    },
+    "lotWithdrawn": null
   }
 }

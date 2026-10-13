@@ -120,6 +120,13 @@ object LotEntity {
       replyTo: ActorRef[Either[AdvanceAskRejected, Envelope]]
   ) extends Command
 
+  /** Снятие лота с торгов; шлёт аукцион, отменённый после старта торгов (ADR-047, дополнение 2026-10-12). */
+  final case class Withdraw(
+      command: WithdrawLot,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[WithdrawLotRejected, Envelope]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Lot]) extends Command
 
   /**
@@ -183,6 +190,8 @@ object LotEntity {
         record(state, Lot.decide(lot, resume, BidId(newId()), now), resume.opId, initiator, replyTo, now, newId)
       case Ask(ask, initiator, replyTo) =>
         record(state, Lot.decide(lot, ask, BidId(newId()), now), ask.opId, initiator, replyTo, now, newId)
+      case Withdraw(withdrawal, initiator, replyTo) =>
+        record(state, Lot.decide(lot, withdrawal), withdrawal.opId, initiator, replyTo, now, newId)
       case Get(replyTo) =>
         Effect.reply(replyTo)(lot)
     }

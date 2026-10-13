@@ -41,6 +41,7 @@ object RaffleMapping {
       case RaffleStatus.Drawn => wire.RaffleStatus.RAFFLE_STATUS_DRAWN
       case RaffleStatus.NoTickets => wire.RaffleStatus.RAFFLE_STATUS_NO_TICKETS
       case RaffleStatus.NotHeld => wire.RaffleStatus.RAFFLE_STATUS_NOT_HELD
+      case RaffleStatus.Cancelled => wire.RaffleStatus.RAFFLE_STATUS_CANCELLED
     }
 
   /** Чужой `op_id` — статус `ALREADY_EXISTS`, как у остальных команд; остальные отказы — значения ответа. */

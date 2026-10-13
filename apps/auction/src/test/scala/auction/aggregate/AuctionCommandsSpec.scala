@@ -75,6 +75,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(discardAnswer)
     }
 
+    var cancelAnswer: Either[CancelAuctionRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(cancelAnswer)
+    }
+
     var planAnswer: Either[ScheduleAuctionLotRejected, Unit] = Right(())
 
     def scheduleLot(auctionId: AuctionId, command: ScheduleAuctionLot, initiator: Initiator) = {
@@ -361,6 +368,57 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       val auctions = Auctions(Inspection.Repeated(AuctionEnvelope(3, op(3), AuctionEvent.AuctionDiscarded)))
       val meetups = Meetups(Authority.NotAdministrator)
       AuctionCommands(auctions, noLots, meetups).discard(auctionOfMeetup, op(3), person).futureValue shouldBe Right(())
+      meetups.asked shouldBe 0
+      auctions.commands shouldBe empty
+    }
+
+    "answers a cancel of an auction without a journal with AuctionNotFound before meetups" in {
+      val meetups = Meetups(Authority.Granted)
+      AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)
+        .cancel(auctionOfMeetup, op(2), person)
+        .futureValue shouldBe Left(CancellationRefusal.Denied(Denial.AuctionNotFound))
+      meetups.asked shouldBe 0
+    }
+
+    "refuses a cancel that meetups does not confirm and does not reach the auction" in {
+      for (
+        (answer, denial) <- List(
+          Authority.NotAdministrator -> Denial.NotAdministrator,
+          Authority.MeetupNotFound -> Denial.MeetupNotFound,
+          Authority.Unavailable -> Denial.Unavailable
+        )
+      ) {
+        val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+        AuctionCommands(auctions, noLots, Meetups(answer)).cancel(auctionOfMeetup, op(2), person).futureValue shouldBe
+          Left(CancellationRefusal.Denied(denial))
+        auctions.commands shouldBe empty
+      }
+    }
+
+    "cancels the auction once meetups confirms the administrator and passes its refusals through" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      commands.cancel(auctionOfMeetup, op(2), person).futureValue shouldBe Right(())
+      auctions.cancelAnswer = Left(CancelAuctionRejected.AuctionNotStarted)
+      commands.cancel(auctionOfMeetup, op(3), person).futureValue shouldBe Left(CancellationRefusal.AuctionNotStarted)
+      auctions.cancelAnswer = Left(CancelAuctionRejected.AuctionAlreadyFinished)
+      commands.cancel(auctionOfMeetup, op(4), person).futureValue shouldBe
+        Left(CancellationRefusal.AuctionAlreadyFinished)
+      auctions.commands shouldBe List(CancelAuction(op(2)), CancelAuction(op(3)), CancelAuction(op(4)))
+    }
+
+    "passes a repeated cancel to the auction without meetups so that it withdraws the lots that did not answer" in {
+      val auctions = Auctions(Inspection.Repeated(AuctionEnvelope(6, op(6), AuctionEvent.AuctionCancelled)))
+      val meetups = Meetups(Authority.NotAdministrator)
+      AuctionCommands(auctions, noLots, meetups).cancel(auctionOfMeetup, op(6), person).futureValue shouldBe Right(())
+      meetups.asked shouldBe 0
+      auctions.commands shouldBe List(CancelAuction(op(6)))
+    }
+
+    "answers an op_id of another command on a cancel without asking meetups or the auction" in {
+      val auctions = Auctions(Inspection.Repeated(AuctionEnvelope(4, op(4), AuctionEvent.PrebiddingStarted)))
+      val meetups = Meetups(Authority.NotAdministrator)
+      AuctionCommands(auctions, noLots, meetups).cancel(auctionOfMeetup, op(4), person).futureValue shouldBe Right(())
       meetups.asked shouldBe 0
       auctions.commands shouldBe empty
     }

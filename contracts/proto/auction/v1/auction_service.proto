@@ -45,6 +45,7 @@ service AuctionService {
   rpc ScheduleAuction(ScheduleAuctionRequest) returns (ScheduleAuctionResponse);
   rpc StartPrebidding(StartPrebiddingRequest) returns (StartPrebiddingResponse);
   rpc DiscardAuction(DiscardAuctionRequest) returns (DiscardAuctionResponse);
+  rpc CancelAuction(CancelAuctionRequest) returns (CancelAuctionResponse);
   rpc SelectForFinal(SelectForFinalRequest) returns (SelectForFinalResponse);
   rpc DeselectForFinal(DeselectForFinalRequest) returns (DeselectForFinalResponse);
   rpc FreezeFinalLineup(FreezeFinalLineupRequest) returns (FreezeFinalLineupResponse);
@@ -1012,6 +1013,46 @@ message DiscardAuctionRefusal {
   }
 }
 
+message CancelAuctionRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message CancelAuctionResponse {
+  // Exactly one is set.
+  oneof outcome {
+    AuctionCancelAccepted accepted = 1;
+    CancelAuctionRefusal refused = 2;
+  }
+}
+
+// Carries nothing: the auction is cancelled for good. Sold lots stay sold, the
+// other lots are withdrawn after the answer, not before it. A repeated cancel of a
+// cancelled auction is accepted again.
+message AuctionCancelAccepted {}
+
+message CancelAuctionRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    AuctionNotStarted auction_not_started = 3;
+    AuctionAlreadyFinished auction_already_finished = 4;
+  }
+}
+
+// Prebidding has not started: DiscardAuction removes such an auction.
+message AuctionNotStarted {}
+
+// The auction is finished: there is nothing left to cancel.
+message AuctionAlreadyFinished {}
+
 message SelectForFinalRequest {
   // The administrator of the meetup of the auction, checked with the meetup.
   Viewer viewer = 1;
@@ -1500,7 +1541,7 @@ enum AuctionListing {
   // Scheduled and not finished: from scheduled to in_final.
   AUCTION_LISTING_ACTIVE = 1;
 
-  // Finished.
+  // Past: finished or cancelled. The status of each auction tells which.
   AUCTION_LISTING_FINISHED = 2;
 }
 
@@ -1539,6 +1580,7 @@ message AuctionSnapshot {
     AuctionState.LineupFrozen lineup_frozen = 15;
     AuctionState.Final in_final = 16;
     AuctionState.Finished finished = 17;
+    AuctionState.Cancelled cancelled = 18;
   }
 }
 
@@ -1675,6 +1717,10 @@ enum RaffleStatus {
 
   // Prebidding started no earlier than closes_at: registration never opened.
   RAFFLE_STATUS_NOT_HELD = 6;
+
+  // The auction was cancelled before the draw: registration is closed, no draw
+  // will take place, and the seed is not revealed.
+  RAFFLE_STATUS_CANCELLED = 7;
 }
 
 message RaffleTicket {

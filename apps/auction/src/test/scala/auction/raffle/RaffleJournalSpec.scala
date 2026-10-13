@@ -45,6 +45,21 @@ final class RaffleJournalSpec extends AnyWordSpec with Matchers with BeforeAndAf
       keepsGolden("raffle-registration-cancelled", stored(RaffleEvent.RegistrationCancelled(person(1))))
       keepsGolden("raffle-pool-fixed", stored(RaffleEvent.PoolFixed(Vector(person(1), person(2)))))
       keepsGolden("raffle-drawn", stored(RaffleEvent.RaffleDrawn(randomness, closesAt.plusSeconds(62))))
+      keepsGolden("raffle-cancelled", stored(RaffleEvent.RaffleCancelled(closesAt.plusSeconds(30))))
+    }
+
+    "keeps the stored form of a cancelled raffle snapshot and restores the same raffle" in {
+      val raffle = Raffle.replay(
+        Raffle.initial,
+        List(
+          RaffleEnvelope(1, OpId(uuid(2)), RaffleEvent.RaffleOpened(closesAt, seed, round)),
+          RaffleEnvelope(2, OpId(uuid(3)), RaffleEvent.Registered(person(1))),
+          RaffleEnvelope(3, OpId(uuid(4)), RaffleEvent.RaffleCancelled(closesAt.plusSeconds(30)))
+        )
+      )
+      raffle.state shouldBe a[RaffleState.Cancelled]
+      keepsGolden("raffle-snapshot-cancelled", RaffleJournal.storeRaffle(raffle, sequence = 3))
+      RaffleJournal.restoreRaffle(RaffleJournal.storeRaffle(raffle, sequence = 3)) shouldBe raffle
     }
 
     "keeps the stored form of a drawn raffle snapshot and restores the same raffle" in {

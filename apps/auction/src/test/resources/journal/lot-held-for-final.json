@@ -21,6 +21,7 @@
     "lotHeldForFinal": {
       "at": "2026-10-07T18:00:00Z"
     },
-    "askAdvanced": null
+    "askAdvanced": null,
+    "lotWithdrawn": null
   }
 }

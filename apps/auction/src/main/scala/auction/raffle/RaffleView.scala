@@ -12,6 +12,7 @@ enum RaffleStatus {
   case Drawn
   case NoTickets
   case NotHeld
+  case Cancelled
 }
 
 /** Жеребьёвка для пересчёта участником: значение раунда, V и номер выигравшего билета. */
@@ -87,6 +88,20 @@ object RaffleView {
           Draw.winner(terms.seed, tickets.size, randomness)
         )
         Some(fixed(terms, tickets, RaffleStatus.Drawn, Some(RaffleReveal(terms.seed, Some(draw)))))
+      // Отменённый розыгрыш seed не раскрывает: жеребьёвки не было и не будет. Билеты не показываются — розыгрыша нет.
+      case RaffleState.Cancelled(terms, participants, _) =>
+        Some(
+          RaffleView(
+            status = RaffleStatus.Cancelled,
+            closesAt = terms.closesAt,
+            commitment = Some(terms.commitment),
+            round = Some(terms.round),
+            registered = participants.contains(viewer),
+            tickets = Vector.empty,
+            myTicket = None,
+            reveal = None
+          )
+        )
     }
   }
 }

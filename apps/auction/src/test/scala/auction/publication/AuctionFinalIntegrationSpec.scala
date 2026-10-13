@@ -204,5 +204,56 @@ final class AuctionFinalIntegrationSpec
         facts(9).getState.getInFinal.activeLotId shouldBe Some(finalist.value.toString)
       }
     }
+
+    // ADR-047, дополнение 2026-10-12: «Факт отмены» и «Факт удаления».
+    "publish the discard of an unstarted auction and the cancel of a started one with their lots withdrawn" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      freshStream()
+      onDatabase(database) { node =>
+        def drafted(): AuctionId =
+          node.commands
+            .draft(MeetupId(newId()), newOp(), person)
+            .futureValue
+            .fold(denial => fail(s"the auction was not drafted: $denial"), _.auctionId)
+        val week =
+          OnlinePhase(Instant.now().minusSeconds(3600), Some(Instant.now().plusSeconds(3600)), closesLots = true)
+
+        val discarded = drafted()
+        node.commands.schedule(discarded, configInput(Some(week)), newOp(), person).futureValue shouldBe Right(())
+        node.commands.discard(discarded, newOp(), person).futureValue shouldBe Right(())
+
+        val cancelled = drafted()
+        val lot = LotId(newId())
+        node.commands.addLot(cancelled, lot, newOp(), person).futureValue shouldBe Right(())
+        lotRef(node, lot)
+          .ask[Either[ScheduleLotRejected, Envelope]](
+            LotEntity.Plan(scheduleLot(opN = 2), Initiator.Operator(person), _)
+          )
+          .futureValue
+          .isRight shouldBe true
+        node.commands.schedule(cancelled, configInput(Some(week)), newOp(), person).futureValue shouldBe Right(())
+        node.commands.startPrebidding(cancelled, newOp(), person).futureValue shouldBe Right(())
+        eventually(lotState(node, lot) shouldBe a[LotState.Trading])
+        node.commands.cancel(cancelled, newOp(), person).futureValue shouldBe Right(())
+
+        eventually {
+          val names =
+            auctionFacts().map((subject, fact) => fact.auctionId -> subject.stripPrefix(LotFacts.SubjectPrefix))
+          names should contain(discarded.value.toString -> "auction_discarded")
+          names should contain(cancelled.value.toString -> "auction_cancelled")
+          streamMessages().map(_.getSubject) should contain(LotFacts.SubjectPrefix + "lot_withdrawn")
+        }
+        val facts = auctionFacts().map(_._2)
+        val discard =
+          facts.find(fact => fact.auctionId == discarded.value.toString && fact.occasion.isAuctionDiscarded).get
+        discard.getState.status.isDiscarded shouldBe true
+        discard.getState.config shouldBe defined
+        val cancel =
+          facts.find(fact => fact.auctionId == cancelled.value.toString && fact.occasion.isAuctionCancelled).get
+        cancel.getState.status.isCancelled shouldBe true
+        cancel.getState.lotIds shouldBe List(lot.value.toString)
+      }
+    }
   }
 }

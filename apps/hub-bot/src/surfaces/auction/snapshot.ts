@@ -66,6 +66,12 @@ function stageOf(status: AuctionSnapshot["status"]): AuctionStage {
       return "in-final";
     case "finished":
       return "finished";
+    // Отменённый аукцион (ADR-047, дополнение 2026-10-12) экраны ещё не
+    // показывают — это PER-606. Отменяют аукцион кнопка пульта (PER-606) и
+    // отмена сходки (PER-602), и ни одной ещё нет, поэтому отменённого
+    // аукциона в ответах не бывает; перевод бросает, как на незнакомом статусе.
+    case "cancelled":
+      throw new Error("auction snapshot is cancelled, not shown yet");
     case "draft":
       throw new Error("auction list returned a draft");
     case undefined:

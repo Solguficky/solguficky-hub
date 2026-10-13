@@ -68,15 +68,18 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
 
     // Тот же довод для аукциона, с обратным исключением: шина несёт сходку
     // аукциона, а чтение — нет, потому что список не должен вести от аукциона к
-    // сходке (ADR-047, дополнение 2026-10-03, «Видимость сходки»).
+    // сходке (ADR-047, дополнение 2026-10-03, «Видимость сходки»). Второе
+    // исключение — статус `discarded`: его несёт только факт удаления, а чтения
+    // удалённый аукцион не отдают (решение владельца на чекпоинте PER-601).
     "keeps the auction state of the bus aligned with the read snapshot field for field" in {
       val state = shape(AuctionState.javaDescriptor)
       val snapshot = shape(AuctionSnapshot.javaDescriptor)
       val reservedBySnapshot = AuctionSnapshot.javaDescriptor.toProto.getReservedRangeList.asScala
         .flatMap(range => range.getStart until range.getEnd)
+      val busOnly = Set(AuctionState.javaDescriptor.findFieldByName("discarded").getNumber)
 
       snapshot.foreach { case (number, field) => state.get(number) shouldBe Some(field) }
-      (state.keySet -- snapshot.keySet) should contain theSameElementsAs reservedBySnapshot
+      (state.keySet -- snapshot.keySet) should contain theSameElementsAs (reservedBySnapshot ++ busOnly)
       AuctionSnapshot.javaDescriptor.toProto.getReservedNameList.asScala should contain theSameElementsAs
         reservedBySnapshot.map(number => AuctionState.javaDescriptor.findFieldByNumber(number).getName)
     }
