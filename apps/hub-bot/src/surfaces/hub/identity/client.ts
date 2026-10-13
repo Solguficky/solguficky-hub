@@ -4,7 +4,10 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
-import { ApplicationQueue as WireQueue } from "../../../../gen/identity/v1/access_pb.js";
+import {
+  ApplicationQueue as WireQueue,
+  AccessRight as WireRight,
+} from "../../../../gen/identity/v1/access_pb.js";
 import {
   ApplicationOutcome,
   type DecideApplicationResponse,
@@ -68,6 +71,10 @@ export type TelegramRecipientRpc = Pick<
   Client<typeof IdentityService>,
   "resolveTelegramUserId"
 >;
+export type AccessRightRpc = Pick<
+  Client<typeof IdentityService>,
+  "checkAccessRight"
+>;
 export type OrganizerRpc = Pick<
   Client<typeof IdentityService>,
   "resolveOrganizerUsername"
@@ -123,7 +130,7 @@ export function createIdentityClient(
     serviceToken,
     timeoutMs = identityRpcTimeoutMs,
   }: RpcClientOptions & { communityTimeZone: string },
-): IdentityClient {
+): IdentityClient & PlaceBidsReader {
   const sessionManager = new Http2SessionManager(baseUrl);
   const transport = createGrpcTransport({
     baseUrl,
@@ -152,6 +159,7 @@ export function createIdentityClient(
       recipients.resolveTelegramUserId(identityId, meta),
     resolveOrganizerUsername: (viewer, identityId, meta) =>
       organizers.resolveOrganizerUsername(viewer, identityId, meta),
+    ...createPlaceBidsReader(client, timeoutMs),
     ...administrator,
     ...applications,
     ...sourceChannels,
@@ -850,6 +858,28 @@ export function createTelegramRecipientResolver(
       } catch (cause) {
         return classifyRecipientFailure(cause);
       }
+    },
+  };
+}
+
+// Право `place-bids` получателя аукционного уведомления (PER-598): Auction отдаёт
+// лот только зрителю с этим правом, а канал видит получателя одним
+// `identity_id`. Недоступность Identity — исключение: повтор решает рендер.
+export type PlaceBidsReader = {
+  holdsPlaceBids(identityId: string, meta?: RpcMetadata): Promise<boolean>;
+};
+
+export function createPlaceBidsReader(
+  rpc: AccessRightRpc,
+  timeoutMs = identityRpcTimeoutMs,
+): PlaceBidsReader {
+  return {
+    async holdsPlaceBids(identityId, meta) {
+      const response = await rpc.checkAccessRight(
+        { identityId, right: WireRight.PLACE_BIDS },
+        { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+      );
+      return response.granted;
     },
   };
 }

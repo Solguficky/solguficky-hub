@@ -8,11 +8,14 @@ import {
 } from "../../../core/delivery/index.js";
 import { registerChatCommands } from "../../../core/menu-commands.js";
 import type {
+  LotNotice,
+  LotNoticeView,
+} from "../../../core/notifications/lot-notice.js";
+import type {
   LocalDate,
   LocalDateTime,
   MeetupAspect,
   MeetupWhen,
-  NotificationMoney,
   NotifiedMeetup,
   RenderableContent,
 } from "../delivery/notification.js";
@@ -80,8 +83,15 @@ export function disableMeetupCategoryCallback(
 // Кадр по образцу P-11: заголовок называет повод и сходку, строки ниже — что
 // нужно знать, не открывая карточку. Одно сообщение на повод, карточка целиком
 // не повторяется: описание и ссылка на календарь только называются.
+// Что уходит отправителю. Вести хаба он рисует сам, а весть о лоте приходит уже
+// собранной общим рендером двух ботов (`lot-notice.ts`, PER-598): ему нужны
+// право получателя и название лота у соседей, а соседей отправитель не зовёт.
+export type OutgoingNotification =
+  | Exclude<RenderableContent, LotNotice>
+  | { kind: "lot-notice"; view: LotNoticeView };
+
 export function renderNotification(
-  content: RenderableContent,
+  content: OutgoingNotification,
   auctionBotUsername?: string,
 ): NotificationMessage {
   if (content.kind === "access-requested") {
@@ -149,32 +159,8 @@ export function renderNotification(
       keyboard: undefined,
     };
   }
-  if (
-    content.kind === "lot-outbid" ||
-    content.kind === "lot-proxy-raised" ||
-    content.kind === "lot-purchased"
-  ) {
-    const price =
-      content.kind === "lot-purchased" ? content.price : content.currentPrice;
-    const text =
-      content.kind === "lot-outbid"
-        ? `Твою ставку на лот перебили. Текущая цена — ${notificationMoney(price)}.`
-        : content.kind === "lot-proxy-raised"
-          ? `Твоя автоставка на лот подняла цену до ${notificationMoney(price)}: лидируешь ты.`
-          : `Лот твой за ${notificationMoney(price)}.`;
-    const keyboard = new InlineKeyboard().text(
-      "К лоту",
-      traceCallback(
-        `v1:${encodeAuctionCallback({ kind: "lot", lotId: content.lotId, page: 0 }).slice(3)}`,
-      ),
-    );
-    // Под перебитием одним рядом с «К лоту» — «Реже», вход в частоту (PER-552,
-    // как у бота аукциона): экран придёт новым сообщением, а уведомление
-    // останется в истории. Ответ автоставки и покупка от частоты не зависят.
-    if (content.kind === "lot-outbid") {
-      keyboard.text("Реже", traceCallback("v1:notify:outbid"));
-    }
-    return { text, keyboard };
+  if (content.kind === "lot-notice") {
+    return { text: content.view.text, keyboard: lotKeyboard(content.view) };
   }
   if (content.kind === "community-announcement") {
     return {
@@ -278,14 +264,24 @@ export function renderNotification(
   }
 }
 
-function notificationMoney(amount: NotificationMoney): string {
-  const whole = amount.minorUnits % 100 === 0;
-  return new Intl.NumberFormat("ru-RU", {
-    style: "currency",
-    currency: amount.currency,
-    minimumFractionDigits: whole ? 0 : 2,
-    maximumFractionDigits: 2,
-  }).format(amount.minorUnits / 100);
+// Кнопки общего рендера — следы хаба: лот — кнопка лота аукционного дерева,
+// частота — «Аукцион» в «Настройки» → «Расширения» (PER-605). Карточка и
+// экран приходят новым сообщением, уведомление остаётся в истории.
+function lotKeyboard(view: LotNoticeView): InlineKeyboard {
+  return InlineKeyboard.from(
+    view.rows.map((row) =>
+      row.map((button) =>
+        InlineKeyboard.text(
+          button.text,
+          traceCallback(
+            button.kind === "lot"
+              ? `v1:${encodeAuctionCallback({ kind: "lot", lotId: button.lotId, page: 0 }).slice(3)}`
+              : "v1:notify:outbid",
+          ),
+        ),
+      ),
+    ),
+  );
 }
 
 type ChangeContent = Extract<RenderableContent, { kind: "meetup-changed" }>;
@@ -420,7 +416,7 @@ export type SendMessageApi = Pick<
 export function createNotificationSender(
   api: SendMessageApi,
   auctionBotUsername?: string,
-): NotificationSender<RenderableContent> {
+): NotificationSender<OutgoingNotification> {
   return {
     async send({ telegramUserId, message: content }) {
       const message = renderNotification(content, auctionBotUsername);

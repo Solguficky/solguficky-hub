@@ -5,7 +5,10 @@ import {
   Circle,
   Preset,
 } from "../../../../gen/identity/v1/access_pb.js";
-import { NotificationSchema } from "../../../../gen/notifications/v1/notifications_pb.js";
+import {
+  LotActivityKind,
+  NotificationSchema,
+} from "../../../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
 const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
@@ -80,6 +83,86 @@ describe("decodeNotification", () => {
       kind: "malformed",
       error: "invalid notification body",
     });
+  });
+
+  // Сводка окна частоты (PER-596) — ветка этого бота с PER-598: до неё она
+  // уходила в `unrendered_type`.
+  it("decodes an activity digest with every line", () => {
+    expect(
+      decodeNotification(
+        fact({
+          case: "lotActivityDigest",
+          value: {
+            lines: [
+              {
+                lotId,
+                kind: LotActivityKind.OUTBID,
+                currentPrice: price,
+                recipientLeads: true,
+              },
+              {
+                lotId,
+                kind: LotActivityKind.PROXY_RAISED,
+                currentPrice: price,
+                recipientLeads: false,
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "lot-activity-digest",
+          lines: [
+            {
+              lotId,
+              kind: "outbid",
+              currentPrice: { minorUnits: 150_000, currency: "RUB" },
+              recipientLeads: true,
+            },
+            {
+              lotId,
+              kind: "proxy-raised",
+              currentPrice: { minorUnits: 150_000, currency: "RUB" },
+              recipientLeads: false,
+            },
+          ],
+        },
+      },
+    });
+  });
+
+  // Сводку без строк и строку без вида или с битым лотом издатель не рождает.
+  it.each([
+    ["no lines", []],
+    [
+      "a line of no kind",
+      [
+        {
+          lotId,
+          kind: LotActivityKind.UNSPECIFIED,
+          currentPrice: price,
+          recipientLeads: false,
+        },
+      ],
+    ],
+    [
+      "a line with a broken lot",
+      [
+        {
+          lotId: "lot-1",
+          kind: LotActivityKind.OUTBID,
+          currentPrice: price,
+          recipientLeads: false,
+        },
+      ],
+    ],
+  ])("treats an activity digest with %s as malformed", (_name, lines) => {
+    expect(
+      decodeNotification(fact({ case: "lotActivityDigest", value: { lines } })),
+    ).toEqual({ kind: "malformed", error: "invalid notification body" });
   });
 
   it("decodes an outbid fact with the lot and the current price", () => {

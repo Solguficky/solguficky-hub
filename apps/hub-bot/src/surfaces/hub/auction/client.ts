@@ -128,7 +128,7 @@ export function createAuctionClient(
     onRaffleRefused,
   }: RpcClientOptions &
     Pick<AuctionAdapterOptions, "onNamesRefused" | "onRaffleRefused">,
-): AuctionClient {
+): AuctionClient & LotTitleReader {
   const sessionManager = new Http2SessionManager(baseUrl);
   const rpc = createClient(
     AuctionService,
@@ -144,7 +144,43 @@ export function createAuctionClient(
     ...(onNamesRefused === undefined ? {} : { onNamesRefused }),
     ...(onRaffleRefused === undefined ? {} : { onRaffleRefused }),
   });
-  return { ...client, close: () => sessionManager.abort() };
+  return {
+    ...client,
+    ...createLotTitleReader(rpc, timeoutMs),
+    close: () => sessionManager.abort(),
+  };
+}
+
+// Название лота для текста уведомления (PER-598). Личности из update у
+// доставки нет — только `identity_id` получателя, и право `place-bids` у него
+// Identity подтвердил шагом раньше: смотрящий несёт только его, а выдумывать
+// получателю права канал не вправе. Любой отказ — исключение со своим кодом:
+// какой из них лечится повтором, решает общий рендер уведомлений.
+export type LotTitleReader = {
+  lotTitle(
+    identityId: string,
+    lotId: string,
+    meta?: RpcMetadata,
+  ): Promise<string>;
+};
+
+export function createLotTitleReader(
+  rpc: Pick<AuctionRpc, "getLot">,
+  timeoutMs = 3_000,
+): LotTitleReader {
+  return {
+    async lotTitle(identityId, lotId, meta) {
+      const snapshot = await rpc.getLot(
+        {
+          viewer: wireViewer({ identityId, rights: ["place-bids"] }),
+          lotId,
+        },
+        { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
+      );
+      // Карточки у лота может не быть: тогда текст обходится без названия.
+      return snapshot.card?.title ?? "";
+    },
+  };
 }
 
 export function createAuctionAdapter(

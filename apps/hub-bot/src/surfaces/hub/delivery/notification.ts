@@ -1,5 +1,4 @@
 import { fromBinary } from "@bufbuild/protobuf";
-import type { Money as WireMoney } from "../../../../gen/auction/v1/auction_pb.js";
 import {
   Circle,
   Preset,
@@ -24,6 +23,10 @@ import {
   type OtherBranch,
   toDeliveryNotification,
 } from "../../../core/delivery/index.js";
+import {
+  type LotNotice,
+  lotNoticeOf,
+} from "../../../core/notifications/lot-notice.js";
 
 export type LocalDate = { year: number; month: number; day: number };
 export type LocalDateTime = LocalDate & { hours: number; minutes: number };
@@ -97,16 +100,14 @@ export type RenderableContent =
   // Выданный набор — сегодня только администратора (PER-468, RFC-016).
   // Получает сам человек; кто выдал, контракт не несёт.
   | { kind: "preset-granted"; preset: "admin" }
-  // Аукционные факты об участнике сообщества доставляет бот хаба (ADR-064).
-  | { kind: "lot-outbid"; lotId: string; currentPrice: NotificationMoney }
-  | { kind: "lot-proxy-raised"; lotId: string; currentPrice: NotificationMoney }
-  | { kind: "lot-purchased"; lotId: string; price: NotificationMoney }
+  // Аукционные факты об участнике сообщества доставляет бот хаба (ADR-064):
+  // перебитие, ответ автоставки, покупку и сводку — те же, что у бота аукциона
+  // (PER-598).
+  | LotNotice
   // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
   // — этот (RFC-015, С-12). Ссылку на бот аукциона он вручает сам; факт её не
   // несёт (PER-536), и она приходит не из ветки, а из настройки бота.
   | { kind: "circle-demoted" };
-
-export type NotificationMoney = { minorUnits: number; currency: string };
 
 // Очереди, в которые ставят заявку: сообщество и аукцион.
 export type ApplicationQueue = "community" | "auction";
@@ -236,46 +237,14 @@ function toContent(message: Notification): NotificationContent | undefined {
       }
       return undefined;
     }
-    case "lotOutbid": {
-      const lotId = canonical(type.value.lotId);
-      const currentPrice = toMoney(type.value.currentPrice);
-      return lotId === undefined || currentPrice === undefined
-        ? undefined
-        : { kind: "lot-outbid", lotId, currentPrice };
-    }
-    case "lotProxyRaised": {
-      const lotId = canonical(type.value.lotId);
-      const currentPrice = toMoney(type.value.currentPrice);
-      return lotId === undefined || currentPrice === undefined
-        ? undefined
-        : { kind: "lot-proxy-raised", lotId, currentPrice };
-    }
-    case "lotPurchased": {
-      const lotId = canonical(type.value.lotId);
-      const price = toMoney(type.value.price);
-      return lotId === undefined || price === undefined
-        ? undefined
-        : { kind: "lot-purchased", lotId, price };
-    }
+    case "lotOutbid":
+    case "lotProxyRaised":
+    case "lotPurchased":
+    case "lotActivityDigest":
+      return lotNoticeOf(type);
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };
   }
-}
-
-const CANONICAL_UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-const CURRENCY = /^[A-Z]{3}$/;
-
-function canonical(id: string): string | undefined {
-  return CANONICAL_UUID.test(id) ? id : undefined;
-}
-
-function toMoney(money: WireMoney | undefined): NotificationMoney | undefined {
-  if (money === undefined || !CURRENCY.test(money.currency)) return undefined;
-  const minorUnits = Number(money.minorUnits);
-  return Number.isSafeInteger(minorUnits) && minorUnits >= 0
-    ? { minorUnits, currency: money.currency }
-    : undefined;
 }
 
 // Пустое тело контракт запрещает: у поля нет значения «не указано». Тело из

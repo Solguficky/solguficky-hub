@@ -2173,12 +2173,16 @@ describe("outbid frequency", () => {
     });
   });
 
-  it("shows the current frequency and all five choices", async () => {
+  // Запись 33 прогона 12.10: выбранный режим отмечен на своей кнопке, а
+  // пояснение говорит о сводке и о том, что покупку настройка не трогает.
+  it("marks the current frequency and explains the digest", async () => {
     const { bot, calls } = makeBot(withOutbid({ frequency: "15" }));
     await bot.handleUpdate(lotPress({ data: notifyCallback() }));
     expect(calls.at(-1)?.method).toBe("editMessageText");
     expect(calls.at(-1)?.payload).toMatchObject({
-      text: expect.stringContaining("Сейчас: не чаще раза в 15 минут по лоту."),
+      text: expect.stringMatching(
+        /одной сводкой[\s\S]*О покупке лота пишу всегда/,
+      ),
       reply_markup: {
         inline_keyboard: [
           [
@@ -2195,7 +2199,7 @@ describe("outbid frequency", () => {
           ],
           [
             {
-              text: "Не чаще раза в 15 минут",
+              text: "• Не чаще раза в 15 минут",
               callback_data: notifyCallback("15"),
             },
           ],
@@ -2219,9 +2223,10 @@ describe("outbid frequency", () => {
       "editMessageText",
     ]);
     expect(calls[0]?.payload).toMatchObject({ text: "Теперь: не присылаю." });
-    expect(calls[1]?.payload).toMatchObject({
-      text: expect.stringContaining("Сейчас: не присылаю."),
-    });
+    // Экран обновлён на месте: отметка переехала на выбранный режим.
+    const shown = JSON.stringify(calls[1]?.payload);
+    expect(shown).toContain('"• Не присылать"');
+    expect(shown).toContain('"О каждом перебитии"');
   });
 
   // Критерий PER-515: выбор переживает рестарт бота — бот его не помнит, а
@@ -2235,9 +2240,9 @@ describe("outbid frequency", () => {
     );
     const restarted = makeBot(withOutbid(store));
     await restarted.bot.handleUpdate(lotPress({ data: notifyCallback() }));
-    expect(restarted.calls.at(-1)?.payload).toMatchObject({
-      text: expect.stringContaining("Сейчас: не чаще раза в час по лоту."),
-    });
+    expect(JSON.stringify(restarted.calls.at(-1)?.payload)).toContain(
+      "• Не чаще раза в час",
+    );
   });
 
   // Критерий PER-515: недоступный Notifications — отказ, а не молчаливое
@@ -2286,7 +2291,8 @@ describe("outbid frequency", () => {
     });
   });
 
-  // «Реже» под перебитием открывает экран новым сообщением: уведомление
+  // «Частота уведомлений» под перебитием открывает экран новым сообщением:
+  // уведомление
   // остаётся в истории целым.
   it("opens the settings from the outbid notification as a new message", async () => {
     const { bot, calls } = makeBot(withOutbid({ frequency: "every" }));

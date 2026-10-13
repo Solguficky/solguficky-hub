@@ -679,16 +679,39 @@ const notifications = [
       lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
       currentPrice: rub(500),
     },
-    "Банка солёных грибов",
+    new Map([["0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0", "Банка солёных грибов"]]),
   ),
-  // «Реже» рядом с «К лоту» у бота с Notifications (PER-515).
+  // «Частота уведомлений» рядом с «К лоту» у бота с Notifications (PER-515,
+  // PER-598).
   renderNotification(
     {
       kind: "lot-outbid",
       lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
       currentPrice: rub(500),
     },
-    "Банка солёных грибов",
+    new Map([["0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0", "Банка солёных грибов"]]),
+    true,
+  ),
+  // Сводка окна частоты: ряд на лот и ряд частоты (PER-598).
+  renderNotification(
+    {
+      kind: "lot-activity-digest",
+      lines: [
+        {
+          lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+          kind: "outbid",
+          currentPrice: rub(500),
+          recipientLeads: false,
+        },
+        {
+          lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1",
+          kind: "proxy-raised",
+          currentPrice: rub(700),
+          recipientLeads: true,
+        },
+      ],
+    },
+    new Map([["0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0", "Банка солёных грибов"]]),
     true,
   ),
   renderNotification({ kind: "access-granted" }),

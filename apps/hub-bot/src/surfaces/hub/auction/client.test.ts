@@ -24,7 +24,7 @@ import {
   StartPrebiddingResponseSchema,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
 import { AccessRight } from "../../../../gen/identity/v1/access_pb.js";
-import { createAuctionAdapter } from "./client.js";
+import { createAuctionAdapter, createLotTitleReader } from "./client.js";
 
 // Перевод ответов Auction для оболочки сходки (PER-307). Транспорт и токен
 // вызывающего проверяет `service-token.test.ts`; здесь — смысл ответа.
@@ -1224,5 +1224,36 @@ describe("auction adapter in the final", () => {
       kind: "ok",
       names: {},
     });
+  });
+});
+
+// Название лота для уведомления хаба (PER-598): смотрящий несёт только право,
+// которое Identity подтвердил, а лот без карточки даёт пустое название.
+describe("lot title reader", () => {
+  const identityId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
+  const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+
+  it("reads the title as the recipient with the right to bid", async () => {
+    const getLot = vi.fn().mockResolvedValue({ card: { title: "Кружка" } });
+    await expect(
+      createLotTitleReader({ getLot }).lotTitle(identityId, lotId),
+    ).resolves.toBe("Кружка");
+    expect(getLot).toHaveBeenCalledWith(
+      {
+        viewer: expect.objectContaining({
+          identityId,
+          rights: [AccessRight.PLACE_BIDS],
+        }),
+        lotId,
+      },
+      expect.anything(),
+    );
+  });
+
+  it("gives an empty title to a lot without a card", async () => {
+    const getLot = vi.fn().mockResolvedValue({});
+    await expect(
+      createLotTitleReader({ getLot }).lotTitle(identityId, lotId),
+    ).resolves.toBe("");
   });
 });

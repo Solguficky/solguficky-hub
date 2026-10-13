@@ -14,6 +14,7 @@ import {
   AccessRequestedSchema,
   CircleChangedSchema,
   CommunityAnnouncementSchema,
+  LotActivityKind,
   MeetupAspect,
   type MeetupCard,
   MeetupPublishedSchema,
@@ -223,17 +224,47 @@ describe("decodeNotification", () => {
         kind: "ok",
         notification: {
           content: {
-            kind:
-              name === "lotOutbid"
-                ? "lot-outbid"
-                : name === "lotProxyRaised"
-                  ? "lot-proxy-raised"
-                  : "lot-purchased",
+            kind: {
+              lotOutbid: "lot-outbid",
+              lotProxyRaised: "lot-proxy-raised",
+              lotPurchased: "lot-purchased",
+            }[name],
           },
         },
       });
     },
   );
+
+  // Сводку окна частоты (PER-596) участнику доставляет бот хаба (PER-598).
+  it("decodes an activity digest for the hub recipient", () => {
+    const decoded = decodeNotification(
+      toBinary(
+        NotificationSchema,
+        create(NotificationSchema, {
+          notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+          recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+          createdAt: "2026-09-26T10:00:00Z",
+          type: {
+            case: "lotActivityDigest",
+            value: {
+              lines: [
+                {
+                  lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0",
+                  kind: LotActivityKind.OUTBID,
+                  currentPrice: { minorUnits: 150_000n, currency: "RUB" },
+                  recipientLeads: false,
+                },
+              ],
+            },
+          },
+        }),
+      ),
+    );
+    expect(decoded).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "lot-activity-digest" } },
+    });
+  });
 
   describe("a manual broadcast", () => {
     const senderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce";

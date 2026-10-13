@@ -1,5 +1,4 @@
 import { fromBinary } from "@bufbuild/protobuf";
-import type { Money as WireMoney } from "../../../../gen/auction/v1/auction_pb.js";
 import {
   ApplicationQueue,
   Circle,
@@ -8,23 +7,24 @@ import {
   type Notification,
   NotificationSchema,
 } from "../../../../gen/notifications/v1/notifications_pb.js";
-import type { Money } from "../../../auction-ui/index.js";
 import {
   type DeliveryNotification as ChannelNotification,
   type DecodeResult,
   type OtherBranch,
   toDeliveryNotification,
 } from "../../../core/delivery/index.js";
+import {
+  type LotNotice,
+  lotNoticeOf,
+} from "../../../core/notifications/lot-notice.js";
 
 // Ветки, которые доставляет бот аукциона (integration.md, «потребитель
 // выбирается по ветке `oneof type`»). Факт несёт только лот и сумму: название
-// лота не входит в домен торгов, и канал читает его у Auction сам.
+// лота не входит в домен торгов, и канал читает его у Auction сам. Ветки лотов —
+// перебитие, ответ автоставки (PER-473), покупка и сводка (PER-596) — общие с
+// ботом хаба (PER-598).
 export type AuctionNotificationContent =
-  | { kind: "lot-outbid"; lotId: string; currentPrice: Money }
-  // Автоставка получателя ответила чужой команде и подняла цену; он лидер
-  // (PER-473).
-  | { kind: "lot-proxy-raised"; lotId: string; currentPrice: Money }
-  | { kind: "lot-purchased"; lotId: string; price: Money }
+  | LotNotice
   // Допуск к аукциону получает сам заявитель (PER-442). Круг здесь всегда
   // public: допуск в хаб доставляет бот хаба.
   | { kind: "access-granted" }
@@ -60,27 +60,11 @@ function toContent(
 ): AuctionNotificationContent | OtherBranch | undefined {
   const type = message.type;
   switch (type.case) {
-    case "lotOutbid": {
-      const lotId = canonical(type.value.lotId);
-      const currentPrice = toMoney(type.value.currentPrice);
-      return lotId === undefined || currentPrice === undefined
-        ? undefined
-        : { kind: "lot-outbid", lotId, currentPrice };
-    }
-    case "lotProxyRaised": {
-      const lotId = canonical(type.value.lotId);
-      const currentPrice = toMoney(type.value.currentPrice);
-      return lotId === undefined || currentPrice === undefined
-        ? undefined
-        : { kind: "lot-proxy-raised", lotId, currentPrice };
-    }
-    case "lotPurchased": {
-      const lotId = canonical(type.value.lotId);
-      const price = toMoney(type.value.price);
-      return lotId === undefined || price === undefined
-        ? undefined
-        : { kind: "lot-purchased", lotId, price };
-    }
+    case "lotOutbid":
+    case "lotProxyRaised":
+    case "lotPurchased":
+    case "lotActivityDigest":
+      return lotNoticeOf(type);
     // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
     // заявку в аукцион, а допуск в хаб для аукциона чужой.
     case "accessGranted": {
@@ -123,25 +107,4 @@ function toContent(
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };
   }
-}
-
-const CANONICAL_UUID =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-
-// Из идентификатора лота собирается кнопка: не каноническая форма уронила бы
-// кодировщик на отправке, а не на разборе.
-function canonical(id: string): string | undefined {
-  return CANONICAL_UUID.test(id) ? id : undefined;
-}
-
-// Сумма без кода валюты ISO 4217 или вне безопасного целого — нарушение
-// контракта: цену в уведомлении нельзя показать приблизительно, а код не той
-// формы уронил бы форматирование на каждой попытке.
-const CURRENCY = /^[A-Z]{3}$/;
-
-function toMoney(money: WireMoney | undefined): Money | undefined {
-  if (money === undefined || !CURRENCY.test(money.currency)) return undefined;
-  const minorUnits = Number(money.minorUnits);
-  if (!Number.isSafeInteger(minorUnits) || minorUnits < 0) return undefined;
-  return { minorUnits, currency: money.currency };
 }

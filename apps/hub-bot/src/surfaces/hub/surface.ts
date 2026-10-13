@@ -3,6 +3,10 @@ import {
   startNatsDelivery,
 } from "../../core/delivery/index.js";
 import { countFailure } from "../../core/failures.js";
+import {
+  createLotNoticeRender,
+  isLotNotice,
+} from "../../core/notifications/lot-notice.js";
 import type { SurfaceDefinition } from "../../core/process.js";
 import { rpcMeta } from "../../core/rpc-metadata.js";
 import { createDispatcher } from "./application/dispatcher.js";
@@ -132,6 +136,32 @@ export const hubSurface: SurfaceDefinition = ({
             ),
         }),
   });
+  // Без Auction аукционных фактов нет, а пришедший всё равно уходит — без
+  // названия и без кнопки частоты: её экран живёт в расширении аукциона.
+  const renderLot = createLotNoticeRender(
+    auction === undefined
+      ? undefined
+      : {
+          holdsPlaceBids: (identityId, requestId) =>
+            identity.holdsPlaceBids(
+              identityId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
+          lotTitle: (identityId, lotId, requestId) =>
+            auction.lotTitle(
+              identityId,
+              lotId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
+        },
+    (cause, requestId) =>
+      logger.warn("lot title unavailable", {
+        ...(requestId === undefined ? {} : { request_id: requestId }),
+        error_category: "dependency_unavailable",
+        error: cause instanceof Error ? cause.message : String(cause),
+      }),
+    auction !== undefined,
+  );
   const sender = createNotificationSender(
     createNotificationApi(token, environment),
     hub.auctionBotUsername,
@@ -158,8 +188,24 @@ export const hubSurface: SurfaceDefinition = ({
                       : rpcMeta({ requestId }),
                   ),
               },
-              // Хабу для текста соседи не нужны: содержимое рисует отправитель.
-              render: async (content) => ({ kind: "ready", message: content }),
+              // Вести хаба рисует отправитель, соседи им не нужны. Весть о лоте
+              // собирает общий рендер двух ботов (PER-598): право получателя у
+              // Identity и название лота у Auction.
+              render: async (content, context) => {
+                if (!isLotNotice(content)) {
+                  return { kind: "ready", message: content };
+                }
+                const rendered = await renderLot(content, context);
+                return rendered.kind === "ready"
+                  ? {
+                      kind: "ready",
+                      message: {
+                        kind: "lot-notice" as const,
+                        view: rendered.message,
+                      },
+                    }
+                  : rendered;
+              },
               sender,
             }),
         }),

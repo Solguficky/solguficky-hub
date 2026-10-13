@@ -34,8 +34,8 @@ import {
 import {
   OUTBID_FREQUENCIES,
   type OutbidFrequency,
+  outbidButtonLabel,
   outbidExplanation,
-  outbidLabels,
 } from "../../core/notifications/outbid.js";
 import { confirmNoLabel, confirmYesLabel } from "../../core/pictograms.js";
 import type {
@@ -312,8 +312,8 @@ export function renderEntryScreen(
         ],
       };
     }
-    // Частота «перебили» (PER-515): пять режимов по одному в ряд, текущий —
-    // строкой «Сейчас: …» в теле, а не меткой на кнопке (дизайн-код,
+    // Частота «перебили» (PER-515): пять режимов по одному в ряд, текущий
+    // отмечен на своей кнопке маркером «• » (PER-598; дизайн-код,
     // «Уведомления»). Выбор отменяется с того же экрана, поэтому
     // подтверждения «Да» у него нет: что сработало, говорит ответ на нажатие.
     // Экран — раздел под меню: последний ряд — «‹ Меню».
@@ -321,15 +321,11 @@ export function renderEntryScreen(
       return {
         id: "notify",
         format: "html",
-        text: screenText(
-          notifyTitle,
-          outbidExplanation,
-          `Сейчас: ${outbidLabels[screen.current].state}.`,
-        ),
+        text: screenText(notifyTitle, ...outbidExplanation),
         keyboard: [
           ...OUTBID_FREQUENCIES.map((frequency) => [
             {
-              text: outbidLabels[frequency].button,
+              text: outbidButtonLabel(frequency, screen.current),
               callback_data: notifyCallback(frequency),
             },
           ]),
