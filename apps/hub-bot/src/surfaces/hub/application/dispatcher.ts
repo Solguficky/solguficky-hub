@@ -237,6 +237,8 @@ export function createDispatcher(
         case "mark-auction-finalist":
         case "prepare-auction-discard":
         case "discard-auction":
+        case "order-final-lineup":
+        case "freeze-final-lineup":
         case "start-auction-final":
         case "start-final-lot":
         case "ask-final-price":

@@ -18,6 +18,7 @@ import type {
   ConsoleLot,
   ConsoleNote,
   ExecuteResult,
+  LineupPick,
   LotAmount,
   RaffleAskError,
   StepWindow,
@@ -191,7 +192,13 @@ export function parseWindow(
  * отпечаток отличает прежнее окно от того, что встало на его место.
  */
 export function windowPrint(window: StepWindow): string {
-  const source = `${window.from}|${window.until}|${window.step.minorUnits}|${window.step.currency}`;
+  return print(
+    `${window.from}|${window.until}|${window.step.minorUnits}|${window.step.currency}`,
+  );
+}
+
+// Пять знаков base36 от строки (FNV-1a): отпечаток для кнопки пульта.
+function print(source: string): string {
   let hash = 0x811c9dc5;
   for (let index = 0; index < source.length; index += 1) {
     hash ^= source.charCodeAt(index);
@@ -203,6 +210,50 @@ export function windowPrint(window: StepWindow): string {
 // Сколько окон держит пульт: ряд на окно, «Добавить окно» и выход
 // укладываются в двенадцать рядов экрана, а строки окон — в одно сообщение.
 export const windowLimit = 8;
+
+/**
+ * Сколько лотов держит состав финала в кнопке (PER-619): номер лота — знак
+ * base36, и выбор порядка с отпечатком и страницей укладывается в 64 байта
+ * при двадцати четырёх лотах. Финал на сходке — семь-восемь лотов.
+ */
+export const lineupLimit = 24;
+
+/**
+ * Удержанные для финала лоты по возрастанию идентификатора — порядок их
+ * заведения, UUIDv7. В перерыве отметка «в финал» и есть удержание: торгов
+ * нет, а проданный в перерыве лот отметку теряет.
+ */
+export function heldLots(console: AuctionConsoleView): ConsoleLot[] {
+  return console.lots
+    .filter((each) => each.markedForFinal)
+    .sort((a, b) => a.lot.lotId.localeCompare(b.lot.lotId));
+}
+
+/** Отпечаток набора удержанных лотов: номера в кнопке указывают в него. */
+export function lineupPrint(held: readonly ConsoleLot[]): string {
+  return print(held.map((each) => each.lot.lotId).join("|"));
+}
+
+/** Номера кнопки годятся для этого набора: каждый в нём и не повторяется. */
+function validOrder(order: readonly number[], size: number): boolean {
+  return (
+    new Set(order).size === order.length &&
+    order.every((at) => Number.isInteger(at) && at >= 0 && at < size)
+  );
+}
+
+/**
+ * Порядок дозаполнен, когда выбрать осталось не больше одного лота:
+ * последний встаёт в конец сам.
+ */
+function completed(
+  order: readonly number[],
+  size: number,
+): number[] | undefined {
+  if (order.length < size - 1) return undefined;
+  const rest = [...Array(size).keys()].filter((at) => !order.includes(at));
+  return [...order, ...rest];
+}
 
 // Сколько последних ставок текущего лота видит ведущий.
 const recentBidLimit = 5;
@@ -877,6 +928,142 @@ export function createAuctionConsole(
     }
   }
 
+  // Состав финала объявляют только в перерыве. Объявленный — этой кнопкой
+  // или раньше — пульт называет словами состояния, и повтор «Да» второго
+  // объявления не просит.
+  function breakNote(console: AuctionConsoleView): ConsoleNote | undefined {
+    switch (console.status) {
+      case "break":
+        return undefined;
+      case "lineup-frozen":
+      case "final":
+        return "lineup-frozen";
+      case "finished":
+        return "final-finished";
+      default:
+        return "not-in-break";
+    }
+  }
+
+  type Held =
+    | { kind: "ok"; console: AuctionConsoleView; held: ConsoleLot[] }
+    | { kind: "refused"; result: ExecuteResult };
+
+  async function readHeld(request: AuctionConsoleRequest): Promise<Held> {
+    const current = await read(request);
+    if (current.kind === "refused") return current;
+    const { console } = current;
+    const held = heldLots(console);
+    const note =
+      breakNote(console) ??
+      (held.length === 0
+        ? "lineup-empty"
+        : held.length > lineupLimit
+          ? "lineup-too-long"
+          : undefined);
+    return note === undefined
+      ? { kind: "ok", console, held }
+      : { kind: "refused", result: { kind: "auction-console", console, note } };
+  }
+
+  // Выбор порядка начат заново: набор удержанных изменился после экрана.
+  function reordered(
+    console: AuctionConsoleView,
+    held: ConsoleLot[],
+  ): ExecuteResult {
+    return {
+      kind: "lineup-order",
+      console,
+      held,
+      pick: { print: lineupPrint(held), order: [] },
+      page: 0,
+      changed: true,
+    };
+  }
+
+  // Порядок финала выбирает администратор по одному лоту (решение владельца
+  // 14 октября 2026 года). Выбрано всё, кроме последнего, — подтверждение.
+  async function orderLineup(
+    request: Extract<AuctionConsoleRequest, { intent: "order-final-lineup" }>,
+  ): Promise<ExecuteResult> {
+    const found = await readHeld(request);
+    if (found.kind === "refused") return found.result;
+    const { console, held } = found;
+    const current = lineupPrint(held);
+    const pick = request.pick ?? { print: current, order: [] };
+    if (pick.print !== current || !validOrder(pick.order, held.length)) {
+      return reordered(console, held);
+    }
+    const order = completed(pick.order, held.length);
+    return order === undefined
+      ? { kind: "lineup-order", console, held, pick, page: request.page }
+      : {
+          kind: "lineup-confirm",
+          console,
+          held,
+          pick: { print: current, order },
+        };
+  }
+
+  // Объявить состав. Ключ рождён на нажатие: повтор после принятого
+  // объявления застаёт аукцион вне перерыва и к Auction не идёт.
+  async function freezeLineup(
+    request: Extract<AuctionConsoleRequest, { intent: "freeze-final-lineup" }>,
+  ): Promise<ExecuteResult> {
+    const found = await readHeld(request);
+    if (found.kind === "refused") return found.result;
+    const { console, held } = found;
+    const { pick } = request;
+    if (
+      pick.print !== lineupPrint(held) ||
+      pick.order.length !== held.length ||
+      !validOrder(pick.order, held.length)
+    ) {
+      return reordered(console, held);
+    }
+    const lotIds = pick.order.flatMap((at) => {
+      const entry = held[at];
+      return entry === undefined ? [] : [entry.lot.lotId];
+    });
+    const frozen = await consoles.freezeFinalLineup(
+      request.identity,
+      { auctionId: request.auctionId, opId: request.opId, lotIds },
+      rpcMeta(request),
+    );
+    switch (frozen.kind) {
+      case "ok":
+        return after(request, "lineup-frozen");
+      case "not-in-break": {
+        const current = await read(request);
+        if (current.kind === "refused") return current.result;
+        return {
+          kind: "auction-console",
+          console: current.console,
+          note: breakNote(current.console) ?? "not-in-break",
+        };
+      }
+      case "lineup-empty":
+        return after(request, "lineup-empty");
+      // Набор удержанных изменился между чтением и командой либо чтение
+      // лотов отстаёт от аукциона. Набор удержанных пульт читает только из
+      // read model, поэтому выбор начинается заново над перечитанным: пока
+      // проекция не догнала, Auction ответит тем же отказом.
+      case "lineup-mismatch": {
+        const again = await readHeld(request);
+        return again.kind === "refused"
+          ? again.result
+          : reordered(again.console, again.held);
+      }
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(frozen);
+    }
+  }
+
   // Открыть следующий лот состава. Пока лот торгуется, следующего Auction не
   // открывает: пульт называет это строкой, а не открывает второй.
   async function startNextLot(
@@ -1511,6 +1698,10 @@ export function createAuctionConsole(
     request: AuctionConsoleRequest,
   ): Promise<ExecuteResult> {
     switch (request.intent) {
+      case "order-final-lineup":
+        return orderLineup(request);
+      case "freeze-final-lineup":
+        return freezeLineup(request);
       case "start-auction-final":
         return startFinal(request);
       case "start-final-lot":

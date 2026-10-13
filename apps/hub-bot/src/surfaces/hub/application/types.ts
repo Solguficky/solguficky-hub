@@ -470,7 +470,13 @@ export type ConsoleNote =
   | "lineup-exhausted"
   | "final-lot-closed"
   | "deadline-not-reached"
-  | "final-finished";
+  | "final-finished"
+  // Состав финала (PER-619): объявлен — этой кнопкой или раньше — либо
+  // объявлять нечего и некогда.
+  | "lineup-frozen"
+  | "lineup-empty"
+  | "lineup-too-long"
+  | "not-in-break";
 
 // Почему вопрос о сроках недели задан заново. `week-cuts-window` — окно
 // «Счастливых часов» не помещается в новые сроки; номер окна едет рядом.
@@ -526,6 +532,12 @@ export type WindowNote =
   | { kind: "limit" }
   // Лот окна уже стоит в другом окне, которое пересекается с этим по времени.
   | { kind: "overlap"; window: number; other: number };
+
+// Порядок состава финала в кнопке (PER-619): номера лотов в наборе
+// удержанных, который пульт держит по возрастанию идентификатора, и отпечаток
+// этого набора. Набор изменился — номера указывают на другие лоты, и отпечаток
+// это ловит.
+export type LineupPick = { print: string; order: readonly number[] };
 
 // Почему вопрос о следующей цене лота финала задан заново.
 export type FinalAskError =
@@ -604,6 +616,20 @@ export type AuctionConsoleRequest =
   | (AuctionConsoleCall & {
       intent: "remove-step-window";
       window: WindowRef;
+      opId: string;
+    })
+  // Состав финала (PER-619): выбор порядка по одному лоту и объявление.
+  // Без `pick` выбор начинается заново. Ключ объявления рождается на нажатие
+  // «Да»: в кнопке рядом с порядком ему нет места, а повтор после принятого
+  // объявления пульт узнаёт по статусу аукциона.
+  | (AuctionConsoleCall & {
+      intent: "order-final-lineup";
+      pick?: LineupPick;
+      page: number;
+    })
+  | (AuctionConsoleCall & {
+      intent: "freeze-final-lineup";
+      pick: LineupPick;
       opId: string;
     })
   // Финал ведущего (PER-337). Лот финала кнопка называет номером в
@@ -910,6 +936,24 @@ export type ExecuteResult =
       // Подтверждение задано заново: цена или лидер изменились после
       // прежнего, и закрывать по нему бот не стал.
       changed?: true;
+    }
+  // Выбор порядка состава финала (PER-619): удержанные лоты по возрастанию
+  // идентификатора и уже выбранные номера. `changed` — набор удержанных
+  // изменился после прежнего экрана, и выбор начат заново.
+  | {
+      kind: "lineup-order";
+      console: AuctionConsoleView;
+      held: readonly ConsoleLot[];
+      pick: LineupPick;
+      page: number;
+      changed?: true;
+    }
+  // Подтверждение состава: `pick` полон и уедет в «Да».
+  | {
+      kind: "lineup-confirm";
+      console: AuctionConsoleView;
+      held: readonly ConsoleLot[];
+      pick: LineupPick;
     }
   // Отказ пульту целиком: не администратор сходки либо аукциона нет.
   | {

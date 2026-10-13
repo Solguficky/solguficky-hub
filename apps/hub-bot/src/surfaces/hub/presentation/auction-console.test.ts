@@ -114,8 +114,13 @@ function fakeAuction(
     lineup?: readonly string[];
     bids?: readonly { amount: Money; participantId: string }[];
     names?: Readonly<Record<string, string>>;
+    // Состав финала (PER-619): сколько объявлений подряд Auction недоступен
+    // и какие лоты он сам считает удержанными, если не те, что в пульте.
+    freezeFailures?: number;
+    heldByAuction?: readonly string[];
   } = {},
 ) {
+  let freezeFailures = options.freezeFailures ?? 0;
   const state: {
     status: ConsoleAuctionStatus;
     week?: AuctionConsoleView["week"];
@@ -123,6 +128,8 @@ function fakeAuction(
     startedBy?: string;
     discarded?: true;
     lineup?: { order: readonly string[]; activeLotId?: string };
+    // Ключ принятого объявления состава: его повтор Auction принимает.
+    frozenBy?: string;
     // Закрытия по ключу: повтор ключа получает исходный ответ, как в сервисе.
     closures: Map<string, LotClosure>;
   } = {
@@ -259,6 +266,33 @@ function fakeAuction(
     },
     selectForFinal: mark(true),
     deselectForFinal: mark(false),
+    // Объявление состава — как в сервисе: повтор ключа принят до проверок,
+    // набор удержанных сверяется, порядок берётся как есть.
+    async freezeFinalLineup(_person, freeze) {
+      commands.push({ method: "freezeFinalLineup", args: freeze });
+      if (freezeFailures > 0) {
+        freezeFailures -= 1;
+        return { kind: "unavailable", cause: new Error("lots not known yet") };
+      }
+      if (state.frozenBy === freeze.opId) return { kind: "ok" };
+      if (state.status !== "break") return { kind: "not-in-break" };
+      const held =
+        options.heldByAuction ??
+        state.lots
+          .filter((each) => each.markedForFinal)
+          .map((each) => each.lot.lotId);
+      if (held.length === 0) return { kind: "lineup-empty" };
+      if (
+        held.length !== freeze.lotIds.length ||
+        !held.every((lotId) => freeze.lotIds.includes(lotId))
+      ) {
+        return { kind: "lineup-mismatch" };
+      }
+      state.status = "lineup-frozen";
+      state.lineup = { order: freeze.lotIds };
+      state.frozenBy = freeze.opId;
+      return { kind: "ok" };
+    },
     async startFinal(_person, start) {
       commands.push({ method: "startFinal", args: start });
       if (state.status !== "lineup-frozen") {
@@ -1727,6 +1761,289 @@ describe("final of the auctioneer", () => {
       `v1:ac:a:${auctionToken}:0`,
       `v1:ac:c:${auctionToken}:0`,
       `v1:ac:k:${auctionToken}:0:${auctionToken}:x`,
+    ]) {
+      await bot.handleUpdate(press(data));
+      expect(last(calls).text).toContain("Это действие тебе недоступно.");
+    }
+    expect(auction.commands).toEqual([]);
+  });
+});
+
+describe("final lineup", () => {
+  // Кнопка лота на экране порядка: название и цена с неразрывными пробелами.
+  const lotData = (screen: Sent, title: string): string => {
+    const found = screen.reply_markup?.inline_keyboard
+      .flat()
+      .find((button) => button.text.startsWith(`${title} — `))?.callback_data;
+    if (found === undefined) throw new Error(`no lot button "${title}"`);
+    return found;
+  };
+  const spacedLabels = (screen: Sent): string[][] =>
+    labels(screen).map((row) => row.map(spaced));
+  const lampId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3e";
+  const bookId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3f";
+  const held = (lotId: string, title: string, price: number): ConsoleLot => ({
+    lot: {
+      ...trading(lotId, title, price),
+      status: { kind: "held", currentPrice: rub(price) },
+    },
+    bidCount: 1,
+    uniqueParticipantCount: 1,
+    markedForFinal: true,
+    overdue: false,
+  });
+  const unsold = (lotId: string, title: string): ConsoleLot => ({
+    lot: { ...trading(lotId, title, 10_000), status: { kind: "unsold" } },
+    bidCount: 0,
+    uniqueParticipantCount: 0,
+    markedForFinal: false,
+    overdue: false,
+  });
+  // Перерыв: три удержанных лота и один, закрытый без продажи.
+  const onBreak = (
+    options: {
+      freezeFailures?: number;
+      heldByAuction?: readonly string[];
+    } = {},
+  ) =>
+    fakeAuction({
+      status: "break",
+      week: { ...week, final: true },
+      lots: [
+        held(vaseId, "Ваза", 120_000),
+        held(mugId, "Кружка", 50_000),
+        held(lampId, "Лампа", 80_000),
+        unsold(bookId, "Книга"),
+      ],
+      ...options,
+    });
+
+  it("announces the lineup in the order the administrator picks, then the final starts and sells a lot, over restarts of the bot", async () => {
+    const auction = onBreak();
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(consoleData));
+    expect(plain(last(calls))).toContain(
+      "Онлайн-торги закончились: перерыв перед финалом.\nВ финал отмечены: 3 лота.",
+    );
+    expect(labels(last(calls))).toContainEqual(["Объявить состав финала"]);
+
+    await next((history) =>
+      press(dataOf(last(history), "Объявить состав финала")),
+    );
+    expect(plain(last(calls))).toBe("Порядок финала\n\nКто выходит первым?");
+    expect(spacedLabels(last(calls))).toEqual([
+      ["Все — как в списке"],
+      ["Ваза — 1 200 ₽"],
+      ["Кружка — 500 ₽"],
+      ["Лампа — 800 ₽"],
+      ["‹ Пульт"],
+    ]);
+
+    await next((history) => press(lotData(last(history), "Кружка")));
+    expect(plain(last(calls))).toBe(
+      "Порядок финала\n\nУже по порядку:\n1. Кружка — 500 ₽\n\nКто выходит следующим?",
+    );
+    expect(spacedLabels(last(calls))).toEqual([
+      ["Остальные — как в списке"],
+      ["Заново"],
+      ["Ваза — 1 200 ₽"],
+      ["Лампа — 800 ₽"],
+      ["‹ Пульт"],
+    ]);
+
+    // Предпоследний выбор дозаполняет порядок: последний лот встаёт в конец.
+    await next((history) => press(lotData(last(history), "Лампа")));
+    const confirm = last(calls);
+    expect(plain(confirm)).toBe(
+      "Объявить состав финала?\n\n1. Кружка — 500 ₽\n2. Лампа — 800 ₽\n3. Ваза — 1 200 ₽\n\nОтменить объявление нельзя: состав и порядок финала после него не меняются.",
+    );
+    expect(labels(confirm)).toEqual([["✔️ Да, объявить", "✖️ Нет"]]);
+    expect(dataOf(confirm, "✖️ Нет")).toBe(consoleData);
+    expect(auction.sent("freezeFinalLineup")).toEqual([]);
+
+    const yes = dataOf(confirm, "✔️ Да, объявить");
+    await next(() => press(yes));
+    expect(auction.sent("freezeFinalLineup").map((each) => each.args)).toEqual([
+      {
+        auctionId,
+        opId: expect.any(String),
+        lotIds: [mugId, lampId, vaseId],
+      },
+    ]);
+    expect(last(calls).text).toBe(
+      "<b>Состав финала объявлен</b>\n\nНачать финал — в пульте.",
+    );
+    expect(spacedLabels(last(calls))).toEqual([["‹ Пульт"]]);
+
+    // Повторное «Да» застаёт состав объявленным и к Auction не идёт.
+    await next(() => press(yes));
+    expect(auction.sent("freezeFinalLineup")).toHaveLength(1);
+    expect(last(calls).text).toBe(
+      "<b>Состав финала объявлен</b>\n\nНачать финал — в пульте.",
+    );
+
+    await next((history) => press(dataOf(last(history), "‹ Пульт")));
+    expect(plain(last(calls))).toContain(
+      "Состав финала объявлен.\n\n1. Кружка — 500 ₽\n2. Лампа — 800 ₽\n3. Ваза — 1 200 ₽",
+    );
+    await next((history) => press(dataOf(last(history), "Начать финал")));
+    await next((history) => press(dataOf(last(history), "‹ Пульт")));
+    await next((history) =>
+      press(dataOf(last(history), "Открыть следующий лот")),
+    );
+    expect(plain(last(calls))).toContain("1. Кружка — 500 ₽ · торгуется");
+    await next((history) =>
+      press(dataOf(last(history), "Закрыть без продажи")),
+    );
+    await next((history) => press(dataOf(last(history), "✔️ Да, закрыть")));
+    expect(last(calls).text).toBe(
+      "<b>Лот закрыт без продажи</b>\n\n<b>Кружка</b>\n\nСтавок не было.",
+    );
+  });
+
+  it("fills the rest of the order as listed and starts the pick over", async () => {
+    const auction = onBreak();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:l:${auctionToken}`));
+    await bot.handleUpdate(press(lotData(last(calls), "Лампа")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Заново")));
+    expect(plain(last(calls))).toBe("Порядок финала\n\nКто выходит первым?");
+
+    await bot.handleUpdate(press(lotData(last(calls), "Лампа")));
+    await bot.handleUpdate(
+      press(dataOf(last(calls), "Остальные — как в списке")),
+    );
+    expect(plain(last(calls))).toContain(
+      "1. Лампа — 800 ₽\n2. Ваза — 1 200 ₽\n3. Кружка — 500 ₽",
+    );
+  });
+
+  it("offers no announcement without marked lots and names it for an old button", async () => {
+    const auction = fakeAuction({
+      status: "break",
+      week: { ...week, final: true },
+      lots: [unsold(bookId, "Книга")],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(plain(last(calls))).toContain(
+      "В финал не отмечено ни одного лота. Объявлять нечего.",
+    );
+    expect(labels(last(calls)).flat()).not.toContain("Объявить состав финала");
+
+    await bot.handleUpdate(press(`v1:ac:l:${auctionToken}`));
+    expect(last(calls).text).toBe(
+      "<b>В финал не отмечено ни одного лота</b>\n\nОбъявлять нечего.",
+    );
+    expect(auction.sent("freezeFinalLineup")).toEqual([]);
+  });
+
+  it("starts the pick over instead of announcing when a held lot is sold after the confirmation", async () => {
+    const auction = onBreak();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:l:${auctionToken}`));
+    await bot.handleUpdate(press(dataOf(last(calls), "Все — как в списке")));
+    const yes = dataOf(last(calls), "✔️ Да, объявить");
+
+    // Удержанный лот продан в перерыве, пока подтверждение было открыто.
+    auction.state.lots = auction.state.lots.map((each) =>
+      each.lot.lotId === mugId
+        ? {
+            ...each,
+            markedForFinal: false,
+            lot: {
+              ...each.lot,
+              status: {
+                kind: "sold",
+                winnerId: "someone",
+                price: rub(50_000),
+              },
+            },
+          }
+        : each,
+    );
+    await bot.handleUpdate(press(yes));
+
+    expect(auction.sent("freezeFinalLineup")).toEqual([]);
+    expect(plain(last(calls))).toBe(
+      "Порядок финала\n\nОтметки финала изменились, пока выбирался порядок. Выбери заново.\n\nКто выходит первым?",
+    );
+    expect(spacedLabels(last(calls))).toEqual([
+      ["Все — как в списке"],
+      ["Ваза — 1 200 ₽"],
+      ["Лампа — 800 ₽"],
+      ["‹ Пульт"],
+    ]);
+  });
+
+  it("starts the pick over when Auction holds other lots than the console read", async () => {
+    const auction = onBreak({ heldByAuction: [vaseId, mugId] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:l:${auctionToken}`));
+    await bot.handleUpdate(press(dataOf(last(calls), "Все — как в списке")));
+    await bot.handleUpdate(press(dataOf(last(calls), "✔️ Да, объявить")));
+
+    expect(auction.sent("freezeFinalLineup")).toHaveLength(1);
+    expect(auction.state.status).toBe("break");
+    expect(plain(last(calls))).toContain(
+      "Отметки финала изменились, пока выбирался порядок. Выбери заново.",
+    );
+  });
+
+  it("retries the same order when Auction does not know the held lots yet", async () => {
+    const auction = onBreak({ freezeFailures: 1 });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:l:${auctionToken}`));
+    await bot.handleUpdate(press(dataOf(last(calls), "Все — как в списке")));
+    const yes = dataOf(last(calls), "✔️ Да, объявить");
+    await bot.handleUpdate(press(yes));
+    expect(dataOf(last(calls), "Повторить")).toBe(yes);
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Повторить")));
+    expect(auction.state.status).toBe("lineup-frozen");
+    expect(auction.state.lineup?.order).toEqual([vaseId, mugId, lampId]);
+    expect(last(calls).text).toBe(
+      "<b>Состав финала объявлен</b>\n\nНачать финал — в пульте.",
+    );
+  });
+
+  it("names a lineup announced elsewhere instead of announcing again", async () => {
+    const auction = onBreak();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:l:${auctionToken}`));
+    await bot.handleUpdate(press(dataOf(last(calls), "Все — как в списке")));
+    const yes = dataOf(last(calls), "✔️ Да, объявить");
+    auction.state.status = "lineup-frozen";
+    auction.state.lineup = { order: [lampId, mugId, vaseId] };
+
+    await bot.handleUpdate(press(yes));
+    expect(auction.sent("freezeFinalLineup")).toEqual([]);
+    expect(last(calls).text).toBe(
+      "<b>Состав финала объявлен</b>\n\nНачать финал — в пульте.",
+    );
+  });
+
+  it("refuses the lineup buttons of someone who is not an administrator before Auction is asked", async () => {
+    const auction = onBreak();
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+
+    for (const data of [
+      `v1:ac:l:${auctionToken}`,
+      `v1:ac:lo:${auctionToken}:abcde:1`,
+      `v1:ac:ly:${auctionToken}:abcde:012`,
     ]) {
       await bot.handleUpdate(press(data));
       expect(last(calls).text).toContain("Это действие тебе недоступно.");

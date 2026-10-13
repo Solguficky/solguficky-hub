@@ -56,6 +56,7 @@ import {
   type EnableAuctionResult,
   type FinalistRefusal,
   type FinalistResult,
+  type FreezeFinalLineupResult,
   type LotAdministration,
   type LotCardResult,
   type LotStatisticsReadResult,
@@ -101,6 +102,7 @@ type AuctionRpc = Pick<
   | "discardAuction"
   | "selectForFinal"
   | "deselectForFinal"
+  | "freezeFinalLineup"
   | "startFinal"
   | "startNextLot"
   | "advanceAsk"
@@ -466,6 +468,25 @@ export function createAuctionAdapter(
           options(meta),
         );
         return finalistResult(response.outcome, "deselect");
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Состав финала (PER-619). `NOT_FOUND` — аукциона нет, как у пульта;
+    // `UNAVAILABLE` — в том числе аукцион после рестарта ещё не знает
+    // удержанных лотов, и повтор пройдёт.
+    async freezeFinalLineup(person, freeze, meta) {
+      try {
+        const response = await rpc.freezeFinalLineup(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: freeze.auctionId,
+            opId: freeze.opId,
+            lotIds: [...freeze.lotIds],
+          },
+          options(meta),
+        );
+        return freezeFinalLineupResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1260,6 +1281,42 @@ function finalistResult(
     }
     case undefined:
       return defect(`${command} for final response without an outcome`);
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function freezeFinalLineupResult(
+  outcome: Awaited<ReturnType<AuctionRpc["freezeFinalLineup"]>>["outcome"],
+): FreezeFinalLineupResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "notInBreak":
+          return { kind: "not-in-break" };
+        case "lineupEmpty":
+          return { kind: "lineup-empty" };
+        case "lineupMismatch":
+          return { kind: "lineup-mismatch" };
+        case undefined:
+          return defect("freeze final lineup refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("freeze final lineup response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
