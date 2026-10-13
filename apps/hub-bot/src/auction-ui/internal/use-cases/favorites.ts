@@ -8,6 +8,7 @@ import type {
 import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
 import { FEED_PAGE_SIZE } from "./open-feed.js";
 import { showLot } from "./open-lot.js";
+import { feedItemOf, mineOf, withMine } from "./standing.js";
 
 // Сырые юзкейсы избранного (PER-495, ADR-063): доступ проверил шлюз. Отметки
 // хранит Notifications, а цену, дедлайн и итог каждого лота экран читает у
@@ -120,7 +121,9 @@ export async function openFavorites(input: {
         kind: "favorites",
         page,
         pageCount,
-        lots: lots.map(itemOf),
+        lots: lots.map((lot) => feedItemOf(lot, viewer)),
+        ...withMine(mineOf(all, viewer)),
+        total: all.length,
       },
     ],
     keyboard: [
@@ -153,13 +156,5 @@ export async function openFavorites(input: {
             ],
           ]),
     ],
-  };
-}
-
-function itemOf(lot: LotView) {
-  return {
-    lotId: lot.lotId,
-    ...(lot.card === undefined ? {} : { title: lot.card.title }),
-    status: lot.status,
   };
 }

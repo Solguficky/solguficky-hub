@@ -20,6 +20,7 @@ const auction: AuctionPort = {
   getLot: async () => {
     throw new Error("not used");
   },
+  getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
   getDisplayNames: async ({ participantIds }) =>
     Object.fromEntries(participantIds.map((id) => [id, "Сова"])),
   listLotHistory: async () => {

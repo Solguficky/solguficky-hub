@@ -13,7 +13,7 @@ export { defaultFaq, readFaqContent } from "../../auction-faq.js";
 // повтор `/start` после сбоя. `apply` — «Подать заявку» под приветствием:
 // единственное действие, которое ставит заявку (дополнение ADR-060).
 // `notify` — настройка частоты «перебили» (PER-515): без хвоста — экран, с
-// хвостом частоты — выбор.
+// хвостом частоты — выбор. `settings` — раздел «Настройки» (PER-595).
 export const ENTRY_ACTIONS = [
   "faq",
   "menu",
@@ -25,6 +25,7 @@ export const ENTRY_ACTIONS = [
   "details",
   "question",
   "notify",
+  "settings",
 ] as const;
 export type EntryAction = (typeof ENTRY_ACTIONS)[number];
 

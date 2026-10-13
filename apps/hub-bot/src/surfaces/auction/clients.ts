@@ -29,6 +29,7 @@ import {
   bidOutcomeOf,
   displayNameOutcomeOf,
   limitOutcomeOf,
+  ownDisplayNameOf,
   unansweredOn,
 } from "../../core/auction/commands.js";
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
@@ -280,6 +281,17 @@ export function createPorts(
             onNamesRefused?.(cause, requestId);
             throw cause;
           }
+        },
+        async getOwnDisplayName(request) {
+          const response = await auction.getDisplayNames(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+              participantIds: [request.viewer.identityId],
+            },
+            callOptions(timeoutMs),
+          );
+          return ownDisplayNameOf(response, request.viewer.identityId);
         },
         // Команды участника (PER-317). Повтор тем же `op_id` решает пакет;
         // порт лишь отличает «ответа не было» от прочих отказов транспорта.

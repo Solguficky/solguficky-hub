@@ -1,4 +1,6 @@
 import { InlineKeyboard } from "grammy";
+import { nameSettingsTitle } from "../../../../auction-standing.js";
+import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
 import type { MeetupAuctionView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
@@ -103,18 +105,29 @@ export function auctionEnabledScreen(view: {
 
 /**
  * «Расширения» в «Настройках»: у каждого расширения — свои настройки. У
- * аукциона это частота сообщений «перебили»; без Auction у бота расширений
- * нет.
+ * аукциона это частота сообщений «перебили» и, пока идёт аукцион, имя в нём
+ * (PER-595); без Auction у бота расширений нет.
  */
-export function settingsExtensionsScreen(auction: boolean): ShownScreen {
+export function settingsExtensionsScreen(
+  auction: boolean,
+  nameAuctionId?: string,
+): ShownScreen {
   const keyboard = new InlineKeyboard();
   if (auction) keyboard.text(auctionLabel, "v1:notify:outbid").row();
+  if (auction && nameAuctionId !== undefined) {
+    keyboard
+      .text(
+        nameSettingsTitle,
+        encodeAuctionCallback({ kind: "name", auctionId: nameAuctionId }),
+      )
+      .row();
+  }
   return {
     id: "settings-extensions",
     text: screenText(
       "Расширения",
       auction
-        ? "Настройки расширений сходок. Аукцион — как часто писать, что твою ставку перебили."
+        ? `Настройки расширений сходок. Аукцион — как часто писать, что твою ставку перебили.${nameAuctionId === undefined ? "" : " Имя в аукционе — под каким именем ты ставишь в идущем аукционе."}`
         : "Расширений пока нет.",
     ),
     keyboard: withNav(keyboard, toSettings),

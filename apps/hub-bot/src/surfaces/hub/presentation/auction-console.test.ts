@@ -352,6 +352,7 @@ function fakeAuction(
     async displayNames() {
       return { kind: "ok" as const, names: options.names ?? {} };
     },
+    currentAuction: async () => ({ kind: "ok" as const }),
     screenPorts() {
       return {
         auction: {
@@ -362,6 +363,7 @@ function fakeAuction(
             nextPageToken: "",
           }),
           listLotHistory: notUsed,
+          getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
           getDisplayNames: async () => ({}),
           placeBid: notUsed,
           setProxyLimit: notUsed,

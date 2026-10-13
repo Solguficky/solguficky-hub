@@ -877,7 +877,12 @@ final class AuctionGrpcIntegrationSpec
       asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, bidder)).futureValue.outcome.isAccepted shouldBe true
       choose(node, bidder, auction, "Пёс").getRefused.reason.isNameFrozen shouldBe true
       choose(node, bidder, auction, "Кот").getAccepted shouldBe
-        wire.DisplayName("Кот*", wire.DisplayNameKind.DISPLAY_NAME_KIND_ALIAS)
+        wire.DisplayName("Кот*", wire.DisplayNameKind.DISPLAY_NAME_KIND_ALIAS, frozen = true)
+      asHubBot(node.client.getDisplayNames())
+        .invoke(wire.GetDisplayNamesRequest(Some(bidder), auction.value.toString, Seq(bidder.identityId)))
+        .futureValue
+        .names(bidder.identityId)
+        .frozen shouldBe true
     }
 
     "refuses a proxy limit without a chosen name and freezes the name after an accepted one" in withNode { node =>

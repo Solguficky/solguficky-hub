@@ -100,30 +100,58 @@ function confirmBody(
 // онлайн-торгах. Устаревшая кнопка или ответ на вопрос после смены состояния
 // получают карточку с отказом без похода в Auction с заведомо мёртвой
 // командой: удержанный лот называет цену, остальные — «торги не идут».
-function confirmOrRefuse(
+//
+// Имя спрашивается до подтверждения (PER-595): иначе первую ставку человек
+// подтверждал бы дважды — до выбора имени и после. `named` — имя уже известно:
+// его только что выбрали.
+async function confirmOrRefuse(
   context: CommandContext,
   lot: LotView,
   pending: PendingCommand,
   page: number,
+  named = false,
 ): Promise<AuctionScreenBody> {
   const { status } = lot;
   if (status.kind !== "trading" || status.phase !== "online") {
-    return Promise.resolve(
-      resultBody(lot, page, notOffered(pending.command, lot)),
-    );
+    return resultBody(lot, page, notOffered(pending.command, lot));
   }
   const refusal =
     pending.command === "bid"
       ? refusedBeforeConfirm(context.viewer, lot, status, pending.amount)
       : undefined;
   if (refusal !== undefined) {
-    return Promise.resolve(
-      resultBody(lot, page, { command: "bid", kind: "refused", refusal }),
-    );
+    return resultBody(lot, page, { command: "bid", kind: "refused", refusal });
   }
-  return Promise.resolve(
-    confirmBody(context, lot, pending, status.currentPrice, page),
-  );
+  if (!named && !(await nameChosen(context, lot, status))) {
+    return nameChoiceBody(context, lot, pending, page);
+  }
+  return confirmBody(context, lot, pending, status.currentPrice, page);
+}
+
+// Выбрано ли имя в аукционе лота. Лидер и держатель лимита уже ставили, и
+// имя у них есть: Auction за ним не зовут. Отказ чтения имени не прячет
+// ставку: подтверждение показывается, а без имени Auction отклонит команду
+// отказом `display-name-not-chosen`, и выбор имени придёт после «Да».
+async function nameChosen(
+  context: CommandContext,
+  lot: LotView,
+  status: Extract<LotView["status"], { kind: "trading" }>,
+): Promise<boolean> {
+  if (
+    status.leaderId === context.viewer.identityId ||
+    lot.viewerProxyLimit !== undefined
+  ) {
+    return true;
+  }
+  try {
+    const own = await context.auction.getOwnDisplayName({
+      viewer: context.viewer,
+      auctionId: lot.auctionId,
+    });
+    return own !== undefined;
+  } catch {
+    return true;
+  }
 }
 
 // Отказы, которые снимок лота называет до «Да» (PER-473): лидер не ставит
@@ -337,7 +365,13 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
   switch (outcome.kind) {
     case "accepted":
       if (intent.command === "proxy") markExplainerSeen(context);
-      return acceptedBody(lot, intent, amount, outcome.lotVersion);
+      return acceptedBody(
+        lot,
+        intent,
+        amount,
+        outcome.lotVersion,
+        context.favorites !== undefined,
+      );
     case "unanswered":
       // Команда могла пройти: что вышло, покажет карточка за «К лоту» — она
       // читает лот заново.
@@ -363,11 +397,14 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
 }
 
 // Версия 0 — Auction её не назвал: кнопка прежняя, карточка читает один раз.
+// Выходов два (PER-595): к лоту и к ленте его аукциона. `favorites` — у бота
+// есть избранное, и экран говорит, что ставка кладёт лот туда сама (ADR-063).
 function acceptedBody(
   lot: LotView,
   intent: { command: AuctionCommand; lotId: string; page: number },
   amount: Money,
   lotVersion: number,
+  favorites: boolean,
 ): AuctionScreenBody {
   return {
     blocks: [
@@ -378,6 +415,7 @@ function acceptedBody(
         auctionId: lot.auctionId,
         ...titled(lot),
         amount,
+        ...(favorites ? { favorites: true } : {}),
       },
     ],
     keyboard: [
@@ -389,6 +427,16 @@ function acceptedBody(
             intent.page,
             lotVersion > 0 ? lotVersion : undefined,
           ),
+        },
+      ],
+      [
+        {
+          action: "accepted.feed",
+          callbackData: encodeAuctionCallback({
+            kind: "feed",
+            auctionId: lot.auctionId,
+            page: intent.page,
+          }),
         },
       ],
     ],
@@ -598,6 +646,9 @@ function questionBody(
         auctionId: lot.auctionId,
         ...titled(lot),
         ...(current === undefined ? {} : { current }),
+        ...(intent.question === "proxy" && lot.viewerProxyLimit !== undefined
+          ? { currentIsLimit: true }
+          : {}),
         ...(explained ? { explainer: explainerOf(lot, context.viewer) } : {}),
       },
     ],
@@ -749,10 +800,13 @@ export async function chooseUsername(
   );
 }
 
-// Выбор имени и возврат к отложенной команде: после принятого имени человек
-// снова видит подтверждение, с новым `op_id`, и жмёт «Да» сам. В живом финале
-// подтверждения нет (ADR-049): человек возвращается на карточку финала и жмёт
-// «Поставить» на цену, которая действует сейчас (PER-336).
+// Выбор имени и переход к отложенной команде: после принятого имени человек
+// видит подтверждение с новым `op_id` и жмёт «Да» сам — один раз, потому что
+// имя спрошено до подтверждения (PER-595). Имя, которое уже не поменять, уже
+// выбрано — ставкой из другого окна, пока висел этот экран: команде оно не
+// мешает. В живом финале подтверждения нет (ADR-049): человек возвращается на
+// карточку финала и жмёт «Поставить» на цену, которая действует сейчас
+// (PER-336).
 async function chooseName(
   context: CommandContext,
   lot: LotView,
@@ -766,9 +820,11 @@ async function chooseName(
     auctionId: lot.auctionId,
     choice,
   });
-  if (outcome.kind === "refused") return refused(outcome.refusal);
+  if (outcome.kind === "refused" && outcome.refusal !== "name-frozen") {
+    return refused(outcome.refusal);
+  }
   if (lot.status.kind === "trading" && lot.status.phase === "live") {
     return showLot({ ...context, lot, page });
   }
-  return confirmOrRefuse(context, lot, pending, page);
+  return confirmOrRefuse(context, lot, pending, page, true);
 }

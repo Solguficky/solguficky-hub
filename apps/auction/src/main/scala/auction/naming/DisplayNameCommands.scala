@@ -19,8 +19,8 @@ trait DisplayNameStore {
   /** Замораживает выбор. `false` — выбора нет. Повтор заморозки — не ошибка. */
   def freeze(auction: AuctionId, participant: ParticipantId): Future[Boolean]
 
-  /** Выборы названных участников; участника без выбора в ответе нет. */
-  def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, ChosenName]]
+  /** Выборы названных участников с признаком заморозки; участника без выбора в ответе нет. */
+  def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, StoredName]]
 }
 
 enum ChooseResult {
@@ -54,7 +54,7 @@ final class DisplayNameCommands(store: DisplayNameStore)(using ExecutionContext)
           case ChooseResult.Written => Right(DisplayNameRules.render(participant, Some(name)))
           // Повтор того же выбора после заморозки — повтор команды, а не попытка сменить имя.
           case ChooseResult.Frozen(current) if current == name =>
-            Right(DisplayNameRules.render(participant, Some(name)))
+            Right(DisplayNameRules.render(participant, Some(name), frozen = true))
           case ChooseResult.Frozen(_) => Left(NamingRefusal.NameFrozen)
           case ChooseResult.AliasTaken => Left(NamingRefusal.AliasTaken)
         }
@@ -65,14 +65,17 @@ final class DisplayNameCommands(store: DisplayNameStore)(using ExecutionContext)
     if (participants.isEmpty) Future.successful(Map.empty)
     else
       store.find(auction, participants).map { chosen =>
-        participants.iterator
-          .map(participant => participant -> DisplayNameRules.render(participant, chosen.get(participant)))
-          .toMap
+        participants.iterator.map { participant =>
+          val stored = chosen.get(participant)
+          participant -> DisplayNameRules.render(participant, stored.map(_.name), stored.exists(_.frozen))
+        }.toMap
       }
 
   /** Проверка перед ставкой и прокси-лимитом: без выбранного имени участник в аукционе не ставит. */
   def requireChosen(auction: AuctionId, participant: ParticipantId): Future[Either[NameNotChosen.type, ChosenName]] =
-    store.find(auction, Set(participant)).map(chosen => DisplayNameRules.requireChosen(chosen.get(participant)))
+    store
+      .find(auction, Set(participant))
+      .map(chosen => DisplayNameRules.requireChosen(chosen.get(participant).map(_.name)))
 
   /**
    * Вызывается после того, как лот принял ставку или прокси-лимит участника. Между принятием и заморозкой общей

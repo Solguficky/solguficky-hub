@@ -111,6 +111,7 @@ describeAccessMatrix("hub bot", "hub", (ports) => async (input) => {
     undefined,
     {
       auction: {
+        currentAuction: async () => ({ kind: "ok" as const }),
         screenPorts: () => ({
           auction: ports.auction,
           operations: ports.operations,

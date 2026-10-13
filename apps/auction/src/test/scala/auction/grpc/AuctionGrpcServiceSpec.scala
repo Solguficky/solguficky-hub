@@ -75,6 +75,7 @@ import auction.naming.ChooseResult
 import auction.naming.ChosenName
 import auction.naming.DisplayNameCommands
 import auction.naming.DisplayNameStore
+import auction.naming.StoredName
 import auction.naming.TelegramUsername
 import auction.onboarding.FaqAcknowledgements
 import auction.projection.AuctionListing
@@ -207,8 +208,13 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       }
     }
 
-    def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, ChosenName]] =
-      Future.successful(chosen.view.filterKeys(participants).toMap)
+    def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, StoredName]] =
+      Future.successful(
+        chosen.view
+          .filterKeys(participants)
+          .map((participant, name) => participant -> StoredName(name, frozen(participant)))
+          .toMap
+      )
 
     private def sameAlias(held: ChosenName, wanted: ChosenName): Boolean =
       (held, wanted) match {
@@ -1478,7 +1484,13 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       auction.placeBid(validBid).futureValue.outcome.isAccepted shouldBe true
       val choose = wire.ChooseDisplayNameRequest(Some(viewer), lot)
       auction.chooseDisplayName(choose.withAlias("Кот")).futureValue.getRefused.reason.isNameFrozen shouldBe true
-      auction.chooseDisplayName(choose.withTelegramUsername("vasya")).futureValue.getAccepted.text shouldBe "@vasya"
+      auction.chooseDisplayName(choose.withTelegramUsername("vasya")).futureValue.getAccepted shouldBe
+        wire.DisplayName("@vasya", wire.DisplayNameKind.DISPLAY_NAME_KIND_TELEGRAM_USERNAME, frozen = true)
+      auction
+        .getDisplayNames(wire.GetDisplayNamesRequest(Some(viewer), lot, Seq(identity)))
+        .futureValue
+        .names(identity)
+        .frozen shouldBe true
     }
 
     "answers every requested participant and a placeholder for one without a choice" in {

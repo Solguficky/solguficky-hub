@@ -7,6 +7,7 @@ import type {
   LotCardView,
   LotStatusView,
   Money,
+  OwnDisplayName,
   ProxyLimitRefusal,
   RaffleView,
   StepWindowView,
@@ -18,6 +19,9 @@ import type {
 // API. Текстов поверхности здесь нет: блоки семантические, подписи к ним
 // выбирает рендерер.
 
+// Положение смотрящего на лоте (PER-595): ведёт торги или купил лот.
+export type LotStanding = "leader" | "won";
+
 // Лот в строке ленты: ровно то, что нужно его строке и кнопке.
 export type FeedItem = {
   lotId: string;
@@ -26,6 +30,7 @@ export type FeedItem = {
   // Окно «Счастливых часов», которое действует сейчас: строка лота его
   // отмечает.
   activeWindow?: StepWindowView;
+  standing?: LotStanding;
 };
 
 // Строка хронологии: ставка, как её показывает экран. Лимита прокси здесь
@@ -55,7 +60,11 @@ export type AuctionBlock =
       // Нумерация с нуля; пустая лента — одна страница без лотов.
       page: number;
       pageCount: number;
+      // Лоты страницы — для кнопок.
       lots: readonly FeedItem[];
+      // Свои лоты всей ленты — где смотрящий лидер или покупатель (PER-595):
+      // текст экрана — сводка о них, а не повтор кнопок. Нет — своих нет.
+      mine?: readonly FeedItem[];
     }
   | {
       kind: "lot";
@@ -72,6 +81,8 @@ export type AuctionBlock =
       activeWindow?: StepWindowView;
       nextWindow?: StepWindowView;
       status: LotStatusView;
+      // Смотрящий ведёт торги или купил лот (PER-595).
+      standing?: LotStanding;
       // Имя участника из статуса: лидера в торгах или победителя проданного
       // лота. Нет — участника нет либо Auction имя не отдал; идентификатор
       // вместо имени на экран не выходит.
@@ -98,6 +109,10 @@ export type AuctionBlock =
       page: number;
       pageCount: number;
       lots: readonly FeedItem[];
+      // Свои лоты всего списка — как у ленты (PER-595). `total` — сколько
+      // лотов в избранном всего; нет — столько, сколько на странице.
+      mine?: readonly FeedItem[];
+      total?: number;
     }
   | {
       // Notifications ещё не знает лот: отметка не поставлена, и это свой
@@ -137,6 +152,9 @@ export type AuctionBlock =
       auctionId: string;
       title?: string;
       amount: Money;
+      // У бота есть избранное: экран говорит, что ставка кладёт лот туда
+      // сама, а снятый вручную лот ставка не вернёт (ADR-063, PER-595).
+      favorites?: true;
     }
   | {
       // Подтверждение команды участника: ставку отменить нельзя (дизайн-код,
@@ -152,13 +170,15 @@ export type AuctionBlock =
     }
   | {
       // Вопрос с `force_reply`: сумма ставки, лимит или псевдоним. `current` —
-      // строка «Сейчас: …»: порог ставки или свой лимит.
+      // подписанное текущее значение (PER-595): порог ставки или, при
+      // `currentIsLimit`, свой лимит.
       kind: "question";
       question: AuctionQuestion;
       lotId: string;
       auctionId: string;
       title?: string;
       current?: Money;
+      currentIsLimit?: true;
       // Пояснение автоставки голосом помощника (PER-517) — только у вопроса
       // лимита до первой принятой автоставки или по «Как это работает».
       // `example` — пример на этом лоте; нет — у лота нет цены или шага.
@@ -209,6 +229,27 @@ export type AuctionBlock =
       kind: "raffle-answer-refused";
       auctionId: string;
       refusal: "not-text" | DisplayNameRefusal;
+    }
+  | {
+      // Имя в аукционе из настроек (PER-595). Нет `name` — имя не выбрано;
+      // `frozen` — аукцион принял ставку, и выбора на экране нет. `username`
+      // — ник из update без «@», пока выбор есть.
+      kind: "name-settings";
+      auctionId: string;
+      name?: OwnDisplayName;
+      username?: string;
+    }
+  | {
+      // Вопрос псевдонима из настроек.
+      kind: "name-question";
+      auctionId: string;
+    }
+  | {
+      // Непринятый псевдоним из настроек — свой экран исхода. Закреплённое
+      // имя сюда не попадает: экран имени просто его называет.
+      kind: "name-answer-refused";
+      auctionId: string;
+      refusal: "not-text" | Exclude<DisplayNameRefusal, "name-frozen">;
     };
 
 // Пример автоставки на текущем лоте: цена сейчас, шаг и лимит на три шага
@@ -282,6 +323,7 @@ export type AuctionButton =
         | "name.alias"
         | "name.back"
         | "accepted.lot"
+        | "accepted.feed"
         | "result.lot"
         | "answer.retry"
         | "history.prev"
@@ -298,7 +340,9 @@ export type AuctionButton =
         | "raffle.register"
         | "raffle.cancel"
         | "raffle.back"
-        | "raffle.return";
+        | "raffle.return"
+        // Имя из настроек: возврат на экран имени с исхода.
+        | "name.return";
       callbackData: string;
     };
 

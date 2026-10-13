@@ -71,23 +71,20 @@ describe("renderEntryScreen", () => {
   });
 
   // Корневое меню — общий родитель разделов (PER-592): «Аукционы», у бота с
-  // Notifications «Избранное» и «Уведомления», затем FAQ; возврата нет.
-  it("lists the sections in the menu and the Notifications ones only with it", () => {
-    const labels = (favorites: boolean, notifications: boolean) =>
-      renderEntryScreen({ kind: "menu", favorites, notifications }, options)
+  // Notifications «Избранное», «Настройки» (PER-595), затем FAQ; возврата нет.
+  it("lists the sections in the menu and favorites only with Notifications", () => {
+    const labels = (favorites: boolean) =>
+      renderEntryScreen({ kind: "menu", favorites }, options)
         .keyboard.flat()
         .map((button) => button.text);
-    expect(labels(false, false)).toEqual(["Аукционы", "Правила и FAQ"]);
-    expect(labels(true, true)).toEqual([
+    expect(labels(false)).toEqual(["Аукционы", "Настройки", "Правила и FAQ"]);
+    expect(labels(true)).toEqual([
       "Аукционы",
       "Избранное",
-      "Уведомления",
+      "Настройки",
       "Правила и FAQ",
     ]);
-    const menu = renderEntryScreen(
-      { kind: "menu", favorites: true, notifications: true },
-      options,
-    );
+    const menu = renderEntryScreen({ kind: "menu", favorites: true }, options);
     expect(menu.id).toBe("menu");
     expect(menu.text).toMatch(/^<b>Меню<\/b>\n\n/);
   });
@@ -213,9 +210,10 @@ describe("renderEntryScreen", () => {
       options,
     );
     expect(screen.format).toBe("html");
-    // Строки лотов в теле повторяют кнопки: день с «—» вместо «·» (PER-472).
+    // Текст не повторяет кнопки (PER-595): своих лотов нет — сводка так и
+    // говорит, а все лоты — кнопками.
     expect(plain(screen.text)).toBe(
-      "<b>Лоты · 1 из 2</b>\n\n• Носки — старт 500 ₽\n• Лот без названия — не продан",
+      "<b>Лоты · 1 из 2</b>\n\nТы пока не лидируешь ни в одном лоте этого аукциона. Все лоты — кнопками ниже.",
     );
     expect(screen.keyboard.map((row) => row.map((b) => plain(b.text)))).toEqual(
       [
@@ -228,9 +226,16 @@ describe("renderEntryScreen", () => {
     );
   });
 
-  // Перенос строки в названии не плодит строк списка: вторая выглядела бы
-  // чужим лотом с чужой ценой.
+  // Перенос строки в названии не плодит строк сводки: вторая выглядела бы
+  // чужим лотом с чужой ценой. Свой проданный лот сводка отмечает «✅ твой
+  // лот» (PER-595).
   it("keeps a lot title with line breaks on one line of the feed", () => {
+    const won = {
+      lotId: "a",
+      title: "Ваза\n• Другой лот",
+      status: { kind: "sold" as const, winnerId: "me", price: rub(3000) },
+      standing: "won" as const,
+    };
     const screen = renderEntryScreen(
       {
         kind: "auction",
@@ -241,13 +246,8 @@ describe("renderEntryScreen", () => {
               auctionId: "auc-1",
               page: 0,
               pageCount: 1,
-              lots: [
-                {
-                  lotId: "a",
-                  title: "Ваза\n• Другой лот",
-                  status: { kind: "unsold" },
-                },
-              ],
+              lots: [won],
+              mine: [won],
             },
           ],
           keyboard: [
@@ -257,7 +257,9 @@ describe("renderEntryScreen", () => {
       },
       options,
     );
-    expect(screen.text).toBe("<b>Лоты</b>\n\n• Ваза • Другой лот — не продан");
+    expect(plain(screen.text)).toBe(
+      "<b>Лоты</b>\n\nЗдесь только твои лоты: где ты лидер и что ты купил. Все лоты аукциона — кнопками ниже.\n\n• Ваза • Другой лот — ✅ твой лот за 3 000 ₽",
+    );
   });
 
   it("names an empty feed instead of showing nothing", () => {
@@ -497,7 +499,7 @@ describe("renderEntryScreen", () => {
       "<b>Ставка ниже порога</b>\n\n<b>Кружка</b>\n\nСейчас можно от 1 300 ₽.",
     );
     expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
-      ["К лоту"],
+      ["‹ Лот"],
     ]);
   });
 
@@ -616,7 +618,7 @@ describe("bid sheet screens", () => {
       current: rub(1600),
     });
     expect(plain(screen.text)).toBe(
-      "<b>Своя сумма</b>\n\nПришли сумму ставки в рублях.\nСейчас: от 1 600 ₽\nНапример: 1 500",
+      "<b>Своя сумма</b>\n\nПришли сумму ставки в рублях.\nМинимальная ставка: 1 600 ₽\nНапример: 1 500",
     );
     expect(screen.asks).toBe(true);
   });
@@ -643,11 +645,11 @@ describe("bid sheet screens", () => {
       [
         "<b>Автоставка</b>",
         "",
-        "Подскажу: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
+        "💡 Подсказка: платишь цену, а не лимит. Лимит — твой потолок: бот перебивает чужие ставки по шагу, пока не дойдёт до него.",
         "Например: цена сейчас 1 200 ₽, шаг 50 ₽, твой лимит 1 350 ₽. Бот сразу поставит за тебя 1 250 ₽ и будет отвечать на чужие ставки, но не выше 1 350 ₽. Никто не перебьёт — заплатишь 1 250 ₽, а не 1 350 ₽.",
         "",
         "Пришли лимит в рублях: до этой суммы бот будет ставить за тебя по шагу. Лимит видишь только ты.",
-        "Сейчас: 1 250 ₽",
+        "Минимальная ставка: 1 250 ₽",
         "Например: 3 000",
       ].join("\n"),
     );
@@ -683,7 +685,7 @@ describe("bid sheet screens", () => {
       explainer: {},
     });
     expect(plain(screen.text)).toContain(
-      "\n\nПодскажу: платишь цену, а не лимит.",
+      "\n\n💡 Подсказка: платишь цену, а не лимит.",
     );
     expect(screen.text).not.toContain("Например: цена сейчас");
   });
@@ -719,7 +721,7 @@ describe("bid sheet screens", () => {
     );
     expect(screen.keyboard.map((row) => row.map((b) => b.text))).toEqual([
       ["Ввести заново"],
-      ["К лоту"],
+      ["‹ Лот"],
     ]);
   });
 
@@ -806,10 +808,10 @@ describe("auction lists", () => {
       },
       options,
     );
-    // Строка аукциона в теле повторяет кнопку: день отделён «—», этап и число
-    // лотов через запятую.
+    // Строка аукциона в теле: день подписан — это начало торгов, — отделён
+    // «—», этап выделен, число лотов через запятую (PER-595).
     expect(screen.text).toBe(
-      "<b>Прошедшие аукционы · 2 из 3</b>\n\n• 10 октября, сб — идут ставки, 5 лотов",
+      "<b>Прошедшие аукционы · 2 из 3</b>\n\n• Торги с 10 октября, сб — <b>идут ставки</b>, 5 лотов",
     );
     expect(screen.keyboard).toEqual([
       [
@@ -845,6 +847,8 @@ describe("auction lists", () => {
     // Вчерашний по Москве дедлайн строку убирает.
     ["2026-10-06T20:59:00Z", ""],
   ])("counts down to a finale at %s", (closesAt, tail) => {
+    // Отсчёт выделен, как этап (PER-595).
+    const marked = tail === "" ? "" : `, <b>${tail.slice(2)}</b>`;
     const screen = renderEntryScreen(
       {
         kind: "auctions",
@@ -853,7 +857,7 @@ describe("auction lists", () => {
       options,
     );
     expect(screen.text).toBe(
-      `<b>Аукционы</b>\n\n• 10 октября, сб — идут ставки, 5 лотов${tail}`,
+      `<b>Аукционы</b>\n\n• Торги с 10 октября, сб — <b>идут ставки</b>, 5 лотов${marked}`,
     );
     // Кнопка остаётся короткой, как у «счастливых часов».
     expect(screen.keyboard[0]?.[0]?.text).toBe(
@@ -994,9 +998,9 @@ describe("happy hours", () => {
       },
       options,
     );
-    // Кнопка остаётся короткой: отметка — в строке тела.
+    // Кнопка остаётся короткой: отметка — строкой сводки (PER-595).
     expect(plain(screen.text)).toBe(
-      "<b>Лоты</b>\n\n• Кружка — 1 200 ₽, счастливые часы\n• Ваза — 1 200 ₽",
+      "<b>Лоты</b>\n\nТы пока не лидируешь ни в одном лоте этого аукциона. Все лоты — кнопками ниже.\n\nСчастливые часы сейчас: Кружка.",
     );
     expect(screen.keyboard.map((row) => row.map((b) => plain(b.text)))).toEqual(
       [["Кружка · 1 200 ₽"], ["Ваза · 1 200 ₽"], ["‹ Аукционы"]],

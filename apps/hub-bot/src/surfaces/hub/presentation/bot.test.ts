@@ -10,9 +10,10 @@ import {
   type RecordedCall,
   withEntry,
 } from "../../../../testkit/harness.js";
-import type {
-  AccessRequestOutcome,
-  AccessRight,
+import {
+  type AccessRequestOutcome,
+  type AccessRight,
+  encodeAuctionCallback,
 } from "../../../auction-ui/index.js";
 import type { TelegramEnvironment } from "../../../core/config.js";
 import { strayHintText } from "../../../core/entry.js";
@@ -6404,12 +6405,23 @@ describe("notification frames", () => {
 
   describe("outbid frequency", () => {
     // Бот с аукционом: только ему «Уведомления» ведут в частоту «перебили».
-    const withAuction = {
-      auction: {} as NonNullable<
-        NonNullable<Parameters<typeof createHarness>[6]>["auction"]
-      >,
-    };
-    const harness = (execute: Dispatcher["execute"], auction = true) =>
+    // Идущий аукцион (PER-595) — `current`; нет — пункта имени нет.
+    type AuctionRuntime = NonNullable<
+      NonNullable<Parameters<typeof createHarness>[6]>["auction"]
+    >;
+    const withAuction = (current?: string) => ({
+      auction: {
+        currentAuction: async () =>
+          current === undefined
+            ? { kind: "ok" as const }
+            : { kind: "ok" as const, auctionId: current },
+      } as unknown as AuctionRuntime,
+    });
+    const harness = (
+      execute: Dispatcher["execute"],
+      auction = true,
+      current?: string,
+    ) =>
       createHarness(
         resolvedIdentity(),
         { execute },
@@ -6417,7 +6429,7 @@ describe("notification frames", () => {
         undefined,
         undefined,
         undefined,
-        auction ? withAuction : {},
+        auction ? withAuction(current) : {},
       );
 
     // Частота — настройки расширения «Аукцион» (PER-605): в «Уведомлениях»
@@ -6447,6 +6459,25 @@ describe("notification frames", () => {
           expect(extensions?.flat()).not.toContainEqual(entry);
         }
       }
+    });
+
+    // Имя в идущем аукционе (PER-595) — пункт «Расширений» рядом с частотой.
+    it("offers the name in the running auction under the settings extensions", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>();
+      const auctionId = "01926f3c-8b7a-5cde-8f00-000000000001";
+      const { bot, calls } = harness(execute, true, auctionId);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:nav:ext"));
+      expect(screen(calls.at(-1)).reply_markup?.inline_keyboard).toEqual([
+        [{ text: "Аукцион", callback_data: "v1:notify:outbid" }],
+        [
+          {
+            text: "Имя в аукционе",
+            callback_data: encodeAuctionCallback({ kind: "name", auctionId }),
+          },
+        ],
+        [{ text: "‹ Настройки", callback_data: "v1:nav:settings" }],
+      ]);
     });
 
     // Запись 33 прогона 12.10: выбранный режим отмечен на своей кнопке, а

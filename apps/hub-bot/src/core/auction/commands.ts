@@ -1,9 +1,11 @@
 import { Code, ConnectError } from "@connectrpc/connect";
 import type { Money as WireMoney } from "../../../gen/auction/v1/auction_pb.js";
-import type {
-  ChooseDisplayNameResponse,
-  PlaceBidResponse,
-  SetProxyLimitResponse,
+import {
+  type ChooseDisplayNameResponse,
+  DisplayNameKind,
+  type GetDisplayNamesResponse,
+  type PlaceBidResponse,
+  type SetProxyLimitResponse,
 } from "../../../gen/auction/v1/auction_service_pb.js";
 import type {
   BidRefusal,
@@ -11,6 +13,7 @@ import type {
   DisplayNameOutcome,
   DisplayNameRefusal,
   Money,
+  OwnDisplayName,
   ProxyLimitRefusal,
 } from "../../auction-ui/index.js";
 import { moneyOf } from "./snapshot.js";
@@ -140,6 +143,22 @@ export function displayNameOutcomeOf(
       return _exhaustive;
     }
   }
+}
+
+// Своё имя из ответа `GetDisplayNames` (PER-595): заглушка — имя не выбрано.
+// Ответ без запрошенного участника — дефект соседа: каждый запрошенный
+// идентификатор в ответе есть (integration.md, «Имя участника»).
+export function ownDisplayNameOf(
+  response: GetDisplayNamesResponse,
+  participantId: string,
+): OwnDisplayName | undefined {
+  const name = response.names[participantId];
+  if (name === undefined) {
+    throw new Error("display names answer without the requested participant");
+  }
+  return name.kind === DisplayNameKind.PLACEHOLDER
+    ? undefined
+    : { text: name.text, frozen: name.frozen };
 }
 
 function displayNameRefusalOf(

@@ -123,7 +123,9 @@ export async function handleAuctionUpdate(
   const { intent } = parsed;
   if (
     input.kind === "reply" &&
-    ((intent.kind !== "question" && intent.kind !== "raffle-question") ||
+    ((intent.kind !== "question" &&
+      intent.kind !== "raffle-question" &&
+      intent.kind !== "name-question") ||
       intent.addressee !== user.telegramUserId)
   ) {
     return {

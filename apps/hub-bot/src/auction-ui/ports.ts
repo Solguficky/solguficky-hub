@@ -260,6 +260,12 @@ export interface AuctionPort {
     auctionId: string;
     participantIds: readonly string[];
   }): Promise<Readonly<Record<string, string>>>;
+  // Своё имя смотрящего в аукционе (ADR-059) — тем же `GetDisplayNames`.
+  // `undefined` — имя не выбрано: Auction отдал заглушку (PER-595).
+  getOwnDisplayName(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<OwnDisplayName | undefined>;
   placeBid(request: {
     viewer: Viewer;
     lotId: string;
@@ -400,6 +406,10 @@ export type DisplayNameRefusal =
   | "alias-invalid"
   | "alias-taken"
   | "name-frozen";
+
+// Выбранное имя смотрящего. `frozen` — аукцион уже принял его ставку или
+// лимит, и выбор больше не меняется (ADR-059, п. 5).
+export type OwnDisplayName = { text: string; frozen: boolean };
 
 export type DisplayNameOutcome =
   | { kind: "accepted"; name: string }

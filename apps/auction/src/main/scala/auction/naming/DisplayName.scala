@@ -78,8 +78,14 @@ enum DisplayKind {
   case Placeholder
 }
 
-/** Имя, готовое к показу: метки уже расставлены, вызывающий их не добавляет. */
-final case class DisplayName(text: String, kind: DisplayKind)
+/**
+ * Имя, готовое к показу: метки уже расставлены, вызывающий их не добавляет. `frozen` — участник уже ставил в аукционе,
+ * и выбор больше не меняется; у заглушки он всегда `false`.
+ */
+final case class DisplayName(text: String, kind: DisplayKind, frozen: Boolean = false)
+
+/** Выбор участника, как его хранит аукцион: само имя и признак заморозки. */
+final case class StoredName(name: ChosenName, frozen: Boolean)
 
 /** Ожидаемые отказы выбора имени. Транспортного кода они не несут: отображение — работа границы. */
 enum NamingRefusal {
@@ -116,10 +122,10 @@ object DisplayNameRules {
    * пробела и кириллицы в нике нет, а у псевдонима была бы звёздочка, так что заглушку не спутать ни с тем, ни с
    * другим.
    */
-  def render(participant: ParticipantId, chosen: Option[ChosenName]): DisplayName =
+  def render(participant: ParticipantId, chosen: Option[ChosenName], frozen: Boolean = false): DisplayName =
     chosen match {
-      case Some(ChosenName.Telegram(username)) => DisplayName(s"@${username.value}", DisplayKind.Username)
-      case Some(ChosenName.Pseudonym(alias)) => DisplayName(s"${alias.value}*", DisplayKind.Pseudonym)
+      case Some(ChosenName.Telegram(username)) => DisplayName(s"@${username.value}", DisplayKind.Username, frozen)
+      case Some(ChosenName.Pseudonym(alias)) => DisplayName(s"${alias.value}*", DisplayKind.Pseudonym, frozen)
       case None => DisplayName(s"Участник ${participant.value.toString.takeRight(4)}", DisplayKind.Placeholder)
     }
 

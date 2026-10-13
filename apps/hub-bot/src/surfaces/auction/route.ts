@@ -278,7 +278,6 @@ async function routeEntry(input: {
     screen: {
       kind: "menu",
       favorites: input.ports.favorites !== undefined,
-      notifications: input.ports.outbid !== undefined,
     },
     identityId,
   } as const;
@@ -297,6 +296,23 @@ async function routeEntry(input: {
     } else if (!(await input.ports.faq.acknowledged(viewer))) {
       // Без отметки любой раздел, кроме FAQ, показывает FAQ.
       return { screen: { kind: "faq" }, identityId };
+    }
+    // «Настройки» (PER-595): имя выбирается в идущем аукционе — ближайшем
+    // активном. Торги открыты у одного аукциона (RFC-017).
+    if (local?.action === "settings") {
+      const [current] = await readAuctions({
+        catalog: input.ports.catalog,
+        viewer,
+        listing: "active",
+      });
+      return {
+        screen: {
+          kind: "settings",
+          notifications: input.ports.outbid !== undefined,
+          ...(current === undefined ? {} : { auctionId: current.auctionId }),
+        },
+        identityId,
+      };
     }
     if (local?.action === "notify") {
       return await outbidSettings({
