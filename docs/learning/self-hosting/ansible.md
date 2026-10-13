@@ -345,7 +345,7 @@ Server-side apply отвечает `changed` только когда API-сер�
 
 В check mode на хосте, где пользователя ещё нет, модуль сообщает «создал бы», но uid не возвращает: его некому было выдать. Условие `dev_account.uid is defined` пропускает задачи потолка, и пробный прогон на живом хосте показал `skipped=3`: каталог drop-in, сам потолок и клон. Это та же слепая зона цепочки, что выше. Значение, которое появится только после соседнего шага, check mode показать не может.
 
-Новый drop-in systemd подхватывает только после `daemon-reload`. Он стоит handler'ом `Reload systemd units`, который уведомляет задача потолка. Сделать reload условием `when: dev_slice.changed` на обычной задаче отверг `ansible-lint` (правило `no-handler`): условие «запустить, если что-то изменилось» и есть handler. Применяется ли потолок к уже открытой сессии без её перезапуска, лаборатория не проверяла. По документации systemd — да. Проверь сам: открой `ssh solguficky-dev`, поменяй `dev_memory_max`, прогони `--tags dev` и сравни `cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/memory.max` в открытой сессии.
+Новый drop-in systemd подхватывает только после `daemon-reload`. Он стоит handler'ом `Reload systemd units`, который уведомляет задача потолка. Сделать reload условием `when: dev_slice.changed` на обычной задаче отверг `ansible-lint` (правило `no-handler`): условие «запустить, если что-то изменилось» и есть handler. Применяется ли потолок к уже открытой сессии без её перезапуска, лаборатория не проверяла. По документации systemd — да. Проверь сам: открой `ssh solguficky-dev`, поменяй `dev_agents_memory_max`, прогони `--tags slices` и сравни `cat /sys/fs/cgroup/user.slice/memory.max` в открытой сессии (с PER-258 потолок живёт на `user.slice`).
 
 ### `verify.yml`: повтор, чтение юнита и контроль механизма
 
@@ -363,7 +363,7 @@ Server-side apply отвечает `changed` только когда API-сер�
   ```
 
   Переменные задачи вычисляются лениво, при каждом обращении. Внутри `until` имя `verify_journal` указывает на результат текущей попытки, а `default([])` закрывает самое первое вычисление. Сам вердикт выносит следующий `assert`: он печатает журнал целиком, если строк так и не нашлось.
-- **`systemd_service` без `state` — чтение, а не действие.** Модуль возвращает свойства юнита в `status`, как `systemctl show`. Так `MemoryMax` читается без `command` и без разбора текста: `verify_dev_memory.status.MemoryMax == (dev_memory_max | human_to_bytes | string)`. systemd отдаёт байты, `human_to_bytes` переводит `3G` в те же 3221225472.
+- **`systemd_service` без `state` — чтение, а не действие.** Модуль возвращает свойства юнита в `status`, как `systemctl show`. Так `MemoryMax` читается без `command` и без разбора текста: `shared.MemoryMax == (dev_agents_memory_max | human_to_bytes | string)`, где `shared` — `status` юнита `user.slice`. systemd отдаёт байты, `human_to_bytes` переводит `3G` в те же 3221225472.
 - **Контроль самого механизма проверки.** Отказ «dev не читает секреты» снят как `runuser -u dev-solguficky -- test -r <файл>` с ожидаемым кодом 1. Но 1 вернёт и сломанный `runuser`. Рядом стоит контроль тем же механизмом: dev читает свой `.git/HEAD`, ожидается 0. Это та же контрольная пара, что у RBAC и host guard выше, только про инструмент проверки, а не про предмет.
 
 ### Лаборатория на control node без root
