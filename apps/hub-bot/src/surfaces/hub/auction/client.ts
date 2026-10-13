@@ -1087,6 +1087,11 @@ function startPrebiddingResult(
           return { kind: "meetup-not-found" };
         case "auctionNotScheduled":
           return { kind: "not-scheduled" };
+        case "anotherAuctionActive":
+          return {
+            kind: "another-auction-active",
+            auctionId: outcome.value.reason.value.auctionId,
+          };
         case undefined:
           return defect("start prebidding refusal without a reason");
         default: {

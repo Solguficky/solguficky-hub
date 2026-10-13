@@ -61,6 +61,10 @@ object Main {
     val backlogTimeout: FiniteDuration = config.getDuration("auction.projection.backlog-timeout").toScala
     val overdueGrace = config.getDuration("auction.deadlines.overdue-grace")
     val publication = PublicationSettings.fromConfig(config)
+    val slot = SlotSettings.fromConfig(config, askTimeout) match {
+      case Right(settings) => settings
+      case Left(reason) => fail(reason, None)
+    }
 
     val database = DatabaseSettings.fromConfig(config) match {
       case Right(settings) => settings
@@ -139,7 +143,8 @@ object Main {
       clock,
       UuidV7.generator(clock),
       askTimeout,
-      AuctionRaffle.sharded(sharding, askTimeout)
+      AuctionRaffle.sharded(sharding, askTimeout),
+      AuctionNode.registerSlot(sharding, clock, UuidV7.generator(clock), slot)
     )
     AuctionNode.eraseRaffleNames(system, raffleTickets, clock, erasureEvery)
     if (identity.url.isEmpty)

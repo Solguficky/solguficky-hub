@@ -418,6 +418,8 @@ export type ConsoleNote =
   | "week-opened"
   | "week-already-open"
   | "week-not-scheduled"
+  // Торги идут у другого аукциона сообщества: открыть неделю нельзя.
+  | "another-auction-active"
   | "week-frozen"
   | "week-needed"
   // Момент розыгрыша (PER-593): задан либо убран.

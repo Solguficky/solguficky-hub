@@ -90,6 +90,8 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-saved": "Сроки недели сохранены.",
   "week-opened": "Онлайн-неделя открыта. Лоты принимают ставки.",
   "week-already-open": "Неделя уже открыта.",
+  "another-auction-active":
+    "Торги уже идут у другого аукциона. Открыть неделю можно, когда они закончатся.",
   "week-not-scheduled":
     "Сначала задай сроки недели. Без них неделю не открыть.",
   "week-frozen":

@@ -38,12 +38,12 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[ScheduleAuctionRejected, AuctionAnswer]]
 
-  /** Открытие онлайн-торгов. Ответ приходит после записи события и подтверждений лотов не ждёт. */
+  /** Открытие онлайн-торгов. Ответ приходит после ответа слота и записи события и подтверждений лотов не ждёт. */
   def startPrebidding(
       auctionId: AuctionId,
       command: StartPrebidding,
       initiator: Initiator
-  ): Future[Either[StartPrebiddingRejected, AuctionAnswer]]
+  ): Future[Either[OpeningRejected, AuctionAnswer]]
 
   /** Удаление аукциона до торгов. */
   def discard(
@@ -153,7 +153,7 @@ object AuctionGateway {
           auctionId: AuctionId,
           command: StartPrebidding,
           initiator: Initiator
-      ): Future[Either[StartPrebiddingRejected, AuctionAnswer]] =
+      ): Future[Either[OpeningRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Start(command, initiator, _))
 
       def discard(

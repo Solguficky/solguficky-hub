@@ -5,6 +5,7 @@ import auction.entity.AuctionAnswer
 import auction.entity.AuctionGateway
 import auction.entity.Initiator
 import auction.entity.LotGateway
+import auction.entity.OpeningRejected
 import auction.lot.AdvanceAskRejected
 import auction.lot.AuctionId
 import auction.lot.DraftLot
@@ -90,10 +91,15 @@ enum CancellationRefusal {
   case AuctionAlreadyFinished
 }
 
-/** Отказ `StartPrebidding`: проверка до агрегата или решение агрегата. */
+/**
+ * Отказ `StartPrebidding`: проверка до агрегата, решение агрегата или слот торгов сообщества — торги идут у другого
+ * аукциона (ADR-047, дополнение 2026-10-12) или слот не ответил в срок.
+ */
 enum OpeningRefusal {
   case Denied(denial: Denial)
   case AuctionNotScheduled
+  case AnotherAuctionActive(holder: AuctionId)
+  case SlotUnavailable
 }
 
 /** Отказ `ScheduleLot`: проверка до агрегата, решение аукциона о реестре или решение самого лота. */
@@ -504,8 +510,12 @@ final class AuctionCommands(
 
   private def start(auctionId: AuctionId, opId: OpId, person: ParticipantId): Future[Either[OpeningRefusal, Unit]] =
     auctions.startPrebidding(auctionId, StartPrebidding(opId), Initiator.Operator(person)).map {
-      case Left(StartPrebiddingRejected.AuctionNotFound) => Left(OpeningRefusal.Denied(Denial.AuctionNotFound))
-      case Left(StartPrebiddingRejected.AuctionNotScheduled) => Left(OpeningRefusal.AuctionNotScheduled)
+      case Left(OpeningRejected.ByAuction(StartPrebiddingRejected.AuctionNotFound)) =>
+        Left(OpeningRefusal.Denied(Denial.AuctionNotFound))
+      case Left(OpeningRejected.ByAuction(StartPrebiddingRejected.AuctionNotScheduled)) =>
+        Left(OpeningRefusal.AuctionNotScheduled)
+      case Left(OpeningRejected.AnotherAuctionActive(holder)) => Left(OpeningRefusal.AnotherAuctionActive(holder))
+      case Left(OpeningRejected.SlotUnavailable) => Left(OpeningRefusal.SlotUnavailable)
       case Right(_) => Right(())
     }
 

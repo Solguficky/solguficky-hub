@@ -427,6 +427,13 @@ object ResponseMapping {
         Right(openingRefused(wire.StartPrebiddingRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
       case Left(OpeningRefusal.Denied(Denial.MeetupNotFound)) =>
         Right(openingRefused(wire.StartPrebiddingRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(OpeningRefusal.AnotherAuctionActive(holder)) =>
+        Right(
+          openingRefused(
+            wire.StartPrebiddingRefusal.Reason.AnotherAuctionActive(wire.AnotherAuctionActive(holder.value.toString))
+          )
+        )
+      case Left(OpeningRefusal.SlotUnavailable) => Left(slotUnavailable)
       case Left(OpeningRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(OpeningRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
       case Left(OpeningRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
@@ -699,6 +706,8 @@ object ResponseMapping {
     wire.RemoveLotResponse().withRefused(wire.RemoveLotRefusal(reason))
 
   private def unavailable: Status = Status.UNAVAILABLE.withDescription("meetup authority is unavailable")
+
+  private def slotUnavailable: Status = Status.UNAVAILABLE.withDescription("trading slot is unavailable")
 
   private def lineupUnknown: Status = Status.UNAVAILABLE.withDescription("auction is still asking its lots")
 

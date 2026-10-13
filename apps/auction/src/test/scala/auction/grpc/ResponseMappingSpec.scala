@@ -202,6 +202,9 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       reason(OpeningRefusal.Denied(Denial.NotAdministrator)).isNotMeetupAdministrator shouldBe true
       reason(OpeningRefusal.Denied(Denial.MeetupNotFound)).isMeetupNotFound shouldBe true
       reason(OpeningRefusal.AuctionNotScheduled).isAuctionNotScheduled shouldBe true
+      val holder = auction.lot.AuctionId(java.util.UUID.fromString("0190f2a0-0000-7000-8000-000000000021"))
+      reason(OpeningRefusal.AnotherAuctionActive(holder)).anotherAuctionActive.map(_.auctionId) shouldBe
+        Some("0190f2a0-0000-7000-8000-000000000021")
     }
 
     "answers a discard without data and every refusal of the right and of the state as a value" in {
@@ -245,6 +248,8 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
         .getCode shouldBe
         Status.Code.NOT_FOUND
       ResponseMapping.startPrebidding(Left(OpeningRefusal.Denied(Denial.Unavailable))).left.value.getCode shouldBe
+        Status.Code.UNAVAILABLE
+      ResponseMapping.startPrebidding(Left(OpeningRefusal.SlotUnavailable)).left.value.getCode shouldBe
         Status.Code.UNAVAILABLE
       ResponseMapping.startPrebidding(Left(OpeningRefusal.Denied(Denial.AuctionNotFound))).left.value.getCode shouldBe
         Status.Code.NOT_FOUND

@@ -256,6 +256,24 @@ describe("auction console", () => {
     ).resolves.toMatchObject({ note: "week-already-open" });
   });
 
+  it("names a start refused because another auction is trading on the console", async () => {
+    const { run } = fake({
+      start: {
+        kind: "another-auction-active",
+        auctionId: "0190f2a0-0000-7000-8000-000000000021",
+      },
+      read: { kind: "ok", console: view("scheduled") },
+      statistics: noLotStatistics,
+    });
+
+    await expect(
+      run({ ...call, intent: "start-auction-week", opId }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "another-auction-active",
+    });
+  });
+
   it("shows an accepted start over a read that has not seen it yet", async () => {
     const { run } = fake({
       read: { kind: "ok", console: view("scheduled") },

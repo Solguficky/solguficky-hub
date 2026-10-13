@@ -339,6 +339,38 @@ object LotRoster {
   private def complete(auction: Auction, roster: LotRoster): Boolean =
     auction.lots.forall(lot => roster.lots.get(lot).exists(_.settled))
 
+  /**
+   * Держит ли аукцион торги по своему журналу — фазы от `Prebidding` до `Final`. Такой аукцион держит слот торгов
+   * сообщества и подтверждает его после рестарта (ADR-047, дополнение 2026-10-12).
+   */
+  def holding(state: AuctionState): Boolean =
+    state match {
+      case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+          AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _) =>
+        true
+      case AuctionState.Initial | AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Finished(_, _) |
+          AuctionState.Cancelled(_, _, _) =>
+        false
+    }
+
+  /**
+   * Идут ли у аукциона торги — ответ держателя слоту торгов сообщества (ADR-047, дополнение 2026-10-12), без открытия в
+   * полёте: его знает entity. Фазы от `Prebidding` до `Final` — да ([[holding]]). Отменённый — пока хоть один лот
+   * реестра не ответил на `WithdrawLot`: ставку лот принимает сам, мимо аукциона, и до ответа ещё торгуется. После
+   * рестарта опрос снимает весь реестр заново, поэтому пустое знание читается как «торгуется». Остальное — нет.
+   */
+  def trading(auction: Auction, roster: LotRoster): Boolean =
+    auction.state match {
+      case AuctionState.Cancelled(_, _, _) =>
+        !auction.lots.forall { lot =>
+          roster.lots.get(lot) match {
+            case Some(LotStanding.Withdrawn | LotStanding.Closed) => true
+            case Some(_) | None => false
+          }
+        }
+      case other => holding(other)
+    }
+
   /** Лоты спрашивает аукцион в онлайн-торгах, в ожидании их конца и в перерыве, пока состав не заморожен. */
   private def asking(state: AuctionState): Boolean =
     state match {
