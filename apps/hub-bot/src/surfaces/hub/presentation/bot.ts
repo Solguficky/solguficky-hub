@@ -10,6 +10,7 @@ import { defaultFaq, type FaqContent } from "../../../auction-faq.js";
 import {
   type ApplicationQueue,
   type AuctionBlock,
+  type AuctionPort,
   type AuctionResult,
   type AuctionScreenBody,
   type AuctionUpdate,
@@ -23,6 +24,17 @@ import {
   replacesAuctionQuestion,
   type Viewer,
 } from "../../../auction-ui/index.js";
+import {
+  createLiveCards,
+  type LiveCardEntry,
+  type LiveCards,
+  type LiveEditOutcome,
+  liveCardOf,
+  liveEditFailure,
+} from "../../../core/auction/live-cards.js";
+import { reportLiveEditFailure } from "../../../core/auction/live-failures.js";
+import type { AuctionWatches } from "../../../core/auction/watch.js";
+import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
 import { markUpdateFailed } from "../../../core/bot/tracing.js";
 import {
@@ -367,6 +379,13 @@ export type BotRuntime = {
   // Скачивание присланного файла по пути из `getFile` (PER-452). Нет — бот
   // ходит в Telegram сам, по токену и среде выше.
   files?: TelegramFiles;
+  // Карточки финала (PER-336): поток аукциона, темп правок и имена для правки
+  // вне update. Нет — карточка финала правится только нажатием.
+  live?: {
+    watches: AuctionWatches;
+    limiter: EditLimiter;
+    names: Pick<AuctionPort, "getDisplayNames">;
+  };
 };
 
 const unavailableText = `Не получилось загрузить данные. Это на моей стороне.
@@ -644,6 +663,10 @@ type UpdateContext = ShellContext & {
   // Личность, разрешённая на этом update: по её правам после ответа
   // сверяется список команд чата (PER-592).
   commandsPerson?: Person;
+  // Открытые карточки финала (PER-336) и отметка, что этот update показал
+  // карточку заново: без неё нажатие под карточкой её из реестра снимает.
+  liveCards?: LiveCards;
+  liveShown?: boolean;
 };
 
 type BoundaryOutcome =
@@ -691,10 +714,25 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
   const albums = createSeenAlbums();
   const hintedAlbums = createHintedAlbums();
   const syncCommands = createChatCommandsSync(runtime.logger);
+  const liveCards =
+    runtime.live === undefined
+      ? undefined
+      : createLiveCards({
+          ...runtime.live,
+          edit: (card, body) =>
+            editLiveLotCard(bot.api, { card, body, runtime, lotPhotos }),
+        });
   bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
     ctx.auctionParents = auctionParents;
+    if (liveCards !== undefined) ctx.liveCards = liveCards;
     await next();
+    // Нажатие под карточкой финала показало другой экран — меню, сходку,
+    // вопрос: правка по потоку вернула бы карточку поверх него (PER-336).
+    const pressed = ctx.callbackQuery?.message;
+    if (liveCards !== undefined && pressed !== undefined && !ctx.liveShown) {
+      liveCards.shown(pressed.chat.id, pressed.message_id, undefined);
+    }
     // Команды кнопки меню клиента — по правам, на каждом действии, где
     // личность разрешена, а не только на `/start` (PER-592): держателю права
     // управления — свой список чата с `/manage`, у снятого он снимается.
@@ -5786,7 +5824,7 @@ async function handleLotPreviewCallback(
     viewer,
     lot: result.lot,
   });
-  const photoNote = await deliverAuctionScreen(ctx, {
+  const { note: photoNote } = await deliverAuctionScreen(ctx, {
     view: {
       body,
       rootParent: toMeetups,
@@ -6984,13 +7022,26 @@ async function handleAuctionCallback(
   // Ответ принят: результат приходит одним новым сообщением, а «Отмена»
   // вопроса снимается.
   if (answer !== undefined) ctx.fresh = true;
-  const photoNote = await deliverAuctionScreen(ctx, {
+  const delivered = await deliverAuctionScreen(ctx, {
     view,
     lotPhotos,
     image: ports.image,
     viewer: viewerOf(person),
     logger: runtime.logger,
   });
+  const photoNote = delivered.note;
+  // Карточка финала (PER-336): сообщение, в котором она оказалась, правится
+  // дальше по потоку аукциона.
+  const chatId = ctx.chat?.id;
+  if (ctx.liveCards !== undefined && chatId !== undefined) {
+    const live = liveCardOf(result.body, viewerOf(person));
+    if (delivered.messageId !== undefined) {
+      const kept = ctx.liveCards.shown(chatId, delivered.messageId, live);
+      if (delivered.messageId === ctx.callbackQuery?.message?.message_id) {
+        ctx.liveShown = kept;
+      }
+    }
+  }
   if (answer !== undefined) {
     delivery.questions.delete(questionKey(ctx.chat?.id, answer.replyId));
     await closeQuestion(ctx, answer.replyId);
@@ -7026,7 +7077,8 @@ function rootParentOf(ctx: UpdateContext, body: AuctionScreenBody): Parent {
 // из кэша `file_id` либо загрузкой байтов из Auction; загрузка — тот же вызов
 // Bot API, что доставляет карточку, и обрывать его по времени нельзя.
 // Изображение не получилось — карточка уходит без фото, а не пропадает.
-// Возвращает пометку о деградации для записи границы.
+// Возвращает пометку о деградации для записи границы и сообщение, в котором
+// экран оказался.
 async function deliverAuctionScreen(
   ctx: UpdateContext,
   input: {
@@ -7036,7 +7088,21 @@ async function deliverAuctionScreen(
     viewer: Viewer;
     logger: Logger;
   },
-): Promise<string | undefined> {
+): Promise<{ note?: string; messageId?: number }> {
+  // Правка того же содержимого ответа не даёт: экран остался в нажатом
+  // сообщении.
+  const at = (sent: { message_id: number } | undefined) => {
+    const messageId =
+      sent?.message_id ?? ctx.callbackQuery?.message?.message_id;
+    return messageId === undefined ? {} : { messageId };
+  };
+  const shownIn = async (
+    note: string | undefined,
+    screen: ShownScreen,
+  ): Promise<{ note?: string; messageId?: number }> => ({
+    ...(note === undefined ? {} : { note }),
+    ...at(await showScreen(ctx, screen)),
+  });
   const { lotPhotos } = input;
   const warn = (message: string, cause: unknown) =>
     input.logger.warn(message, {
@@ -7046,27 +7112,23 @@ async function deliverAuctionScreen(
   const shown = auctionScreen(input.view);
   const key = shown.image;
   if (key === undefined) {
-    await showScreen(ctx, shown.screen);
-    return undefined;
+    return shownIn(undefined, shown.screen);
   }
   const withPhoto = (photo: ScreenPhoto) =>
     auctionScreen({ ...input.view, photo }).screen;
   const cached = lotPhotos.get(key);
   if (cached?.kind === "rejected") {
-    await showScreen(ctx, shown.screen);
-    return "lot image skipped: rejected earlier";
+    return shownIn("lot image skipped: rejected earlier", shown.screen);
   }
   if (cached?.kind === "file") {
     const photo = withPhoto({ id: lotPhotoId, fileId: cached.fileId });
     try {
-      await showScreen(ctx, { ...photo, strict: true });
-      return undefined;
+      return at(await showScreen(ctx, { ...photo, strict: true }));
     } catch (cause) {
       if (!rejectedFile(cause)) {
         // Отказ не про файл — сообщение не правится или Telegram моргнул:
         // запись остаётся, а экран идёт обычным путём края с тем же фото.
-        await showScreen(ctx, photo);
-        return undefined;
+        return shownIn(undefined, photo);
       }
       // Telegram больше не принимает этот `file_id`: запись вытесняется, и
       // показ один раз повторяется загрузкой байтов.
@@ -7084,8 +7146,7 @@ async function deliverAuctionScreen(
     // Бюджет действия исчерпан на изображении или Auction его не отдал:
     // карточка уходит без фото (дизайн-код, «Показ фото лота»).
     warn("lot image unavailable", cause);
-    await showScreen(ctx, shown.screen);
-    return "lot image unavailable";
+    return shownIn("lot image unavailable", shown.screen);
   }
   // Ключ — версия самих байтов: изображение могли сменить между чтением
   // карточки и загрузкой, и старое фото не ляжет под новым ключом.
@@ -7094,21 +7155,20 @@ async function deliverAuctionScreen(
     id: lotPhotoId,
     upload: new InputFile(bytes.content, "lot"),
   });
-  const remember = (sent: unknown) => {
+  const remember = (sent: { message_id: number } | undefined) => {
     const fileId = photoFileId(sent);
     if (fileId !== undefined) {
       lotPhotos.set(uploaded, { kind: "file", fileId });
     }
+    return at(sent);
   };
   try {
-    remember(await showScreen(ctx, { ...upload, strict: true }));
-    return undefined;
+    return remember(await showScreen(ctx, { ...upload, strict: true }));
   } catch (cause) {
     if (cause instanceof GrammyError && notEditable(cause.description)) {
       // Сообщение не правится — карточка уходит новым сообщением с той же
       // загрузкой: изображение тут ни при чём.
-      remember(await showScreen(ctx, { ...upload, delivery: "new" }));
-      return undefined;
+      return remember(await showScreen(ctx, { ...upload, delivery: "new" }));
     }
     // Telegram отверг сам запрос (400) — эта версия до рестарта больше не
     // грузится. Обрыв соединения, лимит и сбой Telegram отметки не
@@ -7118,8 +7178,93 @@ async function deliverAuctionScreen(
       lotPhotos.set(uploaded, { kind: "rejected" });
     }
     warn("lot image rejected by Telegram", cause);
-    await showScreen(ctx, shown.screen);
-    return "lot image rejected";
+    return shownIn("lot image rejected", shown.screen);
+  }
+}
+
+// Правка карточки финала вне update (PER-336): та же оболочка, что у показа
+// по нажатию. Фото — только из кэша `file_id`: загрузка байтов на каждой цене
+// залпа съела бы и время, и лимит; без записи в кэше карточка правится без
+// фото. Ряд «Изменить лот» — по правам смотрящего, с которыми карточку
+// открыли.
+async function editLiveLotCard(
+  api: Bot<UpdateContext>["api"],
+  input: {
+    card: LiveCardEntry;
+    body: AuctionScreenBody;
+    runtime: BotRuntime;
+    lotPhotos: LotPhotos;
+  },
+): Promise<LiveEditOutcome> {
+  const { card, runtime } = input;
+  const view: AuctionView = {
+    body: input.body,
+    rootParent: toMeetups,
+    presentation: runtime.presentation ?? "rich",
+    timeZone: runtime.communityTimeZone ?? "UTC",
+    today: (runtime.today ?? utcToday)(),
+    canManage: canManageMeetups(card.viewer),
+    favorites: runtime.favorites !== undefined,
+  };
+  const shown = auctionScreen(view);
+  const key = shown.image;
+  const cached = key === undefined ? undefined : input.lotPhotos.get(key);
+  const withPhoto =
+    cached?.kind === "file"
+      ? auctionScreen({
+          ...view,
+          photo: { id: lotPhotoId, fileId: cached.fileId },
+        }).screen
+      : undefined;
+  const edit = (screen: ShownScreen) => {
+    const other = {
+      ...screenMark(screen.id),
+      reply_markup: screen.keyboard,
+      ...(screen.format === "HTML" ? { parse_mode: "HTML" as const } : {}),
+    };
+    return screen.format === "rich"
+      ? api.editMessageText(
+          card.chatId,
+          card.messageId,
+          {
+            html: screen.text,
+            ...(screen.media === undefined || screen.media.length === 0
+              ? {}
+              : {
+                  media: screen.media.map((photo) => ({
+                    id: photo.id,
+                    media: {
+                      type: "photo" as const,
+                      media: "fileId" in photo ? photo.fileId : photo.upload,
+                    },
+                  })),
+                }),
+          },
+          other,
+        )
+      : api.editMessageText(card.chatId, card.messageId, screen.text, other);
+  };
+  try {
+    try {
+      await edit(withPhoto ?? shown.screen);
+    } catch (cause) {
+      // Telegram больше не знает `file_id` из кэша: запись вытесняется, и
+      // правка идёт без фото — иначе каждая следующая цена падала бы на нём же.
+      if (
+        withPhoto === undefined ||
+        key === undefined ||
+        !rejectedFile(cause)
+      ) {
+        throw cause;
+      }
+      input.lotPhotos.delete(key);
+      await edit(shown.screen);
+    }
+    return { kind: "done" };
+  } catch (cause) {
+    return liveEditFailure(cause, (error) =>
+      reportLiveEditFailure(runtime.logger, error),
+    );
   }
 }
 

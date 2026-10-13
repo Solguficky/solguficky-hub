@@ -9,8 +9,15 @@ import { AccessRight, Preset } from "../gen/identity/v1/access_pb.js";
 import { IdentityService } from "../gen/identity/v1/identity_service_pb.js";
 import { MeetupVisibility } from "../gen/meetups/v1/meetups_pb.js";
 import { MeetupsService } from "../gen/meetups/v1/meetups_service_pb.js";
-import { presentServiceToken } from "../src/core/rpc-metadata.js";
+import type { AuctionPort } from "../src/auction-ui/index.js";
+import {
+  type AuctionWatchSource,
+  createAuctionWatches,
+} from "../src/core/auction/watch.js";
+import { createEditLimiter } from "../src/core/bot/edit-limiter.js";
+import { presentServiceToken, rpcMeta } from "../src/core/rpc-metadata.js";
 import { noopTracing } from "../src/core/tracing.js";
+import { createUuidV7 } from "../src/core/uuid-v7.js";
 import { createDispatcher } from "../src/surfaces/hub/application/dispatcher.js";
 import { createAuctionClient } from "../src/surfaces/hub/auction/client.js";
 import { communityDay } from "../src/surfaces/hub/community-time.js";
@@ -446,16 +453,29 @@ export function openBotWire(endpoints: {
       ? {}
       : { auctionBotUsername: endpoints.auctionBotUsername }),
   };
-  const spawn = () =>
-    createHarness(
+  // Карточки финала (PER-336): поток и темп правок принадлежат процессу
+  // бота, и рестарт гасит прежние — иначе старый процесс правил бы карточки.
+  let live: LiveRuntime | undefined;
+  const spawn = () => {
+    live?.close();
+    live =
+      auction === undefined
+        ? undefined
+        : liveRuntime(auction.watch, (request) =>
+            auction
+              .screenPorts(rpcMeta({ requestId: createUuidV7() }))
+              .auction.getDisplayNames(request),
+          );
+    return createHarness(
       identity,
       dispatcher,
       calls,
       tracing,
       undefined,
       undefined,
-      options,
+      { ...options, ...(live === undefined ? {} : { live: live.options }) },
     );
+  };
   current = spawn();
   return {
     // Разговор держит этот вход, а не сам бот: после рестарта он говорит уже
@@ -480,6 +500,7 @@ export function openBotWire(endpoints: {
       current = spawn();
     },
     close(): void {
+      live?.close();
       identity.close();
       meetups.close();
       auction?.close();
@@ -622,3 +643,24 @@ export function unusedMeetupId(): string {
 
 /** Порт, на котором заведомо никто не слушает: Meetups «упал». */
 export const unreachableUrl = "http://127.0.0.1:1";
+
+export type LiveRuntime = {
+  options: NonNullable<HarnessOptions["live"]>;
+  close(): void;
+};
+
+/** Поток аукциона и темп правок одного процесса бота провода (PER-336). */
+export function liveRuntime(
+  source: AuctionWatchSource,
+  getDisplayNames: AuctionPort["getDisplayNames"],
+): LiveRuntime {
+  const watches = createAuctionWatches({ source });
+  const limiter = createEditLimiter();
+  return {
+    options: { watches, limiter, names: { getDisplayNames } },
+    close() {
+      limiter.close();
+      watches.close();
+    },
+  };
+}

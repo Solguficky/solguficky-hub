@@ -1,5 +1,10 @@
 import { renderFaqText } from "../../auction-faq.js";
 import {
+  finalBidLabel,
+  finalBidLine,
+  finalPriceLines,
+} from "../../auction-final.js";
+import {
   cancelRegistrationLabel,
   raffleBackName,
   raffleButtonLabel,
@@ -1198,7 +1203,13 @@ function renderCard(
   options: RenderOptions,
 ): Pick<RenderedScreen, "text" | "format" | "photo"> {
   const title = truncate(block.card?.title ?? untitled, TITLE_LIMIT);
-  const groups = statusGroups(block, options);
+  // Исход ставки финала — своей группой под статусом и ценой (PER-336).
+  const groups = [
+    ...statusGroups(block, options),
+    ...(block.finalBid === undefined
+      ? []
+      : [[finalBidLine(block.finalBid, money)]]),
+  ];
   const rich = (options.presentation ?? "rich") === "rich";
   const description = fitDescription(
     title,
@@ -1251,13 +1262,19 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
       ];
     case "trading":
       return [
-        ["Статус: идут торги"],
+        [
+          status.phase === "live"
+            ? "Статус: торги финала"
+            : "Статус: идут торги",
+        ],
         [
           `Цена: ${money(status.currentPrice)}`,
           leaderLine(status.leaderId, participantName),
-          ...(block.nextPrice === undefined
-            ? []
-            : [`Следующая ставка: от ${money(block.nextPrice)}`]),
+          ...(status.phase === "live"
+            ? finalPriceLines(block, money)
+            : block.nextPrice === undefined
+              ? []
+              : [`Следующая ставка: от ${money(block.nextPrice)}`]),
           ...stepLines(block, options),
           ...(status.deadline === undefined
             ? []
@@ -1428,6 +1445,8 @@ function renderButton(
       return text("‹ Лоты");
     case "lot.bid-step":
       return text(`По шагу (${money(button.amount)})`);
+    case "lot.bid-final":
+      return text(finalBidLabel(button.amount, money));
     case "lot.bid-custom":
       return text("Своя сумма");
     case "lot.proxy":

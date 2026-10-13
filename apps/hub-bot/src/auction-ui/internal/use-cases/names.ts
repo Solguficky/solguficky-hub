@@ -8,7 +8,7 @@ import type { AuctionPort, Viewer } from "../../ports.js";
 // Один вызов на экран: каждый идентификатор спрашивается один раз, а без
 // участников Auction за именами не зовут.
 export async function namesOf(input: {
-  auction: AuctionPort;
+  auction: Pick<AuctionPort, "getDisplayNames">;
   viewer: Viewer;
   auctionId: string;
   participantIds: readonly string[];

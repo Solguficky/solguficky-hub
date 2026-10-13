@@ -24,6 +24,7 @@ import type {
   AuctionButton,
   AuctionScreenBody,
   CommandResult,
+  FinalBidOutcome,
   ProxyExample,
 } from "../../screen.js";
 import { parseAmount } from "./amount.js";
@@ -223,6 +224,93 @@ export async function commitCommand(
         ),
         (refusal) => ({ command: "proxy", kind: "refused", refusal }),
       );
+}
+
+// Ставка финала одним нажатием (ADR-049, PER-336): сумма кнопки — ожидаемая
+// цена, `op_id` рождается на нажатии и повторяется один раз, только если
+// ответа не было. Исход — строка на карточке финала, которую ответ и
+// показывает: карточка остаётся живой, и после отказа `bid-not-at-next-price`
+// её кнопка уже несёт новую цену. Лот вне финала — устаревшая кнопка: карточка
+// показывает, где лот, без похода в Auction с мёртвой командой.
+export async function placeFinalBid(
+  context: CommandContext,
+  intent: { lotId: string; amount: number; page: number },
+): Promise<AuctionScreenBody> {
+  const lot = await readLot(context, intent.lotId);
+  const { status } = lot;
+  const shown = (shownLot: LotView, finalBid?: FinalBidOutcome) =>
+    showLot({
+      ...context,
+      lot: shownLot,
+      page: intent.page,
+      ...(finalBid === undefined ? {} : { finalBid }),
+    });
+  if (status.kind !== "trading" || status.phase !== "live") return shown(lot);
+  const amount: Money = {
+    minorUnits: intent.amount,
+    currency: status.currentPrice.currency,
+  };
+  const opId = context.operations.newOperationId();
+  const outcome = await withOneRetry(() =>
+    context.auction.placeBid({
+      viewer: context.viewer,
+      lotId: intent.lotId,
+      amount,
+      opId,
+    }),
+  );
+  switch (outcome.kind) {
+    case "accepted":
+      // Чтение отстаёт от команды: карточка дочитывает лот до версии ответа,
+      // иначе принятая ставка стояла бы над прежней ценой.
+      return shown(
+        await context.auction.getLot({
+          viewer: context.viewer,
+          lotId: intent.lotId,
+          ...(outcome.lotVersion > 0
+            ? { atLeastVersion: outcome.lotVersion }
+            : {}),
+        }),
+        { kind: "accepted", amount },
+      );
+    case "unanswered":
+      return shown(await readLot(context, intent.lotId), { kind: "unknown" });
+    case "refused": {
+      const { refusal } = outcome;
+      if (refusal.kind === "display-name-not-chosen") {
+        return nameChoiceBody(
+          context,
+          lot,
+          { command: "bid", amount: intent.amount },
+          intent.page,
+        );
+      }
+      return shown(
+        atLeastExpected(await readLot(context, intent.lotId), refusal),
+        { kind: "refused", refusal },
+      );
+    }
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Отказ называет цену, которую лот ждёт сейчас, а чтение может отставать от
+// команды, которая её подняла: кнопка карточки не должна предлагать цену ниже
+// названной в отказе — нажатие на неё снова получило бы отказ.
+function atLeastExpected(lot: LotView, refusal: BidRefusal): LotView {
+  if (refusal.kind !== "bid-not-at-next-price") return lot;
+  const { expected } = refusal;
+  if (
+    lot.nextPrice !== undefined &&
+    lot.nextPrice.currency === expected.currency &&
+    lot.nextPrice.minorUnits >= expected.minorUnits
+  ) {
+    return lot;
+  }
+  return { ...lot, nextPrice: expected };
 }
 
 // Ответ Auction на команду — экран. Принятая, отказ и неизвестный исход — свои
@@ -662,7 +750,9 @@ export async function chooseUsername(
 }
 
 // Выбор имени и возврат к отложенной команде: после принятого имени человек
-// снова видит подтверждение, с новым `op_id`, и жмёт «Да» сам.
+// снова видит подтверждение, с новым `op_id`, и жмёт «Да» сам. В живом финале
+// подтверждения нет (ADR-049): человек возвращается на карточку финала и жмёт
+// «Поставить» на цену, которая действует сейчас (PER-336).
 async function chooseName(
   context: CommandContext,
   lot: LotView,
@@ -677,5 +767,8 @@ async function chooseName(
     choice,
   });
   if (outcome.kind === "refused") return refused(outcome.refusal);
+  if (lot.status.kind === "trading" && lot.status.phase === "live") {
+    return showLot({ ...context, lot, page });
+  }
   return confirmOrRefuse(context, lot, pending, page);
 }
