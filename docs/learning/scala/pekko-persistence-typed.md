@@ -9,7 +9,8 @@
 - `apps/auction/src/main/scala/auction/entity/AuctionEntity.scala` и `aggregate/LotRoster.scala` из среза PER-325 — разделы о сигнале восстановления, `pipeToSelf`, памяти вне журнала и пассивации;
 - для них же: `internal/ReplayingEvents.scala` и `internal/Running.scala` того же source-jar, `scaladsl/ActorContext.scala` из `pekko-actor-typed_3-1.6.0-sources.jar` и `reference.conf` из `pekko-cluster-sharding_3-1.6.0.jar`;
 - `PlanLot` в `AuctionEntity.scala` из среза PER-319 — раздел о порядке сообщений; для него `internal/ClusterShardingImpl.scala` из `pekko-cluster-sharding-typed_3-1.6.0-sources.jar`, `ShardRegion.scala` и `Shard.scala` из `pekko-cluster-sharding_3-1.6.0-sources.jar`, `actor/dungeon/Dispatch.scala` и `dispatch/Dispatcher.scala` из `pekko-actor_3-1.6.0-sources.jar` и мутация L1-теста `AuctionOpeningIntegrationSpec`;
-- `entity/LotJournal.scala` и эталоны `src/test/resources/journal/` из среза PER-333 — раздел о новой секции модели хранения; для него `reference.conf` из `pekko-serialization-jackson_3-1.6.0.jar` и `LotJournal.scala` в `origin/develop` до среза.
+- `entity/LotJournal.scala` и эталоны `src/test/resources/journal/` из среза PER-333 — раздел о новой секции модели хранения; для него `reference.conf` из `pekko-serialization-jackson_3-1.6.0.jar` и `LotJournal.scala` в `origin/develop` до среза;
+- `results/ResultsEntity.scala` и `results/ResultsJournal.scala` из среза PER-490 — разделы об инвариантности `Effect` и о числе в модели хранения; для них `scaladsl/Effect.scala` того же source-jar, `prediction/PredictionEntity.scala` как образец привязки типа состояния и прогон L1 `results-publication`, упавший на `ClassCastException`.
 
 Формат, в котором событие лежит в базе, — в [ADR-058](../../decisions/ADR-058-auction-journal-row-json-storage-model.md). Сами правила торгов, `decide` и `apply`, — в [domain-types.md](domain-types.md).
 
@@ -132,6 +133,8 @@ final case class StoredEvent(
 
 Это не дефект среза, а свойство формы: совместимость у неё односторонняя — новый код читает старое, старый код новое не обязан. Откатить сервис после первого записанного продления можно только вперёд или через `JacksonMigration`.
 
+**Число в модели хранения — простой `Long`, а не `Option[Long]`.** `StoredNominationValue` сначала держал `number: Option[Long]`, и проекция публикации падала на разборе события: `java.lang.ClassCastException: class java.lang.Integer cannot be cast to class java.lang.Long` в `ResultsJournal.restoreValue` (кадр `scala.runtime.BoxesRunTime.unboxToLong`). Jackson читает небольшое число JSON как `Integer`; поле `Option[Long]` до этого значения не дотягивается и отдаёт `Integer` туда, где код ждёт `Long`. После среза строка держит `number: Long`, а у варианта без числа — ноль-заглушку: `StoredNominationValue("lots", lots, 0L)`. Отсутствующая секция по-прежнему читается как `None` (см. выше), а число внутри секции приходит уже разобранным `Long`. В .NET поле `long?` разбирается в `long?` штатно; здесь `Option[Long]` такого разбора не даёт, и отличие стоит держать в голове, когда в строку кладут число. Держит это `ResultsJournalSpec`: round-trip строки в обе стороны — числа номинаций читаются как `Long`, а не как `Integer`.
+
 ### Тег — метка события при записи
 
 `withTagger` добавляет к поведению функцию «событие → набор тегов». Pekko зовёт её при записи, и плагин JDBC кладёт каждый тег строкой в таблицу `event_tag` рядом со строкой журнала. Читающая сторона потом выбирает события по тегу (`eventsByTag`) — так устроена проекция, разбор в [pekko-projection.md](pekko-projection.md).
@@ -213,6 +216,39 @@ case LotAnswered(lot, Success(answer)) =>
 ```
 
 После `Effect.persist(...)` действие из `thenRun` ждёт подтверждения журнала — на этом держится «ответ значит записано» из раздела о записи. После `Effect.none` ждать нечего: в `Running.scala` ветка `PersistNothing` сразу уходит в `applySideEffects`, и действие выполняется в той же обработке сообщения.
+
+### `Effect` инвариантен по состоянию: почему лямбда без типа не собирается
+
+`Effect` — не функция, а описание: «что записать и что сделать после». У него два параметра типа, и объявлены они по-разному (`scaladsl/Effect.scala` 1.6.0):
+
+```scala
+trait Effect[+Event, State]
+trait EffectBuilder[+Event, State] extends Effect[Event, State] {
+  def thenRun(callback: State => Unit): EffectBuilder[Event, State]
+  def thenUnstashAll(): Effect[Event, State]
+}
+```
+
+`Event` ковариантен (`+Event`): эффект без событий (`Nothing`) годится там, где ждут эффект с событиями. `State` инвариантен: эффект, знающий состояние как `Any`, не годится там, где ждут эффект, знающий `Results`. Аналог в .NET — инвариантный параметр интерфейса: `IReadOnlyList<object>` не подставляется вместо `IReadOnlyList<Order>`.
+
+`Effect.none` — фабрика с двумя свободными параметрами:
+
+```scala
+def none[Event, State]: EffectBuilder[Event, State] = PersistNothing.asInstanceOf[EffectBuilder[Event, State]]
+```
+
+Их выводятся из контекста. В `ResultsEntity` обработчик команды объявлен как `Effect[StoredResultsEvent, Results]`, и ветка `Effect.none.thenRun { (_: Results) => ... }` подходит: лямбда фиксирует `State = Results`, а `Event` остаётся `Nothing` — он ковариантен, поэтому годится.
+
+Ветка без привязки типа — тот же `Effect.none.thenRun(_ => ...)` с дописанным `.thenUnstashAll()` — не собралась:
+
+```
+Found:    org.apache.pekko.persistence.typed.scaladsl.Effect[Nothing, Any]
+Required: org.apache.pekko.persistence.typed.scaladsl.Effect[auction.results.StoredResultsEvent, auction.results.Results]
+```
+
+Параметры `none` остались в границах (`Nothing`, `Any`), потому что лямбда `_ =>` типа состояния не называет, а ожидаемый тип ветки до получателя `Effect.none.thenRun(...)` не доходит, когда у результата есть следующий вызов. Инвариантный `State = Any` под `Results` не подходит. Лечится привязкой типа параметра в лямбде — `(_: Results) =>`; тот же приём уже стоял в `PredictionEntity` (`Effect.none.thenRun((_: Predictions) => replyTo ! outcome).thenUnstashAll()`), и это готовый образец для нового агрегата.
+
+Почему именно дописанный `.thenUnstashAll()` уводит вывод в `Effect[Nothing, Any]`, а `thenRun` последним вызовом — нет, разбор отдельным прогоном не проверял: проверено, что привязка типа в лямбде снимает отказ, а тот же код без привязки не собирается.
 
 ### Пассивация: восстановление — обычное дело
 
@@ -318,6 +354,8 @@ shardRegion ! ShardingEnvelope(entityId, message)
 - **Гонку двух команд одного актора можно закрыть порядком, а не замком.** Условие одно: проверка и отправка следствия происходят в обработке одного сообщения, без промежуточного ожидания. Тогда всё, что пришло актору позже, и своё отправит позже. Перенос на другой стек — грин Orleans или обработчик с одной очередью — требует проверить, сохраняет ли транспорт порядок до получателя: здесь это видно по исходникам, а не по названию паттерна.
 - **У формата со схемой по именам полей совместимость односторонняя, и сторона отказа зависит от вида данных.** Новое необязательное поле дёшево читается назад, но откат кода видит его как незнакомый ключ. Если формат выбирает вариант по значению (`kind`), отказ громкий; если поле лишь добавляет данные к известному варианту — тихая потеря. Перенос на любой JSON-журнал (Marten, EventStoreDB с `System.Text.Json`): до первого деплоя нового события ответь, что сделает с ним предыдущая версия.
 - **«Долговечное» хранилище по умолчанию стоит проверять на своей топологии.** `ddata` долговечен на диске, но читает прошлое только при том же порте и том же каталоге. Узел с портом `0` или под без тома теряет его на каждом рестарте.
+- **У эффекта, который только отвечает, параметр состояния всё равно надо назвать.** `Effect` инвариантен по состоянию, а `Effect.none` — фабрика с двумя свободными параметрами: без имени типа в лямбде вывод оставляет их в границах и даёт `Effect[Nothing, Any]`. Перенос на другой стек — любой билдер с инвариантным параметром и фабрикой без аргументов: называй тип на входе, а не надейся, что ожидаемый тип дойдёт до получателя цепочки.
+- **Число в модели хранения кладут простым типом, а не `Option`.** Jackson читает небольшое число JSON как `Integer`, и `Option[Long]` отдаёт его дальше как `Integer` — `ClassCastException` на разборе. Заглушка-ноль вместо `None` дешевле падения проекции; вариант без значения отличает `kind`, а не отсутствие числа. Тот же выбор стоит делать в любом JSON-журнале: проверь, во что разбирается числовое поле, прежде чем класть его в `Option`.
 
 ## Почему так, а не иначе
 
@@ -483,3 +521,7 @@ sequenceDiagram
    Ответ: ноль — отсутствующий ключ читается как `None`, а `getOrElse(0)` делает из него ноль. Проверка: `grep -c extensionsUsed apps/auction/src/test/resources/journal/legacy/lot-snapshot.json` даёт 0, а тест `read a snapshot written before proxy limits and anti-sniping as trading without limits or extensions` в `LotJournalSpec` зелёный.
 16. Что сделает код до PER-333 со строкой `DeadlineExtended` и со snapshot, где есть `extensionsUsed`?
    Ответ: строку отвергнет как испорченную — ноль секций у `kind`, которого он не знает, — а из snapshot молча выбросит счётчик. Опора: `unzip -p pekko-serialization-jackson_3-1.6.0.jar reference.conf | grep FAIL_ON_UNKNOWN` и ветка `case _ => mismatch` в `restoreEvent` прежнего `LotJournal.scala`. Прогоном не проверялось — проверь сам, когда будет чем: на коммите до среза прочитать эталон `deadline-extended.json` тестом по образцу `keepsGolden` и ждать `JournalCorrupted`.
+17. Что вернёт вывод типа для ветки `Effect.none.thenRun(_ => ...)` с дописанным `.thenUnstashAll()` в обработчике, объявленном как `Effect[StoredResultsEvent, Results]`?
+   Ответ: `Effect[Nothing, Any]`, и ветка не соберётся: `State` инвариантен, `Any` под `Results` не подходит. Проверка: убрать `(_: Results)` в одной ветке `ResultsEntity` и выполнить `just auction-build` из корня — компилятор печатает `Found: … Effect[Nothing, Any] / Required: … Effect[StoredResultsEvent, Results]`. Точную причину, по которой `thenRun` последним вызовом собирается, а с `.thenUnstashAll()` — нет, разбор отдельным прогоном не проверял; проверь сам, когда будет чем.
+18. Что сделает проекция публикации, если числовое поле строки объявлено `Option[Long]`?
+   Ответ: упадёт на разборе — `java.lang.ClassCastException: class java.lang.Integer cannot be cast to class java.lang.Long` в `ResultsJournal.restoreValue`, потому что Jackson отдаёт небольшое число как `Integer`. Проверка: `ResultsJournalSpec` гоняет строку в обе стороны через `restoreEvent` и на таком поле падает; на простом `Long` с нулём-заглушкой тест зелёный.
