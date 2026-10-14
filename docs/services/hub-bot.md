@@ -701,7 +701,8 @@ Rust/Teloxide-шлюз предыдущего поколения удалён и
 
 - отрисовка ручных рассылок: Notifications их порождает ([PER-225](https://linear.app/anticnvm/issue/PER-225)), бот их подаёт (раздел «Ручные рассылки»), но канал пока снимает эти типы с записью в лог — отрисовку добавит [PER-217](https://linear.app/anticnvm/issue/per-217);
 - что модуль отдаёт в карточку и форма экрана настроек — решения 3 и 4 [RFC-003](../rfcs/RFC-003-bot-presentation-rich-blocks.md);
-- ревизия макета после выбора 1d — отдельное решение владельца.
+- ревизия макета после выбора 1d — отдельное решение владельца;
+- «Помощь» с «Что нового» и третья поверхность пакета — бот поддержки `BOT_SURFACE=support` с темой на человека в группе операторов — приняты владельцем 14 октября 2026 года и ещё не реализованы ([PER-551](https://linear.app/anticnvm/issue/per-551), реализация — [PER-621](https://linear.app/anticnvm/issue/per-621) и [PER-622](https://linear.app/anticnvm/issue/per-622); [ADR-068](../decisions/ADR-068-support-bot-with-operator-topics.md), [ADR-069](../decisions/ADR-069-release-notes-as-environment-data.md)); экраны и переписка — в [дизайн-коде](../design/bot/design-code.md#бот-поддержки).
 
 Решается при реализации следующих задач, ADR не требуется: конкретные тексты и локализация, числа повторов Telegram. Числа ожидания заданы [дизайн-кодом](#дизайн-код-экранов) и живут константами в `src/surfaces/hub/presentation/waiting.ts`.
 
