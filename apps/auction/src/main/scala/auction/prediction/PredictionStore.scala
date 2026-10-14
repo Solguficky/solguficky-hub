@@ -34,6 +34,12 @@ trait PredictionStore {
   /** Прогнозы участника по раундам; раунда без прогноза в ответе нет. Чужих прогнозов этот порт не читает. */
   def mine(auction: AuctionId, participant: ParticipantId): Future[Map[PredictionRound, Forecast]]
 
+  /**
+   * Прогнозы всех участников аукциона по раундам — снимок, по которому считается точность (ADR-067, п. 8). Читает его
+   * только подсчёт итогов: чужие прогнозы ни одному смотрящему не отдаются (п. 9).
+   */
+  def all(auction: AuctionId): Future[Map[PredictionRound, Map[ParticipantId, Forecast]]]
+
   /** Удаляет прогнозы и окно отправок аукциона: аукцион удалён до торгов (ADR-067, п. 4). */
   def discard(auction: AuctionId): Future[Unit]
 

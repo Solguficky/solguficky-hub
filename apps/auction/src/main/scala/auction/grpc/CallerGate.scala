@@ -52,6 +52,8 @@ object MethodAccess {
     "GetRaffle" -> bots,
     "SubmitPrediction" -> bots,
     "GetMyPredictions" -> bots,
+    "GetPredictionResults" -> bots,
+    "SettlePredictionResultsManually" -> Set(Caller.HubBot),
     "MarkInvoicePaid" -> Set(Caller.AuctionBot),
     "MarkInvoiceHandedOver" -> Set(Caller.AuctionBot),
     "ChooseFulfillment" -> Set(Caller.AuctionBot),

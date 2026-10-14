@@ -27,6 +27,15 @@ private final case class PredictionRow(round: String, nomination: String, lot: O
 /** Строка окна отправок: кто отправил, в какой раунд и что — исходный ответ повтору. */
 private final case class SentPrediction(participant: UUID, round: String, answers: String)
 
+/** Строка прогноза с участником: прогнозы всех участников для подсчёта итогов. */
+private final case class StoredPrediction(
+    participant: String,
+    round: String,
+    nomination: String,
+    lot: Option[String],
+    number: Option[Long]
+)
+
 /**
  * Прогнозы в таблицах `auction_prediction` и `auction_prediction_op` через пул плагина журнала — по той же причине, что
  * каталог лота. Имена раунда и номинаций в строке — формат хранения: их переименование делает строки нечитаемыми,
@@ -41,6 +50,9 @@ final class SlickPredictionStore(database: Database)(using ExecutionContext) ext
   private given GetResult[PredictionRow] = GetResult(row => PredictionRow(row.<<, row.<<, row.<<?, row.<<?))
 
   private given GetResult[SentPrediction] = GetResult(row => SentPrediction(UUID.fromString(row.<<), row.<<, row.<<))
+
+  private given GetResult[StoredPrediction] =
+    GetResult(row => StoredPrediction(row.<<, row.<<, row.<<, row.<<?, row.<<?))
 
   def submit(auction: AuctionId, command: SubmitForecast): Future[Either[SubmitRejected.OpIdTaken.type, Forecast]] = {
     val write = operation(auction, command.opId).flatMap {
@@ -89,7 +101,29 @@ final class SlickPredictionStore(database: Database)(using ExecutionContext) ext
       .map { rows =>
         rows.groupBy(_.round).map { (name, answers) =>
           val round = restoreRound(name)
-          round -> forecast(round, answers.toList.map(row => restoreNomination(row.nomination) -> answerOf(row)))
+          round -> forecast(
+            round,
+            answers.toList.map(row => restoreNomination(row.nomination) -> answerOf(row.lot, row.number))
+          )
+        }
+      }
+
+  def all(auction: AuctionId): Future[Map[PredictionRound, Map[ParticipantId, Forecast]]] =
+    database
+      .run(
+        sql"""SELECT participant_id::text, round, nomination, lot_id::text, number FROM auction_prediction
+              WHERE auction_id = ${auction.value.toString}::uuid"""
+          .as[StoredPrediction]
+      )
+      .map { rows =>
+        rows.groupBy(_.round).map { (name, ofRound) =>
+          val round = restoreRound(name)
+          round -> ofRound.groupBy(_.participant).map { (participant, ofParticipant) =>
+            ParticipantId(UUID.fromString(participant)) -> forecast(
+              round,
+              ofParticipant.toList.map(row => restoreNomination(row.nomination) -> answerOf(row.lot, row.number))
+            )
+          }
         }
       }
 
@@ -130,8 +164,8 @@ final class SlickPredictionStore(database: Database)(using ExecutionContext) ext
     if (sent.participant != participant.value || sent.round != roundName(round)) Left(SubmitRejected.OpIdTaken)
     else Right(forecast(round, decode(sent.answers)))
 
-  private def answerOf(row: PredictionRow): Answer =
-    (row.lot, row.number) match {
+  private def answerOf(lot: Option[String], number: Option[Long]): Answer =
+    (lot, number) match {
       case (Some(value), None) => Answer.Lot(LotId(UUID.fromString(value)))
       case (None, Some(value)) => Answer.Number(value)
       case _ => throw new IllegalStateException("prediction row holds neither a lot nor a number")

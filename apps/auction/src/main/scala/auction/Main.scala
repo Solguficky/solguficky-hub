@@ -10,6 +10,8 @@ import auction.grpc.CallerTable
 import auction.grpc.MethodAccess
 import auction.identity.GrpcRaffleAccess
 import auction.identity.IdentitySettings
+import auction.lot.AuctionId
+import auction.lot.ParticipantId
 import auction.meetup.GrpcMeetupAuthority
 import auction.meetup.MeetupsSettings
 import auction.persistence.DatabaseSettings
@@ -17,9 +19,13 @@ import auction.persistence.JournalSchema
 import auction.persistence.SlickDisplayNameStore
 import auction.persistence.SlickPredictionStore
 import auction.persistence.SlickRaffleTickets
+import auction.persistence.SlickResultsOutcomes
+import auction.persistence.SlickResultsStore
 import auction.naming.DisplayNameCommands
 import auction.raffle.RaffleSettings
 import auction.publication.PublicationSettings
+import auction.results.ResultNames
+import auction.results.ResultsForecasts
 import auction.telemetry.DeadlineMetrics
 import auction.telemetry.ProjectionMetrics
 import auction.telemetry.PublicationMetrics
@@ -127,7 +133,12 @@ object Main {
     val clock = Clock.systemUTC()
     val sharding = AuctionNode.join(system)
     AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
-    val raffleTickets = SlickRaffleTickets(system, DisplayNameCommands(SlickDisplayNameStore(system)))
+    val displayNames = DisplayNameCommands(SlickDisplayNameStore(system))
+    val raffleTickets = SlickRaffleTickets(system, displayNames)
+    val resultNames: ResultNames = new ResultNames {
+      def names(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, String]] =
+        displayNames.names(auction, participants).map(_.map((participant, name) => participant -> name.text))
+    }
     AuctionNode.registerRaffles(
       system,
       sharding,
@@ -138,6 +149,24 @@ object Main {
       raffleTickets,
       raffle
     )
+    val predictionStore = SlickPredictionStore(system)
+    val predictions = AuctionNode.registerPredictions(
+      sharding,
+      clock,
+      UuidV7.generator(clock),
+      predictionStore,
+      askTimeout
+    )
+    val results = AuctionNode.registerResults(
+      sharding,
+      clock,
+      UuidV7.generator(clock),
+      SlickResultsOutcomes(system),
+      ResultsForecasts.of(predictionStore),
+      resultNames,
+      SlickResultsStore(system),
+      askTimeout
+    )
     AuctionNode.registerAuctions(
       system,
       sharding,
@@ -146,13 +175,8 @@ object Main {
       askTimeout,
       AuctionRaffle.sharded(sharding, askTimeout),
       AuctionNode.registerSlot(sharding, clock, UuidV7.generator(clock), slot),
-      AuctionNode.registerPredictions(
-        sharding,
-        clock,
-        UuidV7.generator(clock),
-        SlickPredictionStore(system),
-        askTimeout
-      )
+      predictions,
+      results
     )
     AuctionNode.eraseRaffleNames(system, raffleTickets, clock, erasureEvery)
     if (identity.url.isEmpty)

@@ -107,6 +107,7 @@ import auction.projection.LotViews
 import auction.v1.auction.BidSource as BidSourceMessage
 import auction.v1.auction.Money as MoneyMessage
 import auction.v1.auction.StepPolicy as StepPolicyMessage
+import auction.v1.auction as model
 import auction.v1.auction_service as wire
 import ch.qos.logback.classic.Logger as LogbackLogger
 import ch.qos.logback.classic.spi.ILoggingEvent
@@ -545,11 +546,11 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     wire.PredictionRound.PREDICTION_ROUND_CATALOG,
     List(
       wire.PredictionAnswer(
-        wire.PredictionNomination.PREDICTION_NOMINATION_TOTAL_BIDS,
+        model.PredictionNomination.PREDICTION_NOMINATION_TOTAL_BIDS,
         wire.PredictionAnswer.Answer.Number(120)
       ),
       wire.PredictionAnswer(
-        wire.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT,
+        model.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT,
         wire.PredictionAnswer.Answer.LotId(lotId)
       )
     ),
@@ -569,7 +570,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val numberForLot = predictionOf(lot).withAnswers(
         List(
           wire.PredictionAnswer(
-            wire.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT,
+            model.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT,
             wire.PredictionAnswer.Answer.Number(5)
           )
         )
@@ -580,7 +581,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val stranger = "01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e60"
       val foreign = call().submitPrediction(predictionOf(stranger)).futureValue.getRefused.getLotNotInRound
       foreign.lotId shouldBe stranger
-      foreign.nomination shouldBe wire.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT
+      foreign.nomination shouldBe model.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT
       call(names = Names())
         .submitPrediction(predictionOf(lot))
         .futureValue
@@ -597,8 +598,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val accepted = answered.submitPrediction(predictionOf(lot)).futureValue.getAccepted
       accepted.round shouldBe wire.PredictionRound.PREDICTION_ROUND_CATALOG
       accepted.answers.map(_.nomination) shouldBe List(
-        wire.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT,
-        wire.PredictionNomination.PREDICTION_NOMINATION_TOTAL_BIDS
+        model.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT,
+        model.PredictionNomination.PREDICTION_NOMINATION_TOTAL_BIDS
       )
       games.reached shouldBe Vector(SubmitForecast(ViewerId, guess, OpId(UUID.fromString(raffleOp))))
 

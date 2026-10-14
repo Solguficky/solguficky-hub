@@ -570,3 +570,117 @@ message RaffleState {
 // The draw was made: the winning ticket is in the state and never changes. The
 // state of this fact always holds at least one ticket.
 message RaffleDrawn {}
+
+// A recorded public fact about the prediction results of one auction: the ten
+// nominations of ADR-067 and who guessed them. It is not a fact of the auction
+// journal: the results are counted from the prediction rows of the two closed
+// rounds and from the outcomes of the lots, and they live in a journal of their
+// own - the settlement entity. The envelope is the one of LotEvent; which
+// message arrived is told by the subject, as it is with the three above.
+message PredictionResultsEvent {
+  // Canonical lowercase UUIDv7 with hyphens. Identifies the row of the journal
+  // and is the same value again when that row is published more than once.
+  string event_id = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: the auction the results belong to.
+  // The aggregate here is the results of an auction, so the envelope names the
+  // auction instead of repeating state.auction_id.
+  string prediction_results_id = 2;
+
+  // Position of the event in the journal of the results, starting at 1.
+  int64 version = 3;
+
+  // RFC 3339 instant in UTC: the server time the results were counted at.
+  string occurred_at = 4;
+
+  // The public results after the event was applied.
+  PredictionResultsState state = 5;
+
+  // Why the state changed - the occasion. Exactly one is set.
+  oneof occasion {
+    PredictionResultsSettled prediction_results_settled = 6;
+  }
+}
+
+// The public results of the prediction game of one auction.
+message PredictionResultsState {
+  // Canonical lowercase UUIDv5 with hyphens: the auction of the results.
+  string auction_id = 1;
+
+  // Every nomination that was played, in the order of ADR-067. A nomination
+  // with no sales is absent: it has neither a value nor winners.
+  repeated NominationOutcome nominations = 2;
+
+  // Every participant who predicted, with their own result. Empty on a
+  // settlement recorded by hand: it carries no counted results.
+  repeated ParticipantResult participants = 3;
+
+  // True when the results were recorded by hand rather than counted. The
+  // nominations are empty then.
+  bool manual = 4;
+}
+
+// The outcome of one nomination.
+message NominationOutcome {
+  // UNSPECIFIED is not a value.
+  PredictionNomination nomination = 1;
+
+  // The итоговое значение: the winning lots or a number. Unset on a nomination
+  // that was not played.
+  oneof value {
+    NominationLots lots = 2;
+    int64 number = 3;
+  }
+
+  // How many guessed. It stays after a name is erased: only the name goes.
+  uint32 winners = 4;
+
+  // Who guessed, by display name as the history of bids reads it.
+  repeated WinnerName winner_names = 5;
+}
+
+// The winning lots of a lot answer: every lot that shared the first place.
+message NominationLots {
+  // Canonical lowercase UUIDv7 with hyphens.
+  repeated string lot_ids = 1;
+}
+
+message WinnerName {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string participant_id = 1;
+
+  // The display name of the participant in the auction.
+  string name = 2;
+}
+
+// The result of one participant: the nomination they answered and how it went.
+message ParticipantResult {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string participant_id = 1;
+
+  repeated Participation participation = 2;
+}
+
+message Participation {
+  // UNSPECIFIED is not a value.
+  PredictionNomination nomination = 1;
+
+  // Exactly one is set.
+  oneof result {
+    Guessed guessed = 2;
+    Missed missed = 3;
+  }
+}
+
+// The participant named a lot that shared the first place, or a number with the
+// smallest deviation.
+message Guessed {}
+
+message Missed {
+  // The distance from the итог for a number answer. Unset for a lot answer:
+  // a wrong lot has no distance. Absent, not zero.
+  optional int64 deviation = 1;
+}
+
+// The results of both rounds were counted and recorded. Terminal.
+message PredictionResultsSettled {}

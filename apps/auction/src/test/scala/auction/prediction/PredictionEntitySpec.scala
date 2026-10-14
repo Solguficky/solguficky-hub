@@ -75,6 +75,14 @@ final class PredictionEntitySpec extends AnyWordSpec with Matchers with BeforeAn
         round -> forecast
       }))
 
+    def all(auction: AuctionId): Future[Map[PredictionRound, Map[ParticipantId, Forecast]]] =
+      Future.successful(synchronized {
+        rows
+          .collect { case ((`auction`, round, participant), forecast) => (round, participant, forecast) }
+          .groupBy(_._1)
+          .map((round, ofRound) => round -> ofRound.map((_, participant, forecast) => participant -> forecast).toMap)
+      })
+
     def discard(auction: AuctionId): Future[Unit] = synchronized {
       discards += 1
       rows = rows.filterNot(_._1._1 == auction)

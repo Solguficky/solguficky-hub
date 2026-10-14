@@ -286,6 +286,43 @@ enum BidSource {
   BID_SOURCE_FLOOR = 2;
 }
 
+// The ten nominations of the predictions game (ADR-067), shared by the reads
+// and the results fact: it lived in auction_service.proto while only the
+// service spoke of it, and moved here when the bus fact named it too.
+enum PredictionNomination {
+  PREDICTION_NOMINATION_UNSPECIFIED = 0;
+
+  // Catalog round, a lot.
+  PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT = 1;
+
+  // Catalog round, a number.
+  PREDICTION_NOMINATION_TOTAL_SALES = 2;
+
+  // Catalog round, a lot.
+  PREDICTION_NOMINATION_MOST_BIDS_LOT = 3;
+
+  // Catalog round, a lot.
+  PREDICTION_NOMINATION_BIGGEST_GROWTH_LOT = 4;
+
+  // Catalog round, a lot.
+  PREDICTION_NOMINATION_MOST_BIDDERS_LOT = 5;
+
+  // Catalog round, a number.
+  PREDICTION_NOMINATION_TOTAL_BIDS = 6;
+
+  // Final round, a lot.
+  PREDICTION_NOMINATION_FINAL_MOST_EXPENSIVE_LOT = 7;
+
+  // Final round, a number.
+  PREDICTION_NOMINATION_FINAL_TOTAL_SALES = 8;
+
+  // Final round, a lot.
+  PREDICTION_NOMINATION_FINAL_BIGGEST_GROWTH_LOT = 9;
+
+  // Final round, a number.
+  PREDICTION_NOMINATION_FINAL_TOTAL_BIDS = 10;
+}
+
 // How the winner receives a sold lot. The winner chooses it; until then the
 // method is unspecified, and that is a real state rather than a default.
 enum FulfillmentMethod {

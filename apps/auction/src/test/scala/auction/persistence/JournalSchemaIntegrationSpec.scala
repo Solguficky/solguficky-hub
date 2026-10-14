@@ -41,10 +41,10 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
 
   "journal schema" should {
 
-    "create the journal, tag, snapshot, lot catalog, display name, FAQ, lot projection, lot publication, auction projection, lot statistics, final metrics, raffle ticket, auction publication and prediction tables on an empty database" in {
+    "create the journal, tag, snapshot, lot catalog, display name, FAQ, lot projection, lot publication, auction projection, lot statistics, final metrics, raffle ticket, auction publication, prediction and results tables on an empty database" in {
       val database = freshDatabase()
 
-      JournalSchema.migrate(database) shouldBe 13
+      JournalSchema.migrate(database) shouldBe 14
 
       tables(database) should contain allOf (
         "event_journal",
@@ -70,6 +70,7 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
         "auction_publication",
         "auction_prediction",
         "auction_prediction_op",
+        "auction_result",
         JournalSchema.HistoryTable
       )
     }
@@ -80,7 +81,7 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
 
       JournalSchema.migrate(database) shouldBe 0
 
-      appliedVersions(database) shouldBe List("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13")
+      appliedVersions(database) shouldBe List("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14")
     }
 
     "let two processes migrating the same empty database at once apply the schema exactly once" in {
@@ -91,8 +92,8 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
         60.seconds
       )
 
-      executed.sum shouldBe 13
-      appliedVersions(database) shouldBe List("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13")
+      executed.sum shouldBe 14
+      appliedVersions(database) shouldBe List("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14")
     }
   }
 }

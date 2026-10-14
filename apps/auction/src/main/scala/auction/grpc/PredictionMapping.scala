@@ -1,6 +1,7 @@
 package auction.grpc
 
 import auction.catalog.LotId
+import auction.contract.PredictionValues
 import auction.lot.AuctionId
 import auction.lot.OpId
 import auction.prediction.Answer
@@ -11,6 +12,7 @@ import auction.prediction.Nomination
 import auction.prediction.PredictionRound
 import auction.prediction.RoundStatus
 import auction.prediction.SubmitRejected
+import auction.v1.auction as model
 import auction.v1.auction_service as wire
 import io.grpc.Status
 
@@ -145,21 +147,8 @@ object PredictionMapping {
       case PredictionRound.Final => wire.PredictionRound.PREDICTION_ROUND_FINAL
     }
 
-  private val nominations: List[(Nomination, wire.PredictionNomination)] = List(
-    Nomination.MostExpensiveLot -> wire.PredictionNomination.PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT,
-    Nomination.TotalSales -> wire.PredictionNomination.PREDICTION_NOMINATION_TOTAL_SALES,
-    Nomination.MostBidsLot -> wire.PredictionNomination.PREDICTION_NOMINATION_MOST_BIDS_LOT,
-    Nomination.BiggestGrowthLot -> wire.PredictionNomination.PREDICTION_NOMINATION_BIGGEST_GROWTH_LOT,
-    Nomination.MostBiddersLot -> wire.PredictionNomination.PREDICTION_NOMINATION_MOST_BIDDERS_LOT,
-    Nomination.TotalBids -> wire.PredictionNomination.PREDICTION_NOMINATION_TOTAL_BIDS,
-    Nomination.FinalMostExpensiveLot -> wire.PredictionNomination.PREDICTION_NOMINATION_FINAL_MOST_EXPENSIVE_LOT,
-    Nomination.FinalTotalSales -> wire.PredictionNomination.PREDICTION_NOMINATION_FINAL_TOTAL_SALES,
-    Nomination.FinalBiggestGrowthLot -> wire.PredictionNomination.PREDICTION_NOMINATION_FINAL_BIGGEST_GROWTH_LOT,
-    Nomination.FinalTotalBids -> wire.PredictionNomination.PREDICTION_NOMINATION_FINAL_TOTAL_BIDS
-  )
+  private def nominationOf(nomination: Nomination): model.PredictionNomination = PredictionValues.nomination(nomination)
 
-  private def nominationOf(nomination: Nomination): wire.PredictionNomination = nominations.toMap.apply(nomination)
-
-  private def nominationFrom(value: wire.PredictionNomination): Either[FormError, Nomination] =
-    nominations.collectFirst { case (nomination, `value`) => nomination }.toRight(FormError("answers.nomination"))
+  private def nominationFrom(value: model.PredictionNomination): Either[FormError, Nomination] =
+    PredictionValues.restore(value).toRight(FormError("answers.nomination"))
 }

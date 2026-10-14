@@ -53,6 +53,8 @@ import auction.v1.auction_service.GetAuctionLotStatisticsRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
 import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.GetLotRequest
+import auction.v1.auction_service.GetPredictionResultsRequest
+import auction.v1.auction_service.SettlePredictionResultsManuallyRequest
 import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.GetMeetupAuctionRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
@@ -368,6 +370,17 @@ object RequestMapping {
 
   /** Статистика лотов несёт то же, что пульт: аукцион сходки и смотрящего, которого Meetups проверит на право. */
   def getAuctionLotStatistics(request: GetAuctionLotStatisticsRequest): Either[FormError, ConsoleQuery] =
+    administered(request.viewer, request.auctionId)
+
+  /** Чтение итогов прогнозов смотрящим: аукцион сходки; право `place_bids` граница проверит до чтения. */
+  def getPredictionResults(request: GetPredictionResultsRequest): Either[FormError, PredictionQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+    } yield PredictionQuery(auction, acting)
+
+  /** Ручная отметка итогов — право администратора сходки, как у пульта: та же форма запроса. */
+  def settlePredictionResults(request: SettlePredictionResultsManuallyRequest): Either[FormError, ConsoleQuery] =
     administered(request.viewer, request.auctionId)
 
   private def administered(viewer: Option[ViewerMessage], auctionId: String): Either[FormError, ConsoleQuery] =
