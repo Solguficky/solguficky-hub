@@ -687,6 +687,30 @@ object ResponseMapping {
   def statisticsDenied(denial: Denial): Either[Status, wire.GetAuctionLotStatisticsResponse] =
     consoleRefusal(denial).map(wire.GetAuctionLotStatisticsResponse().withRefused)
 
+  /** Отказ права на ручную отметку итогов — та же пара, что у пульта: контракт делит с ним отказы. */
+  def settleResultsDenied(denial: Denial): Either[Status, wire.SettlePredictionResultsManuallyResponse] =
+    settleResultsRefusal(denial).map(wire.SettlePredictionResultsManuallyResponse().withRefused)
+
+  /** Ручная отметка принята: подсчёт подавлен, значения номинаций не несутся (ADR-067, п. 8). */
+  val settleResultsAccepted: wire.SettlePredictionResultsManuallyResponse =
+    wire.SettlePredictionResultsManuallyResponse().withAccepted(wire.PredictionResultsByHand())
+
+  private def settleResultsRefusal(denial: Denial): Either[Status, wire.SettlePredictionResultsManuallyRefusal] = {
+    import wire.SettlePredictionResultsManuallyRefusal.Reason
+    denial match {
+      case Denial.NotAdministrator =>
+        Right(
+          wire.SettlePredictionResultsManuallyRefusal(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+        )
+      case Denial.MeetupNotFound =>
+        Right(wire.SettlePredictionResultsManuallyRefusal(Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Denial.Unavailable => Left(unavailable)
+      case Denial.AuctionNotFound => Left(auctionNotFound)
+      case Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+        throw new IllegalStateException(s"results authority answered $denial")
+    }
+  }
+
   private def consoleRefusal(denial: Denial): Either[Status, wire.GetAuctionConsoleRefusal] = {
     import wire.GetAuctionConsoleRefusal.Reason
     denial match {

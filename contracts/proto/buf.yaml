@@ -25,3 +25,11 @@ breaking:
   # форму.
   ignore:
     - notifications/v1/notifications_service.proto
+  # Перенос значения, а не его удаление: enum PredictionNomination переехал из
+  # схемы сервиса в auction.proto, чтобы его назвал и факт шины (PER-490). На
+  # проводе это то же значение auction.v1.PredictionNomination, и все
+  # потребители меняются тем же изменением, поэтому FILE видит только удаление
+  # из файла. Исключение снимает следующее изменение схем.
+  ignore_only:
+    ENUM_NO_DELETE:
+      - auction/v1/auction_service.proto

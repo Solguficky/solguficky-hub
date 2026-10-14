@@ -64,6 +64,8 @@ service AuctionService {
   rpc GetRaffle(GetRaffleRequest) returns (GetRaffleResponse);
   rpc SubmitPrediction(SubmitPredictionRequest) returns (SubmitPredictionResponse);
   rpc GetMyPredictions(GetMyPredictionsRequest) returns (GetMyPredictionsResponse);
+  rpc GetPredictionResults(GetPredictionResultsRequest) returns (GetPredictionResultsResponse);
+  rpc SettlePredictionResultsManually(SettlePredictionResultsManuallyRequest) returns (SettlePredictionResultsManuallyResponse);
   rpc MarkInvoicePaid(MarkInvoicePaidRequest) returns (MarkInvoicePaidResponse);
   rpc MarkInvoiceHandedOver(MarkInvoiceHandedOverRequest) returns (MarkInvoiceHandedOverResponse);
   rpc ChooseFulfillment(ChooseFulfillmentRequest) returns (ChooseFulfillmentResponse);
@@ -1889,40 +1891,85 @@ enum PredictionRoundStatus {
   PREDICTION_ROUND_STATUS_CANCELLED = 4;
 }
 
-// The ten nominations. Each belongs to one round and asks for either a lot or
-// a number; an answer of the other round or the other kind is malformed.
-enum PredictionNomination {
-  PREDICTION_NOMINATION_UNSPECIFIED = 0;
+message PredictionResultsByHand {}
 
-  // Catalog round, a lot.
-  PREDICTION_NOMINATION_MOST_EXPENSIVE_LOT = 1;
+message GetPredictionResultsRequest {
+  // The viewer must hold place_bids. The response carries the winners by name
+  // and the viewer's own result; nobody else's prediction is readable here.
+  Viewer viewer = 1;
 
-  // Catalog round, a number.
-  PREDICTION_NOMINATION_TOTAL_SALES = 2;
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+}
 
-  // Catalog round, a lot.
-  PREDICTION_NOMINATION_MOST_BIDS_LOT = 3;
+message GetPredictionResultsResponse {
+  // Exactly one is set.
+  oneof outcome {
+    // The results are counted and fixed.
+    PredictionResultsRead counted = 1;
 
-  // Catalog round, a lot.
-  PREDICTION_NOMINATION_BIGGEST_GROWTH_LOT = 4;
+    // The auction is over, but the results are not counted yet: the screen says
+    // "итоги после финала", not an empty list.
+    PredictionResultsAfterFinal after_final = 2;
 
-  // Catalog round, a lot.
-  PREDICTION_NOMINATION_MOST_BIDDERS_LOT = 5;
+    // The results were recorded by hand: they carry no counted values.
+    PredictionResultsByHand by_hand = 3;
 
-  // Catalog round, a number.
-  PREDICTION_NOMINATION_TOTAL_BIDS = 6;
+    // The auction was cancelled: the game has no results.
+    PredictionsCancelled cancelled = 4;
+  }
+}
 
-  // Final round, a lot.
-  PREDICTION_NOMINATION_FINAL_MOST_EXPENSIVE_LOT = 7;
+// The counted results: the winners of each nomination and the viewer's own
+// result. Field numbers and types match auction.v1.PredictionResultsState so
+// that the read and the fact stay readable side by side.
+message PredictionResultsRead {
+  // Every nomination that was played, in nomination order.
+  repeated NominationOutcome nominations = 1;
 
-  // Final round, a number.
-  PREDICTION_NOMINATION_FINAL_TOTAL_SALES = 8;
+  // The viewer's own result by nomination; a nomination they did not answer is
+  // absent.
+  repeated OwnNominationResult mine = 2;
+}
 
-  // Final round, a lot.
-  PREDICTION_NOMINATION_FINAL_BIGGEST_GROWTH_LOT = 9;
+message OwnNominationResult {
+  // UNSPECIFIED is not a value.
+  PredictionNomination nomination = 1;
 
-  // Final round, a number.
-  PREDICTION_NOMINATION_FINAL_TOTAL_BIDS = 10;
+  // Exactly one is set.
+  oneof result {
+    Guessed guessed = 2;
+    Missed missed = 3;
+  }
+}
+
+// The auction reached Finished and the results are not counted yet.
+message PredictionResultsAfterFinal {}
+
+message SettlePredictionResultsManuallyRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens.
+  string auction_id = 2;
+}
+
+message SettlePredictionResultsManuallyResponse {
+  // Exactly one is set. Recording the marker on an auction whose results are
+  // already settled, by hand or by count, is accepted, not refused, and writes
+  // no second fact.
+  oneof outcome {
+    PredictionResultsByHand accepted = 1;
+    SettlePredictionResultsManuallyRefusal refused = 2;
+  }
+}
+
+message SettlePredictionResultsManuallyRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+  }
 }
 
 message MarkInvoicePaidRequest {

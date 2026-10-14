@@ -8,6 +8,7 @@ import auction.entity.AuctionGateway
 import auction.entity.AuctionLots
 import auction.entity.AuctionPredictions
 import auction.entity.AuctionRaffle
+import auction.entity.AuctionResults
 import auction.entity.AuctionSlot
 import auction.entity.LotEntity
 import auction.entity.LotGateway
@@ -26,6 +27,7 @@ import auction.projection.AuctionViewHandler
 import auction.projection.LotProjection
 import auction.projection.LotViewHandler
 import auction.projection.RaffleProjection
+import auction.projection.ResultsProjection
 import auction.publication.AuctionPublicationHandler
 import auction.publication.JetStreamPublisher
 import auction.publication.LotOutbox
@@ -33,6 +35,7 @@ import auction.publication.LotPublicationHandler
 import auction.publication.OutboxRelay
 import auction.publication.PublicationSettings
 import auction.publication.RafflePublicationHandler
+import auction.publication.ResultsPublicationHandler
 import auction.telemetry.DeadlineMetrics
 import auction.telemetry.ProjectionMetrics
 import auction.telemetry.PublicationMetrics
@@ -41,6 +44,7 @@ import auction.persistence.SlickLotCatalogStore
 import auction.persistence.SlickFaqAcknowledgements
 import auction.persistence.SlickPredictionStore
 import auction.persistence.SlickRaffleTickets
+import auction.persistence.SlickResultsStore
 import auction.prediction.PredictionEntity
 import auction.prediction.PredictionGateway
 import auction.prediction.PredictionStore
@@ -50,6 +54,12 @@ import auction.raffle.RaffleEntity
 import auction.raffle.RaffleGateway
 import auction.raffle.RaffleTickets
 import auction.raffle.Seed
+import auction.results.ResultNames
+import auction.results.ResultsEntity
+import auction.results.ResultsForecasts
+import auction.results.ResultsGateway
+import auction.results.ResultsOutcomes
+import auction.results.ResultsStore
 import auction.slot.SlotHolders
 import auction.slot.TradingSlotEntity
 import auction.watch.AuctionChanges
@@ -130,7 +140,8 @@ object AuctionNode {
       askTimeout: FiniteDuration,
       raffle: AuctionRaffle = AuctionRaffle.none,
       slot: AuctionSlot = AuctionSlot.none,
-      predictions: AuctionPredictions = AuctionPredictions.none
+      predictions: AuctionPredictions = AuctionPredictions.none,
+      results: AuctionResults = AuctionResults.none
   ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] = {
     val lots = AuctionLots.sharded(sharding, askTimeout)
     sharding.init(
@@ -143,7 +154,8 @@ object AuctionNode {
           shard = Some(context.shard),
           raffle = raffle,
           slot = slot,
-          predictions = predictions
+          predictions = predictions,
+          results = results
         )
       }
         .withSettings(remembered(system))
@@ -184,6 +196,29 @@ object AuctionNode {
   ): AuctionPredictions = {
     sharding.init(Entity(PredictionEntity.TypeKey)(context => PredictionEntity(context.entityId, clock, newId, store)))
     AuctionPredictions.sharded(sharding, askTimeout)
+  }
+
+  /**
+   * Регистрирует entity итогов прогнозов (ADR-067, п. 8); идентификатор entity — идентификатор аукциона. Регистрируется
+   * раньше аукциона: подсчёт ведёт аукцион. Таймеров у неё нет, поэтому шардинг её не помнит. Снимок исходов лотов
+   * приносит порт [[ResultsOutcomes]] — торгов entity не знает.
+   */
+  def registerResults(
+      sharding: ClusterSharding,
+      clock: Clock,
+      newId: () => UUID,
+      outcomes: ResultsOutcomes,
+      forecasts: ResultsForecasts,
+      names: ResultNames,
+      store: ResultsStore,
+      askTimeout: FiniteDuration
+  ): AuctionResults = {
+    sharding.init(
+      Entity(ResultsEntity.TypeKey)(context =>
+        ResultsEntity(context.entityId, clock, newId, outcomes, forecasts, names, store)
+      )
+    )
+    AuctionResults.sharded(sharding, askTimeout)
   }
 
   /** Запоминание entity в журнале — у аукциона и у розыгрыша: их таймеры обязаны пережить рестарт процесса. */
@@ -309,6 +344,11 @@ object AuctionNode {
       RaffleProjection.PublicationName,
       RaffleProjection.backlog(system, RaffleProjection.PublicationName, backlogTimeout)
     )
+    ResultsProjection.init(system, ResultsProjection.PublicationName, metrics, () => ResultsPublicationHandler(system))
+    metrics.watchBacklog(
+      ResultsProjection.PublicationName,
+      ResultsProjection.backlog(system, ResultsProjection.PublicationName, backlogTimeout)
+    )
     val pool = SlickExtension(system).database(system.settings.config.getConfig("jdbc-journal")).database.source
     val outbox = LotOutbox(() => pool.createConnection())
     publicationMetrics.watchOutbox(() => outbox.backlog())
@@ -399,6 +439,7 @@ object AuctionNode {
       raffles = RaffleGateway.sharded(sharding, askTimeout),
       raffleNames = raffleTickets.names,
       predictions = PredictionGateway.sharded(sharding, SlickPredictionStore(system), askTimeout),
+      results = ResultsGateway.sharded(sharding, SlickResultsStore(system), askTimeout),
       watchViews = SlickAuctionWatchViews(system),
       changes = changes
     )

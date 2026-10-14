@@ -16,6 +16,7 @@ import auction.lot.ScheduleLotRejected
 import auction.lot.UnmarkForFinalRejected
 import auction.lot.WithdrawLotRejected
 import auction.prediction.PredictionRound
+import auction.results.SettleRefused
 import auction.slot.TradingSlotEntity
 import net.logstash.logback.argument.StructuredArguments
 import org.apache.pekko.Done
@@ -139,6 +140,12 @@ enum OpeningRejected {
  * состава возвращаются в торги только в финале, а удалённый аукцион ничего не переспрашивает. Прогнозы не ответили —
  * ответа на команду нет, и повтор с тем же `op_id` дописывает её, как у `StartNextLot`. Знание «прогнозы ответили»
  * несохраняемо, как знание о лотах: все команды прогнозов идемпотентны.
+ *
+ * Итоги прогнозов (ADR-067, п. 8, PER-490) entity просит у отдельной entity портом [[AuctionResults]]: `Settle` уходит
+ * там же, где записан `AuctionFinished`, и в конце онлайн-торгов без финалистов, а повтор — на тике переспроса и после
+ * recovery, пока итоги не подтвердят подсчёт. Неполный снимок исходов лотов — `NotComplete` — подсчёт не начинает, и
+ * это штатное ожидание, а не сбой: следующий тик спросит снова. Отменённый аукцион `Settle` не зовёт — итогов у него
+ * нет. Удаление до торгов чистит строки итогов на всякий случай: у аукциона до торгов их быть не может.
  */
 object AuctionEntity {
 
@@ -357,6 +364,15 @@ object AuctionEntity {
   ) extends Command
 
   /**
+   * Ответ итогов на подсчёт; неудача — ответа нет, и подсчёт повторится на тике переспроса. `NotComplete` — снимок
+   * исходов неполон: подсчёт не начался, и следующий тик спросит снова (ADR-067, п. 8).
+   */
+  private[entity] final case class ResultsAnswered(answer: Try[Either[SettleRefused, Done]]) extends Command
+
+  /** Ответ итогов на удаление вместе с аукционом; неудача — ответа нет, и запись об этом одна. */
+  private[entity] final case class ResultsDiscarded(answer: Try[Done]) extends Command
+
+  /**
    * Ответ слота на занятие вместе с командой открытия, которая его ждёт, и номером события аукциона на момент занятия;
    * неудача — ответа нет.
    */
@@ -414,6 +430,8 @@ object AuctionEntity {
    *   слот торгов сообщества: занятие до открытия торгов и освобождение в конечном состоянии
    * @param predictions
    *   прогнозы аукциона: раунды по фактам аукциона, отмена и удаление вместе с ним
+   * @param results
+   *   итоги прогнозов: подсчёт по переходу в `Finished`, удаление вместе с аукционом
    */
   def apply(
       auctionId: String,
@@ -425,7 +443,8 @@ object AuctionEntity {
       shard: Option[ActorRef[ClusterSharding.ShardCommand]] = None,
       raffle: AuctionRaffle = AuctionRaffle.none,
       slot: AuctionSlot = AuctionSlot.none,
-      predictions: AuctionPredictions = AuctionPredictions.none
+      predictions: AuctionPredictions = AuctionPredictions.none,
+      results: AuctionResults = AuctionResults.none
   ): Behavior[Command] =
     Behaviors.withTimers[Command] { timers =>
       Behaviors.setup { context =>
@@ -532,6 +551,30 @@ object AuctionEntity {
             }
             context.pipeToSelf(asked)(PredictionAnswered(step, generation, _))
           }
+
+        // Подтвердили ли итоги подсчёт в этой инкарнации; рестарт спрашивает снова — подсчёт идемпотентен.
+        var resultsSettled = false
+
+        /**
+         * Подсчёт итогов по переходу в `Finished` (ADR-067, п. 8): аукцион зовёт его там же, где записан
+         * `AuctionFinished`, и повторяет на тике переспроса и после recovery, пока итоги не подтвердят подсчёт.
+         * `NotComplete` — снимок исходов отстал от продаж: это штатное ожидание, и следующий тик спросит снова.
+         */
+        def followResults(auction: Auction): Unit =
+          auction.state match {
+            case AuctionState.Finished(_, _) if !resultsSettled =>
+              context
+                .pipeToSelf(Try(results.settle(auctionId)).fold(Future.failed, answer => answer))(ResultsAnswered(_))
+            case _ => ()
+          }
+
+        def warnResults(message: String, failure: Throwable): Unit =
+          context.log.warn(
+            message,
+            StructuredArguments.keyValue("auction_id", auctionId),
+            StructuredArguments.keyValue("error_category", "dependency_unavailable"),
+            StructuredArguments.keyValue("error", failure.getClass.getName)
+          )
 
         // Сколько занятий слота в пути: повтор открытия в полёте шлёт своё занятие, и «занят» держится до последнего
         // ответа. Рестарт начинает с нуля.
@@ -643,6 +686,13 @@ object AuctionEntity {
                   case AuctionDecision.Accepted(_) =>
                     progress = PredictionProgress.empty
                     generation += 1
+                    // Итогов у аукциона до торгов быть не может; удаление идемпотентно и чистит строки на всякий случай.
+                    context.pipeToSelf(
+                      Try(results.discard(auctionId)) match {
+                        case Success(answer) => answer
+                        case Failure(failure) => Future.failed(failure)
+                      }
+                    )(ResultsDiscarded(_))
                   case AuctionDecision.Repeated(_) | AuctionDecision.Unchanged => ()
                 }
                 replyTo ! Right(answer)
@@ -771,6 +821,7 @@ object AuctionEntity {
                     cancelRaffle(after.auction)
                     confirmSlot(after.auction)
                     releaseSlot(after.auction)
+                    followResults(after.auction)
                 }
               }
             // Общий дедлайн ждёт закрытия раунда каталога, пока торги не начались, и спрашивается снова через тик.
@@ -802,6 +853,8 @@ object AuctionEntity {
                     case Right(decision) =>
                       record(state.auction, decision, end.opId, Initiator.Scheduler, clock, newId) { (auction, _) =>
                         releaseSlot(auction)
+                        // Аукцион без финалистов заканчивается здесь, а не `FinishDue`: итоги считаются и у него.
+                        followResults(auction)
                       }
                   }
               }
@@ -912,6 +965,7 @@ object AuctionEntity {
                     case Right(decision) =>
                       record(state.auction, decision, finish.opId, Initiator.Scheduler, clock, newId) { (auction, _) =>
                         releaseSlot(auction)
+                        followResults(auction)
                       }
                   }
               }
@@ -936,6 +990,16 @@ object AuctionEntity {
               }
             case PredictionAnswered(_, _, Failure(failure)) =>
               Effect.none.thenRun(_ => warnPredictions("predictions did not answer the auction", failure))
+            // Снимок исходов отстал от продаж: подсчёт не начался, и следующий тик спросит снова — без записи.
+            case ResultsAnswered(Success(Left(SettleRefused.NotComplete))) => Effect.none
+            case ResultsAnswered(Success(Right(_))) =>
+              resultsSettled = true
+              Effect.none
+            case ResultsAnswered(Failure(failure)) =>
+              Effect.none.thenRun(_ => warnResults("results did not answer the auction", failure))
+            case ResultsDiscarded(Success(_)) => Effect.none
+            case ResultsDiscarded(Failure(failure)) =>
+              Effect.none.thenRun(_ => warnResults("results did not discard", failure))
             case RaffleAnswered(Success(_)) =>
               raffleOpened = true
               Effect.none
@@ -1049,6 +1113,7 @@ object AuctionEntity {
             cancelRaffle(state.auction)
             confirmSlot(state.auction)
             releaseSlot(state.auction)
+            followResults(state.auction)
             armPrebidding(state.auction)
           }
       }

@@ -85,6 +85,7 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.auction.invoice_paid': auction_events_pb2.InvoiceEvent,
     'events.auction.invoice_handed_over': auction_events_pb2.InvoiceEvent,
     'events.auction.raffle_drawn': auction_events_pb2.RaffleEvent,
+    'events.auction.prediction_results_settled': auction_events_pb2.PredictionResultsEvent,
 }
 
 COMMAND_TYPES: dict[str, Type[Message]] = {}

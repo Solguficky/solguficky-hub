@@ -29,6 +29,8 @@ import auction.raffle.RaffleGateway
 import auction.raffle.RaffleState
 import auction.raffle.RaffleView
 import auction.raffle.Register
+import auction.results.ResultsGateway
+import auction.results.ResultsView
 import auction.v1.auction_service as wire
 import auction.watch.AuctionChanges
 import io.grpc.Status
@@ -70,7 +72,8 @@ final class AuctionGrpcService(
     watchViews: AuctionWatchViews = AuctionGrpcService.NoWatch,
     changes: AuctionChanges = AuctionGrpcService.NoChanges,
     caller: Option[Caller] = None,
-    predictions: PredictionGateway = AuctionGrpcService.NoPredictions
+    predictions: PredictionGateway = AuctionGrpcService.NoPredictions,
+    results: ResultsGateway = AuctionGrpcService.NoResults
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -95,7 +98,8 @@ final class AuctionGrpcService(
       watchViews,
       changes,
       caller,
-      predictions
+      predictions,
+      results
     )
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
@@ -677,6 +681,50 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Итоги прогнозов аукциона (ADR-067, пп. 8–9): право `place_bids`, аукцион — у entity, затем чтение. Отменённый
+   * аукцион итогов не отдаёт: `cancelled`, даже если подсчёт каким-то образом состоялся. Чужие прогнозы не раскрываются
+   * и здесь: чтение несёт только победителей по именам и результат смотрящего.
+   */
+  def getPredictionResults(in: wire.GetPredictionResultsRequest): Future[wire.GetPredictionResultsResponse] =
+    RequestMapping.getPredictionResults(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.isParticipant =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+      case Right(query) =>
+        auctions.current(query.auctionId).recoverWith(awaited).flatMap {
+          case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
+          case Some(auction) =>
+            auction.state match {
+              case AuctionState.Cancelled(_, _, _) =>
+                Future.successful(PredictionResultsMapping.read(ResultsView.Cancelled, query.acting.participant))
+              case _ =>
+                results
+                  .read(query.auctionId)
+                  .recoverWith(awaited)
+                  .map(PredictionResultsMapping.read(_, query.acting.participant))
+            }
+        }
+    }
+
+  /**
+   * Ручная отметка итогов (ADR-067, п. 8): только администратор сходки аукциона, право у Meetups — тем же путём, что у
+   * пульта. Подсчёт этим подавляется; повтор на посчитанном или уже отмеченном принят без второго факта.
+   */
+  def settlePredictionResultsManually(
+      in: wire.SettlePredictionResultsManuallyRequest
+  ): Future[wire.SettlePredictionResultsManuallyResponse] =
+    RequestMapping.settlePredictionResults(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) =>
+        administered(query, ResponseMapping.settleResultsDenied) { _ =>
+          results
+            .recordManually(query.auctionId)
+            .recoverWith(awaited)
+            .map(_ => ResponseMapping.settleResultsAccepted)
+        }
+    }
+
+  /**
    * Лоты раунда, пока он может быть открыт: каталог — реестр запланированного аукциона и аукциона, открывшего торги,
    * пока прогнозы не подтвердили закрытие раунда, финал — замороженный состав (ADR-067, п. 4). В остальных фазах
    * `None`: раунд закрыт или не открыт, и это скажет игра.
@@ -861,6 +909,14 @@ object AuctionGrpcService {
     def submit(auction: AuctionId, command: SubmitForecast) = none
     def mine(auction: AuctionId, participant: ParticipantId) = none
     def recall(auction: AuctionId, participant: ParticipantId, round: PredictionRound, opId: OpId) = none
+  }
+
+  /** Узел без итогов: тесты границы, которым подсчёт не нужен. */
+  val NoResults: ResultsGateway = new ResultsGateway {
+    private def none[T]: Future[T] = Future.failed(new IllegalStateException("results are not wired in this node"))
+    def settle(auction: AuctionId) = none
+    def recordManually(auction: AuctionId) = none
+    def read(auction: AuctionId) = none
   }
 
   /** Изменений нет: поток читает состояние один раз, при подписке. */
