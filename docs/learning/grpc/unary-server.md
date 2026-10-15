@@ -60,6 +60,50 @@ func unaryLogging(log *slog.Logger) grpc.UnaryServerInterceptor {
 
 Важная асимметрия: unary и streaming — две независимые цепочки. `ChainUnaryInterceptor` не видит потоковых методов вовсе, а потоковые в этом сервисе есть, хотя своих мы не писали: `Health/Watch` и `ServerReflectionInfo` приходят вместе с библиотечными сервисами. Поэтому `ChainStreamInterceptor` обязателен, иначе паника в потоковом обработчике не будет перехвачена и унесёт процесс.
 
+### Кто звонит: metadata и два вида токена
+
+**Metadata** — заголовки HTTP/2, которые едут рядом с сообщением: пары «ключ — список значений», ключи в нижнем регистре. Аналог из .NET — `ServerCallContext.RequestHeaders` в ASP.NET Core gRPC. Отличие в том, что у ключа список значений, и сервер сам решает, что делать с несколькими. Identity читает `metadata.ValueFromIncomingContext(ctx, "authorization")` и считает два значения неоднозначными: отказ, а не выбор первого (`decide` в `callers.go`, условие `len(authorization) != 1`).
+
+На одном заголовке `authorization: Bearer <токен>` Identity держит две разные проверки.
+
+**Токен вызывающего** ([ADR-056](../../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md)). У каждого вызывающего свой токен: например, параметр AppHost `hub-bot-service-token` бот хаба получает как `BOT_SERVICE_TOKEN` и шлёт в заголовке, а Identity знает то же значение как `IDENTITY_CALLER_TOKEN_HUB_BOT` (снимок `infra/apphost/AppHost.UnitTests/TestUtilities/Snapshots/hub.run.txt`). Интерцептор `unaryCallerGate` находит по токену вызывающего в таблице и пускает к методу, только если этот вызывающий объявлен для метода (`methodAccess`). Таблица хранит не токены, а их SHA-256, и обходит все строки без раннего выхода:
+
+```go
+func (c Callers) identify(token string) (Caller, bool) {
+	presented := sha256.Sum256([]byte(token))
+	var found Caller
+	for _, row := range c.rows {
+		if subtle.ConstantTimeCompare(presented[:], row.digest[:]) == 1 {
+			found = row.caller
+		}
+	}
+	return found, found != ""
+}
+```
+
+Обычное `==` над строками возвращает ответ на первом несовпавшем байте, и время ответа подсказывает, сколько первых символов угадано. `subtle.ConstantTimeCompare` тратит время, зависящее только от длины, но при разной длине выходит сразу — так говорит `go doc crypto/subtle.ConstantTimeCompare`. Поэтому сравниваются digest фиксированной длины: время не выдаёт ни длину токена, ни номер совпавшей строки. Любой отказ гейт отдаёт кодом `Unauthenticated`: `PermissionDenied` в этом сервисе занят доменным «у человека права нет».
+
+**Секрет мейнтейнера** ([ADR-037](../../decisions/ADR-037-identity-maintainer-shared-secret.md)). `GrantPreset` и `RevokePreset` вызывает не сервис, а человек через `grpcurl`, и это единственный путь к набору `maintainer`. В таблицу вызывающих такой «вызывающий» не входит. Гейт эти методы пропускает (`gated` возвращает `false` для `maintainerMethods`), а секрет `IDENTITY_MAINTAINER_TOKEN` проверяет сам метод первой строкой:
+
+```go
+func (s identityService) authenticateMaintainer(ctx context.Context) error {
+	provided := ""
+	if values := metadata.ValueFromIncomingContext(ctx, "authorization"); len(values) == 1 {
+		provided = values[0]
+	}
+	expected := "Bearer " + s.maintainerToken
+	providedHash := sha256.Sum256([]byte(provided))
+	expectedHash := sha256.Sum256([]byte(expected))
+	valid := subtle.ConstantTimeCompare(providedHash[:], expectedHash[:]) == 1
+	if s.maintainerToken == "" || !valid {
+		return status.Error(codes.Unauthenticated, "unauthenticated")
+	}
+	return nil
+}
+```
+
+`maintainer.go`. Пустой секрет метод закрывает, а не открывает: условие `s.maintainerToken == ""` стоит рядом с несовпадением. Две проверки разведены намеренно: токен бота не открывает выдачу наборов, а старт Identity отказывает, если токен какого-то вызывающего совпал с секретом (`loadCallers`: `%s equals IDENTITY_MAINTAINER_TOKEN`). Иначе сервис, чей токен случайно равен секрету, получил бы право выдавать наборы.
+
 ### Recovery и владелец записи в лог
 
 Паника в обработчике должна стать ответом `Internal`, а не смертью процесса. Перехват делает `recover` внутри `defer`, и тут работает деталь языка: **именованное возвращаемое значение**.
@@ -108,6 +152,8 @@ Reflection — ещё один библиотечный сервис: он от�
 
 **Тип ошибки — способ передать контекст, не жертвуя контрактом наружу.** `panicError` и `internalError` одновременно отдают клиенту скупой `Internal` и отдают своему логгеру причину. Приём переносится всюду, где внутренняя диагностика и внешний ответ должны расходиться. Текст pgx в `status.Errorf` уехал бы на открытый reflection-порт вместе с DSN.
 
+**Секрет человека и токен сервиса — разные роли на разных путях проверки.** Разовая привилегированная операция, которую делает человек, не встраивается в таблицу межсервисных токенов: тогда ошибка в таблице или совпавшее значение открыли бы её сервису. Отдельная проверка в самом методе плюс отказ старта при совпадении значений держат роли раздельно. Секрет сравнивается по digest и за постоянное время в любом стеке: в .NET это `CryptographicOperations.FixedTimeEquals`. Ведёт ли он себя при разной длине так же, как Go, здесь не проверялось: проверь сам, когда будет чем, по исходнику `CryptographicOperations.FixedTimeEquals` в репозитории dotnet/runtime.
+
 **Инвариант проверяется счётчиком, а не поиском.** Тест, который ищет запись с нужным сообщением, проходит и когда записей две. Тест, который требует ровно одну запись, ловит регрессию двойного логирования. Формулировка утверждения важнее покрытия строк.
 
 ## Почему так, а не иначе
@@ -129,6 +175,10 @@ Reflection — ещё один библиотечный сервис: он от�
 | Логировать username из запроса | нарушает [logging.md](../../standards/observability/logging.md): в лог идёт технический идентификатор, не атрибут профиля Telegram |
 | Тест через реальный порт | гонки за `:50051`, зависимость от файрвола; `bufconn` проверяет тот же `New` |
 | Не встраивать `Unimplemented*` | компилятор не заставит заметить новый RPC контракта |
+| Сравнивать токен через `==` | время ответа выдаёт длину угаданного префикса; `ConstantTimeCompare` по digest фиксированной длины этого не даёт |
+| Из нескольких `authorization` брать первое значение | молчаливый выбор: прокси или клиент, добавивший второй заголовок, меняет, чей токен проверен; Identity читает это как отсутствие токена |
+| Секрет мейнтейнера — ещё одна строка таблицы вызывающих | одна проверка на оба вида доступа: токен сервиса и секрет человека различает только строка таблицы. Отдельная проверка в методе плюс отказ старта при совпадении значений |
+| mTLS, подписанный токен, закрытая сеть, второй порт вместо общего секрета | разобраны в [ADR-037](../../decisions/ADR-037-identity-maintainer-shared-secret.md): нужны CA и TLS вместо h2c или выпуск токена перед каждым вызовом; сеть и второй порт дают «удобно локально» без доказательства права |
 
 ## Схема
 
@@ -171,6 +221,9 @@ sequenceDiagram
 - [Go spec: defer](https://go.dev/ref/spec#Defer_statements) — почему отложенная функция может изменить именованный результат.
 - [`errors.AsType`](https://pkg.go.dev/errors#AsType) — дженерик-форма `errors.As`, которую подсказал линтер `modernize`.
 - [`bufconn`](https://pkg.go.dev/google.golang.org/grpc/test/bufconn) — in-memory transport в `server_test.go`.
+- [gRPC metadata](https://grpc.io/docs/guides/metadata/) — зачем идти: что такое metadata, регистр ключей и несколько значений у одного ключа.
+- [`crypto/subtle.ConstantTimeCompare`](https://pkg.go.dev/crypto/subtle#ConstantTimeCompare) — зачем идти: гарантия постоянного времени и ранний выход при разной длине, ради которого сравниваются digest.
+- [ADR-037](../../decisions/ADR-037-identity-maintainer-shared-secret.md) и [ADR-056](../../decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md) — зачем идти: почему секрет мейнтейнера и токены вызывающих — два механизма, и какие варианты отвергнуты.
 - [Proto3 JSON mapping](https://protobuf.dev/programming-guides/json/) — почему `grpcurl` печатает `identityId`, а в `.proto` поле `identity_id`.
 - Скилл `.skillshare/skills/golang/golang-grpc/SKILL.md` — из него взяты пара интерцепторов, статус-коды вместо сырых ошибок и `bufconn` в тестах; `golang-observability/SKILL.md` — состав полей записи доступа; `golang-testing/SKILL.md` — табличные тесты и `t.Parallel`.
 
@@ -189,4 +242,7 @@ sequenceDiagram
 - `NotFound` от Health пишется на `Warn`, `Internal` — на `Error`: `TestUnaryLoggingLevelByCode`. Проверено `go test`.
 - Потоковая ветка логирования покрыта: `TestStreamLoggingRecordsOutcome` проверяет успех и `NotFound` на `ServerReflectionInfo`. Проверено `go test`.
 - `GracefulStop` переводит `""` и `identity.v1.IdentityService` в `NOT_SERVING`: `TestGracefulStopMarksHealthNotServing`. Проверено `go test`, в том числе мутацией — без `health.Shutdown()` тест падает.
+- **Откроет ли токен бота хаба `GrantPreset`?** Нет: `Unauthenticated`, и в записи границы нет полей `caller` и `caller_refusal` — гейт метод пропустил, отказал сам метод. Проверено `go test ./internal/server -run TestCallerTokenDoesNotOpenMaintainerMethods`.
+- **Запустится ли Identity, если `IDENTITY_CALLER_TOKEN_HUB_BOT` равен `IDENTITY_MAINTAINER_TOKEN`, даже с переводом строки в конце?** Нет: `LoadCallers` отказывает с `IDENTITY_CALLER_TOKEN_HUB_BOT equals IDENTITY_MAINTAINER_TOKEN`, называя переменные, но не значения. Проверено `go test ./internal/server -run TestLoadCallersRefusesAmbiguousOrIncompleteTable`.
+- **Что ответит `GrantPreset` без заголовка?** `Code: Unauthenticated`, состояние не меняется, а `grpcurl` выходит с кодом 80 — это 64 плюс номер статуса `Unauthenticated` (16). Проверено на stage 2026-10-15 через `kubectl port-forward` и `grpcurl -plaintext -d '{…}' 127.0.0.1:<порт> identity.v1.IdentityService/GrantPreset; echo $?`.
 - `kill -TERM` по pid `just identity-run` пишет `shutdown signal received` и `graceful shutdown complete` — живым процессом не проверялось: msys `kill` на Windows не доставляет сигнал в обработчик Go.

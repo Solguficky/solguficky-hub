@@ -1,6 +1,6 @@
 # Присутствие поля в proto3 и init-форма protobuf-es
 
-Контракт Meetups требует `expected_version` в командах над сходкой, и бот пять дней слал прикрепление материала без него. Typecheck был зелёным, а Meetups отвечал `invalid_argument`. Файл объясняет, почему «обязательное» поле proto3 держит только сервер и почему TypeScript не заметил пропуска, хотя сгенерированный тип поле требует. Норматив — [protobuf.md](../../standards/contracts/protobuf.md), соседние темы — [enum-openness.md](enum-openness.md) и Connect-клиент в [typescript/module-and-types.md](../typescript/module-and-types.md). Случай записан в журнале наблюдений ([2026-09-27](../../development/observations/2026-09-27-bot-call-without-required-field-passed-ci.md)).
+Контракт Meetups требует `expected_version` в командах над сходкой, и бот пять дней слал прикрепление материала без него. Typecheck был зелёным, а Meetups отвечал `invalid_argument`. Файл объясняет, почему «обязательное» поле proto3 держит только сервер и почему TypeScript не заметил пропуска, хотя сгенерированный тип поле требует. То же правило объясняет, почему `grpcurl` печатает `{}` на ответ с `changed: false`. Норматив — [protobuf.md](../../standards/contracts/protobuf.md), соседние темы — [enum-openness.md](enum-openness.md) и Connect-клиент в [typescript/module-and-types.md](../typescript/module-and-types.md). Случай записан в журнале наблюдений ([2026-09-27](../../development/observations/2026-09-27-bot-call-without-required-field-passed-ci.md)).
 
 ## Механика
 
@@ -18,6 +18,20 @@ omitted read back: 0n
 ```
 
 Аналог из .NET: не `int?`, а `int` в DTO, который сериализатор пропускает при значении по умолчанию. Отличие в том, что в proto3 это поведение формата, а не настройка сериализатора, и выключить его на одной стороне нельзя.
+
+### JSON печатает то же «ничего»
+
+У сообщения proto3 есть каноническое JSON-отображение, и в нём действует то же правило: поле без присутствия со значением по умолчанию по умолчанию в вывод не попадает. Отсюда ответ, который выглядит как сбой. `GrantPresetResponse` состоит из одного поля `bool changed = 1`, и повторная выдача набора на stage печатала:
+
+```text
+первая выдача:   {"changed": true}
+повтор:          {}
+повтор с -emit-defaults:   {"changed": false}
+```
+
+Пустой объект — это не пустой ответ и не ошибка: это `changed: false`, которого нет ни на проводе, ни в JSON. `grpcurl` перед печатью переводит бинарный ответ в JSON, поэтому и показывает правило формата, а не свою прихоть. Флаг `-emit-defaults` (`grpcurl -help`: «Emit default values for JSON-encoded responses») включает печать значений по умолчанию. `bin/stage grant` ops-репозитория зовёт `grpcurl` с ним, чтобы повтор читался без знания proto3.
+
+Аналог из .NET: `JsonSerializerOptions.DefaultIgnoreCondition = WhenWritingDefault`. Отличие то же, что у провода: в proto3 это умолчание формата, и клиент, который разбирает такой JSON, обязан читать отсутствующий ключ как значение по умолчанию, а не как «поля нет в контракте».
 
 ### Обязательность держит только сервер
 
@@ -84,6 +98,7 @@ optional zero:    0800     set? true
 
 ## Урок
 
+- `{}` в ответе proto3 — значения по умолчанию всех полей, а не пустота. Инструмент, который показывает ответ человеку, печатает умолчания явно (`-emit-defaults` у `grpcurl`), иначе `false`, `0` и пустая строка неотличимы от «ничего не пришло».
 - «Обязательное поле» в proto3 — это соглашение, а не свойство формата. Его держит сервер проверкой значения, и работает оно только там, где ноль не бывает законным значением. Иначе нужен `optional` и проверка присутствия.
 - Сгенерированный строгий тип не защищает вызов, если клиент принимает init-форму. У клиентов, построенных на protobuf-es (Connect в боте), граница «забыли поле» проверяется не компилятором, а вызовом в настоящий сервер. Поэтому такой вызов нужен в проводе бота `bot-wire`, а не только в unit-тесте с подставным RPC ([PER-393](https://linear.app/anticnvm/issue/per-393)).
 - На другие стеки правило формата переносится как есть: присутствие скаляра — свойство proto3, а не protobuf-es. Как это выглядит в сгенерированном C# Meetups и Go Identity, здесь не проверялось — проверь сам, когда будет чем: `grep -n "ExpectedVersion" apps/meetups/Meetups.Contracts/obj/Debug/net10.0/meetups/v1/MeetupsService.cs` после `just meetups-build` покажет, `long` это или `long?` с признаком `HasExpectedVersion`.
@@ -114,6 +129,8 @@ flowchart LR
 - [Protobuf language guide (proto3): default values](https://protobuf.dev/programming-guides/proto3/#default) — зачем идти: какие значения считаются значениями по умолчанию и почему их нет на проводе.
 - [protobuf-es: manual, `create` и init-форма](https://github.com/bufbuild/protobuf-es/blob/main/MANUAL.md) — зачем идти: как protobuf-es строит сообщение из частичного init-объекта и что делает `isFieldSet`.
 - `node_modules/@bufbuild/protobuf/dist/esm/types.d.ts` (`MessageInitShape`, `MessageInit`) и `node_modules/@connectrpc/connect/dist/esm/promise-client.d.ts` — зачем идти: увидеть своими глазами, что клиент принимает init-форму, а не тип сообщения.
+- [ProtoJSON format](https://protobuf.dev/programming-guides/json/) — зачем идти: правило, по которому поле со значением по умолчанию и без присутствия пропускается в JSON, и оговорка, что реализация может дать опцию печатать его.
+- [grpcurl README](https://github.com/fullstorydev/grpcurl) и `grpcurl -help` — зачем идти: флаг `-emit-defaults` для JSON-ответа.
 - [protobuf.md](../../standards/contracts/protobuf.md) — зачем идти: норматив требует описать в комментарии `.proto` семантику отсутствия значения, и `expected_version` это делает.
 
 ## Проверь себя
@@ -121,4 +138,5 @@ flowchart LR
 - **Что уйдёт на провод, если бот не передаст `expectedVersion`, и что прочитает Meetups?** Ответ: поля 6 на проводе нет, Meetups прочитает 0 и ответит `INVALID_ARGUMENT`. Проверка: в `apps/hub-bot` собрать `dist` (`just hub-bot-build`) и сериализовать `create(AttachMaterialRequestSchema, { id: "x" })` через `toBinary` — байты `120178` совпадут с вариантом `expectedVersion: 0n`.
 - **Почему `tsc` пропустил вызов без поля, хотя в `AttachMaterialRequest` оно обязательно?** Ответ: метод клиента принимает `MessageInitShape<I>`, где все поля необязательны. Проверка: `grep -n "MessageInitShape" apps/hub-bot/node_modules/@connectrpc/connect/dist/esm/promise-client.d.ts`.
 - **Что изменит `optional` перед `int64 expected_version`?** Ответ: тип станет `bigint | undefined`, а явно заданный ноль запишется на провод (`0800` для поля 1) и `isFieldSet` вернёт `true`. Проверка: сгенерировать `protoc-gen-es` временную схему с двумя вариантами поля через `buf generate` и сравнить типы и `toBinary`.
+- **Что напечатает `grpcurl` на повторную выдачу набора без флагов и с `-emit-defaults`?** `{}` и `{"changed": false}`. Проверено на stage 2026-10-15: `bin/stage grant <ник>` до добавления флага в `deploy.sh` ops и после.
 - **Почему для `expected_version` хватает проверки `value > 0`, а для счётчика с законным нулём — нет?** Ответ: ноль версии невозможен, поэтому он однозначно значит «не передано»; у счётчика ноль — законное значение, и без `optional` пропуск от него не отличить. Опора: `Contract.fs:134-138`.
