@@ -47,7 +47,6 @@ import {
   commandResultScreen,
   confirmScreen,
   followRefusedScreen,
-  lotSubject,
   nameChoiceScreen,
   nameRefusedScreen,
   nameSettingsScreen,
@@ -73,6 +72,7 @@ import {
   readableMoment,
   retryLabel,
   screenText,
+  submenuText,
   toAuctionRoot,
   withNav,
 } from "./kit.js";
@@ -730,13 +730,13 @@ function historyScreen(
   }
   return {
     id: "bids",
-    text: screenText(
+    text: submenuText(
       pagedTitle("Ставки", {
         items: history.entries,
         page: history.page,
         pageCount: history.pageCount,
       }),
-      lotSubject(truncate(history.title ?? untitled, titleLimit)),
+      oneLine(truncate(history.title ?? untitled, titleLimit)),
       history.entries.length === 0
         ? "Ставок пока нет."
         : history.entries

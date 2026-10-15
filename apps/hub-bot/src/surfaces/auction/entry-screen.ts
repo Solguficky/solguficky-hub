@@ -255,6 +255,23 @@ function screenText(
   ].join("\n\n");
 }
 
+// Экран раздела лота (дизайн-код, «Формат», PER-644): заголовок — имя экрана,
+// название лота — строкой ниже курсивом, затем пустая строка и тело. Тот же
+// вид, что у подменю сходки в хабе (`submenuText` в `screens/kit.ts`).
+function lotSectionText(
+  title: string,
+  lotTitle: string,
+  ...paragraphs: (string | undefined)[]
+): string {
+  return [
+    `${heading(title)}\n<i>${escapeHtml(oneLine(lotTitle))}</i>`,
+    ...paragraphs.filter(
+      (paragraph): paragraph is string =>
+        paragraph !== undefined && paragraph !== "",
+    ),
+  ].join("\n\n");
+}
+
 // Название лота в одну строку: Auction переносы строк в названии не режет, а
 // в строке списка и в предмете экрана второй строкой оно читалось бы как чужая
 // запись.
@@ -1249,7 +1266,7 @@ export function resultOutcome(result: CommandResult): Outcome {
 }
 
 // Хронология ставок лота (PER-309): жирный заголовок с номером страницы,
-// название лота жирным и строки ставок по порядку журнала. Восемь строк
+// название лота курсивом строкой ниже (PER-644) и строки ставок по порядку журнала. Восемь строк
 // на странице держат текст далеко под лимитом сообщения при любом названии.
 function renderHistory(
   block: HistoryBlock,
@@ -1257,9 +1274,9 @@ function renderHistory(
 ): Pick<RenderedScreen, "text" | "format"> {
   return {
     format: "html",
-    text: screenText(
+    text: lotSectionText(
       paged("Ставки", block),
-      lotSubject(block.title ?? untitled),
+      block.title ?? untitled,
       block.entries.length === 0
         ? "Ставок пока нет."
         : block.entries
