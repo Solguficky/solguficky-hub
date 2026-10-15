@@ -8900,9 +8900,11 @@ describe("auction queue and moderation", () => {
 
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
 
+    // PER-636: у каждой кнопки очереди — число; очередь модератора отдаёт одну
+    // заявку и ни одного отказа.
     expect(labelsOf(calls.at(-1)?.payload)).toEqual([
-      "Заявки в аукцион",
-      "Отказанные в аукцион",
+      "Заявки в аукцион (1)",
+      "Отказанные в аукцион (0)",
       "‹ Меню",
     ]);
 
@@ -9187,5 +9189,170 @@ describe("auction queue and moderation", () => {
     expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain(
       "v1:community:list",
     );
+  });
+});
+
+// PER-636: на кнопках очередей видно, где ждут заявки. Числа берутся
+// существующими чтениями Identity, идут параллельно, а отказ одного чтения
+// оставляет его кнопку без числа.
+describe("application queue counters", () => {
+  const waiting: ApplicationCard = {
+    applicationId: "0192f3a4-b5c6-7d8e-9f0a-00000000b001",
+    identityId: "0192f3a4-b5c6-7d8e-9f0a-0000c0de0001",
+    telegramUserId: 77n,
+    telegramUsername: "ivan_p",
+    firstName: "Иван",
+    circle: "public",
+    source: { kind: "none" },
+    createdAtMs: Date.parse("2026-10-02T11:05:00.123Z"),
+  };
+  const refused: RefusedApplication = {
+    applicationId: "0192f3a4-b5c6-7d8e-9f0a-00000000b002",
+    identityId: "0192f3a4-b5c6-7d8e-9f0a-0000c0de0002",
+    telegramUserId: 78n,
+    telegramUsername: "petr",
+    circle: "member",
+    outcome: "declined",
+    decidedAt: { year: 2026, month: 10, day: 2, hours: 14, minutes: 5 },
+  };
+  const cursor = `${uuidToToken(waiting.applicationId)}:${waiting.createdAtMs.toString(36)}`;
+
+  // Число каждой очереди своё: сколько ждёт и сколько отказано.
+  function counted(byQueue: {
+    community: { waiting: number; refused: number };
+    auction: { waiting: number; refused: number };
+  }) {
+    const list = (size: number) => Array.from({ length: size }, () => refused);
+    return {
+      ...resolvedIdentity("admin"),
+      readApplicationQueue: vi
+        .fn<ApplicationModerator["readApplicationQueue"]>()
+        .mockImplementation(async (_actor, queue) => ({
+          kind: "ok",
+          value: {
+            card: { application: waiting, position: 1 },
+            total: byQueue[queue].waiting,
+          },
+        })),
+      admitApplication: vi
+        .fn<ApplicationModerator["admitApplication"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: { already: false, outcome: "admitted" },
+        }),
+      declineApplication: vi
+        .fn<ApplicationModerator["declineApplication"]>()
+        .mockResolvedValue({
+          kind: "ok",
+          value: { already: false, outcome: "declined" },
+        }),
+      refusedApplications: vi
+        .fn<ApplicationAdministrator["refusedApplications"]>()
+        .mockImplementation(async (_actor, queue) => ({
+          kind: "ok",
+          value: list(byQueue[queue].refused),
+        })),
+    };
+  }
+
+  it("shows the number of waiting and refused on every queue button", async () => {
+    const identity = counted({
+      community: { waiting: 2, refused: 1 },
+      auction: { waiting: 3, refused: 0 },
+    });
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:g:a"));
+
+    expect(labelsOf(calls.at(-1)?.payload)).toEqual([
+      "Заявки (2)",
+      "Заявки в аукцион (3)",
+      "Отказанные (1)",
+      "Отказанные в аукцион (0)",
+      "‹ Управление",
+    ]);
+    for (const queue of ["community", "auction"] as const) {
+      expect(identity.readApplicationQueue).toHaveBeenCalledWith(
+        expect.anything(),
+        queue,
+        undefined,
+        expect.anything(),
+      );
+      expect(identity.refusedApplications).toHaveBeenCalledWith(
+        expect.anything(),
+        queue,
+        expect.anything(),
+      );
+    }
+  });
+
+  it("keeps a button without a number when its read fails", async () => {
+    const identity = {
+      ...resolvedIdentity("admin"),
+      readApplicationQueue: vi
+        .fn<ApplicationModerator["readApplicationQueue"]>()
+        .mockResolvedValue({ kind: "unavailable", cause: new Error("down") }),
+      refusedApplications: vi
+        .fn<ApplicationAdministrator["refusedApplications"]>()
+        .mockResolvedValue({ kind: "forbidden" }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:g:a"));
+
+    expect(labelsOf(calls.at(-1)?.payload)).toEqual([
+      "Заявки",
+      "Заявки в аукцион",
+      "Отказанные",
+      "Отказанные в аукцион",
+      "‹ Управление",
+    ]);
+  });
+
+  // Решение закрывает заявку — очередь становится короче на одну, и кнопка
+  // показывает новое число. Отказ идёт через подтверждение, поэтому шагов два.
+  it.each([
+    ["допуска", ["qa"]],
+    ["отказа", ["qd", "qy"]],
+  ] as const)("changes the number after %s", async (_decision, steps) => {
+    let total = 2;
+    const identity = {
+      ...resolvedIdentity("admin"),
+      readApplicationQueue: vi
+        .fn<ApplicationModerator["readApplicationQueue"]>()
+        .mockImplementation(async () => ({
+          kind: "ok",
+          value: { card: { application: waiting, position: 1 }, total },
+        })),
+      admitApplication: vi
+        .fn<ApplicationModerator["admitApplication"]>()
+        .mockImplementation(async () => {
+          total = 1;
+          return { kind: "ok", value: { already: false, outcome: "admitted" } };
+        }),
+      declineApplication: vi
+        .fn<ApplicationModerator["declineApplication"]>()
+        .mockImplementation(async () => {
+          total = 1;
+          return { kind: "ok", value: { already: false, outcome: "blocked" } };
+        }),
+      refusedApplications: vi
+        .fn<ApplicationAdministrator["refusedApplications"]>()
+        .mockResolvedValue({ kind: "ok", value: [] }),
+    };
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:g:a"));
+    expect(labelsOf(calls.at(-1)?.payload)).toContain("Заявки (2)");
+
+    for (const step of steps) {
+      await bot.handleUpdate(callbackUpdate(`v1:cm:${step}:${cursor}`));
+    }
+
+    await bot.handleUpdate(callbackUpdate("v1:manage:g:a"));
+    expect(labelsOf(calls.at(-1)?.payload)).toContain("Заявки (1)");
   });
 });

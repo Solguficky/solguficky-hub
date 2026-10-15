@@ -1,5 +1,8 @@
 import { InlineKeyboard } from "grammy";
-import type { AccessRight } from "../../../../auction-ui/index.js";
+import type {
+  AccessRight,
+  ApplicationQueue,
+} from "../../../../auction-ui/index.js";
 import { menuTitle } from "../../../../core/entry.js";
 import type { BotCommand } from "../../../../core/menu-commands.js";
 import { extensionsLabel } from "../../../../core/pictograms.js";
@@ -139,11 +142,30 @@ export function manageGroupOf(code: string): ManageGroup | undefined {
 
 type Item = [label: string, data: string];
 
+/**
+ * Числа на кнопках очередей заявок (PER-636): сколько заявок ждёт и сколько
+ * отказано по каждой очереди. Читает их `bot.ts` существующими вызовами
+ * Identity и передаёт экрану; отказ одного чтения оставляет поле пустым, и его
+ * кнопка идёт без числа.
+ */
+export type ApplicationCounts = {
+  queue?: Readonly<Partial<Record<ApplicationQueue, number>>>;
+  refused?: Readonly<Partial<Record<ApplicationQueue, number>>>;
+};
+
+// Подпись кнопки с числом: «Заявки (2)». Числа нет — подпись без него.
+function item(label: string, data: string, count?: number): Item {
+  return [count === undefined ? label : `${label} (${count})`, data];
+}
+
 // Пункты группы по правам: группа видна, если видим хоть один её пункт.
+// `counts` приходят только экрану группы заявок; на видимость группы они не
+// влияют, поэтому проверка графа зовёт `groupItems` без них.
 function groupItems(
   person: Viewer,
   group: ManageGroup,
   newMeetupToken: string,
+  counts?: ApplicationCounts,
 ): Item[] {
   switch (group) {
     case "meetups":
@@ -154,21 +176,30 @@ function groupItems(
             ["Объявление сообществу", "v1:bc:c"],
           ]
         : [];
-    case "applications":
+    case "applications": {
+      const queue = counts?.queue;
+      const refused = counts?.refused;
       return [
         ...(canManageMembers(person)
-          ? ([["Заявки", "v1:cm:q"]] satisfies Item[])
+          ? ([item("Заявки", "v1:cm:q", queue?.community)] satisfies Item[])
           : []),
         ...(canAdmitBidders(person)
-          ? ([["Заявки в аукцион", "v1:aq:q"]] satisfies Item[])
+          ? ([
+              item("Заявки в аукцион", "v1:aq:q", queue?.auction),
+            ] satisfies Item[])
           : []),
         ...(canManageMembers(person)
-          ? ([["Отказанные", "v1:cm:r"]] satisfies Item[])
+          ? ([
+              item("Отказанные", "v1:cm:r", refused?.community),
+            ] satisfies Item[])
           : []),
         ...(canAdmitBidders(person)
-          ? ([["Отказанные в аукцион", "v1:aq:r"]] satisfies Item[])
+          ? ([
+              item("Отказанные в аукцион", "v1:aq:r", refused?.auction),
+            ] satisfies Item[])
           : []),
       ];
+    }
     case "members":
       return [
         ...(canManageMembers(person)
@@ -223,12 +254,13 @@ function itemsKeyboard(items: readonly Item[]): InlineKeyboard {
 export function manageScreen(
   person: Viewer,
   newMeetupToken: string,
+  counts?: ApplicationCounts,
 ): ShownScreen {
   const visible = manageGroups(person);
   const [only] = visible;
   const keyboard =
     visible.length === 1 && only !== undefined
-      ? itemsKeyboard(groupItems(person, only, newMeetupToken))
+      ? itemsKeyboard(groupItems(person, only, newMeetupToken, counts))
       : itemsKeyboard(
           visible.map((group) => [groups[group].label, manageGroupData(group)]),
         );
@@ -245,12 +277,13 @@ export function manageGroupScreen(
   person: Viewer,
   group: ManageGroup,
   newMeetupToken: string,
+  counts?: ApplicationCounts,
 ): ShownScreen {
   return {
     id: groups[group].id,
     text: screenText(groups[group].label),
     keyboard: withNav(
-      itemsKeyboard(groupItems(person, group, newMeetupToken)),
+      itemsKeyboard(groupItems(person, group, newMeetupToken, counts)),
       toManage,
     ),
     format: "HTML",
