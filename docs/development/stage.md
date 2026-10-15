@@ -134,7 +134,7 @@ bin/stage rollback <ревизия>
 3. Очистить четыре базы и состояние JetStream.
 4. `bin/stage deploy`: Job топологии заводит streams, durables и KV заново, сервисы стартуют и применяют миграции с нуля.
 5. `bin/stage resume`.
-6. Заново выдать роль администратора — раздел «Администратор». Профили людей появятся заново с их первым `/start`.
+6. Заново выдать набор `maintainer` — раздел «Администратор». Профили людей появятся заново с их первым `/start`.
 
 Шаг 3 — очистку четырёх баз и состояния JetStream — выполняет команда ops-репозитория `bin/stage reset [--yes]`. Как очищать базы CNPG и том NATS, решает раскладка ops, и команда сброса — его, а не этого репозитория (ADR-055, «Обоснование»). Локальный сброс — `just local-data-reset` ([local-development.md](local-development.md)).
 
@@ -154,13 +154,19 @@ bin/stage db <база>                                      # туннель н
 
 ## Администратор
 
-Набор `maintainer` на stage выдаёт служебный `GrantPreset` Identity с `"preset": "PRESET_MAINTAINER"` и токеном `IDENTITY_MAINTAINER_TOKEN` из файла секретов хоста; снимает — `RevokePreset` ([ADR-065](../decisions/ADR-065-circle-presets-and-verb-rights.md)). Человеку без круга `member` выдача даёт его той же операцией. Тем же путём выдаётся и `PRESET_ADMIN`, но обычный путь другой: мейнтейнер назначает администратором себя и других экраном «Управление → Администраторы» в боте хаба, без секрета ([PER-521](https://linear.app/anticnvm/issue/per-521)): бот зовёт `AppointAdministrator` от его имени. Служебным endpoint'ом через `grpcurl` выдаётся только `maintainer`. Последовательность:
+Набор `maintainer` на stage выдаёт служебный `GrantPreset` Identity с `"preset": "PRESET_MAINTAINER"`, снимает — `RevokePreset` ([ADR-065](../decisions/ADR-065-circle-presets-and-verb-rights.md)). Вызывающего сервиса у этих методов нет: право доказывает общий секрет `IDENTITY_MAINTAINER_TOKEN` в заголовке `authorization: Bearer`, и его утечка равна праву выдавать наборы ([ADR-037](../decisions/ADR-037-identity-maintainer-shared-secret.md)). Человеку без круга `member` выдача даёт его той же операцией. Тем же путём выдаётся и `PRESET_ADMIN`, но обычный путь другой: мейнтейнер назначает администратором себя и других экраном «Управление → Администраторы» в боте хаба, без секрета ([PER-521](https://linear.app/anticnvm/issue/per-521)): бот зовёт `AppointAdministrator` от его имени. Служебным endpoint'ом выдаётся только `maintainer`.
 
-1. Человек шлёт `/start` боту хаба на stage: так появляется его профиль.
-2. `identity_id` профиля берётся из таблицы `profiles` базы `identity` по нику.
-3. Вызов идёт с control node через туннель к Service `identity-service`: API k3s и порты подов снаружи закрыты.
+```bash
+bin/stage grant <ник>     # выдать maintainer; ник Telegram с @ или без
+bin/stage revoke <ник>    # снять
+bin/stage presets         # активные наборы: ник и набор
+```
 
-Команды — README ops-репозитория, раздел «Администратор». Повторная выдача отвечает `changed: false`, второго сообщения о назначении в хаб не приходит.
+1. Человек шлёт `/start` боту хаба на stage: так появляется его профиль. Без профиля, как и на нике у двух профилей, `grant` отказывает до вызова Identity.
+2. Вызов идёт с хоста, а не с control node: секрет лежит в файле секретов хоста и его не покидает, как и kubeconfig среды (ADR-055). `bin/stage` копирует скрипты на хост, а там `identity_id` находится по нику в базе `identity`, `kubectl port-forward` к Service `identity-service` живёт один вызов, и секрет приходит в `grpcurl` окружением, а не аргументом. Прежний ручной путь — туннель с control node и `grpcurl` на нём — увозил секрет с хоста при каждой выдаче.
+3. Повторная выдача отвечает `{"changed": false}`, второго сообщения о назначении в хаб не приходит.
+
+Команды и раскладка — README ops-репозитория, раздел «Администратор».
 
 ### Разовая выкладка ADR-065
 
@@ -187,7 +193,7 @@ bin/stage db <база>                                      # туннель н
 
 Сроки недели, «Счастливые часы», розыгрыш и открытие недели команда не задаёт: это пульт администратора в боте хаба.
 
-Переменные — без умолчаний: `IDENTITY_GRPC_URL`, `MEETUPS_GRPC_URL`, `AUCTION_GRPC_URL`, `HUB_BOT_SERVICE_TOKEN`, `AUCTION_SEED_ADMIN_TELEGRAM_ID`, `BOT_COMMUNITY_TIME_ZONE`. Адреса и токен — те же имена, что отдаёт `Contour.Host --with-auction`, поэтому команда без переименований идёт и против контура. Для stage значения берутся из файла секретов хоста (токен вызывающего бота хаба), а адреса — туннелем с control node к Service'ам Identity, Meetups и Auction: порты подов снаружи закрыты, как и для выдачи мейнтейнера. Команды туннеля — README ops-репозитория.
+Переменные — без умолчаний: `IDENTITY_GRPC_URL`, `MEETUPS_GRPC_URL`, `AUCTION_GRPC_URL`, `HUB_BOT_SERVICE_TOKEN`, `AUCTION_SEED_ADMIN_TELEGRAM_ID`, `BOT_COMMUNITY_TIME_ZONE`. Адреса и токен — те же имена, что отдаёт `Contour.Host --with-auction`, поэтому команда без переименований идёт и против контура. Для stage значения берутся из файла секретов хоста (токен вызывающего бота хаба), а адреса — туннелем с control node к Service'ам Identity, Meetups и Auction: порты подов снаружи закрыты. Команды туннеля — README ops-репозитория.
 
 ## Если что-то не так
 
@@ -200,6 +206,7 @@ bin/stage db <база>                                      # туннель н
 | выкладка `упала, код N` | см. вывод helm в `autolog` | починить и закоммитить в ops или `bin/stage rollback`; тот же коммит сам не повторится |
 | выкладка отказала до кластера: `нет digest образа` | чарт с новым сервисом пришёл раньше его образа | ничего: коммит с digest'ом выкатится следующим тиком |
 | `bin/stage deploy`: «копия отстала от origin/main» | CI писал в ops после последнего `git pull` | `git pull` в копии ops на control node |
+| `bin/stage grant`: `нет grpcurl на хосте` | хост собран до задачи `grpcurl` в `site.yml` ops | `ansible-playbook site.yml -K --tags grpcurl` |
 | под Identity перезапустился с `connection refused` до `hub-pg-rw` | первое подключение нового пода к базе | ничего: рестарт снимает (пункт «Что известно») |
 
 ## Что известно
