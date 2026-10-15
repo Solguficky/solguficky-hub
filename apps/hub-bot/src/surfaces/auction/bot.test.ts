@@ -249,7 +249,17 @@ function portsWith(
       placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
       setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
       chooseDisplayName: async () => ({ kind: "accepted", name: "@owl" }),
-      getAuction: async () => undefined,
+      // Корень аукциона (PER-644) читает его из тех же списков, что
+      // «Аукционы» и «Прошедшие».
+      getAuction: async ({ auctionId: id }) => {
+        const found = [
+          ...(overrides.auctions?.active ?? [activeAuction]),
+          ...(overrides.auctions?.finished ?? []),
+        ].find((auction) => auction.auctionId === id);
+        return found === undefined
+          ? undefined
+          : { auctionId: found.auctionId, stage: found.stage, final: false };
+      },
       getRaffle: async () => undefined,
       registerForRaffle: async () => {
         throw new Error("not used");
@@ -571,15 +581,12 @@ describe("auction bot", () => {
   });
 
   // Один активный аукцион — всё равно список из одной строки, а не сразу
-  // лента (PER-453); строка открывает ленту, лента возвращает в список.
-  it("lists a single active auction and opens its feed from the row", async () => {
+  // лента (PER-453); строка открывает корень аукциона, как в хабе (PER-644),
+  // корень возвращает в список.
+  it("lists a single active auction and opens its root from the row", async () => {
     const { bot, calls } = makeBot(publicPorts);
     await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
-    const feedButton = encodeAuctionCallback({
-      kind: "feed",
-      auctionId,
-      page: 0,
-    });
+    const feedButton = encodeAuctionCallback({ kind: "root", auctionId });
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("<b>Аукционы</b>"),
       parse_mode: "HTML",
@@ -598,17 +605,28 @@ describe("auction bot", () => {
     });
     await bot.handleUpdate(lotPress({ data: feedButton }));
     expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("<b>Аукцион</b>"),
       reply_markup: {
-        inline_keyboard: expect.arrayContaining([
+        inline_keyboard: [
+          [
+            {
+              text: "🔨 Лоты",
+              callback_data: encodeAuctionCallback({
+                kind: "feed",
+                auctionId,
+                page: 0,
+              }),
+            },
+          ],
           [{ text: "‹ Аукционы", callback_data: entryCallback("auctions") }],
-        ]),
+        ],
       },
     });
   });
 
-  // Завершённый аукцион уходит из активных в прошедшие, и его лента
+  // Завершённый аукцион уходит из активных в прошедшие, и его корень
   // возвращает туда, где он стоит сейчас.
-  it("moves a finished auction to the past list and returns its feed there", async () => {
+  it("moves a finished auction to the past list and returns its root there", async () => {
     const finished = { ...activeAuction, stage: "finished" as const };
     const { bot, calls } = makeBot(
       portsWith({ auctions: { active: [], finished: [finished] } }),
@@ -632,11 +650,7 @@ describe("auction bot", () => {
           [
             {
               text: "10 октября, сб · завершён · 3 лота",
-              callback_data: encodeAuctionCallback({
-                kind: "feed",
-                auctionId,
-                page: 0,
-              }),
+              callback_data: encodeAuctionCallback({ kind: "root", auctionId }),
             },
           ],
           [{ text: "‹ Аукционы", callback_data: entryCallback("auctions") }],
@@ -644,9 +658,7 @@ describe("auction bot", () => {
       },
     });
     await bot.handleUpdate(
-      lotPress({
-        data: encodeAuctionCallback({ kind: "feed", auctionId, page: 0 }),
-      }),
+      lotPress({ data: encodeAuctionCallback({ kind: "root", auctionId }) }),
     );
     expect(calls.at(-1)?.payload).toMatchObject({
       reply_markup: {
@@ -2557,15 +2569,23 @@ describe("favorite lots", () => {
     expect(favorites.marks).toEqual([lotId]);
 
     // Рестарт процесса: память бота пропала, отметка осталась в сервисе.
+    // Избранное открывается только из корня аукциона (PER-644): набранная по
+    // старой привычке `/favorites` получает кадр устаревшего экрана.
     const second = makeBot(ports);
     await second.bot.handleUpdate(commandUpdate("/favorites"));
+    expect(lastScreen(second.calls).text).toContain("Этот экран устарел.");
+    const root = encodeAuctionCallback({ kind: "root", auctionId });
+    await second.bot.handleUpdate(press(root));
+    await second.bot.handleUpdate(
+      press(buttonData(lastScreen(second.calls), "Избранное")),
+    );
     const list = lastScreen(second.calls);
     expect(list.text).toContain("<b>Избранное</b>");
     expect(list.text).toContain("Лотов в избранном: 1.");
-    // Избранное — раздел под меню: последним рядом «‹ Меню» (PER-592).
+    // Возврат — в корень аукциона, откуда список открыт.
     expect(list.keyboard.flat().map((b) => b.text)).toEqual([
       "Кружка · старт 500 ₽",
-      "‹ Меню",
+      "‹ Аукцион",
     ]);
 
     await second.bot.handleUpdate(
@@ -2575,16 +2595,19 @@ describe("favorite lots", () => {
       press(buttonData(lastScreen(second.calls), "Убрать из избранного")),
     );
     expect(favorites.marks).toEqual([]);
-    await second.bot.handleUpdate(commandUpdate("/favorites"));
+    await second.bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "favorites", page: 0, auctionId })),
+    );
     // Пустой список несёт только возврат: его текст — в последнем вызове.
     expect(second.calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("Лотов в избранном пока нет."),
     });
   });
 
-  // Карточка участника в онлайн-торгах с автоставкой и избранным — пять рядов
-  // (PER-594): ставка по шагу, своя сумма с автоставкой, «Обновить» со
-  // «Ставками», избранное и возврат. Пустое описание — заглушка.
+  // Карточка участника в онлайн-торгах с автоставкой и избранным (PER-594,
+  // PER-644): ставка по шагу, своя сумма с автоставкой, «Обновить» с
+  // избранным, «Ставки» и возврат; соседей в пустой ленте нет. Пустое
+  // описание — заглушка.
   it("fits the card of a participant with limits and favorites into five rows", async () => {
     const { bot, calls } = makeBot(
       portsWith({
@@ -2607,8 +2630,8 @@ describe("favorite lots", () => {
     expect(card.keyboard.map((row) => row.map((b) => b.text))).toEqual([
       [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
-      ["Обновить", "Ставки"],
-      ["Добавить в избранное"],
+      ["Обновить", "Добавить в избранное"],
+      ["Ставки"],
       ["‹ Лоты"],
     ]);
     expect(card.text).toContain("Описание пока не добавлено.");
@@ -2707,22 +2730,23 @@ const openRaffle: RaffleView = {
 };
 
 describe("raffle among the participants", () => {
-  it("registers from the feed, shows the commitment and then the result", async () => {
+  // Вход — «Розыгрыш» в корне аукциона, как в хабе (PER-644).
+  it("registers from the auction root, shows the commitment and then the result", async () => {
     const service = raffleService(openRaffle);
     const { bot, calls } = makeBot(withRaffle(publicPorts, service));
 
     await bot.handleUpdate(
-      press(encodeAuctionCallback({ kind: "feed", auctionId, page: 0 })),
+      press(encodeAuctionCallback({ kind: "root", auctionId })),
     );
-    const feed = lastScreen(calls);
-    await bot.handleUpdate(press(buttonData(feed, "Розыгрыш")));
+    const root = lastScreen(calls);
+    await bot.handleUpdate(press(buttonData(root, "Розыгрыш")));
     const before = lastScreen(calls);
     expect(before.text).toContain("<b>Розыгрыш среди участников</b>");
     expect(before.text).toContain("Ты пока не зарегистрирован.");
     expect(before.keyboard.flat().map((b) => b.text)).toEqual([
       "Зарегистрироваться",
       "Как проверить честность",
-      "‹ Лоты",
+      "‹ Аукцион",
     ]);
 
     await bot.handleUpdate(press(buttonData(before, "Зарегистрироваться")));
@@ -2735,7 +2759,7 @@ describe("raffle among the participants", () => {
     expect(registered.keyboard.flat().map((b) => b.text)).toEqual([
       "Отменить регистрацию",
       "Как проверить честность",
-      "‹ Лоты",
+      "‹ Аукцион",
     ]);
     expect(service.registrations).toHaveLength(1);
 
@@ -2768,7 +2792,7 @@ describe("raffle among the participants", () => {
         winningTicket: 2,
       },
     });
-    await bot.handleUpdate(press(buttonData(registered, "‹ Лоты")));
+    await bot.handleUpdate(press(buttonData(registered, "‹ Аукцион")));
     await bot.handleUpdate(press(buttonData(lastScreen(calls), "Розыгрыш")));
     const result = lastScreen(calls);
     expect(result.text).toContain("Выиграл билет №2 — Сова*");
@@ -2778,7 +2802,7 @@ describe("raffle among the participants", () => {
     expect(result.text).not.toContain("python3 -c");
     expect(result.keyboard.flat().map((b) => b.text)).toEqual([
       "Как проверить честность",
-      "‹ Лоты",
+      "‹ Аукцион",
     ]);
 
     await bot.handleUpdate(
@@ -2805,7 +2829,7 @@ describe("raffle among the participants", () => {
     expect(screen.text).toContain("Регистрация закрыта");
     expect(screen.keyboard.flat().map((b) => b.text)).toEqual([
       "Как проверить честность",
-      "‹ Лоты",
+      "‹ Аукцион",
     ]);
   });
 
@@ -2827,7 +2851,7 @@ describe("raffle among the participants", () => {
       lastScreen(calls)
         .keyboard.flat()
         .map((b) => b.text),
-    ).toEqual(["‹ Лоты"]);
+    ).toEqual(["‹ Аукцион"]);
   });
 
   // «К розыгрышу» под итогом (PER-620) — кнопка следа: экран итога приходит

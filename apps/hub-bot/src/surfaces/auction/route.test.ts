@@ -300,7 +300,7 @@ describe("FAQ entry", () => {
     const p = ports(identity({ rights: GUEST }));
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
-    ).toEqual({ kind: "menu", favorites: false });
+    ).toEqual({ kind: "menu" });
   });
 
   it("records completion on the return from FAQ and allows its repetition", async () => {
@@ -330,7 +330,7 @@ describe("FAQ entry", () => {
     const p = ports(identity({ rights: GUEST }));
     const menu = () =>
       routeAuctionCallback({ ports: p, user, data: entryCallback("menu") });
-    const shown = { kind: "menu", favorites: false };
+    const shown = { kind: "menu" };
     expect((await menu()).screen).toEqual(shown);
     vi.mocked(p.faq.acknowledged).mockResolvedValue(false);
     expect((await menu()).screen).toEqual(shown);
@@ -544,16 +544,18 @@ describe("auction lists", () => {
     });
   });
 
-  it("returns the feed to the list where its auction stands now", async () => {
+  // Корень аукциона возвращает в тот список, где аукцион стоит сейчас
+  // (PER-644): лента под корнем, и её возврат ставит тело дерева.
+  it("returns the auction root to the list where its auction stands now", async () => {
     const live = summary(0, "prebidding");
-    const feedOf = (id: string) =>
-      encodeAuctionCallback({ kind: "feed", auctionId: id, page: 0 });
+    const rootOf = (id: string) =>
+      encodeAuctionCallback({ kind: "root", auctionId: id });
     expect(
       (
         await routeAuctionCallback({
           ports: ports(admitted, { active: [live] }),
           user,
-          data: feedOf(live.auctionId),
+          data: rootOf(live.auctionId),
         })
       ).screen,
     ).toMatchObject({ kind: "auction", parent: "auctions" });
@@ -562,10 +564,31 @@ describe("auction lists", () => {
         await routeAuctionCallback({
           ports: ports(admitted),
           user,
-          data: feedButton,
+          data: rootOf(live.auctionId),
         })
       ).screen,
     ).toMatchObject({ kind: "auction", parent: "past" });
+    const feed = await routeAuctionCallback({
+      ports: ports(admitted, { active: [live] }),
+      user,
+      data: feedButton,
+    });
+    expect(feed.screen).toMatchObject({ kind: "auction" });
+    expect(feed.screen).not.toHaveProperty("parent");
+  });
+
+  // Избранное открывается только из корня аукциона (PER-644): кнопка списка
+  // без аукциона — из прежнего меню или набранная `/favorites` — получает
+  // кадр устаревшего экрана и Notifications не зовёт.
+  it("treats a favorites button without an auction as outdated", async () => {
+    const p = ports(admitted);
+    const outcome = await routeAuctionCallback({
+      ports: p,
+      user,
+      data: encodeAuctionCallback({ kind: "favorites", page: 0 }),
+    });
+    expect(outcome.screen).toEqual({ kind: "outdated" });
+    expect(p.identity.resolveIdentity).not.toHaveBeenCalled();
   });
 
   it("fails closed when the list cannot be read", async () => {
@@ -757,7 +780,7 @@ describe("routeAuctionStart", () => {
     const p = ports(identity({ rights: GUEST }));
     expect(
       (await routeAuctionStart({ ports: p, user, firstName })).screen,
-    ).toEqual({ kind: "menu", favorites: false });
+    ).toEqual({ kind: "menu" });
   });
 
   it("fails closed when Identity is unavailable", async () => {
@@ -834,7 +857,7 @@ describe("apply", () => {
           data: applyCallback(),
         })
       ).screen,
-    ).toEqual({ kind: "menu", favorites: false });
+    ).toEqual({ kind: "menu" });
   });
 
   it("answers a declined application with a refusal of its own", async () => {

@@ -46,6 +46,21 @@ export type RouteOutcome = {
   toast?: string;
 };
 
+// Кнопка дерева, которую этот бот ещё понимает. Избранное открывается только
+// из корня аукциона (PER-644, решение владельца по прогону 14 октября 2026
+// года): кнопка списка без аукциона — из прежнего меню или набранная
+// `/favorites` — получает кадр устаревшего экрана, а не список без возврата.
+function currentTradeCallback(data: string): boolean {
+  const parsed = parseAuctionCallback(data);
+  return (
+    parsed.ok &&
+    !(
+      parsed.intent.kind === "favorites" &&
+      parsed.intent.auctionId === undefined
+    )
+  );
+}
+
 // Торговое нажатие через шлюз пакета поверхности `auction` с уже
 // разрешённой личностью (ADR-044, «Доступ как обязательный шлюз»). Над этой
 // функцией идёт contract suite пакета.
@@ -199,7 +214,7 @@ async function routeEntry(input: {
   if (
     input.action.kind !== "start" &&
     local === undefined &&
-    !parseAuctionCallback(input.action.data).ok
+    !currentTradeCallback(input.action.data)
   ) {
     return { screen: { kind: "outdated" } };
   }
@@ -275,13 +290,7 @@ async function routeEntry(input: {
   // Корневое меню — общий родитель разделов (PER-592). Отметкой FAQ оно не
   // закрыто: иначе «‹ Меню» с FAQ вернула бы в FAQ, а разделы за меню
   // закрыты ею по-прежнему.
-  const menu = {
-    screen: {
-      kind: "menu",
-      favorites: input.ports.favorites !== undefined,
-    },
-    identityId,
-  } as const;
+  const menu = { screen: { kind: "menu" }, identityId } as const;
   try {
     const action = local?.action;
     if (action === "faq" || action === "details" || action === "question") {
@@ -360,14 +369,14 @@ async function routeEntry(input: {
     });
     switch (result.kind) {
       case "screen": {
-        const feed = result.body.blocks.find((block) => block.kind === "feed");
-        // Родитель ленты — список, в котором аукцион стоит сейчас, а не путь,
-        // которым человек пришёл (дизайн-код, «Дерево бота аукциона»): лента,
-        // открытая из прошедших или из карточки по кнопке уведомления,
-        // возвращает туда же, куда и открытая из активных. Не активный
-        // аукцион — прошедший: черновика бот аукциона не показывает.
+        const root = result.body.blocks.find((block) => block.kind === "root");
+        // Родитель корня аукциона — список, в котором аукцион стоит сейчас, а
+        // не путь, которым человек пришёл (дизайн-код, «Дерево бота
+        // аукциона»): корень, открытый из прошедших или с ленты по кнопке
+        // уведомления, возвращает туда же, куда и открытый из активных. Не
+        // активный аукцион — прошедший: черновика бот аукциона не показывает.
         const parent: ListAction | undefined =
-          feed === undefined
+          root === undefined
             ? undefined
             : (
                   await readAuctions({
@@ -375,7 +384,7 @@ async function routeEntry(input: {
                     viewer,
                     listing: "active",
                   })
-                ).some((auction) => auction.auctionId === feed.auctionId)
+                ).some((auction) => auction.auctionId === root.auctionId)
               ? "auctions"
               : "past";
         return {

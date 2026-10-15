@@ -178,7 +178,6 @@ describe("feed and history in the hub shell", () => {
       ...view([]),
       canManage: true,
       canAddLots: true,
-      favorites: true,
       body: {
         blocks: [
           {
@@ -202,6 +201,7 @@ describe("feed and history in the hub shell", () => {
             },
           ]),
           [{ action: "feed.next" as const, callbackData: "next" }],
+          [{ action: "feed.back" as const, callbackData: "v1:auc:rt:x" }],
         ],
       },
     });
@@ -242,6 +242,7 @@ describe("feed and history in the hub shell", () => {
           [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
           [{ action: "feed.open-lot", lotId: "b", callbackData: "cb" }],
           [{ action: "feed.next", callbackData: "cn" }],
+          [{ action: "feed.back" as const, callbackData: "v1:auc:rt:x" }],
         ],
       },
     });
@@ -281,6 +282,7 @@ describe("feed and history in the hub shell", () => {
         ],
         keyboard: [
           [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
+          [{ action: "feed.back" as const, callbackData: "v1:auc:rt:x" }],
         ],
       },
     });
@@ -618,7 +620,12 @@ describe("happy hours in the hub shell", () => {
     ]);
     const { screen } = auctionScreen({
       ...feed,
-      body: { ...feed.body, keyboard: [] },
+      body: {
+        ...feed.body,
+        keyboard: [
+          [{ action: "feed.back" as const, callbackData: "v1:auc:rt:x" }],
+        ],
+      },
     });
     // Отметка окна — строкой сводки (PER-595): строк лотов в теле больше нет.
     expect(plain(screen.text)).toContain("Счастливые часы сейчас: Кружка.");
@@ -686,6 +693,7 @@ describe("feed before trading", () => {
           ],
           keyboard: [
             [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
+            [{ action: "feed.back" as const, callbackData: "v1:auc:rt:x" }],
           ],
         },
       }).screen.text,

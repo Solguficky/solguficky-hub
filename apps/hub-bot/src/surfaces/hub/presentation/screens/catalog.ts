@@ -197,22 +197,24 @@ export const screenCatalog = {
     backName: "Сходка",
     maxRows: 5,
   },
+  // Подменю сходки (PER-644): заголовок — название сходки, как у карточки,
+  // имя подменю — строкой ниже курсивом.
   edit: {
     class: "screen",
     nav: "tree",
-    title: "Изменить сходку",
+    submenu: "Изменить",
     parent: "card",
   },
   status: {
     class: "screen",
     nav: "tree",
-    title: "Статус",
+    submenu: "Статус",
     parent: "card",
   },
   materials: {
     class: "screen",
     nav: "tree",
-    title: "Материалы",
+    submenu: "Материалы",
     parent: "card",
     backName: "Материалы",
   },
@@ -222,7 +224,7 @@ export const screenCatalog = {
   extensions: {
     class: "screen",
     nav: "tree",
-    title: "Расширения",
+    submenu: "Расширения",
     parent: "card",
     backName: "Расширения",
   },
@@ -251,16 +253,17 @@ export const screenCatalog = {
   },
   // Заголовок карточки лота — его название. «Обновить» тело ставит, пока у
   // лота нет итога: цена и лидер меняются без участия человека. Ряды
-  // складываются по смыслу (PER-594): ставка по шагу, своя сумма с
-  // автоставкой, «Обновить» со «Ставками», избранное (PER-495), «Изменить лот»
-  // администратора и навигация — шесть, у участника пять.
+  // складываются по смыслу (PER-594, PER-644): ставка по шагу, своя сумма с
+  // автоставкой, «Обновить» с избранным (PER-495), «Ставки», листание
+  // «‹ пред / след ›», «Изменить лот» администратора и навигация — семь, у
+  // участника шесть.
   lot: {
     class: "screen",
     nav: "tree",
     parent: "lots",
     backName: "Лот",
     refresh: true,
-    maxRows: 6,
+    maxRows: 7,
   },
   // Избранное (PER-495): тело — аукционное дерево, оболочка — хаб. Открывается
   // из корня аукциона рядом с «Правила и FAQ» и возвращает в него (PER-605).
@@ -508,6 +511,9 @@ export const screenCatalog = {
   // Подсказка на сообщение вне вопроса (PER-592): кадр исхода с «‹ Меню».
   hint: { class: "screen", nav: "exit" },
   notification: { class: "trace", nav: "free" },
+  // Файл материала (PER-644): подпись — название без разметки, под ним одна
+  // кнопка «‹ Материалы».
+  "material-file": { class: "trace", nav: "tree", parent: "materials" },
   "access-opened": { class: "trace", nav: "free" },
 } as const;
 

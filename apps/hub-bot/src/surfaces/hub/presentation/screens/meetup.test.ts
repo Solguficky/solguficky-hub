@@ -323,10 +323,10 @@ describe("cardScreen", () => {
     const screen = cardScreen({ ...view, meetup: meetup(), subscribed: true });
 
     expect(rows(screen)).toEqual([
-      ["Изменить", "Статус"],
-      ["Материалы (0)", "🧩 Расширения"],
-      ["Написать подписчикам"],
-      ["Отписаться", "Уведомления сходки"],
+      ["✏️ Изменить", "🏷 Статус"],
+      ["📎 Материалы (0)", "🧩 Расширения"],
+      ["📣 Написать подписчикам"],
+      ["🔕 Отписаться", "⚙️ Уведомления сходки"],
       ["‹ Сходки"],
     ]);
   });
@@ -337,7 +337,7 @@ describe("cardScreen", () => {
     // «Расширения» — у всех: что за ними, говорит меню (PER-605).
     expect(rows(cardScreen({ ...participant, meetup: meetup() }))).toEqual([
       ["🧩 Расширения"],
-      ["Подписаться на сходку"],
+      ["🔔 Подписаться на сходку"],
       ["‹ Сходки"],
     ]);
     expect(
@@ -360,8 +360,8 @@ describe("cardScreen", () => {
         }),
       ),
     ).toEqual([
-      ["Материалы (1)", "🧩 Расширения"],
-      ["Подписаться на сходку"],
+      ["📎 Материалы (1)", "🧩 Расширения"],
+      ["🔔 Подписаться на сходку"],
       ["‹ Сходки"],
     ]);
   });
@@ -424,14 +424,14 @@ describe("cardScreen", () => {
           final: true,
         }),
       ).toContain(
-        "📍 Где: Циферблат\n\nАукцион: идут онлайн-торги до 20 августа, чт, 19:00\n\nБерём свои игры",
+        "📍 Где: Циферблат\n\n🔨 Аукцион: идут онлайн-торги до 20 августа, чт, 19:00\n\nБерём свои игры",
       );
     });
 
     it("names a finished auction by its stage", () => {
       expect(
         withAuction({ auctionId, stage: "finished", final: false }),
-      ).toContain("\n\nАукцион: завершён\n\n");
+      ).toContain("\n\n🔨 Аукцион: завершён\n\n");
     });
 
     it("leaves the line out without an auction", () => {
@@ -492,8 +492,8 @@ describe("cardScreen", () => {
 
     expect(rows(screen)).toEqual([
       ["🧩 Расширения"],
-      ["Написать подписчикам"],
-      ["Уведомления сходки"],
+      ["📣 Написать подписчикам"],
+      ["⚙️ Уведомления сходки"],
       ["‹ Архив"],
     ]);
   });
@@ -554,6 +554,6 @@ describe("materialsScreen", () => {
     const screen = materialsScreen(meetup({ materials }), false, 1);
 
     expect(rows(screen)).toEqual([["Материал 9 ↗"], ["←"], ["‹ Сходка"]]);
-    expect(screen.text).toContain("<b>Материалы · 2 из 2</b>");
+    expect(screen.text).toContain("<b>Настолки</b>\n<i>Материалы · 2 из 2</i>");
   });
 });

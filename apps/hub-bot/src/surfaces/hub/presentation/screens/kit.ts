@@ -45,6 +45,26 @@ export function screenText(
   ].join("\n\n");
 }
 
+/**
+ * Подменю сходки (решение владельца по прогону 14 октября 2026 года,
+ * PER-644): заголовок — название сходки, как у её карточки, имя подменю —
+ * строкой ниже курсивом, затем абзацы через пустую строку. Так название и
+ * подменю не сливаются, а человек видит, в какой сходке он.
+ */
+export function submenuText(
+  meetupTitle: string,
+  submenu: string,
+  ...paragraphs: (string | undefined)[]
+): string {
+  return [
+    `${heading(meetupTitle)}\n<i>${escapeHtml(submenu)}</i>`,
+    ...paragraphs.filter(
+      (paragraph): paragraph is string =>
+        paragraph !== undefined && paragraph !== "",
+    ),
+  ].join("\n\n");
+}
+
 /** Строка списка в теле: маркер, затем поля (дизайн-код, «Формат»). */
 export function bullet(line: string): string {
   return `• ${line}`;

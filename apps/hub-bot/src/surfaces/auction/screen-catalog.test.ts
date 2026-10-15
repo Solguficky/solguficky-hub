@@ -54,11 +54,12 @@ const feed: AuctionScreenBody = {
       { action: "feed.prev", callbackData: "v1:auc:feed:auc-1:0" },
       { action: "feed.next", callbackData: "v1:auc:feed:auc-1:2" },
     ],
+    [{ action: "feed.back", callbackData: "v1:auc:rt:auc-1" }],
   ],
 };
 
-// Корень аукциона (PER-605): входа в него этот бот не даёт, но тело дерева
-// он рисует — по стадии и без аукциона.
+// Корень аукциона (PER-605, PER-644): список открывает его, как в хабе, —
+// по стадии и без аукциона.
 const root: AuctionScreenBody = {
   blocks: [
     {
@@ -76,6 +77,7 @@ const root: AuctionScreenBody = {
   keyboard: [
     [{ action: "root.lots", callbackData: "v1:auc:feed:auc-1:0" }],
     [{ action: "root.raffle", callbackData: "v1:auc:rf:auc-1" }],
+    [{ action: "root.favorites", callbackData: "v1:auc:fav:0:auc-1" }],
   ],
 };
 
@@ -88,7 +90,7 @@ const emptyFeed: AuctionScreenBody = {
   blocks: [
     { kind: "feed", auctionId: "auc-1", page: 0, pageCount: 1, lots: [] },
   ],
-  keyboard: [],
+  keyboard: [[{ action: "feed.back", callbackData: "v1:auc:rt:auc-1" }]],
 };
 
 // Лот с итогом: «Обновить» и рядов ставки тело под ним не несёт.
@@ -134,38 +136,41 @@ const lot = (image: boolean): AuctionScreenBody => ({
         callbackData: "v1:auc:cb:lot-1:fa:1",
       },
     ],
-    // Своя сумма с автоставкой и «Обновить» со «Ставками» — парами (PER-594).
+    // Своя сумма с автоставкой — парой (PER-594).
     [
       { action: "lot.bid-custom", callbackData: "v1:auc:ab:lot-1:1" },
       { action: "lot.proxy", callbackData: "v1:auc:ax:lot-1:1" },
     ],
+    [{ action: "lot.refresh", callbackData: "v1:auc:lot:lot-1:1" }],
+    [{ action: "lot.history", callbackData: "v1:auc:hist:lot-1:1:999" }],
+    // Листание лотов (PER-644): соседи в порядке ленты.
     [
-      { action: "lot.refresh", callbackData: "v1:auc:lot:lot-1:1" },
-      { action: "lot.history", callbackData: "v1:auc:hist:lot-1:1:999" },
+      { action: "lot.prev", callbackData: "v1:auc:lot:lot-0:1" },
+      { action: "lot.next", callbackData: "v1:auc:lot:lot-2:1" },
     ],
     [{ action: "lot.back", callbackData: "v1:auc:feed:auc-1:1" }],
   ],
 });
 
 // Карточка с кнопкой избранного (PER-495): ставка по шагу, своя сумма с
-// автоставкой, «Обновить» со «Ставками», избранное и навигация — пять рядов,
-// предел карточки (PER-594).
+// автоставкой, «Обновить» с избранным, «Ставки», листание и навигация —
+// шесть рядов, предел карточки (PER-644).
 const withFollow = (following: boolean): AuctionScreenBody => {
   const body = lot(false);
-  const back = body.keyboard.at(-1) ?? [];
   return {
     blocks: body.blocks.map((block) =>
       block.kind === "lot" ? { ...block, following } : block,
     ),
-    keyboard: [
-      ...body.keyboard.slice(0, -1),
-      [
-        following
-          ? { action: "lot.unfollow", callbackData: "v1:auc:uf:lot-1:1" }
-          : { action: "lot.follow", callbackData: "v1:auc:fo:lot-1:1" },
-      ],
-      back,
-    ],
+    keyboard: body.keyboard.map((row) =>
+      row.some((button) => button.action === "lot.refresh")
+        ? [
+            ...row,
+            following
+              ? { action: "lot.unfollow", callbackData: "v1:auc:uf:lot-1:1" }
+              : { action: "lot.follow", callbackData: "v1:auc:fo:lot-1:1" },
+          ]
+        : row,
+    ),
   };
 };
 
@@ -218,8 +223,9 @@ const favorites = (filled: boolean): AuctionScreenBody => ({
           { action: "favorites.prev", callbackData: "v1:auc:fav:0" },
           { action: "favorites.next", callbackData: "v1:auc:fav:2" },
         ],
+        [{ action: "favorites.back", callbackData: "v1:auc:rt:auc-1" }],
       ]
-    : [],
+    : [[{ action: "favorites.back", callbackData: "v1:auc:rt:auc-1" }]],
 });
 
 const followRefused: AuctionScreenBody = {
@@ -512,7 +518,7 @@ const raffleBody = (raffle: RaffleView | undefined): AuctionScreenBody => ({
     ...(raffle === undefined || raffle.status === "not-held"
       ? []
       : [[{ action: "raffle.proof" as const, callbackData: "v1:auc:rp:a" }]]),
-    [{ action: "raffle.back", callbackData: "v1:auc:feed:auc-1:0" }],
+    [{ action: "raffle.back", callbackData: "v1:auc:rt:auc-1" }],
   ],
 });
 
@@ -529,14 +535,6 @@ const raffleProofBody = (
   ],
   keyboard: [[{ action: "raffle.return", callbackData: "v1:auc:rf:a" }]],
 });
-
-const feedWithRaffle: AuctionScreenBody = {
-  ...feed,
-  keyboard: [
-    [{ action: "feed.raffle", callbackData: "v1:auc:rf:a" }],
-    ...feed.keyboard,
-  ],
-};
 
 const raffleNameChoice: AuctionScreenBody = {
   blocks: [
@@ -668,8 +666,7 @@ const shown: readonly {
   { screen: { kind: "auction", body: nameQuestion } },
   { screen: { kind: "auction", body: nameRefused } },
   // Корневое меню, приветствие и подсказка (PER-592).
-  { screen: { kind: "menu", favorites: false } },
-  { screen: { kind: "menu", favorites: true } },
+  { screen: { kind: "menu" } },
   { screen: { kind: "welcome" } },
   { screen: { kind: "welcome", sourceCode: "chat" } },
   { screen: { kind: "hint", openQuestion: true } },
@@ -680,10 +677,10 @@ const shown: readonly {
   { screen: { kind: "auctions", list: middlePage } },
   { screen: { kind: "past", list: emptyList } },
   { screen: { kind: "past", list: middlePage } },
-  { screen: { kind: "auction", body: feed, parent: "auctions" } },
-  { screen: { kind: "auction", body: feed, parent: "past" } },
-  { screen: { kind: "auction", body: emptyFeed, parent: "auctions" } },
+  { screen: { kind: "auction", body: feed } },
+  { screen: { kind: "auction", body: emptyFeed } },
   { screen: { kind: "auction", body: root, parent: "auctions" } },
+  { screen: { kind: "auction", body: root, parent: "past" } },
   { screen: { kind: "auction", body: goneRoot, parent: "auctions" } },
   { screen: { kind: "auction", body: lot(false) } },
   { screen: { kind: "auction", body: lot(true) } },
@@ -711,7 +708,6 @@ const shown: readonly {
   { screen: { kind: "auction", body: question("alias", true) } },
   { screen: { kind: "auction", body: nameChoice(true) } },
   { screen: { kind: "auction", body: nameChoice(false) } },
-  { screen: { kind: "auction", body: feedWithRaffle, parent: "auctions" } },
   ...raffles.map((raffle) => ({
     screen: { kind: "auction" as const, body: raffleBody(raffle) },
   })),

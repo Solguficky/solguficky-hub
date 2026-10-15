@@ -31,6 +31,12 @@ const catalog = {
   },
   card: { class: "screen", nav: "tree", parent: "list" },
   edit: { class: "screen", nav: "tree", title: "Изменить", parent: "meetups" },
+  status: {
+    class: "screen",
+    nav: "tree",
+    submenu: "Статус",
+    parent: "meetups",
+  },
   plain: {
     class: "screen",
     nav: "tree",
@@ -52,7 +58,7 @@ const config: LintConfig = {
   tag,
   catalog,
   parentGroups: { list: ["hidden", "archive"] },
-  namedPairs: new Set(["Изменить|Статус", "Материалы (#)|Лоты"]),
+  namedPairs: new Set(["Правка|Итог", "Файлы (#)|Ставки"]),
 };
 
 type Key = { text: string; callback_data?: string; style?: string };
@@ -129,12 +135,73 @@ describe("inspectCall configuration", () => {
     ).toEqual([]);
   });
 
+  // Один знак на раздел во всех ботах, тот же, что в тексте (PER-644): вход
+  // в раздел без знака — нарушение, возврат и заголовок знака не несут.
+  it("requires the section sign on a section entry and its text line", () => {
+    const back = [key("‹ Сходки")];
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("edit", "<b>Изменить</b>", [[key("Материалы (3)")], back]),
+      ),
+    ).toEqual(["emoji"]);
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("edit", "<b>Изменить</b>", [[key("📎 Материалы (3)")], back]),
+      ),
+    ).toEqual([]);
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("edit", "<b>Изменить</b>\n\nАукцион: идут торги", [back]),
+      ),
+    ).toEqual(["emoji"]);
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("edit", "<b>Изменить</b>\n\n🔨 Аукцион: идут торги", [back]),
+      ),
+    ).toEqual([]);
+    // Поле записи с отступом называет бота, а не раздел.
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("edit", "<b>Изменить</b>\n\n• Канал\n  Аукцион: ссылка", [back]),
+      ),
+    ).toEqual([]);
+  });
+
+  // Подменю сходки (PER-644): заголовок — название сходки, под ним курсивом
+  // имя подменю из каталога, затем пустая строка.
+  it("reads the submenu name under the meetup title", () => {
+    const back = [[key("‹ Сходки")]];
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("status", "<b>Настолки</b>\n<i>Статус</i>\n\nТекст", back),
+      ),
+    ).toEqual([]);
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("status", "<b>Настолки</b>\n\nТекст", back),
+      ),
+    ).toEqual(["title"]);
+    expect(
+      rulesOf(
+        "editMessageText",
+        call("status", "<b>Настолки</b>\n<i>Статус</i>\nТекст", back),
+      ),
+    ).toEqual(["body"]);
+  });
+
   it("allows a pair only when the bot names it", () => {
     const rows = (pair: Key[]) => [pair, [key("‹ Сходки")]];
     expect(
       rulesOf(
         "editMessageText",
-        call("edit", "<b>Изменить</b>", rows([key("Изменить"), key("Статус")])),
+        call("edit", "<b>Изменить</b>", rows([key("Правка"), key("Итог")])),
       ),
     ).toEqual([]);
     expect(
@@ -143,7 +210,7 @@ describe("inspectCall configuration", () => {
         call(
           "edit",
           "<b>Изменить</b>",
-          rows([key("Изменить"), key("Удалить сходку")]),
+          rows([key("Правка"), key("Удалить сходку")]),
         ),
       ),
     ).toEqual(["rows"]);
@@ -158,7 +225,7 @@ describe("inspectCall configuration", () => {
           call(
             "edit",
             "<b>Изменить</b>",
-            rows([key(`Материалы (${count})`), key("Лоты")]),
+            rows([key(`Файлы (${count})`), key("Ставки")]),
           ),
         ),
       ).toEqual([]);
@@ -169,7 +236,7 @@ describe("inspectCall configuration", () => {
         call(
           "edit",
           "<b>Изменить</b>",
-          rows([key("Материалы (два)"), key("Лоты")]),
+          rows([key("Файлы (два)"), key("Ставки")]),
         ),
       ),
     ).toEqual(["rows"]);

@@ -148,9 +148,8 @@ export async function openFavorites(input: {
               {
                 action: "favorites.back" as const,
                 callbackData: encodeAuctionCallback({
-                  kind: "feed",
+                  kind: "root",
                   auctionId: input.auctionId,
-                  page: 0,
                 }),
               },
             ],

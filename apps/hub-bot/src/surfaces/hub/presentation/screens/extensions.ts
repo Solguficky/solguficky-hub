@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { nameSettingsTitle } from "../../../../auction-standing.js";
 import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
+import { marked, pictogram } from "../../../../core/pictograms.js";
 import type { MeetupAuctionView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
@@ -11,7 +12,7 @@ import {
   type Parent,
   retryLabel,
   screenText,
-  subjectLine,
+  submenuText,
   toCard,
   toExtensions,
   toSettings,
@@ -33,7 +34,8 @@ export const toSettingsExtensions: Parent = {
   data: settingsExtensionsData,
 };
 
-const auctionLabel = "Аукцион";
+// Вход в раздел аукциона несёт его знак во всех ботах (PER-644).
+const auctionLabel = marked(pictogram.auction, "Аукцион");
 const enableLabel = "Включить аукцион";
 
 /**
@@ -51,10 +53,12 @@ export function extensionsScreen(view: {
   const { meetup, auction } = view;
   const token = uuidToToken(meetup.id);
   const keyboard = new InlineKeyboard();
-  const subject = subjectLine(meetupTitleLabel(meetup.title));
   let line: string;
   if (auction?.kind === "open") {
-    line = "Аукцион: торги лотов сходки, избранное, розыгрыш и правила.";
+    line = marked(
+      pictogram.auction,
+      "Аукцион: торги лотов сходки, избранное, розыгрыш и правила.",
+    );
     keyboard.text(auctionLabel, auctionRootData(auction.auctionId)).row();
   } else if (auction?.kind === "unavailable") {
     line = "Аукцион сейчас не отвечает. Попробуй ещё раз.";
@@ -72,7 +76,7 @@ export function extensionsScreen(view: {
   }
   return {
     id: "extensions",
-    text: screenText("Расширения", subject, line),
+    text: submenuText(meetupTitleLabel(meetup.title), "Расширения", line),
     keyboard: withNav(keyboard, toCard(token)),
     format: "HTML",
   };

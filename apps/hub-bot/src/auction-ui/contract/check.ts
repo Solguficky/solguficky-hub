@@ -472,12 +472,13 @@ const raffleCall = (auctionId: string): PortCall => ({
   request: { viewer: CONTRACT_VIEWER, auctionId },
 });
 
-// Лента: розыгрыш — по нему тело ставит «Розыгрыш» — читается параллельно
-// страницам лотов и стартует первым.
-const feedCalls = (
-  auctionId: string,
-  tokens: readonly string[],
-): PortCall[] => [raffleCall(auctionId), ...listCalls(auctionId, tokens)];
+// Лента — только страницы лотов: розыгрыш стоит в корне аукциона (PER-644).
+const feedCalls = (auctionId: string, tokens: readonly string[]): PortCall[] =>
+  listCalls(auctionId, tokens);
+
+// Карточка лота читает ленту своего аукциона ради соседей (PER-644): после
+// имени и отметки, теми же страницами, что лента.
+const CARD_CALLS = listCalls(CONTRACT_AUCTION_ID, ["", "p2"]);
 
 const getLotCall = (lotId: string, atLeastVersion?: number): PortCall => ({
   port: "auction",
@@ -520,6 +521,14 @@ const lotCallback = (lotId: string, page: number, atLeastVersion?: number) =>
 const historyCallback = (lotId: string, page: number, historyPage: number) =>
   encodeAuctionCallback({ kind: "history", lotId, page, historyPage });
 
+// Возврат ленты — в корень аукциона (PER-644).
+const feedBackRow = (auctionId: string) => [
+  {
+    action: "feed.back" as const,
+    callbackData: encodeAuctionCallback({ kind: "root", auctionId }),
+  },
+];
+
 // По цене: стартовая 500, текущая 1200, продажа 3000; без цены — в конце по
 // `lotId`.
 const FEED_ORDER = [
@@ -544,13 +553,16 @@ const FEED_BODY: AuctionScreenBody = {
       })),
     },
   ],
-  keyboard: FEED_ORDER.map((lot) => [
-    {
-      action: "feed.open-lot",
-      lotId: lot.lotId,
-      callbackData: lotCallback(lot.lotId, 0),
-    },
-  ]),
+  keyboard: [
+    ...FEED_ORDER.map((lot) => [
+      {
+        action: "feed.open-lot" as const,
+        lotId: lot.lotId,
+        callbackData: lotCallback(lot.lotId, 0),
+      },
+    ]),
+    feedBackRow(CONTRACT_AUCTION_ID),
+  ],
 };
 
 const refreshRow = (lotId: string, page: number) => [
@@ -565,6 +577,30 @@ const backRow = (page: number) => [
 ];
 
 const callback = (intent: AuctionIntent) => encodeAuctionCallback(intent);
+
+// «‹ пред / след ›» карточки (PER-644): соседи лота в порядке ленты, у
+// каждого своя страница. На краях своей кнопки нет; лота нет в ленте — нет и
+// ряда.
+const neighborRows = (order: readonly LotView[], lotId: string) => {
+  const index = order.findIndex((lot) => lot.lotId === lotId);
+  if (index < 0) return [];
+  const button = (action: "lot.prev" | "lot.next", position: number) => {
+    const lot = order[position];
+    return lot === undefined
+      ? []
+      : [
+          {
+            action,
+            callbackData: lotCallback(lot.lotId, Math.floor(position / 8)),
+          },
+        ];
+  };
+  const row = [
+    ...button("lot.prev", index - 1),
+    ...button("lot.next", index + 1),
+  ];
+  return row.length === 0 ? [] : [row];
+};
 
 // Ряды ставки под лотом в онлайн-торгах: по шагу, затем своя сумма и лимит
 // одним рядом (PER-594).
@@ -605,9 +641,12 @@ const bidRows = (lot: LotView, page: number, step = 125000) => [
   ],
 ];
 
-// Лот без итога: «Обновить» и «Ставки» одним рядом (PER-594), затем возврат.
+// Лот без итога: «Обновить», под ним «Ставки» (PER-644; рядом с «Обновить»
+// встаёт отметка избранного), листание и возврат.
 const lotKeyboard = (lotId: string, page: number) => [
-  [...refreshRow(lotId, page), historyButton(lotId, page)],
+  refreshRow(lotId, page),
+  [historyButton(lotId, page)],
+  ...neighborRows(FEED_ORDER, lotId),
   backRow(page),
 ];
 
@@ -619,6 +658,7 @@ const historyButton = (lotId: string, page: number) => ({
 // Лот с итогом: «Обновить» под ним нет — без человека он уже не меняется.
 const settledKeyboard = (lotId: string, page: number) => [
   [historyButton(lotId, page)],
+  ...neighborRows(FEED_ORDER, lotId),
   backRow(page),
 ];
 
@@ -1352,7 +1392,7 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
     intent: "bid: cancel the question",
     callbackData: questionCallback("bid"),
     auction: AUCTION,
-    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID), ...CARD_CALLS],
     body: {
       blocks: [
         {
@@ -1551,12 +1591,16 @@ const SCHEDULED_BLOCK = {
   status: { kind: "scheduled" as const, startingPrice: rub(500) },
 };
 
-// Запланированный лот с кнопкой избранного: «Обновить», избранное, возврат.
+// Запланированный лот с кнопкой избранного: «Обновить» с отметкой одним
+// рядом (PER-644), листание, возврат.
 const scheduledWithFollow = (following: boolean): AuctionScreenBody => ({
   blocks: [{ ...SCHEDULED_BLOCK, following }],
   keyboard: [
-    refreshRow(SCHEDULED_LOT.lotId, 0),
-    followRow(SCHEDULED_LOT.lotId, 0, following),
+    [
+      ...refreshRow(SCHEDULED_LOT.lotId, 0),
+      ...followRow(SCHEDULED_LOT.lotId, 0, following),
+    ],
+    ...neighborRows(FEED_ORDER, SCHEDULED_LOT.lotId),
     backRow(0),
   ],
 });
@@ -1593,7 +1637,11 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
     intent: "lot: in favorites",
     callbackData: lotCallback(SCHEDULED_LOT.lotId, 0),
     auction: { ...AUCTION, followed: [SCHEDULED_LOT.lotId] },
-    auctionCalls: [getLotCall(SCHEDULED_LOT.lotId), listFollowedCall],
+    auctionCalls: [
+      getLotCall(SCHEDULED_LOT.lotId),
+      listFollowedCall,
+      ...CARD_CALLS,
+    ],
     body: scheduledWithFollow(true),
   },
   // Проданный лот из избранного: итог известен, кнопки нет (PER-595).
@@ -1605,6 +1653,7 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
       getLotCall(SOLD_LOT.lotId),
       namesCall(WINNER_ID),
       listFollowedCall,
+      ...CARD_CALLS,
     ],
     body: soldWithFollow(true),
   },
@@ -1612,7 +1661,11 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
     intent: "lot: not in favorites",
     callbackData: lotCallback(SCHEDULED_LOT.lotId, 0),
     auction: { ...AUCTION, followed: [UNSOLD_LOT.lotId] },
-    auctionCalls: [getLotCall(SCHEDULED_LOT.lotId), listFollowedCall],
+    auctionCalls: [
+      getLotCall(SCHEDULED_LOT.lotId),
+      listFollowedCall,
+      ...CARD_CALLS,
+    ],
     body: scheduledWithFollow(false),
   },
   // За закрытым лотом следить уже не за чем: «В избранное» под ним нет.
@@ -1624,6 +1677,7 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
       getLotCall(SOLD_LOT.lotId),
       namesCall(WINNER_ID),
       listFollowedCall,
+      ...CARD_CALLS,
     ],
     body: soldWithFollow(false),
   },
@@ -1636,6 +1690,7 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
       getLotCall(SOLD_LOT.lotId),
       namesCall(WINNER_ID),
       listFollowedCall,
+      ...CARD_CALLS,
     ],
     body: {
       blocks: [SOLD_BLOCK],
@@ -1657,6 +1712,7 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [
       getLotCall(SCHEDULED_LOT.lotId),
       followCall("followLot", SCHEDULED_LOT.lotId),
+      ...CARD_CALLS,
     ],
     body: scheduledWithFollow(true),
   },
@@ -1708,11 +1764,13 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [
       getLotCall(SCHEDULED_LOT.lotId),
       followCall("unfollowLot", SCHEDULED_LOT.lotId),
+      ...CARD_CALLS,
     ],
     body: scheduledWithFollow(false),
   },
-  // Список из команды бота аукциона: возврата у тела нет, это корень.
-  // Лот, которого Auction не знает, выпадает до нарезки страниц.
+  // Список без аукциона — кнопка прежнего меню бота аукциона: возврата у
+  // тела нет; поверхность до дерева её не пускает (PER-644). Лот, которого
+  // Auction не знает, выпадает до нарезки страниц.
   {
     intent: "favorites: from the menu",
     callbackData: favoritesCallback(0),
@@ -1739,9 +1797,9 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
       keyboard: [openFavoriteRow(UNSOLD_LOT), openFavoriteRow(SOLD_LOT)],
     },
   },
-  // Список из корня ленты хаба: возврат — в эту ленту.
+  // Список из корня аукциона: возврат — в него (PER-644).
   {
-    intent: "favorites: from the feed",
+    intent: "favorites: from the root",
     callbackData: favoritesCallback(0, CONTRACT_AUCTION_ID),
     auction: { ...AUCTION, followed: [UNSOLD_LOT.lotId, SOLD_LOT.lotId] },
     auctionCalls: [
@@ -1765,7 +1823,10 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
         [
           {
             action: "favorites.back",
-            callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
+            callbackData: callback({
+              kind: "root",
+              auctionId: CONTRACT_AUCTION_ID,
+            }),
           },
         ],
       ],
@@ -1887,7 +1948,10 @@ const liveBody = (input: {
             },
           ],
         ]),
-    ...lotKeyboard(CONTRACT_LOT.lotId, 2),
+    // В живом финале листания нет (PER-644): карточку правит поток.
+    refreshRow(CONTRACT_LOT.lotId, 2),
+    [historyButton(CONTRACT_LOT.lotId, 2)],
+    backRow(2),
   ],
 });
 
@@ -2009,7 +2073,7 @@ const FINAL_CASES: readonly AuctionContractCase[] = [
     intent: "final: stale button outside the final",
     callbackData: finalBidCallback(125000),
     auction: AUCTION,
-    auctionCalls: [LOT_CALL, namesCall(LEADER_ID)],
+    auctionCalls: [LOT_CALL, namesCall(LEADER_ID), ...CARD_CALLS],
     body: TRADING_LOT_BODY,
   },
 ];
@@ -2068,10 +2132,10 @@ const raffleNameCall = (
   request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID, choice },
 });
 
-const toFeedRow = [
+const toRootRow = [
   {
     action: "raffle.back" as const,
-    callbackData: feedCallback(CONTRACT_AUCTION_ID, 0),
+    callbackData: callback({ kind: "root", auctionId: CONTRACT_AUCTION_ID }),
   },
 ];
 
@@ -2126,7 +2190,7 @@ const raffleScreen = (raffle: RaffleView | undefined): AuctionScreenBody => {
         ...(raffle === undefined ? {} : { raffle }),
       },
     ],
-    keyboard: [...action, ...proof, toFeedRow],
+    keyboard: [...action, ...proof, toRootRow],
   };
 };
 
@@ -2192,8 +2256,10 @@ const accepted = (raffle: RaffleView) => ({
 });
 
 const RAFFLE_CASES: readonly AuctionContractCase[] = [
+  // Лента — просто список лотов (PER-644): розыгрыш стоит в корне аукциона,
+  // и лента его не читает, даже когда он есть.
   {
-    intent: "feed: with a raffle",
+    intent: "feed: the raffle stays in the root",
     callbackData: feedCallback(EMPTY_AUCTION_ID, 0),
     auction: { ...EMPTY_AUCTION, raffle: OPEN_RAFFLE },
     auctionCalls: feedCalls(EMPTY_AUCTION_ID, [""]),
@@ -2207,33 +2273,7 @@ const RAFFLE_CASES: readonly AuctionContractCase[] = [
           lots: [],
         },
       ],
-      keyboard: [
-        [
-          {
-            action: "feed.raffle",
-            callbackData: raffleCallback(EMPTY_AUCTION_ID),
-          },
-        ],
-      ],
-    },
-  },
-  // Отказ чтения розыгрыша убирает кнопку, а не роняет ленту.
-  {
-    intent: "feed: raffle unavailable",
-    callbackData: feedCallback(EMPTY_AUCTION_ID, 0),
-    auction: { ...EMPTY_AUCTION, raffle: "unavailable" },
-    auctionCalls: feedCalls(EMPTY_AUCTION_ID, [""]),
-    body: {
-      blocks: [
-        {
-          kind: "feed",
-          auctionId: EMPTY_AUCTION_ID,
-          page: 0,
-          pageCount: 1,
-          lots: [],
-        },
-      ],
-      keyboard: [],
+      keyboard: [feedBackRow(EMPTY_AUCTION_ID)],
     },
   },
   {
@@ -2531,6 +2571,32 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
       keyboard: [rootLotsRow],
     },
   },
+  // У процесса с Notifications в корне — «Избранное» (PER-644): вход в
+  // список только отсюда, аукцион в кнопке — возврат.
+  {
+    intent: "root: with favorites",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: { ...AUCTION, summary: CONTRACT_SUMMARY, followed: [] },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: CONTRACT_SUMMARY,
+        },
+      ],
+      keyboard: [
+        rootLotsRow,
+        [
+          {
+            action: "root.favorites",
+            callbackData: favoritesCallback(0, CONTRACT_AUCTION_ID),
+          },
+        ],
+      ],
+    },
+  },
   {
     intent: "root: auction not given",
     callbackData: rootCallback(CONTRACT_AUCTION_ID),
@@ -2742,6 +2808,7 @@ const PER595_CASES: readonly AuctionContractCase[] = [
             callbackData: lotCallback(LOT_LED_BY_VIEWER.lotId, 0),
           },
         ],
+        feedBackRow(CONTRACT_AUCTION_ID),
       ],
     },
   },
@@ -2760,6 +2827,7 @@ const PER595_CASES: readonly AuctionContractCase[] = [
       getLotCall(LOT_WON_BY_VIEWER.lotId),
       namesCall(CONTRACT_VIEWER.identityId),
       listFollowedCall,
+      ...CARD_CALLS,
     ],
     body: {
       blocks: [
@@ -2800,6 +2868,154 @@ const PER595_CASES: readonly AuctionContractCase[] = [
   },
 ];
 
+// Листание карточки на краях ленты (PER-644). Девять запланированных лотов —
+// две страницы ленты: восьмой стоит последним на первой, девятый — на второй.
+// Цена растёт с номером, поэтому порядок ленты — порядок номеров.
+const MANY_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a4";
+
+const manyLot = (n: number): LotView => ({
+  lotId: `01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1c${String(n).padStart(2, "0")}`,
+  auctionId: MANY_AUCTION_ID,
+  version: 1,
+  card: { title: `Лот ${n}`, description: "" },
+  proxyEnabled: false,
+  status: { kind: "scheduled", startingPrice: rub(100 * (n + 1)) },
+});
+
+const MANY_LOTS = Array.from({ length: 9 }, (_, n) => manyLot(n));
+
+const MANY_AUCTION: ContractAuction = {
+  lots: MANY_LOTS,
+  pages: {
+    "": { lots: MANY_LOTS.slice(0, 5), nextPageToken: "m2" },
+    m2: { lots: MANY_LOTS.slice(5), nextPageToken: "" },
+  },
+};
+
+const manyBlock = (lot: LotView) => ({
+  kind: "lot" as const,
+  lotId: lot.lotId,
+  auctionId: MANY_AUCTION_ID,
+  version: 1,
+  ...(lot.card === undefined ? {} : { card: lot.card }),
+  status: lot.status,
+});
+
+const manyBack = (page: number) => [
+  {
+    action: "lot.back" as const,
+    callbackData: feedCallback(MANY_AUCTION_ID, page),
+  },
+];
+
+const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
+  // Последний лот первой страницы: сосед справа — первый на второй, и его
+  // кнопка несёт вторую страницу.
+  {
+    intent: "lot: neighbors across a feed page",
+    callbackData: lotCallback(manyLot(7).lotId, 0),
+    auction: MANY_AUCTION,
+    auctionCalls: [
+      getLotCall(manyLot(7).lotId),
+      ...listCalls(MANY_AUCTION_ID, ["", "m2"]),
+    ],
+    body: {
+      blocks: [manyBlock(manyLot(7))],
+      keyboard: [
+        refreshRow(manyLot(7).lotId, 0),
+        [
+          {
+            action: "lot.prev",
+            callbackData: lotCallback(manyLot(6).lotId, 0),
+          },
+          {
+            action: "lot.next",
+            callbackData: lotCallback(manyLot(8).lotId, 1),
+          },
+        ],
+        manyBack(0),
+      ],
+    },
+  },
+  // Последний лот ленты: «след ›» нет, листание не идёт по кругу.
+  {
+    intent: "lot: last in the feed",
+    callbackData: lotCallback(manyLot(8).lotId, 1),
+    auction: MANY_AUCTION,
+    auctionCalls: [
+      getLotCall(manyLot(8).lotId),
+      ...listCalls(MANY_AUCTION_ID, ["", "m2"]),
+    ],
+    body: {
+      blocks: [manyBlock(manyLot(8))],
+      keyboard: [
+        refreshRow(manyLot(8).lotId, 1),
+        [
+          {
+            action: "lot.prev",
+            callbackData: lotCallback(manyLot(7).lotId, 0),
+          },
+        ],
+        manyBack(1),
+      ],
+    },
+  },
+  // Первый лот ленты: «‹ пред» нет.
+  {
+    intent: "lot: first in the feed",
+    callbackData: lotCallback(manyLot(0).lotId, 0),
+    auction: MANY_AUCTION,
+    auctionCalls: [
+      getLotCall(manyLot(0).lotId),
+      ...listCalls(MANY_AUCTION_ID, ["", "m2"]),
+    ],
+    body: {
+      blocks: [manyBlock(manyLot(0))],
+      keyboard: [
+        refreshRow(manyLot(0).lotId, 0),
+        [
+          {
+            action: "lot.next",
+            callbackData: lotCallback(manyLot(1).lotId, 0),
+          },
+        ],
+        manyBack(0),
+      ],
+    },
+  },
+  // Единственный лот: листать некуда, ряда нет.
+  {
+    intent: "lot: alone in the feed",
+    callbackData: lotCallback(manyLot(0).lotId, 0),
+    auction: {
+      lots: [manyLot(0)],
+      pages: { "": { lots: [manyLot(0)], nextPageToken: "" } },
+    },
+    auctionCalls: [
+      getLotCall(manyLot(0).lotId),
+      ...listCalls(MANY_AUCTION_ID, [""]),
+    ],
+    body: {
+      blocks: [manyBlock(manyLot(0))],
+      keyboard: [refreshRow(manyLot(0).lotId, 0), manyBack(0)],
+    },
+  },
+  // Лента не прочиталась: карточка остаётся, без листания.
+  {
+    intent: "lot: feed unavailable",
+    callbackData: lotCallback(manyLot(3).lotId, 0),
+    auction: { lots: MANY_LOTS, pages: {} },
+    auctionCalls: [
+      getLotCall(manyLot(3).lotId),
+      ...listCalls(MANY_AUCTION_ID, [""]),
+    ],
+    body: {
+      blocks: [manyBlock(manyLot(3))],
+      keyboard: [refreshRow(manyLot(3).lotId, 0), manyBack(0)],
+    },
+  },
+];
+
 export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...ROOT_CASES,
   {
@@ -2832,7 +3048,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           lots: [],
         },
       ],
-      keyboard: [],
+      keyboard: [feedBackRow(EMPTY_AUCTION_ID)],
     },
   },
   // Ни один лот не торговался: сводка не о лидерстве, а о том, что торги не
@@ -2857,20 +3073,27 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           beforeTrading: true,
         },
       ],
-      keyboard: PRE_TRADING_ORDER.map((lot) => [
-        {
-          action: "feed.open-lot",
-          lotId: lot.lotId,
-          callbackData: lotCallback(lot.lotId, 0),
-        },
-      ]),
+      keyboard: [
+        ...PRE_TRADING_ORDER.map((lot) => [
+          {
+            action: "feed.open-lot" as const,
+            lotId: lot.lotId,
+            callbackData: lotCallback(lot.lotId, 0),
+          },
+        ]),
+        feedBackRow(PRE_TRADING_AUCTION_ID),
+      ],
     },
   },
   {
     intent: "lot: trading",
     callbackData: lotCallback(CONTRACT_LOT.lotId, 2),
     auction: AUCTION,
-    auctionCalls: [getLotCall(CONTRACT_LOT.lotId), namesCall(LEADER_ID)],
+    auctionCalls: [
+      getLotCall(CONTRACT_LOT.lotId),
+      namesCall(LEADER_ID),
+      ...CARD_CALLS,
+    ],
     body: TRADING_LOT_BODY,
   },
   // Лидеру онлайна ставить против себя нечего: из рядов ставки остаётся
@@ -2882,6 +3105,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     auctionCalls: [
       getLotCall(CONTRACT_LOT.lotId),
       namesCall(CONTRACT_VIEWER.identityId),
+      ...CARD_CALLS,
     ],
     body: {
       blocks: [
@@ -2915,7 +3139,11 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     intent: "lot: after an accepted command while the read model lags",
     callbackData: lotCallback(CONTRACT_LOT.lotId, 2, 4),
     auction: { ...AUCTION, after: [LOT_CAUGHT_UP], lagging: true },
-    auctionCalls: [getLotCall(CONTRACT_LOT.lotId, 4), namesCall(LEADER_ID)],
+    auctionCalls: [
+      getLotCall(CONTRACT_LOT.lotId, 4),
+      namesCall(LEADER_ID),
+      ...CARD_CALLS,
+    ],
     body: {
       blocks: [
         {
@@ -2947,14 +3175,22 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       "lot: after an accepted command when the read model does not catch up",
     callbackData: lotCallback(CONTRACT_LOT.lotId, 2, 4),
     auction: { ...AUCTION, lagging: true },
-    auctionCalls: [getLotCall(CONTRACT_LOT.lotId, 4), namesCall(LEADER_ID)],
+    auctionCalls: [
+      getLotCall(CONTRACT_LOT.lotId, 4),
+      namesCall(LEADER_ID),
+      ...CARD_CALLS,
+    ],
     body: TRADING_LOT_BODY,
   },
   {
     intent: "lot: sold",
     callbackData: lotCallback(SOLD_LOT.lotId, 0),
     auction: AUCTION,
-    auctionCalls: [getLotCall(SOLD_LOT.lotId), namesCall(WINNER_ID)],
+    auctionCalls: [
+      getLotCall(SOLD_LOT.lotId),
+      namesCall(WINNER_ID),
+      ...CARD_CALLS,
+    ],
     body: {
       blocks: [
         {
@@ -2975,7 +3211,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     intent: "lot: unsold",
     callbackData: lotCallback(UNSOLD_LOT.lotId, 0),
     auction: AUCTION,
-    auctionCalls: [getLotCall(UNSOLD_LOT.lotId)],
+    auctionCalls: [getLotCall(UNSOLD_LOT.lotId), ...CARD_CALLS],
     body: {
       blocks: [
         {
@@ -2994,7 +3230,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     intent: "lot: withdrawn",
     callbackData: lotCallback(WITHDRAWN_LOT.lotId, 0),
     auction: AUCTION,
-    auctionCalls: [getLotCall(WITHDRAWN_LOT.lotId)],
+    auctionCalls: [getLotCall(WITHDRAWN_LOT.lotId), ...CARD_CALLS],
     body: {
       blocks: [
         {
@@ -3013,7 +3249,11 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     intent: "lot: names unavailable",
     callbackData: lotCallback(SOLD_LOT.lotId, 0),
     auction: { lots: AUCTION.lots, pages: AUCTION.pages },
-    auctionCalls: [getLotCall(SOLD_LOT.lotId), namesCall(WINNER_ID)],
+    auctionCalls: [
+      getLotCall(SOLD_LOT.lotId),
+      namesCall(WINNER_ID),
+      ...CARD_CALLS,
+    ],
     body: {
       blocks: [
         {
@@ -3033,7 +3273,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     intent: "lot: scheduled",
     callbackData: lotCallback(SCHEDULED_LOT.lotId, 0),
     auction: AUCTION,
-    auctionCalls: [getLotCall(SCHEDULED_LOT.lotId)],
+    auctionCalls: [getLotCall(SCHEDULED_LOT.lotId), ...CARD_CALLS],
     body: {
       blocks: [
         {
@@ -3046,7 +3286,11 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           status: { kind: "scheduled", startingPrice: rub(500) },
         },
       ],
-      keyboard: [refreshRow(SCHEDULED_LOT.lotId, 0), backRow(0)],
+      keyboard: [
+        refreshRow(SCHEDULED_LOT.lotId, 0),
+        ...neighborRows(FEED_ORDER, SCHEDULED_LOT.lotId),
+        backRow(0),
+      ],
     },
   },
   // Шаг по порогам до торгов — те же пороги, что карточка покажет в торгах
@@ -3055,7 +3299,10 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     intent: "lot: scheduled, step by thresholds",
     callbackData: lotCallback(TIERED_SCHEDULED_LOT.lotId, 0),
     auction: PRE_TRADING_AUCTION,
-    auctionCalls: [getLotCall(TIERED_SCHEDULED_LOT.lotId)],
+    auctionCalls: [
+      getLotCall(TIERED_SCHEDULED_LOT.lotId),
+      ...listCalls(PRE_TRADING_AUCTION_ID, [""]),
+    ],
     body: {
       blocks: [
         {
@@ -3073,6 +3320,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
       ],
       keyboard: [
         refreshRow(TIERED_SCHEDULED_LOT.lotId, 0),
+        ...neighborRows(PRE_TRADING_ORDER, TIERED_SCHEDULED_LOT.lotId),
         [
           {
             action: "lot.back",
@@ -3087,7 +3335,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     intent: "lot: held",
     callbackData: lotCallback(HELD_LOT.lotId, 0),
     auction: OFF_FEED_AUCTION,
-    auctionCalls: [getLotCall(HELD_LOT.lotId)],
+    auctionCalls: [getLotCall(HELD_LOT.lotId), ...CARD_CALLS],
     body: {
       blocks: [
         {
@@ -3107,7 +3355,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     intent: "lot: draft",
     callbackData: lotCallback(DRAFT_LOT.lotId, 0),
     auction: OFF_FEED_AUCTION,
-    auctionCalls: [getLotCall(DRAFT_LOT.lotId)],
+    auctionCalls: [getLotCall(DRAFT_LOT.lotId), ...CARD_CALLS],
     body: {
       blocks: [
         {
@@ -3198,6 +3446,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...COMMAND_CASES,
   ...FINAL_CASES,
   ...FAVORITE_CASES,
+  ...NEIGHBOR_CASES,
   ...RAFFLE_CASES,
   ...PER595_CASES,
 ];

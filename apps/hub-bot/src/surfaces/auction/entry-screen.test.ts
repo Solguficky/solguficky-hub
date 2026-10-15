@@ -70,21 +70,16 @@ describe("renderEntryScreen", () => {
     ]);
   });
 
-  // Корневое меню — общий родитель разделов (PER-592): «Аукционы», у бота с
-  // Notifications «Избранное», «Настройки» (PER-595), затем FAQ; возврата нет.
-  it("lists the sections in the menu and favorites only with Notifications", () => {
-    const labels = (favorites: boolean) =>
-      renderEntryScreen({ kind: "menu", favorites }, options)
-        .keyboard.flat()
-        .map((button) => button.text);
-    expect(labels(false)).toEqual(["Аукционы", "Настройки", "Правила и FAQ"]);
-    expect(labels(true)).toEqual([
+  // Корневое меню — общий родитель разделов (PER-592): «Аукционы»,
+  // «Настройки» (PER-595), затем FAQ; возврата нет. «Избранного» в меню нет:
+  // оно открывается из корня аукциона (PER-644).
+  it("lists the sections in the menu without favorites", () => {
+    const menu = renderEntryScreen({ kind: "menu" }, options);
+    expect(menu.keyboard.flat().map((button) => button.text)).toEqual([
       "Аукционы",
-      "Избранное",
       "Настройки",
       "Правила и FAQ",
     ]);
-    const menu = renderEntryScreen({ kind: "menu", favorites: true }, options);
     expect(menu.id).toBe("menu");
     expect(menu.text).toMatch(/^<b>Меню<\/b>\n\n/);
   });
@@ -204,6 +199,7 @@ describe("renderEntryScreen", () => {
             [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
             [{ action: "feed.open-lot", lotId: "b", callbackData: "cb" }],
             [{ action: "feed.next", callbackData: "cn" }],
+            [{ action: "feed.back", callbackData: "v1:auc:rt:x" }],
           ],
         },
       },
@@ -220,8 +216,9 @@ describe("renderEntryScreen", () => {
         ["Носки · старт 500 ₽"],
         ["Лот без названия · не продан"],
         ["→"],
-        // Оболочка ставит возврат в список аукциона одной кнопкой.
-        ["‹ Аукционы"],
+        // Лента — под корнем аукциона, и возврат в него ставит тело дерева
+        // (PER-644).
+        ["‹ Аукцион"],
       ],
     );
   });
@@ -816,7 +813,8 @@ describe("auction lists", () => {
     ).toBe("10 октября, сб · завершён · 5 лотов");
   });
 
-  it("opens the feed from the row and pages the list with arrows", () => {
+  // Строка списка открывает корень аукциона, как в хабе (PER-644).
+  it("opens the auction root from the row and pages the list with arrows", () => {
     const screen = renderEntryScreen(
       {
         kind: "past",
@@ -834,9 +832,8 @@ describe("auction lists", () => {
         {
           text: "10 октября, сб · идут ставки · 5 лотов",
           callback_data: encodeAuctionCallback({
-            kind: "feed",
+            kind: "root",
             auctionId: "01926f3c-8b7a-5cde-8f00-000000000001",
-            page: 0,
           }),
         },
       ],
@@ -1009,6 +1006,7 @@ describe("happy hours", () => {
           keyboard: [
             [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
             [{ action: "feed.open-lot", lotId: "b", callbackData: "cb" }],
+            [{ action: "feed.back", callbackData: "v1:auc:rt:x" }],
           ],
         },
       },
@@ -1019,7 +1017,7 @@ describe("happy hours", () => {
       "<b>Лоты</b>\n\nТы пока не лидируешь ни в одном лоте этого аукциона. Все лоты — кнопками ниже.\n\nСчастливые часы сейчас: Кружка.",
     );
     expect(screen.keyboard.map((row) => row.map((b) => plain(b.text)))).toEqual(
-      [["Кружка · 1 200 ₽"], ["Ваза · 1 200 ₽"], ["‹ Аукционы"]],
+      [["Кружка · 1 200 ₽"], ["Ваза · 1 200 ₽"], ["‹ Аукцион"]],
     );
   });
 });

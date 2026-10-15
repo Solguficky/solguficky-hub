@@ -281,7 +281,7 @@ describe("inspectCall", () => {
       });
 
     expect(tree([[key("Место"), key("Описание")]])).toEqual(["rows"]);
-    expect(tree([[key("Изменить"), key("Статус")]])).toEqual([]);
+    expect(tree([[key("✏️ Изменить"), key("🏷 Статус")]])).toEqual([]);
     expect(tree([[key("Программа вечера"), key("🗑 Убрать")]])).toEqual([]);
     expect(tree([[key("✔️ Допустить"), key("✖️ Отказать")]])).toEqual([]);
     expect(tree([[key("✔️ Допустить"), key("Закрыть")]])).toEqual(["rows"]);
@@ -466,13 +466,13 @@ describe("inspectCall", () => {
         [screenTag]: "card",
       });
 
-    expect(rows([[key("Изменить"), key("Статус")]])).toEqual([]);
+    expect(rows([[key("✏️ Изменить"), key("🏷 Статус")]])).toEqual([]);
     expect(
       rows([[key("18:00"), key("19:00"), key("20:00"), key("21:00")]]),
     ).toEqual([]);
-    expect(rows([[key("Изменить"), key("Статус"), key("Материалы")]])).toEqual([
-      "rows",
-    ]);
+    expect(
+      rows([[key("✏️ Изменить"), key("🏷 Статус"), key("Материалы")]]),
+    ).toEqual(["rows"]);
     expect(
       rows([[key("1")], [key("2")], [key("3")], [key("4")], [key("5")]]),
     ).toEqual(["rows"]);

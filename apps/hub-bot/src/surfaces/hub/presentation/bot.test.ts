@@ -612,6 +612,44 @@ describe("presentation adapter", () => {
       expect(methods).toContain("sendPhoto");
       expect(methods).not.toContain("sendDocument");
     });
+
+    // Под файлом материала — одна кнопка «‹ Материалы» (PER-644): список
+    // остаётся выше в чате. Нажатие под файлом снимает с него кнопку и
+    // присылает «Материалы» новым сообщением.
+    it("puts one way back to the materials under a material file", async () => {
+      const meetup = { ...publishedMeetup(), materials: [poster(1)] };
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "meetup-card",
+        meetup,
+      });
+      const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      const materials = "v1:mm:list:AZLzpLXGfY6fChssPU5fYA";
+
+      await bot.handleUpdate(
+        callbackUpdate(
+          `v1:mm:file:AZLzpLXGfY6fChssPU5fYA:${uuidToToken(meetup.materials[0]?.id ?? "")}`,
+        ),
+      );
+      const file = calls.find((call) => call.method === "sendPhoto");
+      expect(file?.payload).toMatchObject({
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "‹ Материалы", callback_data: materials }],
+          ],
+        },
+      });
+
+      await bot.handleUpdate(
+        callbackMessageUpdate(materials, { photo: [{ file_id: "photo-1" }] }),
+      );
+      const methods = calls.map((call) => call.method);
+      expect(methods).toContain("editMessageReplyMarkup");
+      expect(calls.at(-1)?.method).toBe("sendMessage");
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
+        "<i>Материалы</i>",
+      );
+    });
   });
 
   it("paginates a long material collection for every meetup viewer", async () => {
@@ -646,7 +684,11 @@ describe("presentation adapter", () => {
       .filter((call) => call.method === "editMessageText")
       .at(-1);
     expect(page).toMatchObject({
-      payload: { text: expect.stringContaining("<b>Материалы · 1 из 4</b>") },
+      payload: {
+        text: expect.stringContaining(
+          "<b>Настолки</b>\n<i>Материалы · 1 из 4</i>",
+        ),
+      },
     });
     expect(JSON.stringify(page?.payload)).toContain(
       "v1:mm:list:AZLzpLXGfY6fChssPU5fYA:1",
@@ -842,7 +884,7 @@ describe("presentation adapter", () => {
     ]);
     expect(calls[1]?.payload).toMatchObject({ caption: "Прикреплено: Афиша" });
     expect(JSON.stringify(calls[1]?.payload)).not.toContain("callback_data");
-    expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
+    expect(sendMessageText(calls[2])).toContain("<i>Материалы</i>");
   });
 
   it("removes a material only after confirming that the original stays", async () => {
@@ -5991,7 +6033,7 @@ describe("notification frames", () => {
     // уведомления (прогон PER-395). Первый ряд — «Расширения» (PER-605).
     expect(keyboard?.inline_keyboard[1]).toEqual([
       {
-        text: "Подписаться на сходку",
+        text: "🔔 Подписаться на сходку",
         callback_data: `v1:notify:sub:${token}:1`,
       },
     ]);
@@ -6009,13 +6051,13 @@ describe("notification frames", () => {
     await bot.handleUpdate(callbackUpdate(`v1:view:${token}`));
     const keyboard = screen(calls[1]).reply_markup;
     expect(keyboard?.inline_keyboard[1]?.[0]).toEqual({
-      text: "Отписаться",
+      text: "🔕 Отписаться",
       callback_data: `v1:notify:sub:${token}:0`,
     });
     // Отписка и настройки подписки стоят одним рядом: под карточкой не больше
     // пяти рядов.
     expect(keyboard?.inline_keyboard[1]?.[1]).toEqual({
-      text: "Уведомления сходки",
+      text: "⚙️ Уведомления сходки",
       callback_data: `v1:notify:settings:${token}`,
     });
   });
@@ -6472,7 +6514,7 @@ describe("notification frames", () => {
         kind: "global-notification-settings",
         categories: [{ category: "published", enabled: true }],
       });
-      const entry = { text: "Аукцион", callback_data: "v1:notify:outbid" };
+      const entry = { text: "🔨 Аукцион", callback_data: "v1:notify:outbid" };
       for (const auction of [true, false]) {
         const { bot, calls } = harness(execute, auction);
         await bot.init();
@@ -6501,7 +6543,7 @@ describe("notification frames", () => {
       await bot.init();
       await bot.handleUpdate(callbackUpdate("v1:nav:ext"));
       expect(screen(calls.at(-1)).reply_markup?.inline_keyboard).toEqual([
-        [{ text: "Аукцион", callback_data: "v1:notify:outbid" }],
+        [{ text: "🔨 Аукцион", callback_data: "v1:notify:outbid" }],
         [
           {
             text: "Имя в аукционе",
@@ -6886,7 +6928,7 @@ describe("notification frames", () => {
         [{ text: "Открыть сходку", callback_data: `v1:view:${token}` }],
         [
           {
-            text: "Уведомления сходки",
+            text: "⚙️ Уведомления сходки",
             callback_data: `v1:t:notify:settings:${token}`,
           },
         ],

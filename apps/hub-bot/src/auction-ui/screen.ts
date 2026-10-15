@@ -325,15 +325,19 @@ export type AuctionButton =
   // цена команды (ADR-049), и ставка уходит без подтверждения.
   | { action: "lot.bid-final"; amount: Money; callbackData: string }
   | {
-      action: // Корень аукциона: лоты и розыгрыш.
+      action: // Корень аукциона: лоты, розыгрыш и избранное.
         | "root.lots"
         | "root.raffle"
+        | "root.favorites"
         | "feed.prev"
         | "feed.next"
         | "lot.refresh"
         | "lot.bid-custom"
         | "lot.proxy"
         | "lot.history"
+        // Листание лотов в карточке (PER-644): соседи в порядке ленты.
+        | "lot.prev"
+        | "lot.next"
         | "lot.back"
         | "confirm.yes"
         | "confirm.no"
@@ -354,9 +358,10 @@ export type AuctionButton =
         | "favorites.prev"
         | "favorites.next"
         | "favorites.back"
-        // Розыгрыш: вход из ленты, регистрация и отмена, возврат в ленту и,
+        // Возврат ленты в корень аукциона (PER-644).
+        | "feed.back"
+        // Розыгрыш: вход из корня, регистрация и отмена, возврат в корень и,
         // с выбора имени и исхода, — в розыгрыш.
-        | "feed.raffle"
         | "raffle.register"
         | "raffle.cancel"
         // «Как проверить честность» с экрана розыгрыша (PER-618).
