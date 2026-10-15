@@ -76,7 +76,7 @@ export function extensionsScreen(view: {
   }
   return {
     id: "extensions",
-    text: submenuText(meetupTitleLabel(meetup.title), "Расширения", line),
+    text: submenuText("Расширения", meetupTitleLabel(meetup.title), line),
     keyboard: withNav(keyboard, toCard(token)),
     format: "HTML",
   };

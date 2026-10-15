@@ -34,7 +34,8 @@ const catalog = {
   status: {
     class: "screen",
     nav: "tree",
-    submenu: "Статус",
+    title: "Статус",
+    subject: true,
     parent: "meetups",
   },
   plain: {
@@ -172,26 +173,26 @@ describe("inspectCall configuration", () => {
     ).toEqual([]);
   });
 
-  // Подменю сходки (PER-644): заголовок — название сходки, под ним курсивом
-  // имя подменю из каталога, затем пустая строка.
-  it("reads the submenu name under the meetup title", () => {
+  // Подменю сходки (PER-644): заголовок — имя подменю, под ним курсивом
+  // название сходки, затем пустая строка.
+  it("reads the meetup title under the submenu name", () => {
     const back = [[key("‹ Сходки")]];
     expect(
       rulesOf(
         "editMessageText",
-        call("status", "<b>Настолки</b>\n<i>Статус</i>\n\nТекст", back),
+        call("status", "<b>Статус</b>\n<i>Настолки</i>\n\nТекст", back),
       ),
     ).toEqual([]);
     expect(
       rulesOf(
         "editMessageText",
-        call("status", "<b>Настолки</b>\n\nТекст", back),
+        call("status", "<b>Статус</b>\n\nТекст", back),
       ),
     ).toEqual(["title"]);
     expect(
       rulesOf(
         "editMessageText",
-        call("status", "<b>Настолки</b>\n<i>Статус</i>\nТекст", back),
+        call("status", "<b>Статус</b>\n<i>Настолки</i>\nТекст", back),
       ),
     ).toEqual(["body"]);
   });

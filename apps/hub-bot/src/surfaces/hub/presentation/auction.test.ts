@@ -498,8 +498,8 @@ describe("meetup extensions menu", () => {
     await bot.handleUpdate(press(extensionsData));
 
     const menu = lastScreen(calls);
-    expect(menu.text).toMatch(/^<b>Ярмарка<\/b>\n<i>Расширения<\/i>\n\n/);
-    expect(menu.text).toContain("<b>Ярмарка</b>");
+    expect(menu.text).toMatch(/^<b>Расширения<\/b>\n<i>Ярмарка<\/i>\n\n/);
+    expect(menu.text).toContain("<i>Ярмарка</i>");
     expect(labels(menu)).toEqual([["🔨 Аукцион"], ["‹ Сходка"]]);
     expect(data(menu, "🔨 Аукцион")).toBe(rootData);
     expect(data(menu, "‹ Сходка")).toBe(`v1:view:${meetupToken}`);

@@ -168,9 +168,9 @@ function checkRules(
   const last = rows.at(-1);
 
   if (entry.class === "screen" && method !== "editMessageReplyMarkup") {
-    const title = titleProblem(call, entry.title, entry.submenu);
+    const title = titleProblem(call, entry.title, entry.subject === true);
     if (title !== undefined) found.push(["title", title]);
-    const body = bodyProblem(call, entry.submenu !== undefined);
+    const body = bodyProblem(call, entry.subject === true);
     if (body !== undefined) found.push(["body", body]);
   }
 
@@ -489,11 +489,11 @@ function textLines(call: Carried, options?: { indent: true }): string[] {
 }
 
 // Заголовок — первая жирная строка. Что над ним, проверяет правило тела. У
-// подменю сходки под заголовком курсивом стоит имя подменю (PER-644).
+// подменю сходки под заголовком курсивом стоит название сходки (PER-644).
 function titleProblem(
   call: Carried,
   title: string | undefined,
-  submenu?: string,
+  subject = false,
 ): string | undefined {
   if (typeof call.rich_message?.html === "string") {
     return call.rich_message.html.includes("<h1>")
@@ -508,15 +508,13 @@ function titleProblem(
   const at = lines.findIndex((line) => line.startsWith("<b>"));
   const heading = lines[at];
   if (heading === undefined) return "нет жирной строки заголовка";
-  if (submenu !== undefined) {
-    const second = lines[at + 1] ?? "";
-    return second.startsWith(`<i>${submenu}`)
-      ? undefined
-      : `под заголовком подменю «${second}», а в каталоге «<i>${submenu}»`;
+  if (title !== undefined && !heading.startsWith(`<b>${title}`)) {
+    return `заголовок «${heading}», а в каталоге «${title}»`;
   }
-  return title === undefined || heading.startsWith(`<b>${title}`)
-    ? undefined
-    : `заголовок «${heading}», а в каталоге «${title}»`;
+  const second = lines[at + 1] ?? "";
+  return subject && !second.startsWith("<i>")
+    ? `под заголовком подменю «${second}», а не название сходки курсивом`
+    : undefined;
 }
 
 // Текст вызова: правка фото несёт подпись внутри `media`, а не рядом с ним.
@@ -539,7 +537,7 @@ const leadingPhotoBlock =
 // действия — свой экран, а не заметка над карточкой (PER-472). Кадр отказа держит жирное предложение и
 // остальной текст в одной строке, и правило его не задевает. Чем заполнено тело, линтер не читает: это
 // держат тесты каталога бота.
-function bodyProblem(call: Carried, submenu = false): string | undefined {
+function bodyProblem(call: Carried, subject = false): string | undefined {
   if (typeof call.rich_message?.html === "string") {
     const html = call.rich_message.html;
     const at = html.indexOf("<h1>");
@@ -570,8 +568,8 @@ function bodyProblem(call: Carried, submenu = false): string | undefined {
   if (tail !== "" && !/[.?!]<\/b>/.test(heading)) {
     return `текст в строке заголовка: «${heading}»`;
   }
-  // Строка подменю — часть заголовка: пустая строка идёт после неё.
-  const below = submenu && lines[at + 1]?.startsWith("<i>") === true ? 2 : 1;
+  // Строка названия сходки — часть заголовка: пустая строка идёт после неё.
+  const below = subject && lines[at + 1]?.startsWith("<i>") === true ? 2 : 1;
   const next = lines[at + below];
   return next === undefined || next === ""
     ? undefined

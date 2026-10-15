@@ -600,8 +600,8 @@ export function editFieldsScreen(meetup: MeetupSnapshot): ShownScreen {
   return {
     id: "edit",
     text: submenuText(
-      meetupTitleLabel(meetup.title),
       "Изменить",
+      meetupTitleLabel(meetup.title),
       "Что меняем?",
     ),
     keyboard: withNav(
@@ -723,8 +723,8 @@ export function statusScreen(
   return {
     id: "status",
     text: submenuText(
-      meetupTitleLabel(meetup.title),
       "Статус",
+      meetupTitleLabel(meetup.title),
       // Экран «Статус» открывает только тот, кто управляет сходкой.
       cardLines(meetup, author, today, true).join("\n"),
     ),
@@ -839,8 +839,8 @@ export function materialsScreen(
   return {
     id: "materials",
     text: submenuText(
-      meetupTitleLabel(meetup.title),
       pagedTitle("Материалы", page),
+      meetupTitleLabel(meetup.title),
       meetup.materials.length === 0
         ? "Пока ничего не прикреплено."
         : page.items
