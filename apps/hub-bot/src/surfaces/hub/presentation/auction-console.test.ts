@@ -646,7 +646,7 @@ describe("entry into the auction console", () => {
     await admin.bot.handleUpdate(press(rootData));
     const root = last(admin.calls);
     expect(labels(root).slice(0, 3)).toEqual([
-      ["Лоты"],
+      ["🔨 Лоты"],
       ["Пульт"],
       ["Правила и FAQ"],
     ]);

@@ -26,12 +26,7 @@ export async function openFeed(input: {
   auctionId: string;
   page: number;
 }): Promise<AuctionScreenBody> {
-  // Розыгрыш читается параллельно страницам ленты: иначе долгая лента съела
-  // бы бюджет действия, и кнопка пропала бы при живом розыгрыше. Отказа
-  // `hasRaffle` не бросает.
-  const raffleRead = hasRaffle(input);
   const lots = sortForFeed(await loadFeed(input));
-  const raffle = await raffleRead;
   const pageCount = Math.max(1, Math.ceil(lots.length / FEED_PAGE_SIZE));
   const page = Math.min(input.page, pageCount - 1);
   const shown = lots.slice(page * FEED_PAGE_SIZE, (page + 1) * FEED_PAGE_SIZE);
@@ -61,22 +56,9 @@ export async function openFeed(input: {
         ...(beforeTrading(lots) ? { beforeTrading: true as const } : {}),
       },
     ],
+    // Лента — просто список лотов (PER-644): розыгрыш и избранное стоят в
+    // корне аукциона у обоих ботов, и возврат ведёт туда же.
     keyboard: [
-      // Действие ленты стоит первым рядом, над лотами (дизайн-код,
-      // «Клавиатура»).
-      ...(raffle
-        ? [
-            [
-              {
-                action: "feed.raffle" as const,
-                callbackData: encodeAuctionCallback({
-                  kind: "raffle",
-                  auctionId: input.auctionId,
-                }),
-              },
-            ],
-          ]
-        : []),
       ...shown.map((lot) => [
         {
           action: "feed.open-lot" as const,
@@ -89,6 +71,15 @@ export async function openFeed(input: {
         },
       ]),
       ...(paging.length > 0 ? [paging] : []),
+      [
+        {
+          action: "feed.back" as const,
+          callbackData: encodeAuctionCallback({
+            kind: "root",
+            auctionId: input.auctionId,
+          }),
+        },
+      ],
     ],
   };
 }
@@ -146,7 +137,7 @@ function hasOpened(status: LotStatusView): boolean {
   }
 }
 
-function loadFeed(input: {
+export function loadFeed(input: {
   auction: AuctionPort;
   viewer: Viewer;
   auctionId: string;

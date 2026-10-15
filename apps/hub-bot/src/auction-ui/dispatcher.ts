@@ -71,6 +71,7 @@ export function dispatchAuctionIntent(input: {
     case "root":
       return openRoot({
         auction: input.auction,
+        ...favorites,
         viewer: input.viewer,
         auctionId: intent.auctionId,
       });

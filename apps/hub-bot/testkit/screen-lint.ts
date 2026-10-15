@@ -1,7 +1,10 @@
+import { followLabel, unfollowLabel } from "../src/auction-standing.js";
 import {
   admitLabel,
   declineLabel,
   extensionsLabel,
+  marked,
+  pictogram,
 } from "../src/core/pictograms.js";
 import type { Surface } from "../src/core/surface.js";
 import {
@@ -52,9 +55,14 @@ const auctionShape: [UnknownEntryKeys<typeof auctionCatalog>] extends [never]
 void hubShape;
 void auctionShape;
 
-// Пары карточки лота у обоих ботов (PER-594): ряды складываются по смыслу —
-// ставки, которые человек задаёт сам, и просмотр хода торгов.
-const lotCardPairs = ["Своя сумма|Автоставка", "Обновить|Ставки"];
+// Пары карточки лота у обоих ботов (PER-594, PER-644): ряды складываются по
+// смыслу — ставки, которые человек задаёт сам, и слежение за лотом:
+// «Обновить» с отметкой избранного.
+const lotCardPairs = [
+  "Своя сумма|Автоставка",
+  `Обновить|${followLabel}`,
+  `Обновить|${unfollowLabel}`,
+];
 
 // Пары хаба, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
 // пара, которой в дизайн-коде нет: подписка живёт в карточке по решению
@@ -72,9 +80,10 @@ const hubNamedPairs: ReadonlySet<string> = new Set([
   "Участники|Гости",
   "• Модераторы|Разрешённые ники",
   "Модераторы|Разрешённые ники",
-  "Изменить|Статус",
-  "Отписаться|Уведомления сходки",
-  `Материалы (#)|${extensionsLabel}`,
+  // Подписи карточки несут знаки своих разделов (PER-644).
+  `${marked(pictogram.edit, "Изменить")}|${marked(pictogram.status, "Статус")}`,
+  `${marked(pictogram.off, "Отписаться")}|${marked(pictogram.settings, "Уведомления сходки")}`,
+  `${marked(pictogram.materials, "Материалы (#)")}|${extensionsLabel}`,
   // Корень аукциона (PER-605): входы администратора и розыгрыша, затем свои
   // отметки и правила — парами, как стояли в корне ленты (PER-500).
   "Пульт|Розыгрыш",

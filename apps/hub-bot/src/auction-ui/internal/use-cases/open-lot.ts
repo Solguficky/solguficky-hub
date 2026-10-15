@@ -18,6 +18,7 @@ import type {
   FinalBidOutcome,
 } from "../../screen.js";
 import { namesOf } from "./names.js";
+import { type LotNeighbors, readNeighbors } from "./neighbors.js";
 import { standingOf } from "./standing.js";
 
 // Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
@@ -59,13 +60,23 @@ export async function showLot(input: {
   finalBid?: FinalBidOutcome;
 }): Promise<AuctionScreenBody> {
   const { lot } = input;
-  const participantName = await participantNameOf(input);
-  const following =
-    input.following ?? (await followingOf(input.favorites, input.viewer, lot));
+  // Соседей в ленте читают параллельно имени и отметке и стартуют последними:
+  // карточка ждёт самое долгое из трёх, а не их сумму. В живом финале
+  // листания нет — карточку правит поток, и ряд пропадал бы на каждой правке.
+  const [participantName, following, neighbors] = await Promise.all([
+    participantNameOf(input),
+    input.following === undefined
+      ? followingOf(input.favorites, input.viewer, lot)
+      : Promise.resolve(input.following),
+    isLive(lot.status)
+      ? Promise.resolve<LotNeighbors>({})
+      : readNeighbors({ auction: input.auction, viewer: input.viewer, lot }),
+  ]);
   return lotBody({
     lot,
     viewer: input.viewer,
     page: input.page,
+    neighbors,
     ...(participantName === undefined ? {} : { participantName }),
     ...(following === undefined ? {} : { following }),
     ...(input.finalBid === undefined ? {} : { finalBid: input.finalBid }),
@@ -91,6 +102,7 @@ export async function liveLot(input: {
     lot: input.lot,
     viewer: input.viewer,
     page: input.page,
+    neighbors: {},
     ...(participantName === undefined ? {} : { participantName }),
     ...(input.following === undefined ? {} : { following: input.following }),
   });
@@ -100,6 +112,7 @@ function lotBody(input: {
   lot: LotView;
   viewer: Viewer;
   page: number;
+  neighbors: LotNeighbors;
   participantName?: string;
   following?: boolean;
   finalBid?: FinalBidOutcome;
@@ -133,9 +146,10 @@ function lotBody(input: {
         },
       ]
     : [];
-  // Ряды складываются по смыслу (дизайн-код, «Клавиатура»; PER-594):
-  // «Обновить» и «Ставки» — одна группа, просмотр хода торгов лота.
-  const watch = [...refresh, ...history];
+  // Ряды складываются по смыслу (дизайн-код, «Клавиатура»): «Обновить» и
+  // отметка избранного — одна группа, слежение за лотом, а «Ставки» — рядом
+  // ниже (решение владельца по прогону 14 октября 2026 года, PER-644).
+  const watch = [...refresh, ...followButtons(lot, input.page, following)];
   return {
     blocks: [
       {
@@ -152,7 +166,8 @@ function lotBody(input: {
     keyboard: [
       ...bidRows(lot, input.viewer, input.page),
       ...(watch.length === 0 ? [] : [watch]),
-      ...followRows(lot, input.page, following),
+      ...(history.length === 0 ? [] : [history]),
+      ...neighborRows(input.neighbors),
       [
         {
           action: "lot.back",
@@ -253,7 +268,34 @@ async function followingOf(
   }
 }
 
-// Кнопка избранного стоит над возвратом: это действие экрана, а не
+// «‹ пред / след ›» — листание лотов в одном сообщении (PER-644): ряд стоит
+// над возвратом, на краях ленты своей кнопки нет. Сосед — та же кнопка лота
+// со своей страницей ленты.
+function neighborRows(neighbors: LotNeighbors): AuctionButton[][] {
+  const button = (
+    action: "lot.prev" | "lot.next",
+    neighbor: LotNeighbors["prev"],
+  ): AuctionButton[] =>
+    neighbor === undefined
+      ? []
+      : [
+          {
+            action,
+            callbackData: encodeAuctionCallback({
+              kind: "lot",
+              lotId: neighbor.lotId,
+              page: neighbor.page,
+            }),
+          },
+        ];
+  const row = [
+    ...button("lot.prev", neighbors.prev),
+    ...button("lot.next", neighbors.next),
+  ];
+  return row.length === 0 ? [] : [row];
+}
+
+// Кнопка избранного стоит рядом с «Обновить»: это действие экрана, а не
 // навигация. Состояния нет — нет и кнопки. У закрытого лота «Добавить в
 // избранное» нет: следить за ним уже не за чем, а Notifications вычищает его
 // реплику через 30 дней, и поздняя отметка отказывала бы вечным «попробуй
@@ -261,35 +303,33 @@ async function followingOf(
 // список избранного очищается сам, когда аукцион закончен (ADR-063,
 // дополнение 2026-10-12). Отмеченный непроданный или снятый лот снимается
 // как любой.
-function followRows(
+function followButtons(
   lot: LotView,
   page: number,
   following: boolean | undefined,
-): AuctionButton[][] {
+): AuctionButton[] {
   if (following === undefined) return [];
   if (lot.status.kind === "sold") return [];
   if (!following && isClosed(lot.status)) return [];
   const { lotId } = lot;
   return [
-    [
-      following
-        ? {
-            action: "lot.unfollow",
-            callbackData: encodeAuctionCallback({
-              kind: "unfollow",
-              lotId,
-              page,
-            }),
-          }
-        : {
-            action: "lot.follow",
-            callbackData: encodeAuctionCallback({
-              kind: "follow",
-              lotId,
-              page,
-            }),
-          },
-    ],
+    following
+      ? {
+          action: "lot.unfollow",
+          callbackData: encodeAuctionCallback({
+            kind: "unfollow",
+            lotId,
+            page,
+          }),
+        }
+      : {
+          action: "lot.follow",
+          callbackData: encodeAuctionCallback({
+            kind: "follow",
+            lotId,
+            page,
+          }),
+        },
   ];
 }
 

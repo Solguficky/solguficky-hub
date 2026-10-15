@@ -88,9 +88,19 @@ describe("feed", () => {
     expect(block.lots.map((item) => item.lotId)).toEqual(
       twenty.slice(FEED_PAGE_SIZE, 2 * FEED_PAGE_SIZE).map((l) => l.lotId),
     );
-    expect(body.keyboard.at(-1)).toEqual([
+    // Листание — над возвратом в корень аукциона (PER-644).
+    expect(body.keyboard.at(-2)).toEqual([
       { action: "feed.prev", callbackData: feedButton(0) },
       { action: "feed.next", callbackData: feedButton(2) },
+    ]);
+    expect(body.keyboard.at(-1)).toEqual([
+      {
+        action: "feed.back",
+        callbackData: encodeAuctionCallback({
+          kind: "root",
+          auctionId: AUCTION_ID,
+        }),
+      },
     ]);
   });
 
@@ -107,13 +117,13 @@ describe("feed", () => {
       auctionId: AUCTION_ID,
       page: 2,
     });
-    expect(first.keyboard.at(-1)).toEqual([
+    expect(first.keyboard.at(-2)).toEqual([
       { action: "feed.next", callbackData: feedButton(1) },
     ]);
-    expect(last.keyboard.at(-1)).toEqual([
+    expect(last.keyboard.at(-2)).toEqual([
       { action: "feed.prev", callbackData: feedButton(1) },
     ]);
-    expect(last.keyboard).toHaveLength(20 - 2 * FEED_PAGE_SIZE + 1);
+    expect(last.keyboard).toHaveLength(20 - 2 * FEED_PAGE_SIZE + 2);
   });
 
   it("shows the last page for a page that no longer exists", async () => {

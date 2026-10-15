@@ -23,6 +23,19 @@ export const pictogram = {
   materials: "📎",
   /** Вход в расширения: на карточке сходки и в «Настройках» (PER-605). */
   extensions: "🧩",
+  /**
+   * Раздел аукциона (PER-644): вход «Аукцион» из «Расширений», строка
+   * «Аукцион:» карточки сходки и «Лоты» корня аукциона в обоих ботах.
+   */
+  auction: "🔨",
+  /** Правка сходки: «Изменить» на её карточке (PER-644). */
+  edit: "✏️",
+  /** Статус сходки: «Статус» на её карточке (PER-644). */
+  status: "🏷",
+  /** Рассылка подписчикам сходки (PER-644). */
+  broadcast: "📣",
+  /** Настройки уведомлений сходки (PER-644). */
+  settings: "⚙️",
   /** Поле цены карточки лота (PER-594). */
   price: "💰",
   /** Поле лидера или победителя карточки лота (PER-594). */
@@ -45,17 +58,50 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.yes]: ["Да, ", "Допустить"],
   [pictogram.no]: ["Нет", "Отказать"],
   [pictogram.remove]: ["Убрать", "Удалить"],
-  [pictogram.on]: ["Вкл · "],
-  [pictogram.off]: ["Выкл · "],
+  // 🔔 и 🔕 значат «уведомления идут» и «не идут»: на переключателе это его
+  // состояние, на подписке сходки — действие (PER-644).
+  [pictogram.on]: ["Вкл · ", "Подписаться"],
+  [pictogram.off]: ["Выкл · ", "Отписаться"],
   [pictogram.when]: ["Когда: "],
   [pictogram.where]: ["Где: "],
-  [pictogram.materials]: ["Материалы:"],
+  [pictogram.materials]: ["Материалы"],
   [pictogram.extensions]: ["Расширения"],
+  [pictogram.auction]: ["Аукцион", "Лоты"],
+  [pictogram.edit]: ["Изменить"],
+  [pictogram.status]: ["Статус"],
+  [pictogram.broadcast]: ["Написать подписчикам"],
+  [pictogram.settings]: ["Уведомления сходки"],
   [pictogram.price]: ["Цена: ", "Стартовая цена: ", "Цена продажи: "],
   [pictogram.leader]: ["Лидер: ", "Победитель: "],
   [pictogram.deadline]: ["Торги до: "],
   [pictogram.won]: ["Твой лот", "твой лот"],
   [pictogram.hint]: ["Подсказка:"],
+};
+
+/**
+ * Один знак на раздел во всех ботах, тот же, что в тексте (решение владельца
+ * по прогону 14 октября 2026 года, PER-644): кнопка входа в раздел и строка
+ * текста о нём несут его знак. Ключ — подпись без знака, «#» стоит на месте
+ * числа. Возврат «‹ …» и заголовок экрана знака не несут: это имя родителя и
+ * имя экрана, а не вход в раздел.
+ */
+export const sectionLabels: Readonly<Record<string, Pictogram>> = {
+  Изменить: pictogram.edit,
+  Статус: pictogram.status,
+  "Материалы (#)": pictogram.materials,
+  Расширения: pictogram.extensions,
+  "Написать подписчикам": pictogram.broadcast,
+  "Подписаться на сходку": pictogram.on,
+  Отписаться: pictogram.off,
+  "Уведомления сходки": pictogram.settings,
+  Аукцион: pictogram.auction,
+  Лоты: pictogram.auction,
+};
+
+/** Начала строк текста о разделе, которые несут его знак. */
+export const sectionLines: Readonly<Record<string, Pictogram>> = {
+  "Материалы:": pictogram.materials,
+  "Аукцион:": pictogram.auction,
 };
 
 /**

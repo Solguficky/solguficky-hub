@@ -160,8 +160,9 @@ describe("handleAuctionUpdate gateway", () => {
     const { press, calls } = surfaceFor(kind, { rights, blocked: false });
     const result = await press(LOT_BUTTON);
     expect(result.kind).toBe("screen");
-    // Личность пришла в update: шлюз её не перечитывает.
-    expect(calls).toEqual({ identity: 0, auction: 1 });
+    // Личность пришла в update: шлюз её не перечитывает. Карточка читает лот
+    // и ленту его аукциона ради соседей (PER-644).
+    expect(calls).toEqual({ identity: 0, auction: 2 });
   });
 
   it.each<[AuctionSurface["kind"], AccessRight[]]>([

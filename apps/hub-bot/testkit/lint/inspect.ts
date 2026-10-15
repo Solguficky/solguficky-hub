@@ -6,6 +6,8 @@ import {
   marked,
   pictogram,
   pictogramWords,
+  sectionLabels,
+  sectionLines,
 } from "../../src/core/pictograms.js";
 import type {
   Catalog,
@@ -166,9 +168,9 @@ function checkRules(
   const last = rows.at(-1);
 
   if (entry.class === "screen" && method !== "editMessageReplyMarkup") {
-    const title = titleProblem(call, entry.title);
+    const title = titleProblem(call, entry.title, entry.submenu);
     if (title !== undefined) found.push(["title", title]);
-    const body = bodyProblem(call);
+    const body = bodyProblem(call, entry.submenu !== undefined);
     if (body !== undefined) found.push(["body", body]);
   }
 
@@ -354,6 +356,13 @@ function checkRules(
     if (sign !== undefined) {
       found.push(["emoji", `подпись «${button.text}»: ${sign}`]);
     }
+    const section = sectionLabels[button.text.replace(/\d+/g, "#")];
+    if (section !== undefined) {
+      found.push([
+        "emoji",
+        `подпись «${button.text}» — вход в раздел, и знак у неё «${section}»`,
+      ]);
+    }
     // Знак словаря в подписи слово не меняет: «✔️ Да, продолжить» тоже вне
     // словаря.
     const word = button.text.replace(/^\p{Extended_Pictographic}️?\s/u, "");
@@ -395,6 +404,19 @@ function checkRules(
   for (const line of textLines(call)) {
     const sign = strayPictogram(line);
     if (sign !== undefined) found.push(["emoji", `строка «${line}»: ${sign}`]);
+  }
+  // Строка о разделе стоит без отступа: поле записи списка с отступом —
+  // «  Аукцион: <ссылка>» у канала — называет бота, а не раздел.
+  for (const line of textLines(call, { indent: true })) {
+    const section = Object.entries(sectionLines).find(([start]) =>
+      line.startsWith(start),
+    );
+    if (section !== undefined) {
+      found.push([
+        "emoji",
+        `строка «${line}» говорит о разделе, и знак у неё «${section[1]}»`,
+      ]);
+    }
   }
   for (const text of [
     ...buttons.map((button) => button.text),
@@ -449,8 +471,9 @@ function strayPictogram(text: string): string | undefined {
 }
 
 // Строки текста вызова: обычный текст делится переносом, rich-карточка — ещё
-// и блоками; разметка в начале строки снимается.
-function textLines(call: Carried): string[] {
+// и блоками; разметка в начале строки снимается. `indent` оставляет отступ в
+// начале строки.
+function textLines(call: Carried, options?: { indent: true }): string[] {
   const html =
     typeof call.rich_message?.html === "string"
       ? call.rich_message.html
@@ -458,14 +481,19 @@ function textLines(call: Carried): string[] {
   if (html === undefined) return [];
   return html
     .split(/\n|<br\s*\/?>|<\/?(?:p|h1|li|ul|ol|blockquote)>/)
-    .map((line) => line.replace(/^(?:<[^>]+>)+/, "").trim())
-    .filter((line) => line !== "");
+    .map((line) => {
+      const bare = line.replace(/^(?:<[^>]+>)+/, "");
+      return options?.indent === true ? bare.trimEnd() : bare.trim();
+    })
+    .filter((line) => line.trim() !== "");
 }
 
-// Заголовок — первая жирная строка. Что над ним, проверяет правило тела.
+// Заголовок — первая жирная строка. Что над ним, проверяет правило тела. У
+// подменю сходки под заголовком курсивом стоит имя подменю (PER-644).
 function titleProblem(
   call: Carried,
   title: string | undefined,
+  submenu?: string,
 ): string | undefined {
   if (typeof call.rich_message?.html === "string") {
     return call.rich_message.html.includes("<h1>")
@@ -476,8 +504,16 @@ function titleProblem(
   if (text === undefined) return "экран без текста";
   const mode = call.parse_mode ?? call.media?.parse_mode;
   if (mode !== "HTML") return "экран без разметки: заголовок не выделен";
-  const heading = text.split("\n").find((line) => line.startsWith("<b>"));
+  const lines = text.split("\n");
+  const at = lines.findIndex((line) => line.startsWith("<b>"));
+  const heading = lines[at];
   if (heading === undefined) return "нет жирной строки заголовка";
+  if (submenu !== undefined) {
+    const second = lines[at + 1] ?? "";
+    return second.startsWith(`<i>${submenu}`)
+      ? undefined
+      : `под заголовком подменю «${second}», а в каталоге «<i>${submenu}»`;
+  }
   return title === undefined || heading.startsWith(`<b>${title}`)
     ? undefined
     : `заголовок «${heading}», а в каталоге «${title}»`;
@@ -503,7 +539,7 @@ const leadingPhotoBlock =
 // действия — свой экран, а не заметка над карточкой (PER-472). Кадр отказа держит жирное предложение и
 // остальной текст в одной строке, и правило его не задевает. Чем заполнено тело, линтер не читает: это
 // держат тесты каталога бота.
-function bodyProblem(call: Carried): string | undefined {
+function bodyProblem(call: Carried, submenu = false): string | undefined {
   if (typeof call.rich_message?.html === "string") {
     const html = call.rich_message.html;
     const at = html.indexOf("<h1>");
@@ -534,7 +570,9 @@ function bodyProblem(call: Carried): string | undefined {
   if (tail !== "" && !/[.?!]<\/b>/.test(heading)) {
     return `текст в строке заголовка: «${heading}»`;
   }
-  const next = lines[at + 1];
+  // Строка подменю — часть заголовка: пустая строка идёт после неё.
+  const below = submenu && lines[at + 1]?.startsWith("<i>") === true ? 2 : 1;
+  const next = lines[at + below];
   return next === undefined || next === ""
     ? undefined
     : `после заголовка нет пустой строки: «${next}»`;

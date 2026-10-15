@@ -37,6 +37,7 @@ import {
   removeLabel,
   screenText,
   subjectLine,
+  submenuText,
   toArchive,
   toCard,
   toHidden,
@@ -426,6 +427,21 @@ export type CardView = {
 const unsubscribedHint =
   "Подпишись, чтобы получать изменения, материалы и сообщения организатора этой сходки.";
 
+// Кнопки карточки — входы в разделы сходки, и каждая несёт знак своего
+// раздела, тот же, что в тексте (решение владельца по прогону 14 октября 2026
+// года, PER-644). Возврат «‹ …» знака не несёт.
+const editLabel = marked(pictogram.edit, "Изменить");
+const statusLabel = marked(pictogram.status, "Статус");
+const materialsLabel = (count: number) =>
+  marked(pictogram.materials, `Материалы (${count})`);
+const broadcastLabel = marked(pictogram.broadcast, "Написать подписчикам");
+const subscribeLabel = marked(pictogram.on, "Подписаться на сходку");
+const unsubscribeLabel = marked(pictogram.off, "Отписаться");
+export const meetupNotificationsLabel = marked(
+  pictogram.settings,
+  "Уведомления сходки",
+);
+
 /**
  * Карточка сходки. Под ней не больше пяти рядов: правка и статус, материалы и
  * расширения, рассылка, подписка с её настройками и возврат. Файлы
@@ -438,13 +454,13 @@ export function cardScreen(view: CardView): ShownScreen {
   const editable = manageable && meetup.lifecycle !== "cancelled";
   if (editable) {
     keyboard
-      .text("Изменить", `v1:manage:edit:${token}`)
-      .text("Статус", `v1:manage:status:${token}`)
+      .text(editLabel, `v1:manage:edit:${token}`)
+      .text(statusLabel, `v1:manage:status:${token}`)
       .row();
   }
   if (editable || meetup.materials.length > 0) {
     keyboard.text(
-      `Материалы (${meetup.materials.length})`,
+      materialsLabel(meetup.materials.length),
       `v1:mm:list:${token}`,
     );
   }
@@ -459,7 +475,7 @@ export function cardScreen(view: CardView): ShownScreen {
   // Написать подписчикам можно и об отменённой сходке: сообщить им об отмене
   // — законный повод, и Notifications жизненный цикл при рассылке не фильтрует.
   if (manageable) {
-    keyboard.text("Написать подписчикам", `v1:bc:m:${token}`).row();
+    keyboard.text(broadcastLabel, `v1:bc:m:${token}`).row();
   }
   // Кнопка подписки рисуется только тогда, когда Notifications ответил:
   // состояние на ней — факт, а не заглушка. Настройки сходки решают, что
@@ -467,12 +483,14 @@ export function cardScreen(view: CardView): ShownScreen {
   // Notifications не ответил, вход остаётся: иначе один моргнувший ответ
   // отрезает экран целиком.
   if (view.subscribed === false) {
-    keyboard.text("Подписаться на сходку", `v1:notify:sub:${token}:1`).row();
+    keyboard.text(subscribeLabel, `v1:notify:sub:${token}:1`).row();
   } else {
     if (view.subscribed === true) {
-      keyboard.text("Отписаться", `v1:notify:sub:${token}:0`);
+      keyboard.text(unsubscribeLabel, `v1:notify:sub:${token}:0`);
     }
-    keyboard.text("Уведомления сходки", `v1:notify:settings:${token}`).row();
+    keyboard
+      .text(meetupNotificationsLabel, `v1:notify:settings:${token}`)
+      .row();
   }
   // Постеры — только в богатой карточке: обычное сообщение несёт либо текст,
   // либо файл, и с файлом оно перестало бы правиться на месте.
@@ -581,9 +599,10 @@ export function editFieldsScreen(meetup: MeetupSnapshot): ShownScreen {
   const token = uuidToToken(meetup.id);
   return {
     id: "edit",
-    text: screenText(
-      "Изменить сходку",
-      `«${escapeHtml(meetupTitleLabel(meetup.title))}» — что меняем?`,
+    text: submenuText(
+      meetupTitleLabel(meetup.title),
+      "Изменить",
+      "Что меняем?",
     ),
     keyboard: withNav(
       new InlineKeyboard()
@@ -703,13 +722,12 @@ export function statusScreen(
   }
   return {
     id: "status",
-    text: [
-      heading("Статус"),
-      "",
-      escapeHtml(meetupTitleLabel(meetup.title)),
+    text: submenuText(
+      meetupTitleLabel(meetup.title),
+      "Статус",
       // Экран «Статус» открывает только тот, кто управляет сходкой.
-      ...cardLines(meetup, author, today, true),
-    ].join("\n"),
+      cardLines(meetup, author, today, true).join("\n"),
+    ),
     keyboard: withNav(keyboard, toCard(token)),
     format: "HTML",
   };
@@ -820,9 +838,9 @@ export function materialsScreen(
   }
   return {
     id: "materials",
-    text: screenText(
+    text: submenuText(
+      meetupTitleLabel(meetup.title),
       pagedTitle("Материалы", page),
-      escapeHtml(meetupTitleLabel(meetup.title)),
       meetup.materials.length === 0
         ? "Пока ничего не прикреплено."
         : page.items

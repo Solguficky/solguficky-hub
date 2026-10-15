@@ -124,18 +124,19 @@ describe("auction through both bots", () => {
     );
     await admin.presses("Включить аукцион");
     // Повтор включения отвечает тем же аукционом: ключ выводит Auction.
-    await eventually(admin, "Аукцион", () => admin.presses("Повторить"));
-    await admin.presses("Аукцион");
+    // Вход в раздел аукциона несёт его знак (PER-644).
+    await eventually(admin, "🔨 Аукцион", () => admin.presses("Повторить"));
+    await admin.presses("🔨 Аукцион");
     // Чтения Auction отстают от команды: корень покажет «Лоты», когда read
     // model узнает аукцион сходки.
-    await eventually(admin, "Лоты", async () => {
+    await eventually(admin, "🔨 Лоты", async () => {
       await admin.opensLink(meetupId);
       await admin.presses("🧩 Расширения");
-      if (pressableLike(admin, "Аукцион") !== undefined) {
-        await admin.presses("Аукцион");
+      if (pressableLike(admin, "🔨 Аукцион") !== undefined) {
+        await admin.presses("🔨 Аукцион");
       }
     });
-    await admin.presses("Лоты");
+    await admin.presses("🔨 Лоты");
     await admin.presses("Добавить лот");
     await admin.says("Кружка");
     // Цепочка нового лота (PER-618): после названия — цена, способ шага, шаг
@@ -181,9 +182,9 @@ describe("auction through both bots", () => {
     await member.says("/start");
     await member.opensLink(meetupId);
     await member.presses("🧩 Расширения");
-    await eventually(member, "Аукцион", () => member.presses("Повторить"));
-    await member.presses("Аукцион");
-    await member.presses("Лоты");
+    await eventually(member, "🔨 Аукцион", () => member.presses("Повторить"));
+    await member.presses("🔨 Аукцион");
+    await member.presses("🔨 Лоты");
     // Строка ленты несёт цену, а не «старт»: лот ищется по названию, как у
     // гостя ниже.
     await member.presses(lotRow(member, lotTitle) ?? lotTitle);
@@ -258,6 +259,8 @@ describe("auction through both bots", () => {
       .filter((label) => label.includes("идут ставки"));
     expect(rows, "сценарию нужна свежая база контура").toHaveLength(1);
     await guest.presses(rows[0] ?? "");
+    // Строка списка открывает корень аукциона, как в хабе (PER-644).
+    await guest.presses("🔨 Лоты");
     // Цена в ленте может отставать от ставки участника: лот ищется по
     // названию, а цену показывает карточка.
     await guest.presses(lotRow(guest, lotTitle) ?? lotTitle);

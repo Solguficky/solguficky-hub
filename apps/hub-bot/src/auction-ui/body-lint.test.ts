@@ -19,15 +19,21 @@ import type { LotView, ResolvedIdentity } from "./ports.js";
 const rules: BodyRules = {
   pair: (row) =>
     row.every(({ action }) =>
-      ["feed.prev", "feed.next", "history.prev", "history.next"].includes(
-        action,
-      ),
+      [
+        "feed.prev",
+        "feed.next",
+        "history.prev",
+        "history.next",
+        "lot.prev",
+        "lot.next",
+      ].includes(action),
     ) ||
     [
       "confirm.yes|confirm.no",
-      // Пары карточки лота складываются по смыслу (PER-594).
+      // Пары карточки лота складываются по смыслу (PER-594, PER-644).
       "lot.bid-custom|lot.proxy",
-      "lot.refresh|lot.history",
+      "lot.refresh|lot.follow",
+      "lot.refresh|lot.unfollow",
     ].includes(row.map(({ action }) => action).join("|")),
   // Общий потолок двенадцать рядов. Оболочка бота аукциона сегодня ставит
   // под телом два ряда — FAQ и меню, — и пока исключение `rows` ленты в её

@@ -74,11 +74,7 @@ export function raffleBody(
       [
         {
           action: "raffle.back",
-          callbackData: encodeAuctionCallback({
-            kind: "feed",
-            auctionId,
-            page: 0,
-          }),
+          callbackData: encodeAuctionCallback({ kind: "root", auctionId }),
         },
       ],
     ],

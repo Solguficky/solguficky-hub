@@ -2,6 +2,7 @@ import type {
   AuctionStageView,
   AuctionSummaryView,
 } from "../../../../auction-ui/index.js";
+import { marked, pictogram } from "../../../../core/pictograms.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { readableMoment } from "./kit.js";
 
@@ -20,9 +21,10 @@ export const stageWords: Record<AuctionStageView, string> = {
 
 /**
  * Строка аукциона на карточке сходки (PER-594; ADR-064, дополнение
- * 2026-10-12): стадия словом, а у онлайн-торгов с дедлайном — и срок, «Аукцион:
- * идут онлайн-торги до 12 июня, сб, 19:00». Остальное об аукционе — в его
- * корне за «🧩 Расширения».
+ * 2026-10-12): стадия словом, а у онлайн-торгов с дедлайном — и срок, «🔨
+ * Аукцион: идут онлайн-торги до 12 июня, сб, 19:00». Знак — раздела аукциона,
+ * тот же, что у его кнопок (PER-644). Остальное об аукционе — в его корне за
+ * «🧩 Расширения».
  */
 export function auctionStateLine(
   auction: AuctionSummaryView,
@@ -30,10 +32,11 @@ export function auctionStateLine(
   today: CommunityDay,
 ): string {
   const words = stageWords[auction.stage];
+  const lead = marked(pictogram.auction, "Аукцион:");
   return auction.stage === "prebidding" && auction.closesAt !== undefined
-    ? `Аукцион: ${words} до ${readableMoment(
+    ? `${lead} ${words} до ${readableMoment(
         communityLocalTime(auction.closesAt, timeZone),
         today,
       )}`
-    : `Аукцион: ${words}`;
+    : `${lead} ${words}`;
 }

@@ -294,6 +294,7 @@ import {
   hiddenScreen,
   materialsScreen,
   materialTitle,
+  meetupNotificationsLabel,
   meetupsScreen,
   meetupTitleLabel,
   publishConfirmScreen,
@@ -2184,6 +2185,7 @@ async function handleCallback(
         ctx,
         material.source,
         material.title,
+        action.token,
       );
       if (delivery.kind === "failed") {
         await showRefusal(
@@ -3883,7 +3885,7 @@ async function handleCallback(
         await confirmCategoryDisabled(ctx, {
           note: meetupCategoryDisabledNote(action.category),
           settings: {
-            text: "Уведомления сходки",
+            text: meetupNotificationsLabel,
             data: traceCallback(`v1:notify:settings:${action.token}`),
           },
         });
@@ -4202,13 +4204,21 @@ function removeConfirmScreen(confirm: {
 
 // Файл уходит тем видом, каким записан. Второй вид остаётся запасным: у файла,
 // прикреплённого до PER-443, вид не записан, и фото среди них читается
-// документом.
+// документом. Под файлом — одна кнопка «‹ Материалы» (решение владельца по
+// прогону 14 октября 2026 года, PER-644): список остаётся выше в чате, и без
+// неё за следующим материалом пришлось бы листать вверх. Нажатие под файлом
+// снимает с него кнопку и присылает «Материалы» новым сообщением.
 async function sendStoredMaterialFile(
   ctx: UpdateContext,
   source: Extract<MeetupMaterialSource, { kind: "file" }>,
   title: string,
+  token: string,
 ): Promise<{ kind: "sent" } | { kind: "failed"; cause: unknown }> {
-  const other = { caption: title };
+  const other = {
+    caption: title,
+    reply_markup: withNav(new InlineKeyboard(), toMaterials(token)),
+    ...screenMark("material-file"),
+  };
   const asDocument = () => ctx.replyWithDocument(source.fileId, other);
   const asPhoto = () => ctx.replyWithPhoto(source.fileId, other);
   const [first, second] =
@@ -7263,7 +7273,6 @@ async function handleAuctionCallback(
     // же, что правка сходки и «Включить аукцион» (RFC-016).
     canManage,
     ...(canAddLots === undefined ? {} : { canAddLots }),
-    favorites: runtime.favorites !== undefined,
   };
   const shown = auctionScreen(view);
   if (shown.asks === true) {
@@ -7468,7 +7477,6 @@ async function editLiveLotCard(
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: (runtime.today ?? utcToday)(),
     canManage: canManageMeetups(card.viewer),
-    favorites: runtime.favorites !== undefined,
   };
   const shown = auctionScreen(view);
   const key = shown.image;

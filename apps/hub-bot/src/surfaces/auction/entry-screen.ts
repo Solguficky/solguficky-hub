@@ -24,6 +24,9 @@ import {
   feedSummary,
   followLabel,
   leaderLine,
+  lotNextLabel,
+  lotPrevLabel,
+  lotsLabel,
   nameSettingsParagraphs,
   nameSettingsTitle,
   ownLotLine,
@@ -97,11 +100,11 @@ export { money, truncate };
 // лота — тело аукционного дерева (PER-306), лист ставки — PER-317. Правила экрана
 // — дизайн-код (docs/design/bot/design-code.md): жирный заголовок, HTML,
 // последний ряд `[‹ Родитель]`, кадр отказа с выходом. Корень один — «Меню»
-// (PER-592): «Аукционы» с «Прошедшими» внутри, FAQ, «Настройки» с
-// «Уведомлениями» (PER-515) и «Именем в аукционе» (PER-595) и, у бота с
-// Notifications, «Избранное» (PER-495) — его разделы, их же открывают команды.
+// (PER-592): «Аукционы» с «Прошедшими» внутри, FAQ и «Настройки» с
+// «Уведомлениями» (PER-515) и «Именем в аукционе» (PER-595) — его разделы, их
+// же открывают команды. «Избранное» — в корне аукциона (PER-644).
 export type AuctionEntryScreen =
-  | { kind: "menu"; favorites: boolean }
+  | { kind: "menu" }
   // Приветствие человека без права: заявку ставит только его кнопка.
   | { kind: "welcome"; sourceCode?: string }
   // Подсказка на сообщение вне вопроса (PER-592).
@@ -225,6 +228,8 @@ const welcomeParagraphs = [
 const notifyTitle = "Уведомления";
 const settingsTitle = "Настройки";
 const favoritesTitle = "Избранное";
+// Корень аукциона (PER-605, PER-644): его заголовок и имя возврата в него.
+const rootTitle = "Аукцион";
 // Возврат подразделов «Настроек» (PER-595).
 const toSettings = {
   text: `‹ ${settingsTitle}`,
@@ -281,19 +286,6 @@ export function renderEntryScreen(
         ),
         keyboard: [
           [{ text: "Аукционы", callback_data: entryCallback("auctions") }],
-          ...(screen.favorites
-            ? [
-                [
-                  {
-                    text: favoritesTitle,
-                    callback_data: encodeAuctionCallback({
-                      kind: "favorites",
-                      page: 0,
-                    }),
-                  },
-                ],
-              ]
-            : []),
           [{ text: settingsTitle, callback_data: entryCallback("settings") }],
           [{ text: faqTitle, callback_data: entryCallback("faq") }],
         ],
@@ -436,20 +428,15 @@ export function renderEntryScreen(
       const body = renderBody(screen.body, options);
       // Подтверждение и вопрос несут только свои ряды: «Да» и «Нет», «Отмена».
       if (body.asks === true || isConfirm(body.id)) return body;
-      // Избранное — раздел под меню: возврата у тела нет, и «‹ Меню» ставит
-      // оболочка (PER-592).
-      if (body.id === "favorites") {
-        return { ...body, keyboard: [...body.keyboard, [toMenu]] };
-      }
       // Имя в аукционе — подраздел «Настроек» (PER-595): возврат ставит
       // оболочка, у хаба родитель другой.
       if (body.id === "name-settings") {
         return { ...body, keyboard: [...body.keyboard, [toSettings]] };
       }
-      // Родителя ленты тело не знает: возврат в её список ставит оболочка.
-      // Корень аукциона (PER-605) входа в этом боте не имеет, но нарисовать
-      // его бот обязан: возврат — тот же, что у ленты.
-      if (body.id === "feed" || body.id === "root") {
+      // Родителя корня аукциона тело не знает: возврат в список, где аукцион
+      // стоит сейчас, ставит оболочка. Лента, розыгрыш и избранное
+      // возвращают в корень сами (PER-644).
+      if (body.id === "root") {
         const parent = screen.parent ?? "auctions";
         return {
           ...body,
@@ -595,10 +582,11 @@ function renderList(
       ...list.auctions.map((auction) => [
         {
           text: auctionLabel(auction, options.timeZone, options.now),
+          // Аукцион открывается корнем, как в хабе (PER-644): лоты, розыгрыш
+          // и избранное — за ним.
           callback_data: encodeAuctionCallback({
-            kind: "feed",
+            kind: "root",
             auctionId: auction.auctionId,
-            page: 0,
           }),
         },
       ]),
@@ -908,7 +896,7 @@ const rootStages: Record<AuctionStageView, string> = {
 function rootText(block: RootBlock, options: RenderOptions): string {
   const { auction } = block;
   if (auction === undefined) {
-    return screenText("Аукцион", "Этого аукциона больше нет.");
+    return screenText(rootTitle, "Этого аукциона больше нет.");
   }
   const day = (instant: string) =>
     readableDay(instant, options.timeZone, options.now);
@@ -919,7 +907,7 @@ function rootText(block: RootBlock, options: RenderOptions): string {
         ? `Онлайн-торги — с ${day(auction.opensAt)}.`
         : `Онлайн-торги — с ${day(auction.opensAt)} до ${day(auction.closesAt)}.`;
   return screenText(
-    "Аукцион",
+    rootTitle,
     [
       rootStages[auction.stage],
       ...(online === undefined ? [] : [online]),
@@ -1612,12 +1600,18 @@ function renderButton(
       return text(followLabel);
     case "lot.unfollow":
       return text(unfollowLabel);
+    case "lot.prev":
+      return text(lotPrevLabel);
+    case "lot.next":
+      return text(lotNextLabel);
     case "favorites.prev":
       return text("←");
     case "favorites.next":
       return text("→");
     case "favorites.back":
-      return text("‹ Лоты");
+    case "feed.back":
+    case "raffle.back":
+      return text(`‹ ${rootTitle}`);
     case "lot.bid-step":
       return text(`По шагу (${money(button.amount)})`);
     case "lot.bid-final":
@@ -1663,18 +1657,17 @@ function renderButton(
     case "answer.retry":
       return text("Ввести заново");
     case "root.lots":
-      return text("Лоты");
-    case "feed.raffle":
+      return text(lotsLabel);
     case "root.raffle":
       return text(raffleButtonLabel);
+    case "root.favorites":
+      return text(favoritesTitle);
     case "raffle.register":
       return text(registerLabel);
     case "raffle.cancel":
       return text(cancelRegistrationLabel);
     case "raffle.proof":
       return text(raffleProofLabel);
-    case "raffle.back":
-      return text("‹ Лоты");
     case "raffle.return":
       return text(`‹ ${raffleBackName}`);
     default: {
