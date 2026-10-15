@@ -301,6 +301,7 @@ import {
   statusScreen,
 } from "./screens/meetup.js";
 import {
+  type ApplicationCounts,
   canAdmitBidders,
   canGrantAdmins,
   canManageMeetups,
@@ -308,6 +309,7 @@ import {
   canOpenManagement,
   commandsFor,
   helpScreen,
+  type ManageGroup,
   manageGroupScreen,
   manageGroups,
   manageItemParent,
@@ -3616,7 +3618,14 @@ async function handleCallback(
       return;
     }
     if (action.kind === "manage-menu") {
-      await showScreen(ctx, manageScreen(person, uuidToToken(createUuidV7())));
+      await showScreen(
+        ctx,
+        manageScreen(
+          person,
+          uuidToToken(createUuidV7()),
+          await manageCounts(ctx, runtime, person),
+        ),
+      );
       outcome = {
         level: "info",
         message: "manage menu sent",
@@ -3628,7 +3637,12 @@ async function handleCallback(
     if (action.kind === "manage-group") {
       await showScreen(
         ctx,
-        manageGroupScreen(person, action.group, uuidToToken(createUuidV7())),
+        manageGroupScreen(
+          person,
+          action.group,
+          uuidToToken(createUuidV7()),
+          await manageCounts(ctx, runtime, person, action.group),
+        ),
       );
       outcome = {
         level: "info",
@@ -4860,6 +4874,61 @@ function readApplicationQueue(
       );
 }
 
+// Числа на кнопках очередей заявок (PER-636): существующие чтения Identity идут
+// параллельно, и отказ одного оставляет его кнопку без числа — экран всё равно
+// открывается. Читаются только те очереди, которые смотрящий видит по праву.
+async function readApplicationCounts(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  actor: Person,
+): Promise<ApplicationCounts> {
+  const [communityQueue, auctionQueue, communityRefused, auctionRefused] =
+    await Promise.all([
+      canManageMembers(actor)
+        ? readApplicationQueue(ctx, runtime, actor, "community", undefined)
+        : undefined,
+      canAdmitBidders(actor)
+        ? readApplicationQueue(ctx, runtime, actor, "auction", undefined)
+        : undefined,
+      canManageMembers(actor)
+        ? readRefused(ctx, runtime, actor, "community")
+        : undefined,
+      canAdmitBidders(actor)
+        ? readRefused(ctx, runtime, actor, "auction")
+        : undefined,
+    ]);
+  const queue: Partial<Record<ApplicationQueue, number>> = {};
+  const refused: Partial<Record<ApplicationQueue, number>> = {};
+  if (communityQueue?.kind === "ok")
+    queue.community = communityQueue.value.total;
+  if (auctionQueue?.kind === "ok") queue.auction = auctionQueue.value.total;
+  if (communityRefused?.kind === "ok")
+    refused.community = communityRefused.value.length;
+  if (auctionRefused?.kind === "ok")
+    refused.auction = auctionRefused.value.length;
+  return { queue, refused };
+}
+
+// Числа нужны, только когда экран показывает пункты группы заявок: «Управление»
+// с одной видимой группой либо сама группа «Заявки и отказы». Экран групп их не
+// несёт, и тогда чтения не идут.
+function manageCounts(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  group?: ManageGroup,
+): Promise<ApplicationCounts | undefined> {
+  if (group !== undefined) {
+    return group === "applications"
+      ? readApplicationCounts(ctx, runtime, person)
+      : Promise.resolve(undefined);
+  }
+  const visible = manageGroups(person);
+  return visible.length === 1 && visible[0] === "applications"
+    ? readApplicationCounts(ctx, runtime, person)
+    : Promise.resolve(undefined);
+}
+
 // Карточка открывается из управления, туда и возвращает отказ.
 function showApplicationRefusal(
   ctx: UpdateContext,
@@ -5236,7 +5305,14 @@ async function handleSectionCommand(
           error: "management_forbidden",
         };
       }
-      await showScreen(ctx, manageScreen(person, uuidToToken(createUuidV7())));
+      await showScreen(
+        ctx,
+        manageScreen(
+          person,
+          uuidToToken(createUuidV7()),
+          await manageCounts(ctx, runtime, person),
+        ),
+      );
       return {
         level: "info",
         message: "manage menu sent",
