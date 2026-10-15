@@ -197,24 +197,27 @@ export const screenCatalog = {
     backName: "Сходка",
     maxRows: 5,
   },
-  // Подменю сходки (PER-644): заголовок — название сходки, как у карточки,
-  // имя подменю — строкой ниже курсивом.
+  // Подменю сходки (PER-644): заголовок — имя подменю, название сходки —
+  // строкой ниже курсивом.
   edit: {
     class: "screen",
     nav: "tree",
-    submenu: "Изменить",
+    title: "Изменить",
+    subject: true,
     parent: "card",
   },
   status: {
     class: "screen",
     nav: "tree",
-    submenu: "Статус",
+    title: "Статус",
+    subject: true,
     parent: "card",
   },
   materials: {
     class: "screen",
     nav: "tree",
-    submenu: "Материалы",
+    title: "Материалы",
+    subject: true,
     parent: "card",
     backName: "Материалы",
   },
@@ -224,7 +227,8 @@ export const screenCatalog = {
   extensions: {
     class: "screen",
     nav: "tree",
-    submenu: "Расширения",
+    title: "Расширения",
+    subject: true,
     parent: "card",
     backName: "Расширения",
   },
@@ -380,6 +384,7 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     title: "Ставки",
+    subject: true,
     parent: "lot",
   },
   // Лист ставки (PER-317): тело — аукционное дерево, тексты — оболочка хаба.

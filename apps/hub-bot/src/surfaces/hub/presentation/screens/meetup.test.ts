@@ -554,6 +554,6 @@ describe("materialsScreen", () => {
     const screen = materialsScreen(meetup({ materials }), false, 1);
 
     expect(rows(screen)).toEqual([["Материал 9 ↗"], ["←"], ["‹ Сходка"]]);
-    expect(screen.text).toContain("<b>Настолки</b>\n<i>Материалы · 2 из 2</i>");
+    expect(screen.text).toContain("<b>Материалы · 2 из 2</b>\n<i>Настолки</i>");
   });
 });

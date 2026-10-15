@@ -146,6 +146,7 @@ export const screenCatalog = {
     class: "screen",
     nav: "tree",
     title: "Ставки",
+    subject: true,
     parent: "lot",
   },
   // Лист ставки (PER-317): подтверждение без ряда навигации, вопросы с

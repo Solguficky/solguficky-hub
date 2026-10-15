@@ -892,7 +892,10 @@ describe("auction screens beyond the linter", () => {
   // Видимый текст: теги сняты — и моноширинный блок и ссылка на раунд drand
   // у розыгрыша. Остаток `<` — неэкранированный знак.
   const visible = (screen: RenderedScreen) =>
-    screen.text.replace(/<\/?(b|h1|p|br|code)>|<a href="[^"<>]*">|<\/a>/g, "");
+    screen.text.replace(
+      /<\/?(b|i|h1|p|br|code)>|<a href="[^"<>]*">|<\/a>/g,
+      "",
+    );
 
   it("marks every link button, and only a link button, with the sign", () => {
     expect(

@@ -321,7 +321,7 @@ describe("feed and history in the hub shell", () => {
       },
     });
     expect(plain(screen.text)).toBe(
-      "<b>Ставки</b>\n\n<b>Кружка</b>\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
+      "<b>Ставки</b>\n<i>Кружка</i>\n\n• 3 октября 2025, пт, 19:04 · @jay · 500 ₽ · вручную",
     );
   });
 });

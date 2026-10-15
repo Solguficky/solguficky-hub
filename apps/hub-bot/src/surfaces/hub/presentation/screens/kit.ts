@@ -46,18 +46,19 @@ export function screenText(
 }
 
 /**
- * Подменю сходки (решение владельца по прогону 14 октября 2026 года,
- * PER-644): заголовок — название сходки, как у её карточки, имя подменю —
- * строкой ниже курсивом, затем абзацы через пустую строку. Так название и
- * подменю не сливаются, а человек видит, в какой сходке он.
+ * Подменю сходки (PER-644; порядок строк по решению владельца от 16 октября
+ * 2026 года): заголовок — имя подменю, как у любого экрана, а то, к чему оно
+ * относится, — название сходки — строкой ниже курсивом, затем абзацы через
+ * пустую строку. Так заголовок называет экран, а человек видит, в какой он
+ * сходке.
  */
 export function submenuText(
-  meetupTitle: string,
   submenu: string,
+  meetupTitle: string,
   ...paragraphs: (string | undefined)[]
 ): string {
   return [
-    `${heading(meetupTitle)}\n<i>${escapeHtml(submenu)}</i>`,
+    `${heading(submenu)}\n<i>${escapeHtml(meetupTitle)}</i>`,
     ...paragraphs.filter(
       (paragraph): paragraph is string =>
         paragraph !== undefined && paragraph !== "",

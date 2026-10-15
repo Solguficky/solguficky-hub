@@ -647,7 +647,7 @@ describe("presentation adapter", () => {
       expect(methods).toContain("editMessageReplyMarkup");
       expect(calls.at(-1)?.method).toBe("sendMessage");
       expect(JSON.stringify(calls.at(-1)?.payload)).toContain(
-        "<i>Материалы</i>",
+        "<b>Материалы</b>",
       );
     });
   });
@@ -686,7 +686,7 @@ describe("presentation adapter", () => {
     expect(page).toMatchObject({
       payload: {
         text: expect.stringContaining(
-          "<b>Настолки</b>\n<i>Материалы · 1 из 4</i>",
+          "<b>Материалы · 1 из 4</b>\n<i>Настолки</i>",
         ),
       },
     });
@@ -884,7 +884,7 @@ describe("presentation adapter", () => {
     ]);
     expect(calls[1]?.payload).toMatchObject({ caption: "Прикреплено: Афиша" });
     expect(JSON.stringify(calls[1]?.payload)).not.toContain("callback_data");
-    expect(sendMessageText(calls[2])).toContain("<i>Материалы</i>");
+    expect(sendMessageText(calls[2])).toContain("<b>Материалы</b>");
   });
 
   it("removes a material only after confirming that the original stays", async () => {
