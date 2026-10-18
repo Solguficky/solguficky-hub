@@ -1,7 +1,7 @@
 name: Image Meetups
 
 # Production-образ Meetups. Pull request только собирает образ и проверяет его:
-# в GHCR ничего не пишется, и права записи код из PR не получает. Push в develop
+# в GHCR ничего не пишется, и права записи код из PR не получает. Push в stage
 # публикует образ — кандидата на stage. Мерж в main образ не пересобирает: на
 # прод едет тот же digest, что прошёл stage (RFC-010: «Production build
 # повторно не выполняется»), и это забота выкатки, а не этого workflow.
@@ -19,7 +19,7 @@ on:
       - '.github/workflows/image-meetups.yml'
       - '.github/workflows/image-publish.yml'
   push:
-    branches: [develop]
+    branches: [stage]
     paths:
       - 'apps/meetups/**'
       - 'shared/dotnet/**'
@@ -33,7 +33,7 @@ permissions: {}
 
 jobs:
   check:
-    if: ${{ github.ref != 'refs/heads/develop' }}
+    if: ${{ github.ref != 'refs/heads/stage' }}
     permissions:
       contents: read
     uses: ./.github/workflows/image-publish.yml
@@ -44,7 +44,7 @@ jobs:
       publish: false
 
   publish:
-    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/develop' }}
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/stage' }}
     # Публикации по очереди: тег sha-<коммит> одного прогона не должен
     # перевесить другой, пока первый читает digest и аттестует его.
     concurrency:

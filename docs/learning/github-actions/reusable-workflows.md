@@ -125,7 +125,7 @@ Environment — именованная среда в настройках реп
 
 ```mermaid
 sequenceDiagram
-    participant D as push в develop
+    participant D as push в stage
     participant P as джоба publish
     participant S as джоба stage (stage-bump.yml)
     participant O as ops: main

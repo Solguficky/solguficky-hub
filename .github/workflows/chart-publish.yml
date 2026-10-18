@@ -3,7 +3,7 @@ name: Chart publish
 # Helm-чарт прода, сгенерированный из графа AppHost (ADR-055), публикуется в
 # GHCR OCI-артефактом, откуда его тянет HelmRelease Flux. Pull request чарт не
 # публикует: его проверяет джоба apphost в ci.yml тем же рецептом
-# `just apphost-chart`. Push в develop публикует кандидата, как образы
+# `just apphost-chart`. Push в stage публикует кандидата, как образы
 # (image-*.yml); промоушн — PR в ops-репозиторий, а не пересборка. Версия
 # кандидата уходит в stage/test/release.yaml ops-репозитория (stage-bump.yml),
 # откуда stage выкатывает её сам (дополнение ADR-055 от 2026-10-07).
@@ -11,8 +11,8 @@ name: Chart publish
 # Версия — 0.1.<номер прогона>: монотонна, поэтому HelmRelease с диапазоном
 # semver видит новую версию без пре-релизных меток. appVersion — коммит, из
 # которого собран чарт, а не версия образов: digest образов в чарт не попадает,
-# их кладёт ops-репозиторий в values среды. Ручной запуск публикует только с
-# develop: чарт с ветки получил бы старшую версию, и диапазон semver HelmRelease
+# их кладёт ops-репозиторий в values среды. Ручной запуск публикует только со
+# stage: чарт с ветки получил бы старшую версию, и диапазон semver HelmRelease
 # поставил бы непроверенный чарт.
 #
 # Отдельный файл, а не джоба в ci.yml: tools/verify/select-recipes.sh читает
@@ -20,7 +20,7 @@ name: Chart publish
 
 on:
   push:
-    branches: [develop]
+    branches: [stage]
     paths:
       - 'infra/apphost/AppHost/**'
       - 'apps/meetups/**'
@@ -36,7 +36,7 @@ permissions: {}
 
 jobs:
   publish:
-    if: ${{ github.ref == 'refs/heads/develop' }}
+    if: ${{ github.ref == 'refs/heads/stage' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
