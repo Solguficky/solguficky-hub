@@ -63,8 +63,9 @@ final class MeetupCancellationIntegrationSpec
 
   private final case class Node(sharding: ClusterSharding, commands: AuctionCommands)
 
+  // Короче секунды выборку jnats не принимает: `expiresIn` отказывает `IllegalArgumentException`.
   private def settings(url: Option[String]): MeetupFactsSettings =
-    MeetupFactsSettings(url, fetchWait = 500.millis, answerTimeout = 10.seconds, 200.millis, 200.millis)
+    MeetupFactsSettings(url, fetchWait = 1.second, answerTimeout = 10.seconds, 200.millis, 200.millis)
 
   private def onDatabase[A](database: DatabaseSettings)(use: Node => A): A = {
     val kit = ActorTestKit(s"auction-meetup-facts-${UUID.randomUUID()}", nodeConfig(database))
