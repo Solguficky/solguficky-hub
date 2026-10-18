@@ -64,7 +64,7 @@ final class MeetupCancellationIntegrationSpec
   private final case class Node(sharding: ClusterSharding, commands: AuctionCommands)
 
   private def settings(url: Option[String]): MeetupFactsSettings =
-    MeetupFactsSettings(url, batch = 10, fetchWait = 500.millis, answerTimeout = 10.seconds, 200.millis, 200.millis)
+    MeetupFactsSettings(url, fetchWait = 500.millis, answerTimeout = 10.seconds, 200.millis, 200.millis)
 
   private def onDatabase[A](database: DatabaseSettings)(use: Node => A): A = {
     val kit = ActorTestKit(s"auction-meetup-facts-${UUID.randomUUID()}", nodeConfig(database))
@@ -156,7 +156,7 @@ final class MeetupCancellationIntegrationSpec
 
   "the meetup facts consumer" should {
 
-    "discard a scheduled auction, cancel a trading one and leave a meetup without an auction untouched" in {
+    "discards a scheduled auction, cancels a trading one and leaves a meetup without an auction untouched" in {
       freshMeetupsStream()
       val database = freshDatabase()
       JournalSchema.migrate(database)
@@ -185,7 +185,7 @@ final class MeetupCancellationIntegrationSpec
       }
     }
 
-    "write no second event for a redelivered fact and keep the auction discarded" in {
+    "writes no second event for a redelivered fact and keeps the auction discarded" in {
       freshMeetupsStream()
       val database = freshDatabase()
       JournalSchema.migrate(database)
@@ -207,7 +207,7 @@ final class MeetupCancellationIntegrationSpec
       }
     }
 
-    "deliver a fact again after the auction did not answer and apply it once" in {
+    "delivers a fact again after the auction did not answer and applies it once" in {
       freshMeetupsStream()
       val database = freshDatabase()
       JournalSchema.migrate(database)
@@ -231,12 +231,12 @@ final class MeetupCancellationIntegrationSpec
           eventually(auctionState(node, auction) shouldBe AuctionState.Initial)
           eventually(meetupsDurablePending() shouldBe (0L, 0L))
           attempts.get shouldBe 2
-          consumer.pending() shouldBe Some((0L, 0L))
+          consumer.backlog() shouldBe Some(DurableBacklog(0, 0))
         } finally consumer.close()
       }
     }
 
-    "stop the node instead of running without the durable" in {
+    "stops the node instead of running without the durable" in {
       freshMeetupsStream(withDurable = false)
       val database = freshDatabase()
       JournalSchema.migrate(database)
@@ -248,7 +248,7 @@ final class MeetupCancellationIntegrationSpec
       }
     }
 
-    "start without a consumer when no bus address is set" in {
+    "starts without a consumer when no bus address is set" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
       onDatabase(database) { node =>

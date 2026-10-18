@@ -763,9 +763,11 @@ object ResponseMapping {
         )
       case Denial.MeetupNotFound =>
         Right(wire.SettlePredictionResultsManuallyRefusal(Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Denial.MeetupCancelled =>
+        Right(wire.SettlePredictionResultsManuallyRefusal(Reason.MeetupCancelled(wire.MeetupCancelled())))
       case Denial.Unavailable => Left(unavailable)
       case Denial.AuctionNotFound => Left(auctionNotFound)
-      case Denial.MeetupCancelled | Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+      case Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
         throw new IllegalStateException(s"results authority answered $denial")
     }
   }

@@ -120,11 +120,19 @@ public class JetStreamTopologyTests
     public void Durables_AnyDurable_FiltersItsStreamSubject()
     {
         var subjects = JetStreamTopology.Streams.ToDictionary(stream => stream.Name, stream => stream.Subject);
+        // Узкий фильтр пара объявляет явно; он обязан лежать внутри subjects своего стрима.
+        var narrowed = JetStreamTopology.Consumers
+            .SelectMany(consumer => (consumer.FilterSubjects ?? new Dictionary<string, string>())
+                .Select(filter => JetStreamTopology.DurableName(consumer.Consumer, filter.Key)))
+            .ToHashSet();
 
         foreach (var durable in JetStreamTopology.Durables)
         {
-            if (!durable.FilterSubject.StartsWith("events.notifications.notification_created.", StringComparison.Ordinal)
-                && durable.Durable != "auction-meetups-events")
+            if (narrowed.Contains(durable.Durable))
+            {
+                durable.FilterSubject.ShouldStartWith(subjects[durable.Stream].TrimEnd('>'));
+            }
+            else
             {
                 durable.FilterSubject.ShouldBe(subjects[durable.Stream]);
             }

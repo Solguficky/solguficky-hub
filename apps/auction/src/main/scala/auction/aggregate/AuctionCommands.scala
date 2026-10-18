@@ -504,11 +504,16 @@ final class AuctionCommands(
     }
 
   /**
-   * Право на чтение пульта администратора (PER-320): тот же вопрос Meetups, что у команд, но без записи и без окна
-   * `seen` — чтению нечего повторять. Ворот по состоянию сходки нет: пульт отменённой сходки показывает её аукцион.
+   * Право администратора без записи аукциону и без окна `seen` (PER-320): чтение пульта — ему нечего повторять — и
+   * команды, которые пишет не аукцион. Чтение ворот по состоянию сходки не проходит (`Unconditional`): пульт отменённой
+   * сходки показывает её аукцион; команда называет свои ворота сама.
    */
-  def authorize(meetup: MeetupId, person: ParticipantId): Future[Either[Denial, Unit]] =
-    authorized(meetup, person, MeetupGate.Unconditional, (denial: Denial) => denial)(Future.successful(Right(())))
+  def authorize(
+      meetup: MeetupId,
+      person: ParticipantId,
+      gate: MeetupGate = MeetupGate.Unconditional
+  ): Future[Either[Denial, Unit]] =
+    authorized(meetup, person, gate, (denial: Denial) => denial)(Future.successful(Right(())))
 
   /**
    * Право вести торги аукциона — у Meetups, как у остальных команд администратора: ставку зала заносит помощник

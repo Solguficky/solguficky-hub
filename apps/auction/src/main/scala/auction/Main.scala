@@ -207,17 +207,18 @@ object Main {
       backlogTimeout
     )
     // Durable не объявлен — дефект развёртывания: процесс падает с ненулевым кодом, а не работает без наследования
-    // отмен сходок, как при отказе привязки границы.
+    // отмен сходок, как при отказе привязки границы. Выход — не на потоке потребителя: остановка узла ждёт его.
     AuctionNode.startMeetupFacts(
       system,
       sharding,
       meetupFacts,
       MeetupFactsMetrics(telemetry.getMeter("auction")),
-      reason => {
-        logger.error(s"auction meetup facts consumer failed: $reason")
-        system.terminate()
-        System.exit(1)
-      }
+      reason =>
+        Future {
+          logger.error(s"auction meetup facts consumer failed: $reason")
+          system.terminate()
+          System.exit(1)
+        }
     )
     val readiness = AuctionNode.readiness(system, readinessTimeout)
 

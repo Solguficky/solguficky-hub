@@ -9,8 +9,6 @@ import scala.jdk.DurationConverters.*
  * Настройки потребителя фактов Meetups. Адрес шины — тот же, что у релея фактов, и так же необязателен: профиль без
  * узла `nats` поднимает сервис без потребителя, и отмены сходок в нём не наследуются.
  *
- * @param batch
- *   сколько сообщений одна выборка берёт из durable
  * @param fetchWait
  *   сколько выборка ждёт сообщений; столько же длится остановка в худшем случае
  * @param answerTimeout
@@ -22,7 +20,6 @@ import scala.jdk.DurationConverters.*
  */
 final case class MeetupFactsSettings(
     natsUrl: Option[String],
-    batch: Int,
     fetchWait: FiniteDuration,
     answerTimeout: FiniteDuration,
     redeliveryDelay: FiniteDuration,
@@ -31,7 +28,7 @@ final case class MeetupFactsSettings(
 
   // Адрес от AppHost несёт пользователя и пароль шины, а настройки попадают в отладочный вывод.
   override def toString: String =
-    s"MeetupFactsSettings(${natsUrl.fold("<none>")(_ => "***")}, $batch, $fetchWait, $answerTimeout, " +
+    s"MeetupFactsSettings(${natsUrl.fold("<none>")(_ => "***")}, $fetchWait, $answerTimeout, " +
       s"$redeliveryDelay, $reconnectAfter)"
 }
 
@@ -44,7 +41,6 @@ object MeetupFactsSettings {
       natsUrl = Option
         .when(config.hasPath("auction.publication.nats-url"))(config.getString("auction.publication.nats-url"))
         .filter(_.trim.nonEmpty),
-      batch = config.getInt(s"$section.batch"),
       fetchWait = config.getDuration(s"$section.fetch-wait").toScala,
       answerTimeout = config.getDuration(s"$section.answer-timeout").toScala,
       redeliveryDelay = config.getDuration(s"$section.redelivery-delay").toScala,

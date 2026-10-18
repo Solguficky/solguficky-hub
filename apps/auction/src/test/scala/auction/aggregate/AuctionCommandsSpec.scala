@@ -422,6 +422,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       commands.authorize(meetup, person).futureValue shouldBe Right(())
     }
 
+    "authorizes a command that the auction does not write through the gate it names" in {
+      val commands =
+        AuctionCommands(Auctions(Inspection.Absent), noLots, Meetups(Authority.Granted(Standings.cancelled)))
+      commands.authorize(meetup, person).futureValue shouldBe Right(())
+      commands.authorize(meetup, person, MeetupGate.NotCancelled).futureValue shouldBe Left(Denial.MeetupCancelled)
+    }
+
     "answers a repeated command of a cancelled meetup from the window before asking meetups" in {
       val original = AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup))
       val meetups = Meetups(Authority.Granted(Standings.cancelled))

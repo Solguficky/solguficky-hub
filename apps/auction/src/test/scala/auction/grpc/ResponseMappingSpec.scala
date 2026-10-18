@@ -216,6 +216,15 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       reason(OpeningRefusal.Denied(Denial.MeetupHidden)).isMeetupHidden shouldBe true
     }
 
+    "answers a manual settlement of a cancelled meetup with a named refusal" in {
+      ResponseMapping
+        .settleResultsDenied(Denial.MeetupCancelled)
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+    }
+
     "answers a command of a cancelled meetup with a named refusal in every command the gate closes" in {
       ResponseMapping.draftAuction(Left(Denial.MeetupCancelled)).value.getRefused.reason.isMeetupCancelled shouldBe true
       ResponseMapping.addLot(Left(Denial.MeetupCancelled)).value.getRefused.reason.isMeetupCancelled shouldBe true

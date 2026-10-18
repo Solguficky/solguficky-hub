@@ -16,7 +16,6 @@ import scala.concurrent.Await
 import scala.concurrent.Future
 import scala.jdk.CollectionConverters.*
 import scala.jdk.DurationConverters.*
-import scala.util.Try
 import scala.util.Using
 import scala.util.control.NonFatal
 
@@ -61,19 +60,20 @@ final class MeetupCancellationConsumer(
   }
 
   /**
-   * Сколько сообщений durable ещё не выдал и сколько выдал без подтверждения; `None` — потребитель сейчас не привязан.
-   * Читается на сборе метрики запросом к серверу.
+   * Отставание durable на сервере; `None` — потребитель сейчас не привязан. Читается на сборе метрики запросом к
+   * серверу.
    */
-  def pending(): Option[(Long, Long)] =
+  def backlog(): Option[DurableBacklog] =
     consumer.map { context =>
       val info = context.getConsumerInfo
-      (info.getNumPending, info.getNumAckPending)
+      DurableBacklog(pending = info.getNumPending, unacknowledged = info.getNumAckPending)
     }
 
   override def close(): Unit = {
     running = false
     thread.interrupt()
     thread.join(settings.fetchWait.toMillis + settings.reconnectAfter.toMillis)
+    consumer = None
   }
 
   private def loop(): Unit =
@@ -82,6 +82,7 @@ final class MeetupCancellationConsumer(
       catch {
         case absent: JetStreamApiException if MeetupCancellationConsumer.isMissing(absent) =>
           running = false
+          consumer = None
           missing(
             s"durable ${MeetupCancellationConsumer.Durable} of stream ${MeetupCancellationConsumer.Stream} is not declared"
           )
@@ -99,7 +100,9 @@ final class MeetupCancellationConsumer(
               ).asJava
             )
           )
-          Try(Thread.sleep(settings.reconnectAfter.toMillis))
+          // `close` прерывает паузу: `InterruptedException` не `NonFatal`, и `Try` его бы не поймал.
+          try Thread.sleep(settings.reconnectAfter.toMillis)
+          catch { case _: InterruptedException => () }
         case NonFatal(_) => ()
         case _: InterruptedException => ()
       }
@@ -119,13 +122,14 @@ final class MeetupCancellationConsumer(
       .getStreamContext(MeetupCancellationConsumer.Stream)
       .getConsumerContext(MeetupCancellationConsumer.Durable)
     consumer = Some(context)
-    val options =
-      FetchConsumeOptions.builder().maxMessages(settings.batch).expiresIn(settings.fetchWait.toMillis).build()
+    // По одному сообщению за выборку: AckWait durable идёт с выдачи, и сообщение, ждущее в буфере клиента, пока
+    // аукцион не отвечает на предыдущее, сервер выдал бы снова раньше, чем потребитель до него дойдёт.
+    val options = FetchConsumeOptions.builder().maxMessages(1).expiresIn(settings.fetchWait.toMillis).build()
     while (running) {
       if (connection.getStatus != Connection.Status.CONNECTED)
         throw new IllegalStateException("auction meetup facts connection is not connected")
-      val fetched = context.fetch(options)
-      Iterator.continually(fetched.nextMessage()).takeWhile(_ != null).foreach(handle)
+      // Пустая выборка клиент отдаёт как `null`.
+      Option(context.fetch(options).nextMessage()).foreach(handle)
     }
   }
 
@@ -176,6 +180,9 @@ final class MeetupCancellationConsumer(
     }
   }
 }
+
+/** Сообщения durable, которые сервер ещё не выдал, и выданные без подтверждения. */
+final case class DurableBacklog(pending: Long, unacknowledged: Long)
 
 object MeetupCancellationConsumer {
   val Operation = "auction.meetup_facts"

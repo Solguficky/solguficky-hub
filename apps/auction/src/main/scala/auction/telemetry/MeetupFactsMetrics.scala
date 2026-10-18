@@ -1,5 +1,6 @@
 package auction.telemetry
 
+import auction.meetup.DurableBacklog
 import io.opentelemetry.api.common.AttributeKey
 import io.opentelemetry.api.common.Attributes
 import io.opentelemetry.api.metrics.Meter
@@ -30,9 +31,9 @@ final class MeetupFactsMetrics(meter: Meter) {
    * лог, а не роняет экспорт остальных метрик.
    *
    * @param read
-   *   невыданные и неподтверждённые сообщения durable; `None` — потребитель не привязан
+   *   отставание durable; `None` — потребитель не привязан
    */
-  def watchPending(durable: String, read: () => Option[(Long, Long)]): AutoCloseable = {
+  def watchPending(durable: String, read: () => Option[DurableBacklog]): AutoCloseable = {
     val attributes = Attributes.of(DurableKey, durable)
     val pending = meter
       .gaugeBuilder("auction.meetup_facts.pending")
@@ -48,9 +49,9 @@ final class MeetupFactsMetrics(meter: Meter) {
       .buildObserver()
     val observe: Runnable = () =>
       try
-        read().foreach { (waiting, delivered) =>
-          pending.record(waiting, attributes)
-          unacknowledged.record(delivered, attributes)
+        read().foreach { backlog =>
+          pending.record(backlog.pending, attributes)
+          unacknowledged.record(backlog.unacknowledged, attributes)
         }
       catch {
         // Текст отказа клиента шины может нести её адрес, поэтому в запись уходит только класс исключения.

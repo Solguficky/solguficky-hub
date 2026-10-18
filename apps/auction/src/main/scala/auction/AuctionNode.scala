@@ -399,14 +399,15 @@ object AuctionNode {
               .entityRefFor(AuctionEntity.TypeKey, inheritance.auctionId.value.toString)
               .ask(AuctionEntity.InheritCancellation(inheritance.command, _)),
           missing
-        ).start()
-        val watching = metrics.watchPending(MeetupCancellationConsumer.Durable, () => consumer.pending())
+        )
+        val watching = metrics.watchPending(MeetupCancellationConsumer.Durable, () => consumer.backlog())
+        // Остановка регистрируется до старта: отказ привязки приходит сразу и может сам начать остановку узла.
         CoordinatedShutdown(system).addTask(CoordinatedShutdown.PhaseServiceStop, "auction-meetup-facts") { () =>
           watching.close()
           consumer.close()
           Future.successful(Done)
         }
-        Some(consumer)
+        Some(consumer.start())
     }
 
   /**

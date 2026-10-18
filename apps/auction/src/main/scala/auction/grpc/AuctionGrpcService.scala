@@ -3,6 +3,7 @@ package auction.grpc
 import auction.aggregate.Auction
 import auction.aggregate.AuctionCommands
 import auction.aggregate.AuctionState
+import auction.aggregate.MeetupGate
 import auction.aggregate.Correlation
 import auction.aggregate.Denial
 import auction.catalog.LotCatalogCommands
@@ -508,10 +509,14 @@ final class AuctionGrpcService(
     }
 
   /**
-   * Чтение администратора сходки: аукцион у entity, без журнала или без сходки — `NOT_FOUND` до вопроса Meetups, затем
-   * право у Meetups, и только после него `read`.
+   * Чтение или команда администратора сходки мимо аукциона: аукцион у entity, без журнала или без сходки — `NOT_FOUND`
+   * до вопроса Meetups, затем право у Meetups и ворота `gate` по состоянию сходки, и только после них `read`.
    */
-  private def administered[R](query: ConsoleQuery, denied: Denial => Either[Status, R])(
+  private def administered[R](
+      query: ConsoleQuery,
+      denied: Denial => Either[Status, R],
+      gate: MeetupGate = MeetupGate.Unconditional
+  )(
       read: Auction => Future[R]
   ): Future[R] =
     auctions.current(query.auctionId).recoverWith(awaited).flatMap {
@@ -520,7 +525,7 @@ final class AuctionGrpcService(
         auction.meetup match {
           case None => refuse(Status.NOT_FOUND.withDescription("auction not found"))
           case Some(meetup) =>
-            auctions.authorize(meetup, query.acting.participant).flatMap {
+            auctions.authorize(meetup, query.acting.participant, gate).flatMap {
               case Left(denial) => denied(denial).fold(refuse, Future.successful)
               case Right(()) => read(auction)
             }
@@ -716,7 +721,9 @@ final class AuctionGrpcService(
     RequestMapping.settlePredictionResults(in) match {
       case Left(error) => invalid(error)
       case Right(query) =>
-        administered(query, ResponseMapping.settleResultsDenied) { _ =>
+        // Ручная отметка — команда администратора: у отменённой сходки она закрыта воротами (ADR-047, дополнение
+        // 2026-10-12).
+        administered(query, ResponseMapping.settleResultsDenied, MeetupGate.NotCancelled) { _ =>
           results
             .recordManually(query.auctionId)
             .recoverWith(awaited)

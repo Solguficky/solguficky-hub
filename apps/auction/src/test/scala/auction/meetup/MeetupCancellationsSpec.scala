@@ -21,7 +21,7 @@ final class MeetupCancellationsSpec extends AnyWordSpec with Matchers {
 
   "meetup cancellations" should {
 
-    "turn a cancellation into one command to the auction of the meetup with an op_id derived from the event" in {
+    "turns a cancellation into one command to the auction of the meetup with an op_id derived from the event" in {
       MeetupCancellations.inheritance(fact().withRequestId("req-1").toByteArray) shouldBe Right(
         Inheritance(
           Auction.idOf(MeetupId(meetupId)),
@@ -31,11 +31,11 @@ final class MeetupCancellationsSpec extends AnyWordSpec with Matchers {
       )
     }
 
-    "give the same command for a redelivery of the same fact" in {
+    "gives the same command for a redelivery of the same fact" in {
       MeetupCancellations.inheritance(fact().toByteArray) shouldBe MeetupCancellations.inheritance(fact().toByteArray)
     }
 
-    "refuse a body that is not a meetup cancellation without naming its values" in {
+    "refuses a body that is not a meetup cancellation without naming its values" in {
       MeetupCancellations.inheritance(Array[Byte](1, 2, 3)) shouldBe Left("meetup event is not a MeetupEvent")
       MeetupCancellations.inheritance(fact(MeetupEvent.Occasion.MeetupHeld(MeetupHeld())).toByteArray) shouldBe
         Left("meetup event is not meetup_cancelled")

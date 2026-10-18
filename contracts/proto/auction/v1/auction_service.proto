@@ -1993,6 +1993,7 @@ message SettlePredictionResultsManuallyRefusal {
   oneof reason {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
   }
 }
 
