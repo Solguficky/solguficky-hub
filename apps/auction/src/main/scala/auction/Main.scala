@@ -13,6 +13,7 @@ import auction.identity.IdentitySettings
 import auction.lot.AuctionId
 import auction.lot.ParticipantId
 import auction.meetup.GrpcMeetupAuthority
+import auction.meetup.MeetupFactsSettings
 import auction.meetup.MeetupsSettings
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalSchema
@@ -27,6 +28,7 @@ import auction.publication.PublicationSettings
 import auction.results.ResultNames
 import auction.results.ResultsForecasts
 import auction.telemetry.DeadlineMetrics
+import auction.telemetry.MeetupFactsMetrics
 import auction.telemetry.ProjectionMetrics
 import auction.telemetry.PublicationMetrics
 import auction.telemetry.Telemetry
@@ -68,6 +70,7 @@ object Main {
     val backlogTimeout: FiniteDuration = config.getDuration("auction.projection.backlog-timeout").toScala
     val overdueGrace = config.getDuration("auction.deadlines.overdue-grace")
     val publication = PublicationSettings.fromConfig(config)
+    val meetupFacts = MeetupFactsSettings.fromConfig(config)
     val slot = SlotSettings.fromConfig(config, askTimeout) match {
       case Right(settings) => settings
       case Left(reason) => fail(reason, None)
@@ -202,6 +205,20 @@ object Main {
       PublicationMetrics(telemetry.getMeter("auction")),
       publication,
       backlogTimeout
+    )
+    // Durable не объявлен — дефект развёртывания: процесс падает с ненулевым кодом, а не работает без наследования
+    // отмен сходок, как при отказе привязки границы. Выход — не на потоке потребителя: остановка узла ждёт его.
+    AuctionNode.startMeetupFacts(
+      system,
+      sharding,
+      meetupFacts,
+      MeetupFactsMetrics(telemetry.getMeter("auction")),
+      reason =>
+        Future {
+          logger.error(s"auction meetup facts consumer failed: $reason")
+          system.terminate()
+          System.exit(1)
+        }
     )
     val readiness = AuctionNode.readiness(system, readinessTimeout)
 

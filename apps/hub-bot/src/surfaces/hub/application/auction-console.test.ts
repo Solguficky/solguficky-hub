@@ -356,6 +356,20 @@ describe("auction console", () => {
     });
   });
 
+  it("refuses the console of a cancelled meetup and the start of a hidden one", async () => {
+    for (const kind of ["meetup-cancelled", "meetup-hidden"] as const) {
+      const { run } = fake({
+        start: { kind },
+        read: { kind: "ok", console: view("scheduled") },
+        statistics: noLotStatistics,
+      });
+
+      await expect(
+        run({ ...call, intent: "start-auction-week", opId }),
+      ).resolves.toEqual({ kind: "auction-console-refused", reason: kind });
+    }
+  });
+
   it("shows an accepted start over a read that has not seen it yet", async () => {
     const { run } = fake({
       read: { kind: "ok", console: view("scheduled") },

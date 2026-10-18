@@ -72,6 +72,8 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
         };
       case "not-administrator":
         return { kind: "auction-refused", reason: "not-administrator" };
+      case "meetup-cancelled":
+        return { kind: "auction-refused", reason: "meetup-cancelled" };
       case "meetup-not-found":
         return { kind: "meetup-not-found" };
       case "invalid":

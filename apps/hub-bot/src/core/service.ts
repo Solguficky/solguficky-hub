@@ -1,11 +1,13 @@
 import type { Surface } from "./surface.js";
 
 // Имя сервиса — у каждой поверхности своё (ADR-064, п. 18): по нему записи,
-// метрики и трейсы двух процессов не смешиваются, а пакет доставки выводит из
+// метрики и трейсы процессов не смешиваются, а пакет доставки выводит из
 // него durable, bucket журнала и счётчик (`hub-bot-…`, `auction-bot-…`).
+// Поддержка выводит из него bucket своих пар (`support-bot-topics`).
 export const serviceNames = {
   hub: "hub-bot",
   auction: "auction-bot",
+  support: "support-bot",
 } as const satisfies Record<Surface, string>;
 
 export type ServiceName = (typeof serviceNames)[Surface];

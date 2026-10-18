@@ -73,6 +73,24 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
     }
   }
 
+  "op_id of a meetup cancellation" should {
+
+    "keeps the vector fixed by its namespace" in {
+      // Сменённое пространство имён дало бы повторной доставке факта новый `op_id`, и окно `seen` её бы не узнало.
+      Auction.meetupCancellationOf(UUID.fromString("0190a0e0-0000-7000-8000-0000000000aa")).value.toString shouldBe
+        "5e8b899a-97a5-5112-b58e-0a4d5892ffb0"
+    }
+
+    "is a version 5 uuid, the same for one event and different for another" in {
+      forAll(Gen.uuid, Gen.uuid) { (a, b) =>
+        val id = Auction.meetupCancellationOf(a).value
+        id.version shouldBe 5
+        Auction.meetupCancellationOf(a) shouldBe Auction.meetupCancellationOf(a)
+        if (a != b) Auction.meetupCancellationOf(b) should not be Auction.meetupCancellationOf(a)
+      }
+    }
+  }
+
   "auction" should {
 
     "is born at its meetup and keeps that meetup" in {
@@ -583,6 +601,34 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         Left(CancelAuctionRejected.AuctionAlreadyFinished)
       Auction.decide(onBreak, CancelAuction(op(30)), Some(Set(lot))) shouldBe
         Right(AuctionDecision.Accepted(AuctionEvent.AuctionCancelled))
+    }
+
+    "inherits a cancelled meetup: discards before trading, cancels while trading and leaves the rest untouched" in {
+      val inherit = ApplyMeetupCancelled(op(50))
+      Auction.decide(Auction.initial, inherit, None) shouldBe AuctionDecision.Unchanged
+      List(born, scheduled).foreach { auction =>
+        Auction.decide(auction, inherit, None) shouldBe AuctionDecision.Accepted(AuctionEvent.AuctionDiscarded)
+      }
+      List(trading, settling, frozen, inFinal, active).foreach { auction =>
+        Auction.decide(auction, inherit, None) shouldBe AuctionDecision.Accepted(AuctionEvent.AuctionCancelled)
+      }
+      Auction.decide(onBreak, inherit, Some(Set(lot))) shouldBe AuctionDecision.Accepted(AuctionEvent.AuctionCancelled)
+      // Уже кончившиеся торги отмена сходки не трогает, как и отмена администратором.
+      Auction.decide(onBreak, inherit, Some(Set.empty)) shouldBe AuctionDecision.Unchanged
+      Auction.decide(completed, inherit, None) shouldBe AuctionDecision.Unchanged
+      Auction.decide(finished, inherit, None) shouldBe AuctionDecision.Unchanged
+      Auction.decide(cancelled(trading, 6), inherit, None) shouldBe AuctionDecision.Unchanged
+    }
+
+    "answers a repeated meetup cancellation with the original envelope, even after the discard emptied the auction" in {
+      val inherit = ApplyMeetupCancelled(op(50))
+      val discarded = applied(scheduled, Auction.decide(scheduled, inherit, None), 3, 50)
+      discarded.state shouldBe AuctionState.Initial
+      Auction.decide(discarded, inherit, None) shouldBe
+        AuctionDecision.Repeated(AuctionEnvelope(3, op(50), AuctionEvent.AuctionDiscarded))
+      val gone = applied(trading, Auction.decide(trading, inherit, None), 6, 50)
+      Auction.decide(gone, inherit, None) shouldBe
+        AuctionDecision.Repeated(AuctionEnvelope(6, op(50), AuctionEvent.AuctionCancelled))
     }
 
     "sends no closing to a lot of a cancelled auction, though its withdrawal may not have reached the lot" in {

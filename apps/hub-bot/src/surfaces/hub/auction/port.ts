@@ -40,6 +40,7 @@ export type EnableAuctionResult =
   | { kind: "enabled"; auctionId: string; alreadyExisted: boolean }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
   | AuctionFailure;
 
 export type MeetupAuctions = {
@@ -81,6 +82,7 @@ export type AddLotResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
   | { kind: "lots-frozen" }
   | { kind: "auction-not-found" }
   | AuctionFailure;
@@ -91,6 +93,7 @@ export type ScheduleLotResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
   | { kind: "lots-frozen" }
   | { kind: "lot-not-in-auction" }
   | { kind: "scheduling-closed" }
@@ -157,6 +160,10 @@ export type LotAdministration = {
 // бота хаба перед Auction, и тоже только его. Право решает Auction, спрашивая
 // Meetups; именованный отказ — значение ответа, и бот его не повторяет.
 // `auction-not-found` — `NOT_FOUND`: аукциона нет, кнопка устарела.
+// `meetup-cancelled` — сходка отменена, и аукцион наследует это: команды
+// администратора у неё закрыты, кроме удаления и отмены аукциона;
+// `meetup-hidden` — сходка скрыта, и онлайн-торги не открываются (ADR-047,
+// дополнение 2026-10-12). Чтение пульта их не получает.
 
 export type ConsoleReadResult =
   | { kind: "ok"; console: AuctionConsoleSnapshot }
@@ -188,6 +195,7 @@ export type ScheduleAuctionResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
   | { kind: "closes-not-after-opens" }
   | { kind: "window-outside-week"; window: number }
   | { kind: "windows-overlap"; first: number; second: number }
@@ -205,6 +213,8 @@ export type StartPrebiddingResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "meetup-hidden" }
   | { kind: "not-scheduled" }
   | { kind: "another-auction-active"; auctionId: string }
   | { kind: "auction-not-found" }
@@ -233,6 +243,7 @@ export type FinalistResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
   | { kind: "refused"; reason: FinalistRefusal }
   | { kind: "auction-not-found" }
   | AuctionFailure;
@@ -267,6 +278,7 @@ export type FreezeFinalLineupResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
   | { kind: "not-in-break" }
   | { kind: "lineup-empty" }
   | { kind: "lineup-mismatch" }
@@ -277,6 +289,7 @@ export type StartFinalResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
   | { kind: "lineup-not-frozen" }
   | { kind: "auction-not-found" }
   | AuctionFailure;
@@ -285,6 +298,7 @@ export type StartNextLotResult =
   | { kind: "ok"; lotId: string }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
   | { kind: "not-in-final" }
   | { kind: "another-lot-active"; lotId: string }
   | { kind: "lineup-exhausted" }
@@ -297,6 +311,7 @@ export type AdvanceAskResult =
   | { kind: "ok" }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
   | { kind: "lot-not-in-auction" }
   | { kind: "lot-not-open" }
   | { kind: "ask-below-current-price"; mustExceed: Money }
@@ -313,6 +328,7 @@ export type CloseLotResult =
   | { kind: "ok"; closure: LotClosure }
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
   | { kind: "lot-not-in-auction" }
   | { kind: "lot-not-open" }
   | { kind: "deadline-not-reached" }

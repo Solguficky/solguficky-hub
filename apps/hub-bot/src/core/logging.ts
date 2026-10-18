@@ -34,6 +34,9 @@ export type LogFields = {
   notification_type?: string;
   attempt?: number;
   retry_delay_ms?: number;
+  // Чем кончилась реплика переписки бота поддержки: скопирована, отказ и
+  // его вид (ADR-068).
+  outcome?: string;
 };
 
 export type Logger = {

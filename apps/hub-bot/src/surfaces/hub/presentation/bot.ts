@@ -217,6 +217,7 @@ import {
   auctionDiscardedText,
   closeConfirmScreen,
   closedScreen,
+  consoleMeetupText,
   consoleMissingText,
   consoleScreen,
   discardConfirmScreen,
@@ -444,6 +445,9 @@ const materialForbiddenText = "Это действие доступно орга
 // Отказ сервиса по праву человек видит без имени сервиса: ему не нужно знать,
 // кто из них решал (PER-396). Смысл кадра прежний — действие не разрешено.
 const forbiddenText = "Это действие тебе недоступно.";
+// Отменённая сходка аукциона не получает (ADR-047, дополнение 2026-10-12).
+const auctionMeetupCancelledText =
+  "Сходку отменили. Аукцион у неё не включить.";
 // Категорию запросов доступа сервис показывает и даёт менять только
 // модератору очереди. Нажатие из старого уведомления или экрана настроек после
 // потери права получает `PERMISSION_DENIED`, и ответ называет причину, а не
@@ -5765,7 +5769,12 @@ async function enableAuction(
     };
   }
   if (result.kind === "auction-refused") {
-    await showRefusal(ctx, forbiddenText, exitToExtensions(token));
+    const cancelled = result.reason === "meetup-cancelled";
+    await showRefusal(
+      ctx,
+      cancelled ? auctionMeetupCancelledText : forbiddenText,
+      exitToExtensions(token),
+    );
     return {
       level: "warn",
       message: "auction enabling rejected",
@@ -5773,8 +5782,8 @@ async function enableAuction(
       use_case: useCase,
       meetup_id: meetupId,
       identity_id: person.identityId,
-      error_category: "authorization",
-      error: "not_meetup_administrator",
+      error_category: cancelled ? "invariant" : "authorization",
+      error: cancelled ? "meetup_cancelled" : "not_meetup_administrator",
     };
   }
   if (result.kind === "meetup-not-found") {
@@ -6881,7 +6890,9 @@ async function renderConsoleResult(
         ctx,
         result.reason === "not-administrator"
           ? forbiddenText
-          : consoleMissingText,
+          : result.reason === "auction-not-found"
+            ? consoleMissingText
+            : consoleMeetupText[result.reason],
         exitToMeetups(),
       );
       return {
@@ -6893,7 +6904,9 @@ async function renderConsoleResult(
         error_category:
           result.reason === "not-administrator"
             ? "authorization"
-            : "visibility",
+            : result.reason === "auction-not-found"
+              ? "visibility"
+              : "invariant",
         error: result.reason.replaceAll("-", "_"),
       };
     default: {

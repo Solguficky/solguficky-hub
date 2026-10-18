@@ -57,7 +57,7 @@ final class AuctionCancellingIntegrationSpec
 
   private object Granted extends MeetupAuthority {
     def check(meetup: MeetupId, person: ParticipantId, correlation: Correlation): Future[Authority] =
-      Future.successful(Authority.Granted)
+      Future.successful(Authority.Granted(Standings.published))
   }
 
   /** Розыгрышу из сьюта не нужны ни Identity, ни маяк, ни имена: до закрытия регистрации дело не доходит. */

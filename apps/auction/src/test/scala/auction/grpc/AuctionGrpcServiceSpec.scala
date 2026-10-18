@@ -10,6 +10,7 @@ import auction.aggregate.AuctionCommands
 import auction.aggregate.AuctionFixtures
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
+import auction.aggregate.Standings
 import auction.aggregate.Correlation
 import auction.aggregate.DeselectForFinal
 import auction.aggregate.CancelAuction
@@ -350,7 +351,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   private val NoMeetups: MeetupAuthority = (_, _, _) => fail("meetups was asked")
 
-  private val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+  private val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
 
   /** Человек в зале, за которого помощник заносит ставку, и его имя в аукционе. */
   private val RoomId = ParticipantId(UUID.fromString("01890a5d-ac99-7aaa-8bbb-dddddddddddd"))
@@ -1181,7 +1182,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
             )
           )
       }
-      val meetups: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val meetups: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
       val console = service(
         Unreachable,
         views = registry,
@@ -1228,7 +1229,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         override def deselectForFinal(auctionId: AuctionId, command: DeselectForFinal, initiator: Initiator) =
           Future.successful(Left(FinalChoiceRejected.ByLot(UnmarkForFinalRejected.DeadlinePassed)))
       }
-      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
       val auction = service(Unreachable, auctions = AuctionCommands(late, Unreachable, granted))
       auction
         .selectForFinal(wire.SelectForFinalRequest(Some(viewer), meetupAuction.toString, lot, op))
@@ -1372,7 +1373,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         override def draft(auctionId: AuctionId, command: DraftAuction, initiator: Initiator) =
           Future.successful(AuctionAnswer.Unchanged)
       }
-      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
       val answer = service(Unreachable, auctions = AuctionCommands(existing, Unreachable, granted))
         .draftAuction(wire.DraftAuctionRequest(Some(viewer), meetupId, op))
         .futureValue
@@ -1482,7 +1483,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         override def removeLot(auctionId: AuctionId, command: RemoveLot, initiator: Initiator) =
           Future.successful(Left(RemoveLotRejected.LotsFrozen))
       }
-      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
       val auction = service(Unreachable, auctions = AuctionCommands(frozen, Unreachable, granted))
       auction
         .addLot(wire.AddLotRequest(Some(viewer), auctionId, lot, op))
@@ -1511,7 +1512,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
           Future.successful(answer)
         }
       }
-      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
       val auction = service(Unreachable, auctions = AuctionCommands(present, Unreachable, granted))
       val request = wire.ScheduleLotRequest(
         Some(viewer),
@@ -1692,7 +1693,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
               )
             )
       }
-      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
       val lots = service(
         Unreachable,
         views = read,
@@ -1869,7 +1870,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         override def startNextLot(auctionId: AuctionId, command: StartNextLot, initiator: Initiator) =
           Future.successful(Right(finalLot))
       }
-      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
       val auction = service(Unreachable, auctions = AuctionCommands(running, Unreachable, granted))
       auction
         .freezeFinalLineup(wire.FreezeFinalLineupRequest(Some(viewer), meetupAuctionId, op, List(lot)))
@@ -1902,7 +1903,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         override def freezeFinalLineup(auctionId: AuctionId, command: FreezeFinalLineup, initiator: Initiator) =
           Future.successful(Left(FreezeFinalLineupRejected.LineupUnknown))
       }
-      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted)
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
       statusOf(
         service(Unreachable, auctions = AuctionCommands(asking, Unreachable, granted))
           .freezeFinalLineup(wire.FreezeFinalLineupRequest(Some(viewer), meetupAuctionId, op, List(lot)))
