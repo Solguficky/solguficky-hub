@@ -822,4 +822,27 @@ describe("live final in the hub shell", () => {
     expect(plainNext).toContain("Следующая ставка: 1 400 ₽");
     expect(plainNext).not.toContain("Шаг");
   });
+
+  // Отказ «не по цене» поднимает кнопку выше отстающего снимка: карточка
+  // называет ту же сумму, что на кнопке, а не прежнюю объявленную.
+  it("names the raised next price instead of a stale ask", () => {
+    const text = plain(
+      auctionScreen(
+        view([
+          lot({
+            card: { title: "Футболка", description: "" },
+            nextPrice: rub(1700),
+            status: {
+              kind: "trading",
+              currentPrice: rub(1200),
+              phase: "live",
+              ask: rub(1500),
+            },
+          }),
+        ]),
+      ).screen.text,
+    );
+    expect(text).toContain("Следующая ставка: 1 700 ₽");
+    expect(text).not.toContain("Ведущий объявил");
+  });
 });

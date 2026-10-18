@@ -1911,6 +1911,22 @@ describe("final of the auctioneer", () => {
     expect(spaced(last(calls).text ?? "")).toBe(sold);
   });
 
+  // Лот, выбывший до своей очереди, открытием не считается: первый лот
+  // финала ещё не открывали.
+  it("keeps the first-lot button when a lot of the lineup is gone before the start", async () => {
+    const auction = frozen();
+    auction.state.lots = auction.state.lots.map((each) =>
+      each.lot.lotId === mugId
+        ? { ...each, lot: { ...each.lot, status: { kind: "withdrawn" } } }
+        : each,
+    );
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:g:${auctionToken}`));
+
+    expect(labels(last(calls))).toEqual([["Открыть первый лот"], ["‹ Пульт"]]);
+  });
+
   // Повтор «Начать финал», когда лот уже открыт, — тот же исход, но без
   // «Открыть первый лот»: первый лот уже открывали (PER-639).
   it("drops the first-lot button on a repeated start of a running final", async () => {

@@ -24,11 +24,20 @@ export function auctionSummaryViewOf(
     ...(opensAt === undefined ? {} : { opensAt }),
     ...(closesAt === undefined ? {} : { closesAt }),
     final: (snapshot.config?.finalBlocks ?? 0) > 0,
-    ...withLineup(finalLineupOf(snapshot.status)),
+    ...withLineup(snapshot.status),
   };
 }
 
-function withLineup(lineup: FinalLineupView | undefined) {
+// Состав в сводке — подсказка ленте (PER-639), а сводку читают ещё список
+// аукционов и корень. Кривой состав их не роняет: сводка остаётся без него, и
+// лента показывает себя как вне финала. Строгим перевод остаётся у пульта.
+function withLineup(status: AuctionSnapshot["status"]) {
+  let lineup: FinalLineupView | undefined;
+  try {
+    lineup = finalLineupOf(status);
+  } catch {
+    lineup = undefined;
+  }
   return lineup === undefined ? {} : { lineup };
 }
 

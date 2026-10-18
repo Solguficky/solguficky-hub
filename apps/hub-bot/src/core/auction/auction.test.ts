@@ -148,6 +148,8 @@ describe("auction snapshot for the root", () => {
       activeLotId: LOT_B,
     });
     expect(inFinal()).toEqual({ order: [LOT_A, LOT_B] });
-    expect(() => inFinal("")).toThrow("final active lot is empty");
+    // Кривой состав сводку не роняет: её читают ещё список аукционов и
+    // корень, и лента тогда показывает себя как вне финала.
+    expect(inFinal("")).toBeUndefined();
   });
 });

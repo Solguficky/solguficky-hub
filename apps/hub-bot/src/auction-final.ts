@@ -27,8 +27,16 @@ export function finalPriceLines(
   money: (m: Money) => string,
 ): string[] {
   if (!inLiveFinal(block)) return [];
-  if (block.status.kind === "trading" && block.status.ask !== undefined) {
-    return [`Ведущий объявил: ${money(block.status.ask)}`];
+  // Объявленная цена — строка карточки, только пока она и есть следующая
+  // ставка: после отказа «не по цене» дерево поднимает `nextPrice` выше
+  // отстающего снимка, и карточка называет ту сумму, что стоит на кнопке.
+  const ask = block.status.kind === "trading" ? block.status.ask : undefined;
+  if (
+    ask !== undefined &&
+    (block.nextPrice === undefined ||
+      block.nextPrice.minorUnits === ask.minorUnits)
+  ) {
+    return [`Ведущий объявил: ${money(ask)}`];
   }
   return block.nextPrice === undefined
     ? []

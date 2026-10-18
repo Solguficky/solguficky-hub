@@ -326,7 +326,7 @@ function quoted(
 // последняя в замороженном составе, а состав после заморозки не меняется.
 // Продажи считаются по пульту, прочитанному до команды, и само закрытие
 // добавляется к ним: в прочитанном пульте лот ещё торгуется.
-function lastOfLineup(
+function finishedByLast(
   console: AuctionConsoleView,
   position: number,
   entry: ConsoleLot,
@@ -1378,12 +1378,12 @@ export function createAuctionConsole(
     closed: LotClosure,
   ): Promise<ExecuteResult> {
     const { console, entry } = found;
-    const last = lastOfLineup(console, request.position, entry, closed);
+    const finished = finishedByLast(console, request.position, entry, closed);
     const outcome = {
       kind: "final-lot-closed" as const,
       auctionId: request.auctionId,
       ...titled(entry),
-      ...(last === undefined ? {} : { last }),
+      ...(finished === undefined ? {} : { finished }),
     };
     if (closed.kind === "unsold") {
       return { ...outcome, closure: { kind: "unsold" } };

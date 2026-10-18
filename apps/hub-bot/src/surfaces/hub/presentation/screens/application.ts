@@ -16,6 +16,7 @@ import {
   confirmKeyboard,
   escapeHtml,
   type Parent,
+  plural,
   screenText,
   toManage,
   withNav,
@@ -80,21 +81,6 @@ function sourceLabel(source: ApplicationCard["source"]): string {
       return _exhaustive;
     }
   }
-}
-
-/** Число со словом в нужной форме: «1 лот», «3 лота», «5 лотов». */
-export function plural(count: number, forms: [string, string, string]): string {
-  const tens = count % 100;
-  const ones = count % 10;
-  const form =
-    tens >= 11 && tens <= 14
-      ? forms[2]
-      : ones === 1
-        ? forms[0]
-        : ones >= 2 && ones <= 4
-          ? forms[1]
-          : forms[2];
-  return `${count} ${form}`;
 }
 
 /** Возраст заявки: «только что», «5 минут назад», «3 часа назад», «2 дня назад». */
