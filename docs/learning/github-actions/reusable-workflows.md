@@ -116,7 +116,7 @@ Environment — именованная среда в настройках реп
 
 ## Почему так, а не иначе
 
-- **`workflow_run` вместо вызова.** Отдельный workflow «после завершения публикации» не потребовал бы правок шести файлов. Отвергнут по двум причинам. Документация: «This event will only trigger a workflow run if the workflow file exists on the default branch», а ветка по умолчанию здесь `main`, тогда как публикации идут из `develop`. И у такого запуска нет `needs.<job>.outputs` вызвавшего прогона: digest пришлось бы доставать заново.
+- **`workflow_run` вместо вызова.** Отдельный workflow «после завершения публикации» не потребовал бы правок шести файлов. Отвергнут по двум причинам. Документация: «This event will only trigger a workflow run if the workflow file exists on the default branch», а ветка по умолчанию здесь `main`, тогда как публикации шли из `develop` (с 2026-10-18 — из `stage`, что тоже не default branch). Само правило default branch разобрано в [triggers-and-credentials.md](triggers-and-credentials.md). И у такого запуска нет `needs.<job>.outputs` вызвавшего прогона: digest пришлось бы доставать заново.
 - **Шаг записи в каждом workflow.** Шесть копий клонирования, `yq` и цикла повторов. Reusable workflow держит их в одном месте; цена — шесть одинаковых по форме вызовов (ось стандартов ревью назвала это запахом, отложено).
 - **`secrets: inherit` вместо передачи по имени.** Короче, но reusable workflow получил бы все секреты репозитория. Передача по имени отдаёт ровно один ключ.
 - **`concurrency` на джобе записи.** Отменял бы ожидающие записи разных ключей — см. выше.
