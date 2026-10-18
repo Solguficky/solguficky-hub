@@ -1,0 +1,15 @@
+{
+  "servers": {
+    "aspire": {
+      "command": "aspire",
+      "args": [
+        "agent",
+        "mcp"
+      ]
+    },
+    "linear": {
+      "type": "http",
+      "url": "https://mcp.linear.app/mcp"
+    }
+  }
+}

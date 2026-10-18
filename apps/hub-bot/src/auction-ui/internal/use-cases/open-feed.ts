@@ -1,0 +1,261 @@
+import { encodeAuctionCallback, MAX_FEED_PAGE } from "../../callback-data.js";
+import type {
+  AuctionPort,
+  FinalLineupView,
+  LotStatusView,
+  LotView,
+  Money,
+  Viewer,
+} from "../../ports.js";
+import type { AuctionButton, AuctionScreenBody } from "../../screen.js";
+import { collectPages } from "./collect-pages.js";
+import { feedItemOf, mineOf, withMine } from "./standing.js";
+
+// Лотов на странице ленты. Восемь — как у списка материалов в хабе: кнопки
+// лотов и строка листания помещаются в один экран телефона.
+export const FEED_PAGE_SIZE = 8;
+
+const MAX_FEED_LOTS = FEED_PAGE_SIZE * (MAX_FEED_PAGE + 1);
+
+// Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
+//
+// Страница за пределом ленты — кнопка устаревшего экрана: лоты сняли, пока
+// сообщение висело. Она показывает последнюю страницу, а не ошибку.
+export async function openFeed(input: {
+  auction: AuctionPort;
+  viewer: Viewer;
+  auctionId: string;
+  page: number;
+}): Promise<AuctionScreenBody> {
+  // Стадия читается параллельно страницам и стартует первой, как розыгрыш у
+  // корня: порядок вызовов один при любом числе страниц.
+  const [lineup, loaded] = await Promise.all([
+    readFinalLineup(input),
+    loadFeed(input),
+  ]);
+  const lots = orderForFeed(loaded, lineup);
+  const active =
+    lineup?.activeLotId === undefined
+      ? undefined
+      : lots.find((lot) => lot.lotId === lineup.activeLotId);
+  const pageCount = Math.max(1, Math.ceil(lots.length / FEED_PAGE_SIZE));
+  const page = Math.min(input.page, pageCount - 1);
+  const shown = lots.slice(page * FEED_PAGE_SIZE, (page + 1) * FEED_PAGE_SIZE);
+  const feedButton = (target: number) =>
+    encodeAuctionCallback({
+      kind: "feed",
+      auctionId: input.auctionId,
+      page: target,
+    });
+  const paging: AuctionButton[] = [
+    ...(page > 0
+      ? [{ action: "feed.prev" as const, callbackData: feedButton(page - 1) }]
+      : []),
+    ...(page < pageCount - 1
+      ? [{ action: "feed.next" as const, callbackData: feedButton(page + 1) }]
+      : []),
+  ];
+  return {
+    blocks: [
+      {
+        kind: "feed",
+        auctionId: input.auctionId,
+        page,
+        pageCount,
+        lots: shown.map((lot) => feedItemOf(lot, input.viewer)),
+        ...withMine(mineOf(lots, input.viewer)),
+        ...(beforeTrading(lots) ? { beforeTrading: true as const } : {}),
+        ...(lineup === undefined
+          ? {}
+          : {
+              final:
+                active === undefined
+                  ? {}
+                  : { active: feedItemOf(active, input.viewer) },
+            }),
+      },
+    ],
+    // Лента — просто список лотов (PER-644): розыгрыш и избранное стоят в
+    // корне аукциона у обоих ботов, и возврат ведёт туда же.
+    keyboard: [
+      ...shown.map((lot) => [
+        {
+          action: "feed.open-lot" as const,
+          lotId: lot.lotId,
+          callbackData: encodeAuctionCallback({
+            kind: "lot",
+            lotId: lot.lotId,
+            page,
+          }),
+        },
+      ]),
+      ...(paging.length > 0 ? [paging] : []),
+      [
+        {
+          action: "feed.back" as const,
+          callbackData: encodeAuctionCallback({
+            kind: "root",
+            auctionId: input.auctionId,
+          }),
+        },
+      ],
+    ],
+  };
+}
+
+// Кнопка «Розыгрыш» стоит, только пока розыгрыш есть: Auction отдаёт его с
+// открытия онлайн-торгов (ADR-066). Отказ чтения убирает кнопку, а не роняет
+// ленту — как отказ имён на карточке.
+export async function hasRaffle(input: {
+  auction: AuctionPort;
+  viewer: Viewer;
+  auctionId: string;
+}): Promise<boolean> {
+  try {
+    return (
+      (await input.auction.getRaffle({
+        viewer: input.viewer,
+        auctionId: input.auctionId,
+      })) !== undefined
+    );
+  } catch {
+    return false;
+  }
+}
+
+// Торги аукциона ещё не открыты: ни один лот не торговался и хотя бы один
+// ещё ждёт торгов (PER-618). Снятый лот торгов не доказывает в обе стороны —
+// его снимают и из черновика, и при отмене идущего аукциона, — поэтому лента
+// из одних снятых лотов ничего не обещает, а пустая своё говорит сама.
+function beforeTrading(lots: readonly LotView[]): boolean {
+  return (
+    lots.some((lot) => awaitsTrading(lot.status)) &&
+    lots.every((lot) => !hasOpened(lot.status))
+  );
+}
+
+function awaitsTrading(status: LotStatusView): boolean {
+  return status.kind === "draft" || status.kind === "scheduled";
+}
+
+function hasOpened(status: LotStatusView): boolean {
+  switch (status.kind) {
+    case "trading":
+    case "held":
+    case "sold":
+    case "unsold":
+      return true;
+    case "draft":
+    case "scheduled":
+    case "withdrawn":
+      return false;
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+export function loadFeed(input: {
+  auction: AuctionPort;
+  viewer: Viewer;
+  auctionId: string;
+}): Promise<LotView[]> {
+  return collectPages({
+    what: "auction feed",
+    maxItems: MAX_FEED_LOTS,
+    fetch: async (pageToken) => {
+      const page = await input.auction.listAuctionLots({
+        viewer: input.viewer,
+        auctionId: input.auctionId,
+        pageToken,
+      });
+      return { items: page.lots, nextPageToken: page.nextPageToken };
+    },
+  });
+}
+
+// Цена, по которой лот стоит в ленте: текущая в торгах, стартовая до них,
+// цена продажи у проданного. У черновика, снятого и непроданного лота цены
+// нет — они идут в конец ленты.
+export function feedPriceOf(status: LotStatusView): Money | undefined {
+  switch (status.kind) {
+    case "trading":
+    case "held":
+      return status.currentPrice;
+    case "scheduled":
+      return status.startingPrice;
+    case "sold":
+      return status.price;
+    case "draft":
+    case "unsold":
+    case "withdrawn":
+      return undefined;
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
+// Состав идущего финала (PER-639) или `undefined`: финал не идёт либо стадию
+// прочитать не удалось. Отказ чтения ленту не роняет — она остаётся прежней,
+// как без кнопки «Розыгрыш» у корня.
+export async function readFinalLineup(input: {
+  auction: AuctionPort;
+  viewer: Viewer;
+  auctionId: string;
+}): Promise<FinalLineupView | undefined> {
+  try {
+    const summary = await input.auction.getAuction({
+      viewer: input.viewer,
+      auctionId: input.auctionId,
+    });
+    return summary?.stage === "in-final" ? summary.lineup : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Порядок ленты: вне финала — по цене, в финале — порядок зала (PER-639).
+// Активный лот первым, за ним лоты состава, которые ещё ждут своей очереди, в
+// порядке выхода, затем проданные и прочие по цене. Соседи карточки берут ту
+// же функцию, поэтому листание и лента не расходятся.
+export function orderForFeed(
+  lots: readonly LotView[],
+  lineup: FinalLineupView | undefined,
+): LotView[] {
+  if (lineup === undefined) return sortForFeed(lots);
+  const byId = new Map(lots.map((lot) => [lot.lotId, lot]));
+  const ahead = [
+    ...(lineup.activeLotId === undefined ? [] : [lineup.activeLotId]),
+    ...lineup.order.filter((lotId) => lotId !== lineup.activeLotId),
+  ]
+    .map((lotId) => byId.get(lotId))
+    .filter(
+      (lot): lot is LotView =>
+        lot !== undefined &&
+        (lot.status.kind === "held" || lot.status.kind === "trading"),
+    );
+  const placed = new Set(ahead.map((lot) => lot.lotId));
+  return [
+    ...ahead,
+    ...sortForFeed(lots.filter((lot) => !placed.has(lot.lotId))),
+  ];
+}
+
+// По возрастанию цены; при равной цене — по `lotId`, чтобы номер страницы
+// держал один и тот же набор лотов между нажатиями. Валюта у платформы одна,
+// поэтому сравниваются минимальные единицы.
+export function sortForFeed(lots: readonly LotView[]): LotView[] {
+  return [...lots].sort((a, b) => {
+    const priceA = feedPriceOf(a.status)?.minorUnits;
+    const priceB = feedPriceOf(b.status)?.minorUnits;
+    if (priceA !== priceB) {
+      if (priceA === undefined) return 1;
+      if (priceB === undefined) return -1;
+      return priceA - priceB;
+    }
+    return a.lotId < b.lotId ? -1 : a.lotId > b.lotId ? 1 : 0;
+  });
+}

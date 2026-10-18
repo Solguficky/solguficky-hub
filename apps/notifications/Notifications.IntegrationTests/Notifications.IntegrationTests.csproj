@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- xUnit v3 test project is an executable: the entry point comes from the runner. -->
+    <OutputType>Exe</OutputType>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="Dapper" Version="2.1.66" />
+    <!-- Клиент нужен, чтобы команды шли через настоящий Kestrel и h2c, а не в
+         обход транспорта: коды отказов контракта — свойство границы, и проверять
+         их вызовом C#-метода значило бы проверять не то. Тот же пакет и версия,
+         что у Meetups.IntegrationTests. -->
+    <PackageReference Include="Grpc.Net.Client" Version="2.67.0" />
+    <PackageReference Include="Grpc.HealthCheck" Version="2.67.0" />
+    <PackageReference Include="Npgsql" Version="10.0.1" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.14.0" />
+    <!-- Шина для реплики чужих фактов: потребитель проверяется на настоящем
+         JetStream, а не на своей имитации pull и ack. -->
+    <PackageReference Include="Testcontainers.Nats" Version="4.14.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Notifications\Notifications.csproj" />
+    <ProjectReference Include="..\Notifications.TestKit\Notifications.TestKit.csproj" />
+  </ItemGroup>
+
+</Project>

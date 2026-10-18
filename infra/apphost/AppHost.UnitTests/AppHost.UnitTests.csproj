@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- xUnit v3 test project is an executable: the entry point comes from the runner. -->
+    <OutputType>Exe</OutputType>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- Стек задан docs/standards/testing/testing-strategy.md, раздел «Стек C#»,
+       и версии совпадают с Notifications.UnitTests: второй тест-проект не
+       выбирает стек заново. -->
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+    <PackageReference Include="Shouldly" Version="4.3.0" />
+    <PackageReference Include="Aspire.Hosting.Testing" Version="13.5.3" />
+  </ItemGroup>
+
+  <!-- IsAspireProjectResource="false": AppHost здесь предмет прогона, а не ресурс
+       внутри чужого графа. Форма повторяет tests/contour/Contour.Environment. -->
+  <ItemGroup>
+    <ProjectReference Include="..\AppHost\AppHost.csproj" IsAspireProjectResource="false" />
+  </ItemGroup>
+
+</Project>

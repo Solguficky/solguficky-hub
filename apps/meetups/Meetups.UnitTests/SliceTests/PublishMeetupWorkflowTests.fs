@@ -1,0 +1,197 @@
+/// Оболочка среза «опубликовать». Здесь проверяется то, чего не видно в домене:
+/// момент публикации и момент события обязаны быть одним значением, а повтор на
+/// видимой сходке не должен открывать транзакцию.
+module Meetups.SliceTests.PublishMeetupWorkflowTests
+
+open System
+open System.Threading.Tasks
+open Swensen.Unquote
+open Xunit
+open Meetups
+open Meetups.Domain
+open Meetups.Infrastructure
+open Meetups.Slices.PublishMeetup
+open Meetups.TestData
+
+let private eventId = Guid.Parse "0199c0de-0000-7000-8000-00000000e002"
+
+let private stub: Deps =
+    {
+        Load = fun _ -> failwith "Load is not expected in this test"
+        Commit = fun _ _ _ _ -> failwith "Commit is not expected in this test"
+        Now = fun () -> Sample.later
+        NewEventId = fun () -> eventId
+        RequestId = None
+    }
+
+let private run (deps: Deps) =
+    execute
+        deps
+        {
+            Id = Sample.meetupId
+            Viewer = Sample.administrator
+            ExpectedVersion = Sample.expectedVersion
+        }
+    |> Async.AwaitTask
+    |> Async.RunSynchronously
+
+let private loading (snapshot: MeetupSnapshot option) (deps: Deps) =
+    { deps with
+        Load = fun _ -> Task.FromResult snapshot
+    }
+
+/// Два чтения подряд: основное и перечитывание после расхождения версий. Дальше
+/// отдаётся второй снимок — тесту достаточно одной пары.
+let private loadingThen (first: MeetupSnapshot option) (second: MeetupSnapshot option) (deps: Deps) =
+    let mutable reads = 0
+
+    { deps with
+        Load =
+            fun _ ->
+                reads <- reads + 1
+                Task.FromResult(if reads = 1 then first else second)
+    }
+
+let private recording (written: ResizeArray<_>) (deps: Deps) =
+    { deps with
+        Commit =
+            fun envelope _ state event ->
+                written.Add(envelope, state, event)
+
+                Meetup.apply state event
+                |> Meetup.toSnapshot
+                |> Ok
+                |> Task.FromResult
+    }
+
+[<Fact>]
+let ``A titled hidden meetup is published and written as one event`` () =
+    let written = ResizeArray()
+
+    let result =
+        stub
+        |> loading (Some(Meetup.toSnapshot Sample.titled))
+        |> recording written
+        |> run
+
+    let expected =
+        Meetup.apply (Existing Sample.titled) (MeetupPublished Sample.later)
+        |> Meetup.toSnapshot
+
+    test <@ result = Ok expected @>
+    test <@ written.Count = 1 @>
+
+/// Один и тот же момент становится отметкой первой публикации в состоянии и
+/// `occurred_at` в конверте. Два чтения часов дали бы одному факту два времени, и
+/// заметить это можно только здесь: домен своих часов не читает вовсе.
+[<Fact>]
+let ``The publication moment and the event moment are the same value`` () =
+    let written = ResizeArray()
+
+    let result =
+        stub
+        |> loading (Some(Meetup.toSnapshot Sample.titled))
+        |> recording written
+        |> run
+
+    let envelope, _, event = written[0]
+
+    let publishedAt =
+        match result with
+        | Ok snapshot -> snapshot.FirstPublishedAt
+        | Error _ -> None
+
+    test
+        <@
+            envelope.OccurredAt = Sample.later
+            && event = MeetupPublished Sample.later
+            && publishedAt = Some Sample.later
+        @>
+
+[<Fact>]
+let ``Publishing an already visible meetup returns its snapshot without writing`` () =
+    let stored = Meetup.toSnapshot Sample.published
+    let result = run (stub |> loading (Some stored))
+
+    test <@ result = Ok stored @>
+
+[<Fact>]
+let ``Publishing an absent meetup is rejected without writing`` () =
+    test <@ run (stub |> loading None) = Error(PublishMeetupError.Domain MeetupNotFound) @>
+
+[<Fact>]
+let ``A meetup without a title is rejected without writing`` () =
+    let result =
+        run (
+            stub
+            |> loading (Some(Meetup.toSnapshot Sample.draft))
+        )
+
+    test <@ result = Error(PublishMeetupError.Domain TitleRequiredForPublication) @>
+
+[<Fact>]
+let ``A version conflict from the store becomes a rejected command`` () =
+    let loaded =
+        stub
+        |> loading (Some(Meetup.toSnapshot Sample.titled))
+
+    let deps =
+        { loaded with
+            Commit =
+                fun _ _ _ _ ->
+                    Error MeetupStore.VersionConflict
+                    |> Task.FromResult
+        }
+
+    test <@ run deps = Error PublishMeetupError.Conflict @>
+
+/// Расхождение версий ещё не отказ: PER-78 требует перечитать состояние и, если
+/// цель команды уже в силе, вернуть текущий снимок успехом без события. Второе
+/// чтение отдаёт уже видимую сходку — её снимок и уходит ответом.
+[<Fact>]
+let ``A stale version with the target already in place is a safe retry`` () =
+    let stored = Meetup.toSnapshot Sample.published
+
+    let loaded =
+        stub
+        |> loadingThen (Some(Meetup.toSnapshot Sample.titled)) (Some stored)
+
+    let deps =
+        { loaded with
+            Commit = fun _ _ _ _ -> Task.FromResult(Error MeetupStore.VersionConflict)
+        }
+
+    test <@ run deps = Ok stored @>
+
+/// PER-227: запрос, начавший команду, ложится в конверт события значением из
+/// зависимостей, а отсутствие остаётся отсутствием, а не выдуманным id.
+[<Fact>]
+let ``The request that started the command is written with the event`` () =
+    let written = ResizeArray()
+    let requestId = RequestId.create "req-bot-frame"
+
+    { stub with
+        RequestId = requestId
+    }
+    |> loading (Some(Meetup.toSnapshot Sample.titled))
+    |> recording written
+    |> run
+    |> ignore
+
+    let envelope, _, _ = written[0]
+
+    test <@ envelope.RequestId = requestId @>
+
+[<Fact>]
+let ``A command without a request id writes none`` () =
+    let written = ResizeArray()
+
+    stub
+    |> loading (Some(Meetup.toSnapshot Sample.titled))
+    |> recording written
+    |> run
+    |> ignore
+
+    let envelope, _, _ = written[0]
+
+    test <@ envelope.RequestId = None @>

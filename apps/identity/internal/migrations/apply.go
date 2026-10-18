@@ -1,0 +1,108 @@
+package migrations
+
+import (
+	"context"
+	"database/sql"
+	"embed"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+	"github.com/pressly/goose/v3/lock"
+	"go.opentelemetry.io/otel/trace"
+)
+
+//go:embed *.sql
+var files embed.FS
+
+const (
+	maxOpenConns    = 16
+	connMaxLifetime = 30 * time.Minute
+
+	// ConnectTimeout — предел установления соединения, если DSN не задал свой
+	// connect_timeout. Без него недоступная база держит вызов до дедлайна
+	// клиента, и тот видит общий DeadlineExceeded вместо Unavailable (ADR-054).
+	// pgx применяет предел к каждому адресу хоста, а localhost раскрывается в
+	// два, поэтому худший случай вдвое больше и всё равно меньше трёх секунд
+	// дедлайна бота.
+	ConnectTimeout = time.Second
+)
+
+// Option настраивает пул.
+type Option func(*poolConfig)
+
+type poolConfig struct {
+	tracerProvider trace.TracerProvider
+}
+
+// WithTracerProvider включает спаны запросов к PostgreSQL. Без опции пул не
+// трассируется.
+func WithTracerProvider(tp trace.TracerProvider) Option {
+	return func(c *poolConfig) { c.tracerProvider = tp }
+}
+
+// Open собирает пул и проверяет, что база отвечает: сервис без базы не стартует.
+func Open(ctx context.Context, dsn string, opts ...Option) (*sql.DB, error) {
+	db, err := Pool(dsn, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.PingContext(ctx); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("ping database: %w", err)
+	}
+	return db, nil
+}
+
+// Pool собирает пул с настройками сервиса, не подключаясь: соединения
+// открываются при первом обращении. Тесты берут его, чтобы проверить отказ
+// недоступной базы с тем же пределом подключения, что и у сервиса.
+func Pool(dsn string, opts ...Option) (*sql.DB, error) {
+	var pool poolConfig
+	for _, opt := range opts {
+		opt(&pool)
+	}
+	config, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("parse database url: %w", err)
+	}
+	// Ноль у pgx значит «без предела», и явный connect_timeout=0 в DSN — выбор
+	// развёртывания, а не отсутствие ключа. Поэтому признак — сам ключ.
+	if config.ConnectTimeout == 0 && !strings.Contains(dsn, "connect_timeout") {
+		config.ConnectTimeout = ConnectTimeout
+	}
+	if pool.tracerProvider != nil {
+		config.Tracer = newQueryTracer(pool.tracerProvider)
+	}
+	db := stdlib.OpenDB(*config)
+	db.SetMaxOpenConns(maxOpenConns)
+	db.SetConnMaxLifetime(connMaxLifetime)
+	return db, nil
+}
+
+func Apply(ctx context.Context, db *sql.DB) error {
+	locker, err := lock.NewPostgresSessionLocker()
+	if err != nil {
+		return fmt.Errorf("migration locker: %w", err)
+	}
+	provider, err := goose.NewProvider(goose.DialectPostgres, db, files, goose.WithSessionLocker(locker))
+	if err != nil {
+		return fmt.Errorf("migration provider: %w", err)
+	}
+	if _, err := provider.Up(ctx); err != nil {
+		return fmt.Errorf("apply migrations: %w", err)
+	}
+	return nil
+}
+
+func ApplyDSN(ctx context.Context, dsn string) error {
+	db, err := Open(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	return Apply(ctx, db)
+}

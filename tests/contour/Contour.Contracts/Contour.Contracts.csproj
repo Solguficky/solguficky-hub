@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.28.3" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.80.0" />
+  </ItemGroup>
+
+  <!-- Meetups.Contracts генерирует и identity/v1/access.proto, и клиента
+       Identity: Meetups сам его вызывает в CheckMeetupAuthority (ADR-051).
+       Своей генерации здесь поэтому нет: два сгенерированных Identity.V1 в одном
+       решении дали бы CS0433. Проект остаётся точкой, через которую контур
+       получает клиентов, и не тянет тесты в зависимость от проекта сервиса. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\apps\meetups\Meetups.Contracts\Meetups.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

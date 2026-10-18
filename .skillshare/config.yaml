@@ -10,6 +10,10 @@ targets:
     skills:
       mode: copy
       target_naming: standard
+  - name: opencode
+    skills:
+      exclude:
+        - '*'
 skills:
   - name: skillshare
     source: https://github.com/runkids/skillshare/skills/skillshare
@@ -26,11 +30,27 @@ skills:
     source: github.com/cursor/plugins/cli-for-agent/skills/cli-for-agents
   - name: verify-this
     source: github.com/cursor/plugins/cursor-team-kit/skills/verify-this
-extras:
-  - name: commands
-    targets:
-      - path: .claude/commands
-        mode: copy
+  - name: _golang
+    source: https://github.com/samber/cc-skills-golang.git
+    tracked: true
+    group: golang
+    branch: main
+  - name: _aspire-skills
+    source: https://github.com/microsoft/aspire-skills.git
+    tracked: true
+    branch: main
+  - name: frontend-design-deslop
+    source: github.com/samber/cc-skills/skills/frontend-design-deslop
+  - name: presentation-design
+    source: github.com/jwynia/agent-skills/skills/general/communication/presentation-design
+  - name: unslop-ui
+    source: github.com/jcarterjohnson/vibecoded-design-tells/skill
+  - name: playwright-cli
+    source: github.com/microsoft/playwright-cli/skills/playwright-cli
+  - name: akka-streams
+    source: github.com/alexandru/skills/skills/akka-streams
+  - name: orleans
+    source: github.com/managedcode/dotnet-skills/catalog/Frameworks/Orleans/skills/orleans
 ignore:
   - .DS_Store
   - .git/

@@ -1,0 +1,472 @@
+import { Code } from "@connectrpc/connect";
+import { describe, expect, it, vi } from "vitest";
+import { BidSource } from "../../../gen/auction/v1/auction_pb.js";
+import {
+  AccessRight,
+  ApplicationQueue,
+} from "../../../gen/identity/v1/access_pb.js";
+import { AccessRequestOutcome } from "../../../gen/identity/v1/identity_service_pb.js";
+import { OutbidFrequency as WireFrequency } from "../../../gen/notifications/v1/notifications_service_pb.js";
+import { requestIdHeader } from "../../core/rpc-metadata.js";
+import {
+  type AuctionRpc,
+  createDeliveryPorts,
+  createPorts,
+  type IdentityRpc,
+  imageTimeoutMs,
+  type NotificationsRpc,
+} from "./clients.js";
+
+function rpcs() {
+  const identity = {
+    resolveIdentity: vi.fn(async () => ({
+      identityId: "id-1",
+      rights: [
+        AccessRight.ACCESS_HUB,
+        AccessRight.UNSPECIFIED,
+        AccessRight.PLACE_BIDS,
+      ],
+      blocked: false,
+    })),
+    requestAccess: vi.fn(async () => ({
+      identityId: "id-1",
+      rights: [AccessRight.PLACE_BIDS],
+      outcome: AccessRequestOutcome.GRANTED_BY_ALLOWLIST,
+    })),
+  };
+  const snapshot = {
+    id: "lot-1",
+    auctionId: "auc-1",
+    version: 7n,
+    status: { case: "unsold", value: 1 },
+  };
+  const auction = {
+    getFaqAcknowledgement: vi.fn(async () => ({ acknowledged: false })),
+    acknowledgeFaq: vi.fn(async () => ({ acknowledged: true })),
+    getLot: vi.fn(async () => snapshot),
+    listAuctionLots: vi.fn(async () => ({
+      lots: [snapshot],
+      nextPageToken: "next",
+    })),
+    // Запись вида, которого бот не знает, стоит между ставками: так её
+    // присылает Auction, добавивший новый вид.
+    listLotHistory: vi.fn(async () => ({
+      entries: [
+        {
+          sequence: 4n,
+          occurredAt: "2026-10-03T16:04:00Z",
+          kind: {
+            case: "bid",
+            value: {
+              bidId: "b-1",
+              participantId: "p-1",
+              amount: { minorUnits: 150_000n, currency: "RUB" },
+              origin: { case: "manual", value: { source: BidSource.FLOOR } },
+            },
+          },
+        },
+        { sequence: 5n, occurredAt: "2026-10-03T16:05:00Z", kind: {} },
+        {
+          sequence: 6n,
+          occurredAt: "2026-10-03T16:05:00Z",
+          kind: {
+            case: "bid",
+            value: {
+              bidId: "b-2",
+              participantId: "p-2",
+              amount: { minorUnits: 160_000n, currency: "RUB" },
+              origin: { case: "proxy", value: {} },
+            },
+          },
+        },
+      ],
+      nextPageToken: "",
+    })),
+    getDisplayNames: vi.fn(async () => ({
+      names: { "p-1": { text: "@owl", kind: 1 } },
+    })),
+    getLotImage: vi.fn(async () => ({
+      content: new Uint8Array([9]),
+      mediaType: "image/jpeg",
+      version: "v2",
+    })),
+  };
+  const refused = vi.fn();
+  return {
+    identity,
+    auction,
+    refused,
+    // Моки отвечают формой сгенерированных сообщений без их классов: это
+    // единственное ослабление типа в тесте.
+    ports: createPorts(
+      identity as unknown as IdentityRpc,
+      auction as unknown as AuctionRpc,
+      { timeoutMs: 1_000, onNamesRefused: refused },
+    )("req-1"),
+  };
+}
+
+// Смотрящий уходит в Auction с правами, как их вывел Identity, без ролей.
+const viewer = {
+  identityId: "id-1",
+  rights: ["place-bids", "manage-meetups"] as const,
+};
+const wireViewer = {
+  identityId: "id-1",
+  rights: [AccessRight.PLACE_BIDS, AccessRight.MANAGE_MEETUPS],
+};
+const callOptions = {
+  timeoutMs: 1_000,
+  headers: { [requestIdHeader]: "req-1" },
+};
+
+describe("createPorts", () => {
+  it("does not treat an unconfirmed RPC response as saved completion", async () => {
+    const { auction, ports } = rpcs();
+    auction.acknowledgeFaq.mockResolvedValue({ acknowledged: false });
+    await expect(ports.faq.acknowledge(viewer)).rejects.toThrow(
+      "did not acknowledge",
+    );
+  });
+  it("reads and records FAQ acknowledgement for the viewer with request metadata", async () => {
+    const { auction, ports } = rpcs();
+    expect(await ports.faq.acknowledged(viewer)).toBe(false);
+    await ports.faq.acknowledge(viewer);
+    for (const rpc of [auction.getFaqAcknowledgement, auction.acknowledgeFaq]) {
+      expect(rpc).toHaveBeenCalledWith(
+        { viewer: wireViewer },
+        { timeoutMs: 1_000, headers: { [requestIdHeader]: "req-1" } },
+      );
+    }
+  });
+  it("maps the resolved identity into a viewer with rights and drops the unspecified right", async () => {
+    const { identity, ports } = rpcs();
+    const resolved = await ports.identity.resolveIdentity({
+      telegramUserId: 42,
+      telegramUsername: "nick",
+    });
+    expect(resolved).toEqual({
+      viewer: { identityId: "id-1", rights: ["access-hub", "place-bids"] },
+      blocked: false,
+    });
+    expect(identity.resolveIdentity).toHaveBeenCalledWith(
+      { telegramUserId: 42n, telegramUsername: "nick" },
+      { timeoutMs: 1_000, headers: { [requestIdHeader]: "req-1" } },
+    );
+  });
+
+  it("applies to the auction queue on /start and maps the answer", async () => {
+    const { identity, ports } = rpcs();
+    const answer = await ports.entry.requestAccess({
+      user: { telegramUserId: 42, telegramUsername: "nick" },
+      queue: "auction",
+      sourceCode: "tg_ads",
+      firstName: "Сова",
+    });
+    expect(answer).toEqual({
+      viewer: { identityId: "id-1", rights: ["place-bids"] },
+      outcome: "granted-by-allowlist",
+    });
+    expect(identity.requestAccess).toHaveBeenCalledExactlyOnceWith(
+      {
+        telegramUserId: 42n,
+        telegramUsername: "nick",
+        queue: ApplicationQueue.AUCTION,
+        sourceCode: "tg_ads",
+        firstName: "Сова",
+      },
+      callOptions,
+    );
+  });
+
+  // Присутствие кода значимо: пустой код едет пустой строкой, отсутствующий
+  // поля в запросе не оставляет.
+  it.each([
+    ["", { sourceCode: "" }],
+    [undefined, {}],
+  ])("sends the channel code %j as received", async (sourceCode, expected) => {
+    const { identity, ports } = rpcs();
+    await ports.entry.requestAccess({
+      user: { telegramUserId: 42 },
+      queue: "auction",
+      ...(sourceCode === undefined ? {} : { sourceCode }),
+      firstName: "Сова",
+    });
+    expect(identity.requestAccess).toHaveBeenCalledExactlyOnceWith(
+      {
+        telegramUserId: 42n,
+        queue: ApplicationQueue.AUCTION,
+        firstName: "Сова",
+        ...expected,
+      },
+      callOptions,
+    );
+  });
+
+  it.each([
+    [AccessRequestOutcome.ALREADY_HELD, "already-held"],
+    [AccessRequestOutcome.GRANTED_BY_ALLOWLIST, "granted-by-allowlist"],
+    [AccessRequestOutcome.PENDING, "pending"],
+    [AccessRequestOutcome.DECLINED, "declined"],
+    [AccessRequestOutcome.BLOCKED, "blocked"],
+    [AccessRequestOutcome.UNSPECIFIED, "unspecified"],
+    // Число, которого словарь ещё не знает, — отказ, а не допуск.
+    [99 as AccessRequestOutcome, "unspecified"],
+  ])("reads the outcome %s as %s", async (wire, outcome) => {
+    const { identity, ports } = rpcs();
+    identity.requestAccess.mockResolvedValue({
+      identityId: "id-1",
+      rights: [],
+      outcome: wire,
+    });
+    const answer = await ports.entry.requestAccess({
+      user: { telegramUserId: 42 },
+      queue: "auction",
+      firstName: "Сова",
+    });
+    expect(answer.outcome).toBe(outcome);
+  });
+
+  it("sends the viewer to Auction and maps the snapshot", async () => {
+    const { auction, ports } = rpcs();
+    const lot = await ports.auction.getLot({ viewer, lotId: "lot-1" });
+    expect(lot).toEqual({
+      lotId: "lot-1",
+      auctionId: "auc-1",
+      version: 7,
+      proxyEnabled: false,
+      status: { kind: "unsold" },
+    });
+    expect(auction.getLot).toHaveBeenCalledWith(
+      { viewer: wireViewer, lotId: "lot-1" },
+      { timeoutMs: 1_000, headers: { [requestIdHeader]: "req-1" } },
+    );
+  });
+
+  it("pages the lots of an auction through the same viewer", async () => {
+    const { auction, ports } = rpcs();
+    const page = await ports.auction.listAuctionLots({
+      viewer,
+      auctionId: "auc-1",
+      pageToken: "t",
+    });
+    expect(page.nextPageToken).toBe("next");
+    expect(page.lots.map((lot) => lot.lotId)).toEqual(["lot-1"]);
+    expect(auction.listAuctionLots).toHaveBeenCalledWith(
+      { viewer: wireViewer, auctionId: "auc-1", pageToken: "t" },
+      callOptions,
+    );
+  });
+
+  it("reads the history of a lot and skips an entry of a kind it does not know", async () => {
+    const { auction, ports } = rpcs();
+    const page = await ports.auction.listLotHistory({
+      viewer,
+      lotId: "lot-1",
+      pageToken: "",
+    });
+    expect(page).toEqual({
+      entries: [
+        {
+          kind: "bid",
+          sequence: 4,
+          occurredAt: "2026-10-03T16:04:00Z",
+          bidId: "b-1",
+          participantId: "p-1",
+          amount: { minorUnits: 150_000, currency: "RUB" },
+          origin: { kind: "manual", source: "floor" },
+        },
+        {
+          kind: "bid",
+          sequence: 6,
+          occurredAt: "2026-10-03T16:05:00Z",
+          bidId: "b-2",
+          participantId: "p-2",
+          amount: { minorUnits: 160_000, currency: "RUB" },
+          origin: { kind: "proxy" },
+        },
+      ],
+      nextPageToken: "",
+    });
+    expect(auction.listLotHistory).toHaveBeenCalledWith(
+      { viewer: wireViewer, lotId: "lot-1", pageToken: "" },
+      callOptions,
+    );
+  });
+
+  it("returns display names as ready text", async () => {
+    const { ports } = rpcs();
+    expect(
+      await ports.auction.getDisplayNames({
+        viewer,
+        auctionId: "auc-1",
+        participantIds: ["p-1"],
+      }),
+    ).toEqual({ "p-1": "@owl" });
+  });
+
+  // Пакет гасит отказ имён; без сообщения порта деградация была бы немой.
+  it("reports a refused display name with the request id before throwing", async () => {
+    const { auction, ports, refused } = rpcs();
+    const cause = new Error("UNIMPLEMENTED");
+    auction.getDisplayNames.mockRejectedValueOnce(cause);
+    await expect(
+      ports.auction.getDisplayNames({
+        viewer,
+        auctionId: "auc-1",
+        participantIds: ["p-1"],
+      }),
+    ).rejects.toBe(cause);
+    expect(refused).toHaveBeenCalledWith(cause, "req-1");
+  });
+
+  it("loads image bytes with the longer image timeout", async () => {
+    const { auction, ports } = rpcs();
+    const image = await ports.image.getLotImage({ viewer, lotId: "lot-1" });
+    expect(image).toEqual({
+      content: new Uint8Array([9]),
+      mediaType: "image/jpeg",
+      version: "v2",
+    });
+    expect(auction.getLotImage).toHaveBeenCalledWith(
+      { viewer: wireViewer, lotId: "lot-1" },
+      { timeoutMs: imageTimeoutMs, headers: { [requestIdHeader]: "req-1" } },
+    );
+  });
+});
+
+// PER-515, PER-539: настройки уведомлений аукциона — на личности, без прав
+// смотрящего.
+describe("auction notification settings port", () => {
+  function outbidPorts(answer: WireFrequency) {
+    const notifications = {
+      getAuctionNotificationPreferences: vi.fn(async () => ({
+        identityId: "id-1",
+        outbidFrequency: answer,
+        finalAnnouncements: true,
+      })),
+      setAuctionNotificationPreferences: vi.fn(async () => ({
+        identityId: "id-1",
+        outbidFrequency: answer,
+        finalAnnouncements: false,
+      })),
+    };
+    const { identity, auction } = rpcs();
+    const ports = createPorts(
+      identity as unknown as IdentityRpc,
+      auction as unknown as AuctionRpc,
+      {
+        timeoutMs: 1_000,
+        notifications: notifications as unknown as NotificationsRpc,
+      },
+    )("req-1");
+    return { notifications, ports };
+  }
+
+  it("has no port without a Notifications client", () => {
+    expect(rpcs().ports.outbid).toBeUndefined();
+  });
+
+  it("reads and sets the settings of the person with request metadata", async () => {
+    const { notifications, ports } = outbidPorts(
+      WireFrequency.AT_MOST_EVERY_15_MINUTES,
+    );
+    expect(await ports.outbid?.get(viewer)).toEqual({
+      frequency: "15",
+      finalAnnouncements: true,
+    });
+    expect(
+      await ports.outbid?.set(viewer, { kind: "final", enabled: false }),
+    ).toEqual({ frequency: "15", finalAnnouncements: false });
+    await ports.outbid?.set(viewer, { kind: "frequency", frequency: "15" });
+    expect(
+      notifications.getAuctionNotificationPreferences,
+    ).toHaveBeenCalledWith({ identityId: "id-1" }, callOptions);
+    // Изменение несёт только свою настройку: вторую сервер не трогает.
+    expect(
+      notifications.setAuctionNotificationPreferences,
+    ).toHaveBeenNthCalledWith(
+      1,
+      { identityId: "id-1", finalAnnouncements: false },
+      callOptions,
+    );
+    expect(
+      notifications.setAuctionNotificationPreferences,
+    ).toHaveBeenNthCalledWith(
+      2,
+      {
+        identityId: "id-1",
+        outbidFrequency: WireFrequency.AT_MOST_EVERY_15_MINUTES,
+      },
+      callOptions,
+    );
+  });
+
+  // Умолчание `EVERY` отдаёт сервер; `UNSPECIFIED` — ответ вне контракта.
+  it("does not turn an unspecified answer into a frequency", async () => {
+    const { ports } = outbidPorts(WireFrequency.UNSPECIFIED);
+    expect(await ports.outbid?.get(viewer)).toBeUndefined();
+  });
+});
+
+describe("action budget", () => {
+  const now = 1_000_000;
+
+  it("does not call a service after the budget is spent and cuts the image read", async () => {
+    vi.useFakeTimers({ now });
+    try {
+      const { auction } = rpcs();
+      const ports = createPorts(
+        {} as IdentityRpc,
+        auction as unknown as AuctionRpc,
+      )("req-1", now + 800);
+      await ports.image.getLotImage({ viewer, lotId: "lot-1" });
+      expect(auction.getLotImage).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ timeoutMs: 800 }),
+      );
+      vi.setSystemTime(now + 800);
+      await expect(
+        ports.auction.getLot({ viewer, lotId: "lot-1" }),
+      ).rejects.toMatchObject({ code: Code.DeadlineExceeded });
+      expect(auction.getLot).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("notification reads", () => {
+  it("asks Identity for the auction right of the recipient", async () => {
+    const checkAccessRight = vi.fn(async () => ({ granted: false }));
+    const { reads } = createDeliveryPorts(
+      { checkAccessRight } as unknown as IdentityRpc,
+      {} as AuctionRpc,
+      1_000,
+    );
+    expect(await reads.holdsPlaceBids("id-1", "req-1")).toBe(false);
+    expect(checkAccessRight).toHaveBeenCalledExactlyOnceWith(
+      { identityId: "id-1", right: AccessRight.PLACE_BIDS },
+      callOptions,
+    );
+  });
+
+  // Право получателя Identity подтвердил шагом раньше; ролей Auction не
+  // получает.
+  it("reads the lot title as the recipient with the auction right", async () => {
+    const getLot = vi.fn(async () => ({ card: { title: "Кружка" } }));
+    const { reads } = createDeliveryPorts(
+      {} as IdentityRpc,
+      { getLot } as unknown as AuctionRpc,
+      1_000,
+    );
+    expect(await reads.lotTitle("id-1", "lot-1", "req-1")).toBe("Кружка");
+    expect(getLot).toHaveBeenCalledExactlyOnceWith(
+      {
+        viewer: { identityId: "id-1", rights: [AccessRight.PLACE_BIDS] },
+        lotId: "lot-1",
+      },
+      callOptions,
+    );
+  });
+});

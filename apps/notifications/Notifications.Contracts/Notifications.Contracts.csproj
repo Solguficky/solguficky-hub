@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.28.3" />
+    <PackageReference Include="Grpc.AspNetCore" Version="2.67.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.67.0">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <!-- Реализации gRPC-сервиса здесь нет и в скелете не появится: она принадлежит
+       PER-71. Заглушки генерируются заранее, потому что словарь типов нужен и
+       потребителю шины, и серверу, а гейт generated-only дешевле поставить
+       вместе с проектом, чем задним числом. -->
+  <ItemGroup>
+    <!-- meetups.proto и auction.proto не свои: notifications.proto импортирует
+         их напрямую, и без них генерация не разрешает ссылку. Третий импорт,
+         identity/v1/access.proto, уже генерируется ниже, вместе с событиями
+         Identity. -->
+    <Protobuf Include="..\..\..\contracts\proto\meetups\v1\meetups.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\auction\v1\auction.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\notifications\v1\notifications.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\notifications\v1\notifications_service.proto" GrpcServices="Both" ProtoRoot="..\..\..\contracts\proto" />
+  </ItemGroup>
+
+  <!-- Чужие факты, из которых собирается реплика (PER-215). Берутся только
+       файлы событий и их значений: реплике сервисы Meetups и Identity не нужны,
+       ради этого producers и держат события отдельными файлами. -->
+  <ItemGroup>
+    <Protobuf Include="..\..\..\contracts\proto\meetups\v1\meetups_events.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\auction\v1\auction_events.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\identity\v1\access.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\identity\v1\identity_events.proto" GrpcServices="None" ProtoRoot="..\..\..\contracts\proto" />
+  </ItemGroup>
+
+  <!-- Владельцы права на ручную рассылку (ADR-028 §7, ADR-051). Клиенты, а не
+       серверы: право на рассылку по сходке Notifications спрашивает у Meetups,
+       право на объявление сообществу — у Identity, на самой команде и без
+       реплики. Остальные методы обоих сервисов генерируются вместе с файлом,
+       но сервисом не вызываются. -->
+  <ItemGroup>
+    <Protobuf Include="..\..\..\contracts\proto\identity\v1\identity_service.proto" GrpcServices="Client" ProtoRoot="..\..\..\contracts\proto" />
+    <Protobuf Include="..\..\..\contracts\proto\meetups\v1\meetups_service.proto" GrpcServices="Client" ProtoRoot="..\..\..\contracts\proto" />
+  </ItemGroup>
+
+</Project>

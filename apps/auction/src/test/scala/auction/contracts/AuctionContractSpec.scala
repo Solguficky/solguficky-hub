@@ -1,0 +1,138 @@
+package auction.contracts
+
+import auction.v1.auction_events.{AuctionState, BidPlaced, LotEvent, LotState, ManualBid, ProxyBid}
+import auction.v1.auction_service.{
+  AuctionService,
+  AuctionSnapshot,
+  ChooseDisplayNameRequest,
+  LotCard,
+  LotImageRef,
+  LotSnapshot
+}
+import com.google.protobuf.Descriptors.{Descriptor, FieldDescriptor}
+import org.scalatest.matchers.should.Matchers
+import org.scalatest.wordspec.AnyWordSpec
+
+import scala.jdk.CollectionConverters.*
+
+/**
+ * Держит проверяемой кодогенерацию собственного контракта аукциона, как `IdentityContractSpec` держит чужой.
+ *
+ * Поведение торгов здесь не проверяется: ядра ещё нет. Проверяется то, что обещает схема и что прошлое поколение ломало
+ * на проводе, — отсутствие значения остаётся отсутствием, а не нулём (дефект 5.7 архива, RFC-011 П-01).
+ */
+final class AuctionContractSpec extends AnyWordSpec with Matchers {
+
+  "generated auction contract" should {
+
+    // Прежний продюсер писал `PreviousLeaderId ?? 0` в optional-поле, взводил
+    // признак присутствия всегда, и Notifications рассылал «вашу ставку
+    // перебили» пользователю с id 0.
+    "keeps the previous leader absent on the first bid after a round trip" in {
+      val firstBid = BidPlaced(origin = BidPlaced.Origin.Manual(ManualBid()))
+
+      BidPlaced.parseFrom(firstBid.toByteArray).previousLeaderId shouldBe None
+    }
+
+    "keeps a proxy bid free of a source" in {
+      val proxyBid = BidPlaced(previousLeaderId = Some("0190a0e0-0000-7000-8000-000000000001"))
+        .withProxy(ProxyBid())
+
+      BidPlaced.parseFrom(proxyBid.toByteArray).origin.manual shouldBe None
+    }
+
+    "leaves the occasion unset on an event that carries none" in {
+      LotEvent.parseFrom(LotEvent(eventId = "e", lotId = "l", version = 1).toByteArray).occasion.isEmpty shouldBe true
+    }
+
+    // Между лотами финала активного лота нет; `""` в этом поле читалось бы как
+    // идентификатор лота, которого нет.
+    "keeps the active lot absent between the lots of the final after a round trip" in {
+      val between = AuctionState(id = "s").withInFinal(AuctionState.Final(order = Seq("l")))
+
+      AuctionState.parseFrom(between.toByteArray).status.inFinal.flatMap(_.activeLotId) shouldBe None
+    }
+
+    // Снимок факта на шине и снимок чтения — два определения с обещанием «номера
+    // полей совпадают». Ни buf, ни гейт nats-tester их не сравнивают: до этого
+    // теста зеркальность держалась на комментарии в схеме.
+    "keeps the lot state of the bus aligned with the read snapshot field for field" in {
+      val state = shape(LotState.javaDescriptor)
+      val snapshot = shape(LotSnapshot.javaDescriptor)
+      val reservedByState = LotState.javaDescriptor.toProto.getReservedRangeList.asScala
+        .flatMap(range => range.getStart until range.getEnd)
+
+      state.foreach { case (number, field) => snapshot.get(number) shouldBe Some(field) }
+      (snapshot.keySet -- state.keySet) should contain theSameElementsAs reservedByState
+    }
+
+    // Тот же довод для аукциона, с обратным исключением: шина несёт сходку
+    // аукциона, а чтение — нет, потому что список не должен вести от аукциона к
+    // сходке (ADR-047, дополнение 2026-10-03, «Видимость сходки»). Второе
+    // исключение — статус `discarded`: его несёт только факт удаления, а чтения
+    // удалённый аукцион не отдают (решение владельца на чекпоинте PER-601).
+    "keeps the auction state of the bus aligned with the read snapshot field for field" in {
+      val state = shape(AuctionState.javaDescriptor)
+      val snapshot = shape(AuctionSnapshot.javaDescriptor)
+      val reservedBySnapshot = AuctionSnapshot.javaDescriptor.toProto.getReservedRangeList.asScala
+        .flatMap(range => range.getStart until range.getEnd)
+      val busOnly = Set(AuctionState.javaDescriptor.findFieldByName("discarded").getNumber)
+
+      snapshot.foreach { case (number, field) => state.get(number) shouldBe Some(field) }
+      (state.keySet -- snapshot.keySet) should contain theSameElementsAs (reservedBySnapshot ++ busOnly)
+      AuctionSnapshot.javaDescriptor.toProto.getReservedNameList.asScala should contain theSameElementsAs
+        reservedBySnapshot.map(number => AuctionState.javaDescriptor.findFieldByNumber(number).getName)
+    }
+
+    // Лот без строки каталога (ADR-057) читается отсутствием карточки, а не
+    // карточкой с пустыми строками: её край показал бы как лот без названия.
+    // Отсутствие держит только поле-сообщение с presence вне `status`: плоские
+    // строки его не выражают, а член `oneof` сбрасывал бы статус лота.
+    "carries the catalog card as a message with presence outside the status" in {
+      val card = LotSnapshot.javaDescriptor.findFieldByName("card")
+
+      card.getMessageType.getFullName shouldBe "auction.v1.LotCard"
+      card.hasPresence shouldBe true
+      card.getContainingOneof shouldBe null
+    }
+
+    // Лот без изображения читается отсутствием ссылки, а не пустой версией. Байтов
+    // в карточке нет: лента пришла бы с каждым файлом, а тёплый кэш `file_id`
+    // бота сравнивает только версию (ADR-057, дополнение).
+    "names the image of a card by a version with presence and without the bytes" in {
+      val image = LotCard.javaDescriptor.findFieldByName("image")
+      image.getMessageType.getFullName shouldBe "auction.v1.LotImageRef"
+      image.hasPresence shouldBe true
+      LotImageRef.javaDescriptor.getFields.asScala.map(_.getName) shouldBe Seq("version")
+    }
+
+    // «Ника нет» бот выражает пустым ником, а не пустым запросом: отказ
+    // UsernameMissing и ошибка формы с пустым `choice` — разные ответы. Член
+    // `oneof` держит присутствие и у пустой строки, плоское поле — нет.
+    "keeps an empty username a choice of the username after a round trip" in {
+      val noUsername = ChooseDisplayNameRequest().withTelegramUsername("")
+
+      ChooseDisplayNameRequest.parseFrom(noUsername.toByteArray).choice.telegramUsername shouldBe Some("")
+    }
+
+    // Серверный трейт генерирует pekko-grpc поверх того же ScalaPB (ADR-048).
+    // Ссылка на тип держит его появление в сборке: пропавшая генерация роняет
+    // компиляцию этого теста, а не первого обработчика, который его реализует.
+    "exposes the server side of the service" in {
+      AuctionService.name shouldBe "auction.v1.AuctionService"
+    }
+  }
+
+  // Имя, тип, label и принадлежность oneof: поле, вынесенное из `status` наверх
+  // с тем же номером и типом, — тоже расхождение.
+  private def shape(descriptor: Descriptor): Map[Int, (String, String, String, Option[String])] =
+    descriptor.getFields.asScala.map { field =>
+      val typeName = field.getType match {
+        case FieldDescriptor.Type.MESSAGE => field.getMessageType.getFullName
+        case FieldDescriptor.Type.ENUM => field.getEnumType.getFullName
+        case other => other.name
+      }
+      val label = if (field.toProto.getProto3Optional) "optional" else field.toProto.getLabel.name
+      field.getNumber -> (field.getName, typeName, label, Option(field.getContainingOneof).map(_.getName))
+    }.toMap
+}

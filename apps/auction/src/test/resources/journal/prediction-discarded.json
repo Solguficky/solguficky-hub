@@ -1,0 +1,9 @@
+{
+  "eventId": "0190f2a0-0000-7000-8000-000000000001",
+  "occurredAt": "2026-10-01T09:00:00Z",
+  "event": {
+    "kind": "PredictionsDiscarded",
+    "roundOpened": null,
+    "roundClosed": null
+  }
+}

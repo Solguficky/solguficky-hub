@@ -1,0 +1,611 @@
+using System.Globalization;
+using Google.Protobuf;
+using Identity.V1;
+using Meetups.V1;
+
+namespace Notifications.Replica;
+
+/// <summary>
+/// Разбор сообщения шины в значения реплики. Чистая функция: ни базы, ни
+/// часов, поэтому каждое правило контракта проверяется на L0.
+/// </summary>
+/// <remarks>
+/// Нарушение контракта — не исключение, а <see cref="Decoded.Poison" />: его
+/// повтор ничего не исправит, и решение «снять с доставки» принимает
+/// потребитель, а не стек вызовов.
+///
+/// Повод (<c>occasion</c>) реплике не нужен: она пишет снимок, а не повод.
+/// Разбор узнаёт из него только то, что различает адресные факты, —
+/// <see cref="MeetupOccasion" />: первую публикацию (PER-216), снятие с
+/// публикации и появление материала (PER-218); остальные поводы и пустой oneof
+/// для него одинаковы. Новая ветка <c>oneof</c> — совместимое изменение
+/// контракта, и сборка, которая её ещё не знает, видит пустой повод; сними она
+/// такое сообщение с доставки, реплика потеряла бы полный снимок из-за поля,
+/// которое ей не нужно. Значения перечислений в снимке — другое дело: их
+/// смысл реплика хранит, и незнакомое значение остаётся ядом.
+/// </remarks>
+public static class ReplicaMapping
+{
+    public static Decoded Meetup(ReadOnlyMemory<byte> payload)
+    {
+        MeetupEvent message;
+        try
+        {
+            message = MeetupEvent.Parser.ParseFrom(payload.Span);
+        }
+        catch (InvalidProtocolBufferException ex)
+        {
+            return new Decoded.Poison($"not a meetups.v1.MeetupEvent: {ex.Message}");
+        }
+
+        if (Envelope(message.EventId, message.MeetupId, message.Version, message.OccurredAt) is { } envelopeProblem)
+        {
+            return envelopeProblem;
+        }
+
+        if (message.State is not { } state)
+        {
+            return new Decoded.Poison("state is not set");
+        }
+
+        var meetupId = Guid.Parse(message.MeetupId);
+
+        if (!Guid.TryParse(state.Id, out var stateId) || stateId != meetupId)
+        {
+            return new Decoded.Poison($"state.id '{state.Id}' does not repeat meetup_id '{message.MeetupId}'");
+        }
+
+        if (!Guid.TryParse(state.Author, out var author))
+        {
+            return new Decoded.Poison($"state.author '{state.Author}' is not a UUID");
+        }
+
+        Guid? performedBy = null;
+        if (message.HasPerformedBy)
+        {
+            if (!Guid.TryParse(message.PerformedBy, out var performer))
+            {
+                return new Decoded.Poison($"performed_by '{message.PerformedBy}' is not a UUID");
+            }
+
+            performedBy = performer;
+        }
+
+        var lifecycle = state.Lifecycle switch
+        {
+            MeetupLifecycle.Planned => "planned",
+            MeetupLifecycle.Held => "held",
+            MeetupLifecycle.Cancelled => "cancelled",
+            _ => null,
+        };
+
+        if (lifecycle is null)
+        {
+            return new Decoded.Poison($"state.lifecycle {state.Lifecycle} is not a known value");
+        }
+
+        var visibility = state.Visibility switch
+        {
+            MeetupVisibility.Hidden => "hidden",
+            MeetupVisibility.Visible => "visible",
+            _ => null,
+        };
+
+        if (visibility is null)
+        {
+            return new Decoded.Poison($"state.visibility {state.Visibility} is not a known value");
+        }
+
+        DateTimeOffset? firstPublishedAt = null;
+        if (state.HasFirstPublishedAt)
+        {
+            if (Instant(state.FirstPublishedAt) is not { } published)
+            {
+                return new Decoded.Poison($"state.first_published_at '{state.FirstPublishedAt}' is not an RFC 3339 instant");
+            }
+
+            firstPublishedAt = published;
+        }
+
+        if (Schedule(state.Schedule) is not { } schedule)
+        {
+            return new Decoded.Poison("state.schedule is not a valid schedule");
+        }
+
+        // Отметка первой публикации обязана стоять в снимке её события: без
+        // неё событие противоречит само себе, и порождать из него «новую
+        // сходку» значило бы поверить поводу вопреки состоянию.
+        var occasion = message.OccasionCase switch
+        {
+            MeetupEvent.OccasionOneofCase.MeetupPublished => MeetupOccasion.FirstPublication,
+            MeetupEvent.OccasionOneofCase.MeetupUnpublished => MeetupOccasion.Unpublication,
+            MeetupEvent.OccasionOneofCase.MeetupMaterialAttached => MeetupOccasion.MaterialAttached,
+            _ => MeetupOccasion.Other,
+        };
+
+        if (occasion == MeetupOccasion.FirstPublication && firstPublishedAt is null)
+        {
+            return new Decoded.Poison("meetup_published carries no state.first_published_at");
+        }
+
+        // Тот же довод, что у отметки первой публикации: повод называет
+        // материал, которого нет в снимке, — событие противоречит само себе.
+        AttachedMaterial? material = null;
+        if (occasion == MeetupOccasion.MaterialAttached)
+        {
+            var attached = message.MeetupMaterialAttached.MaterialId;
+            if (!Guid.TryParse(attached, out var materialId))
+            {
+                return new Decoded.Poison($"meetup_material_attached.material_id '{attached}' is not a UUID");
+            }
+
+            if (state.Materials.FirstOrDefault(item => Guid.TryParse(item.Id, out var id) && id == materialId) is not { } item)
+            {
+                return new Decoded.Poison($"meetup_material_attached names material {attached} absent from state.materials");
+            }
+
+            material = new AttachedMaterial(materialId, item.Title);
+        }
+
+        return new Decoded.Fact(new MeetupFact(
+            Guid.Parse(message.EventId),
+            meetupId,
+            message.Version,
+            Instant(message.OccurredAt)!.Value,
+            new MeetupReplicaState(
+                author,
+                state.Title,
+                state.Description,
+                state.Venue,
+                state.Kind,
+                state.CalendarLink,
+                lifecycle,
+                visibility,
+                firstPublishedAt,
+                schedule),
+            Card(state),
+            occasion,
+            message.HasRequestId ? message.RequestId : null,
+            material,
+            performedBy));
+    }
+
+    /// <summary>
+    /// Карточка уведомления из снимка события. Значения перечислений уже
+    /// проверены выше, расписание — тоже, поэтому копируется как есть.
+    /// </summary>
+    private static Notifications.V1.MeetupCard Card(MeetupState state) =>
+        new()
+        {
+            Id = state.Id,
+            Title = state.Title,
+            Description = state.Description,
+            Venue = state.Venue,
+            Kind = state.Kind,
+            CalendarLink = state.CalendarLink,
+            Schedule = state.Schedule.Clone(),
+            Lifecycle = state.Lifecycle,
+            Visibility = state.Visibility,
+        };
+
+    /// <summary>
+    /// Карточка уведомления из снимка реплики — обратное отображение к разбору
+    /// выше. Нужна поводу, у которого нет своего события: сработавшему
+    /// напоминанию. Его карточка — значение на момент срабатывания, а не на
+    /// момент последнего события, и описывает то, о чём напоминают.
+    /// </summary>
+    /// <remarks>
+    /// Значения колонок записал разбор выше и держат ограничения схемы, поэтому
+    /// незнакомое значение здесь — поломка, а не яд, и оно роняет вызов.
+    /// </remarks>
+    public static Notifications.V1.MeetupCard Card(Guid meetupId, MeetupReplicaState state) =>
+        new()
+        {
+            Id = meetupId.ToString(),
+            Title = state.Title,
+            Description = state.Description,
+            Venue = state.Venue,
+            Kind = state.Kind,
+            CalendarLink = state.CalendarLink,
+            Schedule = ToSchedule(state.Schedule),
+            Lifecycle = state.Lifecycle switch
+            {
+                "planned" => MeetupLifecycle.Planned,
+                "held" => MeetupLifecycle.Held,
+                "cancelled" => MeetupLifecycle.Cancelled,
+                var other => throw new InvalidOperationException($"replica lifecycle '{other}' is not a known value"),
+            },
+            Visibility = state.Visibility switch
+            {
+                "hidden" => MeetupVisibility.Hidden,
+                "visible" => MeetupVisibility.Visible,
+                var other => throw new InvalidOperationException($"replica visibility '{other}' is not a known value"),
+            },
+        };
+
+    private static Meetups.V1.Schedule ToSchedule(ScheduleColumns columns)
+    {
+        if (columns.Form == "no_date")
+        {
+            return new Meetups.V1.Schedule { NoDate = new NoDate() };
+        }
+
+        var value = columns.Precision switch
+        {
+            "day" => new DateValue { Day = ToCalendarDate(columns.StartDate) },
+            "day_start" => new DateValue { DayStart = ToLocalDateTime(columns.StartDate, columns.StartTime) },
+            "interval" => new DateValue
+            {
+                Interval = new LocalInterval
+                {
+                    Start = ToLocalDateTime(columns.StartDate, columns.StartTime),
+                    End = ToLocalDateTime(columns.EndDate, columns.EndTime),
+                },
+            },
+            var other => throw new InvalidOperationException($"replica schedule precision '{other}' is not a known value"),
+        };
+
+        return columns.Form switch
+        {
+            "tentative" => new Meetups.V1.Schedule { Tentative = value },
+            "fixed" => new Meetups.V1.Schedule { Fixed = value },
+            var other => throw new InvalidOperationException($"replica schedule form '{other}' is not a known value"),
+        };
+    }
+
+    private static CalendarDate ToCalendarDate(DateOnly? date) =>
+        date is { } value
+            ? new CalendarDate { Year = value.Year, Month = value.Month, Day = value.Day }
+            : throw new InvalidOperationException("replica schedule has no date where its precision requires one");
+
+    private static LocalDateTime ToLocalDateTime(DateOnly? date, TimeOnly? time) =>
+        time is { } value
+            ? new LocalDateTime
+            {
+                Date = ToCalendarDate(date),
+                Time = new LocalTime { Hours = value.Hour, Minutes = value.Minute },
+            }
+            : throw new InvalidOperationException("replica schedule has no time where its precision requires one");
+
+    public static Decoded Identity(ReadOnlyMemory<byte> payload)
+    {
+        IdentityEvent message;
+        try
+        {
+            message = IdentityEvent.Parser.ParseFrom(payload.Span);
+        }
+        catch (InvalidProtocolBufferException ex)
+        {
+            return new Decoded.Poison($"not an identity.v1.IdentityEvent: {ex.Message}");
+        }
+
+        if (Envelope(message.EventId, message.IdentityId, message.Version, message.OccurredAt) is { } envelopeProblem)
+        {
+            return envelopeProblem;
+        }
+
+        if (message.State is not { } state)
+        {
+            return new Decoded.Poison("state is not set");
+        }
+
+        var identityId = Guid.Parse(message.IdentityId);
+
+        if (!Guid.TryParse(state.Id, out var stateId) || stateId != identityId)
+        {
+            return new Decoded.Poison($"state.id '{state.Id}' does not repeat identity_id '{message.IdentityId}'");
+        }
+
+        // Круг — одно значение, и незнакомый круг приходит изменением
+        // контракта, которое обновляет и этого потребителя: молча прочитанный
+        // как «круга нет», он увёл бы доставку не в тот бот.
+        string? circle = null;
+        if (state.Circle != Circle.Unspecified)
+        {
+            if (CircleName(state.Circle) is not { } name)
+            {
+                return new Decoded.Poison($"state.circle carries unknown circle {state.Circle}");
+            }
+
+            circle = name;
+        }
+
+        // Незнакомое право контракт велит читать как «ничего не даёт», а не
+        // как испорченное событие: право добавляет новая поверхность, и
+        // потребитель, который её ещё не знает, адресует по тем правам, что
+        // знает. Незнакомый набор тем более ничего не решает: допуск идёт по
+        // правам, а набор только показывается людям.
+        var rights = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var right in state.Rights)
+        {
+            if (RightName(right) is { } name)
+            {
+                rights.Add(name);
+            }
+        }
+
+        var presets = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var preset in state.Presets)
+        {
+            if (PresetName(preset) is { } name)
+            {
+                presets.Add(name);
+            }
+        }
+
+        // Поводы, которых этот потребитель не знает, применяются к реплике как
+        // раньше: снимок самодостаточен, а повод нужен только адресным фактам.
+        IdentityOccasion occasion;
+        string? occasionPreset = null;
+        AccessQueue? occasionQueue = null;
+        string? occasionRight = null;
+        switch (message.OccasionCase)
+        {
+            case IdentityEvent.OccasionOneofCase.ApplicationSubmitted:
+                switch (Queue(message.ApplicationSubmitted.Queue))
+                {
+                    case QueueReading.Known known:
+                        occasionQueue = known.Queue;
+                        occasion = IdentityOccasion.ApplicationSubmitted;
+                        break;
+
+                    // Очередь, которой этот потребитель не знает, — новая
+                    // поверхность со своими модераторами: звать модераторов
+                    // известной очереди было бы ложью, а снимок остаётся верным.
+                    case QueueReading.Unknown:
+                        occasion = IdentityOccasion.Other;
+                        break;
+
+                    // Заявку ставят только в очередь: событие без неё испорчено,
+                    // а не повод оповестить модераторов неизвестно какой очереди.
+                    default:
+                        return new Decoded.Poison("application_submitted carries no queue");
+                }
+
+                break;
+
+            case IdentityEvent.OccasionOneofCase.ApplicationAdmitted:
+                // По очереди канал выбирает бот, которым придёт сообщение.
+                switch (Queue(message.ApplicationAdmitted.Queue))
+                {
+                    case QueueReading.Known known:
+                        occasionQueue = known.Queue;
+                        occasion = IdentityOccasion.ApplicationAdmitted;
+                        break;
+
+                    case QueueReading.Unknown:
+                        occasion = IdentityOccasion.Other;
+                        break;
+
+                    default:
+                        return new Decoded.Poison("application_admitted carries no queue");
+                }
+
+                break;
+
+            case IdentityEvent.OccasionOneofCase.CircleChanged:
+                occasion = IdentityOccasion.CircleChanged;
+                break;
+
+            case IdentityEvent.OccasionOneofCase.PresetGranted:
+                // Незнакомый набор не повод: сообщить о нём нечего, а снимок
+                // реплика пишет и так.
+                if (PresetName(message.PresetGranted.Preset) is { } granted)
+                {
+                    occasionPreset = granted;
+                    occasion = IdentityOccasion.PresetGranted;
+                }
+                else
+                {
+                    occasion = IdentityOccasion.Other;
+                }
+
+                break;
+
+            case IdentityEvent.OccasionOneofCase.RightGranted:
+                // Незнакомое право ничего не даёт и ничего не закрывает: повод
+                // остаётся только сдвигом реплики, как неизвестный повод.
+                if (RightName(message.RightGranted.Right) is { } right)
+                {
+                    occasionRight = right;
+                    occasion = IdentityOccasion.RightGranted;
+                }
+                else
+                {
+                    occasion = IdentityOccasion.Other;
+                }
+
+                break;
+
+            case IdentityEvent.OccasionOneofCase.ProfileBlocked:
+                occasion = IdentityOccasion.ProfileBlocked;
+                break;
+
+            default:
+                occasion = IdentityOccasion.Other;
+                break;
+        }
+
+        return new Decoded.Fact(new IdentityFact(
+            Guid.Parse(message.EventId),
+            identityId,
+            message.Version,
+            Instant(message.OccurredAt)!.Value,
+            circle,
+            presets.ToArray(),
+            rights.ToArray(),
+            state.Blocked,
+            occasion,
+            occasionPreset,
+            occasionQueue,
+            occasionRight));
+    }
+
+    private static string? CircleName(Circle circle) => circle switch
+    {
+        Circle.Member => "member",
+        Circle.Guest => "guest",
+        _ => null,
+    };
+
+    private static string? PresetName(Preset preset) => preset switch
+    {
+        Preset.Admin => "admin",
+        Preset.Maintainer => "maintainer",
+        _ => null,
+    };
+
+    private static string? RightName(AccessRight right) => right switch
+    {
+        AccessRight.AccessHub => "access_hub",
+        AccessRight.PlaceBids => "place_bids",
+        AccessRight.ManageMembers => "manage_members",
+        AccessRight.AdmitBidders => "admit_bidders",
+        AccessRight.ManageMeetups => "manage_meetups",
+        AccessRight.GrantAdmins => "grant_admins",
+        _ => null,
+    };
+
+    /// <summary>Очередь повода заявки. Незаданная очередь — испорченное событие.</summary>
+    private static QueueReading Queue(ApplicationQueue queue) => queue switch
+    {
+        ApplicationQueue.Community => new QueueReading.Known(AccessQueue.Community),
+        ApplicationQueue.Auction => new QueueReading.Known(AccessQueue.Auction),
+        ApplicationQueue.Unspecified => QueueReading.Missing.Instance,
+        _ => QueueReading.Unknown.Instance,
+    };
+
+    private abstract record QueueReading
+    {
+        public sealed record Known(AccessQueue Queue) : QueueReading;
+
+        /// <summary>Очередь названа, но этому потребителю незнакома.</summary>
+        public sealed record Unknown : QueueReading
+        {
+            public static readonly Unknown Instance = new();
+        }
+
+        /// <summary>Очередь не названа.</summary>
+        public sealed record Missing : QueueReading
+        {
+            public static readonly Missing Instance = new();
+        }
+    }
+
+    /// <summary>Общие правила конверта обоих источников.</summary>
+    private static Decoded.Poison? Envelope(string eventId, string aggregateId, long version, string occurredAt)
+    {
+        if (!Guid.TryParse(eventId, out _))
+        {
+            return new Decoded.Poison($"event_id '{eventId}' is not a UUID");
+        }
+
+        if (!Guid.TryParse(aggregateId, out _))
+        {
+            return new Decoded.Poison($"aggregate id '{aggregateId}' is not a UUID");
+        }
+
+        // Версия начинается с 1: ноль — это незаданное поле, и сравнивать с
+        // ним реплику значило бы принять пустое сообщение за самое старое.
+        if (version < 1)
+        {
+            return new Decoded.Poison($"version {version} is not positive");
+        }
+
+        if (Instant(occurredAt) is null)
+        {
+            return new Decoded.Poison($"occurred_at '{occurredAt}' is not an RFC 3339 instant");
+        }
+
+        return null;
+    }
+
+    private static DateTimeOffset? Instant(string value) =>
+        DateTimeOffset.TryParse(
+            value,
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out var instant)
+            ? instant
+            : null;
+
+    private static ScheduleColumns? Schedule(Meetups.V1.Schedule? schedule)
+    {
+        if (schedule is null)
+        {
+            return null;
+        }
+
+        return schedule.FormCase switch
+        {
+            Meetups.V1.Schedule.FormOneofCase.NoDate => ScheduleColumns.NoDate,
+            Meetups.V1.Schedule.FormOneofCase.Tentative => Dated("tentative", schedule.Tentative),
+            Meetups.V1.Schedule.FormOneofCase.Fixed => Dated("fixed", schedule.Fixed),
+            _ => null,
+        };
+    }
+
+    private static ScheduleColumns? Dated(string form, DateValue value)
+    {
+        switch (value.PrecisionCase)
+        {
+            case DateValue.PrecisionOneofCase.Day:
+                return Date(value.Day) is { } day
+                    ? new ScheduleColumns(form, "day", day, null, null, null)
+                    : null;
+
+            case DateValue.PrecisionOneofCase.DayStart:
+                return Moment(value.DayStart) is { } start
+                    ? new ScheduleColumns(form, "day_start", start.Date, start.Time, null, null)
+                    : null;
+
+            case DateValue.PrecisionOneofCase.Interval:
+                if (Moment(value.Interval.Start) is not { } from || Moment(value.Interval.End) is not { } to)
+                {
+                    return null;
+                }
+
+                return new ScheduleColumns(form, "interval", from.Date, from.Time, to.Date, to.Time);
+
+            default:
+                return null;
+        }
+    }
+
+    private static (DateOnly Date, TimeOnly Time)? Moment(LocalDateTime? value)
+    {
+        if (value is null || Date(value.Date) is not { } date || Time(value.Time) is not { } time)
+        {
+            return null;
+        }
+
+        return (date, time);
+    }
+
+    private static DateOnly? Date(CalendarDate? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return new DateOnly(value.Year, value.Month, value.Day);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return null;
+        }
+    }
+
+    private static TimeOnly? Time(LocalTime? value)
+    {
+        if (value is null || value.Hours is < 0 or > 23 || value.Minutes is < 0 or > 59)
+        {
+            return null;
+        }
+
+        return new TimeOnly(value.Hours, value.Minutes);
+    }
+}

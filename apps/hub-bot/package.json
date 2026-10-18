@@ -1,0 +1,57 @@
+{
+  "name": "hub-bot",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "npm@10.9.7",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "proto": "cd ../.. && buf generate --template apps/hub-bot/buf.gen.yaml",
+    "prestart": "npm run proto && npm run build",
+    "start": "node dist/src/main.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:contour": "vitest run --config vitest.contour.config.ts",
+    "test:contour-auction": "vitest run --config vitest.contour-auction.config.ts",
+    "explore:contour": "vitest run --config vitest.explore.config.ts",
+    "test:live": "vitest run --config vitest.live.config.ts",
+    "console:live": "vitest run --config vitest.live-console.config.ts",
+    "coverage": "vitest run --coverage",
+    "lint": "biome check . ../../tests/contour/bot-wire ../../tests/telegram-live",
+    "format": "biome format --write . ../../tests/contour/bot-wire ../../tests/telegram-live"
+  },
+  "dependencies": {
+    "@bufbuild/protobuf": "^2.14.1",
+    "@connectrpc/connect": "^2.1.2",
+    "@connectrpc/connect-node": "^2.1.2",
+    "@nats-io/jetstream": "^3.4.0",
+    "@nats-io/kv": "^3.4.0",
+    "@nats-io/transport-node": "^3.4.0",
+    "@opentelemetry/api": "^1.9.1",
+    "@opentelemetry/api-logs": "^0.200.0",
+    "@opentelemetry/context-async-hooks": "2.0.0",
+    "@opentelemetry/core": "2.0.0",
+    "@opentelemetry/exporter-logs-otlp-grpc": "^0.200.0",
+    "@opentelemetry/exporter-metrics-otlp-grpc": "^0.200.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "^0.200.0",
+    "@opentelemetry/resources": "^2.11.0",
+    "@opentelemetry/sdk-logs": "^0.200.0",
+    "@opentelemetry/sdk-metrics": "^2.11.0",
+    "@opentelemetry/sdk-trace-base": "2.0.0",
+    "grammy": "^1.46.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.11",
+    "@bufbuild/protoc-gen-es": "^2.14.1",
+    "@types/node": "^22.20.1",
+    "@vitest/coverage-v8": "^4.1.11",
+    "testcontainers": "^12.1.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
+  }
+}

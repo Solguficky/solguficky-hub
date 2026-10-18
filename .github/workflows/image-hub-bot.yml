@@ -1,0 +1,81 @@
+name: Image Hub Bot
+
+# Production-образ пакета ботов по apps/hub-bot/Containerfile — один на бот
+# хаба и бот аукциона: процессы различает переменная BOT_SURFACE, а workload
+# auction-bot в чарте читает ключ образа hub-bot (ADR-064, п. 18). Pull request
+# только собирает образ и проверяет его: в GHCR ничего не пишется, и права
+# записи код из PR не получает. Push в stage публикует образ — кандидата на
+# stage. Мерж в main образ не пересобирает: на прод едет тот же digest, что
+# прошёл stage (RFC-010: «Production build повторно не выполняется»).
+#
+# Отдельный файл, а не джоба в ci.yml: tools/verify/select-recipes.sh читает
+# фильтры путей ci.yml как карту механического гейта, а образ в гейт не входит.
+
+on:
+  pull_request:
+    paths:
+      - 'apps/hub-bot/**'
+      - 'contracts/proto/**'
+      - 'tools/image/**'
+      - '.github/workflows/image-hub-bot.yml'
+      - '.github/workflows/image-publish.yml'
+  push:
+    branches: [stage]
+    paths:
+      - 'apps/hub-bot/**'
+      - 'contracts/proto/**'
+      - 'tools/image/**'
+      - '.github/workflows/image-hub-bot.yml'
+      - '.github/workflows/image-publish.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    if: ${{ github.ref != 'refs/heads/stage' }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/image-publish.yml
+    with:
+      image-name: hub-bot
+      builder: containerfile
+      containerfile: apps/hub-bot/Containerfile
+      node-lock: apps/hub-bot/package-lock.json
+      publish: false
+
+  publish:
+    if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/stage' }}
+    # Публикации по очереди: тег sha-<коммит> одного прогона не должен
+    # перевесить другой, пока первый читает digest и аттестует его.
+    concurrency:
+      group: image-hub-bot-publish
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    uses: ./.github/workflows/image-publish.yml
+    with:
+      image-name: hub-bot
+      builder: containerfile
+      containerfile: apps/hub-bot/Containerfile
+      node-lock: apps/hub-bot/package-lock.json
+      publish: true
+
+  # Кандидат stage: digest уходит в ops-репозиторий, откуда stage выкатывает
+  # его сам (stage-bump.yml, дополнение ADR-055 от 2026-10-07). Ключ один на
+  # оба бота: bump перекатывает и бот хаба, и бот аукциона.
+  stage:
+    needs: publish
+    permissions: {}
+    uses: ./.github/workflows/stage-bump.yml
+    with:
+      file: stage/test/values.yaml
+      key: .parameters.hub_bot.hub_bot_image
+      value: ${{ needs.publish.outputs.ref }}
+      what: hub-bot image
+    secrets:
+      OPS_DEPLOY_KEY: ${{ secrets.OPS_DEPLOY_KEY }}

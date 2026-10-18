@@ -1,0 +1,354 @@
+package auction.entity
+
+import auction.aggregate.*
+import auction.catalog.LotId
+import auction.lot.OpId
+import org.apache.pekko.persistence.typed.SnapshotAdapter
+
+import java.time.Instant
+import java.util.UUID
+
+/*
+ * Модель хранения аукциона (ADR-058) — та же форма, что у лота: доменные типы в базу не пишутся, имя класса — manifest
+ * строки, имена полей — ключи JSON, взаимоисключающие варианты — поле `kind` и одна заполненная секция.
+ */
+
+final case class StoredAuctionDrafted(meetupId: UUID)
+
+final case class StoredLotRef(lotId: UUID)
+
+/** Payload `PrebiddingEnded`: перерыв (`false`) или конец аукциона без финалистов (`true`). */
+final case class StoredPrebiddingEnded(finished: Boolean)
+
+/** Payload `FinalLineupFrozen`: удержанные лоты в порядке выхода. */
+final case class StoredLineup(order: List[UUID])
+
+/** `raffleClosesAt` добавлен в конец (PER-499): строка без него — аукцион без розыгрыша. */
+final case class StoredOnlinePhase(
+    opensAt: Instant,
+    closesAt: Option[Instant],
+    closesLots: Boolean,
+    raffleClosesAt: Option[Instant] = None
+)
+
+final case class StoredMixedClosing(onlineByDeadline: Boolean)
+
+/** `kind` — `ByAuctioneer`, `ByDeadline` или `Mixed`; секция `mixed` заполнена ровно у последнего. */
+final case class StoredClosingPolicy(kind: String, mixed: Option[StoredMixedClosing])
+
+/** Окно сниженного шага аукциона с его лотами (ADR-047, дополнение 2026-10-08). */
+final case class StoredAuctionStepWindow(from: Instant, until: Instant, step: StoredMoney, lots: List[UUID])
+
+/**
+ * Payload `AuctionScheduled` и конфигурация в snapshot. `lotDefaults` — та же форма, что конфигурация лота; пусто,
+ * когда администратор их не задал (дополнение ADR-047 от 2026-10-06). Строка, записанная до этого, несёт их всегда и
+ * читается так же. `stepWindows` пишется только непустым (дополнение 2026-10-08): строка без него — аукцион без окон.
+ */
+final case class StoredAuctionConfig(
+    onlinePhase: Option[StoredOnlinePhase],
+    finalBlocks: Int,
+    closingPolicy: StoredClosingPolicy,
+    lotDefaults: Option[StoredConfig],
+    stepWindows: Option[List[StoredAuctionStepWindow]] = None
+)
+
+/**
+ * `PrebiddingStarted` записан одним `kind` без секции: payload у него пуст (ADR-047). Секция `auctionScheduled`
+ * добавлена в конец: строка, записанная до неё, читает её как пустую. Так же в конец добавлены секции перерыва и финала
+ * (PER-334) и секция завершения лота финала (PER-607); `PrebiddingDeadlineReached`, `FinalStarted`, `AuctionCancelled`
+ * и `AuctionFinished` пишутся одним `kind`.
+ */
+final case class StoredAuctionEventBody(
+    kind: String,
+    auctionDrafted: Option[StoredAuctionDrafted],
+    lotAdded: Option[StoredLotRef],
+    lotRemoved: Option[StoredLotRef],
+    auctionScheduled: Option[StoredAuctionConfig],
+    prebiddingEnded: Option[StoredPrebiddingEnded] = None,
+    finalLineupFrozen: Option[StoredLineup] = None,
+    finalLotActivated: Option[StoredLotRef] = None,
+    finalLotCompleted: Option[StoredLotRef] = None
+)
+
+object StoredAuctionEventBody {
+
+  /** Событие данного вида без единой секции; заполненную секцию добавляет `copy`. */
+  def of(kind: String): StoredAuctionEventBody = StoredAuctionEventBody(kind, None, None, None, None)
+}
+
+/**
+ * Строка журнала аукциона: конверт ADR-047 и событие. Аукцион строки — её `persistence_id`, поэтому, в отличие от лота,
+ * отдельного поля аукциона в конверте нет.
+ */
+final case class StoredAuctionEvent(
+    eventId: UUID,
+    transactionId: UUID,
+    opId: UUID,
+    occurredAt: Instant,
+    actor: StoredActor,
+    event: StoredAuctionEventBody
+) extends JournalSerializable
+
+final case class StoredAuctionSeen(sequence: Long, opId: UUID, event: StoredAuctionEventBody)
+
+/**
+ * Snapshot аукциона целиком, с реестром по возрастанию `lot_id` и окном дедупликации. `config` и `startedBy`
+ * необязательны по форме: snapshot, записанный до планирования и открытия торгов, их не несёт и читается как черновик.
+ * `config` заполнена с `Scheduled`, `startedBy` — `op_id` команды открытия — с `Prebidding`. `order` — состав финала с
+ * заморозки, `activated` — возвращённые в торги лоты финала; оба добавлены в конец (PER-334). `cancelledBy` — `op_id`
+ * отмены, только у `Cancelled`; добавлен в конец (PER-601). `completed` — завершённые лоты финала, только у `Final` и
+ * только непустым; добавлен в конец (PER-607): snapshot финала без него читается без завершённых лотов.
+ */
+final case class StoredAuction(
+    sequence: Long,
+    state: String,
+    meetupId: Option[UUID],
+    lots: List[UUID],
+    seen: List[StoredAuctionSeen],
+    config: Option[StoredAuctionConfig],
+    startedBy: Option[UUID],
+    order: Option[List[UUID]] = None,
+    activated: Option[List[UUID]] = None,
+    cancelledBy: Option[UUID] = None,
+    completed: Option[List[UUID]] = None
+) extends JournalSerializable
+
+object AuctionJournal {
+
+  def store(eventId: UUID, transactionId: UUID, opId: OpId, occurredAt: Instant, initiator: Initiator)(
+      event: AuctionEvent
+  ): StoredAuctionEvent =
+    StoredAuctionEvent(
+      eventId = eventId,
+      transactionId = transactionId,
+      opId = opId.value,
+      occurredAt = occurredAt,
+      actor = LotJournal.storeInitiator(initiator),
+      event = storeEvent(event)
+    )
+
+  def envelope(sequence: Long, stored: StoredAuctionEvent): AuctionEnvelope =
+    AuctionEnvelope(sequence, OpId(stored.opId), restoreEvent(stored.event))
+
+  def storeAuction(auction: Auction, sequence: Long): StoredAuction = {
+    val (state, config, startedBy) = auction.state match {
+      case AuctionState.Initial => ("Initial", None, None)
+      case AuctionState.Draft => ("Draft", None, None)
+      case AuctionState.Scheduled(config) => ("Scheduled", Some(config), None)
+      case AuctionState.Prebidding(config, startedBy) => ("Prebidding", Some(config), Some(startedBy))
+      case AuctionState.Settling(config, startedBy) => ("Settling", Some(config), Some(startedBy))
+      case AuctionState.Break(config, startedBy) => ("Break", Some(config), Some(startedBy))
+      case AuctionState.LineupFrozen(config, startedBy, _) => ("LineupFrozen", Some(config), Some(startedBy))
+      case AuctionState.Final(config, startedBy, _, _, _) => ("Final", Some(config), Some(startedBy))
+      case AuctionState.Finished(config, startedBy) => ("Finished", Some(config), Some(startedBy))
+      case AuctionState.Cancelled(config, startedBy, _) => ("Cancelled", Some(config), Some(startedBy))
+    }
+    val cancelledBy = auction.state match {
+      case AuctionState.Cancelled(_, _, cancelledBy) => Some(cancelledBy.value)
+      case _ => None
+    }
+    val (order, activated) = auction.state match {
+      case AuctionState.LineupFrozen(_, _, order) => (Some(order), None)
+      case AuctionState.Final(_, _, order, activated, _) => (Some(order), Some(activated))
+      case _ => (None, None)
+    }
+    val completed = auction.state match {
+      case AuctionState.Final(_, _, _, _, completed) if completed.nonEmpty => Some(completed.map(_.value))
+      case _ => None
+    }
+    StoredAuction(
+      sequence = sequence,
+      state = state,
+      meetupId = auction.meetup.map(_.value),
+      lots = auction.lots.toList.map(_.value).sorted,
+      seen = auction.seen.values.toList
+        .sortBy(_.sequence)
+        .map(envelope => StoredAuctionSeen(envelope.sequence, envelope.opId.value, storeEvent(envelope.event))),
+      config = config.map(storeConfig),
+      startedBy = startedBy.map(_.value),
+      order = order.map(_.map(_.value)),
+      activated = activated.map(_.map(_.value)),
+      cancelledBy = cancelledBy,
+      completed = completed
+    )
+  }
+
+  /**
+   * Snapshot восстанавливается с инвариантами: сходка пуста ровно в `Initial`, а конфигурация, `op_id` открытия,
+   * состав, возвращённые лоты финала и `op_id` отмены есть ровно у тех состояний, которые их несут.
+   */
+  def restoreAuction(stored: StoredAuction): Auction = {
+    val lots = (ids: List[UUID]) => ids.map(LotId(_))
+    val state =
+      (stored.state, stored.config, stored.startedBy, stored.order, stored.activated, stored.cancelledBy) match {
+        case ("Initial", None, None, None, None, None) => AuctionState.Initial
+        case ("Draft", None, None, None, None, None) => AuctionState.Draft
+        case ("Scheduled", Some(config), None, None, None, None) => AuctionState.Scheduled(restoreConfig(config))
+        case ("Prebidding", Some(config), Some(startedBy), None, None, None) =>
+          AuctionState.Prebidding(restoreConfig(config), OpId(startedBy))
+        case ("Settling", Some(config), Some(startedBy), None, None, None) =>
+          AuctionState.Settling(restoreConfig(config), OpId(startedBy))
+        case ("Break", Some(config), Some(startedBy), None, None, None) =>
+          AuctionState.Break(restoreConfig(config), OpId(startedBy))
+        case ("LineupFrozen", Some(config), Some(startedBy), Some(order), None, None) if order.nonEmpty =>
+          AuctionState.LineupFrozen(restoreConfig(config), OpId(startedBy), lots(order))
+        case ("Final", Some(config), Some(startedBy), Some(order), Some(activated), None)
+            if order.nonEmpty && stored.completed.getOrElse(Nil).forall(activated.contains) =>
+          AuctionState.Final(
+            restoreConfig(config),
+            OpId(startedBy),
+            lots(order),
+            lots(activated),
+            lots(stored.completed.getOrElse(Nil))
+          )
+        case ("Finished", Some(config), Some(startedBy), None, None, None) =>
+          AuctionState.Finished(restoreConfig(config), OpId(startedBy))
+        case ("Cancelled", Some(config), Some(startedBy), None, None, Some(cancelledBy)) =>
+          AuctionState.Cancelled(restoreConfig(config), OpId(startedBy), OpId(cancelledBy))
+        case _ =>
+          corrupted(
+            s"auction snapshot of state ${stored.state} with a config, an opening or a lineup that do not match it"
+          )
+      }
+    if (stored.completed.isDefined && stored.state != "Final")
+      corrupted(s"auction snapshot of state ${stored.state} with completed lots of a final")
+    val meetup = stored.meetupId.map(MeetupId(_))
+    if ((state == AuctionState.Initial) != meetup.isEmpty)
+      corrupted(s"auction snapshot of state ${stored.state} with meetup ${stored.meetupId}")
+    Auction(
+      state = state,
+      meetup = meetup,
+      lots = stored.lots.map(LotId(_)).toSet,
+      seen = stored.seen.map { seen =>
+        val envelope = AuctionEnvelope(seen.sequence, OpId(seen.opId), restoreEvent(seen.event))
+        envelope.opId -> envelope
+      }.toMap
+    )
+  }
+
+  val snapshotAdapter: SnapshotAdapter[AuctionEntity.State] = new SnapshotAdapter[AuctionEntity.State] {
+    override def toJournal(state: AuctionEntity.State): Any = storeAuction(state.auction, state.sequence)
+
+    override def fromJournal(from: Any): AuctionEntity.State =
+      from match {
+        case stored: StoredAuction => AuctionEntity.State(restoreAuction(stored), stored.sequence)
+        case other => corrupted(s"auction snapshot of unexpected type ${other.getClass.getName}")
+      }
+  }
+
+  def storeEvent(event: AuctionEvent): StoredAuctionEventBody =
+    event match {
+      case AuctionEvent.AuctionDrafted(meetup) =>
+        StoredAuctionEventBody.of("AuctionDrafted").copy(auctionDrafted = Some(StoredAuctionDrafted(meetup.value)))
+      case AuctionEvent.LotAdded(lot) =>
+        StoredAuctionEventBody.of("LotAdded").copy(lotAdded = Some(StoredLotRef(lot.value)))
+      case AuctionEvent.LotRemoved(lot) =>
+        StoredAuctionEventBody.of("LotRemoved").copy(lotRemoved = Some(StoredLotRef(lot.value)))
+      case AuctionEvent.AuctionScheduled(config) =>
+        StoredAuctionEventBody.of("AuctionScheduled").copy(auctionScheduled = Some(storeConfig(config)))
+      case AuctionEvent.PrebiddingStarted => StoredAuctionEventBody.of("PrebiddingStarted")
+      case AuctionEvent.AuctionDiscarded => StoredAuctionEventBody.of("AuctionDiscarded")
+      case AuctionEvent.AuctionCancelled => StoredAuctionEventBody.of("AuctionCancelled")
+      case AuctionEvent.PrebiddingDeadlineReached => StoredAuctionEventBody.of("PrebiddingDeadlineReached")
+      case AuctionEvent.PrebiddingEnded(finished) =>
+        StoredAuctionEventBody.of("PrebiddingEnded").copy(prebiddingEnded = Some(StoredPrebiddingEnded(finished)))
+      case AuctionEvent.FinalLineupFrozen(order) =>
+        StoredAuctionEventBody.of("FinalLineupFrozen").copy(finalLineupFrozen = Some(StoredLineup(order.map(_.value))))
+      case AuctionEvent.FinalStarted => StoredAuctionEventBody.of("FinalStarted")
+      case AuctionEvent.FinalLotActivated(lot) =>
+        StoredAuctionEventBody.of("FinalLotActivated").copy(finalLotActivated = Some(StoredLotRef(lot.value)))
+      case AuctionEvent.FinalLotCompleted(lot) =>
+        StoredAuctionEventBody.of("FinalLotCompleted").copy(finalLotCompleted = Some(StoredLotRef(lot.value)))
+      case AuctionEvent.AuctionFinished => StoredAuctionEventBody.of("AuctionFinished")
+    }
+
+  /**
+   * Ровно одна секция, и та, что названа `kind`; у событий без payload — ни одной. Иначе строка испорчена.
+   */
+  def restoreEvent(stored: StoredAuctionEventBody): AuctionEvent =
+    stored match {
+      case StoredAuctionEventBody("AuctionDrafted", Some(drafted), None, None, None, None, None, None, None) =>
+        AuctionEvent.AuctionDrafted(MeetupId(drafted.meetupId))
+      case StoredAuctionEventBody("LotAdded", None, Some(added), None, None, None, None, None, None) =>
+        AuctionEvent.LotAdded(LotId(added.lotId))
+      case StoredAuctionEventBody("LotRemoved", None, None, Some(removed), None, None, None, None, None) =>
+        AuctionEvent.LotRemoved(LotId(removed.lotId))
+      case StoredAuctionEventBody("AuctionScheduled", None, None, None, Some(config), None, None, None, None) =>
+        AuctionEvent.AuctionScheduled(restoreConfig(config))
+      case StoredAuctionEventBody("PrebiddingStarted", None, None, None, None, None, None, None, None) =>
+        AuctionEvent.PrebiddingStarted
+      case StoredAuctionEventBody("AuctionDiscarded", None, None, None, None, None, None, None, None) =>
+        AuctionEvent.AuctionDiscarded
+      case StoredAuctionEventBody("AuctionCancelled", None, None, None, None, None, None, None, None) =>
+        AuctionEvent.AuctionCancelled
+      case StoredAuctionEventBody("PrebiddingDeadlineReached", None, None, None, None, None, None, None, None) =>
+        AuctionEvent.PrebiddingDeadlineReached
+      case StoredAuctionEventBody("PrebiddingEnded", None, None, None, None, Some(ended), None, None, None) =>
+        AuctionEvent.PrebiddingEnded(ended.finished)
+      case StoredAuctionEventBody("FinalLineupFrozen", None, None, None, None, None, Some(lineup), None, None)
+          if lineup.order.nonEmpty && lineup.order.distinct.size == lineup.order.size =>
+        AuctionEvent.FinalLineupFrozen(lineup.order.map(LotId(_)))
+      case StoredAuctionEventBody("FinalStarted", None, None, None, None, None, None, None, None) =>
+        AuctionEvent.FinalStarted
+      case StoredAuctionEventBody("FinalLotActivated", None, None, None, None, None, None, Some(activated), None) =>
+        AuctionEvent.FinalLotActivated(LotId(activated.lotId))
+      case StoredAuctionEventBody("FinalLotCompleted", None, None, None, None, None, None, None, Some(completed)) =>
+        AuctionEvent.FinalLotCompleted(LotId(completed.lotId))
+      case StoredAuctionEventBody("AuctionFinished", None, None, None, None, None, None, None, None) =>
+        AuctionEvent.AuctionFinished
+      case other => corrupted(s"auction event of kind ${other.kind} with sections that do not match it")
+    }
+
+  private def storeConfig(config: AuctionConfig): StoredAuctionConfig =
+    StoredAuctionConfig(
+      onlinePhase = config.onlinePhase.map(phase =>
+        StoredOnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots, phase.raffleClosesAt)
+      ),
+      finalBlocks = config.finalBlocks,
+      closingPolicy = config.closingPolicy match {
+        case ClosingPolicy.ByAuctioneer => StoredClosingPolicy("ByAuctioneer", None)
+        case ClosingPolicy.ByDeadline => StoredClosingPolicy("ByDeadline", None)
+        case ClosingPolicy.Mixed(onlineByDeadline) =>
+          StoredClosingPolicy("Mixed", Some(StoredMixedClosing(onlineByDeadline)))
+      },
+      lotDefaults = config.lotDefaults.map(LotJournal.storeConfig),
+      stepWindows = Option.when(config.stepWindows.nonEmpty)(config.stepWindows.map { window =>
+        StoredAuctionStepWindow(
+          window.from,
+          window.until,
+          LotJournal.storeMoney(window.step),
+          window.lots.toList.map(_.value).sorted
+        )
+      })
+    )
+
+  /** Конфигурация восстанавливается через ту же проверку, что и при планировании: журнал `ConfigInvalid` не обходит. */
+  private def restoreConfig(stored: StoredAuctionConfig): AuctionConfig = {
+    val policy = (stored.closingPolicy.kind, stored.closingPolicy.mixed) match {
+      case ("ByAuctioneer", None) => ClosingPolicy.ByAuctioneer
+      case ("ByDeadline", None) => ClosingPolicy.ByDeadline
+      case ("Mixed", Some(mixed)) => ClosingPolicy.Mixed(mixed.onlineByDeadline)
+      case (kind, _) => corrupted(s"closing policy of kind $kind with a section that does not match it")
+    }
+    AuctionConfig
+      .of(
+        stored.onlinePhase.map(phase =>
+          OnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots, phase.raffleClosesAt)
+        ),
+        stored.finalBlocks,
+        policy,
+        stored.lotDefaults.map(LotJournal.restoreConfig),
+        stored.stepWindows.getOrElse(Nil).map { window =>
+          StepWindowConfig(
+            window.from,
+            window.until,
+            LotJournal.restoreMoney(window.step),
+            window.lots.map(LotId(_)).toSet
+          )
+        }
+      )
+      .fold(invalid => corrupted(s"auction config violates $invalid"), config => config)
+  }
+
+  private def corrupted(message: String): Nothing = throw new JournalCorrupted(message)
+}

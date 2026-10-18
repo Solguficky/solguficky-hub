@@ -1,0 +1,175 @@
+using AppHost.Configuration.Infrastructure;
+using NATS.Client.JetStream.Models;
+using Shouldly;
+using Xunit;
+
+namespace AppHost.UnitTests;
+
+/// <summary>
+/// Таблица топологии и конфиги из неё — чистые данные, поэтому проверяются на
+/// L0. Применение к живому серверу подтверждает прогон Aspire, а не этот набор.
+/// </summary>
+public class JetStreamTopologyTests
+{
+    [Fact]
+    public void Durables_AuctionDomain_NotificationsAndTesterReadItsStream()
+    {
+        JetStreamTopology.Streams.Single(stream => stream.Name == "AUCTION_EVENTS").Subject.ShouldBe("events.auction.>");
+        JetStreamTopology.Durables.Where(durable => durable.Stream == "AUCTION_EVENTS")
+            .Select(durable => durable.Durable).ShouldBe(["notifications-auction-events", "nats-tester-auction-events"], ignoreOrder: true);
+    }
+
+    [Fact]
+    public void DurableName_ConsumerAndStream_JoinsLowercaseHyphenated() =>
+        JetStreamTopology.DurableName("notifications", "MEETUPS_EVENTS").ShouldBe("notifications-meetups-events");
+
+    /// <summary>
+    /// Пересечение subjects JetStream отвергает на создании второго стрима:
+    /// без проверки ошибка всплыла бы только на старте AppHost.
+    /// </summary>
+    [Fact]
+    public void Streams_AllDomains_SubjectsDoNotOverlap() =>
+        JetStreamTopology.Streams.Select(stream => stream.Subject).ShouldBeUnique();
+
+    [Fact]
+    public void Durables_EveryDeclaredPair_HasExactlyOneDurable()
+    {
+        var durables = JetStreamTopology.Durables.ToList();
+
+        durables.Count.ShouldBe(JetStreamTopology.Consumers.Sum(consumer => consumer.Streams.Count));
+        durables.Select(durable => durable.Durable).ShouldBeUnique();
+    }
+
+    /// <summary>
+    /// Пара потребителя со стримом, которого нет в таблице, иначе упала бы
+    /// только на старте AppHost, а не здесь.
+    /// </summary>
+    [Fact]
+    public void Consumers_AnyDeclaredStream_ExistsInTopology()
+    {
+        var streams = JetStreamTopology.Streams.Select(stream => stream.Name).ToHashSet();
+
+        foreach (var consumer in JetStreamTopology.Consumers)
+        {
+            consumer.Streams.ShouldAllBe(stream => streams.Contains(stream), consumer.Consumer);
+        }
+    }
+
+    /// <summary>
+    /// Сервис не читает собственный выход: такой durable копил бы сообщения,
+    /// которые никто не подтверждает.
+    /// </summary>
+    [Fact]
+    public void Durables_Notifications_DoesNotReadItsOwnFacts() =>
+        JetStreamTopology.Durables
+            .Select(durable => durable.Durable)
+            .ShouldNotContain("notifications-notifications-events");
+
+    /// <summary>
+    /// Канал доставки читает только адресные факты: события Meetups и Identity
+    /// ему не адресованы, и durable на них копил бы неподтверждаемое.
+    /// </summary>
+    [Fact]
+    public void Durables_HubBot_ReadsOnlyNotificationFacts() =>
+        JetStreamTopology.Durables
+            .Single(durable => durable.Durable == "hub-bot-notifications-events")
+            .FilterSubject.ShouldBe("events.notifications.notification_created.hub");
+
+    /// <summary>
+    /// Бот аукциона — второй канал доставки (PER-328): свой durable на тех же
+    /// адресных фактах, а не общий с хабом, иначе каналы стали бы конкурентами
+    /// за одно сообщение.
+    /// </summary>
+    [Fact]
+    public void Durables_AuctionBot_ReadsNotificationFactsOnItsOwnDurable() =>
+        JetStreamTopology.Durables
+            .Single(durable => durable.Durable == "auction-bot-notifications-events")
+            .FilterSubject.ShouldBe("events.notifications.notification_created.auction");
+
+    /// <summary>
+    /// Запись журнала обязана пережить последнюю повторную выдачу своего
+    /// сообщения: истеки она раньше стрима, повтор ушёл бы человеку второй раз.
+    /// </summary>
+    [Theory]
+    [InlineData("hub-bot-deliveries")]
+    [InlineData("auction-bot-deliveries")]
+    public void KeyValueBuckets_DeliveryJournal_OutlivesStreamRetention(string bucketName)
+    {
+        var journal = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == bucketName);
+
+        journal.MaxAge.ShouldBeGreaterThan(JetStreamTopology.MaxAge);
+    }
+
+    [Fact]
+    public void ToConfig_Bucket_KeepsLatestStateOnDisk()
+    {
+        var config = JetStreamTopology.ToConfig(JetStreamTopology.KeyValueBuckets[0]);
+
+        config.History.ShouldBe(1);
+        config.Storage.ShouldBe(NATS.Client.KeyValueStore.NatsKVStorageType.File);
+    }
+
+    [Fact]
+    public void Durables_NatsTester_ReadsEveryStream() =>
+        JetStreamTopology.Durables
+            .Where(durable => durable.Durable.StartsWith("nats-tester-", StringComparison.Ordinal))
+            .Select(durable => durable.Stream)
+            .ShouldBe(JetStreamTopology.Streams.Select(stream => stream.Name), ignoreOrder: true);
+
+    [Fact]
+    public void Durables_AnyDurable_FiltersItsStreamSubject()
+    {
+        var subjects = JetStreamTopology.Streams.ToDictionary(stream => stream.Name, stream => stream.Subject);
+
+        foreach (var durable in JetStreamTopology.Durables)
+        {
+            if (!durable.FilterSubject.StartsWith("events.notifications.notification_created.", StringComparison.Ordinal))
+            {
+                durable.FilterSubject.ShouldBe(subjects[durable.Stream]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Точка, <c>*</c>, <c>&gt;</c> и пробел в имени durable сервер запрещает:
+    /// имя становится токеном subject'а API JetStream.
+    /// </summary>
+    [Fact]
+    public void Durables_AnyDurable_NameIsValidJetStreamToken()
+    {
+        foreach (var durable in JetStreamTopology.Durables)
+        {
+            durable.Durable.IndexOfAny(['.', '*', '>', ' ']).ShouldBe(-1, durable.Durable);
+        }
+    }
+
+    [Fact]
+    public void ToConfig_Stream_KeepsByLimitsOnDiskForSevenDays()
+    {
+        var config = JetStreamTopology.ToConfig(JetStreamTopology.Streams[0]);
+
+        config.Retention.ShouldBe(StreamConfigRetention.Limits);
+        config.Storage.ShouldBe(StreamConfigStorage.File);
+        config.Discard.ShouldBe(StreamConfigDiscard.Old);
+        config.MaxAge.ShouldBe(TimeSpan.FromDays(7));
+        config.DuplicateWindow.ShouldBe(TimeSpan.FromMinutes(2));
+        config.Subjects.ShouldBe(["events.meetups.>"]);
+    }
+
+    /// <summary>
+    /// Без явного ack позиция двигается на выдаче, и упавший потребитель теряет
+    /// сообщение; без DeliverAll durable, созданный раньше потребителя, не отдаст
+    /// то, что пришло до его первого старта.
+    /// </summary>
+    [Fact]
+    public void ToConfig_Durable_AcksExplicitlyFromStreamStart()
+    {
+        var durable = JetStreamTopology.Durables.First();
+        var config = JetStreamTopology.ToConfig(durable);
+
+        config.DurableName.ShouldBe(durable.Durable);
+        config.FilterSubject.ShouldBe(durable.FilterSubject);
+        config.AckPolicy.ShouldBe(ConsumerConfigAckPolicy.Explicit);
+        config.DeliverPolicy.ShouldBe(ConsumerConfigDeliverPolicy.All);
+    }
+}

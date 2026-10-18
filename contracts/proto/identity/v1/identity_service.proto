@@ -2,9 +2,395 @@ syntax = "proto3";
 
 package identity.v1;
 
-// Resolves a Telegram identity into the platform's internal identity.
+import "identity/v1/access.proto";
+
+// Resolves Telegram identities and exposes authenticated maintainer operations.
 service IdentityService {
   rpc ResolveIdentity(ResolveIdentityRequest) returns (ResolveIdentityResponse);
+  // Entry on /start: establishes the identity like ResolveIdentity and reports
+  // what became of the request in the named queue.
+  rpc RequestAccess(RequestAccessRequest) returns (RequestAccessResponse);
+  // Resolves an internal id back to the Telegram user id of that profile. It is
+  // a separate operation and not a mode of ResolveIdentity: that one establishes
+  // an identity and creates the profile at first contact, while this one must
+  // answer NOT_FOUND for an id it does not know.
+  rpc ResolveTelegramUserId(ResolveTelegramUserIdRequest) returns (ResolveTelegramUserIdResponse);
+  // Answers whether a known identity holds the right now, read from current
+  // state: the right that comes with the circle or a preset, or one granted
+  // apart from them. Identity does not know which surface asks or what it
+  // guards.
+  rpc CheckAccessRight(CheckAccessRightRequest) returns (CheckAccessRightResponse);
+  // Resolves the author of a meetup to their Telegram username for the meetup
+  // card.
+  rpc ResolveOrganizerUsername(ResolveOrganizerUsernameRequest) returns (ResolveOrganizerUsernameResponse);
+  // Grants a preset to an existing identity. Requires maintainer
+  // authentication: the shared secret is the only way to grant
+  // PRESET_MAINTAINER. A person without the member circle gets it in the same
+  // call, because every right of a preset needs it.
+  rpc GrantPreset(GrantPresetRequest) returns (GrantPresetResponse);
+  // Revokes a preset. Requires maintainer authentication.
+  rpc RevokePreset(RevokePresetRequest) returns (RevokePresetResponse);
+  // Lists the people holding PRESET_ADMIN or PRESET_MAINTAINER, on behalf of a
+  // holder of ACCESS_RIGHT_GRANT_ADMINS.
+  rpc ListAdministrators(ListAdministratorsRequest) returns (ListAdministratorsResponse);
+  // Grants PRESET_ADMIN, on behalf of a holder of ACCESS_RIGHT_GRANT_ADMINS, to
+  // the member with this username. The holder may appoint themselves.
+  rpc AppointAdministrator(AppointAdministratorRequest) returns (AppointAdministratorResponse);
+  // Revokes PRESET_ADMIN, on behalf of a holder of ACCESS_RIGHT_GRANT_ADMINS.
+  // Rights the person holds apart from the preset are untouched.
+  rpc DismissAdministrator(DismissAdministratorRequest) returns (DismissAdministratorResponse);
+  // Lists the people not blocked and holding no preset, on behalf of a holder
+  // of ACCESS_RIGHT_MANAGE_MEMBERS.
+  rpc ListCommunityMembers(ListCommunityMembersRequest) returns (ListCommunityMembersResponse);
+  // Reads one person of that list, on behalf of a holder of
+  // ACCESS_RIGHT_MANAGE_MEMBERS.
+  rpc GetCommunityMember(GetCommunityMemberRequest) returns (GetCommunityMemberResponse);
+  rpc AdmitCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  rpc BlockCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  // Demotes a member to the guest circle, on behalf of a holder of
+  // ACCESS_RIGHT_MANAGE_MEMBERS: rights granted one by one are revoked and
+  // ACCESS_RIGHT_PLACE_BIDS is granted. A holder of a preset is refused with
+  // FAILED_PRECONDITION, as by BlockCommunityMember: the preset is revoked
+  // first by its own grantor.
+  rpc DemoteCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  // Grants ACCESS_RIGHT_ADMIT_BIDDERS to a member, on behalf of a holder of
+  // ACCESS_RIGHT_MANAGE_MEMBERS.
+  rpc GrantAuctionModeration(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  // Revokes the granted ACCESS_RIGHT_ADMIT_BIDDERS. A right that comes with a
+  // preset is not revoked by it.
+  rpc RevokeAuctionModeration(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  // Lists the people holding ACCESS_RIGHT_ADMIT_BIDDERS, on behalf of a holder
+  // of ACCESS_RIGHT_MANAGE_MEMBERS.
+  rpc ListAuctionModerators(ListAuctionModeratorsRequest) returns (ListAuctionModeratorsResponse);
+  // Revokes ACCESS_RIGHT_PLACE_BIDS granted to a guest, on behalf of a holder
+  // of ACCESS_RIGHT_ADMIT_BIDDERS. The guest keeps the circle with whatever
+  // rights remain, and the revocation is recorded as a declined application in
+  // the auction queue: a later RequestAccess there answers DECLINED until the
+  // refusal is reconsidered. A right that comes with a circle is not revoked
+  // by it.
+  rpc RevokeAuctionRight(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  rpc ListAllowedUsernames(ListAllowedUsernamesRequest) returns (ListAllowedUsernamesResponse);
+  rpc AddAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
+  rpc RemoveAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
+  rpc ReadApplicationQueue(ReadApplicationQueueRequest) returns (ReadApplicationQueueResponse);
+  rpc AdmitApplication(DecideApplicationRequest) returns (DecideApplicationResponse);
+  rpc DeclineApplication(DecideApplicationRequest) returns (DecideApplicationResponse);
+  rpc ListRefusedApplications(ListRefusedApplicationsRequest) returns (ListRefusedApplicationsResponse);
+  rpc ReconsiderApplication(ReconsiderApplicationRequest) returns (ReconsiderApplicationResponse);
+  rpc ListSourceChannels(ListSourceChannelsRequest) returns (ListSourceChannelsResponse);
+  rpc CreateSourceChannel(ChangeSourceChannelRequest) returns (ChangeSourceChannelResponse);
+  rpc RenameSourceChannel(ChangeSourceChannelRequest) returns (ChangeSourceChannelResponse);
+}
+
+// The caller passes the identity established from the same Telegram update.
+// Identity authorizes it by the rights it reads from its own current state;
+// the bot does not decide it.
+message IdentityActor {
+  // Rights are read by Identity, never taken from the caller.
+  reserved 2;
+  reserved "global_roles";
+
+  string identity_id = 1;
+}
+
+message CommunityMember {
+  string identity_id = 1;
+  optional string telegram_username = 2;
+  // True when circle is CIRCLE_MEMBER. Superseded by circle and kept for
+  // consumers that do not read it.
+  bool admitted = 3;
+
+  // Telegram user id of the profile. Zero means an older server that does not
+  // send it: a real id is always positive.
+  int64 telegram_user_id = 4;
+
+  // CIRCLE_UNSPECIFIED means no circle, or an older server that does not send
+  // it; admitted tells a member apart in both cases.
+  Circle circle = 5;
+
+  // True when ACCESS_RIGHT_ADMIT_BIDDERS is granted one by one, so that
+  // RevokeAuctionModeration takes it away. A person of the list holds no
+  // preset, so the right never comes with one here. Always false from an
+  // older server.
+  bool auction_moderation = 6;
+}
+
+// Narrows the list. Every value but COMMUNITY_FILTER_UNSPECIFIED leaves out
+// the people without a circle.
+enum CommunityFilter {
+  // Everyone of the list, the people without a circle included.
+  COMMUNITY_FILTER_UNSPECIFIED = 0;
+  COMMUNITY_FILTER_MEMBERS = 1;
+  COMMUNITY_FILTER_GUESTS = 2;
+  // The people with auction_moderation.
+  COMMUNITY_FILTER_AUCTION_MODERATORS = 3;
+}
+
+message ListCommunityMembersRequest {
+  IdentityActor actor = 1;
+  // An older server ignores it and lists everyone.
+  CommunityFilter filter = 2;
+}
+message ListCommunityMembersResponse { repeated CommunityMember members = 1; }
+
+message GetCommunityMemberRequest {
+  IdentityActor actor = 1;
+  // Canonical lowercase UUID string.
+  string identity_id = 2;
+}
+
+message GetCommunityMemberResponse {
+  // Exactly one is set.
+  oneof outcome {
+    CommunityMember found = 1;
+    GetCommunityMemberRefusal refused = 2;
+  }
+}
+
+message GetCommunityMemberRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMembersManager not_members_manager = 1;
+    IdentityUnknown identity_unknown = 2;
+    IdentityBlocked identity_blocked = 3;
+    IdentityHoldsPreset identity_holds_preset = 4;
+  }
+}
+
+message ChangeCommunityMemberRequest {
+  IdentityActor actor = 1;
+  string identity_id = 2;
+}
+message ChangeCommunityMemberResponse { bool changed = 1; }
+
+// A holder of ACCESS_RIGHT_ADMIT_BIDDERS.
+message AuctionModerator {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+  // Username without the leading '@'. Absent when the account has none.
+  optional string telegram_username = 2;
+  // Telegram user id, for naming a moderator without a username.
+  int64 telegram_user_id = 3;
+  // True when the right was granted one by one, so that
+  // RevokeAuctionModeration takes it away. False when it comes only with
+  // PRESET_ADMIN.
+  bool revocable = 4;
+}
+
+message ListAuctionModeratorsRequest { IdentityActor actor = 1; }
+message ListAuctionModeratorsResponse { repeated AuctionModerator moderators = 1; }
+
+message ListAllowedUsernamesRequest { IdentityActor actor = 1; }
+message ListAllowedUsernamesResponse { repeated string usernames = 1; }
+
+message ChangeAllowedUsernameRequest {
+  IdentityActor actor = 1;
+  string username = 2;
+}
+message ChangeAllowedUsernameResponse { bool changed = 1; }
+
+// A channel of the source registry: the code of the "s_<code>" deep link
+// payload and the label a moderator sees on the application card.
+message SourceChannel {
+  // Case-sensitive, as Telegram passes the payload.
+  string code = 1;
+  string label = 2;
+}
+
+message ListSourceChannelsRequest { IdentityActor actor = 1; }
+message ListSourceChannelsResponse { repeated SourceChannel channels = 1; }
+
+message ChangeSourceChannelRequest {
+  IdentityActor actor = 1;
+  // Code without the "s_" prefix.
+  string code = 2;
+  string label = 3;
+}
+message ChangeSourceChannelResponse { bool changed = 1; }
+
+// How an application was closed. An open application has no outcome.
+enum ApplicationOutcome {
+  // No value: the field is unset or the outcome is unknown to the consumer.
+  APPLICATION_OUTCOME_UNSPECIFIED = 0;
+
+  // A moderator of its queue admitted it.
+  APPLICATION_OUTCOME_ADMITTED = 1;
+
+  // Refused without a block, in the application's queue only: the person keeps
+  // their circle and rights, and an application in the other queue is untouched.
+  APPLICATION_OUTCOME_DECLINED = 2;
+
+  // Refused with a block of the profile. A server that keeps queues apart no
+  // longer produces it for a decision; applications refused earlier keep it.
+  APPLICATION_OUTCOME_BLOCKED = 3;
+
+  // Closed by a grant of what the queue grants that was not a decision on it.
+  APPLICATION_OUTCOME_CLOSED_BY_GRANT = 4;
+
+  // Closed by a block of the profile that was not a refusal of it.
+  APPLICATION_OUTCOME_CLOSED_BY_BLOCK = 5;
+}
+
+// Position in the queue. Both fields are set together and are copied from a
+// card exactly as received.
+message ApplicationCursor {
+  // created_at of the card, as received.
+  string created_at = 1;
+
+  // application_id of the card, as received.
+  string application_id = 2;
+}
+
+message ApplicationSource {
+  // Current label of the channel in the registry. Absent when the code the
+  // person came with was unknown to the registry when the application was
+  // created, malformed or too long: the source is then "unknown", which is not
+  // the same as no source at all. A channel created later does not label it.
+  optional string channel_label = 1;
+}
+
+message ApplicationCard {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string application_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens of the applicant.
+  string identity_id = 2;
+
+  // Telegram user id of the applicant, for the tg://user?id= profile link.
+  int64 telegram_user_id = 3;
+
+  // Username without the leading '@'. Absent when the account has none.
+  optional string telegram_username = 4;
+
+  // Telegram first_name given at the /start that created the application.
+  // Absent for applications created by data migration.
+  optional string first_name = 5;
+
+  reserved 6;
+  reserved "requested_role";
+
+  // Absent when the person came without a source code.
+  ApplicationSource source = 7;
+
+  // RFC 3339 instant in UTC with exactly millisecond precision: the moment
+  // the application was created.
+  string created_at = 8;
+
+  // The queue the application lies in. Never APPLICATION_QUEUE_UNSPECIFIED
+  // from a server that sends it.
+  ApplicationQueue queue = 9;
+}
+
+message ReadApplicationQueueRequest {
+  IdentityActor actor = 1;
+
+  // Absent reads from the start of the queue.
+  ApplicationCursor after = 2;
+
+  // The queue to read. The two queues are read apart: a cursor of one does
+  // not position the other. APPLICATION_QUEUE_UNSPECIFIED, from a caller that
+  // does not send it yet, reads both queues together, as before queues.
+  ApplicationQueue queue = 3;
+}
+
+message ReadApplicationQueueResponse {
+  // Absent when no open application lies after the cursor.
+  ApplicationCard application = 1;
+
+  // 1-based position of the card among open applications. Zero when there is
+  // no card.
+  int32 position = 2;
+
+  // Number of open applications, counted in the same read as position.
+  int32 total = 3;
+}
+
+// The administrator whose act closed an application.
+message ApplicationDecider {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Username without the leading '@'. Absent when the account has none.
+  optional string telegram_username = 2;
+
+  // Telegram user id, for naming a decider without a username.
+  int64 telegram_user_id = 3;
+}
+
+message ApplicationDecision {
+  // Never APPLICATION_OUTCOME_UNSPECIFIED.
+  ApplicationOutcome outcome = 1;
+
+  // Absent when no administrator closed the application: an allowed username
+  // redeemed on /start did.
+  ApplicationDecider decided_by = 2;
+
+  // RFC 3339 instant in UTC: the moment the application was closed.
+  string decided_at = 3;
+}
+
+message DecideApplicationRequest {
+  IdentityActor actor = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string application_id = 2;
+}
+
+message DecideApplicationResponse {
+  // Exactly one is set.
+  oneof result {
+    // This call closed the application.
+    ApplicationDecision decided = 1;
+
+    // The application had been closed before this call, which changed
+    // nothing.
+    ApplicationDecision already_decided = 2;
+  }
+}
+
+message RefusedApplication {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string application_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens of the applicant.
+  string identity_id = 2;
+
+  // Telegram user id of the applicant.
+  int64 telegram_user_id = 3;
+
+  // Username without the leading '@'. Absent when the account has none. There
+  // is no first_name: it is erased when the application is decided.
+  optional string telegram_username = 4;
+
+  reserved 5;
+  reserved "requested_role";
+
+  // Outcome is APPLICATION_OUTCOME_BLOCKED or APPLICATION_OUTCOME_DECLINED.
+  ApplicationDecision decision = 6;
+
+  // The queue the application was refused in.
+  ApplicationQueue queue = 7;
+}
+
+message ListRefusedApplicationsRequest {
+  IdentityActor actor = 1;
+
+  // The queue whose refusals to list. APPLICATION_QUEUE_UNSPECIFIED lists both
+  // queues, as in ReadApplicationQueueRequest.
+  ApplicationQueue queue = 2;
+}
+message ListRefusedApplicationsResponse { repeated RefusedApplication applications = 1; }
+
+message ReconsiderApplicationRequest {
+  IdentityActor actor = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens of a refused application.
+  string application_id = 2;
+}
+
+message ReconsiderApplicationResponse {
+  // False when the target state had already been reached.
+  bool changed = 1;
 }
 
 message ResolveIdentityRequest {
@@ -17,17 +403,297 @@ message ResolveIdentityRequest {
 }
 
 message ResolveIdentityResponse {
+  reserved 2, 4;
+  reserved "global_roles", "role";
+
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
 
-  // Platform-wide roles. Domain permissions are not returned here; the owning
-  // domain applies them. An empty set means an ordinary user.
-  repeated GlobalRole global_roles = 2;
+  // True when the profile's block mark is on. Blocking revokes the circle,
+  // presets and rights, so an empty state alone does not distinguish a blocked
+  // profile from one that never started.
+  bool blocked = 3;
+
+  // Rights Identity derived from the circle, the presets and the rights granted
+  // one by one, in no promised order. A surface admits by a right in this set
+  // and never by the circle or a preset. Empty for a blocked profile. Domain
+  // permissions are not here; the owning domain applies them.
+  repeated AccessRight rights = 5;
+
+  // The circle: which bot answers the person. CIRCLE_UNSPECIFIED means no
+  // circle: a person never admitted, or a blocked one.
+  Circle circle = 6;
+
+  // Presets the person holds, in no promised order, for showing them to
+  // people. Never read for admission.
+  repeated Preset presets = 7;
 }
 
-enum GlobalRole {
-  // No value: the field is unset or the role is unknown to the consumer.
-  GLOBAL_ROLE_UNSPECIFIED = 0;
+message RequestAccessRequest {
+  // Telegram user id taken from the /start update. The caller establishes it
+  // at its own trusted boundary; this message carries no proof of that.
+  int64 telegram_user_id = 1;
 
-  GLOBAL_ROLE_ADMIN = 1;
+  // Username without the leading '@'. Absent when the account has none.
+  optional string telegram_username = 2;
+
+  reserved 3;
+  reserved "requested_role";
+
+  // Channel code from the deep link payload "s_<code>", without the "s_"
+  // prefix. Untrusted and passed as received; an empty code after "s_" is sent
+  // as an empty string. Absent when the payload carries no "s_" prefix.
+  optional string source_code = 4;
+
+  // Telegram first_name from the same update, for the moderation card.
+  string first_name = 5;
+
+  // The queue the calling surface applies to: the hub bot to the community
+  // queue, the auction bot to the auction queue. Must not be
+  // APPLICATION_QUEUE_UNSPECIFIED.
+  ApplicationQueue queue = 6;
 }
+
+// What became of the request in the named queue: of the circle the community
+// queue grants or of the right the auction queue grants. Only
+// GRANTED_BY_ALLOWLIST means the call itself granted it.
+enum AccessRequestOutcome {
+  // No value: an outcome unknown to the consumer. The consumer reads it as a
+  // refusal.
+  ACCESS_REQUEST_OUTCOME_UNSPECIFIED = 0;
+
+  // What the queue grants was held before the call, by the circle or as a
+  // granted right.
+  ACCESS_REQUEST_OUTCOME_ALREADY_HELD = 1;
+
+  // An allowed usernames entry was redeemed by this call and granted what the
+  // queue grants.
+  ACCESS_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST = 2;
+
+  // An application in the queue is open: created by this call or left by an
+  // earlier one. The two are not distinguished.
+  ACCESS_REQUEST_OUTCOME_PENDING = 3;
+
+  // An earlier application in this queue was declined.
+  ACCESS_REQUEST_OUTCOME_DECLINED = 4;
+
+  // The profile is blocked.
+  ACCESS_REQUEST_OUTCOME_BLOCKED = 5;
+}
+
+message RequestAccessResponse {
+  reserved 2, 4;
+  reserved "global_roles", "role";
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  AccessRequestOutcome outcome = 3;
+
+  // Rights after the call, same meaning as in ResolveIdentityResponse.
+  repeated AccessRight rights = 5;
+
+  // The circle after the call, same meaning as in ResolveIdentityResponse.
+  Circle circle = 6;
+
+  // Presets after the call, same meaning as in ResolveIdentityResponse.
+  repeated Preset presets = 7;
+}
+
+message ResolveTelegramUserIdRequest {
+  // Canonical lowercase UUIDv7 string with hyphens: the internal id a consumer
+  // of the bus received in an event or in a notification.
+  string identity_id = 1;
+}
+
+message ResolveTelegramUserIdResponse {
+  // Telegram user id of that profile. An unknown identity_id is NOT_FOUND, not
+  // a zero here, so a channel cannot mistake "no such person" for a delivery
+  // target.
+  int64 telegram_user_id = 1;
+}
+
+message CheckAccessRightRequest {
+  // Canonical lowercase UUIDv7 string with hyphens of the person to check.
+  string identity_id = 1;
+
+  // The right the calling surface requires. Must not be
+  // ACCESS_RIGHT_UNSPECIFIED.
+  AccessRight right = 2;
+}
+
+message CheckAccessRightResponse {
+  // True only when the identity holds the right right now. A blocked profile
+  // holds no right.
+  bool granted = 1;
+}
+
+message ResolveOrganizerUsernameRequest {
+  // The viewer of the card.
+  IdentityActor actor = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens: the author id taken from a
+  // meetup snapshot.
+  string identity_id = 2;
+}
+
+message ResolveOrganizerUsernameResponse {
+  // Username without the leading '@'. Absent only when the organizer has none:
+  // a profile the call does not answer for is a failed call, never an absent
+  // field here.
+  optional string telegram_username = 1;
+}
+
+message GrantPresetRequest {
+  // Canonical lowercase UUID string of an existing profile.
+  string identity_id = 1;
+
+  // Must not be PRESET_UNSPECIFIED.
+  Preset preset = 2;
+}
+
+message GrantPresetResponse {
+  // False when the preset was already held.
+  bool changed = 1;
+}
+
+message RevokePresetRequest {
+  // Canonical lowercase UUID string of an existing profile.
+  string identity_id = 1;
+
+  // Must not be PRESET_UNSPECIFIED.
+  Preset preset = 2;
+}
+
+message RevokePresetResponse {
+  // False when the preset was not held.
+  bool changed = 1;
+}
+
+message ListAdministratorsRequest { IdentityActor actor = 1; }
+
+message ListAdministratorsResponse {
+  reserved 1;
+  reserved "administrators";
+
+  // Exactly one is set.
+  oneof outcome {
+    AdministratorList listed = 2;
+    ListAdministratorsRefusal refused = 3;
+  }
+}
+
+message AdministratorList { repeated Administrator administrators = 1; }
+
+message ListAdministratorsRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotAdminGrantor not_admin_grantor = 1;
+  }
+}
+
+// A person holding PRESET_ADMIN, PRESET_MAINTAINER or both.
+message Administrator {
+  string identity_id = 1;
+  optional string telegram_username = 2;
+  // Always positive.
+  int64 telegram_user_id = 3;
+  // True when the person holds PRESET_MAINTAINER, with or without
+  // PRESET_ADMIN.
+  bool maintainer = 4;
+
+  // True when the person holds PRESET_ADMIN, so that DismissAdministrator
+  // takes it away.
+  bool admin = 5;
+}
+
+message AppointAdministratorRequest {
+  IdentityActor actor = 1;
+  // Telegram username, with or without the leading '@'; case is ignored.
+  string telegram_username = 2;
+}
+
+message AppointAdministratorResponse {
+  reserved 1, 2;
+  reserved "changed", "identity_id";
+
+  // Exactly one is set.
+  oneof outcome {
+    AdministratorAppointed appointed = 3;
+    AppointAdministratorRefusal refused = 4;
+  }
+}
+
+message AdministratorAppointed {
+  // The person the username resolved to.
+  string identity_id = 1;
+  // False when the preset was already held.
+  bool changed = 2;
+}
+
+message AppointAdministratorRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotAdminGrantor not_admin_grantor = 1;
+    UsernameUnknown username_unknown = 2;
+    IdentityNotMember identity_not_member = 3;
+    IdentityBlocked identity_blocked = 4;
+    UsernameUnresolved username_unresolved = 5;
+  }
+}
+
+message DismissAdministratorRequest {
+  IdentityActor actor = 1;
+  // Canonical lowercase UUID string of the person losing PRESET_ADMIN.
+  string identity_id = 2;
+}
+
+message DismissAdministratorResponse {
+  reserved 1;
+  reserved "changed";
+
+  // Exactly one is set.
+  oneof outcome {
+    AdministratorDismissed dismissed = 2;
+    DismissAdministratorRefusal refused = 3;
+  }
+}
+
+message AdministratorDismissed {
+  // False when the preset was not held.
+  bool changed = 1;
+}
+
+message DismissAdministratorRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotAdminGrantor not_admin_grantor = 1;
+    IdentityUnknown identity_unknown = 2;
+  }
+}
+
+// The actor may not grant PRESET_ADMIN. Carries no cause: the causes are not
+// told apart.
+message NotAdminGrantor {}
+
+// No profile carries the username.
+message UsernameUnknown {}
+
+// The person is not in CIRCLE_MEMBER.
+message IdentityNotMember {}
+
+// The person's profile is blocked.
+message IdentityBlocked {}
+
+// The username does not name exactly one person. Carries no candidates.
+message UsernameUnresolved {}
+
+// No profile has this identity_id.
+message IdentityUnknown {}
+
+// The actor may not manage the community composition. Carries no cause: the
+// causes are not told apart.
+message NotMembersManager {}
+
+// The person holds a preset and so is not in the community list.
+message IdentityHoldsPreset {}

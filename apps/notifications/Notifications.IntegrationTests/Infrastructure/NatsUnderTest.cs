@@ -1,0 +1,211 @@
+using Google.Protobuf;
+using NATS.Client.Core;
+using NATS.Client.JetStream;
+using NATS.Client.JetStream.Models;
+using Notifications.Facts;
+using Notifications.Replica;
+using Notifications.Messaging;
+using Notifications.V1;
+using Testcontainers.Nats;
+using Xunit;
+
+namespace Notifications.IntegrationTests.Infrastructure;
+
+/// <summary>
+/// Свой сервер JetStream на тест, со streams и durable, которые сервис ждёт.
+/// </summary>
+/// <remarks>
+/// Контейнер на тест, а не общий на прогон: позиция durable живёт на сервере,
+/// и два теста на одном durable делили бы поток — сообщение одного теста
+/// подтверждал бы силос другого.
+///
+/// Топология здесь повторена, а не взята из AppHost: <c>JetStreamTopology</c>
+/// там <c>internal</c>, а сервис ссылки на AppHost не имеет. Совпадение держат
+/// имена из <see cref="ReplicaFeeds" />, которые сервис и так обязан знать, и
+/// настройки из раздела «JetStream» в docs/architecture/integration.md. Без
+/// Docker тест падает, а не пропускается: пропуск здесь выглядел бы как
+/// проверенное потребление.
+/// </remarks>
+public sealed class NatsUnderTest : IAsyncDisposable
+{
+    private readonly NatsContainer container;
+    private readonly NatsConnection connection;
+    private bool paused;
+
+    private NatsUnderTest(NatsContainer container, NatsConnection connection)
+    {
+        this.container = container;
+        this.connection = connection;
+        Url = container.GetConnectionString();
+        JetStream = new NatsJSContext(connection);
+    }
+
+    /// <remarks>
+    /// Запоминается при старте: проброшенный порт Testcontainers читает у
+    /// Docker, а у замороженного контейнера (<see cref="Pause" />) его не видно.
+    /// </remarks>
+    public string Url { get; }
+
+    public INatsJSContext JetStream { get; }
+
+    /// <param name="withDurables">
+    /// <c>false</c> оставляет streams без durable: так проверяется, что сервис
+    /// не заводит durable сам.
+    /// </param>
+    /// <param name="streamMaxAge">
+    /// Окно хранения стримов; по умолчанию — то же, что у топологии AppHost.
+    /// Другое значение проверяет, что сервис сверяет с ним срок жизни ключей.
+    /// </param>
+    /// <param name="factsMaxMessageSize">
+    /// Предел размера сообщения стрима адресных фактов; по умолчанию его нет.
+    /// Заданный превращает крупный факт в отказ «всегда»: шина отвечает на
+    /// публикацию ошибкой о самом сообщении.
+    /// </param>
+    public static async Task<NatsUnderTest> Start(
+        bool withDurables = true, TimeSpan? streamMaxAge = null, int? factsMaxMessageSize = null)
+    {
+        var container = new NatsBuilder("nats:2.10-alpine").Build();
+        await container.StartAsync();
+
+        var connection = new NatsConnection(new NatsOpts { Url = container.GetConnectionString() });
+        var bus = new NatsUnderTest(container, connection);
+
+        foreach (var feed in NotificationsHost.EventFeeds)
+        {
+            await bus.JetStream.CreateStreamAsync(new StreamConfig(feed.Stream, [Subjects(feed)])
+            {
+                Retention = StreamConfigRetention.Limits,
+                Storage = StreamConfigStorage.File,
+                MaxAge = streamMaxAge ?? ReplicaFeeds.StreamMaxAge,
+                DuplicateWindow = TimeSpan.FromMinutes(2),
+            });
+
+            if (withDurables)
+            {
+                await bus.JetStream.CreateOrUpdateConsumerAsync(feed.Stream, new ConsumerConfig(feed.Durable)
+                {
+                    FilterSubject = Subjects(feed),
+                    AckPolicy = ConsumerConfigAckPolicy.Explicit,
+                    DeliverPolicy = ConsumerConfigDeliverPolicy.All,
+                });
+            }
+        }
+
+        // Стрим адресных фактов, куда пишет релей. Durable на нём сервису не
+        // нужен — свой выход он не читает, — а тест читает его упорядоченным
+        // потребителем без позиции на сервере.
+        await bus.JetStream.CreateStreamAsync(new StreamConfig(FactsStream, ["events.notifications.>"])
+        {
+            Retention = StreamConfigRetention.Limits,
+            Storage = StreamConfigStorage.File,
+            MaxAge = streamMaxAge ?? ReplicaFeeds.StreamMaxAge,
+            DuplicateWindow = TimeSpan.FromMinutes(2),
+            MaxMsgSize = factsMaxMessageSize ?? -1,
+        });
+
+        return bus;
+    }
+
+    public const string FactsStream = "NOTIFICATIONS_EVENTS";
+
+    /// <summary>
+    /// Все адресные факты, опубликованные в шину к этому моменту, вместе с
+    /// заголовком <c>Nats-Msg-Id</c> каждого.
+    /// </summary>
+    public async Task<IReadOnlyList<PublishedNotification>> PublishedFacts()
+    {
+        var stream = await JetStream.GetStreamAsync(FactsStream);
+        var total = (int)stream.Info.State.Messages;
+        if (total == 0)
+        {
+            return [];
+        }
+
+        var consumer = await JetStream.CreateOrderedConsumerAsync(FactsStream);
+        var facts = new List<PublishedNotification>(total);
+
+        await foreach (var message in consumer.ConsumeAsync<byte[]>())
+        {
+            if (message.Subject is not ("events.notifications.notification_created.hub"
+                or "events.notifications.notification_created.auction"))
+            {
+                throw new InvalidOperationException($"fact published to unexpected subject {message.Subject}");
+            }
+
+            var messageId = message.Headers is { } headers && headers.TryGetValue("Nats-Msg-Id", out var id) ? id.ToString() : null;
+            facts.Add(new PublishedNotification(Notification.Parser.ParseFrom(message.Data), messageId, message.Subject));
+
+            if (facts.Count == total)
+            {
+                break;
+            }
+        }
+
+        return facts;
+    }
+
+    /// <summary>
+    /// Публикует событие так, как это делает producer: subject повода и
+    /// <c>Nats-Msg-Id</c>. Идентификатор публикации задаётся отдельно от
+    /// <c>event_id</c>, потому что повтор с тем же заголовком внутри окна
+    /// отсекает сервер, и тест на повтор проверял бы шину, а не потребителя.
+    /// </summary>
+    public async Task Publish(string subject, IMessage message, string? messageId = null)
+    {
+        var ack = await JetStream.PublishAsync(
+            subject,
+            message.ToByteArray(),
+            opts: new NatsJSPubOpts { MsgId = messageId ?? Guid.NewGuid().ToString() });
+
+        ack.EnsureSuccess();
+    }
+
+    /// <summary>Сколько сообщений durable ещё не подтверждено потребителем.</summary>
+    public async Task<ulong> Unacknowledged(EventFeed feed)
+    {
+        var consumer = await JetStream.GetConsumerAsync(feed.Stream, feed.Durable);
+        await consumer.RefreshAsync();
+        return consumer.Info.NumPending + (ulong)consumer.Info.NumAckPending;
+    }
+
+    /// <summary>
+    /// Замораживает сервер: адрес, streams и durable остаются, а на запросы
+    /// никто не отвечает. Так выглядит шина, не успевшая ответить за таймаут
+    /// клиента, — остановка контейнера дала бы другой адрес и пустой сервер.
+    /// </summary>
+    public async Task Pause()
+    {
+        await container.PauseAsync(TestContext.Current.CancellationToken);
+        paused = true;
+    }
+
+    public async Task Unpause()
+    {
+        await container.UnpauseAsync(TestContext.Current.CancellationToken);
+        paused = false;
+    }
+
+
+    private static string Subjects(EventFeed feed) => $"events.{feed.Source}.>";
+
+    public async ValueTask DisposeAsync()
+    {
+        // Замороженный контейнер останавливается не на каждой версии Docker.
+        if (paused)
+        {
+            await container.UnpauseAsync();
+        }
+
+        await connection.DisposeAsync();
+        await container.DisposeAsync();
+    }
+}
+
+public sealed record PublishedNotification(Notification Fact, string? MessageId, string Subject)
+{
+    public void Deconstruct(out Notification fact, out string? messageId)
+    {
+        fact = Fact;
+        messageId = MessageId;
+    }
+}

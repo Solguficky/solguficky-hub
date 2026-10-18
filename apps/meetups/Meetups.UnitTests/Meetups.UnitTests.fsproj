@@ -1,0 +1,80 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- xUnit v3 test project is an executable: the entry point comes from the runner. -->
+    <OutputType>Exe</OutputType>
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+    <PackageReference Include="Unquote" Version="7.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.11" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="TestUtilities/TestData/Sample.fs" />
+    <Compile Include="TestUtilities/TestRpc.fs" />
+    <Compile Include="RequestIdTests.fs" />
+    <Compile Include="DomainTests/ScheduleTests.fs" />
+    <Compile Include="DomainTests/CreateMeetupDraftTests.fs" />
+    <Compile Include="DomainTests/ChangeMeetupAttributesTests.fs" />
+    <Compile Include="DomainTests/SetMeetupScheduleTests.fs" />
+    <Compile Include="DomainTests/ScheduleMeetupPublicationTests.fs" />
+    <Compile Include="DomainTests/CancelMeetupPublicationTests.fs" />
+    <Compile Include="DomainTests/MeetupTransitionsTests.fs" />
+    <Compile Include="DomainTests/PublishMeetupTests.fs" />
+    <Compile Include="DomainTests/UnpublishMeetupTests.fs" />
+    <Compile Include="DomainTests/CancelMeetupTests.fs" />
+    <Compile Include="DomainTests/AttachMaterialTests.fs" />
+    <Compile Include="DomainTests/RemoveMaterialTests.fs" />
+    <Compile Include="DomainTests/MarkMeetupHeldTests.fs" />
+    <Compile Include="DomainTests/ArchiveTests.fs" />
+    <Compile Include="DomainTests/AccessTests.fs" />
+    <Compile Include="DomainTests/MeetupApplyTests.fs" />
+    <Compile Include="DomainTests/MeetupTargetReachedTests.fs" />
+    <Compile Include="DomainTests/MeetupRehydrateTests.fs" />
+    <Compile Include="InfrastructureTests/MeetupRowTests.fs" />
+    <Compile Include="InfrastructureTests/MeetupEventPayloadTests.fs" />
+    <Compile Include="InfrastructureTests/MeetupReadingTests.fs" />
+    <Compile Include="InfrastructureTests/DbTests.fs" />
+    <Compile Include="SliceTests/ContractTests.fs" />
+    <Compile Include="SliceTests/CreateMeetupDraftWorkflowTests.fs" />
+    <Compile Include="SliceTests/SetMeetupScheduleWorkflowTests.fs" />
+    <Compile Include="SliceTests/PublishMeetupWorkflowTests.fs" />
+    <Compile Include="SliceTests/ScheduleMeetupPublicationWorkflowTests.fs" />
+    <Compile Include="SliceTests/CancelMeetupPublicationWorkflowTests.fs" />
+    <Compile Include="SliceTests/UnpublishMeetupWorkflowTests.fs" />
+    <Compile Include="SliceTests/CancelMeetupWorkflowTests.fs" />
+    <Compile Include="SliceTests/AttachMaterialWorkflowTests.fs" />
+    <Compile Include="SliceTests/RemoveMaterialWorkflowTests.fs" />
+    <Compile Include="SliceTests/MarkMeetupHeldWorkflowTests.fs" />
+    <Compile Include="SliceTests/CommandApiTests.fs" />
+    <Compile Include="SliceTests/ListVisibleMeetupsTests.fs" />
+    <Compile Include="SliceTests/ListArchivedMeetupsTests.fs" />
+    <Compile Include="SliceTests/GetMeetupTests.fs" />
+    <Compile Include="SliceTests/ListMeetupStatesTests.fs" />
+    <Compile Include="SliceTests/CheckMeetupAuthorityTests.fs" />
+    <Compile Include="SliceTests/DispatchMeetupEventsTests.fs" />
+    <Compile Include="SliceTests/PublishDueMeetupsTests.fs" />
+    <Compile Include="ContractSurfaceTests.fs" />
+    <Compile Include="BoundaryLogTests.fs" />
+    <Compile Include="OutboxDispatchLogTests.fs" />
+    <Compile Include="DuePublicationLogTests.fs" />
+    <Compile Include="DispatchTelemetryTests.fs" />
+    <Compile Include="OutboxDispatchWorkerTests.fs" />
+    <Compile Include="NatsEventPublisherTests.fs" />
+    <Compile Include="IdentityRightClientTests.fs" />
+    <Compile Include="TransportTests/CallerGateTests.fs" />
+    <Compile Include="MigrationsTests.fs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Meetups.Contracts\Meetups.Contracts.csproj" />
+    <ProjectReference Include="..\Meetups.TestKit\Meetups.TestKit.fsproj" />
+    <ProjectReference Include="..\Meetups\Meetups.fsproj" />
+  </ItemGroup>
+
+</Project>

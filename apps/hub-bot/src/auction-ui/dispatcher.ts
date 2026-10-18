@@ -1,0 +1,177 @@
+import type { AuctionIntent } from "./callback-data.js";
+import {
+  answerQuestion,
+  askQuestion,
+  cancelQuestion,
+  chooseUsername,
+  commitCommand,
+  confirmCommand,
+  placeFinalBid,
+} from "./internal/use-cases/commands.js";
+import { openFavorites, toggleFollow } from "./internal/use-cases/favorites.js";
+import {
+  answerNameQuestion,
+  askNameAlias,
+  chooseNameUsername,
+  openName,
+} from "./internal/use-cases/name-settings.js";
+import { openFeed } from "./internal/use-cases/open-feed.js";
+import { openHistory } from "./internal/use-cases/open-history.js";
+import { openLot } from "./internal/use-cases/open-lot.js";
+import { openRoot } from "./internal/use-cases/open-root.js";
+import {
+  answerRaffleQuestion,
+  askRaffleAlias,
+  cancelRaffleQuestion,
+  cancelRaffleRegistration,
+  chooseRaffleUsername,
+  openRaffle,
+  openRaffleProof,
+  registerForRaffle,
+} from "./internal/use-cases/raffle.js";
+import type {
+  AuctionPort,
+  FavoritesPort,
+  OperationIdPort,
+  ProxyExplainerPort,
+  TelegramUser,
+  Viewer,
+} from "./ports.js";
+import type { AuctionScreenBody } from "./screen.js";
+
+// Диспетчер принимает личность, которую уже установил шлюз, и сам доступ не
+// проверяет. Из пакета не экспортируется по той же причине, что и юзкейсы.
+//
+// `answer` — ответ на вопрос: шаг вопроса пришёл из `reply_to_message`, а не
+// нажатием его «Отмены». `text` нет — ответили не текстом.
+export function dispatchAuctionIntent(input: {
+  auction: AuctionPort;
+  operations: OperationIdPort;
+  favorites?: FavoritesPort;
+  proxyExplainer?: ProxyExplainerPort;
+  viewer: Viewer;
+  user: TelegramUser;
+  intent: AuctionIntent;
+  answer?: { text?: string };
+}): Promise<AuctionScreenBody> {
+  const { intent } = input;
+  const favorites =
+    input.favorites === undefined ? {} : { favorites: input.favorites };
+  const context = {
+    auction: input.auction,
+    operations: input.operations,
+    ...favorites,
+    ...(input.proxyExplainer === undefined
+      ? {}
+      : { proxyExplainer: input.proxyExplainer }),
+    viewer: input.viewer,
+    user: input.user,
+  };
+  switch (intent.kind) {
+    case "root":
+      return openRoot({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        auctionId: intent.auctionId,
+      });
+    case "feed":
+      return openFeed({
+        auction: input.auction,
+        viewer: input.viewer,
+        auctionId: intent.auctionId,
+        page: intent.page,
+      });
+    case "lot":
+      return openLot({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        lotId: intent.lotId,
+        page: intent.page,
+        ...(intent.atLeastVersion === undefined
+          ? {}
+          : { atLeastVersion: intent.atLeastVersion }),
+      });
+    case "history":
+      return openHistory({
+        auction: input.auction,
+        viewer: input.viewer,
+        lotId: intent.lotId,
+        page: intent.page,
+        historyPage: intent.historyPage,
+      });
+    case "confirm":
+      return confirmCommand(context, intent);
+    case "commit":
+      return commitCommand(context, intent);
+    case "final-bid":
+      return placeFinalBid(context, intent);
+    case "ask":
+      return askQuestion(context, intent);
+    case "explain":
+      return askQuestion(context, {
+        question: "proxy",
+        lotId: intent.lotId,
+        page: intent.page,
+        explain: true,
+      });
+    case "question":
+      return input.answer === undefined
+        ? cancelQuestion(context, intent)
+        : answerQuestion(context, intent, input.answer.text);
+    case "username":
+      return chooseUsername(context, intent);
+    case "follow":
+    case "unfollow":
+      return toggleFollow({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        lotId: intent.lotId,
+        page: intent.page,
+        follow: intent.kind === "follow",
+      });
+    case "favorites":
+      return openFavorites({
+        auction: input.auction,
+        ...favorites,
+        viewer: input.viewer,
+        page: intent.page,
+        ...(intent.auctionId === undefined
+          ? {}
+          : { auctionId: intent.auctionId }),
+      });
+    case "raffle":
+      return openRaffle(context, intent.auctionId);
+    case "raffle-register":
+      return registerForRaffle(context, intent.auctionId);
+    case "raffle-cancel":
+      return cancelRaffleRegistration(context, intent.auctionId);
+    case "raffle-proof":
+      return openRaffleProof(context, intent.auctionId);
+    case "raffle-username":
+      return chooseRaffleUsername(context, intent.auctionId);
+    case "raffle-ask-alias":
+      return Promise.resolve(askRaffleAlias(context, intent.auctionId));
+    case "raffle-question":
+      return input.answer === undefined
+        ? Promise.resolve(cancelRaffleQuestion(context, intent.auctionId))
+        : answerRaffleQuestion(context, intent.auctionId, input.answer.text);
+    case "name":
+      return openName(context, intent.auctionId);
+    case "name-username":
+      return chooseNameUsername(context, intent.auctionId);
+    case "name-ask-alias":
+      return Promise.resolve(askNameAlias(context, intent.auctionId));
+    // «Отмена» под вопросом возвращает на экран имени.
+    case "name-question":
+      return input.answer === undefined
+        ? openName(context, intent.auctionId)
+        : answerNameQuestion(context, intent.auctionId, input.answer.text);
+    default: {
+      const _exhaustive: never = intent;
+      return _exhaustive;
+    }
+  }
+}

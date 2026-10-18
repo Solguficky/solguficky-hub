@@ -1,0 +1,1951 @@
+import { z } from "zod";
+import type { ApplicationQueue } from "../../../auction-ui/index.js";
+import {
+  OUTBID_FREQUENCIES,
+  type OutbidFrequency,
+} from "../../../core/notifications/outbid.js";
+import type {
+  CloseQuote,
+  ConsoleSort,
+  FormField,
+  LineupPick,
+  LotStepMode,
+  LotTextField,
+  WindowRef,
+} from "../application/types.js";
+import type { CommunityDay } from "../community-time.js";
+import type { CommunityFilter } from "../identity/port.js";
+import type {
+  MeetupCategory,
+  NotificationCategory,
+} from "../notifications/port.js";
+import { type ManageGroup, manageGroupOf } from "./screens/menu.js";
+
+const CallbackSchema = z.string().max(64);
+const TokenSchema = z.string().regex(/^[A-Za-z0-9_-]{22}$/);
+const FormFieldSchema = z.enum(["title", "schedule", "venue", "description"]);
+
+// Псевдонимы категорий, а не имена из сгенерированного enum: на данные кнопки
+// у Telegram 64 байта, и `NOTIFICATION_CATEGORY_COMMUNITY_ANNOUNCEMENT` рядом с
+// токеном сходки в них не помещается. Бриф зафиксировал `changes`, остальные
+// собраны тем же правилом.
+const MeetupCategorySchema = z.enum([
+  "changes",
+  "material",
+  "reminder",
+  "organizer",
+]);
+// Категории, о которых приходит уведомление по конкретной сходке. Напоминание
+// выключается глобально (`v1:notify:off:reminder`): по сходке оно приходит один
+// раз.
+const NotifiedMeetupCategorySchema = z.enum([
+  "changes",
+  "material",
+  "organizer",
+]);
+export type NotifiedMeetupCategory = z.infer<
+  typeof NotifiedMeetupCategorySchema
+>;
+const OutbidFrequencySchema = z.enum(OUTBID_FREQUENCIES);
+const GlobalCategorySchema = z.enum([
+  "published",
+  "changes",
+  "material",
+  "reminder",
+  "organizer",
+  "announcement",
+  "access",
+]);
+// Кнопка несёт целевое состояние, а не переворот: у двух человек, нажавших на
+// одну отрисовку, результат обязан совпасть.
+const TargetStateSchema = z.enum(["0", "1"]);
+// Режим формы, в которой спросили о прошедшей дате: `c` — создание, `e` —
+// правка. От него зависит следующий шаг после ответа.
+const FormModeSchema = z.enum(["c", "e"]);
+// Чья дата выбирается кнопками: `c` — дата сходки в форме создания, `e` — в
+// правке, `p` — момент отложенной публикации из «Статуса», `d` — он же с
+// черновика. От источника зависит, куда возвращает «Отмена».
+const WhenModeSchema = z.enum(["c", "e", "p", "d"]);
+export type WhenMode = z.infer<typeof WhenModeSchema>;
+/** Экран, с которого назначают отложенную публикацию. */
+export type PublishOrigin = "status" | "draft";
+// Прошедшая дата едет в кнопке подтверждения цифрами `ДДММГГГГЧЧММ`: так
+// ответ не зависит от памяти процесса и переживает его рестарт, как вопросы
+// правки, восстановимые по сущностям сообщения.
+const PastScheduleSchema = z.string().regex(/^\d{12}$/);
+// Страница списка в кнопке: только цифры, без пустой строки и экспоненты,
+// которые `z.coerce.number()` принял бы за число.
+const PageSchema = z
+  .string()
+  .regex(/^\d{1,4}$/)
+  .transform(Number);
+// Номер лота в составе финала с нуля: финал — семь-восемь лотов, а трёх цифр
+// хватает любому реестру. Ведущие нули — не номер.
+const PositionSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,2})$/)
+  .transform(Number);
+// Окно «Счастливых часов» в кнопке пульта (PER-504): номер в конфигурации с
+// нуля — двух цифр хватает с запасом, — и отпечаток его сроков и шага.
+const WindowIndexSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d?)$/)
+  .transform(Number);
+const WindowPrintSchema = z.string().regex(/^[0-9a-z]{5}$/);
+// Порядок состава финала в кнопке (PER-619): номер лота в наборе удержанных —
+// знак base36, не больше двадцати четырёх; `-` — ещё ничего не выбрано.
+const emptyLineupOrder = "-";
+const LineupOrderSchema = z
+  .string()
+  .regex(/^(-|[0-9a-z]{1,24})$/)
+  .transform((raw): number[] =>
+    raw === emptyLineupOrder
+      ? []
+      : [...raw].map((each) => Number.parseInt(each, 36)),
+  );
+const ConsoleSortSchema = z.enum(["bd", "ba", "pd", "pa", "gd", "ga"]);
+export const defaultConsoleSort: ConsoleSort = {
+  metric: "bids",
+  direction: "descending",
+};
+
+function consoleSortToken(sort: ConsoleSort): string {
+  const metric =
+    sort.metric === "bids" ? "b" : sort.metric === "participants" ? "p" : "g";
+  return `${metric}${sort.direction === "descending" ? "d" : "a"}`;
+}
+
+function parseConsoleSort(raw: string | undefined): ConsoleSort | undefined {
+  const parsed = ConsoleSortSchema.safeParse(raw);
+  if (!parsed.success) return undefined;
+  switch (parsed.data) {
+    case "bd":
+      return defaultConsoleSort;
+    case "ba":
+      return { metric: "bids", direction: "ascending" };
+    case "pd":
+      return { metric: "participants", direction: "descending" };
+    case "pa":
+      return { metric: "participants", direction: "ascending" };
+    case "gd":
+      return { metric: "growth", direction: "descending" };
+    case "ga":
+      return { metric: "growth", direction: "ascending" };
+  }
+  return undefined;
+}
+// Версия карточки, с которой человек начал действие с материалом. Её несёт
+// кнопка подтверждения: `ca` — confirm-add, `cr` — confirm-remove, сжатые ради
+// места. `v1:mm:ca:` с двумя токенами занимает 55 байт, и девять цифр — всё,
+// что остаётся до 64 (PER-393).
+const VersionSchema = z
+  .string()
+  .regex(/^[1-9]\d{0,8}$/)
+  .transform(Number);
+
+// Ник едет в `callback_data` как есть, и обратно он доезжает только в этом
+// алфавите и в этой длине: у Telegram на данные кнопки 64 байта, а длиннее 32
+// символов ника не бывает. Экран сверяется с тем же выражением, что и разбор:
+// кнопка, которую разбор потом назовёт сломанной, рисоваться не должна.
+export const removableUsernamePattern = /^[A-Za-z0-9_]{1,32}$/;
+
+// Место в списке состава (PER-547): фильтр и страница. Карточка человека и
+// действия с неё несут его, чтобы «‹ Состав» вернул на ту же страницу.
+export type CommunityPlace = { filter: CommunityFilter; page: number };
+
+const filterCodes: Readonly<Record<CommunityFilter, string>> = {
+  members: "m",
+  guests: "g",
+  moderators: "o",
+};
+
+/** Сегмент `callback_data`: буква фильтра и страница — `m0`, `g2`, `o0`. */
+export function communityPlaceData(place: CommunityPlace): string {
+  return `${filterCodes[place.filter]}${place.page}`;
+}
+
+/** Первая страница участников — куда ведут «Состав сообщества» и прежние кнопки. */
+export const firstMembersPage: CommunityPlace = { filter: "members", page: 0 };
+
+// Кнопки до PER-547 несли место закрытия доступа: `p`, `p<токен>` — очередь,
+// которой в составе больше нет, `a<страница>` — допущенных. Они ведут в
+// участников: очередь ушла в «Заявки», допущенные стали фильтром.
+function parseCommunityPlace(
+  raw: string | undefined,
+): CommunityPlace | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const code = raw[0];
+  const page = PageSchema.safeParse(raw.slice(1));
+  const filter = (Object.keys(filterCodes) as CommunityFilter[]).find(
+    (candidate) => filterCodes[candidate] === code,
+  );
+  if (filter !== undefined) {
+    return page.success ? { filter, page: page.data } : undefined;
+  }
+  if (code === "a") {
+    return page.success ? { filter: "members", page: page.data } : undefined;
+  }
+  if (
+    raw === "p" ||
+    (code === "p" && TokenSchema.safeParse(raw.slice(1)).success)
+  ) {
+    return firstMembersPage;
+  }
+  return undefined;
+}
+
+// Место карточки заявки в кнопке: токен заявки и момент её создания в
+// миллисекундах. Вместе это курсор очереди Identity, а не номер: очередь
+// меняется, пока карточка висит.
+export type CardCursor = { token: string; createdAtMs: number };
+
+// Десять знаков base36 — до 3,6·10¹⁵ мс, внутри диапазона Date (8,64·10¹⁵):
+// подделанный момент длиннее не дойдёт до toISOString и не уронит запрос.
+const MillisSchema = z.string().regex(/^[0-9a-z]{1,10}$/);
+
+/** Сегменты `callback_data`: `<токен>:<момент base36>`. */
+export function cardCursorData(cursor: CardCursor): string {
+  return `${cursor.token}:${cursor.createdAtMs.toString(36)}`;
+}
+
+function parseCardCursor(
+  token: string | undefined,
+  millis: string | undefined,
+): CardCursor | undefined {
+  const parsedToken = TokenSchema.safeParse(token);
+  const parsedMillis = MillisSchema.safeParse(millis);
+  if (!parsedToken.success || !parsedMillis.success) return undefined;
+  const createdAtMs = Number.parseInt(parsedMillis.data, 36);
+  return Number.isSafeInteger(createdAtMs)
+    ? { token: parsedToken.data, createdAtMs }
+    : undefined;
+}
+
+type PlainAction =
+  // «‹ Меню» и старые кнопки «Меню» в чатах: корневое меню (PER-592).
+  | { kind: "home" }
+  // «Подать заявку» под приветствием: единственное действие, которое ставит
+  // заявку (дополнение ADR-060). Код канала прихода едет в кнопке, пока
+  // помещается: `v1:apply` или `v1:apply:<код>`.
+  | { kind: "apply"; sourceCode?: string }
+  // Корни разделов, которые открывают команды; кнопкой — повтор после сбоя.
+  | { kind: "settings" }
+  | { kind: "help" }
+  | { kind: "next" }
+  // Списки листаются: страница едет в кнопке листания, без неё — первая.
+  | { kind: "hub"; page?: number }
+  | { kind: "archive"; page?: number }
+  | { kind: "manage-menu" }
+  | { kind: "manage-group"; group: ManageGroup }
+  | { kind: "manage-hidden"; page?: number }
+  // Состав (PER-547): список людей с фильтром; без места — первая страница
+  // участников. Карточка и действия с неё несут токен человека и место.
+  | { kind: "community"; place?: CommunityPlace }
+  | { kind: "community-usernames"; page: number }
+  | { kind: "ask-allowed-username" }
+  | { kind: "community-member"; token: string; place: CommunityPlace }
+  | { kind: "ask-block-member"; token: string; place: CommunityPlace }
+  | { kind: "block-member"; token: string; place: CommunityPlace }
+  | { kind: "remove-allowed-username"; username: string; page: number }
+  // Модерация аукциона (ADR-064, пункт 7) — с карточки человека.
+  | { kind: "grant-moderation"; token: string; place: CommunityPlace }
+  | { kind: "revoke-moderation"; token: string; place: CommunityPlace }
+  // Администраторы (PER-521): список, вопрос о нике, «Да» назначения с ником и
+  // его «Нет», подтверждение снятия и его «Да» с токеном человека.
+  | { kind: "administrators" }
+  | { kind: "ask-appoint-administrator" }
+  | { kind: "confirm-appoint-administrator"; username: string }
+  | { kind: "decline-appoint-administrator" }
+  | { kind: "ask-dismiss-administrator"; token: string }
+  | { kind: "dismiss-administrator"; token: string }
+  // Отказанные: токен — заявки, а не человека; страница — куда вернуть список.
+  // Очередь называет домен кнопки: `cm` — сообщество, `aq` — аукцион.
+  | { kind: "refused-applications"; queue: ApplicationQueue; page: number }
+  | {
+      kind: "ask-reconsider";
+      queue: ApplicationQueue;
+      token: string;
+      page: number;
+    }
+  | { kind: "reconsider"; queue: ApplicationQueue; token: string; page: number }
+  // Каналы прихода (ADR-060, пункт 18): список со ссылками и вопрос о новом.
+  | { kind: "source-channels"; page: number }
+  | { kind: "ask-source-channel" }
+  // Карточка заявки: без курсора — первая в очереди, `after` — следующая за
+  // курсором («Пропустить»), `at` — та же, если она ещё открыта.
+  | {
+      kind: "application-card";
+      queue: ApplicationQueue;
+      cursor?: CardCursor;
+      from?: "after" | "at";
+    }
+  | { kind: "admit-application"; queue: ApplicationQueue; cursor: CardCursor }
+  | {
+      kind: "ask-decline-application";
+      queue: ApplicationQueue;
+      cursor: CardCursor;
+    }
+  | {
+      kind: "decline-application";
+      queue: ApplicationQueue;
+      cursor: CardCursor;
+    }
+  | { kind: "create-meetup"; token: string }
+  // Команда публикации. С версией — «Да» подтверждения с черновика (решение
+  // владельца 10 октября 2026 года); без версии — «Да, опубликовать» кадра
+  // конфликта и кнопки, оставшиеся в чатах до подтверждения.
+  | { kind: "publish-meetup"; token: string; version?: number }
+  | { kind: "manage-edit"; token: string }
+  | { kind: "manage-field"; token: string; field: FormField }
+  // Черновик формы создания: без поля — сам экран, с полем — вопрос о нём.
+  | { kind: "manage-draft"; token: string; field?: FormField }
+  | { kind: "manage-status"; token: string }
+  // «Включить аукцион» на карточке сходки (PER-307). Кнопки входа в аукцион
+  // здесь нет: она домена `auc`, и её пишет и разбирает аукционное дерево.
+  | { kind: "manage-meetups"; token: string }
+  | { kind: "auction-faq"; auction: string }
+  // Форма лота администратора (PER-319). Кнопки несут лот, а новый лот —
+  // аукцион: сходку форма не называет, её знает Auction.
+  | { kind: "lot-new"; auction: string }
+  | { kind: "lot-form"; lot: string }
+  // `chain` — кнопка цепочки нового лота (PER-618): «Ввести заново» под её
+  // вопросом продолжает цепочку, а не правку одного ряда.
+  | { kind: "lot-ask"; lot: string; field: LotFormField; chain?: true }
+  // Выбор способа шага (PER-491): цена и режим едут в кнопке, чтобы рестарт
+  // не терял цену.
+  | {
+      kind: "lot-step-mode";
+      lot: string;
+      price: number;
+      mode: LotStepMode;
+      chain?: true;
+    }
+  // «Пропустить» под вопросом о фото в цепочке нового лота (PER-618).
+  | { kind: "lot-skip"; lot: string }
+  // «Глазами участника» на экране правки (PER-512): карточка лота без кнопок.
+  | { kind: "lot-view"; lot: string }
+  // Пульт аукциона администратора (PER-320). Кнопки несут аукцион, а отметка
+  // финала — ещё лот и страницу пульта, на которую вернуться.
+  | { kind: "console-view"; auction: string; page: number; sort: ConsoleSort }
+  | { kind: "console-week"; auction: string }
+  // Розыгрыш (PER-593): вопрос о моменте и снятие момента.
+  | { kind: "console-raffle"; auction: string }
+  | { kind: "console-raffle-remove"; auction: string }
+  | { kind: "console-final"; auction: string; final: boolean }
+  | { kind: "console-open"; auction: string }
+  // «Да» подтверждения: ключ открытия рождён, когда подтверждение показано,
+  // и повторное нажатие несёт тот же.
+  | { kind: "console-confirm"; auction: string; op: string }
+  // «Удалить аукцион»: подтверждение, затем «Да» с ключом удаления.
+  | { kind: "console-discard"; auction: string }
+  | { kind: "console-discard-confirm"; auction: string; op: string }
+  | {
+      kind: "console-mark";
+      auction: string;
+      lot: string;
+      selected: boolean;
+      page: number;
+      sort: ConsoleSort;
+    }
+  // «Счастливые часы» (PER-504): список окон, окно на странице лотов, вопрос
+  // о новом окне, лот в окне и вне его, удаление окна. Окно кнопка называет
+  // номером и отпечатком; лот окна — без страницы, её экран выводит из лота.
+  | { kind: "console-windows"; auction: string }
+  | { kind: "console-window"; auction: string; window: WindowRef; page: number }
+  | { kind: "console-window-ask"; auction: string }
+  | {
+      kind: "console-window-lot";
+      auction: string;
+      window: WindowRef;
+      lot: string;
+      selected: boolean;
+    }
+  | { kind: "console-window-remove"; auction: string; window: WindowRef }
+  // Состав финала (PER-619): начать выбор порядка, выбрать следующий лот
+  // или страницу и «Да» подтверждения с полным порядком.
+  | { kind: "console-lineup"; auction: string; pick?: LineupPick; page: number }
+  | { kind: "console-lineup-confirm"; auction: string; pick: LineupPick }
+  // Финал ведущего (PER-337). Лот финала — номер в замороженном составе с
+  // нуля: токен лота рядом с аукционом и ключом в 64 байта не помещается.
+  | { kind: "console-start-final"; auction: string }
+  | { kind: "console-next-lot"; auction: string }
+  | { kind: "console-ask"; auction: string; position: number }
+  | { kind: "console-close"; auction: string; position: number }
+  // «Да» подтверждения закрытия: ключ рождён, когда подтверждение показано.
+  | {
+      kind: "console-close-confirm";
+      auction: string;
+      position: number;
+      op: string;
+      quote: CloseQuote;
+    }
+  // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
+  | { kind: "manage-publish"; token: string; origin: PublishOrigin }
+  | { kind: "manage-confirm-publish"; token: string; version: number }
+  | { kind: "manage-unpublish"; token: string }
+  | { kind: "manage-confirm-unpublish"; token: string; version?: number }
+  | { kind: "manage-cancel"; token: string }
+  | { kind: "manage-confirm-cancel"; token: string; version?: number }
+  | { kind: "manage-hold"; token: string }
+  | { kind: "manage-confirm-hold"; token: string; version?: number }
+  | { kind: "manage-publish-later"; token: string; origin: PublishOrigin }
+  | { kind: "manage-unschedule"; token: string }
+  | { kind: "manage-confirm-unschedule"; token: string; version?: number }
+  | {
+      kind: "manage-confirm-past-schedule";
+      token: string;
+      editing: boolean;
+      value: string;
+    }
+  | { kind: "manage-retry-past-schedule"; token: string; editing: boolean }
+  // Экран выбора даты: без дня — выбор дня, с днём — выбор времени.
+  | {
+      kind: "manage-pick-day";
+      token: string;
+      mode: WhenMode;
+      picked?: { digits: string; day: CommunityDay };
+    }
+  // Кнопка времени — полный ответ о дате, в том виде, в котором дату вводят
+  // текстом.
+  | {
+      kind: "manage-pick-schedule";
+      token: string;
+      mode: WhenMode;
+      value: string;
+    }
+  // «Ввести дату»: даты среди заготовок нет, и её спрашивают текстом.
+  | { kind: "manage-type-schedule"; token: string; mode: WhenMode }
+  | { kind: "manage-materials"; token: string; page?: number }
+  | { kind: "begin-attach-material"; token: string }
+  // «Нет» на подтверждении прикрепления: возврат к материалам, а сообщение с
+  // файлом остаётся следом с подписью, что прикрепления не было.
+  | { kind: "decline-attach-material"; token: string }
+  // `version` отсутствует только у кнопки прошлого релиза, которая версии не
+  // несла: команду по ней не отправить, и экран отвечает кадром конфликта.
+  | {
+      kind: "confirm-attach-material";
+      token: string;
+      materialToken: string;
+      version?: number;
+    }
+  | { kind: "remove-material"; token: string; materialToken: string }
+  | {
+      kind: "confirm-remove-material";
+      token: string;
+      materialToken: string;
+      version?: number;
+    }
+  | { kind: "open-material-file"; token: string; materialToken: string }
+  | { kind: "view-meetup"; token: string }
+  // Расширения (PER-605): меню «Расширения» сходки и «Расширения» в
+  // «Настройках».
+  | { kind: "meetup-extensions"; token: string }
+  | { kind: "settings-extensions" }
+  // Рассылка: вход из карточки сходки или из управления, затем подтверждение.
+  // Ключ рассылки рождается в кнопке подтверждения, как ключ создания сходки,
+  // а текст едет не в кнопке, а в сообщении предпросмотра, на которое кадр
+  // подтверждения отвечает: 64 байта его не вместят.
+  | { kind: "begin-meetup-broadcast"; token: string }
+  | { kind: "begin-community-broadcast" }
+  | { kind: "confirm-meetup-broadcast"; token: string; broadcastToken: string }
+  | { kind: "confirm-community-broadcast"; broadcastToken: string }
+  // Токен — сходка, с карточки которой рассылку начали: по нему «Нет»
+  // возвращает к ней; у объявления сообществу токена нет.
+  | { kind: "cancel-broadcast"; token?: string }
+  | { kind: "notify-global" }
+  // Настройки уведомлений аукциона (PER-552, PER-539): экран, выбор режима
+  // частоты и выключатель анонса финала — целевыми значениями.
+  | { kind: "notify-outbid" }
+  | { kind: "notify-set-outbid"; frequency: OutbidFrequency }
+  | { kind: "notify-set-final"; enabled: boolean }
+  | {
+      kind: "notify-set-global";
+      category: NotificationCategory;
+      enabled: boolean;
+    }
+  // Отключение категории прямо из уведомления. Отдельное действие, а не `gset`:
+  // тот перерисовывает сообщение в экран настроек, и текст уведомления пропал
+  // бы вместе с ним.
+  | { kind: "notify-disable-global"; category: NotificationCategory }
+  // То же отключение из уведомления об изменении или материале, но у одной
+  // сходки: эти категории получают её подписчики, и настройка сходки сильнее
+  // общей.
+  | {
+      kind: "notify-disable-meetup";
+      token: string;
+      category: NotifiedMeetupCategory;
+    }
+  | { kind: "notify-settings"; token: string }
+  | { kind: "notify-subscription"; token: string; subscribed: boolean }
+  | {
+      kind: "notify-set-meetup";
+      token: string;
+      category: MeetupCategory;
+      enabled: boolean;
+    }
+  // «Отмена» под вопросом: кнопка несёт шаг вопроса и Telegram id того, кому
+  // он задан. По нажатию вопрос правится в экран, с которого задан, а по ответу
+  // бот читает шаг из клавиатуры вопроса в `reply_to_message` — память процесса
+  // ему не нужна. Кнопка прошлого релиза id не несёт: «Отмена» на ней работает,
+  // а ответ на такой вопрос устарел (PER-461).
+  | { kind: "question"; step: QuestionStep; askedBy?: number }
+  | { kind: "outdated" }
+  | { kind: "malformed" };
+
+/** Что спросил вопрос: этого хватает, чтобы принять ответ на него. */
+export type QuestionStep =
+  | { kind: "field"; mode: "create" | "edit"; token: string; field: FormField }
+  | { kind: "publish-moment"; token: string; origin: PublishOrigin }
+  // Версия карточки, с которой начато прикрепление: она доезжает до кнопки
+  // подтверждения и уходит в `expected_version` (PER-393).
+  | { kind: "material-source"; token: string; version: number }
+  // Источник файла в 64 байта не помещается, поэтому ответ на этот вопрос
+  // принимается только по карте вопросов в памяти процесса; кнопка возвращает
+  // к материалам.
+  | { kind: "material-title"; token: string }
+  | { kind: "broadcast"; token?: string }
+  | { kind: "username" }
+  // Ник назначаемого администратора (PER-521).
+  | { kind: "administrator" }
+  // Код канала в 64 байта рядом с префиксом не помещается, поэтому подпись,
+  // как название материала, принимается только по карте вопросов в памяти.
+  | { kind: "channel-code" }
+  | { kind: "channel-label" }
+  // Вопросы формы лота (PER-319). Идентификатор нового лота рождён до вопроса
+  // и едет в нём: ответ после рестарта создаёт тот же лот, а не второй. Вопрос
+  // о шаге несёт цену из предыдущего ответа в целых рублях — в Auction они
+  // уходят одной командой. Самая длинная строка — `ln`, 53 байта.
+  // `key` — ключ создания, а не токен лота: см. `new-lot-id.ts`.
+  | { kind: "lot-new"; auction: string; key: string }
+  // `chain` — вопрос цепочки нового лота (PER-618): цена, шаг и фото по
+  // порядку после названия; «Отмена» и у них ведёт в форму лота.
+  | { kind: "lot-text"; lot: string; field: LotTextField }
+  | { kind: "lot-price"; lot: string; chain?: true }
+  | {
+      kind: "lot-step";
+      lot: string;
+      price: number;
+      mode: LotStepMode;
+      chain?: true;
+    }
+  | { kind: "lot-image"; lot: string; chain?: true }
+  // Сроки онлайн-недели на пульте (PER-320): аукцион, а финал и текущие сроки
+  // ответ читает у Auction заново.
+  | { kind: "console-week"; auction: string }
+  // Момент розыгрыша (PER-593): аукцион, а сроки и текущий момент ответ
+  // читает у Auction заново.
+  | { kind: "console-raffle"; auction: string }
+  // Новое окно «Счастливых часов» (PER-504): аукцион, а сроки недели и окна
+  // ответ читает у Auction заново.
+  | { kind: "console-window"; auction: string }
+  // Следующая цена лота финала (PER-337): аукцион и номер лота в составе.
+  | { kind: "final-ask"; auction: string; position: number };
+
+/** Ряд экрана правки лота: текст карточки, фото либо цена с шагом, парой. */
+export type LotFormField = LotTextField | "image" | "price";
+
+const LotFormFieldSchema = z.enum(["title", "description", "image", "price"]);
+// Ключ создания лота: двенадцать символов вместо двадцати двух у токена.
+const LotKeySchema = z.string().regex(/^[A-Za-z0-9_-]{12}$/);
+// Цена в рублях в кнопке вопроса о шаге: от 1 до 9 999 999, без ведущих нулей,
+// — та же граница, что у разбора ответа (`parseRubles`).
+const RublesSchema = z
+  .string()
+  .regex(/^[1-9]\d{0,6}$/)
+  .transform(Number);
+// Способ шага в кнопке выбора (PER-491): один шаг или пороги.
+const LotStepModeSchema = z.enum(["single", "tiered"]);
+
+/** Данные кнопки «Добавить лот» в ленте аукциона; аргумент — токен аукциона. */
+export function lotNewData(auction: string): string {
+  return `v1:lot:new:${auction}`;
+}
+
+/** Данные кнопки входа на экран правки лота; аргумент — токен лота. */
+export function lotFormData(lot: string): string {
+  return `v1:lot:form:${lot}`;
+}
+
+/** Данные кнопки «Глазами участника» на экране правки; аргумент — токен лота. */
+export function lotPreviewData(lot: string): string {
+  return `v1:lot:view:${lot}`;
+}
+
+/**
+ * Данные кнопки ряда на экране правки лота. `chain` — вопрос цепочки нового
+ * лота (PER-618): так его задаёт «Ввести заново» под цепочкой.
+ */
+export function lotAskData(
+  lot: string,
+  field: LotFormField,
+  chain?: boolean,
+): string {
+  return `v1:lot:ask:${lot}:${field}${chain === true ? chainMark : ""}`;
+}
+
+/** «Пропустить» под вопросом о фото в цепочке нового лота (PER-618). */
+export function lotSkipData(lot: string): string {
+  return `v1:lot:skip:${lot}`;
+}
+
+// Хвост кнопки цепочки нового лота (PER-618).
+const chainMark = ":c";
+
+/**
+ * Данные кнопки выбора способа шага (PER-491). Цена едет в кнопке: вопрос о
+ * шаге задаётся после неё, и рестарт между ними не должен её терять.
+ */
+export function lotStepModeData(
+  lot: string,
+  price: number,
+  mode: LotStepMode,
+  chain?: boolean,
+): string {
+  return `v1:lot:sm:${lot}:${price}:${mode}${chain === true ? chainMark : ""}`;
+}
+
+// Кнопки пульта аукциона: `v1:ac:<действие>:<аукцион>[:…]`. Самые длинные —
+// выбор порядка состава финала, до 64 байт, и лот в окне «Счастливых часов»
+// с номером окна и отпечатком, до 63.
+
+/** Пульт аукциона на странице `page`; первая страница — без номера. */
+export function consoleViewData(
+  auction: string,
+  page = 0,
+  sort: ConsoleSort = defaultConsoleSort,
+): string {
+  if (sort.metric === "bids" && sort.direction === "descending") {
+    return page === 0 ? `v1:ac:v:${auction}` : `v1:ac:v:${auction}:${page}`;
+  }
+  return `v1:ac:v:${auction}:${page}:${consoleSortToken(sort)}`;
+}
+
+/** «Сроки недели»: вопрос о начале и конце онлайн-недели. */
+export function consoleWeekData(auction: string): string {
+  return `v1:ac:w:${auction}`;
+}
+
+/** «Розыгрыш»: вопрос о моменте закрытия регистрации (PER-593). */
+export function consoleRaffleData(auction: string): string {
+  return `v1:ac:r:${auction}`;
+}
+
+/** «Убрать розыгрыш»: неделя без момента проходит без розыгрыша. */
+export function consoleRaffleRemoveData(auction: string): string {
+  return `v1:ac:rx:${auction}`;
+}
+
+/** Переключатель финала с целевым состоянием. */
+export function consoleFinalData(auction: string, final: boolean): string {
+  return `v1:ac:f:${auction}:${final ? "1" : "0"}`;
+}
+
+/** «Открыть онлайн-неделю»: подтверждение, а не команда. */
+export function consoleOpenData(auction: string): string {
+  return `v1:ac:o:${auction}`;
+}
+
+/** «Да» подтверждения открытия: аукцион и ключ команды. */
+export function consoleConfirmData(auction: string, op: string): string {
+  return `v1:ac:y:${auction}:${op}`;
+}
+
+/** «Удалить аукцион»: подтверждение, а не команда. */
+export function consoleDiscardData(auction: string): string {
+  return `v1:ac:x:${auction}`;
+}
+
+/** «Да» подтверждения удаления: аукцион и ключ команды. */
+export function consoleDiscardConfirmData(auction: string, op: string): string {
+  return `v1:ac:z:${auction}:${op}`;
+}
+
+/** Отметка лота для финала (`s`) или её снятие (`d`). */
+export function consoleMarkData(mark: {
+  auction: string;
+  lot: string;
+  selected: boolean;
+  page: number;
+  sort?: ConsoleSort;
+}): string {
+  const base = `v1:ac:${mark.selected ? "s" : "d"}:${mark.auction}:${mark.lot}:${mark.page}`;
+  return mark.sort === undefined ||
+    (mark.sort.metric === "bids" && mark.sort.direction === "descending")
+    ? base
+    : `${base}:${consoleSortToken(mark.sort)}`;
+}
+
+/** «Счастливые часы» на пульте: список окон. */
+export function consoleWindowsData(auction: string): string {
+  return `v1:ac:h:${auction}`;
+}
+
+/** Окно на странице лотов `page`; первая страница — без номера. */
+export function consoleWindowData(
+  auction: string,
+  window: WindowRef,
+  page = 0,
+): string {
+  const base = `v1:ac:hw:${auction}:${window.index}:${window.print}`;
+  return page === 0 ? base : `${base}:${page}`;
+}
+
+/** «Добавить окно»: вопрос о сроках и шаге. */
+export function consoleWindowAskData(auction: string): string {
+  return `v1:ac:ha:${auction}`;
+}
+
+/**
+ * Лот в окне (`hs`) и вне его (`hd`): целевое состояние, а не переворот. Самая
+ * длинная кнопка пульта — 63 байта при двузначном номере окна.
+ */
+export function consoleWindowLotData(mark: {
+  auction: string;
+  window: WindowRef;
+  lot: string;
+  selected: boolean;
+}): string {
+  return `v1:ac:${mark.selected ? "hs" : "hd"}:${mark.auction}:${mark.window.index}:${mark.window.print}:${mark.lot}`;
+}
+
+/** «Удалить окно». */
+export function consoleWindowRemoveData(
+  auction: string,
+  window: WindowRef,
+): string {
+  return `v1:ac:hx:${auction}:${window.index}:${window.print}`;
+}
+
+/** «Объявить состав финала» и «Заново»: выбор порядка с первого лота. */
+export function consoleLineupData(auction: string): string {
+  return `v1:ac:l:${auction}`;
+}
+
+function lineupOrderToken(order: readonly number[]): string {
+  return order.length === 0
+    ? emptyLineupOrder
+    : order.map((at) => at.toString(36)).join("");
+}
+
+/**
+ * Следующий лот порядка или страница выбора: отпечаток набора удержанных,
+ * выбранные номера и страница. Двадцать четыре лота с однозначной страницей —
+ * ровно 64 байта.
+ */
+export function consoleLineupPickData(
+  auction: string,
+  pick: LineupPick,
+  page = 0,
+): string {
+  const base = `v1:ac:lo:${auction}:${pick.print}:${lineupOrderToken(pick.order)}`;
+  return page === 0 ? base : `${base}:${page}`;
+}
+
+/** «Да» подтверждения состава: полный порядок; ключ рождается на нажатие. */
+export function consoleLineupConfirmData(
+  auction: string,
+  pick: LineupPick,
+): string {
+  return `v1:ac:ly:${auction}:${pick.print}:${lineupOrderToken(pick.order)}`;
+}
+
+/** «Начать финал». */
+export function consoleStartFinalData(auction: string): string {
+  return `v1:ac:g:${auction}`;
+}
+
+/** «Открыть следующий лот» финала. */
+export function consoleNextLotData(auction: string): string {
+  return `v1:ac:n:${auction}`;
+}
+
+/** «Поднять цену» лота финала с номером `position` в составе. */
+export function consoleAskData(auction: string, position: number): string {
+  return `v1:ac:a:${auction}:${position}`;
+}
+
+/** «Продать»: подтверждение закрытия, а не команда. */
+export function consoleCloseData(auction: string, position: number): string {
+  return `v1:ac:c:${auction}:${position}`;
+}
+
+/**
+ * «Да» подтверждения закрытия: аукцион, номер лота, ключ и названное — цена
+ * в минорных единицах по основанию 36 либо `x`, закрытие без продажи. Цена
+ * до девяти миллионов рублей — шесть знаков, и с трёхзначным номером строка
+ * укладывается в 64 байта.
+ */
+export function consoleCloseConfirmData(
+  auction: string,
+  position: number,
+  op: string,
+  quote: CloseQuote,
+): string {
+  const named =
+    quote.kind === "sale" ? quote.minorUnits.toString(36) : noSaleQuote;
+  return `v1:ac:k:${auction}:${position}:${op}:${named}`;
+}
+
+const noSaleQuote = "x";
+const QuoteSchema = z
+  .string()
+  .regex(/^(x|0|[1-9a-z][0-9a-z]{0,6})$/)
+  .transform(
+    (raw): CloseQuote =>
+      raw === noSaleQuote
+        ? { kind: "no-sale" }
+        : { kind: "sale", minorUnits: Number.parseInt(raw, 36) },
+  );
+
+/** Кнопка FAQ из корня ленты аукциона сходки. */
+export function auctionFaqData(auction: string): string {
+  return `v1:faq:${auction}`;
+}
+
+/**
+ * Данные кнопки «Отмена» для вопроса с этим шагом, заданного человеку
+ * `askedBy`. Id идёт последней частью: самый длинный шаг — `ln` с токеном
+ * аукциона и ключом создания лота — занимает с ним 60 байт из 64.
+ */
+export function questionData(step: QuestionStep, askedBy: number): string {
+  return `${stepData(step)}:${askedBy}`;
+}
+
+function stepData(step: QuestionStep): string {
+  switch (step.kind) {
+    case "lot-new":
+      return `v1:q:ln:${step.auction}:${step.key}`;
+    case "lot-text":
+      return `v1:q:${step.field === "title" ? "lt" : "ld"}:${step.lot}`;
+    // Цепочка нового лота (PER-618) — свои коды: `cp`, `cs`/`cy`, `ci`.
+    case "lot-price":
+      return `v1:q:${step.chain === true ? "cp" : "lp"}:${step.lot}`;
+    case "lot-step": {
+      // `ls` — один шаг, `ly` — пороги: способ восстанавливается из кнопки.
+      const code =
+        step.chain === true
+          ? step.mode === "single"
+            ? "cs"
+            : "cy"
+          : step.mode === "single"
+            ? "ls"
+            : "ly";
+      return `v1:q:${code}:${step.lot}:${step.price}`;
+    }
+    case "lot-image":
+      return `v1:q:${step.chain === true ? "ci" : "li"}:${step.lot}`;
+    case "console-week":
+      return `v1:q:aw:${step.auction}`;
+    case "console-raffle":
+      return `v1:q:ar:${step.auction}`;
+    case "console-window":
+      return `v1:q:ah:${step.auction}`;
+    case "final-ask":
+      return `v1:q:fa:${step.auction}:${step.position}`;
+    case "field":
+      return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.field}`;
+    case "publish-moment":
+      // `pd` — вопрос задан с черновика: «Отмена» возвращает на него.
+      return `v1:q:${step.origin === "draft" ? "pd" : "pm"}:${step.token}`;
+    case "material-source":
+      return `v1:q:ms:${step.token}:${step.version}`;
+    case "material-title":
+      return `v1:q:mt:${step.token}`;
+    case "broadcast":
+      return step.token === undefined ? "v1:q:bc" : `v1:q:bm:${step.token}`;
+    case "username":
+      return "v1:q:nick";
+    case "administrator":
+      return "v1:q:an";
+    case "channel-code":
+      return "v1:q:cc";
+    case "channel-label":
+      return "v1:q:cl";
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
+}
+
+// Кнопка под следом — уведомлением или сообщением «Доступ открыт» — несёт то же
+// действие, что и кнопка экрана, с пометкой `t`: экран по ней приходит новым
+// сообщением, а след остаётся в истории как был (дизайн-код, «Доставка»).
+export type CallbackAction = PlainAction & { trace?: true };
+
+/** Данные кнопки «Подать заявку» без кода канала. */
+export const applyData = "v1:apply";
+
+const tracePrefix = "v1:t:";
+
+/** Данные кнопки следа для действия, которое на экране несёт `data`. */
+export function traceCallback(data: `v1:${string}`): string {
+  return `${tracePrefix}${data.slice("v1:".length)}`;
+}
+
+// «Да» подтверждения смены состояния несёт версию сходки, которую человек
+// видел, пятым сегментом: команда уходит с ней в `expected_version`, и правка
+// другого администратора между экраном и нажатием даёт конфликт (PER-472).
+// Кнопка прошлого релиза версии не несёт и разбирается без неё: юзкейс тогда
+// берёт версию из снимка в момент нажатия, как раньше.
+function stateConfirm<
+  Kind extends
+    | "manage-confirm-unpublish"
+    | "manage-confirm-cancel"
+    | "manage-confirm-hold"
+    | "manage-confirm-unschedule",
+>(
+  kind: Kind,
+  token: string,
+  parts: readonly string[],
+): { kind: Kind; token: string; version?: number } | { kind: "malformed" } {
+  if (parts.length === 4) return { kind, token };
+  if (parts.length !== 5) return { kind: "malformed" };
+  const version = VersionSchema.safeParse(parts[4]);
+  return version.success
+    ? { kind, token, version: version.data }
+    : { kind: "malformed" };
+}
+
+export function parseCallback(raw: unknown): CallbackAction {
+  const parsed = CallbackSchema.safeParse(raw);
+  if (!parsed.success) return { kind: "malformed" };
+  const parts = parsed.data.split(":");
+  if (parts[0] !== "v1") return { kind: "outdated" };
+  if (parsed.data.startsWith(tracePrefix)) {
+    const inner = parseCallback(`v1:${parsed.data.slice(tracePrefix.length)}`);
+    return inner.kind === "malformed" || inner.kind === "outdated"
+      ? inner
+      : { ...inner, trace: true };
+  }
+  if (parsed.data === "v1:manage:menu") return { kind: "manage-menu" };
+  if (parsed.data === "v1:manage:hidden") return { kind: "manage-hidden" };
+  if (parsed.data === "v1:community:list") return { kind: "community" };
+  if (parsed.data === "v1:community:allow")
+    return { kind: "ask-allowed-username" };
+  if (parsed.data === "v1:nav:start") return { kind: "home" };
+  if (parsed.data === applyData) return { kind: "apply" };
+  if (parsed.data.startsWith(`${applyData}:`)) {
+    const code = parsed.data.slice(applyData.length + 1);
+    return /^[A-Za-z0-9_-]*$/.test(code)
+      ? { kind: "apply", sourceCode: code }
+      : { kind: "malformed" };
+  }
+  if (parsed.data === "v1:nav:settings") return { kind: "settings" };
+  if (parsed.data === "v1:nav:ext") return { kind: "settings-extensions" };
+  if (parsed.data === "v1:nav:help") return { kind: "help" };
+  if (parsed.data === "v1:nav:next") return { kind: "next" };
+  if (parts.length === 4 && parts[1] === "manage" && parts[2] === "g") {
+    const group = manageGroupOf(parts[3] ?? "");
+    return group === undefined
+      ? { kind: "malformed" }
+      : { kind: "manage-group", group };
+  }
+  if (parsed.data === "v1:nav:hub") return { kind: "hub" };
+  if (parsed.data === "v1:notify:global") return { kind: "notify-global" };
+  if (parsed.data === "v1:nav:archive") return { kind: "archive" };
+  if (parsed.data === "v1:sc:a") return { kind: "ask-source-channel" };
+  if (parts[1] === "sc" && parts[2] === "l" && parts.length <= 4) {
+    const page = PageSchema.safeParse(parts[3] ?? "0");
+    return page.success
+      ? { kind: "source-channels", page: page.data }
+      : { kind: "malformed" };
+  }
+  if (parts[1] === "q") {
+    const asked = parseAskedQuestion(parts);
+    if (asked !== undefined) return { kind: "question", ...asked };
+    const step = parseQuestionStep(parts);
+    return step === undefined
+      ? { kind: "malformed" }
+      : { kind: "question", step };
+  }
+  const listed = parseListPage(parts);
+  if (listed !== undefined) return listed;
+  if (parts.length === 3 && parts[1] === "ext") {
+    const extToken = TokenSchema.safeParse(parts[2]);
+    return extToken.success
+      ? { kind: "meetup-extensions", token: extToken.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 3 && parts[1] === "view") {
+    const viewToken = TokenSchema.safeParse(parts[2]);
+    return viewToken.success
+      ? { kind: "view-meetup", token: viewToken.data }
+      : { kind: "malformed" };
+  }
+  if (parts[1] === "mm") {
+    const meetupToken = TokenSchema.safeParse(parts[3]);
+    if (!meetupToken.success) return { kind: "malformed" };
+    if ((parts.length === 4 || parts.length === 5) && parts[2] === "list") {
+      if (parts[4] === undefined) {
+        return { kind: "manage-materials", token: meetupToken.data };
+      }
+      const page = PageSchema.safeParse(parts[4]);
+      return page.success
+        ? { kind: "manage-materials", token: meetupToken.data, page: page.data }
+        : { kind: "malformed" };
+    }
+    if (parts.length === 4 && parts[2] === "add") {
+      return { kind: "begin-attach-material", token: meetupToken.data };
+    }
+    if (parts.length === 4 && parts[2] === "no") {
+      return { kind: "decline-attach-material", token: meetupToken.data };
+    }
+    const materialToken = TokenSchema.safeParse(parts[4]);
+    if (!materialToken.success) return { kind: "malformed" };
+    // Подтверждения несут версию шестым сегментом. Прежние `confirm-add` и
+    // `confirm-rm` версии не несли, и Meetups отвергал их с 22.09: такая кнопка
+    // разбирается без версии, и экран перечитывает карточку вместо команды.
+    if (parts.length === 6 && (parts[2] === "ca" || parts[2] === "cr")) {
+      const version = VersionSchema.safeParse(parts[5]);
+      if (!version.success) return { kind: "malformed" };
+      return {
+        kind:
+          parts[2] === "ca"
+            ? "confirm-attach-material"
+            : "confirm-remove-material",
+        token: meetupToken.data,
+        materialToken: materialToken.data,
+        version: version.data,
+      };
+    }
+    if (parts.length !== 5) return { kind: "malformed" };
+    switch (parts[2]) {
+      case "confirm-add":
+        return {
+          kind: "confirm-attach-material",
+          token: meetupToken.data,
+          materialToken: materialToken.data,
+        };
+      case "rm":
+        return {
+          kind: "remove-material",
+          token: meetupToken.data,
+          materialToken: materialToken.data,
+        };
+      case "confirm-rm":
+        return {
+          kind: "confirm-remove-material",
+          token: meetupToken.data,
+          materialToken: materialToken.data,
+        };
+      case "file":
+        return {
+          kind: "open-material-file",
+          token: meetupToken.data,
+          materialToken: materialToken.data,
+        };
+      default:
+        return { kind: "malformed" };
+    }
+  }
+  if (parts[1] === "cm") {
+    return parseCommunity(parts);
+  }
+  if (parts[1] === "ad") {
+    return parseAdministrators(parts);
+  }
+  if (parts[1] === "aq") {
+    return parseApplicationQueue(parts, "auction");
+  }
+  // Кнопки состава одним списком из прошлого релиза. «Закрыть» там исполнялось
+  // сразу; теперь та же кнопка ведёт в подтверждение, как и новая. Допуск из
+  // состава ушёл в «Заявки» (PER-547), и его кнопка устарела.
+  if (parts.length === 4 && parts[1] === "community") {
+    const username = parts[3] ?? "";
+    if (parts[2] === "remove" && removableUsernamePattern.test(username)) {
+      return { kind: "remove-allowed-username", username, page: 0 };
+    }
+    const identityToken = TokenSchema.safeParse(parts[3]);
+    if (!identityToken.success) return { kind: "malformed" };
+    if (parts[2] === "admit") return { kind: "outdated" };
+    if (parts[2] === "block")
+      return {
+        kind: "ask-block-member",
+        token: identityToken.data,
+        place: firstMembersPage,
+      };
+  }
+  // Домен `notify` разбирается до общей проверки ниже: она требует токен в
+  // `parts[3]` и домен `manage`, а глобальный кадр токена не несёт вовсе.
+  if (parts[1] === "notify") {
+    return parseNotify(parts);
+  }
+  if (parts[1] === "bc") {
+    return parseBroadcast(parts);
+  }
+  if (parts[1] === "lot") {
+    return parseLot(parts);
+  }
+  if (parts[1] === "ac") {
+    return parseConsole(parts);
+  }
+  if (parts[1] === "faq") {
+    const auction = TokenSchema.safeParse(parts[2]);
+    return parts.length === 3 && auction.success
+      ? { kind: "auction-faq", auction: auction.data }
+      : { kind: "malformed" };
+  }
+  const token = TokenSchema.safeParse(parts[3]);
+  if (!token.success || parts[1] !== "manage") {
+    return { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "new")
+    return { kind: "create-meetup", token: token.data };
+  if (parts.length === 4 && parts[2] === "publish")
+    return { kind: "publish-meetup", token: token.data };
+  if (parts.length === 5 && parts[2] === "publish") {
+    const version = VersionSchema.safeParse(parts[4]);
+    return version.success
+      ? { kind: "publish-meetup", token: token.data, version: version.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "edit")
+    return { kind: "manage-edit", token: token.data };
+  if (parts.length === 5 && parts[2] === "field") {
+    const field = FormFieldSchema.safeParse(parts[4]);
+    return field.success
+      ? { kind: "manage-field", token: token.data, field: field.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "draft")
+    return { kind: "manage-draft", token: token.data };
+  if (parts.length === 5 && parts[2] === "draft") {
+    const field = FormFieldSchema.safeParse(parts[4]);
+    return field.success
+      ? { kind: "manage-draft", token: token.data, field: field.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 6 && parts[2] === "past") {
+    const mode = FormModeSchema.safeParse(parts[4]);
+    const digits = PastScheduleSchema.safeParse(parts[5]);
+    return mode.success && digits.success
+      ? {
+          kind: "manage-confirm-past-schedule",
+          token: token.data,
+          editing: mode.data === "e",
+          value: pastScheduleValue(digits.data),
+        }
+      : { kind: "malformed" };
+  }
+  if ((parts.length === 5 || parts.length === 6) && parts[2] === "when") {
+    const parsedMode = WhenModeSchema.safeParse(parts[4]);
+    if (!parsedMode.success) return { kind: "malformed" };
+    const mode = parsedMode.data;
+    const digits = parts[5];
+    if (digits === undefined) {
+      return { kind: "manage-pick-day", token: token.data, mode };
+    }
+    if (digits === "t") {
+      return { kind: "manage-type-schedule", token: token.data, mode };
+    }
+    // «Отмена» экрана выбора даты — обычный возврат на экран, с которого дату
+    // открыли: режима ответа у него нет, и снимать нечего.
+    if (digits === "x") {
+      return mode === "e"
+        ? { kind: "view-meetup", token: token.data }
+        : mode === "p"
+          ? { kind: "manage-status", token: token.data }
+          : { kind: "manage-draft", token: token.data };
+    }
+    const day = dayFromDigits(digits.slice(0, 8));
+    if (day === undefined) return { kind: "malformed" };
+    if (digits.length === 8) {
+      return {
+        kind: "manage-pick-day",
+        token: token.data,
+        mode,
+        picked: { digits, day },
+      };
+    }
+    return PastScheduleSchema.safeParse(digits).success
+      ? {
+          kind: "manage-pick-schedule",
+          token: token.data,
+          mode,
+          value: pastScheduleValue(digits),
+        }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 5 && parts[2] === "past-retry") {
+    const mode = FormModeSchema.safeParse(parts[4]);
+    return mode.success
+      ? {
+          kind: "manage-retry-past-schedule",
+          token: token.data,
+          editing: mode.data === "e",
+        }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "status")
+    return { kind: "manage-status", token: token.data };
+  if (parts.length === 4 && parts[2] === "auction")
+    return { kind: "manage-meetups", token: token.data };
+  if (parts.length === 4 && parts[2] === "republish")
+    return { kind: "manage-publish", token: token.data, origin: "status" };
+  // `d` — «Опубликовать» на черновике: «Нет» подтверждения вернёт на него.
+  if (parts.length === 5 && parts[2] === "republish" && parts[4] === "d")
+    return { kind: "manage-publish", token: token.data, origin: "draft" };
+  if (parts.length === 5 && parts[2] === "confirm-publish") {
+    const version = VersionSchema.safeParse(parts[4]);
+    return version.success
+      ? {
+          kind: "manage-confirm-publish",
+          token: token.data,
+          version: version.data,
+        }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "unpublish")
+    return { kind: "manage-unpublish", token: token.data };
+  if (parts[2] === "confirm-unpublish")
+    return stateConfirm("manage-confirm-unpublish", token.data, parts);
+  if (parts.length === 4 && parts[2] === "cancel")
+    return { kind: "manage-cancel", token: token.data };
+  if (parts[2] === "confirm-cancel")
+    return stateConfirm("manage-confirm-cancel", token.data, parts);
+  if (parts.length === 4 && parts[2] === "hold")
+    return { kind: "manage-hold", token: token.data };
+  if (parts[2] === "confirm-hold")
+    return stateConfirm("manage-confirm-hold", token.data, parts);
+  if (parts.length === 4 && parts[2] === "publish-later")
+    return {
+      kind: "manage-publish-later",
+      token: token.data,
+      origin: "status",
+    };
+  // `d` — кнопка стоит на черновике: «Отмена» вернёт на него, а не в «Статус».
+  if (parts.length === 5 && parts[2] === "publish-later" && parts[4] === "d")
+    return { kind: "manage-publish-later", token: token.data, origin: "draft" };
+  if (parts.length === 4 && parts[2] === "unschedule")
+    return { kind: "manage-unschedule", token: token.data };
+  if (parts[2] === "confirm-unschedule")
+    return stateConfirm("manage-confirm-unschedule", token.data, parts);
+  return { kind: "malformed" };
+}
+
+// Кнопки формы лота: `v1:lot:new:<аукцион>`, `v1:lot:form:<лот>`,
+// `v1:lot:view:<лот>`, `v1:lot:ask:<лот>:<поле>[:c]`,
+// `v1:lot:sm:<лот>:<цена>:<способ>[:c]` и `v1:lot:skip:<лот>`; `:c` — кнопка
+// цепочки нового лота (PER-618).
+function parseLot(parts: readonly string[]): CallbackAction {
+  const token = TokenSchema.safeParse(parts[3]);
+  if (!token.success) return { kind: "malformed" };
+  if (parts.length === 4 && parts[2] === "new") {
+    return { kind: "lot-new", auction: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "form") {
+    return { kind: "lot-form", lot: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "view") {
+    return { kind: "lot-view", lot: token.data };
+  }
+  if (parts.length === 4 && parts[2] === "skip") {
+    return { kind: "lot-skip", lot: token.data };
+  }
+  // Хвост цепочки — только `c` и только у цены и фото: у названия и описания
+  // цепочки нет.
+  const chain = (at: number) =>
+    parts.length === at + 1 && parts[at] === "c"
+      ? { chain: true as const }
+      : parts.length === at
+        ? {}
+        : undefined;
+  if (parts[2] === "ask") {
+    const field = LotFormFieldSchema.safeParse(parts[4]);
+    const tail = chain(5);
+    if (!field.success || tail === undefined) return { kind: "malformed" };
+    if (
+      tail.chain === true &&
+      field.data !== "price" &&
+      field.data !== "image"
+    ) {
+      return { kind: "malformed" };
+    }
+    return { kind: "lot-ask", lot: token.data, field: field.data, ...tail };
+  }
+  if (parts[2] === "sm") {
+    const price = RublesSchema.safeParse(parts[4]);
+    const mode = LotStepModeSchema.safeParse(parts[5]);
+    const tail = chain(6);
+    return price.success && mode.success && tail !== undefined
+      ? {
+          kind: "lot-step-mode",
+          lot: token.data,
+          price: price.data,
+          mode: mode.data,
+          ...tail,
+        }
+      : { kind: "malformed" };
+  }
+  return { kind: "malformed" };
+}
+
+// Кнопки пульта аукциона (PER-320): `v1:ac:v:<аукцион>[:<страница>]`,
+// `v1:ac:w:<аукцион>`, `v1:ac:f:<аукцион>:<0|1>`, `v1:ac:o:<аукцион>`,
+// `v1:ac:y:<аукцион>:<ключ>`, `v1:ac:x:<аукцион>`, `v1:ac:z:<аукцион>:<ключ>`
+// и `v1:ac:<s|d>:<аукцион>:<лот>:<страница>`. Состав финала (PER-619):
+// `v1:ac:l:<аукцион>`, `v1:ac:lo:<аукцион>:<отпечаток>:<порядок>[:<страница>]`
+// и `v1:ac:ly:<аукцион>:<отпечаток>:<порядок>`. Финал (PER-337):
+// `v1:ac:g:<аукцион>`, `v1:ac:n:<аукцион>`, `v1:ac:<a|c>:<аукцион>:<номер>` и
+// `v1:ac:k:<аукцион>:<номер>:<ключ>:<названное>`. «Счастливые часы»
+// (PER-504): `v1:ac:h:<аукцион>`, `v1:ac:ha:<аукцион>`,
+// `v1:ac:hw:<аукцион>:<окно>:<отпечаток>[:<страница>]`,
+// `v1:ac:<hs|hd>:<аукцион>:<окно>:<отпечаток>:<лот>` и
+// `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`. Розыгрыш (PER-593):
+// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`.
+function parseConsole(parts: readonly string[]): CallbackAction {
+  const auction = TokenSchema.safeParse(parts[3]);
+  if (!auction.success) return { kind: "malformed" };
+  const index = WindowIndexSchema.safeParse(parts[4]);
+  const print = WindowPrintSchema.safeParse(parts[5]);
+  const window =
+    index.success && print.success
+      ? { index: index.data, print: print.data }
+      : undefined;
+  switch (parts[2]) {
+    case "h":
+      return parts.length === 4
+        ? { kind: "console-windows", auction: auction.data }
+        : { kind: "malformed" };
+    case "ha":
+      return parts.length === 4
+        ? { kind: "console-window-ask", auction: auction.data }
+        : { kind: "malformed" };
+    case "hw": {
+      const page = PageSchema.safeParse(parts[6] ?? "0");
+      return (parts.length === 6 || parts.length === 7) &&
+        window !== undefined &&
+        page.success
+        ? {
+            kind: "console-window",
+            auction: auction.data,
+            window,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "hs":
+    case "hd": {
+      const lot = TokenSchema.safeParse(parts[6]);
+      return parts.length === 7 && window !== undefined && lot.success
+        ? {
+            kind: "console-window-lot",
+            auction: auction.data,
+            window,
+            lot: lot.data,
+            selected: parts[2] === "hs",
+          }
+        : { kind: "malformed" };
+    }
+    case "hx":
+      return parts.length === 6 && window !== undefined
+        ? { kind: "console-window-remove", auction: auction.data, window }
+        : { kind: "malformed" };
+    case "v": {
+      if (parts.length > 6) return { kind: "malformed" };
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      const sort =
+        parts.length === 6 ? parseConsoleSort(parts[5]) : defaultConsoleSort;
+      return page.success && sort !== undefined
+        ? { kind: "console-view", auction: auction.data, page: page.data, sort }
+        : { kind: "malformed" };
+    }
+    case "w":
+      return parts.length === 4
+        ? { kind: "console-week", auction: auction.data }
+        : { kind: "malformed" };
+    case "r":
+      return parts.length === 4
+        ? { kind: "console-raffle", auction: auction.data }
+        : { kind: "malformed" };
+    case "rx":
+      return parts.length === 4
+        ? { kind: "console-raffle-remove", auction: auction.data }
+        : { kind: "malformed" };
+    case "f": {
+      const final = TargetStateSchema.safeParse(parts[4]);
+      return parts.length === 5 && final.success
+        ? {
+            kind: "console-final",
+            auction: auction.data,
+            final: final.data === "1",
+          }
+        : { kind: "malformed" };
+    }
+    case "o":
+      return parts.length === 4
+        ? { kind: "console-open", auction: auction.data }
+        : { kind: "malformed" };
+    case "y": {
+      const op = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && op.success
+        ? { kind: "console-confirm", auction: auction.data, op: op.data }
+        : { kind: "malformed" };
+    }
+    case "x":
+      return parts.length === 4
+        ? { kind: "console-discard", auction: auction.data }
+        : { kind: "malformed" };
+    case "z": {
+      const op = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && op.success
+        ? {
+            kind: "console-discard-confirm",
+            auction: auction.data,
+            op: op.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "l":
+      return parts.length === 4
+        ? { kind: "console-lineup", auction: auction.data, page: 0 }
+        : { kind: "malformed" };
+    case "lo":
+    case "ly": {
+      const print = WindowPrintSchema.safeParse(parts[4]);
+      const order = LineupOrderSchema.safeParse(parts[5]);
+      if (!print.success || !order.success) return { kind: "malformed" };
+      const pick = { print: print.data, order: order.data };
+      if (parts[2] === "ly") {
+        return parts.length === 6 && pick.order.length > 0
+          ? { kind: "console-lineup-confirm", auction: auction.data, pick }
+          : { kind: "malformed" };
+      }
+      const page = PageSchema.safeParse(parts[6] ?? "0");
+      return (parts.length === 6 || parts.length === 7) && page.success
+        ? {
+            kind: "console-lineup",
+            auction: auction.data,
+            pick,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "g":
+      return parts.length === 4
+        ? { kind: "console-start-final", auction: auction.data }
+        : { kind: "malformed" };
+    case "n":
+      return parts.length === 4
+        ? { kind: "console-next-lot", auction: auction.data }
+        : { kind: "malformed" };
+    case "a":
+    case "c": {
+      const position = PositionSchema.safeParse(parts[4]);
+      return parts.length === 5 && position.success
+        ? {
+            kind: parts[2] === "a" ? "console-ask" : "console-close",
+            auction: auction.data,
+            position: position.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "k": {
+      const position = PositionSchema.safeParse(parts[4]);
+      const op = TokenSchema.safeParse(parts[5]);
+      const quote = QuoteSchema.safeParse(parts[6]);
+      return parts.length === 7 &&
+        position.success &&
+        op.success &&
+        quote.success
+        ? {
+            kind: "console-close-confirm",
+            auction: auction.data,
+            position: position.data,
+            op: op.data,
+            quote: quote.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "s":
+    case "d": {
+      const lot = TokenSchema.safeParse(parts[4]);
+      const page = PageSchema.safeParse(parts[5]);
+      const sort =
+        parts.length === 7 ? parseConsoleSort(parts[6]) : defaultConsoleSort;
+      return (parts.length === 6 || parts.length === 7) &&
+        lot.success &&
+        page.success &&
+        sort !== undefined
+        ? {
+            kind: "console-mark",
+            auction: auction.data,
+            lot: lot.data,
+            selected: parts[2] === "s",
+            page: page.data,
+            sort,
+          }
+        : { kind: "malformed" };
+    }
+    default:
+      return { kind: "malformed" };
+  }
+}
+
+// Telegram id пользователя: целое до 52 бит, не больше 16 цифр. Ноль — запасное
+// значение бота для update без `from`: «Отмена» под таким вопросом работает, а
+// ответ ни от кого не совпадёт с ним и будет отброшен.
+const TelegramIdSchema = z
+  .string()
+  .regex(/^(0|[1-9]\d{0,15})$/)
+  .transform(Number);
+
+// Кнопка с id спрашиваемого последней частью. Токен — 22 символа, поэтому за
+// id не сойдёт; версия материала без id — сойдёт, но шаг без последней части
+// тогда не разбирается, и кнопка читается как кнопка прошлого релиза.
+function parseAskedQuestion(
+  parts: readonly string[],
+): { step: QuestionStep; askedBy: number } | undefined {
+  const askedBy = TelegramIdSchema.safeParse(parts.at(-1));
+  if (!askedBy.success) return undefined;
+  const step = parseQuestionStep(parts.slice(0, -1));
+  return step === undefined ? undefined : { step, askedBy: askedBy.data };
+}
+
+function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
+  if (parts.length === 3 && parts[2] === "bc") return { kind: "broadcast" };
+  if (parts.length === 3 && parts[2] === "nick") return { kind: "username" };
+  if (parts.length === 3 && parts[2] === "an") return { kind: "administrator" };
+  if (parts.length === 3 && parts[2] === "cc") return { kind: "channel-code" };
+  if (parts.length === 3 && parts[2] === "cl") return { kind: "channel-label" };
+  const token = TokenSchema.safeParse(parts[3]);
+  if (!token.success) return undefined;
+  if (parts.length === 4) {
+    switch (parts[2]) {
+      case "lt":
+        return { kind: "lot-text", lot: token.data, field: "title" };
+      case "ld":
+        return { kind: "lot-text", lot: token.data, field: "description" };
+      case "lp":
+        return { kind: "lot-price", lot: token.data };
+      case "cp":
+        return { kind: "lot-price", lot: token.data, chain: true };
+      case "li":
+        return { kind: "lot-image", lot: token.data };
+      case "ci":
+        return { kind: "lot-image", lot: token.data, chain: true };
+      case "aw":
+        return { kind: "console-week", auction: token.data };
+      case "ar":
+        return { kind: "console-raffle", auction: token.data };
+      case "ah":
+        return { kind: "console-window", auction: token.data };
+      case "pm":
+        return { kind: "publish-moment", token: token.data, origin: "status" };
+      case "pd":
+        return { kind: "publish-moment", token: token.data, origin: "draft" };
+      case "mt":
+        return { kind: "material-title", token: token.data };
+      case "bm":
+        return { kind: "broadcast", token: token.data };
+      default:
+        return undefined;
+    }
+  }
+  if (parts.length !== 5) return undefined;
+  if (parts[2] === "ln") {
+    const key = LotKeySchema.safeParse(parts[4]);
+    return key.success
+      ? { kind: "lot-new", auction: token.data, key: key.data }
+      : undefined;
+  }
+  if (
+    parts[2] === "ls" ||
+    parts[2] === "ly" ||
+    parts[2] === "cs" ||
+    parts[2] === "cy"
+  ) {
+    const price = RublesSchema.safeParse(parts[4]);
+    const chain = parts[2] === "cs" || parts[2] === "cy";
+    return price.success
+      ? {
+          kind: "lot-step",
+          lot: token.data,
+          price: price.data,
+          mode: parts[2] === "ls" || parts[2] === "cs" ? "single" : "tiered",
+          ...(chain ? { chain: true as const } : {}),
+        }
+      : undefined;
+  }
+  if (parts[2] === "fa") {
+    const position = PositionSchema.safeParse(parts[4]);
+    return position.success
+      ? { kind: "final-ask", auction: token.data, position: position.data }
+      : undefined;
+  }
+  if (parts[2] === "ms") {
+    const version = VersionSchema.safeParse(parts[4]);
+    return version.success
+      ? { kind: "material-source", token: token.data, version: version.data }
+      : undefined;
+  }
+  if (parts[2] === "fe" || parts[2] === "fc") {
+    const field = FormFieldSchema.safeParse(parts[4]);
+    return field.success
+      ? {
+          kind: "field",
+          mode: parts[2] === "fe" ? "edit" : "create",
+          token: token.data,
+          field: field.data,
+        }
+      : undefined;
+  }
+  return undefined;
+}
+
+// Кнопка листания: `v1:nav:hub:<страница>`, `v1:nav:archive:<страница>`,
+// `v1:manage:hidden:<страница>`. Страница за пределами списка — не ошибка
+// разбора: экран откроет последнюю.
+function parseListPage(parts: readonly string[]): CallbackAction | undefined {
+  if (parts.length !== 4) return undefined;
+  const kind =
+    parts[1] === "nav" && parts[2] === "hub"
+      ? "hub"
+      : parts[1] === "nav" && parts[2] === "archive"
+        ? "archive"
+        : parts[1] === "manage" && parts[2] === "hidden"
+          ? "manage-hidden"
+          : undefined;
+  if (kind === undefined) return undefined;
+  const page = PageSchema.safeParse(parts[3]);
+  return page.success ? { kind, page: page.data } : { kind: "malformed" };
+}
+
+/// День из цифр кнопки `ДДММГГГГ`; день, которого нет в календаре, —
+/// `undefined`: такую кнопку бот не рисовал.
+function dayFromDigits(digits: string): CommunityDay | undefined {
+  if (!/^\d{8}$/.test(digits)) return undefined;
+  const day = {
+    year: Number(digits.slice(4, 8)),
+    month: Number(digits.slice(2, 4)),
+    day: Number(digits.slice(0, 2)),
+  };
+  const date = new Date(Date.UTC(day.year, day.month - 1, day.day));
+  return date.getUTCFullYear() === day.year &&
+    date.getUTCMonth() + 1 === day.month &&
+    date.getUTCDate() === day.day
+    ? day
+    : undefined;
+}
+
+/// Цифры кнопки обратно в тот вид, в котором дату вводят: форма разбирает и
+/// проверяет её тем же путём, что и ответ текстом.
+function pastScheduleValue(digits: string): string {
+  return `${digits.slice(0, 2)}.${digits.slice(2, 4)}.${digits.slice(4, 8)} ${digits.slice(8, 10)}:${digits.slice(10, 12)}`;
+}
+
+// Администраторы (PER-521): `l` — список, `n` — вопрос о нике, `ay` — «Да»
+// назначения с ником, `an` — его «Нет», `dq` и `dy` — подтверждение снятия и
+// его «Да» с токеном человека.
+function parseAdministrators(parts: readonly string[]): CallbackAction {
+  const malformed = { kind: "malformed" } as const;
+  const [, , verb, first, ...rest] = parts;
+  if (rest.length > 0) return malformed;
+  switch (verb) {
+    case "l":
+      return first === undefined ? { kind: "administrators" } : malformed;
+    case "n":
+      return first === undefined
+        ? { kind: "ask-appoint-administrator" }
+        : malformed;
+    case "an":
+      return first === undefined
+        ? { kind: "decline-appoint-administrator" }
+        : malformed;
+    case "ay":
+      return first !== undefined && removableUsernamePattern.test(first)
+        ? { kind: "confirm-appoint-administrator", username: first }
+        : malformed;
+    case "dq":
+    case "dy": {
+      const token = TokenSchema.safeParse(first);
+      if (!token.success) return malformed;
+      return verb === "dq"
+        ? { kind: "ask-dismiss-administrator", token: token.data }
+        : { kind: "dismiss-administrator", token: token.data };
+    }
+    default:
+      return malformed;
+  }
+}
+
+// Состав (PER-547): `l` — список с местом, `v` — карточка человека, `mg` и
+// `mv` — выдать и снять модерацию, `bq` и `by` — вопрос о закрытии доступа и
+// его «Да»; у карточки и её действий — токен человека и место в списке. `u` —
+// ники, `rm` — убрать ник. Отказанные: `r` — список, `rq` и `ry` — вопрос о
+// пересмотре и его «Да»; токен у них — заявки, а не человека. Карточка заявки:
+// `q` — первая или следующая за курсором, `qc` — та же, `qa` — допустить, `qd`
+// и `qy` — вопрос об отказе и его «Да». Кнопки прежних подэкранов ведут на
+// новые места: `p` — очередь в «Заявки», `a` — участники, `m` — модераторы,
+// `mc` — участники, у которых модерацию выдают с карточки; `ad` — допуск из
+// очереди состава — устарел.
+function parseCommunity(parts: readonly string[]): CallbackAction {
+  const malformed = { kind: "malformed" } as const;
+  if (parts.length > 5) return malformed;
+  const [, , verb, first, second] = parts;
+  switch (verb) {
+    case "q":
+    case "qc":
+    case "qa":
+    case "qd":
+    case "qy":
+    case "r":
+    case "rq":
+    case "ry":
+      return parseApplicationQueue(parts, "community");
+    case "l": {
+      if (second !== undefined) return malformed;
+      const place = parseCommunityPlace(first);
+      return place === undefined ? malformed : { kind: "community", place };
+    }
+    case "v":
+    case "mg":
+    case "mv":
+    case "bq":
+    case "by": {
+      const token = TokenSchema.safeParse(first);
+      if (!token.success) return malformed;
+      // Прежние `mg:<токен>:<страница кандидатов>` и `mv:<токен>` несли не
+      // место, а список, которого больше нет.
+      const place =
+        verb === "mg" && second !== undefined && /^\d{1,4}$/.test(second)
+          ? firstMembersPage
+          : verb === "mv" && second === undefined
+            ? { filter: "moderators" as const, page: 0 }
+            : parseCommunityPlace(second);
+      if (place === undefined) return malformed;
+      const kinds = {
+        v: "community-member",
+        mg: "grant-moderation",
+        mv: "revoke-moderation",
+        bq: "ask-block-member",
+        by: "block-member",
+      } as const;
+      return { kind: kinds[verb], token: token.data, place };
+    }
+    case "p":
+      if (second !== undefined) return malformed;
+      if (first !== undefined && !TokenSchema.safeParse(first).success) {
+        return malformed;
+      }
+      return { kind: "application-card", queue: "community" };
+    case "a":
+    case "mc": {
+      if (second !== undefined) return malformed;
+      const page = PageSchema.safeParse(first ?? "0");
+      if (!page.success) return malformed;
+      return {
+        kind: "community",
+        place: { filter: "members", page: verb === "a" ? page.data : 0 },
+      };
+    }
+    case "m":
+      return first === undefined
+        ? { kind: "community", place: { filter: "moderators", page: 0 } }
+        : malformed;
+    case "ad":
+      return TokenSchema.safeParse(first).success &&
+        (second === undefined || TokenSchema.safeParse(second).success)
+        ? { kind: "outdated" }
+        : malformed;
+    case "u": {
+      if (second !== undefined) return malformed;
+      const page = PageSchema.safeParse(first ?? "0");
+      return page.success
+        ? { kind: "community-usernames", page: page.data }
+        : malformed;
+    }
+    case "rm": {
+      const page = PageSchema.safeParse(first);
+      if (
+        !page.success ||
+        second === undefined ||
+        !removableUsernamePattern.test(second)
+      ) {
+        return malformed;
+      }
+      return {
+        kind: "remove-allowed-username",
+        username: second,
+        page: page.data,
+      };
+    }
+    default:
+      return malformed;
+  }
+}
+
+// Очередь заявок и её отказанные — одни глаголы у двух доменов: `cm` читает
+// очередь сообщества, `aq` — очередь аукциона (ADR-064, пункт 12). Очередь
+// едет доменом, а не полем: курсор одной очереди не ставит другую.
+function parseApplicationQueue(
+  parts: readonly string[],
+  queue: ApplicationQueue,
+): CallbackAction {
+  const malformed = { kind: "malformed" } as const;
+  if (parts.length > 5) return malformed;
+  const [, , verb, first, second] = parts;
+  switch (verb) {
+    case "q":
+    case "qc": {
+      if (verb === "q" && first === undefined) {
+        return { kind: "application-card", queue };
+      }
+      const cursor = parseCardCursor(first, second);
+      if (cursor === undefined) return malformed;
+      return {
+        kind: "application-card",
+        queue,
+        cursor,
+        from: verb === "q" ? "after" : "at",
+      };
+    }
+    case "qa":
+    case "qd":
+    case "qy": {
+      const cursor = parseCardCursor(first, second);
+      if (cursor === undefined) return malformed;
+      return {
+        kind:
+          verb === "qa"
+            ? "admit-application"
+            : verb === "qd"
+              ? "ask-decline-application"
+              : "decline-application",
+        queue,
+        cursor,
+      };
+    }
+    case "r": {
+      if (second !== undefined) return malformed;
+      const page = PageSchema.safeParse(first ?? "0");
+      return page.success
+        ? { kind: "refused-applications", queue, page: page.data }
+        : malformed;
+    }
+    case "rq":
+    case "ry": {
+      const token = TokenSchema.safeParse(first);
+      const page = PageSchema.safeParse(second);
+      if (!token.success || !page.success) return malformed;
+      return {
+        kind: verb === "rq" ? "ask-reconsider" : "reconsider",
+        queue,
+        token: token.data,
+        page: page.data,
+      };
+    }
+    default:
+      return malformed;
+  }
+}
+
+/** Домен кнопок очереди: `v1:cm` — сообщество, `v1:aq` — аукцион. */
+export function queueDomain(queue: ApplicationQueue): string {
+  return queue === "community" ? "v1:cm" : "v1:aq";
+}
+
+function parseBroadcast(parts: readonly string[]): CallbackAction {
+  if (parts.length === 3 && parts[2] === "c") {
+    return { kind: "begin-community-broadcast" };
+  }
+  if (parts.length === 3 && parts[2] === "no") {
+    return { kind: "cancel-broadcast" };
+  }
+  const first = TokenSchema.safeParse(parts[3]);
+  if (!first.success) return { kind: "malformed" };
+  if (parts.length === 4 && parts[2] === "m") {
+    return { kind: "begin-meetup-broadcast", token: first.data };
+  }
+  if (parts.length === 4 && parts[2] === "no") {
+    return { kind: "cancel-broadcast", token: first.data };
+  }
+  if (parts.length === 4 && parts[2] === "cs") {
+    return { kind: "confirm-community-broadcast", broadcastToken: first.data };
+  }
+  const second = TokenSchema.safeParse(parts[4]);
+  if (parts.length === 5 && parts[2] === "ms" && second.success) {
+    return {
+      kind: "confirm-meetup-broadcast",
+      token: first.data,
+      broadcastToken: second.data,
+    };
+  }
+  return { kind: "malformed" };
+}
+
+function parseNotify(parts: readonly string[]): CallbackAction {
+  if (parts.length === 3 && parts[2] === "outbid") {
+    return { kind: "notify-outbid" };
+  }
+  if (parts.length === 4 && parts[2] === "outbid") {
+    const frequency = OutbidFrequencySchema.safeParse(parts[3]);
+    return frequency.success
+      ? { kind: "notify-set-outbid", frequency: frequency.data }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "final") {
+    const state = TargetStateSchema.safeParse(parts[3]);
+    return state.success
+      ? { kind: "notify-set-final", enabled: state.data === "1" }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 5 && parts[2] === "gset") {
+    const category = GlobalCategorySchema.safeParse(parts[3]);
+    const state = TargetStateSchema.safeParse(parts[4]);
+    return category.success && state.success
+      ? {
+          kind: "notify-set-global",
+          category: category.data,
+          enabled: state.data === "1",
+        }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "off") {
+    const category = GlobalCategorySchema.safeParse(parts[3]);
+    return category.success
+      ? { kind: "notify-disable-global", category: category.data }
+      : { kind: "malformed" };
+  }
+  const token = TokenSchema.safeParse(parts[3]);
+  if (!token.success) return { kind: "malformed" };
+  if (parts.length === 4 && parts[2] === "settings") {
+    return { kind: "notify-settings", token: token.data };
+  }
+  if (parts.length === 5 && parts[2] === "moff") {
+    const category = NotifiedMeetupCategorySchema.safeParse(parts[4]);
+    return category.success
+      ? {
+          kind: "notify-disable-meetup",
+          token: token.data,
+          category: category.data,
+        }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 5 && parts[2] === "sub") {
+    const state = TargetStateSchema.safeParse(parts[4]);
+    return state.success
+      ? {
+          kind: "notify-subscription",
+          token: token.data,
+          subscribed: state.data === "1",
+        }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 6 && parts[2] === "set") {
+    // Только категории, которые сходка может нести: глобальные сюда не
+    // проходят, и `INVALID_ARGUMENT` за них не платится.
+    const category = MeetupCategorySchema.safeParse(parts[4]);
+    const state = TargetStateSchema.safeParse(parts[5]);
+    return category.success && state.success
+      ? {
+          kind: "notify-set-meetup",
+          token: token.data,
+          category: category.data,
+          enabled: state.data === "1",
+        }
+      : { kind: "malformed" };
+  }
+  return { kind: "malformed" };
+}

@@ -1,0 +1,61 @@
+namespace AppHost.Configuration;
+
+/// <summary>
+/// Одно логическое имя на узел: константа, имя ресурса Aspire, ключ профиля,
+/// аргумент `aspire wait` и имя в документации — одна и та же строка.
+/// </summary>
+public static class AppHostNames
+{
+    public static class Resources
+    {
+        public const string Postgres = "postgres";
+
+        // Одна база на сервис. Ресурс и база названы по-разному вынужденно:
+        // имена `identity` и `meetups` в пространстве ресурсов Aspire уже
+        // заняты самими сервисами, а база называется по своему владельцу.
+        public const string IdentityDb = "identity-db";
+        public const string IdentityDbName = "identity";
+        public const string MeetupsDb = "meetups-db";
+        public const string MeetupsDbName = "meetups";
+        public const string NotificationsDb = "notifications-db";
+        public const string NotificationsDbName = "notifications";
+        public const string AuctionDb = "auction-db";
+        public const string AuctionDbName = "auction";
+
+        public const string Nats = "nats";
+        public const string Loki = "loki";
+        public const string Grafana = "grafana";
+
+        public const string Identity = "identity";
+        public const string Meetups = "meetups";
+        public const string Notifications = "notifications";
+        public const string HubBot = "hub-bot";
+        public const string Auction = "auction";
+
+        // Бот аукциона (ADR-044).
+        public const string AuctionBot = "auction-bot";
+    }
+
+    /// <summary>
+    /// Имена endpoint-ов внутри ресурса. Имя читают и setup, и проба, и
+    /// документация, поэтому строке место здесь, а не в трёх литералах.
+    /// </summary>
+    public static class Endpoints
+    {
+        public const string Grpc = "grpc";
+        public const string Http = "http";
+    }
+
+    /// <summary>
+    /// Имя сервиса в <c>grpc.health.v1</c>, под которым компонент отвечает
+    /// готовностью: его база отвечает. Пустое имя у тех же компонентов —
+    /// liveness, и базу оно не спрашивает. Имя — полное имя основного
+    /// gRPC-сервиса контракта, как его ждёт спецификация grpc.health.
+    /// </summary>
+    public static class Readiness
+    {
+        public const string Identity = "identity.v1.IdentityService";
+        public const string Meetups = "meetups.v1.MeetupsService";
+        public const string Notifications = "notifications.v1.NotificationsService";
+    }
+}

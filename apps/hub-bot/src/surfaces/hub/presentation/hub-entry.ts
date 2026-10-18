@@ -1,0 +1,76 @@
+import {
+  type AuctionDenial,
+  applicationQueue,
+  decideEntry,
+} from "../../../auction-ui/index.js";
+import type { HubAccess } from "../application/hub-access.js";
+import type { DeepLink, Person } from "../application/types.js";
+import { viewerOf } from "../auction/port.js";
+import type {
+  RequestAccessInput,
+  RequestAccessResult,
+  ResolveIdentityInput,
+} from "../identity/port.js";
+
+// Вход на `/start` в боте хаба (ADR-060). Очередь и разбор исхода — политика
+// аукционного дерева, одна на оба бота (ADR-064, пересмотр ADR-044): хаб только
+// называет свою поверхность и переводит ответ в свои кадры.
+
+/**
+ * Запрос входа: очередь сообщества, имя для карточки модератора и код канала. Код
+ * несёт только payload `s_<код>` — ссылка на сходку и чужой payload его не
+ * несут, а пустой код после `s_` едет пустой строкой.
+ */
+export function hubAccessRequest(
+  person: ResolveIdentityInput & { firstName: string },
+  deepLink: DeepLink | undefined,
+): RequestAccessInput {
+  return {
+    telegramUserId: person.telegramUserId,
+    ...(person.telegramUsername === undefined
+      ? {}
+      : { telegramUsername: person.telegramUsername }),
+    queue: applicationQueue("hub"),
+    ...(deepLink?.kind === "source" ? { sourceCode: deepLink.code } : {}),
+    firstName: person.firstName,
+  };
+}
+
+// `in-community` политика хаба не отдаёт: право хаба его и пускает. Запись
+// есть только ради полноты словаря.
+const denials: Record<AuctionDenial, Exclude<HubAccess, "admitted">> = {
+  "not-admitted": "pending",
+  "in-community": "pending",
+  declined: "declined",
+  blocked: "blocked",
+};
+
+export type HubEntry =
+  | { kind: "decided"; person: Person; access: HubAccess }
+  // Исход, которого край не знает: ни допуска, ни ответа о заявке.
+  | { kind: "unknown-outcome"; identityId: string };
+
+export function decideHubEntry(
+  answer: Extract<RequestAccessResult, { kind: "answered" }>,
+): HubEntry {
+  const person = {
+    identityId: answer.identityId,
+    rights: answer.rights,
+  };
+  const entry = decideEntry("hub", {
+    viewer: viewerOf(person),
+    outcome: answer.outcome,
+  });
+  switch (entry.kind) {
+    case "entered":
+      return { kind: "decided", person, access: "admitted" };
+    case "denied":
+      return { kind: "decided", person, access: denials[entry.reason] };
+    case "unknown-outcome":
+      return entry;
+    default: {
+      const _exhaustive: never = entry;
+      return _exhaustive;
+    }
+  }
+}

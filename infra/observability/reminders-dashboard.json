@@ -1,0 +1,63 @@
+{
+  "uid": "notifications-reminders",
+  "title": "Notifications reminders",
+  "tags": ["notifications", "reminders"],
+  "schemaVersion": 41,
+  "version": 1,
+  "refresh": "30s",
+  "time": {"from": "now-30m", "to": "now"},
+  "panels": [
+    {
+      "id": 1,
+      "title": "Sweeper ticks in 2 minutes (0 = silent)",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "expr": "sum(count_over_time({service_name=~\u0022.*[Nn]otifications.*\u0022} |= \u0022reminder_sweep\u0022 [2m])) or vector(0)", "queryType": "instant"}],
+      "fieldConfig": {"defaults": {"thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "background", "graphMode": "none", "justifyMode": "center"}
+    },
+    {
+      "id": 2,
+      "title": "Last successful sweep",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "expr": "max(last_over_time({service_name=~\u0022.*[Nn]otifications.*\u0022} |= \u0022reminder_sweep\u0022 | json | last_successful_sweep_unix_seconds > 0 | unwrap last_successful_sweep_unix_seconds | __error__=\u0022\u0022 [10m])) * 1000", "queryType": "instant"}],
+      "fieldConfig": {"defaults": {"unit": "dateTimeAsIso"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "none", "justifyMode": "center"}
+    },
+    {
+      "id": 3,
+      "title": "Oldest overdue task",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 12, "y": 0},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "expr": "max(last_over_time({service_name=~\u0022.*[Nn]otifications.*\u0022} |= \u0022reminder_sweep\u0022 | json | unwrap oldest_due_age_seconds | __error__=\u0022\u0022 [2m]))", "queryType": "instant"}],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "none", "justifyMode": "center"}
+    },
+    {
+      "id": 4,
+      "title": "Fired / removed since service start",
+      "type": "stat",
+      "gridPos": {"h": 8, "w": 6, "x": 18, "y": 0},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [
+        {"refId": "A", "expr": "max(last_over_time({service_name=~\u0022.*[Nn]otifications.*\u0022} |= \u0022reminder_sweep\u0022 | json | unwrap fired_total | __error__=\u0022\u0022 [2m]))", "legendFormat": "fired", "queryType": "instant"},
+        {"refId": "B", "expr": "max(last_over_time({service_name=~\u0022.*[Nn]otifications.*\u0022} |= \u0022reminder_sweep\u0022 | json | unwrap removed_total | __error__=\u0022\u0022 [2m]))", "legendFormat": "removed", "queryType": "instant"}
+      ],
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {"reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "colorMode": "value", "graphMode": "none", "justifyMode": "center"}
+    },
+    {
+      "id": 5,
+      "title": "Sweeper snapshots",
+      "type": "logs",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 8},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "expr": "{service_name=~\u0022.*[Nn]otifications.*\u0022} |= \u0022reminder_sweep\u0022", "queryType": "range"}],
+      "options": {"showTime": true, "showLabels": false, "showCommonLabels": false, "wrapLogMessage": true, "sortOrder": "Descending"}
+    }
+  ]
+}

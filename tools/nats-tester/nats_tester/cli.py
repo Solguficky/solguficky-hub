@@ -4,32 +4,20 @@ import asyncio
 import json
 import subprocess
 import sys
-from pathlib import Path
-from typing import Optional, Type
+from typing import Optional
 
 import click
 from google.protobuf import json_format
-from google.protobuf.message import Message
+from google.protobuf.message import DecodeError
 import nats
+
+from nats_tester import gate
+from nats_tester.registry import ALL_MESSAGE_TYPES, COMMAND_TYPES, EVENT_TYPES
 
 try:
     from uuid import uuid7  # Python 3.14+
 except ImportError:
     from uuid6 import uuid7
-
-
-# Реестр subjects: subject -> сгенерированный класс сообщения.
-#
-# Пуст: принятых NATS-контрактов в contracts/proto пока нет. Единственная
-# схема, identity/v1, обслуживает gRPC и subject не имеет.
-#
-# Запись добавляется вместе с принятием контракта, одновременно с
-# docs/architecture/integration.md.
-EVENT_TYPES: dict[str, Type[Message]] = {}
-
-COMMAND_TYPES: dict[str, Type[Message]] = {}
-
-ALL_MESSAGE_TYPES = {**EVENT_TYPES, **COMMAND_TYPES}
 
 
 @click.group()
@@ -49,8 +37,17 @@ def cli():
 
         # Watch everything on the bus
         nats-tester subscribe
+
+        # Read a durable JetStream consumer, flagging repeats by event_id
+        nats-tester consume --stream MEETUPS_EVENTS --durable nats-tester-meetups-events
     """
-    pass
+    # Вывод несёт эмодзи, а на Windows поток, перенаправленный в пайп — Git
+    # Bash, just, — берёт кодировку ANSI-страницы, cp1251, и первая же строка
+    # падает с UnicodeEncodeError. Терминал Git Bash (mintty) читает UTF-8, а
+    # настоящая консоль Windows пишет его и так. Поток без reconfigure не трогаем.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, 'reconfigure'):
+            stream.reconfigure(encoding='utf-8')
 
 
 @cli.command()
@@ -61,7 +58,12 @@ def cli():
               help='NATS subject to publish to')
 @click.option('--event-type',
               help='Message type (auto-detected from subject if not specified)')
-def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[str]):
+@click.option('--msg-id',
+              help='Nats-Msg-Id header; defaults to event_id from the JSON')
+@click.option('--no-msg-id', is_flag=True,
+              help='Publish without Nats-Msg-Id, bypassing JetStream server-side dedup')
+def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[str],
+            msg_id: Optional[str], no_msg_id: bool):
     """Publish event from JSON file to NATS.
 
     Reads JSON file, encodes it to Protobuf, and publishes to NATS.
@@ -145,12 +147,20 @@ def publish(json_file: str, nats_url: str, subject: str, event_type: Optional[st
     try:
         click.echo("✓ Publishing to NATS...")
 
+        # Nats-Msg-Id = event_id — то же правило, что у адаптеров публикации:
+        # JetStream отбрасывает повтор внутри окна дедупликации стрима. Флаг
+        # --no-msg-id снимает заголовок, чтобы повтор дошёл до потребителя и
+        # проверялась уже его дедупликация.
+        # Из разобранного сообщения, а не из JSON: json_format принимает и
+        # event_id, и eventId, и ключ файла не обязан совпадать с именем поля.
+        header_id = None if no_msg_id else (msg_id or getattr(event, 'event_id', None))
+        command = ['nats', 'pub', subject, '--server', nats_url, '--force-stdin']
+        if header_id:
+            command += ['--header', f'Nats-Msg-Id:{header_id}']
+            click.echo(f"✓ Nats-Msg-Id: {header_id}")
+
         result = subprocess.run(
-            [
-                'nats', 'pub', subject,
-                '--server', nats_url,
-                '--force-stdin'
-            ],
+            command,
             input=protobuf_data,
             check=True,
             capture_output=True
@@ -274,10 +284,146 @@ async def _subscribe_async(nats_url: str, subject: str):
 
 
 @cli.command()
+@click.option('--nats-url', default='nats://localhost:4222',
+              help='NATS server URL')
+@click.option('--stream', required=True,
+              help='JetStream stream, e.g. MEETUPS_EVENTS')
+@click.option('--durable', required=True,
+              help='Existing durable consumer, e.g. nats-tester-meetups-events')
+@click.option('--drain', is_flag=True,
+              help='Exit once the durable has nothing pending instead of waiting')
+def consume(nats_url: str, stream: str, durable: str, drain: bool):
+    """Read a durable JetStream consumer, ack and flag repeats by event_id.
+
+    Binds to a durable declared by the AppHost topology, not a new one: the
+    position lives on the server, so a restart continues after the last acked
+    message. A second message with an already seen event_id is reported as a
+    duplicate and acked without being applied — the consumer-side dedup rule.
+    Seen ids live in memory for this run only.
+
+    \b
+    Examples:
+        nats-tester consume --stream MEETUPS_EVENTS --durable nats-tester-meetups-events
+        nats-tester consume --stream IDENTITY_EVENTS --durable nats-tester-identity-events --drain
+    """
+    try:
+        asyncio.run(_consume_async(nats_url, stream, durable, drain))
+    except KeyboardInterrupt:
+        pass
+
+
+async def _consume_async(nats_url: str, stream: str, durable: str, drain: bool):
+    """Async implementation of consume."""
+    click.echo(click.style(f"📥 Consuming {stream} as durable {durable}", fg='cyan', bold=True))
+
+    seen: set[str] = set()
+    applied = 0
+    duplicates = 0
+    rejected = 0
+
+    try:
+        nc = await nats.connect(nats_url)
+        js = nc.jetstream()
+        sub = await js.pull_subscribe_bind(durable=durable, stream=stream)
+
+        while True:
+            try:
+                messages = await sub.fetch(10, timeout=1)
+            except nats.errors.TimeoutError:
+                if drain:
+                    break
+                continue
+
+            for msg in messages:
+                sequence = msg.metadata.sequence.stream
+                try:
+                    event_id = _event_id(msg.subject, msg.data)
+                except DecodeError as e:
+                    # term, а не ack и не выход: без него сервер возвращал бы
+                    # сообщение после AckWait бесконечно, и durable застревал.
+                    rejected += 1
+                    click.secho(f"⛔ #{sequence} {msg.subject} undecodable, terminated: {e}", fg='red')
+                    await msg.term()
+                    continue
+                if event_id is not None and event_id in seen:
+                    duplicates += 1
+                    click.secho(f"🔁 #{sequence} {msg.subject} event_id={event_id} DUPLICATE, skipped", fg='yellow')
+                else:
+                    applied += 1
+                    if event_id is not None:
+                        seen.add(event_id)
+                    click.secho(f"✅ #{sequence} {msg.subject} event_id={event_id} applied", fg='green')
+                # Ack и у повтора: он обработан — распознан и пропущен. Без ack
+                # сервер вернул бы его снова после AckWait.
+                await msg.ack()
+
+    except (KeyboardInterrupt, asyncio.CancelledError):
+        pass
+    except Exception as e:
+        click.secho(f"❌ Error: {e}", fg='red')
+        sys.exit(1)
+    finally:
+        if 'nc' in locals():
+            await nc.close()
+
+    click.echo(f"Applied {applied}, duplicates {duplicates}, undecodable {rejected}.")
+
+
+def _event_id(subject: str, data: bytes) -> Optional[str]:
+    """event_id конверта, если subject известен реестру и сообщение его несёт."""
+    message_class = ALL_MESSAGE_TYPES.get(subject)
+    if message_class is None:
+        return None
+    message = message_class()
+    message.ParseFromString(data)
+    return getattr(message, 'event_id', None) or None
+
+
+@cli.command()
+@click.option('--nats-url', default='nats://localhost:4222',
+              help='NATS server URL')
+def streams(nats_url: str):
+    """Show JetStream streams and their durable consumers.
+
+    Confirms that the AppHost applied the topology: stream subjects, retention,
+    max age and, per durable, how many messages are pending and unacked.
+    """
+    asyncio.run(_streams_async(nats_url))
+
+
+async def _streams_async(nats_url: str):
+    """Async implementation of streams."""
+    try:
+        nc = await nats.connect(nats_url)
+        js = nc.jetstream()
+        for info in await js.streams_info():
+            config = info.config
+            click.secho(f"{config.name}", fg='cyan', bold=True)
+            click.echo(f"   subjects:  {', '.join(config.subjects or [])}")
+            # nats-py отдаёт retention и storage то enum'ом, то строкой — по версии.
+            retention = getattr(config.retention, 'value', config.retention)
+            storage = getattr(config.storage, 'value', config.storage)
+            click.echo(f"   retention: {retention}, storage: {storage}, "
+                       f"max_age: {config.max_age}s, duplicate_window: {config.duplicate_window}s")
+            click.echo(f"   messages:  {info.state.messages}")
+            for consumer in await js.consumers_info(config.name):
+                ack_floor = consumer.ack_floor.stream_seq if consumer.ack_floor else 0
+                click.echo(f"   durable {consumer.name}: pending {consumer.num_pending}, "
+                           f"unacked {consumer.num_ack_pending}, ack floor {ack_floor}")
+    except Exception as e:
+        click.secho(f"❌ Error: {e}", fg='red')
+        sys.exit(1)
+    finally:
+        if 'nc' in locals():
+            await nc.close()
+
+
+@cli.command()
 def check():
     """Check if required tools are installed.
 
-    Verifies that nats CLI is available and protobuf classes are generated.
+    Verifies that nats CLI is available and that the generated classes pass
+    the gate checks: import, generation set and registry.
     """
     click.echo(click.style("🔍 Checking required tools", fg='cyan', bold=True))
     click.echo()
@@ -293,14 +439,18 @@ def check():
         click.echo("   Install: go install github.com/nats-io/natscli/nats@latest")
         all_ok = False
 
-    # Check generated protobuf files
-    generated_dir = Path(__file__).parent / 'generated'
-    if generated_dir.exists():
-        click.secho(f"✅ protobuf: generated classes found", fg='green')
-    else:
-        click.secho("❌ protobuf: generated classes not found", fg='red')
-        click.echo("   Run: python generate_proto.py")
+    # Проверки сгенерированных классов: импорт, состав генерации и согласие с
+    # реестром. Их же гоняет `just nats-tester-check` в `verify`: расхождение
+    # не должно существовать в двух версиях — ручной и машинной.
+    problems = gate.check()
+    if problems:
+        click.secho("❌ protobuf: generated classes are out of sync", fg='red')
+        for problem in problems:
+            click.echo(f"   {problem}")
+        click.echo("   See README, «Troubleshooting»")
         all_ok = False
+    else:
+        click.secho("✅ protobuf: generated classes import and match the bus schemas", fg='green')
 
     click.echo()
     if all_ok:
@@ -394,7 +544,7 @@ def list_types():
     total = len(EVENT_TYPES) + len(COMMAND_TYPES)
     click.echo(f"Total: {total} message type(s)")
     click.echo()
-    click.echo("To add new types, edit EVENT_TYPES or COMMAND_TYPES in cli.py")
+    click.echo("To add new types, edit EVENT_TYPES or COMMAND_TYPES in registry.py")
 
 
 def _check_tool(tool_name: str) -> bool:

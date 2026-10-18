@@ -1,0 +1,126 @@
+module Meetups.MigrationsTests
+
+open Swensen.Unquote
+open Xunit
+
+[<Fact>]
+let ``Embedded migrations are numbered from one without gaps`` () =
+    let versions =
+        Meetups.Migrations.list ()
+        |> List.map (fun migration -> migration.Version)
+
+    test <@ versions = [ 1 .. versions.Length ] @>
+
+[<Fact>]
+let ``The first migration creates both meetup tables`` () =
+    let sql = (Meetups.Migrations.list () |> List.head).Sql
+
+    test
+        <@
+            sql.Contains("CREATE TABLE IF NOT EXISTS meetups")
+            && sql.Contains("CREATE TABLE IF NOT EXISTS meetup_events")
+        @>
+
+[<Fact>]
+let ``The second migration turns the journal into a dispatchable queue`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 1).Sql
+
+    test
+        <@
+            sql.Contains("ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ")
+            && sql.Contains("CREATE INDEX IF NOT EXISTS meetup_events_pending_dispatch")
+            && sql.Contains("WHERE dispatched_at IS NULL")
+            && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_record_immutable")
+            && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_row_undeletable")
+            && sql.Contains("CREATE OR REPLACE TRIGGER meetup_events_untruncatable")
+            && sql.Contains("ERRCODE = 'MT001'")
+            && sql.Contains("ERRCODE = 'MT002'")
+        @>
+
+[<Fact>]
+let ``The fourth migration admits every state transition event`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 3).Sql
+
+    test
+        <@
+            sql.Contains("meetup_unpublished")
+            && sql.Contains("meetup_republished")
+            && sql.Contains("meetup_cancelled")
+        @>
+
+[<Fact>]
+let ``The fifth migration admits the held transition event`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 4).Sql
+
+    test <@ sql.Contains("meetup_held") @>
+
+/// Материалы — колонка состояния, а не вторая таблица: порядок коллекции держит
+/// массив, а целостность элементов — домен. Журнал получает два новых повода.
+[<Fact>]
+let ``The sixth migration adds the material collection and its events`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 5).Sql
+
+    test
+        <@
+            sql.Contains("ADD COLUMN IF NOT EXISTS materials JSONB NOT NULL DEFAULT '[]'::jsonb")
+            && sql.Contains("meetups_materials_array")
+            && sql.Contains("meetup_material_attached")
+            && sql.Contains("meetup_material_removed")
+        @>
+
+[<Fact>]
+let ``The seventh migration admits the publication moment events`` () =
+    let sql = (Meetups.Migrations.list () |> List.item 6).Sql
+
+    test
+        <@
+            sql.Contains("meetup_publication_scheduled")
+            && sql.Contains("meetup_publication_cancelled")
+            && sql.Contains("meetups_scheduled_publish_not_cancelled")
+        @>
+
+[<Fact>]
+let ``A postgres URI becomes a keyword connection string`` () =
+    let cs =
+        Meetups.Migrations.connectionString "postgres://postgres:secret@127.0.0.1:5432/meetups?sslmode=disable"
+
+    test
+        <@
+            cs.Contains("Host=127.0.0.1")
+            && cs.Contains("Database=meetups")
+            && cs.Contains("Password=secret")
+        @>
+
+[<Fact>]
+let ``A postgres URI keeps a password that contains a colon`` () =
+    let cs =
+        Meetups.Migrations.connectionString "postgres://user:sec:ret@127.0.0.1:5432/meetups?sslmode=disable"
+
+    test <@ cs.Contains("Password=sec:ret") @>
+
+[<Fact>]
+let ``A stricter sslmode survives the translation`` () =
+    let cs =
+        Meetups.Migrations.connectionString "postgres://user:secret@db:5432/meetups?sslmode=verify-full"
+
+    test <@ cs.Contains("VerifyFull") @>
+
+[<Fact>]
+let ``A libpq parameter reaches its Npgsql keyword`` () =
+    let cs =
+        Meetups.Migrations.connectionString
+            "postgres://user:secret@db:5432/meetups?sslmode=require&application_name=meetups"
+
+    test
+        <@
+            cs.Contains("Application Name=meetups")
+            && cs.Contains("Require")
+        @>
+
+[<Fact>]
+let ``An unsupported parameter is refused instead of dropped`` () =
+    raises<exn> <@ Meetups.Migrations.connectionString "postgres://user:secret@db:5432/meetups?fsync=off" @>
+
+[<Fact>]
+let ``An unsupported sslmode value is refused instead of downgraded`` () =
+    raises<exn> <@ Meetups.Migrations.connectionString "postgres://user:secret@db:5432/meetups?sslmode=verify-most" @>

@@ -6,7 +6,45 @@
 # Скрипты хуков и CI выполняются через sh: CRLF в них ломает shebang.
 *.sh text eol=lf
 
+# gofmt и gofumpt считают CRLF нарушением формата. Без eol=lf рабочее дерево
+# Windows получает CRLF из индекса, и `just identity-lint` падает на каждом
+# .go-файле, хотя в индексе и на Linux-раннере CI тот же файл отформатирован.
+*.go text eol=lf
+
+# Biome форматирует переводом строки LF и считает CRLF нарушением формата — та же
+# история, что с gofmt выше. Без eol=lf `just hub-bot-lint` на Windows падает
+# на всех файлах пакета сразу, хотя в индексе и на Linux-раннере CI они в порядке.
+*.ts text eol=lf
+*.mts text eol=lf
+*.mjs text eol=lf
+*.json text eol=lf
+
+# scalafmt переписывает файл переводом строки из настройки, а не из рабочего
+# дерева, поэтому на Windows `just auction-lint` иначе печатает весь компонент
+# как неотформатированный — та же история, что с gofmt и Biome выше.
+*.scala text eol=lf
+*.sbt text eol=lf
+
+# Версию JDK читает setup-java как содержимое файла целиком: хвостовой \r
+# из рабочего дерева Windows доехал бы до него частью номера версии.
+.java-version text eol=lf
+
 # Файл исключений skillshare сравнивается по строкам буквально: CRLF из рабочего
 # дерева Windows превращает каждое имя в `code-review\r`, и sync перестаёт
 # исключать хоть что-нибудь, молча раскладывая выключенные скиллы по таргетам.
 .skillignore text eol=lf
+
+# Конфигурация MCP каждого агента генерируется из .rulesync/mcp.jsonc и
+# проверяется командой `just check-mcp`. В review читается источник, а не его
+# переводы. `.codex/config.toml` и `opencode.jsonc` принадлежат rulesync целиком.
+.mcp.json diff linguist-generated=true
+.cursor/mcp.json diff linguist-generated=true
+.codex/config.toml diff linguist-generated=true
+.vscode/mcp.json diff linguist-generated=true
+opencode.jsonc diff linguist-generated=true
+
+# Команды каждого агента генерируются из .rulesync/commands/ и проверяются
+# командой `just check-commands`. Здесь та же причина: перевод команды в форму
+# конкретного харнеса читается в источнике.
+.claude/commands/*.md diff linguist-generated=true
+.opencode/commands/*.md diff linguist-generated=true

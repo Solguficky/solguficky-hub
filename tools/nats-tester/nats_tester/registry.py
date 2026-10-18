@@ -1,0 +1,93 @@
+"""Реестр subjects: subject -> сгенерированный класс сообщения.
+
+Запись добавляется вместе с принятием контракта — одновременно с
+`docs/architecture/integration.md` и `NATS_PROTO_FILES` в `proto_sources.py`.
+
+Схемы `identity/v1/identity_service.proto`, `meetups/v1/meetups_service.proto`,
+`notifications/v1/notifications_service.proto` и `auction/v1/auction_service.proto`
+обслуживают gRPC и в реестр не попадают: subject у них не бывает. Классы
+`meetups/v1/meetups.proto`, `identity/v1/access.proto` и `auction/v1/auction.proto`
+собираются как payload: их импортируют схемы событий своих доменов, и без них
+те не импортируются.
+
+У Meetups, Identity и Auction subject называет повод, и повод живёт в ветке
+`oneof` тоже, поэтому потребитель на `events.meetups.>` или `events.identity.>`
+разбирает ветку, а не строку subject'а. Имя subject'а — префикс домена плюс имя
+ветки `oneof occasion`, и это соответствие проверяет `gate.subject_problems()`:
+до него оно держалось на слове в этом комментарии.
+
+У Meetups и Identity сообщение на всех поводах домена одно. У Auction их четыре —
+`LotEvent` у поводов лота, `AuctionEvent` у поводов аукциона, `InvoiceEvent`
+у поводов счёта и `RaffleEvent` у поводов розыгрыша — под одним
+префиксом `events.auction.`, поэтому там тип сообщения читается из этого реестра
+по subject'у до разбора ветки, а не после.
+"""
+
+from typing import Type
+
+from google.protobuf.message import Message
+
+from nats_tester.generated.auction.v1 import auction_events_pb2
+from nats_tester.generated.identity.v1 import identity_events_pb2
+from nats_tester.generated.meetups.v1 import meetups_events_pb2
+from nats_tester.generated.notifications.v1 import notifications_pb2
+
+EVENT_TYPES: dict[str, Type[Message]] = {
+    'events.notifications.notification_created.hub': notifications_pb2.Notification,
+    'events.notifications.notification_created.auction': notifications_pb2.Notification,
+    'events.identity.profile_registered': identity_events_pb2.IdentityEvent,
+    'events.identity.profile_blocked': identity_events_pb2.IdentityEvent,
+    'events.identity.profile_unblocked': identity_events_pb2.IdentityEvent,
+    'events.identity.application_submitted': identity_events_pb2.IdentityEvent,
+    'events.identity.application_admitted': identity_events_pb2.IdentityEvent,
+    'events.identity.right_granted': identity_events_pb2.IdentityEvent,
+    'events.identity.right_revoked': identity_events_pb2.IdentityEvent,
+    'events.identity.circle_changed': identity_events_pb2.IdentityEvent,
+    'events.identity.preset_granted': identity_events_pb2.IdentityEvent,
+    'events.identity.preset_revoked': identity_events_pb2.IdentityEvent,
+    'events.meetups.meetup_created': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_changed': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_published': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_unpublished': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_republished': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_publication_scheduled': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_publication_cancelled': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_cancelled': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_material_attached': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_material_removed': meetups_events_pb2.MeetupEvent,
+    'events.meetups.meetup_held': meetups_events_pb2.MeetupEvent,
+    'events.auction.lot_opened': auction_events_pb2.LotEvent,
+    'events.auction.bid_placed': auction_events_pb2.LotEvent,
+    'events.auction.ask_advanced': auction_events_pb2.LotEvent,
+    'events.auction.deadline_extended': auction_events_pb2.LotEvent,
+    'events.auction.lot_sold': auction_events_pb2.LotEvent,
+    'events.auction.lot_unsold': auction_events_pb2.LotEvent,
+    'events.auction.lot_withdrawn': auction_events_pb2.LotEvent,
+    'events.auction.lot_held_for_final': auction_events_pb2.LotEvent,
+    'events.auction.lot_resumed': auction_events_pb2.LotEvent,
+    'events.auction.lot_drafted': auction_events_pb2.LotEvent,
+    'events.auction.lot_scheduled': auction_events_pb2.LotEvent,
+    'events.auction.auction_drafted': auction_events_pb2.AuctionEvent,
+    'events.auction.auction_scheduled': auction_events_pb2.AuctionEvent,
+    'events.auction.lot_added': auction_events_pb2.AuctionEvent,
+    'events.auction.lot_removed': auction_events_pb2.AuctionEvent,
+    'events.auction.prebidding_started': auction_events_pb2.AuctionEvent,
+    'events.auction.prebidding_deadline_reached': auction_events_pb2.AuctionEvent,
+    'events.auction.prebidding_ended': auction_events_pb2.AuctionEvent,
+    'events.auction.final_lineup_frozen': auction_events_pb2.AuctionEvent,
+    'events.auction.final_started': auction_events_pb2.AuctionEvent,
+    'events.auction.final_lot_activated': auction_events_pb2.AuctionEvent,
+    'events.auction.final_lot_completed': auction_events_pb2.AuctionEvent,
+    'events.auction.auction_finished': auction_events_pb2.AuctionEvent,
+    'events.auction.auction_discarded': auction_events_pb2.AuctionEvent,
+    'events.auction.auction_cancelled': auction_events_pb2.AuctionEvent,
+    'events.auction.invoice_issued': auction_events_pb2.InvoiceEvent,
+    'events.auction.invoice_paid': auction_events_pb2.InvoiceEvent,
+    'events.auction.invoice_handed_over': auction_events_pb2.InvoiceEvent,
+    'events.auction.raffle_drawn': auction_events_pb2.RaffleEvent,
+    'events.auction.prediction_results_settled': auction_events_pb2.PredictionResultsEvent,
+}
+
+COMMAND_TYPES: dict[str, Type[Message]] = {}
+
+ALL_MESSAGE_TYPES = {**EVENT_TYPES, **COMMAND_TYPES}

@@ -4,50 +4,816 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Ручной запуск для случая, когда push не создал прогон сам: например,
+  # ветку двигал GitHub App. Кнопка Run workflow появляется, только когда
+  # этот триггер есть в ci.yml на ветке по умолчанию (develop).
+  workflow_dispatch:
 
 jobs:
+  # Фильтр путей сравнивает ветку с базой, и у ручного запуска такой базы нет,
+  # поэтому на нём джоба пропускается целиком, а зависимые запускаются по
+  # github.event_name.
   changes:
+    if: github.event_name != 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       pull-requests: read
     outputs:
+      contracts: ${{ steps.filter.outputs.contracts }}
       identity: ${{ steps.filter.outputs.identity }}
+      meetups: ${{ steps.filter.outputs.meetups }}
+      notifications: ${{ steps.filter.outputs.notifications }}
+      hub-bot: ${{ steps.filter.outputs.hub-bot }}
+      apphost: ${{ steps.filter.outputs.apphost }}
+      community-site-api: ${{ steps.filter.outputs.community-site-api }}
+      bot-console: ${{ steps.filter.outputs.bot-console }}
+      auction-seed: ${{ steps.filter.outputs.auction-seed }}
+      auction: ${{ steps.filter.outputs.auction }}
+      contour: ${{ steps.filter.outputs.contour }}
+      nats-tester: ${{ steps.filter.outputs.nats-tester }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
+            contracts:
+              - 'contracts/**'
+              - 'apps/identity/go.mod'
+              - 'apps/hub-bot/package.json'
+              - 'apps/hub-bot/package-lock.json'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
             identity:
               - 'contracts/proto/**'
               - 'apps/identity/**'
+              - 'tools/identity/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            meetups:
+              - 'contracts/proto/**'
+              - 'apps/meetups/**'
+              - 'shared/dotnet/**'
+              - 'tools/meetups/**'
+              - 'justfile'
+              - 'global.json'
+              - '.editorconfig'
+              - '.config/dotnet-tools.json'
+              - '.github/workflows/ci.yml'
+            notifications:
+              - 'contracts/proto/**'
+              - 'apps/notifications/**'
+              - 'shared/dotnet/**'
+              - 'tools/notifications/**'
+              - 'justfile'
+              - 'global.json'
+              - '.github/workflows/ci.yml'
+            hub-bot:
+              - 'contracts/proto/**'
+              - 'apps/hub-bot/**'
+              # Сценарии провода бота и живого контура типизирует и линтует
+              # конфиг бота; живой прогон (L3) CI не гоняет никогда.
+              - 'tests/contour/bot-wire/**'
+              - 'tests/telegram-live/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            auction:
+              - 'contracts/proto/**'
+              - 'apps/auction/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            community-site-api:
+              - 'apps/community-site-api/**'
+              # Тесты страницы и браузерные сценарии читают саму опубликованную
+              # страницу, поэтому её правка обязана поднимать эту джобу: иначе
+              # самое частое изменение сайта проходит мимо собственных тестов.
+              - 'docs/published/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            # Пульт провода двух ботов — своя единица, но код обоих ботов берёт из
+            # дерева их пакета: правка test kit любой поверхности проверяет и пульт.
+            bot-console:
+              - 'tests/contour/bot-wire/console/**'
+              - 'apps/hub-bot/**'
+              - 'contracts/proto/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            # Наполнение аукциона — своя единица, но клиенты бота хаба берёт из
+            # дерева пакета ботов: правка пакета проверяет и наполнение.
+            auction-seed:
+              - 'tools/auction-seed/**'
+              - 'apps/hub-bot/**'
+              - 'contracts/proto/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            apphost:
+              - 'infra/apphost/**'
+              # Чарт собирает Identity и оба бота по этим файлам: перенос без
+              # правки графа ловит тест публикации.
+              - 'apps/identity/Containerfile'
+              - 'apps/hub-bot/Containerfile'
+              # CLI находит AppHost по этому файлу, путь в нём проверяет джоба.
+              - 'aspire.config.json'
+              - 'tools/apphost/**'
+              - 'shared/dotnet/**'
+              - 'apps/meetups/**'
+              - 'apps/notifications/**'
+              - 'contracts/proto/**'
+              - 'justfile'
+              - 'global.json'
+              - '.editorconfig'
+              - '.github/workflows/ci.yml'
+            # Сквозной контур поднимает настоящую топологию, поэтому его
+            # участники — это все, чья правка способна её сломать: оба сервиса
+            # среза, граф AppHost и схема. Фильтр по своему каталогу оставил бы
+            # набор молчать ровно тогда, когда ломается то, что он проверяет.
+            # Notifications здесь потому, что AppHost на него ссылается и его
+            # поломка валит сборку, хотя профиль контура его не поднимает.
+            # Hub Bot — участник провода: его клиенты и kit гоняет набор
+            # tests/contour/bot-wire.
+            contour:
+              - 'tests/contour/**'
+              - 'tools/contour/**'
+              - 'infra/apphost/**'
+              - 'apps/identity/**'
+              - 'apps/hub-bot/**'
+              - 'apps/meetups/**'
+              - 'apps/notifications/**'
+              - 'shared/dotnet/**'
+              - 'contracts/proto/**'
+              - 'justfile'
+              - 'global.json'
+              - '.editorconfig'
+              - '.github/workflows/ci.yml'
+            nats-tester:
+              - 'contracts/proto/**'
+              - 'tools/nats-tester/**'
               - 'justfile'
               - '.github/workflows/ci.yml'
 
-  identity:
+  # Компиляция, стиль и совместимость модуля contracts/proto. Джобы
+  # потребителей сужают вход фильтром paths и поимённым списком Protobuf,
+  # поэтому схема домена, у которого потребителя ещё нет, не читается ни одной
+  # из них: без этой джобы она ломается молча при зелёном CI. Стиль и
+  # совместимость джоба проверяет сама, не дожидаясь тестов потребителей: те
+  # wire-разрыв не ловят — оба конца, пересобранные из одной сломанной схемы,
+  # договорятся между собой. Тот же гейт локально — `just contracts-check`.
+  contracts:
     needs: changes
-    if: needs.changes.outputs.identity == 'true'
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.contracts == 'true'
+      || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      # fetch-depth: 0 — база сравнения для buf breaking. По умолчанию checkout
+      # приносит только сам коммит, и ветки origin/develop в клоне нет.
+      - uses: actions/checkout@v7
         with:
-          go-version: '1.22'
-          cache-dependency-path: apps/identity/go.sum
+          fetch-depth: 0
       - id: tools
         run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
-      - uses: bufbuild/buf-setup-action@v1
+      # setup_only: действие только ставит buf. Без него дефолты buf-action
+      # добавляют в джобу его lint, format, breaking и push.
+      - uses: bufbuild/buf-action@v1
         with:
+          setup_only: true
           version: ${{ steps.tools.outputs.buf }}
-      - run: go install google.golang.org/protobuf/cmd/protoc-gen-go google.golang.org/grpc/cmd/protoc-gen-go-grpc
+          github_token: ${{ github.token }}
+      - run: buf build
+        working-directory: contracts/proto
+      - run: buf lint contracts/proto
+      # subdir называет корень модуля внутри git-дерева базы: без него база
+      # читается от корня репозитория, и импорты между схемами не резолвятся.
+      - run: buf breaking contracts/proto --against '.git#branch=origin/develop,subdir=contracts/proto'
+      # Кодогенерация всего модуля на Go и TypeScript плагинами потребителей —
+      # та же команда, что `just contracts-codegen-buf`. Версии плагинов
+      # читаются из go.mod Identity и package.json бота, своих здесь нет.
+      # Scala генерирует джоба auction внутри своей сборки.
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/identity/go.mod
+          cache-dependency-path: apps/identity/go.sum
+      - run: go install tool
+        working-directory: apps/identity
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/hub-bot/package-lock.json
+      - run: npm ci
+        working-directory: apps/hub-bot
+      - run: buf generate --template contracts/buf.gen.codegen.yaml
+
+  # Ручной запуск форсирует полный прогон: пропущенная джоба changes не должна
+  # уносить за собой зависимые, поэтому условие начинается с !cancelled().
+  identity:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.identity == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: identity
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      IDENTITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/identity?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/identity/go.mod
+          cache-dependency-path: apps/identity/go.sum
+      - id: tools
+        run: |
+          echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+          echo "golangci=$(grep '^GOLANGCI_LINT_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      # setup_only: действие только ставит buf. Без него дефолты buf-action
+      # добавляют в джобу его lint, format, breaking и push.
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      - run: buf --version
+      - run: go install tool
         working-directory: apps/identity
       - run: buf generate --template apps/identity/buf.gen.yaml
-      - run: go test ./...
+      - run: go build ./...
         working-directory: apps/identity
+      - uses: extractions/setup-just@v4
+      # Фикстуры разбора лога — та же проверка, что в `just verify`.
+      - run: just identity-test-log-check
+      # Тесты через рецепт, а не прямым `go test`: тег integration, порог
+      # числа тестов и падение на пропуске живут в justfile и скрипте, и копия
+      # здесь разошлась бы с `test-all` молча. Под тегом unit-файлы
+      # компилируются тоже, поэтому прогон полный. Рецепт повторяет
+      # `buf generate`; после шага выше это та же генерация без изменений.
+      - run: just identity-test-integration
+      # Отдельным шагом: -race требует cgo и на Windows-машине разработчика
+      # не запускается без toolchain C, поэтому детектор гонок живёт в CI.
+      # Тот же рецепт держит порог и пропуск и под -race.
+      - run: just identity-test-integration -race
+      # Два прогона, как у `just identity-lint`: с тегом линтер видит тесты с
+      # базой, без тега `unused` ловит помощник, нужный только им.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v${{ steps.tools.outputs.golangci }}
+          working-directory: apps/identity
+          install-mode: goinstall
+          args: --timeout 5m --build-tags=integration
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v${{ steps.tools.outputs.golangci }}
+          working-directory: apps/identity
+          install-mode: goinstall
+          args: --timeout 5m
+
+  meetups:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.meetups == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      # Условие обратимости из ADR-025: в контрактном проекте нет рукописного кода.
+      # Гейт читает Git, поэтому идёт до сборки и не зависит от неё.
+      - run: sh tools/meetups/check-contracts-generated.sh
+      # Форматирование F# — тот же гейт, что `just meetups-format-check`.
+      # Fantomas берётся из .config/dotnet-tools.json в корне, поэтому обе
+      # команды идут без working-directory.
+      - run: dotnet tool restore
+      - run: dotnet fantomas --check apps/meetups
+      - uses: extractions/setup-just@v4
+      - run: dotnet build Meetups.sln --nologo
+        working-directory: apps/meetups
+      # Оба уровня через рецепты, а не прямым dotnet test: порог числа тестов и
+      # --fail-skips живут в justfile, и копия здесь разошлась бы с локальным
+      # гейтом молча. Рецепт собирает проект сам; после шага выше это
+      # инкрементальная сборка без изменений, и --no-build в рецепт не
+      # пробрасывается, чтобы у рецепта осталась одна форма вызова. Docker для
+      # интеграционного уровня на ubuntu-latest есть.
+      - run: just meetups-test
+      - run: just meetups-test-integration
+
+  notifications:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.notifications == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      # Тот же гейт generated-only, что у Meetups: читает Git, поэтому идёт до
+      # сборки и не зависит от неё.
+      - run: sh tools/notifications/check-contracts-generated.sh
+      # Гейта форматирования здесь нет: Fantomas C# не форматирует, а своего
+      # гейта для C# в репозитории нет ни у AppHost, ни у ServiceDefaults.
+      - uses: extractions/setup-just@v4
+      - run: dotnet build Notifications.sln --nologo
+        working-directory: apps/notifications
+      # Через рецепты по той же причине, что у Meetups: порог и --fail-skips
+      # живут в justfile, а повторная сборка внутри рецепта инкрементальна.
+      # Интеграционные тесты поднимают PostgreSQL через Testcontainers. Docker на
+      # ubuntu-latest есть, поэтому они выполняются, а не пропускаются: фикстура
+      # под GITHUB_ACTIONS превращает отсутствие контейнера в отказ, а
+      # --fail-skips рецепта ловит любой другой пропуск.
+      - run: just notifications-test
+      - run: just notifications-test-integration
+
+  hub-bot:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.hub-bot == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/hub-bot/package-lock.json
+            tests/telegram-live/package-lock.json
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      # setup_only: действие только ставит buf. Без него дефолты buf-action
+      # добавляют в джобу его lint, format, breaking и push.
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      - run: npm ci
+        working-directory: apps/hub-bot
+      # mtcute живого контура: код драйвера проходит typecheck, lint и L0 бота.
+      # Скрипты не нужны — сессия в памяти, нативный better-sqlite3 не строится.
+      - run: npm ci --ignore-scripts
+        working-directory: tests/telegram-live
+      - run: buf generate --template apps/hub-bot/buf.gen.yaml
+      - run: npm run typecheck
+        working-directory: apps/hub-bot
+      - run: npm run lint
+        working-directory: apps/hub-bot
+      - run: npm test
+        working-directory: apps/hub-bot
+      # Наборы с Testcontainers — отдельным шагом: `npm test` их исключает, чтобы
+      # `just verify` не требовал Docker. На ubuntu-latest Docker есть.
+      - run: npm run test:integration
+        working-directory: apps/hub-bot
+      - run: npm run build
+        working-directory: apps/hub-bot
+
+  # Функция сайта не собирается: её бандлит Netlify CLI при деплое. Гейт держат
+  # typecheck, линт и тесты доменной логики ревизий — того единственного места,
+  # где ошибка стоит потерянных заметок.
+  community-site-api:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.community-site-api == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/community-site-api/package-lock.json
+      - run: npm ci
+        working-directory: apps/community-site-api
+      - run: npm run typecheck
+        working-directory: apps/community-site-api
+      - run: npm run lint
+        working-directory: apps/community-site-api
+      - run: npm test
+        working-directory: apps/community-site-api
+      # E2E держат отдельным шагом: им нужен скачанный браузер, поэтому в
+      # локальный `just verify` они не входят, а здесь идут последними —
+      # после того как дешёвые проверки уже дали свой сигнал.
+      - run: npx playwright install --with-deps chromium
+        working-directory: apps/community-site-api
+      - run: npm run e2e
+        working-directory: apps/community-site-api
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/community-site-api/playwright-report/
+          retention-days: 7
+
+  # AppHost компилируется в CI, а не только в локальном `just verify`: без этой
+  # джобы правка графа или setup-а ресурса, которая не собирается, проходит
+  # ревью зелёной.
+  apphost:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.apphost == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - uses: extractions/setup-just@v4
+      # До сборки: битый путь в aspire.config.json называет проверка, а не
+      # поздний отказ CLI у человека.
+      - run: just apphost-config-check
+      - run: dotnet build infra/apphost/AppHost/AppHost.csproj --nologo
+      # Docker джобе не нужен: тесты проверяют валидацию графа и материализацию
+      # модели, а они отрабатывают до старта ресурсов. Через `just`, а не прямым
+      # dotnet run, чтобы порог числа тестов остался в одном месте.
+      - run: just apphost-test
+      # Снимок модели, разошедшийся с эталоном, лог показывает усечённым:
+      # полный полученный текст едет артефактом, чтобы сверить его построчно.
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: apphost-snapshots-received
+          path: infra/apphost/AppHost.UnitTests/bin/Debug/net10.0/*.received.txt
+          if-no-files-found: ignore
+          retention-days: 7
+      - run: just apphost-chart-test
+      # Чарт прода на каждом PR (ADR-055): `aspire publish`, helm lint, helm
+      # template с фикстурой values и правила чарта. Тот же рецепт публикует
+      # чарт в chart-publish.yml, поэтому проверенное и опубликованное не
+      # расходятся. Docker не нужен: публикация не собирает образы.
+      - name: Helm из justfile
+        run: sh tools/apphost/install-helm.sh >> "$GITHUB_PATH"
+      - run: just apphost-chart
+
+  # Пульт провода двух ботов: своя установка, typecheck по kit обоих ботов и L0
+  # языка команд с прокси. Сам пульт — не гейт и здесь не запускается.
+  bot-console:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.bot-console == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/hub-bot/package-lock.json
+            tests/contour/bot-wire/console/package-lock.json
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      # Typecheck пульта читает исходники обеих поверхностей пакета ботов, а те —
+      # сгенерированный код.
+      - run: npm ci
+        working-directory: apps/hub-bot
+      - run: buf generate --template apps/hub-bot/buf.gen.yaml
+      - run: npm ci
+        working-directory: tests/contour/bot-wire/console
+      - run: npm run typecheck
+        working-directory: tests/contour/bot-wire/console
+      - run: npm run lint
+        working-directory: tests/contour/bot-wire/console
+      - run: npm test
+        working-directory: tests/contour/bot-wire/console
+
+  # Наполнение аукциона: своя установка, typecheck по клиентам бота хаба и L0
+  # каталога, переменных и порядка вызовов. Само наполнение — не гейт.
+  auction-seed:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.auction-seed == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/hub-bot/package-lock.json
+            tools/auction-seed/package-lock.json
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      # Typecheck наполнения читает клиенты бота хаба, а те — сгенерированный код.
+      - run: npm ci
+        working-directory: apps/hub-bot
+      - run: buf generate --template apps/hub-bot/buf.gen.yaml
+      - run: npm ci
+        working-directory: tools/auction-seed
+      - run: npm run typecheck
+        working-directory: tools/auction-seed
+      - run: npm run lint
+        working-directory: tools/auction-seed
+      - run: npm test
+        working-directory: tools/auction-seed
+
+  auction:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.auction == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Джоба собирает дерево и запускает его тесты. Токен ей не нужен: права
+      # сужены до чтения, и checkout не оставляет его в конфигурации Git.
+      # Для сборки на sbt это весомее, чем для остальных джоб: build.sbt —
+      # исполняемый Scala-код, и он выполняется из проверяемой ветки.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Версию JDK держит файл компонента — тем же способом, каким identity
+      # держит её в go.mod, а meetups в global.json. Отдельного значения
+      # в workflow нет: оно разошлось бы с локальной сборкой молча.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version-file: apps/auction/.java-version
+          cache: sbt
+      # Образ ubuntu-latest больше не поставляет sbt, поэтому его ставит
+      # отдельное официальное действие.
+      - uses: sbt/setup-sbt@v1
+      # Один вызов на все проверки — тот же состав, что `just auction-verify`.
+      # Три отдельных шага подняли бы JVM трижды; какая из команд упала, sbt
+      # называет в логе сам. Кодогенерация ScalaPB входит в compile, поэтому
+      # отдельного шага генерации здесь нет — как и у meetups, где её делает
+      # dotnet build. Рецепт `just auction-proto` вызывает ту же задачу sbt
+      # вручную и второй командой генерации не является.
+      - name: Scala format, build and tests
+        run: sbt -batch "scalafmtCheckAll; scalafmtSbtCheck; Test/compile; test"
+        working-directory: apps/auction
+      # L1 (`*IntegrationSpec`): схема, журнал и готовность на PostgreSQL в
+      # Testcontainers. Docker на ubuntu-latest есть; отдельный шаг, потому что
+      # сьюты отбирает переменная окружения, и в `verify` они не входят.
+      - name: Scala integration tests
+        run: sbt -batch test
+        working-directory: apps/auction
+        env:
+          AUCTION_INTEGRATION_TESTS: "1"
+
+  # nats-tester — единственный потребитель схем, чей сгенерированный код лежит
+  # в Git: инструмент ставится без protoc, поэтому классы обязаны совпадать со
+  # схемой. Джоба проверяет импорт, состав генерации и реестр, а затем
+  # перегенерирует классы закреплённым protoc и падает на расхождении —
+  # расхождение видно здесь, а не при ручной отладке шины.
+  nats-tester:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.nats-tester == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Токен не нужен: права сужены до чтения, а джоба запускает скачанный
+      # бинарник protoc — checkout не оставляет его в конфигурации Git.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      # Версии читаются из justfile, а не дублируются здесь: тем же способом
+      # джобы identity и hub-bot берут BUF_VERSION.
+      - id: tools
+        run: |
+          echo "python=$(grep '^PYTHON_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+          echo "protoc=$(grep '^PROTOC_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+          echo "protoc_sha=$(grep '^PROTOC_SHA256' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ steps.tools.outputs.python }}
+      - uses: extractions/setup-just@v4
+      # Установка не только для проверки: она же подтверждает, что пакет
+      # собирается из pyproject и ставится.
+      - run: python -m pip install -e tools/nats-tester
+      - run: just nats-tester-check
+      # protoc ставится из релиза, а не пакетом дистрибутива: gencode
+      # закоммиченных классов проверяет версию рантайма на импорте, и protoc
+      # другой линии даёт другой gencode. Сумма — чтобы скачанный бинарник
+      # совпадал с закреплённой версией, а не просто запускался.
+      - name: Install pinned protoc
+        env:
+          PROTOC_VERSION: ${{ steps.tools.outputs.protoc }}
+          PROTOC_SHA256: ${{ steps.tools.outputs.protoc_sha }}
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/protoc.zip" \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-x86_64.zip"
+          echo "${PROTOC_SHA256}  $RUNNER_TEMP/protoc.zip" | sha256sum -c -
+          unzip -q "$RUNNER_TEMP/protoc.zip" -d "$RUNNER_TEMP/protoc"
+          echo "$RUNNER_TEMP/protoc/bin" >> "$GITHUB_PATH"
+      - run: protoc --version
+      - run: just nats-tester-proto
+      # Пусто — классы соответствуют схемам; иначе стат показывает, что
+      # разошлось, и в логе видно, какая схема это сделала.
+      - run: git diff --exit-code --stat -- tools/nats-tester/nats_tester/generated
 
   repo-hygiene:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Agent tooling is generated from Skillshare sources
-        run: sh tools/skillshare/check-generated.sh
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - uses: extractions/setup-just@v4
+      - name: Skill frontmatter parses as a YAML mapping
+        run: sh tools/skillshare/check-frontmatter.sh
+      - name: Commands are generated from the rulesync source
+        run: just check-commands
+      - name: MCP configuration is generated from the rulesync source
+        run: just check-mcp
+      - name: Published pages are addressable
+        run: sh tools/community-site/check-published-pages.sh
+      - name: Local gate selection matches the CI path map and verify
+        run: sh tools/verify/select-recipes-test.sh
+      - name: Agent readiness check names every failing tool
+        run: sh tools/agent-env/ready-test.sh
+
+  # Уровень L2: среду поднимает AppHost через Aspire.Hosting.Testing, набор ею
+  # не владеет. Джоба намеренно НЕ входит в обязательные проверки ветки: по
+  # RFC-012 (вопрос О-5) сквозной уровень переводится туда после периода
+  # наблюдения за стабильностью, и основание перевода — наблюдаемая
+  # стабильность, а не истечение срока. Условие записано в PER-270.
+  #
+  # Тулинг тот же, что у джобы identity, и по той же причине: узел identity
+  # в графе сначала генерирует Go-код через buf, потом собирает бинарник.
+  # Без `go install tool` buf не найдёт плагины, и узел упадёт молча.
+  #
+  # PostgreSQL здесь не сервис джобы: базой владеет AppHost, он поднимает её
+  # контейнером сам. Второй Postgres на 5432 только мешал бы.
+  contour:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.contour == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: apps/identity/go.mod
+          cache-dependency-path: apps/identity/go.sum
+      - id: tools
+        run: echo "buf=$(grep '^BUF_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      # setup_only: действие только ставит buf. Без него дефолты buf-action
+      # добавляют в джобу его lint, format, breaking и push.
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+          version: ${{ steps.tools.outputs.buf }}
+          github_token: ${{ github.token }}
+      - run: go install tool
+        working-directory: apps/identity
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: |
+            apps/hub-bot/package-lock.json
+      - run: npm ci
+        working-directory: apps/hub-bot
+      - uses: extractions/setup-just@v4
+      - name: Contour contracts stay generated-only
+        run: just contour-contracts-check
+      # Через рецепт, а не напрямую: иначе порог --minimum-expected-tests
+      # разошёлся бы с локальным прогоном молча.
+      #
+      # Вывод уходит в файл, потому что в нём и лежат логи ресурсов: категория
+      # AppHost.Resources.<имя> несёт stdout Identity, Meetups и контейнера
+      # PostgreSQL. Своего сбора у набора нет намеренно — ResourceLoggerService
+      # под тестовым builder'ом отдаёт ноль строк (проверено), и писать пустые
+      # файлы значит выдавать их за доказательство.
+      #
+      # pipefail обязателен: без него код возврата берётся от tee, и красный
+      # прогон стал бы зелёной джобой — ровно тот ложно-зелёный, против
+      # которого написано правило «пропуск не равен прохождению».
+      - name: Smoke the contour on a live topology
+        shell: bash
+        run: |
+          set -o pipefail
+          just contour-test 2>&1 | tee contour-run.log
+      # Провод бота поднимает свою топологию через Contour.Host: среда живёт
+      # ровно столько, сколько набор, и делить её с дымовым прогоном значило
+      # бы сделать один набор владельцем среды другого.
+      - name: Run the bot wire against the live topology
+        shell: bash
+        run: |
+          set -o pipefail
+          just contour-bot-test 2>&1 | tee contour-bot-run.log
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: contour-run-log
+          path: |
+            contour-run.log
+            contour-bot-run.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Без path-фильтра: коллизию номера вносит merge-результат pull request,
+  # а не дифф ветки. На событии pull_request checkout уже содержит базу и
+  # входящий документ рядом; фильтр путей сравнил бы только изменённые файлы
+  # и пропустил бы чужой документ с тем же номером.
+  document-numbers:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Джоба читает дерево и запускает из него же скрипты. Токен ей не нужен:
+      # права сужены до чтения, и checkout не оставляет его в конфигурации Git.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: ADR and RFC numbers are unique and listed
+        run: sh tools/docs/check-document-numbers.sh
+      - name: Duplicate and missing-index cases fail with paths
+        run: sh tools/docs/check-document-numbers-test.sh
+
+  # Без path-фильтра: применимость живёт в индексе и в баннере файла, и правка
+  # одного места без другого расходится ровно так же, как правка обоих сразу.
+  adr-applicability:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Джоба читает дерево и запускает из него же скрипты. Токен ей не нужен:
+      # права сужены до чтения, и checkout не оставляет его в конфигурации Git.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Non-Active ADR banners match the index
+        run: sh tools/docs/check-adr-applicability.sh
+      - name: Missing and mismatched banners fail with paths
+        run: sh tools/docs/check-adr-applicability-test.sh
+
+  # Без path-фильтра: ссылку ломает правка целевого документа, а не того, где
+  # она стоит, поэтому фильтр по изменённым файлам пропустил бы ровно этот случай.
+  # python3 есть в образе ubuntu-latest, а скрипт берёт только stdlib, поэтому
+  # setup-python не нужен.
+  doc-links:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Джоба читает дерево и запускает из него же скрипты. Токен ей не нужен:
+      # права сужены до чтения, и checkout не оставляет его в конфигурации Git.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Relative links in docs resolve to a file and a heading
+        run: python3 tools/docs/check-doc-links.py
+      - name: Broken and valid link cases land where they should
+        run: sh tools/docs/check-doc-links-test.sh

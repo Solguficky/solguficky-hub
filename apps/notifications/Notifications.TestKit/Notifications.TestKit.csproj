@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!-- Утилиты нескольких тест-проектов, по docs/standards/testing/testing-strategy.md.
+       Ссылка только на контракты: валидным событиям источников нужны типы proto,
+       а не силос, поэтому TestKit не тянет Orleans и composition root сервиса. -->
+  <ItemGroup>
+    <ProjectReference Include="..\Notifications.Contracts\Notifications.Contracts.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,320 @@
+syntax = "proto3";
+
+package meetups.v1;
+
+import "identity/v1/access.proto";
+import "meetups/v1/meetups.proto";
+
+service MeetupsService {
+  rpc CreateMeetupDraft(CreateMeetupDraftRequest) returns (MeetupSnapshot);
+  rpc ChangeMeetupAttributes(ChangeMeetupAttributesRequest) returns (MeetupSnapshot);
+  rpc SetMeetupSchedule(SetMeetupScheduleRequest) returns (MeetupSnapshot);
+  rpc PublishMeetup(PublishMeetupRequest) returns (MeetupSnapshot);
+  rpc ScheduleMeetupPublication(ScheduleMeetupPublicationRequest) returns (MeetupSnapshot);
+  rpc CancelMeetupPublication(CancelMeetupPublicationRequest) returns (MeetupSnapshot);
+  rpc UnpublishMeetup(UnpublishMeetupRequest) returns (MeetupSnapshot);
+  rpc CancelMeetup(CancelMeetupRequest) returns (MeetupSnapshot);
+  rpc AttachMaterial(AttachMaterialRequest) returns (MeetupSnapshot);
+  rpc RemoveMaterial(RemoveMaterialRequest) returns (MeetupSnapshot);
+  rpc MarkMeetupHeld(MarkMeetupHeldRequest) returns (MeetupSnapshot);
+  rpc ListVisibleMeetups(ListVisibleMeetupsRequest) returns (ListVisibleMeetupsResponse);
+  rpc ListArchivedMeetups(ListArchivedMeetupsRequest) returns (ListArchivedMeetupsResponse);
+  rpc GetMeetup(GetMeetupRequest) returns (MeetupSnapshot);
+  rpc ListMeetupStates(ListMeetupStatesRequest) returns (ListMeetupStatesResponse);
+  rpc CheckMeetupAuthority(CheckMeetupAuthorityRequest) returns (MeetupAuthority);
+}
+
+// Deliberately carries no description of the caller's scenario and no roles of
+// the person: the question is only whether the person stands in one of the
+// accepted relations to the meetup, and Meetups establishes the relation itself.
+message CheckMeetupAuthorityRequest {
+  // The caller once supplied the person's roles here; Meetups no longer trusts
+  // roles it did not ask Identity for.
+  reserved 1;
+  reserved "viewer";
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens of the person to check.
+  string identity_id = 3;
+
+  // Relations the calling surface accepts; holding any one of them grants.
+  // Must not be empty and must not contain MEETUP_RELATION_UNSPECIFIED.
+  repeated MeetupRelation accepted_relations = 4;
+}
+
+enum MeetupRelation {
+  // No value: the field is unset or the relation is unknown to the receiver.
+  MEETUP_RELATION_UNSPECIFIED = 0;
+
+  // Holder of identity.v1.ACCESS_RIGHT_MANAGE_MEETUPS; the relation holds for
+  // every meetup.
+  MEETUP_RELATION_COMMUNITY_ADMINISTRATOR = 1;
+}
+
+// The status is the whole answer to "does the relation hold"; the body carries
+// the meetup's state so a caller that decides on that state does not read the
+// meetup a second time (ADR-047, addition 2026-10-12). There is no cacheable
+// grant or expiry here. An UNSPECIFIED state value means the producer did not
+// supply it.
+message MeetupAuthority {
+  MeetupLifecycle lifecycle = 1;
+  MeetupVisibility visibility = 2;
+}
+
+message ListMeetupStatesRequest {
+  // Opaque token returned as next_page_token. Empty starts an enumeration.
+  string page_token = 1;
+
+  // 0 selects the server default; the maximum accepted value is 100.
+  int32 page_size = 2;
+}
+
+message ListMeetupStatesResponse {
+  repeated MeetupSnapshot meetups = 1;
+
+  // Opaque continuation token. Empty means that the enumeration is complete.
+  string next_page_token = 2;
+  // RFC 3339 UTC instant at which this page's database snapshot was taken.
+  string consistent_at = 3;
+}
+
+message Viewer {
+  reserved 2;
+  reserved "global_roles";
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string identity_id = 1;
+
+  // Rights from Identity, copied as received from
+  // ResolveIdentityResponse.rights. Domain permissions are not precomputed
+  // here; Meetups applies them. An empty set means no rights. The block mark is
+  // deliberately absent: Meetups decides access by rights and only the caller
+  // reads the mark from ResolveIdentityResponse to choose a refusal.
+  repeated identity.v1.AccessRight rights = 3;
+}
+
+message CreateMeetupDraftRequest {
+  Viewer viewer = 1;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens. This is both the
+  // meetup id and the idempotency key. There is no separate idempotency field.
+  string id = 2;
+}
+
+message ChangeMeetupAttributesRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Empty string is the total value "unspecified". Omitted fields are not a
+  // distinct state: every attribute is sent.
+  string title = 3;
+  string description = 4;
+  string venue = 5;
+  string kind = 6;
+  string calendar_link = 7;
+
+  // Aggregate version the caller's decision was based on. Required: this
+  // command is decided from a displayed snapshot, and the server compares the
+  // version in the atomic write predicate. 0 is not a valid version, so an
+  // absent field is refused rather than read as "the latest one".
+  int64 expected_version = 8;
+}
+
+message SetMeetupScheduleRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Target schedule as a single value. Absence is not a value: "no date" is the
+  // no_date form, not an omitted field.
+  Schedule schedule = 3;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 4;
+}
+
+message PublishMeetupRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
+}
+
+// The moment is a local community date and time; Meetups interprets it in the
+// community timezone from its configuration and stores an instant. An instant in
+// the request would move the interpretation to every caller (ADR-031).
+message ScheduleMeetupPublicationRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Local date and time in the community timezone, minute precision.
+  LocalDateTime moment = 3;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 4;
+}
+
+message CancelMeetupPublicationRequest {
+  Viewer viewer = 1;
+  string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
+}
+
+message UnpublishMeetupRequest {
+  Viewer viewer = 1;
+  string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
+}
+
+message CancelMeetupRequest {
+  Viewer viewer = 1;
+  string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
+}
+
+message AttachMaterialRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. The meetup the material is
+  // attached to.
+  string id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens. It is both the
+  // material id and the idempotency key; there is no separate idempotency field.
+  string material_id = 3;
+
+  // Empty string is the total value "unspecified".
+  string title = 4;
+
+  MeetupMaterialSource source = 5;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 6;
+}
+
+message RemoveMaterialRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens. The material is named by the same
+  // caller-generated id the attachment used.
+  string material_id = 3;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 4;
+}
+
+message MarkMeetupHeldRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+
+  // Aggregate version the caller's decision was based on. Required; see
+  // ChangeMeetupAttributesRequest.expected_version.
+  int64 expected_version = 3;
+}
+
+// Returns the visible meetups that are still actual: held, cancelled and past
+// meetups are read by ListArchivedMeetups instead.
+message ListVisibleMeetupsRequest {
+  Viewer viewer = 1;
+}
+
+// Returns the visible meetups that left the actual list: held, cancelled and
+// those whose schedule has passed. The archive reads through the same
+// visibility rule as the actual list and never opens a hidden meetup.
+message ListArchivedMeetupsRequest {
+  Viewer viewer = 1;
+}
+
+message GetMeetupRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 2;
+}
+
+message ListVisibleMeetupsResponse {
+  repeated MeetupSummary meetups = 1;
+}
+
+message ListArchivedMeetupsResponse {
+  // Newest schedule first; meetups without a date come last.
+  repeated MeetupSummary meetups = 1;
+}
+
+// Server-produced state. Every field is set; first_published_at carries the only
+// absent state in this message.
+message MeetupSnapshot {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string author = 2;
+
+  // Empty string is the total value "unspecified".
+  string title = 3;
+  string description = 4;
+  string venue = 5;
+  string kind = 6;
+  string calendar_link = 7;
+
+  Schedule schedule = 8;
+  MeetupLifecycle lifecycle = 9;
+  MeetupVisibility visibility = 10;
+
+  // RFC 3339 UTC instant. Unset when the meetup has never been published.
+  optional string first_published_at = 11;
+
+  // Aggregate version. 0 is not a valid value; there is no absent state here.
+  int64 version = 12;
+
+  // One ordered collection of materials. The order of this field is the order
+  // of the collection; an empty collection is not an absent state.
+  repeated MeetupMaterial materials = 13;
+
+  // RFC 3339 UTC instant of the planned publication. Unset when no publication
+  // is scheduled; a visible meetup never carries a moment.
+  optional string scheduled_publish_at = 14;
+}
+
+// Server-produced state. Every field is set; there is no absent state here.
+message MeetupSummary {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Empty string is the total value "unspecified".
+  string title = 2;
+  string venue = 3;
+
+  Schedule schedule = 4;
+  MeetupLifecycle lifecycle = 5;
+  MeetupVisibility visibility = 6;
+}

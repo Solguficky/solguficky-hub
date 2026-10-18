@@ -12,9 +12,15 @@
           },
           {
             "type": "command",
-            "command": "just identity-proto || exit 2",
+            "command": "just identity-proto && just hub-bot-proto || exit 2",
             "if": "Edit(contracts/proto/**)",
-            "statusMessage": "Проверяю Identity-кодогенерацию"
+            "statusMessage": "Проверяю кодогенерацию Identity и Hub Bot"
+          },
+          {
+            "type": "command",
+            "command": "just sync-mcp && just sync-commands || exit 2",
+            "if": "Edit(.rulesync/**)",
+            "statusMessage": "Раскладываю конфигурацию MCP и команды по агентам"
           }
         ]
       }

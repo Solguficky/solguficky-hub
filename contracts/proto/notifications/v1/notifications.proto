@@ -1,0 +1,463 @@
+syntax = "proto3";
+
+package notifications.v1;
+
+import "auction/v1/auction.proto";
+import "identity/v1/access.proto";
+import "meetups/v1/meetups.proto";
+
+// The addressed notification fact: "this person is owed this notification".
+// Notifications publishes it and its responsibility ends there; delivery is the
+// channel's business. No rendered text and no chat id are carried: the channel
+// renders the message from the data below, and nothing is broadcast without a
+// recipient.
+message Notification {
+  // Canonical lowercase UUIDv7 with hyphens. Stable id of the fact; a channel
+  // uses it as its deduplication key, because exactly-once is not promised on
+  // this boundary.
+  string notification_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. Internal Identity id of the
+  // recipient. A notification always has exactly one recipient.
+  string recipient_id = 2;
+
+  // RFC 3339 UTC instant at which the fact was created.
+  string created_at = 3;
+
+  // RFC 3339 UTC instant after which the notification is stale and a channel
+  // may drop it. Unset means no deadline: an empty string is not a value.
+  optional string not_after = 4;
+
+  // The fact that made this notification due. Exactly one reference is set.
+  Cause cause = 5;
+
+  reserved 18;
+  reserved "role_granted";
+
+  // Exactly one type is set. Every branch carries the data a channel needs to
+  // render the message without calling other services: Notifications knows
+  // nothing about channels, and a channel has no replica of the meetup state.
+  //
+  // A consumer that meets a type it does not know cannot render a message from
+  // the envelope alone and must not deliver it silently.
+  oneof type {
+    // The meetup became visible for the first time. Sent to everyone with the
+    // global "new published meetup" category on: a subscription to the meetup
+    // is not required and cannot exist before publication.
+    MeetupPublished meetup_published = 6;
+
+    // Attributes or the state of the meetup changed. The source event carries a
+    // snapshot, and what changed is computed by comparison with the replica; an
+    // empty change is not a cause of a notification. A schedule move is a
+    // change like any other: it has no type of its own.
+    MeetupChanged meetup_changed = 7;
+
+    // A material appeared on the meetup. Its source is a Meetups event of the
+    // material dictionary, which is not designed yet.
+    MeetupMaterial meetup_material = 8;
+
+    // The day-before reminder fired for a meetup with a fixed start moment.
+    // A schedule without a start time produces no reminder.
+    MeetupReminder meetup_reminder = 9;
+
+    // A manual message from an organizer to the subscribers of the meetup.
+    OrganizerMessage organizer_message = 10;
+
+    // A manual message from an administrator to the whole community. It is not
+    // tied to any meetup.
+    CommunityAnnouncement community_announcement = 11;
+
+    // The meetup was taken out of publication. Addressed only to those whose
+    // subscription and change category are still on at send time.
+    MeetupUnpublished meetup_unpublished = 12;
+
+    // Someone else's bid took the lead of a lot away from the recipient. Sent
+    // only to the previous leader named by the auction fact: a subscription is
+    // not required. Sent one by one only when the recipient's outbid frequency
+    // is "every outbid"; a frequency with an interval folds outbids into
+    // lot_activity_digest instead, and "off" withholds them.
+    LotOutbid lot_outbid = 14;
+
+    // The recipient bought a lot: it was sold to them.
+    LotPurchased lot_purchased = 15;
+
+    // Someone without access asked for a circle and is waiting for a decision.
+    AccessRequested access_requested = 16;
+
+    // An administrator admitted the recipient by their own application. Sent
+    // only to the applicant: a subscription and a category are not required.
+    AccessGranted access_granted = 17;
+
+    // The recipient was granted a preset. Sent only to the recipient: a
+    // subscription and a category are not required.
+    PresetGranted preset_granted = 21;
+
+    // The recipient's proxy limit answered another participant and raised the
+    // price of a lot; the recipient leads. Sent only to that bidder: a
+    // subscription is not required. The outbid frequency governs it as it
+    // governs lot_outbid: one by one under "every outbid", a line of
+    // lot_activity_digest under an interval, nothing under "off".
+    LotProxyRaised lot_proxy_raised = 19;
+
+    // The recipient's circle changed between guest and member. This fact is
+    // delivered by the bot of the previous circle; it carries both circles so
+    // that the channel can explain the transition without a link to another bot.
+    CircleChanged circle_changed = 20;
+
+    // The outbids and proxy answers of one person collected over the interval
+    // of their outbid frequency. One window per person, opened by the first
+    // such event on any lot and closed when the interval ends or, earlier, when
+    // a lot in it is sold. Sent only to that person: a subscription is not
+    // required.
+    LotActivityDigest lot_activity_digest = 22;
+
+    // The lineup of the final of an auction was frozen. One fact per
+    // recipient: the recipient's own lots of the lineup are named inside it,
+    // never in a second fact.
+    AuctionFinalLineup auction_final_lineup = 23;
+
+    // The live final of an auction started.
+    AuctionFinalStarted auction_final_started = 24;
+
+    // The deadline of a followed lot is an hour away. One fact per recipient who
+    // follows the lot, does not lead it and is not blocked. No category governs
+    // it: unfollowing the lot is how it is turned off.
+    LotReminder lot_reminder = 25;
+
+    // The raffle among participants of an auction was drawn. One fact per
+    // ticket holder, the winner included. No category governs it: one message
+    // per raffle.
+    RaffleResult raffle_result = 26;
+  }
+
+  // Opaque end-to-end id of the chain this notification belongs to, compared as
+  // is and never parsed. A notification caused by a Meetups event carries that
+  // event's request_id unchanged; a fired reminder carries the id of the sweep
+  // that fired it. Unset means the cause carried none. An empty string is not a
+  // value.
+  //
+  // A channel carries this value into its logs and never mints a replacement.
+  optional string request_id = 13;
+}
+
+// The reference to the fact that made the notification due. The triple (type,
+// source, recipient) is the deterministic cause key, so a repeated cause
+// produces no second fact for the same person.
+message Cause {
+  oneof ref {
+    // event_id of the consumed Meetups journal event. Stable across
+    // republication, therefore a transport repeat is recognized.
+    string meetup_event_id = 1;
+
+    // Identifier of the Notifications reminder task that fired.
+    string reminder_task_id = 2;
+
+    // Identifier of the manual broadcast command, supplied by the caller.
+    string command_request_id = 3;
+
+    // event_id of the consumed Auction lot event. Stable across republication,
+    // therefore a transport repeat is recognized.
+    string auction_lot_event_id = 4;
+
+    // event_id of the consumed Identity event. Stable across republication,
+    // therefore a transport repeat is recognized.
+    string identity_event_id = 5;
+
+    // Identifier of the Notifications outbid window that closed into a
+    // lot_activity_digest. A window closes once, so it produces one digest.
+    string outbid_digest_id = 6;
+
+    // event_id of the consumed Auction auction event. Stable across
+    // republication, therefore a transport repeat is recognized.
+    string auction_event_id = 7;
+
+    // event_id of the consumed Auction raffle event. Stable across
+    // republication, therefore a transport repeat is recognized.
+    string auction_raffle_event_id = 8;
+  }
+}
+
+// The subset of the meetup state a channel needs to render a notification
+// without calling Meetups. It is the value at the moment the cause occurred,
+// not a live view: the meetup may already be hidden or changed when the message
+// is composed, and this is what the tombstone is rendered from.
+message MeetupCard {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // Empty string is the total value "unspecified". The field set covers every
+  // value MeetupAspect can name: an aspect whose value is absent here would
+  // force the channel to call Meetups to render what changed.
+  string title = 2;
+  string description = 3;
+  string venue = 4;
+  string kind = 5;
+  string calendar_link = 6;
+
+  // Local community schedule, without a timezone, exactly as Meetups publishes
+  // it. "No date" is the no_date form, not an absent field.
+  meetups.v1.Schedule schedule = 7;
+
+  meetups.v1.MeetupLifecycle lifecycle = 8;
+
+  // Visibility is carried because a return to publication arrives as a change
+  // of state: the aspect list says that visibility changed, not which way.
+  meetups.v1.MeetupVisibility visibility = 9;
+}
+
+// What changed in a meetup, as seen by the comparison of the snapshot with the
+// replica. The list is never empty: an empty change is not a cause.
+enum MeetupAspect {
+  MEETUP_ASPECT_UNSPECIFIED = 0;
+
+  MEETUP_ASPECT_TITLE = 1;
+  MEETUP_ASPECT_DESCRIPTION = 2;
+  MEETUP_ASPECT_VENUE = 3;
+  MEETUP_ASPECT_KIND = 4;
+  MEETUP_ASPECT_CALENDAR_LINK = 5;
+  MEETUP_ASPECT_SCHEDULE = 6;
+  MEETUP_ASPECT_LIFECYCLE = 7;
+  MEETUP_ASPECT_VISIBILITY = 8;
+}
+
+// The first publication of a meetup. The return of a meetup that was taken out
+// of publication is not this type: the mark of the first publication is already
+// set, so the return is a change of state.
+message MeetupPublished {
+  MeetupCard meetup = 1;
+}
+
+message MeetupChanged {
+  MeetupCard meetup = 1;
+
+  // Aspects whose value differs from the replica. Never empty. Old values are
+  // not carried: the message says what changed and the card carries the state
+  // that is true now.
+  repeated MeetupAspect changed_aspects = 2;
+}
+
+message MeetupMaterial {
+  MeetupCard meetup = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string material_id = 2;
+
+  // Empty string is the total value "unspecified".
+  string material_title = 3;
+}
+
+message MeetupReminder {
+  MeetupCard meetup = 1;
+}
+
+// The deadline of a lot the recipient follows is an hour away. Nothing else is
+// carried: the price, the exact deadline and the title are read by the channel
+// from Auction by lot_id, as for the other lot types.
+message LotReminder {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+}
+
+// The result of the draw as the recipient sees it. The recipient won when
+// ticket equals winning_ticket. Names of ticket holders are not carried: the
+// channel leads the recipient to the result screen, read from AuctionService.
+message RaffleResult {
+  // Canonical lowercase UUID with hyphens, version 5 or 7: the auction of the
+  // raffle.
+  string auction_id = 1;
+
+  // The recipient's ticket number, from 1 to ticket_count.
+  uint32 ticket = 2;
+
+  // The number of the winning ticket, from 1 to ticket_count.
+  uint32 winning_ticket = 3;
+
+  // How many tickets took part in the draw. At least 1.
+  uint32 ticket_count = 4;
+}
+
+message OrganizerMessage {
+  MeetupCard meetup = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. Internal Identity id of the sender.
+  // A human-readable name is not carried: it is not part of the identity
+  // contract, and naming stays the channel's business.
+  string sender_id = 2;
+
+  // Text written by the sender, verbatim. It is the source data of the message,
+  // not text rendered by Notifications: Notifications composes nothing.
+  string body = 3;
+}
+
+message CommunityAnnouncement {
+  // Canonical lowercase UUIDv7 with hyphens. Internal Identity id of the sender.
+  // A human-readable name is not carried: it is not part of the identity
+  // contract, and naming stays the channel's business.
+  string sender_id = 1;
+
+  // Text written by the sender, verbatim.
+  string body = 2;
+}
+
+message MeetupUnpublished {
+  MeetupCard meetup = 1;
+}
+
+// The lead of a lot passed from the recipient to another participant. The
+// recipient is the previous leader, so no field names them: a first bid has no
+// previous leader and produces no notification at all, rather than one with an
+// empty or zero leader.
+//
+// The new leader is not carried: who outbid the recipient is data about another
+// person that the message does not need. The previous price is not carried
+// either: the auction fact does not know it. The lot title is not part of the
+// trading domain; the channel reads it by lot_id.
+message LotOutbid {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // The price of the lot after the bid that took the lead.
+  auction.v1.Money current_price = 2;
+}
+
+// The recipient's proxy limit answered a command of another participant and
+// placed a bid for the recipient, who now leads.
+//
+// Who the recipient answered is not carried, for the same reason as in
+// LotOutbid; neither is the limit, which only its owner sees and the auction
+// fact does not carry. The lot title is read by lot_id.
+message LotProxyRaised {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // The price of the lot after the proxy bid.
+  auction.v1.Money current_price = 2;
+}
+
+// A lot was sold to the recipient. An unsold lot and a lot held for the final
+// produce no notification.
+message LotPurchased {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // The price the lot was sold at.
+  auction.v1.Money price = 2;
+}
+
+// What happened to the recipient's bids over one outbid window. Every lot where
+// the recipient was outbid in the window is listed, even if they took the lead
+// back before it closed; every lot where their proxy limit answered another
+// participant is listed too. A window without lines produces no notification.
+message LotActivityDigest {
+  // At least one line. One line per lot and kind, in the order the lines
+  // first appeared in the window.
+  repeated LotActivityLine lines = 1;
+}
+
+// One lot in a LotActivityDigest. The price and the lead are the lot's at the
+// moment the window closed, not at the moment of the event that added the
+// line: bids of third parties after it are reflected. For a lot sold in the
+// window they are the sale's.
+message LotActivityLine {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  LotActivityKind kind = 2;
+
+  // The price of the lot when the window closed.
+  auction.v1.Money current_price = 3;
+
+  // Whether the recipient led the lot when the window closed. An outbid line
+  // with true means the lead came back.
+  bool recipient_leads = 4;
+}
+
+enum LotActivityKind {
+  // No value: the field is unset or the value is unknown to the consumer.
+  LOT_ACTIVITY_KIND_UNSPECIFIED = 0;
+
+  // Someone else's bid took the lead of the lot away from the recipient.
+  LOT_ACTIVITY_KIND_OUTBID = 1;
+
+  // The recipient's proxy limit answered another participant on the lot.
+  LOT_ACTIVITY_KIND_PROXY_RAISED = 2;
+}
+
+// The frozen lineup of the final of an auction. The auction and lot titles are
+// not part of the trading domain; the channel reads them by id.
+message AuctionFinalLineup {
+  // Canonical lowercase UUID with hyphens: version 5 for an auction of a
+  // meetup, as auction.v1.AuctionState.id.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // At least one lot, in the order they go in the final.
+  repeated FinalLineupLot lineup = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the lots of the lineup the
+  // recipient led when they were held, in lineup order. Empty when the
+  // recipient leads none: then this is the plain announcement.
+  repeated string your_lot_ids = 4;
+}
+
+// One lot of a frozen lineup. Who leads it is not carried: that is data about
+// another person, and the recipient's own lots are named by your_lot_ids.
+message FinalLineupLot {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // The price the lot had when it was held for the final.
+  auction.v1.Money price = 2;
+}
+
+// The live final of an auction started. No lot is active yet, so none is
+// carried.
+message AuctionFinalStarted {
+  // Canonical lowercase UUID with hyphens, as in AuctionFinalLineup.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+}
+
+// A new application was opened in a queue the recipient moderates. The
+// applicant is not carried: who asked, by which name and from which channel is
+// data for the moderator, and the channel leads the recipient to the
+// application queue, where it is read from IdentityService under the
+// moderator's own rights.
+message AccessRequested {
+  reserved 1;
+  reserved "circle";
+
+  // The queue the application lies in, and so the screen the channel leads to.
+  identity.v1.ApplicationQueue queue = 2;
+}
+
+// The recipient was admitted by an application. Who decided is deliberately
+// absent; which bot delivers it is a rule of the delivery channel, not of this
+// message.
+message AccessGranted {
+  reserved 1;
+  reserved "circle";
+
+  // The queue of the application.
+  identity.v1.ApplicationQueue queue = 2;
+}
+
+// The recipient was granted a preset. The hub bot delivers it. Who granted is
+// deliberately absent.
+message PresetGranted {
+  // The granted preset.
+  identity.v1.Preset preset = 1;
+}
+
+// The person's active circle changed between guest and member.
+message CircleChanged {
+  // The circle the person had before the event.
+  identity.v1.Circle previous_circle = 1;
+
+  // The circle the person has after the event.
+  identity.v1.Circle current_circle = 2;
+}

@@ -1,0 +1,43 @@
+import { z } from "zod";
+
+export const TelegramDeepLinkPayloadSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{1,64}$/);
+
+export const MeetupDeepLinkPayloadSchema = z
+  .string()
+  .regex(/^m_[A-Za-z0-9_-]{22}$/);
+
+const TelegramUserSchema = z.object({
+  id: z.number().int(),
+  is_bot: z.boolean(),
+  first_name: z.string(),
+  username: z.string().optional(),
+});
+
+export const IncomingUpdateSchema = z.object({
+  update_id: z.number().int(),
+  message: z
+    .object({
+      message_id: z.number().int(),
+      date: z.number().int(),
+      chat: z.object({
+        id: z.number().int(),
+        type: z.string(),
+      }),
+      from: TelegramUserSchema.optional(),
+      text: z.string().optional(),
+    })
+    .optional(),
+});
+
+// Клавиатура сообщения, на которое ответили: в ней ищется кнопка «Отмена» с
+// шагом вопроса. Сообщение приходит из апдейта, поэтому форма проверяется, а
+// сами данные кнопки разбирает `parseCallback`.
+export const RepliedKeyboardSchema = z.object({
+  reply_markup: z.object({
+    inline_keyboard: z.array(
+      z.array(z.object({ callback_data: z.unknown().optional() })),
+    ),
+  }),
+});

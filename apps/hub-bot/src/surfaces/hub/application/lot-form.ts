@@ -1,0 +1,639 @@
+import type { LotView } from "../../../auction-ui/index.js";
+import { rpcMeta } from "../../../core/rpc-metadata.js";
+import type {
+  AuctionFailure,
+  LotAdministration,
+  LotCardResult,
+  LotReadResult,
+  LotStepPolicyInput,
+} from "../auction/port.js";
+import type {
+  ExecuteResult,
+  LotAmount,
+  LotAskError,
+  LotFormRequest,
+  LotFormView,
+  LotQuestion,
+  LotStepMode,
+  LotTermsView,
+  LotTierView,
+} from "./types.js";
+
+// Форма лота администратора (PER-319; ADR-047, дополнение 2026-10-05). Каждый
+// принятый ответ сразу уходит в Auction: название и описание — в карточку
+// каталога, цена и шаг — условиями торгов, фото (PER-452) — байтами в ту же
+// карточку. Своего состояния у формы нет.
+// Право здесь не решается: его проверяют Auction и Meetups на каждой команде,
+// а край только не показывает вход тому, кто не администратор.
+
+/** Валюта формы: платформа одновалютна, и другую Auction отклонит. */
+export const lotCurrency = "RUB";
+
+/** Верхняя граница суммы в рублях: семь цифр помещаются в кнопку вопроса. */
+export const maxLotRubles = 9_999_999;
+
+/** Сколько форма ждёт лот, которого read model Auction ещё не знает. */
+export const lotReadWindowMs = 1_500;
+/** Шаг повторного чтения: чаще проекция лот всё равно не покажет. */
+const lotReadStepMs = 250;
+/**
+ * Остаток бюджета действия, который перечитывание не трогает: после чтения
+ * идёт команда — правка карточки или условия, — и ей нужно время на ответ.
+ */
+const lotCommandReserveMs = 1_000;
+
+export type RublesResult =
+  | { kind: "ok"; rubles: number }
+  | { kind: "rejected"; reason: "amount-format" | "amount-range" };
+
+// Пробел, неразрывный и узкий неразрывный: так сумму пишут с клавиатуры и так
+// её показывает сам бот — «5 000 ₽» можно вставить обратно без знака валюты.
+const groupSeparators = /[   ]/g;
+
+/**
+ * Сумма в целых рублях. Копейки, знак, буквы и экспонента — не число формы:
+ * сумма уходит в Auction в минорных единицах, и округление здесь придумало бы
+ * цену за человека.
+ */
+export function parseRubles(raw: string): RublesResult {
+  const digits = raw.trim().replace(groupSeparators, "");
+  if (!/^\d+$/.test(digits)) {
+    return { kind: "rejected", reason: "amount-format" };
+  }
+  // Ведущие нули длину не раздувают: «0005000» — те же пять тысяч.
+  const significant = digits.replace(/^0+/, "");
+  if (significant === "" || significant.length > String(maxLotRubles).length) {
+    return { kind: "rejected", reason: "amount-range" };
+  }
+  return { kind: "ok", rubles: Number(significant) };
+}
+
+function rubles(amount: number): LotAmount {
+  return { minorUnits: amount * 100, currency: lotCurrency };
+}
+
+// Целое число рублей, где ноль допустим (первая граница порога). Отличается от
+// `parseRubles` только этим: цена ноль не бывает, а граница «от 0» обязана.
+function parseWholeRubles(raw: string): number | undefined {
+  const digits = raw.trim().replace(groupSeparators, "");
+  if (!/^\d+$/.test(digits)) return undefined;
+  const significant = digits.replace(/^0+/, "");
+  const value = significant === "" ? 0 : Number(significant);
+  return value > maxLotRubles ? undefined : value;
+}
+
+type StepParse =
+  | {
+      kind: "ok";
+      policy: LotStepPolicyInput;
+      terms: { step: LotAmount } | { tiers: LotTierView[] };
+    }
+  | { kind: "rejected"; reason: LotAskError };
+
+// Шаг из ответа (PER-491): одно число — `fixed`, строки «от суммы — шаг» —
+// `tiered`. Пороги проверяются здесь, до Auction: первая граница ноль и
+// возрастание (И-15), и та же проверка приходит отказом Auction на всякий
+// случай, но человеку она нужна текстом формы.
+function parseStep(mode: LotStepMode, raw: string): StepParse {
+  if (mode === "single") {
+    const step = parseRubles(raw);
+    if (step.kind === "rejected")
+      return { kind: "rejected", reason: step.reason };
+    const amount = rubles(step.rubles);
+    return {
+      kind: "ok",
+      policy: { kind: "fixed", step: amount },
+      terms: { step: amount },
+    };
+  }
+  const lines = raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+  if (lines.length === 0) return { kind: "rejected", reason: "step-format" };
+  const tiers: LotTierView[] = [];
+  for (const line of lines) {
+    // Разделитель — тире любое из трёх; в сумме тире не бывает.
+    const parts = line.split(/[—–-]/);
+    if (parts.length !== 2) return { kind: "rejected", reason: "step-format" };
+    const bound = parseWholeRubles(parts[0] ?? "");
+    const step = parseWholeRubles(parts[1] ?? "");
+    if (bound === undefined || step === undefined || step <= 0) {
+      return { kind: "rejected", reason: "step-format" };
+    }
+    tiers.push({ lowerBound: rubles(bound), step: rubles(step) });
+  }
+  const [first] = tiers;
+  if (first === undefined || first.lowerBound.minorUnits !== 0) {
+    return { kind: "rejected", reason: "step-order" };
+  }
+  for (let i = 1; i < tiers.length; i += 1) {
+    if (
+      tiers[i]!.lowerBound.minorUnits <= tiers[i - 1]!.lowerBound.minorUnits
+    ) {
+      return { kind: "rejected", reason: "step-order" };
+    }
+  }
+  return { kind: "ok", policy: { kind: "tiered", tiers }, terms: { tiers } };
+}
+
+function termsOf(lot: LotView): LotTermsView {
+  switch (lot.status.kind) {
+    case "draft":
+      return { kind: "unset" };
+    case "scheduled":
+      return {
+        kind: "set",
+        startingPrice: lot.status.startingPrice,
+        ...(lot.fixedStep === undefined ? {} : { step: lot.fixedStep }),
+        ...(lot.tiers === undefined ? {} : { tiers: lot.tiers }),
+      };
+    case "trading":
+    case "held":
+    case "sold":
+    case "unsold":
+    case "withdrawn":
+      return { kind: "closed" };
+    default: {
+      const _exhaustive: never = lot.status;
+      return _exhaustive;
+    }
+  }
+}
+
+function viewOf(lot: LotView): LotFormView {
+  return {
+    lotId: lot.lotId,
+    auctionId: lot.auctionId,
+    ...(lot.card === undefined ? {} : { title: lot.card.title }),
+    description: lot.card?.description ?? "",
+    hasImage: lot.card?.image !== undefined,
+    terms: termsOf(lot),
+  };
+}
+
+function failed(failure: AuctionFailure): ExecuteResult {
+  return failure.kind === "invalid"
+    ? { kind: "dependency-rejected", reason: "invalid", cause: failure.cause }
+    : { kind: "dependency-rejected", reason: failure.kind };
+}
+
+export function createLotForm(lots: LotAdministration) {
+  type Read =
+    | { kind: "ok"; raw: LotView; lot: LotFormView }
+    | { kind: "refused"; result: ExecuteResult };
+
+  // Read model Auction отстаёт от команды на сотни миллисекунд, а нажатие поля
+  // и ответ на вопрос приходят сразу после «Лот добавлен» (PER-471). Поэтому
+  // `not-found` читается заново, пока не выйдет окно или бюджет действия:
+  // лот, которого правда нет, получает тот же отказ, только позже. У шага с
+  // командой после чтения остаток бюджета под неё перечитывание не трогает —
+  // ни ожиданием, ни медленным ответом повторного чтения: иначе найденный лот
+  // упёрся бы в дедлайн на правке.
+  async function readVisible(
+    request: LotFormRequest & { lotId: string },
+  ): Promise<LotReadResult> {
+    const meta = rpcMeta(request);
+    const commandFollows =
+      request.intent !== "view-lot-form" &&
+      request.intent !== "check-lot-price";
+    const readsUntil =
+      meta?.deadlineAt === undefined
+        ? undefined
+        : meta.deadlineAt - (commandFollows ? lotCommandReserveMs : 0);
+    const until = Math.min(
+      Date.now() + lotReadWindowMs,
+      readsUntil ?? Number.POSITIVE_INFINITY,
+    );
+    const again =
+      readsUntil === undefined ? meta : { ...meta, deadlineAt: readsUntil };
+    let found = await lots.getLot(request.identity, request.lotId, meta);
+    // Повтор начинается, только если после ожидания чтению остаётся хотя бы
+    // шаг: вызов без остатка бюджета отказал бы таймаутом, а не `not-found`.
+    while (
+      found.kind === "not-found" &&
+      Date.now() + 2 * lotReadStepMs <= until
+    ) {
+      await new Promise((resolve) => setTimeout(resolve, lotReadStepMs));
+      found = await lots.getLot(request.identity, request.lotId, again);
+    }
+    return found;
+  }
+
+  async function read(
+    request: LotFormRequest & { lotId: string },
+  ): Promise<Read> {
+    const found = await readVisible(request);
+    switch (found.kind) {
+      case "ok":
+        return { kind: "ok", raw: found.lot, lot: viewOf(found.lot) };
+      case "not-found":
+        return {
+          kind: "refused",
+          result: {
+            kind: "lot-refused",
+            reason: "lot-not-found",
+            lotId: request.lotId,
+          },
+        };
+      default:
+        return { kind: "refused", result: failed(found) };
+    }
+  }
+
+  // Отказ карточки, общий для создания и правки. `card-conflict` и
+  // `card-not-found` у каждой команды свои, и вызывающий разбирает их сам.
+  function cardRefused(
+    card: Exclude<
+      LotCardResult,
+      { kind: "ok" | "card-conflict" | "card-not-found" }
+    >,
+    question: LotQuestion,
+    lot: LotFormView | undefined,
+  ): ExecuteResult {
+    switch (card.kind) {
+      case "empty-title":
+        return {
+          kind: "lot-ask",
+          question,
+          ...(lot === undefined ? {} : { lot }),
+          error: "empty-title",
+        };
+      case "not-admin":
+        return {
+          kind: "lot-refused",
+          reason: "not-administrator",
+          lotId: question.lotId,
+        };
+      // Фото не прошло, лот прежний: тот же вопрос заново, с пределом Auction.
+      case "image-too-large":
+        return {
+          kind: "lot-ask",
+          question,
+          ...(lot === undefined ? {} : { lot }),
+          error: "image-too-large",
+          maxImageBytes: card.maxBytes,
+        };
+      case "unsupported-image":
+        return {
+          kind: "lot-ask",
+          question,
+          ...(lot === undefined ? {} : { lot }),
+          error: "unsupported-image",
+        };
+      default:
+        return failed(card);
+    }
+  }
+
+  async function create(
+    request: Extract<LotFormRequest, { intent: "create-lot" }>,
+  ): Promise<ExecuteResult> {
+    const question: LotQuestion = {
+      kind: "new",
+      auctionId: request.auctionId,
+      lotId: request.lotId,
+    };
+    const title = request.title.trim();
+    const card = { lotId: request.lotId, title, description: "" };
+    let written = await lots.createLotCard(
+      request.identity,
+      card,
+      rpcMeta(request),
+    );
+    // Карточка с этим `lot_id` уже есть с другим названием: прошлый ответ на
+    // этот же вопрос оборвался между карточкой и реестром. Новый ответ —
+    // правка той карточки, а не отказ: человек отвечает на тот же вопрос.
+    // Оборваться мог только ответ боту: тогда лот уже в аукционе, и человек
+    // мог дозаполнить его с экрана правки. Описание и условия такого лота
+    // берутся из чтения, иначе правка названия стёрла бы описание.
+    let known: LotFormView | undefined;
+    if (written.kind === "card-conflict") {
+      const stored = await lots.getLot(
+        request.identity,
+        request.lotId,
+        rpcMeta(request),
+      );
+      known = stored.kind === "ok" ? viewOf(stored.lot) : undefined;
+      written = await lots.editLotCard(
+        request.identity,
+        { ...card, description: known?.description ?? "" },
+        rpcMeta(request),
+      );
+    }
+    if (written.kind === "card-conflict" || written.kind === "card-not-found") {
+      return failed({
+        kind: "invalid",
+        cause: new Error(`lot card of a new lot answered ${written.kind}`),
+      });
+    }
+    if (written.kind !== "ok") return cardRefused(written, question, undefined);
+    const added = await lots.addLot(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        lotId: request.lotId,
+        opId: request.opId,
+      },
+      rpcMeta(request),
+    );
+    switch (added.kind) {
+      case "ok":
+        // Экран собран из ответа команд: read model Auction лот ещё не знает.
+        // Лот, который она уже знает, заведён прошлым ответом: это правка.
+        return known === undefined
+          ? {
+              kind: "lot-form",
+              lot: {
+                lotId: request.lotId,
+                auctionId: request.auctionId,
+                title,
+                description: "",
+                hasImage: false,
+                terms: { kind: "unset" },
+              },
+              saved: "created",
+            }
+          : { kind: "lot-form", lot: { ...known, title }, saved: "text" };
+      case "not-administrator":
+      case "meetup-not-found":
+        return {
+          kind: "lot-refused",
+          reason: "not-administrator",
+          auctionId: request.auctionId,
+        };
+      case "lots-frozen":
+        return {
+          kind: "lot-refused",
+          reason: "lots-frozen",
+          auctionId: request.auctionId,
+        };
+      case "auction-not-found":
+        return { kind: "lot-refused", reason: "auction-not-found" };
+      default:
+        return failed(added);
+    }
+  }
+
+  async function setText(
+    request: Extract<LotFormRequest, { intent: "set-lot-text" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const question: LotQuestion = {
+      kind: "text",
+      field: request.field,
+      lotId: request.lotId,
+    };
+    // Правка заменяет оба текста, а второй берётся из карточки. Лот без
+    // карточки форма не заводила, и править в нём нечего.
+    const stored = current.raw.card;
+    if (stored === undefined) {
+      return {
+        kind: "lot-refused",
+        reason: "lot-not-found",
+        lotId: request.lotId,
+      };
+    }
+    const value = request.value.trim();
+    // Пустое название отклоняет Auction, а пустое описание он принял бы и стёр
+    // заданное: стирать описание форма не умеет, поэтому вопрос задаётся заново.
+    if (request.field === "description" && value === "") {
+      return {
+        kind: "lot-ask",
+        question,
+        lot: current.lot,
+        error: "empty-description",
+      };
+    }
+    const title = request.field === "title" ? value : stored.title;
+    const description =
+      request.field === "description" ? value : stored.description;
+    const written = await lots.editLotCard(
+      request.identity,
+      { lotId: request.lotId, title, description },
+      rpcMeta(request),
+    );
+    if (written.kind === "ok") {
+      return {
+        kind: "lot-form",
+        lot: { ...current.lot, title, description },
+        saved: "text",
+      };
+    }
+    if (written.kind === "card-not-found") {
+      return {
+        kind: "lot-refused",
+        reason: "lot-not-found",
+        lotId: request.lotId,
+      };
+    }
+    if (written.kind === "card-conflict") {
+      return failed({
+        kind: "invalid",
+        cause: new Error("lot card edit answered card-conflict"),
+      });
+    }
+    return cardRefused(written, question, current.lot);
+  }
+
+  // Фото меняется в любом состоянии лота, как название и описание: каталог
+  // торгов не касается (ADR-057). Правка заменяет оба текста, поэтому они
+  // берутся из карточки, как у `setText`.
+  async function setImage(
+    request: Extract<LotFormRequest, { intent: "set-lot-image" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const stored = current.raw.card;
+    if (stored === undefined) {
+      return {
+        kind: "lot-refused",
+        reason: "lot-not-found",
+        lotId: request.lotId,
+      };
+    }
+    const written = await lots.editLotCard(
+      request.identity,
+      {
+        lotId: request.lotId,
+        title: stored.title,
+        description: stored.description,
+        image: request.image,
+      },
+      rpcMeta(request),
+    );
+    if (written.kind === "ok") {
+      return {
+        kind: "lot-form",
+        lot: { ...current.lot, hasImage: true },
+        saved: "image",
+      };
+    }
+    if (written.kind === "card-not-found") {
+      return {
+        kind: "lot-refused",
+        reason: "lot-not-found",
+        lotId: request.lotId,
+      };
+    }
+    if (written.kind === "card-conflict") {
+      return failed({
+        kind: "invalid",
+        cause: new Error("lot card edit answered card-conflict"),
+      });
+    }
+    return cardRefused(
+      written,
+      { kind: "image", lotId: request.lotId },
+      current.lot,
+    );
+  }
+
+  async function checkPrice(
+    request: Extract<LotFormRequest, { intent: "check-lot-price" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    if (current.lot.terms.kind === "closed") {
+      return {
+        kind: "lot-refused",
+        reason: "terms-closed",
+        lotId: request.lotId,
+      };
+    }
+    const price = parseRubles(request.value);
+    return price.kind === "rejected"
+      ? {
+          kind: "lot-ask",
+          question: { kind: "price", lotId: request.lotId },
+          lot: current.lot,
+          error: price.reason,
+        }
+      : // Цена принята — спрашивается способ шага (PER-491), а не шаг сразу.
+        {
+          kind: "lot-step-mode",
+          lot: current.lot,
+          priceRubles: price.rubles,
+        };
+  }
+
+  async function setTerms(
+    request: Extract<LotFormRequest, { intent: "set-lot-terms" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const closed: ExecuteResult = {
+      kind: "lot-refused",
+      reason: "terms-closed",
+      lotId: request.lotId,
+    };
+    if (current.lot.terms.kind === "closed") return closed;
+    const question: LotQuestion = {
+      kind: "step",
+      lotId: request.lotId,
+      priceRubles: request.priceRubles,
+      mode: request.mode,
+    };
+    const step = parseStep(request.mode, request.value);
+    if (step.kind === "rejected") {
+      return {
+        kind: "lot-ask",
+        question,
+        lot: current.lot,
+        error: step.reason,
+      };
+    }
+    const startingPrice = rubles(request.priceRubles);
+    const scheduled = await lots.scheduleLot(
+      request.identity,
+      {
+        // Аукцион лота называет сам лот: кнопке вопроса он не нужен.
+        auctionId: current.lot.auctionId,
+        lotId: request.lotId,
+        opId: request.opId,
+        startingPrice,
+        stepPolicy: step.policy,
+      },
+      rpcMeta(request),
+    );
+    switch (scheduled.kind) {
+      case "ok":
+        return {
+          kind: "lot-form",
+          lot: {
+            ...current.lot,
+            terms: { kind: "set", startingPrice, ...step.terms },
+          },
+          saved: "terms",
+        };
+      case "lots-frozen":
+      case "scheduling-closed":
+        return closed;
+      case "step-policy-invalid":
+        return {
+          kind: "lot-ask",
+          question,
+          lot: current.lot,
+          error: "step-refused",
+        };
+      case "lot-not-in-auction":
+        return {
+          kind: "lot-refused",
+          reason: "lot-not-in-auction",
+          lotId: request.lotId,
+        };
+      case "not-administrator":
+      case "meetup-not-found":
+        return {
+          kind: "lot-refused",
+          reason: "not-administrator",
+          lotId: request.lotId,
+        };
+      case "auction-not-found":
+        return { kind: "lot-refused", reason: "auction-not-found" };
+      case "currency-mismatch":
+        // Аукцион ведётся не в рублях: человек это не исправит, а форма другой
+        // валюты не знает.
+        return failed({
+          kind: "invalid",
+          cause: new Error(`auction does not trade in ${lotCurrency}`),
+        });
+      default:
+        return failed(scheduled);
+    }
+  }
+
+  return async function lotForm(
+    request: LotFormRequest,
+  ): Promise<ExecuteResult> {
+    switch (request.intent) {
+      case "create-lot":
+        return create(request);
+      case "view-lot-form": {
+        const current = await read(request);
+        return current.kind === "refused"
+          ? current.result
+          : { kind: "lot-form", lot: current.lot };
+      }
+      case "view-lot-preview": {
+        const current = await read(request);
+        return current.kind === "refused"
+          ? current.result
+          : { kind: "lot-preview", lot: current.raw };
+      }
+      case "set-lot-text":
+        return setText(request);
+      case "check-lot-price":
+        return checkPrice(request);
+      case "set-lot-terms":
+        return setTerms(request);
+      case "set-lot-image":
+        return setImage(request);
+      default: {
+        const _exhaustive: never = request;
+        return _exhaustive;
+      }
+    }
+  };
+}

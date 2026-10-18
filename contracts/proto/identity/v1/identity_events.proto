@@ -1,0 +1,198 @@
+syntax = "proto3";
+
+package identity.v1;
+
+import "identity/v1/access.proto";
+
+// Outgoing facts about one person's access. They live apart from
+// identity_service.proto for the same reason the access values do: a consumer of
+// the events must not drag IdentityService and its nine operations into its
+// codegen.
+//
+// Subjects, delivery semantics and the rules a consumer follows when it applies
+// these facts are not repeated here: they live in docs/architecture/integration.md,
+// section "Identity NATS".
+
+// A recorded fact about one person: what happened to their access and what is
+// true about it now.
+message IdentityEvent {
+  // Canonical lowercase UUIDv7 with hyphens. Identifies the outbox row and is
+  // the same value again when that row is published more than once.
+  string event_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens. The person this fact belongs to.
+  // It repeats state.id so that the envelope alone identifies the subject of
+  // the fact.
+  string identity_id = 2;
+
+  // Profile version after the event was applied. Monotonic within one profile
+  // and starting at 1, so 0 is not a valid value.
+  //
+  // It counts every event of the profile, and every change of the snapshot
+  // below, circle and presets included, is one. The converse does not hold: an occasion that
+  // changes no access, such as application_submitted, still takes a version and
+  // carries the snapshot it left as it was. A consumer compares the version
+  // against the one it already holds for this person to order snapshots, and
+  // must not read a newer version alone as changed access.
+  int64 version = 3;
+
+  // RFC 3339 instant in UTC: the one moment the change was decided from and
+  // committed with. It is neither the moment of publication nor the moment of
+  // delivery, both of which happen later and are not carried at all.
+  string occurred_at = 4;
+
+  // The access state of the person after the event was applied. Always set: the
+  // body of every event is a whole snapshot, never a delta.
+  IdentityState state = 5;
+
+  reserved 7, 8;
+  reserved "role_granted", "role_revoked";
+
+  // What happened - the occasion. Exactly one is set, and an empty oneof is not
+  // a value.
+  oneof occasion {
+    ProfileRegistered profile_registered = 6;
+    ProfileBlocked profile_blocked = 9;
+    ProfileUnblocked profile_unblocked = 10;
+    ApplicationSubmitted application_submitted = 11;
+    ApplicationAdmitted application_admitted = 12;
+    RightGranted right_granted = 13;
+    RightRevoked right_revoked = 14;
+    CircleChanged circle_changed = 15;
+    PresetGranted preset_granted = 16;
+    PresetRevoked preset_revoked = 17;
+  }
+}
+
+// The access state of a person after an event.
+//
+// It is defined here and does not reuse ResolveIdentityResponse from the service
+// contract. The fields coincide today, but separate definitions keep a change of
+// the resolve API from silently becoming a change of this contract. Field numbers
+// match identity.v1.ResolveIdentityResponse so that the two stay readable side by
+// side.
+//
+// The profile version is a value of the envelope and is not repeated here: two
+// copies of one number can disagree. ResolveIdentityResponse spends no number on
+// it, so there is nothing to reserve.
+message IdentityState {
+  reserved 2, 4;
+  reserved "global_roles", "role";
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string id = 1;
+
+  // True when the profile's block mark is on. Blocking revokes the circle,
+  // presets and rights, so an empty state alone does not distinguish a blocked
+  // profile from one that never started.
+  bool blocked = 3;
+
+  // Rights Identity derived from the circle, the presets and the rights granted
+  // one by one, in no promised order, as ResolveIdentityResponse.rights. An
+  // empty set is a state: what a person has before admission, what a guest
+  // whose last right was revoked keeps, and what a blocked person is left with.
+  repeated AccessRight rights = 5;
+
+  // The circle. CIRCLE_UNSPECIFIED is a state, not an absent field: no circle
+  // yet, or a blocked person.
+  Circle circle = 6;
+
+  // Presets the person holds, in no promised order. An empty set is a state.
+  repeated Preset presets = 7;
+
+  // The Telegram user id and the username cache are deliberately absent: they are
+  // personal data, and no consumer of these events may hold them. A delivery
+  // channel that needs the Telegram user id asks IdentityService for it by the
+  // internal id instead.
+  //
+  // The moment of registration is absent too. No declared consumer asks for it,
+  // and adding a field later is compatible while removing one is not.
+}
+
+// The profile was created at the person's first contact.
+//
+// The snapshot is not promised to be empty. Admission from the allowed-username
+// list is decided in the same transaction that creates the profile, so a
+// registration can already carry a circle and rights, and a consumer that
+// assumed an empty state here would be wrong about exactly those people.
+message ProfileRegistered {}
+
+// The person's circle changed: they got their first circle or moved between
+// guest and member. The circle after the change is state.circle; the previous
+// one is carried because it is no longer in the state, so a consumer without a
+// replica need not diff. A transition into the blocked state takes the circle
+// away and is reported as profile_blocked alone.
+message CircleChanged {
+  // CIRCLE_UNSPECIFIED when the person had no circle.
+  Circle previous = 1;
+}
+
+// A preset was granted. The preset names which one is new; the presets and the
+// rights after the grant are in the state.
+message PresetGranted {
+  Preset preset = 1;
+}
+
+// A preset stopped being held. The preset is carried because it is no longer
+// in the state. A transition into the blocked state is reported as
+// profile_blocked alone.
+message PresetRevoked {
+  Preset preset = 1;
+}
+
+// The person entered the blocked state. The mark is state.blocked,
+// state.circle is unset and state.presets and state.rights are empty: the same
+// transaction revokes the circle, every preset and every right.
+message ProfileBlocked {}
+
+// The block was lifted. Lifting it restores no circle, preset or right, so
+// whatever the person had while blocked is what they have after: this occasion
+// never adds one.
+message ProfileUnblocked {}
+
+// A new application was opened in a queue whose grant the person does not hold.
+// It changes no access: the snapshot is the one the person already had.
+//
+// The applicant's name, username and arrival channel are deliberately absent:
+// they are data for the moderator and stay in IdentityService.
+message ApplicationSubmitted {
+  reserved 1;
+  reserved "role";
+
+  // The queue the application lies in.
+  ApplicationQueue queue = 2;
+}
+
+// A moderator of the queue admitted the person by an application: they decided an open
+// one, or reconsidered a refused one. It is reported apart from circle_changed
+// and right_granted because they do not say why access changed, and an
+// admission is the one cause the applicant is told about. The grants it made
+// come as their own circle_changed and right_granted occasions earlier in the
+// same transaction, so the snapshot already holds what the queue grants.
+//
+// An allowed-username grant and a grant that came with the member circle are
+// not admissions and never produce this occasion; neither does a refusal.
+message ApplicationAdmitted {
+  reserved 1;
+  reserved "role";
+
+  // The queue of the application.
+  ApplicationQueue queue = 2;
+}
+
+// A right was granted to the person one by one, apart from their circle and
+// presets, for example ACCESS_RIGHT_PLACE_BIDS to a guest or
+// ACCESS_RIGHT_ADMIT_BIDDERS to a member. A right that comes with a circle or a
+// preset arrives with circle_changed or preset_granted and is not reported
+// here. The whole set after the grant is in state.rights.
+message RightGranted {
+  AccessRight right = 1;
+}
+
+// A right granted one by one stopped being active. The right is carried
+// because it is no longer a granted right; it may still be in state.rights
+// through the circle or a preset. A transition into the blocked state is
+// reported as profile_blocked alone.
+message RightRevoked {
+  AccessRight right = 1;
+}

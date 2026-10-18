@@ -1,0 +1,81 @@
+# Production-образ Auction. Контекст сборки — корень репозитория: кодогенерации
+# ScalaPB нужен contracts/proto (build.sbt, contractsRoot). Что попадает в
+# контекст, решает соседний Containerfile.dockerignore — список разрешённого,
+# а не запрещённого.
+#
+# Каждая внешняя база закреплена по digest: tools/image/check-containerfile.sh
+# роняет сборку на теге. Тег рядом с digest только читается человеком, pull
+# идёт по digest; обновить базу — заменить digest целиком. Мажор JDK в базе
+# сборки обязан совпадать с apps/auction/.java-version, версия sbt — с
+# project/build.properties: сверки ниже роняют сборку на любом расхождении.
+
+FROM docker.io/library/eclipse-temurin:25-jdk-noble@sha256:0d623ea18d7b0fe1e12a2c0a920f7e950cad433387e5a49d3611e1507fa07602 AS build
+WORKDIR /src
+# Описание сборки — отдельным слоем до исходников: зависимости, плагины и сам
+# sbt закреплены в нём, и слой переживает правку кода.
+COPY apps/auction/build.sbt apps/auction/.java-version apps/auction/
+COPY apps/auction/project/build.properties apps/auction/project/plugins.sbt apps/auction/project/
+# Мажор — цифры до первой точки, а не хвост строки: файл из рабочей копии на
+# Windows несёт CRLF, и \r в хвосте делал бы равные версии неравными.
+RUN want=$(cut -d. -f1 apps/auction/.java-version | tr -cd '0-9') \
+    && have=$(java -version 2>&1 | sed -n 's/.*version "\([0-9]*\).*/\1/p' | head -n 1) \
+    && [ "$want" = "$have" ] || { echo "JDK в базе $have, в .java-version $want" >&2; exit 1; }
+# sbt берётся из релиза GitHub с контрольной суммой, записанной здесь, а не
+# скачанной рядом с архивом: сумма из того же источника ничего не доказывает.
+# Новая версия в build.properties роняет сверку, и сумма меняется вместе с ней.
+# curl нужен только этой стадии: в финальный образ он не попадает.
+ARG SBT_VERSION=1.11.7
+ARG SBT_SHA256=1232818f91c39639a93bbe1108e12d94c7044a646a7847f1a3977b9e46716cd6
+RUN want=$(sed -n 's/^sbt\.version=\([0-9.]*\).*/\1/p' apps/auction/project/build.properties) \
+    && [ "$want" = "$SBT_VERSION" ] || { echo "sbt в Containerfile $SBT_VERSION, в build.properties $want" >&2; exit 1; }
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/* \
+    && curl -fsSL -o /tmp/sbt.tgz "https://github.com/sbt/sbt/releases/download/v$SBT_VERSION/sbt-$SBT_VERSION.tgz" \
+    && echo "$SBT_SHA256  /tmp/sbt.tgz" | sha256sum -c - \
+    && tar -C /opt -xzf /tmp/sbt.tgz && rm /tmp/sbt.tgz
+ENV PATH=/opt/sbt/bin:$PATH
+RUN cd apps/auction && sbt -batch update
+COPY contracts/proto contracts/proto
+COPY apps/auction/src/main apps/auction/src/main
+# Classpath — jar'ы зависимостей и jar самого сервиса (exportJars) в порядке
+# sbt. Порядок держит argfile JVM: `-cp /app/lib/*` перечислил бы их в порядке
+# каталога, а при совпадающем классе в двух jar'ах победитель зависит от
+# порядка. Номер в имени разводит одноимённые jar'ы разных групп.
+# Файл пишется с переводом строки в конце: без него `read` вернул бы ложь на
+# последней записи, и последний jar молча выпал бы из образа. Сверка числа
+# скопированных jar'ов со списком sbt ловит такую потерю и пустой classpath.
+RUN cd apps/auction \
+    && sbt -batch 'set exportJars := true' 'set TaskKey[Unit]("imageClasspath") := IO.writeLines(file("/out/classpath.txt"), (Runtime / fullClasspathAsJars).value.files.map(_.getPath))' imageClasspath \
+    && mkdir -p /out/lib && i=0 && entries="" \
+    && while read -r jar; do \
+         i=$((i + 1)); name=$(printf '%03d-%s' "$i" "$(basename "$jar")"); \
+         cp "$jar" "/out/lib/$name"; entries="$entries${entries:+:}/app/lib/$name"; \
+       done < /out/classpath.txt \
+    && want=$(grep -c . /out/classpath.txt) \
+    && { [ "$i" -gt 0 ] && [ "$i" -eq "$want" ] || { echo "classpath: скопировано $i jar из $want" >&2; exit 1; }; } \
+    && printf -- '-cp %s\n' "$entries" > /out/classpath
+
+# База со shell, а не distroless: критерий `podman run <образ> id` исполняет
+# `id` из образа, а канарейки tools/image/check-test.sh собираются на этой же
+# базе и исполняют RUN. JRE без компилятора и без sbt; корневые сертификаты для
+# TLS к PostgreSQL и OTLP-коллектору — cacerts самой JRE.
+FROM docker.io/library/eclipse-temurin:25-jre-noble@sha256:398f810215757dc1926390014272579fb0e57c41ef1c8aa4f64ae761613a168b
+COPY --from=build /out/lib /app/lib
+COPY --from=build /out/classpath /app/classpath
+# В контейнере граница слушает все интерфейсы: умолчание 127.0.0.1 из
+# application.conf недостижимо ни для проб kubelet, ни для соседних подов.
+ENV AUCTION_HTTP_HOST=0.0.0.0 \
+    AUCTION_GRPC_HOST=0.0.0.0
+# uid числом: runtime проверяет non-root без чтения /etc/passwd образа.
+USER 1000:1000
+# 8080 — HTTP с /health, 8081 — gRPC (application.conf).
+EXPOSE 8080 8081
+# Команда в CMD, а не в ENTRYPOINT: `podman run <образ> id` тогда исполняет
+# `id`. Exec-форма отдаёт SIGTERM самой JVM, и coordinated shutdown Pekko
+# успевает выйти из кластера. Куча — доля лимита памяти контейнера, а не
+# умолчание в четверть. Доля 60%, а не больше: metaspace Scala и Pekko, code
+# cache и стеки потоков живут вне кучи, и при узкой доле cgroup убил бы процесс
+# SIGKILL раньше, чем кончится куча. OOM кучи роняет процесс, и под
+# перезапускается, вместо того чтобы жить с полумёртвой ActorSystem. Без
+# hsperfdata JVM не пишет в /tmp. Конфигурация идёт только переменными
+# окружения AUCTION_*.
+CMD ["java", "-XX:MaxRAMPercentage=60", "-XX:+ExitOnOutOfMemoryError", "-XX:-UsePerfData", "@/app/classpath", "auction.Main"]

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Логи сервиса — JSON: каркас полей из docs/standards/observability/logging.md
+  читается запросом `| json | <поле>=…` в Loki.
+
+  Поле service объявлено здесь, а не в коде: стандарт требует константы сборки,
+  а не метки сборщика логов, и одна строка конфигурации избавляет каждую запись
+  от передачи имени сервиса руками.
+-->
+<configuration>
+  <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+      <customFields>{"service":"auction"}</customFields>
+      <fieldNames>
+        <timestamp>timestamp</timestamp>
+        <version>[ignore]</version>
+        <levelValue>[ignore]</levelValue>
+      </fieldNames>
+    </encoder>
+  </appender>
+
+  <root level="INFO">
+    <appender-ref ref="JSON"/>
+  </root>
+</configuration>

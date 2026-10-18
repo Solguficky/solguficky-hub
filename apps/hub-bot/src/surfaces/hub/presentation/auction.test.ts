@@ -1,0 +1,1777 @@
+import { Code, ConnectError } from "@connectrpc/connect";
+import { InputFile } from "grammy";
+import type { Update } from "grammy/types";
+import { describe, expect, it, vi } from "vitest";
+import {
+  createHarness,
+  type HarnessOptions,
+  type RecordedCall,
+} from "../../../../testkit/harness.js";
+import {
+  type AccessRight,
+  encodeAuctionCallback,
+  type FavoritesPort,
+  type LotView,
+  type RaffleView,
+} from "../../../auction-ui/index.js";
+import type {
+  AuctionWatches,
+  AuctionWatchState,
+} from "../../../core/auction/watch.js";
+import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
+import { createDispatcher } from "../application/dispatcher.js";
+import type {
+  AuctionScreenPorts,
+  AuctionScreens,
+  EnableAuctionResult,
+  MeetupAuctionResult,
+  MeetupAuctions,
+} from "../auction/port.js";
+import type { IdentityResolver } from "../identity/port.js";
+import type { MeetupSnapshot, Meetups } from "../meetups/port.js";
+import { createAuctionParents } from "./auction-parents.js";
+import { isAuctionCallback } from "./auction-route.js";
+import { createLotPhotos } from "./lot-photos.js";
+import { uuidToToken } from "./meetup-deep-link.js";
+
+// Аукцион у сходки в боте хаба (PER-307): вход и включение на карточке,
+// оболочка ленты и лота с возвратом к сходке и доставка фото лота. Общий
+// пакет и Auction подменены: здесь проверяется оболочка хаба, а поведение
+// тела держит contract suite (`auction-contract.test.ts`).
+
+const meetupId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60";
+const meetupToken = uuidToToken(meetupId);
+const auctionId = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
+const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
+const identityId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd";
+
+const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
+const lotData = encodeAuctionCallback({ kind: "lot", lotId, page: 0 });
+
+function meetup(materials = 0): MeetupSnapshot {
+  return {
+    id: meetupId,
+    title: "Ярмарка",
+    description: "",
+    venue: "",
+    lifecycle: "planned",
+    visibility: "visible",
+    author: "0192f0a0-0000-7000-8000-00000000a001",
+    version: 1,
+    materials: Array.from({ length: materials }, (_, index) => ({
+      id: `0192f0a0-0000-7000-8000-0000000000b${index}`,
+      title: `Материал ${index + 1}`,
+      source: { kind: "message-link" as const, url: "https://t.me/c/1/2" },
+    })),
+  };
+}
+
+const lot: LotView = {
+  lotId,
+  auctionId,
+  version: 3,
+  card: {
+    title: "Кружка с совой",
+    description: "Ручная роспись.",
+    image: { version: "img-1" },
+  },
+  proxyEnabled: false,
+  status: {
+    kind: "scheduled",
+    startingPrice: { minorUnits: 50_000, currency: "RUB" },
+  },
+};
+
+// Пускает право хаба, а в Auction уходят права (RFC-016). По умолчанию права
+// участника, у набора `admin` — ещё право вести сходки; гостю тест передаёт
+// права явно.
+type Holder = "admin" | "member" | "guest";
+
+function identity(
+  holder: Holder,
+  blocked = false,
+  rights: readonly AccessRight[] = blocked
+    ? []
+    : holder === "admin"
+      ? ["access-hub", "place-bids", "manage-meetups"]
+      : ["access-hub", "place-bids"],
+) {
+  return {
+    resolve: async () => ({
+      kind: "resolved" as const,
+      identityId,
+      rights,
+      blocked,
+    }),
+  } satisfies IdentityResolver;
+}
+
+function fakeMeetups(snapshot = meetup(), down = false): Meetups {
+  const notUsed = async (): Promise<never> => {
+    throw new Error("not used");
+  };
+  return {
+    listVisible: notUsed,
+    listArchived: notUsed,
+    createDraft: notUsed,
+    get: async () =>
+      down
+        ? { kind: "timeout", cause: new Error("budget spent") }
+        : { kind: "ok", meetup: snapshot },
+    changeAttributes: notUsed,
+    setSchedule: notUsed,
+    publish: async () => ({
+      kind: "ok",
+      meetup: { ...snapshot, visibility: "visible" },
+    }),
+    unpublish: notUsed,
+    cancel: notUsed,
+    markHeld: notUsed,
+    schedulePublication: notUsed,
+    cancelPublication: notUsed,
+    attachMaterial: notUsed,
+    removeMaterial: notUsed,
+  };
+}
+
+// Auction с аукционом на сходку: ключ выводит сервер из сходки, поэтому второй
+// аукцион не рождается ни от какого числа нажатий.
+function fakeAuction(
+  options: {
+    existing?: boolean;
+    lookup?: () => MeetupAuctionResult;
+    enable?: () => EnableAuctionResult;
+    image?: () => Promise<{ content: Uint8Array; version: string }>;
+    // Лот ленты и карточки; по умолчанию — запланированный.
+    lot?: LotView;
+    // Розыгрыш аукциона (ADR-066): регистрация меняет отметку.
+    raffle?: RaffleView;
+    // Имя в аукционе ещё не выбрано: регистрация ждёт выбора имени, а
+    // псевдоним — этот отказ, если он задан.
+    nameless?: { aliasRefusal?: "alias-taken" };
+  } = {},
+) {
+  const shownLot = options.lot ?? lot;
+  const raffle: { current: RaffleView | undefined } = {
+    current: options.raffle,
+  };
+  let named = options.nameless === undefined;
+  const auctions = new Map<string, string>(
+    options.existing === true ? [[meetupId, auctionId]] : [],
+  );
+  const opIds: string[] = [];
+  const lookups: string[] = [];
+  const image =
+    options.image ??
+    (async () => ({ content: new Uint8Array([1, 2, 3]), version: "img-1" }));
+  const getLotImage = vi.fn((_request: { lotId: string }) => image());
+  const listAuctionLots = vi.fn(async () => ({
+    lots: [shownLot],
+    nextPageToken: "",
+  }));
+  const getLot = vi.fn(async () => shownLot);
+  // Снимок аукциона — один у корня (PER-605) и у строки аукциона на карточке
+  // сходки (PER-594).
+  const summaryOf = (id: string) => ({
+    auctionId: id,
+    stage: "scheduled" as const,
+    opensAt: "2026-10-26T09:00:00Z",
+    closesAt: "2026-10-29T18:00:00Z",
+    final: true,
+  });
+  // Корень аукциона (PER-605): Auction отдаёт аукцион, который у сходки есть.
+  const getAuction = vi.fn(async (request: { auctionId: string }) =>
+    [...auctions.values()].includes(request.auctionId)
+      ? summaryOf(request.auctionId)
+      : undefined,
+  );
+  const port: MeetupAuctions & AuctionScreens = {
+    async getMeetupAuction(_person, id) {
+      lookups.push(id);
+      if (options.lookup !== undefined) return options.lookup();
+      const found = auctions.get(id);
+      return found === undefined
+        ? { kind: "ok" }
+        : { kind: "ok", auction: summaryOf(found) };
+    },
+    async enableAuction(_person, id, opId) {
+      opIds.push(opId);
+      if (options.enable !== undefined) return options.enable();
+      const alreadyExisted = auctions.has(id);
+      auctions.set(id, auctionId);
+      return { kind: "enabled", auctionId, alreadyExisted };
+    },
+    currentAuction: async () => ({ kind: "ok" as const }),
+    screenPorts(): AuctionScreenPorts {
+      return {
+        auction: {
+          getLot,
+          findLot: getLot,
+          listAuctionLots,
+          // Ставка соперника и ответ прокси лидера одной командой: момент один.
+          listLotHistory: async () => ({
+            entries: [
+              {
+                kind: "bid" as const,
+                sequence: 4,
+                occurredAt: "2026-10-03T16:04:00Z",
+                bidId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401",
+                participantId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402",
+                amount: { minorUnits: 150_000, currency: "RUB" },
+                origin: { kind: "manual" as const, source: "bot" as const },
+              },
+              {
+                kind: "bid" as const,
+                sequence: 6,
+                occurredAt: "2026-10-03T16:04:00Z",
+                bidId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3403",
+                participantId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3404",
+                amount: { minorUnits: 160_000, currency: "RUB" },
+                origin: { kind: "proxy" as const },
+              },
+            ],
+            nextPageToken: "",
+          }),
+          getOwnDisplayName: async () => ({ text: "@fake", frozen: false }),
+          getDisplayNames: async () => ({}),
+          placeBid: async () => ({ kind: "accepted", lotVersion: 0 }),
+          setProxyLimit: async () => ({ kind: "accepted", lotVersion: 0 }),
+          chooseDisplayName: async () => {
+            const refusal = options.nameless?.aliasRefusal;
+            if (refusal !== undefined) return { kind: "refused", refusal };
+            named = true;
+            return { kind: "accepted", name: "@owl" };
+          },
+          getAuction,
+          getRaffle: async () => raffle.current,
+          registerForRaffle: async () => {
+            if (raffle.current === undefined) throw new Error("no raffle");
+            if (!named) {
+              return { kind: "refused", refusal: "display-name-not-chosen" };
+            }
+            raffle.current = { ...raffle.current, registered: true };
+            return { kind: "accepted", raffle: raffle.current };
+          },
+          cancelRaffleRegistration: async () => {
+            throw new Error("not used");
+          },
+        },
+        operations: {
+          newOperationId: () => "0198f2a4-7c1e-7d3a-9b21-00000000c001",
+        },
+        image: {
+          getLotImage: async (request) => ({
+            ...(await getLotImage(request)),
+            mediaType: "image/jpeg",
+          }),
+        },
+      };
+    },
+  };
+  return {
+    port,
+    auctions,
+    opIds,
+    lookups,
+    getLotImage,
+    listAuctionLots,
+    getLot,
+    getAuction,
+    raffle,
+  };
+}
+
+function harness(
+  holder: Holder,
+  auction: ReturnType<typeof fakeAuction>,
+  options: Omit<HarnessOptions, "auction"> & {
+    blocked?: boolean;
+    rights?: readonly AccessRight[];
+    snapshot?: MeetupSnapshot;
+    meetupsDown?: boolean;
+    presentation?: "rich" | "plain";
+  } = {},
+) {
+  const { blocked, rights, snapshot, meetupsDown, presentation, ...rest } =
+    options;
+  return createHarness(
+    identity(holder, blocked, rights),
+    createDispatcher(
+      fakeMeetups(snapshot, meetupsDown),
+      undefined,
+      undefined,
+      auction.port,
+    ),
+    [],
+    undefined,
+    presentation,
+    undefined,
+    { auction: auction.port, ...rest },
+  );
+}
+
+function press(data: string, message: Record<string, unknown> = {}): Update {
+  return {
+    update_id: 3,
+    callback_query: {
+      id: "callback-1",
+      chat_instance: "chat-1",
+      from: { id: 42, is_bot: false, first_name: "tester" },
+      data,
+      message: {
+        message_id: 9,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        text: "Лоты",
+        ...message,
+      },
+    } as never,
+  };
+}
+
+type Shown = {
+  text?: string;
+  rich_message?: {
+    html?: string;
+    media?: { id: string; media: { type: string; media: unknown } }[];
+  };
+  reply_markup?: {
+    inline_keyboard: { text: string; callback_data?: string }[][];
+  };
+};
+
+function screens(calls: readonly RecordedCall[]): Shown[] {
+  return calls
+    .filter((call) =>
+      ["editMessageText", "sendMessage", "sendRichMessage"].includes(
+        call.method,
+      ),
+    )
+    .map((call) => call.payload as Shown);
+}
+
+function lastScreen(calls: readonly RecordedCall[]): Shown {
+  const shown = screens(calls).at(-1);
+  if (shown === undefined) throw new Error("no screen was shown");
+  return shown;
+}
+
+function labels(shown: Shown): string[][] {
+  return (shown.reply_markup?.inline_keyboard ?? []).map((row) =>
+    row.map((button) => button.text),
+  );
+}
+
+function data(shown: Shown, text: string): string | undefined {
+  return shown.reply_markup?.inline_keyboard
+    .flat()
+    .find((button) => button.text === text)?.callback_data;
+}
+
+const extensionsData = `v1:ext:${meetupToken}`;
+const rootData = encodeAuctionCallback({ kind: "root", auctionId });
+
+describe("meetup card extensions entry", () => {
+  it("puts one extensions entry next to the materials and names the auction stage in a line", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      snapshot: meetup(2),
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
+
+    const card = lastScreen(calls);
+    expect(labels(card)).toContainEqual(["📎 Материалы (2)", "🧩 Расширения"]);
+    expect(data(card, "🧩 Расширения")).toBe(extensionsData);
+    expect(JSON.stringify(labels(card))).not.toContain("Лоты");
+    expect(JSON.stringify(card)).not.toContain("Включить аукцион");
+    // Кнопка без состояния, а состояние аукциона — строка текста (PER-594):
+    // карточка читает аукцион один раз.
+    expect(card.rich_message?.html ?? card.text).toContain(
+      "🔨 Аукцион: скоро старт",
+    );
+    expect(auction.lookups).toEqual([meetupId]);
+  });
+
+  // Строка аукциона — блок после «Когда» и «Где» (PER-594): у онлайн-торгов
+  // со сроком — и срок в поясе сообщества.
+  it.each([
+    [
+      "prebidding",
+      {
+        auctionId,
+        stage: "prebidding" as const,
+        closesAt: "2026-10-29T18:00:00Z",
+        final: false,
+      },
+      /\n\n🔨 Аукцион: идут онлайн-торги до 29 октября( 2026)?, чт, \d\d:00\n\n/,
+    ],
+    [
+      "finished",
+      { auctionId, stage: "finished" as const, final: false },
+      /\n\n🔨 Аукцион: завершён\n\n/,
+    ],
+  ])("names the %s auction on the meetup card", async (_, summary, line) => {
+    const auction = fakeAuction({
+      lookup: () => ({ kind: "ok", auction: summary }),
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
+
+    const text = lastScreen(calls).text ?? "";
+    expect(text).toMatch(line);
+    // Блок стоит после «Когда» и «Где» и перед описанием.
+    expect(text.indexOf("📍 Где:")).toBeLessThan(text.indexOf("Аукцион:"));
+    expect(text.indexOf("Аукцион:")).toBeLessThan(
+      text.indexOf("Описание пока не добавлено."),
+    );
+  });
+
+  it("leaves the auction line out without an auction at the meetup", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
+
+    expect(lastScreen(calls).text).not.toContain("Аукцион:");
+  });
+
+  it("keeps the card and its extensions entry when Auction does not answer", async () => {
+    const auction = fakeAuction({
+      lookup: () => ({ kind: "unavailable", cause: new Error("down") }),
+    });
+    const { bot, calls, records } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:view:${meetupToken}`));
+
+    const card = lastScreen(calls);
+    expect(card.rich_message?.html ?? card.text).toContain("Ярмарка");
+    // Карточка верна, но для записи границы это сбой соседа: иначе его не
+    // отличить от сходки без аукциона (PER-594).
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      error_category: "dependency_unavailable",
+      error: "auction_unavailable",
+    });
+    // Сбой Auction убирает только строку аукциона (PER-594).
+    expect(card.rich_message?.html ?? card.text).not.toContain("Аукцион:");
+    expect(labels(card)).toContainEqual(["📎 Материалы (0)", "🧩 Расширения"]);
+    // Пять рядов организатора не превышены: расширения — в ряду материалов.
+    expect(card.reply_markup?.inline_keyboard.length).toBeLessThanOrEqual(5);
+  });
+
+  it("does not call Auction for a person without the hub right", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("guest", auction, {
+      rights: ["place-bids"],
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+
+    expect(auction.lookups).toEqual([]);
+    expect(auction.getAuction).not.toHaveBeenCalled();
+    // Приветствие с кнопкой заявки (PER-592), а не экран аукциона.
+    expect(lastScreen(calls).text).toContain("Чтобы войти, подай заявку.");
+  });
+
+  it("does not call Auction for a blocked person", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot } = harness("member", auction, { blocked: true });
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+
+    expect(auction.getAuction).not.toHaveBeenCalled();
+  });
+});
+
+describe("meetup extensions menu", () => {
+  it("opens the auction root of an enabled auction", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    const menu = lastScreen(calls);
+    expect(menu.text).toMatch(/^<b>Расширения<\/b>\n<i>Ярмарка<\/i>\n\n/);
+    expect(menu.text).toContain("<i>Ярмарка</i>");
+    expect(labels(menu)).toEqual([["🔨 Аукцион"], ["‹ Сходка"]]);
+    expect(data(menu, "🔨 Аукцион")).toBe(rootData);
+    expect(data(menu, "‹ Сходка")).toBe(`v1:view:${meetupToken}`);
+  });
+
+  it("offers enabling to the administrator of a meetup without an auction", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    const menu = lastScreen(calls);
+    expect(labels(menu)).toEqual([["Включить аукцион"], ["‹ Сходка"]]);
+    expect(data(menu, "Включить аукцион")).toBe(
+      `v1:manage:auction:${meetupToken}`,
+    );
+  });
+
+  it("tells a member that the meetup has no extensions", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    const menu = lastScreen(calls);
+    expect(menu.text).toContain("У этой сходки пока нет расширений.");
+    expect(labels(menu)).toEqual([["‹ Сходка"]]);
+  });
+
+  it("offers no enabling at a cancelled meetup", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("admin", auction, {
+      snapshot: { ...meetup(), lifecycle: "cancelled" },
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    const menu = lastScreen(calls);
+    expect(menu.text).toContain("У этой сходки пока нет расширений.");
+    expect(JSON.stringify(menu)).not.toContain("Включить аукцион");
+  });
+
+  it("names an Auction outage with a retry instead of guessing the auction", async () => {
+    const auction = fakeAuction({
+      lookup: () => ({ kind: "unavailable", cause: new Error("down") }),
+    });
+    const { bot, calls, records } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    const menu = lastScreen(calls);
+    expect(menu.text).toContain("Аукцион сейчас не отвечает.");
+    expect(labels(menu)).toEqual([["Повторить"], ["‹ Сходка"]]);
+    expect(data(menu, "Повторить")).toBe(extensionsData);
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      error_category: "dependency_unavailable",
+      error: "auction_unavailable",
+    });
+  });
+});
+
+describe("enabling the auction", () => {
+  it("enables the auction and shows the outcome with the auction root behind it", async () => {
+    const auction = fakeAuction();
+    const { bot, calls, records } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
+
+    const outcome = lastScreen(calls);
+    expect(outcome.text).toContain("<b>Аукцион включён</b>");
+    expect(labels(outcome)).toEqual([["🔨 Аукцион"], ["‹ Расширения"]]);
+    expect(data(outcome, "🔨 Аукцион")).toBe(rootData);
+    expect(data(outcome, "‹ Расширения")).toBe(extensionsData);
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "ok",
+      use_case: "enable_auction",
+    });
+    await bot.handleUpdate(press(rootData));
+    expect(lastScreen(calls).text).toMatch(/^<b>Аукцион<\/b>/);
+  });
+
+  it("does not birth a second auction on a repeated press", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
+    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
+
+    expect(auction.auctions.size).toBe(1);
+    // Ключ команды рождается на нажатие, а аукцион один.
+    expect(new Set(auction.opIds).size).toBe(2);
+    expect(lastScreen(calls).text).toContain(
+      "<b>Аукцион у этой сходки уже включён</b>",
+    );
+  });
+
+  it("answers a refusal of the meetup administrator right with a frame back to the extensions", async () => {
+    const auction = fakeAuction({
+      enable: () => ({ kind: "not-administrator" }),
+    });
+    const { bot, calls, records } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
+
+    const frame = lastScreen(calls);
+    expect(frame.text).toContain("Это действие тебе недоступно.");
+    expect(data(frame, "‹ Расширения")).toBe(extensionsData);
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      error_category: "authorization",
+    });
+  });
+
+  it("offers a retry when Auction is unavailable", async () => {
+    const auction = fakeAuction({
+      enable: () => ({ kind: "unavailable", cause: new Error("down") }),
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
+
+    expect(data(lastScreen(calls), "Повторить")).toBe(
+      `v1:manage:auction:${meetupToken}`,
+    );
+  });
+});
+
+describe("auction root and the way back", () => {
+  it("walks extensions, auction, lots and a lot, and returns the same way", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(root.text).toMatch(/^<b>Аукцион<\/b>/);
+    expect(root.text).toContain("Статус: скоро старт");
+    expect(root.text).toContain("Онлайн-торги: с ");
+    expect(root.text).toContain("Финал: в зале");
+    expect(labels(root)).toEqual([
+      ["🔨 Лоты"],
+      ["Правила и FAQ"],
+      ["‹ Расширения"],
+    ]);
+    expect(data(root, "‹ Расширения")).toBe(extensionsData);
+
+    await bot.handleUpdate(press(data(root, "🔨 Лоты") ?? ""));
+    const feed = lastScreen(calls);
+    expect(feed.text).toMatch(/^<b>Лоты<\/b>/);
+    // Лента — просто список лотов: входов корня в ней нет.
+    expect(JSON.stringify(labels(feed))).not.toContain("Правила и FAQ");
+    expect(labels(feed).at(-1)).toEqual(["‹ Аукцион"]);
+    expect(data(feed, "‹ Аукцион")).toBe(rootData);
+
+    await bot.handleUpdate(press(lotData));
+    const card = lastScreen(calls);
+    expect(labels(card).at(-1)).toEqual(["‹ Лоты"]);
+    await bot.handleUpdate(press(data(card, "‹ Лоты") ?? ""));
+    expect(data(lastScreen(calls), "‹ Аукцион")).toBe(rootData);
+  });
+
+  it("gives the administrator the console in the root and keeps adding lots in the list", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("admin", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+    expect(labels(lastScreen(calls))).toEqual([
+      ["🔨 Лоты"],
+      ["Пульт"],
+      ["Правила и FAQ"],
+      ["‹ Сходки"],
+    ]);
+    await bot.handleUpdate(press(feedData));
+    expect(labels(lastScreen(calls))[0]).toEqual(["Добавить лот"]);
+  });
+
+  it("returns from the root to the upcoming list when the process no longer knows the meetup", async () => {
+    const auction = fakeAuction({ existing: true });
+    // Рестарт: память процесса пуста, а кнопка корня осталась в чате.
+    const { bot, calls } = harness("member", auction, {
+      auctionParents: createAuctionParents(),
+    });
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(labels(root).at(-1)).toEqual(["‹ Сходки"]);
+    expect(data(root, "‹ Сходки")).toBe("v1:nav:hub");
+  });
+
+  it("remembers the meetup from enabling, not only from the menu", async () => {
+    const auction = fakeAuction();
+    const parents = createAuctionParents();
+    const { bot } = harness("admin", auction, { auctionParents: parents });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
+
+    expect(parents.meetupOf(auctionId)).toBe(meetupId);
+  });
+
+  it("offers a retry when Auction does not answer the root", async () => {
+    const auction = fakeAuction({ existing: true });
+    auction.getAuction.mockRejectedValue(
+      new ConnectError("down", Code.Unavailable),
+    );
+    const { bot, calls, records } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+
+    expect(data(lastScreen(calls), "Повторить")).toBe(rootData);
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      use_case: "view_auction",
+      error_category: "dependency_unavailable",
+    });
+  });
+
+  // Чтение Auction могло ещё не увидеть только что включённый аукцион:
+  // кадр предлагает повтор, а не тупик.
+  it("offers a retry when Auction does not give the auction yet", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+
+    const root = lastScreen(calls);
+    expect(root.text).toContain("Аукцион не найден.");
+    expect(labels(root)).toEqual([["Повторить"], ["‹ Сходки"]]);
+    expect(data(root, "Повторить")).toBe(rootData);
+  });
+
+  it("shows the bids of a lot in journal order and returns to the lot", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({
+          kind: "history",
+          lotId,
+          page: 0,
+          historyPage: 999,
+        }),
+      ),
+    );
+    const history = lastScreen(calls);
+    expect(history.text).toMatch(/^<b>Ставки<\/b>/);
+    const lines = (history.text ?? "")
+      .split("\n")
+      .filter((line) => line.includes("₽"));
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(/1\s500\s₽ · вручную$/);
+    expect(lines[1]).toMatch(/1\s600\s₽ · авто$/);
+    expect(labels(history).at(-1)).toEqual(["‹ Лот"]);
+    expect(data(history, "‹ Лот")).toBe(lotData);
+  });
+
+  it("offers a retry when Auction does not answer the feed", async () => {
+    const auction = fakeAuction({ existing: true });
+    auction.listAuctionLots.mockRejectedValue(
+      new ConnectError("down", Code.Unavailable),
+    );
+    const { bot, calls, records } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(feedData));
+
+    expect(data(lastScreen(calls), "Повторить")).toBe(feedData);
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      use_case: "view_auction",
+      error_category: "dependency_unavailable",
+    });
+  });
+});
+
+// Избранное (PER-495): участник отмечает лоты в боте хаба — у человека одна
+// отметка в Notifications, в каком бы боте он ни торговал.
+describe("favorite lots in the hub", () => {
+  function notificationsFavorites() {
+    const marks: string[] = [];
+    const port: FavoritesPort = {
+      listFollowedLots: async () => [...marks],
+      followLot: async ({ lotId: marked }) => {
+        if (!marks.includes(marked)) marks.push(marked);
+        return { kind: "done", following: true };
+      },
+      unfollowLot: async ({ lotId: unmarked }) => {
+        const at = marks.indexOf(unmarked);
+        if (at >= 0) marks.splice(at, 1);
+        return { kind: "done", following: false };
+      },
+    };
+    return { marks, port };
+  }
+
+  it("marks a lot from its card and lists it from the auction root with the way back to the root", async () => {
+    const favorites = notificationsFavorites();
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+      favorites: () => favorites.port,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+    const root = lastScreen(calls);
+    expect(labels(root)[1]).toEqual(["Избранное", "Правила и FAQ"]);
+
+    await bot.handleUpdate(press(lotData));
+    const follow = data(lastScreen(calls), "Добавить в избранное");
+    if (follow === undefined) throw new Error("no follow button on the card");
+    await bot.handleUpdate(press(follow));
+    expect(favorites.marks).toEqual([lotId]);
+    expect(data(lastScreen(calls), "Убрать из избранного")).toBeDefined();
+
+    const open = data(root, "Избранное");
+    if (open === undefined) throw new Error("no favorites in the auction root");
+    await bot.handleUpdate(press(open));
+    const list = lastScreen(calls);
+    expect(list.text).toMatch(/^<b>Избранное<\/b>/);
+    expect(labels(list).at(-1)).toEqual(["‹ Аукцион"]);
+    expect(data(list, "‹ Аукцион")).toBe(rootData);
+  });
+
+  it("keeps the root and the card without favorites when Notifications is not configured", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+    expect(labels(lastScreen(calls))[1]).toEqual(["Правила и FAQ"]);
+    await bot.handleUpdate(press(lotData));
+    expect(JSON.stringify(labels(lastScreen(calls)))).not.toContain(
+      "Добавить в избранное",
+    );
+  });
+});
+
+describe("lot photo delivery", () => {
+  const richLot = (fileId: string) => ({
+    message_id: 9,
+    date: 0,
+    chat: { id: 42, type: "private", first_name: "tester" },
+    rich_message: {
+      blocks: [
+        {
+          type: "photo",
+          photo: [
+            { file_id: "small", file_unique_id: "s", width: 90, height: 90 },
+            { file_id: fileId, file_unique_id: "l", width: 800, height: 800 },
+          ],
+        },
+      ],
+    },
+  });
+
+  it("uploads the photo into the rich card and reuses its file_id", async () => {
+    const auction = fakeAuction({ existing: true });
+    const photos = createLotPhotos();
+    const { bot, calls } = harness("member", auction, {
+      lotPhotos: photos,
+      respond: (method) =>
+        method === "editMessageText" ? richLot("big-file") : undefined,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    const card = lastScreen(calls);
+    // Фото — первым блоком, над заголовком (решение владельца 10 октября 2026).
+    expect(card.rich_message?.html).toMatch(
+      /^<img src="tg:\/\/photo\?id=lot"\/><h1>/,
+    );
+    expect(card.rich_message?.media?.[0]?.media.media).toBeInstanceOf(
+      InputFile,
+    );
+    expect(photos.get({ lotId, version: "img-1" })).toEqual({
+      kind: "file",
+      fileId: "big-file",
+    });
+
+    await bot.handleUpdate(press(lotData));
+    expect(auction.getLotImage).toHaveBeenCalledTimes(1);
+    expect(lastScreen(calls).rich_message?.media?.[0]?.media.media).toBe(
+      "big-file",
+    );
+  });
+
+  it("sends the card without a photo when Auction does not give the image", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      image: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+    const { bot, calls, records } = harness("member", auction);
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    const card = lastScreen(calls);
+    expect(card.rich_message?.html).toContain("<h1>Кружка с совой</h1>");
+    expect(card.rich_message?.media).toBeUndefined();
+    expect(
+      records.some((record) => record.message === "lot image unavailable"),
+    ).toBe(true);
+  });
+
+  it("edits the card without a photo when Telegram refuses the upload and skips it next time", async () => {
+    const auction = fakeAuction({ existing: true });
+    const photos = createLotPhotos();
+    const { bot, calls } = harness("member", auction, {
+      lotPhotos: photos,
+      respond: (method, payload) =>
+        method === "editMessageText" &&
+        (payload as Shown).rich_message?.media !== undefined
+          ? {
+              ok: false,
+              error_code: 400,
+              description: "Bad Request: IMAGE_PROCESS_FAILED",
+            }
+          : undefined,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    const card = lastScreen(calls);
+    expect(card.rich_message?.html).toContain("<h1>Кружка с совой</h1>");
+    expect(card.rich_message?.media).toBeUndefined();
+    expect(photos.get({ lotId, version: "img-1" })).toEqual({
+      kind: "rejected",
+    });
+
+    await bot.handleUpdate(press(lotData));
+    expect(auction.getLotImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the lot card as an HTML message without a photo in plain presentation", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    const card = lastScreen(calls);
+    expect(card.text).toMatch(/^<b>Кружка с совой<\/b>/);
+    expect(card.rich_message).toBeUndefined();
+    expect(auction.getLotImage).not.toHaveBeenCalled();
+  });
+});
+
+describe("review findings", () => {
+  // Включение не читает сходку заново (PER-605): исход называет аукцион и
+  // ведёт в его корень, даже когда Meetups лежит.
+  it("reports an enabled auction when Meetups does not answer", async () => {
+    const auction = fakeAuction();
+    const parents = createAuctionParents();
+    const { bot, calls, records } = harness("admin", auction, {
+      meetupsDown: true,
+      auctionParents: parents,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
+
+    const frame = lastScreen(calls);
+    expect(frame.text).toContain("<b>Аукцион включён</b>");
+    expect(data(frame, "‹ Расширения")).toBe(`v1:ext:${meetupToken}`);
+    expect(JSON.stringify(frame)).not.toContain("Повторить");
+    expect(parents.meetupOf(auctionId)).toBe(meetupId);
+    expect(records.at(-1)?.fields).toMatchObject({ result: "ok" });
+  });
+
+  it("leaves a hub button without a version to the hub parser", () => {
+    expect(isAuctionCallback("manage:menu")).toBe(false);
+    expect(isAuctionCallback("v1:nav:hub")).toBe(false);
+    expect(isAuctionCallback(feedData)).toBe(true);
+    expect(isAuctionCallback(`v1:t:${lotData.slice("v1:".length)}`)).toBe(true);
+    // Своя кнопка, даже нечитаемая, остаётся аукционной.
+    expect(isAuctionCallback("v9:auc:feed:broken")).toBe(true);
+  });
+
+  it("opens a traced auction callback from a notification as a new screen", async () => {
+    const auction = fakeAuction({ existing: true });
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:t:${lotData.slice("v1:".length)}`));
+
+    expect(auction.getLot).toHaveBeenCalledOnce();
+    expect(lastScreen(calls).rich_message?.html).toContain("Кружка с совой");
+    expect(calls.some((call) => call.method === "sendRichMessage")).toBe(true);
+    expect(calls.some((call) => call.method === "editMessageText")).toBe(false);
+  });
+
+  it("shows the blocking frame, not an outage, when Auction is not configured", async () => {
+    const { bot, calls } = createHarness(
+      identity("member", true),
+      createDispatcher(fakeMeetups()),
+    );
+    await bot.init();
+    await bot.handleUpdate(press(feedData));
+
+    expect(lastScreen(calls).text).toContain("Доступ к Solguficky Hub закрыт");
+  });
+
+  it("names a missing lot, but treats a failing feed as an outage", async () => {
+    const auction = fakeAuction({ existing: true });
+    auction.getLot.mockRejectedValue(new ConnectError("no", Code.NotFound));
+    auction.listAuctionLots.mockRejectedValue(
+      new ConnectError("no", Code.NotFound),
+    );
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(lotData));
+    expect(lastScreen(calls).text).toContain("Лот не найден");
+    await bot.handleUpdate(press(feedData));
+    expect(lastScreen(calls).text).not.toContain("Лот не найден");
+    expect(data(lastScreen(calls), "Повторить")).toBe(feedData);
+  });
+
+  it("does not mark the photo rejected on a transient Telegram failure", async () => {
+    const auction = fakeAuction({ existing: true });
+    const photos = createLotPhotos();
+    const { bot } = harness("member", auction, {
+      lotPhotos: photos,
+      respond: (method, payload) =>
+        method === "editMessageText" &&
+        (payload as Shown).rich_message?.media !== undefined
+          ? {
+              ok: false,
+              error_code: 429,
+              description: "Too Many Requests: retry after 1",
+              parameters: { retry_after: 1 },
+            }
+          : undefined,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    expect(photos.get({ lotId, version: "img-1" })).toBeUndefined();
+  });
+
+  it("keeps a working file_id when only the message cannot be edited", async () => {
+    const auction = fakeAuction({ existing: true });
+    const photos = createLotPhotos();
+    photos.set({ lotId, version: "img-1" }, { kind: "file", fileId: "big" });
+    const { bot, calls } = harness("member", auction, {
+      lotPhotos: photos,
+      respond: (method) =>
+        method === "editMessageText"
+          ? {
+              ok: false,
+              error_code: 400,
+              description: "Bad Request: message can't be edited",
+            }
+          : undefined,
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    expect(photos.get({ lotId, version: "img-1" })).toEqual({
+      kind: "file",
+      fileId: "big",
+    });
+    expect(auction.getLotImage).not.toHaveBeenCalled();
+    const sent = calls.filter((call) => call.method === "sendRichMessage");
+    expect(
+      (sent.at(-1)?.payload as Shown | undefined)?.rich_message?.media?.[0]
+        ?.media.media,
+    ).toBe("big");
+  });
+});
+
+// Лист ставки (PER-317) в оболочке хаба: вопрос новым сообщением с режимом
+// ответа, ответ reply-сообщением и «Отмена» по дизайн-коду, «Вопросы».
+describe("bid leaf in the hub", () => {
+  const trading: LotView = {
+    ...lot,
+    nextPrice: { minorUnits: 125_000, currency: "RUB" },
+    proxyEnabled: true,
+    status: {
+      kind: "trading",
+      currentPrice: { minorUnits: 120_000, currency: "RUB" },
+      phase: "online",
+    },
+  };
+  const step = encodeAuctionCallback({
+    kind: "question",
+    question: "bid",
+    lotId,
+    page: 0,
+    addressee: 42,
+  });
+  const question = {
+    message_id: 9,
+    date: 0,
+    chat: { id: 42, type: "private", first_name: "tester" },
+    from: { id: 1, is_bot: true, first_name: "hub" },
+    text: "Своя сумма",
+    reply_markup: {
+      inline_keyboard: [[{ text: "Отмена", callback_data: step }]],
+    },
+  };
+  const answer = (extra: Record<string, unknown>): Update =>
+    ({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        reply_to_message: question,
+        ...extra,
+      },
+    }) as Update;
+  const setup = async () => {
+    const auction = fakeAuction({ existing: true, lot: trading });
+    const run = harness("member", auction, {
+      presentation: "plain",
+    });
+    await run.bot.init();
+    return run;
+  };
+
+  it("puts the bid rows on the card of a lot in online trading", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(press(lotData));
+    const card = lastScreen(calls);
+    // Своя сумма с автоставкой — парой, «Обновить» и «Ставки» — рядами (PER-594).
+    expect(labels(card).slice(0, 4)).toEqual([
+      [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
+      ["Своя сумма", "Автоставка"],
+      ["Обновить"],
+      ["Ставки"],
+    ]);
+  });
+
+  // Карточка участника в онлайн-торгах с автоставкой и избранным — пять рядов
+  // (PER-594): ставка по шагу, своя сумма с автоставкой, «Обновить» со
+  // «Ставками», избранное и возврат.
+  it("fits the card of a participant with limits and favorites into five rows", async () => {
+    const auction = fakeAuction({ existing: true, lot: trading });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+      favorites: () => ({
+        listFollowedLots: async () => [],
+        followLot: async () => ({ kind: "done", following: true }),
+        unfollowLot: async () => ({ kind: "done", following: false }),
+      }),
+    });
+    await bot.init();
+    await bot.handleUpdate(press(lotData));
+
+    expect(labels(lastScreen(calls))).toEqual([
+      [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
+      ["Своя сумма", "Автоставка"],
+      ["Обновить", "Добавить в избранное"],
+      ["Ставки"],
+      ["‹ Лоты"],
+    ]);
+  });
+
+  it("asks the amount in a new message with the reply mode", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({ kind: "ask", question: "bid", lotId, page: 0 }),
+      ),
+    );
+    expect(calls.map((call) => call.method)).toContain(
+      "editMessageReplyMarkup",
+    );
+    const asked = calls.find((call) => call.method === "sendMessage");
+    expect(asked?.payload).toMatchObject({
+      text: expect.stringContaining("Своя сумма"),
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [[{ text: "Отмена", callback_data: step }]],
+      },
+    });
+  });
+
+  // Пояснение видено (PER-517): вопрос лимита уходит в Telegram с «Как это
+  // работает» над «Отменой», и линтер экранов проверяет его на отправке.
+  it("asks the limit with how it works once the explainer was seen", async () => {
+    const auction = fakeAuction({ existing: true, lot: trading });
+    const marks: string[] = [];
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+      proxyExplainer: () => ({
+        seen: async () => true,
+        markSeen: async (viewer) => {
+          marks.push(viewer.identityId);
+        },
+      }),
+    });
+    await bot.init();
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({
+          kind: "ask",
+          question: "proxy",
+          lotId,
+          page: 0,
+        }),
+      ),
+    );
+    const asked = calls.find((call) => call.method === "sendMessage");
+    expect(asked?.payload).toMatchObject({
+      text: expect.not.stringContaining("Подсказка"),
+      reply_markup: {
+        force_reply: true,
+        inline_keyboard: [[{ text: "Как это работает" }], [{ text: "Отмена" }]],
+      },
+    });
+    expect(marks).toEqual([]);
+  });
+
+  // «Как это работает» (PER-517) задаёт вопрос лимита заново: нажатый вопрос
+  // удаляется, как по «Отмене», а новый с пояснением приходит следом.
+  it("replaces the limit question with an explained one on how it works", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "explain", lotId, page: 0 }), {
+        text: "Автоставка",
+      }),
+    );
+    expect(calls.map((call) => call.method)).not.toContain(
+      "editMessageReplyMarkup",
+    );
+    expect(calls.find((call) => call.method === "deleteMessage")).toMatchObject(
+      { payload: { chat_id: 42, message_id: 9 } },
+    );
+    expect(calls.at(-1)).toMatchObject({
+      method: "sendMessage",
+      payload: {
+        text: expect.stringContaining(
+          "💡 Подсказка: платишь цену, а не лимит.",
+        ),
+        reply_markup: { force_reply: true },
+      },
+    });
+  });
+
+  it("confirms the typed amount and takes the cancel off the question", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(answer({ text: "1 300" }));
+    const confirm = calls.find((call) => call.method === "sendMessage");
+    expect(confirm?.payload).toMatchObject({
+      text: expect.stringMatching(/^<b>Поставить 1\s300\s₽\?<\/b>/),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: expect.stringMatching(/^✔️ Да, поставить 1\s300\s₽$/),
+              style: "danger",
+              callback_data: expect.stringMatching(/^v1:auc:b:/),
+            },
+            { text: "✖️ Нет", callback_data: expect.any(String) },
+          ],
+        ],
+      },
+    });
+    expect(calls.at(-1)).toMatchObject({
+      method: "editMessageReplyMarkup",
+      payload: { message_id: 9 },
+    });
+  });
+
+  // PER-473: принятая ставка — свой экран с «‹ Лот» и «‹ Лоты» (PER-595), а не
+  // строка над карточкой с прежней ценой.
+  it("answers an accepted bid with its own screen and the lot button", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(
+      press(
+        encodeAuctionCallback({
+          kind: "commit",
+          command: "bid",
+          lotId,
+          opId: "0198f2a4-7c1e-7d3a-9b21-00000000c001",
+          amount: 130_000,
+          page: 0,
+        }),
+      ),
+    );
+    const shown = calls.find((call) => call.method === "editMessageText");
+    expect(shown?.payload).toMatchObject({
+      text: expect.stringMatching(/^<b>Ставка 1\s300\s₽ принята<\/b>/),
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "‹ Лот",
+              callback_data: encodeAuctionCallback({
+                kind: "lot",
+                lotId,
+                page: 0,
+              }),
+            },
+          ],
+          [{ text: "‹ Лоты" }],
+        ],
+      },
+    });
+  });
+
+  // Непринятый ответ — свой экран новым сообщением (PER-472): причина в
+  // заголовке, «Ввести заново» и «К лоту» вместо режима ответа.
+  it.each([
+    [{ text: "много" }, "Это не сумма"],
+    [{ text: "$20" }, "Ставки принимаются только в рублях"],
+    [{ sticker: { file_id: "s" } }, "Нужен ответ текстом"],
+  ])(
+    "answers a refused %j with its own screen and a retry",
+    async (extra, reason) => {
+      const { bot, calls } = await setup();
+      await bot.handleUpdate(answer(extra));
+      const sent = calls.find((call) => call.method === "sendMessage");
+      const payload = sent?.payload as
+        | {
+            text?: string;
+            reply_markup?: { inline_keyboard?: { text: string }[][] };
+          }
+        | undefined;
+      expect(payload?.text?.startsWith(`<b>${reason}</b>`)).toBe(true);
+      expect(
+        payload?.reply_markup?.inline_keyboard?.map((row) =>
+          row.map((button) => button.text),
+        ),
+      ).toEqual([["Ввести заново"], ["‹ Лот"]]);
+    },
+  );
+
+  it("deletes the question on cancel and sends the card anew", async () => {
+    const { bot, calls } = await setup();
+    await bot.handleUpdate(press(step, question));
+    const methods = calls.map((call) => call.method);
+    expect(methods.indexOf("deleteMessage")).toBeGreaterThanOrEqual(0);
+    expect(methods.indexOf("deleteMessage")).toBeLessThan(
+      methods.indexOf("sendMessage"),
+    );
+    expect(methods).not.toContain("editMessageText");
+  });
+});
+
+describe("raffle among the participants", () => {
+  const openRaffle: RaffleView = {
+    auctionId,
+    status: "open",
+    closesAt: "2026-10-29T18:00:00Z",
+    commitment: "ab".repeat(32),
+    beaconRound: 12_345_678,
+    registered: false,
+    tickets: [],
+  };
+
+  it("registers from the auction root and shows the result with the recomputation", async () => {
+    const auction = fakeAuction({ existing: true, raffle: openRaffle });
+    // Пояс сообщества задан явно: момент жеребьёвки проверяется по нему (PER-641).
+    const { bot, calls } = harness("member", auction, {
+      communityTimeZone: "Europe/Moscow",
+    });
+
+    await bot.handleUpdate(press(rootData));
+    const raffleData = data(lastScreen(calls), "Розыгрыш");
+    expect(raffleData).toBeDefined();
+    await bot.handleUpdate(press(raffleData ?? ""));
+    const before = lastScreen(calls);
+    expect(before.text).toContain("<b>Розыгрыш среди участников</b>");
+    expect(labels(before)).toEqual([
+      ["Зарегистрироваться"],
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
+
+    await bot.handleUpdate(press(data(before, "Зарегистрироваться") ?? ""));
+    const registered = lastScreen(calls);
+    expect(registered.text).toContain("Ты зарегистрирован.");
+    // Техника — за кнопкой (PER-618).
+    expect(registered.text).toContain(
+      "Итог проверяемый: как его проверить — по кнопке ниже.",
+    );
+    expect(registered.text).not.toContain("ab".repeat(32));
+    expect(labels(registered)).toEqual([
+      ["Отменить регистрацию"],
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
+
+    auction.raffle.current = {
+      ...openRaffle,
+      status: "drawn",
+      drawnAt: "2026-10-29T22:30:00Z",
+      registered: true,
+      tickets: [{ number: 1, displayName: "@owl" }],
+      myTicket: 1,
+      reveal: {
+        seed: "cd".repeat(32),
+        randomness: "ef".repeat(32),
+        value: "12".repeat(32),
+        winningTicket: 1,
+      },
+    };
+    await bot.handleUpdate(press(raffleData ?? ""));
+    const result = lastScreen(calls);
+    expect(result.text).toContain("Выиграл билет №1 — @owl.");
+    expect(result.text).toContain("Это твой билет.");
+    expect(result.text).toContain("Билетов: 1");
+    // Момент жеребьёвки во времени сообщества (PER-641): 22:30 UTC — уже
+    // 30 октября по Москве.
+    expect(result.text).toContain("Жеребьёвка: 30 октября");
+    expect(result.text).not.toContain("cd".repeat(32));
+    expect(result.text).not.toContain("Как проверить итог");
+    expect(labels(result)).toEqual([
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
+
+    await bot.handleUpdate(
+      press(data(result, "Как проверить честность") ?? ""),
+    );
+    const proof = lastScreen(calls);
+    expect(proof.text).toContain("<b>Как проверить честность</b>");
+    expect(proof.text).toContain("ab".repeat(32));
+    expect(proof.text).toContain("cd".repeat(32));
+    expect(proof.text).toContain("Как проверить итог");
+    expect(proof.text).toContain("python3 -c");
+    expect(labels(proof)).toEqual([["‹ Розыгрыш"]]);
+  });
+
+  it("offers no registration outside the registration window", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      raffle: { ...openRaffle, status: "not-held" },
+    });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "raffle", auctionId })),
+    );
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("Розыгрыш не проводится");
+    expect(labels(screen)).toEqual([["‹ Аукцион"]]);
+  });
+});
+
+describe("raffle screens in the hub", () => {
+  const base: RaffleView = {
+    auctionId,
+    status: "open",
+    closesAt: "2026-10-29T18:00:00Z",
+    commitment: "ab".repeat(32),
+    beaconRound: 12_345_678,
+    registered: false,
+    tickets: [],
+  };
+  const pool = {
+    registered: true,
+    tickets: [{ number: 1, displayName: "@owl" }, { number: 2 }],
+    myTicket: 1,
+  };
+  const raffleData = encodeAuctionCallback({ kind: "raffle", auctionId });
+
+  // Каждый статус уходит в Telegram и проходит линтер экранов хаба.
+  it.each([
+    [{ ...base, status: "closing" as const }, "Регистрация закрыта"],
+    [
+      { ...base, ...pool, status: "awaiting-beacon" as const },
+      "Жеребьёвка идёт: итог — через пару минут.",
+    ],
+    [
+      {
+        ...base,
+        ...pool,
+        status: "drawn" as const,
+        reveal: {
+          seed: "cd".repeat(32),
+          randomness: "ef".repeat(32),
+          value: "12".repeat(32),
+          winningTicket: 2,
+        },
+      },
+      "Выиграл билет №2.",
+    ],
+    [
+      {
+        ...base,
+        status: "no-tickets" as const,
+        reveal: { seed: "cd".repeat(32) },
+      },
+      "Розыгрыш не состоялся",
+    ],
+  ])("shows the raffle in status %#", async (raffle, text) => {
+    const auction = fakeAuction({ existing: true, raffle });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(press(raffleData));
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain(text);
+    expect(screen.text).not.toContain("drand");
+    expect(labels(screen)).toEqual([
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
+  });
+
+  // До жеребьёвки строки нет (PER-641).
+  it("shows no draw moment before the draw", async () => {
+    for (const raffle of [
+      { ...base, status: "closing" as const },
+      { ...base, ...pool, status: "awaiting-beacon" as const },
+      {
+        ...base,
+        status: "no-tickets" as const,
+        reveal: { seed: "cd".repeat(32) },
+      },
+    ]) {
+      const auction = fakeAuction({ existing: true, raffle });
+      const { bot, calls } = harness("member", auction);
+
+      await bot.handleUpdate(press(raffleData));
+      expect(lastScreen(calls).text).not.toContain("Жеребьёвка: ");
+    }
+  });
+
+  // Экран проверки в каждом статусе уходит в Telegram и проходит линтер.
+  it.each([
+    [{ ...base }, "Seed раскроется после жеребьёвки"],
+    [
+      { ...base, ...pool, status: "awaiting-beacon" as const },
+      "Жеребьёвка ждёт значение маяка drand",
+    ],
+    [
+      {
+        ...base,
+        status: "no-tickets" as const,
+        reveal: { seed: "cd".repeat(32) },
+      },
+      "Билетов не было: пересчитывать нечего.",
+    ],
+  ])("shows the proof in status %#", async (raffle, text) => {
+    const auction = fakeAuction({ existing: true, raffle });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "raffle-proof", auctionId })),
+    );
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("Отпечаток seed (SHA-256)");
+    expect(screen.text).toContain(text);
+    expect(labels(screen)).toEqual([["‹ Розыгрыш"]]);
+  });
+
+  // «К розыгрышу» под итогом (PER-620) — кнопка следа: экран итога приходит
+  // новым сообщением, весть в истории не правится.
+  it("opens the raffle from a result notification as a new message", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      raffle: {
+        ...base,
+        ...pool,
+        status: "drawn",
+        reveal: { seed: "cd".repeat(32), winningTicket: 2 },
+      },
+    });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(press(`v1:t:${raffleData.slice("v1:".length)}`));
+    const screen = lastScreen(calls);
+    expect(screen.text).toContain("Выиграл билет №2.");
+    expect(labels(screen)).toEqual([
+      ["Как проверить честность"],
+      ["‹ Аукцион"],
+    ]);
+    expect(calls.some((call) => call.method === "editMessageText")).toBe(false);
+  });
+
+  it("chooses a name before the registration and returns to the raffle", async () => {
+    const auction = fakeAuction({ existing: true, raffle: base, nameless: {} });
+    const { bot, calls } = harness("member", auction);
+
+    await bot.handleUpdate(
+      press(encodeAuctionCallback({ kind: "raffle-register", auctionId })),
+    );
+    const choice = lastScreen(calls);
+    expect(choice.text).toContain("<b>Имя в аукционе</b>");
+    expect(choice.text).toContain("в списке розыгрыша");
+    expect(labels(choice)).toEqual([["Взять псевдоним"], ["‹ Розыгрыш"]]);
+
+    await bot.handleUpdate(press(data(choice, "Взять псевдоним") ?? ""));
+    const asked = calls.filter((call) => call.method === "sendMessage").at(-1)
+      ?.payload as Shown | undefined;
+    expect(asked?.text).toContain("Псевдоним");
+    const step = asked?.reply_markup?.inline_keyboard[0]?.[0]?.callback_data;
+    expect(step).toBe(
+      encodeAuctionCallback({
+        kind: "raffle-question",
+        auctionId,
+        addressee: 42,
+      }),
+    );
+
+    await bot.handleUpdate({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text: "Сова",
+        reply_to_message: {
+          message_id: 9,
+          date: 0,
+          chat: { id: 42, type: "private", first_name: "tester" },
+          from: { id: 1, is_bot: true, first_name: "hub" },
+          text: "Псевдоним",
+          reply_markup: {
+            inline_keyboard: [[{ text: "Отмена", callback_data: step ?? "" }]],
+          },
+        },
+      },
+    } as Update);
+    expect(lastScreen(calls).text).toContain("Ты зарегистрирован.");
+  });
+
+  it("refuses a taken alias with a retry and the way back to the raffle", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      raffle: base,
+      nameless: { aliasRefusal: "alias-taken" },
+    });
+    const { bot, calls } = harness("member", auction);
+    const step = encodeAuctionCallback({
+      kind: "raffle-question",
+      auctionId,
+      addressee: 42,
+    });
+
+    await bot.handleUpdate({
+      update_id: 5,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text: "Сова",
+        reply_to_message: {
+          message_id: 9,
+          date: 0,
+          chat: { id: 42, type: "private", first_name: "tester" },
+          from: { id: 1, is_bot: true, first_name: "hub" },
+          text: "Псевдоним",
+          reply_markup: {
+            inline_keyboard: [[{ text: "Отмена", callback_data: step }]],
+          },
+        },
+      },
+    } as Update);
+    const refused = lastScreen(calls);
+    expect(refused.text).toContain("Этот псевдоним уже занят");
+    expect(labels(refused)).toEqual([["Ввести заново"], ["‹ Розыгрыш"]]);
+  });
+});
+
+// Карточка финала в боте хаба (PER-336): та же карточка дерева, что у бота
+// аукциона, правится по потоку аукциона в сообщении, где её открыли.
+describe("final lot card in the hub", () => {
+  const rival = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402";
+  const rub = (rubles: number) => ({
+    minorUnits: rubles * 100,
+    currency: "RUB",
+  });
+  const live = (version: number, price: number): LotView => ({
+    ...lot,
+    version,
+    nextPrice: rub(price + 100),
+    proxyEnabled: true,
+    status: {
+      kind: "trading",
+      currentPrice: rub(price),
+      leaderId: rival,
+      phase: "live",
+    },
+  });
+  const plain = (text: string) => text.replace(/[  ]/g, " ");
+
+  function stream() {
+    const listeners = new Set<(state: AuctionWatchState) => void>();
+    const watches: AuctionWatches = {
+      subscribe(_auctionId, _viewer, listener) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      open: () => (listeners.size > 0 ? 1 : 0),
+      close: () => listeners.clear(),
+    };
+    return {
+      watches,
+      listeners,
+      emit(activeLot: LotView) {
+        for (const listener of [...listeners]) {
+          listener({ auctionId, finished: false, activeLot, lineup: [] });
+        }
+      },
+    };
+  }
+
+  const immediate: EditLimiter = {
+    submit: (_chat, _key, task) => {
+      void task();
+    },
+    drop: () => {},
+    waiting: () => 0,
+    close: () => {},
+  };
+
+  const flush = async () => {
+    for (let i = 0; i < 50; i += 1) await Promise.resolve();
+  };
+
+  const setup = async () => {
+    const watch = stream();
+    const auction = fakeAuction({ existing: true, lot: live(1, 1200) });
+    const run = harness("member", auction, {
+      presentation: "plain",
+      live: {
+        watches: watch.watches,
+        limiter: immediate,
+        names: { getDisplayNames: async () => ({ [rival]: "@jay" }) },
+      },
+    });
+    await run.bot.init();
+    return { ...run, watch };
+  };
+
+  const liveEdits = (calls: readonly RecordedCall[]) =>
+    calls.filter(
+      (call) =>
+        call.method === "editMessageText" &&
+        (call.payload as { message_id?: number }).message_id === 9,
+    );
+
+  it("keeps one button at the next price as the price moves", async () => {
+    const { bot, calls, watch } = await setup();
+    await bot.handleUpdate(press(lotData));
+    const card = lastScreen(calls);
+    expect(labels(card)[0]?.map(plain)).toEqual(["Поставить 1 300 ₽"]);
+    expect(watch.listeners.size).toBe(1);
+    const before = liveEdits(calls).length;
+    watch.emit(live(2, 1400));
+    await flush();
+    const edited = liveEdits(calls).at(-1)?.payload as Shown;
+    expect(liveEdits(calls)).toHaveLength(before + 1);
+    expect(plain(edited.text ?? "")).toContain("Цена: 1 400 ₽");
+    expect(plain(edited.text ?? "")).toContain("Лидер: @jay");
+    expect(labels(edited)[0]?.map(plain)).toEqual(["Поставить 1 500 ₽"]);
+  });
+
+  it("stops editing once another screen takes the message", async () => {
+    const { bot, calls, watch } = await setup();
+    await bot.handleUpdate(press(lotData));
+    await bot.handleUpdate(press(feedData));
+    expect(watch.listeners.size).toBe(0);
+    const before = liveEdits(calls).length;
+    watch.emit(live(2, 1400));
+    await flush();
+    expect(liveEdits(calls)).toHaveLength(before);
+  });
+});

@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package identity.v1;
+
+// The circle of a person: membership and audience, not a rank. It decides
+// which bot answers the person and delivers to them and which queue their
+// application lies in. No admission decision reads it: rights decide.
+enum Circle {
+  // No value: no circle yet, a blocked person, or a circle unknown to the
+  // consumer.
+  CIRCLE_UNSPECIFIED = 0;
+
+  // Inner community circle.
+  CIRCLE_MEMBER = 1;
+
+  // Outer circle: a person admitted to the auction without being a community
+  // member.
+  CIRCLE_GUEST = 2;
+}
+
+// A named group of rights granted and revoked as a whole. A person may hold
+// several. It is shown to people; no consumer admits by it, only by the rights
+// it carries.
+enum Preset {
+  // No value: the field is unset or the preset is unknown to the consumer.
+  PRESET_UNSPECIFIED = 0;
+
+  // Community administrator.
+  PRESET_ADMIN = 1;
+
+  // Operates the platform and appoints administrators.
+  PRESET_MAINTAINER = 2;
+}
+
+// What a person may do. Identity derives the set from the circle, the presets
+// and the rights granted to the person one by one; a consumer reads the set as
+// given and never derives it from the circle or a preset. Rights imply nothing
+// about each other.
+enum AccessRight {
+  // No value: the field is unset or the right is unknown to the consumer. An
+  // unknown right grants nothing.
+  ACCESS_RIGHT_UNSPECIFIED = 0;
+
+  // The community hub: meetups, subscriptions, materials and the auction of a
+  // meetup. Comes with the member circle.
+  ACCESS_RIGHT_ACCESS_HUB = 1;
+
+  // Bids and proxy limits in any auction. Comes with the member circle; a guest
+  // is granted it by admission to the auction.
+  ACCESS_RIGHT_PLACE_BIDS = 2;
+
+  // Deciding the community queue and managing who is in the community: the
+  // membership list, demotion, blocking, source channels and allowed usernames.
+  ACCESS_RIGHT_MANAGE_MEMBERS = 3;
+
+  // Deciding the auction queue: granting ACCESS_RIGHT_PLACE_BIDS to a guest and
+  // revoking it. Shared by every auction.
+  ACCESS_RIGHT_ADMIT_BIDDERS = 4;
+
+  // Creating, editing, publishing and cancelling meetups, their materials and
+  // hidden meetups, announcements to the community, the auction of a meetup
+  // and the lot catalog shared by every auction.
+  ACCESS_RIGHT_MANAGE_MEETUPS = 5;
+
+  // Granting and revoking PRESET_ADMIN.
+  ACCESS_RIGHT_GRANT_ADMINS = 6;
+}
+
+// The queue an application lies in. The queues are independent: a refusal in
+// one does not touch the other.
+enum ApplicationQueue {
+  // No value: the field is unset or the queue is unknown to the consumer.
+  APPLICATION_QUEUE_UNSPECIFIED = 0;
+
+  // An application to join the community: admission grants CIRCLE_MEMBER.
+  APPLICATION_QUEUE_COMMUNITY = 1;
+
+  // An application for ACCESS_RIGHT_PLACE_BIDS: admission grants the right and
+  // CIRCLE_GUEST when the person has no circle yet.
+  APPLICATION_QUEUE_AUCTION = 2;
+}

@@ -1,0 +1,58 @@
+using AppHost.Configuration.Topology;
+
+namespace AppHost.Configuration.Infrastructure;
+
+internal static class PostgresSetup
+{
+    public static IResourceBuilder<PostgresServerResource> Configure(ServiceGraphContext context)
+    {
+        var postgres = context.Builder
+            .AddPostgres(AppHostNames.Resources.Postgres)
+            .WithImageTag("16-alpine")
+            .WithDataVolume(DataVolumes.Name(context.Builder, "postgres-data"));
+
+        // Базы принадлежат серверу, а не профилю: их жизненный цикл задаёт этот
+        // setup, поэтому в графе они появляются через Publish, а не через AddInfrastructure.
+        // Одна база на сервис: владелец схемы один, и чужой сервис не может ни
+        // прочитать её таблицы, ни столкнуться с ними именами.
+        context.Publish(
+            AppHostNames.Resources.IdentityDb,
+            postgres.AddDatabase(AppHostNames.Resources.IdentityDb, AppHostNames.Resources.IdentityDbName));
+
+        context.Publish(
+            AppHostNames.Resources.MeetupsDb,
+            postgres.AddDatabase(AppHostNames.Resources.MeetupsDb, AppHostNames.Resources.MeetupsDbName));
+
+        // Notifications держит в своей базе и доменную схему, и таблицы
+        // membership Orleans: и то и другое заводит один DbUp сервиса.
+        context.Publish(
+            AppHostNames.Resources.NotificationsDb,
+            postgres.AddDatabase(AppHostNames.Resources.NotificationsDb, AppHostNames.Resources.NotificationsDbName));
+
+        // Журнал и snapshots Pekko Persistence JDBC лежат в отдельной базе
+        // Auction (ADR-045). Схему в ней заводит сам сервис миграциями при
+        // старте.
+        context.Publish(
+            AppHostNames.Resources.AuctionDb,
+            postgres.AddDatabase(AppHostNames.Resources.AuctionDb, AppHostNames.Resources.AuctionDbName));
+
+        return postgres;
+    }
+
+    /// <summary>
+    /// В чарте сервера нет: PostgreSQL — CloudNativePG своей среды (ADR-055).
+    /// Каждая база становится строкой подключения под тем же именем, что локально,
+    /// поэтому bind сервисов не меняется.
+    /// </summary>
+    public static void Publish(ServiceGraphContext context)
+    {
+        foreach (var database in (string[])[
+            AppHostNames.Resources.IdentityDb,
+            AppHostNames.Resources.MeetupsDb,
+            AppHostNames.Resources.NotificationsDb,
+            AppHostNames.Resources.AuctionDb])
+        {
+            context.Publish(database, context.Builder.AddConnectionString(database));
+        }
+    }
+}

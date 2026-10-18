@@ -1,0 +1,335 @@
+namespace Meetups.IntegrationTests.Scenarios
+
+open Grpc.Core
+open Grpc.Health.V1
+open Meetups.IntegrationTests.Infrastructure
+open Meetups.V1
+open Swensen.Unquote
+open Xunit
+
+/// Один хост на класс: старт Kestrel дороже самих вызовов. Очередь записей у
+/// него общая, поэтому каждый тест утверждает про свою операцию.
+///
+/// Живой базы у этого хоста нет: DSN валиден по форме и заведомо недостижим.
+/// Отсюда следует, что здесь проверяются каркас границы и те отказы, которые
+/// принимаются до открытия соединения, — по праву и по разбору запроса. Успешные
+/// чтения живут в MeetupBoundaryTests с настоящей PostgreSQL.
+///
+/// «До обращения к хранилищу» относится к соединению, а не к контейнеру: сборку
+/// зависимостей диспетчер делает раньше разбора запроса, и NpgsqlDataSource
+/// резолвится всегда. Именно поэтому фикстуре и понадобился DSN.
+type GrpcBoundaryTests(host: MeetupsHostFixture) =
+
+    let client = AuthenticatedClient.bot host.Channel
+    let authority = AuthenticatedClient.notifications host.Channel
+
+    /// Пустой набор прав — обычный пользователь (integration.md).
+    let viewer = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000a")
+
+    let id = "0199c0de-0000-7000-8000-000000000001"
+
+    let recordOf operation =
+        host.Records
+        |> List.tryFindBack (fun entry -> entry.Fields.TryFind "operation" = Some operation)
+
+    interface IClassFixture<MeetupsHostFixture>
+
+    /// Заголовочный критерий задачи: отказ по праву приходит от Meetups, а не от
+    /// проверки в боте, и приходит на каждой административной операции.
+    [<Fact>]
+    member _.``Every command refuses an ordinary viewer with PERMISSION_DENIED``() =
+        let actual =
+            [
+                Rpc.codeOf (fun () ->
+                    client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = viewer, Id = id))
+                    |> ignore
+                )
+                Rpc.codeOf (fun () ->
+                    client.ChangeMeetupAttributes(
+                        ChangeMeetupAttributesRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L)
+                    )
+                    |> ignore
+                )
+                Rpc.codeOf (fun () ->
+                    client.SetMeetupSchedule(
+                        SetMeetupScheduleRequest(
+                            Viewer = viewer,
+                            Id = id,
+                            ExpectedVersion = 1L,
+                            Schedule = Schedule(NoDate = NoDate())
+                        )
+                    )
+                    |> ignore
+                )
+                Rpc.codeOf (fun () ->
+                    client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L))
+                    |> ignore
+                )
+            ]
+
+        test <@ actual = List.replicate 4 (Some StatusCode.PermissionDenied) @>
+
+    /// Проверка права спрашивает Identity раньше хранилища, которого у этого хоста и
+    /// нет. Identity здесь недостижим, и ответ — «право не подтверждено», а не отказ
+    /// и не падение на базе: так настоящий адаптер доказывает и порядок, и сведение
+    /// отказа транспорта (ADR-051).
+    [<Fact>]
+    member _.``The authority check reports an unreachable Identity as UNAVAILABLE before touching storage``() =
+        let request = CheckMeetupAuthorityRequest(IdentityId = viewer.IdentityId, Id = id)
+
+        request.AcceptedRelations.Add MeetupRelation.CommunityAdministrator
+
+        let actual =
+            Rpc.codeOf (fun () -> authority.CheckMeetupAuthority(request) |> ignore)
+
+        test <@ actual = Some StatusCode.Unavailable @>
+
+    /// Набор отношений без значений — ошибка вызывающего, и отвечает на неё разбор,
+    /// до Identity: иначе недостижимый Identity спрятал бы её за UNAVAILABLE.
+    [<Fact>]
+    member _.``The authority check refuses an empty set of relations with INVALID_ARGUMENT``() =
+        let actual =
+            Rpc.codeOf (fun () ->
+                authority.CheckMeetupAuthority(CheckMeetupAuthorityRequest(IdentityId = viewer.IdentityId, Id = id))
+                |> ignore
+            )
+
+        test <@ actual = Some StatusCode.InvalidArgument @>
+
+    /// Другие права контракта и значение вне словаря не отвергают запрос по разбору:
+    /// перевод в домен их отбрасывает, а отказ приходит от правила по праву.
+    [<Fact>]
+    member _.``Commands refuse a viewer carrying only other or unknown rights by right``() =
+        let newcomer = Viewer(IdentityId = "0199c0de-0000-7000-8000-00000000000b")
+        newcomer.Rights.Add(Identity.V1.AccessRight.AccessHub)
+        newcomer.Rights.Add(Identity.V1.AccessRight.ManageMembers)
+        newcomer.Rights.Add(Identity.V1.AccessRight.GrantAdmins)
+        newcomer.Rights.Add(enum<Identity.V1.AccessRight> 99)
+
+        let actual =
+            [
+                Rpc.codeOf (fun () ->
+                    client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = newcomer, Id = id))
+                    |> ignore
+                )
+                Rpc.codeOf (fun () ->
+                    client.PublishMeetup(PublishMeetupRequest(Viewer = newcomer, Id = id, ExpectedVersion = 1L))
+                    |> ignore
+                )
+            ]
+
+        test <@ actual = List.replicate 2 (Some StatusCode.PermissionDenied) @>
+
+    /// Клиент собрал запрос неправильно — это INVALID_ARGUMENT, а не отказ домена.
+    /// Проверяются разные дефекты сборки, потому что каждый разбирает своя функция
+    /// границы, а обязательность показанной версии — ещё и поле, которого раньше не
+    /// было в схеме.
+    [<Fact>]
+    member _.``A malformed request is refused with INVALID_ARGUMENT``() =
+        let actual =
+            [
+                // Смотрящего нет вовсе.
+                Rpc.codeOf (fun () ->
+                    client.PublishMeetup(PublishMeetupRequest(Id = id, ExpectedVersion = 1L))
+                    |> ignore
+                )
+                // Идентификатор не в каноническом виде.
+                Rpc.codeOf (fun () ->
+                    client.PublishMeetup(
+                        PublishMeetupRequest(Viewer = viewer, Id = id.ToUpperInvariant(), ExpectedVersion = 1L)
+                    )
+                    |> ignore
+                )
+                // Показанной версии нет: 0 — не версия сходки, а отсутствие поля.
+                Rpc.codeOf (fun () ->
+                    client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id))
+                    |> ignore
+                )
+                // Пустой oneof расписания: «даты нет» — это форма no_date, а не
+                // отсутствие формы.
+                Rpc.codeOf (fun () ->
+                    client.SetMeetupSchedule(
+                        SetMeetupScheduleRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L, Schedule = Schedule())
+                    )
+                    |> ignore
+                )
+                // Читающие срезы разбирают тот же viewer и id до открытия соединения.
+                Rpc.codeOf (fun () ->
+                    client.ListVisibleMeetups(ListVisibleMeetupsRequest())
+                    |> ignore
+                )
+                Rpc.codeOf (fun () ->
+                    client.GetMeetup(GetMeetupRequest(Id = id))
+                    |> ignore
+                )
+                Rpc.codeOf (fun () ->
+                    client.GetMeetup(GetMeetupRequest(Viewer = viewer, Id = id.ToUpperInvariant()))
+                    |> ignore
+                )
+            ]
+
+        test <@ actual = List.replicate 7 (Some StatusCode.InvalidArgument) @>
+
+    [<Fact>]
+    member _.``The service reports itself serving over grpc health v1``() =
+        let health = Health.HealthClient(host.Channel)
+
+        let actual = health.Check(HealthCheckRequest()).Status
+
+        test <@ actual = HealthCheckResponse.Types.ServingStatus.Serving @>
+
+    /// Готовность спрашивает базу, и у этого хоста её нет: проба называет причину
+    /// NOT_SERVING, а не висит и не отвечает SERVING. Liveness выше остаётся
+    /// SERVING — процесс обслуживает gRPC.
+    [<Fact>]
+    member _.``Readiness is not serving while the database is unreachable``() =
+        let health = Health.HealthClient(host.Channel)
+
+        let actual =
+            health
+                .Check(
+                    HealthCheckRequest(Service = MeetupsService.Descriptor.FullName),
+                    deadline = System.DateTime.UtcNow.AddSeconds 3.0
+                )
+                .Status
+
+        test <@ actual = HealthCheckResponse.Types.ServingStatus.NotServing @>
+
+    /// Критерий PER-361: недоступная база отвечает клиенту Unavailable раньше его
+    /// дедлайна — у бота три секунды, — а запись границы несёт тот же код и
+    /// категорию dependency_unavailable.
+    [<Fact>]
+    member _.``An unreachable database is refused as Unavailable before the client deadline``() =
+        let headers = Metadata()
+        headers.Add("x-request-id", "unreachable-database")
+
+        let actual =
+            Rpc.codeOf (fun () ->
+                client.GetMeetup(
+                    GetMeetupRequest(Viewer = viewer, Id = id),
+                    headers,
+                    deadline = System.DateTime.UtcNow.AddSeconds 3.0
+                )
+                |> ignore
+            )
+
+        let frame =
+            host.Records
+            |> List.tryFind (fun entry -> entry.Fields.TryFind "request_id" = Some "unreachable-database")
+            |> Option.map (fun entry -> entry.Fields.TryFind "grpc_code", entry.Fields.TryFind "error_category")
+
+        test <@ actual = Some StatusCode.Unavailable @>
+        test <@ frame = Some(Some "Unavailable", Some "dependency_unavailable") @>
+
+    /// Объявленный отказ — часть контракта, а не сбой сервиса: Warning без stack и
+    /// код транспорта в своём поле, а не в result. До этой задачи такого отказа у
+    /// сервиса не существовало, и правило проверялось только in-process.
+    [<Fact>]
+    member _.``A declared refusal is recorded as a warning with its transport code``() =
+        Rpc.codeOf (fun () ->
+            client.ChangeMeetupAttributes(
+                ChangeMeetupAttributesRequest(Viewer = viewer, Id = id, ExpectedVersion = 1L)
+            )
+            |> ignore
+        )
+        |> ignore
+
+        let frame =
+            recordOf "/meetups.v1.MeetupsService/ChangeMeetupAttributes"
+            |> Option.map (fun entry ->
+                entry.Level, entry.Fields.TryFind "result", entry.Fields.TryFind "grpc_code", entry.Exception.IsSome
+            )
+
+        test
+            <@ frame = Some(Microsoft.Extensions.Logging.LogLevel.Warning, Some "error", Some "PermissionDenied", false) @>
+
+    [<Fact>]
+    member _.``The boundary records an incoming request id as a structured field``() =
+        let headers = Metadata()
+        headers.Add("x-request-id", "request-42")
+
+        Rpc.codeOf (fun () ->
+            client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id), headers)
+            |> ignore
+        )
+        |> ignore
+
+        let declared =
+            recordOf "/meetups.v1.MeetupsService/PublishMeetup"
+            |> Option.bind (fun entry -> entry.Fields.TryFind "request_id")
+
+        test <@ declared = Some "request-42" @>
+
+    [<Fact>]
+    member _.``The boundary omits a request id when the caller sent none``() =
+        Rpc.codeOf (fun () ->
+            client.GetMeetup(GetMeetupRequest(Viewer = viewer, Id = id))
+            |> ignore
+        )
+        |> ignore
+
+        let hasRequestId =
+            recordOf "/meetups.v1.MeetupsService/GetMeetup"
+            |> Option.map (fun entry -> entry.Fields.ContainsKey "request_id")
+
+        test <@ hasRequestId = Some false @>
+
+    [<Fact>]
+    member _.``The boundary records an incoming use case as a structured field``() =
+        let headers = Metadata()
+        headers.Add("x-use-case", "create_meetup")
+
+        Rpc.codeOf (fun () ->
+            client.PublishMeetup(PublishMeetupRequest(Viewer = viewer, Id = id), headers)
+            |> ignore
+        )
+        |> ignore
+
+        let declared =
+            recordOf "/meetups.v1.MeetupsService/PublishMeetup"
+            |> Option.bind (fun entry -> entry.Fields.TryFind "use_case")
+
+        test <@ declared = Some "create_meetup" @>
+
+    [<Fact>]
+    member _.``The boundary omits a use case when the caller sent none``() =
+        Rpc.codeOf (fun () ->
+            client.GetMeetup(GetMeetupRequest(Viewer = viewer, Id = id))
+            |> ignore
+        )
+        |> ignore
+
+        let hasUseCase =
+            recordOf "/meetups.v1.MeetupsService/GetMeetup"
+            |> Option.map (fun entry -> entry.Fields.ContainsKey "use_case")
+
+        test <@ hasUseCase = Some false @>
+
+    [<Fact>]
+    member _.``The readiness probe leaves no boundary record``() =
+        let health = Health.HealthClient(host.Channel)
+        health.Check(HealthCheckRequest()) |> ignore
+        // Положительный контроль: продуктовый вызов рядом доказывает, что записи
+        // вообще снимаются, и отсутствие пробы значит фильтр, а не мёртвый сток.
+        // Вызов отказывается по праву, но запись границы от этого не исчезает.
+        Rpc.codeOf (fun () ->
+            client.CreateMeetupDraft(CreateMeetupDraftRequest(Viewer = viewer, Id = id))
+            |> ignore
+        )
+        |> ignore
+
+        let operations =
+            host.Records
+            |> List.choose (fun entry -> entry.Fields.TryFind "operation")
+
+        let probes =
+            operations
+            |> List.filter (fun name -> name.StartsWith "/grpc.health.v1.Health/")
+
+        test <@ probes = [] @>
+
+        test
+            <@
+                operations
+                |> List.contains "/meetups.v1.MeetupsService/CreateMeetupDraft"
+            @>

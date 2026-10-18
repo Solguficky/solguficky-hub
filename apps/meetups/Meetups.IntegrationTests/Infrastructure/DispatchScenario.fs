@@ -1,0 +1,318 @@
+namespace Meetups.IntegrationTests.Infrastructure
+
+open System
+open Npgsql
+
+module private DispatchSql =
+    let actor = Guid.Parse("0199c0de-0000-7000-8000-00000000000a")
+    let occurredAt = DateTimeOffset.Parse("2026-09-07T12:00:00Z")
+    let dispatchedAt = DateTimeOffset.Parse("2026-09-07T12:01:00Z")
+
+    let command
+        (connection: NpgsqlConnection)
+        (transaction: NpgsqlTransaction option)
+        (sql: string)
+        (parameters: (string * obj) list)
+        =
+        let command =
+            match transaction with
+            | Some value -> new NpgsqlCommand(sql, connection, value)
+            | None -> new NpgsqlCommand(sql, connection)
+
+        for name, value in parameters do
+            command.Parameters.AddWithValue(name, value)
+            |> ignore
+
+        command
+
+    let queryIds (dsn: string) (sql: string) (parameters: (string * obj) list) =
+        use connection = new NpgsqlConnection(dsn)
+        connection.Open()
+        use command = command connection None sql parameters
+        use reader = command.ExecuteReader()
+
+        [
+            while reader.Read() do
+                reader.GetGuid(0)
+        ]
+
+    /// Возвращает SQLSTATE, а не факт отказа: `MT001`, `MT002` и `23514` нужно
+    /// различать, иначе проверка неизменяемости проходила бы на любой другой
+    /// ошибке схемы — ровно то, чем плох общий код отказа.
+    let failureCode (dsn: string) (sql: string) (parameters: (string * obj) list) =
+        use connection = new NpgsqlConnection(dsn)
+        connection.Open()
+        use command = command connection None sql parameters
+
+        try
+            command.ExecuteNonQuery() |> ignore
+            None
+        with :? PostgresException as ex ->
+            Some ex.SqlState
+
+/// Командная транзакция среза: состояние и событие пишутся вместе, поэтому
+/// откат и конкурентный коммит нельзя собрать из отдельных вставок.
+type CommandTransaction(dsn: string) =
+    let connection = new NpgsqlConnection(dsn)
+
+    do connection.Open()
+
+    let transaction = connection.BeginTransaction()
+
+    member _.Insert(meetupId: Guid, eventId: Guid) =
+        use state =
+            DispatchSql.command
+                connection
+                (Some transaction)
+                """
+                INSERT INTO meetups (
+                    id, author, lifecycle, visibility, version,
+                    schedule_form, schedule_precision
+                ) VALUES (
+                    @meetup_id, @actor, 'planned', 'hidden', 1,
+                    'no_date', NULL
+                )
+                """
+                [
+                    "meetup_id", box meetupId
+                    "actor", box DispatchSql.actor
+                ]
+
+        state.ExecuteNonQuery() |> ignore
+
+        use journal =
+            DispatchSql.command
+                connection
+                (Some transaction)
+                """
+                INSERT INTO meetup_events (
+                    event_id, meetup_id, version, event_type, payload, performed_by, occurred_at
+                ) VALUES (
+                    @event_id, @meetup_id, 1, 'meetup_created', '{}'::jsonb, @actor, @occurred_at
+                )
+                RETURNING position
+                """
+                [
+                    "event_id", box eventId
+                    "meetup_id", box meetupId
+                    "actor", box DispatchSql.actor
+                    "occurred_at", box DispatchSql.occurredAt
+                ]
+
+        journal.ExecuteScalar() :?> int64
+
+    member _.Commit() = transaction.Commit()
+
+    interface IDisposable with
+        member _.Dispose() =
+            transaction.Dispose()
+            connection.Dispose()
+
+module DispatchScenario =
+    let dispatchedAt = DispatchSql.dispatchedAt
+
+    /// Симуляция диспетчера, а не сам диспетчер. Имя названо так намеренно: с
+    /// появлением продуктового reader'а тест, который зовёт эту функцию и потом
+    /// проверяет, что строка вышла из batch, проверял бы симуляцию, выглядя при этом
+    /// убедительно. Продуктовый путь идёт через `DispatchReader.runTick`.
+    let simulateDispatch (dsn: string) =
+        DispatchSql.queryIds
+            dsn
+            """
+            UPDATE meetup_events
+            SET dispatched_at = @dispatched_at
+            WHERE dispatched_at IS NULL
+            RETURNING event_id
+            """
+            [
+                "dispatched_at", box DispatchSql.dispatchedAt
+            ]
+
+    /// Что увидел бы читатель с high-water mark по `position`: всё, что старше
+    /// прочитанной позиции, для него больше не существует.
+    let eventsAfter (dsn: string) (position: int64) =
+        DispatchSql.queryIds
+            dsn
+            "SELECT event_id FROM meetup_events WHERE position > @position ORDER BY position"
+            [ "position", box position ]
+
+    let pendingEvents (dsn: string) =
+        DispatchSql.queryIds dsn "SELECT event_id FROM meetup_events WHERE dispatched_at IS NULL ORDER BY position" []
+
+    /// Закоммиченная пара «сходка и её событие» с заданным моментом. Нужна там, где
+    /// сценарию важен возраст записи, а не только её наличие: `CommandTransaction`
+    /// держит один момент на все свои вставки и открытую транзакцию в придачу.
+    ///
+    /// Одно событие — одна сходка, поэтому версия всегда первая. Несколько событий
+    /// одной сходки потребовали бы вести их версии, а сценариям публикации нужен
+    /// набор строк, а не история конкретной сходки.
+    let seedEvent (dsn: string) (meetupId: Guid) (eventId: Guid) (occurredAt: DateTimeOffset) =
+        use connection = new NpgsqlConnection(dsn)
+        connection.Open()
+        use transaction = connection.BeginTransaction()
+
+        use state =
+            DispatchSql.command
+                connection
+                (Some transaction)
+                """
+                INSERT INTO meetups (
+                    id, author, lifecycle, visibility, version,
+                    schedule_form, schedule_precision
+                ) VALUES (
+                    @meetup_id, @actor, 'planned', 'hidden', 1,
+                    'no_date', NULL
+                )
+                ON CONFLICT (id) DO NOTHING
+                """
+                [
+                    "meetup_id", box meetupId
+                    "actor", box DispatchSql.actor
+                ]
+
+        state.ExecuteNonQuery() |> ignore
+
+        use journal =
+            DispatchSql.command
+                connection
+                (Some transaction)
+                """
+                INSERT INTO meetup_events (
+                    event_id, meetup_id, version, event_type, payload, performed_by, occurred_at
+                ) VALUES (
+                    @event_id, @meetup_id, 1, 'meetup_created', '{}'::jsonb, @actor, @occurred_at
+                )
+                """
+                [
+                    "event_id", box eventId
+                    "meetup_id", box meetupId
+                    "actor", box DispatchSql.actor
+                    "occurred_at", box occurredAt
+                ]
+
+        journal.ExecuteNonQuery() |> ignore
+
+        transaction.Commit()
+
+    let recordUpdateCode (dsn: string) (eventId: Guid) =
+        DispatchSql.failureCode
+            dsn
+            "UPDATE meetup_events SET payload = '{\"changed\":true}'::jsonb WHERE event_id = @event_id"
+            [ "event_id", box eventId ]
+
+    let rowDeleteCode (dsn: string) (eventId: Guid) =
+        DispatchSql.failureCode dsn "DELETE FROM meetup_events WHERE event_id = @event_id" [ "event_id", box eventId ]
+
+    /// TRUNCATE не проходит через строчный триггер, поэтому запрет на него
+    /// держит отдельный statement-триггер, и проверять его надо отдельно.
+    let tableTruncateCode (dsn: string) = DispatchSql.failureCode dsn "TRUNCATE meetup_events" []
+
+    /// Настоящее нарушение CHECK рядом с отказами триггера: без него «историю
+    /// переписать нельзя» и «строка не прошла ограничение» выглядели бы для
+    /// адаптера команд одним и тем же кодом.
+    let checkViolationCode (dsn: string) (meetupId: Guid) (eventId: Guid) =
+        DispatchSql.failureCode
+            dsn
+            """
+            INSERT INTO meetup_events (
+                event_id, meetup_id, version, event_type, payload, performed_by, occurred_at
+            ) VALUES (
+                @event_id, @meetup_id, 2, 'meetup_changed', '[1]'::jsonb, @actor, @occurred_at
+            )
+            """
+            [
+                "event_id", box eventId
+                "meetup_id", box meetupId
+                "actor", box DispatchSql.actor
+                "occurred_at", box DispatchSql.occurredAt
+            ]
+
+    let readRecord (dsn: string) (eventId: Guid) =
+        use connection = new NpgsqlConnection(dsn)
+        connection.Open()
+
+        use command =
+            DispatchSql.command
+                connection
+                None
+                """
+                SELECT meetup_id, version, event_type, payload::text, performed_by, occurred_at
+                FROM meetup_events
+                WHERE event_id = @event_id
+                """
+                [ "event_id", box eventId ]
+
+        use reader = command.ExecuteReader()
+        reader.Read() |> ignore
+
+        (reader.GetGuid(0),
+         reader.GetInt32(1),
+         reader.GetString(2),
+         reader.GetString(3),
+         reader.GetGuid(4),
+         reader.GetFieldValue<DateTimeOffset>(5))
+
+    let readDispatchMark (dsn: string) (eventId: Guid) =
+        use connection = new NpgsqlConnection(dsn)
+        connection.Open()
+
+        use command =
+            DispatchSql.command
+                connection
+                None
+                "SELECT dispatched_at FROM meetup_events WHERE event_id = @event_id"
+                [ "event_id", box eventId ]
+
+        use reader = command.ExecuteReader()
+        reader.Read() |> ignore
+
+        if reader.IsDBNull(0) then None else Some(reader.GetFieldValue<DateTimeOffset>(0))
+
+    let recordCounts (dsn: string) (meetupId: Guid) (eventId: Guid) =
+        use connection = new NpgsqlConnection(dsn)
+        connection.Open()
+
+        use command =
+            DispatchSql.command
+                connection
+                None
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM meetups WHERE id = @meetup_id),
+                    (SELECT COUNT(*) FROM meetup_events WHERE event_id = @event_id)
+                """
+                [
+                    "meetup_id", box meetupId
+                    "event_id", box eventId
+                ]
+
+        use reader = command.ExecuteReader()
+        reader.Read() |> ignore
+        (reader.GetInt64(0), reader.GetInt64(1))
+
+    /// Попытка переписать, с каким запросом связан факт (PER-227). Колонка вошла в
+    /// перечисление триггера миграцией 008, и отказ обязан быть `MT001`, а не успех.
+    let requestIdUpdateCode (dsn: string) (eventId: Guid) =
+        DispatchSql.failureCode
+            dsn
+            "UPDATE meetup_events SET request_id = 'rewritten' WHERE event_id = @event_id"
+            [ "event_id", box eventId ]
+
+    /// Запись в колонку значения, которое граница не приняла бы: пустого или длиннее
+    /// предела. Схема держит то же правило, что и `RequestId.create`.
+    let requestIdStoreCode (dsn: string) (eventId: Guid) (value: string) =
+        DispatchSql.failureCode
+            dsn
+            """
+            INSERT INTO meetup_events (
+                event_id, meetup_id, version, event_type, payload, performed_by, occurred_at, request_id
+            )
+            SELECT @new_event_id, meetup_id, version + 1, event_type, payload, performed_by, occurred_at, @request_id
+            FROM meetup_events
+            WHERE event_id = @event_id
+            """
+            [
+                "event_id", box eventId
+                "new_event_id", box (Guid.CreateVersion7())
+                "request_id", box value
+            ]

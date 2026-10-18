@@ -9,6 +9,17 @@
 #
 # Локальные переопределения — в lefthook-local.yml, он в .gitignore.
 
+post-checkout:
+  commands:
+    skillshare-sync:
+      # {3} — 1 при смене ветки, 0 при checkout отдельных файлов.
+      run: sh tools/git-hooks/sync-skillshare-targets.sh {1} {2} {3}
+
+post-merge:
+  commands:
+    skillshare-sync:
+      run: sh tools/git-hooks/sync-skillshare-targets.sh
+
 commit-msg:
   commands:
     conventional-commit:

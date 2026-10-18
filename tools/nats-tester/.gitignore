@@ -20,8 +20,9 @@ wheels/
 .installed.cfg
 *.egg
 
-# Generated protobuf files (committed to repo for convenience)
-# nats_tester/generated/
+# Generated protobuf classes are committed on purpose: the tool installs
+# without protoc, and the pinned regeneration check in CI keeps them honest.
+# See README, «Текущее состояние».
 
 # Virtual environments
 .venv/

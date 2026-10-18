@@ -1,0 +1,203 @@
+{
+  "sequence": 5,
+  "state": {
+    "kind": "Withdrawn",
+    "trading": null,
+    "held": null,
+    "sold": null,
+    "scheduled": null,
+    "unsold": null,
+    "withdrawn": "AuctionCancelled"
+  },
+  "auction": "00000000-0000-0004-0000-000000000001",
+  "seen": [
+    {
+      "sequence": 1,
+      "opId": "00000000-0000-0003-0000-000000000001",
+      "auctionId": "00000000-0000-0004-0000-000000000001",
+      "event": {
+        "kind": "LotDrafted",
+        "lotOpened": null,
+        "bidPlaced": null,
+        "lotScheduled": null,
+        "proxyLimitSet": null,
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null,
+        "deadlineExtended": null,
+        "lotHeldForFinal": null,
+        "askAdvanced": null,
+        "lotWithdrawn": null
+      }
+    },
+    {
+      "sequence": 2,
+      "opId": "00000000-0000-0003-0000-000000000002",
+      "auctionId": null,
+      "event": {
+        "kind": "LotScheduled",
+        "lotOpened": null,
+        "bidPlaced": null,
+        "lotScheduled": {
+          "startingPrice": {
+            "minorUnits": 10000,
+            "currency": "RUB"
+          },
+          "config": {
+            "currency": "RUB",
+            "stepPolicy": {
+              "fixed": null,
+              "tiers": [
+                {
+                  "bound": {
+                    "minorUnits": 0,
+                    "currency": "RUB"
+                  },
+                  "step": {
+                    "minorUnits": 500,
+                    "currency": "RUB"
+                  }
+                },
+                {
+                  "bound": {
+                    "minorUnits": 100000,
+                    "currency": "RUB"
+                  },
+                  "step": {
+                    "minorUnits": 1000,
+                    "currency": "RUB"
+                  }
+                }
+              ]
+            },
+            "antiSnipe": {
+              "window": "PT2M",
+              "extension": "PT2M",
+              "maxExtensions": 3
+            },
+            "proxyEnabled": true
+          }
+        },
+        "proxyLimitSet": null,
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null,
+        "deadlineExtended": null,
+        "lotHeldForFinal": null,
+        "askAdvanced": null,
+        "lotWithdrawn": null
+      }
+    },
+    {
+      "sequence": 3,
+      "opId": "00000000-0000-0003-0000-000000000003",
+      "auctionId": null,
+      "event": {
+        "kind": "LotOpened",
+        "lotOpened": {
+          "startingPrice": {
+            "minorUnits": 10000,
+            "currency": "RUB"
+          },
+          "config": {
+            "currency": "RUB",
+            "stepPolicy": {
+              "fixed": null,
+              "tiers": [
+                {
+                  "bound": {
+                    "minorUnits": 0,
+                    "currency": "RUB"
+                  },
+                  "step": {
+                    "minorUnits": 500,
+                    "currency": "RUB"
+                  }
+                },
+                {
+                  "bound": {
+                    "minorUnits": 100000,
+                    "currency": "RUB"
+                  },
+                  "step": {
+                    "minorUnits": 1000,
+                    "currency": "RUB"
+                  }
+                }
+              ]
+            },
+            "antiSnipe": {
+              "window": "PT2M",
+              "extension": "PT2M",
+              "maxExtensions": 3
+            },
+            "proxyEnabled": true
+          },
+          "deadline": "2026-10-07T18:00:00Z",
+          "stepWindows": null
+        },
+        "bidPlaced": null,
+        "lotScheduled": null,
+        "proxyLimitSet": null,
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null,
+        "deadlineExtended": null,
+        "lotHeldForFinal": null,
+        "askAdvanced": null,
+        "lotWithdrawn": null
+      }
+    },
+    {
+      "sequence": 4,
+      "opId": "00000000-0000-0003-0000-000000000004",
+      "auctionId": null,
+      "event": {
+        "kind": "BidPlaced",
+        "lotOpened": null,
+        "bidPlaced": {
+          "bidId": "00000000-0000-0002-0000-000000000001",
+          "participant": "00000000-0000-0001-0000-000000000002",
+          "amount": {
+            "minorUnits": 10500,
+            "currency": "RUB"
+          },
+          "previousLeader": null,
+          "origin": "Manual",
+          "source": "Bot",
+          "overtakenByProxy": null
+        },
+        "lotScheduled": null,
+        "proxyLimitSet": null,
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null,
+        "deadlineExtended": null,
+        "lotHeldForFinal": null,
+        "askAdvanced": null,
+        "lotWithdrawn": null
+      }
+    },
+    {
+      "sequence": 5,
+      "opId": "00000000-0000-0003-0000-000000000005",
+      "auctionId": null,
+      "event": {
+        "kind": "LotWithdrawn",
+        "lotOpened": null,
+        "bidPlaced": null,
+        "lotScheduled": null,
+        "proxyLimitSet": null,
+        "proxyLimitWithdrawn": null,
+        "lotSold": null,
+        "lotUnsold": null,
+        "deadlineExtended": null,
+        "lotHeldForFinal": null,
+        "askAdvanced": null,
+        "lotWithdrawn": {
+          "reason": "AuctionCancelled"
+        }
+      }
+    }
+  ]
+}

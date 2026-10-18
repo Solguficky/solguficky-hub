@@ -1,0 +1,330 @@
+syntax = "proto3";
+
+package notifications.v1;
+
+// Manages a person's meetup subscriptions, their notification category
+// settings and the two manual broadcasts. The caller presents the internal
+// identity of the person; which interface the command came from is not part of
+// this contract. Outgoing notifications are not described here: this service
+// publishes them to the bus, and that dictionary is a separate contract.
+service NotificationsService {
+  // Following a meetup. Carries no category choice: "I follow this" and "what
+  // to send me" are separate, and neither is derived from the other.
+  rpc SubscribeToMeetup(SubscribeToMeetupRequest) returns (MeetupNotificationPreferences);
+  rpc UnsubscribeFromMeetup(UnsubscribeFromMeetupRequest) returns (MeetupNotificationPreferences);
+
+  // One category at a time, and one operation per scope: the two scopes answer
+  // with snapshots of different shape, so they do not share a request.
+  rpc SetGlobalCategoryPreference(SetGlobalCategoryPreferenceRequest) returns (GlobalNotificationPreferences);
+  rpc SetMeetupCategoryPreference(SetMeetupCategoryPreferenceRequest) returns (MeetupNotificationPreferences);
+
+  rpc GetGlobalNotificationPreferences(GetGlobalNotificationPreferencesRequest) returns (GlobalNotificationPreferences);
+  rpc GetMeetupNotificationPreferences(GetMeetupNotificationPreferencesRequest) returns (MeetupNotificationPreferences);
+
+  // The person's auction notification settings, whole: how often they hear
+  // about outbids and proxy answers, and whether they hear about the final.
+  // None of them is one of the categories below.
+  rpc GetAuctionNotificationPreferences(GetAuctionNotificationPreferencesRequest) returns (AuctionNotificationPreferences);
+  rpc SetAuctionNotificationPreferences(SetAuctionNotificationPreferencesRequest) returns (AuctionNotificationPreferences);
+
+  // Favorite lots: "the person follows this lot".
+  rpc FollowLot(FollowLotRequest) returns (LotFollowing);
+  rpc UnfollowLot(UnfollowLotRequest) returns (LotFollowing);
+  rpc ListFollowedLots(ListFollowedLotsRequest) returns (FollowedLots);
+
+  // Whether the person has already seen the explanation of an automatic bid
+  // limit.
+  rpc GetProxyExplainer(GetProxyExplainerRequest) returns (ProxyExplainer);
+  rpc MarkProxyExplainerSeen(MarkProxyExplainerSeenRequest) returns (ProxyExplainer);
+
+  // Two separate operations rather than one with an optional meetup id. They
+  // share the acceptance message because one mechanism executes both.
+  rpc BroadcastToMeetupSubscribers(BroadcastToMeetupSubscribersRequest) returns (BroadcastAccepted);
+  rpc BroadcastToCommunity(BroadcastToCommunityRequest) returns (BroadcastAccepted);
+}
+
+message SubscribeToMeetupRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The person whose own
+  // subscription changes. Platform roles are deliberately absent from every
+  // request in this file, and so is any ready-made permission.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+}
+
+message UnsubscribeFromMeetupRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+}
+
+message SetGlobalCategoryPreferenceRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Any category of the dictionary below that the person can see.
+  NotificationCategory category = 2;
+
+  // Target state of this one category, never a toggle of the current value.
+  // There is no presence here: an unsent field and an explicit false are the
+  // same bytes, so false is the total value "off".
+  bool enabled = 3;
+}
+
+message SetMeetupCategoryPreferenceRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+
+  // A category that a meetup can carry. Which ones those are is a property of
+  // the category itself, stated in the enum below.
+  NotificationCategory category = 3;
+
+  // Target state of this one category for this one meetup, with the same
+  // absence of presence as in the global command. There is no third state on
+  // the wire: "inherit the global value" is not spellable here.
+  bool enabled = 4;
+}
+
+message GetGlobalNotificationPreferencesRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+}
+
+message GetMeetupNotificationPreferencesRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+}
+
+// Server-produced state. The list is total over every category of the
+// dictionary: a category the person never touched carries the product default,
+// not an absent entry.
+message GlobalNotificationPreferences {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Every category of the dictionary the person can see, in dictionary order.
+  // A category reserved to a role the person does not hold is absent, not
+  // reported as off.
+  repeated CategoryPreference categories = 2;
+}
+
+// Server-produced state for one meetup. The two planes are reported side by
+// side and neither is derived from the other: category values stand whether or
+// not the person is currently subscribed.
+message MeetupNotificationPreferences {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+
+  // False both for a person who never subscribed and for one who unsubscribed:
+  // this message does not distinguish the two.
+  bool subscribed = 3;
+
+  // Only the categories a meetup can carry. Each entry holds the value in
+  // force: the override when one exists, the global value otherwise. Which of
+  // the two produced it is deliberately not reported.
+  repeated CategoryPreference categories = 4;
+}
+
+message CategoryPreference {
+  NotificationCategory category = 1;
+  bool enabled = 2;
+}
+
+message GetAuctionNotificationPreferencesRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+}
+
+// Changes one or both settings. An absent field leaves its setting as it is.
+message SetAuctionNotificationPreferencesRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Target value, never a step from the current one.
+  optional OutbidFrequency outbid_frequency = 2;
+
+  // Target state, never a toggle of the current value.
+  optional bool final_announcements = 3;
+}
+
+// Server-produced state, total: a setting the person never touched carries the
+// product default — EVERY and true — not UNSPECIFIED or an absent value.
+message AuctionNotificationPreferences {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  OutbidFrequency outbid_frequency = 2;
+
+  // Whether the announcements of an auction final — auction_final_lineup and
+  // auction_final_started — reach the person.
+  bool final_announcements = 3;
+}
+
+// A fixed list rather than a number of minutes: only these intervals exist.
+// It governs outbids and the answers of the person's own proxy limit alike;
+// purchases are not affected. The interval is counted per person, across lots.
+enum OutbidFrequency {
+  // No value: the field is unset or the value is unknown to the consumer.
+  OUTBID_FREQUENCY_UNSPECIFIED = 0;
+
+  // Every outbid and every proxy answer on its own.
+  OUTBID_FREQUENCY_EVERY = 1;
+
+  // At most one message in the interval: the first outbid or proxy answer on
+  // any lot opens a window, and when it ends one lot_activity_digest lists
+  // every lot touched in it, with the price at that moment. A sale of a lot in
+  // the window closes it early.
+  OUTBID_FREQUENCY_AT_MOST_EVERY_5_MINUTES = 2;
+  OUTBID_FREQUENCY_AT_MOST_EVERY_15_MINUTES = 3;
+  OUTBID_FREQUENCY_AT_MOST_EVERY_60_MINUTES = 4;
+
+  // No outbid and no proxy answer messages. Purchase and access messages are
+  // not affected.
+  OUTBID_FREQUENCY_OFF = 5;
+}
+
+message FollowLotRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The person whose own mark
+  // changes.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string lot_id = 2;
+}
+
+message UnfollowLotRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string lot_id = 2;
+}
+
+// Server-produced state of one mark after the command.
+message LotFollowing {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string lot_id = 2;
+
+  bool following = 3;
+}
+
+message ListFollowedLotsRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+}
+
+// The person's own list, earliest mark first. Price, deadline and outcome of
+// the lots are not here.
+message FollowedLots {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 strings with hyphens.
+  repeated string lot_ids = 2;
+}
+
+message GetProxyExplainerRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+}
+
+// Carries no moment and no lot: only whether the explanation was seen.
+message MarkProxyExplainerSeenRequest {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+}
+
+// Server-produced state. A person who was never marked gets seen = false.
+message ProxyExplainer {
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string identity_id = 1;
+
+  bool seen = 2;
+}
+
+message BroadcastToMeetupSubscribersRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The author of the message.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 string with hyphens. This is
+  // both the broadcast id and the idempotency key. There is no separate
+  // idempotency field.
+  string id = 3;
+
+  // Author-written content. Not a rendered message: wording of the envelope,
+  // keyboard and links belong to the delivering channel. Unlike the meetup
+  // attributes, the empty string is not a total value here.
+  string body = 4;
+}
+
+message BroadcastToCommunityRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The author of the
+  // announcement.
+  string identity_id = 1;
+
+  // Caller-generated canonical lowercase UUIDv7 string with hyphens. Both the
+  // broadcast id and the idempotency key, as above.
+  string id = 2;
+
+  // Author-written content, as in BroadcastToMeetupSubscribers.
+  string body = 3;
+
+  // The audience is deliberately absent. A community announcement is expanded
+  // to one fixed circle by this service, and the sender does not choose it:
+  // there is no "everyone" broadcast, and no recipient list travels here.
+}
+
+// Server-produced acknowledgement that the broadcast was accepted. Acceptance
+// is not delivery: this service publishes addressed facts and learns nothing
+// about their outcome, so no recipient count and no delivery mark appear here.
+message BroadcastAccepted {
+  // Echo of the caller-generated id.
+  string id = 1;
+
+  // RFC 3339 UTC instant at which the broadcast was first accepted.
+  string accepted_at = 2;
+
+  // False when this call matched an already-accepted id.
+  bool created = 3;
+}
+
+enum NotificationCategory {
+  // No value: the field is unset or the category is unknown to the consumer.
+  NOTIFICATION_CATEGORY_UNSPECIFIED = 0;
+
+  // Global scope only: it has no per-meetup form.
+  NOTIFICATION_CATEGORY_MEETUP_PUBLISHED = 1;
+
+  NOTIFICATION_CATEGORY_MEETUP_CHANGED = 2;
+
+  NOTIFICATION_CATEGORY_MEETUP_MATERIAL = 3;
+
+  NOTIFICATION_CATEGORY_MEETUP_REMINDER = 4;
+
+  NOTIFICATION_CATEGORY_ORGANIZER_MESSAGE = 5;
+
+  // Global scope only: it is bound to no meetup.
+  NOTIFICATION_CATEGORY_COMMUNITY_ANNOUNCEMENT = 6;
+
+  // Global scope only, and visible to administrators only: new applications
+  // for access. Nobody else sees it or may set it.
+  NOTIFICATION_CATEGORY_ACCESS_REQUEST = 7;
+}

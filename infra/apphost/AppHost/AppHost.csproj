@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <Sdk Name="Aspire.AppHost.Sdk" Version="13.5.3" />
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsAspireHost>true</IsAspireHost>
+    <AspireUseCliBundle>true</AspireUseCliBundle>
+    <UserSecretsId>b2e6f0a4-9b3e-4f8b-8f4a-3f0b6a5c2f11</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" Version="13.5.3" />
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" Version="13.5.3" />
+    <PackageReference Include="Aspire.Hosting.Nats" Version="13.5.3" />
+    <PackageReference Include="Aspire.Hosting.JavaScript" Version="13.5.3" />
+    <!-- Генератор Helm-чарта из того же графа (ADR-055). Пакет выходит только
+         preview и закреплён точной сборкой той же линии, что SDK: плавающая
+         версия меняла бы чарт без правки в этом репозитории. -->
+    <PackageReference Include="Aspire.Hosting.Kubernetes" Version="13.5.3-preview.1.26425.3" />
+    <PackageReference Include="Grpc.HealthCheck" Version="2.80.0" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.80.0" />
+    <!-- Клиент, которым AppHost применяет топологию JetStream. Та же версия уже
+         приходит транзитивно от health check Aspire.Hosting.Nats; явная ссылка
+         держит её, если Aspire при обновлении сменит свою зависимость. -->
+    <PackageReference Include="NATS.Client.JetStream" Version="2.8.0" />
+    <!-- Bucket журнала доставки объявляется той же таблицей топологии; версия
+         держится на линии клиента JetStream. -->
+    <PackageReference Include="NATS.Client.KeyValueStore" Version="2.8.0" />
+  </ItemGroup>
+
+  <!-- Ссылка на сервис даёт типизованный Projects.Meetups: опечатка в пути падает
+       на сборке AppHost, а не на старте графа. -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\apps\meetups\Meetups\Meetups.fsproj" />
+    <ProjectReference Include="..\..\..\apps\notifications\Notifications\Notifications.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <!-- Реестр графа и резолвер профиля намеренно internal: снаружи AppHost ими
+       никто не пользуется, и публичными их делает только тест. Открываем тестам
+       вместо расширения видимости самих типов. -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="AppHost.UnitTests" />
+  </ItemGroup>
+
+</Project>

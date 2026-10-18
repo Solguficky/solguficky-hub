@@ -1,0 +1,11 @@
+# Контекст сборки Containerfile рядом — корень репозитория, поэтому список
+# разрешённого: всё, что не названо ниже, в контекст не попадает. Так target/
+# рабочего дерева, тесты и чужие компоненты не доезжают до сборки.
+# Docker находит файл по имени сам, podman получает его через --ignorefile.
+*
+!contracts/proto
+!apps/auction/build.sbt
+!apps/auction/.java-version
+!apps/auction/project/build.properties
+!apps/auction/project/plugins.sbt
+!apps/auction/src/main

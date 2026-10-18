@@ -1,0 +1,559 @@
+import { describe, expect, it } from "vitest";
+import type { AuctionSummaryView } from "../../../../auction-ui/index.js";
+import type {
+  ArchivedMeetupSummary,
+  MeetupSnapshot,
+  MeetupSummary,
+} from "../../meetups/port.js";
+import {
+  archiveScreen,
+  cardScreen,
+  hiddenScreen,
+  materialsScreen,
+  meetupParent,
+  meetupsScreen,
+  statusScreen,
+} from "./meetup.js";
+
+// L0: сборщики экранов сходки на данных, без бота и Telegram. Что экран
+// проходит правила дизайн-кода, держит линтер test kit; здесь — то, чего он не
+// видит: что именно попало на страницу и куда ведёт возврат.
+
+const today = { year: 2026, month: 8, day: 1 };
+
+function meetup(overrides: Partial<MeetupSnapshot> = {}): MeetupSnapshot {
+  return {
+    id: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+    author: "0192f0a0-0000-7000-8000-00000000a001",
+    title: "Настолки",
+    description: "Берём свои игры",
+    venue: "Циферблат",
+    schedule: { year: 2026, month: 8, day: 15, hours: 19, minutes: 0 },
+    lifecycle: "planned",
+    visibility: "visible",
+    version: 1,
+    materials: [],
+    ...overrides,
+  };
+}
+
+function summaries(count: number): MeetupSummary[] {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `0198f2a4-7c1e-7d3a-9b21-${(index + 1).toString(16).padStart(12, "0")}`,
+    title: `Сходка ${index + 1}`,
+    schedule: { year: 2026, month: 8, day: index + 1 },
+    visibility: "visible" as const,
+  }));
+}
+
+const rows = (screen: {
+  keyboard: { inline_keyboard: { text: string }[][] };
+}) =>
+  screen.keyboard.inline_keyboard.map((row) =>
+    row.map((button) => button.text),
+  );
+
+// Решение владельца 10 октября 2026 года: «видна» или «скрыта» в статусе
+// видит только тот, кто управляет сходкой.
+describe("card status", () => {
+  const statusOf = (manageable: boolean, visibility: "visible" | "hidden") =>
+    cardScreen({
+      meetup: meetup({ visibility }),
+      manageable,
+      subscribed: true,
+      presentation: "plain",
+      today,
+    })
+      .text.split("\n")
+      .find((line) => line.startsWith("Статус:"));
+
+  it("shows visibility to whoever manages the meetup", () => {
+    expect(statusOf(true, "visible")).toBe("Статус: запланирована, видна");
+    expect(statusOf(true, "hidden")).toBe("Статус: запланирована, скрыта");
+  });
+
+  it("shows only the lifecycle to everyone else", () => {
+    expect(statusOf(false, "visible")).toBe("Статус: запланирована");
+    expect(statusOf(false, "hidden")).toBe("Статус: запланирована");
+  });
+});
+
+describe("card posters", () => {
+  const photo = (index: number) => ({
+    id: `0199c0de-0000-7000-8000-00000000000${index}`,
+    title: `Афиша ${index}`,
+    source: {
+      kind: "file" as const,
+      fileId: `photo-${index}`,
+      fileKind: "photo" as const,
+    },
+  });
+  const cardOf = (
+    materials: MeetupSnapshot["materials"],
+    overrides: { presentation?: "rich" | "plain"; posters?: boolean } = {},
+  ) =>
+    cardScreen({
+      meetup: meetup({ materials }),
+      manageable: false,
+      subscribed: true,
+      presentation: "rich",
+      today,
+      ...overrides,
+    });
+
+  // Решение владельца 10 октября 2026 года: фото — первым блоком, над
+  // заголовком.
+  it("shows several photos as a slideshow in the collection order", () => {
+    const screen = cardOf([
+      photo(1),
+      {
+        id: "0199c0de-0000-7000-8000-000000000009",
+        title: "Программа",
+        source: { kind: "file", fileId: "pdf", fileKind: "document" },
+      },
+      {
+        id: "0199c0de-0000-7000-8000-000000000008",
+        title: "Опрос",
+        source: { kind: "message-link", url: "https://t.me/c/1/2" },
+      },
+      photo(2),
+    ]);
+
+    expect(screen.media).toEqual([
+      { id: "p1", fileId: "photo-1" },
+      { id: "p2", fileId: "photo-2" },
+    ]);
+    expect(
+      screen.text.startsWith(
+        '<tg-slideshow><img src="tg://photo?id=p1"/><img src="tg://photo?id=p2"/></tg-slideshow><h1>',
+      ),
+    ).toBe(true);
+    expect(screen.text).not.toContain("pdf");
+  });
+
+  it("shows a single photo without a slideshow", () => {
+    const screen = cardOf([photo(1)]);
+
+    expect(screen.media).toEqual([{ id: "p1", fileId: "photo-1" }]);
+    expect(screen.text.startsWith('<img src="tg://photo?id=p1"/><h1>')).toBe(
+      true,
+    );
+    expect(screen.text).not.toContain("tg-slideshow");
+  });
+
+  it("carries no media without photos, in the plain card and when posters are off", () => {
+    const document = {
+      id: "0199c0de-0000-7000-8000-000000000009",
+      title: "Программа",
+      source: {
+        kind: "file" as const,
+        fileId: "pdf",
+        fileKind: "document" as const,
+      },
+    };
+
+    for (const screen of [
+      cardOf([document]),
+      cardOf([photo(1), photo(2)], { presentation: "plain" }),
+      cardOf([photo(1), photo(2)], { posters: false }),
+    ]) {
+      expect(screen.media).toBeUndefined();
+      expect(screen.text).not.toContain("tg://photo");
+    }
+  });
+
+  it("stops at ten posters", () => {
+    const screen = cardOf(
+      Array.from({ length: 12 }, (_, index) => ({
+        ...photo(1),
+        id: `0199c0de-0000-7000-8000-0000000000${(index + 16).toString(16)}`,
+        source: {
+          kind: "file" as const,
+          fileId: `photo-${index}`,
+          fileKind: "photo" as const,
+        },
+      })),
+    );
+
+    expect(screen.media).toHaveLength(10);
+  });
+});
+
+describe("meetupParent", () => {
+  it("returns a planned visible meetup to the meetups list", () => {
+    expect(meetupParent(meetup(), today).name).toBe("Сходки");
+  });
+
+  it("returns a hidden planned meetup to the hidden section", () => {
+    expect(meetupParent(meetup({ visibility: "hidden" }), today).name).toBe(
+      "Скрытые",
+    );
+  });
+
+  it("returns a cancelled, held or past meetup to the archive even when hidden", () => {
+    expect(meetupParent(meetup({ lifecycle: "cancelled" }), today).name).toBe(
+      "Архив",
+    );
+    expect(
+      meetupParent(meetup({ lifecycle: "held", visibility: "hidden" }), today)
+        .name,
+    ).toBe("Архив");
+    expect(
+      meetupParent(
+        meetup({
+          schedule: { year: 2026, month: 7, day: 31, hours: 19, minutes: 0 },
+        }),
+        today,
+      ).name,
+    ).toBe("Архив");
+  });
+
+  it("keeps a meetup of today in the meetups list", () => {
+    expect(
+      meetupParent(
+        meetup({
+          schedule: { year: 2026, month: 8, day: 1, hours: 0, minutes: 0 },
+        }),
+        today,
+      ).name,
+    ).toBe("Сходки");
+  });
+});
+
+describe("meetupsScreen", () => {
+  it("cuts the list into pages of eight with a pager and the page in the title", () => {
+    const first = meetupsScreen(summaries(17), 0, today);
+    const last = meetupsScreen(summaries(17), 2, today);
+
+    expect(first.text).toContain("<b>Сходки · 1 из 3</b>");
+    // «Сходки» — раздел под меню (PER-592): «Архив» — последним рядом
+    // содержимого, затем листание, последним — «‹ Меню».
+    expect(rows(first)).toHaveLength(8 + 3);
+    expect(rows(first).at(-3)).toEqual(["Архив"]);
+    expect(rows(first).at(-2)).toEqual(["→"]);
+    expect(rows(first).at(-1)).toEqual(["‹ Меню"]);
+    expect(first.keyboard.inline_keyboard.at(-2)?.[0]).toMatchObject({
+      callback_data: "v1:nav:hub:1",
+    });
+    expect(last.text).toContain("· 3 из 3");
+    expect(rows(last)).toEqual([
+      ["17 августа · Сходка 17"],
+      ["Архив"],
+      ["←"],
+      ["‹ Меню"],
+    ]);
+  });
+
+  it("opens the last page for a page beyond the list", () => {
+    expect(meetupsScreen(summaries(9), 7, today).text).toContain("· 2 из 2");
+  });
+
+  it("names the year of a date outside the current one", () => {
+    const next = meetupsScreen(
+      [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+          title: "Новогодняя",
+          schedule: { year: 2027, month: 1, day: 3 },
+          visibility: "visible",
+        },
+      ],
+      0,
+      today,
+    );
+
+    expect(next.text).toContain("• 3 января 2027, вс — Новогодняя");
+    expect(rows(next)[0]).toEqual(["3 января 2027 · Новогодняя"]);
+  });
+
+  it("escapes a title in the text and leaves it as is on the button", () => {
+    const screen = meetupsScreen(
+      [
+        {
+          id: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+          title: "<b>Жирная</b>",
+          visibility: "visible",
+        },
+      ],
+      0,
+      today,
+    );
+
+    expect(screen.text).toContain("• &lt;b&gt;Жирная&lt;/b&gt;");
+    expect(rows(screen)[0]).toEqual(["<b>Жирная</b>"]);
+  });
+});
+
+describe("archiveScreen", () => {
+  it("names how each meetup ended and returns to the meetups", () => {
+    const archived: ArchivedMeetupSummary[] = [
+      { ...summaries(1)[0], status: "held" } as ArchivedMeetupSummary,
+    ];
+    const screen = archiveScreen(archived, 0, today);
+
+    expect(screen.text).toBe(
+      "<b>Архив</b>\n\n• 1 августа, сб — Сходка 1 (состоялась)",
+    );
+    expect(rows(screen).at(-1)).toEqual(["‹ Сходки"]);
+  });
+});
+
+describe("hiddenScreen", () => {
+  it("lists only hidden meetups and returns to management", () => {
+    const screen = hiddenScreen(
+      [
+        { ...summaries(1)[0], visibility: "hidden" } as MeetupSummary,
+        ...summaries(3).slice(1),
+      ],
+      0,
+      today,
+    );
+
+    expect(screen.text).toBe(
+      "<b>Скрытые сходки</b>\n\n• 1 августа, сб — Сходка 1",
+    );
+    expect(rows(screen)).toEqual([["1 августа · Сходка 1"], ["‹ Управление"]]);
+  });
+});
+
+describe("cardScreen", () => {
+  const view = { manageable: true, presentation: "plain" as const, today };
+
+  it("fits an organizer's card into five rows", () => {
+    const screen = cardScreen({ ...view, meetup: meetup(), subscribed: true });
+
+    expect(rows(screen)).toEqual([
+      ["✏️ Изменить", "🏷 Статус"],
+      ["📎 Материалы (0)", "🧩 Расширения"],
+      ["📣 Написать подписчикам"],
+      ["🔕 Отписаться", "⚙️ Уведомления сходки"],
+      ["‹ Сходки"],
+    ]);
+  });
+
+  it("shows a participant the subscription and materials only when there are any", () => {
+    const participant = { ...view, manageable: false, subscribed: false };
+
+    // «Расширения» — у всех: что за ними, говорит меню (PER-605).
+    expect(rows(cardScreen({ ...participant, meetup: meetup() }))).toEqual([
+      ["🧩 Расширения"],
+      ["🔔 Подписаться на сходку"],
+      ["‹ Сходки"],
+    ]);
+    expect(
+      rows(
+        cardScreen({
+          ...participant,
+          meetup: meetup({
+            materials: [
+              {
+                id: "0199c0de-0000-7000-8000-000000000002",
+                title: "Афиша",
+                source: {
+                  kind: "file",
+                  fileId: "bot-file-id",
+                  fileKind: "document",
+                },
+              },
+            ],
+          }),
+        }),
+      ),
+    ).toEqual([
+      ["📎 Материалы (1)", "🧩 Расширения"],
+      ["🔔 Подписаться на сходку"],
+      ["‹ Сходки"],
+    ]);
+  });
+
+  // Исход действия на карточку не ложится: он свой экран, а карточка
+  // всегда несёт подсказку о подписке под собой.
+  it("keeps the card free of an outcome and puts the subscription hint below it", () => {
+    const hinted = cardScreen({ ...view, meetup: meetup(), subscribed: false });
+
+    expect(hinted.text.startsWith("<b>Настолки</b>")).toBe(true);
+    expect(hinted.text).not.toContain("Изменение сохранено");
+    expect(hinted.text.endsWith("сообщения организатора этой сходки.")).toBe(
+      true,
+    );
+  });
+
+  it("reads the date in words and addresses the author informally", () => {
+    const screen = cardScreen({
+      ...view,
+      meetup: meetup(),
+      author: { kind: "self" },
+    });
+
+    expect(screen.text).toContain("Когда: 15 августа, сб, 19:00");
+    expect(screen.text).toContain("Ты автор этой сходки");
+  });
+
+  // Пустое описание — заглушка, одна у карточек сходки и лота (PER-594).
+  it("shows the placeholder for an empty description without photos", () => {
+    const screen = cardScreen({
+      ...view,
+      meetup: meetup({ description: "" }),
+      subscribed: true,
+    });
+
+    expect(screen.media).toBeUndefined();
+    expect(screen.text).toContain("\n\nОписание пока не добавлено.");
+  });
+
+  // Строка аукциона — свой блок после «Когда» и «Где» (PER-594): стадия
+  // словом, у онлайн-торгов со сроком — срок в поясе сообщества.
+  describe("auction line", () => {
+    const withAuction = (auction?: AuctionSummaryView) =>
+      cardScreen({
+        ...view,
+        meetup: meetup(),
+        subscribed: true,
+        timeZone: "Europe/Moscow",
+        ...(auction === undefined ? {} : { auction }),
+      }).text;
+    const auctionId = "daef05c7-cd68-5048-b03d-cb4860e8dc73";
+
+    it("names the deadline of online trading", () => {
+      expect(
+        withAuction({
+          auctionId,
+          stage: "prebidding",
+          opensAt: "2026-08-10T09:00:00Z",
+          closesAt: "2026-08-20T16:00:00Z",
+          final: true,
+        }),
+      ).toContain(
+        "📍 Где: Циферблат\n\n🔨 Аукцион: идут онлайн-торги до 20 августа, чт, 19:00\n\nБерём свои игры",
+      );
+    });
+
+    it("names a finished auction by its stage", () => {
+      expect(
+        withAuction({ auctionId, stage: "finished", final: false }),
+      ).toContain("\n\n🔨 Аукцион: завершён\n\n");
+    });
+
+    it("leaves the line out without an auction", () => {
+      const text = withAuction();
+      expect(text).not.toContain("Аукцион:");
+      expect(text).toContain("📍 Где: Циферблат\n\nБерём свои игры");
+    });
+  });
+
+  // Фото, которое стоит постером над заголовком, пометки не несёт; фото без
+  // постера — в обычной карточке — «(фото)», документ — «(файл)» (PER-594).
+  const photoAndDocument = meetup({
+    materials: [
+      {
+        id: "0199c0de-0000-7000-8000-000000000001",
+        title: "Афиша",
+        source: { kind: "file", fileId: "photo-1", fileKind: "photo" },
+      },
+      {
+        id: "0199c0de-0000-7000-8000-000000000002",
+        title: "Регламент",
+        source: { kind: "file", fileId: "doc-2", fileKind: "document" },
+      },
+    ],
+  });
+
+  it("marks a document as a file in the material list and a poster photo not", () => {
+    const screen = cardScreen({
+      ...view,
+      presentation: "rich",
+      meetup: photoAndDocument,
+      subscribed: true,
+    });
+
+    expect(screen.text).toContain(
+      "📎 Материалы:<br>1. Афиша<br>2. Регламент (файл)",
+    );
+  });
+
+  it("marks a photo without a poster as a photo", () => {
+    const screen = cardScreen({
+      ...view,
+      presentation: "plain",
+      meetup: photoAndDocument,
+      subscribed: true,
+    });
+
+    expect(screen.text).toContain(
+      "📎 Материалы:\n1. Афиша (фото)\n2. Регламент (файл)",
+    );
+  });
+
+  it("keeps a cancelled meetup readable but not editable", () => {
+    const screen = cardScreen({
+      ...view,
+      meetup: meetup({ lifecycle: "cancelled" }),
+    });
+
+    expect(rows(screen)).toEqual([
+      ["🧩 Расширения"],
+      ["📣 Написать подписчикам"],
+      ["⚙️ Уведомления сходки"],
+      ["‹ Архив"],
+    ]);
+  });
+});
+
+describe("statusScreen", () => {
+  it("keeps every state action of a planned hidden meetup with a moment", () => {
+    const screen = statusScreen(
+      meetup({
+        visibility: "hidden",
+        publishAt: { year: 2026, month: 8, day: 10, hours: 9, minutes: 30 },
+      }),
+      undefined,
+      today,
+    );
+
+    expect(rows(screen)).toEqual([
+      ["Опубликовать"],
+      ["Перенести публикацию"],
+      ["Отменить отложенную публикацию"],
+      ["Отметить состоявшейся"],
+      ["Отменить сходку"],
+      ["‹ Сходка"],
+    ]);
+    expect(screen.text).toContain(
+      "Публикация назначена на 10 августа, пн, 09:30",
+    );
+  });
+});
+
+describe("materialsScreen", () => {
+  const materials = Array.from({ length: 9 }, (_, index) => ({
+    id: `0199c0de-0000-7000-8000-${(index + 1).toString(16).padStart(12, "0")}`,
+    title: `Материал ${index + 1}`,
+    source:
+      index === 0
+        ? {
+            kind: "file" as const,
+            fileId: "bot-file-id",
+            fileKind: "document" as const,
+          }
+        : { kind: "message-link" as const, url: `https://t.me/c/1/${index}` },
+  }));
+
+  it("opens a file by a button and marks a link, with removal for the organizer", () => {
+    const screen = materialsScreen(meetup({ materials }), true, 0);
+
+    expect(rows(screen)[0]).toEqual(["Материал 1", "🗑 Убрать"]);
+    expect(rows(screen)[1]).toEqual(["Материал 2 ↗", "🗑 Убрать"]);
+    expect(rows(screen).slice(-3)).toEqual([
+      ["→"],
+      ["Прикрепить материал"],
+      ["‹ Сходка"],
+    ]);
+  });
+
+  it("shows a participant the materials without management", () => {
+    const screen = materialsScreen(meetup({ materials }), false, 1);
+
+    expect(rows(screen)).toEqual([["Материал 9 ↗"], ["←"], ["‹ Сходка"]]);
+    expect(screen.text).toContain("<b>Материалы · 2 из 2</b>\n<i>Настолки</i>");
+  });
+});

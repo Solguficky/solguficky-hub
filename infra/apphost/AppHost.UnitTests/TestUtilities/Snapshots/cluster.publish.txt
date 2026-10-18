@@ -1,0 +1,217 @@
+auction: ContainerResource
+  image: /placeholder:latest
+  build: <repo>/apps/auction/Containerfile context=<repo>
+  endpoint: grpc http port= target=8081 proxied=True external=False
+  endpoint: http http port= target=8080 proxied=True external=False
+  env: AUCTION_CALLER_TOKEN_AUCTION_BOT={auction-bot-service-token.value}
+  env: AUCTION_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
+  env: AUCTION_DATABASE_JDBC_URL={auction-db.connectionString}
+  env: AUCTION_DATABASE_PASSWORD={auction-db-password.value}
+  env: AUCTION_DATABASE_USER={auction-db-user.value}
+  env: AUCTION_GRPC_PORT={auction.bindings.grpc.targetPort}
+  env: AUCTION_HTTP_PORT={auction.bindings.http.targetPort}
+  env: AUCTION_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  env: AUCTION_MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
+  env: AUCTION_NATS_URL={nats.connectionString}
+  env: AUCTION_SERVICE_TOKEN={auction-service-token.value}
+  waits: auction-db WaitUntilHealthy
+  waits: identity WaitUntilHealthy
+  waits: meetups WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference auction-bot-service-token
+  relationship: Reference auction-db
+  relationship: Reference auction-db-password
+  relationship: Reference auction-db-user
+  relationship: Reference auction-service-token
+  relationship: Reference hub-bot-service-token
+  relationship: Reference identity
+  relationship: Reference meetups
+  relationship: Reference nats
+  relationship: WaitFor auction-db
+  relationship: WaitFor identity
+  relationship: WaitFor meetups
+  relationship: WaitFor nats
+  health: auction_http_/health_200_check
+auction-bot: ContainerResource
+  image: /hub-bot:latest
+  env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
+  env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: BOT_ENVIRONMENT=prod
+  env: BOT_NATS_URL={nats.connectionString}
+  env: BOT_SERVICE_TOKEN={auction-bot-service-token.value}
+  env: BOT_SURFACE=auction
+  env: BOT_TOKEN={auction-bot-token.value}
+  env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
+  waits: auction WaitUntilHealthy
+  waits: identity WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  waits: notifications WaitUntilHealthy
+  relationship: Reference auction
+  relationship: Reference auction-bot-service-token
+  relationship: Reference auction-bot-token
+  relationship: Reference identity
+  relationship: Reference nats
+  relationship: Reference notifications
+  relationship: WaitFor auction
+  relationship: WaitFor identity
+  relationship: WaitFor nats
+  relationship: WaitFor notifications
+auction-bot-service-token: ParameterResource
+  secret: True
+auction-bot-token: ParameterResource
+  secret: True
+auction-db: ConnectionStringParameterResource
+  secret: True
+auction-db-password: ParameterResource
+  secret: True
+auction-db-user: ParameterResource
+  secret: True
+auction-service-token: ParameterResource
+  secret: True
+hub-bot: ContainerResource
+  image: /placeholder:latest
+  build: <repo>/apps/hub-bot/Containerfile context=<repo>
+  env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
+  env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: BOT_ENVIRONMENT=prod
+  env: BOT_NATS_URL={nats.connectionString}
+  env: BOT_SERVICE_TOKEN={hub-bot-service-token.value}
+  env: BOT_SURFACE=hub
+  env: BOT_TOKEN={hub-bot-token.value}
+  env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  env: MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
+  env: NOTIFICATIONS_GRPC_URL={notifications.bindings.grpc.url}
+  waits: auction WaitUntilHealthy
+  waits: identity WaitUntilHealthy
+  waits: meetups WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  waits: notifications WaitUntilHealthy
+  relationship: Reference auction
+  relationship: Reference hub-bot-service-token
+  relationship: Reference hub-bot-token
+  relationship: Reference identity
+  relationship: Reference meetups
+  relationship: Reference nats
+  relationship: Reference notifications
+  relationship: WaitFor auction
+  relationship: WaitFor identity
+  relationship: WaitFor meetups
+  relationship: WaitFor nats
+  relationship: WaitFor notifications
+hub-bot-service-token: ParameterResource
+  secret: True
+hub-bot-token: ParameterResource
+  secret: True
+identity: ContainerResource
+  image: /placeholder:latest
+  build: <repo>/apps/identity/Containerfile context=<repo>
+  endpoint: grpc http port= target=50051 proxied=True external=False
+  env: IDENTITY_CALLER_TOKEN_AUCTION={auction-service-token.value}
+  env: IDENTITY_CALLER_TOKEN_AUCTION_BOT={auction-bot-service-token.value}
+  env: IDENTITY_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
+  env: IDENTITY_CALLER_TOKEN_MEETUPS={meetups-service-token.value}
+  env: IDENTITY_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
+  env: IDENTITY_DATABASE_URL={identity-db.connectionString}
+  env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
+  env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
+  env: IDENTITY_NATS_URL={nats.connectionString}
+  waits: identity-db WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference auction-bot-service-token
+  relationship: Reference auction-service-token
+  relationship: Reference hub-bot-service-token
+  relationship: Reference identity
+  relationship: Reference identity-db
+  relationship: Reference identity-maintainer-token
+  relationship: Reference meetups-service-token
+  relationship: Reference nats
+  relationship: Reference notifications-service-token
+  relationship: WaitFor identity-db
+  relationship: WaitFor nats
+  health: identity-grpc
+identity-db: ConnectionStringParameterResource
+  secret: True
+identity-maintainer-token: ParameterResource
+  secret: True
+jetstream-topology: ContainerResource
+  image: docker.io/natsio/nats-box:
+  arg: /topology/apply.sh
+  arg: /topology
+  env: NATS_URL={nats.connectionString}
+  relationship: Reference nats
+k8s: KubernetesEnvironmentResource
+meetups: ProjectResource
+  endpoint: grpc http port= target=8080 proxied=True external=False
+  env: ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+  env: HTTP_PORTS={meetups.bindings.grpc.targetPort}
+  env: MEETUPS_CALLER_TOKEN_AUCTION={auction-service-token.value}
+  env: MEETUPS_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
+  env: MEETUPS_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
+  env: MEETUPS_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: MEETUPS_DATABASE_URL={meetups-db.connectionString}
+  env: MEETUPS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  env: MEETUPS_NATS_URL={nats.connectionString}
+  env: MEETUPS_SERVICE_TOKEN={meetups-service-token.value}
+  waits: identity WaitUntilHealthy
+  waits: meetups-db WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference auction-service-token
+  relationship: Reference hub-bot-service-token
+  relationship: Reference identity
+  relationship: Reference meetups-db
+  relationship: Reference meetups-service-token
+  relationship: Reference nats
+  relationship: Reference notifications-service-token
+  relationship: WaitFor identity
+  relationship: WaitFor meetups-db
+  relationship: WaitFor nats
+  health: meetups-grpc
+meetups-db: ConnectionStringParameterResource
+  secret: True
+meetups-service-token: ParameterResource
+  secret: True
+nats: ConnectionStringParameterResource
+  secret: True
+notifications: ProjectResource
+  endpoint: grpc http port= target=8080 proxied=True external=False
+  env: ASPNETCORE_FORWARDEDHEADERS_ENABLED=true
+  env: HTTP_PORTS={notifications.bindings.grpc.targetPort}
+  env: NOTIFICATIONS_CALLER_TOKEN_AUCTION_BOT={auction-bot-service-token.value}
+  env: NOTIFICATIONS_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
+  env: NOTIFICATIONS_CLUSTER_ID={notifications-cluster-id.value}
+  env: NOTIFICATIONS_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: NOTIFICATIONS_DATABASE_URL={notifications-db.connectionString}
+  env: NOTIFICATIONS_IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  env: NOTIFICATIONS_MEETUPS_GRPC_URL={meetups.bindings.grpc.url}
+  env: NOTIFICATIONS_NATS_URL={nats.connectionString}
+  env: NOTIFICATIONS_SERVICE_ID={notifications-service-id.value}
+  env: NOTIFICATIONS_SERVICE_TOKEN={notifications-service-token.value}
+  env: NOTIFICATIONS_SILO_ADVERTISED_HOST={notifications.bindings.grpc.host}
+  waits: identity WaitUntilHealthy
+  waits: meetups WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  waits: notifications-db WaitUntilHealthy
+  relationship: Reference auction-bot-service-token
+  relationship: Reference hub-bot-service-token
+  relationship: Reference identity
+  relationship: Reference meetups
+  relationship: Reference nats
+  relationship: Reference notifications
+  relationship: Reference notifications-cluster-id
+  relationship: Reference notifications-db
+  relationship: Reference notifications-service-id
+  relationship: Reference notifications-service-token
+  relationship: WaitFor identity
+  relationship: WaitFor meetups
+  relationship: WaitFor nats
+  relationship: WaitFor notifications-db
+  health: notifications-grpc
+notifications-cluster-id: ParameterResource
+  secret: False
+notifications-db: ConnectionStringParameterResource
+  secret: True
+notifications-service-id: ParameterResource
+  secret: False
+notifications-service-token: ParameterResource
+  secret: True

@@ -1,0 +1,779 @@
+import { describe, expect, it, vi } from "vitest";
+import type { MeetupSnapshot, Meetups } from "../meetups/port.js";
+import { createDispatcher } from "./dispatcher.js";
+import { rejectedValueText } from "./meetup-form.js";
+
+const identity = {
+  identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+  rights: ["access-hub", "place-bids"] as const,
+};
+const empty: MeetupSnapshot = {
+  id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+  title: "",
+  description: "",
+  venue: "",
+  lifecycle: "planned",
+  visibility: "hidden",
+  author: "0192f0a0-0000-7000-8000-00000000a001",
+  version: 1,
+  materials: [],
+};
+
+function harness() {
+  let snapshot = empty;
+  const meetups: Meetups = {
+    listVisible: vi.fn(async () => ({ kind: "ok" as const, meetups: [] })),
+    listArchived: vi.fn(async () => ({ kind: "ok" as const, meetups: [] })),
+    createDraft: vi.fn(async (_person, id) => ({
+      kind: "ok" as const,
+      meetup: { ...snapshot, id },
+    })),
+    get: vi.fn(async () => ({ kind: "ok" as const, meetup: snapshot })),
+    changeAttributes: vi.fn(async (_person, meetup) => {
+      snapshot = meetup;
+      return { kind: "ok" as const, meetup };
+    }),
+    setSchedule: vi.fn(async (_person, meetup, schedule) => {
+      snapshot = { ...meetup, schedule };
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
+    publish: vi.fn(async () => ({ kind: "ok" as const, meetup: snapshot })),
+    unpublish: vi.fn(async () => {
+      snapshot = { ...snapshot, visibility: "hidden" };
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
+    cancel: vi.fn(async () => {
+      snapshot = { ...snapshot, lifecycle: "cancelled" };
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
+    markHeld: vi.fn(async () => {
+      snapshot = { ...snapshot, lifecycle: "held" };
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
+    schedulePublication: vi.fn(async (_person, meetup, moment) => {
+      snapshot = { ...meetup, publishAt: moment };
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
+    cancelPublication: vi.fn(async (_person, meetup) => {
+      const { publishAt: _cleared, ...rest } = meetup;
+      snapshot = rest;
+      return { kind: "ok" as const, meetup: snapshot };
+    }),
+    attachMaterial: vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: snapshot,
+    })),
+    removeMaterial: vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: snapshot,
+    })),
+  };
+  // День сообщества закреплён: иначе вердикт «дата прошла» зависел бы от дня
+  // прогона, и фикстуры с датами покраснели бы сами по себе.
+  return {
+    meetups,
+    dispatcher: createDispatcher(meetups, undefined, () => today),
+  };
+}
+
+const today = { year: 2026, month: 9, day: 1 };
+
+describe("meetup creation form", () => {
+  it("creates the draft on entry and persists every completed step", async () => {
+    const { dispatcher, meetups } = harness();
+    const created = await dispatcher.execute({
+      identity,
+      intent: "create-meetup",
+      meetupId: empty.id,
+    });
+    expect(created).toMatchObject({ kind: "ask", field: "title" });
+    if (created.kind !== "ask") return;
+    const titled = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "title",
+      value: "Осенняя сходка",
+      meetupId: created.meetup.id,
+    });
+    // После названия форма больше не ведёт по полям: черновик показывается
+    // целиком, и следующее поле человек выбирает сам.
+    expect(titled).toMatchObject({ kind: "draft" });
+    if (titled.kind !== "draft") return;
+    const scheduled = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "schedule",
+      value: "21.09.2026 19:30",
+      meetupId: titled.meetup.id,
+    });
+    expect(scheduled).toMatchObject({ kind: "draft" });
+    expect(meetups.createDraft).toHaveBeenCalledOnce();
+    expect(meetups.changeAttributes).toHaveBeenCalledOnce();
+    expect(meetups.setSchedule).toHaveBeenCalledOnce();
+  });
+
+  it("repeats an unparsed schedule step without changing the saved meetup", async () => {
+    const { dispatcher, meetups } = harness();
+    await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "title",
+      value: "Сходка",
+      meetupId: empty.id,
+    });
+    const result = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "schedule",
+      value: "когда-нибудь вечером",
+      meetupId: empty.id,
+    });
+    expect(result).toMatchObject({
+      kind: "ask",
+      field: "schedule",
+      meetup: { title: "Сходка" },
+    });
+    expect(meetups.setSchedule).not.toHaveBeenCalled();
+  });
+
+  it("passes the same meetup id on repeated publication", async () => {
+    const { dispatcher, meetups } = harness();
+    await dispatcher.execute({
+      identity,
+      intent: "publish-meetup",
+      meetupId: empty.id,
+    });
+    await dispatcher.execute({
+      identity,
+      intent: "publish-meetup",
+      meetupId: empty.id,
+    });
+    expect(meetups.publish).toHaveBeenNthCalledWith(
+      1,
+      identity,
+      empty,
+      undefined,
+    );
+    expect(meetups.publish).toHaveBeenNthCalledWith(
+      2,
+      identity,
+      empty,
+      undefined,
+    );
+  });
+
+  it("answers a repeated publication with the current card, not a new publication", async () => {
+    const { dispatcher, meetups } = harness();
+    const visible = {
+      ...empty,
+      title: "Сходка",
+      visibility: "visible" as const,
+    };
+    meetups.get = vi
+      .fn<Meetups["get"]>()
+      .mockResolvedValueOnce({
+        kind: "ok",
+        meetup: { ...empty, title: "Сходка" },
+      })
+      .mockResolvedValue({ kind: "ok", meetup: visible });
+    meetups.publish = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: visible,
+    }));
+    const first = await dispatcher.execute({
+      identity,
+      intent: "publish-meetup",
+      meetupId: empty.id,
+    });
+    const second = await dispatcher.execute({
+      identity,
+      intent: "publish-meetup",
+      meetupId: empty.id,
+    });
+    expect(first).toEqual({ kind: "published", meetup: visible });
+    expect(second).toEqual({
+      kind: "published",
+      meetup: visible,
+      repeated: true,
+    });
+    // Повтор тоже уходит в Meetups: право решает владелец ресурса, а
+    // идемпотентная команда события второй раз не пишет.
+    expect(meetups.publish).toHaveBeenCalledTimes(2);
+  });
+
+  it("forwards an ordinary user and surfaces the Meetups refusal", async () => {
+    const meetups = harness().meetups;
+    meetups.createDraft = vi.fn(async () => ({ kind: "forbidden" as const }));
+    const dispatcher = createDispatcher(meetups);
+    await expect(
+      dispatcher.execute({
+        identity: { ...identity, rights: [] },
+        intent: "create-meetup",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({ kind: "dependency-rejected", reason: "forbidden" });
+    expect(meetups.createDraft).toHaveBeenCalledOnce();
+  });
+
+  it("passes the rejection cause on without a text for the person", async () => {
+    const meetups = harness().meetups;
+    const cause = new Error("description is required");
+    meetups.publish = vi.fn(async () => ({
+      kind: "invalid" as const,
+      cause,
+    }));
+    const dispatcher = createDispatcher(meetups);
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "publish-meetup",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({
+      kind: "dependency-rejected",
+      reason: "invalid",
+      cause,
+    });
+  });
+
+  it("repeats a field when Meetups rejects its value", async () => {
+    const meetups = harness().meetups;
+    const cause = new Error("title is too long");
+    meetups.changeAttributes = vi.fn(async () => ({
+      kind: "invalid" as const,
+      cause,
+    }));
+    const dispatcher = createDispatcher(meetups);
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "set-meetup-field",
+        field: "title",
+        value: "Слишком длинное название",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "ask",
+      field: "title",
+      error: rejectedValueText,
+      rejected: cause,
+    });
+  });
+
+  it("re-asks the schedule within the edit flow when Meetups rejects its value", async () => {
+    const { dispatcher, meetups } = harness();
+    const cause = new Error("schedule is in the past");
+    meetups.setSchedule = vi.fn(async () => ({
+      kind: "invalid" as const,
+      cause,
+    }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "update-meetup-field",
+        field: "schedule",
+        value: "21.09.2026 19:30",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "edit-ask",
+      field: "schedule",
+      error: rejectedValueText,
+      rejected: cause,
+    });
+  });
+
+  it("updates exactly one selected field and returns to the meetup card", async () => {
+    const { dispatcher, meetups } = harness();
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "update-meetup-field",
+        field: "venue",
+        value: "Новый зал",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-updated",
+      meetup: { venue: "Новый зал" },
+    });
+    expect(meetups.changeAttributes).toHaveBeenCalledOnce();
+    expect(meetups.setSchedule).not.toHaveBeenCalled();
+  });
+
+  it("does not mutate an already cancelled meetup from an old edit question", async () => {
+    const { dispatcher, meetups } = harness();
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: { ...empty, lifecycle: "cancelled" as const },
+    }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "update-meetup-field",
+        field: "title",
+        value: "Позднее изменение",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "edit-unavailable",
+      reason: "cancelled",
+    });
+    expect(meetups.changeAttributes).not.toHaveBeenCalled();
+  });
+
+  it("changes state once and treats an old cancel action as already complete", async () => {
+    const { dispatcher, meetups } = harness();
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "change-meetup-state",
+        action: "cancel",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-state-changed",
+      action: "cancel",
+      meetup: { lifecycle: "cancelled" },
+    });
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "change-meetup-state",
+        action: "cancel",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-state-unchanged",
+      reason: "already-cancelled",
+    });
+    expect(meetups.cancel).toHaveBeenCalledOnce();
+  });
+
+  it("marks a meetup held without the shared already-cancelled precheck", async () => {
+    const { dispatcher, meetups } = harness();
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "change-meetup-state",
+        action: "hold",
+        meetupId: empty.id,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-state-changed",
+      action: "hold",
+      meetup: { lifecycle: "held" },
+    });
+    expect(meetups.markHeld).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the typed value and shows the current snapshot on a version conflict", async () => {
+    const { meetups, dispatcher } = harness();
+    const changed = { ...empty, title: "Чужая правка", version: 2 };
+    meetups.changeAttributes = vi.fn(async () => ({
+      kind: "conflict" as const,
+    }));
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: changed }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "set-meetup-field",
+        field: "title",
+        value: "Моя правка",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({
+      kind: "conflict",
+      meetup: changed,
+      field: "title",
+      input: "Моя правка",
+    });
+  });
+
+  it("marks a version conflict from the edit flow so the retry stays an edit", async () => {
+    const { meetups, dispatcher } = harness();
+    const changed = { ...empty, title: "Чужая правка", version: 2 };
+    meetups.changeAttributes = vi.fn(async () => ({
+      kind: "conflict" as const,
+    }));
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: changed }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "update-meetup-field",
+        field: "title",
+        value: "Моя правка",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({
+      kind: "conflict",
+      meetup: changed,
+      field: "title",
+      input: "Моя правка",
+      editing: true,
+    });
+  });
+
+  it("asks to confirm publication again on a version conflict", async () => {
+    const { meetups, dispatcher } = harness();
+    const changed = { ...empty, title: "Чужая правка", version: 2 };
+    meetups.publish = vi.fn(async () => ({ kind: "conflict" as const }));
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: changed }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "publish-meetup",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({ kind: "conflict", meetup: changed });
+  });
+
+  it("asks to confirm a state change again on a version conflict", async () => {
+    const { meetups, dispatcher } = harness();
+    const changed = { ...empty, lifecycle: "held" as const, version: 2 };
+    meetups.cancel = vi.fn(async () => ({ kind: "conflict" as const }));
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: changed }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "change-meetup-state",
+        action: "cancel",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({ kind: "conflict", meetup: changed, action: "cancel" });
+  });
+
+  // Команда идёт с версией, которую человек видел на подтверждении, а не со
+  // свежей: правка другого администратора между экраном и «Да» доходит до
+  // Meetups конфликтом (PER-472).
+  it("sends the version seen on the confirmation, not the fresh one", async () => {
+    const { meetups, dispatcher } = harness();
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: { ...empty, version: 5 },
+    }));
+
+    await dispatcher.execute({
+      identity,
+      intent: "change-meetup-state",
+      action: "cancel",
+      meetupId: empty.id,
+      expectedVersion: 4,
+    });
+
+    expect(meetups.cancel).toHaveBeenCalledWith(
+      identity,
+      expect.objectContaining({ version: 4 }),
+      undefined,
+    );
+  });
+
+  // Кнопка прошлого релиза версии не несёт: команда берёт версию снимка.
+  it("takes the fresh version when the confirmation carries none", async () => {
+    const { meetups, dispatcher } = harness();
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: { ...empty, version: 5 },
+    }));
+
+    await dispatcher.execute({
+      identity,
+      intent: "change-meetup-state",
+      action: "cancel",
+      meetupId: empty.id,
+    });
+
+    expect(meetups.cancel).toHaveBeenCalledWith(
+      identity,
+      expect.objectContaining({ version: 5 }),
+      undefined,
+    );
+  });
+
+  // «Уже в этом состоянии» решает свежий снимок раньше версии: повтор того же
+  // действия по устаревшему подтверждению отвечает «уже», а не конфликтом.
+  it("answers an already cancelled meetup before checking the version", async () => {
+    const { meetups, dispatcher } = harness();
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: { ...empty, lifecycle: "cancelled" as const, version: 5 },
+    }));
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "change-meetup-state",
+        action: "cancel",
+        meetupId: empty.id,
+        expectedVersion: 4,
+      }),
+    ).resolves.toMatchObject({
+      kind: "meetup-state-unchanged",
+      reason: "already-cancelled",
+    });
+    expect(meetups.cancel).not.toHaveBeenCalled();
+  });
+});
+
+describe("deferred publication", () => {
+  const moment = { year: 2026, month: 10, day: 1, hours: 19, minutes: 30 };
+
+  it("schedules the typed local moment against the read version", async () => {
+    const { meetups, dispatcher } = harness();
+
+    const result = await dispatcher.execute({
+      identity,
+      intent: "schedule-publication",
+      value: "01.10.2026 19:30",
+      meetupId: empty.id,
+    });
+
+    expect(meetups.schedulePublication).toHaveBeenCalledWith(
+      identity,
+      empty,
+      moment,
+      undefined,
+    );
+    expect(result).toEqual({
+      kind: "publication-scheduled",
+      meetup: { ...empty, publishAt: moment },
+    });
+  });
+
+  it("repeats the question without calling Meetups on unparsed input", async () => {
+    const { meetups, dispatcher } = harness();
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "schedule-publication",
+        value: "завтра вечером",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({
+      kind: "ask-publish-moment",
+      meetup: empty,
+      retry: "unparsed",
+    });
+    expect(meetups.schedulePublication).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes a past moment from a meetup that is already published", async () => {
+    const { meetups, dispatcher } = harness();
+    const published = { ...empty, visibility: "visible" as const, version: 2 };
+    meetups.schedulePublication = vi
+      .fn<Meetups["schedulePublication"]>()
+      .mockResolvedValueOnce({
+        kind: "invalid",
+        cause: new Error("in the past"),
+      })
+      .mockResolvedValueOnce({
+        kind: "invalid",
+        cause: new Error("already published"),
+        precondition: true,
+      });
+    const request = {
+      identity,
+      intent: "schedule-publication" as const,
+      value: "01.10.2026 19:30",
+      meetupId: empty.id,
+    };
+
+    await expect(dispatcher.execute(request)).resolves.toEqual({
+      kind: "ask-publish-moment",
+      meetup: empty,
+      retry: "past",
+    });
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: published,
+    }));
+    await expect(dispatcher.execute(request)).resolves.toEqual({
+      kind: "publication-unavailable",
+      meetup: published,
+    });
+  });
+
+  it("asks for the moment again over the fresh snapshot on a version conflict", async () => {
+    const { meetups, dispatcher } = harness();
+    const changed = { ...empty, title: "Чужая правка", version: 2 };
+    meetups.schedulePublication = vi.fn(async () => ({
+      kind: "conflict" as const,
+    }));
+    meetups.get = vi
+      .fn<Meetups["get"]>()
+      .mockResolvedValueOnce({ kind: "ok", meetup: empty })
+      .mockResolvedValueOnce({ kind: "ok", meetup: changed });
+
+    await expect(
+      dispatcher.execute({
+        identity,
+        intent: "schedule-publication",
+        value: "01.10.2026 19:30",
+        meetupId: empty.id,
+      }),
+    ).resolves.toEqual({
+      kind: "ask-publish-moment",
+      meetup: changed,
+      retry: "conflict",
+    });
+  });
+
+  it("cancels a scheduled publication once and reports a repeat as done", async () => {
+    const { meetups, dispatcher } = harness();
+    await dispatcher.execute({
+      identity,
+      intent: "schedule-publication",
+      value: "01.10.2026 19:30",
+      meetupId: empty.id,
+    });
+    const cancel = {
+      identity,
+      intent: "change-meetup-state" as const,
+      action: "unschedule" as const,
+      meetupId: empty.id,
+    };
+
+    const first = await dispatcher.execute(cancel);
+    const repeated = await dispatcher.execute(cancel);
+
+    expect(first).toEqual({
+      kind: "meetup-state-changed",
+      action: "unschedule",
+      meetup: empty,
+    });
+    expect(repeated).toEqual({
+      kind: "meetup-state-unchanged",
+      reason: "not-scheduled",
+      meetup: empty,
+    });
+    expect(meetups.cancelPublication).toHaveBeenCalledOnce();
+  });
+});
+
+describe("past meetup date", () => {
+  it("asks to confirm a date before today without calling Meetups", async () => {
+    const { dispatcher, meetups } = harness();
+    const result = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "schedule",
+      value: "31.08.2026 19:30",
+      meetupId: empty.id,
+    });
+    expect(result).toEqual({
+      kind: "confirm-past-schedule",
+      meetup: empty,
+      schedule: { year: 2026, month: 8, day: 31, hours: 19, minutes: 30 },
+    });
+    expect(meetups.setSchedule).not.toHaveBeenCalled();
+  });
+
+  it("marks the question as an edit when it came from the edit flow", async () => {
+    const { dispatcher } = harness();
+    const result = await dispatcher.execute({
+      identity,
+      intent: "update-meetup-field",
+      field: "schedule",
+      value: "31.08.2026 19:30",
+      meetupId: empty.id,
+    });
+    expect(result).toMatchObject({
+      kind: "confirm-past-schedule",
+      editing: true,
+    });
+  });
+
+  // Граница — день, как у архива Meetups: сходка сегодня в прошедший час
+  // остаётся в «Сходках», и спрашивать о ней не о чем.
+  it("accepts today's date at an hour that has already passed", async () => {
+    const { dispatcher, meetups } = harness();
+    const result = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "schedule",
+      value: "01.09.2026 00:01",
+      meetupId: empty.id,
+    });
+    expect(result).toMatchObject({ kind: "draft" });
+    expect(meetups.setSchedule).toHaveBeenCalledOnce();
+  });
+
+  it("saves a confirmed past date and returns to the draft", async () => {
+    const { dispatcher, meetups } = harness();
+    const result = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "schedule",
+      value: "31.08.2026 19:30",
+      meetupId: empty.id,
+      confirmedPast: true,
+    });
+    expect(result).toMatchObject({ kind: "draft" });
+    expect(meetups.setSchedule).toHaveBeenCalledWith(
+      identity,
+      empty,
+      { year: 2026, month: 8, day: 31, hours: 19, minutes: 30 },
+      undefined,
+    );
+  });
+
+  it("says a confirmed past date from the edit flow moved the meetup to the archive", async () => {
+    const { dispatcher } = harness();
+    const result = await dispatcher.execute({
+      identity,
+      intent: "update-meetup-field",
+      field: "schedule",
+      value: "31.08.2026 19:30",
+      meetupId: empty.id,
+      confirmedPast: true,
+    });
+    expect(result).toMatchObject({ kind: "meetup-updated", archived: true });
+  });
+
+  it("marks a publication with a past date as archived, and a future one as not", async () => {
+    const { dispatcher, meetups } = harness();
+    const past = {
+      ...empty,
+      schedule: { year: 2026, month: 8, day: 31, hours: 19, minutes: 30 },
+    };
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: past }));
+    meetups.publish = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: past,
+    }));
+    expect(
+      await dispatcher.execute({
+        identity,
+        intent: "publish-meetup",
+        meetupId: empty.id,
+      }),
+    ).toEqual({ kind: "published", meetup: past, archived: true });
+
+    const future = {
+      ...past,
+      schedule: { ...past.schedule, month: 9, day: 1 },
+    };
+    meetups.get = vi.fn(async () => ({ kind: "ok" as const, meetup: future }));
+    meetups.publish = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: future,
+    }));
+    expect(
+      await dispatcher.execute({
+        identity,
+        intent: "publish-meetup",
+        meetupId: empty.id,
+      }),
+    ).toEqual({ kind: "published", meetup: future });
+  });
+});

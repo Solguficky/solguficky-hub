@@ -1,1 +1,35 @@
 version: v2
+
+# Три правила набора DEFAULT исключены осознанно: имена request и response
+# выводятся из домена, а не из RPC, и одно сообщение обслуживает несколько
+# операций — общий MeetupSnapshot у RPC Meetups, общие request у пар
+# Admit/Block и Add/Remove в Identity, общие preferences и BroadcastAccepted
+# у Notifications. Решение и причина — docs/architecture/integration.md,
+# норматив — docs/standards/contracts/protobuf.md.
+lint:
+  except:
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+
+# Категория FILE явно, а не по умолчанию: удаление, переименование и смена типа
+# поля краснеют, а WIRE пропустил бы переименование.
+breaking:
+  use:
+    - FILE
+  # Ломающий переход без переходного периода по решению владельца 13 октября
+  # 2026 года (PER-539): GetOutbidPreference и SetOutbidPreference заменены
+  # самодостаточными настройками уведомлений аукциона, а оба потребителя —
+  # боты одного пакета — меняются тем же изменением. Исключение снимает
+  # следующее изменение схем — база сравнения к тому времени уже несёт новую
+  # форму.
+  ignore:
+    - notifications/v1/notifications_service.proto
+  # Перенос значения, а не его удаление: enum PredictionNomination переехал из
+  # схемы сервиса в auction.proto, чтобы его назвал и факт шины (PER-490). На
+  # проводе это то же значение auction.v1.PredictionNomination, и все
+  # потребители меняются тем же изменением, поэтому FILE видит только удаление
+  # из файла. Исключение снимает следующее изменение схем.
+  ignore_only:
+    ENUM_NO_DELETE:
+      - auction/v1/auction_service.proto

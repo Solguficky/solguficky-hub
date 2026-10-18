@@ -1,0 +1,469 @@
+import { Api, InlineKeyboard } from "grammy";
+import { encodeAuctionCallback } from "../../../auction-ui/index.js";
+import type { TelegramEnvironment } from "../../../core/config.js";
+import {
+  classifyTelegramFailure,
+  type NotificationSender,
+  type SendResult,
+} from "../../../core/delivery/index.js";
+import { registerChatCommands } from "../../../core/menu-commands.js";
+import type {
+  LotNotice,
+  LotNoticeView,
+} from "../../../core/notifications/lot-notice.js";
+import { renderRaffleNotice } from "../../../core/notifications/raffle-notice.js";
+import type {
+  LocalDate,
+  LocalDateTime,
+  MeetupAspect,
+  MeetupWhen,
+  NotifiedMeetup,
+  RenderableContent,
+} from "../delivery/notification.js";
+import { managerCommands } from "./commands.js";
+import { uuidToToken } from "./meetup-deep-link.js";
+import {
+  type NotifiedMeetupCategory,
+  traceCallback,
+} from "./parse-callback.js";
+
+// Кнопка отключения несёт целевое состояние, как переключатель P-09: повторное
+// нажатие даёт то же «выключено», а не включает категорию обратно.
+export const disablePublishedCallback = "v1:notify:off:published";
+
+// Напоминание выключает общую категорию, а не категорию сходки: по сходке оно
+// приходит один раз, и второе бывает только после переноса. Сходки, у которых
+// напоминание включено отдельно, это не остановит, и подтверждение говорит об
+// этом прямо.
+export const disableReminderCallback = "v1:notify:off:reminder";
+
+// Предел текста сообщения Telegram в UTF-16-единицах; длина строки JavaScript
+// считается в тех же единицах. Предел тела рассылки сегодня совпадает с ним
+// (docs/architecture/integration.md), но это разные величины: сужение тела не
+// должно сужать кадр, в который тело вставляется.
+export const telegramTextLimit = 4096;
+
+// Объявление ни к какой сходке не привязано, и категория у него только общая.
+export const disableAnnouncementCallback = "v1:notify:off:announcement";
+
+// Заявка тоже не привязана к сходке. Категория одна на оба круга, поэтому
+// кнопка стоит и под заявкой в хаб, и под заявкой в аукцион.
+export const disableAccessRequestCallback = "v1:notify:off:access";
+
+// Вызов Bot API обязан уложиться в ack_wait durable (30 с): иначе шина выдаст то
+// же сообщение второй раз, пока первая отправка ещё висит. Умолчание клиента
+// grammY рассчитано на long polling и измеряется минутами, поэтому у доставки
+// свой клиент со своим таймаутом, а не общий с поллером.
+const sendTimeoutSeconds = 10;
+
+export function createNotificationApi(
+  token: string,
+  environment: TelegramEnvironment,
+): Api {
+  return new Api(token, { environment, timeoutSeconds: sendTimeoutSeconds });
+}
+
+// Клавиатуры нет, когда вести некуда: пустая разметка — тоже разметка, и
+// отправлять её незачем.
+export type NotificationMessage = {
+  text: string;
+  keyboard: InlineKeyboard | undefined;
+};
+
+// Изменения и материалы получают подписчики конкретной сходки, и настройка у
+// сходки перекрывает общую. Поэтому кнопка выключает категорию у этой сходки:
+// общий выключатель не остановил бы уведомления, если у сходки категория
+// включена явно, а подтверждение под сообщением обещало бы обратное.
+export function disableMeetupCategoryCallback(
+  meetupId: string,
+  category: NotifiedMeetupCategory,
+): string {
+  return `v1:notify:moff:${uuidToToken(meetupId)}:${category}`;
+}
+
+// Что уходит отправителю. Вести хаба он рисует сам, а весть о лоте приходит уже
+// собранной общим рендером двух ботов (`lot-notice.ts`, PER-598): ему нужны
+// право получателя и название лота у соседей, а соседей отправитель не зовёт.
+export type OutgoingNotification =
+  | Exclude<RenderableContent, LotNotice>
+  | { kind: "lot-notice"; view: LotNoticeView };
+
+// Кадр по образцу P-11: заголовок называет повод и сходку, строки ниже — что
+// нужно знать, не открывая карточку. Одно сообщение на повод, карточка целиком
+// не повторяется: описание и ссылка на календарь только называются.
+export function renderNotification(
+  content: OutgoingNotification,
+  auctionBotUsername?: string,
+): NotificationMessage {
+  if (content.kind === "access-requested") {
+    // Повод и переход в очередь, где заявку решают, и выключатель категории.
+    const disable = (keyboard: InlineKeyboard) =>
+      keyboard.text(
+        "Не присылать запросы доступа",
+        disableAccessRequestCallback,
+      );
+    // Кнопка следа ведёт в очередь заявки: карточка придёт новым сообщением,
+    // а уведомление останется в истории. Идентификатора заявки в поводе нет
+    // (notifications.v1 AccessRequested), поэтому очередь открывается с начала.
+    // Аукционная заявка — в очередь аукциона, где допуск выдаёт право
+    // ставить, а не круг участника (PER-534).
+    const auction = content.queue === "auction";
+    return {
+      text: auction
+        ? "Новая заявка на участие в аукционе"
+        : "Новая заявка на доступ в сообщество",
+      keyboard: disable(
+        new InlineKeyboard()
+          .text(
+            "Открыть заявки",
+            traceCallback(auction ? "v1:aq:q" : "v1:cm:q"),
+          )
+          .row(),
+      ),
+    };
+  }
+  if (content.kind === "access-granted") {
+    // Тот же текст, что слал экран состава до PER-442: сменился носитель, а
+    // не обещание. Кнопка следа — корень «Сходки» придёт новым сообщением.
+    return {
+      text: "Доступ открыт: теперь тебе видны сходки сообщества.",
+      keyboard: new InlineKeyboard().text(
+        "Сходки",
+        traceCallback("v1:nav:hub"),
+      ),
+    };
+  }
+  if (content.kind === "preset-granted") {
+    // Кнопка следа — «Сходки» придут новым сообщением, а весть о правах
+    // останется в истории. «Управление» — команда `/manage`: отправитель
+    // ставит её в список команд чата (решение владельца 10 октября 2026 года).
+    return {
+      text: "Тебе выданы права администратора сообщества. В меню команд появилось «Управление» — /manage.",
+      keyboard: new InlineKeyboard().text(
+        "Сходки",
+        traceCallback("v1:nav:hub"),
+      ),
+    };
+  }
+  if (content.kind === "circle-demoted") {
+    // Понижение до гостя (PER-537): о смене круга сообщает прежний бот — хаб, и
+    // вручает ссылку на новый, бот аукциона (RFC-015, С-12). Ссылка идёт
+    // текстом, клавиатуры нет: вести внутрь хаба некуда, а url-кнопка к чужому
+    // боту в уведомлении хаба была бы новым приёмом. Факт ссылку не несёт
+    // (PER-536) — её даёт `BOT_AUCTION_BOT_USERNAME`; настройки нет, и текст
+    // уходит без ссылки: о смене круга человеку всё равно сообщают.
+    return {
+      text:
+        auctionBotUsername === undefined
+          ? "Аукцион теперь в боте аукциона."
+          : `Аукцион теперь в боте аукциона: https://t.me/${auctionBotUsername}`,
+      keyboard: undefined,
+    };
+  }
+  if (content.kind === "raffle-result") {
+    // Итог розыгрыша (PER-620): кнопка следа — экран итога розыгрыша аукционного
+    // дерева придёт новым сообщением, весть останется в истории.
+    const view = renderRaffleNotice(content);
+    return {
+      text: view.text,
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({ kind: "raffle", auctionId: view.button.auctionId }).slice(3)}`,
+        ),
+      ),
+    };
+  }
+  if (content.kind === "lot-notice") {
+    return { text: content.view.text, keyboard: lotKeyboard(content.view) };
+  }
+  if (content.kind === "community-announcement") {
+    return {
+      text: withHeadline("Объявление сообщества", content.body),
+      keyboard: new InlineKeyboard().text(
+        "Не присылать объявления",
+        disableAnnouncementCallback,
+      ),
+    };
+  }
+  const meetup = content.meetup;
+  const open = () =>
+    new InlineKeyboard().text(
+      "Открыть сходку",
+      // Кнопка следа: карточка придёт новым сообщением, а уведомление — и
+      // слова организатора в нём — останется в истории.
+      traceCallback(`v1:view:${uuidToToken(meetup.id)}`),
+    );
+  switch (content.kind) {
+    case "meetup-published":
+      return {
+        text: [headline("Новая сходка", meetup), ...whenAndWhere(meetup)].join(
+          "\n",
+        ),
+        keyboard: open()
+          .row()
+          .text("Не присылать новые сходки", disablePublishedCallback),
+      };
+    case "meetup-changed":
+      return {
+        text: renderChange(content).join("\n"),
+        keyboard: open()
+          .row()
+          .text(
+            "Не присылать изменения этой сходки",
+            disableMeetupCategoryCallback(meetup.id, "changes"),
+          ),
+      };
+    // Материал бывает и ссылкой, и файлом, поэтому повод назван материалом, а
+    // не сообщением. Название сходки стоит в кавычках: через двоеточие оно
+    // читалось как название материала, стоящего строкой ниже.
+    case "meetup-material": {
+      const material = content.materialTitle.trim();
+      const title = meetup.title.trim();
+      return {
+        text: [
+          title === ""
+            ? "Новый материал у сходки"
+            : `Новый материал у сходки «${title}»`,
+          ...(material === "" ? [] : [material]),
+        ].join("\n"),
+        keyboard: open()
+          .row()
+          .text(
+            "Не присылать материалы этой сходки",
+            disableMeetupCategoryCallback(meetup.id, "material"),
+          ),
+      };
+    }
+    case "meetup-reminder":
+      return {
+        text: [headline("Напоминание", meetup), ...whenAndWhere(meetup)].join(
+          "\n",
+        ),
+        keyboard: open()
+          .row()
+          .text("Не присылать напоминания", disableReminderCallback),
+      };
+    // Сообщение организатора получают подписчики сходки, поэтому кнопка, как у
+    // изменений, выключает категорию у этой сходки, а не общую. «Этой сходки» в
+    // подписи нет: с ним кнопка шире экрана телефона и обрезается, а что
+    // выключено только здесь, говорит ответ на нажатие.
+    case "organizer-message":
+      return {
+        text: withHeadline(
+          headline("Сообщение организатора", meetup),
+          content.body,
+        ),
+        keyboard: open()
+          .row()
+          .text(
+            "Не присылать сообщения организатора",
+            disableMeetupCategoryCallback(meetup.id, "organizer"),
+          ),
+      };
+    // Сходка скрыта: кнопка «Открыть» упёрлась бы в «не найдено», а отключать
+    // уже нечего — снятие последний повод, пока сходку не вернут. Поэтому
+    // клавиатуры нет, а текст называет сходку и дату, чтобы её узнать.
+    case "meetup-unpublished":
+      return {
+        text: [
+          headline("Сходка снята с публикации", meetup),
+          formatWhen(meetup.when),
+        ].join("\n"),
+        keyboard: undefined,
+      };
+    default: {
+      const _exhaustive: never = content;
+      return _exhaustive;
+    }
+  }
+}
+
+// Кнопки общего рендера — следы хаба: лот — кнопка лота аукционного дерева,
+// частота — «Аукцион» в «Настройки» → «Расширения» (PER-605). Карточка и
+// экран приходят новым сообщением, уведомление остаётся в истории.
+function lotKeyboard(view: LotNoticeView): InlineKeyboard {
+  return InlineKeyboard.from(
+    view.rows.map((row) =>
+      row.map((button) =>
+        InlineKeyboard.text(
+          button.text,
+          traceCallback(
+            button.kind === "lot"
+              ? `v1:${encodeAuctionCallback({ kind: "lot", lotId: button.lotId, page: 0 }).slice(3)}`
+              : "v1:notify:outbid",
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+type ChangeContent = Extract<RenderableContent, { kind: "meetup-changed" }>;
+
+const aspectLabels: Record<MeetupAspect, string> = {
+  title: "название",
+  description: "описание",
+  venue: "место",
+  kind: "вид сходки",
+  "calendar-link": "ссылка на календарь",
+  schedule: "дата и время",
+  lifecycle: "статус",
+  visibility: "видимость",
+  other: "другие сведения",
+};
+
+// Старых значений контракт не несёт, поэтому текст говорит, что изменилось, и
+// показывает, как стало. Смена состояния, о которой заголовок говорит сам, —
+// отмена, проведение, возврат в публикацию — в перечень не повторяется.
+function renderChange(content: ChangeContent): string[] {
+  const { meetup, aspects } = content;
+  const cancelled =
+    aspects.includes("lifecycle") && content.lifecycle === "cancelled";
+  const held = aspects.includes("lifecycle") && content.lifecycle === "held";
+  const returned =
+    aspects.includes("visibility") && content.visibility === "visible";
+  const lead = cancelled
+    ? "Сходка отменена"
+    : held
+      ? "Сходка состоялась"
+      : returned
+        ? "Сходка снова опубликована"
+        : "Изменения в сходке";
+  const named = aspects.filter(
+    (aspect) =>
+      !(aspect === "lifecycle" && (cancelled || held)) &&
+      !(aspect === "visibility" && returned),
+  );
+  const lines = [headline(lead, meetup)];
+  if (named.length > 0) {
+    lines.push(
+      `Изменилось: ${named.map((aspect) => aspectLabels[aspect]).join(", ")}`,
+    );
+  }
+  if (aspects.includes("lifecycle") && !cancelled && !held) {
+    lines.push("Статус: запланирована");
+  }
+  const kind = meetup.kind.trim();
+  if (aspects.includes("kind") && kind !== "") lines.push(`Вид: ${kind}`);
+  // Отменённой сходке дата и место уже ни к чему: главное сказано заголовком.
+  if (!cancelled) lines.push(...whenAndWhere(meetup));
+  return lines;
+}
+
+// Тело рассылки ограничено тем же пределом, что и сообщение Telegram, и
+// заголовок канала над телом предельной длины получил бы 400 — сообщение
+// снялось бы без повтора. Поэтому заголовок ставится, только когда помещается,
+// а иначе уходит одно тело: текст автора дороже конверта, а у сообщения
+// организатора сходку по-прежнему называет кнопка. Тело не обрезается — его
+// обещано доставить дословно.
+function withHeadline(lead: string, body: string): string {
+  const framed = `${lead}\n\n${body}`;
+  return framed.length <= telegramTextLimit ? framed : body;
+}
+
+function headline(lead: string, meetup: NotifiedMeetup): string {
+  const title = meetup.title.trim();
+  return title === "" ? lead : `${lead}: ${title}`;
+}
+
+function whenAndWhere(meetup: NotifiedMeetup): string[] {
+  const venue = meetup.venue.trim();
+  return venue === ""
+    ? [formatWhen(meetup.when)]
+    : [formatWhen(meetup.when), `Место: ${venue}`];
+}
+
+function formatWhen(when: MeetupWhen): string {
+  switch (when.kind) {
+    case "no-date":
+      return "Дата пока не назначена";
+    case "day":
+      return tentative(when.tentative, formatDate(when.date));
+    case "day-start":
+      return tentative(when.tentative, formatDateTime(when.at));
+    case "interval": {
+      const sameDay =
+        when.start.year === when.end.year &&
+        when.start.month === when.end.month &&
+        when.start.day === when.end.day;
+      const end = sameDay ? formatTime(when.end) : formatDateTime(when.end);
+      return tentative(when.tentative, `${formatDateTime(when.start)}–${end}`);
+    }
+    default: {
+      const _exhaustive: never = when;
+      return _exhaustive;
+    }
+  }
+}
+
+function tentative(isTentative: boolean, value: string): string {
+  return isTentative ? `Предварительно: ${value}` : value;
+}
+
+// Тот же вид `ДД.ММ.ГГГГ ЧЧ:ММ`, что у карточки и формы сходки: дата в
+// уведомлении и в карточке, куда оно ведёт, читается одинаково.
+function formatDate(value: LocalDate): string {
+  return `${pad(value.day)}.${pad(value.month)}.${value.year}`;
+}
+
+function formatTime(value: LocalDateTime): string {
+  return `${pad(value.hours)}:${pad(value.minutes)}`;
+}
+
+function formatDateTime(value: LocalDateTime): string {
+  return `${formatDate(value)} ${formatTime(value)}`;
+}
+
+function pad(part: number): string {
+  return String(part).padStart(2, "0");
+}
+
+export type SendMessageApi = Pick<
+  Api,
+  "sendMessage" | "setMyCommands" | "deleteMyCommands"
+>;
+
+// Содержимое рисуется здесь же, при отправке: соседи для текста хабу не
+// нужны, и рендер пакета доставки отдаёт содержимое как есть. `auctionBotUsername`
+// нужен одному сообщению — вести о понижении, которая вручает ссылку на бот
+// аукциона (PER-537).
+export function createNotificationSender(
+  api: SendMessageApi,
+  auctionBotUsername?: string,
+): NotificationSender<OutgoingNotification> {
+  return {
+    async send({ telegramUserId, message: content }) {
+      const message = renderNotification(content, auctionBotUsername);
+      try {
+        // Личный чат с человеком имеет id самого человека. Telegram держит id в
+        // 52 битах, поэтому переход из bigint в number точен.
+        await api.sendMessage(Number(telegramUserId), message.text, {
+          ...(message.keyboard === undefined
+            ? {}
+            : { reply_markup: message.keyboard }),
+          link_preview_options: { is_disabled: true },
+        });
+        // Назначенному администратором — команда `/manage` в списке его чата
+        // (PER-468; решение владельца 10 октября 2026 года). Отказ записи
+        // доставку не отменяет: вход `/start` поставит список снова.
+        if (content.kind === "preset-granted") {
+          await registerChatCommands(
+            api,
+            Number(telegramUserId),
+            managerCommands,
+          );
+        }
+        return { kind: "sent" };
+      } catch (cause) {
+        return classifySendFailure(cause);
+      }
+    },
+  };
+}
+
+// Классы отказов Bot API общие у обоих ботов и живут в пакете доставки:
+// правка правила одна на два канала.
+export function classifySendFailure(cause: unknown): SendResult {
+  return classifyTelegramFailure(cause);
+}
