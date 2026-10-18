@@ -197,6 +197,10 @@ function fakeAuction(
           cancelRaffleRegistration: async () => {
             throw new Error("not used");
           },
+          getMyPredictions: async () => [],
+          submitPrediction: async () => {
+            throw new Error("not used");
+          },
         },
         operations: {
           newOperationId: () => "0198f2a4-7c1e-7d3a-9b21-00000000c001",

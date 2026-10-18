@@ -5,6 +5,7 @@ import {
   finalPriceLines,
   showsStep,
 } from "../../../../auction-final.js";
+import { predictionButtonLabel } from "../../../../auction-prediction.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
 import {
   favoritesEmpty,
@@ -55,6 +56,14 @@ import {
   oneLine,
   questionScreen,
 } from "./auction-bid.js";
+import {
+  predictionAliasQuestionScreen,
+  predictionAnswerRefusedScreen,
+  predictionLotsScreen,
+  predictionNameChoiceScreen,
+  predictionNumberQuestionScreen,
+  predictionScreen,
+} from "./auction-predictions.js";
 import {
   raffleAnswerRefusedScreen,
   raffleNameChoiceScreen,
@@ -205,6 +214,30 @@ export function auctionScreen(view: AuctionView): AuctionShown {
         return {
           screen: raffleAnswerRefusedScreen(block, view.body.keyboard),
         };
+      case "prediction":
+        return { screen: predictionScreen(block, view.body.keyboard, view) };
+      case "prediction-lots":
+        return {
+          screen: predictionLotsScreen(block, view.body.keyboard),
+        };
+      case "prediction-number-question":
+        return {
+          screen: predictionNumberQuestionScreen(block, view.body.keyboard),
+          asks: true,
+        };
+      case "prediction-name-choice":
+        return {
+          screen: predictionNameChoiceScreen(block, view.body.keyboard),
+        };
+      case "prediction-alias-question":
+        return {
+          screen: predictionAliasQuestionScreen(view.body.keyboard),
+          asks: true,
+        };
+      case "prediction-answer-refused":
+        return {
+          screen: predictionAnswerRefusedScreen(block, view.body.keyboard),
+        };
       // Имя в аукционе из «Настроек» (PER-595): вход — в «Расширениях».
       case "name-settings":
         return {
@@ -348,11 +381,17 @@ function rootScreen(
   const token = uuidToToken(root.auctionId);
   const buttons = view.body.keyboard.flat();
   const lots = buttons.find((button) => button.action === "root.lots");
+  const predictions = buttons.find(
+    (button) => button.action === "root.predictions",
+  );
   const raffle = buttons.find((button) => button.action === "root.raffle");
   const favorites = buttons.find(
     (button) => button.action === "root.favorites",
   );
   if (lots !== undefined) keyboard.text(lotsLabel, lots.callbackData).row();
+  if (predictions !== undefined) {
+    keyboard.text(predictionButtonLabel, predictions.callbackData).row();
+  }
   if (view.canManage === true) {
     keyboard.text(consoleLabel, consoleViewData(token));
   }
@@ -440,12 +479,18 @@ function feedLabel(
     case "root.favorites":
     case "lot.prev":
     case "lot.next":
+    case "prediction.edit":
+    case "prediction.select-lot":
+    case "prediction.clear":
+    case "prediction.switch-round":
+    case "prediction.back":
     case "raffle.register":
     case "raffle.cancel":
     case "raffle.proof":
     case "raffle.back":
     case "raffle.return":
     case "root.lots":
+    case "root.predictions":
     case "root.raffle":
       throw new Error(`action ${button.action} in a feed body`);
     default: {
@@ -615,12 +660,18 @@ function lotLabel(button: AuctionButton): string {
     case "name.return":
     case "feed.back":
     case "root.favorites":
+    case "prediction.edit":
+    case "prediction.select-lot":
+    case "prediction.clear":
+    case "prediction.switch-round":
+    case "prediction.back":
     case "raffle.register":
     case "raffle.cancel":
     case "raffle.proof":
     case "raffle.back":
     case "raffle.return":
     case "root.lots":
+    case "root.predictions":
     case "root.raffle":
       throw new Error(`action ${button.action} in a lot body`);
     default: {
@@ -793,12 +844,18 @@ function historyLabel(button: AuctionButton): string {
     case "root.favorites":
     case "lot.prev":
     case "lot.next":
+    case "prediction.edit":
+    case "prediction.select-lot":
+    case "prediction.clear":
+    case "prediction.switch-round":
+    case "prediction.back":
     case "raffle.register":
     case "raffle.cancel":
     case "raffle.proof":
     case "raffle.back":
     case "raffle.return":
     case "root.lots":
+    case "root.predictions":
     case "root.raffle":
       throw new Error(`action ${button.action} in a history body`);
     default: {

@@ -6,9 +6,11 @@ import {
 } from "../../../testkit/screen-lint.js";
 import type {
   AuctionScreenBody,
+  PredictionAnswer,
   RaffleStatusView,
   RaffleView,
 } from "../../auction-ui/index.js";
+import { encodeAuctionCallback } from "../../auction-ui/index.js";
 import type { AuctionListPage } from "./auctions.js";
 import { markupOf, richMessageOf } from "./bot.js";
 import { notificationMarkup, renderNotification } from "./delivery/message.js";
@@ -91,6 +93,296 @@ const emptyFeed: AuctionScreenBody = {
     { kind: "feed", auctionId: "auc-1", page: 0, pageCount: 1, lots: [] },
   ],
   keyboard: [[{ action: "feed.back", callbackData: "v1:auc:rt:auc-1" }]],
+};
+
+const PREDICTION_AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a1";
+const PREDICTION_LOT_ID = "01929b7e-5c1d-7a3f-8e4b-0000000000a2";
+
+function predictionBody(
+  round: "catalog" | "final",
+  status: "not-open" | "open" | "closed",
+  answers: readonly PredictionAnswer[] = [],
+  notice?:
+    | "lot-not-in-round"
+    | "round-closed"
+    | "stale-answer-removed"
+    | "unanswered",
+): AuctionScreenBody {
+  const nomination =
+    round === "catalog"
+      ? "catalog-most-expensive-lot"
+      : "final-most-expensive-lot";
+  return {
+    blocks: [
+      {
+        kind: "prediction",
+        auctionId: PREDICTION_AUCTION_ID,
+        round,
+        feedPage: 0,
+        status,
+        answers,
+        lotNames: { [PREDICTION_LOT_ID]: "Кружка" },
+        ...(round === "catalog" ? { opensAt: "2026-10-26T16:00:00Z" } : {}),
+        ...(notice === undefined ? {} : { notice }),
+      },
+    ],
+    keyboard: [
+      ...(status === "open"
+        ? [
+            [
+              {
+                action: "prediction.edit" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "prediction-edit",
+                  auctionId: PREDICTION_AUCTION_ID,
+                  round,
+                  nomination,
+                  feedPage: 0,
+                }),
+              },
+            ],
+          ]
+        : []),
+      [
+        {
+          action: "prediction.switch-round",
+          callbackData: encodeAuctionCallback({
+            kind: "prediction",
+            auctionId: PREDICTION_AUCTION_ID,
+            round: round === "catalog" ? "final" : "catalog",
+            feedPage: 0,
+          }),
+        },
+      ],
+      [
+        {
+          action: "prediction.back",
+          callbackData: encodeAuctionCallback({
+            kind: "feed",
+            auctionId: PREDICTION_AUCTION_ID,
+            page: 0,
+          }),
+        },
+      ],
+    ],
+  };
+}
+
+const predictionLots: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "prediction-lots",
+      auctionId: PREDICTION_AUCTION_ID,
+      round: "final",
+      nomination: "final-most-expensive-lot",
+      feedPage: 0,
+      page: 0,
+      pageCount: 1,
+      lots: [
+        {
+          lotId: PREDICTION_LOT_ID,
+          title: "Кружка",
+          status: { kind: "held", currentPrice: rub(900) },
+        },
+      ],
+      currentLotId: PREDICTION_LOT_ID,
+      currentTitle: "Кружка",
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "prediction.select-lot",
+        lotId: PREDICTION_LOT_ID,
+        callbackData: encodeAuctionCallback({
+          kind: "prediction-lot",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "final",
+          nomination: "final-most-expensive-lot",
+          lotId: PREDICTION_LOT_ID,
+          feedPage: 0,
+        }),
+      },
+    ],
+    [
+      {
+        action: "prediction.clear",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction-clear",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "final",
+          nomination: "final-most-expensive-lot",
+          feedPage: 0,
+        }),
+      },
+    ],
+    [
+      {
+        action: "prediction.back",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "final",
+          feedPage: 0,
+        }),
+      },
+    ],
+  ],
+};
+
+const predictionNumberQuestion: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "prediction-number-question",
+      auctionId: PREDICTION_AUCTION_ID,
+      round: "catalog",
+      nomination: "catalog-total-sales",
+      feedPage: 0,
+      currentValue: 1_234_567,
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "prediction.clear",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction-clear",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "catalog",
+          nomination: "catalog-total-sales",
+          feedPage: 0,
+        }),
+      },
+    ],
+    [
+      {
+        action: "question.cancel",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction-number-question",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "catalog",
+          nomination: "catalog-total-sales",
+          feedPage: 0,
+          addressee: 42,
+        }),
+      },
+    ],
+  ],
+};
+
+const predictionNameChoice: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "prediction-name-choice",
+      auctionId: PREDICTION_AUCTION_ID,
+      round: "final",
+      feedPage: 0,
+      username: "owl_fan",
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "name.username",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction-username",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "final",
+          nomination: "final-total-bids",
+          feedPage: 0,
+        }),
+      },
+    ],
+    [
+      {
+        action: "name.alias",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction-ask-alias",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "final",
+          nomination: "final-total-bids",
+          feedPage: 0,
+        }),
+      },
+    ],
+    [
+      {
+        action: "prediction.back",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "final",
+          feedPage: 0,
+        }),
+      },
+    ],
+  ],
+};
+
+const predictionAliasQuestion: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "prediction-alias-question",
+      auctionId: PREDICTION_AUCTION_ID,
+      round: "final",
+      nomination: "final-total-bids",
+      feedPage: 0,
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "question.cancel",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction-alias-question",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "final",
+          nomination: "final-total-bids",
+          feedPage: 0,
+          addressee: 42,
+        }),
+      },
+    ],
+  ],
+};
+
+const predictionAnswerRefused: AuctionScreenBody = {
+  blocks: [
+    {
+      kind: "prediction-answer-refused",
+      auctionId: PREDICTION_AUCTION_ID,
+      round: "final",
+      nomination: "final-total-bids",
+      feedPage: 0,
+      refusal: "not-a-number",
+    },
+  ],
+  keyboard: [
+    [
+      {
+        action: "answer.retry",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction-number-question",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "final",
+          nomination: "final-total-bids",
+          feedPage: 0,
+          addressee: 42,
+        }),
+      },
+    ],
+    [
+      {
+        action: "prediction.back",
+        callbackData: encodeAuctionCallback({
+          kind: "prediction",
+          auctionId: PREDICTION_AUCTION_ID,
+          round: "final",
+          feedPage: 0,
+        }),
+      },
+    ],
+  ],
 };
 
 // Лот с итогом: «Обновить» и рядов ставки тело под ним не несёт.
@@ -680,6 +972,40 @@ const shown: readonly {
   { screen: { kind: "past", list: middlePage } },
   { screen: { kind: "auction", body: feed } },
   { screen: { kind: "auction", body: emptyFeed } },
+  { screen: { kind: "auction", body: predictionBody("catalog", "open") } },
+  { screen: { kind: "auction", body: predictionBody("final", "not-open") } },
+  {
+    screen: {
+      kind: "auction",
+      body: predictionBody("final", "closed", [
+        {
+          nomination: "final-total-bids",
+          answer: { kind: "number", value: 42 },
+        },
+      ]),
+    },
+  },
+  {
+    screen: {
+      kind: "auction",
+      body: predictionBody(
+        "final",
+        "closed",
+        [
+          {
+            nomination: "final-total-bids",
+            answer: { kind: "number", value: 42 },
+          },
+        ],
+        "round-closed",
+      ),
+    },
+  },
+  { screen: { kind: "auction", body: predictionLots } },
+  { screen: { kind: "auction", body: predictionNumberQuestion } },
+  { screen: { kind: "auction", body: predictionNameChoice } },
+  { screen: { kind: "auction", body: predictionAliasQuestion } },
+  { screen: { kind: "auction", body: predictionAnswerRefused } },
   { screen: { kind: "auction", body: root, parent: "auctions" } },
   { screen: { kind: "auction", body: root, parent: "past" } },
   { screen: { kind: "auction", body: goneRoot, parent: "auctions" } },

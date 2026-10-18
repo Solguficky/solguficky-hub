@@ -8,11 +8,17 @@ import type {
   LotStatusView,
   Money,
   OwnDisplayName,
+  PredictionAnswer,
+  PredictionRoundStatus,
   ProxyLimitRefusal,
   RaffleView,
   StepTierView,
   StepWindowView,
 } from "./ports.js";
+import type {
+  PredictionNomination,
+  PredictionRound,
+} from "./prediction-spec.js";
 
 // Каноническое тело аукционного экрана (ADR-044, «Один аукцион, две оболочки»).
 // Одинаково в обоих ботах: приложение оборачивает его в свою оболочку —
@@ -256,6 +262,70 @@ export type AuctionBlock =
       refusal: "not-text" | DisplayNameRefusal;
     }
   | {
+      // Только свой прогноз (ADR-067): ответы не содержат чужих участников.
+      kind: "prediction";
+      auctionId: string;
+      round: PredictionRound;
+      feedPage: number;
+      status: PredictionRoundStatus;
+      answers: readonly PredictionAnswer[];
+      lotNames: Readonly<Record<string, string>>;
+      staleNominations?: readonly PredictionNomination[];
+      opensAt?: string;
+      currency?: string;
+      notice?:
+        | "lot-not-in-round"
+        | "round-closed"
+        | "stale-answer-removed"
+        | "unanswered";
+    }
+  | {
+      // Выбор лота из каталога или удержанного состава финала.
+      kind: "prediction-lots";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      feedPage: number;
+      page: number;
+      pageCount: number;
+      lots: readonly FeedItem[];
+      currentLotId?: string;
+      currentTitle?: string;
+    }
+  | {
+      // Вопрос с force_reply для числовой номинации.
+      kind: "prediction-number-question";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      feedPage: number;
+      currency?: string;
+      currentValue?: number;
+    }
+  | {
+      // Выбор имени перед отправкой прогноза, через тот же экран, что и ставка.
+      kind: "prediction-name-choice";
+      auctionId: string;
+      round: PredictionRound;
+      feedPage: number;
+      username?: string;
+    }
+  | {
+      kind: "prediction-alias-question";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      feedPage: number;
+    }
+  | {
+      kind: "prediction-answer-refused";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      feedPage: number;
+      refusal: AnswerRefusal;
+    }
+  | {
       // Имя в аукционе из настроек (PER-595). Нет `name` — имя не выбрано;
       // `frozen` — аукцион принял ставку, и выбора на экране нет. `username`
       // — ник из update без «@», пока выбор есть.
@@ -324,6 +394,7 @@ export type AnswerRefusal =
 export type AuctionButton =
   | { action: "feed.open-lot"; lotId: string; callbackData: string }
   | { action: "favorites.open-lot"; lotId: string; callbackData: string }
+  | { action: "prediction.select-lot"; lotId: string; callbackData: string }
   // «По шагу» с порогом в подписи: сумма — та, что уедет в подтверждение.
   | { action: "lot.bid-step"; amount: Money; callbackData: string }
   // «Поставить N» карточки финала: сумма — следующая цена, она же ожидаемая
@@ -332,6 +403,7 @@ export type AuctionButton =
   | {
       action: // Корень аукциона: лоты, розыгрыш и избранное.
         | "root.lots"
+        | "root.predictions"
         | "root.raffle"
         | "root.favorites"
         | "feed.prev"
@@ -365,6 +437,10 @@ export type AuctionButton =
         | "favorites.back"
         // Возврат ленты в корень аукциона (PER-644).
         | "feed.back"
+        | "prediction.edit"
+        | "prediction.clear"
+        | "prediction.switch-round"
+        | "prediction.back"
         // Розыгрыш: вход из корня, регистрация и отмена, возврат в корень и,
         // с выбора имени и исхода, — в розыгрыш.
         | "raffle.register"

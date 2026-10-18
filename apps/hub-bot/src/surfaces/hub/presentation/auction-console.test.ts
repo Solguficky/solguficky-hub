@@ -453,6 +453,8 @@ function fakeAuction(
               : undefined,
           registerForRaffle: notUsed,
           cancelRaffleRegistration: notUsed,
+          getMyPredictions: async () => [],
+          submitPrediction: notUsed,
         },
         operations: { newOperationId: () => "unused" },
         image: { getLotImage: notUsed },

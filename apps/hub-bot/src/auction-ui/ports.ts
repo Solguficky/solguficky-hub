@@ -3,6 +3,11 @@
 // сообщения. Пакет поэтому не зависит ни от `@bufbuild/protobuf`, ни от
 // сгенерированного кода, а contract suite подставляет вместо клиентов шпионов.
 
+import type {
+  PredictionNomination,
+  PredictionRound,
+} from "./prediction-spec.js";
+
 export const ACCESS_RIGHTS = [
   "access-hub",
   "place-bids",
@@ -318,7 +323,60 @@ export interface AuctionPort {
     auctionId: string;
     opId: string;
   }): Promise<RaffleOutcome<RaffleCancellationRefusal>>;
+  // Прогнозы (ADR-067): читается только состояние смотрящего; отправка всегда
+  // заменяет весь прогноз раунда, а `unanswered` повторяется с тем же `opId`.
+  getMyPredictions(request: {
+    viewer: Viewer;
+    auctionId: string;
+  }): Promise<readonly PredictionRoundView[]>;
+  submitPrediction(request: {
+    viewer: Viewer;
+    auctionId: string;
+    round: PredictionRound;
+    answers: readonly PredictionAnswer[];
+    opId: string;
+  }): Promise<PredictionOutcome>;
 }
+
+export type PredictionAnswer =
+  | {
+      nomination: PredictionNomination;
+      answer: { kind: "lot"; lotId: string };
+    }
+  | {
+      nomination: PredictionNomination;
+      answer: { kind: "number"; value: number };
+    };
+
+export type PredictionRoundStatus =
+  | "not-open"
+  | "open"
+  | "closed"
+  | "cancelled";
+
+export type PredictionRoundView = {
+  round: PredictionRound;
+  status: PredictionRoundStatus;
+  answers: readonly PredictionAnswer[];
+};
+
+export type Prediction = Pick<PredictionRoundView, "round" | "answers">;
+
+export type PredictionRefusal =
+  | { kind: "round-not-open" }
+  | { kind: "round-closed" }
+  | { kind: "cancelled" }
+  | { kind: "display-name-not-chosen" }
+  | {
+      kind: "lot-not-in-round";
+      nomination: PredictionNomination;
+      lotId: string;
+    };
+
+export type PredictionOutcome =
+  | { kind: "accepted"; prediction: Prediction }
+  | { kind: "refused"; refusal: PredictionRefusal }
+  | { kind: "unanswered" };
 
 // Где розыгрыш (`auction.v1.RaffleStatus`). `closing` — момент закрытия прошёл,
 // а пул ещё фиксируется; `not-held` — онлайн-торги открылись не раньше момента

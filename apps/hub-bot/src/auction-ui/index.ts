@@ -70,6 +70,12 @@ export type {
   Money,
   OperationIdPort,
   OwnDisplayName,
+  Prediction,
+  PredictionAnswer,
+  PredictionOutcome,
+  PredictionRefusal,
+  PredictionRoundStatus,
+  PredictionRoundView,
   ProxyExplainerPort,
   ProxyLimitRefusal,
   RaffleCancellationRefusal,
@@ -86,6 +92,22 @@ export type {
   TradingPhase,
   Viewer,
 } from "./ports.js";
+export type {
+  PredictionAnswerKind,
+  PredictionNomination,
+  PredictionNominationSpec,
+  PredictionRound,
+} from "./prediction-spec.js";
+export {
+  PREDICTION_NOMINATIONS,
+  PREDICTION_ROUNDS,
+  predictionNominationCode,
+  predictionNominationFromCode,
+  predictionNominationsFor,
+  predictionRoundCode,
+  predictionRoundFromCode,
+  predictionSpec,
+} from "./prediction-spec.js";
 export type {
   AnswerRefusal,
   AuctionBlock,

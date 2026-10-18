@@ -12,6 +12,7 @@ import {
 // на худшем случае и не принимает чужого написания.
 
 const LOT_ID = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
+const AUCTION_ID = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d";
 const OP_ID = "01929b7e-5c1d-7a3f-8e4b-ffffffffffff";
 const ADDRESSEE = Number.MAX_SAFE_INTEGER;
 
@@ -76,6 +77,38 @@ const WORST: readonly AuctionIntent[] = [
     amount: MAX_COMMAND_AMOUNT,
     page: MAX_FEED_PAGE,
   },
+  {
+    kind: "prediction-number-question",
+    auctionId: AUCTION_ID,
+    round: "final",
+    nomination: "final-total-sales",
+    feedPage: MAX_FEED_PAGE,
+    addressee: ADDRESSEE,
+  },
+  {
+    kind: "prediction-lot",
+    auctionId: AUCTION_ID,
+    round: "final",
+    nomination: "final-biggest-growth-lot",
+    lotId: LOT_ID,
+    feedPage: MAX_FEED_PAGE,
+  },
+  {
+    kind: "prediction-lots",
+    auctionId: AUCTION_ID,
+    round: "final",
+    nomination: "final-most-expensive-lot",
+    page: MAX_FEED_PAGE,
+    feedPage: MAX_FEED_PAGE,
+  },
+  {
+    kind: "prediction-alias-question",
+    auctionId: AUCTION_ID,
+    round: "final",
+    nomination: "final-total-sales",
+    feedPage: MAX_FEED_PAGE,
+    addressee: ADDRESSEE,
+  },
 ];
 
 describe("bid leaf callback_data", () => {
@@ -138,6 +171,14 @@ describe("bid leaf callback_data", () => {
     ["an unknown pending command", "v1:auc:nu:AZKbflwdej-OSy1snwobPA:0:z1"],
     ["a final bid without an amount", "v1:auc:fb:AZKbflwdej-OSy1snwobPA:0"],
     ["a final bid with a tail", "v1:auc:fb:AZKbflwdej-OSy1snwobPA:2oho:0:1"],
+    [
+      "a prediction nomination from another round",
+      "v1:auc:pe:AZKbflwdej-OSy1snwobPA:f:1:0",
+    ],
+    [
+      "a lot nomination encoded as a number question",
+      "v1:auc:pn:AZKbflwdej-OSy1snwobPA:c:1:0:42",
+    ],
   ])("refuses %s", (_, raw) => {
     const parsed = parseAuctionCallback(raw);
     expect(parsed.ok).toBe(false);
@@ -166,5 +207,29 @@ describe("bid leaf callback_data", () => {
       ),
     ).toBe(false);
     expect(isAuctionQuestion("v1:mt:open:x")).toBe(false);
+    expect(
+      isAuctionQuestion(
+        encodeAuctionCallback({
+          kind: "prediction-number-question",
+          auctionId: AUCTION_ID,
+          round: "catalog",
+          nomination: "catalog-total-bids",
+          feedPage: 0,
+          addressee: ADDRESSEE,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isAuctionQuestion(
+        encodeAuctionCallback({
+          kind: "prediction-alias-question",
+          auctionId: AUCTION_ID,
+          round: "final",
+          nomination: "final-total-sales",
+          feedPage: 0,
+          addressee: 42,
+        }),
+      ),
+    ).toBe(true);
   });
 });

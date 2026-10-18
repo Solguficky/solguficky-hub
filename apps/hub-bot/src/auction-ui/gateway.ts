@@ -125,7 +125,9 @@ export async function handleAuctionUpdate(
     input.kind === "reply" &&
     ((intent.kind !== "question" &&
       intent.kind !== "raffle-question" &&
-      intent.kind !== "name-question") ||
+      intent.kind !== "name-question" &&
+      intent.kind !== "prediction-number-question" &&
+      intent.kind !== "prediction-alias-question") ||
       intent.addressee !== user.telegramUserId)
   ) {
     return {

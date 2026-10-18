@@ -124,6 +124,10 @@ function ports(
       cancelRaffleRegistration: vi.fn(async () => {
         throw new Error("not used");
       }),
+      getMyPredictions: vi.fn(async () => []),
+      submitPrediction: vi.fn(async () => {
+        throw new Error("not used");
+      }),
     },
     operations: {
       newOperationId: vi.fn(() => "01929b7e-5c1d-7a3f-8e4b-00000000c001"),

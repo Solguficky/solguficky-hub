@@ -20,6 +20,17 @@ import { openHistory } from "./internal/use-cases/open-history.js";
 import { openLot } from "./internal/use-cases/open-lot.js";
 import { openRoot } from "./internal/use-cases/open-root.js";
 import {
+  answerPredictionAlias,
+  answerPredictionNumber,
+  askPredictionAlias,
+  cancelPredictionAlias,
+  choosePredictionUsername,
+  clearPredictionNomination,
+  editPrediction,
+  openPrediction,
+  submitPredictionLot,
+} from "./internal/use-cases/predictions.js";
+import {
   answerRaffleQuestion,
   askRaffleAlias,
   cancelRaffleQuestion,
@@ -169,6 +180,38 @@ export function dispatchAuctionIntent(input: {
       return input.answer === undefined
         ? openName(context, intent.auctionId)
         : answerNameQuestion(context, intent.auctionId, input.answer.text);
+    case "prediction":
+      return openPrediction(context, intent);
+    case "prediction-edit":
+      return editPrediction(context, intent);
+    case "prediction-lots":
+      return editPrediction(context, intent);
+    case "prediction-lot":
+      return submitPredictionLot(context, intent);
+    case "prediction-clear":
+      return clearPredictionNomination(context, intent);
+    case "prediction-username":
+      return choosePredictionUsername(context, intent);
+    case "prediction-ask-alias":
+      return Promise.resolve(askPredictionAlias(context, intent));
+    case "prediction-number-question":
+      return input.answer === undefined
+        ? openPrediction(context, intent)
+        : answerPredictionNumber(context, {
+            ...intent,
+            ...(input.answer.text === undefined
+              ? {}
+              : { text: input.answer.text }),
+          });
+    case "prediction-alias-question":
+      return input.answer === undefined
+        ? Promise.resolve(cancelPredictionAlias(context, intent))
+        : answerPredictionAlias(context, {
+            ...intent,
+            ...(input.answer.text === undefined
+              ? {}
+              : { text: input.answer.text }),
+          });
     default: {
       const _exhaustive: never = intent;
       return _exhaustive;

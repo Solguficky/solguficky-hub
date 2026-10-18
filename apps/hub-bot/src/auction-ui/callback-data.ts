@@ -1,4 +1,13 @@
 import { z } from "zod";
+import {
+  type PredictionNomination,
+  type PredictionRound,
+  predictionNominationCode,
+  predictionNominationFromCode,
+  predictionRoundCode,
+  predictionRoundFromCode,
+  predictionSpec,
+} from "./prediction-spec.js";
 
 // `callback_data` аукциона: `v1:auc:<действие>[:<аргумент>]…` по формату бота
 // хаба (docs/services/hub-bot.md, «Формат `callback_data`»). Домен `auc`
@@ -116,6 +125,73 @@ export type AuctionIntent =
   | { kind: "raffle-username"; auctionId: string }
   | { kind: "raffle-ask-alias"; auctionId: string }
   | { kind: "raffle-question"; auctionId: string; addressee: number }
+  // Прогнозы (ADR-067): экран, выбор номинации, страница лотов, ответ и очистка.
+  | {
+      kind: "prediction";
+      auctionId: string;
+      round: PredictionRound;
+      feedPage: number;
+    }
+  | {
+      kind: "prediction-edit";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      feedPage: number;
+    }
+  | {
+      kind: "prediction-lots";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      page: number;
+      feedPage: number;
+    }
+  | {
+      kind: "prediction-lot";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      lotId: string;
+      feedPage: number;
+    }
+  | {
+      kind: "prediction-clear";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      feedPage: number;
+    }
+  | {
+      kind: "prediction-username";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      feedPage: number;
+    }
+  | {
+      kind: "prediction-ask-alias";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      feedPage: number;
+    }
+  | {
+      kind: "prediction-number-question";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      feedPage: number;
+      addressee: number;
+    }
+  | {
+      kind: "prediction-alias-question";
+      auctionId: string;
+      round: PredictionRound;
+      nomination: PredictionNomination;
+      feedPage: number;
+      addressee: number;
+    }
   // Имя в аукционе из настроек (PER-595): экран имени, ник, вопрос псевдонима
   // и его шаг с адресатом. Аукцион — идущий: его находит оболочка.
   | { kind: "name"; auctionId: string }
@@ -362,6 +438,24 @@ export function encodeAuctionCallback(intent: AuctionIntent): string {
       return `${prefix}:${AUCTION_ACTION[intent.kind]}:${uuidToToken(intent.auctionId)}`;
     case "raffle-question":
       return `${prefix}:rq:${uuidToToken(intent.auctionId)}:${addresseeArgument(intent.addressee)}`;
+    case "prediction":
+      return `${prefix}:pr:${uuidToToken(intent.auctionId)}:${predictionRoundCode(intent.round)}:${pageArgument(intent.feedPage)}`;
+    case "prediction-edit":
+      return `${prefix}:pe:${uuidToToken(intent.auctionId)}:${predictionRoundCode(intent.round)}:${predictionNominationCode(intent.nomination)}:${pageArgument(intent.feedPage)}`;
+    case "prediction-lots":
+      return `${prefix}:ps:${uuidToToken(intent.auctionId)}:${predictionRoundCode(intent.round)}:${predictionNominationCode(intent.nomination)}:${pageArgument(intent.page)}:${pageArgument(intent.feedPage)}`;
+    case "prediction-lot":
+      return `${prefix}:pl:${uuidToToken(intent.auctionId)}:${predictionRoundCode(intent.round)}:${predictionNominationCode(intent.nomination)}:${uuidToToken(intent.lotId)}:${pageArgument(intent.feedPage)}`;
+    case "prediction-clear":
+      return `${prefix}:pc:${uuidToToken(intent.auctionId)}:${predictionRoundCode(intent.round)}:${predictionNominationCode(intent.nomination)}:${pageArgument(intent.feedPage)}`;
+    case "prediction-username":
+      return `${prefix}:pu:${uuidToToken(intent.auctionId)}:${predictionRoundCode(intent.round)}:${predictionNominationCode(intent.nomination)}:${pageArgument(intent.feedPage)}`;
+    case "prediction-ask-alias":
+      return `${prefix}:pa:${uuidToToken(intent.auctionId)}:${predictionRoundCode(intent.round)}:${predictionNominationCode(intent.nomination)}:${pageArgument(intent.feedPage)}`;
+    case "prediction-number-question":
+      return `${prefix}:pn:${uuidToToken(intent.auctionId)}:${predictionRoundCode(intent.round)}:${predictionNominationCode(intent.nomination)}:${pageArgument(intent.feedPage)}:${addresseeArgument(intent.addressee)}`;
+    case "prediction-alias-question":
+      return `${prefix}:pq:${uuidToToken(intent.auctionId)}:${predictionRoundCode(intent.round)}:${predictionNominationCode(intent.nomination)}:${pageArgument(intent.feedPage)}:${addresseeArgument(intent.addressee)}`;
     case "name-question":
       return `${prefix}:nq:${uuidToToken(intent.auctionId)}:${addresseeArgument(intent.addressee)}`;
     default: {
@@ -394,6 +488,8 @@ export function parseAuctionCallback(raw: unknown): ParsedAuctionCallback {
   if (command !== undefined) return command;
   if (action === "fav") return favoritesAction(args);
   if (action === "rt") return rootAction(args);
+  const prediction = predictionAction(action, args);
+  if (prediction !== undefined) return prediction;
   const byAuction = auctionAction(action, args);
   if (byAuction !== undefined) return byAuction;
   // Аргументов у действия ровно столько, сколько пишет его кодировщик: лишний
@@ -452,7 +548,9 @@ export function isAuctionQuestion(raw: unknown): boolean {
     parsed.ok &&
     (parsed.intent.kind === "question" ||
       parsed.intent.kind === "raffle-question" ||
-      parsed.intent.kind === "name-question")
+      parsed.intent.kind === "name-question" ||
+      parsed.intent.kind === "prediction-number-question" ||
+      parsed.intent.kind === "prediction-alias-question")
   );
 }
 
@@ -466,6 +564,156 @@ export function replacesAuctionQuestion(raw: unknown): boolean {
 
 function accept(intent: AuctionIntent): ParsedAuctionCallback {
   return { ok: true, intent };
+}
+
+// Прогнозы несут короткий раунд и номер номинации, чтобы выбор лота укладывался
+// в лимит Telegram вместе с двумя UUID-токенами.
+function predictionAction(
+  action: string,
+  args: readonly string[],
+): ParsedAuctionCallback | undefined {
+  const known = ["pr", "pe", "ps", "pl", "pc", "pu", "pa", "pn", "pq"];
+  if (!(known as readonly string[]).includes(action)) return undefined;
+
+  const [token, rawRound, rawNomination, tail, extra, last] = args;
+  const auctionId = token === undefined ? undefined : tokenToUuid(token);
+  if (auctionId === undefined) return refuse("malformed");
+
+  if (action === "pu" || action === "pa") {
+    const round = predictionRoundFromCode(rawRound);
+    const nomination = predictionNominationFromCode(rawNomination);
+    const feedPage = pageOf(tail);
+    if (
+      args.length !== 4 ||
+      round === undefined ||
+      nomination === undefined ||
+      predictionSpec(nomination).round !== round ||
+      feedPage === undefined
+    ) {
+      return refuse("malformed");
+    }
+    return accept({
+      kind: action === "pu" ? "prediction-username" : "prediction-ask-alias",
+      auctionId,
+      round,
+      nomination,
+      feedPage,
+    });
+  }
+
+  if (action === "pq") {
+    const round = predictionRoundFromCode(rawRound);
+    const nomination = predictionNominationFromCode(rawNomination);
+    const feedPage = pageOf(tail);
+    const addressee = addresseeOf(extra);
+    return args.length === 5 &&
+      round !== undefined &&
+      nomination !== undefined &&
+      predictionSpec(nomination).round === round &&
+      feedPage !== undefined &&
+      addressee !== undefined
+      ? accept({
+          kind: "prediction-alias-question",
+          auctionId,
+          round,
+          nomination,
+          feedPage,
+          addressee,
+        })
+      : refuse("malformed");
+  }
+
+  const round = predictionRoundFromCode(rawRound);
+  if (round === undefined) return refuse("malformed");
+  if (action === "pr") {
+    const feedPage = pageOf(rawNomination);
+    return args.length === 3 && feedPage !== undefined
+      ? accept({ kind: "prediction", auctionId, round, feedPage })
+      : refuse("malformed");
+  }
+
+  const nomination = predictionNominationFromCode(rawNomination);
+  if (nomination === undefined || predictionSpec(nomination).round !== round) {
+    return refuse("malformed");
+  }
+
+  if (action === "pe") {
+    const feedPage = pageOf(tail);
+    return args.length === 4 && feedPage !== undefined
+      ? accept({
+          kind: "prediction-edit",
+          auctionId,
+          round,
+          nomination,
+          feedPage,
+        })
+      : refuse("malformed");
+  }
+  if (action === "ps") {
+    const page = pageOf(tail);
+    const feedPage = pageOf(extra);
+    return predictionSpec(nomination).answer === "lot" &&
+      args.length === 5 &&
+      page !== undefined &&
+      feedPage !== undefined
+      ? accept({
+          kind: "prediction-lots",
+          auctionId,
+          round,
+          nomination,
+          page,
+          feedPage,
+        })
+      : refuse("malformed");
+  }
+  if (action === "pl") {
+    const lotId = tail === undefined ? undefined : tokenToUuid(tail);
+    const feedPage = pageOf(extra);
+    return predictionSpec(nomination).answer === "lot" &&
+      args.length === 5 &&
+      lotId !== undefined &&
+      feedPage !== undefined
+      ? accept({
+          kind: "prediction-lot",
+          auctionId,
+          round,
+          nomination,
+          lotId,
+          feedPage,
+        })
+      : refuse("malformed");
+  }
+  if (action === "pc") {
+    const feedPage = pageOf(tail);
+    return args.length === 4 && feedPage !== undefined
+      ? accept({
+          kind: "prediction-clear",
+          auctionId,
+          round,
+          nomination,
+          feedPage,
+        })
+      : refuse("malformed");
+  }
+  if (action === "pn") {
+    const feedPage = pageOf(tail);
+    const addressee = addresseeOf(extra);
+    return predictionSpec(nomination).answer !== "lot" &&
+      args.length === 5 &&
+      feedPage !== undefined &&
+      addressee !== undefined &&
+      last === undefined
+      ? accept({
+          kind: "prediction-number-question",
+          auctionId,
+          round,
+          nomination,
+          feedPage,
+          addressee,
+        })
+      : refuse("malformed");
+  }
+  return undefined;
 }
 
 // Действия розыгрыша и имени из настроек: токен аукциона и, у шага вопроса,
