@@ -7,6 +7,7 @@ import auction.catalog.LotTitle
 import auction.entity.LotJournal
 import auction.lot.CurrencyCode
 import auction.lot.Money
+import auction.projection.DayLotStatisticsView
 import auction.projection.LotImageView
 import auction.projection.BidRecord
 import auction.projection.LotSnapshotView
@@ -19,6 +20,8 @@ import slick.jdbc.GetResult
 import slick.jdbc.JdbcBackend.Database
 import slick.jdbc.PostgresProfile.api.*
 
+import java.sql.Timestamp
+import java.time.Instant
 import java.util.UUID
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -171,6 +174,49 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
             WHERE r.auction_id = ${auctionId.toString}::uuid
             ORDER BY r.lot_id""".as[LotStatisticsView].map(_.toList)
     )
+
+  private given GetResult[DayLotStatisticsView] = GetResult { row =>
+    DayLotStatisticsView(
+      lotId = UUID.fromString(row.nextString()),
+      bidCount = row.nextLong(),
+      maxPrice = money(row.nextLongOption(), row.nextStringOption()),
+      priceBefore = money(row.nextLongOption(), row.nextStringOption())
+    )
+  }
+
+  /**
+   * Статистика лота за окно (PER-492). Цена и её валюта берутся одной строкой ставки — той, что несёт максимум окна, —
+   * поэтому у лота с одной валютой нет второго чтения, которое могло бы её разойтись. Цена к открытию окна — тоже
+   * строка: последняя ставка до окна по номеру события, а без ставок — стартовая цена `LotOpened`. Обе ветки пусты
+   * только у лота без ставок вовсе и без стартовой цены, и тогда роста у него нет.
+   */
+  def dayStatistics(auctionId: UUID, from: Instant, until: Instant): Future[List[DayLotStatisticsView]] = {
+    val windowFrom = Timestamp.from(from)
+    val windowUntil = Timestamp.from(until)
+    database.run(
+      sql"""SELECT v.lot_id::text,
+                   (SELECT COUNT(*) FROM lot_bid b
+                      WHERE b.lot_id = v.lot_id AND b.occurred_at >= $windowFrom AND b.occurred_at < $windowUntil),
+                   t.minor_units, t.currency,
+                   COALESCE(p.minor_units, s.minor_units), COALESCE(p.currency, s.currency)
+            FROM auction_lot r JOIN lot_view v ON v.lot_id = r.lot_id
+            LEFT JOIN LATERAL (
+              SELECT b.minor_units, b.currency
+              FROM lot_bid b
+              WHERE b.lot_id = v.lot_id AND b.occurred_at >= $windowFrom AND b.occurred_at < $windowUntil
+              ORDER BY b.minor_units DESC, b.sequence DESC LIMIT 1
+            ) t ON TRUE
+            LEFT JOIN LATERAL (
+              SELECT b.minor_units, b.currency
+              FROM lot_bid b
+              WHERE b.lot_id = v.lot_id AND b.occurred_at < $windowFrom
+              ORDER BY b.sequence DESC LIMIT 1
+            ) p ON TRUE
+            LEFT JOIN lot_starting_price s ON s.lot_id = v.lot_id
+            WHERE r.auction_id = ${auctionId.toString}::uuid
+            ORDER BY r.lot_id""".as[DayLotStatisticsView].map(_.toList)
+    )
+  }
 
   // Та же защита, что у SlickLotCatalogStore: строка с пустым по типу названием — запись в обход сервиса.
   private def restored(lotId: UUID, title: String): LotTitle =

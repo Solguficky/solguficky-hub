@@ -509,6 +509,21 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Сводка дня торгов за окно, которое назвал вызывающий (PER-492). Право и отказы — те же, что у пульта и статистики:
+   * сводку читает администратор сходки. Числа — из read model и согласованы в конечном счёте.
+   */
+  def getAuctionDaySummary(in: wire.GetAuctionDaySummaryRequest): Future[wire.GetAuctionDaySummaryResponse] =
+    RequestMapping.getAuctionDaySummary(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) =>
+        administered(ConsoleQuery(query.auctionId, query.acting), ResponseMapping.daySummaryDenied) { _ =>
+          views
+            .dayStatistics(query.auctionId.value, query.from, query.until)
+            .map(lots => wire.GetAuctionDaySummaryResponse().withSummary(DaySummaryMapping.summary(lots)))
+        }
+    }
+
+  /**
    * Чтение или команда администратора сходки мимо аукциона: аукцион у entity, без журнала или без сходки — `NOT_FOUND`
    * до вопроса Meetups, затем право у Meetups и ворота `gate` по состоянию сходки, и только после них `read`.
    */

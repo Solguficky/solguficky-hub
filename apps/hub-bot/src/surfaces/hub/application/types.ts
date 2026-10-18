@@ -8,6 +8,7 @@ import type {
   AuctionNotificationChange,
   AuctionNotificationSettings,
 } from "../../../core/notifications/outbid.js";
+import type { CommunityDay } from "../community-time.js";
 import type {
   ArchivedMeetupSummary,
   MeetupMaterial,
@@ -404,6 +405,16 @@ export type ConsoleLot = ConsoleLotSnapshot & {
   priceGrowth?: LotAmount;
 };
 
+// Лот в сводке дня (PER-492): агрегаты окна суток, которые отдал Auction, и
+// название из карточки пульта. Заголовка нет, когда у лота нет карточки.
+export type DaySummaryLot = {
+  lotId: string;
+  title?: string;
+  bidCount: number;
+  maxPrice?: LotAmount;
+  growth?: LotAmount;
+};
+
 export type ConsoleSortMetric = "bids" | "participants" | "growth";
 export type ConsoleSortDirection = "ascending" | "descending";
 export type ConsoleSort = {
@@ -616,6 +627,9 @@ export type AuctionConsoleRequest =
       selected: boolean;
       opId: string;
     })
+  // Сводка дня торгов (PER-492): окно суток считает край — во времени
+  // сообщества, с начала текущего дня по часы бота.
+  | (AuctionConsoleCall & { intent: "view-day-summary" })
   // «Счастливые часы» (PER-504): список окон, окно с его лотами, вопрос о
   // новом окне и команды. Каждая команда читает конфигурацию заново и отдаёт
   // её Auction целиком: своего состояния у пульта нет.
@@ -890,6 +904,14 @@ export type ExecuteResult =
       auctionId: string;
       week: AuctionWeek;
       error?: RaffleAskError;
+    }
+  // Сводка дня торгов (PER-492): лоты реестра с агрегатами окна и подпись
+  // самого дня. Отбор строк и порядок делает экран, как у пульта.
+  | {
+      kind: "auction-day-summary";
+      auctionId: string;
+      day: CommunityDay;
+      lots: readonly DaySummaryLot[];
     }
   // «Счастливые часы» (PER-504): список окон либо исход команды над ними.
   | {

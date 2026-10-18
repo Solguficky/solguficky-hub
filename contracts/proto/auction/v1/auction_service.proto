@@ -56,6 +56,7 @@ service AuctionService {
   rpc WatchAuction(WatchAuctionRequest) returns (stream AuctionWatch);
   rpc GetAuctionConsole(GetAuctionConsoleRequest) returns (GetAuctionConsoleResponse);
   rpc GetAuctionLotStatistics(GetAuctionLotStatisticsRequest) returns (GetAuctionLotStatisticsResponse);
+  rpc GetAuctionDaySummary(GetAuctionDaySummaryRequest) returns (GetAuctionDaySummaryResponse);
   rpc GetMeetupAuction(GetMeetupAuctionRequest) returns (GetMeetupAuctionResponse);
   rpc GetAuction(GetAuctionRequest) returns (GetAuctionResponse);
   rpc ListAuctions(ListAuctionsRequest) returns (ListAuctionsResponse);
@@ -1527,6 +1528,60 @@ message LotStatistics {
   // RFC 3339 instant in UTC of the last BidPlaced in journal sequence order,
   // whether manual or proxy. Unset when no bid exists, not an empty string.
   optional string last_bid_at = 5;
+}
+
+message GetAuctionDaySummaryRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // RFC 3339 instant in UTC: the first instant of the window.
+  string from = 3;
+
+  // RFC 3339 instant in UTC: the first instant after the window, strictly after
+  // from. The window is half-open: a bid at from is inside it, a bid at until is not.
+  string until = 4;
+}
+
+message GetAuctionDaySummaryResponse {
+  // Exactly one is set. The refusal is shared with the administrator's console.
+  oneof outcome {
+    AuctionDaySummary summary = 1;
+    GetAuctionConsoleRefusal refused = 2;
+  }
+}
+
+// The trading of one window, as the meetup administrator reads it for the daily
+// digest. Aggregates of that window only; the lifetime counters of a lot are read
+// with GetAuctionLotStatistics.
+message AuctionDaySummary {
+  // Every lot of the registry, without pagination or a meaningful order.
+  // The caller ranks the complete list.
+  repeated DayLotStatistics lots = 1;
+}
+
+// Aggregates of one window only: no participant ids, display names or proxy limit amounts.
+message DayLotStatistics {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // Accepted BidPlaced facts inside the window, manual and proxy alike.
+  // A folded proxy chain counts once; 0 means the lot took no accepted bid in the
+  // window. Refused commands do not count; 0 is a real value.
+  int64 bid_count = 2;
+
+  // Highest price the lot reached in the window, in the lot's currency. Unset when
+  // the lot took no accepted bid in the window, not an empty message.
+  Money max_price = 3;
+
+  // max_price minus the price the lot had when the window opened: the price of its
+  // last accepted bid before the window, or its starting price when there was none.
+  // Absolute difference, in the lot's currency, not a percentage. Unset when the lot
+  // took no accepted bid in the window or had no price before the window; a zero
+  // difference is a real value.
+  Money growth = 4;
 }
 
 message GetMeetupAuctionRequest {

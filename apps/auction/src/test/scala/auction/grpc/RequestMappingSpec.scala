@@ -32,6 +32,7 @@ import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.CancelAuctionRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
+import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.LotImageRemoval
 import auction.v1.auction_service.LotImageUpload
@@ -119,6 +120,41 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
 
     "maps an ask to the amount the auctioneer announced" in {
       RequestMapping.advanceAsk(validAsk).value.newAsk shouldBe Money(50000, CurrencyCode("RUB"))
+    }
+
+    "maps the window of a day summary as the caller named it, refusing an empty one" in {
+      val query = RequestMapping
+        .getAuctionDaySummary(
+          GetAuctionDaySummaryRequest(
+            Some(viewer),
+            meetupAuction,
+            "2026-10-18T00:00:00Z",
+            "2026-10-19T00:00:00Z"
+          )
+        )
+        .value
+
+      query.from shouldBe Instant.parse("2026-10-18T00:00:00Z")
+      query.until shouldBe Instant.parse("2026-10-19T00:00:00Z")
+      query.acting.viewer.rights shouldBe Set(AccessRight.PlaceBids)
+      // Окно половины не имеет: конец в тот же миг, что начало, — пустой срез,
+      // а не сутки.
+      RequestMapping
+        .getAuctionDaySummary(
+          GetAuctionDaySummaryRequest(Some(viewer), meetupAuction, "2026-10-18T00:00:00Z", "2026-10-18T00:00:00Z")
+        )
+        .left
+        .value shouldBe FormError("until")
+      RequestMapping
+        .getAuctionDaySummary(GetAuctionDaySummaryRequest(Some(viewer), meetupAuction, "вчера", "2026-10-19T00:00:00Z"))
+        .left
+        .value shouldBe FormError("from")
+      RequestMapping
+        .getAuctionDaySummary(
+          GetAuctionDaySummaryRequest(Some(viewer), lot, "2026-10-18T00:00:00Z", "2026-10-19T00:00:00Z")
+        )
+        .left
+        .value shouldBe FormError("auction_id")
     }
 
     "names new_ask as the invalid field of an ask without an amount" in {

@@ -11,7 +11,7 @@ import type {
   LotStatisticsReadResult,
   ScheduleAuctionResult,
 } from "../auction/port.js";
-import { communityInstant } from "../community-time.js";
+import { communityDay, communityInstant } from "../community-time.js";
 import { lotCurrency, parseRubles } from "./lot-form.js";
 import type {
   AuctionConsoleRequest,
@@ -21,6 +21,7 @@ import type {
   ConsoleAuctionStatus,
   ConsoleLot,
   ConsoleNote,
+  DaySummaryLot,
   ExecuteResult,
   FinalTrading,
   LineupPick,
@@ -43,6 +44,9 @@ import type {
 // Финал по умолчанию у первых сроков: формат сходки — онлайн-неделя и живой
 // финал в зале. Переключатель на пульте снимает его следующей командой.
 const defaultFinal = true;
+
+// Запасное окно сводки дня, когда у пояса сообщества нет полуночи этого дня.
+const dayMillis = 24 * 60 * 60 * 1000;
 
 export type WeekResult =
   | { kind: "ok"; opensAt: string; closesAt: string }
@@ -517,6 +521,63 @@ export function createAuctionConsole(
         ...(trading === undefined ? {} : { trading }),
         ...(raffle === undefined ? {} : { raffle }),
       },
+    };
+  }
+
+  /**
+   * Сводка дня торгов (PER-492): окно суток — с полуночи дня сообщества по
+   * часы бота, — и агрегаты окна для лотов реестра. Названия берутся из того же
+   * чтения пульта, поэтому сводка не заводит своего чтения карточек. Лот,
+   * которого суточное чтение не знает, в сводку не попадает: агрегатов у него
+   * нет, а выдумывать нули значило бы соврать про «ставок не было».
+   */
+  async function daySummary(
+    request: AuctionConsoleRequest,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const at = now();
+    const day = communityDay(at, timeZone);
+    // Пояса, у которого этой полуночи нет, — часы перевели вперёд: окно тогда
+    // сутки от часов бота, и подпись дня остаётся днём сообщества.
+    const from =
+      communityInstant({ ...day, hours: 0, minutes: 0 }, timeZone) ??
+      new Date(at.getTime() - dayMillis).toISOString();
+    // Полночь ровно в этот миг дала бы пустое окно, а оно у Auction —
+    // нарушение формы: окно всегда шире нуля, и сводка тогда честно пуста.
+    const opening =
+      Date.parse(from) < at.getTime()
+        ? from
+        : new Date(at.getTime() - 1).toISOString();
+    const summary = await consoles.getAuctionDaySummary(
+      request.identity,
+      { auctionId: request.auctionId, from: opening, until: at.toISOString() },
+      rpcMeta(request),
+    );
+    if (summary.kind !== "ok") return readFailure(summary);
+    const byLot = new Map(summary.lots.map((lot) => [lot.lotId, lot]));
+    const lots: DaySummaryLot[] = [];
+    for (const entry of current.console.lots) {
+      const statistics = byLot.get(entry.lot.lotId);
+      if (statistics === undefined) continue;
+      const title = entry.lot.card?.title;
+      lots.push({
+        lotId: entry.lot.lotId,
+        ...(title === undefined ? {} : { title }),
+        bidCount: statistics.bidCount,
+        ...(statistics.maxPrice === undefined
+          ? {}
+          : { maxPrice: statistics.maxPrice }),
+        ...(statistics.growth === undefined
+          ? {}
+          : { growth: statistics.growth }),
+      });
+    }
+    return {
+      kind: "auction-day-summary",
+      auctionId: request.auctionId,
+      day,
+      lots,
     };
   }
 
@@ -1887,6 +1948,8 @@ export function createAuctionConsole(
         return closeLot(request);
       case "view-auction-console":
         return after(request, undefined);
+      case "view-day-summary":
+        return daySummary(request);
       case "ask-auction-week":
         return askWeek(request);
       case "prepare-auction-week-start":

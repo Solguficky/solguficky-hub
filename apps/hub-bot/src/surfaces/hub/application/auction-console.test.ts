@@ -12,6 +12,7 @@ import type {
   CloseLotResult,
   ConsoleRaffleResult,
   ConsoleReadResult,
+  DaySummaryReadResult,
   DiscardAuctionResult,
   DisplayNamesResult,
   FinalBidsResult,
@@ -72,6 +73,9 @@ function view(
 function fake(answers: {
   read?: ConsoleReadResult;
   statistics?: LotStatisticsReadResult;
+  day?: DaySummaryReadResult;
+  // Часы бота, если тесту нужен не общий полдень: полночь дня сообщества.
+  at?: Date;
   schedule?: ScheduleAuctionResult;
   start?: StartPrebiddingResult;
   mark?: FinalistResult;
@@ -91,6 +95,7 @@ function fake(answers: {
   const asks: Money[] = [];
   const closes: FinalLotCommand[] = [];
   const freezes: (readonly string[])[] = [];
+  const windows: { auctionId: string; from: string; until: string }[] = [];
   const port: AuctionConsoles = {
     getAuctionConsole: async () =>
       answers.read ?? { kind: "ok", console: view("draft") },
@@ -99,6 +104,13 @@ function fake(answers: {
         throw new Error("statistics response not configured by test");
       }
       return answers.statistics;
+    },
+    getAuctionDaySummary: async (_person, day) => {
+      windows.push(day);
+      if (answers.day === undefined) {
+        throw new Error("day summary response not configured by test");
+      }
+      return answers.day;
     },
     scheduleAuction: async (_person, config) => {
       scheduled.push(config);
@@ -135,12 +147,13 @@ function fake(answers: {
     },
   };
   return {
-    run: createAuctionConsole(port, zone, () => now),
+    run: createAuctionConsole(port, zone, () => answers.at ?? now),
     reads,
     scheduled,
     asks,
     closes,
     freezes,
+    windows,
   };
 }
 
@@ -1934,5 +1947,133 @@ describe("raffle of the week", () => {
       error: "week-cuts-raffle",
     });
     expect(scheduled.map((config) => config.raffleClosesAt)).toEqual([moment]);
+  });
+});
+
+describe("day summary", () => {
+  const call = { identity: admin, auctionId };
+  const second = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d";
+  const entry = (id: string, title: string): ConsoleLot => ({
+    lot: {
+      lotId: id,
+      auctionId,
+      version: 1,
+      card: { title, description: "" },
+      proxyEnabled: false,
+      status: {
+        kind: "trading",
+        currentPrice: { minorUnits: 1_500, currency: "RUB" },
+        phase: "online",
+      },
+    },
+    bidCount: 3,
+    uniqueParticipantCount: 2,
+    markedForFinal: false,
+    overdue: false,
+  });
+  const lots = [entry(lotId, "Кружка"), entry(second, "Плакат")];
+  const statistics: LotStatisticsReadResult = {
+    kind: "ok",
+    lots: lots.map((each) => ({
+      lotId: each.lot.lotId,
+      bidCount: each.bidCount,
+      uniqueParticipantCount: each.uniqueParticipantCount,
+    })),
+  };
+  const day: DaySummaryReadResult = {
+    kind: "ok",
+    lots: [
+      {
+        lotId,
+        bidCount: 4,
+        maxPrice: { minorUnits: 150_000, currency: "RUB" },
+        growth: { minorUnits: 30_000, currency: "RUB" },
+      },
+      { lotId: second, bidCount: 0 },
+    ],
+  };
+
+  it("names the window the community day and the bot clock, not 24 hours", async () => {
+    const { run, windows } = fake({
+      read: { kind: "ok", console: view("prebidding", { lots }) },
+      statistics,
+      day,
+    });
+
+    await expect(run({ ...call, intent: "view-day-summary" })).resolves.toEqual(
+      {
+        kind: "auction-day-summary",
+        auctionId,
+        // 6 октября 2026 года, полночь по Москве, и часы бота.
+        day: { year: 2026, month: 10, day: 6 },
+        lots: [
+          {
+            lotId,
+            title: "Кружка",
+            bidCount: 4,
+            maxPrice: { minorUnits: 150_000, currency: "RUB" },
+            growth: { minorUnits: 30_000, currency: "RUB" },
+          },
+          { lotId: second, title: "Плакат", bidCount: 0 },
+        ],
+      },
+    );
+    expect(windows).toEqual([
+      {
+        auctionId,
+        from: "2026-10-05T21:00:00Z",
+        until: now.toISOString(),
+      },
+    ]);
+  });
+
+  it("keeps a lot the daily reading does not know out of the summary", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: view("prebidding", { lots }) },
+      statistics,
+      day: { kind: "ok", lots: [{ lotId, bidCount: 2 }] },
+    });
+
+    const result = await run({ ...call, intent: "view-day-summary" });
+
+    expect(result).toMatchObject({
+      kind: "auction-day-summary",
+      lots: [{ lotId, title: "Кружка", bidCount: 2 }],
+    });
+  });
+
+  it("shows the refusal of the daily reading instead of an empty summary", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: view("prebidding", { lots }) },
+      statistics,
+      day: { kind: "not-administrator" },
+    });
+
+    await expect(run({ ...call, intent: "view-day-summary" })).resolves.toEqual(
+      { kind: "auction-console-refused", reason: "not-administrator" },
+    );
+  });
+});
+
+describe("day summary at the community midnight", () => {
+  it("asks for a window wider than nothing instead of refusing the day", async () => {
+    const { run, windows } = fake({
+      read: { kind: "ok", console: view("prebidding", { lots: [] }) },
+      statistics: noLotStatistics,
+      day: { kind: "ok", lots: [] },
+      // Полночь дня сообщества по Москве: окно суток начинается ровно сейчас.
+      at: new Date("2026-10-05T21:00:00Z"),
+    });
+
+    await expect(
+      run({ identity: admin, auctionId, intent: "view-day-summary" }),
+    ).resolves.toMatchObject({ kind: "auction-day-summary" });
+
+    const [window] = windows;
+    expect(window?.from).toBe("2026-10-05T20:59:59.999Z");
+    expect(window?.until).toBe("2026-10-05T21:00:00.000Z");
+    expect(Date.parse(window?.until ?? "")).toBeGreaterThan(
+      Date.parse(window?.from ?? ""),
+    );
   });
 });
