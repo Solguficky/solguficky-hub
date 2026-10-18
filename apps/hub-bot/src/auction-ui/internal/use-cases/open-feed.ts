@@ -1,6 +1,7 @@
 import { encodeAuctionCallback, MAX_FEED_PAGE } from "../../callback-data.js";
 import type {
   AuctionPort,
+  FinalLineupView,
   LotStatusView,
   LotView,
   Money,
@@ -26,7 +27,17 @@ export async function openFeed(input: {
   auctionId: string;
   page: number;
 }): Promise<AuctionScreenBody> {
-  const lots = sortForFeed(await loadFeed(input));
+  // Стадия читается параллельно страницам и стартует первой, как розыгрыш у
+  // корня: порядок вызовов один при любом числе страниц.
+  const [lineup, loaded] = await Promise.all([
+    readFinalLineup(input),
+    loadFeed(input),
+  ]);
+  const lots = orderForFeed(loaded, lineup);
+  const active =
+    lineup?.activeLotId === undefined
+      ? undefined
+      : lots.find((lot) => lot.lotId === lineup.activeLotId);
   const pageCount = Math.max(1, Math.ceil(lots.length / FEED_PAGE_SIZE));
   const page = Math.min(input.page, pageCount - 1);
   const shown = lots.slice(page * FEED_PAGE_SIZE, (page + 1) * FEED_PAGE_SIZE);
@@ -54,6 +65,14 @@ export async function openFeed(input: {
         lots: shown.map((lot) => feedItemOf(lot, input.viewer)),
         ...withMine(mineOf(lots, input.viewer)),
         ...(beforeTrading(lots) ? { beforeTrading: true as const } : {}),
+        ...(lineup === undefined
+          ? {}
+          : {
+              final:
+                active === undefined
+                  ? {}
+                  : { active: feedItemOf(active, input.viewer) },
+            }),
       },
     ],
     // Лента — просто список лотов (PER-644): розыгрыш и избранное стоят в
@@ -177,6 +196,52 @@ export function feedPriceOf(status: LotStatusView): Money | undefined {
       return _exhaustive;
     }
   }
+}
+
+// Состав идущего финала (PER-639) или `undefined`: финал не идёт либо стадию
+// прочитать не удалось. Отказ чтения ленту не роняет — она остаётся прежней,
+// как без кнопки «Розыгрыш» у корня.
+export async function readFinalLineup(input: {
+  auction: AuctionPort;
+  viewer: Viewer;
+  auctionId: string;
+}): Promise<FinalLineupView | undefined> {
+  try {
+    const summary = await input.auction.getAuction({
+      viewer: input.viewer,
+      auctionId: input.auctionId,
+    });
+    return summary?.stage === "in-final" ? summary.lineup : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Порядок ленты: вне финала — по цене, в финале — порядок зала (PER-639).
+// Активный лот первым, за ним лоты состава, которые ещё ждут своей очереди, в
+// порядке выхода, затем проданные и прочие по цене. Соседи карточки берут ту
+// же функцию, поэтому листание и лента не расходятся.
+export function orderForFeed(
+  lots: readonly LotView[],
+  lineup: FinalLineupView | undefined,
+): LotView[] {
+  if (lineup === undefined) return sortForFeed(lots);
+  const byId = new Map(lots.map((lot) => [lot.lotId, lot]));
+  const ahead = [
+    ...(lineup.activeLotId === undefined ? [] : [lineup.activeLotId]),
+    ...lineup.order.filter((lotId) => lotId !== lineup.activeLotId),
+  ]
+    .map((lotId) => byId.get(lotId))
+    .filter(
+      (lot): lot is LotView =>
+        lot !== undefined &&
+        (lot.status.kind === "held" || lot.status.kind === "trading"),
+    );
+  const placed = new Set(ahead.map((lot) => lot.lotId));
+  return [
+    ...ahead,
+    ...sortForFeed(lots.filter((lot) => !placed.has(lot.lotId))),
+  ];
 }
 
 // По возрастанию цены; при равной цене — по `lotId`, чтобы номер страницы

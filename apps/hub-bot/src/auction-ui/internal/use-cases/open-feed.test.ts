@@ -246,3 +246,111 @@ describe("feed before trading", () => {
     expect((await blockOf([])).beforeTrading).toBeUndefined();
   });
 });
+
+// Лента в живом финале (PER-639): стадия из `getAuction` даёт состав и лот,
+// который торгует ведущий. Кнопки — в порядке зала: активный лот, лоты
+// состава, которые ждут очереди, по порядку выхода, затем остальные по цене.
+describe("feed in the live final", () => {
+  const money = (rubles: number) => ({
+    minorUnits: rubles * 100,
+    currency: "RUB",
+  });
+  const held = (n: number, rubles: number): LotView => ({
+    ...lot(n),
+    status: { kind: "held", currentPrice: money(rubles) },
+  });
+  const live = (n: number, rubles: number): LotView => ({
+    ...lot(n),
+    status: {
+      kind: "trading",
+      currentPrice: money(rubles),
+      phase: "live",
+      ask: money(rubles + 300),
+    },
+  });
+  const sold = (n: number, rubles: number): LotView => ({
+    ...lot(n),
+    status: { kind: "sold", winnerId: "w", price: money(rubles) },
+  });
+
+  const shirt = live(1, 1200);
+  const vase = held(2, 400);
+  const lamp = held(3, 2000);
+  const mug = sold(4, 900);
+  const lots = [mug, lamp, vase, shirt];
+
+  const blockOf = async (
+    getAuction: AuctionPort["getAuction"],
+    feed: LotView[] = lots,
+  ) => {
+    const body = await openFeed({
+      auction: { ...oneServerPage(feed), getAuction },
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+      page: 0,
+    });
+    const [block] = body.blocks;
+    if (block?.kind !== "feed") throw new Error("feed block expected");
+    return block;
+  };
+
+  const inFinal =
+    (activeLotId?: string): AuctionPort["getAuction"] =>
+    async () => ({
+      auctionId: AUCTION_ID,
+      stage: "in-final",
+      final: true,
+      lineup: {
+        // Порядок выхода не совпадает с ценой: лампа раньше вазы.
+        order: [mug.lotId, shirt.lotId, lamp.lotId, vase.lotId],
+        ...(activeLotId === undefined ? {} : { activeLotId }),
+      },
+    });
+
+  it("puts the active lot first, the waiting lineup next and the rest after", async () => {
+    const block = await blockOf(inFinal(shirt.lotId));
+    expect(block.lots.map((item) => item.lotId)).toEqual([
+      shirt.lotId,
+      lamp.lotId,
+      vase.lotId,
+      mug.lotId,
+    ]);
+    expect(block.final?.active?.lotId).toBe(shirt.lotId);
+  });
+
+  it("marks the final without an active lot between lots", async () => {
+    const block = await blockOf(inFinal(), [mug, lamp, vase, sold(1, 1500)]);
+    expect(block.final).toEqual({});
+    expect(block.lots.map((item) => item.lotId)).toEqual([
+      lamp.lotId,
+      vase.lotId,
+      mug.lotId,
+      lot(1).lotId,
+    ]);
+  });
+
+  // Вне финала и при отказе чтения стадии лента прежняя — по цене и без
+  // пометки.
+  it("keeps the feed as before outside the final", async () => {
+    const block = await blockOf(async () => ({
+      auctionId: AUCTION_ID,
+      stage: "lineup-frozen",
+      final: true,
+      lineup: { order: [shirt.lotId, lamp.lotId, vase.lotId] },
+    }));
+    expect(block.final).toBeUndefined();
+    expect(block.lots.map((item) => item.lotId)).toEqual(
+      sortForFeed(lots).map((each) => each.lotId),
+    );
+  });
+
+  it("keeps the feed as before when the stage is unavailable", async () => {
+    const block = await blockOf(async () => {
+      throw new Error("auction unavailable");
+    });
+    expect(block.final).toBeUndefined();
+    expect(block.lots.map((item) => item.lotId)).toEqual(
+      sortForFeed(lots).map((each) => each.lotId),
+    );
+  });
+});

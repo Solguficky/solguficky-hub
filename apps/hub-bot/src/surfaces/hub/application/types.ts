@@ -950,6 +950,9 @@ export type ExecuteResult =
       closure:
         | { kind: "sold"; price: LotAmount; buyerName?: string }
         | { kind: "unsold" };
+      // Закрыт последний лот состава — аукцион завершён (PER-639): сколько
+      // лотов аукциона продано и за сколько всего, с этим закрытием.
+      finished?: { soldLots: number; total: LotAmount };
     }
   // Подтверждение закрытия лота финала: продажа лидеру по текущей цене либо
   // закрытие без продажи, если ставок нет. `opId` уедет в «Да».

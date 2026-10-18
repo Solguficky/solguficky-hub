@@ -3,12 +3,14 @@ import {
   finalBidLabel,
   finalBidLine,
   finalPriceLines,
+  showsStep,
 } from "../../../../auction-final.js";
 import { raffleButtonLabel } from "../../../../auction-raffle.js";
 import {
   favoritesEmpty,
   favoritesSummary,
   feedSummary,
+  finalFeedLabel,
   followLabel,
   leaderLine,
   lotNextLabel,
@@ -285,7 +287,7 @@ function feedScreen(
     if (content.length === 0) continue;
     nextRow(keyboard);
     for (const button of content) {
-      keyboard.text(feedLabel(button, items), button.callbackData);
+      keyboard.text(feedLabel(button, items, feed.final), button.callbackData);
     }
   }
   // Текст не повторяет кнопки (PER-595): в нём сводка своих лотов — где
@@ -390,13 +392,17 @@ function rootScreen(
 function feedLabel(
   button: AuctionButton,
   items: ReadonlyMap<string, FeedItem>,
+  final?: { active?: FeedItem },
 ): string {
   switch (button.action) {
     case "feed.open-lot": {
       const item = items.get(button.lotId);
-      return item === undefined
-        ? untitled
-        : buttonText(`${item.title ?? untitled} · ${priceLabel(item.status)}`);
+      if (item === undefined) return untitled;
+      const title = item.title ?? untitled;
+      return buttonText(
+        (final === undefined ? null : finalFeedLabel(item, final, title)) ??
+          `${title} · ${priceLabel(item.status)}`,
+      );
     }
     case "feed.prev":
       return "←";
@@ -858,16 +864,15 @@ function statusGroups(
       ];
     }
     case "trading": {
-      // Ход торгов: в финале — объявленная цена и следующая ставка ровно по
-      // ней (PER-336), в онлайн-торгах — порог следующей ставки; затем шаг и
-      // свой лимит.
+      // Ход торгов: в финале — одна строка цены без шага (PER-336, PER-639),
+      // в онлайн-торгах — порог следующей ставки и шаг; затем свой лимит.
       const course = [
         ...(status.phase === "live"
           ? finalPriceLines(block, money)
           : block.nextPrice === undefined
             ? []
             : [`Следующая ставка: от ${money(block.nextPrice)}`]),
-        ...stepLines(block, view),
+        ...(showsStep(block) ? stepLines(block, view) : []),
         // Свой лимит смотрящего: чужих Auction не отдаёт.
         ...(block.viewerProxyLimit === undefined
           ? []

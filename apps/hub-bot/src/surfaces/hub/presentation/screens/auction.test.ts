@@ -711,3 +711,138 @@ describe("feed before trading", () => {
     );
   });
 });
+
+// Живой финал (PER-639): лента говорит, что идёт финал и какой лот на
+// торгах, а карточка — одну строку цены без шага.
+describe("live final in the hub shell", () => {
+  const shirt = {
+    lotId: "lot-shirt",
+    title: "Футболка",
+    status: {
+      kind: "trading" as const,
+      currentPrice: rub(1200),
+      phase: "live" as const,
+      ask: rub(1500),
+    },
+  };
+  const vase = {
+    lotId: "lot-vase",
+    title: "Ваза",
+    status: { kind: "held" as const, currentPrice: rub(400) },
+  };
+  const mug = {
+    lotId: "lot-mug",
+    title: "Кружка",
+    status: { kind: "sold" as const, winnerId: "w", price: rub(900) },
+  };
+  const feedOf = (final?: { active?: typeof shirt }) =>
+    auctionScreen({
+      ...view([]),
+      body: {
+        blocks: [
+          {
+            kind: "feed",
+            auctionId,
+            page: 0,
+            pageCount: 1,
+            lots: [shirt, vase, mug],
+            ...(final === undefined ? {} : { final }),
+          },
+        ],
+        keyboard: [
+          ...[shirt, vase, mug].map((item) => [
+            {
+              action: "feed.open-lot" as const,
+              lotId: item.lotId,
+              callbackData: item.lotId,
+            },
+          ]),
+          [{ action: "feed.back" as const, callbackData: "v1:auc:rt:x" }],
+        ],
+      },
+    }).screen;
+  const labels = (screen: ReturnType<typeof feedOf>) =>
+    screen.keyboard.inline_keyboard.map((row) =>
+      plain(row.map((button) => button.text).join("|")),
+    );
+
+  it("names the lot on sale and marks the lineup apart from the sold lots", () => {
+    const screen = feedOf({ active: shirt });
+    expect(plain(screen.text)).toContain(
+      "Идёт финал: сейчас «Футболка», цена 1 200 ₽, ведущий объявил 1 500 ₽.",
+    );
+    expect(plain(screen.text)).not.toContain("не лидируешь");
+    expect(labels(screen).slice(0, 3)).toEqual([
+      "▶ Футболка · на торгах",
+      "Ваза · в составе · 400 ₽",
+      "Кружка · продан за 900 ₽",
+    ]);
+  });
+
+  it("says the auctioneer prepares the next lot between lots", () => {
+    expect(plain(feedOf({}).text)).toContain(
+      "Идёт финал: ведущий готовит следующий лот.",
+    );
+  });
+
+  it("keeps the feed as before outside the final", () => {
+    const screen = feedOf();
+    expect(plain(screen.text)).toContain("Ты пока не лидируешь");
+    expect(labels(screen).slice(0, 2)).toEqual([
+      "Футболка · 1 200 ₽",
+      "Ваза · 400 ₽",
+    ]);
+  });
+
+  const card = (ask?: Money) =>
+    plain(
+      auctionScreen(
+        view([
+          lot({
+            card: { title: "Футболка", description: "" },
+            nextPrice: ask ?? rub(1400),
+            fixedStep: rub(200),
+            status: {
+              kind: "trading",
+              currentPrice: rub(1200),
+              phase: "live",
+              ...(ask === undefined ? {} : { ask }),
+            },
+          }),
+        ]),
+      ).screen.text,
+    );
+
+  it("shows one price line and no step on the card of the live final", () => {
+    const announced = card(rub(1500));
+    expect(announced).toContain("Ведущий объявил: 1 500 ₽");
+    expect(announced).not.toContain("Следующая ставка");
+    expect(announced).not.toContain("Шаг");
+    const plainNext = card();
+    expect(plainNext).toContain("Следующая ставка: 1 400 ₽");
+    expect(plainNext).not.toContain("Шаг");
+  });
+
+  // Отказ «не по цене» поднимает кнопку выше отстающего снимка: карточка
+  // называет ту же сумму, что на кнопке, а не прежнюю объявленную.
+  it("names the raised next price instead of a stale ask", () => {
+    const text = plain(
+      auctionScreen(
+        view([
+          lot({
+            card: { title: "Футболка", description: "" },
+            nextPrice: rub(1700),
+            status: {
+              kind: "trading",
+              currentPrice: rub(1200),
+              phase: "live",
+              ask: rub(1500),
+            },
+          }),
+        ]),
+      ).screen.text,
+    );
+    expect(text).toContain("Следующая ставка: 1 700 ₽");
+    expect(text).not.toContain("Ведущий объявил");
+  });
+});

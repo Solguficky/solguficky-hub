@@ -64,6 +64,7 @@ import {
   pagedTitle,
   pageSize,
   paginate,
+  plural,
   readableMoment,
   removeLabel,
   screenText,
@@ -311,6 +312,20 @@ function statusLines(view: ConsoleScreenView): string[] {
 // показывает состав в порядке выхода, а не реестр, и торги текущего лота.
 function inFinal(console: AuctionConsoleView): boolean {
   return console.status === "lineup-frozen" || console.status === "final";
+}
+
+// Финал идёт, а ведущий ещё не открыл ни одного лота: активного нет, и ни
+// один лот состава не торговался в финале. Лот, выбывший до своей очереди,
+// открытием не считается.
+function noLotOpened(console: AuctionConsoleView): boolean {
+  const lineup = console.lineup;
+  if (console.status !== "final" || lineup === undefined) return false;
+  if (lineup.activeLotId !== undefined) return false;
+  return lineup.order.every((lotId) => {
+    const kind = console.lots.find((each) => each.lot.lotId === lotId)?.lot
+      .status.kind;
+    return kind !== "trading" && kind !== "sold" && kind !== "unsold";
+  });
 }
 
 function lineupLines(console: AuctionConsoleView): string[] {
@@ -562,10 +577,18 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   const auction = uuidToToken(console.auctionId);
   // Исход команды — свой экран (PER-472): пульт открывает «‹ Пульт».
   if (view.note !== undefined) {
+    const keyboard = new InlineKeyboard();
+    // Начатый финал ведёт сразу к первому лоту (PER-639): тот же вход, что
+    // «Открыть следующий лот» пульта, без лишнего тапа через пульт. Повтор
+    // «Начать финал» посреди финала отвечает тем же исходом — там первый лот
+    // уже открывали, и кнопки нет.
+    if (view.note === "final-started" && noLotOpened(console)) {
+      keyboard.text("Открыть первый лот", consoleNextLotData(auction));
+    }
     return {
       id: "outcome",
       text: noteText(view, view.note),
-      keyboard: withNav(new InlineKeyboard(), {
+      keyboard: withNav(keyboard, {
         name: "Пульт",
         data: consoleViewData(auction, view.page, view.sort),
       }),
@@ -936,26 +959,47 @@ export function closedScreen(closed: {
   closure:
     | { kind: "sold"; price: LotAmount; buyerName?: string | undefined }
     | { kind: "unsold" };
+  finished?: { soldLots: number; total: LotAmount } | undefined;
 }): ShownScreen {
-  const { closure } = closed;
+  const { closure, finished } = closed;
   const buyer =
     closure.kind === "sold" && closure.buyerName !== undefined
       ? `, покупатель — ${closure.buyerName}`
       : "";
+  const toConsole = consoleViewData(uuidToToken(closed.auctionId));
+  // Последний лот состава завершает аукцион (PER-639): исход говорит об этом
+  // сам, а «Итоги» ведут в пульт завершённого аукциона. Возврат тогда — в
+  // аукцион, как у самого пульта, чтобы две кнопки не вели в одно место.
+  const keyboard = new InlineKeyboard();
+  if (finished !== undefined) keyboard.text("Итоги", toConsole);
   return {
     id: "outcome",
     text: outcomeText(
-      closure.kind === "sold"
-        ? `Лот продан. Цена: ${money(closure.price)}${buyer}.`
-        : "Лот закрыт без продажи. Ставок не было.",
+      [
+        closure.kind === "sold"
+          ? `Лот продан. Цена: ${money(closure.price)}${buyer}.`
+          : "Лот закрыт без продажи. Ставок не было.",
+        ...(finished === undefined ? [] : [finishedLine(finished)]),
+      ].join(" "),
       truncate(closed.title ?? untitled, titleLimit),
     ),
-    keyboard: withNav(new InlineKeyboard(), {
-      name: "Пульт",
-      data: consoleViewData(uuidToToken(closed.auctionId)),
-    }),
+    keyboard: withNav(
+      keyboard,
+      finished === undefined
+        ? { name: "Пульт", data: toConsole }
+        : toAuctionRoot(closed.auctionId),
+    ),
     format: "HTML",
   };
+}
+
+function finishedLine(finished: {
+  soldLots: number;
+  total: LotAmount;
+}): string {
+  return finished.soldLots === 0
+    ? "Это был последний лот — аукцион завершён, продаж нет."
+    : `Это был последний лот — аукцион завершён: ${plural(finished.soldLots, ["лот", "лота", "лотов"])}, ${money(finished.total)}.`;
 }
 
 /** Причина отказа ответу о следующей цене: заголовок экрана исхода. */

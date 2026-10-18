@@ -17,24 +17,39 @@ export function finalBidLabel(amount: Money, money: (m: Money) => string) {
 }
 
 /**
- * Строки цены лота в торгах финала: ровно следующая цена, без «от», и цена,
- * которую объявил ведущий, пока она выше текущей.
+ * Строка цены лота в торгах финала — одна (PER-639): цена, которую объявил
+ * ведущий, пока она выше текущей — тогда она и есть следующая ставка, — иначе
+ * ровно следующая цена, без «от». Шага в финале карточка не показывает: цену
+ * задаёт ведущий (`showsStep`).
  */
 export function finalPriceLines(
   block: LotBlock,
   money: (m: Money) => string,
 ): string[] {
-  if (block.status.kind !== "trading" || block.status.phase !== "live") {
-    return [];
+  if (!inLiveFinal(block)) return [];
+  // Объявленная цена — строка карточки, только пока она и есть следующая
+  // ставка: после отказа «не по цене» дерево поднимает `nextPrice` выше
+  // отстающего снимка, и карточка называет ту сумму, что стоит на кнопке.
+  const ask = block.status.kind === "trading" ? block.status.ask : undefined;
+  if (
+    ask !== undefined &&
+    (block.nextPrice === undefined ||
+      block.nextPrice.minorUnits === ask.minorUnits)
+  ) {
+    return [`Ведущий объявил: ${money(ask)}`];
   }
-  return [
-    ...(block.status.ask === undefined
-      ? []
-      : [`Ведущий объявил: ${money(block.status.ask)}`]),
-    ...(block.nextPrice === undefined
-      ? []
-      : [`Следующая ставка: ${money(block.nextPrice)}`]),
-  ];
+  return block.nextPrice === undefined
+    ? []
+    : [`Следующая ставка: ${money(block.nextPrice)}`];
+}
+
+/** Показывает ли карточка шаг лота: в живом финале — нет (PER-639). */
+export function showsStep(block: LotBlock): boolean {
+  return !inLiveFinal(block);
+}
+
+function inLiveFinal(block: LotBlock): boolean {
+  return block.status.kind === "trading" && block.status.phase === "live";
 }
 
 /**

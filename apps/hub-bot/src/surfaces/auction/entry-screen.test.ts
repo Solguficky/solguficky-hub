@@ -1100,3 +1100,84 @@ describe("feed before trading", () => {
     );
   });
 });
+
+// Живой финал (PER-639): те же слова, что у хаба (`screens/auction.test.ts`):
+// лента называет лот на торгах, карточка — одну строку цены без шага.
+describe("live final in the auction shell", () => {
+  const shirt = {
+    lotId: "a",
+    title: "Футболка",
+    status: {
+      kind: "trading" as const,
+      currentPrice: rub(1200),
+      phase: "live" as const,
+      ask: rub(1500),
+    },
+  };
+  const vase = {
+    lotId: "b",
+    title: "Ваза",
+    status: { kind: "held" as const, currentPrice: rub(400) },
+  };
+  const mug = {
+    lotId: "c",
+    title: "Кружка",
+    status: { kind: "sold" as const, winnerId: "w", price: rub(900) },
+  };
+
+  it("names the lot on sale and marks the lineup apart from the sold lots", () => {
+    const screen = renderEntryScreen(
+      {
+        kind: "auction",
+        body: {
+          blocks: [
+            {
+              kind: "feed",
+              auctionId: "auc-1",
+              page: 0,
+              pageCount: 1,
+              lots: [shirt, vase, mug],
+              final: { active: shirt },
+            },
+          ],
+          keyboard: [
+            [{ action: "feed.open-lot", lotId: "a", callbackData: "ca" }],
+            [{ action: "feed.open-lot", lotId: "b", callbackData: "cb" }],
+            [{ action: "feed.open-lot", lotId: "c", callbackData: "cc" }],
+            [{ action: "feed.back", callbackData: "v1:auc:rt:x" }],
+          ],
+        },
+      },
+      options,
+    );
+    expect(plain(screen.text)).toContain(
+      "Идёт финал: сейчас «Футболка», цена 1 200 ₽, ведущий объявил 1 500 ₽.",
+    );
+    expect(
+      screen.keyboard.slice(0, 3).map((row) => plain(row[0]?.text ?? "")),
+    ).toEqual([
+      "▶ Футболка · на торгах",
+      "Ваза · в составе · 400 ₽",
+      "Кружка · продан за 900 ₽",
+    ]);
+  });
+
+  it("shows one price line and no step on the card of the live final", () => {
+    const text = plain(
+      lotScreen({
+        card: { title: "Футболка", description: "" },
+        nextPrice: rub(1500),
+        fixedStep: rub(200),
+        status: {
+          kind: "trading",
+          currentPrice: rub(1200),
+          phase: "live",
+          ask: rub(1500),
+        },
+      }).text,
+    );
+    expect(text).toContain("Ведущий объявил: 1 500 ₽");
+    expect(text).not.toContain("Следующая ставка");
+    expect(text).not.toContain("Шаг");
+  });
+});

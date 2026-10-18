@@ -3,6 +3,7 @@ import {
   finalBidLabel,
   finalBidLine,
   finalPriceLines,
+  showsStep,
 } from "../../auction-final.js";
 import {
   cancelRegistrationLabel,
@@ -22,6 +23,7 @@ import {
   favoritesEmpty,
   favoritesSummary,
   feedSummary,
+  finalFeedLabel,
   followLabel,
   leaderLine,
   lotNextLabel,
@@ -1425,16 +1427,15 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
       ];
     }
     case "trading": {
-      // Ход торгов: в финале — объявленная цена и следующая ставка ровно по
-      // ней (PER-336), в онлайн-торгах — порог следующей ставки; затем шаг и
-      // свой лимит.
+      // Ход торгов: в финале — одна строка цены без шага (PER-336, PER-639),
+      // в онлайн-торгах — порог следующей ставки и шаг; затем свой лимит.
       const course = [
         ...(status.phase === "live"
           ? finalPriceLines(block, money)
           : block.nextPrice === undefined
             ? []
             : [`Следующая ставка: от ${money(block.nextPrice)}`]),
-        ...stepLines(block, options),
+        ...(showsStep(block) ? stepLines(block, options) : []),
         ...proxyLine(block),
       ];
       return [
@@ -1591,10 +1592,18 @@ function renderButton(
     case "feed.open-lot":
     case "favorites.open-lot": {
       const item = items.get(button.lotId);
+      if (item === undefined) return text(untitled);
+      const title = shorten(item.title ?? untitled);
+      // В ленте живого финала лот на торгах и лоты состава подписаны иначе
+      // (PER-639); избранное финала не знает.
+      const final =
+        button.action === "feed.open-lot"
+          ? blocks.find((block): block is FeedBlock => block.kind === "feed")
+              ?.final
+          : undefined;
       return text(
-        item === undefined
-          ? untitled
-          : `${shorten(item.title ?? untitled)} · ${priceLabel(item.status)}`,
+        (final === undefined ? null : finalFeedLabel(item, final, title)) ??
+          `${title} · ${priceLabel(item.status)}`,
       );
     }
     case "feed.prev":

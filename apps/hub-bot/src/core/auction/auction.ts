@@ -2,6 +2,7 @@ import type { AuctionSnapshot } from "../../../gen/auction/v1/auction_service_pb
 import type {
   AuctionStageView,
   AuctionSummaryView,
+  FinalLineupView,
 } from "../../auction-ui/index.js";
 
 // Снимок аукциона для его корня (PER-605) в словаре пакета. Перевод общий у
@@ -23,7 +24,42 @@ export function auctionSummaryViewOf(
     ...(opensAt === undefined ? {} : { opensAt }),
     ...(closesAt === undefined ? {} : { closesAt }),
     final: (snapshot.config?.finalBlocks ?? 0) > 0,
+    ...withLineup(snapshot.status),
   };
+}
+
+// Состав в сводке — подсказка ленте (PER-639), а сводку читают ещё список
+// аукционов и корень. Кривой состав их не роняет: сводка остаётся без него, и
+// лента показывает себя как вне финала. Строгим перевод остаётся у пульта.
+function withLineup(status: AuctionSnapshot["status"]) {
+  let lineup: FinalLineupView | undefined;
+  try {
+    lineup = finalLineupOf(status);
+  } catch {
+    lineup = undefined;
+  }
+  return lineup === undefined ? {} : { lineup };
+}
+
+/**
+ * Состав финала из статуса снимка: есть у замороженного состава и у идущего
+ * финала, и он никогда не пуст. Пустая строка активного лота — поле выставлено
+ * пустым, а «между лотами» контракт выражает отсутствием поля.
+ */
+export function finalLineupOf(
+  status: AuctionSnapshot["status"],
+): FinalLineupView | undefined {
+  if (status.case !== "lineupFrozen" && status.case !== "inFinal") {
+    return undefined;
+  }
+  if (status.value.order.length === 0) {
+    throw new Error("final lineup is empty");
+  }
+  const order = [...status.value.order];
+  if (status.case === "lineupFrozen") return { order };
+  const active = status.value.activeLotId;
+  if (active === "") throw new Error("final active lot is empty");
+  return active === undefined ? { order } : { order, activeLotId: active };
 }
 
 function instantOf(
