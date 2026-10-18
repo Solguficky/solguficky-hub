@@ -91,7 +91,7 @@ function refuseOnce(method: string, answer: unknown): SupportRespond {
   };
 }
 
-describe("support bot: person", () => {
+describe("person relay", () => {
   it("greets /start without opening a topic", async () => {
     const { bot, calls } = createSupportHarness();
     await bot.handleUpdate(fromPerson({ text: "/start hub" }) as never);
@@ -146,7 +146,7 @@ describe("support bot: person", () => {
     expect(calls[0]?.payload).toMatchObject({ message_thread_id: 1 });
   });
 
-  it("forgets the source after the first message and without a mark", async () => {
+  it("writes an unknown source when /start carries no mark", async () => {
     const { bot, calls } = createSupportHarness();
     await bot.handleUpdate(fromPerson({ text: "/start" }) as never);
     await bot.handleUpdate(fromPerson({ text: "Привет" }) as never);
@@ -245,7 +245,7 @@ describe("support bot: person", () => {
     await expect(pairs.personOf(51)).resolves.toBe(anya.id);
   });
 
-  it("answers the blocked with the block frame and copies nothing", async () => {
+  it("answers a blocked person with the block frame and copies nothing", async () => {
     const { bot, calls } = createSupportHarness({
       standing: { resolve: async () => ({ blocked: true }) },
     });
@@ -320,7 +320,7 @@ describe("support bot: person", () => {
     expect(methods(calls)).toEqual(["copyMessage", "setMessageReaction"]);
   });
 
-  it("replies «not delivered» when Telegram refuses the copy", async () => {
+  it("replies not delivered when Telegram refuses the copy", async () => {
     const { bot, calls } = createSupportHarness({
       respond: (method) =>
         method === "copyMessage"
@@ -338,7 +338,7 @@ describe("support bot: person", () => {
     expect(methods(calls)).not.toContain("setMessageReaction");
   });
 
-  it("replies «not delivered» and opens no topic when KV is down", async () => {
+  it("replies not delivered and opens no topic when KV is down", async () => {
     const { bot, calls } = createSupportHarness({
       kv: createMemoryKv(() => true),
     });
@@ -360,6 +360,63 @@ describe("support bot: person", () => {
     calls.length = 0;
     await bot.handleUpdate(inTopic(1, { text: "Ответ" }) as never);
     expect(payloadOf(calls, "copyMessage")).toMatchObject({ chat_id: anya.id });
+  });
+
+  // Тема от сбоя между двумя записями отвечает человеку, но не перетягивает
+  // его сообщения обратно к себе.
+  it("keeps the person in the new topic after an answer in the half-paired one", async () => {
+    let failPerson = true;
+    const kv = createMemoryKv(
+      (op, key) => failPerson && op === "put" && key.startsWith("person."),
+    );
+    const { bot, calls } = createSupportHarness({ kv });
+    await bot.handleUpdate(fromPerson({ text: "Привет" }) as never);
+    failPerson = false;
+    await bot.handleUpdate(fromPerson({ text: "Ещё раз" }) as never);
+    expect(payloadOf(calls.slice(-2), "copyMessage")).toMatchObject({
+      message_thread_id: 2,
+    });
+    await bot.handleUpdate(inTopic(1, { text: "Ответ в старой" }) as never);
+    calls.length = 0;
+    await bot.handleUpdate(fromPerson({ text: "А теперь?" }) as never);
+    expect(payloadOf(calls, "copyMessage")).toMatchObject({
+      message_thread_id: 2,
+    });
+  });
+
+  it("greets /start with extra text and copies nothing", async () => {
+    const { bot, calls } = createSupportHarness();
+    await bot.handleUpdate(fromPerson({ text: "/start hub привет" }) as never);
+    expect(methods(calls)).toEqual(["sendMessage"]);
+    expect(calls[0]?.payload).toMatchObject({ text: welcomeText });
+  });
+
+  // Метка живёт до первого сообщения: у человека с темой она не дождётся
+  // темы, заведённой взамен удалённой.
+  it("drops the source mark on the first message even with a topic", async () => {
+    const kv = createMemoryKv();
+    await createSupportHarness({ kv }).bot.handleUpdate(
+      fromPerson({ text: "Привет" }) as never,
+    );
+    let deleted = false;
+    const { bot, calls } = createSupportHarness({
+      kv,
+      firstThread: 50,
+      respond: (method) => {
+        if (method !== "copyMessage" || !deleted) return undefined;
+        deleted = false;
+        return refusal(400, "Bad Request: message thread not found");
+      },
+    });
+    await bot.handleUpdate(fromPerson({ text: "/start hub" }) as never);
+    await bot.handleUpdate(fromPerson({ text: "Снова я" }) as never);
+    deleted = true;
+    calls.length = 0;
+    await bot.handleUpdate(fromPerson({ text: "Тема пропала" }) as never);
+    expect(methods(calls)).toContain("createForumTopic");
+    expect(
+      textOf(calls.find((call) => call.method === "sendMessage")),
+    ).toContain("Откуда: неизвестно");
   });
 
   it("refuses what Telegram cannot copy", async () => {
@@ -385,7 +442,7 @@ describe("support bot: person", () => {
   });
 });
 
-describe("support bot: operator", () => {
+describe("operator relay", () => {
   async function paired() {
     const harness = createSupportHarness();
     await harness.bot.handleUpdate(fromPerson({ text: "Привет" }) as never);
@@ -415,7 +472,7 @@ describe("support bot: operator", () => {
     ]);
   });
 
-  it("keeps a note `//` between operators", async () => {
+  it("does not copy a note starting with //", async () => {
     const { bot, calls } = await paired();
     await bot.handleUpdate(
       inTopic(1, { text: "// это дефолт, не баг" }) as never,

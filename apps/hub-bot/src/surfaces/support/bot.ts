@@ -55,7 +55,8 @@ const receipt = [{ type: "emoji", emoji: "👌" }] as const;
 // не растёт с числом тех, кто открыл бота и ничего не написал.
 const sourceLimit = 10_000;
 
-const startCommand = /^\/start(?:@\S+)?(?:\s+(\S+))?\s*$/;
+// Текст после метки `/start` не читается: команда — приветствие, а не реплика.
+const startCommand = /^\/start(?:@\S+)?(?:\s+(\S+))?(?:\s|$)/;
 
 function sourceOf(payload: string | undefined): Source | undefined {
   return payload === "hub" || payload === "auction" ? payload : undefined;
@@ -209,9 +210,17 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         }
       }
       // Тему `/start` не заводит: его видит каждый, кто открыл бота.
-      await ctx.api.sendMessage(message.chat.id, welcomeText, {
-        parse_mode: "HTML",
-      });
+      try {
+        await ctx.api.sendMessage(message.chat.id, welcomeText, {
+          parse_mode: "HTML",
+        });
+      } catch (cause) {
+        handled(ctx, "start", "welcome-not-sent", {
+          category: "dependency_unavailable",
+          error: messageOf(cause),
+        });
+        return;
+      }
       handled(ctx, "start", "welcome");
       return;
     }
@@ -245,9 +254,13 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         ctx.requestId,
       );
       if (standing.blocked) {
-        await ctx.api.sendMessage(message.chat.id, blockedText, {
-          parse_mode: "HTML",
-        });
+        try {
+          await ctx.api.sendMessage(message.chat.id, blockedText, {
+            parse_mode: "HTML",
+          });
+        } catch (cause) {
+          sideFailed(ctx, "person_reply", cause);
+        }
         handled(ctx, "person", "blocked", { category: "authorization" });
         return;
       }
@@ -264,6 +277,12 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         error: messageOf(cause),
       });
     };
+
+    // Метку источника бот помнит до первого сообщения, а не до темы: иначе
+    // она пережила бы месяцы переписки и попала в карточку темы, заведённой
+    // взамен удалённой.
+    const source = sources.get(user.id);
+    sources.delete(user.id);
 
     let pairs: PairStore;
     let thread: number | undefined;
@@ -291,8 +310,6 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
       } catch (cause) {
         return { cause };
       }
-      const source = sources.get(user.id);
-      sources.delete(user.id);
       try {
         await ctx.api.sendMessage(
           groupId,
@@ -464,9 +481,14 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
     } catch (cause) {
       sideFailed(ctx, "receipt", cause);
     }
-    // Доставленный ответ тоже продлевает пару.
+    // Доставленный ответ тоже продлевает пару, но только текущую тему
+    // человека. Тема, оставшаяся от сбоя между двумя записями новой пары,
+    // отвечает человеку, но его к себе не возвращает: иначе каждый ответ в
+    // старой и новой теме перекидывал бы его сообщения между ними.
     try {
-      await pairs.bind(recipient, thread);
+      if ((await pairs.threadOf(recipient)) === thread) {
+        await pairs.bind(recipient, thread);
+      }
     } catch (cause) {
       sideFailed(ctx, "touch_pair", cause);
     }
