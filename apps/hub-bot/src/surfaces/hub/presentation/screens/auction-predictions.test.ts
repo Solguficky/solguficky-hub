@@ -22,7 +22,6 @@ const prediction = (
   kind: "prediction",
   auctionId: AUCTION_ID,
   round: "catalog",
-  feedPage: 2,
   status: "open",
   answers: [
     {
@@ -49,13 +48,13 @@ describe("prediction screens in the hub shell", () => {
         [
           {
             action: "prediction.edit",
-            callbackData: "v1:auc:pe:AZKbflwdej-OSy1snwobPA:c:1:2",
+            callbackData: "v1:auc:pe:AZKbflwdej-OSy1snwobPA:c:1",
           },
         ],
         [
           {
             action: "prediction.switch-round",
-            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:f:2",
+            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:f",
           },
         ],
         [{ action: "prediction.back", callbackData: "back" }],
@@ -70,7 +69,7 @@ describe("prediction screens in the hub shell", () => {
     expect(shown.text).not.toContain("чужой прогноз");
     expect(
       shown.keyboard.inline_keyboard.flat().map((button) => button.text),
-    ).toEqual(["Изменить 1.1", "Раунд 2 · Финал", "‹ Лоты"]);
+    ).toEqual(["Изменить 1.1", "Раунд 2 · Финал", "‹ Аукцион"]);
   });
 
   it("marks a closed round as fixed and removes nomination actions", () => {
@@ -85,7 +84,7 @@ describe("prediction screens in the hub shell", () => {
         [
           {
             action: "prediction.switch-round",
-            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:c:2",
+            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:c",
           },
         ],
         [{ action: "prediction.back", callbackData: "back" }],
@@ -98,7 +97,7 @@ describe("prediction screens in the hub shell", () => {
     expect(shown.text).toContain("Новый ответ не принят");
     expect(
       shown.keyboard.inline_keyboard.flat().map((button) => button.text),
-    ).toEqual(["Раунд 1 · Каталог", "‹ Лоты"]);
+    ).toEqual(["Раунд 1 · Каталог", "‹ Аукцион"]);
   });
 
   it("does not claim an empty forecast was fixed", () => {
@@ -108,7 +107,7 @@ describe("prediction screens in the hub shell", () => {
         [
           {
             action: "prediction.switch-round",
-            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:c:2",
+            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:c",
           },
         ],
         [{ action: "prediction.back", callbackData: "back" }],
@@ -127,13 +126,13 @@ describe("prediction screens in the hub shell", () => {
         [
           {
             action: "prediction.edit",
-            callbackData: "v1:auc:pe:AZKbflwdej-OSy1snwobPA:c:1:2",
+            callbackData: "v1:auc:pe:AZKbflwdej-OSy1snwobPA:c:1",
           },
         ],
         [
           {
             action: "prediction.switch-round",
-            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:f:2",
+            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:f",
           },
         ],
         [
@@ -159,13 +158,13 @@ describe("prediction screens in the hub shell", () => {
         [
           {
             action: "prediction.edit",
-            callbackData: "v1:auc:pe:AZKbflwdej-OSy1snwobPA:c:1:2",
+            callbackData: "v1:auc:pe:AZKbflwdej-OSy1snwobPA:c:1",
           },
         ],
         [
           {
             action: "prediction.switch-round",
-            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:f:2",
+            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:f",
           },
         ],
         [
@@ -188,13 +187,13 @@ describe("prediction screens in the hub shell", () => {
         [
           {
             action: "prediction.edit",
-            callbackData: "v1:auc:pe:AZKbflwdej-OSy1snwobPA:c:1:2",
+            callbackData: "v1:auc:pe:AZKbflwdej-OSy1snwobPA:c:1",
           },
         ],
         [
           {
             action: "prediction.switch-round",
-            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:f:2",
+            callbackData: "v1:auc:pr:AZKbflwdej-OSy1snwobPA:f",
           },
         ],
         [
@@ -217,7 +216,6 @@ describe("prediction screens in the hub shell", () => {
         auctionId: AUCTION_ID,
         round: "final",
         nomination: "final-most-expensive-lot",
-        feedPage: 2,
         page: 0,
         pageCount: 1,
         lots: [
@@ -261,7 +259,6 @@ describe("prediction screens in the hub shell", () => {
         auctionId: AUCTION_ID,
         round: "catalog",
         nomination: "catalog-total-sales",
-        feedPage: 2,
         currentValue: 1_234_567,
       },
       rows(
@@ -282,7 +279,6 @@ describe("prediction screens in the hub shell", () => {
         kind: "prediction-name-choice",
         auctionId: AUCTION_ID,
         round: "final",
-        feedPage: 8,
         username: "owl_fan",
       },
       rows(
@@ -312,7 +308,6 @@ describe("prediction screens in the hub shell", () => {
         auctionId: AUCTION_ID,
         round: "final",
         nomination: "final-total-bids",
-        feedPage: 8,
         refusal: "other-currency",
       },
       rows(

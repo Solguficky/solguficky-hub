@@ -127,12 +127,13 @@ export const screenCatalog = {
     parent: "root",
     backName: "Лоты",
   },
-  // Прогнозы участника — тело общего аукционного дерева (ADR-067).
+  // Прогнозы участника — тело общего аукционного дерева (ADR-067), вход из
+  // корня аукциона и возврат туда же (PER-644).
   predictions: {
     class: "screen",
     nav: "tree",
     title: "Прогнозы аукциона",
-    parent: "feed",
+    parent: "root",
     backName: "Прогнозы",
   },
   "prediction-lots": {

@@ -20,14 +20,14 @@ import {
   ownLotLine,
   unfollowLabel,
 } from "../../../../auction-standing.js";
-import {
-  type AuctionBlock,
-  type AuctionButton,
-  type AuctionScreenBody,
-  type BidOriginView,
-  type FeedItem,
-  type HistoryItem,
-  type LotStatusView,
+import type {
+  AuctionBlock,
+  AuctionButton,
+  AuctionScreenBody,
+  BidOriginView,
+  FeedItem,
+  HistoryItem,
+  LotStatusView,
 } from "../../../../auction-ui/index.js";
 import { money, truncate } from "../../../../core/format.js";
 import {

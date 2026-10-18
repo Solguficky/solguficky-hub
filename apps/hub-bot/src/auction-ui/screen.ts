@@ -266,7 +266,6 @@ export type AuctionBlock =
       kind: "prediction";
       auctionId: string;
       round: PredictionRound;
-      feedPage: number;
       status: PredictionRoundStatus;
       answers: readonly PredictionAnswer[];
       lotNames: Readonly<Record<string, string>>;
@@ -285,7 +284,6 @@ export type AuctionBlock =
       auctionId: string;
       round: PredictionRound;
       nomination: PredictionNomination;
-      feedPage: number;
       page: number;
       pageCount: number;
       lots: readonly FeedItem[];
@@ -298,7 +296,6 @@ export type AuctionBlock =
       auctionId: string;
       round: PredictionRound;
       nomination: PredictionNomination;
-      feedPage: number;
       currency?: string;
       currentValue?: number;
     }
@@ -307,7 +304,6 @@ export type AuctionBlock =
       kind: "prediction-name-choice";
       auctionId: string;
       round: PredictionRound;
-      feedPage: number;
       username?: string;
     }
   | {
@@ -315,14 +311,12 @@ export type AuctionBlock =
       auctionId: string;
       round: PredictionRound;
       nomination: PredictionNomination;
-      feedPage: number;
     }
   | {
       kind: "prediction-answer-refused";
       auctionId: string;
       round: PredictionRound;
       nomination: PredictionNomination;
-      feedPage: number;
       refusal: AnswerRefusal;
     }
   | {

@@ -58,7 +58,6 @@ const predictionsRow = (round: PredictionRoundView["round"]) => [
       kind: "prediction",
       auctionId: AUCTION_ID,
       round,
-      feedPage: 0,
     }),
   },
 ];

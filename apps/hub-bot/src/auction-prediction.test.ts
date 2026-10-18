@@ -9,7 +9,6 @@ const catalogPrediction = {
   kind: "prediction",
   auctionId: "auction-1",
   round: "catalog",
-  feedPage: 0,
   status: "open",
   answers: [],
   lotNames: {},

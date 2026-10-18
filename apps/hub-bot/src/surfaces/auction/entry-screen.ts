@@ -1825,7 +1825,7 @@ function renderButton(
     case "prediction.back":
       return text(
         blocks.some((block) => block.kind === "prediction")
-          ? "‹ Лоты"
+          ? `‹ ${rootTitle}`
           : "‹ Прогнозы",
       );
     default: {

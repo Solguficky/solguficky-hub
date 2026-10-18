@@ -37,23 +37,16 @@ type PredictionNominationContext = {
   auctionId: string;
   round: PredictionRound;
   nomination: PredictionNomination;
-  feedPage: number;
 };
 
-const toRound = (
-  auctionId: string,
-  round: PredictionRound,
-  feedPage: number,
-): string =>
-  encodeAuctionCallback({ kind: "prediction", auctionId, round, feedPage });
+const toRound = (auctionId: string, round: PredictionRound): string =>
+  encodeAuctionCallback({ kind: "prediction", auctionId, round });
 
-const toFeed = (auctionId: string, feedPage: number): AuctionButton => ({
+// Прогнозы — ребёнок корня аукциона (PER-644): возврат ведёт туда же, куда у
+// ленты, розыгрыша и избранного.
+const toRoot = (auctionId: string): AuctionButton => ({
   action: "prediction.back",
-  callbackData: encodeAuctionCallback({
-    kind: "feed",
-    auctionId,
-    page: feedPage,
-  }),
+  callbackData: encodeAuctionCallback({ kind: "root", auctionId }),
 });
 
 async function roundView(
@@ -135,7 +128,6 @@ export async function openPrediction(
   input: {
     auctionId: string;
     round: PredictionRound;
-    feedPage: number;
     notice?:
       | "lot-not-in-round"
       | "round-closed"
@@ -169,7 +161,6 @@ export async function openPrediction(
               auctionId: input.auctionId,
               round: input.round,
               nomination: nomination.id,
-              feedPage: input.feedPage,
             }),
           },
         ]);
@@ -179,7 +170,6 @@ export async function openPrediction(
         kind: "prediction",
         auctionId: input.auctionId,
         round: input.round,
-        feedPage: input.feedPage,
         status,
         answers: round.answers,
         lotNames: lotDetails.names,
@@ -198,11 +188,10 @@ export async function openPrediction(
           callbackData: toRound(
             input.auctionId,
             input.round === "catalog" ? "final" : "catalog",
-            input.feedPage,
           ),
         },
       ],
-      [toFeed(input.auctionId, input.feedPage)],
+      [toRoot(input.auctionId)],
     ],
   };
 }
@@ -213,7 +202,6 @@ export async function editPrediction(
     auctionId: string;
     round: PredictionRound;
     nomination: PredictionAnswer["nomination"];
-    feedPage: number;
     page?: number;
   },
 ): Promise<AuctionScreenBody> {
@@ -288,7 +276,6 @@ async function openPredictionLots(
     auctionId: string;
     round: PredictionRound;
     nomination: PredictionAnswer["nomination"];
-    feedPage: number;
     page: number;
     currentLotId?: string;
   },
@@ -322,7 +309,6 @@ async function openPredictionLots(
         auctionId: input.auctionId,
         round: input.round,
         nomination: input.nomination,
-        feedPage: input.feedPage,
         page,
         pageCount,
         lots: shown.map((lot) => feedItemOf(lot, context.viewer)),
@@ -343,7 +329,6 @@ async function openPredictionLots(
             round: input.round,
             nomination: input.nomination,
             lotId: lot.lotId,
-            feedPage: input.feedPage,
           }),
         },
       ]),
@@ -370,7 +355,6 @@ async function openPredictionLots(
                         round: input.round,
                         nomination: input.nomination,
                         page: page - 1,
-                        feedPage: input.feedPage,
                       }),
                     },
                   ]
@@ -385,7 +369,6 @@ async function openPredictionLots(
                         round: input.round,
                         nomination: input.nomination,
                         page: page + 1,
-                        feedPage: input.feedPage,
                       }),
                     },
                   ]
@@ -393,14 +376,7 @@ async function openPredictionLots(
             ],
           ]
         : []),
-      [
-        toRoundButton(
-          input.auctionId,
-          input.round,
-          input.feedPage,
-          "prediction.back",
-        ),
-      ],
+      [toRoundButton(input.auctionId, input.round, "prediction.back")],
     ],
   };
 }
@@ -408,12 +384,11 @@ async function openPredictionLots(
 function toRoundButton(
   auctionId: string,
   round: PredictionRound,
-  feedPage: number,
   action: "prediction.back",
 ): AuctionButton {
   return {
     action,
-    callbackData: toRound(auctionId, round, feedPage),
+    callbackData: toRound(auctionId, round),
   };
 }
 
@@ -421,15 +396,13 @@ function clearCallback(input: {
   auctionId: string;
   round: PredictionRound;
   nomination: PredictionAnswer["nomination"];
-  feedPage: number;
 }): string {
-  const { auctionId, round, nomination, feedPage } = input;
+  const { auctionId, round, nomination } = input;
   return encodeAuctionCallback({
     kind: "prediction-clear",
     auctionId,
     round,
     nomination,
-    feedPage,
   });
 }
 
@@ -439,7 +412,6 @@ async function predictionNumberQuestion(
     auctionId: string;
     round: PredictionRound;
     nomination: PredictionAnswer["nomination"];
-    feedPage: number;
     currentValue?: number;
   },
 ): Promise<AuctionScreenBody> {
@@ -450,7 +422,6 @@ async function predictionNumberQuestion(
         auctionId: input.auctionId,
         round: input.round,
         nomination: input.nomination,
-        feedPage: input.feedPage,
         ...(input.currentValue === undefined
           ? {}
           : { currentValue: input.currentValue }),
@@ -475,7 +446,6 @@ async function predictionNumberQuestion(
             auctionId: input.auctionId,
             round: input.round,
             nomination: input.nomination,
-            feedPage: input.feedPage,
             addressee: context.user.telegramUserId,
           }),
         },
@@ -490,7 +460,6 @@ export async function answerPredictionNumber(
     auctionId: string;
     round: PredictionRound;
     nomination: PredictionAnswer["nomination"];
-    feedPage: number;
     text?: string;
   },
 ): Promise<AuctionScreenBody> {
@@ -505,7 +474,6 @@ export async function answerPredictionNumber(
   return submitAnswer(context, {
     auctionId: input.auctionId,
     round: input.round,
-    feedPage: input.feedPage,
     answer: {
       nomination: input.nomination,
       answer: { kind: "number", value: parsed.value },
@@ -520,13 +488,11 @@ export async function submitPredictionLot(
     round: PredictionRound;
     nomination: PredictionAnswer["nomination"];
     lotId: string;
-    feedPage: number;
   },
 ): Promise<AuctionScreenBody> {
   return submitAnswer(context, {
     auctionId: input.auctionId,
     round: input.round,
-    feedPage: input.feedPage,
     answer: {
       nomination: input.nomination,
       answer: { kind: "lot", lotId: input.lotId },
@@ -540,7 +506,6 @@ export async function clearPredictionNomination(
     auctionId: string;
     round: PredictionRound;
     nomination: PredictionAnswer["nomination"];
-    feedPage: number;
   },
 ): Promise<AuctionScreenBody> {
   return submitAnswer(context, { ...input, clear: input.nomination });
@@ -551,7 +516,6 @@ async function submitAnswer(
   input: {
     auctionId: string;
     round: PredictionRound;
-    feedPage: number;
     answer?: PredictionAnswer;
     clear?: PredictionAnswer["nomination"];
   },
@@ -629,7 +593,6 @@ async function submitAnswer(
       auctionId: input.auctionId,
       round: input.round,
       nomination,
-      feedPage: input.feedPage,
     });
   }
   return settlePrediction(context, input, outcome, removedStaleAnswer);
@@ -637,7 +600,7 @@ async function submitAnswer(
 
 async function settlePrediction(
   context: PredictionContext,
-  input: { auctionId: string; round: PredictionRound; feedPage: number },
+  input: { auctionId: string; round: PredictionRound },
   outcome: PredictionOutcome,
   removedStaleAnswer: boolean,
 ): Promise<AuctionScreenBody> {
@@ -670,7 +633,6 @@ function predictionNameChoice(
         kind: "prediction-name-choice",
         auctionId: input.auctionId,
         round: input.round,
-        feedPage: input.feedPage,
         ...(hasUsername ? { username } : {}),
       },
     ],
@@ -685,7 +647,6 @@ function predictionNameChoice(
                   auctionId: input.auctionId,
                   round: input.round,
                   nomination: input.nomination,
-                  feedPage: input.feedPage,
                 }),
               },
             ],
@@ -699,18 +660,10 @@ function predictionNameChoice(
             auctionId: input.auctionId,
             round: input.round,
             nomination: input.nomination,
-            feedPage: input.feedPage,
           }),
         },
       ],
-      [
-        toRoundButton(
-          input.auctionId,
-          input.round,
-          input.feedPage,
-          "prediction.back",
-        ),
-      ],
+      [toRoundButton(input.auctionId, input.round, "prediction.back")],
     ],
   };
 }
@@ -719,7 +672,7 @@ export function askPredictionAlias(
   context: PredictionContext,
   input: PredictionNominationContext,
 ): AuctionScreenBody {
-  const { auctionId, round, nomination, feedPage } = input;
+  const { auctionId, round, nomination } = input;
   return {
     blocks: [
       {
@@ -727,7 +680,6 @@ export function askPredictionAlias(
         auctionId,
         round,
         nomination,
-        feedPage,
       },
     ],
     keyboard: [
@@ -739,7 +691,6 @@ export function askPredictionAlias(
             auctionId,
             round,
             nomination,
-            feedPage,
             addressee: context.user.telegramUserId,
           }),
         },
@@ -798,7 +749,7 @@ function refusedPredictionName(
   input: PredictionNominationContext,
   refusal: "not-text" | DisplayNameRefusal,
 ): AuctionScreenBody {
-  const { auctionId, round, nomination, feedPage } = input;
+  const { auctionId, round, nomination } = input;
   return {
     blocks: [
       {
@@ -806,7 +757,6 @@ function refusedPredictionName(
         auctionId,
         round,
         nomination,
-        feedPage,
         refusal,
       },
     ],
@@ -819,18 +769,10 @@ function refusedPredictionName(
             auctionId,
             round,
             nomination,
-            feedPage,
           }),
         },
       ],
-      [
-        toRoundButton(
-          input.auctionId,
-          input.round,
-          input.feedPage,
-          "prediction.back",
-        ),
-      ],
+      [toRoundButton(input.auctionId, input.round, "prediction.back")],
     ],
   };
 }
@@ -847,7 +789,6 @@ function refusedPredictionAnswer(
         auctionId: input.auctionId,
         round: input.round,
         nomination: input.nomination,
-        feedPage: input.feedPage,
         refusal,
       },
     ],
@@ -862,26 +803,17 @@ function refusedPredictionAnswer(
                   auctionId: input.auctionId,
                   round: input.round,
                   nomination: input.nomination,
-                  feedPage: input.feedPage,
                 })
               : encodeAuctionCallback({
                   kind: "prediction-number-question",
                   auctionId: input.auctionId,
                   round: input.round,
                   nomination: input.nomination,
-                  feedPage: input.feedPage,
                   addressee: context.user.telegramUserId,
                 }),
         },
       ],
-      [
-        toRoundButton(
-          input.auctionId,
-          input.round,
-          input.feedPage,
-          "prediction.back",
-        ),
-      ],
+      [toRoundButton(input.auctionId, input.round, "prediction.back")],
     ],
   };
 }

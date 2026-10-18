@@ -42,7 +42,7 @@ function dataOf(keyboard: Keyboard, action: AuctionButton["action"]): string {
 }
 
 function predictionParent(keyboard: Keyboard): Parent {
-  return { name: "Лоты", data: dataOf(keyboard, "prediction.back") };
+  return { name: "Аукцион", data: dataOf(keyboard, "prediction.back") };
 }
 
 export function predictionScreen(

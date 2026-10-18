@@ -64,7 +64,6 @@ export async function openRoot(input: {
                   kind: "prediction",
                   auctionId: input.auctionId,
                   round: predictionRound,
-                  feedPage: 0,
                 }),
               },
             ],

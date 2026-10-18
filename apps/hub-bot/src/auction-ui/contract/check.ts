@@ -776,7 +776,6 @@ const PAGED_PREDICTION_LOT_AUCTION: ContractAuction = {
 const predictionQuestionCallback = (input: {
   round: PredictionRound;
   nomination: PredictionAnswer["nomination"];
-  feedPage: number;
 }) =>
   callback({
     kind: "prediction-number-question",
@@ -790,7 +789,6 @@ function predictionBody(
   status: PredictionRoundStatus,
   answers: readonly PredictionAnswer[],
   options: {
-    feedPage?: number;
     opensAt?: string;
     lotNames?: Readonly<Record<string, string>>;
     notice?:
@@ -801,14 +799,12 @@ function predictionBody(
     staleNominations?: readonly PredictionNomination[];
   } = {},
 ): AuctionScreenBody {
-  const feedPage = options.feedPage ?? 0;
   return {
     blocks: [
       {
         kind: "prediction",
         auctionId: CONTRACT_AUCTION_ID,
         round,
-        feedPage,
         status,
         answers,
         lotNames: options.lotNames ?? {},
@@ -829,7 +825,6 @@ function predictionBody(
                 auctionId: CONTRACT_AUCTION_ID,
                 round,
                 nomination: nomination.id,
-                feedPage,
               }),
             },
           ])
@@ -841,14 +836,13 @@ function predictionBody(
             kind: "prediction",
             auctionId: CONTRACT_AUCTION_ID,
             round: round === "catalog" ? "final" : "catalog",
-            feedPage,
           }),
         },
       ],
       [
         {
           action: "prediction.back" as const,
-          callbackData: feedCallback(CONTRACT_AUCTION_ID, feedPage),
+          callbackData: rootCallback(CONTRACT_AUCTION_ID),
         },
       ],
     ],
@@ -858,7 +852,6 @@ function predictionBody(
 function predictionNumberQuestionBody(input: {
   round: PredictionRound;
   nomination: PredictionAnswer["nomination"];
-  feedPage: number;
   currentValue?: number;
 }): AuctionScreenBody {
   return {
@@ -902,15 +895,13 @@ function predictionNumberQuestionBody(input: {
 function predictionNameChoiceBody(input: {
   round: PredictionRound;
   nomination: PredictionAnswer["nomination"];
-  feedPage: number;
   username?: string;
 }): AuctionScreenBody {
-  const { round, nomination, feedPage, username } = input;
+  const { round, nomination, username } = input;
   const context = {
     auctionId: CONTRACT_AUCTION_ID,
     round,
     nomination,
-    feedPage,
   };
   return {
     blocks: [
@@ -918,7 +909,6 @@ function predictionNameChoiceBody(input: {
         kind: "prediction-name-choice",
         auctionId: CONTRACT_AUCTION_ID,
         round,
-        feedPage,
         ...(username === undefined ? {} : { username }),
       },
     ],
@@ -949,7 +939,6 @@ function predictionNameChoiceBody(input: {
             kind: "prediction",
             auctionId: CONTRACT_AUCTION_ID,
             round,
-            feedPage,
           }),
         },
       ],
@@ -960,7 +949,6 @@ function predictionNameChoiceBody(input: {
 function predictionLotSelectionBody(input: {
   round: PredictionRound;
   nomination: PredictionAnswer["nomination"];
-  feedPage: number;
   lots: readonly LotView[];
   page?: number;
   pageCount?: number;
@@ -970,7 +958,6 @@ function predictionLotSelectionBody(input: {
   const {
     round,
     nomination,
-    feedPage,
     lots,
     currentLotId,
     page = 0,
@@ -985,7 +972,6 @@ function predictionLotSelectionBody(input: {
         auctionId: CONTRACT_AUCTION_ID,
         round,
         nomination,
-        feedPage,
         page,
         pageCount,
         lots: lots.map((lot) => ({
@@ -1008,7 +994,6 @@ function predictionLotSelectionBody(input: {
             round,
             nomination,
             lotId: lot.lotId,
-            feedPage,
           }),
         },
       ]),
@@ -1023,7 +1008,6 @@ function predictionLotSelectionBody(input: {
                   auctionId: CONTRACT_AUCTION_ID,
                   round,
                   nomination,
-                  feedPage,
                 }),
               },
             ],
@@ -1041,7 +1025,6 @@ function predictionLotSelectionBody(input: {
                         round,
                         nomination,
                         page: page - 1,
-                        feedPage,
                       }),
                     },
                   ]
@@ -1056,7 +1039,6 @@ function predictionLotSelectionBody(input: {
                         round,
                         nomination,
                         page: page + 1,
-                        feedPage,
                       }),
                     },
                   ]
@@ -1071,7 +1053,6 @@ function predictionLotSelectionBody(input: {
             kind: "prediction",
             auctionId: CONTRACT_AUCTION_ID,
             round,
-            feedPage,
           }),
         },
       ],
@@ -1082,13 +1063,12 @@ function predictionLotSelectionBody(input: {
 function predictionAnswerRefusedBody(input: {
   round: PredictionRound;
   nomination: PredictionAnswer["nomination"];
-  feedPage: number;
   refusal: Extract<
     AnswerRefusal,
     "not-a-number" | "other-currency" | "too-precise" | "too-large" | "not-text"
   >;
 }): AuctionScreenBody {
-  const { round, nomination, feedPage, refusal } = input;
+  const { round, nomination, refusal } = input;
   const kind = predictionSpec(nomination).answer;
   return {
     blocks: [
@@ -1097,7 +1077,6 @@ function predictionAnswerRefusedBody(input: {
         auctionId: CONTRACT_AUCTION_ID,
         round,
         nomination,
-        feedPage,
         refusal,
       },
     ],
@@ -1112,14 +1091,12 @@ function predictionAnswerRefusedBody(input: {
                   auctionId: CONTRACT_AUCTION_ID,
                   round,
                   nomination,
-                  feedPage,
                 })
               : callback({
                   kind: "prediction-number-question",
                   auctionId: CONTRACT_AUCTION_ID,
                   round,
                   nomination,
-                  feedPage,
                   addressee: CONTRACT_USER.telegramUserId,
                 }),
         },
@@ -1131,7 +1108,6 @@ function predictionAnswerRefusedBody(input: {
             kind: "prediction",
             auctionId: CONTRACT_AUCTION_ID,
             round,
-            feedPage,
           }),
         },
       ],
@@ -3069,7 +3045,6 @@ const rootPredictionsRow = (
       kind: "prediction",
       auctionId,
       round,
-      feedPage: 0,
     }),
   },
 ];
@@ -3593,10 +3568,7 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
           auction: CONTRACT_SUMMARY,
         },
       ],
-      keyboard: [
-        rootLotsRow,
-        rootPredictionsRow(CONTRACT_AUCTION_ID, "final"),
-      ],
+      keyboard: [rootLotsRow, rootPredictionsRow(CONTRACT_AUCTION_ID, "final")],
     },
   },
   {
@@ -3605,7 +3577,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       kind: "prediction",
       auctionId: CONTRACT_AUCTION_ID,
       round: "catalog",
-      feedPage: 3,
     }),
     auction: {
       ...AUCTION,
@@ -3625,7 +3596,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       "open",
       [CATALOG_LOT_ANSWER, CATALOG_MONEY_ANSWER],
       {
-        feedPage: 3,
         opensAt: PREDICTION_OPENS_AT,
         lotNames: { [CONTRACT_LOT.lotId]: "Кружка с совой" },
       },
@@ -3637,7 +3607,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       kind: "prediction",
       auctionId: CONTRACT_AUCTION_ID,
       round: "catalog",
-      feedPage: 0,
     }),
     auction: {
       ...PREDICTION_LOT_AUCTION,
@@ -3662,14 +3631,13 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       kind: "prediction",
       auctionId: CONTRACT_AUCTION_ID,
       round: "final",
-      feedPage: 3,
     }),
     auction: {
       ...AUCTION,
       predictions: predictionViews("final", "not-open"),
     },
     auctionCalls: [predictionReadCall(CONTRACT_AUCTION_ID)],
-    body: predictionBody("final", "not-open", [], { feedPage: 3 }),
+    body: predictionBody("final", "not-open", []),
   },
   {
     intent: "predictions: closed round is read-only",
@@ -3677,7 +3645,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       kind: "prediction",
       auctionId: CONTRACT_AUCTION_ID,
       round: "catalog",
-      feedPage: 0,
     }),
     auction: {
       ...AUCTION,
@@ -3697,7 +3664,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     callbackData: predictionQuestionCallback({
       round: "final",
       nomination: "final-total-bids",
-      feedPage: 5,
     }),
     reply: { text: "56" },
     auction: {
@@ -3709,7 +3675,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       predictionReadCall(CONTRACT_AUCTION_ID),
     ],
     body: predictionBody("final", "closed", [FINAL_COUNT_ANSWER], {
-      feedPage: 5,
       notice: "round-closed",
     }),
   },
@@ -3718,7 +3683,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     callbackData: predictionQuestionCallback({
       round: "final",
       nomination: "final-total-bids",
-      feedPage: 5,
     }),
     reply: { text: "56" },
     auction: {
@@ -3742,7 +3706,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       predictionReadCall(CONTRACT_AUCTION_ID),
     ],
     body: predictionBody("final", "closed", [FINAL_COUNT_ANSWER], {
-      feedPage: 5,
       notice: "round-closed",
     }),
   },
@@ -3753,7 +3716,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       auctionId: CONTRACT_AUCTION_ID,
       round: "catalog",
       nomination: "catalog-most-expensive-lot",
-      feedPage: 2,
     }),
     auction: {
       ...PAGED_PREDICTION_LOT_AUCTION,
@@ -3767,7 +3729,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     body: predictionLotSelectionBody({
       round: "catalog",
       nomination: "catalog-most-expensive-lot",
-      feedPage: 2,
       lots: PAGED_PREDICTION_CATALOG_FIRST_PAGE,
       pageCount: 2,
       currentLotId: CONTRACT_LOT.lotId,
@@ -3780,7 +3741,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       auctionId: CONTRACT_AUCTION_ID,
       round: "final",
       nomination: "final-most-expensive-lot",
-      feedPage: 2,
     }),
     auction: {
       ...PREDICTION_LOT_AUCTION,
@@ -3799,7 +3759,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     body: predictionLotSelectionBody({
       round: "final",
       nomination: "final-most-expensive-lot",
-      feedPage: 2,
       lots: [HELD_LOT],
       currentLotId: HELD_LOT.lotId,
     }),
@@ -3811,7 +3770,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       auctionId: CONTRACT_AUCTION_ID,
       round: "catalog",
       nomination: "catalog-most-expensive-lot",
-      feedPage: 2,
       page: 1,
     }),
     auction: {
@@ -3826,7 +3784,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     body: predictionLotSelectionBody({
       round: "catalog",
       nomination: "catalog-most-expensive-lot",
-      feedPage: 2,
       lots: [HELD_LOT],
       page: 1,
       pageCount: 2,
@@ -3842,7 +3799,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       round: "final",
       nomination: "final-most-expensive-lot",
       lotId: HELD_LOT.lotId,
-      feedPage: 2,
     }),
     auction: {
       ...PREDICTION_LOT_AUCTION,
@@ -3883,7 +3839,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
         },
       ],
       {
-        feedPage: 2,
         lotNames: { [HELD_LOT.lotId]: "Шарф" },
       },
     ),
@@ -3893,7 +3848,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     callbackData: predictionQuestionCallback({
       round: "catalog",
       nomination: "catalog-total-sales",
-      feedPage: 4,
     }),
     reply: { text: "12 345,67 ₽" },
     auction: {
@@ -3940,7 +3894,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
         },
       ],
       {
-        feedPage: 4,
         opensAt: PREDICTION_OPENS_AT,
         lotNames: { [CONTRACT_LOT.lotId]: "Кружка с совой" },
       },
@@ -3952,7 +3905,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     callbackData: predictionQuestionCallback({
       round: "catalog",
       nomination: "catalog-total-sales",
-      feedPage: 4,
     }),
     reply: { text: "12 500" },
     auction: {
@@ -3992,7 +3944,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       predictionSummaryCall,
     ],
     body: predictionBody("catalog", "open", [CATALOG_MONEY_ANSWER], {
-      feedPage: 4,
       opensAt: PREDICTION_OPENS_AT,
       notice: "stale-answer-removed",
     }),
@@ -4002,7 +3953,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     callbackData: predictionQuestionCallback({
       round: "final",
       nomination: "final-total-bids",
-      feedPage: 5,
     }),
     reply: { text: "1 234" },
     auction: {
@@ -4033,24 +3983,18 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       ]),
       predictionReadCall(CONTRACT_AUCTION_ID),
     ],
-    body: predictionBody(
-      "final",
-      "open",
-      [
-        {
-          nomination: "final-total-bids",
-          answer: { kind: "number", value: 1234 },
-        },
-      ],
-      { feedPage: 5 },
-    ),
+    body: predictionBody("final", "open", [
+      {
+        nomination: "final-total-bids",
+        answer: { kind: "number", value: 1234 },
+      },
+    ]),
   },
   {
     intent: "predictions: reject foreign currency code",
     callbackData: predictionQuestionCallback({
       round: "final",
       nomination: "final-total-sales",
-      feedPage: 5,
     }),
     reply: { text: "12 USD" },
     auction: {
@@ -4061,7 +4005,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     body: predictionAnswerRefusedBody({
       round: "final",
       nomination: "final-total-sales",
-      feedPage: 5,
       refusal: "other-currency",
     }),
   },
@@ -4072,7 +4015,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       auctionId: CONTRACT_AUCTION_ID,
       round: "final",
       nomination: "final-total-bids",
-      feedPage: 6,
     }),
     auction: {
       ...AUCTION,
@@ -4092,16 +4034,13 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       predictionSubmitCall("final", [FINAL_MONEY_ANSWER]),
       predictionReadCall(CONTRACT_AUCTION_ID),
     ],
-    body: predictionBody("final", "open", [FINAL_MONEY_ANSWER], {
-      feedPage: 6,
-    }),
+    body: predictionBody("final", "open", [FINAL_MONEY_ANSWER], {}),
   },
   {
     intent: "predictions: unanswered submission retries same operation",
     callbackData: predictionQuestionCallback({
       round: "final",
       nomination: "final-total-bids",
-      feedPage: 7,
     }),
     reply: { text: "56" },
     auction: {
@@ -4139,24 +4078,18 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       ]),
       predictionReadCall(CONTRACT_AUCTION_ID),
     ],
-    body: predictionBody(
-      "final",
-      "open",
-      [
-        {
-          nomination: "final-total-bids",
-          answer: { kind: "number", value: 56 },
-        },
-      ],
-      { feedPage: 7 },
-    ),
+    body: predictionBody("final", "open", [
+      {
+        nomination: "final-total-bids",
+        answer: { kind: "number", value: 56 },
+      },
+    ]),
   },
   {
     intent: "predictions: unanswered twice shows an uncertain save outcome",
     callbackData: predictionQuestionCallback({
       round: "final",
       nomination: "final-total-bids",
-      feedPage: 7,
     }),
     reply: { text: "56" },
     auction: {
@@ -4181,7 +4114,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       predictionReadCall(CONTRACT_AUCTION_ID),
     ],
     body: predictionBody("final", "open", [FINAL_COUNT_ANSWER], {
-      feedPage: 7,
       notice: "unanswered",
     }),
   },
@@ -4190,7 +4122,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     callbackData: predictionQuestionCallback({
       round: "final",
       nomination: "final-total-bids",
-      feedPage: 8,
     }),
     from: USER_WITH_USERNAME,
     reply: { text: "56" },
@@ -4216,7 +4147,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     body: predictionNameChoiceBody({
       round: "final",
       nomination: "final-total-bids",
-      feedPage: 8,
       username: "owl_fan",
     }),
   },
@@ -4227,7 +4157,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       auctionId: CONTRACT_AUCTION_ID,
       round: "final",
       nomination: "final-total-bids",
-      feedPage: 8,
     }),
     from: USER_WITH_USERNAME,
     auction: {
@@ -4242,7 +4171,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     body: predictionNumberQuestionBody({
       round: "final",
       nomination: "final-total-bids",
-      feedPage: 8,
       currentValue: 42,
     }),
   },
@@ -4253,7 +4181,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       auctionId: CONTRACT_AUCTION_ID,
       round: "catalog",
       nomination: "catalog-total-sales",
-      feedPage: 9,
     }),
     auction: AUCTION,
     auctionCalls: [],
@@ -4264,7 +4191,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
           auctionId: CONTRACT_AUCTION_ID,
           round: "catalog",
           nomination: "catalog-total-sales",
-          feedPage: 9,
         },
       ],
       keyboard: [
@@ -4276,7 +4202,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
               auctionId: CONTRACT_AUCTION_ID,
               round: "catalog",
               nomination: "catalog-total-sales",
-              feedPage: 9,
               addressee: CONTRACT_USER.telegramUserId,
             }),
           },
@@ -4291,7 +4216,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       auctionId: CONTRACT_AUCTION_ID,
       round: "catalog",
       nomination: "catalog-total-sales",
-      feedPage: 9,
       addressee: CONTRACT_USER.telegramUserId,
     }),
     auction: AUCTION,
@@ -4299,7 +4223,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     body: predictionNameChoiceBody({
       round: "catalog",
       nomination: "catalog-total-sales",
-      feedPage: 9,
     }),
   },
   {
@@ -4309,7 +4232,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       auctionId: CONTRACT_AUCTION_ID,
       round: "catalog",
       nomination: "catalog-total-sales",
-      feedPage: 9,
       addressee: CONTRACT_USER.telegramUserId,
     }),
     reply: {},
@@ -4322,7 +4244,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
           auctionId: CONTRACT_AUCTION_ID,
           round: "catalog",
           nomination: "catalog-total-sales",
-          feedPage: 9,
           refusal: "not-text",
         },
       ],
@@ -4335,7 +4256,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
               auctionId: CONTRACT_AUCTION_ID,
               round: "catalog",
               nomination: "catalog-total-sales",
-              feedPage: 9,
             }),
           },
         ],
@@ -4346,7 +4266,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
               kind: "prediction",
               auctionId: CONTRACT_AUCTION_ID,
               round: "catalog",
-              feedPage: 9,
             }),
           },
         ],
@@ -4360,7 +4279,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
       auctionId: CONTRACT_AUCTION_ID,
       round: "catalog",
       nomination: "catalog-total-sales",
-      feedPage: 9,
       addressee: CONTRACT_USER.telegramUserId,
     }),
     reply: { text: "Сова" },
@@ -4377,7 +4295,6 @@ const PREDICTION_CASES: readonly AuctionContractCase[] = [
     body: predictionNumberQuestionBody({
       round: "catalog",
       nomination: "catalog-total-sales",
-      feedPage: 9,
     }),
   },
 ];

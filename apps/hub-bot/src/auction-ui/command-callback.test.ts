@@ -82,7 +82,6 @@ const WORST: readonly AuctionIntent[] = [
     auctionId: AUCTION_ID,
     round: "final",
     nomination: "final-total-sales",
-    feedPage: MAX_FEED_PAGE,
     addressee: ADDRESSEE,
   },
   {
@@ -91,7 +90,6 @@ const WORST: readonly AuctionIntent[] = [
     round: "final",
     nomination: "final-biggest-growth-lot",
     lotId: LOT_ID,
-    feedPage: MAX_FEED_PAGE,
   },
   {
     kind: "prediction-lots",
@@ -99,14 +97,12 @@ const WORST: readonly AuctionIntent[] = [
     round: "final",
     nomination: "final-most-expensive-lot",
     page: MAX_FEED_PAGE,
-    feedPage: MAX_FEED_PAGE,
   },
   {
     kind: "prediction-alias-question",
     auctionId: AUCTION_ID,
     round: "final",
     nomination: "final-total-sales",
-    feedPage: MAX_FEED_PAGE,
     addressee: ADDRESSEE,
   },
 ];
@@ -173,11 +169,11 @@ describe("bid leaf callback_data", () => {
     ["a final bid with a tail", "v1:auc:fb:AZKbflwdej-OSy1snwobPA:2oho:0:1"],
     [
       "a prediction nomination from another round",
-      "v1:auc:pe:AZKbflwdej-OSy1snwobPA:f:1:0",
+      "v1:auc:pe:AZKbflwdej-OSy1snwobPA:f:1",
     ],
     [
       "a lot nomination encoded as a number question",
-      "v1:auc:pn:AZKbflwdej-OSy1snwobPA:c:1:0:42",
+      "v1:auc:pn:AZKbflwdej-OSy1snwobPA:c:1:42",
     ],
   ])("refuses %s", (_, raw) => {
     const parsed = parseAuctionCallback(raw);
@@ -214,7 +210,6 @@ describe("bid leaf callback_data", () => {
           auctionId: AUCTION_ID,
           round: "catalog",
           nomination: "catalog-total-bids",
-          feedPage: 0,
           addressee: ADDRESSEE,
         }),
       ),
@@ -226,7 +221,6 @@ describe("bid leaf callback_data", () => {
           auctionId: AUCTION_ID,
           round: "final",
           nomination: "final-total-sales",
-          feedPage: 0,
           addressee: 42,
         }),
       ),
