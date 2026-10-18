@@ -9,13 +9,13 @@ import {
   sources,
 } from "../../testkit/imports.js";
 
-// Раскладка пакета ботов (ADR-064, пп. 18–19): общий код процесса — `src/core`,
-// аукционное дерево `src/auction-ui` и `gen/` — у обеих поверхностей один, а
-// свои у каждой только экраны, тексты и клиенты своего сценария в
-// `src/surfaces/<поверхность>`. Поверхности не импортируют друг друга, а общий
-// код не знает ни одной: функция, которой место у обеих, уходит в общий код, а
-// не копируется. Знать обе поверхности могут только выбор процесса
-// `src/main.ts` и test kit (`testkit/`): один kit гоняет обе поверхности.
+// Раскладка пакета ботов (ADR-064, пп. 18–19; ADR-068, п. 1): общий код
+// процесса — `src/core`, аукционное дерево `src/auction-ui` и `gen/` — у
+// поверхностей одни, а свои у каждой только экраны, тексты и клиенты своего
+// сценария в `src/surfaces/<поверхность>`. Поверхности не импортируют друг
+// друга, а общий код не знает ни одной: функция, которой место у нескольких,
+// уходит в общий код, а не копируется. Знать все поверхности могут только
+// выбор процесса `src/main.ts` и test kit (`testkit/`): один kit гоняет все.
 
 const src = path.join(app, "src");
 const testkit = path.join(app, "testkit");
@@ -25,6 +25,7 @@ type Zone =
   | "tree"
   | "hub"
   | "auction"
+  | "support"
   | "kit"
   | "gen"
   | "main"
@@ -41,6 +42,7 @@ const zoneOf = (file: string): Zone => {
   if (file === path.join(testkit, "tracing.ts")) return "core";
   if (inside(file, path.join(src, "surfaces", "auction"))) return "auction";
   if (inside(file, path.join(src, "surfaces", "hub"))) return "hub";
+  if (inside(file, path.join(src, "surfaces", "support"))) return "support";
   if (inside(file, testkit)) return "kit";
   // Сами тесты раскладки читают исходники и к поверхностям не относятся.
   return "core";
@@ -55,9 +57,11 @@ const allowed: Record<Zone, readonly Zone[]> = {
   // другую не импортирует: прямых импортов между ними тест не пропускает.
   hub: ["hub", "core", "tree", "kit", "gen", "outside"],
   auction: ["auction", "core", "tree", "kit", "gen", "outside"],
-  kit: ["kit", "hub", "auction", "core", "tree", "gen", "outside"],
+  // Поддержке аукционное дерево не нужно: экранов у неё нет (ADR-068).
+  support: ["support", "core", "kit", "gen", "outside"],
+  kit: ["kit", "hub", "auction", "support", "core", "tree", "gen", "outside"],
   gen: ["gen", "outside"],
-  main: ["main", "core", "hub", "auction", "outside"],
+  main: ["main", "core", "hub", "auction", "support", "outside"],
   outside: [],
 };
 
@@ -73,8 +77,8 @@ const crossingsFrom = (zone: Zone): Import[] =>
     .map(shown);
 
 describe("package layout", () => {
-  it.each(["hub", "auction"] as const)(
-    "keeps the %s surface off the other surface",
+  it.each(["hub", "auction", "support"] as const)(
+    "keeps the %s surface off the other surfaces",
     (zone) => {
       expect(crossingsFrom(zone)).toEqual([]);
     },
@@ -93,21 +97,28 @@ describe("package layout", () => {
     expect(crossings).toEqual([]);
   });
 
-  it("keeps the shared core off both surfaces", () => {
+  it("keeps the shared core off the surfaces", () => {
     expect(crossingsFrom("core")).toEqual([]);
   });
 
-  // Самопроверка: обе поверхности видны сканеру и берут общий код, иначе
-  // пустые списки выше ничего не доказывают.
+  // Самопроверка: поверхности видны сканеру и берут общий код, иначе пустые
+  // списки выше ничего не доказывают. Дерево берут только поверхности с
+  // аукционом: у поддержки экранов нет.
+  const importsOf = (zone: Zone) =>
+    scanned
+      .filter((file) => zoneOf(file) === zone)
+      .flatMap(relativeImports)
+      .map(({ target }) => zoneOf(target));
+
   it.each(["hub", "auction"] as const)(
     "sees the %s surface importing the core and the tree",
     (zone) => {
-      const imports = scanned
-        .filter((file) => zoneOf(file) === zone)
-        .flatMap(relativeImports)
-        .map(({ target }) => zoneOf(target));
-      expect(imports).toContain("core");
-      expect(imports).toContain("tree");
+      expect(importsOf(zone)).toContain("core");
+      expect(importsOf(zone)).toContain("tree");
     },
   );
+
+  it("sees the support surface importing the core", () => {
+    expect(importsOf("support")).toContain("core");
+  });
 });

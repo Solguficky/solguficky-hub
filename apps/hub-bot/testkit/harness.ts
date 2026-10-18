@@ -2,7 +2,6 @@ import type { Transformer } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
 import type { Presentation } from "../src/core/config.js";
 import type { LogFields, Logger } from "../src/core/logging.js";
-import type { Surface } from "../src/core/surface.js";
 import { noopTracing, type Tracing } from "../src/core/tracing.js";
 import { createBot as createAuctionBot } from "../src/surfaces/auction/bot.js";
 import type { PortsFactory } from "../src/surfaces/auction/clients.js";
@@ -21,7 +20,11 @@ import {
   type BotRuntime,
   createBot,
 } from "../src/surfaces/hub/presentation/bot.js";
-import { inspectCall, reportViolations } from "./screen-lint.js";
+import {
+  inspectCall,
+  reportViolations,
+  type ScreenSurface,
+} from "./screen-lint.js";
 
 // Харнесс обеих поверхностей без Telegram: `botInfo` подставляется, поэтому
 // `bot.init()` не ходит в Bot API, а исходящие вызовы записывает трансформер
@@ -99,7 +102,7 @@ export type Respond = (method: ApiMethod, payload: ApiPayload) => unknown;
 // действии (PER-592), и она уходит в свой журнал `commands`, если он передан,
 // чтобы `calls` оставался разговором.
 function recorder(
-  surface: Surface,
+  surface: ScreenSurface,
   calls: RecordedCall[],
   respond?: Respond,
   commands?: RecordedCall[],

@@ -95,7 +95,12 @@ const hubNamedPairs: ReadonlySet<string> = new Set([
 
 type Catalog = Readonly<Record<string, ScreenEntry>>;
 
-const configFor: Record<Surface, (catalog: Catalog) => LintConfig> = {
+// Поверхность с деревом экранов. У бота поддержки экранов нет — у человека
+// переписка, у операторов тема (ADR-068; дизайн-код, «Бот поддержки»), — и
+// каталога ему не положено.
+export type ScreenSurface = Exclude<Surface, "support">;
+
+const configFor: Record<ScreenSurface, (catalog: Catalog) => LintConfig> = {
   hub: (catalog) => ({
     tag: hubTag,
     catalog,
@@ -120,14 +125,14 @@ const configFor: Record<Surface, (catalog: Catalog) => LintConfig> = {
   }),
 };
 
-const configs: Record<Surface, LintConfig> = {
+const configs: Record<ScreenSurface, LintConfig> = {
   hub: configFor.hub(hubCatalog),
   auction: configFor.auction(auctionCatalog),
 };
 
 /** Каталог передаётся только в тестах каталогов и линтера; в работе он один. */
 export function inspectCall(
-  surface: Surface,
+  surface: ScreenSurface,
   method: string,
   payload: unknown,
   catalog?: Catalog,
@@ -145,7 +150,7 @@ export function inspectCall(
  * передаётся только в тестах самого правила.
  */
 export function inspectCatalog(
-  surface: Surface,
+  surface: ScreenSurface,
   catalog?: Catalog,
 ): ScreenViolation[] {
   return inspectGraphWith(
