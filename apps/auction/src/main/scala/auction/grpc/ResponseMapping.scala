@@ -746,6 +746,10 @@ object ResponseMapping {
   def statisticsDenied(denial: Denial): Either[Status, wire.GetAuctionLotStatisticsResponse] =
     consoleRefusal(denial).map(wire.GetAuctionLotStatisticsResponse().withRefused)
 
+  /** Отказ права на сводку дня — тот же, что у пульта: контракт делит с ним тип отказа. */
+  def daySummaryDenied(denial: Denial): Either[Status, wire.GetAuctionDaySummaryResponse] =
+    consoleRefusal(denial).map(wire.GetAuctionDaySummaryResponse().withRefused)
+
   /** Отказ права на ручную отметку итогов — та же пара, что у пульта: контракт делит с ним отказы. */
   def settleResultsDenied(denial: Denial): Either[Status, wire.SettlePredictionResultsManuallyResponse] =
     settleResultsRefusal(denial).map(wire.SettlePredictionResultsManuallyResponse().withRefused)

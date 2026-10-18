@@ -33,6 +33,7 @@ import {
   consoleCloseConfirmData,
   consoleCloseData,
   consoleConfirmData,
+  consoleDaySummaryData,
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
@@ -620,16 +621,27 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     keyboard.text("Сроки недели", consoleWeekData(auction));
   }
   const week = console.week;
-  if (
+  const scheduled =
     console.status === "scheduled" &&
     week?.opensAt !== undefined &&
-    week.closesAt !== undefined
-  ) {
+    week.closesAt !== undefined;
+  const windowsShown =
+    scheduled ||
+    (console.status === "prebidding" && (week?.windows.length ?? 0) > 0);
+  // «Сводка дня» (PER-492) идёт рядом со «Счастливыми часами», где этот ряд
+  // есть: в онлайн-торгах с окнами и восемью лотами отдельный ряд вывел бы
+  // пульт за двенадцать. Без окон — сразу под сортировкой.
+  if (!windowsShown) {
+    nextRow(keyboard).text("Сводка дня", consoleDaySummaryData(auction));
+  }
+  if (scheduled) {
     nextRow(keyboard).text(
       toggleLabel("Финал", week.final),
       consoleFinalData(auction, !week.final),
     );
-    nextRow(keyboard).text("Счастливые часы", consoleWindowsData(auction));
+    nextRow(keyboard)
+      .text("Счастливые часы", consoleWindowsData(auction))
+      .text("Сводка дня", consoleDaySummaryData(auction));
     nextRow(keyboard).text("Розыгрыш", consoleRaffleData(auction));
     if (week.raffleClosesAt !== undefined) {
       nextRow(keyboard).text(
@@ -643,7 +655,9 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     (week?.windows.length ?? 0) > 0
   ) {
     // После открытия окна только видны: править их уже нельзя.
-    nextRow(keyboard).text("Счастливые часы", consoleWindowsData(auction));
+    nextRow(keyboard)
+      .text("Счастливые часы", consoleWindowsData(auction))
+      .text("Сводка дня", consoleDaySummaryData(auction));
   }
   if (editable) {
     nextRow(keyboard).text(

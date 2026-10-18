@@ -351,6 +351,8 @@ type PlainAction =
   // о новом окне, лот в окне и вне его, удаление окна. Окно кнопка называет
   // номером и отпечатком; лот окна — без страницы, её экран выводит из лота.
   | { kind: "console-windows"; auction: string }
+  // Сводка дня торгов (PER-492): текст за сутки со ссылками на лоты.
+  | { kind: "console-day-summary"; auction: string }
   | { kind: "console-window"; auction: string; window: WindowRef; page: number }
   | { kind: "console-window-ask"; auction: string }
   | {
@@ -678,6 +680,11 @@ export function consoleMarkData(mark: {
 /** «Счастливые часы» на пульте: список окон. */
 export function consoleWindowsData(auction: string): string {
   return `v1:ac:h:${auction}`;
+}
+
+/** «Сводка дня»: текст за сутки со ссылками на лоты в боте аукциона (PER-492). */
+export function consoleDaySummaryData(auction: string): string {
+  return `v1:ac:ds:${auction}`;
 }
 
 /** Окно на странице лотов `page`; первая страница — без номера. */
@@ -1304,6 +1311,10 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       ? { index: index.data, print: print.data }
       : undefined;
   switch (parts[2]) {
+    case "ds":
+      return parts.length === 4
+        ? { kind: "console-day-summary", auction: auction.data }
+        : { kind: "malformed" };
     case "h":
       return parts.length === 4
         ? { kind: "console-windows", auction: auction.data }

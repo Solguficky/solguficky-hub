@@ -59,6 +59,7 @@ import {
   type AuctionScreens,
   type CloseLotResult,
   type ConsoleReadResult,
+  type DaySummaryReadResult,
   type DiscardAuctionResult,
   type EnableAuctionResult,
   type FinalistRefusal,
@@ -106,6 +107,7 @@ type AuctionRpc = Pick<
   | "getLotImage"
   | "getAuctionConsole"
   | "getAuctionLotStatistics"
+  | "getAuctionDaySummary"
   | "scheduleAuction"
   | "startPrebidding"
   | "discardAuction"
@@ -417,6 +419,22 @@ export function createAuctionAdapter(
           options(meta),
         );
         return lotStatisticsResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async getAuctionDaySummary(person, day, meta) {
+      try {
+        const response = await rpc.getAuctionDaySummary(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: day.auctionId,
+            from: day.from,
+            until: day.until,
+          },
+          options(meta),
+        );
+        return daySummaryResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1147,6 +1165,49 @@ function lotStatisticsResult(
       }
     case undefined:
       return defect("auction lot statistics response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function daySummaryResult(
+  outcome: Awaited<ReturnType<AuctionRpc["getAuctionDaySummary"]>>["outcome"],
+): DaySummaryReadResult {
+  switch (outcome.case) {
+    case "summary":
+      return {
+        kind: "ok",
+        lots: outcome.value.lots.map((lot) => {
+          const bidCount = safeCount(lot.bidCount, "day summary bid count");
+          return {
+            lotId: lot.lotId,
+            bidCount,
+            ...(lot.maxPrice === undefined
+              ? {}
+              : { maxPrice: moneyOf(lot.maxPrice) }),
+            ...(lot.growth === undefined
+              ? {}
+              : { growth: moneyOf(lot.growth) }),
+          };
+        }),
+      };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case undefined:
+          return defect("auction day summary refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("auction day summary response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
