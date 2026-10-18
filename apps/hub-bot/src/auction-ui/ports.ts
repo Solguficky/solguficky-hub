@@ -227,6 +227,15 @@ export type AuctionSummaryView = {
   closesAt?: string;
   // Финал в зале запланирован: после онлайн-торгов лоты состава уходят в него.
   final: boolean;
+  // Состав финала (PER-639): есть, только пока состав объявлен или идёт финал.
+  lineup?: FinalLineupView;
+};
+
+// Замороженный состав финала: лоты в порядке выхода и лот, который ведущий
+// торгует сейчас. Активного лота нет до первого и между лотами.
+export type FinalLineupView = {
+  order: readonly string[];
+  activeLotId?: string;
 };
 
 export interface AuctionPort {

@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   AuctionState_CancelledSchema,
   AuctionState_DraftSchema,
+  AuctionState_FinalSchema,
+  AuctionState_LineupFrozenSchema,
   AuctionState_PrebiddingSchema,
 } from "../../../gen/auction/v1/auction_events_pb.js";
 import {
@@ -103,5 +105,49 @@ describe("auction snapshot for the root", () => {
         }),
       ),
     ).toThrow("auction online phase start is not an instant");
+  });
+
+  // Состав финала (PER-639): лента в финале ставит лоты в порядке зала и
+  // выделяет тот, что торгует ведущий.
+  it("reads the lineup of a frozen lineup and of a running final", () => {
+    const LOT_A = "01929b7e-5c1d-7a3f-8e4b-00000000000a";
+    const LOT_B = "01929b7e-5c1d-7a3f-8e4b-00000000000b";
+    expect(
+      auctionSummaryViewOf(
+        create(AuctionSnapshotSchema, {
+          id: AUCTION_ID,
+          status: {
+            case: "lineupFrozen",
+            value: create(AuctionState_LineupFrozenSchema, {
+              order: [LOT_A, LOT_B],
+            }),
+          },
+        }),
+      ),
+    ).toEqual({
+      auctionId: AUCTION_ID,
+      stage: "lineup-frozen",
+      final: false,
+      lineup: { order: [LOT_A, LOT_B] },
+    });
+    const inFinal = (activeLotId?: string) =>
+      auctionSummaryViewOf(
+        create(AuctionSnapshotSchema, {
+          id: AUCTION_ID,
+          status: {
+            case: "inFinal",
+            value: create(AuctionState_FinalSchema, {
+              order: [LOT_A, LOT_B],
+              ...(activeLotId === undefined ? {} : { activeLotId }),
+            }),
+          },
+        }),
+      ).lineup;
+    expect(inFinal(LOT_B)).toEqual({
+      order: [LOT_A, LOT_B],
+      activeLotId: LOT_B,
+    });
+    expect(inFinal()).toEqual({ order: [LOT_A, LOT_B] });
+    expect(() => inFinal("")).toThrow("final active lot is empty");
   });
 });

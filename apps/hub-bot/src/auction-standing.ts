@@ -70,11 +70,20 @@ export function feedSummary(
     lots: readonly FeedItem[];
     mine?: readonly FeedItem[];
     beforeTrading?: true;
+    final?: { active?: FeedItem };
   },
   options: MineOptions,
 ): string[] {
   if (feed.beforeTrading === true) return [beforeTradingLine];
   const mine = feed.mine ?? [];
+  // В живом финале сводка начинается с того, что идёт в зале (PER-639), а
+  // «не лидируешь» не говорит: лидерство решает ведущий по лоту за лотом.
+  if (feed.final !== undefined) {
+    return [
+      finalFeedLine(feed.final.active, options),
+      ...(mine.length === 0 ? [] : [mineLines(mine, options)]),
+    ];
+  }
   const happy = feed.lots.filter((item) => item.activeWindow !== undefined);
   const happyLine =
     happy.length === 0
@@ -91,6 +100,46 @@ export function feedSummary(
     mineLines(mine, options),
     ...happyLine,
   ];
+}
+
+/**
+ * Шапка ленты в живом финале (PER-639): лот на торгах с ценой и объявленной
+ * ведущим суммой, а между лотами — что ведущий готовит следующий.
+ */
+export function finalFeedLine(
+  active: FeedItem | undefined,
+  options: Pick<MineOptions, "title">,
+): string {
+  if (active === undefined) {
+    return "Идёт финал: ведущий готовит следующий лот.";
+  }
+  const { status } = active;
+  const price =
+    status.kind === "trading" || status.kind === "held"
+      ? `, цена ${money(status.currentPrice)}`
+      : "";
+  const ask =
+    status.kind === "trading" && status.ask !== undefined
+      ? `, ведущий объявил ${money(status.ask)}`
+      : "";
+  return `Идёт финал: сейчас «${options.title(active)}»${price}${ask}.`;
+}
+
+/**
+ * Подпись кнопки лота в ленте финала (PER-639): лот на торгах выделен, лоты
+ * состава, которые ждут очереди, помечены — так они видны отдельно от
+ * проданных. `null` — подпись обычная.
+ */
+export function finalFeedLabel(
+  item: FeedItem,
+  final: { active?: FeedItem },
+  title: string,
+): string | null {
+  if (final.active?.lotId === item.lotId) return `▶ ${title} · на торгах`;
+  if (item.status.kind === "held") {
+    return `${title} · в составе · ${money(item.status.currentPrice)}`;
+  }
+  return null;
 }
 
 /** Сводка ленты, пока аукцион не открыл торги (PER-618). */

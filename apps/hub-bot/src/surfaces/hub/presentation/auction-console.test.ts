@@ -1832,12 +1832,10 @@ describe("final of the auctioneer", () => {
 
     await next((history) => press(dataOf(last(history), "Начать финал")));
     expect(last(calls).text).toBe("<b>Финал начат</b>\n\nОткрой первый лот.");
-    await next((history) => press(dataOf(last(history), "‹ Пульт")));
-    expect(plain(last(calls))).toContain("Сейчас лот не открыт.");
+    // Первый лот открывается прямо с исхода (PER-639), без захода в пульт.
+    expect(labels(last(calls))).toEqual([["Открыть первый лот"], ["‹ Пульт"]]);
 
-    await next((history) =>
-      press(dataOf(last(history), "Открыть следующий лот")),
-    );
+    await next((history) => press(dataOf(last(history), "Открыть первый лот")));
     const panel = last(calls);
     expect(plain(panel)).toContain("1. Ваза — 1 200 ₽ · торгуется");
     expect(plain(panel)).toContain(
@@ -1913,6 +1911,20 @@ describe("final of the auctioneer", () => {
     expect(spaced(last(calls).text ?? "")).toBe(sold);
   });
 
+  // Повтор «Начать финал», когда лот уже открыт, — тот же исход, но без
+  // «Открыть первый лот»: первый лот уже открывали (PER-639).
+  it("drops the first-lot button on a repeated start of a running final", async () => {
+    const auction = frozen();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:g:${auctionToken}`));
+    await bot.handleUpdate(press(`v1:ac:n:${auctionToken}`));
+    await bot.handleUpdate(press(`v1:ac:g:${auctionToken}`));
+
+    expect(last(calls).text).toBe("<b>Финал начат</b>\n\nОткрой первый лот.");
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+  });
+
   it("confirms the sale again instead of closing when the hall bid after the confirmation", async () => {
     const auction = frozen();
     const { bot, calls } = harness("admin", auction);
@@ -1944,6 +1956,40 @@ describe("final of the auctioneer", () => {
     expect(dataOf(last(calls), "✔️ Да, продать")).not.toBe(yes);
   });
 
+  // Последний лот состава завершает аукцион (PER-639): исход говорит об этом
+  // со счётом продаж всего аукциона, а «Итоги» ведут в пульт.
+  it("says the auction is finished when the last lot of the lineup is sold", async () => {
+    const soldVase = finalist(vaseId, "Ваза", 120_000);
+    const auction = fakeAuction({
+      status: "final",
+      lots: [
+        {
+          ...soldVase,
+          lot: {
+            ...soldVase.lot,
+            status: { kind: "sold", winnerId: "someone", price: rub(120_000) },
+          },
+        },
+        finalist(mugId, "Кружка", 50_000, leaderId),
+      ],
+      lineup: [vaseId, mugId],
+      bids: [{ amount: rub(50_000), participantId: leaderId }],
+      names: { [leaderId]: "Бэтмен" },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Открыть следующий лот")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Продать")));
+    await bot.handleUpdate(press(dataOf(last(calls), "✔️ Да, продать")));
+
+    expect(spaced(last(calls).text ?? "")).toBe(
+      "<b>Лот продан</b>\n\n<b>Кружка</b>\n\nЦена: 500 ₽, покупатель — Бэтмен. Это был последний лот — аукцион завершён: 2 лота, 1 700 ₽.",
+    );
+    expect(labels(last(calls))).toEqual([["Итоги"], ["‹ Аукцион"]]);
+    expect(dataOf(last(calls), "Итоги")).toBe(consoleData);
+  });
+
   it("closes a lot without bids without a sale", async () => {
     const auction = fakeAuction({
       status: "final",
@@ -1962,10 +2008,13 @@ describe("final of the auctioneer", () => {
     );
     await bot.handleUpdate(press(dataOf(last(calls), "✔️ Да, закрыть")));
 
+    // Лот единственный в составе, то есть последний: исход говорит, что
+    // аукцион завершён, и «Итоги» ведут в пульт (PER-639).
     expect(last(calls).text).toBe(
-      "<b>Лот закрыт без продажи</b>\n\n<b>Кружка</b>\n\nСтавок не было.",
+      "<b>Лот закрыт без продажи</b>\n\n<b>Кружка</b>\n\nСтавок не было. Это был последний лот — аукцион завершён, продаж нет.",
     );
-    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    expect(dataOf(last(calls), "‹ Аукцион")).toBeDefined();
+    await bot.handleUpdate(press(dataOf(last(calls), "Итоги")));
     expect(plain(last(calls))).toContain("1. Кружка — не продан");
   });
 

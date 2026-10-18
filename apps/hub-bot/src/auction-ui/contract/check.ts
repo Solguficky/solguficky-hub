@@ -472,13 +472,23 @@ const raffleCall = (auctionId: string): PortCall => ({
   request: { viewer: CONTRACT_VIEWER, auctionId },
 });
 
-// Лента — только страницы лотов: розыгрыш стоит в корне аукциона (PER-644).
-const feedCalls = (auctionId: string, tokens: readonly string[]): PortCall[] =>
-  listCalls(auctionId, tokens);
+const summaryCall = (auctionId: string): PortCall => ({
+  port: "auction",
+  method: "getAuction",
+  request: { viewer: CONTRACT_VIEWER, auctionId },
+});
+
+// Лента — стадия аукциона и страницы лотов: розыгрыш стоит в корне аукциона
+// (PER-644), а стадия говорит, идёт ли финал (PER-639). Стадия стартует
+// первой, страницы — следом.
+const feedCalls = (
+  auctionId: string,
+  tokens: readonly string[],
+): PortCall[] => [summaryCall(auctionId), ...listCalls(auctionId, tokens)];
 
 // Карточка лота читает ленту своего аукциона ради соседей (PER-644): после
-// имени и отметки, теми же страницами, что лента.
-const CARD_CALLS = listCalls(CONTRACT_AUCTION_ID, ["", "p2"]);
+// имени и отметки, тем же чтением, что лента.
+const CARD_CALLS = feedCalls(CONTRACT_AUCTION_ID, ["", "p2"]);
 
 const getLotCall = (lotId: string, atLeastVersion?: number): PortCall => ({
   port: "auction",
@@ -2918,7 +2928,7 @@ const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
     auction: MANY_AUCTION,
     auctionCalls: [
       getLotCall(manyLot(7).lotId),
-      ...listCalls(MANY_AUCTION_ID, ["", "m2"]),
+      ...feedCalls(MANY_AUCTION_ID, ["", "m2"]),
     ],
     body: {
       blocks: [manyBlock(manyLot(7))],
@@ -2945,7 +2955,7 @@ const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
     auction: MANY_AUCTION,
     auctionCalls: [
       getLotCall(manyLot(8).lotId),
-      ...listCalls(MANY_AUCTION_ID, ["", "m2"]),
+      ...feedCalls(MANY_AUCTION_ID, ["", "m2"]),
     ],
     body: {
       blocks: [manyBlock(manyLot(8))],
@@ -2968,7 +2978,7 @@ const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
     auction: MANY_AUCTION,
     auctionCalls: [
       getLotCall(manyLot(0).lotId),
-      ...listCalls(MANY_AUCTION_ID, ["", "m2"]),
+      ...feedCalls(MANY_AUCTION_ID, ["", "m2"]),
     ],
     body: {
       blocks: [manyBlock(manyLot(0))],
@@ -2994,7 +3004,7 @@ const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
     },
     auctionCalls: [
       getLotCall(manyLot(0).lotId),
-      ...listCalls(MANY_AUCTION_ID, [""]),
+      ...feedCalls(MANY_AUCTION_ID, [""]),
     ],
     body: {
       blocks: [manyBlock(manyLot(0))],
@@ -3008,7 +3018,7 @@ const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
     auction: { lots: MANY_LOTS, pages: {} },
     auctionCalls: [
       getLotCall(manyLot(3).lotId),
-      ...listCalls(MANY_AUCTION_ID, [""]),
+      ...feedCalls(MANY_AUCTION_ID, [""]),
     ],
     body: {
       blocks: [manyBlock(manyLot(3))],
@@ -3302,7 +3312,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
     auction: PRE_TRADING_AUCTION,
     auctionCalls: [
       getLotCall(TIERED_SCHEDULED_LOT.lotId),
-      ...listCalls(PRE_TRADING_AUCTION_ID, [""]),
+      ...feedCalls(PRE_TRADING_AUCTION_ID, [""]),
     ],
     body: {
       blocks: [

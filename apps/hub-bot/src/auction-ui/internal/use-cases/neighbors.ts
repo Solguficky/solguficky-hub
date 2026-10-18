@@ -1,5 +1,10 @@
 import type { AuctionPort, LotView, Viewer } from "../../ports.js";
-import { FEED_PAGE_SIZE, loadFeed, sortForFeed } from "./open-feed.js";
+import {
+  FEED_PAGE_SIZE,
+  loadFeed,
+  orderForFeed,
+  readFinalLineup,
+} from "./open-feed.js";
 
 // Соседи лота в ленте для «‹ пред / след ›» карточки (PER-644). Порядок — тот
 // же, что у ленты: соседей считает её же сортировка, поэтому листание карточки
@@ -40,12 +45,16 @@ export async function readNeighbors(input: {
   lot: LotView;
 }): Promise<LotNeighbors> {
   try {
-    const lots = await loadFeed({
+    const feed = {
       auction: input.auction,
       viewer: input.viewer,
       auctionId: input.lot.auctionId,
-    });
-    return neighborsOf(sortForFeed(lots), input.lot.lotId);
+    };
+    const [lineup, lots] = await Promise.all([
+      readFinalLineup(feed),
+      loadFeed(feed),
+    ]);
+    return neighborsOf(orderForFeed(lots, lineup), input.lot.lotId);
   } catch {
     return {};
   }

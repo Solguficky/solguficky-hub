@@ -82,7 +82,8 @@ function sourceLabel(source: ApplicationCard["source"]): string {
   }
 }
 
-function plural(count: number, forms: [string, string, string]): string {
+/** Число со словом в нужной форме: «1 лот», «3 лота», «5 лотов». */
+export function plural(count: number, forms: [string, string, string]): string {
   const tens = count % 100;
   const ones = count % 10;
   const form =

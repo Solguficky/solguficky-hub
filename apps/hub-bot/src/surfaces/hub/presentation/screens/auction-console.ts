@@ -54,6 +54,7 @@ import {
   consoleWindowsData,
   defaultConsoleSort,
 } from "../parse-callback.js";
+import { plural } from "./application.js";
 import { money, truncate } from "./auction.js";
 import {
   buttonText,
@@ -313,6 +314,19 @@ function inFinal(console: AuctionConsoleView): boolean {
   return console.status === "lineup-frozen" || console.status === "final";
 }
 
+// Финал идёт, а ведущий ещё не открыл ни одного лота: активного нет, и все
+// лоты состава по-прежнему ждут очереди.
+function noLotOpened(console: AuctionConsoleView): boolean {
+  const lineup = console.lineup;
+  if (console.status !== "final" || lineup === undefined) return false;
+  if (lineup.activeLotId !== undefined) return false;
+  return lineup.order.every(
+    (lotId) =>
+      console.lots.find((each) => each.lot.lotId === lotId)?.lot.status.kind ===
+      "held",
+  );
+}
+
 function lineupLines(console: AuctionConsoleView): string[] {
   const active = console.lineup?.activeLotId;
   return (console.lineup?.order ?? []).map((lotId, index) => {
@@ -562,10 +576,18 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   const auction = uuidToToken(console.auctionId);
   // Исход команды — свой экран (PER-472): пульт открывает «‹ Пульт».
   if (view.note !== undefined) {
+    const keyboard = new InlineKeyboard();
+    // Начатый финал ведёт сразу к первому лоту (PER-639): тот же вход, что
+    // «Открыть следующий лот» пульта, без лишнего тапа через пульт. Повтор
+    // «Начать финал» посреди финала отвечает тем же исходом — там первый лот
+    // уже открывали, и кнопки нет.
+    if (view.note === "final-started" && noLotOpened(console)) {
+      keyboard.text("Открыть первый лот", consoleNextLotData(auction));
+    }
     return {
       id: "outcome",
       text: noteText(view, view.note),
-      keyboard: withNav(new InlineKeyboard(), {
+      keyboard: withNav(keyboard, {
         name: "Пульт",
         data: consoleViewData(auction, view.page, view.sort),
       }),
@@ -936,26 +958,44 @@ export function closedScreen(closed: {
   closure:
     | { kind: "sold"; price: LotAmount; buyerName?: string | undefined }
     | { kind: "unsold" };
+  last?: { soldLots: number; total: LotAmount } | undefined;
 }): ShownScreen {
-  const { closure } = closed;
+  const { closure, last } = closed;
   const buyer =
     closure.kind === "sold" && closure.buyerName !== undefined
       ? `, покупатель — ${closure.buyerName}`
       : "";
+  const pult = consoleViewData(uuidToToken(closed.auctionId));
+  // Последний лот состава завершает аукцион (PER-639): исход говорит об этом
+  // сам, а «Итоги» ведут в пульт завершённого аукциона. Возврат тогда — в
+  // аукцион, как у самого пульта, чтобы две кнопки не вели в одно место.
+  const keyboard = new InlineKeyboard();
+  if (last !== undefined) keyboard.text("Итоги", pult);
   return {
     id: "outcome",
     text: outcomeText(
-      closure.kind === "sold"
-        ? `Лот продан. Цена: ${money(closure.price)}${buyer}.`
-        : "Лот закрыт без продажи. Ставок не было.",
+      [
+        closure.kind === "sold"
+          ? `Лот продан. Цена: ${money(closure.price)}${buyer}.`
+          : "Лот закрыт без продажи. Ставок не было.",
+        ...(last === undefined ? [] : [finishedLine(last)]),
+      ].join(" "),
       truncate(closed.title ?? untitled, titleLimit),
     ),
-    keyboard: withNav(new InlineKeyboard(), {
-      name: "Пульт",
-      data: consoleViewData(uuidToToken(closed.auctionId)),
-    }),
+    keyboard: withNav(
+      keyboard,
+      last === undefined
+        ? { name: "Пульт", data: pult }
+        : toAuctionRoot(closed.auctionId),
+    ),
     format: "HTML",
   };
+}
+
+function finishedLine(last: { soldLots: number; total: LotAmount }): string {
+  return last.soldLots === 0
+    ? "Это был последний лот — аукцион завершён, продаж нет."
+    : `Это был последний лот — аукцион завершён: ${plural(last.soldLots, ["лот", "лота", "лотов"])}, ${money(last.total)}.`;
 }
 
 /** Причина отказа ответу о следующей цене: заголовок экрана исхода. */

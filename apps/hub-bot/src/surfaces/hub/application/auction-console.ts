@@ -322,6 +322,34 @@ function quoted(
         quote.minorUnits === status.currentPrice.minorUnits;
 }
 
+// Итог аукциона, когда закрыт последний лот состава (PER-639): позиция —
+// последняя в замороженном составе, а состав после заморозки не меняется.
+// Продажи считаются по пульту, прочитанному до команды, и само закрытие
+// добавляется к ним: в прочитанном пульте лот ещё торгуется.
+function lastOfLineup(
+  console: AuctionConsoleView,
+  position: number,
+  entry: ConsoleLot,
+  closed: LotClosure,
+): { soldLots: number; total: LotAmount } | undefined {
+  const order = console.lineup?.order ?? [];
+  if (order.length === 0 || position !== order.length - 1) return undefined;
+  const prices = console.lots.flatMap((each) =>
+    each.lot.lotId !== entry.lot.lotId && each.lot.status.kind === "sold"
+      ? [each.lot.status.price]
+      : [],
+  );
+  if (closed.kind === "sold") prices.push(closed.price);
+  const currency = prices[0]?.currency ?? lotCurrency;
+  return {
+    soldLots: prices.length,
+    total: {
+      minorUnits: prices.reduce((sum, price) => sum + price.minorUnits, 0),
+      currency,
+    },
+  };
+}
+
 function titled(entry: ConsoleLot): { title?: string } {
   const title = entry.lot.card?.title;
   return title === undefined ? {} : { title };
@@ -1346,13 +1374,16 @@ export function createAuctionConsole(
   // состоялась, и сбой чтения имён её не отменяет.
   async function closure(
     request: Extract<AuctionConsoleRequest, { intent: "close-final-lot" }>,
-    entry: ConsoleLot,
+    found: { console: AuctionConsoleView; entry: ConsoleLot },
     closed: LotClosure,
   ): Promise<ExecuteResult> {
+    const { console, entry } = found;
+    const last = lastOfLineup(console, request.position, entry, closed);
     const outcome = {
       kind: "final-lot-closed" as const,
       auctionId: request.auctionId,
       ...titled(entry),
+      ...(last === undefined ? {} : { last }),
     };
     if (closed.kind === "unsold") {
       return { ...outcome, closure: { kind: "unsold" } };
@@ -1406,7 +1437,7 @@ export function createAuctionConsole(
     );
     switch (closed.kind) {
       case "ok":
-        return closure(request, found.entry, closed.closure);
+        return closure(request, found, closed.closure);
       case "lot-not-open":
         return after(request, "final-lot-closed");
       case "deadline-not-reached":
