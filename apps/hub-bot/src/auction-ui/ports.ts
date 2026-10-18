@@ -341,6 +341,8 @@ export type RaffleView = {
   status: RaffleStatusView;
   // Момент RFC 3339 в UTC: когда закрывается регистрация.
   closesAt: string;
+  // Момент RFC 3339 в UTC: когда прошла жеребьёвка; нет до неё и при пустом пуле.
+  drawnAt?: string;
   // SHA-256 seed строчным hex и раунд маяка drand; нет у непроведённого.
   commitment?: string;
   beaconRound?: number;

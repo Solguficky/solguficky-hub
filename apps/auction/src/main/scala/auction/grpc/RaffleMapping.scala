@@ -18,6 +18,7 @@ object RaffleMapping {
       auctionId = auctionId.toString,
       status = status(view.status),
       closesAt = LotValues.instant(view.closesAt),
+      drawnAt = view.drawnAt.map(LotValues.instant),
       commitment = view.commitment.getOrElse(""),
       beaconRound = view.round.getOrElse(0L),
       registered = view.registered,

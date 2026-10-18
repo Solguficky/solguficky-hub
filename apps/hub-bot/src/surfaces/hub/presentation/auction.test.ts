@@ -1364,7 +1364,10 @@ describe("raffle among the participants", () => {
 
   it("registers from the auction root and shows the result with the recomputation", async () => {
     const auction = fakeAuction({ existing: true, raffle: openRaffle });
-    const { bot, calls } = harness("member", auction);
+    // Пояс сообщества задан явно: момент жеребьёвки проверяется по нему (PER-641).
+    const { bot, calls } = harness("member", auction, {
+      communityTimeZone: "Europe/Moscow",
+    });
 
     await bot.handleUpdate(press(rootData));
     const raffleData = data(lastScreen(calls), "Розыгрыш");
@@ -1395,6 +1398,7 @@ describe("raffle among the participants", () => {
     auction.raffle.current = {
       ...openRaffle,
       status: "drawn",
+      drawnAt: "2026-10-29T22:30:00Z",
       registered: true,
       tickets: [{ number: 1, displayName: "@owl" }],
       myTicket: 1,
@@ -1410,6 +1414,9 @@ describe("raffle among the participants", () => {
     expect(result.text).toContain("Выиграл билет №1 — @owl.");
     expect(result.text).toContain("Это твой билет.");
     expect(result.text).toContain("Билетов: 1");
+    // Момент жеребьёвки во времени сообщества (PER-641): 22:30 UTC — уже
+    // 30 октября по Москве.
+    expect(result.text).toContain("Жеребьёвка: 30 октября");
     expect(result.text).not.toContain("cd".repeat(32));
     expect(result.text).not.toContain("Как проверить итог");
     expect(labels(result)).toEqual([
@@ -1503,6 +1510,25 @@ describe("raffle screens in the hub", () => {
       ["Как проверить честность"],
       ["‹ Аукцион"],
     ]);
+  });
+
+  // До жеребьёвки строки нет (PER-641).
+  it("shows no draw moment before the draw", async () => {
+    for (const raffle of [
+      { ...base, status: "closing" as const },
+      { ...base, ...pool, status: "awaiting-beacon" as const },
+      {
+        ...base,
+        status: "no-tickets" as const,
+        reveal: { seed: "cd".repeat(32) },
+      },
+    ]) {
+      const auction = fakeAuction({ existing: true, raffle });
+      const { bot, calls } = harness("member", auction);
+
+      await bot.handleUpdate(press(raffleData));
+      expect(lastScreen(calls).text).not.toContain("Жеребьёвка: ");
+    }
   });
 
   // Экран проверки в каждом статусе уходит в Telegram и проходит линтер.

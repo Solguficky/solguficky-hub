@@ -2779,6 +2779,7 @@ describe("raffle among the participants", () => {
     service.set({
       ...openRaffle,
       status: "drawn",
+      drawnAt: "2026-10-29T22:30:00Z",
       registered: true,
       tickets: [
         { number: 1, displayName: "@owl" },
@@ -2798,6 +2799,9 @@ describe("raffle among the participants", () => {
     expect(result.text).toContain("Выиграл билет №2 — Сова*");
     expect(result.text).toContain("Билетов: 2");
     expect(result.text).toContain("Твой билет: №1");
+    // Момент жеребьёвки во времени сообщества (PER-641): 22:30 UTC — уже
+    // 30 октября по Москве.
+    expect(result.text).toContain("Жеребьёвка: 30 октября");
     expect(result.text).not.toContain("cd".repeat(32));
     expect(result.text).not.toContain("python3 -c");
     expect(result.keyboard.flat().map((b) => b.text)).toEqual([
@@ -2827,6 +2831,8 @@ describe("raffle among the participants", () => {
     );
     const screen = lastScreen(calls);
     expect(screen.text).toContain("Регистрация закрыта");
+    // До жеребьёвки строки момента нет (PER-641).
+    expect(screen.text).not.toContain("Жеребьёвка: ");
     expect(screen.keyboard.flat().map((b) => b.text)).toEqual([
       "Как проверить честность",
       "‹ Аукцион",

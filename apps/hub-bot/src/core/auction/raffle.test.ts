@@ -45,6 +45,7 @@ describe("raffle answers", () => {
           auctionId: AUCTION_ID,
           status: RaffleStatus.DRAWN,
           closesAt: "2026-10-29T18:00:00Z",
+          drawnAt: "2026-10-29T22:30:00Z",
           commitment: "ab".repeat(32),
           beaconRound: 7n,
           tickets: [{ number: 1, displayName: "@owl" }, { number: 2 }],
@@ -59,9 +60,28 @@ describe("raffle answers", () => {
       ),
     ).toMatchObject({
       status: "drawn",
+      drawnAt: "2026-10-29T22:30:00Z",
       tickets: [{ number: 1, displayName: "@owl" }, { number: 2 }],
       myTicket: 2,
       reveal: { seed: "cd".repeat(32), winningTicket: 1 },
+    });
+  });
+
+  // Момент жеребьёвки есть только у проведённой (PER-641): ответ без него —
+  // не пустая строка, а отсутствующее поле.
+  it("drops the draw moment of a drawn raffle that does not carry one", () => {
+    const raffle = raffleOf(
+      create(RaffleSchema, {
+        auctionId: AUCTION_ID,
+        status: RaffleStatus.DRAWN,
+        closesAt: "2026-10-29T18:00:00Z",
+        tickets: [{ number: 1 }],
+      }),
+    );
+    expect(raffle).not.toHaveProperty("drawnAt");
+    expect(raffle).toMatchObject({
+      status: "drawn",
+      closesAt: "2026-10-29T18:00:00Z",
     });
   });
 

@@ -484,6 +484,7 @@ const raffles: readonly (RaffleView | undefined)[] = [
   raffleOf("drawn", {
     registered: true,
     ...pool,
+    drawnAt: "2026-10-29T22:30:00Z",
     reveal: {
       seed: "cd".repeat(32),
       randomness: "ef".repeat(32),

@@ -665,6 +665,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       accepted.commitment shouldBe raffleSeed.commitment
       accepted.beaconRound shouldBe 42L
       accepted.reveal shouldBe None
+      accepted.drawnAt shouldBe None
       accepted.toProtoString should not include raffleSeed.hex
       raffles.reached shouldBe Vector(Register(ViewerId, OpId(UUID.fromString(raffleOp))))
     }
@@ -700,6 +701,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       read.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_DRAWN
       read.tickets shouldBe Seq(wire.RaffleTicket(1, Some("Кот*")), wire.RaffleTicket(2, None))
       read.myTicket shouldBe Some(2)
+      read.drawnAt shouldBe Some(Instant.EPOCH.toString)
       read.getReveal.seed shouldBe raffleSeed.hex
       read.getReveal.winningTicket shouldBe Some(Draw.winner(raffleSeed, 2, randomness))
       service(Unreachable, raffles = Raffles(Raffle.initial))
