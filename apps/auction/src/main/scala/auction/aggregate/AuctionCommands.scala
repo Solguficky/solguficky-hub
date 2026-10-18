@@ -24,10 +24,12 @@ import scala.concurrent.Future
 
 /**
  * Ответ Meetups на `CheckMeetupAuthority` (ADR-051) в домене Auction. `Unavailable` — право сейчас не подтвердить: это
- * статус ответа, а не отказ, и события он не порождает. Сбой самой проверки — неудачное `Future`.
+ * статус ответа, а не отказ, и события он не порождает. Сбой самой проверки — неудачное `Future`. `Granted` несёт
+ * состояние сходки, если Meetups его прислал: решают по нему ворота ([[MeetupGate]]), а не клиент, потому что чтению
+ * пульта и ставке зала оно не нужно.
  */
 enum Authority {
-  case Granted
+  case Granted(standing: Option[MeetupStanding])
   case NotAdministrator
   case MeetupNotFound
   case Unavailable
@@ -49,13 +51,15 @@ trait MeetupAuthority {
 }
 
 /**
- * Почему команда аукциона не дошла до записи: так ответил Meetups, аукциона нет, реестр заморожен стартом торгов или
- * лот, названный в `AddLot`, уже родился в другом аукционе — такой `lot_id` край прислать не должен, и это дефект
- * вызывающего, а не отказ человеку.
+ * Почему команда аукциона не дошла до записи: так ответил Meetups, сходка отменена или скрыта ([[MeetupGate]]),
+ * аукциона нет, реестр заморожен стартом торгов или лот, названный в `AddLot`, уже родился в другом аукционе — такой
+ * `lot_id` край прислать не должен, и это дефект вызывающего, а не отказ человеку.
  */
 enum Denial {
   case NotAdministrator
   case MeetupNotFound
+  case MeetupCancelled
+  case MeetupHidden
   case Unavailable
   case AuctionNotFound
   case LotsFrozen
@@ -174,8 +178,9 @@ enum ClosingRefusal {
  * Команды администратора аукциону (ADR-047, дополнение 2026-10-03). Порядок фиксирован:
  *
  *   1. повтор того же `op_id` получает исходный ответ раньше проверки права; 2. у всех команд, кроме рождения, аукцион
- *      без журнала — `AuctionNotFound` до обращения к Meetups; 3. право у Meetups, и только после `Granted` — команда
- *      агрегату. Entity сверяет `seen` ещё раз, поэтому повтор, принятый между шагами, тоже получает исходный ответ.
+ *      без журнала — `AuctionNotFound` до обращения к Meetups; 3. право у Meetups и ворота по состоянию сходки из его
+ *      ответа ([[MeetupGate]], ADR-047, дополнение 2026-10-12), и только после них — команда агрегату. Entity сверяет
+ *      `seen` ещё раз, поэтому повтор, принятый между шагами, тоже получает исходный ответ.
  *
  * Открытие торгов командой здесь заканчивается записью события: лоты открывает entity аукциона, и ответ их не ждёт.
  * Повтор открытия с тем же `op_id` идёт в entity мимо Meetups — события он не пишет, но доспрашивает лоты, не
@@ -216,7 +221,7 @@ final class AuctionCommands(
     auctions.inspect(auctionId, opId).flatMap {
       case Inspection.Repeated(original) => Future.successful(Right(Drafted(auctionId, !drafting(original.event))))
       case Inspection.Absent | Inspection.Present(_, _) =>
-        authorized(meetup, person, (denial: Denial) => denial) {
+        authorized(meetup, person, MeetupGate.NotCancelled, (denial: Denial) => denial) {
           auctions
             .draft(auctionId, DraftAuction(meetup, opId), Initiator.Operator(person))
             .map {
@@ -236,7 +241,7 @@ final class AuctionCommands(
         }
       case Inspection.Absent => Future.successful(Left(Denial.AuctionNotFound))
       case Inspection.Present(meetup, registryOpen) =>
-        authorized(meetup, person, (denial: Denial) => denial) {
+        authorized(meetup, person, MeetupGate.NotCancelled, (denial: Denial) => denial) {
           // Замороженный реестр отказывает до рождения лота: иначе лот остался бы с журналом, но вне реестра. Старт
           // торгов между `Inspect` и командой это не закрывает: лот успевает родиться, а реестр уже отвечает
           // `LotsFrozen`. Такой лот вне реестра модель терпит так же, как лот после оборванного `AddLot`.
@@ -264,7 +269,7 @@ final class AuctionCommands(
       case Inspection.Repeated(_) => Future.successful(Right(()))
       case Inspection.Absent => Future.successful(Left(RemovalRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, RemovalRefusal.Denied(_)) {
+        authorized(meetup, person, MeetupGate.NotCancelled, RemovalRefusal.Denied(_)) {
           auctions.removeLot(auctionId, RemoveLot(lot, opId), Initiator.Operator(person)).map {
             case Left(RemoveLotRejected.AuctionNotFound) => Left(RemovalRefusal.Denied(Denial.AuctionNotFound))
             case Left(RemoveLotRejected.LotsFrozen) => Left(RemovalRefusal.Denied(Denial.LotsFrozen))
@@ -284,7 +289,7 @@ final class AuctionCommands(
       case Inspection.Repeated(_) => Future.successful(Right(()))
       case Inspection.Absent => Future.successful(Left(SchedulingRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, SchedulingRefusal.Denied(_)) {
+        authorized(meetup, person, MeetupGate.NotCancelled, SchedulingRefusal.Denied(_)) {
           auctions.schedule(auctionId, ScheduleAuction(config, opId), Initiator.Operator(person)).map {
             case Left(ScheduleAuctionRejected.AuctionNotFound) =>
               Left(SchedulingRefusal.Denied(Denial.AuctionNotFound))
@@ -306,7 +311,7 @@ final class AuctionCommands(
         }
       case Inspection.Absent => Future.successful(Left(OpeningRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, OpeningRefusal.Denied(_))(start(auctionId, opId, person))
+        authorized(meetup, person, MeetupGate.Published, OpeningRefusal.Denied(_))(start(auctionId, opId, person))
     }
 
   /**
@@ -318,7 +323,7 @@ final class AuctionCommands(
       case Inspection.Repeated(_) => Future.successful(Right(()))
       case Inspection.Absent => Future.successful(Left(DiscardRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, DiscardRefusal.Denied(_)) {
+        authorized(meetup, person, MeetupGate.Unconditional, DiscardRefusal.Denied(_)) {
           auctions.discard(auctionId, DiscardAuction(opId), Initiator.Operator(person)).map {
             case Left(DiscardAuctionRejected.AuctionNotFound) => Left(DiscardRefusal.Denied(Denial.AuctionNotFound))
             case Left(DiscardAuctionRejected.AuctionAlreadyStarted) => Left(DiscardRefusal.AuctionAlreadyStarted)
@@ -341,7 +346,9 @@ final class AuctionCommands(
         }
       case Inspection.Absent => Future.successful(Left(CancellationRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, CancellationRefusal.Denied(_))(cancelled(auctionId, opId, person))
+        authorized(meetup, person, MeetupGate.Unconditional, CancellationRefusal.Denied(_))(
+          cancelled(auctionId, opId, person)
+        )
     }
 
   def scheduleLot(
@@ -357,7 +364,7 @@ final class AuctionCommands(
         Future.successful(Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.OpIdTaken)))
       case Inspection.Absent => Future.successful(Left(LotSchedulingRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, LotSchedulingRefusal.Denied(_)) {
+        authorized(meetup, person, MeetupGate.NotCancelled, LotSchedulingRefusal.Denied(_)) {
           val command = ScheduleAuctionLot(lot, startingPrice, stepPolicy, opId)
           auctions.scheduleLot(auctionId, command, Initiator.Operator(person)).map {
             case Right(()) => Right(())
@@ -402,7 +409,7 @@ final class AuctionCommands(
       case Inspection.Repeated(_) => Future.successful(Left(AskRefusal.ByLot(AdvanceAskRejected.OpIdTaken)))
       case Inspection.Absent => Future.successful(Left(AskRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, AskRefusal.Denied(_)) {
+        authorized(meetup, person, MeetupGate.NotCancelled, AskRefusal.Denied(_)) {
           auctions.advanceAsk(auctionId, AdvanceLotAsk(lot, newAsk, opId), Initiator.Operator(person)).map {
             case Right(()) => Right(())
             case Left(AdvanceLotAskRejected.AuctionNotFound) => Left(AskRefusal.Denied(Denial.AuctionNotFound))
@@ -423,7 +430,7 @@ final class AuctionCommands(
       case Inspection.Repeated(_) => Future.successful(Right(()))
       case Inspection.Absent => Future.successful(Left(LineupRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, LineupRefusal.Denied(_)) {
+        authorized(meetup, person, MeetupGate.NotCancelled, LineupRefusal.Denied(_)) {
           auctions.freezeFinalLineup(auctionId, FreezeFinalLineup(order, opId), Initiator.Operator(person)).map {
             case Right(_) => Right(())
             case Left(FreezeFinalLineupRejected.AuctionNotFound) => Left(LineupRefusal.Denied(Denial.AuctionNotFound))
@@ -441,7 +448,7 @@ final class AuctionCommands(
       case Inspection.Repeated(_) => Future.successful(Right(()))
       case Inspection.Absent => Future.successful(Left(FinalStartRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, FinalStartRefusal.Denied(_)) {
+        authorized(meetup, person, MeetupGate.NotCancelled, FinalStartRefusal.Denied(_)) {
           auctions.startFinal(auctionId, StartFinal(opId), Initiator.Operator(person)).map {
             case Right(_) => Right(())
             case Left(StartFinalRejected.AuctionNotFound) => Left(FinalStartRefusal.Denied(Denial.AuctionNotFound))
@@ -460,7 +467,7 @@ final class AuctionCommands(
         }
       case Inspection.Absent => Future.successful(Left(NextLotRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, NextLotRefusal.Denied(_)) {
+        authorized(meetup, person, MeetupGate.NotCancelled, NextLotRefusal.Denied(_)) {
           auctions.startNextLot(auctionId, StartNextLot(opId), Initiator.Operator(person)).map {
             case Right(lot) => Right(lot)
             case Left(StartNextLotRejected.AuctionNotFound) => Left(NextLotRefusal.Denied(Denial.AuctionNotFound))
@@ -487,7 +494,7 @@ final class AuctionCommands(
         Future.successful(Left(ClosingRefusal.Rejected(CloseAuctionLotRejected.OpIdTaken)))
       case Inspection.Absent => Future.successful(Left(ClosingRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, ClosingRefusal.Denied(_)) {
+        authorized(meetup, person, MeetupGate.NotCancelled, ClosingRefusal.Denied(_)) {
           auctions.closeLot(auctionId, CloseAuctionLot(lot, opId), Initiator.Operator(person)).map {
             case Right(ending) => Right(ending)
             case Left(CloseAuctionLotRejected.AuctionNotFound) => Left(ClosingRefusal.Denied(Denial.AuctionNotFound))
@@ -498,10 +505,10 @@ final class AuctionCommands(
 
   /**
    * Право на чтение пульта администратора (PER-320): тот же вопрос Meetups, что у команд, но без записи и без окна
-   * `seen` — чтению нечего повторять.
+   * `seen` — чтению нечего повторять. Ворот по состоянию сходки нет: пульт отменённой сходки показывает её аукцион.
    */
   def authorize(meetup: MeetupId, person: ParticipantId): Future[Either[Denial, Unit]] =
-    authorized(meetup, person, (denial: Denial) => denial)(Future.successful(Right(())))
+    authorized(meetup, person, MeetupGate.Unconditional, (denial: Denial) => denial)(Future.successful(Right(())))
 
   /**
    * Право вести торги аукциона — у Meetups, как у остальных команд администратора: ставку зала заносит помощник
@@ -529,7 +536,7 @@ final class AuctionCommands(
       case Inspection.Repeated(_) => Future.successful(Left(FinalChoiceRefusal.ByLot(opIdTaken)))
       case Inspection.Absent => Future.successful(Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, FinalChoiceRefusal.Denied(_)) {
+        authorized(meetup, person, MeetupGate.NotCancelled, FinalChoiceRefusal.Denied(_)) {
           run.map {
             case Right(()) => Right(())
             case Left(FinalChoiceRejected.AuctionNotFound) => Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound))
@@ -564,12 +571,16 @@ final class AuctionCommands(
       case Right(_) => Right(())
     }
 
-  /** Любой ответ Meetups, кроме `Granted`, — отказ, и до агрегата команда не доходит. */
-  private def authorized[L, R](meetup: MeetupId, person: ParticipantId, deny: Denial => L)(
+  /**
+   * Любой ответ Meetups, кроме `Granted`, — отказ, и до агрегата команда не доходит; после `Granted` то же решают
+   * ворота по состоянию сходки из ответа.
+   */
+  private def authorized[L, R](meetup: MeetupId, person: ParticipantId, gate: MeetupGate, deny: Denial => L)(
       run: => Future[Either[L, R]]
   ): Future[Either[L, R]] =
     authority.check(meetup, person, correlation).flatMap {
-      case Authority.Granted => run
+      case Authority.Granted(standing) =>
+        MeetupGate.admit(gate, standing).fold(run)(denial => Future.successful(Left(deny(denial))))
       case Authority.NotAdministrator => Future.successful(Left(deny(Denial.NotAdministrator)))
       case Authority.MeetupNotFound => Future.successful(Left(deny(Denial.MeetupNotFound)))
       case Authority.Unavailable => Future.successful(Left(deny(Denial.Unavailable)))

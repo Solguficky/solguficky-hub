@@ -1068,6 +1068,27 @@ describe("auction console adapter", () => {
     ).resolves.not.toHaveProperty("raffle");
   });
 
+  it("reads a start refused for a cancelled or a hidden meetup as its own answer", async () => {
+    for (const [reason, kind] of [
+      ["meetupCancelled", "meetup-cancelled"],
+      ["meetupHidden", "meetup-hidden"],
+    ] as const) {
+      const started = adapter({
+        startPrebidding: async () =>
+          create(StartPrebiddingResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+      });
+
+      await expect(
+        started.startPrebidding(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+  });
+
   it("reads a discarded auction, a started week and a missing auction as answers", async () => {
     const sent: unknown[] = [];
     const accepted = adapter({

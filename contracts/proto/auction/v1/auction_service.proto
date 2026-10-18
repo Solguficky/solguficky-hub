@@ -695,6 +695,7 @@ message DraftAuctionRefusal {
   oneof reason {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
   }
 }
 
@@ -729,6 +730,7 @@ message AddLotRefusal {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
     LotsFrozen lots_frozen = 3;
+    MeetupCancelled meetup_cancelled = 4;
   }
 }
 
@@ -763,6 +765,7 @@ message RemoveLotRefusal {
     MeetupNotFound meetup_not_found = 2;
     LotsFrozen lots_frozen = 3;
     LotNotInAuction lot_not_in_auction = 4;
+    MeetupCancelled meetup_cancelled = 5;
   }
 }
 
@@ -771,6 +774,12 @@ message NotMeetupAdministrator {}
 
 // The meetup does not exist for the viewer. Only an administrator learns it.
 message MeetupNotFound {}
+
+// The meetup of the auction is cancelled.
+message MeetupCancelled {}
+
+// The meetup of the auction is hidden from publication.
+message MeetupHidden {}
 
 // The registry of the auction and the trading conditions of its lots are frozen:
 // prebidding has started.
@@ -824,6 +833,7 @@ message ScheduleLotRefusal {
     SchedulingClosed scheduling_closed = 5;
     StepPolicyInvalid step_policy_invalid = 6;
     CurrencyMismatch currency_mismatch = 7;
+    MeetupCancelled meetup_cancelled = 8;
   }
 }
 
@@ -868,6 +878,7 @@ message ScheduleAuctionRefusal {
     MeetupNotFound meetup_not_found = 2;
     ConfigInvalid config_invalid = 3;
     AuctionAlreadyStarted auction_already_started = 4;
+    MeetupCancelled meetup_cancelled = 5;
   }
 }
 
@@ -984,6 +995,8 @@ message StartPrebiddingRefusal {
     MeetupNotFound meetup_not_found = 2;
     AuctionNotScheduled auction_not_scheduled = 3;
     AnotherAuctionActive another_auction_active = 4;
+    MeetupCancelled meetup_cancelled = 5;
+    MeetupHidden meetup_hidden = 6;
   }
 }
 
@@ -1105,6 +1118,7 @@ message SelectForFinalRefusal {
     AlreadyMarkedForFinal already_marked_for_final = 7;
     DeadlinePassed deadline_passed = 8;
     SelectionNotApplicable selection_not_applicable = 9;
+    MeetupCancelled meetup_cancelled = 10;
   }
 }
 
@@ -1143,6 +1157,7 @@ message DeselectForFinalRefusal {
     NotInOnlinePhase not_in_online_phase = 6;
     NotMarkedForFinal not_marked_for_final = 7;
     DeadlinePassed deadline_passed = 8;
+    MeetupCancelled meetup_cancelled = 9;
   }
 }
 
@@ -1196,6 +1211,7 @@ message FreezeFinalLineupRefusal {
     NotInBreak not_in_break = 3;
     LineupEmpty lineup_empty = 4;
     LineupMismatch lineup_mismatch = 5;
+    MeetupCancelled meetup_cancelled = 6;
   }
 }
 
@@ -1241,6 +1257,7 @@ message StartFinalRefusal {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
     LineupNotFrozen lineup_not_frozen = 3;
+    MeetupCancelled meetup_cancelled = 4;
   }
 }
 
@@ -1281,6 +1298,7 @@ message StartNextLotRefusal {
     NotInFinal not_in_final = 3;
     AnotherLotActive another_lot_active = 4;
     LineupExhausted lineup_exhausted = 5;
+    MeetupCancelled meetup_cancelled = 6;
   }
 }
 
@@ -1334,6 +1352,7 @@ message AdvanceAskRefusal {
     LotNotOpen lot_not_open = 4;
     AskBelowCurrentPrice ask_below_current_price = 5;
     CurrencyMismatch currency_mismatch = 6;
+    MeetupCancelled meetup_cancelled = 7;
   }
 }
 
@@ -1383,6 +1402,7 @@ message CloseLotRefusal {
     LotNotInAuction lot_not_in_auction = 3;
     LotNotOpen lot_not_open = 4;
     DeadlineNotReached deadline_not_reached = 5;
+    MeetupCancelled meetup_cancelled = 6;
   }
 }
 

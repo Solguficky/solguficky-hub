@@ -213,6 +213,13 @@ object AuctionEntity {
   ) extends Command
 
   /**
+   * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, инициатор — планировщик. Что делать,
+   * решает агрегат: удаление идёт путём `Discard`, отмена — путём `Cancel`, под тем же `op_id`, поэтому прогнозы, лоты,
+   * розыгрыш и слот следуют за ними так же. Ответ — после записи или без неё; отказов нет.
+   */
+  final case class InheritCancellation(command: ApplyMeetupCancelled, replyTo: ActorRef[AuctionAnswer]) extends Command
+
+  /**
    * Условия торгов лоту реестра — `ScheduleLot`, идущий через аукцион; `PlanLot` — имя сообщения, как `LotEntity.Plan`
    * у лота. События аукцион не пишет: решает, можно ли ещё менять условия, и шлёт команду лоту. Ответ приходит после
    * ответа лота; лот не ответил — ответа нет, и повтор с тем же `op_id` узнаёт лот.
@@ -355,11 +362,14 @@ object AuctionEntity {
       answer: Try[Done]
   ) extends Command
 
-  /** Ответ прогнозов на удаление вместе с удалением аукциона, которое его ждёт; неудача — ответа нет. */
+  /**
+   * Ответ прогнозов на удаление вместе с удалением аукциона, которое его ждёт, и тем, кому отдать его ответ; неудача —
+   * ответа нет.
+   */
   private[entity] final case class PredictionsWiped(
       command: DiscardAuction,
       initiator: Initiator,
-      replyTo: ActorRef[Either[DiscardAuctionRejected, AuctionAnswer]],
+      reply: Either[DiscardAuctionRejected, AuctionAnswer] => Unit,
       answer: Try[Done]
   ) extends Command
 
@@ -676,10 +686,10 @@ object AuctionEntity {
             decision: Either[DiscardAuctionRejected, AuctionDecision],
             discard: DiscardAuction,
             initiator: Initiator,
-            replyTo: ActorRef[Either[DiscardAuctionRejected, AuctionAnswer]]
+            reply: Either[DiscardAuctionRejected, AuctionAnswer] => Unit
         ): EffectBuilder[StoredAuctionEvent, State] =
           decision match {
-            case Left(rejected) => Effect.none.thenRun(_ => replyTo ! Left(rejected))
+            case Left(rejected) => Effect.none.thenRun(_ => reply(Left(rejected)))
             case Right(accepted) =>
               record(state.auction, accepted, discard.opId, initiator, clock, newId) { (_, answer) =>
                 accepted match {
@@ -695,15 +705,61 @@ object AuctionEntity {
                     )(ResultsDiscarded(_))
                   case AuctionDecision.Repeated(_) | AuctionDecision.Unchanged => ()
                 }
-                replyTo ! Right(answer)
+                reply(Right(answer))
               }
+          }
+
+        // Прогнозы удаляются до записи удаления: удалённый аукцион ничего не переспрашивает, и удаление, потерянное
+        // после записи, оставило бы старые прогнозы аукциону, рождённому заново. До планирования прогнозов нет.
+        def discarding(
+            state: State,
+            discard: DiscardAuction,
+            initiator: Initiator,
+            reply: Either[DiscardAuctionRejected, AuctionAnswer] => Unit
+        ): Effect[StoredAuctionEvent, State] =
+          (state.auction.state, Auction.decide(state.auction, discard)) match {
+            case (AuctionState.Scheduled(_), Right(AuctionDecision.Accepted(_))) =>
+              wiping = true
+              Effect.none.thenRun { _ =>
+                context.pipeToSelf(askPredictions(predictions.discard(auctionId)))(
+                  PredictionsWiped(discard, initiator, reply, _)
+                )
+              }
+            case (_, decision) => discarded(state, decision, discard, initiator, reply)
+          }
+
+        def cancelling(
+            state: State,
+            cancel: CancelAuction,
+            initiator: Initiator,
+            reply: Either[CancelAuctionRejected, AuctionAnswer] => Unit
+        ): Effect[StoredAuctionEvent, State] =
+          Auction.decide(state.auction, cancel, LotRoster.lineup(state.auction, roster)) match {
+            case Left(rejected) => Effect.none.thenRun(_ => reply(Left(rejected)))
+            case Right(decision) =>
+              record(state.auction, decision, cancel.opId, initiator, clock, newId) { (auction, answer) =>
+                reply(Right(answer))
+                timers.cancel(PrebiddingKey)
+                follow(LotRoster.cancelled(auction, roster, decision))
+                cancelRaffle(auction)
+                followPredictions(auction)
+                releaseSlot(auction)
+              }
+          }
+
+        // Ответ на факт отмены сходки. Отказа у него нет: путь удаления или отмены, выбранный по решению агрегата, своего
+        // отказа на том же состоянии дать не может.
+        def inherited(replyTo: ActorRef[AuctionAnswer])(answer: Either[?, AuctionAnswer]): Unit =
+          answer match {
+            case Right(answered) => replyTo ! answered
+            case Left(rejected) => throw new IllegalStateException(s"meetup cancellation answered $rejected")
           }
 
         def onCommand(state: State, command: Command): Effect[StoredAuctionEvent, State] =
           command match {
-            case PredictionsWiped(discard, initiator, replyTo, Success(_)) =>
+            case PredictionsWiped(discard, initiator, reply, Success(_)) =>
               wiping = false
-              discarded(state, Auction.decide(state.auction, discard), discard, initiator, replyTo).thenUnstashAll()
+              discarded(state, Auction.decide(state.auction, discard), discard, initiator, reply).thenUnstashAll()
             case PredictionsWiped(_, _, _, Failure(failure)) =>
               wiping = false
               Effect.none
@@ -765,18 +821,20 @@ object AuctionEntity {
               Effect.none
             case SlotReleased(Failure(failure)) =>
               Effect.none.thenRun(_ => warnSlot("trading slot did not answer the release", failure))
-            case Cancel(cancel, initiator, replyTo) =>
-              Auction.decide(state.auction, cancel, LotRoster.lineup(state.auction, roster)) match {
-                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
-                case Right(decision) =>
-                  record(state.auction, decision, cancel.opId, initiator, clock, newId) { (auction, answer) =>
-                    replyTo ! Right(answer)
-                    timers.cancel(PrebiddingKey)
-                    follow(LotRoster.cancelled(auction, roster, decision))
-                    cancelRaffle(auction)
-                    followPredictions(auction)
-                    releaseSlot(auction)
-                  }
+            case Cancel(cancel, initiator, replyTo) => cancelling(state, cancel, initiator, replyTo ! _)
+            case InheritCancellation(inherit, replyTo) =>
+              Auction.decide(state.auction, inherit, LotRoster.lineup(state.auction, roster)) match {
+                case AuctionDecision.Accepted(AuctionEvent.AuctionDiscarded) |
+                    AuctionDecision.Repeated(AuctionEnvelope(_, _, AuctionEvent.AuctionDiscarded)) =>
+                  discarding(state, DiscardAuction(inherit.opId), Initiator.Scheduler, inherited(replyTo))
+                // Повтор отмены идёт тем же путём, что новая: события он не пишет, но доснимает неответившие лоты.
+                case AuctionDecision.Accepted(AuctionEvent.AuctionCancelled) |
+                    AuctionDecision.Repeated(AuctionEnvelope(_, _, AuctionEvent.AuctionCancelled)) =>
+                  cancelling(state, CancelAuction(inherit.opId), Initiator.Scheduler, inherited(replyTo))
+                case decision =>
+                  record(state.auction, decision, inherit.opId, Initiator.Scheduler, clock, newId)((_, answer) =>
+                    replyTo ! answer
+                  )
               }
             case LotWithdrew(lot, Success(answer)) =>
               Effect.none.thenRun { after =>
@@ -1079,19 +1137,7 @@ object AuctionEntity {
                     followPredictions(auction)
                   }
               }
-            // Прогнозы удаляются до записи удаления: удалённый аукцион ничего не переспрашивает, и удаление, потерянное
-            // после записи, оставило бы старые прогнозы аукциону, рождённому заново. До планирования прогнозов нет.
-            case Discard(discard, initiator, replyTo) =>
-              (state.auction.state, Auction.decide(state.auction, discard)) match {
-                case (AuctionState.Scheduled(_), Right(AuctionDecision.Accepted(_))) =>
-                  wiping = true
-                  Effect.none.thenRun { _ =>
-                    context.pipeToSelf(askPredictions(predictions.discard(auctionId)))(
-                      PredictionsWiped(discard, initiator, replyTo, _)
-                    )
-                  }
-                case (_, decision) => discarded(state, decision, discard, initiator, replyTo)
-              }
+            case Discard(discard, initiator, replyTo) => discarding(state, discard, initiator, replyTo ! _)
             case Get(replyTo) => Effect.reply(replyTo)(state.auction)
           }
 

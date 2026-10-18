@@ -15,6 +15,8 @@ import auction.entity.LotGateway
 import auction.grpc.AuctionGrpcService
 import auction.grpc.CallerTable
 import auction.grpc.GrpcBoundary
+import auction.meetup.MeetupCancellationConsumer
+import auction.meetup.MeetupFactsSettings
 import auction.lot.AuctionId
 import auction.naming.DisplayNameCommands
 import auction.persistence.DatabaseSettings
@@ -37,6 +39,7 @@ import auction.publication.PublicationSettings
 import auction.publication.RafflePublicationHandler
 import auction.publication.ResultsPublicationHandler
 import auction.telemetry.DeadlineMetrics
+import auction.telemetry.MeetupFactsMetrics
 import auction.telemetry.ProjectionMetrics
 import auction.telemetry.PublicationMetrics
 import auction.persistence.SlickDisplayNameStore
@@ -365,6 +368,46 @@ object AuctionNode {
         }
     }
   }
+
+  /**
+   * Наследование отмены сходки (ADR-047, дополнение 2026-10-12): durable-потребитель `events.meetups.meetup_cancelled`
+   * отдаёт аукциону сходки `ApplyMeetupCancelled` через шардинг, а отставание durable видно метриками. Без адреса шины
+   * потребитель не стартует, как релей фактов: профиль без NATS живёт, но отмены сходок в нём не наследуются, и запись
+   * об этом одна. Durable не объявлен — `missing`: узел обязан остановиться, а не работать без наследования молча.
+   *
+   * @return
+   *   потребитель, если он стартовал; останавливает его `CoordinatedShutdown`
+   */
+  def startMeetupFacts(
+      system: ActorSystem[?],
+      sharding: ClusterSharding,
+      settings: MeetupFactsSettings,
+      metrics: MeetupFactsMetrics,
+      missing: String => Unit
+  ): Option[MeetupCancellationConsumer] =
+    settings.natsUrl match {
+      case None =>
+        logger.warn("auction meetup facts consumer is off: AUCTION_NATS_URL is not set, meetup cancellations wait")
+        None
+      case Some(url) =>
+        given Timeout = Timeout(settings.answerTimeout)
+        val consumer = MeetupCancellationConsumer(
+          url,
+          settings,
+          inheritance =>
+            sharding
+              .entityRefFor(AuctionEntity.TypeKey, inheritance.auctionId.value.toString)
+              .ask(AuctionEntity.InheritCancellation(inheritance.command, _)),
+          missing
+        ).start()
+        val watching = metrics.watchPending(MeetupCancellationConsumer.Durable, () => consumer.pending())
+        CoordinatedShutdown(system).addTask(CoordinatedShutdown.PhaseServiceStop, "auction-meetup-facts") { () =>
+          watching.close()
+          consumer.close()
+          Future.successful(Done)
+        }
+        Some(consumer)
+    }
 
   /**
    * Предел тела запроса gRPC-границы. Умолчание pekko-http — 8 MiB, и файл крупнее до домена не дошёл бы: вместо

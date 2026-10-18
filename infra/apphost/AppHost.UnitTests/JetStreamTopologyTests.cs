@@ -123,12 +123,24 @@ public class JetStreamTopologyTests
 
         foreach (var durable in JetStreamTopology.Durables)
         {
-            if (!durable.FilterSubject.StartsWith("events.notifications.notification_created.", StringComparison.Ordinal))
+            if (!durable.FilterSubject.StartsWith("events.notifications.notification_created.", StringComparison.Ordinal)
+                && durable.Durable != "auction-meetups-events")
             {
                 durable.FilterSubject.ShouldBe(subjects[durable.Stream]);
             }
         }
     }
+
+    /// <summary>
+    /// Auction читает из стрима Meetups только отмену сходки (ADR-047,
+    /// дополнение 2026-10-12): остальные поводы ему не адресованы, и durable на
+    /// весь стрим копил бы неподтверждаемое.
+    /// </summary>
+    [Fact]
+    public void Durables_Auction_ReadsOnlyMeetupCancellations() =>
+        JetStreamTopology.Durables
+            .Single(durable => durable.Durable == "auction-meetups-events")
+            .ShouldBe(new ConsumerSpec("auction-meetups-events", "MEETUPS_EVENTS", "events.meetups.meetup_cancelled"));
 
     /// <summary>
     /// Точка, <c>*</c>, <c>&gt;</c> и пробел в имени durable сервер запрещает:

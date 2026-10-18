@@ -84,7 +84,7 @@ object ResponseMapping {
       case Denial.MeetupNotFound => refused(wire.PlaceBidRefusal.Reason.MeetupNotFound(wire.MeetupNotFound()))
       case Denial.Unavailable => Left(unavailable)
       case Denial.AuctionNotFound => Left(auctionNotFound)
-      case Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+      case Denial.MeetupCancelled | Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
         throw new IllegalStateException(s"floor bid answered $denial")
     }
   }
@@ -278,8 +278,16 @@ object ResponseMapping {
               wire.DraftAuctionRefusal(wire.DraftAuctionRefusal.Reason.MeetupNotFound(wire.MeetupNotFound()))
             )
         )
+      case Left(Denial.MeetupCancelled) =>
+        Right(
+          wire
+            .DraftAuctionResponse()
+            .withRefused(
+              wire.DraftAuctionRefusal(wire.DraftAuctionRefusal.Reason.MeetupCancelled(wire.MeetupCancelled()))
+            )
+        )
       case Left(Denial.Unavailable) => Left(unavailable)
-      case Left(Denial.AuctionNotFound | Denial.LotsFrozen | Denial.LotOfAnotherAuction) =>
+      case Left(Denial.MeetupHidden | Denial.AuctionNotFound | Denial.LotsFrozen | Denial.LotOfAnotherAuction) =>
         throw new IllegalStateException("auction draft answered a registry denial")
     }
 
@@ -300,6 +308,12 @@ object ResponseMapping {
             .AddLotResponse()
             .withRefused(wire.AddLotRefusal(wire.AddLotRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
         )
+      case Left(Denial.MeetupCancelled) =>
+        Right(
+          wire
+            .AddLotResponse()
+            .withRefused(wire.AddLotRefusal(wire.AddLotRefusal.Reason.MeetupCancelled(wire.MeetupCancelled())))
+        )
       case Left(Denial.LotsFrozen) =>
         Right(
           wire
@@ -310,6 +324,7 @@ object ResponseMapping {
       case Left(Denial.AuctionNotFound) => Left(auctionNotFound)
       case Left(Denial.LotOfAnotherAuction) =>
         Left(Status.FAILED_PRECONDITION.withDescription("lot belongs to another auction"))
+      case Left(Denial.MeetupHidden) => throw new IllegalStateException("lot addition answered MeetupHidden")
     }
 
   def removeLot(outcome: Either[RemovalRefusal, Unit]): Either[Status, wire.RemoveLotResponse] =
@@ -321,12 +336,14 @@ object ResponseMapping {
         Right(removalRefused(wire.RemoveLotRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
       case Left(RemovalRefusal.Denied(Denial.MeetupNotFound)) =>
         Right(removalRefused(wire.RemoveLotRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(RemovalRefusal.Denied(Denial.MeetupCancelled)) =>
+        Right(removalRefused(wire.RemoveLotRefusal.Reason.MeetupCancelled(wire.MeetupCancelled())))
       case Left(RemovalRefusal.Denied(Denial.LotsFrozen)) =>
         Right(removalRefused(wire.RemoveLotRefusal.Reason.LotsFrozen(wire.LotsFrozen())))
       case Left(RemovalRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(RemovalRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(RemovalRefusal.Denied(Denial.LotOfAnotherAuction)) =>
-        throw new IllegalStateException("lot removal answered LotOfAnotherAuction")
+      case Left(RemovalRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"lot removal answered $denial")
     }
 
   /**
@@ -342,12 +359,14 @@ object ResponseMapping {
         Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
       case Left(LotSchedulingRefusal.Denied(Denial.MeetupNotFound)) =>
         Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(LotSchedulingRefusal.Denied(Denial.MeetupCancelled)) =>
+        Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.MeetupCancelled(wire.MeetupCancelled())))
       case Left(LotSchedulingRefusal.Denied(Denial.LotsFrozen)) =>
         Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.LotsFrozen(wire.LotsFrozen())))
       case Left(LotSchedulingRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(LotSchedulingRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(LotSchedulingRefusal.Denied(Denial.LotOfAnotherAuction)) =>
-        throw new IllegalStateException("lot scheduling answered LotOfAnotherAuction")
+      case Left(LotSchedulingRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotOfAnotherAuction))) =>
+        throw new IllegalStateException(s"lot scheduling answered $denial")
       case Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.SchedulingClosed)) =>
         Right(schedulingRefused(wire.ScheduleLotRefusal.Reason.SchedulingClosed(wire.SchedulingClosed())))
       case Left(LotSchedulingRefusal.ByLot(ScheduleLotRejected.StepPolicyInvalid(_))) =>
@@ -385,9 +404,13 @@ object ResponseMapping {
         )
       case Left(SchedulingRefusal.Denied(Denial.MeetupNotFound)) =>
         Right(auctionSchedulingRefused(wire.ScheduleAuctionRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(SchedulingRefusal.Denied(Denial.MeetupCancelled)) =>
+        Right(auctionSchedulingRefused(wire.ScheduleAuctionRefusal.Reason.MeetupCancelled(wire.MeetupCancelled())))
       case Left(SchedulingRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(SchedulingRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(SchedulingRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+      case Left(
+            SchedulingRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
         throw new IllegalStateException(s"auction scheduling answered $denial")
     }
 
@@ -431,6 +454,10 @@ object ResponseMapping {
         Right(openingRefused(wire.StartPrebiddingRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator())))
       case Left(OpeningRefusal.Denied(Denial.MeetupNotFound)) =>
         Right(openingRefused(wire.StartPrebiddingRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
+      case Left(OpeningRefusal.Denied(Denial.MeetupCancelled)) =>
+        Right(openingRefused(wire.StartPrebiddingRefusal.Reason.MeetupCancelled(wire.MeetupCancelled())))
+      case Left(OpeningRefusal.Denied(Denial.MeetupHidden)) =>
+        Right(openingRefused(wire.StartPrebiddingRefusal.Reason.MeetupHidden(wire.MeetupHidden())))
       case Left(OpeningRefusal.AnotherAuctionActive(holder)) =>
         Right(
           openingRefused(
@@ -458,7 +485,11 @@ object ResponseMapping {
         Right(discardRefused(wire.DiscardAuctionRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
       case Left(DiscardRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(DiscardRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(DiscardRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+      case Left(
+            DiscardRefusal.Denied(
+              denial @ (Denial.MeetupCancelled | Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction)
+            )
+          ) =>
         throw new IllegalStateException(s"auction discard answered $denial")
     }
 
@@ -478,7 +509,11 @@ object ResponseMapping {
         Right(cancelRefused(wire.CancelAuctionRefusal.Reason.MeetupNotFound(wire.MeetupNotFound())))
       case Left(CancellationRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(CancellationRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(CancellationRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+      case Left(
+            CancellationRefusal.Denied(
+              denial @ (Denial.MeetupCancelled | Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction)
+            )
+          ) =>
         throw new IllegalStateException(s"auction cancellation answered $denial")
     }
 
@@ -507,7 +542,10 @@ object ResponseMapping {
       case Left(LineupRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
       case Left(LineupRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(LineupRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(LineupRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+      case Left(LineupRefusal.Denied(Denial.MeetupCancelled)) => refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(
+            LineupRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
         throw new IllegalStateException(s"lineup freeze answered $denial")
     }
   }
@@ -524,7 +562,11 @@ object ResponseMapping {
         refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
       case Left(FinalStartRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(FinalStartRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(FinalStartRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+      case Left(FinalStartRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(
+            FinalStartRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
         throw new IllegalStateException(s"final start answered $denial")
     }
   }
@@ -545,7 +587,11 @@ object ResponseMapping {
       case Left(NextLotRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
       case Left(NextLotRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(NextLotRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(NextLotRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+      case Left(NextLotRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(
+            NextLotRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
         throw new IllegalStateException(s"next lot of the final answered $denial")
     }
   }
@@ -573,7 +619,8 @@ object ResponseMapping {
       case Left(AskRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
       case Left(AskRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(AskRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(AskRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+      case Left(AskRefusal.Denied(Denial.MeetupCancelled)) => refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(AskRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
         throw new IllegalStateException(s"ask answered $denial")
     }
   }
@@ -602,7 +649,11 @@ object ResponseMapping {
       case Left(ClosingRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
       case Left(ClosingRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(ClosingRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(ClosingRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+      case Left(ClosingRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(
+            ClosingRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
         throw new IllegalStateException(s"close answered $denial")
     }
   }
@@ -639,7 +690,11 @@ object ResponseMapping {
         refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
       case Left(FinalChoiceRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(FinalChoiceRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+      case Left(FinalChoiceRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(
+            FinalChoiceRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
         throw new IllegalStateException(s"final selection answered $denial")
     }
   }
@@ -674,7 +729,11 @@ object ResponseMapping {
         refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
       case Left(FinalChoiceRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(FinalChoiceRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
-      case Left(FinalChoiceRefusal.Denied(denial @ (Denial.LotsFrozen | Denial.LotOfAnotherAuction))) =>
+      case Left(FinalChoiceRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(
+            FinalChoiceRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
         throw new IllegalStateException(s"final deselection answered $denial")
     }
   }
@@ -706,7 +765,7 @@ object ResponseMapping {
         Right(wire.SettlePredictionResultsManuallyRefusal(Reason.MeetupNotFound(wire.MeetupNotFound())))
       case Denial.Unavailable => Left(unavailable)
       case Denial.AuctionNotFound => Left(auctionNotFound)
-      case Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+      case Denial.MeetupCancelled | Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
         throw new IllegalStateException(s"results authority answered $denial")
     }
   }
@@ -719,7 +778,7 @@ object ResponseMapping {
       case Denial.MeetupNotFound => Right(wire.GetAuctionConsoleRefusal(Reason.MeetupNotFound(wire.MeetupNotFound())))
       case Denial.Unavailable => Left(unavailable)
       case Denial.AuctionNotFound => Left(auctionNotFound)
-      case Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
+      case Denial.MeetupCancelled | Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction =>
         throw new IllegalStateException(s"console authority answered $denial")
     }
   }

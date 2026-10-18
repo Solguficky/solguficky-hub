@@ -375,6 +375,14 @@ const auctionNotFound: ExecuteResult = {
   kind: "auction-console-refused",
   reason: "auction-not-found",
 };
+const meetupCancelled: ExecuteResult = {
+  kind: "auction-console-refused",
+  reason: "meetup-cancelled",
+};
+const meetupHidden: ExecuteResult = {
+  kind: "auction-console-refused",
+  reason: "meetup-hidden",
+};
 
 // Лоты добавляются, пока онлайн-неделя не открыта; после старта Auction
 // отвечает `lots_frozen`. По тому же правилу лента показывает «Добавить лот».
@@ -709,6 +717,8 @@ export function createAuctionConsole(
         return notAdministrator;
       case "auction-not-found":
         return auctionNotFound;
+      case "meetup-cancelled":
+        return meetupCancelled;
       default:
         return failed(scheduled);
     }
@@ -769,6 +779,8 @@ export function createAuctionConsole(
         return notAdministrator;
       case "auction-not-found":
         return auctionNotFound;
+      case "meetup-cancelled":
+        return meetupCancelled;
       default:
         return failed(scheduled);
     }
@@ -823,6 +835,10 @@ export function createAuctionConsole(
         return notAdministrator;
       case "auction-not-found":
         return auctionNotFound;
+      case "meetup-cancelled":
+        return meetupCancelled;
+      case "meetup-hidden":
+        return meetupHidden;
       default:
         return failed(started);
     }
@@ -914,6 +930,8 @@ export function createAuctionConsole(
         return notAdministrator;
       case "auction-not-found":
         return auctionNotFound;
+      case "meetup-cancelled":
+        return meetupCancelled;
       default:
         return failed(marked);
     }
@@ -1061,6 +1079,8 @@ export function createAuctionConsole(
         return notAdministrator;
       case "auction-not-found":
         return auctionNotFound;
+      case "meetup-cancelled":
+        return meetupCancelled;
       default:
         return failed(started);
     }
@@ -1197,6 +1217,8 @@ export function createAuctionConsole(
         return notAdministrator;
       case "auction-not-found":
         return auctionNotFound;
+      case "meetup-cancelled":
+        return meetupCancelled;
       default:
         return failed(frozen);
     }
@@ -1233,6 +1255,8 @@ export function createAuctionConsole(
         return notAdministrator;
       case "auction-not-found":
         return auctionNotFound;
+      case "meetup-cancelled":
+        return meetupCancelled;
       default:
         return failed(started);
     }
@@ -1335,6 +1359,8 @@ export function createAuctionConsole(
         return notAdministrator;
       case "auction-not-found":
         return auctionNotFound;
+      case "meetup-cancelled":
+        return meetupCancelled;
       default:
         return failed(advanced);
     }
@@ -1449,6 +1475,8 @@ export function createAuctionConsole(
         return notAdministrator;
       case "auction-not-found":
         return auctionNotFound;
+      case "meetup-cancelled":
+        return meetupCancelled;
       default:
         return failed(closed);
     }
@@ -1541,6 +1569,8 @@ export function createAuctionConsole(
       case "raffle-not-after-opens":
       case "raffle-not-before-closes":
         return storedRefused(scheduled);
+      case "meetup-cancelled":
+        return meetupCancelled;
       default:
         return failed(scheduled);
     }
