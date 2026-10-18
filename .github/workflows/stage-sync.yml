@@ -1,0 +1,70 @@
+name: Stage sync
+
+# Раз в сутки переносит develop в ветку stage fast-forward'ом (дополнение
+# ADR-055 от 2026-10-18). Публикации образов и чарта идут на push в stage, а не
+# в develop, поэтому stage меняется ночью одной пачкой, а не после каждого мержа.
+# Ветка stage только догоняет develop: своих коммитов у неё нет, и разошедшаяся
+# ветка роняет синхронизацию, а не перезаписывается.
+#
+# Push идёт deploy key'ем этого репозитория с правом записи, а не GITHUB_TOKEN:
+# push под GITHUB_TOKEN не запускает других workflow, и публикации не
+# стартовали бы. Ключ — секрет STAGE_SYNC_KEY в environment `stage-sync`,
+# допущенном только для main: schedule всегда идёт с default branch, а ручной
+# запуск с другой ветки ключа не получит и не перенесёт в stage свой код.
+# Ruleset ветки stage пускает обновление только deploy key'ям и запрещает
+# force push.
+#
+# Расписание — в UTC: 00:07 UTC — это 03:07 по Москве. Минута не нулевая,
+# потому что запуски в начале часа GitHub откладывает чаще.
+
+on:
+  schedule:
+    - cron: '7 0 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: stage-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment: stage-sync
+    steps:
+      - name: Fast-forward stage to develop
+        env:
+          STAGE_SYNC_KEY: ${{ secrets.STAGE_SYNC_KEY }}
+        run: |
+          set -eu
+          [ -n "$STAGE_SYNC_KEY" ] || { echo "::error::нет секрета STAGE_SYNC_KEY в environment stage-sync"; exit 1; }
+          key_file="$RUNNER_TEMP/stage-sync-key"
+          (umask 077 && printf '%s\n' "$STAGE_SYNC_KEY" > "$key_file")
+          # Ключ хоста закреплён, как в stage-bump.yml: источник — опубликованные
+          # отпечатки GitHub, а не первый ответ сети.
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' > "$RUNNER_TEMP/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $key_file -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts"
+          git init --quiet "$RUNNER_TEMP/repo"
+          cd "$RUNNER_TEMP/repo"
+          git remote add origin "git@github.com:$GITHUB_REPOSITORY.git"
+          # Без деревьев и файлов: для проверки предка и push нужны только коммиты.
+          git fetch --quiet --filter=tree:0 origin \
+            +refs/heads/develop:refs/remotes/origin/develop \
+            +refs/heads/stage:refs/remotes/origin/stage
+          develop=$(git rev-parse origin/develop)
+          stage=$(git rev-parse origin/stage)
+          if [ "$develop" = "$stage" ]; then
+            echo "stage-sync: stage уже на develop $(echo "$develop" | cut -c1-8), push нет"
+            exit 0
+          fi
+          if ! git merge-base --is-ancestor "$stage" "$develop"; then
+            echo "::error::stage-sync: в stage есть коммиты, которых нет в develop; fast-forward невозможен, ветку разбирает человек"
+            exit 1
+          fi
+          # Без --force: сервер сам отвергнет не fast-forward, если stage сдвинули
+          # между fetch и push.
+          git push --quiet origin "$develop:refs/heads/stage"
+          echo "stage-sync: stage $stage -> $develop"
+          git log --oneline "$stage..$develop"

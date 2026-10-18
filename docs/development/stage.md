@@ -1,6 +1,6 @@
 # Stage хаба на VPS
 
-Stage — хаб с аукционом и оба бота в namespace `test` k3s на VPS ([PER-311](https://linear.app/anticnvm/issue/per-311), [PER-454](https://linear.app/anticnvm/issue/per-454)): шесть сервисов чарта из AppHost, PostgreSQL на CloudNativePG и NATS JetStream. Новые образы и чарт из `develop` stage выкатывает сам. Рантайм и правила кластера — [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md), решения про stage — его дополнения 2026-10-06 и 2026-10-07. Боевой токен, бэкапы, Flux и SOPS в stage не входят: это листья [PER-80](https://linear.app/anticnvm/issue/per-80) и [PER-383](https://linear.app/anticnvm/issue/per-383).
+Stage — хаб с аукционом и оба бота в namespace `test` k3s на VPS ([PER-311](https://linear.app/anticnvm/issue/per-311), [PER-454](https://linear.app/anticnvm/issue/per-454)): шесть сервисов чарта из AppHost, PostgreSQL на CloudNativePG и NATS JetStream. Раз в сутки ветка `stage` догоняет `develop`, и новые образы и чарт из неё stage выкатывает сам. Рантайм и правила кластера — [ADR-055](../decisions/ADR-055-k3s-runtime-from-aspire-chart.md), решения про stage — его дополнения 2026-10-06, 2026-10-07 и 2026-10-18. Боевой токен, бэкапы, Flux и SOPS в stage не входят: это листья [PER-80](https://linear.app/anticnvm/issue/per-80) и [PER-383](https://linear.app/anticnvm/issue/per-383).
 
 Описание stage живёт в приватном ops-репозитории `solguficky-ops`, а не здесь: values с digest образов, манифесты PostgreSQL и NATS, сетевые разрешения и скрипты выкладки. Публичный репозиторий топологию среды не раскрывает (ADR-055, «Обоснование»). Этот файл — устойчивые правила работы со stage; команды и раскладка файлов — README ops-репозитория.
 
@@ -30,11 +30,12 @@ Stage — хаб с аукционом и оба бота в namespace `test` k3
 
 ## Автовыкладка
 
-Мерж в `develop`, который меняет образ сервиса или чарт, доезжает до stage без ручных шагов (дополнение ADR-055 от 2026-10-07):
+Мерж в `develop`, который меняет образ сервиса или чарт, доезжает до stage следующей ночью без ручных шагов (дополнения ADR-055 от 2026-10-07 и 2026-10-18):
 
-1. CI публикует образ или чарт в GHCR (`image-*.yml`, `chart-publish.yml`).
-2. Джоба `stage` того же workflow (`stage-bump.yml`) коммитит digest в `stage/test/values.yaml` или версию чарта в `stage/test/release.yaml` прямо в `main` ops-репозитория. Ключ записи — секрет `OPS_DEPLOY_KEY` в environment `stage` этого репозитория, допущенном только для `develop`.
-3. Таймер `solguficky-stage-autodeploy` на хосте раз в две минуты тянет клон ops-репозитория своим read-only deploy key и выкатывает новый коммит.
+1. `stage-sync.yml` в 03:07 по Москве (`7 0 * * *` UTC) переносит ветку `stage` на `develop` fast-forward'ом. Push идёт deploy key'ем `STAGE_SYNC_KEY` из environment `stage-sync`, допущенного только для `main`: push под `GITHUB_TOKEN` не запустил бы публикации. Если в `stage` есть коммит, которого нет в `develop`, джоба красная, а ветка остаётся как была.
+2. CI публикует изменённые этим переносом образы и чарт в GHCR (`image-*.yml`, `chart-publish.yml` на push в `stage`, по своим фильтрам путей).
+3. Джоба `stage` того же workflow (`stage-bump.yml`) коммитит digest в `stage/test/values.yaml` или версию чарта в `stage/test/release.yaml` прямо в `main` ops-репозитория. Ключ записи — секрет `OPS_DEPLOY_KEY` в environment `stage` этого репозитория, допущенном только для ветки `stage`.
+4. Таймер `solguficky-stage-autodeploy` на хосте раз в две минуты тянет клон ops-репозитория своим read-only deploy key и выкатывает новый коммит.
 
 Образ у двух ботов один — `hub-bot`, и ключ digest'а в `values.yaml` у них один: `parameters.hub_bot.hub_bot_image`. Новый digest перекатывает оба бота, а откатить образ одного бота отдельно нельзя. Ключ `parameters.auction_bot.auction_bot_image` новый чарт не читает, а CI его больше не двигает ([PER-538](https://linear.app/anticnvm/issue/per-538)). Из `values.yaml` он не удаляется: его читают версии чарта до PER-538. Откат `release.yaml` на такую версию ставит бот аукциона на последний записанный туда digest. Без ключа старый чарт взял бы свою заглушку `auction-bot:latest`, и выкладка отказала бы на проверке digest.
 
@@ -57,7 +58,8 @@ bin/stage resume                  # вернуть; следующий тик в
 
 - **Deploy keys включены в организации** (Settings → Member privileges → Deploy keys). Это политика всей организации, на репозиторий её не включить. Пока она выключена, GitHub отвечает на добавление ключа `Deploy keys are disabled for this repository`.
 - **Ключей два, у каждого своя роль.** Ключ хоста — только чтение, создаётся на хосте playbook'ом, в GitHub попадает только его публичная часть. Ключ CI — с правом записи, его закрытая часть живёт только в секрете `OPS_DEPLOY_KEY`.
-- **Environment `stage` этого репозитория ограничен веткой `develop`**, и в нём лежит `OPS_DEPLOY_KEY`. Секрет нужен до мержа, который меняет образы: публикации мержа без секрета проходят, а их джобы `stage` падают с «нет секрета», и digest'ы до ops не доходят — их приходится публиковать заново.
+- **Environment `stage` этого репозитория ограничен веткой `stage`**, и в нём лежит `OPS_DEPLOY_KEY`. Секрет нужен до переноса, который меняет образы: публикации без секрета проходят, а их джобы `stage` падают с «нет секрета», и digest'ы до ops не доходят — их приходится публиковать заново.
+- **Синхронизации ветки нужны три вещи** (дополнение ADR-055 от 2026-10-18). Первая — deploy key этого репозитория с правом записи, закрытая часть которого лежит только в секрете `STAGE_SYNC_KEY` environment `stage-sync`, а environment допущен только для `main`. Вторая — ruleset ветки `stage`: запрет force push и удаления, обновление только с bypass для deploy key'ев. Третья — `stage-sync.yml` на `main`: cron и `workflow_dispatch` GitHub берёт только с default branch, поэтому до релиза в `main` ночного переноса нет.
 - **Токены обоих ботов в файле секретов хоста до `--tags autodeploy`.** На работающем хосте таймер срабатывает сразу при включении и выкатывает `main` ops. Без `AUCTION_BOT_TOKEN` выкладка откажет на проверке и отметит коммит; после того как токен вписан, нужен `bin/stage resume`.
 
 ### Выкатить заново из CI
@@ -66,13 +68,14 @@ bin/stage resume                  # вернуть; следующий тик в
 
 | Нужно | Как | Что произойдёт |
 |---|---|---|
-| пересобрать образ сервиса и выкатить | `gh workflow run image-<сервис>.yml --ref develop` | публикация, коммит digest в ops, выкладка таймером за ≤2 минуты |
-| переопубликовать чарт и выкатить | `gh workflow run chart-publish.yml --ref develop` | новая версия `0.1.<N>` в `release.yaml`, выкладка |
+| довезти `develop` до stage, не дожидаясь ночи | `gh workflow run stage-sync.yml --ref main` | fast-forward `stage`, публикации изменённого, выкладка |
+| пересобрать образ сервиса и выкатить | `gh workflow run image-<сервис>.yml --ref stage` | публикация, коммит digest в ops, выкладка таймером за ≤2 минуты |
+| переопубликовать чарт и выкатить | `gh workflow run chart-publish.yml --ref stage` | новая версия `0.1.<N>` в `release.yaml`, выкладка |
 | выкатить то, что уже записано в ops | `bin/stage resume` | следующий тик выкатывает `main` ops без сборки |
 | то же сразу, не дожидаясь таймера | `bin/stage deploy` | ручная выкладка из `release.yaml` и `values.yaml` |
 | вернуть образ на прежний digest | правка `stage/test/values.yaml` коммитом в `main` ops | таймер выкатит этот коммит |
 
-Ручной запуск с другой ветки на stage не попадёт: публикация идёт только на `develop`, и environment `stage` отдаёт секрет только ей. Чарт ветки ставится руками — раздел «Ручная выкладка».
+Ручной запуск с другой ветки на stage не попадёт: публикация идёт только на ветке `stage`, и environment `stage` отдаёт секрет только ей. Чарт ветки ставится руками — раздел «Ручная выкладка».
 
 ## Ручная выкладка
 
@@ -83,7 +86,7 @@ bin/stage deploy                                 # чарт и версия из
 bin/stage deploy ./solguficky-hub-<версия>.tgz   # чарт ветки до публикации
 ```
 
-Чарт ветки ставится только при остановленной автовыкладке: `bin/stage pause` до, `bin/stage resume` после. Иначе следующий коммит из `develop` выкатит опубликованный чарт поверх ветки.
+Чарт ветки ставится только при остановленной автовыкладке: `bin/stage pause` до, `bin/stage resume` после. Иначе следующий коммит из ветки `stage` выкатит опубликованный чарт поверх ветки.
 
 Порядок внутри выкладки: сначала проверки, которые могут отказать по входу, — секреты, токены ботов, digest каждого образа чарта. Затем Secret'ы ролей, PostgreSQL и NATS с ожиданием готовности, затем `helm upgrade --install` с `--wait`. Отказ проверки оставляет stage таким, каким он был. Pre-hook чарта применяет топологию JetStream до сервисов. Без `--atomic`: упавшая выкладка остаётся упавшей ревизией, и решение об откате принимает человек (ADR-055).
 
@@ -173,7 +176,7 @@ bin/stage presets         # активные наборы: ник и набор
 Переход на круг, наборы и права с глаголом ([ADR-065](../decisions/ADR-065-circle-presets-and-verb-rights.md)) меняет контракты пяти сервисов без обратной совместимости, поэтому выкатывается один раз, целиком и в таком порядке. Сброс данных не нужен: миграции Identity 017 и Notifications 024 переносят состояние, а мейнтейнер stage получает наборы `maintainer` и `admin` и назначать себя заново ему не нужно.
 
 1. **До мержа — `bin/stage pause`.** Автовыкладка катит каждую публикацию мержа отдельным коммитом ops раз в две минуты. Без паузы новый образ одного сервиса встанет рядом со старыми соседями, а Identity применит миграцию раньше, чем остановлены боты.
-2. **Мерж и публикации.** Мержится pull request; CI публикует образы `identity`, `meetups`, `notifications`, `auction`, `hub-bot` и чарт. Дождаться, пока все джобы `stage` этих публикаций зелёные (`gh run list --branch develop`), и `git pull` в копии ops: в `stage/test/values.yaml` новые digest'ы пяти образов, в `release.yaml` новая версия чарта.
+2. **Мерж и публикации.** Мержится pull request, а ветка `stage` догоняет `develop` ночью или по `gh workflow run stage-sync.yml --ref main`; CI публикует образы `identity`, `meetups`, `notifications`, `auction`, `hub-bot` и чарт. Дождаться, пока все джобы `stage` этих публикаций зелёные (`gh run list --branch stage`), и `git pull` в копии ops: в `stage/test/values.yaml` новые digest'ы пяти образов, в `release.yaml` новая версия чарта.
 3. **Остановить ботов** — `bin/stage stop hub-bot`, `bin/stage stop auction-bot`. Без них Identity не пишет новых событий, а Notifications дочитывает старые.
 4. **Проверки до выкладки** в `bin/stage db identity`:
    - `SELECT count(*) FROM identity_outbox WHERE published_at IS NULL;` — 0. Иначе подождать: релей старого Identity ещё работает. Миграция 017 помечает неопубликованные строки прежней формы опубликованными — в новой форме их не закодировать, и событие пропало бы.
@@ -199,7 +202,10 @@ bin/stage presets         # активные наборы: ник и набор
 
 | Симптом | Причина | Что делать |
 |---|---|---|
-| джоба `stage` красная: `нет секрета OPS_DEPLOY_KEY` | секрета нет в environment `stage` или вызов не передал его по имени | положить секрет, затем `gh workflow run` нужной публикации на `develop` |
+| джоба `stage` красная: `нет секрета OPS_DEPLOY_KEY` | секрета нет в environment `stage` или вызов не передал его по имени | положить секрет, затем `gh workflow run` нужной публикации на `stage` |
+| джоба `stage-sync` красная: fast-forward невозможен | в ветке `stage` есть коммит, которого нет в `develop` | разобрать коммит: нужный довезти в `develop` pull request'ом, затем вернуть `stage` на предка `develop` (ruleset пустит только владельца в обход) |
+| джоба `stage-sync` красная: `нет секрета STAGE_SYNC_KEY` | секрета нет в environment `stage-sync` или запуск не с `main` | положить секрет, запустить `stage-sync.yml` с `main` |
+| ночью `stage-sync` не запустился | `stage-sync.yml` ещё не на `main`, или GitHub выключил расписание после 60 дней без активности в репозитории | релиз в `main`; включить workflow в Actions |
 | джоба `stage` красная: push отвергнут пять раз | гонка записей одного мержа не разошлась повторами | перезапустить эту публикацию; повторится — сигнал пересмотра в дополнении ADR-055 |
 | в `bin/stage autolog` `Permission denied (publickey)` | ключа хоста нет в Deploy keys ops-репозитория или deploy keys выключены в организации | добавить ключ (текст печатает `--tags autodeploy`) |
 | `autolog` молчит, новый коммит в ops лежит | автовыкладка на паузе или таймер не включён | `bin/stage status` (строка «на паузе»), `bin/stage resume`; `verify.yml --tags autodeploy` |
