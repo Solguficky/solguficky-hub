@@ -6,6 +6,15 @@ import {
   showsStep,
 } from "../../auction-final.js";
 import {
+  predictionButtonLabel,
+  predictionNameChoiceText,
+  predictionNumberQuestionText,
+  predictionParagraphs,
+  predictionRefusalText,
+  predictionRoundTitle,
+  predictionTitle,
+} from "../../auction-prediction.js";
+import {
   cancelRegistrationLabel,
   raffleBackName,
   raffleButtonLabel,
@@ -50,6 +59,8 @@ import {
   type LotStatusView,
   MAX_COMMAND_AMOUNT,
   type Money,
+  parseAuctionCallback,
+  predictionSpec,
 } from "../../auction-ui/index.js";
 import type { Presentation } from "../../core/config.js";
 import {
@@ -881,6 +892,18 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
       case "raffle-question":
       case "name-question":
         return "alias-question";
+      case "prediction":
+        return "predictions";
+      case "prediction-lots":
+        return "prediction-lots";
+      case "prediction-number-question":
+        return "prediction-number-question";
+      case "prediction-name-choice":
+        return "prediction-name-choice";
+      case "prediction-alias-question":
+        return "prediction-alias-question";
+      case "prediction-answer-refused":
+        return "prediction-answer-refused";
       case "name-settings":
         return "name-settings";
       case "name-answer-refused":
@@ -1008,6 +1031,67 @@ function renderLeaf(
             ...raffleProofParagraphs(block.raffle),
           ),
         };
+      case "prediction":
+        return {
+          format: "html",
+          text: screenText(
+            predictionTitle,
+            ...predictionParagraphs(block, {
+              moment: (instant) =>
+                readableMoment(instant, options.timeZone, options.now),
+              money,
+            }),
+          ),
+        };
+      case "prediction-lots": {
+        const nomination = predictionSpec(block.nomination);
+        const current =
+          block.currentTitle === undefined
+            ? undefined
+            : `Сейчас выбрано: ${escapeHtml(oneLine(block.currentTitle))}`;
+        return {
+          format: "html",
+          text: screenText(
+            paged("Выбрать лот", block),
+            `${nomination.number} · ${escapeHtml(nomination.question)}`,
+            current,
+            block.lots.length === 0
+              ? "В этом раунде пока нет доступных лотов."
+              : block.lots
+                  .map(
+                    (lot) =>
+                      `• ${escapeHtml(oneLine(lot.title ?? untitled))} — ${priceLabel(lot.status)}`,
+                  )
+                  .join("\n"),
+          ),
+        };
+      }
+      case "prediction-number-question":
+        return {
+          format: "html",
+          text: screenText(
+            predictionSpec(block.nomination).question,
+            ...predictionNumberQuestionText(block, money),
+          ),
+          asks: true,
+        };
+      case "prediction-name-choice":
+        return {
+          format: "html",
+          text: screenText(
+            nameSettingsTitle,
+            predictionNameChoiceText(block.username),
+          ),
+        };
+      case "prediction-alias-question":
+        return { format: "html", text: aliasQuestionText(), asks: true };
+      case "prediction-answer-refused": {
+        const refusal = predictionRefusalText(block.refusal);
+        return {
+          format: "html",
+          text: screenText(refusal.title, refusal.detail),
+        };
+      }
       case "raffle-question":
       case "name-question":
         return { format: "html", text: aliasQuestionText(), asks: true };
@@ -1610,6 +1694,8 @@ function renderButton(
       return text("←");
     case "feed.next":
       return text("→");
+    case "root.predictions":
+      return text(predictionButtonLabel);
     case "lot.refresh":
       return text("Обновить");
     case "lot.history":
@@ -1659,11 +1745,13 @@ function renderButton(
         (block) =>
           block.kind === "name-choice" ||
           block.kind === "raffle-name-choice" ||
+          block.kind === "prediction-name-choice" ||
           block.kind === "name-settings",
       );
       return text(
         (choice?.kind === "name-choice" ||
           choice?.kind === "raffle-name-choice" ||
+          choice?.kind === "prediction-name-choice" ||
           choice?.kind === "name-settings") &&
           choice.username !== undefined
           ? `Ник @${choice.username}`
@@ -1696,6 +1784,50 @@ function renderButton(
       return text(raffleProofLabel);
     case "raffle.return":
       return text(`‹ ${raffleBackName}`);
+    case "prediction.edit": {
+      const parsed = parseAuctionCallback(button.callbackData);
+      if (!parsed.ok || parsed.intent.kind !== "prediction-edit") {
+        throw new Error("prediction edit button has invalid callback data");
+      }
+      const { nomination } = parsed.intent;
+      const block = blocks.find(
+        (each): each is Extract<AuctionBlock, { kind: "prediction" }> =>
+          each.kind === "prediction",
+      );
+      const answered = block?.answers.some(
+        (answer) => answer.nomination === nomination,
+      );
+      return text(
+        `${answered ? "Изменить" : "Ответить"} ${predictionSpec(nomination).number}`,
+      );
+    }
+    case "prediction.select-lot": {
+      const block = blocks.find(
+        (each): each is Extract<AuctionBlock, { kind: "prediction-lots" }> =>
+          each.kind === "prediction-lots",
+      );
+      const item = block?.lots.find((lot) => lot.lotId === button.lotId);
+      return text(
+        item === undefined
+          ? untitled
+          : `${shorten(item.title ?? untitled)} · ${priceLabel(item.status)}`,
+      );
+    }
+    case "prediction.clear":
+      return text("Очистить");
+    case "prediction.switch-round": {
+      const parsed = parseAuctionCallback(button.callbackData);
+      if (!parsed.ok || parsed.intent.kind !== "prediction") {
+        throw new Error("prediction round button has invalid callback data");
+      }
+      return text(predictionRoundTitle(parsed.intent.round));
+    }
+    case "prediction.back":
+      return text(
+        blocks.some((block) => block.kind === "prediction")
+          ? `‹ ${rootTitle}`
+          : "‹ Прогнозы",
+      );
     default: {
       const _exhaustive: never = button;
       return _exhaustive;

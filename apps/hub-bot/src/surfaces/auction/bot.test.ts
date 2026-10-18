@@ -267,6 +267,10 @@ function portsWith(
       cancelRaffleRegistration: async () => {
         throw new Error("not used");
       },
+      getMyPredictions: async () => [],
+      submitPrediction: async () => {
+        throw new Error("not used");
+      },
     },
     operations: {
       newOperationId: () => "01929b7e-5c1d-7a3f-8e4b-00000000c001",

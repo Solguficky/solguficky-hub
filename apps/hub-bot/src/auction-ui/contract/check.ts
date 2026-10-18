@@ -23,6 +23,10 @@ import type {
   LotView,
   Money,
   OwnDisplayName,
+  PredictionAnswer,
+  PredictionOutcome,
+  PredictionRoundStatus,
+  PredictionRoundView,
   ProxyLimitRefusal,
   RaffleCancellationRefusal,
   RaffleOutcome,
@@ -32,7 +36,14 @@ import type {
   TelegramUser,
   Viewer,
 } from "../ports.js";
+import {
+  type PredictionNomination,
+  type PredictionRound,
+  predictionNominationsFor,
+  predictionSpec,
+} from "../prediction-spec.js";
 import type {
+  AnswerRefusal,
   AuctionScreenBody,
   CommandResult,
   FinalBidOutcome,
@@ -123,6 +134,16 @@ export type PortCall =
       method: "registerForRaffle" | "cancelRaffleRegistration";
       request: Parameters<AuctionMethods["registerForRaffle"]>[0];
     }
+  | {
+      port: "auction";
+      method: "getMyPredictions";
+      request: Parameters<AuctionMethods["getMyPredictions"]>[0];
+    }
+  | {
+      port: "auction";
+      method: "submitPrediction";
+      request: Parameters<AuctionMethods["submitPrediction"]>[0];
+    }
   // Избранное (PER-495): отметки живут в Notifications, а не в Auction.
   | { port: "favorites"; method: "listFollowedLots"; request: Viewer }
   | {
@@ -177,6 +198,10 @@ export type ContractAuction = {
   // Ответы регистрации и её отмены по порядку вызовов.
   registrations?: readonly RaffleOutcome<RaffleRegistrationRefusal>[];
   cancellations?: readonly RaffleOutcome<RaffleCancellationRefusal>[];
+  // Свои прогнозы по раундам; нет — этот намерение не должен их читать.
+  predictions?: readonly PredictionRoundView[];
+  // Ответы отправки прогноза по порядку вызовов.
+  predictionSubmissions?: readonly PredictionOutcome[];
 };
 
 export type AuctionContractCase = {
@@ -365,6 +390,11 @@ const NAMES: Readonly<Record<string, string>> = {
   [RIVAL_ID]: "@jay",
 };
 
+const OPEN_PREDICTION_ROUNDS: readonly PredictionRoundView[] = [
+  { round: "catalog", status: "open", answers: [] },
+  { round: "final", status: "not-open", answers: [] },
+];
+
 // Лента приходит двумя серверными страницами и не по цене: порядок, которого
 // ждут тела ниже, может дать только край.
 export const AUCTION: ContractAuction = {
@@ -384,6 +414,7 @@ export const AUCTION: ContractAuction = {
     [UNSOLD_LOT.lotId]: { "": { entries: [], nextPageToken: "" } },
   },
   names: NAMES,
+  predictions: OPEN_PREDICTION_ROUNDS,
 };
 
 const HELD_LOT: LotView = {
@@ -413,6 +444,7 @@ const OFF_FEED_AUCTION: ContractAuction = {
 const EMPTY_AUCTION: ContractAuction = {
   lots: [],
   pages: { "": { lots: [], nextPageToken: "" } },
+  predictions: OPEN_PREDICTION_ROUNDS,
 };
 
 // Аукцион до торгов (PER-618): лот с шагом по порогам, черновик и снятый —
@@ -450,6 +482,7 @@ const PRE_TRADING_AUCTION: ContractAuction = {
       nextPageToken: "",
     },
   },
+  predictions: OPEN_PREDICTION_ROUNDS,
 };
 
 // По цене: стартовая 700; без цены — по `lotId`.
@@ -611,6 +644,466 @@ const neighborRows = (order: readonly LotView[], lotId: string) => {
   ];
   return row.length === 0 ? [] : [row];
 };
+
+const predictionReadCall = (auctionId: string): PortCall => ({
+  port: "auction",
+  method: "getMyPredictions",
+  request: { viewer: CONTRACT_VIEWER, auctionId },
+});
+
+const predictionSubmitCall = (
+  round: PredictionRound,
+  answers: readonly PredictionAnswer[],
+  opId: string = CONTRACT_OP_IDS[0],
+): PortCall => ({
+  port: "auction",
+  method: "submitPrediction",
+  request: {
+    viewer: CONTRACT_VIEWER,
+    auctionId: CONTRACT_AUCTION_ID,
+    round,
+    answers,
+    opId,
+  },
+});
+
+const predictionSummaryCall: PortCall = {
+  port: "auction",
+  method: "getAuction",
+  request: { viewer: CONTRACT_VIEWER, auctionId: CONTRACT_AUCTION_ID },
+};
+
+const predictionFindLotCall = (lotId: string): PortCall => ({
+  port: "auction",
+  method: "findLot",
+  request: { viewer: CONTRACT_VIEWER, lotId },
+});
+
+const CATALOG_LOT_ANSWER: PredictionAnswer = {
+  nomination: "catalog-most-expensive-lot",
+  answer: { kind: "lot", lotId: CONTRACT_LOT.lotId },
+};
+
+const CATALOG_MONEY_ANSWER: PredictionAnswer = {
+  nomination: "catalog-total-sales",
+  answer: { kind: "number", value: 1_250_000 },
+};
+
+const CATALOG_STALE_LOT_ANSWER: PredictionAnswer = {
+  nomination: "catalog-most-expensive-lot",
+  answer: { kind: "lot", lotId: WITHDRAWN_LOT.lotId },
+};
+
+const FINAL_COUNT_ANSWER: PredictionAnswer = {
+  nomination: "final-total-bids",
+  answer: { kind: "number", value: 42 },
+};
+
+const FINAL_MONEY_ANSWER: PredictionAnswer = {
+  nomination: "final-total-sales",
+  answer: { kind: "number", value: 2_500_000 },
+};
+
+const predictionViews = (
+  round: PredictionRound,
+  status: PredictionRoundStatus,
+  answers: readonly PredictionAnswer[] = [],
+): readonly PredictionRoundView[] =>
+  (["catalog", "final"] as const).map((each) => ({
+    round: each,
+    status: each === round ? status : "not-open",
+    answers: each === round ? answers : [],
+  }));
+
+const PREDICTION_OPENS_AT = "2026-10-26T16:00:00Z";
+
+const PREDICTION_SUMMARY: AuctionSummaryView = {
+  auctionId: CONTRACT_AUCTION_ID,
+  stage: "prebidding",
+  opensAt: PREDICTION_OPENS_AT,
+  final: true,
+};
+
+const PREDICTION_LOTS = [
+  DRAFT_LOT,
+  CONTRACT_LOT,
+  HELD_LOT,
+  WITHDRAWN_LOT,
+] as const;
+
+const EXTRA_PREDICTION_LOTS: readonly LotView[] = Array.from(
+  { length: 5 },
+  (_, index): LotView => ({
+    lotId: `01929b7e-5c1d-7a3f-8e4b-${String(index + 10).padStart(12, "0")}`,
+    auctionId: CONTRACT_AUCTION_ID,
+    version: 1,
+    card: {
+      title: `Сувенир ${String(index + 1).padStart(2, "0")}`,
+      description: "",
+    },
+    proxyEnabled: false,
+    status: { kind: "draft" },
+  }),
+);
+
+const PAGED_PREDICTION_LOTS = [
+  ...PREDICTION_LOTS,
+  ...EXTRA_PREDICTION_LOTS,
+] as const;
+
+const PAGED_PREDICTION_CATALOG_FIRST_PAGE = [
+  DRAFT_LOT,
+  CONTRACT_LOT,
+  ...EXTRA_PREDICTION_LOTS,
+] as const;
+
+const PREDICTION_LOT_AUCTION: ContractAuction = {
+  ...AUCTION,
+  lots: PREDICTION_LOTS,
+  pages: {
+    "": { lots: PREDICTION_LOTS, nextPageToken: "" },
+  },
+};
+
+const PAGED_PREDICTION_LOT_AUCTION: ContractAuction = {
+  ...PREDICTION_LOT_AUCTION,
+  lots: PAGED_PREDICTION_LOTS,
+  pages: {
+    "": { lots: PAGED_PREDICTION_LOTS, nextPageToken: "" },
+  },
+};
+
+const predictionQuestionCallback = (input: {
+  round: PredictionRound;
+  nomination: PredictionAnswer["nomination"];
+}) =>
+  callback({
+    kind: "prediction-number-question",
+    auctionId: CONTRACT_AUCTION_ID,
+    ...input,
+    addressee: CONTRACT_USER.telegramUserId,
+  });
+
+function predictionBody(
+  round: PredictionRound,
+  status: PredictionRoundStatus,
+  answers: readonly PredictionAnswer[],
+  options: {
+    opensAt?: string;
+    lotNames?: Readonly<Record<string, string>>;
+    notice?:
+      | "lot-not-in-round"
+      | "round-closed"
+      | "stale-answer-removed"
+      | "unanswered";
+    staleNominations?: readonly PredictionNomination[];
+  } = {},
+): AuctionScreenBody {
+  return {
+    blocks: [
+      {
+        kind: "prediction",
+        auctionId: CONTRACT_AUCTION_ID,
+        round,
+        status,
+        answers,
+        lotNames: options.lotNames ?? {},
+        ...(options.staleNominations === undefined
+          ? {}
+          : { staleNominations: options.staleNominations }),
+        ...(options.opensAt === undefined ? {} : { opensAt: options.opensAt }),
+        ...(options.notice === undefined ? {} : { notice: options.notice }),
+      },
+    ],
+    keyboard: [
+      ...(status === "open"
+        ? predictionNominationsFor(round).map((nomination) => [
+            {
+              action: "prediction.edit" as const,
+              callbackData: callback({
+                kind: "prediction-edit",
+                auctionId: CONTRACT_AUCTION_ID,
+                round,
+                nomination: nomination.id,
+              }),
+            },
+          ])
+        : []),
+      [
+        {
+          action: "prediction.switch-round" as const,
+          callbackData: callback({
+            kind: "prediction",
+            auctionId: CONTRACT_AUCTION_ID,
+            round: round === "catalog" ? "final" : "catalog",
+          }),
+        },
+      ],
+      [
+        {
+          action: "prediction.back" as const,
+          callbackData: rootCallback(CONTRACT_AUCTION_ID),
+        },
+      ],
+    ],
+  };
+}
+
+function predictionNumberQuestionBody(input: {
+  round: PredictionRound;
+  nomination: PredictionAnswer["nomination"];
+  currentValue?: number;
+}): AuctionScreenBody {
+  return {
+    blocks: [
+      {
+        kind: "prediction-number-question",
+        auctionId: CONTRACT_AUCTION_ID,
+        ...input,
+      },
+    ],
+    keyboard: [
+      ...(input.currentValue === undefined
+        ? []
+        : [
+            [
+              {
+                action: "prediction.clear" as const,
+                callbackData: callback({
+                  kind: "prediction-clear",
+                  auctionId: CONTRACT_AUCTION_ID,
+                  ...input,
+                }),
+              },
+            ],
+          ]),
+      [
+        {
+          action: "question.cancel",
+          callbackData: callback({
+            kind: "prediction-number-question",
+            auctionId: CONTRACT_AUCTION_ID,
+            ...input,
+            addressee: CONTRACT_USER.telegramUserId,
+          }),
+        },
+      ],
+    ],
+  };
+}
+
+function predictionNameChoiceBody(input: {
+  round: PredictionRound;
+  nomination: PredictionAnswer["nomination"];
+  username?: string;
+}): AuctionScreenBody {
+  const { round, nomination, username } = input;
+  const context = {
+    auctionId: CONTRACT_AUCTION_ID,
+    round,
+    nomination,
+  };
+  return {
+    blocks: [
+      {
+        kind: "prediction-name-choice",
+        auctionId: CONTRACT_AUCTION_ID,
+        round,
+        ...(username === undefined ? {} : { username }),
+      },
+    ],
+    keyboard: [
+      ...(username === undefined
+        ? []
+        : [
+            [
+              {
+                action: "name.username" as const,
+                callbackData: callback({
+                  kind: "prediction-username",
+                  ...context,
+                }),
+              },
+            ],
+          ]),
+      [
+        {
+          action: "name.alias",
+          callbackData: callback({ kind: "prediction-ask-alias", ...context }),
+        },
+      ],
+      [
+        {
+          action: "prediction.back",
+          callbackData: callback({
+            kind: "prediction",
+            auctionId: CONTRACT_AUCTION_ID,
+            round,
+          }),
+        },
+      ],
+    ],
+  };
+}
+
+function predictionLotSelectionBody(input: {
+  round: PredictionRound;
+  nomination: PredictionAnswer["nomination"];
+  lots: readonly LotView[];
+  page?: number;
+  pageCount?: number;
+  currentLotId?: string;
+  currentTitle?: string | undefined;
+}): AuctionScreenBody {
+  const {
+    round,
+    nomination,
+    lots,
+    currentLotId,
+    page = 0,
+    pageCount = 1,
+  } = input;
+  const current = lots.find((lot) => lot.lotId === currentLotId);
+  const currentTitle = input.currentTitle ?? current?.card?.title;
+  return {
+    blocks: [
+      {
+        kind: "prediction-lots",
+        auctionId: CONTRACT_AUCTION_ID,
+        round,
+        nomination,
+        page,
+        pageCount,
+        lots: lots.map((lot) => ({
+          lotId: lot.lotId,
+          ...(lot.card === undefined ? {} : { title: lot.card.title }),
+          status: lot.status,
+        })),
+        ...(currentLotId === undefined ? {} : { currentLotId }),
+        ...(currentTitle === undefined ? {} : { currentTitle }),
+      },
+    ],
+    keyboard: [
+      ...lots.map((lot) => [
+        {
+          action: "prediction.select-lot" as const,
+          lotId: lot.lotId,
+          callbackData: callback({
+            kind: "prediction-lot",
+            auctionId: CONTRACT_AUCTION_ID,
+            round,
+            nomination,
+            lotId: lot.lotId,
+          }),
+        },
+      ]),
+      ...(currentLotId === undefined
+        ? []
+        : [
+            [
+              {
+                action: "prediction.clear" as const,
+                callbackData: callback({
+                  kind: "prediction-clear",
+                  auctionId: CONTRACT_AUCTION_ID,
+                  round,
+                  nomination,
+                }),
+              },
+            ],
+          ]),
+      ...(pageCount > 1
+        ? [
+            [
+              ...(page > 0
+                ? [
+                    {
+                      action: "feed.prev" as const,
+                      callbackData: callback({
+                        kind: "prediction-lots",
+                        auctionId: CONTRACT_AUCTION_ID,
+                        round,
+                        nomination,
+                        page: page - 1,
+                      }),
+                    },
+                  ]
+                : []),
+              ...(page < pageCount - 1
+                ? [
+                    {
+                      action: "feed.next" as const,
+                      callbackData: callback({
+                        kind: "prediction-lots",
+                        auctionId: CONTRACT_AUCTION_ID,
+                        round,
+                        nomination,
+                        page: page + 1,
+                      }),
+                    },
+                  ]
+                : []),
+            ],
+          ]
+        : []),
+      [
+        {
+          action: "prediction.back",
+          callbackData: callback({
+            kind: "prediction",
+            auctionId: CONTRACT_AUCTION_ID,
+            round,
+          }),
+        },
+      ],
+    ],
+  };
+}
+
+function predictionAnswerRefusedBody(input: {
+  round: PredictionRound;
+  nomination: PredictionAnswer["nomination"];
+  refusal: Extract<
+    AnswerRefusal,
+    "not-a-number" | "other-currency" | "too-precise" | "too-large" | "not-text"
+  >;
+}): AuctionScreenBody {
+  const { round, nomination, refusal } = input;
+  return {
+    blocks: [
+      {
+        kind: "prediction-answer-refused",
+        auctionId: CONTRACT_AUCTION_ID,
+        round,
+        nomination,
+        refusal,
+      },
+    ],
+    keyboard: [
+      [
+        {
+          action: "answer.retry",
+          callbackData: callback({
+            kind: "prediction-edit",
+            auctionId: CONTRACT_AUCTION_ID,
+            round,
+            nomination,
+          }),
+        },
+      ],
+      [
+        {
+          action: "prediction.back",
+          callbackData: callback({
+            kind: "prediction",
+            auctionId: CONTRACT_AUCTION_ID,
+            round,
+          }),
+        },
+      ],
+    ],
+  };
+}
 
 // Ряды ставки под лотом в онлайн-торгах: по шагу, затем своя сумма и лимит
 // одним рядом (PER-594).
@@ -2524,10 +3017,25 @@ const rootCallback = (auctionId: string) =>
 
 const rootCalls = (auctionId: string): PortCall[] => [
   raffleCall(auctionId),
+  predictionReadCall(auctionId),
   {
     port: "auction",
     method: "getAuction",
     request: { viewer: CONTRACT_VIEWER, auctionId },
+  },
+];
+
+const rootPredictionsRow = (
+  auctionId: string,
+  round: PredictionRound = "catalog",
+) => [
+  {
+    action: "root.predictions" as const,
+    callbackData: encodeAuctionCallback({
+      kind: "prediction",
+      auctionId,
+      round,
+    }),
   },
 ];
 
@@ -2554,6 +3062,7 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
       ],
       keyboard: [
         rootLotsRow,
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
         [
           {
             action: "root.raffle",
@@ -2579,7 +3088,7 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
           auction: CONTRACT_SUMMARY,
         },
       ],
-      keyboard: [rootLotsRow],
+      keyboard: [rootLotsRow, rootPredictionsRow(CONTRACT_AUCTION_ID)],
     },
   },
   // У процесса с Notifications в корне — «Избранное» (PER-644): вход в
@@ -2599,6 +3108,7 @@ const ROOT_CASES: readonly AuctionContractCase[] = [
       ],
       keyboard: [
         rootLotsRow,
+        rootPredictionsRow(CONTRACT_AUCTION_ID),
         [
           {
             action: "root.favorites",
@@ -3024,6 +3534,758 @@ const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
       blocks: [manyBlock(manyLot(3))],
       keyboard: [refreshRow(manyLot(3).lotId, 0), manyBack(0)],
     },
+  },
+];
+
+const PREDICTION_CASES: readonly AuctionContractCase[] = [
+  {
+    intent: "predictions: root opens the active final round",
+    callbackData: rootCallback(CONTRACT_AUCTION_ID),
+    auction: {
+      ...AUCTION,
+      summary: CONTRACT_SUMMARY,
+      predictions: [
+        { round: "catalog", status: "closed", answers: [] },
+        { round: "final", status: "open", answers: [] },
+      ],
+    },
+    auctionCalls: rootCalls(CONTRACT_AUCTION_ID),
+    body: {
+      blocks: [
+        {
+          kind: "root",
+          auctionId: CONTRACT_AUCTION_ID,
+          auction: CONTRACT_SUMMARY,
+        },
+      ],
+      keyboard: [rootLotsRow, rootPredictionsRow(CONTRACT_AUCTION_ID, "final")],
+    },
+  },
+  {
+    intent: "predictions: open catalog round with only own answers",
+    callbackData: callback({
+      kind: "prediction",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+    }),
+    auction: {
+      ...AUCTION,
+      summary: PREDICTION_SUMMARY,
+      predictions: predictionViews("catalog", "open", [
+        CATALOG_LOT_ANSWER,
+        CATALOG_MONEY_ANSWER,
+      ]),
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSummaryCall,
+      predictionFindLotCall(CONTRACT_LOT.lotId),
+    ],
+    body: predictionBody(
+      "catalog",
+      "open",
+      [CATALOG_LOT_ANSWER, CATALOG_MONEY_ANSWER],
+      {
+        opensAt: PREDICTION_OPENS_AT,
+        lotNames: { [CONTRACT_LOT.lotId]: "Кружка с совой" },
+      },
+    ),
+  },
+  {
+    intent: "predictions: mark a removed catalog lot in the open forecast",
+    callbackData: callback({
+      kind: "prediction",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+    }),
+    auction: {
+      ...PREDICTION_LOT_AUCTION,
+      summary: PREDICTION_SUMMARY,
+      predictions: predictionViews("catalog", "open", [
+        CATALOG_STALE_LOT_ANSWER,
+      ]),
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSummaryCall,
+      predictionFindLotCall(WITHDRAWN_LOT.lotId),
+    ],
+    body: predictionBody("catalog", "open", [CATALOG_STALE_LOT_ANSWER], {
+      opensAt: PREDICTION_OPENS_AT,
+      staleNominations: ["catalog-most-expensive-lot"],
+    }),
+  },
+  {
+    intent: "predictions: switch to unopened final round",
+    callbackData: callback({
+      kind: "prediction",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "final",
+    }),
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "not-open"),
+    },
+    auctionCalls: [predictionReadCall(CONTRACT_AUCTION_ID)],
+    body: predictionBody("final", "not-open", []),
+  },
+  {
+    intent: "predictions: closed round is read-only",
+    callbackData: callback({
+      kind: "prediction",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+    }),
+    auction: {
+      ...AUCTION,
+      summary: PREDICTION_SUMMARY,
+      predictions: predictionViews("catalog", "closed", [CATALOG_MONEY_ANSWER]),
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSummaryCall,
+    ],
+    body: predictionBody("catalog", "closed", [CATALOG_MONEY_ANSWER], {
+      opensAt: PREDICTION_OPENS_AT,
+    }),
+  },
+  {
+    intent: "predictions: reject a stale answer after round closure",
+    callbackData: predictionQuestionCallback({
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    reply: { text: "56" },
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "closed", [FINAL_COUNT_ANSWER]),
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+    ],
+    body: predictionBody("final", "closed", [FINAL_COUNT_ANSWER], {
+      notice: "round-closed",
+    }),
+  },
+  {
+    intent: "predictions: honor round-closed refusal despite a stale open read",
+    callbackData: predictionQuestionCallback({
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    reply: { text: "56" },
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open", [FINAL_COUNT_ANSWER]),
+      predictionSubmissions: [
+        {
+          kind: "refused",
+          refusal: { kind: "round-closed" },
+        },
+      ],
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSubmitCall("final", [
+        {
+          nomination: "final-total-bids",
+          answer: { kind: "number", value: 56 },
+        },
+      ]),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+    ],
+    body: predictionBody("final", "closed", [FINAL_COUNT_ANSWER], {
+      notice: "round-closed",
+    }),
+  },
+  {
+    intent: "predictions: edit catalog lot from all catalog lots",
+    callbackData: callback({
+      kind: "prediction-edit",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+      nomination: "catalog-most-expensive-lot",
+    }),
+    auction: {
+      ...PAGED_PREDICTION_LOT_AUCTION,
+      predictions: predictionViews("catalog", "open", [CATALOG_LOT_ANSWER]),
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      ...listCalls(CONTRACT_AUCTION_ID, [""]),
+    ],
+    body: predictionLotSelectionBody({
+      round: "catalog",
+      nomination: "catalog-most-expensive-lot",
+      lots: PAGED_PREDICTION_CATALOG_FIRST_PAGE,
+      pageCount: 2,
+      currentLotId: CONTRACT_LOT.lotId,
+    }),
+  },
+  {
+    intent: "predictions: edit final lot from held lineup only",
+    callbackData: callback({
+      kind: "prediction-edit",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "final",
+      nomination: "final-most-expensive-lot",
+    }),
+    auction: {
+      ...PREDICTION_LOT_AUCTION,
+      predictions: predictionViews("final", "open", [
+        {
+          nomination: "final-most-expensive-lot",
+          answer: { kind: "lot", lotId: HELD_LOT.lotId },
+        },
+      ]),
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      ...listCalls(CONTRACT_AUCTION_ID, [""]),
+    ],
+    body: predictionLotSelectionBody({
+      round: "final",
+      nomination: "final-most-expensive-lot",
+      lots: [HELD_LOT],
+      currentLotId: HELD_LOT.lotId,
+    }),
+  },
+  {
+    intent: "predictions: reopen catalog lot choices from pagination callback",
+    callbackData: callback({
+      kind: "prediction-lots",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+      nomination: "catalog-most-expensive-lot",
+      page: 1,
+    }),
+    auction: {
+      ...PAGED_PREDICTION_LOT_AUCTION,
+      predictions: predictionViews("catalog", "open", [CATALOG_LOT_ANSWER]),
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      ...listCalls(CONTRACT_AUCTION_ID, [""]),
+    ],
+    body: predictionLotSelectionBody({
+      round: "catalog",
+      nomination: "catalog-most-expensive-lot",
+      lots: [HELD_LOT],
+      page: 1,
+      pageCount: 2,
+      currentLotId: CONTRACT_LOT.lotId,
+      currentTitle: CONTRACT_LOT.card?.title,
+    }),
+  },
+  {
+    intent: "predictions: select final lot",
+    callbackData: callback({
+      kind: "prediction-lot",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "final",
+      nomination: "final-most-expensive-lot",
+      lotId: HELD_LOT.lotId,
+    }),
+    auction: {
+      ...PREDICTION_LOT_AUCTION,
+      predictions: predictionViews("final", "open"),
+      predictionSubmissions: [
+        {
+          kind: "accepted",
+          prediction: {
+            round: "final",
+            answers: [
+              {
+                nomination: "final-most-expensive-lot",
+                answer: { kind: "lot", lotId: HELD_LOT.lotId },
+              },
+            ],
+          },
+        },
+      ],
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSubmitCall("final", [
+        {
+          nomination: "final-most-expensive-lot",
+          answer: { kind: "lot", lotId: HELD_LOT.lotId },
+        },
+      ]),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionFindLotCall(HELD_LOT.lotId),
+    ],
+    body: predictionBody(
+      "final",
+      "open",
+      [
+        {
+          nomination: "final-most-expensive-lot",
+          answer: { kind: "lot", lotId: HELD_LOT.lotId },
+        },
+      ],
+      {
+        lotNames: { [HELD_LOT.lotId]: "Шарф" },
+      },
+    ),
+  },
+  {
+    intent: "predictions: parse rubles and preserve other nominations",
+    callbackData: predictionQuestionCallback({
+      round: "catalog",
+      nomination: "catalog-total-sales",
+    }),
+    reply: { text: "12 345,67 ₽" },
+    auction: {
+      ...AUCTION,
+      summary: PREDICTION_SUMMARY,
+      predictions: predictionViews("catalog", "open", [CATALOG_LOT_ANSWER]),
+      predictionSubmissions: [
+        {
+          kind: "accepted",
+          prediction: {
+            round: "catalog",
+            answers: [
+              CATALOG_LOT_ANSWER,
+              {
+                nomination: "catalog-total-sales",
+                answer: { kind: "number", value: 1_234_567 },
+              },
+            ],
+          },
+        },
+      ],
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSubmitCall("catalog", [
+        CATALOG_LOT_ANSWER,
+        {
+          nomination: "catalog-total-sales",
+          answer: { kind: "number", value: 1_234_567 },
+        },
+      ]),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSummaryCall,
+      predictionFindLotCall(CONTRACT_LOT.lotId),
+    ],
+    body: predictionBody(
+      "catalog",
+      "open",
+      [
+        CATALOG_LOT_ANSWER,
+        {
+          nomination: "catalog-total-sales",
+          answer: { kind: "number", value: 1_234_567 },
+        },
+      ],
+      {
+        opensAt: PREDICTION_OPENS_AT,
+        lotNames: { [CONTRACT_LOT.lotId]: "Кружка с совой" },
+      },
+    ),
+  },
+  {
+    intent:
+      "predictions: remove a withdrawn answer before saving another nomination",
+    callbackData: predictionQuestionCallback({
+      round: "catalog",
+      nomination: "catalog-total-sales",
+    }),
+    reply: { text: "12 500" },
+    auction: {
+      ...PREDICTION_LOT_AUCTION,
+      summary: PREDICTION_SUMMARY,
+      predictions: predictionViews("catalog", "open", [
+        CATALOG_STALE_LOT_ANSWER,
+      ]),
+      predictionSubmissions: [
+        {
+          kind: "refused",
+          refusal: {
+            kind: "lot-not-in-round",
+            nomination: "catalog-most-expensive-lot",
+            lotId: WITHDRAWN_LOT.lotId,
+          },
+        },
+        {
+          kind: "accepted",
+          prediction: { round: "catalog", answers: [CATALOG_MONEY_ANSWER] },
+        },
+      ],
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSubmitCall(
+        "catalog",
+        [CATALOG_STALE_LOT_ANSWER, CATALOG_MONEY_ANSWER],
+        CONTRACT_OP_IDS[0],
+      ),
+      predictionSubmitCall(
+        "catalog",
+        [CATALOG_MONEY_ANSWER],
+        CONTRACT_OP_IDS[1],
+      ),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSummaryCall,
+    ],
+    body: predictionBody("catalog", "open", [CATALOG_MONEY_ANSWER], {
+      opensAt: PREDICTION_OPENS_AT,
+      notice: "stale-answer-removed",
+    }),
+  },
+  {
+    intent: "predictions: parse grouped integer in final round",
+    callbackData: predictionQuestionCallback({
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    reply: { text: "1 234" },
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open"),
+      predictionSubmissions: [
+        {
+          kind: "accepted",
+          prediction: {
+            round: "final",
+            answers: [
+              {
+                nomination: "final-total-bids",
+                answer: { kind: "number", value: 1234 },
+              },
+            ],
+          },
+        },
+      ],
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSubmitCall("final", [
+        {
+          nomination: "final-total-bids",
+          answer: { kind: "number", value: 1234 },
+        },
+      ]),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+    ],
+    body: predictionBody("final", "open", [
+      {
+        nomination: "final-total-bids",
+        answer: { kind: "number", value: 1234 },
+      },
+    ]),
+  },
+  {
+    intent: "predictions: reject foreign currency code",
+    callbackData: predictionQuestionCallback({
+      round: "final",
+      nomination: "final-total-sales",
+    }),
+    reply: { text: "12 USD" },
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open"),
+    },
+    auctionCalls: [],
+    body: predictionAnswerRefusedBody({
+      round: "final",
+      nomination: "final-total-sales",
+      refusal: "other-currency",
+    }),
+  },
+  {
+    intent: "predictions: clear one nomination and keep the rest",
+    callbackData: callback({
+      kind: "prediction-clear",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open", [
+        FINAL_COUNT_ANSWER,
+        FINAL_MONEY_ANSWER,
+      ]),
+      predictionSubmissions: [
+        {
+          kind: "accepted",
+          prediction: { round: "final", answers: [FINAL_MONEY_ANSWER] },
+        },
+      ],
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSubmitCall("final", [FINAL_MONEY_ANSWER]),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+    ],
+    body: predictionBody("final", "open", [FINAL_MONEY_ANSWER], {}),
+  },
+  {
+    intent: "predictions: unanswered submission retries same operation",
+    callbackData: predictionQuestionCallback({
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    reply: { text: "56" },
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open"),
+      predictionSubmissions: [
+        { kind: "unanswered" },
+        {
+          kind: "accepted",
+          prediction: {
+            round: "final",
+            answers: [
+              {
+                nomination: "final-total-bids",
+                answer: { kind: "number", value: 56 },
+              },
+            ],
+          },
+        },
+      ],
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSubmitCall("final", [
+        {
+          nomination: "final-total-bids",
+          answer: { kind: "number", value: 56 },
+        },
+      ]),
+      predictionSubmitCall("final", [
+        {
+          nomination: "final-total-bids",
+          answer: { kind: "number", value: 56 },
+        },
+      ]),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+    ],
+    body: predictionBody("final", "open", [
+      {
+        nomination: "final-total-bids",
+        answer: { kind: "number", value: 56 },
+      },
+    ]),
+  },
+  {
+    intent: "predictions: unanswered twice shows an uncertain save outcome",
+    callbackData: predictionQuestionCallback({
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    reply: { text: "56" },
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open", [FINAL_COUNT_ANSWER]),
+      predictionSubmissions: [{ kind: "unanswered" }, { kind: "unanswered" }],
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSubmitCall("final", [
+        {
+          nomination: "final-total-bids",
+          answer: { kind: "number", value: 56 },
+        },
+      ]),
+      predictionSubmitCall("final", [
+        {
+          nomination: "final-total-bids",
+          answer: { kind: "number", value: 56 },
+        },
+      ]),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+    ],
+    body: predictionBody("final", "open", [FINAL_COUNT_ANSWER], {
+      notice: "unanswered",
+    }),
+  },
+  {
+    intent: "predictions: ask for a name without losing the nomination",
+    callbackData: predictionQuestionCallback({
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    from: USER_WITH_USERNAME,
+    reply: { text: "56" },
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open"),
+      predictionSubmissions: [
+        {
+          kind: "refused",
+          refusal: { kind: "display-name-not-chosen" },
+        },
+      ],
+    },
+    auctionCalls: [
+      predictionReadCall(CONTRACT_AUCTION_ID),
+      predictionSubmitCall("final", [
+        {
+          nomination: "final-total-bids",
+          answer: { kind: "number", value: 56 },
+        },
+      ]),
+    ],
+    body: predictionNameChoiceBody({
+      round: "final",
+      nomination: "final-total-bids",
+      username: "owl_fan",
+    }),
+  },
+  {
+    intent: "predictions: choose username returns to same nomination",
+    callbackData: callback({
+      kind: "prediction-username",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "final",
+      nomination: "final-total-bids",
+    }),
+    from: USER_WITH_USERNAME,
+    auction: {
+      ...AUCTION,
+      predictions: predictionViews("final", "open", [FINAL_COUNT_ANSWER]),
+      displayNames: [{ kind: "accepted", name: "@owl_fan" }],
+    },
+    auctionCalls: [
+      chooseCall({ kind: "username", username: "owl_fan" }),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+    ],
+    body: predictionNumberQuestionBody({
+      round: "final",
+      nomination: "final-total-bids",
+      currentValue: 42,
+    }),
+  },
+  {
+    intent: "predictions: ask for an alias",
+    callbackData: callback({
+      kind: "prediction-ask-alias",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+      nomination: "catalog-total-sales",
+    }),
+    auction: AUCTION,
+    auctionCalls: [],
+    body: {
+      blocks: [
+        {
+          kind: "prediction-alias-question",
+          auctionId: CONTRACT_AUCTION_ID,
+          round: "catalog",
+          nomination: "catalog-total-sales",
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "question.cancel",
+            callbackData: callback({
+              kind: "prediction-alias-question",
+              auctionId: CONTRACT_AUCTION_ID,
+              round: "catalog",
+              nomination: "catalog-total-sales",
+              addressee: CONTRACT_USER.telegramUserId,
+            }),
+          },
+        ],
+      ],
+    },
+  },
+  {
+    intent: "predictions: alias question cancelled",
+    callbackData: callback({
+      kind: "prediction-alias-question",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+      nomination: "catalog-total-sales",
+      addressee: CONTRACT_USER.telegramUserId,
+    }),
+    auction: AUCTION,
+    auctionCalls: [],
+    body: predictionNameChoiceBody({
+      round: "catalog",
+      nomination: "catalog-total-sales",
+    }),
+  },
+  {
+    intent: "predictions: alias reply without text can be retried",
+    callbackData: callback({
+      kind: "prediction-alias-question",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+      nomination: "catalog-total-sales",
+      addressee: CONTRACT_USER.telegramUserId,
+    }),
+    reply: {},
+    auction: AUCTION,
+    auctionCalls: [],
+    body: {
+      blocks: [
+        {
+          kind: "prediction-answer-refused",
+          auctionId: CONTRACT_AUCTION_ID,
+          round: "catalog",
+          nomination: "catalog-total-sales",
+          refusal: "not-text",
+        },
+      ],
+      keyboard: [
+        [
+          {
+            action: "answer.retry",
+            callbackData: callback({
+              kind: "prediction-ask-alias",
+              auctionId: CONTRACT_AUCTION_ID,
+              round: "catalog",
+              nomination: "catalog-total-sales",
+            }),
+          },
+        ],
+        [
+          {
+            action: "prediction.back",
+            callbackData: callback({
+              kind: "prediction",
+              auctionId: CONTRACT_AUCTION_ID,
+              round: "catalog",
+            }),
+          },
+        ],
+      ],
+    },
+  },
+  {
+    intent: "predictions: ask and answer alias with same context",
+    callbackData: callback({
+      kind: "prediction-alias-question",
+      auctionId: CONTRACT_AUCTION_ID,
+      round: "catalog",
+      nomination: "catalog-total-sales",
+      addressee: CONTRACT_USER.telegramUserId,
+    }),
+    reply: { text: "Сова" },
+    auction: {
+      ...AUCTION,
+      summary: PREDICTION_SUMMARY,
+      predictions: predictionViews("catalog", "open"),
+      displayNames: [{ kind: "accepted", name: "Сова*" }],
+    },
+    auctionCalls: [
+      chooseCall({ kind: "alias", alias: "Сова" }),
+      predictionReadCall(CONTRACT_AUCTION_ID),
+    ],
+    body: predictionNumberQuestionBody({
+      round: "catalog",
+      nomination: "catalog-total-sales",
+    }),
   },
 ];
 
@@ -3460,6 +4722,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
   ...NEIGHBOR_CASES,
   ...RAFFLE_CASES,
   ...PER595_CASES,
+  ...PREDICTION_CASES,
 ];
 
 export function spyPorts(
@@ -3474,6 +4737,9 @@ export function spyPorts(
   const follows = [...(snapshot.follows ?? [])];
   const registrations = [...(snapshot.registrations ?? [])];
   const cancellations = [...(snapshot.cancellations ?? [])];
+  const predictionSubmissions = [...(snapshot.predictionSubmissions ?? [])];
+  let predictionRounds =
+    snapshot.predictions === undefined ? undefined : [...snapshot.predictions];
   const { followed, explainer } = snapshot;
   const followCommand = (outcome: FollowOutcome | undefined) => {
     if (outcome === undefined) throw new Error("follow is not expected");
@@ -3583,6 +4849,28 @@ export function spyPorts(
           request,
         });
         return settled(cancellations.shift());
+      },
+      async getMyPredictions(request) {
+        calls.push({ port: "auction", method: "getMyPredictions", request });
+        if (predictionRounds === undefined) {
+          throw new Error("predictions are not expected");
+        }
+        return predictionRounds;
+      },
+      async submitPrediction(request) {
+        calls.push({ port: "auction", method: "submitPrediction", request });
+        const outcome = settled(predictionSubmissions.shift());
+        if (outcome.kind === "accepted") {
+          if (predictionRounds === undefined) {
+            throw new Error("prediction submission without a snapshot");
+          }
+          predictionRounds = predictionRounds.map((round) =>
+            round.round === outcome.prediction.round
+              ? { ...round, answers: outcome.prediction.answers }
+              : round,
+          );
+        }
+        return outcome;
       },
     },
     operations: {

@@ -1,4 +1,4 @@
-import type { CallOptions, Client } from "@connectrpc/connect";
+import type { Client } from "@connectrpc/connect";
 import { createClient } from "@connectrpc/connect";
 import {
   createGrpcTransport,
@@ -34,6 +34,12 @@ import {
 } from "../../core/auction/commands.js";
 import { type Pause, readLotAtLeast } from "../../core/auction/fresh.js";
 import { historyPageOf } from "../../core/auction/history.js";
+import {
+  myPredictionsOf,
+  predictionOutcomeOf,
+  wirePredictionAnswers,
+  wirePredictionRound,
+} from "../../core/auction/predictions.js";
 import {
   cancellationOutcomeOf,
   raffleOf,
@@ -101,6 +107,8 @@ export type AuctionRpc = Pick<
   | "getRaffle"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
+  | "getMyPredictions"
+  | "submitPrediction"
   | "getLotImage"
   | "listAuctions"
   | "getFaqAcknowledgement"
@@ -392,6 +400,32 @@ export function createPorts(
                 {
                   viewer: wireViewer(request.viewer),
                   auctionId: request.auctionId,
+                  opId: request.opId,
+                },
+                callOptions(timeoutMs),
+              ),
+            ),
+          );
+        },
+        async getMyPredictions(request) {
+          const response = await auction.getMyPredictions(
+            {
+              viewer: wireViewer(request.viewer),
+              auctionId: request.auctionId,
+            },
+            callOptions(timeoutMs),
+          );
+          return myPredictionsOf(response);
+        },
+        submitPrediction(request) {
+          return unansweredOn(async () =>
+            predictionOutcomeOf(
+              await auction.submitPrediction(
+                {
+                  viewer: wireViewer(request.viewer),
+                  auctionId: request.auctionId,
+                  round: wirePredictionRound(request.round),
+                  answers: wirePredictionAnswers(request.answers),
                   opId: request.opId,
                 },
                 callOptions(timeoutMs),

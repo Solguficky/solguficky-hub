@@ -140,6 +140,12 @@ const surface: AuctionSurface = {
       async cancelRaffleRegistration() {
         throw new Error("not used");
       },
+      async getMyPredictions() {
+        return [];
+      },
+      async submitPrediction() {
+        throw new Error("not used");
+      },
     },
     operations: {
       newOperationId() {

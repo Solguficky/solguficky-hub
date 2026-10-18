@@ -24,6 +24,12 @@ import {
 import { type Pause, readLotAtLeast } from "../../../core/auction/fresh.js";
 import { historyPageOf } from "../../../core/auction/history.js";
 import {
+  myPredictionsOf,
+  predictionOutcomeOf,
+  wirePredictionAnswers,
+  wirePredictionRound,
+} from "../../../core/auction/predictions.js";
+import {
   cancellationOutcomeOf,
   raffleOf,
   registrationOutcomeOf,
@@ -95,6 +101,8 @@ type AuctionRpc = Pick<
   | "getRaffle"
   | "registerForRaffle"
   | "cancelRaffleRegistration"
+  | "getMyPredictions"
+  | "submitPrediction"
   | "getLotImage"
   | "getAuctionConsole"
   | "getAuctionLotStatistics"
@@ -831,6 +839,32 @@ export function createAuctionAdapter(
                   {
                     viewer: wireViewer(request.viewer),
                     auctionId: request.auctionId,
+                    opId: request.opId,
+                  },
+                  options(meta),
+                ),
+              ),
+            );
+          },
+          async getMyPredictions(request) {
+            const response = await rpc.getMyPredictions(
+              {
+                viewer: wireViewer(request.viewer),
+                auctionId: request.auctionId,
+              },
+              options(meta),
+            );
+            return myPredictionsOf(response);
+          },
+          submitPrediction(request) {
+            return unansweredOn(async () =>
+              predictionOutcomeOf(
+                await rpc.submitPrediction(
+                  {
+                    viewer: wireViewer(request.viewer),
+                    auctionId: request.auctionId,
+                    round: wirePredictionRound(request.round),
+                    answers: wirePredictionAnswers(request.answers),
                     opId: request.opId,
                   },
                   options(meta),

@@ -127,6 +127,30 @@ export const screenCatalog = {
     parent: "root",
     backName: "Лоты",
   },
+  // Прогнозы участника — тело общего аукционного дерева (ADR-067), вход из
+  // корня аукциона и возврат туда же (PER-644).
+  predictions: {
+    class: "screen",
+    nav: "tree",
+    title: "Прогнозы аукциона",
+    parent: "root",
+    backName: "Прогнозы",
+  },
+  "prediction-lots": {
+    class: "screen",
+    nav: "tree",
+    title: "Выбрать лот",
+    parent: "predictions",
+  },
+  "prediction-name-choice": {
+    class: "screen",
+    nav: "tree",
+    title: "Имя в аукционе",
+    parent: "predictions",
+  },
+  "prediction-number-question": { class: "question", nav: "question" },
+  "prediction-alias-question": { class: "question", nav: "question" },
+  "prediction-answer-refused": { class: "screen", nav: "exit" },
   // «Обновить» разрешено, пока у лота нет итога (PER-462). Состояния лота
   // каталог не знает: кнопку по состоянию ставит аукционное дерево, и держат это
   // его contract cases.

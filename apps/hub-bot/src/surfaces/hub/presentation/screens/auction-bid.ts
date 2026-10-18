@@ -249,7 +249,11 @@ function proxyExplainer(
 export function nameChoiceScreen(
   block: Pick<NameChoiceBlock, "username">,
   keyboard: readonly (readonly AuctionButton[])[],
-  target?: { id: "raffle-name-choice"; back: Parent; body: string },
+  target?: {
+    id: "raffle-name-choice" | "prediction-name-choice";
+    back: Parent;
+    body: string;
+  },
 ): ShownScreen {
   const rows = new InlineKeyboard();
   for (const button of keyboard.flat()) {
