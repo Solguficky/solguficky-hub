@@ -370,6 +370,12 @@ export function createLotForm(lots: LotAdministration) {
         };
       case "auction-not-found":
         return { kind: "lot-refused", reason: "auction-not-found" };
+      case "meetup-cancelled":
+        return {
+          kind: "lot-refused",
+          reason: "meetup-cancelled",
+          auctionId: request.auctionId,
+        };
       default:
         return failed(added);
     }
@@ -592,6 +598,12 @@ export function createLotForm(lots: LotAdministration) {
         };
       case "auction-not-found":
         return { kind: "lot-refused", reason: "auction-not-found" };
+      case "meetup-cancelled":
+        return {
+          kind: "lot-refused",
+          reason: "meetup-cancelled",
+          lotId: request.lotId,
+        };
       case "currency-mismatch":
         // Аукцион ведётся не в рублях: человек это не исправит, а форма другой
         // валюты не знает.

@@ -4,6 +4,10 @@ import com.dimafeng.testcontainers.GenericContainer
 import io.nats.client.Connection
 import io.nats.client.JetStreamManagement
 import io.nats.client.Nats
+import io.nats.client.PublishOptions
+import io.nats.client.api.AckPolicy
+import io.nats.client.api.ConsumerConfiguration
+import io.nats.client.api.DeliverPolicy
 import io.nats.client.api.MessageInfo
 import io.nats.client.api.StorageType
 import io.nats.client.api.StreamConfiguration
@@ -19,7 +23,8 @@ import scala.util.Using
  * Настоящий NATS с JetStream для L1-сьюта: один контейнер на сьют, стартует при первом обращении.
  *
  * Стрим сервис не заводит — его объявляет топология AppHost (ADR-050), — поэтому сьют объявляет его сам теми же
- * настройками, что `JetStreamTopology`: subjects домена и окно дедупликации в две минуты.
+ * настройками, что `JetStreamTopology`: subjects домена и окно дедупликации в две минуты. Так же объявляется и durable
+ * потребителя фактов Meetups.
  */
 trait NatsFixture extends BeforeAndAfterAll { self: Suite =>
 
@@ -53,6 +58,57 @@ trait NatsFixture extends BeforeAndAfterAll { self: Suite =>
           .duplicateWindow(Duration.ofMinutes(2))
           .build()
       )
+    }
+
+  /**
+   * Пустой стрим `MEETUPS_EVENTS` и, если `withDurable`, durable Auction на отмены сходок с настройками
+   * `JetStreamTopology`: фильтр по subject, явный ack и выдача с начала стрима.
+   */
+  protected def freshMeetupsStream(withDurable: Boolean = true): Unit =
+    withJetStream { management =>
+      if (management.getStreamNames.contains("MEETUPS_EVENTS")) management.deleteStream("MEETUPS_EVENTS")
+      management.addStream(
+        StreamConfiguration
+          .builder()
+          .name("MEETUPS_EVENTS")
+          .subjects("events.meetups.>")
+          .storageType(StorageType.Memory)
+          .duplicateWindow(Duration.ofMinutes(2))
+          .build()
+      )
+      if (withDurable)
+        management.addOrUpdateConsumer(
+          "MEETUPS_EVENTS",
+          ConsumerConfiguration
+            .builder()
+            .durable("auction-meetups-events")
+            .filterSubject("events.meetups.meetup_cancelled")
+            .ackPolicy(AckPolicy.Explicit)
+            .deliverPolicy(DeliverPolicy.All)
+            .build()
+        )
+    }
+
+  /**
+   * Публикует факт Meetups с `Nats-Msg-Id`, как релей Meetups: тот же id второй раз сервер отбросит окном дедупликации.
+   */
+  protected def publishMeetupFact(subject: String, messageId: String, payload: Array[Byte]): Unit =
+    Using.resource(Nats.connect(natsUrl): Connection) { connection =>
+      connection
+        .jetStream()
+        .publish(
+          subject,
+          payload,
+          PublishOptions.builder().messageId(messageId).expectedStream("MEETUPS_EVENTS").build()
+        )
+      ()
+    }
+
+  /** Счётчики durable Auction на сервере: невыданные и выданные без подтверждения. */
+  protected def meetupsDurablePending(): (Long, Long) =
+    withJetStream { management =>
+      val info = management.getConsumerInfo("MEETUPS_EVENTS", "auction-meetups-events")
+      (info.getNumPending, info.getNumAckPending)
     }
 
   /** Все сообщения стрима по порядку: subject, заголовки и тело, как их сохранил сервер. */

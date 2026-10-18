@@ -7,6 +7,13 @@ import auction.aggregate.DiscardRefusal
 import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.OpeningRefusal
 import auction.aggregate.SchedulingRefusal
+import auction.aggregate.RemovalRefusal
+import auction.aggregate.FinalChoiceRefusal
+import auction.aggregate.LineupRefusal
+import auction.aggregate.FinalStartRefusal
+import auction.aggregate.NextLotRefusal
+import auction.aggregate.AskRefusal
+import auction.aggregate.ClosingRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.ImageVersion
 import auction.catalog.LotCard
@@ -205,6 +212,82 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       val holder = auction.lot.AuctionId(java.util.UUID.fromString("0190f2a0-0000-7000-8000-000000000021"))
       reason(OpeningRefusal.AnotherAuctionActive(holder)).anotherAuctionActive.map(_.auctionId) shouldBe
         Some("0190f2a0-0000-7000-8000-000000000021")
+      reason(OpeningRefusal.Denied(Denial.MeetupCancelled)).isMeetupCancelled shouldBe true
+      reason(OpeningRefusal.Denied(Denial.MeetupHidden)).isMeetupHidden shouldBe true
+    }
+
+    "answers a manual settlement of a cancelled meetup with a named refusal" in {
+      ResponseMapping
+        .settleResultsDenied(Denial.MeetupCancelled)
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+    }
+
+    "answers a command of a cancelled meetup with a named refusal in every command the gate closes" in {
+      ResponseMapping.draftAuction(Left(Denial.MeetupCancelled)).value.getRefused.reason.isMeetupCancelled shouldBe true
+      ResponseMapping.addLot(Left(Denial.MeetupCancelled)).value.getRefused.reason.isMeetupCancelled shouldBe true
+      ResponseMapping
+        .removeLot(Left(RemovalRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .scheduleAuction(Left(SchedulingRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .scheduleLot(Left(LotSchedulingRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .selectForFinal(Left(FinalChoiceRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .deselectForFinal(Left(FinalChoiceRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .freezeFinalLineup(Left(LineupRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .startFinal(Left(FinalStartRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .startNextLot(Left(NextLotRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .advanceAsk(Left(AskRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
+      ResponseMapping
+        .closeLot(Left(ClosingRefusal.Denied(Denial.MeetupCancelled)))
+        .value
+        .getRefused
+        .reason
+        .isMeetupCancelled shouldBe true
     }
 
     "answers a discard without data and every refusal of the right and of the state as a value" in {

@@ -133,7 +133,8 @@ lazy val auction = (project in file("."))
     // CheckAccessRight (ADR-066, PER-499). Схема событий Identity ему не нужна.
     // Из meetups — сервис и его
     // сообщения: аукцион спрашивает право администратора CheckMeetupAuthority
-    // (ADR-047, ADR-051); схема событий Meetups ему не нужна.
+    // (ADR-047, ADR-051), — и схема событий: аукцион наследует отмену сходки из
+    // events.meetups.meetup_cancelled (ADR-047, дополнение 2026-10-12).
     Compile / PB.generate / includeFilter := new SimpleFileFilter(schema => {
       val path = schema.getPath.replace('\\', '/')
       schema.isFile &&
@@ -142,6 +143,7 @@ lazy val auction = (project in file("."))
         path.endsWith("/proto/identity/v1/access.proto") ||
         path.endsWith("/proto/identity/v1/identity_service.proto") ||
         path.endsWith("/proto/meetups/v1/meetups_service.proto") ||
+        path.endsWith("/proto/meetups/v1/meetups_events.proto") ||
         path.endsWith("/proto/meetups/v1/meetups.proto"))
     }),
     // Сервер AuctionService и клиенты MeetupsService и IdentityService. Выбор

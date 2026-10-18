@@ -111,6 +111,13 @@ final case class DiscardAuction(opId: OpId)
 final case class CancelAuction(opId: OpId)
 
 /**
+ * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, без входа сверх `op_id` и без отказов.
+ * Удалить аукцион, отменить его или ничего не делать, решает агрегат по своему состоянию, а не потребитель: состояние,
+ * прочитанное заранее, успевает устареть. `op_id` — UUIDv5 от `event_id` факта ([[Auction.meetupCancellationOf]]).
+ */
+final case class ApplyMeetupCancelled(opId: OpId)
+
+/**
  * `ScheduleLot` словаря ADR-047, каким он приходит аукциону: администратор задаёт стартовую цену и шаг, остальные
  * условия подставляет аукцион ([[LotTerms]]). Лоту после решения уходит его собственная команда [[ScheduleLot]] с тем
  * же `op_id`. События аукцион на неё не пишет: условия торгов живут только в журнале лота.
@@ -436,6 +443,17 @@ object Auction {
    */
   def idOf(meetup: MeetupId): AuctionId = AuctionId(nameBased(MeetupNamespace, meetup.value.toString))
 
+  /**
+   * Пространство имён UUIDv5 `op_id` отмены сходки из шины. Не меняется никогда, как и пространство аукциона сходки.
+   */
+  val MeetupCancellationNamespace: UUID = UUID.fromString("1cb0b497-fae3-4a59-bb5a-22f40418ba01")
+
+  /**
+   * `op_id` команды [[ApplyMeetupCancelled]] — UUIDv5 от канонической строки `event_id` факта отмены: повторная
+   * доставка того же факта упирается в окно `seen` и второго события не пишет.
+   */
+  def meetupCancellationOf(eventId: UUID): OpId = OpId(nameBased(MeetupCancellationNamespace, eventId.toString))
+
   /** UUIDv5 (RFC 9562): SHA-1 от пространства имён и имени в UTF-8, с битами версии и варианта. */
   private[aggregate] def nameBased(namespace: UUID, name: String): UUID = {
     val digest = MessageDigest.getInstance("SHA-1")
@@ -604,6 +622,33 @@ object Auction {
             Right(AuctionDecision.Accepted(AuctionEvent.AuctionCancelled))
           case AuctionState.Finished(_, _) => Left(CancelAuctionRejected.AuctionAlreadyFinished)
           case AuctionState.Cancelled(_, _, _) => Right(AuctionDecision.Unchanged)
+        }
+    }
+
+  /**
+   * Отмена сходки (ADR-047, дополнение 2026-10-12): `Initial` — ничего, до торгов — `AuctionDiscarded`, как удаление
+   * администратором, торги открыты — `AuctionCancelled` по правилам [[CancelAuction]], конечное состояние — ничего.
+   * Финал с завершённым составом и перерыв без удержанных уже кончились, как и для отмены администратором. Отказов нет:
+   * факт отмены необратим, и ответить ему «нельзя» некому. `held` — удержанные лоты перерыва по знанию entity.
+   */
+  def decide(auction: Auction, command: ApplyMeetupCancelled, held: Option[Set[LotId]]): AuctionDecision =
+    auction.seen.get(command.opId) match {
+      case Some(original) => AuctionDecision.Repeated(original)
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => AuctionDecision.Unchanged
+          case AuctionState.Draft | AuctionState.Scheduled(_) => AuctionDecision.Accepted(AuctionEvent.AuctionDiscarded)
+          case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            decide(auction, CancelAuction(command.opId), held) match {
+              case Right(decision) => decision
+              case Left(
+                    CancelAuctionRejected.AuctionAlreadyFinished | CancelAuctionRejected.AuctionNotStarted |
+                    CancelAuctionRejected.AuctionNotFound
+                  ) =>
+                AuctionDecision.Unchanged
+            }
         }
     }
 

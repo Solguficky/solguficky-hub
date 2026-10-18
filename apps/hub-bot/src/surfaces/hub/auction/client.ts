@@ -874,6 +874,8 @@ function enableResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
         case undefined:
           // Пустой `oneof` — дефект соседа, а не решение: экран отвечает как
           // на сбой, а причина уходит в запись границы.
@@ -964,6 +966,8 @@ function addLotResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
         case "lotsFrozen":
           return { kind: "lots-frozen" };
         case undefined:
@@ -1013,6 +1017,8 @@ function scheduleLotResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
         case "lotsFrozen":
           return { kind: "lots-frozen" };
         case "lotNotInAuction":
@@ -1173,6 +1179,8 @@ function scheduleAuctionResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
         case "auctionAlreadyStarted":
           return { kind: "already-started" };
         case "configInvalid":
@@ -1205,6 +1213,10 @@ function startPrebiddingResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "meetupHidden":
+          return { kind: "meetup-hidden" };
         case "auctionNotScheduled":
           return { kind: "not-scheduled" };
         case "anotherAuctionActive":
@@ -1282,6 +1294,8 @@ function finalistResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
         case "notInPrebidding":
           return refused("not-in-prebidding");
         case "lotNotInAuction":
@@ -1328,6 +1342,8 @@ function freezeFinalLineupResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
         case "notInBreak":
           return { kind: "not-in-break" };
         case "lineupEmpty":
@@ -1363,6 +1379,8 @@ function startFinalResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
         case "lineupNotFrozen":
           return { kind: "lineup-not-frozen" };
         case undefined:
@@ -1396,6 +1414,8 @@ function startNextLotResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
         case "notInFinal":
           return { kind: "not-in-final" };
         case "anotherLotActive":
@@ -1434,6 +1454,8 @@ function advanceAskResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
         case "lotNotInAuction":
           return { kind: "lot-not-in-auction" };
         case "lotNotOpen":
@@ -1503,6 +1525,8 @@ function closeLotResult(
           return { kind: "not-administrator" };
         case "meetupNotFound":
           return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
         case "lotNotInAuction":
           return { kind: "lot-not-in-auction" };
         case "lotNotOpen":

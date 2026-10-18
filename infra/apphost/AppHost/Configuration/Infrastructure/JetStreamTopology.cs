@@ -64,6 +64,14 @@ internal static class JetStreamTopology
         {
             ["NOTIFICATIONS_EVENTS"] = "events.notifications.notification_created.auction",
         }),
+
+        // Auction наследует отмену сходки (ADR-047, дополнение 2026-10-12, PER-602):
+        // из стрима Meetups ему нужен один повод, остальные копились бы в durable
+        // неподтверждёнными.
+        new("auction", ["MEETUPS_EVENTS"], new Dictionary<string, string>
+        {
+            ["MEETUPS_EVENTS"] = "events.meetups.meetup_cancelled",
+        }),
         new("nats-tester", ["MEETUPS_EVENTS", "IDENTITY_EVENTS", "AUCTION_EVENTS", "NOTIFICATIONS_EVENTS"]),
     ];
 

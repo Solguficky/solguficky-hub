@@ -4,6 +4,7 @@ import auction.AuctionNode
 import auction.aggregate.Auction
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
+import auction.aggregate.Standings
 import auction.aggregate.Correlation
 import auction.aggregate.MeetupAuthority
 import auction.aggregate.MeetupId
@@ -126,7 +127,7 @@ final class AuctionGrpcIntegrationSpec
    * его держит L0 адаптера и контур; здесь проверяется, что делает с ответом узел.
    */
   private final class StubAuthority extends MeetupAuthority {
-    @volatile var answer: Authority = Authority.Granted
+    @volatile var answer: Authority = Authority.Granted(Standings.published)
     @volatile var asked: Int = 0
     @volatile var correlations: List[Correlation] = Nil
     def check(meetup: MeetupId, person: ParticipantId, correlation: Correlation): Future[Authority] = {
@@ -661,7 +662,7 @@ final class AuctionGrpcIntegrationSpec
       refusal(schedule(auction, lot).withStartingPrice(MoneyMessage(500000, "EUR"))).isCurrencyMismatch shouldBe true
       node.authority.answer = Authority.NotAdministrator
       refusal(schedule(auction, lot)).isNotMeetupAdministrator shouldBe true
-      node.authority.answer = Authority.Granted
+      node.authority.answer = Authority.Granted(Standings.published)
 
       // Бот аукциона у метода не объявлен: условия лоту задаёт только форма бота хаба.
       statusOf(

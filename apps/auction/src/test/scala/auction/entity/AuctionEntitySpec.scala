@@ -399,6 +399,9 @@ final class AuctionEntitySpec
       AuctionEntity.Cancel(CancelAuction(op(opN)), administrator, _)
     )
 
+  private def inherit(opN: Int) =
+    entity.runCommand[AuctionAnswer](AuctionEntity.InheritCancellation(ApplyMeetupCancelled(op(opN)), _))
+
   private def roster: LotRoster = entity.runCommand[LotRoster](AuctionEntity.Roster(_)).reply
 
   /** Розыгрыш-подмена: открытие и отмена зовут свои функции. */
@@ -989,6 +992,66 @@ final class AuctionEntitySpec
         AuctionAnswer.Written(AuctionEnvelope(5, op(next + 1), AuctionEvent.AuctionDrafted(meetup)))
       entity.runCommand[Inspection](AuctionEntity.Inspect(op(next + 2), _)).reply shouldBe
         Inspection.Present(meetup, registryOpen = true)
+    }
+
+    "discards a draft on a cancelled meetup on behalf of the scheduler and writes nothing for a redelivery" in {
+      draft(1)
+      val discarded = inherit(50)
+      discarded.reply shouldBe AuctionAnswer.Written(AuctionEnvelope(2, op(50), AuctionEvent.AuctionDiscarded))
+      discarded.events.map(_.actor) shouldBe List(StoredActor("Scheduler", None))
+      discarded.state.auction.state shouldBe AuctionState.Initial
+      val repeated = inherit(50)
+      repeated.events shouldBe empty
+      repeated.reply shouldBe discarded.reply
+    }
+
+    "erases the predictions of a scheduled auction before the discard of a cancelled meetup is written" in {
+      val predictions = Predictions()
+      val wiped = Promise[org.apache.pekko.Done]()
+      predictions.discarding = () => wiped.future
+      entity = entityOf(lots, predictions = predictions)
+      scheduledWith(lot)
+      val answer = kit.createTestProbe[AuctionAnswer]()
+      entity.runCommand(AuctionEntity.InheritCancellation(ApplyMeetupCancelled(op(50)), answer.ref)).events shouldBe
+        empty
+      answer.expectNoMessage(200.millis)
+      wiped.success(org.apache.pekko.Done)
+      answer.receiveMessage() shouldBe AuctionAnswer.Written(AuctionEnvelope(4, op(50), AuctionEvent.AuctionDiscarded))
+      entity.getState().auction.state shouldBe AuctionState.Initial
+      predictions.count("discard") shouldBe 1
+    }
+
+    "cancels a trading auction of a cancelled meetup and withdraws its lots like a cancel of the administrator" in {
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      eventually(roster.active shouldBe Set(lot))
+      val cancelled = inherit(50)
+      cancelled.reply shouldBe AuctionAnswer.Written(AuctionEnvelope(5, op(50), AuctionEvent.AuctionCancelled))
+      cancelled.state.auction.state shouldBe AuctionState.Cancelled(config(), op(opening), op(50))
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Withdrawn))
+      lots.withdraws.map(_._2) shouldBe Vector(LotRoster.withdrawalOf(op(50), lot))
+      inherit(50).events shouldBe empty
+    }
+
+    "cancels an auction that opened its prebidding between the cancel of the meetup and the delivery of the fact" in {
+      val opening = scheduledWith(lot)
+      // Ворота у торгов уже закрыты, но открытие успело пройти до факта: факт застаёт аукцион идущим и отменяет его.
+      start(opening).reply.isRight shouldBe true
+      inherit(50).reply shouldBe AuctionAnswer.Written(AuctionEnvelope(5, op(50), AuctionEvent.AuctionCancelled))
+      eventually(roster.lots shouldBe Map(lot -> LotStanding.Withdrawn))
+      trading shouldBe false
+    }
+
+    "writes nothing for a meetup without an auction and for an auction that already finished or was cancelled" in {
+      val absent = inherit(50)
+      absent.reply shouldBe AuctionAnswer.Unchanged
+      absent.events shouldBe empty
+      val opening = scheduledWith(lot)
+      start(opening).reply.isRight shouldBe true
+      cancel(opening + 1).reply.isRight shouldBe true
+      val late = inherit(51)
+      late.reply shouldBe AuctionAnswer.Unchanged
+      late.events shouldBe empty
     }
 
     "refuses to discard an auction that was never drafted or whose prebidding started, without writing" in {

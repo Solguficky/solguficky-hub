@@ -152,7 +152,9 @@ export type LotRefusal =
   | "lot-not-found"
   | "auction-not-found"
   // Лот сняли с аукциона, пока форма была открыта.
-  | "lot-not-in-auction";
+  | "lot-not-in-auction"
+  // Сходку отменили: аукцион наследует отмену (ADR-047, дополнение 2026-10-12).
+  | "meetup-cancelled";
 // `unschedule` снимает назначенную публикацию: это не ось видимости, но
 // механика та же — отдельное действие с подтверждением и повтором по версии.
 export type MeetupStateAction = "unpublish" | "cancel" | "hold" | "unschedule";
@@ -824,9 +826,12 @@ export type ExecuteResult =
       auctionId: string;
       alreadyExisted: boolean;
     }
-  // Auction отказал по праву администратора сходки — отказ окончательный, и
-  // бот его не повторяет.
-  | { kind: "auction-refused"; reason: "not-administrator" }
+  // Auction отказал по праву администратора сходки или потому, что сходку
+  // отменили, — отказ окончательный, и бот его не повторяет.
+  | {
+      kind: "auction-refused";
+      reason: "not-administrator" | "meetup-cancelled";
+    }
   // Экран правки лота (PER-319). `saved` — что только что записано: лот собран
   // из ответа команды, потому что чтение Auction её ещё могло не увидеть.
   | {
@@ -986,10 +991,16 @@ export type ExecuteResult =
       held: readonly ConsoleLot[];
       pick: LineupPick;
     }
-  // Отказ пульту целиком: не администратор сходки либо аукциона нет.
+  // Отказ пульту целиком: не администратор сходки, аукциона нет, сходку
+  // отменили или скрыли (ADR-047, дополнение 2026-10-12). Кадры отказов
+  // сходки с переходом — PER-606.
   | {
       kind: "auction-console-refused";
-      reason: "not-administrator" | "auction-not-found";
+      reason:
+        | "not-administrator"
+        | "auction-not-found"
+        | "meetup-cancelled"
+        | "meetup-hidden";
     }
   | {
       kind: "meetup-notification-settings";
