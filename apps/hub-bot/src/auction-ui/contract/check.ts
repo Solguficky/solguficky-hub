@@ -2099,6 +2099,7 @@ const CLOSING_RAFFLE: RaffleView = { ...REGISTERED_RAFFLE, status: "closing" };
 const DRAWN_RAFFLE: RaffleView = {
   ...REGISTERED_RAFFLE,
   status: "drawn",
+  drawnAt: "2026-10-29T22:30:00Z",
   tickets: [
     { number: 1, displayName: "@owl_fan" },
     { number: 2, displayName: "Сова*" },

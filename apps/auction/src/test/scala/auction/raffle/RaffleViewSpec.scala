@@ -32,18 +32,22 @@ final class RaffleViewSpec extends AnyWordSpec with Matchers {
       open.registered shouldBe true
       open.commitment shouldBe Some(seed.commitment)
       open.reveal shouldBe None
+      open.drawnAt shouldBe None
       view(RaffleState.Open(terms, Vector.empty), at = closesAt).get.status shouldBe RaffleStatus.Closing
       val awaiting = view(RaffleState.Fixed(terms, Vector(person(2), person(1)))).get
       awaiting.status shouldBe RaffleStatus.AwaitingBeacon
       awaiting.reveal shouldBe None
+      awaiting.drawnAt shouldBe None
       awaiting.toString should not include seed.hex
     }
 
     "reveals after the draw the seed, the randomness, V and the winning ticket with the names of the pool" in {
       val tickets = Vector(person(2), person(1))
-      val drawn = view(RaffleState.Drawn(terms, tickets, randomness, closesAt.plusSeconds(61)), names = Map(1 -> "a*"))
+      val drawnAt = closesAt.plusSeconds(61)
+      val drawn = view(RaffleState.Drawn(terms, tickets, randomness, drawnAt), names = Map(1 -> "a*"))
       drawn.get.status shouldBe RaffleStatus.Drawn
       drawn.get.myTicket shouldBe Some(2)
+      drawn.get.drawnAt shouldBe Some(drawnAt)
       drawn.get.tickets shouldBe Vector(RaffleTicketView(1, Some("a*")), RaffleTicketView(2, None))
       drawn.get.reveal shouldBe Some(
         RaffleReveal(
@@ -57,8 +61,10 @@ final class RaffleViewSpec extends AnyWordSpec with Matchers {
       val empty = view(RaffleState.Fixed(terms, Vector.empty)).get
       empty.status shouldBe RaffleStatus.NoTickets
       empty.reveal shouldBe Some(RaffleReveal(seed, None))
+      empty.drawnAt shouldBe None
       view(RaffleState.Initial) shouldBe None
       view(RaffleState.NotHeld(closesAt)).get.commitment shouldBe None
+      view(RaffleState.NotHeld(closesAt)).get.drawnAt shouldBe None
     }
 
     "shows a cancelled raffle with the registration of the viewer, without tickets and never with the seed" in {
@@ -68,6 +74,7 @@ final class RaffleViewSpec extends AnyWordSpec with Matchers {
       cancelled.tickets shouldBe empty
       cancelled.myTicket shouldBe None
       cancelled.reveal shouldBe None
+      cancelled.drawnAt shouldBe None
       cancelled.toString should not include seed.hex
     }
   }

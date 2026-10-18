@@ -1709,6 +1709,10 @@ message Raffle {
 
   // Unset until the draw is revealed: set with DRAWN and NO_TICKETS.
   RaffleReveal reveal = 9;
+
+  // RFC 3339 instant in UTC: when the draw was made. Unset with every status
+  // but DRAWN: NO_TICKETS reveals the seed without a draw.
+  optional string drawn_at = 10;
 }
 
 enum RaffleStatus {

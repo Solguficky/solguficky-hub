@@ -36,6 +36,7 @@ export function raffleOf(raffle: Raffle): RaffleView {
     auctionId: raffle.auctionId,
     status,
     closesAt: raffle.closesAt,
+    ...(raffle.drawnAt === undefined ? {} : { drawnAt: raffle.drawnAt }),
     ...(raffle.commitment === "" ? {} : { commitment: raffle.commitment }),
     ...(raffle.beaconRound === 0n
       ? {}

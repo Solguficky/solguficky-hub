@@ -71,7 +71,12 @@ export function raffleParagraphs(
         provableLine,
       ];
     case "drawn":
-      return [winnerLine(raffle), poolLine(raffle), ticketList(raffle)];
+      return [
+        winnerLine(raffle),
+        ...drawnAtLine(raffle, options),
+        poolLine(raffle),
+        ticketList(raffle),
+      ];
     case "no-tickets":
       return [
         `Розыгрыш не состоялся: к закрытию регистрации ${closesAt} никто не зарегистрировался.`,
@@ -190,6 +195,14 @@ function winnerLine(raffle: RaffleView): string {
   return `<b>Выиграл билет ${ticketName(ticket ?? { number })}.</b>${
     number === raffle.myTicket ? " Это твой билет." : ""
   }`;
+}
+
+// Момент жеребьёвки — строка-поле «Ключ: значение» (PER-641). Нет момента —
+// нет строки: экран итога прежней формы момента не выдумывает.
+function drawnAtLine(raffle: RaffleView, options: RaffleTextOptions): string[] {
+  return raffle.drawnAt === undefined
+    ? []
+    : [`Жеребьёвка: ${escapeHtml(options.moment(raffle.drawnAt))}`];
 }
 
 function revealLines(raffle: RaffleView): string {
