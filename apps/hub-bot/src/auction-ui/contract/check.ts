@@ -1069,7 +1069,6 @@ function predictionAnswerRefusedBody(input: {
   >;
 }): AuctionScreenBody {
   const { round, nomination, refusal } = input;
-  const kind = predictionSpec(nomination).answer;
   return {
     blocks: [
       {
@@ -1084,21 +1083,12 @@ function predictionAnswerRefusedBody(input: {
       [
         {
           action: "answer.retry",
-          callbackData:
-            kind === "lot"
-              ? callback({
-                  kind: "prediction-edit",
-                  auctionId: CONTRACT_AUCTION_ID,
-                  round,
-                  nomination,
-                })
-              : callback({
-                  kind: "prediction-number-question",
-                  auctionId: CONTRACT_AUCTION_ID,
-                  round,
-                  nomination,
-                  addressee: CONTRACT_USER.telegramUserId,
-                }),
+          callbackData: callback({
+            kind: "prediction-edit",
+            auctionId: CONTRACT_AUCTION_ID,
+            round,
+            nomination,
+          }),
         },
       ],
       [

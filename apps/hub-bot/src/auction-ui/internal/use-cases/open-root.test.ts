@@ -108,6 +108,26 @@ describe("root predictions entry", () => {
     ]);
   });
 
+  it("shows a gone auction although the prediction read is refused", async () => {
+    const gone: AuctionPort = {
+      ...auctionOf(async () => {
+        throw new Error("auction not found");
+      }),
+      getAuction: async () => undefined,
+    };
+
+    const body = await openRoot({
+      auction: gone,
+      viewer: VIEWER,
+      auctionId: AUCTION_ID,
+    });
+
+    expect(body).toEqual({
+      blocks: [{ kind: "root", auctionId: AUCTION_ID }],
+      keyboard: [],
+    });
+  });
+
   it("propagates prediction read failures to the boundary", async () => {
     await expect(
       openRoot({

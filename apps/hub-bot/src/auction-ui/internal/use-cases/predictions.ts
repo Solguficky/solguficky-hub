@@ -464,12 +464,12 @@ export async function answerPredictionNumber(
   },
 ): Promise<AuctionScreenBody> {
   if (input.text === undefined) {
-    return refusedPredictionAnswer(context, input, "not-text");
+    return refusedPredictionAnswer(input, "not-text");
   }
   const kind = predictionSpec(input.nomination).answer;
   const parsed = parsePredictionValue(input.text, kind);
   if (!parsed.ok) {
-    return refusedPredictionAnswer(context, input, parsed.refusal);
+    return refusedPredictionAnswer(input, parsed.refusal);
   }
   return submitAnswer(context, {
     auctionId: input.auctionId,
@@ -777,8 +777,10 @@ function refusedPredictionName(
   };
 }
 
+// «Ввести заново» открывает номинацию тем же путём, что «Изменить»: число
+// получает вопрос заново, лот — список. Шаг вопроса здесь не годится: нажатие
+// на него диспетчер читает как «Отмену».
 function refusedPredictionAnswer(
-  context: PredictionContext,
   input: PredictionNominationContext,
   refusal: AnswerRefusal,
 ): AuctionScreenBody {
@@ -796,21 +798,12 @@ function refusedPredictionAnswer(
       [
         {
           action: "answer.retry",
-          callbackData:
-            predictionSpec(input.nomination).answer === "lot"
-              ? encodeAuctionCallback({
-                  kind: "prediction-edit",
-                  auctionId: input.auctionId,
-                  round: input.round,
-                  nomination: input.nomination,
-                })
-              : encodeAuctionCallback({
-                  kind: "prediction-number-question",
-                  auctionId: input.auctionId,
-                  round: input.round,
-                  nomination: input.nomination,
-                  addressee: context.user.telegramUserId,
-                }),
+          callbackData: encodeAuctionCallback({
+            kind: "prediction-edit",
+            auctionId: input.auctionId,
+            round: input.round,
+            nomination: input.nomination,
+          }),
         },
       ],
       [toRoundButton(input.auctionId, input.round, "prediction.back")],

@@ -18,7 +18,10 @@ import { hasRaffle } from "./open-feed.js";
 //
 // Сырой юзкейс: доступ он не проверяет и поэтому из пакета не экспортируется.
 // Отказ чтения аукциона и прогнозов бросается, как у ленты; отказ чтения
-// розыгрыша убирает его кнопку, а не роняет корень.
+// розыгрыша убирает его кнопку, а не роняет корень. Прогнозы читаются
+// параллельно аукциону, но их отказ учитывается, только когда аукцион есть:
+// удалённому Auction отвечает на прогнозы `NOT_FOUND`, а корень должен
+// сказать «не найден».
 export async function openRoot(input: {
   auction: AuctionPort;
   favorites?: FavoritesPort;
@@ -26,15 +29,17 @@ export async function openRoot(input: {
   auctionId: string;
 }): Promise<AuctionScreenBody> {
   const raffleRead = hasRaffle(input);
-  const predictionRead = predictionEntryRound(input);
+  const predictionRead = predictionEntryRound(input).then(
+    (round) => ({ ok: true as const, round }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
   const auction = await input.auction.getAuction({
     viewer: input.viewer,
     auctionId: input.auctionId,
   });
-  const [raffle, predictionRound] = await Promise.all([
-    raffleRead,
-    predictionRead,
-  ]);
+  const [raffle, predictions] = await Promise.all([raffleRead, predictionRead]);
+  if (auction !== undefined && !predictions.ok) throw predictions.error;
+  const predictionRound = predictions.ok ? predictions.round : undefined;
   if (auction === undefined) {
     return {
       blocks: [{ kind: "root", auctionId: input.auctionId }],
