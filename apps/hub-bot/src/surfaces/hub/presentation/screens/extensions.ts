@@ -5,7 +5,9 @@ import { marked, pictogram } from "../../../../core/pictograms.js";
 import type { MeetupAuctionView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
+import { lotNewData } from "../parse-callback.js";
 import {
+  addLotLabel,
   auctionRootData,
   extensionsData,
   outcomeText,
@@ -84,23 +86,25 @@ export function extensionsScreen(view: {
 
 /**
  * Аукцион включён. Корень открывает кнопка, а не этот же ответ: read model
- * Auction может ещё не увидеть только что рождённый аукцион.
+ * Auction может ещё не увидеть только что рождённый аукцион. Над ней —
+ * «Добавить лот» (прогон 12.10, №16): первый шаг после включения, без захода
+ * через корень и ленту.
  */
 export function auctionEnabledScreen(view: {
   meetupToken: string;
   auctionId: string;
   alreadyExisted: boolean;
 }): ShownScreen {
-  const keyboard = new InlineKeyboard().text(
-    auctionLabel,
-    auctionRootData(view.auctionId),
-  );
+  const keyboard = new InlineKeyboard()
+    .text(addLotLabel, lotNewData(uuidToToken(view.auctionId)))
+    .row()
+    .text(auctionLabel, auctionRootData(view.auctionId));
   return {
     id: "outcome",
     text: outcomeText(
       view.alreadyExisted
         ? "Аукцион у этой сходки уже включён"
-        : "Аукцион включён. Лоты добавляются в нём: «Аукцион» → «Лоты».",
+        : "Аукцион включён. Первый лот добавляет кнопка ниже, все лоты — в «Аукционе» → «Лоты».",
     ),
     keyboard: withNav(keyboard, toExtensions(view.meetupToken)),
     format: "HTML",

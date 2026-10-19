@@ -40,6 +40,19 @@ export type MaterialConfirmation = {
   source: MeetupMaterialSource;
 };
 
+const TypedTextSchema = z.object({
+  text: z.string(),
+  forward_origin: z.undefined(),
+});
+
+/**
+ * Набранный текст, а не пересланное сообщение: у него нет источника, и отказ
+ * про скрытый источник ему не подходит (прогон 14.10, №99).
+ */
+export function isTypedText(raw: unknown): boolean {
+  return TypedTextSchema.safeParse(raw).success;
+}
+
 export function parseMaterialInput(
   raw: unknown,
 ): PendingMaterialSource | undefined {

@@ -72,6 +72,7 @@ import {
   hubAccessText,
   hubWelcome,
 } from "../application/hub-access.js";
+import { isSold } from "../application/lot-form.js";
 import {
   type CommunityToday,
   formatLocalMoment,
@@ -152,6 +153,7 @@ import { decideHubEntry, hubAccessRequest } from "./hub-entry.js";
 import { parseLotPhoto } from "./lot-photo-input.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
+  isTypedText,
   type PendingMaterialSource as MaterialInputSource,
   materialConfirmationHtml,
   parseMaterialConfirmation,
@@ -183,6 +185,7 @@ import {
   lotNewData,
   lotSkipData,
   lotStepModeData,
+  type NewMeetupOrigin,
   type NotifiedMeetupCategory,
   type PublishOrigin,
   parseCallback,
@@ -206,6 +209,7 @@ import {
   toAdministrators,
 } from "./screens/administrators.js";
 import {
+  admittedNote,
   applicationCardScreen,
   applicationQueueEndScreen,
   decisionToast,
@@ -265,6 +269,7 @@ import {
   heading,
   outcomeText,
   type Parent,
+  readableMoment,
   refusalText,
   retryLabel,
   screenText,
@@ -315,7 +320,6 @@ import {
   canOpenManagement,
   commandsFor,
   helpScreen,
-  type ManageGroup,
   manageGroupScreen,
   manageGroups,
   manageItemParent,
@@ -544,6 +548,8 @@ type PendingQuestion = {
   mode: "create" | "edit";
   field: FormField;
   meetupId: string;
+  // Вопрос о названии новой сходки и откуда он задан (`fn`, `fg`).
+  fresh?: NewMeetupOrigin;
   telegramUserId: number;
   expiresAt: number;
 };
@@ -1001,7 +1007,9 @@ async function handleMessage(
             ctx,
             questions,
             pending,
-            "На это сообщение нельзя дать ссылку. Источник скрыт или пересылка из него запрещена: нужно пересланное сообщение с доступным источником, фотография или документ.",
+            isTypedText(ctx.message)
+              ? "Текст сам по себе не материал: перешли сообщение из канала или чата, фото или документ."
+              : "На это сообщение нельзя дать ссылку. Источник скрыт или пересылка из него запрещена: нужно пересланное сообщение с доступным источником, фотография или документ.",
             replyId,
           );
           outcome = {
@@ -1573,7 +1581,10 @@ async function handleMessage(
       }
       await answered();
       await showScreen(ctx, {
-        ...appointConfirmScreen(username),
+        ...appointConfirmScreen(
+          username,
+          ctx.from?.username?.toLowerCase() === username.toLowerCase(),
+        ),
         delivery: "new",
       });
       outcome = {
@@ -1677,6 +1688,7 @@ async function handleMessage(
         field: pending.field,
         value: ctx.message.text,
         meetupId: pending.meetupId,
+        ...(pending.fresh === undefined ? {} : { fresh: true as const }),
         ...rpcCall(ctx, useCase),
       });
       await renderFormResult(
@@ -1684,6 +1696,8 @@ async function handleMessage(
         result,
         questions,
         runtime.presentation ?? "rich",
+        "status",
+        pending.fresh,
       );
       await answered(result);
       outcome = screenBoundary(result, {
@@ -1695,6 +1709,7 @@ async function handleMessage(
           "meetup-updated",
           "edit-unavailable",
           "confirm-past-schedule",
+          "meetup-exists",
         ],
         okMessage: "meetup form answer handled",
         rejectedMessage: "meetup form answer rejected",
@@ -2531,6 +2546,7 @@ async function handleCallback(
             action.page,
             communityToday(ctx),
             canManageMembers(person),
+            manageItemParent("applications"),
           ),
         );
       } else {
@@ -2549,6 +2565,7 @@ async function handleCallback(
               action.page,
               communityToday(ctx),
               canManageMembers(person),
+              manageItemParent("applications"),
             ),
           );
         } else {
@@ -2704,7 +2721,7 @@ async function handleCallback(
         outcome = adminOutcome(result, person.identityId);
         return;
       }
-      const shown = appointOutcome(result);
+      const shown = appointOutcome(result, person.identityId);
       const subject = `@${action.username}`;
       await showScreen(
         ctx,
@@ -2843,13 +2860,7 @@ async function handleCallback(
           // Заявку решил другой администратор, пока карточка висела: исход
           // назовёт только решение, а вопрос о нём уже не к месту.
           await waiting.answer("Эту заявку уже решили.");
-          await showApplicationQueue(
-            ctx,
-            person,
-            action.queue,
-            result.value,
-            true,
-          );
+          await showApplicationQueue(ctx, action.queue, result.value, true);
         }
       }
       outcome = adminOutcome(result, person.identityId);
@@ -2863,6 +2874,25 @@ async function handleCallback(
         action.kind === "admit-application"
           ? runtime.identity.admitApplication
           : runtime.identity.declineApplication;
+      // Ответ решения не называет человека, поэтому допуск читает карточку до
+      // решения: экран после него называет допущенного (прогон 14.10, №51).
+      // Чтение не прошло или заявка уже другая — строки нет, решение идёт.
+      const before =
+        action.kind === "admit-application" && decide !== undefined
+          ? await readApplicationQueue(
+              ctx,
+              runtime,
+              person,
+              action.queue,
+              queueCursor(action.cursor, "at"),
+            )
+          : undefined;
+      const admitted =
+        before?.kind === "ok" &&
+        before.value.card?.application.applicationId ===
+          tokenToUuid(action.cursor.token)
+          ? before.value.card.application
+          : undefined;
       const result =
         decide === undefined
           ? {
@@ -2893,6 +2923,12 @@ async function handleCallback(
         person,
         action.queue,
         queueCursor(action.cursor, result.kind === "ok" ? "after" : "at"),
+        result.kind === "ok" &&
+          !result.value.already &&
+          result.value.outcome === "admitted" &&
+          admitted !== undefined
+          ? admittedNote(admitted)
+          : undefined,
       );
       outcome = adminOutcome(result, person.identityId);
       return;
@@ -3471,7 +3507,7 @@ async function handleCallback(
         intent: "list-visible-meetups",
         ...rpcCall(ctx, useCase),
       });
-      await renderHiddenMeetupList(ctx, person, result, action.page);
+      await renderHiddenMeetupList(ctx, result, action.page);
       outcome = screenBoundary(result, {
         ok: ["meetup-list"],
         okMessage: "hidden meetup list sent",
@@ -3632,14 +3668,7 @@ async function handleCallback(
       return;
     }
     if (action.kind === "manage-menu") {
-      await showScreen(
-        ctx,
-        manageScreen(
-          person,
-          uuidToToken(createUuidV7()),
-          await manageCounts(ctx, runtime, person),
-        ),
-      );
+      await showScreen(ctx, manageScreen(person));
       outcome = {
         level: "info",
         message: "manage menu sent",
@@ -3655,7 +3684,9 @@ async function handleCallback(
           person,
           action.group,
           uuidToToken(createUuidV7()),
-          await manageCounts(ctx, runtime, person, action.group),
+          action.group === "applications"
+            ? await readApplicationCounts(ctx, runtime, person)
+            : undefined,
         ),
       );
       outcome = {
@@ -3666,27 +3697,30 @@ async function handleCallback(
       };
       return;
     }
+    // «Создать сходку» Meetups не зовёт: она задаёт вопрос о названии, а
+    // черновик рождается ответом (прогон 14.10, №14 и №54). Id будущей сходки
+    // едет в вопросе, поэтому ответ после рестарта создаёт ту же сходку.
     if (action.kind === "create-meetup") {
-      const meetupId = tokenToUuid(action.token);
-      const result = await runtime.dispatcher.execute({
-        identity: person,
-        intent: "create-meetup",
-        meetupId,
-        ...rpcCall(ctx, useCase),
-      });
-      await renderFormResult(
+      await askQuestion(
         ctx,
-        result,
         questions,
-        runtime.presentation ?? "rich",
+        {
+          kind: "meetup",
+          mode: "create",
+          field: "title",
+          meetupId: tokenToUuid(action.token),
+          fresh: action.from ?? "manage",
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        formPrompts.title,
       );
-      outcome = screenBoundary(result, {
-        ok: ["ask", "draft", "published"],
-        okMessage: "meetup form step sent",
-        rejectedMessage: "meetup form step rejected",
-        useCase,
-        meetupId,
-      });
+      outcome = {
+        level: "info",
+        message: "meetup title requested",
+        result: "ok",
+        use_case: useCase,
+        identity_id: person.identityId,
+      };
       return;
     }
     if (
@@ -4512,7 +4546,7 @@ async function renderCommunity(
     ctx,
     communityScreen(result.value, view, {
       notice,
-      parent: manageItemParent(actor, "members"),
+      parent: manageItemParent("members"),
       viewerId: actor.identityId,
     }),
   );
@@ -4598,6 +4632,10 @@ function managementRefusal(
         : managementForbiddenText;
     case "ask-allowed-username":
       return canManageMembers(person) ? undefined : communityForbiddenText;
+    // Вопрос о названии новой сходки Meetups не спрашивает: сходка рождается
+    // ответом, поэтому без права он не задаётся.
+    case "create-meetup":
+      return canManageMeetups(person) ? undefined : managementForbiddenText;
     // Вопрос о нике Identity не спрашивает, поэтому без права он не задаётся.
     // Список, назначение и снятие бот пропускает: право решает Identity и
     // отвечает отказом значением (PER-521).
@@ -4708,7 +4746,7 @@ async function renderAdministrators(
     administratorsScreen(
       result.value,
       actor.identityId,
-      manageItemParent(actor, "members"),
+      manageItemParent("members"),
     ),
   );
   return result;
@@ -4782,7 +4820,7 @@ async function renderRefused(
       page,
       communityToday(ctx),
       canManageMembers(actor),
-      manageItemParent(actor, "applications"),
+      manageItemParent("applications"),
     ),
   );
 }
@@ -4835,7 +4873,7 @@ async function renderSourceChannels(
           : { auction: runtime.auctionBotUsername }),
       },
       notice,
-      manageItemParent(actor, "members"),
+      manageItemParent("members"),
     ),
   );
   return result;
@@ -4920,26 +4958,6 @@ async function readApplicationCounts(
   return { queue, refused };
 }
 
-// Числа нужны, только когда экран показывает пункты группы заявок: «Управление»
-// с одной видимой группой либо сама группа «Заявки и отказы». Экран групп их не
-// несёт, и тогда чтения не идут.
-function manageCounts(
-  ctx: UpdateContext,
-  runtime: BotRuntime,
-  person: Person,
-  group?: ManageGroup,
-): Promise<ApplicationCounts | undefined> {
-  if (group !== undefined) {
-    return group === "applications"
-      ? readApplicationCounts(ctx, runtime, person)
-      : Promise.resolve(undefined);
-  }
-  const visible = manageGroups(person);
-  return visible.length === 1 && visible[0] === "applications"
-    ? readApplicationCounts(ctx, runtime, person)
-    : Promise.resolve(undefined);
-}
-
 // Карточка открывается из управления, туда и возвращает отказ.
 function showApplicationRefusal(
   ctx: UpdateContext,
@@ -4955,17 +4973,24 @@ function showApplicationRefusal(
 
 async function showApplicationQueue(
   ctx: UpdateContext,
-  actor: Person,
   queue: ApplicationQueue,
   read: ApplicationQueueRead,
   afterCursor: boolean,
+  note?: string,
 ): Promise<void> {
-  const parent = manageItemParent(actor, "applications");
+  const parent = manageItemParent("applications");
   await showScreen(
     ctx,
     read.card === undefined
-      ? applicationQueueEndScreen(queue, read.total, afterCursor, parent)
-      : applicationCardScreen(queue, read.card, read.total, Date.now(), parent),
+      ? applicationQueueEndScreen(queue, read.total, afterCursor, parent, note)
+      : applicationCardScreen(
+          queue,
+          read.card,
+          read.total,
+          Date.now(),
+          parent,
+          note,
+        ),
   );
 }
 
@@ -4975,6 +5000,7 @@ async function renderApplicationCard(
   actor: Person,
   queue: ApplicationQueue,
   after: ApplicationCursor | undefined,
+  note?: string,
 ): Promise<IdentityAdminResult<ApplicationQueueRead>> {
   const result = await readApplicationQueue(ctx, runtime, actor, queue, after);
   if (result.kind !== "ok") {
@@ -4983,10 +5009,10 @@ async function renderApplicationCard(
   }
   await showApplicationQueue(
     ctx,
-    actor,
     queue,
     result.value,
     after !== undefined,
+    note,
   );
   return result;
 }
@@ -5029,15 +5055,48 @@ function adminOutcome(
   };
 }
 
+// Итог точечной правки называет поле и новое значение, как сроки недели на
+// пульте (прогон 14.10, №56). Описание длинное — оно только называется.
+function changedField(
+  result: Extract<ExecuteResult, { kind: "meetup-updated" }>,
+  today: CommunityDay,
+): string | undefined {
+  const { meetup } = result;
+  switch (result.field) {
+    case undefined:
+      return undefined;
+    case "title":
+      return `Название: ${meetup.title}.`;
+    case "venue":
+      return `Место: ${meetup.venue}.`;
+    case "schedule":
+      return meetup.schedule === undefined
+        ? undefined
+        : `Дата и время: ${readableMoment(meetup.schedule, today)}.`;
+    case "description":
+      return "Описание обновлено.";
+    default: {
+      const _exhaustive: never = result.field;
+      return _exhaustive;
+    }
+  }
+}
+
 async function renderMeetupList(
   ctx: UpdateContext,
+  person: Person,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   page = 0,
 ): Promise<void> {
   if (result.kind === "meetup-list") {
     await showScreen(
       ctx,
-      meetupsScreen(result.meetups, page, communityToday(ctx)),
+      meetupsScreen(
+        result.meetups,
+        page,
+        communityToday(ctx),
+        canManageMeetups(person) ? uuidToToken(createUuidV7()) : undefined,
+      ),
     );
     return;
   }
@@ -5061,7 +5120,6 @@ async function renderMeetupListFailure(
 
 async function renderHiddenMeetupList(
   ctx: UpdateContext,
-  person: Person,
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   page = 0,
 ): Promise<void> {
@@ -5072,7 +5130,7 @@ async function renderHiddenMeetupList(
         result.meetups,
         page,
         communityToday(ctx),
-        manageItemParent(person, "meetups"),
+        manageItemParent("meetups"),
       ),
     );
     return;
@@ -5186,7 +5244,7 @@ async function openNavScreen(
         intent: "list-visible-meetups",
         ...rpcCall(ctx, useCase),
       });
-      await renderMeetupList(ctx, result, page);
+      await renderMeetupList(ctx, person, result, page);
       return screenBoundary(result, {
         ok: ["meetup-list"],
         okMessage: "meetup list sent",
@@ -5316,14 +5374,7 @@ async function handleSectionCommand(
           error: "management_forbidden",
         };
       }
-      await showScreen(
-        ctx,
-        manageScreen(
-          person,
-          uuidToToken(createUuidV7()),
-          await manageCounts(ctx, runtime, person),
-        ),
-      );
+      await showScreen(ctx, manageScreen(person));
       return {
         level: "info",
         message: "manage menu sent",
@@ -5520,7 +5571,7 @@ async function openNextMeetup(
       ? nextMeetupOf(list.meetups, communityToday(ctx))
       : undefined;
   if (nearest === undefined) {
-    await renderMeetupList(ctx, list);
+    await renderMeetupList(ctx, person, list);
     return screenBoundary(list, {
       ok: ["meetup-list"],
       okMessage: "meetup list sent",
@@ -5902,6 +5953,15 @@ async function handleLotFormCallback(
     });
     return sent("lot step requested");
   }
+  // Рядов полей у проданного лота нет; старая кнопка получает отказ до
+  // вопроса (решение владельца 15 октября 2026 года).
+  if (isSold(result.lot.terms)) {
+    return showLotFailure(
+      ctx,
+      { kind: "lot-refused", reason: "lot-sold", lotId },
+      { person },
+    );
+  }
   // Ряд цены на экране правки стоит, пока условия открыты; старая кнопка под
   // лотом в торгах получает отказ до вопроса, а не после двух ответов.
   if (action.field === "price" && result.lot.terms.kind === "closed") {
@@ -5911,7 +5971,7 @@ async function handleLotFormCallback(
       { person },
     );
   }
-  // Фото, как и тексты, меняется и после старта торгов (ADR-057). Кнопка
+  // Фото, как и тексты, меняется и после старта торгов до продажи (ADR-057). Кнопка
   // цепочки нового лота (PER-618) — «Ввести заново» под ней — задаёт вопрос
   // цепочки.
   await askLotQuestion(ctx, questions, {
@@ -6751,6 +6811,7 @@ async function renderConsoleResult(
         consoleScreen({
           console: result.console,
           ...(result.note === undefined ? {} : { note: result.note }),
+          ...(result.noteLot === undefined ? {} : { noteLot: result.noteLot }),
           ...(holder === undefined ? {} : { holder }),
           page: context.page ?? 0,
           sort: context.sort ?? defaultConsoleSort,
@@ -6774,6 +6835,7 @@ async function renderConsoleResult(
           idle: result.idle,
           timeZone,
           today: communityToday(ctx),
+          ...(result.early === undefined ? {} : { early: result.early }),
         }),
       );
       return handled("auction week confirmation sent");
@@ -7820,6 +7882,20 @@ async function renderStateResult(
   result: Awaited<ReturnType<Dispatcher["execute"]>>,
   presentation: "rich" | "plain",
 ): Promise<void> {
+  // Отмена — исход своим экраном «Сходка отменена» с возвратом к карточке:
+  // перерисованная карточка не говорила, что отмена прошла (прогон 14.10,
+  // №103). Остальные смены состояния видны на самой карточке.
+  if (result.kind === "meetup-state-changed" && result.action === "cancel") {
+    await renderMeetupCard(
+      ctx,
+      cardFrom(result),
+      true,
+      presentation,
+      true,
+      "Сходка отменена.",
+    );
+    return;
+  }
   if (result.kind === "published" || result.kind === "meetup-state-changed") {
     await renderMeetupCard(ctx, cardFrom(result), true, presentation, true);
     return;
@@ -8014,6 +8090,8 @@ async function renderFormResult(
   presentation: "rich" | "plain",
   // Экран, с которого назначают публикацию: нужен только вопросу о её моменте.
   origin: PublishOrigin = "status",
+  // Вопрос о названии новой сходки: повтор вопроса сохраняет, откуда он задан.
+  fresh?: NewMeetupOrigin,
 ): Promise<void> {
   // Дату по нажатию выбирают кнопками на экране без режима ответа. Вопрос
   // текстом остаётся ответу на вопрос: человек уже пишет, и ему нужен формат.
@@ -8047,6 +8125,11 @@ async function renderFormResult(
       mode: result.kind === "edit-ask" ? "edit" : "create",
       field: result.field,
       meetupId: result.meetup.id,
+      ...(fresh === undefined ||
+      result.kind !== "ask" ||
+      result.field !== "title"
+        ? {}
+        : { fresh }),
       telegramUserId: ctx.from?.id ?? 0,
     };
     // Непринятый ответ — свой экран (PER-472): формат поля покажет вопрос за
@@ -8153,10 +8236,30 @@ async function renderFormResult(
       true,
       presentation,
       true,
-      result.archived === true
-        ? "Изменение сохранено. Дата сходки уже прошла, поэтому она в архиве, а не в «Сходках»."
-        : "Изменение сохранено.",
+      [
+        "Изменение сохранено.",
+        changedField(result, communityToday(ctx)),
+        result.archived === true
+          ? "Дата сходки уже прошла, поэтому она в архиве, а не в «Сходках»."
+          : undefined,
+      ]
+        .filter((part) => part !== undefined)
+        .join(" "),
     );
+    return;
+  }
+  // Старая кнопка «Создать сходку» несёт id уже созданной сходки: её ответ
+  // ничего не переименовывает, а показывает, что сходка уже есть.
+  if (result.kind === "meetup-exists") {
+    await showScreen(ctx, {
+      id: "outcome",
+      text: outcomeText(
+        "Эта сходка уже создана. Новую создаёт свежая кнопка «Создать сходку».",
+        meetupTitleLabel(result.meetup.title),
+      ),
+      keyboard: exitToCard(uuidToToken(result.meetup.id)),
+      format: "HTML",
+    });
     return;
   }
   if (result.kind === "edit-unavailable") {
@@ -8329,6 +8432,7 @@ function stepOf(pending: PendingBody): QuestionStep {
         mode: pending.mode,
         token: uuidToToken(pending.meetupId),
         field: pending.field,
+        ...(pending.fresh === undefined ? {} : { fresh: pending.fresh }),
       };
     case "publish-moment":
       return {
@@ -8464,6 +8568,7 @@ function pendingOf(
         mode: step.mode,
         field: step.field,
         meetupId: tokenToUuid(step.token),
+        ...(step.fresh === undefined ? {} : { fresh: step.fresh }),
         telegramUserId,
         expiresAt,
       };
@@ -8562,7 +8667,15 @@ type ScreenAction =
 function cancelTarget(step: QuestionStep): ScreenAction {
   switch (step.kind) {
     case "field":
-      // Вопрос формы создания задан с черновика, точечной правки — с карточки.
+      // Вопрос о названии новой сходки задан до черновика — из «Сходок» или
+      // из группы «Сходки и объявления», туда «Отмена» и ведёт: черновика
+      // нет (прогон 14.10, №14). Остальные вопросы формы создания заданы с
+      // черновика, точечной правки — с карточки.
+      if (step.fresh !== undefined) {
+        return step.fresh === "meetups"
+          ? { kind: "hub" }
+          : { kind: "manage-group", group: "meetups" };
+      }
       return step.mode === "create"
         ? { kind: "manage-draft", token: step.token }
         : { kind: "view-meetup", token: step.token };
@@ -8722,6 +8835,11 @@ async function refuseAnswer(
 function reopenData(step: QuestionStep): string {
   switch (step.kind) {
     case "field":
+      // Сходки по вопросу «Создать сходку» ещё может не быть: «Ввести заново»
+      // задаёт тот же вопрос с тем же id (прогон 14.10, №14).
+      if (step.fresh !== undefined) {
+        return `v1:manage:new:${step.token}${step.fresh === "meetups" ? ":s" : ""}`;
+      }
       return step.mode === "create"
         ? `v1:manage:draft:${step.token}:${step.field}`
         : `v1:manage:field:${step.token}:${step.field}`;
@@ -8774,6 +8892,11 @@ function reopenData(step: QuestionStep): string {
 function answerParent(step: QuestionStep): Parent {
   switch (step.kind) {
     case "field":
+      if (step.fresh !== undefined) {
+        return step.fresh === "meetups"
+          ? toMeetups
+          : manageItemParent("meetups");
+      }
       return step.mode === "create"
         ? { name: "Сходка", data: `v1:manage:draft:${step.token}` }
         : toCard(step.token);

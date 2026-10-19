@@ -38,7 +38,6 @@ export function createMeetupForm(
       ExecuteRequest,
       {
         intent:
-          | "create-meetup"
           | "set-meetup-field"
           | "update-meetup-field"
           | "publish-meetup"
@@ -48,22 +47,16 @@ export function createMeetupForm(
     >,
   ): Promise<ExecuteResult> => {
     switch (request.intent) {
-      case "create-meetup":
-        return map(
-          await meetups.createDraft(
-            request.identity,
-            request.meetupId,
-            rpcMeta(request),
-          ),
-          "title",
-        );
       case "set-meetup-field":
       case "update-meetup-field": {
         const editing = request.intent === "update-meetup-field";
         // Решение принимается по снимку, прочитанному здесь же, и он же едет
         // обратно как `expected_version`: команда, собранная по устаревшему
         // снимку, получает отказ, а не тихую перезапись чужой правки (PER-78).
-        const current = await currentSnapshot(meetups, request);
+        const current =
+          request.intent === "set-meetup-field" && request.fresh === true
+            ? await snapshotOrDraft(meetups, request)
+            : await currentSnapshot(meetups, request);
         if (current.kind === "rejected") return current.result;
         if (editing && current.meetup.lifecycle === "cancelled") {
           return {
@@ -124,11 +117,16 @@ export function createMeetupForm(
               ? {
                   kind: "meetup-updated",
                   meetup: scheduled.meetup,
+                  field: "schedule",
                   archived: true,
                 }
-              : { kind: "meetup-updated", meetup: scheduled.meetup };
+              : {
+                  kind: "meetup-updated",
+                  meetup: scheduled.meetup,
+                  field: "schedule",
+                };
           }
-          return map(scheduled, "draft");
+          return toDraft(scheduled);
         }
         const changed = { ...current.meetup, [request.field]: request.value };
         const updated = await meetups.changeAttributes(
@@ -155,10 +153,14 @@ export function createMeetupForm(
         }
         if (editing) {
           return updated.kind === "ok"
-            ? { kind: "meetup-updated", meetup: updated.meetup }
+            ? {
+                kind: "meetup-updated",
+                meetup: updated.meetup,
+                field: request.field,
+              }
             : failure(updated);
         }
-        return map(updated, "draft");
+        return toDraft(updated);
       }
       case "publish-meetup": {
         const current = await currentSnapshot(meetups, request);
@@ -372,6 +374,45 @@ async function currentSnapshot(
   return { kind: "meetup", meetup: current.meetup };
 }
 
+/// Название новой сходки: черновик рождается ответом на вопрос о нём, а не
+/// нажатием «Создать сходку» (прогон 14.10, №14 и №54), — «Отмена» до ответа
+/// не оставляет «Без названия» в «Скрытых». Id сходки бот родил до вопроса, и
+/// создание идемпотентно по нему: повтор ответа после сбоя записи названия
+/// находит тот же черновик без названия и дописывает его, второго не будет.
+/// Сходку, у которой название уже есть или которая опубликована, ответ не
+/// трогает: это старая кнопка, и переименовать готовую сходку она не должна.
+/// Чужой черновик Meetups не отдаёт, и создание с его id получило бы отказ.
+async function snapshotOrDraft(
+  meetups: Meetups,
+  request: FormRequest,
+): Promise<
+  | { kind: "meetup"; meetup: MeetupSnapshot }
+  | { kind: "rejected"; result: ExecuteResult }
+> {
+  const current = await meetups.get(
+    request.identity,
+    request.meetupId,
+    rpcMeta(request),
+  );
+  if (current.kind === "ok") {
+    const { meetup } = current;
+    return meetup.title === "" && meetup.visibility === "hidden"
+      ? { kind: "meetup", meetup }
+      : { kind: "rejected", result: { kind: "meetup-exists", meetup } };
+  }
+  if (current.kind !== "not-found") {
+    return { kind: "rejected", result: failure(current) };
+  }
+  const created = await meetups.createDraft(
+    request.identity,
+    request.meetupId,
+    rpcMeta(request),
+  );
+  return created.kind === "ok"
+    ? { kind: "meetup", meetup: created.meetup }
+    : { kind: "rejected", result: failure(created) };
+}
+
 /// Конфликт версий: команда не применена, и человеку показывают текущее
 /// состояние рядом с сохранённым вводом. Сам ввод повторно не отправляется —
 /// его подтверждают заново по обновлённым данным (PER-78).
@@ -425,15 +466,13 @@ function parseSchedule(value: string): MeetupSchedule | undefined {
   return schedule;
 }
 
-function map(
+// Форма спрашивает только название: остальные поля человек заполняет с
+// черновика в своём порядке.
+function toDraft(
   result: Awaited<ReturnType<Meetups["createDraft"]>>,
-  next: "title" | "draft",
 ): ExecuteResult {
   if (result.kind !== "ok") return failure(result);
-  // Форма спрашивает только название: остальные поля человек заполняет с
-  // черновика в своём порядке.
-  if (next === "draft") return { kind: "draft", meetup: result.meetup };
-  return { kind: "ask", field: next, meetup: result.meetup };
+  return { kind: "draft", meetup: result.meetup };
 }
 
 function mapPublished(

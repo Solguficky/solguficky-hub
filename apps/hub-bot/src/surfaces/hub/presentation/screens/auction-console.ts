@@ -88,6 +88,8 @@ const titleLimit = 120;
 export type ConsoleScreenView = {
   console: AuctionConsoleView;
   note?: ConsoleNote;
+  // Лот, о котором заметка отметки финала.
+  noteLot?: string;
   // Аукцион, у которого идут торги: его называет `another-auction-active`.
   holder?: TradingHolder;
   page: number;
@@ -98,7 +100,7 @@ export type ConsoleScreenView = {
 
 export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-saved": "Сроки недели сохранены.",
-  "week-opened": "Онлайн-неделя открыта. Лоты принимают ставки.",
+  "week-opened": "Онлайн-неделя открыта. Ставки принимаются с этой минуты.",
   "week-already-open": "Неделя уже открыта.",
   "another-auction-active":
     "Торги уже идут у другого аукциона. Открыть неделю можно, когда они закончатся.",
@@ -162,6 +164,19 @@ function noteText(view: ConsoleScreenView, note: ConsoleNote): string {
       return view.holder === undefined
         ? outcomeText(consoleNoteText[note])
         : screenText(tradingElsewhere(view.holder, view));
+    // Исход отметки называет лот предметом (прогон 14.10, №76).
+    case "marked":
+    case "unmarked":
+    case "already-marked":
+    case "not-marked": {
+      const entry = view.console.lots.find(
+        (each) => each.lot.lotId === view.noteLot,
+      );
+      return outcomeText(
+        consoleNoteText[note],
+        entry === undefined ? undefined : titleOf(entry),
+      );
+    }
     default:
       return outcomeText(consoleNoteText[note]);
   }
@@ -191,9 +206,13 @@ function localMoment(
   return readableMoment(communityLocalTime(instant, view.timeZone), view.today);
 }
 
+// Подпись финала: «Финал» в одно слово не говорил, что это живой финал на
+// сходке после онлайн-недели (прогон 12.10, №46).
+const finalLabel = "Финал в зале";
+
 /** Всплывающий текст принятого переключателя финала (кадр P-08). */
 export function finalToast(final: boolean): string {
-  return final ? "Включено: финал." : "Выключено: финал.";
+  return final ? "Включено: финал в зале." : "Выключено: финал в зале.";
 }
 
 function moment(instant: string, view: ConsoleScreenView): string {
@@ -484,6 +503,7 @@ function titleOf(entry: ConsoleLot): string {
 function lotLine(entry: ConsoleLot): string {
   return [
     `• ${titleOf(entry)} — ${priceLabel(entry.lot.status)}`,
+    ...(entry.leaderName === undefined ? [] : [`лидер ${entry.leaderName}`]),
     bidsLabel(entry.bidCount),
     `${entry.uniqueParticipantCount} уч.`,
     ...(entry.priceGrowth === undefined
@@ -636,7 +656,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   }
   if (scheduled) {
     nextRow(keyboard).text(
-      toggleLabel("Финал", week.final),
+      toggleLabel(finalLabel, week.final),
       consoleFinalData(auction, !week.final),
     );
     nextRow(keyboard)
@@ -731,18 +751,31 @@ export function weekConfirmScreen(confirm: {
   idle: number;
   timeZone: string;
   today: CommunityDay;
+  // Начало недели ещё впереди (№58).
+  early?: true;
 }): ShownScreen {
   const auction = uuidToToken(confirm.console.auctionId);
+  const opensAt = confirm.console.week?.opensAt;
   const closesAt = confirm.console.week?.closesAt;
   const view = { ...confirm, page: 0, sort: defaultConsoleSort };
+  // Auction открывает лоты сразу, сроки начала не ждут (прогон 14.10, №58):
+  // неделя с будущим началом принимает ставки с подтверждения.
   return {
     id: "week-confirm",
     text: screenText(
       "Онлайн-неделя",
       escapeHtml(
-        closesAt === undefined
-          ? `К ставкам сразу откроются: ${lotsLabel(confirm.opening)}.`
-          : `К ставкам сразу откроются: ${lotsLabel(confirm.opening)}. Торги закроются ${moment(closesAt, view)}.`,
+        [
+          `К ставкам сразу откроются: ${lotsLabel(confirm.opening)}.`,
+          ...(confirm.early === true && opensAt !== undefined
+            ? [
+                `Ставки начнут приниматься с подтверждения, не дожидаясь начала недели ${moment(opensAt, view)}.`,
+              ]
+            : []),
+          ...(closesAt === undefined
+            ? []
+            : [`Торги закроются ${moment(closesAt, view)}.`]),
+        ].join(" "),
       ),
       confirm.idle === 0
         ? undefined

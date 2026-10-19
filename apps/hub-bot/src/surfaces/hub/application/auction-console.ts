@@ -509,11 +509,20 @@ export function createAuctionConsole(
           : { priceGrowth: statistic.priceGrowth }),
       });
     }
-    const console = liveActive({ ...found.console, lots });
-    const [trading, raffle] = await Promise.all([
-      tradingOf(request, console),
-      raffleOf(request, console),
+    const live = liveActive({ ...found.console, lots });
+    const [trading, raffle, leaders] = await Promise.all([
+      tradingOf(request, live),
+      raffleOf(request, live),
+      leadersOf(request, live),
     ]);
+    const console = {
+      ...live,
+      lots: live.lots.map((entry) => {
+        const id = leaderOf(entry);
+        const leaderName = id === undefined ? undefined : leaders[id];
+        return leaderName === undefined ? entry : { ...entry, leaderName };
+      }),
+    };
     return {
       kind: "ok",
       console: {
@@ -522,6 +531,30 @@ export function createAuctionConsole(
         ...(raffle === undefined ? {} : { raffle }),
       },
     };
+  }
+
+  // Имена лидеров для строк пульта (прогон 14.10, №76) — одним чтением на
+  // пульт. Имя — подсказка, а не условие экрана: отказ чтения оставляет строки
+  // без лидера, и пульт открывается. Лидеров нет — чтения нет.
+  async function leadersOf(
+    request: AuctionConsoleRequest,
+    console: AuctionConsoleView,
+  ): Promise<Readonly<Record<string, string>>> {
+    const ids = [
+      ...new Set(
+        console.lots.flatMap((entry) => {
+          const id = leaderOf(entry);
+          return id === undefined ? [] : [id];
+        }),
+      ),
+    ];
+    if (ids.length === 0) return {};
+    const names = await consoles.displayNames(
+      request.identity,
+      { auctionId: request.auctionId, participantIds: ids },
+      rpcMeta(request),
+    );
+    return names.kind === "ok" ? names.names : {};
   }
 
   /**
@@ -970,22 +1003,29 @@ export function createAuctionConsole(
           mark,
           rpcMeta(request),
         );
+    // Исход отметки называет лот (прогон 14.10, №76).
+    const aboutLot = (result: ExecuteResult): ExecuteResult =>
+      result.kind === "auction-console"
+        ? { ...result, noteLot: request.lotId }
+        : result;
     switch (marked.kind) {
       case "ok":
-        return after(
-          request,
-          request.selected ? "marked" : "unmarked",
-          (console) => ({
-            ...console,
-            lots: console.lots.map((each) =>
-              each.lot.lotId === request.lotId
-                ? { ...each, markedForFinal: request.selected }
-                : each,
-            ),
-          }),
+        return aboutLot(
+          await after(
+            request,
+            request.selected ? "marked" : "unmarked",
+            (console) => ({
+              ...console,
+              lots: console.lots.map((each) =>
+                each.lot.lotId === request.lotId
+                  ? { ...each, markedForFinal: request.selected }
+                  : each,
+              ),
+            }),
+          ),
         );
       case "refused":
-        return after(request, marked.reason);
+        return aboutLot(await after(request, marked.reason));
       case "not-administrator":
       case "meetup-not-found":
         return notAdministrator;
@@ -1065,12 +1105,16 @@ export function createAuctionConsole(
         holder: holderOf(holder),
       };
     }
+    const opensAt = console.week?.opensAt;
+    const early =
+      opensAt !== undefined && Date.parse(opensAt) > now().getTime();
     return {
       kind: "auction-week-confirm",
       console,
       opId: request.opId,
       opening,
       idle,
+      ...(early ? { early: true as const } : {}),
     };
   }
 
@@ -1994,4 +2038,12 @@ export function createAuctionConsole(
       }
     }
   };
+}
+
+// Лидер лота на торгах или на удержании; у остальных лидера нет.
+function leaderOf(entry: ConsoleLot): string | undefined {
+  const status = entry.lot.status;
+  return status.kind === "trading" || status.kind === "held"
+    ? status.leaderId
+    : undefined;
 }

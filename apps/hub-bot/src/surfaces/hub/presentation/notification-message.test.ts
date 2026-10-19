@@ -225,7 +225,7 @@ describe("renderNotification", () => {
       }),
     );
     expect(message.text).toBe(
-      "Новая сходка: Настолки у Лёши\n12.08.2026 19:00\nМесто: Циферблат",
+      "Новая сходка: Настолки у Лёши\n📅 Когда: 12 августа, ср, 19:00\n📍 Где: Циферблат",
     );
     const rows = message.keyboard?.inline_keyboard ?? [];
     expect(rows[0]?.[0]).toMatchObject({ text: "Открыть сходку" });
@@ -242,14 +242,14 @@ describe("renderNotification", () => {
   it("does not promise a precision the meetup does not have", () => {
     const text = (when: MeetupWhen) =>
       renderNotification(content(when, { venue: "" })).text.split("\n")[1];
-    expect(text({ kind: "no-date" })).toBe("Дата пока не назначена");
+    expect(text({ kind: "no-date" })).toBe("📅 Когда: дата пока не назначена");
     expect(
       text({
         kind: "day",
         tentative: true,
         date: { year: 2026, month: 8, day: 12 },
       }),
-    ).toBe("Предварительно: 12.08.2026");
+    ).toBe("📅 Когда: предварительно 12 августа, ср");
     expect(
       text({
         kind: "interval",
@@ -257,7 +257,7 @@ describe("renderNotification", () => {
         start: { year: 2026, month: 8, day: 12, hours: 19, minutes: 0 },
         end: { year: 2026, month: 8, day: 12, hours: 22, minutes: 30 },
       }),
-    ).toBe("12.08.2026 19:00–22:30");
+    ).toBe("📅 Когда: 12 августа, ср, 19:00–22:30");
     expect(
       text({
         kind: "interval",
@@ -265,14 +265,30 @@ describe("renderNotification", () => {
         start: { year: 2026, month: 8, day: 12, hours: 22, minutes: 0 },
         end: { year: 2026, month: 8, day: 13, hours: 2, minutes: 0 },
       }),
-    ).toBe("12.08.2026 22:00–13.08.2026 02:00");
+    ).toBe("📅 Когда: 12 августа, ср, 22:00–13 августа, чт, 02:00");
+  });
+
+  // Прогон 14.10, №60: дата читается, как на карточке, — чужой год назван.
+  it("names the year of a meetup outside the current community year", () => {
+    const message = renderNotification(
+      content({
+        kind: "day-start",
+        tentative: false,
+        at: { year: 2026, month: 8, day: 12, hours: 19, minutes: 0 },
+      }),
+      undefined,
+      { year: 2025, month: 12, day: 30 },
+    );
+    expect(message.text.split("\n")[1]).toBe(
+      "📅 Когда: 12 августа 2026, ср, 19:00",
+    );
   });
 
   it("omits an empty venue line", () => {
     const message = renderNotification(
       content({ kind: "no-date" }, { venue: " " }),
     );
-    expect(message.text).not.toContain("Место");
+    expect(message.text).not.toContain("Где");
   });
 
   it("keeps the disable button within the 64-byte budget", () => {
@@ -306,7 +322,7 @@ describe("reminder notification", () => {
   it("names the meetup, when and where, and offers to stop reminders", () => {
     const message = renderNotification({ kind: "meetup-reminder", meetup });
     expect(message.text).toBe(
-      "Напоминание: Настолки у Лёши\n12.08.2026 19:00\nМесто: Циферблат",
+      "Напоминание: Настолки у Лёши\n📅 Когда: 12 августа, ср, 19:00\n📍 Где: Циферблат",
     );
     const rows = message.keyboard?.inline_keyboard ?? [];
     expect(rows[0]?.[0]).toMatchObject({
@@ -324,7 +340,7 @@ describe("reminder notification", () => {
 describe("change notification", () => {
   it("says what changed and shows the current values", () => {
     expect(renderNotification(changed(["venue", "schedule"])).text).toBe(
-      "Изменения в сходке: Настолки у Лёши\nИзменилось: место, дата и время\n12.08.2026 19:00\nМесто: Циферблат",
+      "Изменения в сходке: Настолки у Лёши\nИзменилось: место, дата и время\n📅 Когда: 12 августа, ср, 19:00\n📍 Где: Циферблат",
     );
   });
 
@@ -342,11 +358,22 @@ describe("change notification", () => {
     );
   });
 
+  // Прогон 14.10, №105: изменений у отменённой сходки не будет — выключать
+  // их нечего, под отменой одна «Открыть сходку».
+  it("offers only to open a cancelled meetup", () => {
+    expect(buttons(changed(["lifecycle"], "cancelled"))).toEqual([
+      expect.objectContaining({
+        text: "Открыть сходку",
+        callback_data: "v1:t:view:AZjypHwefTqbIU-OEqs0zw",
+      }),
+    ]);
+  });
+
   it("keeps other changes next to the new state", () => {
     expect(
       renderNotification(changed(["lifecycle", "title"], "held")).text,
     ).toBe(
-      "Сходка состоялась: Настолки у Лёши\nИзменилось: название\n12.08.2026 19:00\nМесто: Циферблат",
+      "Сходка состоялась: Настолки у Лёши\nИзменилось: название\n📅 Когда: 12 августа, ср, 19:00\n📍 Где: Циферблат",
     );
   });
 
@@ -423,7 +450,7 @@ describe("unpublished notification", () => {
   it("names the meetup without a way to open it", () => {
     const message = renderNotification({ kind: "meetup-unpublished", meetup });
     expect(message.text).toBe(
-      "Сходка снята с публикации: Настолки у Лёши\n12.08.2026 19:00",
+      "Сходка снята с публикации: Настолки у Лёши\n📅 Когда: 12 августа, ср, 19:00",
     );
     expect(message.keyboard).toBeUndefined();
   });
@@ -658,18 +685,22 @@ describe("access granted", () => {
 });
 
 describe("preset granted", () => {
-  it("names the administrator rights and leads to the meetups by a trace button", () => {
+  // Прогон 14.10, №48: факт не несёт прежних прав, и у мейнтейнера
+  // «Управление» было и до набора — текст говорит, что есть, а не что
+  // появилось, и ведёт в «Управление».
+  it("names the administrator rights and leads to the management by a trace button", () => {
     const content: OutgoingNotification = {
       kind: "preset-granted",
       preset: "admin",
     };
     expect(renderNotification(content).text).toBe(
-      "Тебе выданы права администратора сообщества. В меню команд появилось «Управление» — /manage.",
+      "Тебе выданы права администратора сообщества: заявки, состав и сходки. Они собраны в «Управлении» — кнопка ниже или команда /manage.",
     );
+    expect(renderNotification(content).text).not.toContain("появил");
     expect(buttons(content)).toEqual([
       expect.objectContaining({
-        text: "Сходки",
-        callback_data: "v1:t:nav:hub",
+        text: "Управление",
+        callback_data: "v1:t:manage:menu",
       }),
     ]);
   });

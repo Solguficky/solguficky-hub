@@ -133,14 +133,23 @@ export function administratorsScreen(
   };
 }
 
-/** Подтверждение назначения: ник едет в «Да», «Нет» — исход с «Ввести заново». */
-export function appointConfirmScreen(username: string): ShownScreen {
+/**
+ * Подтверждение назначения: ник едет в «Да», «Нет» — исход с «Ввести заново».
+ * `self` — ник совпал с ником нажавшего: тогда текст на «ты» (прогон 14.10,
+ * №47), как у снятия себя.
+ */
+export function appointConfirmScreen(
+  username: string,
+  self = false,
+): ShownScreen {
   return {
     id: "administrator-appoint-confirm",
     text: screenText(
       "Назначить администратором?",
       subjectLine(`@${username}`),
-      "Человек сможет решать заявки, вести состав и сходки, и ему придёт сообщение о назначении.",
+      self
+        ? "Это ты: ты сможешь решать заявки, вести состав и сходки, и тебе придёт сообщение о назначении."
+        : "Человек сможет решать заявки, вести состав и сходки, и ему придёт сообщение о назначении.",
     ),
     keyboard: confirmKeyboard({
       yes: "Да, назначить",
@@ -205,19 +214,24 @@ export function appointRetryScreen(
 
 /**
  * Текст исхода назначения. `forbidden`, `unavailable` и `invalid` сюда не
- * входят: у них свои кадры отказа и сбоя.
+ * входят: у них свои кадры отказа и сбоя. Назначенный — сам смотрящий, если
+ * Identity вернул его id: текст тогда на «ты».
  */
 export function appointOutcome(
   result: Exclude<
     AppointAdministratorResult,
     { kind: "forbidden" } | { kind: "unavailable" } | { kind: "invalid" }
   >,
+  viewerId?: string,
 ): { text: string; retry: boolean } {
   switch (result.kind) {
     case "ok":
       return result.value.changed
         ? {
-            text: "Администратор назначен. Человеку придёт сообщение о назначении.",
+            text:
+              result.value.identityId === viewerId
+                ? "Ты назначен администратором. Тебе придёт сообщение о назначении."
+                : "Администратор назначен. Человеку придёт сообщение о назначении.",
             retry: false,
           }
         : { text: "Уже администратор. Ничего не изменилось.", retry: false };

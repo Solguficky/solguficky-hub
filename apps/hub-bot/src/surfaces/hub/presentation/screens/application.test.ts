@@ -80,7 +80,7 @@ describe("application card", () => {
       twoDaysLater,
     );
 
-    expect(screen.text).toContain("<b>Заявка 1 из 2 · хаб</b>");
+    expect(screen.text).toContain("<b>Заявка 1 из 2 · сообщество</b>");
     expect(screen.text).toContain("Иван П. · код c0de1234");
     expect(screen.text).not.toContain(card.identityId);
     expect(rows(screen.keyboard)).toEqual([
@@ -196,7 +196,7 @@ describe("decline confirmation", () => {
     expect(
       declineConfirmScreen("community", { ...card, circle: "member" }).text,
     ).toContain(
-      "в хаб будет отклонена. Доступ к аукциону, если он есть, останется.",
+      "в сообщество будет отклонена. Доступ к аукциону, если он есть, останется.",
     );
   });
 });
