@@ -1,3 +1,4 @@
+using System.Globalization;
 using Google.Protobuf;
 using Identity.V1;
 using Meetups.V1;
@@ -145,6 +146,8 @@ public static class EventFactory
     /// сообщество, гость — аукцион. Снимок — тот, что был до заявки:
     /// незаблокирован, с кругом <paramref name="held" /> и его правами, если
     /// круг есть, и правами <paramref name="granted" />, выданными записями.
+    /// Заявка названа курсором, как её называет Identity с PER-634; событие
+    /// старше курсора тест получает, очистив поля.
     /// </summary>
     public static IdentityEvent Application(
         string identityId,
@@ -161,7 +164,12 @@ public static class EventFactory
             Version = version,
             OccurredAt = Committed.AddMinutes(version).ToString("O"),
             State = new IdentityState { Id = identityId },
-            ApplicationSubmitted = new ApplicationSubmitted { Queue = Queue(circle) },
+            ApplicationSubmitted = new ApplicationSubmitted
+            {
+                Queue = Queue(circle),
+                ApplicationId = NewId(),
+                CreatedAt = Committed.AddMinutes(version).ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+            },
         };
         Hold(message.State, held);
         message.State.Rights.Add(granted.Where(right => !message.State.Rights.Contains(right)));

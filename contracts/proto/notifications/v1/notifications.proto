@@ -424,15 +424,23 @@ message AuctionFinalStarted {
 
 // A new application was opened in a queue the recipient moderates. The
 // applicant is not carried: who asked, by which name and from which channel is
-// data for the moderator, and the channel leads the recipient to the
-// application queue, where it is read from IdentityService under the
-// moderator's own rights.
+// data for the moderator, and the channel reads the application from
+// IdentityService under the moderator's own rights by the cursor carried here.
 message AccessRequested {
   reserved 1;
   reserved "circle";
 
   // The queue the application lies in, and so the screen the channel leads to.
   identity.v1.ApplicationQueue queue = 2;
+
+  // Canonical lowercase UUIDv7 string with hyphens. Empty when the Identity
+  // event predates it: the channel then leads to the queue from its start.
+  string application_id = 3;
+
+  // RFC 3339 instant in UTC with exactly millisecond precision: the moment the
+  // application was created, as identity.v1.ApplicationCard.created_at gives
+  // it. Empty exactly when application_id is.
+  string created_at = 4;
 }
 
 // The recipient was admitted by an application. Who decided is deliberately

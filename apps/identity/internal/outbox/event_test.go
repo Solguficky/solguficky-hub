@@ -96,6 +96,45 @@ func TestRecordMessageCarriesPresetsAndRights(t *testing.T) {
 	}
 }
 
+// Новая заявка называет себя курсором карточки: момент — UTC с ровно
+// миллисекундами, как его отдаёт очередь, иначе бот не найдёт её по курсору.
+func TestRecordMessageCarriesApplicationCursor(t *testing.T) {
+	t.Parallel()
+	createdAt := time.Date(2026, time.October, 12, 21, 5, 7, 40000000, time.FixedZone("MSK", 3*60*60))
+	record := outbox.Record{
+		Occasion:             outbox.ApplicationSubmitted,
+		Queue:                "community",
+		ApplicationID:        "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903",
+		ApplicationCreatedAt: createdAt,
+	}
+
+	message, err := record.Message()
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitted := message.GetApplicationSubmitted()
+	if got := submitted.GetApplicationId(); got != "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903" {
+		t.Fatalf("application_id: got %q", got)
+	}
+	if got, want := submitted.GetCreatedAt(), "2026-10-12T18:05:07.040Z"; got != want {
+		t.Fatalf("created_at: got %q want %q", got, want)
+	}
+}
+
+// Строка, записанная до курсора, уходит прежним событием: поля пусты, а не
+// нулевой момент 0001 года.
+func TestRecordMessageOmitsCursorOfEarlierRow(t *testing.T) {
+	t.Parallel()
+	message, err := (outbox.Record{Occasion: outbox.ApplicationSubmitted, Queue: "auction"}).Message()
+	if err != nil {
+		t.Fatal(err)
+	}
+	submitted := message.GetApplicationSubmitted()
+	if submitted.GetApplicationId() != "" || submitted.GetCreatedAt() != "" {
+		t.Fatalf("cursor: got %q %q", submitted.GetApplicationId(), submitted.GetCreatedAt())
+	}
+}
+
 // Первый круг: прежнего нет, и повод несёт CIRCLE_UNSPECIFIED, а не отказ.
 func TestRecordMessageReadsFirstCircleWithoutPrevious(t *testing.T) {
 	t.Parallel()

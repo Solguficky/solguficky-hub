@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"time"
 
 	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"github.com/Solguficky/solguficky-hub/apps/identity/internal/outbox"
@@ -27,7 +29,8 @@ SELECT EXISTS (
 	openApplicationSQL = `
 INSERT INTO identity_applications (id, identity_id, queue, source_channel, source_unknown, first_name, created_at)
 VALUES ($1, $2, $3, $4, $5, $6, date_trunc('milliseconds', now()))
-ON CONFLICT (identity_id, queue) WHERE outcome IS NULL DO NOTHING`
+ON CONFLICT (identity_id, queue) WHERE outcome IS NULL DO NOTHING
+RETURNING created_at`
 )
 
 // RequestAccess — вход на /start в любом боте (ADR-060, пункты 1–7, 17–19).
@@ -66,9 +69,16 @@ func (s identityService) RequestAccess(ctx context.Context, req *identityv1.Requ
 	// Новая заявка — повод для оповещения модераторов очереди (ADR-062). Она
 	// пишется после регистрации: регистрация обязана быть первым событием
 	// профиля. Найденная открытая заявка повода не даёт, поэтому повторный
-	// /start никого не оповещает.
-	if opened {
-		if err := outbox.Append(ctx, tx, identityID, outbox.Event{Occasion: outbox.ApplicationSubmitted, Queue: queue}); err != nil {
+	// /start никого не оповещает. Событие называет заявку её курсором: по нему
+	// бот модератора читает карточку из очереди (PER-634).
+	if opened != nil {
+		event := outbox.Event{
+			Occasion:             outbox.ApplicationSubmitted,
+			Queue:                queue,
+			ApplicationID:        opened.id,
+			ApplicationCreatedAt: opened.createdAt,
+		}
+		if err := outbox.Append(ctx, tx, identityID, event); err != nil {
 			return nil, internal("announce application", err)
 		}
 	}
@@ -94,60 +104,66 @@ func (s identityService) RequestAccess(ctx context.Context, req *identityv1.Requ
 // по кругу: гость без place_bids в очередь аукциона попадает (integration.md,
 // ALREADY_HELD). Строка профиля блокируется первой, поэтому два /start одного
 // человека идут друг за другом, а решение модератора не встаёт между чтением
-// прав и заявкой. Второе значение отвечает, открыта ли заявка этим вызовом, а
-// не найдена открытой.
+// прав и заявкой. Второе значение — заявка, открытая этим вызовом; nil — заявку
+// не открыли или нашли открытой.
 func requestAccessTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	identityID, queue string,
 	req *identityv1.RequestAccessRequest,
 	announce bool,
-) (identityv1.AccessRequestOutcome, bool, error) {
+) (identityv1.AccessRequestOutcome, *openedApplication, error) {
 	blocked, err := lockProfile(ctx, tx, identityID)
 	if err != nil {
-		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, false, err
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, nil, err
 	}
 	if blocked {
-		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_BLOCKED, false, nil
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_BLOCKED, nil, nil
 	}
 	granted := queueGrantedRight(queue)
 	heldBefore, err := holdsRight(ctx, tx, identityID, granted)
 	if err != nil {
-		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, false, err
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, nil, err
 	}
 	if err := admitAllowedUsername(ctx, tx, identityID, req.GetTelegramUsername(), announce); err != nil {
-		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, false, err
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, nil, err
 	}
 	if heldBefore {
-		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_ALREADY_HELD, false, nil
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_ALREADY_HELD, nil, nil
 	}
 	heldAfter, err := holdsRight(ctx, tx, identityID, granted)
 	if err != nil {
-		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, false, err
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, nil, err
 	}
 	if heldAfter {
-		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST, false, nil
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_GRANTED_BY_ALLOWLIST, nil, nil
 	}
 	var declined bool
 	if err := tx.QueryRowContext(ctx, standingDeclineSQL, identityID, queue).Scan(&declined); err != nil {
-		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, false, err
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, nil, err
 	}
 	if declined {
-		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_DECLINED, false, nil
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_DECLINED, nil, nil
 	}
 	opened, err := openApplication(ctx, tx, identityID, queue, req)
 	if err != nil {
-		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, false, err
+		return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_UNSPECIFIED, nil, err
 	}
 	return identityv1.AccessRequestOutcome_ACCESS_REQUEST_OUTCOME_PENDING, opened, nil
 }
 
-// openApplication отвечает, открыла ли она заявку. Ложь без ошибки — открытая
+// openedApplication — заявка, открытая вызовом: её курсор в очереди.
+type openedApplication struct {
+	id        string
+	createdAt time.Time
+}
+
+// openApplication отвечает заявкой, которую открыла. nil без ошибки — открытая
 // заявка в эту очередь уже была, и вставка ничего не сделала.
-func openApplication(ctx context.Context, tx *sql.Tx, identityID, queue string, req *identityv1.RequestAccessRequest) (bool, error) {
+func openApplication(ctx context.Context, tx *sql.Tx, identityID, queue string, req *identityv1.RequestAccessRequest) (*openedApplication, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	// Присутствие кода значимо: пустой код — «неизвестный источник», а не его
 	// отсутствие, поэтому указатель собирается из геттера, а не теряется.
@@ -158,18 +174,18 @@ func openApplication(ctx context.Context, tx *sql.Tx, identityID, queue string, 
 	}
 	source, err := resolveApplicationSource(ctx, tx, code)
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	result, err := tx.ExecContext(ctx, openApplicationSQL, id.String(), identityID, queue,
-		source.channel, source.unknown, nullableText(req.GetFirstName()))
+	var createdAt time.Time
+	err = tx.QueryRowContext(ctx, openApplicationSQL, id.String(), identityID, queue,
+		source.channel, source.unknown, nullableText(req.GetFirstName())).Scan(&createdAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
-		return false, err
+		return nil, err
 	}
-	inserted, err := result.RowsAffected()
-	if err != nil {
-		return false, err
-	}
-	return inserted == 1, nil
+	return &openedApplication{id: id.String(), createdAt: createdAt}, nil
 }
 
 func nullableText(value string) any {

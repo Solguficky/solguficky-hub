@@ -279,6 +279,41 @@ public class ReplicaMappingTests
     }
 
     [Fact]
+    public void Identity_ApplicationSubmitted_CarriesApplicationCursorAsSent()
+    {
+        var message = EventFactory.Application(IdentityId, version: 2, Circle.Member);
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Application.ShouldBe(new SubmittedApplication(
+            message.ApplicationSubmitted.ApplicationId,
+            message.ApplicationSubmitted.CreatedAt));
+    }
+
+    [Theory]
+    [InlineData("", "")]
+    [InlineData("not-a-uuid", "2026-10-12T18:05:07.040Z")]
+    [InlineData("0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", "")]
+    [InlineData("0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", "yesterday")]
+    [InlineData("0198F2A4-7C1E-7D3A-9B21-4F8E12AB3903", "2026-10-12T18:05:07.040Z")]
+    [InlineData("0198f2a47c1e7d3a9b214f8e12ab3903", "2026-10-12T18:05:07.040Z")]
+    [InlineData("0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", "2026-10-12T18:05:07Z")]
+    [InlineData("0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", "2026-10-12T21:05:07.040+03:00")]
+    public void Identity_ApplicationWithoutReadableCursor_StaysAnApplication(string applicationId, string createdAt)
+    {
+        // Событие старше курсора или с курсором, который не читается, остаётся
+        // заявкой: оповещение теряет только тело, а не повод.
+        var message = EventFactory.Application(IdentityId, version: 2, Circle.Member);
+        message.ApplicationSubmitted.ApplicationId = applicationId;
+        message.ApplicationSubmitted.CreatedAt = createdAt;
+
+        var fact = Fact<IdentityFact>(ReplicaMapping.Identity(EventFactory.Bytes(message)));
+
+        fact.Occasion.ShouldBe(IdentityOccasion.ApplicationSubmitted);
+        fact.Application.ShouldBeNull();
+    }
+
+    [Fact]
     public void Identity_ApplicationToUnknownQueue_OnlyMovesReplica()
     {
         // Незнакомая очередь — новая поверхность со своими модераторами: звать

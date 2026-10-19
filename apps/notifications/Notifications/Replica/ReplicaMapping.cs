@@ -339,6 +339,7 @@ public static class ReplicaMapping
         string? occasionPreset = null;
         AccessQueue? occasionQueue = null;
         string? occasionRight = null;
+        SubmittedApplication? application = null;
         switch (message.OccasionCase)
         {
             case IdentityEvent.OccasionOneofCase.ApplicationSubmitted:
@@ -347,6 +348,7 @@ public static class ReplicaMapping
                     case QueueReading.Known known:
                         occasionQueue = known.Queue;
                         occasion = IdentityOccasion.ApplicationSubmitted;
+                        application = SubmittedCursor(message.ApplicationSubmitted);
                         break;
 
                     // Очередь, которой этот потребитель не знает, — новая
@@ -438,8 +440,29 @@ public static class ReplicaMapping
             occasion,
             occasionPreset,
             occasionQueue,
-            occasionRight));
+            occasionRight,
+            application));
     }
+
+    /// <summary>
+    /// Курсор новой заявки. Его нет у события Identity, которое старше курсора,
+    /// а неполный или не канонический курсор читается так же: оповещение без
+    /// него теряет только тело заявки, а повод и реплика остаются верными.
+    /// Вид проверяется строго — UUID в нижнем регистре с дефисами и момент UTC
+    /// с ровно миллисекундами, как их пишет Identity: курсор иного вида бот
+    /// всё равно отверг бы, и звенья расходились бы молча.
+    /// </summary>
+    private static SubmittedApplication? SubmittedCursor(ApplicationSubmitted submitted) =>
+        Guid.TryParseExact(submitted.ApplicationId, "D", out var id) &&
+        submitted.ApplicationId == id.ToString("D") &&
+        DateTimeOffset.TryParseExact(
+            submitted.CreatedAt,
+            "yyyy-MM-dd'T'HH:mm:ss.fff'Z'",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+            out _)
+            ? new SubmittedApplication(submitted.ApplicationId, submitted.CreatedAt)
+            : null;
 
     private static string? CircleName(Circle circle) => circle switch
     {

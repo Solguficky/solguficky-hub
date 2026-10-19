@@ -31,6 +31,7 @@ import {
   type RaffleNotice,
   raffleNoticeOf,
 } from "../../../core/notifications/raffle-notice.js";
+import type { ApplicationCursor } from "../identity/port.js";
 
 export type LocalDate = { year: number; month: number; day: number };
 export type LocalDateTime = LocalDate & { hours: number; minutes: number };
@@ -96,8 +97,13 @@ export type RenderableContent =
   | { kind: "organizer-message"; meetup: NotifiedMeetup; body: string }
   | { kind: "community-announcement"; body: string }
   // Заявку на доступ получает администратор. Заявителя контракт не несёт: кто
-  // просит, модератор видит в очереди, куда ведёт сообщение.
-  | { kind: "access-requested"; queue: ApplicationQueue }
+  // просит, бот читает при доставке из очереди правами получателя по курсору
+  // заявки (PER-634). Курсора нет у факта, который старше него.
+  | {
+      kind: "access-requested";
+      queue: ApplicationQueue;
+      application?: SubmittedApplication;
+    }
   // Допуск в хаб получает сам заявитель (PER-442). Очередь здесь всегда
   // сообщества: допуск в аукцион доставляет бот аукциона.
   | { kind: "access-granted" }
@@ -117,6 +123,10 @@ export type RenderableContent =
 
 // Очереди, в которые ставят заявку: сообщество и аукцион.
 export type ApplicationQueue = "community" | "auction";
+
+// Курсор заявки, о которой оповещение: идентификатор и момент создания, по
+// которым Identity отдаёт её карточку из очереди.
+export type SubmittedApplication = ApplicationCursor;
 
 export type NotificationContent = RenderableContent | OtherBranch;
 
@@ -208,9 +218,14 @@ function toContent(message: Notification): NotificationContent | undefined {
     }
     case "accessRequested": {
       const queue = toQueue(type.value.queue);
-      return queue === undefined
-        ? undefined
-        : { kind: "access-requested", queue };
+      if (queue === undefined) return undefined;
+      const application = toSubmittedApplication(
+        type.value.applicationId,
+        type.value.createdAt,
+      );
+      return application === undefined
+        ? { kind: "access-requested", queue }
+        : { kind: "access-requested", queue, application };
     }
     // Допуск доставляет бот той поверхности, куда подана заявка: хаб — заявку
     // в сообщество, а допуск в аукцион для него чужой, как ветки торгов.
@@ -391,6 +406,28 @@ function toDateTime(
     minutes: value.time.minutes,
   };
 }
+
+// Курсор заявки из факта. Пустой — факт старше курсора, неразборчивый —
+// дефект издателя; оба читаются отсутствием: оповещение теряет только тело
+// заявки, а повод остаётся.
+function toSubmittedApplication(
+  applicationId: string,
+  createdAt: string,
+): SubmittedApplication | undefined {
+  if (!canonicalUuid.test(applicationId)) return undefined;
+  if (!applicationInstant.test(createdAt)) return undefined;
+  const createdAtMs = Date.parse(createdAt);
+  return Number.isFinite(createdAtMs)
+    ? { applicationId, createdAtMs }
+    : undefined;
+}
+
+const canonicalUuid =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// Вид момента заявки по контракту — UTC с ровно миллисекундами. Иной вид —
+// дефект издателя: курсор из него встал бы не на заявку, и открытая заявка
+// показалась бы решённой.
+const applicationInstant = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 // Незнакомая или пустая очередь — дефект издателя.
 function toQueue(value: WireQueue): ApplicationQueue | undefined {

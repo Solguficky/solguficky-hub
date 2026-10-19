@@ -2036,6 +2036,52 @@ describe("presentation adapter", () => {
       expect(JSON.stringify(calls[1]?.payload)).toContain("Пётр (@petr)");
     });
 
+    // Оповещение о заявке несёт те же кнопки с пометкой следа (PER-634):
+    // решение то же, а следующая карточка приходит новым сообщением, и
+    // оповещение остаётся в истории как было.
+    it("admits from the notification and sends the next card anew", async () => {
+      const identity = moderating([shown(second, 1, 1)]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:t:cm:qa:${cursorOf(first)}`));
+
+      expect(identity.admitApplication).toHaveBeenCalledWith(
+        expect.objectContaining({ identityId: resolvedId }),
+        first.applicationId,
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "sendMessage",
+      ]);
+      expect(calls[0]?.payload).toMatchObject({ text: "Человек допущен." });
+      expect(JSON.stringify(calls[1]?.payload)).toContain(
+        "Заявка 1 из 1 · хаб",
+      );
+    });
+
+    it("does not decide again from the notification of a decided application", async () => {
+      const identity = moderating([shown(second, 1, 1)]);
+      identity.admitApplication.mockResolvedValue({
+        kind: "ok",
+        value: {
+          already: true,
+          outcome: "declined",
+          decidedBy: { telegramUserId: 7n, telegramUsername: "admin" },
+        },
+      });
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:t:cm:qa:${cursorOf(first)}`));
+
+      expect(calls[0]?.payload).toMatchObject({
+        text: expect.stringMatching(/^Уже решено: .*@admin\.$/),
+      });
+      expect(calls.map((call) => call.method)).not.toContain("editMessageText");
+    });
+
     it("keeps the same card when the decision was not saved", async () => {
       const identity = moderating([shown(first, 1, 1)]);
       identity.admitApplication.mockResolvedValue({
@@ -2137,6 +2183,33 @@ describe("presentation adapter", () => {
         text: "Отказано: профиль заблокирован.",
       });
       expect(JSON.stringify(calls.at(-1)?.payload)).toContain("Пётр (@petr)");
+    });
+
+    // «Отказать» под оповещением о заявке (PER-634) — тот же вопрос и тот же
+    // отказ, только вопрос приходит новым сообщением, а оповещение остаётся.
+    it("asks before declining from the notification and declines the same way", async () => {
+      const identity = moderating([shown(first, 1, 2), shown(second, 1, 1)]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:t:cm:qd:${cursorOf(first)}`));
+
+      expect(identity.declineApplication).not.toHaveBeenCalled();
+      expect(calls.at(-1)).toMatchObject({
+        method: "sendMessage",
+        payload: { text: expect.stringContaining("<b>Отказать?</b>") },
+      });
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:qy:${cursorOf(first)}`));
+
+      expect(identity.declineApplication).toHaveBeenCalledWith(
+        expect.anything(),
+        first.applicationId,
+        expect.anything(),
+      );
+      expect(calls.at(-2)?.payload).toMatchObject({
+        text: "Отказано: профиль заблокирован.",
+      });
     });
 
     it("does not ask about a card another administrator already decided", async () => {

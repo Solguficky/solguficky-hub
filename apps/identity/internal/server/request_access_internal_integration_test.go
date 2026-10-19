@@ -56,6 +56,28 @@ func TestRequestAccessOutsideListsOpensOneApplication(t *testing.T) {
 		"v2 application_submitted(auction) {}[] blocked=false")
 }
 
+// Событие новой заявки несёт её курсор — идентификатор и момент той строки,
+// которую открыл вызов (PER-634): по нему бот модератора найдёт карточку.
+func TestRequestAccessAnnouncesApplicationCursor(t *testing.T) {
+	t.Parallel()
+	svc, db := newIdentityService(t)
+
+	resp := requestAccess(t, svc, accessRequest{telegramUserID: 7110, queue: hubQueue})
+
+	var matches bool
+	err := db.QueryRowContext(t.Context(), `
+		SELECT o.application_id = a.id AND o.application_created_at = a.created_at
+		FROM identity_outbox o
+		JOIN identity_applications a ON a.identity_id = o.identity_id
+		WHERE o.identity_id = $1 AND o.occasion = 'application_submitted'`, resp.GetIdentityId()).Scan(&matches)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matches {
+		t.Fatal("application_submitted cursor differs from the opened application")
+	}
+}
+
 // Заявка без источника и без имени: payload без `s_` и пустой first_name.
 func TestRequestAccessWithoutSourceOpensBareApplication(t *testing.T) {
 	t.Parallel()

@@ -161,6 +161,16 @@ message ApplicationSubmitted {
 
   // The queue the application lies in.
   ApplicationQueue queue = 2;
+
+  // Canonical lowercase UUIDv7 string with hyphens. Empty from a producer that
+  // predates it.
+  string application_id = 3;
+
+  // RFC 3339 instant in UTC with exactly millisecond precision: the moment the
+  // application was created, as ApplicationCard.created_at gives it. Together
+  // with application_id it is the ApplicationCursor of the application. Empty
+  // from a producer that predates it.
+  string created_at = 4;
 }
 
 // A moderator of the queue admitted the person by an application: they decided an open

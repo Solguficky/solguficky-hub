@@ -96,6 +96,20 @@ export function ageLabel(createdAtMs: number, nowMs: number): string {
 }
 
 /**
+ * Тело карточки заявки: кто просит и откуда пришёл. Одно у экрана очереди и
+ * у оповещения о заявке (PER-634): модератор решает по одним и тем же строкам.
+ */
+export function applicationCardBody(
+  application: ApplicationCard,
+  nowMs: number,
+): string {
+  return [
+    personHtml(application),
+    `Пришёл: ${sourceLabel(application.source)} · ${ageLabel(application.createdAtMs, nowMs)}`,
+  ].join("\n");
+}
+
+/**
  * Карточка ведёт в профиль только по публичному username. Допуск и отказ —
  * бинарная пара одним рядом и без цвета: красное у отказа — его «Да, отказать»
  * (решение владельца 10 октября 2026 года).
@@ -123,10 +137,7 @@ export function applicationCardScreen(
     id: "application",
     text: screenText(
       `Заявка ${position} из ${total} · ${circleLabel[application.circle]}`,
-      [
-        personHtml(application),
-        `Пришёл: ${sourceLabel(application.source)} · ${ageLabel(application.createdAtMs, nowMs)}`,
-      ].join("\n"),
+      applicationCardBody(application, nowMs),
     ),
     keyboard,
     format: "HTML",
