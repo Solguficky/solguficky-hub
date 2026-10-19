@@ -37,6 +37,15 @@ public static class MethodAccess
             ["SetAuctionNotificationPreferences"] = BothBots,
             ["BroadcastToMeetupSubscribers"] = Bot,
             ["BroadcastToCommunity"] = Bot,
+
+            // Сводки выпуска (PER-626) — пока только у бота хаба: поверхность
+            // называет токен, а первую сводку выпускает один хаб. Бот аукциона
+            // получит свою поверхность вместе с экраном в своих «Настройках»
+            // (ADR-069, п. 7), и строка расширится тем же изменением, а не
+            // молчаливым отсутствием.
+            ["ReportReleaseNotes"] = Bot,
+            ["ListReleaseSummaries"] = Bot,
+            ["GetReleaseSummary"] = Bot,
             ["FollowLot"] = BothBots,
             ["UnfollowLot"] = BothBots,
             ["ListFollowedLots"] = BothBots,

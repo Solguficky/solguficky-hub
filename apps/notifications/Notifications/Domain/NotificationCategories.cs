@@ -69,6 +69,13 @@ public static class NotificationCategories
         // остальным он обещал бы то, чего не бывает (ADR-064). Включена по
         // умолчанию, иначе очередь копится незамеченной (ADR-062).
         (NotificationCategory.AccessRequest, new CategoryDefinition("access_request", true, false, QueueModerators)),
+
+        // Сводка выпуска: «Новое в боте». Только глобальная — сводка
+        // принадлежит поверхности бота, а не сходке, и переопределять её у
+        // сходки негде. Значение по умолчанию берётся отсюда, когда процесс не
+        // задал своё: продукт хочет решать это параметром среды, а не
+        // константой (ADR-069, п. 5), и чтение параметра — PER-628.
+        (NotificationCategory.ReleaseNotes, new CategoryDefinition("release_notes", true, false)),
     ];
 
     private static readonly IReadOnlyDictionary<NotificationCategory, CategoryDefinition> ByCategory =
