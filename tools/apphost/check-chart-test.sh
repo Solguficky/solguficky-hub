@@ -49,10 +49,10 @@ EOF
     fi
 }
 
-# image NAME - the image a service runs: the auction bot runs the hub bot's
+# image NAME - the image a service runs: the auction and support bots run the hub bot's
 image() {
     case "$1" in
-        auction-bot) echo "ghcr.io/solguficky/hub-bot@$digest" ;;
+        auction-bot | support-bot) echo "ghcr.io/solguficky/hub-bot@$digest" ;;
         *) echo "ghcr.io/solguficky/$1@$digest" ;;
     esac
 }
@@ -131,10 +131,10 @@ metadata:
 EOF
 }
 
-# tree CASE - a rendered tree with the six chart workloads and the topology Job
+# tree CASE - a rendered tree with the seven chart workloads and the topology Job
 tree() {
     work="$scratch/$1"
-    for name in identity meetups notifications hub-bot auction auction-bot; do
+    for name in identity meetups notifications hub-bot auction auction-bot support-bot; do
         mkdir -p "$work/solguficky-hub/templates/$name"
         deployment "$name" > "$work/solguficky-hub/templates/$name/deployment.yaml"
     done
@@ -167,12 +167,13 @@ assert_fails() {
 }
 
 work=$(tree good)
-assert_passes "six workloads and the topology Job by the rules pass" "$work"
+assert_passes "seven workloads and the topology Job by the rules pass" "$work"
 
 work=$(tree bot-without-probes)
 sed -i '/Probe:/,/port:/d' "$work/solguficky-hub/templates/hub-bot/deployment.yaml"
 sed -i '/Probe:/,/port:/d' "$work/solguficky-hub/templates/auction-bot/deployment.yaml"
-assert_passes "the two bots are the workloads allowed without probes" "$work"
+sed -i '/Probe:/,/port:/d' "$work/solguficky-hub/templates/support-bot/deployment.yaml"
+assert_passes "the three bots are the workloads allowed without probes" "$work"
 
 work=$(tree two-replicas)
 sed -i 's/replicas: 1/replicas: 2/' "$work/solguficky-hub/templates/meetups/deployment.yaml"
@@ -189,11 +190,16 @@ assert_fails "a rollingUpdate block next to Recreate" "notifications: rollingUpd
 work=$(tree image-tag)
 sed -i "s|hub-bot@$digest|hub-bot:latest|" "$work/solguficky-hub/templates/hub-bot/deployment.yaml"
 sed -i "s|hub-bot@$digest|hub-bot:latest|" "$work/solguficky-hub/templates/auction-bot/deployment.yaml"
+sed -i "s|hub-bot@$digest|hub-bot:latest|" "$work/solguficky-hub/templates/support-bot/deployment.yaml"
 assert_fails "an image by tag" "hub-bot: image 'ghcr.io/solguficky/hub-bot:latest' is not pinned" "$work"
 
 work=$(tree auction-bot-own-image)
 sed -i "s|hub-bot@$digest|auction-bot@$digest|" "$work/solguficky-hub/templates/auction-bot/deployment.yaml"
 assert_fails "the auction bot on an image of its own" "auction-bot: image ['ghcr.io/solguficky/auction-bot@$digest'] differs from hub-bot's" "$work"
+
+work=$(tree support-bot-own-image)
+sed -i "s|hub-bot@$digest|support-bot@$digest|" "$work/solguficky-hub/templates/support-bot/deployment.yaml"
+assert_fails "the support bot on an image of its own" "support-bot: image ['ghcr.io/solguficky/support-bot@$digest'] differs from hub-bot's" "$work"
 
 work=$(tree root)
 sed -i '/runAsNonRoot/d' "$work/solguficky-hub/templates/identity/deployment.yaml"

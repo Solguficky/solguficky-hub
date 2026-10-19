@@ -34,11 +34,13 @@ auction: ContainerResource
   health: auction_http_/health_200_check
 auction-bot: ContainerResource
   image: /hub-bot:latest
+  env: AUCTION_FAQ_QUESTION_URL=https://t.me/{support-bot-username.value}?start=auction
   env: AUCTION_GRPC_URL={auction.bindings.grpc.url}
   env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
   env: BOT_ENVIRONMENT=prod
   env: BOT_NATS_URL={nats.connectionString}
   env: BOT_SERVICE_TOKEN={auction-bot-service-token.value}
+  env: BOT_SUPPORT_BOT_USERNAME={support-bot-username.value}
   env: BOT_SURFACE=auction
   env: BOT_TOKEN={auction-bot-token.value}
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
@@ -53,6 +55,7 @@ auction-bot: ContainerResource
   relationship: Reference identity
   relationship: Reference nats
   relationship: Reference notifications
+  relationship: Reference support-bot-username
   relationship: WaitFor auction
   relationship: WaitFor identity
   relationship: WaitFor nats
@@ -77,6 +80,7 @@ hub-bot: ContainerResource
   env: BOT_ENVIRONMENT=prod
   env: BOT_NATS_URL={nats.connectionString}
   env: BOT_SERVICE_TOKEN={hub-bot-service-token.value}
+  env: BOT_SUPPORT_BOT_USERNAME={support-bot-username.value}
   env: BOT_SURFACE=hub
   env: BOT_TOKEN={hub-bot-token.value}
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
@@ -94,6 +98,7 @@ hub-bot: ContainerResource
   relationship: Reference meetups
   relationship: Reference nats
   relationship: Reference notifications
+  relationship: Reference support-bot-username
   relationship: WaitFor auction
   relationship: WaitFor identity
   relationship: WaitFor meetups
@@ -112,6 +117,7 @@ identity: ContainerResource
   env: IDENTITY_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
   env: IDENTITY_CALLER_TOKEN_MEETUPS={meetups-service-token.value}
   env: IDENTITY_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
+  env: IDENTITY_CALLER_TOKEN_SUPPORT_BOT={support-bot-service-token.value}
   env: IDENTITY_DATABASE_URL={identity-db.connectionString}
   env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
   env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
@@ -127,6 +133,7 @@ identity: ContainerResource
   relationship: Reference meetups-service-token
   relationship: Reference nats
   relationship: Reference notifications-service-token
+  relationship: Reference support-bot-service-token
   relationship: WaitFor identity-db
   relationship: WaitFor nats
   health: identity-grpc
@@ -215,3 +222,30 @@ notifications-service-id: ParameterResource
   secret: False
 notifications-service-token: ParameterResource
   secret: True
+support-bot: ContainerResource
+  image: /hub-bot:latest
+  env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: BOT_ENVIRONMENT=prod
+  env: BOT_NATS_URL={nats.connectionString}
+  env: BOT_SERVICE_TOKEN={support-bot-service-token.value}
+  env: BOT_SUPPORT_GROUP_ID={support-bot-group-id.value}
+  env: BOT_SURFACE=support
+  env: BOT_TOKEN={support-bot-token.value}
+  env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  waits: identity WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference identity
+  relationship: Reference nats
+  relationship: Reference support-bot-group-id
+  relationship: Reference support-bot-service-token
+  relationship: Reference support-bot-token
+  relationship: WaitFor identity
+  relationship: WaitFor nats
+support-bot-group-id: ParameterResource
+  secret: False
+support-bot-service-token: ParameterResource
+  secret: True
+support-bot-token: ParameterResource
+  secret: True
+support-bot-username: ParameterResource
+  secret: False

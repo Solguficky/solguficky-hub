@@ -43,25 +43,27 @@ public class ClusterPublishTests
         builder.Resources.OfType<IComputeResource>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.Auction, R.AuctionBot, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications]);
+            .ShouldBe([R.Auction, R.AuctionBot, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications, R.SupportBot]);
     }
 
     /// <summary>
     /// Значений токенов при публикации нет — CI собирает чарт без секретов, —
-    /// поэтому ветка публикации бота аукциона проверку своего токена не зовёт:
-    /// повтор токена бота хаба ловит выкладка среды до старта подов. Иначе чарт
+    /// поэтому ветки публикации ботов аукциона и поддержки проверку своего
+    /// токена не зовут: повтор ловит выкладка среды до старта подов. Иначе чарт
     /// не собрался бы без токенов, а с одинаковыми — тем более.
     /// </summary>
     [Theory]
     [InlineData("")]
     [InlineData("same")]
-    public async Task Publish_AuctionBot_DoesNotCheckTokenValues(string token)
+    public async Task Publish_Bots_DoNotCheckTokenValues(string token)
     {
         var builder = await PublishModelAsync(
             $"--Parameters:auction-bot-token={token}",
+            $"--Parameters:support-bot-token={token}",
             $"--Parameters:hub-bot-token={token}");
 
         builder.Resources.ShouldContain(resource => resource.Name == R.AuctionBot);
+        builder.Resources.ShouldContain(resource => resource.Name == R.SupportBot);
     }
 
     /// <summary>
@@ -91,17 +93,20 @@ public class ClusterPublishTests
     }
 
     /// <summary>
-    /// Бот аукциона своей сборки не имеет: образ у пакета ботов один (ADR-064,
-    /// п. 18). Сборка дала бы ему свой ключ образа в values, и среда могла бы
-    /// выкатить двум ботам разный код под одним Containerfile. Что workload
-    /// читает ключ бота хаба, держит правило чарта (tools/apphost/check-chart.py).
+    /// Боты аукциона и поддержки своей сборки не имеют: образ у пакета ботов
+    /// один (ADR-064, п. 18). Сборка дала бы боту свой ключ образа в values, и
+    /// среда могла бы выкатить ботам разный код под одним Containerfile. Что
+    /// workload читает ключ бота хаба, держит правило чарта
+    /// (tools/apphost/check-chart.py).
     /// </summary>
-    [Fact]
-    public async Task Publish_AuctionBot_HasNoBuildOfItsOwn()
+    [Theory]
+    [InlineData(R.AuctionBot)]
+    [InlineData(R.SupportBot)]
+    public async Task Publish_SurfaceBot_HasNoBuildOfItsOwn(string name)
     {
         var builder = await PublishModelAsync();
 
-        var resource = builder.Resources.Single(resource => resource.Name == R.AuctionBot);
+        var resource = builder.Resources.Single(resource => resource.Name == name);
 
         resource.ShouldBeOfType<ContainerResource>();
         resource.Annotations.OfType<DockerfileBuildAnnotation>().ShouldBeEmpty();
@@ -123,8 +128,8 @@ public class ClusterPublishTests
     /// <summary>
     /// Без дашборда Aspire не выдаёт сервису в чарте ни адреса OTLP, ни имени:
     /// экспорт в поде молча выключается (PER-378). Адрес — Collector своей среды,
-    /// одинаковый во всех средах. Бот аукциона OTLP не шлёт, его логи Collector
-    /// читает из файлов подов, и адрес задвоил бы их, когда экспорт у бота появится.
+    /// одинаковый во всех средах. Боты аукциона и поддержки OTLP не шлют, их
+    /// логи Collector читает из файлов подов, и адрес задвоил бы их, когда экспорт у бота появится.
     /// </summary>
     [Theory]
     [InlineData(R.Identity)]
@@ -143,12 +148,14 @@ public class ClusterPublishTests
         environment["OTEL_SERVICE_NAME"].ShouldBe(name);
     }
 
-    [Fact]
-    public async Task Publish_AuctionBot_HasNoOtlpEndpoint()
+    [Theory]
+    [InlineData(R.AuctionBot)]
+    [InlineData(R.SupportBot)]
+    public async Task Publish_SurfaceBot_HasNoOtlpEndpoint(string name)
     {
         var builder = await PublishModelAsync();
 
-        var environment = await PublishEnvironmentAsync(builder, R.AuctionBot);
+        var environment = await PublishEnvironmentAsync(builder, name);
 
         environment.Keys.ShouldNotContain(key => key.StartsWith("OTEL_EXPORTER_OTLP", StringComparison.Ordinal));
     }
@@ -181,7 +188,7 @@ public class ClusterPublishTests
     /// Чарт собирается из <c>cluster</c>, а локальный стенд хаба с аукционом — из
     /// <c>hub-auction</c>. Расхождение составов — решение, которое должно быть
     /// видно правкой этого теста, а не тихо приехать в прод вместе с изменением
-    /// локального профиля. Stage поднимает хаб с аукционом и оба бота
+    /// локального профиля. Stage поднимает хаб с аукционом и три бота
     /// (дополнения к ADR-055); локальный <c>hub</c> JVM не тянет.
     /// </summary>
     [Fact]

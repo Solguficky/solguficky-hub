@@ -23,6 +23,7 @@ type Caller string
 const (
 	CallerHubBot        Caller = "hub-bot"
 	CallerAuctionBot    Caller = "auction-bot"
+	CallerSupportBot    Caller = "support-bot"
 	CallerMeetups       Caller = "meetups"
 	CallerNotifications Caller = "notifications"
 	CallerAuction       Caller = "auction"
@@ -38,7 +39,7 @@ func (c Caller) TokenVariable() string {
 // обработчике. Метод без строки не принимает никого, поэтому новый RPC закрыт,
 // пока его вызывающий не объявлен здесь.
 var methodAccess = map[string][]Caller{
-	identityv1.IdentityService_ResolveIdentity_FullMethodName:          {CallerHubBot, CallerAuctionBot},
+	identityv1.IdentityService_ResolveIdentity_FullMethodName:          {CallerHubBot, CallerAuctionBot, CallerSupportBot},
 	identityv1.IdentityService_RequestAccess_FullMethodName:            {CallerHubBot, CallerAuctionBot},
 	identityv1.IdentityService_ResolveTelegramUserId_FullMethodName:    {CallerHubBot, CallerAuctionBot},
 	identityv1.IdentityService_CheckAccessRight_FullMethodName:         {CallerMeetups, CallerNotifications, CallerHubBot, CallerAuctionBot, CallerAuction},

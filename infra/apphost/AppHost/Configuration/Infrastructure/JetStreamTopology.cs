@@ -86,11 +86,16 @@ internal static class JetStreamTopology
     /// держит сообщение <see cref="MaxAge" />. Поэтому срок жизни записи —
     /// окно стрима с запасом в сутки: при равных сроках запись могла бы истечь
     /// раньше последней повторной выдачи.
+    ///
+    /// Пары «человек ↔ тема» бота поддержки (ADR-068, п. 8) живут по тому же
+    /// правилу владения, но не журнал доставки: срок жизни — 180 дней с
+    /// последнего сообщения в теме, бот переписывает обе записи на каждом.
     /// </remarks>
     public static readonly IReadOnlyList<KeyValueSpec> KeyValueBuckets =
     [
         new("hub-bot-deliveries", MaxAge + TimeSpan.FromDays(1)),
         new("auction-bot-deliveries", MaxAge + TimeSpan.FromDays(1)),
+        new("support-bot-topics", TimeSpan.FromDays(180)),
     ];
 
     public static IEnumerable<ConsumerSpec> Durables =>

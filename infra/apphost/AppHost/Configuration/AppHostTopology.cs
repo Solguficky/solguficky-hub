@@ -34,6 +34,7 @@ internal static class AppHostTopology
         topology.AddService(R.HubBot, [R.Nats, R.Identity, R.Meetups, R.Notifications, R.Auction], HubBotSetup.Configure, P.Workload(HubBotSetup.Publish));
         topology.AddService(R.Auction, [R.Postgres, R.Nats, R.Meetups], AuctionSetup.Configure, P.Workload(AuctionSetup.Publish));
         topology.AddService(R.AuctionBot, [R.Nats, R.Identity, R.Auction, R.Notifications], AuctionBotSetup.Configure, P.Workload(AuctionBotSetup.Publish));
+        topology.AddService(R.SupportBot, [R.Nats, R.Identity], SupportBotSetup.Configure, P.Workload(SupportBotSetup.Publish));
 
         topology.Build();
     }

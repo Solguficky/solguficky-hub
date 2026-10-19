@@ -100,6 +100,18 @@ public class JetStreamTopologyTests
         journal.MaxAge.ShouldBeGreaterThan(JetStreamTopology.MaxAge);
     }
 
+    /// <summary>
+    /// Пара «человек ↔ тема» бота поддержки живёт 180 дней с последнего
+    /// сообщения (ADR-068, п. 8): срок — свой, а не окно стрима журналов.
+    /// </summary>
+    [Fact]
+    public void KeyValueBuckets_SupportTopics_LiveHalfAYear()
+    {
+        var topics = JetStreamTopology.KeyValueBuckets.Single(bucket => bucket.Bucket == "support-bot-topics");
+
+        topics.MaxAge.ShouldBe(TimeSpan.FromDays(180));
+    }
+
     [Fact]
     public void ToConfig_Bucket_KeepsLatestStateOnDisk()
     {

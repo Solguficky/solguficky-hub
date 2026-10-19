@@ -112,6 +112,11 @@ func TestCallerGateRefusesWithUnauthenticated(t *testing.T) {
 		{name: "meetups on request access", method: requestAccess, authorization: []string{bearer(CallerMeetups)}, refusal: refusalNotDeclared, caller: CallerMeetups},
 		{name: "no header on appoint", method: appoint, refusal: refusalMissingToken},
 		{name: "auction bot on appoint", method: appoint, authorization: []string{bearer(CallerAuctionBot)}, refusal: refusalNotDeclared, caller: CallerAuctionBot},
+		// Бот поддержки зовёт одну ResolveIdentity (ADR-068, п. 3): заявку он
+		// не ставит, права не спрашивает.
+		{name: "support bot on request access", method: requestAccess, authorization: []string{bearer(CallerSupportBot)}, refusal: refusalNotDeclared, caller: CallerSupportBot},
+		{name: "support bot on check right", method: checkRight, authorization: []string{bearer(CallerSupportBot)}, refusal: refusalNotDeclared, caller: CallerSupportBot},
+		{name: "support bot on appoint", method: appoint, authorization: []string{bearer(CallerSupportBot)}, refusal: refusalNotDeclared, caller: CallerSupportBot},
 		{name: "maintainer secret on dismiss", method: dismiss, authorization: []string{"Bearer " + gateMaintainer}, refusal: refusalUnknownToken},
 		{name: "no header on list administrators", method: listAdmins, refusal: refusalMissingToken},
 	}
@@ -164,6 +169,8 @@ func TestCallerGateAdmitsDeclaredCaller(t *testing.T) {
 	}{
 		{identityv1.IdentityService_ResolveIdentity_FullMethodName, CallerHubBot},
 		{identityv1.IdentityService_ResolveIdentity_FullMethodName, CallerAuctionBot},
+		// Бот поддержки: блокировка и круг в карточке темы (ADR-068, п. 3).
+		{identityv1.IdentityService_ResolveIdentity_FullMethodName, CallerSupportBot},
 		{identityv1.IdentityService_RequestAccess_FullMethodName, CallerHubBot},
 		{identityv1.IdentityService_RequestAccess_FullMethodName, CallerAuctionBot},
 		{identityv1.IdentityService_CheckAccessRight_FullMethodName, CallerMeetups},
@@ -330,6 +337,11 @@ func TestLoadCallersRefusesAmbiguousOrIncompleteTable(t *testing.T) {
 			name:   "declared caller without variable",
 			change: func(env map[string]string) { delete(env, "IDENTITY_CALLER_TOKEN_AUCTION_BOT") },
 			want:   "IDENTITY_CALLER_TOKEN_AUCTION_BOT is not set",
+		},
+		{
+			name:   "support bot without variable",
+			change: func(env map[string]string) { delete(env, "IDENTITY_CALLER_TOKEN_SUPPORT_BOT") },
+			want:   "IDENTITY_CALLER_TOKEN_SUPPORT_BOT is not set",
 		},
 		{
 			name: "two callers share a value",
