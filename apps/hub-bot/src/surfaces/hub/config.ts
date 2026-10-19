@@ -1,6 +1,10 @@
 import { type FaqContent, readFaqContent } from "../../auction-faq.js";
-import { type Env, type Loaded, reader } from "../../core/config.js";
-import { isTelegramBotUsername } from "./presentation/source-deep-link.js";
+import {
+  type Env,
+  type Loaded,
+  readBotUsername,
+  reader,
+} from "../../core/config.js";
 
 // Своё у поверхности хаба: адреса Meetups, Notifications и Auction и имя бота
 // аукциона для ссылок каналов прихода. Токены, среда, пояс, форма карточки и
@@ -15,6 +19,9 @@ export type HubConfig = {
   auctionUrl?: string;
   // Имя бота аукциона без «@» для экрана каналов прихода (PER-441).
   auctionBotUsername?: string;
+  // Имя бота поддержки без «@» для «Написать в поддержку ↗» в «Помощи» и в
+  // кадре ожидания допуска (PER-625, ADR-068). Без него ряда и кнопки нет.
+  supportBotUsername?: string;
 };
 
 export function readHubConfig(env: Env): Loaded<HubConfig> {
@@ -23,16 +30,12 @@ export function readHubConfig(env: Env): Loaded<HubConfig> {
   if (!faq.ok) return faq;
   // Опечатка в имени бота аукциона дала бы администратору ссылку в чужой или
   // несуществующий бот, поэтому форма проверяется на старте, а не молча.
-  const auctionBotUsername = read("BOT_AUCTION_BOT_USERNAME");
-  if (
-    auctionBotUsername !== undefined &&
-    !isTelegramBotUsername(auctionBotUsername)
-  ) {
-    return {
-      ok: false,
-      error: "BOT_AUCTION_BOT_USERNAME must be a Telegram bot username",
-    };
-  }
+  const auctionBot = readBotUsername(env, "BOT_AUCTION_BOT_USERNAME");
+  if (!auctionBot.ok) return auctionBot;
+  // Та же проверка у бота поддержки: ссылка «Помощи» и кадра ожидания ведёт
+  // в чужой бот так же молча (PER-625, ADR-068).
+  const supportBot = readBotUsername(env, "BOT_SUPPORT_BOT_USERNAME");
+  if (!supportBot.ok) return supportBot;
   const auctionUrl = read("AUCTION_GRPC_URL");
   return {
     ok: true,
@@ -42,7 +45,12 @@ export function readHubConfig(env: Env): Loaded<HubConfig> {
         read("NOTIFICATIONS_GRPC_URL") ?? "http://127.0.0.1:50053",
       faq: faq.content,
       ...(auctionUrl === undefined ? {} : { auctionUrl }),
-      ...(auctionBotUsername === undefined ? {} : { auctionBotUsername }),
+      ...(auctionBot.config === undefined
+        ? {}
+        : { auctionBotUsername: auctionBot.config }),
+      ...(supportBot.config === undefined
+        ? {}
+        : { supportBotUsername: supportBot.config }),
     },
   };
 }

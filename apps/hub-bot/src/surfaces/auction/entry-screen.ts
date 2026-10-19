@@ -68,6 +68,8 @@ import {
   applyLabel,
   menuTitle,
   strayHintText,
+  supportBotLink,
+  supportLabel,
 } from "../../core/entry.js";
 import { money, truncate } from "../../core/format.js";
 import {
@@ -186,6 +188,9 @@ export type RenderOptions = {
   // Момент показа: год в дате называется, когда он не текущий (дизайн-код,
   // «Формат»). По умолчанию часы процесса; тесты передают свой.
   now?: Date;
+  // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку
+  // «Написать в поддержку ↗» (PER-625, ADR-068). Нет — клавиатуры нет.
+  supportBotUsername?: string;
 };
 
 // Лимит обычного сообщения Bot API — 4096 символов UTF-16 после разбора
@@ -486,14 +491,34 @@ export function renderEntryScreen(
       return body;
     }
     // Кадры ожидания допуска, блокировки и перехода в бот хаба в дерево не
-    // входят: экранов за ними у человека здесь нет, и клавиатуры тоже.
-    case "denied":
+    // входят: экранов за ними у человека здесь нет. Кнопка-ссылка в бот
+    // поддержки есть только у ожидания и только когда её адрес задан (PER-625,
+    // ADR-068): «?start=auction» говорит боту поддержки, откуда человек.
+    case "denied": {
+      const support =
+        screen.reason === "not-admitted" &&
+        options.supportBotUsername !== undefined
+          ? [
+              [
+                {
+                  text: supportLabel,
+                  url: supportBotLink(options.supportBotUsername, "auction"),
+                },
+              ],
+            ]
+          : [];
       return {
-        id: screen.reason === "in-community" ? "in-community" : "denied",
+        id:
+          screen.reason === "in-community"
+            ? "in-community"
+            : support.length === 0
+              ? "denied"
+              : "denied-support",
         format: "html",
         text: deniedTexts[screen.reason],
-        keyboard: [],
+        keyboard: support,
       };
+    }
     case "outdated":
       return {
         id: "outdated",

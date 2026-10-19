@@ -11,6 +11,30 @@ export const applyLabel = "Подать заявку";
 /** Кто рассматривает заявку: строка приветствия и кадра ожидания. */
 export const admittersLine = "Доступ выдаёт администратор или мейнтейнер.";
 
+/** Вход в бот поддержки: ряд «Помощи» и кнопка кадра ожидания (ADR-068). */
+export const supportLabel = "Написать в поддержку ↗";
+
+/**
+ * Ссылка в бот поддержки с меткой поверхности (ADR-068, п. 2): по ней бот
+ * поддержки помнит, откуда пришёл человек, пока тот не написал первое
+ * сообщение.
+ */
+export function supportBotLink(
+  botUsername: string,
+  source: "hub" | "auction",
+): string {
+  return `https://t.me/${botUsername}?start=${source}`;
+}
+
+// Имя бота без «@»: 5–32 символа, латиница, цифры и «_», в конце «bot».
+// Telegram требует того же при создании бота. Общее у обеих поверхностей:
+// имя бота аукциона проверяет хаб, имя бота поддержки — оба.
+export function isTelegramBotUsername(value: string): boolean {
+  return telegramBotUsernamePattern.test(value);
+}
+
+const telegramBotUsernamePattern = /^[A-Za-z][A-Za-z0-9_]{1,28}bot$/i;
+
 /** Заголовок и имя возврата корневого меню — общего родителя разделов. */
 export const menuTitle = "Меню";
 

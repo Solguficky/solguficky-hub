@@ -1414,6 +1414,56 @@ describe("presentation adapter", () => {
     expect(records[0]?.fields.error).toBe("hub_access_pending");
   });
 
+  // Кадр ожидания допуска несёт вход в бот поддержки, когда её адрес задан
+  // (PER-625, ADR-068): «?start=hub» говорит боту поддержки, откуда человек.
+  // Отказ и блокировка кнопки не несут.
+  it("offers the support bot on the waiting frame when its address is set", async () => {
+    const support = {
+      supportBotUsername: "solguficky_support_bot",
+    };
+    const pending = createHarness(
+      entering(answered("pending")),
+      undefined,
+      [],
+      undefined,
+      undefined,
+      undefined,
+      support,
+    );
+    await pending.bot.init();
+    await pending.bot.handleUpdate(callbackUpdate("v1:apply"));
+    const waiting = pending.calls.find(
+      (call) => call.method === "editMessageText",
+    );
+    expect(waiting?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Написать в поддержку ↗",
+              url: "https://t.me/solguficky_support_bot?start=hub",
+            },
+          ],
+        ],
+      },
+    });
+
+    for (const outcome of ["declined", "blocked"] as const) {
+      const { bot, calls } = createHarness(
+        entering(answered(outcome)),
+        undefined,
+        [],
+        undefined,
+        undefined,
+        undefined,
+        support,
+      );
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:apply"));
+      expect(JSON.stringify(calls)).not.toContain("t.me");
+    }
+  });
+
   it("opens the menu for a person the allowlist has just admitted", async () => {
     const identity = entering(answered("granted-by-allowlist", MEMBER_RIGHTS));
     const { bot, calls } = createHarness(identity, listing());
@@ -4433,6 +4483,35 @@ describe("presentation adapter", () => {
       expect(sendMessageText(admin.calls[0])).toContain(
         "• /manage — Управление",
       );
+    });
+
+    // Ряд «Написать в поддержку ↗» стоит над «‹ Меню», когда адрес бота
+    // поддержки задан, и ведёт в него с меткой поверхности (PER-625, ADR-068).
+    it("puts the support row above the menu exit in the help", async () => {
+      const { bot, calls } = createHarness(
+        resolvedIdentity(),
+        undefined,
+        [],
+        undefined,
+        undefined,
+        undefined,
+        { supportBotUsername: "solguficky_support_bot" },
+      );
+      await bot.init();
+      await bot.handleUpdate(messageUpdate("/help"));
+      expect(calls[0]?.payload).toMatchObject({
+        reply_markup: {
+          inline_keyboard: [
+            [
+              {
+                text: "Написать в поддержку ↗",
+                url: "https://t.me/solguficky_support_bot?start=hub",
+              },
+            ],
+            [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
+          ],
+        },
+      });
     });
 
     it("opens management by right and refuses it without one", async () => {

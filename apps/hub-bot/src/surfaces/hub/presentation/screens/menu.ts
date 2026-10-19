@@ -3,7 +3,11 @@ import type {
   AccessRight,
   ApplicationQueue,
 } from "../../../../auction-ui/index.js";
-import { menuTitle } from "../../../../core/entry.js";
+import {
+  menuTitle,
+  supportBotLink,
+  supportLabel,
+} from "../../../../core/entry.js";
 import type { BotCommand } from "../../../../core/menu-commands.js";
 import { extensionsLabel } from "../../../../core/pictograms.js";
 import { botCommands, managerCommands } from "../commands.js";
@@ -319,9 +323,18 @@ const extensionsHelp = `Расширения сходки, например ау
 
 /**
  * «Помощь» — раздел под меню: текст о боте и команды строками, кнопка одна —
- * «‹ Меню». `welcome` — текст о боте, абзацы через пустую строку.
+ * «‹ Меню». `welcome` — текст о боте, абзацы через пустую строку. С адресом
+ * бота поддержки над «‹ Меню» стоит ряд «Написать в поддержку ↗» (PER-625).
  */
-export function helpScreen(person: Viewer, welcome: string): ShownScreen {
+export function helpScreen(
+  person: Viewer,
+  welcome: string,
+  supportBotUsername?: string,
+): ShownScreen {
+  const keyboard = new InlineKeyboard();
+  if (supportBotUsername !== undefined) {
+    keyboard.url(supportLabel, supportBotLink(supportBotUsername, "hub")).row();
+  }
   return {
     id: "help",
     text: screenText(
@@ -335,7 +348,7 @@ export function helpScreen(person: Viewer, welcome: string): ShownScreen {
         ),
       ].join("\n"),
     ),
-    keyboard: withNav(new InlineKeyboard(), toMenu),
+    keyboard: withNav(keyboard, toMenu),
     format: "HTML",
   };
 }
