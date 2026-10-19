@@ -14,6 +14,10 @@ import {
   toDeliveryNotification,
 } from "../../../core/delivery/index.js";
 import {
+  type FinalNotice,
+  finalNoticeOf,
+} from "../../../core/notifications/final-notice.js";
+import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
@@ -29,6 +33,8 @@ import {
 // ботом хаба (PER-598).
 export type AuctionNotificationContent =
   | LotNotice
+  // Анонс состава и старта финала (PER-478) — тот же, что у бота хаба.
+  | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота хаба.
   | RaffleNotice
   // Допуск к аукциону получает сам заявитель (PER-442). Круг здесь всегда
@@ -72,6 +78,9 @@ function toContent(
     case "lotActivityDigest":
     case "lotReminder":
       return lotNoticeOf(type);
+    case "auctionFinalLineup":
+    case "auctionFinalStarted":
+      return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
     // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
