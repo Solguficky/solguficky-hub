@@ -38,11 +38,12 @@ function scriptedSource() {
     viewer: Viewer;
     push(state: AuctionWatchState): void;
     fail(cause: Error): void;
+    end(): void;
     signal: AbortSignal;
   }[] = [];
   const source: AuctionWatchSource = (request, signal) => ({
     [Symbol.asyncIterator]() {
-      const queue: (AuctionWatchState | Error)[] = [];
+      const queue: (AuctionWatchState | Error | "end")[] = [];
       let wake: (() => void) | undefined;
       const poke = () => {
         wake?.();
@@ -58,6 +59,10 @@ function scriptedSource() {
           queue.push(cause);
           poke();
         },
+        end: () => {
+          queue.push("end");
+          poke();
+        },
         signal,
       });
       signal.addEventListener("abort", poke);
@@ -67,6 +72,7 @@ function scriptedSource() {
             if (signal.aborted) return { done: true, value: undefined };
             const head = queue.shift();
             if (head instanceof Error) throw head;
+            if (head === "end") return { done: true, value: undefined };
             if (head !== undefined) return { done: false, value: head };
             await new Promise<void>((resolve) => {
               wake = resolve;
@@ -298,6 +304,56 @@ describe("watch state of an AuctionWatch message", () => {
         }),
       ]),
     ).toBe(false);
+  });
+
+  // Пульт ведущего (PER-566) помечает цену устаревшей, пока поток
+  // переподключается: обрыв и мягкое закрытие на рестарте сообщаются, а
+  // закрытие после последнего состояния — нет, это конец, а не обрыв.
+  it("tells subscribers that the stream broke off and reconnects", async () => {
+    const { source, opened } = scriptedSource();
+    const watches = createAuctionWatches({ source, sleep: async () => {} });
+    const seen: string[] = [];
+    watches.subscribe(
+      AUCTION_ID,
+      ALICE,
+      () => seen.push("state"),
+      () => seen.push("ended"),
+      () => seen.push("interrupted"),
+    );
+    await flush();
+    opened[0]?.push(state());
+    opened[0]?.fail(new Error("unavailable"));
+    await flush();
+    opened[1]?.end();
+    await flush();
+    opened[2]?.push(state(true));
+    await flush();
+    expect(seen).toEqual([
+      "state",
+      "interrupted",
+      "interrupted",
+      "state",
+      "ended",
+    ]);
+    expect(opened).toHaveLength(3);
+  });
+
+  it("does not interrupt a subscriber that has left", async () => {
+    const { source, opened } = scriptedSource();
+    const watches = createAuctionWatches({ source, sleep: async () => {} });
+    const seen: string[] = [];
+    const leave = watches.subscribe(
+      AUCTION_ID,
+      ALICE,
+      () => {},
+      undefined,
+      () => seen.push("interrupted"),
+    );
+    await flush();
+    leave();
+    opened[0]?.fail(new Error("unavailable"));
+    await flush();
+    expect(seen).toEqual([]);
   });
 
   it("refuses a message without an auction", () => {

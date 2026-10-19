@@ -97,7 +97,19 @@ export type ConsoleScreenView = {
   sort: ConsoleSort;
   timeZone: string;
   today: CommunityDay;
+  // Поток аукциона оборвался, пока пульт живой (PER-566): цена на экране
+  // могла устареть, и экран говорит об этом, пока поток не вернётся.
+  stale?: boolean;
 };
+
+export const staleConsoleText =
+  "Связь с аукционом прервалась — цена могла устареть. Нажми «Обновить».";
+
+// Живая правка пульта ведущего (PER-566): по потоку аукциона правится только
+// пульт финала. Исход команды — свой экран, и правка по потоку затёрла бы его.
+export function liveConsole(view: ConsoleScreenView): boolean {
+  return view.note === undefined && inFinal(view.console);
+}
 
 export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-saved": "Сроки недели сохранены.",
@@ -422,6 +434,7 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
     id: "auction-console",
     text: screenText(
       "Пульт",
+      view.stale === true ? escapeHtml(staleConsoleText) : undefined,
       statusLines(view).map(escapeHtml).join("\n"),
       lineupLines(console).map(escapeHtml).join("\n"),
       trading.length === 0 ? undefined : trading.map(escapeHtml).join("\n"),
