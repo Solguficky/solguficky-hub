@@ -935,6 +935,49 @@ describe("auction console", () => {
     expect(dataOf(screen, "‹ Аукцион")).toBe(rootData);
   });
 
+  // Прогон 14.10, №76: строка лота называет лидера по имени в аукционе. Имя —
+  // подсказка: не прочиталось — строка без лидера, пульт открывается.
+  it("names the leader of a lot in the console list when the name is read", async () => {
+    const leaderId = "0192f0a0-0000-7000-8000-0000000000aa";
+    const led: ConsoleLot = {
+      ...vase,
+      lot: {
+        ...vase.lot,
+        status: {
+          kind: "trading",
+          currentPrice: rub(120_000),
+          phase: "online",
+          leaderId,
+        },
+      },
+    };
+    const named = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [led],
+      names: { [leaderId]: "Pem*" },
+    });
+    const first = harness("admin", named);
+    await first.bot.init();
+    await first.bot.handleUpdate(press(consoleData));
+    expect(plain(last(first.calls))).toContain(
+      "• Ваза — 1 200 ₽ · лидер Pem* · 3 ставки · 2 уч.",
+    );
+
+    const nameless = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [led],
+    });
+    const second = harness("admin", nameless);
+    await second.bot.init();
+    await second.bot.handleUpdate(press(consoleData));
+    expect(plain(last(second.calls))).toContain(
+      "• Ваза — 1 200 ₽ · 3 ставки · 2 уч.",
+    );
+    expect(plain(last(second.calls))).not.toContain("лидер");
+  });
+
   it("marks a lot for the final and takes the mark off", async () => {
     const auction = fakeAuction({
       status: "prebidding",
@@ -954,7 +997,9 @@ describe("auction console", () => {
       },
     ]);
     // Исход — свой экран без строк пульта; пульт открывает «‹ Пульт».
-    expect(last(calls).text).toBe("<b>Лот отмечен для финала</b>");
+    expect(last(calls).text).toBe(
+      "<b>Лот отмечен для финала</b>\n\n<b>Ваза</b>",
+    );
     expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(plain(last(calls))).toContain(
@@ -966,7 +1011,7 @@ describe("auction console", () => {
     );
 
     expect(auction.sent("deselectForFinal")).toHaveLength(1);
-    expect(last(calls).text).toBe("<b>Отметка финала снята</b>");
+    expect(last(calls).text).toBe("<b>Отметка финала снята</b>\n\n<b>Ваза</b>");
     expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
     expect(labels(last(calls))[0]).toEqual(["Ставки", "Люди", "Рост"]);
@@ -1077,7 +1122,7 @@ describe("week of the auction", () => {
     expect(labels(screen)).toEqual([
       ["Ставки", "Люди", "Рост"],
       ["Сроки недели"],
-      ["Вкл · Финал"],
+      ["Вкл · Финал в зале"],
       ["Счастливые часы", "Сводка дня"],
       ["Розыгрыш"],
       ["Открыть онлайн-неделю"],
@@ -1135,7 +1180,7 @@ describe("week of the auction", () => {
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
-    const toggle = dataOf(last(calls), "Вкл · Финал");
+    const toggle = dataOf(last(calls), "Вкл · Финал в зале");
     // Кнопка несёт целевое состояние, а не переворот.
     expect(toggle).toBe(`v1:ac:f:${auctionToken}:0`);
     await bot.handleUpdate(press(toggle));
@@ -1146,9 +1191,9 @@ describe("week of the auction", () => {
         args: { auctionId, opId: expect.any(String), ...week, final: false },
       },
     ]);
-    expect(toasts(calls)).toContain("Выключено: финал.");
+    expect(toasts(calls)).toContain("Выключено: финал в зале.");
     expect(plain(last(calls))).toContain("Финал: нет.");
-    expect(labels(last(calls))).toContainEqual(["Выкл · Финал"]);
+    expect(labels(last(calls))).toContainEqual(["Выкл · Финал в зале"]);
 
     // Повтор той же кнопки команды не шлёт: финал уже такой.
     await bot.handleUpdate(press(toggle));
@@ -1164,9 +1209,9 @@ describe("week of the auction", () => {
     await bot.init();
     await bot.handleUpdate(press(consoleData));
 
-    await bot.handleUpdate(press(dataOf(last(calls), "Вкл · Финал")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Вкл · Финал в зале")));
     // Новое чтение видит выключенный финал, и «Вкл» шлёт команду.
-    await bot.handleUpdate(press(dataOf(last(calls), "Выкл · Финал")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Выкл · Финал в зале")));
 
     expect(
       auction.sent("scheduleAuction").map((command) => command.args),
@@ -1174,8 +1219,8 @@ describe("week of the auction", () => {
       expect.objectContaining({ final: false }),
       expect.objectContaining({ final: true }),
     ]);
-    expect(toasts(calls)).toContain("Включено: финал.");
-    expect(labels(last(calls))).toContainEqual(["Вкл · Финал"]);
+    expect(toasts(calls)).toContain("Включено: финал в зале.");
+    expect(labels(last(calls))).toContainEqual(["Вкл · Финал в зале"]);
   });
 
   it("shows an outcome screen with a retry when the end of the week has already come", async () => {
@@ -1281,7 +1326,7 @@ describe("raffle of the week", () => {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(consoleData));
-    await bot.handleUpdate(press(dataOf(last(calls), "Вкл · Финал")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Вкл · Финал в зале")));
     await bot.handleUpdate(press(`v1:ac:w:${auctionToken}`));
     await bot.handleUpdate(
       answer(calls, { text: "20.10.2026 18:00 — 28.10.2026 00:00" }),
@@ -1560,7 +1605,7 @@ describe("opening the online week", () => {
     // Подтверждение называет, сколько лотов откроется и сколько останется
     // без торгов.
     expect(plain(confirm)).toContain(
-      "К ставкам сразу откроются: 1 лот. Торги закроются 27 октября, вт, 00:00.",
+      "К ставкам сразу откроются: 1 лот. Ставки начнут приниматься с подтверждения, не дожидаясь начала недели 20 октября, вт, 18:00. Торги закроются 27 октября, вт, 00:00.",
     );
     expect(plain(confirm)).toContain(
       "Без цены и шага останутся без торгов: 1 лот.",
@@ -1574,7 +1619,7 @@ describe("opening the online week", () => {
 
     expect(auction.state.status).toBe("prebidding");
     expect(last(calls).text).toBe(
-      "<b>Онлайн-неделя открыта</b>\n\nЛоты принимают ставки.",
+      "<b>Онлайн-неделя открыта</b>\n\nСтавки принимаются с этой минуты.",
     );
     expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
     await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
@@ -1586,7 +1631,7 @@ describe("opening the online week", () => {
     expect(second?.args).toEqual(first?.args);
     expect(auction.sent("startPrebidding")).toHaveLength(2);
     expect(last(calls).text).toBe(
-      "<b>Онлайн-неделя открыта</b>\n\nЛоты принимают ставки.",
+      "<b>Онлайн-неделя открыта</b>\n\nСтавки принимаются с этой минуты.",
     );
   });
 

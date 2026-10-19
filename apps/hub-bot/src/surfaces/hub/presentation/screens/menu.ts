@@ -57,7 +57,7 @@ export function canAdmitBidders(person: Viewer): boolean {
 
 /**
  * Назначать и снимать администраторов: у мейнтейнера это право есть и без
- * набора admin, и «Управление» тогда показывает ему один этот пункт.
+ * набора admin, и «Управление» тогда показывает ему одну группу «Участники».
  */
 export function canGrantAdmins(person: Viewer): boolean {
   return person.rights.includes("grant-admins");
@@ -126,17 +126,30 @@ const helpData = "v1:nav:help";
  */
 export type ManageGroup = "meetups" | "applications" | "members";
 
+// Пояснение под заголовком группы (PER-633, прогон 14.10 №104): заголовок
+// без абзаца сжимает пузырь, и подписи кнопок не влезают.
 const groups: Record<
   ManageGroup,
-  { label: string; code: string; id: ManageGroupScreen }
+  { label: string; code: string; id: ManageGroupScreen; lead: string }
 > = {
-  meetups: { label: "Сходки и объявления", code: "m", id: "manage-meetups" },
+  meetups: {
+    label: "Сходки и объявления",
+    code: "m",
+    id: "manage-meetups",
+    lead: "Новые сходки, черновики и объявления всему сообществу.",
+  },
   applications: {
     label: "Заявки и отказы",
     code: "a",
     id: "manage-applications",
+    lead: "Очереди заявок и тех, кому отказано.",
   },
-  members: { label: "Участники", code: "p", id: "manage-members" },
+  members: {
+    label: "Участники",
+    code: "p",
+    id: "manage-members",
+    lead: "Кто в сообществе и с какими правами.",
+  },
 };
 
 type ManageGroupScreen =
@@ -246,13 +259,11 @@ export function manageGroups(person: Viewer): ManageGroup[] {
 }
 
 /**
- * Родитель пункта управления: его группа, а если человек видит одну группу —
- * само «Управление», которое тогда сразу показывает её пункты.
+ * Родитель пункта управления — всегда его группа: место пункта не зависит от
+ * того, сколько групп человек видит (решение владельца по прогону 14.10, №49).
  */
-export function manageItemParent(person: Viewer, group: ManageGroup): Parent {
-  return manageGroups(person).length === 1
-    ? toManage
-    : { name: groups[group].label, data: manageGroupData(group) };
+export function manageItemParent(group: ManageGroup): Parent {
+  return { name: groups[group].label, data: manageGroupData(group) };
 }
 
 function itemsKeyboard(items: readonly Item[]): InlineKeyboard {
@@ -264,35 +275,36 @@ function itemsKeyboard(items: readonly Item[]): InlineKeyboard {
 }
 
 /**
- * «Управление» — раздел под корневым меню: возврат «‹ Меню». Человек с одной группой
- * видит сразу её пункты, с несколькими — кнопки групп. Ключ создания рождается
- * при отрисовке и лежит в кнопке: два быстрых нажатия несут один ключ, а
- * перерисовка — новый. Заявки в аукцион лежат рядом с заявками в сообщество:
- * заявка гостя подана в бот аукциона, а не в конкретный аукцион (решение
- * владельца по PER-534, дополнение ADR-064 к пункту 12).
+ * «Управление» — раздел под корневым меню: кнопки видимых групп и возврат
+ * «‹ Меню». Одна видимая группа тоже идёт кнопкой: раскрытие одной группы
+ * прямо в «Управлении» убрано (решение владельца по прогону 14.10, №49).
+ * Заявки в аукцион лежат рядом с заявками в сообщество: заявка гостя подана в
+ * бот аукциона, а не в конкретный аукцион (решение владельца по PER-534,
+ * дополнение ADR-064 к пункту 12).
  */
-export function manageScreen(
-  person: Viewer,
-  newMeetupToken: string,
-  counts?: ApplicationCounts,
-): ShownScreen {
-  const visible = manageGroups(person);
-  const [only] = visible;
-  const keyboard =
-    visible.length === 1 && only !== undefined
-      ? itemsKeyboard(groupItems(person, only, newMeetupToken, counts))
-      : itemsKeyboard(
-          visible.map((group) => [groups[group].label, manageGroupData(group)]),
-        );
+export function manageScreen(person: Viewer): ShownScreen {
+  const keyboard = itemsKeyboard(
+    manageGroups(person).map((group) => [
+      groups[group].label,
+      manageGroupData(group),
+    ]),
+  );
   return {
     id: "manage",
     keyboard: withNav(keyboard, toMenu),
-    text: screenText("Управление"),
+    text: screenText(
+      "Управление",
+      "Сходки, заявки и участники сообщества — по группам.",
+    ),
     format: "HTML",
   };
 }
 
-/** Экран группы — ребёнок «Управления»: её пункты и возврат «‹ Управление». */
+/**
+ * Экран группы — ребёнок «Управления»: её пункты и возврат «‹ Управление».
+ * Ключ создания сходки рождается при отрисовке и лежит в кнопке: два быстрых
+ * нажатия несут один ключ, а перерисовка — новый.
+ */
 export function manageGroupScreen(
   person: Viewer,
   group: ManageGroup,
@@ -301,7 +313,7 @@ export function manageGroupScreen(
 ): ShownScreen {
   return {
     id: groups[group].id,
-    text: screenText(groups[group].label),
+    text: screenText(groups[group].label, groups[group].lead),
     keyboard: withNav(
       itemsKeyboard(groupItems(person, group, newMeetupToken, counts)),
       toManage,

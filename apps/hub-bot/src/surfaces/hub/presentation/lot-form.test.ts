@@ -557,11 +557,10 @@ describe("lot form", () => {
         ].join("\n"),
       ].join("\n\n"),
     );
+    // Поля по два в ряд со знаками (прогон 12.10, №17 и №18).
     expect(labels(opened)).toEqual([
-      ["Название"],
-      ["Описание"],
-      ["Фото"],
-      ["Цена и шаг"],
+      ["🔖 Название", "📝 Описание"],
+      ["🖼 Фото", "💰 Цена и шаг"],
       ["Глазами участника"],
       ["‹ Лот"],
     ]);
@@ -782,9 +781,8 @@ describe("lot form", () => {
     const form = last(calls);
     // Фото — каталог, а не условия торгов: его ряд остаётся (ADR-057).
     expect(labels(form)).toEqual([
-      ["Название"],
-      ["Описание"],
-      ["Фото"],
+      ["🔖 Название", "📝 Описание"],
+      ["🖼 Фото"],
       ["Глазами участника"],
       ["‹ Лот"],
     ]);
@@ -799,6 +797,42 @@ describe("lot form", () => {
     );
     expect(question.bind(null, calls)).toThrow("no question was asked");
     expect(auction.commands).toEqual([]);
+  });
+
+  it("closes the title, description and photo of a sold lot, also to an old button and an old question", async () => {
+    const auction = fakeAuction({ lots: [scheduled] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    const lot = uuidToToken(existingLot);
+    // Вопрос о названии задан, пока лот не продан.
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:title`));
+    const asked = calls.length;
+    auction.lots.set(existingLot, {
+      ...scheduled,
+      status: { kind: "sold", winnerId: existingLot, price: rub(90_000) },
+    });
+
+    await bot.handleUpdate(answer(calls.slice(0, asked), "Новое название"));
+    expect(plain(last(calls))).toBe(
+      "Лот продан. Название, описание и фото больше не меняются.",
+    );
+
+    await bot.handleUpdate(press(`v1:lot:form:${lot}`));
+    const form = last(calls);
+    // У проданного лота правка закрыта; цена продажи — вместо подписи торгов.
+    expect(labels(form)).toEqual([["Глазами участника"], ["‹ Лот"]]);
+    expect(form.text).toMatch(
+      /Лот продан за 900\s₽: название, описание и фото больше не меняются\./,
+    );
+    expect(form.text).not.toContain("Торги по лоту начались");
+
+    await bot.handleUpdate(press(`v1:lot:ask:${lot}:image`));
+    expect(plain(last(calls))).toBe(
+      "Лот продан. Название, описание и фото больше не меняются.",
+    );
+    expect(
+      auction.commands.filter((command) => command.method === "editLotCard"),
+    ).toEqual([]);
   });
 
   it("tells the administrator that trading started when Auction freezes the terms after both answers", async () => {

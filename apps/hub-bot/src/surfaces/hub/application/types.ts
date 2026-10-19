@@ -128,7 +128,9 @@ export type LotTermsView =
       step?: LotAmount;
       tiers?: readonly LotTierView[];
     }
-  | { kind: "closed" };
+  // Торги начались. `soldFor` — лот продан: его название, описание и фото
+  // больше не меняются (решение владельца 15 октября 2026 года).
+  | { kind: "closed"; soldFor?: LotAmount };
 
 // Сумма в минимальных единицах валюты, как в `auction.v1.Money`.
 export type LotAmount = { minorUnits: number; currency: string };
@@ -150,6 +152,8 @@ export type LotRefusal =
   | "lots-frozen"
   // Торги начались: цену и шаг лота изменить нельзя.
   | "terms-closed"
+  // Лот продан: покупатель купил его под этим названием, описанием и фото.
+  | "lot-sold"
   | "lot-not-found"
   | "auction-not-found"
   // Лот сняли с аукциона, пока форма была открыта.
@@ -209,18 +213,13 @@ export type ExecuteRequest =
     }
   | {
       identity: Person;
-      intent: "create-meetup";
-      meetupId: string;
-      requestId?: string;
-      useCase?: string;
-      deadlineAt?: number;
-    }
-  | {
-      identity: Person;
       intent: "set-meetup-field";
       field: FormField;
       value: string;
       meetupId: string;
+      // Название новой сходки с кнопки «Создать сходку»: сходку рождает этот
+      // ответ (прогон 14.10, №14).
+      fresh?: true;
       // Дату раньше сегодняшнего дня сообщества человек уже подтвердил:
       // вопрос о прошедшей дате второй раз не задаётся (PER-342).
       confirmedPast?: true;
@@ -403,6 +402,9 @@ export type ConsoleLotSnapshot = {
 export type ConsoleLot = ConsoleLotSnapshot & {
   uniqueParticipantCount: number;
   priceGrowth?: LotAmount;
+  // Имя лидера в аукционе (прогон 14.10, №76). Нет — лидера нет либо имя не
+  // прочиталось: строка лота идёт без него.
+  leaderName?: string;
 };
 
 // Лот в сводке дня (PER-492): агрегаты окна суток, которые отдал Auction, и
@@ -887,6 +889,9 @@ export type ExecuteResult =
       holder?: TradingHolder;
       // Переключатель финала принят: исход — всплывающий текст, а не строка.
       toggled?: true;
+      // Лот, о котором заметка отметки финала: исход называет его (прогон
+      // 14.10, №76).
+      noteLot?: string;
     }
   // Вопрос о сроках недели: первый либо тот же заново, с причиной. `window` —
   // номер окна с единицы при `week-cuts-window`.
@@ -946,6 +951,9 @@ export type ExecuteResult =
       opId: string;
       opening: number;
       idle: number;
+      // Начало недели ещё впереди: Auction открывает лоты сразу, и
+      // подтверждение говорит, что ставки не ждут начала (прогон 14.10, №58).
+      early?: true;
     }
   // Подтверждение удаления аукциона до торгов: `lots` — сколько лотов уйдёт
   // из аукциона вместе с ним. `opId` уедет в «Да».
@@ -1106,6 +1114,9 @@ export type ExecuteResult =
   | {
       kind: "meetup-updated";
       meetup: MeetupSnapshot;
+      // Поле точечной правки: итог называет его и новое значение (прогон
+      // 14.10, №56). Нет у ответа формы, пришедшего после публикации.
+      field?: FormField;
       archived?: true;
       author?: MeetupAuthor;
       auction?: MeetupAuctionView;
@@ -1136,6 +1147,9 @@ export type ExecuteResult =
       reason: "cancelled";
       meetup: MeetupSnapshot;
     }
+  // Ответ на старую кнопку «Создать сходку»: сходка с её id уже названа или
+  // опубликована, и ответ её не трогает.
+  | { kind: "meetup-exists"; meetup: MeetupSnapshot }
   | {
       // Версия показанного снимка разошлась: команда не применена, и человеку
       // показывают текущее состояние рядом с его несохранённым вводом (PER-78).

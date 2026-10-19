@@ -42,11 +42,14 @@ describe("идемпотентность по журналу Meetups", () => {
   it("случай 1: два быстрых нажатия «Создать сходку» дают один черновик", async () => {
     const { adminId, organizer } = await organizerInManagement();
 
+    // Черновик рождается ответом на вопрос о названии (прогон 14.10): оба
+    // нажатия несут один id, и ответ заводит одну сходку — создание и название.
     await organizer.pressesTwice("Создать сходку");
+    await organizer.says("Двойное нажатие");
 
     const journal = await direct.journalOf(adminId);
     expect(journal.meetupIds).toHaveLength(1);
-    expect(journal.events).toBe(1);
+    expect(journal.events).toBe(2);
   });
 
   it("случай 2: повтор вызова Meetups с тем же ключом возвращает тот же черновик", async () => {
@@ -67,15 +70,18 @@ describe("идемпотентность по журналу Meetups", () => {
     const { adminId, organizer } = await organizerInManagement();
 
     await organizer.presses("Создать сходку");
+    await organizer.says("Первая");
     // Перерисовка «Управления»: оно правит своё сообщение, и второй вход в него
     // идёт новым сообщением по команде `/manage`.
     await organizer.says("/manage");
     await organizer.presses("Сходки и объявления");
     await organizer.presses("Создать сходку");
+    await organizer.says("Вторая");
 
+    // У каждого черновика два события: создание и название.
     const journal = await direct.journalOf(adminId);
     expect(journal.meetupIds).toHaveLength(2);
-    expect(journal.events).toBe(2);
+    expect(journal.events).toBe(4);
   });
 
   it("E-09: двойное нажатие «Да, опубликовать сходку» публикует один раз", async () => {

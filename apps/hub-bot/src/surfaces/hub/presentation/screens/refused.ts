@@ -25,7 +25,7 @@ import type { ShownScreen } from "./show.js";
 // одной очереди (ADR-064, пункт 15), и домен кнопок называет её.
 
 const circleLabel: Record<RefusedApplication["circle"], string> = {
-  member: "в хаб",
+  member: "в сообщество",
   public: "в аукцион",
 };
 
@@ -87,7 +87,7 @@ export function refusedScreen(
   requestedPage: number,
   today: CommunityDay,
   liftsBlocks = true,
-  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  // Родитель — группа пункта (`manageItemParent`).
   parent: Parent = toManage,
 ): ShownScreen {
   const page = paginate(applications, requestedPage);

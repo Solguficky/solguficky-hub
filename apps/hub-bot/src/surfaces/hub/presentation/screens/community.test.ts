@@ -62,8 +62,9 @@ describe("community list", () => {
     const screen = communityScreen(snapshot, { kind: "list", place: members });
 
     expect(screen.id).toBe("community");
+    // Ники — только на кнопках, текст — сводка (прогон 14.10, №53).
     expect(screen.text).toBe(
-      "<b>Состав сообщества</b>\n\nУчастники: 2\n\n• @user1\n• @user2 · модерирует аукцион",
+      "<b>Состав сообщества</b>\n\nУчастники: 2\n\nМодерируют аукцион: 1.",
     );
     expect(rows(screen)).toEqual([
       ["• Участники", "Гости"],
@@ -78,19 +79,20 @@ describe("community list", () => {
     expect(dataOf(screen, "Разрешённые ники")).toBe("v1:cm:u");
   });
 
-  // Как на экране «Администраторы»: смотрящий видит себя «(ты)» в тексте, а
-  // кнопка остаётся ником (PER-618).
-  it("marks the viewer in the text", () => {
+  // Ники только на кнопках (прогон 14.10, №53): смотрящий видит себя «(ты)»
+  // на своей кнопке, как строкой на экране «Администраторы» (PER-618).
+  it("marks the viewer on the button", () => {
     const screen = communityScreen(
       snapshot,
       { kind: "list", place: members },
       { viewerId: id(2) },
     );
 
-    expect(screen.text).toBe(
-      "<b>Состав сообщества</b>\n\nУчастники: 2\n\n• @user1\n• @user2 (ты) · модерирует аукцион",
+    expect(screen.text).not.toContain("@user2");
+    expect(rows(screen)).toContainEqual(["@user2 (ты)"]);
+    expect(dataOf(screen, "@user2 (ты)")).toBe(
+      `v1:cm:v:${uuidToToken(id(2))}:m0`,
     );
-    expect(rows(screen)).toContainEqual(["@user2"]);
   });
 
   it("shows the guests apart from the members", () => {
@@ -99,9 +101,7 @@ describe("community list", () => {
       place: { filter: "guests", page: 0 },
     });
 
-    expect(screen.text).toBe(
-      "<b>Состав сообщества</b>\n\nГости: 1\n\n• @user3",
-    );
+    expect(screen.text).toBe("<b>Состав сообщества</b>\n\nГости: 1");
     expect(rows(screen)[0]).toEqual(["Участники", "• Гости"]);
     expect(dataOf(screen, "@user3")).toBe(`v1:cm:v:${uuidToToken(id(3))}:g0`);
   });
@@ -113,8 +113,9 @@ describe("community list", () => {
     });
 
     expect(screen.text).toBe(
-      "<b>Состав сообщества</b>\n\nМодераторы аукциона: 1\n\n• @user2",
+      "<b>Состав сообщества</b>\n\nМодераторы аукциона: 1",
     );
+    expect(rows(screen)).toContainEqual(["@user2"]);
     expect(rows(screen)[1]).toEqual(["• Модераторы", "Разрешённые ники"]);
   });
 
@@ -160,7 +161,7 @@ describe("community list", () => {
     );
   });
 
-  it("names a person without a username by the code and a mention", () => {
+  it("names a person without a username by the code on the button", () => {
     const screen = communityScreen(
       {
         members: [
@@ -176,9 +177,6 @@ describe("community list", () => {
       { kind: "list", place: members },
     );
 
-    expect(screen.text).toContain(
-      '<a href="tg://user?id=5001">без ника</a> · 12ab34cd',
-    );
     expect(screen.text).not.toContain("01a0e306");
     expect(rows(screen)).toContainEqual(["без ника · 12ab34cd"]);
   });

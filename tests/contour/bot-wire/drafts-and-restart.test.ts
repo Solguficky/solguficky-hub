@@ -35,9 +35,6 @@ describe("висящие вопросы формы", () => {
     await person.says("/manage");
     await person.presses("Сходки и объявления");
     await person.presses("Создать сходку");
-    // Первый черновик запоминается до второго: ключи двух меню могут попасть в
-    // одну миллисекунду, и порядок UUIDv7 их тогда не различит.
-    const [first] = (await direct.journalOf(adminId)).meetupIds;
     // Два вопроса висят разом только после рестарта: пока бот помнит вопрос,
     // следующее действие в чате его удаляет. Рестарт память стирает, а шаг
     // остаётся в кнопке «Отмена» под вопросом.
@@ -48,7 +45,11 @@ describe("висящие вопросы формы", () => {
     await person.presses("Сходки и объявления");
     await person.presses("Создать сходку");
 
+    // Черновик рождается ответом на вопрос (прогон 14.10), поэтому первый
+    // запоминается после первого ответа и до второго.
     await person.answers(1, "Первый черновик");
+    const [first] = (await direct.journalOf(adminId)).meetupIds;
+    await person.answers(2, "Второй черновик");
 
     const second = (await direct.journalOf(adminId)).meetupIds.find(
       (id) => id !== first,
@@ -59,7 +60,9 @@ describe("висящие вопросы формы", () => {
     expect((await direct.readAsAdmin(adminId, first)).title).toBe(
       "Первый черновик",
     );
-    expect((await direct.readAsAdmin(adminId, second)).title).toBe("");
+    expect((await direct.readAsAdmin(adminId, second)).title).toBe(
+      "Второй черновик",
+    );
   });
 
   it("случай 8: ответ на вопрос формы создания после рестарта восстанавливает шаг из сообщения", async () => {

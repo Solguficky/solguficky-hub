@@ -191,7 +191,6 @@ export function createDispatcher(
           if (meetupAuction === undefined)
             return { kind: "rejected", reason: "auction-not-configured" };
           return meetupAuction.enable(request);
-        case "create-meetup":
         case "set-meetup-field":
         case "update-meetup-field":
         case "publish-meetup":

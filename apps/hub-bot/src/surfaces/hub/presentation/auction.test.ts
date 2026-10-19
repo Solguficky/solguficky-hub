@@ -578,7 +578,13 @@ describe("enabling the auction", () => {
 
     const outcome = lastScreen(calls);
     expect(outcome.text).toContain("<b>Аукцион включён</b>");
-    expect(labels(outcome)).toEqual([["🔨 Аукцион"], ["‹ Расширения"]]);
+    // Первый шаг после включения — лот (прогон 12.10, №16).
+    expect(labels(outcome)).toEqual([
+      ["🛠 Добавить лот"],
+      ["🔨 Аукцион"],
+      ["‹ Расширения"],
+    ]);
+    expect(data(outcome, "🛠 Добавить лот")).toMatch(/^v1:lot:new:[\w-]+$/);
     expect(data(outcome, "🔨 Аукцион")).toBe(rootData);
     expect(data(outcome, "‹ Расширения")).toBe(extensionsData);
     expect(records.at(-1)?.fields).toMatchObject({

@@ -77,6 +77,7 @@ import { stageWords } from "./auction-stage.js";
 import { toSettingsExtensions } from "./extensions.js";
 import {
   type AuctionEntry,
+  addLotLabel,
   bullet,
   buttonText,
   escapeHtml,
@@ -147,7 +148,6 @@ export type AuctionView = {
 // Входы в форму лота — ряды оболочки хаба, а не тела: у бота аукциона формы
 // нет, и тело у двух ботов остаётся одним.
 // Знак управления — 🛠 (PER-669): экраны аукциона видит и участник.
-const addLotLabel = adminLabel("Добавить лот");
 const editLotLabel = adminLabel("Изменить лот");
 // Пульт аукциона (PER-320) — ряд оболочки хаба в корне аукциона.
 const consoleLabel = adminLabel("Пульт");
