@@ -128,6 +128,12 @@ message Notification {
     // ticket holder, the winner included. No category governs it: one message
     // per raffle.
     RaffleResult raffle_result = 26;
+
+    // A daily summary of what is new in the bot was created for the surface of
+    // this recipient. One fact per recipient of that surface who has the
+    // category on. The text of the records is absent: it lives in the image of
+    // the surface's bot.
+    ReleaseSummary release_summary = 27;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -174,7 +180,31 @@ message Cause {
     // event_id of the consumed Auction raffle event. Stable across
     // republication, therefore a transport repeat is recognized.
     string auction_raffle_event_id = 8;
+
+    // Identifier of the release-notes summary that produced the fact. A
+    // summary is created once, so it produces one fact per recipient.
+    string release_summary_id = 9;
   }
+}
+
+// A day of release notes of one surface: the records the environment saw for
+// the first time that day, named by id. The text is deliberately absent — it
+// lives in the image of the surface's bot. The same message answers the summary
+// read of the service contract.
+message ReleaseSummary {
+  // Canonical lowercase UUIDv7 with hyphens. Stable id of the summary: a
+  // channel uses it as the target of the button under a delivered summary and
+  // as the anchor of paging.
+  string summary_id = 1;
+
+  // RFC 3339 UTC instant at which the summary was created. Which day the
+  // channel names is the channel's business.
+  string summarized_at = 2;
+
+  // At least one record. Ids of the records of the summary, in the order the
+  // environment saw them. The text is not carried: the channel takes it from
+  // its own image and drops a record its image does not know.
+  repeated string record_ids = 3;
 }
 
 // The subset of the meetup state a channel needs to render a notification
