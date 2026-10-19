@@ -45,6 +45,8 @@ import {
   applyLabel,
   createHintedAlbums,
   strayHintText,
+  supportBotLink,
+  supportLabel,
   withSourceCode,
 } from "../../../core/entry.js";
 import { countFailure, type FailureCategory } from "../../../core/failures.js";
@@ -378,6 +380,9 @@ export type BotRuntime = {
   // Имя бота аукциона без «@»: экран каналов собирает по нему вторую ссылку
   // `s_<код>`. Нет — экран отдаёт только ссылку в бот хаба.
   auctionBotUsername?: string;
+  // Имя бота поддержки без «@»: «Помощь» и кадр ожидания допуска несут
+  // ссылку «Написать в поддержку ↗» (PER-625). Нет — ни ряда, ни кнопки.
+  supportBotUsername?: string;
   // Сегодняшний день сообщества: по нему экран решает, в каком списке стоит
   // сходка, и называет год у даты. Тот же источник, что у формы.
   today?: CommunityToday;
@@ -5102,7 +5107,7 @@ async function renderArchiveList(
 // и выход последним рядом. Тексты кадров ошибок по смыслу не меняются.
 async function showFrame(
   ctx: UpdateContext,
-  id: "refusal" | "broadcast-result" | "no-access",
+  id: "refusal" | "broadcast-result" | "no-access" | "no-access-support",
   text: string,
   keyboard: InlineKeyboard,
   delivery?: "new",
@@ -5405,7 +5410,14 @@ async function applyForHub(
   }
   ctx.commandsPerson = entry.person;
   if (entry.access !== "admitted") {
-    return denyHubAccess(ctx, entry.access, entry.person, useCase, true);
+    return denyHubAccess(
+      ctx,
+      runtime,
+      entry.access,
+      entry.person,
+      useCase,
+      true,
+    );
   }
   return openMenu(ctx, entry.person, useCase);
 }
@@ -5456,7 +5468,10 @@ async function openHelp(
       useCase,
     );
   }
-  await showScreen(ctx, helpScreen(person, result.text));
+  await showScreen(
+    ctx,
+    helpScreen(person, result.text, runtime.supportBotUsername),
+  );
   return {
     level: "info",
     message: "help sent",
@@ -7252,11 +7267,12 @@ async function handleAuctionCallback(
       // Политика хаба уже пропустила человека, поэтому отказ шлюза — расхождение
       // кругов, а не штатный путь; кадр тот же, что у политики хаба.
       const access = result.reason === "blocked" ? "blocked" : "pending";
+      const frame = noAccessFrame(runtime, access);
       await showFrame(
         ctx,
-        "no-access",
+        frame.id,
         hubAccessText(access, person.identityId, ctx.from?.username),
-        new InlineKeyboard(),
+        frame.keyboard,
       );
       return hubAccessOutcome(access, person.identityId, useCase);
     }
@@ -7856,7 +7872,37 @@ async function denyHubAccessIfNeeded(
   if (access === "admitted") {
     return undefined;
   }
-  return denyHubAccess(ctx, access, identity.person, useCase, edit, sourceCode);
+  return denyHubAccess(
+    ctx,
+    runtime,
+    access,
+    identity.person,
+    useCase,
+    edit,
+    sourceCode,
+  );
+}
+
+// Кадр ожидания допуска с адресом бота поддержки несёт одну кнопку-ссылку
+// (PER-625, ADR-068): «?start=hub» говорит боту поддержки, откуда человек.
+// Без адреса, а также у отказа и блокировки клавиатуры нет.
+function noAccessFrame(
+  runtime: BotRuntime,
+  access: Exclude<HubAccess, "admitted" | "unapplied">,
+): {
+  id: "no-access" | "no-access-support";
+  keyboard: InlineKeyboard;
+} {
+  if (access !== "pending" || runtime.supportBotUsername === undefined) {
+    return { id: "no-access", keyboard: new InlineKeyboard() };
+  }
+  return {
+    id: "no-access-support",
+    keyboard: new InlineKeyboard().url(
+      supportLabel,
+      supportBotLink(runtime.supportBotUsername, "hub"),
+    ),
+  };
 }
 
 // Кадр отказа хаба без выхода: гостю намёк на бот аукциона не нужен, он там
@@ -7864,6 +7910,7 @@ async function denyHubAccessIfNeeded(
 // личности не знает, — приветствие с кнопкой «Подать заявку» (PER-592).
 async function denyHubAccess(
   ctx: UpdateContext,
+  runtime: BotRuntime,
   access: Exclude<HubAccess, "admitted">,
   person: Person,
   useCase: ProductUseCase | undefined,
@@ -7887,11 +7934,12 @@ async function denyHubAccess(
     return hubAccessOutcome(access, person.identityId, useCase);
   }
   const text = hubAccessText(access, person.identityId, ctx.from?.username);
+  const frame = noAccessFrame(runtime, access);
   await showFrame(
     ctx,
-    "no-access",
+    frame.id,
     text,
-    new InlineKeyboard(),
+    frame.keyboard,
     edit ? undefined : "new",
   );
   return hubAccessOutcome(access, person.identityId, useCase);

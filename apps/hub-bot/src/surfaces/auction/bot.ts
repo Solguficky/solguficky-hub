@@ -72,6 +72,9 @@ export type BotOptions = {
   ports: PortsFactory;
   logger: Logger;
   faq?: FaqContent;
+  // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку
+  // «Написать в поддержку ↗» (PER-625, ADR-068). Нет — кнопки нет.
+  supportBotUsername?: string;
   // Пояс, в котором человек читает дедлайн лота.
   timeZone: string;
   photos?: PhotoCache;
@@ -107,6 +110,9 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
         ? {}
         : { presentation: options.presentation }),
       ...(options.faq === undefined ? {} : { faq: options.faq }),
+      ...(options.supportBotUsername === undefined
+        ? {}
+        : { supportBotUsername: options.supportBotUsername }),
     });
   const photos = options.photos ?? createPhotoCache();
   const questions = options.questions ?? createQuestionMemory();

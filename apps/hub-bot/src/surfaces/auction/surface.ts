@@ -101,6 +101,9 @@ export const auctionSurface: SurfaceDefinition = ({
     ports: clients.ports,
     faq: auction.faq,
     logger,
+    ...(auction.supportBotUsername === undefined
+      ? {}
+      : { supportBotUsername: auction.supportBotUsername }),
     timeZone: config.communityTimeZone,
     live: {
       watches,

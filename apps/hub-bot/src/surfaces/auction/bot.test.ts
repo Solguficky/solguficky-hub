@@ -89,6 +89,8 @@ function makeBot(
     refuseOnce?: Record<string, string>;
     photos?: PhotoCache;
     presentation?: "rich" | "plain";
+    // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку (PER-625).
+    supportBotUsername?: string;
     // Обрыв соединения на первом вызове метода.
     dropOnce?: string;
     // Карточки финала (PER-336): поток и темп правок.
@@ -108,6 +110,9 @@ function makeBot(
     logger: options.logger ?? silent,
     timeZone: "Europe/Moscow",
     ...(options.photos === undefined ? {} : { photos: options.photos }),
+    ...(options.supportBotUsername === undefined
+      ? {}
+      : { supportBotUsername: options.supportBotUsername }),
     ...(options.live === undefined ? {} : { live: options.live }),
     botInfo,
   });
@@ -323,7 +328,7 @@ function commandUpdate(text: string): Update {
   });
 }
 
-type SentButton = { text: string; callback_data?: string };
+type SentButton = { text: string; callback_data?: string; url?: string };
 
 // Запись трансформера — объект параметров вызова Bot API; его тип зависит от
 // метода, и тест читает из него только клавиатуру.
@@ -576,6 +581,43 @@ describe("auction bot", () => {
       });
     },
   );
+
+  // Кадр ожидания допуска несёт вход в бот поддержки с меткой аукциона
+  // (PER-625, ADR-068): «?start=auction» говорит боту поддержки, откуда человек.
+  it("puts the support bot on the waiting frame when its address is set", async () => {
+    const requestAccess = vi.fn<EntryPort["requestAccess"]>(async () => ({
+      viewer: { identityId: VIEWER_ID, rights: [] },
+      outcome: "pending",
+    }));
+    const { bot, calls } = makeBot(
+      portsWith({ entry: requestAccess, rights: [] }),
+      { supportBotUsername: "solguficky_support_bot" },
+    );
+    await bot.handleUpdate(
+      startUpdate({
+        message_id: 1,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: "/start",
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      }),
+    );
+    await bot.handleUpdate(lotPress({ data: "v1:entry:apply" }));
+    const shown = calls.at(-1);
+    expect(shown).toMatchObject({
+      method: "editMessageText",
+      payload: { text: deniedTexts["not-admitted"] },
+    });
+    expect(keyboardOf(shown?.payload)).toEqual([
+      [
+        {
+          text: "Написать в поддержку ↗",
+          url: "https://t.me/solguficky_support_bot?start=auction",
+        },
+      ],
+    ]);
+  });
 
   it("stays silent in a group", async () => {
     const { bot, calls } = makeBot(publicPorts);

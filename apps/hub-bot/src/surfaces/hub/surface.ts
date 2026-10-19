@@ -137,6 +137,9 @@ export const hubSurface: SurfaceDefinition = ({
     ...(hub.auctionBotUsername === undefined
       ? {}
       : { auctionBotUsername: hub.auctionBotUsername }),
+    ...(hub.supportBotUsername === undefined
+      ? {}
+      : { supportBotUsername: hub.supportBotUsername }),
     communityTimeZone,
     ...(auction === undefined
       ? {}

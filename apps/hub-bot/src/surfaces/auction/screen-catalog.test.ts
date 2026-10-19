@@ -891,6 +891,7 @@ const shown: readonly {
   screen: AuctionEntryScreen;
   faq?: typeof urls;
   presentation?: "plain";
+  supportBotUsername?: string;
 }[] = [
   {
     screen: {
@@ -1026,6 +1027,11 @@ const shown: readonly {
   { screen: { kind: "auction", body: raffleAnswerRefused } },
   { screen: { kind: "denied", reason: "blocked" } },
   { screen: { kind: "denied", reason: "not-admitted" } },
+  // Ожидание допуска с адресом бота поддержки — отдельный кадр (PER-625).
+  {
+    screen: { kind: "denied", reason: "not-admitted" },
+    supportBotUsername: "solguficky_support_bot",
+  },
   { screen: { kind: "denied", reason: "declined" } },
   { screen: { kind: "denied", reason: "in-community" } },
   { screen: { kind: "outdated" } },
@@ -1078,13 +1084,15 @@ const bare = Object.fromEntries(
 // Момент показа: даты экранов — 2026 год, поэтому года в них нет.
 const now = new Date("2026-10-07T12:00:00Z");
 
-const rendered = shown.map(({ screen, faq, presentation }) =>
-  renderEntryScreen(screen, {
-    timeZone: "Europe/Moscow",
-    now,
-    ...(faq === undefined ? {} : { faq }),
-    ...(presentation === undefined ? {} : { presentation }),
-  }),
+const rendered = shown.map(
+  ({ screen, faq, presentation, supportBotUsername }) =>
+    renderEntryScreen(screen, {
+      timeZone: "Europe/Moscow",
+      now,
+      ...(faq === undefined ? {} : { faq }),
+      ...(presentation === undefined ? {} : { presentation }),
+      ...(supportBotUsername === undefined ? {} : { supportBotUsername }),
+    }),
 );
 
 // Уведомления — следы с меткой каталога, которые шлёт отправитель доставки в

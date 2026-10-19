@@ -115,6 +115,34 @@ describe("renderEntryScreen", () => {
     );
   });
 
+  // Ожидание допуска несёт вход в бот поддержки, когда её адрес задан
+  // (PER-625, ADR-068): «?start=auction» говорит боту поддержки, откуда
+  // человек. Отказ, блокировка и переход в бот хаба кнопки не несут.
+  it("offers the support bot on the waiting frame when its address is set", () => {
+    const render: RenderOptions = {
+      ...options,
+      supportBotUsername: "solguficky_support_bot",
+    };
+    const waiting = renderEntryScreen(
+      { kind: "denied", reason: "not-admitted" },
+      render,
+    );
+    expect(waiting.id).toBe("denied-support");
+    expect(waiting.keyboard).toEqual([
+      [
+        {
+          text: "Написать в поддержку ↗",
+          url: "https://t.me/solguficky_support_bot?start=auction",
+        },
+      ],
+    ]);
+    for (const reason of ["declined", "blocked", "in-community"] as const) {
+      const screen = renderEntryScreen({ kind: "denied", reason }, render);
+      expect(screen.keyboard).toEqual([]);
+      expect(screen.id).toBe(reason === "in-community" ? reason : "denied");
+    }
+  });
+
   it("hints how to answer an open question and where to go otherwise", () => {
     const open = renderEntryScreen(
       { kind: "hint", openQuestion: true },

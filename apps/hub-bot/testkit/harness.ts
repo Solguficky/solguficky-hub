@@ -203,6 +203,7 @@ export type HarnessOptions = Partial<
     | "lotPhotos"
     | "communityTimeZone"
     | "auctionBotUsername"
+    | "supportBotUsername"
     | "files"
     | "favorites"
     | "proxyExplainer"
@@ -303,6 +304,8 @@ export function createAuctionHarness(
   options: {
     presentation?: Presentation;
     timeZone?: string;
+    // Имя бота поддержки без «@»: кадр ожидания допуска несёт ссылку (PER-625).
+    supportBotUsername?: string;
     // Карточки финала (PER-336): поток и темп правок процесса.
     live?: Parameters<typeof createAuctionBot>[0]["live"];
   } = {},
@@ -317,6 +320,9 @@ export function createAuctionHarness(
       : { presentation: options.presentation }),
     ports,
     logger,
+    ...(options.supportBotUsername === undefined
+      ? {}
+      : { supportBotUsername: options.supportBotUsername }),
     timeZone: options.timeZone ?? "Europe/Moscow",
     botInfo: auctionBotInfo,
     ...(options.live === undefined ? {} : { live: options.live }),

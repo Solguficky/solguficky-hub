@@ -1,6 +1,6 @@
 import { type FaqContent, readFaqContent } from "../../auction-faq.js";
 import { type Env, type Loaded, reader } from "../../core/config.js";
-import { isTelegramBotUsername } from "./presentation/source-deep-link.js";
+import { isTelegramBotUsername } from "../../core/entry.js";
 
 // Своё у поверхности хаба: адреса Meetups, Notifications и Auction и имя бота
 // аукциона для ссылок каналов прихода. Токены, среда, пояс, форма карточки и
@@ -15,6 +15,9 @@ export type HubConfig = {
   auctionUrl?: string;
   // Имя бота аукциона без «@» для экрана каналов прихода (PER-441).
   auctionBotUsername?: string;
+  // Имя бота поддержки без «@» для «Написать в поддержку ↗» в «Помощи» и в
+  // кадре ожидания допуска (PER-625, ADR-068). Без него ряда и кнопки нет.
+  supportBotUsername?: string;
 };
 
 export function readHubConfig(env: Env): Loaded<HubConfig> {
@@ -33,6 +36,18 @@ export function readHubConfig(env: Env): Loaded<HubConfig> {
       error: "BOT_AUCTION_BOT_USERNAME must be a Telegram bot username",
     };
   }
+  // Та же проверка у бота поддержки: ссылка «Помощи» и кадра ожидания ведёт
+  // в чужой бот так же молча.
+  const supportBotUsername = read("BOT_SUPPORT_BOT_USERNAME");
+  if (
+    supportBotUsername !== undefined &&
+    !isTelegramBotUsername(supportBotUsername)
+  ) {
+    return {
+      ok: false,
+      error: "BOT_SUPPORT_BOT_USERNAME must be a Telegram bot username",
+    };
+  }
   const auctionUrl = read("AUCTION_GRPC_URL");
   return {
     ok: true,
@@ -43,6 +58,7 @@ export function readHubConfig(env: Env): Loaded<HubConfig> {
       faq: faq.content,
       ...(auctionUrl === undefined ? {} : { auctionUrl }),
       ...(auctionBotUsername === undefined ? {} : { auctionBotUsername }),
+      ...(supportBotUsername === undefined ? {} : { supportBotUsername }),
     },
   };
 }

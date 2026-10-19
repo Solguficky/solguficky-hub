@@ -15,11 +15,3 @@ export function isSourceChannelCode(code: string): boolean {
 export function sourceStartLink(botUsername: string, code: string): string {
   return `https://t.me/${botUsername}?start=${sourceDeepLinkPrefix}${code}`;
 }
-
-// Имя бота без «@»: 5–32 символа, латиница, цифры и «_», в конце «bot».
-// Telegram требует того же при создании бота.
-const telegramBotUsernamePattern = /^[A-Za-z][A-Za-z0-9_]{1,28}bot$/i;
-
-export function isTelegramBotUsername(value: string): boolean {
-  return telegramBotUsernamePattern.test(value);
-}
