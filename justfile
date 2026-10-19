@@ -191,15 +191,16 @@ verify: check-agent-tools check-mcp check-commands check-published-pages check-d
 # поднимает его джобу в CI. Карта путей одна — джоба changes в ci.yml, её
 # читает tools/verify/select-recipes.sh. Правка justfile или ci.yml поднимает
 # все джобы, и здесь выбирается весь verify. Выбор печатается до прогона.
-# Тяжёлые группы — сборки на JVM и .NET: apphost, meetups, notifications и
-# auction — локально не идут: их печатает строка «уходит в CI», и проверяют
-# джобы CI с теми же именами. Тогда зелёный локальный прогон выходит с кодом 3
-# — «оценено не полностью», — и сдача ждёт эти джобы на draft PR
+# Тяжёлые группы — сборки на JVM и .NET, переменная heavy в селекторе —
+# локально не идут: их печатает строка «уходит в CI», и проверяют джобы CI с
+# теми же именами. Тогда зелёный локальный прогон выходит с кодом 3 —
+# «оценено не полностью», — и сдача ждёт эти джобы на draft PR
 # (docs/development/agent-execution-loop.md, «Бюджет гейта»). Код 0 — всё
-# проверено здесь.
+# проверено здесь; любой отказ рецептов — код 1, чтобы рецепт, упавший со
+# своим кодом 3, не выдал себя за ушедшее в CI.
 verify-changed:
-    @recipes=$(sh tools/verify/select-recipes.sh) && deferred=$(sh tools/verify/select-recipes.sh --deferred 2>/dev/null) \
-        && echo "verify-changed: $recipes" && "{{ just_executable() }}" $recipes \
+    @recipes=$(sh tools/verify/select-recipes.sh) && deferred=$(sh tools/verify/select-recipes.sh --deferred) \
+        && echo "verify-changed: $recipes" && { "{{ just_executable() }}" $recipes || exit 1; } \
         && if [ -n "$deferred" ]; then echo "verify-changed: оценено не полностью, ждать джобы CI: $deferred" >&2; exit 3; fi
 
 # Все уровни тестов всех компонентов: L0, L1 и L2. Пропущенный тест роняет

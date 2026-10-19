@@ -30,8 +30,8 @@
 - Проверка перед созданием: `gh pr view --json isDraft,url`. Второй `gh pr create` на ту же ветку отказывает с `a pull request for branch ... already exists`.
 - Создание: `git push -u origin feature/PER-N`, затем `gh pr create --base develop --title "[PER-N] Название задачи" --body-file <файл>`.
 - Чекпоинт на вопросе — тот же вызов с `--draft`: draft несёт вопрос, а не запрос ревью.
-- Гейт ушёл в CI (код 3 у `verify-changed`) — pull request создаётся тем же вызовом с `--draft` и ждёт вердикта CI ([verification-gate.md](verification-gate.md#вердикт-ci)). `gh pr ready` — только после зелёных джоб; красная джоба оставляет его draft-ом с остановкой по контуру.
-- Draft уже открыт — `git push`, `gh pr edit --title "[PER-N] Название задачи" --body-file <файл>`, `gh pr ready`.
+- Гейт ушёл в CI (код 3 у `verify-changed`) — pull request создаётся тем же вызовом с `--draft` и ждёт вердикта CI ([verification-gate.md](verification-gate.md#вердикт-ci)). `gh pr ready` — только после зелёных джоб; красная джоба оставляет его draft-ом с остановкой по контуру. Pull request уже готов, например после правок по ревью, — сначала верни его в draft: `gh pr ready --undo`.
+- Draft уже открыт — `git push`, `gh pr edit --title "[PER-N] Название задачи" --body-file <файл>`, `gh pr ready`; при гейте, ушедшем в CI, — только после зелёных джоб.
 - Тело передаётся файлом (`--body-file`): многострочный `--body` в PowerShell приезжает склеенным.
 - Вливается pull request в `develop` через squash; ревью и мерж выполняет владелец.
 

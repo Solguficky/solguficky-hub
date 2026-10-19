@@ -26,18 +26,24 @@
 
 ```sh
 sha=$(git rev-parse HEAD)
-gh run list --branch feature/PER-N --workflow ci.yml --event pull_request --commit "$sha" --json databaseId --jq '.[0].databaseId'
+id=""
+for _ in $(seq 30); do
+    id=$(gh run list --branch feature/PER-N --workflow ci.yml --event pull_request --commit "$sha" --json databaseId --jq '.[0].databaseId // empty')
+    [ -n "$id" ] && break
+    sleep 10
+done
+echo "RUN=${id:-none}"
 gh run watch <id> > <лог> 2>&1; echo "EXIT=$?"
 gh run view <id> --json jobs --jq '.jobs[] | select(.name == ("changes", "auction")) | "\(.name) \(.conclusion)"'
 ```
 
 - В `select` стоят `changes` и группы из строки «уходит в CI».
-- `gh run watch` нужен ради ожидания конца прогона. Его код вердиктом не является, потому что в нём участвуют и джобы вне выбора, например `contour`, которая на периоде наблюдения.
+- Прогон появляется не сразу после `gh pr create`: цикл ждёт его до пяти минут. `RUN=none` — прогон не появился, гейт не оценил изменение, а не зелёный.
+- `gh run watch` нужен ради ожидания конца прогона. Его код вердиктом не является, потому что в нём участвуют и джобы вне обязательных проверок ветки ([ci.md](../development/ci.md)).
 - Вердикт выносят по последней команде:
   - у каждой названной джобы `success` — зелёный;
   - `failure` или `cancelled` — красный;
   - `skipped` или строки нет вовсе — гейт не оценил изменение, потому что карта путей и выбор разошлись.
-- Прогон не появился за несколько минут после открытия pull request — это тоже «не оценил», а не зелёный.
 - Ждать прогон в Claude Code — фоновой командой (`run_in_background`), а не опросом в цикле.
 
 ## Перед прогоном
