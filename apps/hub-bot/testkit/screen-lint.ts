@@ -1,10 +1,17 @@
-import { followLabel, unfollowLabel } from "../src/auction-standing.js";
 import {
+  followLabel,
+  lotNextLabel,
+  lotPrevLabel,
+  unfollowLabel,
+} from "../src/auction-standing.js";
+import {
+  adminLabel,
   admitLabel,
   declineLabel,
   extensionsLabel,
   marked,
   pictogram,
+  refreshLabel,
 } from "../src/core/pictograms.js";
 import type { Surface } from "../src/core/surface.js";
 import {
@@ -55,13 +62,17 @@ const auctionShape: [UnknownEntryKeys<typeof auctionCatalog>] extends [never]
 void hubShape;
 void auctionShape;
 
-// Пары карточки лота у обоих ботов (PER-594, PER-644): ряды складываются по
-// смыслу — ставки, которые человек задаёт сам, и слежение за лотом:
-// «Обновить» с отметкой избранного.
+// Пары карточки лота у обоих ботов (PER-594, PER-644, PER-669): ряды
+// складываются по смыслу — ставки, которые человек задаёт сам, и взгляд на
+// лот: «Ставки» с отметкой избранного. Листание лотов — ряд
+// `[◀️][🔄 Обновить][▶️]`; на краях ленты и у лота с итогом он короче.
 const lotCardPairs = [
   "Своя сумма|Автоставка",
-  `Обновить|${followLabel}`,
-  `Обновить|${unfollowLabel}`,
+  `Ставки|${followLabel}`,
+  `Ставки|${unfollowLabel}`,
+  `${lotPrevLabel}|${refreshLabel}|${lotNextLabel}`,
+  `${lotPrevLabel}|${refreshLabel}`,
+  `${refreshLabel}|${lotNextLabel}`,
 ];
 
 // Пары хаба, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
@@ -81,12 +92,12 @@ const hubNamedPairs: ReadonlySet<string> = new Set([
   "• Модераторы|Разрешённые ники",
   "Модераторы|Разрешённые ники",
   // Подписи карточки несут знаки своих разделов (PER-644).
-  `${marked(pictogram.edit, "Изменить")}|${marked(pictogram.status, "Статус")}`,
+  `${adminLabel("Изменить")}|${adminLabel("Статус")}`,
   `${marked(pictogram.off, "Отписаться")}|${marked(pictogram.settings, "Уведомления сходки")}`,
   `${marked(pictogram.materials, "Материалы (#)")}|${extensionsLabel}`,
-  // Корень аукциона (PER-605): входы администратора и розыгрыша, затем свои
-  // отметки и правила — парами, как стояли в корне ленты (PER-500).
-  "Пульт|Розыгрыш",
+  // Корень аукциона (PER-605): свои отметки и правила — парой, как стояли в
+  // корне ленты (PER-500). «🛠 Пульт» ряд с «Розыгрышем» больше не делит
+  // (PER-669).
   "Избранное|Правила и FAQ",
   // Способ шага лота (PER-491): бинарная пара выбора одним рядом.
   "Один шаг|По порогам",

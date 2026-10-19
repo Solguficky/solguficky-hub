@@ -621,12 +621,16 @@ const backRow = (page: number) => [
 
 const callback = (intent: AuctionIntent) => encodeAuctionCallback(intent);
 
-// «‹ пред / след ›» карточки (PER-644): соседи лота в порядке ленты, у
-// каждого своя страница. На краях своей кнопки нет; лота нет в ленте — нет и
-// ряда.
-const neighborRows = (order: readonly LotView[], lotId: string) => {
+// `[◀️][🔄 Обновить][▶️]` карточки (PER-644, PER-669): соседи лота в порядке
+// ленты, у каждого своя страница, «Обновить» посередине. На краях своей
+// кнопки нет; лота нет в ленте — в ряду только «Обновить», если она есть.
+const pagerRows = (
+  order: readonly LotView[],
+  lotId: string,
+  refresh: readonly ReturnType<typeof refreshRow>[number][] = [],
+) => {
   const index = order.findIndex((lot) => lot.lotId === lotId);
-  if (index < 0) return [];
+  if (index < 0) return refresh.length === 0 ? [] : [[...refresh]];
   const button = (action: "lot.prev" | "lot.next", position: number) => {
     const lot = order[position];
     return lot === undefined
@@ -640,6 +644,7 @@ const neighborRows = (order: readonly LotView[], lotId: string) => {
   };
   const row = [
     ...button("lot.prev", index - 1),
+    ...refresh,
     ...button("lot.next", index + 1),
   ];
   return row.length === 0 ? [] : [row];
@@ -1144,12 +1149,11 @@ const bidRows = (lot: LotView, page: number, step = 125000) => [
   ],
 ];
 
-// Лот без итога: «Обновить», под ним «Ставки» (PER-644; рядом с «Обновить»
-// встаёт отметка избранного), листание и возврат.
+// Лот без итога: «Ставки» (рядом встаёт отметка избранного), листание с
+// «Обновить» посередине и возврат (PER-669).
 const lotKeyboard = (lotId: string, page: number) => [
-  refreshRow(lotId, page),
   [historyButton(lotId, page)],
-  ...neighborRows(FEED_ORDER, lotId),
+  ...pagerRows(FEED_ORDER, lotId, refreshRow(lotId, page)),
   backRow(page),
 ];
 
@@ -1161,7 +1165,7 @@ const historyButton = (lotId: string, page: number) => ({
 // Лот с итогом: «Обновить» под ним нет — без человека он уже не меняется.
 const settledKeyboard = (lotId: string, page: number) => [
   [historyButton(lotId, page)],
-  ...neighborRows(FEED_ORDER, lotId),
+  ...pagerRows(FEED_ORDER, lotId),
   backRow(page),
 ];
 
@@ -2094,16 +2098,17 @@ const SCHEDULED_BLOCK = {
   status: { kind: "scheduled" as const, startingPrice: rub(500) },
 };
 
-// Запланированный лот с кнопкой избранного: «Обновить» с отметкой одним
-// рядом (PER-644), листание, возврат.
+// Запланированный лот с кнопкой избранного: «Ставок» у него нет, отметка
+// стоит своим рядом, под ней листание с «Обновить» и возврат (PER-669).
 const scheduledWithFollow = (following: boolean): AuctionScreenBody => ({
   blocks: [{ ...SCHEDULED_BLOCK, following }],
   keyboard: [
-    [
-      ...refreshRow(SCHEDULED_LOT.lotId, 0),
-      ...followRow(SCHEDULED_LOT.lotId, 0, following),
-    ],
-    ...neighborRows(FEED_ORDER, SCHEDULED_LOT.lotId),
+    followRow(SCHEDULED_LOT.lotId, 0, following),
+    ...pagerRows(
+      FEED_ORDER,
+      SCHEDULED_LOT.lotId,
+      refreshRow(SCHEDULED_LOT.lotId, 0),
+    ),
     backRow(0),
   ],
 });
@@ -2451,9 +2456,10 @@ const liveBody = (input: {
             },
           ],
         ]),
-    // В живом финале листания нет (PER-644): карточку правит поток.
-    refreshRow(CONTRACT_LOT.lotId, 2),
+    // В живом финале листания нет (PER-644): карточку правит поток, и в
+    // ряду листания остаётся одна «Обновить».
     [historyButton(CONTRACT_LOT.lotId, 2)],
+    refreshRow(CONTRACT_LOT.lotId, 2),
     backRow(2),
   ],
 });
@@ -3443,12 +3449,12 @@ const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
     body: {
       blocks: [manyBlock(manyLot(7))],
       keyboard: [
-        refreshRow(manyLot(7).lotId, 0),
         [
           {
             action: "lot.prev",
             callbackData: lotCallback(manyLot(6).lotId, 0),
           },
+          ...refreshRow(manyLot(7).lotId, 0),
           {
             action: "lot.next",
             callbackData: lotCallback(manyLot(8).lotId, 1),
@@ -3458,7 +3464,7 @@ const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
       ],
     },
   },
-  // Последний лот ленты: «след ›» нет, листание не идёт по кругу.
+  // Последний лот ленты: ▶️ нет, листание не идёт по кругу.
   {
     intent: "lot: last in the feed",
     callbackData: lotCallback(manyLot(8).lotId, 1),
@@ -3470,18 +3476,18 @@ const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
     body: {
       blocks: [manyBlock(manyLot(8))],
       keyboard: [
-        refreshRow(manyLot(8).lotId, 1),
         [
           {
             action: "lot.prev",
             callbackData: lotCallback(manyLot(7).lotId, 0),
           },
+          ...refreshRow(manyLot(8).lotId, 1),
         ],
         manyBack(1),
       ],
     },
   },
-  // Первый лот ленты: «‹ пред» нет.
+  // Первый лот ленты: ◀️ нет.
   {
     intent: "lot: first in the feed",
     callbackData: lotCallback(manyLot(0).lotId, 0),
@@ -3493,8 +3499,8 @@ const NEIGHBOR_CASES: readonly AuctionContractCase[] = [
     body: {
       blocks: [manyBlock(manyLot(0))],
       keyboard: [
-        refreshRow(manyLot(0).lotId, 0),
         [
+          ...refreshRow(manyLot(0).lotId, 0),
           {
             action: "lot.next",
             callbackData: lotCallback(manyLot(1).lotId, 0),
@@ -4560,8 +4566,11 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: [
-        refreshRow(SCHEDULED_LOT.lotId, 0),
-        ...neighborRows(FEED_ORDER, SCHEDULED_LOT.lotId),
+        ...pagerRows(
+          FEED_ORDER,
+          SCHEDULED_LOT.lotId,
+          refreshRow(SCHEDULED_LOT.lotId, 0),
+        ),
         backRow(0),
       ],
     },
@@ -4592,8 +4601,11 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
         },
       ],
       keyboard: [
-        refreshRow(TIERED_SCHEDULED_LOT.lotId, 0),
-        ...neighborRows(PRE_TRADING_ORDER, TIERED_SCHEDULED_LOT.lotId),
+        ...pagerRows(
+          PRE_TRADING_ORDER,
+          TIERED_SCHEDULED_LOT.lotId,
+          refreshRow(TIERED_SCHEDULED_LOT.lotId, 0),
+        ),
         [
           {
             action: "lot.back",

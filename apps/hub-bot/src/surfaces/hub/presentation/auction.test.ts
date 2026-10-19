@@ -388,7 +388,7 @@ describe("meetup card extensions entry", () => {
     expect(labels(card)).toContainEqual(["📎 Материалы (2)", "🧩 Расширения"]);
     expect(data(card, "🧩 Расширения")).toBe(extensionsData);
     expect(JSON.stringify(labels(card))).not.toContain("Лоты");
-    expect(JSON.stringify(card)).not.toContain("Включить аукцион");
+    expect(JSON.stringify(card)).not.toContain("🛠 Включить аукцион");
     // Кнопка без состояния, а состояние аукциона — строка текста (PER-594):
     // карточка читает аукцион один раз.
     expect(card.rich_message?.html ?? card.text).toContain(
@@ -516,8 +516,8 @@ describe("meetup extensions menu", () => {
     await bot.handleUpdate(press(extensionsData));
 
     const menu = lastScreen(calls);
-    expect(labels(menu)).toEqual([["Включить аукцион"], ["‹ Сходка"]]);
-    expect(data(menu, "Включить аукцион")).toBe(
+    expect(labels(menu)).toEqual([["🛠 Включить аукцион"], ["‹ Сходка"]]);
+    expect(data(menu, "🛠 Включить аукцион")).toBe(
       `v1:manage:auction:${meetupToken}`,
     );
   });
@@ -543,7 +543,7 @@ describe("meetup extensions menu", () => {
 
     const menu = lastScreen(calls);
     expect(menu.text).toContain("У этой сходки пока нет расширений.");
-    expect(JSON.stringify(menu)).not.toContain("Включить аукцион");
+    expect(JSON.stringify(menu)).not.toContain("🛠 Включить аукцион");
   });
 
   it("names an Auction outage with a retry instead of guessing the auction", async () => {
@@ -678,12 +678,12 @@ describe("auction root and the way back", () => {
     await bot.handleUpdate(press(rootData));
     expect(labels(lastScreen(calls))).toEqual([
       ["🔨 Лоты"],
-      ["Пульт"],
       ["Правила и FAQ"],
+      ["🛠 Пульт"],
       ["‹ Сходки"],
     ]);
     await bot.handleUpdate(press(feedData));
-    expect(labels(lastScreen(calls))[0]).toEqual(["Добавить лот"]);
+    expect(labels(lastScreen(calls))[0]).toEqual(["🛠 Добавить лот"]);
   });
 
   it("returns from the root to the upcoming list when the process no longer knows the meetup", async () => {
@@ -1138,18 +1138,19 @@ describe("bid leaf in the hub", () => {
     const { bot, calls } = await setup();
     await bot.handleUpdate(press(lotData));
     const card = lastScreen(calls);
-    // Своя сумма с автоставкой — парой, «Обновить» и «Ставки» — рядами (PER-594).
+    // Своя сумма с автоставкой — парой (PER-594), «Ставки» — рядом, «Обновить»
+    // — в ряду листания (PER-669).
     expect(labels(card).slice(0, 4)).toEqual([
       [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
-      ["Обновить"],
       ["Ставки"],
+      ["🔄 Обновить"],
     ]);
   });
 
   // Карточка участника в онлайн-торгах с автоставкой и избранным — пять рядов
-  // (PER-594): ставка по шагу, своя сумма с автоставкой, «Обновить» со
-  // «Ставками», избранное и возврат.
+  // (PER-594, PER-669): ставка по шагу, своя сумма с автоставкой, «Ставки» с
+  // избранным, листание с «Обновить» и возврат.
   it("fits the card of a participant with limits and favorites into five rows", async () => {
     const auction = fakeAuction({ existing: true, lot: trading });
     const { bot, calls } = harness("member", auction, {
@@ -1166,8 +1167,8 @@ describe("bid leaf in the hub", () => {
     expect(labels(lastScreen(calls))).toEqual([
       [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
-      ["Обновить", "Добавить в избранное"],
-      ["Ставки"],
+      ["Ставки", "Добавить в избранное"],
+      ["🔄 Обновить"],
       ["‹ Лоты"],
     ]);
   });

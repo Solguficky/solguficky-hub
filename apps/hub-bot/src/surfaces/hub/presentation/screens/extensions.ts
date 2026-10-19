@@ -1,7 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { nameSettingsTitle } from "../../../../auction-standing.js";
 import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
-import { marked, pictogram } from "../../../../core/pictograms.js";
+import { adminLabel, marked, pictogram } from "../../../../core/pictograms.js";
 import type { MeetupAuctionView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
@@ -36,7 +36,7 @@ export const toSettingsExtensions: Parent = {
 
 // Вход в раздел аукциона несёт его знак во всех ботах (PER-644).
 const auctionLabel = marked(pictogram.auction, "Аукцион");
-const enableLabel = "Включить аукцион";
+const enableLabel = adminLabel("Включить аукцион");
 
 /**
  * Меню «Расширения» сходки. Включённый аукцион открывает свой корень;

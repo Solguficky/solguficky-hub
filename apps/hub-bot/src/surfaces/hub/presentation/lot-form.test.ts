@@ -437,13 +437,13 @@ describe("entries into the lot form", () => {
     const feed = last(calls);
     // Над списком лотов — только «Добавить лот»: пульт и правила стоят в
     // корне аукциона (PER-605).
-    expect(labels(feed)[0]).toEqual(["Добавить лот"]);
-    expect(dataOf(feed, "Добавить лот")).toBe(`v1:lot:new:${auctionToken}`);
+    expect(labels(feed)[0]).toEqual(["🛠 Добавить лот"]);
+    expect(dataOf(feed, "🛠 Добавить лот")).toBe(`v1:lot:new:${auctionToken}`);
 
     await bot.handleUpdate(press(lotData(existingLot)));
     const card = last(calls);
-    expect(labels(card)).toContainEqual(["Изменить лот"]);
-    expect(dataOf(card, "Изменить лот")).toBe(
+    expect(labels(card)).toContainEqual(["🛠 Изменить лот"]);
+    expect(dataOf(card, "🛠 Изменить лот")).toBe(
       `v1:lot:form:${uuidToToken(existingLot)}`,
     );
   });
@@ -457,8 +457,8 @@ describe("entries into the lot form", () => {
     await bot.handleUpdate(press(lotData(existingLot)));
 
     const text = JSON.stringify(shown(calls));
-    expect(text).not.toContain("Добавить лот");
-    expect(text).not.toContain("Изменить лот");
+    expect(text).not.toContain("🛠 Добавить лот");
+    expect(text).not.toContain("🛠 Изменить лот");
   });
 
   it("refuses a form button and an answer of someone who is not an administrator before Auction is asked", async () => {

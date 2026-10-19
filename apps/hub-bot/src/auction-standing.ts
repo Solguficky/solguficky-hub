@@ -14,12 +14,12 @@ import { marked, pictogram } from "./core/pictograms.js";
 export const followLabel = "Добавить в избранное";
 export const unfollowLabel = "Убрать из избранного";
 /**
- * Листание лотов в карточке лота (PER-644): соседи в порядке ленты. «‹» и «›»
- * здесь — служебные знаки листания, а не возврат к родителю: ряд стоит над
- * возвратом, и линтер держит возврат только последним рядом.
+ * Листание лотов в карточке лота (PER-644): соседи в порядке ленты. Знак
+ * листания свой и без слова (PER-669): «‹» остаётся только у возврата к
+ * родителю, и ряд `[◀️][🔄 Обновить][▶️]` не читается как возврат.
  */
-export const lotPrevLabel = "‹ пред";
-export const lotNextLabel = "след ›";
+export const lotPrevLabel: string = pictogram.previous;
+export const lotNextLabel: string = pictogram.next;
 /** Вход в ленту из корня аукциона — со знаком раздела аукциона (PER-644). */
 export const lotsLabel = marked(pictogram.auction, "Лоты");
 

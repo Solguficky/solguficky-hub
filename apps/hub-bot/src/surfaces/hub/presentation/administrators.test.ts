@@ -295,7 +295,7 @@ describe("administrators in the hub bot", () => {
     expect(labels(screen)).toEqual([
       "Снять @peer",
       "Назначить",
-      "Обновить",
+      "🔄 Обновить",
       "‹ Управление",
     ]);
   });
@@ -317,7 +317,7 @@ describe("administrators in the hub bot", () => {
       "Снять @peer · id 44",
       "Снять @Peer · id 46",
       "Назначить",
-      "Обновить",
+      "🔄 Обновить",
       "‹ Управление",
     ]);
   });

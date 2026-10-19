@@ -212,7 +212,7 @@ describe("feed and history in the hub shell", () => {
     // Лента — просто список лотов (PER-605): пульт, избранное и правила
     // стоят в корне аукциона, а над лотами — только «Добавить лот».
     expect(rows).toHaveLength(11);
-    expect(rows[0]).toEqual(["Добавить лот"]);
+    expect(rows[0]).toEqual(["🛠 Добавить лот"]);
     expect(rows.at(-1)).toEqual(["‹ Аукцион"]);
   });
 

@@ -257,7 +257,7 @@ describe("community allowed usernames", () => {
     expect(rows(screen)).toEqual([
       ["🗑 Убрать @alice_1"],
       ["Добавить ник"],
-      ["Обновить"],
+      ["🔄 Обновить"],
       nav,
     ]);
     expect(dataOf(screen, "🗑 Убрать @alice_1")).toBe("v1:cm:rm:0:alice_1");
