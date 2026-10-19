@@ -5,6 +5,7 @@ import type { NatsDelivery } from "./delivery/index.js";
 import { countFailure } from "./failures.js";
 import { createLogger, type LogFields, type Logger } from "./logging.js";
 import { type BotCommand, registerCommands } from "./menu-commands.js";
+import { type ReleaseNotes, readReleaseNotes } from "./release-notes.js";
 import { bindService } from "./service.js";
 import { createShutdown, type Stoppable } from "./shutdown.js";
 import type { Surface } from "./surface.js";
@@ -49,6 +50,8 @@ export type SurfaceContext = {
   config: ProcessConfig;
   logger: Logger;
   tracing: Tracing;
+  // Записи «Что нового» образа (ADR-069, п. 1).
+  releaseNotes: ReleaseNotes;
 };
 
 export type SurfaceDefinition = (
@@ -89,9 +92,17 @@ async function main(
     return 1;
   }
   const { config } = loaded;
+  // Записи читаются до первого сигнала, как конфигурация: битый каталог —
+  // образ собран неверно, и процесс отказывает тем же путём.
+  const notes = readReleaseNotes();
+  if (!notes.ok) {
+    logger.error(notes.error);
+    return 1;
+  }
+  const releaseNotes = notes.config;
   const metrics = startMetrics();
   const tracing = startTraces();
-  const defined = define({ env, config, logger, tracing });
+  const defined = define({ env, config, logger, tracing, releaseNotes });
   if (!defined.ok) {
     logger.error(defined.error);
     await Promise.allSettled([tracing.shutdown(), metrics.shutdown()]);
@@ -173,6 +184,7 @@ async function main(
     logger.info(`${service} starting`, {
       service,
       telegram_environment: config.environment,
+      release_notes: releaseNotes.idsFor(surface).length,
       ...defined.config.startFields,
     });
     // Меню пишется без ожидания: медленный или отказавший Telegram не должен

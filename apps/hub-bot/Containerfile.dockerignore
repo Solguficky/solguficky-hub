@@ -10,4 +10,5 @@
 !apps/hub-bot/tsconfig.json
 !apps/hub-bot/tsconfig.build.json
 !apps/hub-bot/src
+!apps/hub-bot/release-notes
 **/*.test.ts
