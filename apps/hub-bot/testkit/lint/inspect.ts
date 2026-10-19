@@ -6,6 +6,7 @@ import {
   marked,
   pictogram,
   pictogramWords,
+  refreshLabel,
   sectionLabels,
   sectionLines,
 } from "../../src/core/pictograms.js";
@@ -79,6 +80,7 @@ const backSign = "‹ ";
 // Выход кадра исхода аукциона — к карточке лота, как у кнопки следа.
 const toLotLabel = "К лоту";
 const removeMaterialLabel = marked(pictogram.remove, "Убрать");
+const adminSign = `${pictogram.admin} `;
 const linkSign = " ↗";
 const callbackDataLimit = 64;
 const defaultMaxRows = 12;
@@ -301,23 +303,37 @@ function checkRules(
     found.push(["rows", `рядов ${rows.length}, потолок ${maxRows}`]);
   }
   rows.forEach((row, index) => {
-    // Шире двух — только ряд коротких заготовок вроде времени или листания.
+    // Шире двух — только ряд коротких заготовок вроде времени или листания
+    // либо ряд, который дизайн-код называет поимённо: листание лотов с
+    // «🔄 Обновить» посередине (PER-669).
     const short = row.every((button) => button.text.length <= 6);
-    if (row.length > (short ? 4 : 2)) {
+    const pair = labels(row).join("|");
+    const named =
+      config.namedPairs?.has(pair) === true ||
+      config.namedPairs?.has(pair.replace(/\d+/g, "#")) === true;
+    if (row.length > (short ? 4 : 2) && !named) {
       found.push(["rows", `в ряду ${row.length} кнопок: ${describeRow(row)}`]);
       return;
     }
     // Две в ряду — только у пар, которые дизайн-код называет поимённо: ряд
     // навигации, разделы меню, листание и заготовки, пары дерева бота,
     // материал с «🗑 Убрать».
-    const pair = labels(row).join("|");
     const allowed =
       short ||
+      named ||
       index === rows.length - 1 ||
       entry.nav === "root" ||
-      config.namedPairs?.has(pair) === true ||
-      config.namedPairs?.has(pair.replace(/\d+/g, "#")) === true ||
       row.some((button) => button.text === removeMaterialLabel);
+    // Кнопка управления не делит ряд с кнопкой участника (решение владельца
+    // 19 октября 2026 года, PER-669). Исключение — действие над строкой
+    // таблицы: «🗑 Убрать» у своего материала знака управления не несёт.
+    const admin = row.filter((button) => button.text.startsWith(adminSign));
+    if (admin.length > 0 && admin.length < row.length) {
+      found.push([
+        "rows",
+        `кнопка управления делит ряд с кнопкой участника: ${describeRow(row)}`,
+      ]);
+    }
     if (row.length === 2 && !allowed) {
       found.push(["rows", `пара вне дизайн-кода: ${describeRow(row)}`]);
     }
@@ -360,7 +376,7 @@ function checkRules(
     if (section !== undefined) {
       found.push([
         "emoji",
-        `подпись «${button.text}» — вход в раздел, и знак у неё «${section}»`,
+        `подпись «${button.text}» несёт свой знак «${section}»`,
       ]);
     }
     // Знак словаря в подписи слово не меняет: «✔️ Да, продолжить» тоже вне
@@ -369,7 +385,7 @@ function checkRules(
     if (retiredLabels.has(word) || /^\[[x ]\] /.test(button.text)) {
       found.push(["vocabulary", `подпись «${button.text}» вне словаря`]);
     }
-    if (button.text === "Обновить" && entry.refresh !== true) {
+    if (button.text === refreshLabel && entry.refresh !== true) {
       found.push([
         "vocabulary",
         "«Обновить» — только у экрана, чьи данные меняются без человека",

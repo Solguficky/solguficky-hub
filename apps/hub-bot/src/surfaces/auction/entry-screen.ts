@@ -85,6 +85,7 @@ import {
   emptyDescription,
   marked,
   pictogram,
+  refreshLabel,
 } from "../../core/pictograms.js";
 import type {
   AuctionListPage,
@@ -1722,7 +1723,7 @@ function renderButton(
     case "root.predictions":
       return text(predictionButtonLabel);
     case "lot.refresh":
-      return text("Обновить");
+      return text(refreshLabel);
     case "lot.history":
       return text("Ставки");
     case "lot.back":

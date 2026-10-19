@@ -9,6 +9,7 @@ import {
 } from "../../../../testkit/harness.js";
 import {
   type AccessRight,
+  type AuctionStageView,
   encodeAuctionCallback,
   type FavoritesPort,
   type LotView,
@@ -149,6 +150,8 @@ function fakeAuction(
     // Имя в аукционе ещё не выбрано: регистрация ждёт выбора имени, а
     // псевдоним — этот отказ, если он задан.
     nameless?: { aliasRefusal?: "alias-taken" };
+    // Идущий аукцион сообщества (PER-595, PER-669); по умолчанию — нет его.
+    current?: () => MeetupAuctionResult | Promise<MeetupAuctionResult>;
   } = {},
 ) {
   const shownLot = options.lot ?? lot;
@@ -201,7 +204,7 @@ function fakeAuction(
       auctions.set(id, auctionId);
       return { kind: "enabled", auctionId, alreadyExisted };
     },
-    currentAuction: async () => ({ kind: "ok" as const }),
+    currentAuction: async () => options.current?.() ?? { kind: "ok" },
     screenPorts(): AuctionScreenPorts {
       return {
         auction: {
@@ -388,7 +391,7 @@ describe("meetup card extensions entry", () => {
     expect(labels(card)).toContainEqual(["📎 Материалы (2)", "🧩 Расширения"]);
     expect(data(card, "🧩 Расширения")).toBe(extensionsData);
     expect(JSON.stringify(labels(card))).not.toContain("Лоты");
-    expect(JSON.stringify(card)).not.toContain("Включить аукцион");
+    expect(JSON.stringify(card)).not.toContain("🛠 Включить аукцион");
     // Кнопка без состояния, а состояние аукциона — строка текста (PER-594):
     // карточка читает аукцион один раз.
     expect(card.rich_message?.html ?? card.text).toContain(
@@ -516,8 +519,8 @@ describe("meetup extensions menu", () => {
     await bot.handleUpdate(press(extensionsData));
 
     const menu = lastScreen(calls);
-    expect(labels(menu)).toEqual([["Включить аукцион"], ["‹ Сходка"]]);
-    expect(data(menu, "Включить аукцион")).toBe(
+    expect(labels(menu)).toEqual([["🛠 Включить аукцион"], ["‹ Сходка"]]);
+    expect(data(menu, "🛠 Включить аукцион")).toBe(
       `v1:manage:auction:${meetupToken}`,
     );
   });
@@ -543,7 +546,7 @@ describe("meetup extensions menu", () => {
 
     const menu = lastScreen(calls);
     expect(menu.text).toContain("У этой сходки пока нет расширений.");
-    expect(JSON.stringify(menu)).not.toContain("Включить аукцион");
+    expect(JSON.stringify(menu)).not.toContain("🛠 Включить аукцион");
   });
 
   it("names an Auction outage with a retry instead of guessing the auction", async () => {
@@ -577,11 +580,11 @@ describe("enabling the auction", () => {
     expect(outcome.text).toContain("<b>Аукцион включён</b>");
     // Первый шаг после включения — лот (прогон 12.10, №16).
     expect(labels(outcome)).toEqual([
-      ["Добавить лот"],
+      ["🛠 Добавить лот"],
       ["🔨 Аукцион"],
       ["‹ Расширения"],
     ]);
-    expect(data(outcome, "Добавить лот")).toMatch(/^v1:lot:new:[\w-]+$/);
+    expect(data(outcome, "🛠 Добавить лот")).toMatch(/^v1:lot:new:[\w-]+$/);
     expect(data(outcome, "🔨 Аукцион")).toBe(rootData);
     expect(data(outcome, "‹ Расширения")).toBe(extensionsData);
     expect(records.at(-1)?.fields).toMatchObject({
@@ -684,12 +687,12 @@ describe("auction root and the way back", () => {
     await bot.handleUpdate(press(rootData));
     expect(labels(lastScreen(calls))).toEqual([
       ["🔨 Лоты"],
-      ["Пульт"],
       ["Правила и FAQ"],
+      ["🛠 Пульт"],
       ["‹ Сходки"],
     ]);
     await bot.handleUpdate(press(feedData));
-    expect(labels(lastScreen(calls))[0]).toEqual(["Добавить лот"]);
+    expect(labels(lastScreen(calls))[0]).toEqual(["🛠 Добавить лот"]);
   });
 
   it("returns from the root to the upcoming list when the process no longer knows the meetup", async () => {
@@ -1144,18 +1147,19 @@ describe("bid leaf in the hub", () => {
     const { bot, calls } = await setup();
     await bot.handleUpdate(press(lotData));
     const card = lastScreen(calls);
-    // Своя сумма с автоставкой — парой, «Обновить» и «Ставки» — рядами (PER-594).
+    // Своя сумма с автоставкой — парой (PER-594), «Ставки» — рядом, «Обновить»
+    // — в ряду листания (PER-669).
     expect(labels(card).slice(0, 4)).toEqual([
       [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
-      ["Обновить"],
       ["Ставки"],
+      ["🔄 Обновить"],
     ]);
   });
 
   // Карточка участника в онлайн-торгах с автоставкой и избранным — пять рядов
-  // (PER-594): ставка по шагу, своя сумма с автоставкой, «Обновить» со
-  // «Ставками», избранное и возврат.
+  // (PER-594, PER-669): ставка по шагу, своя сумма с автоставкой, «Ставки» с
+  // избранным, листание с «Обновить» и возврат.
   it("fits the card of a participant with limits and favorites into five rows", async () => {
     const auction = fakeAuction({ existing: true, lot: trading });
     const { bot, calls } = harness("member", auction, {
@@ -1172,8 +1176,8 @@ describe("bid leaf in the hub", () => {
     expect(labels(lastScreen(calls))).toEqual([
       [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
-      ["Обновить", "Добавить в избранное"],
-      ["Ставки"],
+      ["Ставки", "Добавить в избранное"],
+      ["🔄 Обновить"],
       ["‹ Лоты"],
     ]);
   });
@@ -1783,5 +1787,177 @@ describe("final lot card in the hub", () => {
     watch.emit(live(2, 1400));
     await flush();
     expect(liveEdits(calls)).toHaveLength(before);
+  });
+});
+
+// «События» (PER-669; решение владельца по отзыву тестовой группы 19 октября
+// 2026 года): идущий аукцион — событие в меню, вход в него из «Событий»
+// возвращает туда же через всё дерево.
+describe("events of the hub", () => {
+  const going = (stage: AuctionStageView) => (): MeetupAuctionResult => ({
+    kind: "ok",
+    auctionId,
+    auction: {
+      auctionId,
+      stage,
+      opensAt: "2026-10-12T09:00:00Z",
+      closesAt: "2026-10-18T14:00:00Z",
+      final: true,
+    },
+  });
+  const trading = going("prebidding");
+  const menuData = "v1:nav:start";
+  const eventsData = "v1:nav:events";
+
+  function command(text: string): Update {
+    return {
+      update_id: 4,
+      message: {
+        message_id: 10,
+        date: 0,
+        chat: { id: 42, type: "private", first_name: "tester" },
+        from: { id: 42, is_bot: false, first_name: "tester" },
+        text,
+        entities: [{ type: "bot_command", offset: 0, length: text.length }],
+      },
+    } as never;
+  }
+
+  it("shows a going auction in the menu and reaches its root in two presses", async () => {
+    const auction = fakeAuction({ existing: true, current: trading });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(menuData));
+    const menu = lastScreen(calls);
+    expect(labels(menu)).toEqual([
+      ["Сходки", "Ближайшая сходка"],
+      ["События"],
+      ["Настройки", "Помощь"],
+    ]);
+    expect(menu.text).toContain("Идут события:");
+    expect(menu.text).toContain("🔨 Аукцион: идут онлайн-торги до");
+
+    await bot.handleUpdate(press(eventsData));
+    const events = lastScreen(calls);
+    expect(labels(events)).toEqual([["🔨 Аукцион"], ["‹ Меню"]]);
+    expect(data(events, "🔨 Аукцион")).toBe(
+      rootData.replace("v1:auc:", "v1:aue:"),
+    );
+
+    await bot.handleUpdate(press(data(events, "🔨 Аукцион") ?? ""));
+    const root = lastScreen(calls);
+    expect(labels(root).at(-1)).toEqual(["‹ События"]);
+    expect(data(root, "‹ События")).toBe(eventsData);
+    // Кнопки дерева несут вход: лента возвращает в корень, а корень — в
+    // «События».
+    const lots = data(root, "🔨 Лоты") ?? "";
+    expect(lots.startsWith("v1:aue:")).toBe(true);
+    await bot.handleUpdate(press(lots));
+    const feed = lastScreen(calls);
+    expect(data(feed, "‹ Аукцион")).toBe(
+      rootData.replace("v1:auc:", "v1:aue:"),
+    );
+    const card =
+      feed.reply_markup?.inline_keyboard
+        .flat()
+        .find((button) => button.callback_data?.includes(":lot:"))
+        ?.callback_data ?? "";
+    expect(card.startsWith("v1:aue:")).toBe(true);
+    await bot.handleUpdate(press(card));
+    expect(
+      (data(lastScreen(calls), "‹ Лоты") ?? "").startsWith("v1:aue:"),
+    ).toBe(true);
+  });
+
+  it("returns from the rules to the root opened from the events", async () => {
+    const auction = fakeAuction({ existing: true, current: trading });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(rootData.replace("v1:auc:", "v1:aue:")));
+    const faq = data(lastScreen(calls), "Правила и FAQ") ?? "";
+    expect(faq.endsWith(":e")).toBe(true);
+    await bot.handleUpdate(press(faq));
+    expect(data(lastScreen(calls), "‹ Аукцион")).toBe(
+      rootData.replace("v1:auc:", "v1:aue:"),
+    );
+  });
+
+  // Меню — горячий путь: медленный Auction его не держит дольше срока.
+  it("opens the menu without the events when Auction is slow", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      current: () => new Promise<MeetupAuctionResult>(() => {}),
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(menuData));
+    expect(labels(lastScreen(calls))).toEqual([
+      ["Сходки", "Ближайшая сходка"],
+      ["Настройки", "Помощь"],
+    ]);
+  });
+
+  it("keeps the meetup way back for the root opened from the meetup", async () => {
+    const auction = fakeAuction({ existing: true, current: trading });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+    const root = lastScreen(calls);
+    expect(labels(root).at(-1)).toEqual(["‹ Расширения"]);
+    expect((data(root, "🔨 Лоты") ?? "").startsWith("v1:auc:")).toBe(true);
+  });
+
+  it("hides the events from the menu while nothing goes and keeps /events with an empty state", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      current: going("scheduled"),
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(menuData));
+    const menu = lastScreen(calls);
+    expect(labels(menu)).toEqual([
+      ["Сходки", "Ближайшая сходка"],
+      ["Настройки", "Помощь"],
+    ]);
+    expect(menu.text).not.toContain("Идут события");
+
+    await bot.handleUpdate(command("/events"));
+    const events = lastScreen(calls);
+    expect(events.text).toContain(
+      "Сейчас не идут события, привязанные к сходкам.",
+    );
+    expect(labels(events)).toEqual([["‹ Меню"]]);
+  });
+
+  it("opens the menu without the events when Auction does not answer", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      current: () => ({ kind: "unavailable", cause: new Error("down") }),
+    });
+    const { bot, calls } = harness("admin", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(menuData));
+    expect(labels(lastScreen(calls))).toEqual([
+      ["Сходки", "Ближайшая сходка"],
+      ["Настройки", "Помощь"],
+      ["🛠 Управление"],
+    ]);
+
+    await bot.handleUpdate(press(eventsData));
+    expect(labels(lastScreen(calls))).toContainEqual(["Повторить"]);
   });
 });

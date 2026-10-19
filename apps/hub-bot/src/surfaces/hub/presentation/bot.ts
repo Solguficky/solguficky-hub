@@ -257,11 +257,18 @@ import {
   firstCommunityPlace,
 } from "./screens/community.js";
 import {
+  eventsScreen,
+  type HubEvent,
+  isAuctionEvent,
+} from "./screens/events.js";
+import {
   auctionEnabledScreen,
   extensionsScreen,
   settingsExtensionsScreen,
 } from "./screens/extensions.js";
 import {
+  type AuctionEntry,
+  auctionEntryOf,
   cancelLabel,
   confirmKeyboard,
   escapeHtml,
@@ -275,6 +282,7 @@ import {
   screenText,
   toCard,
   toCommunity,
+  toEvents,
   toExtensions,
   toManage,
   toMaterials,
@@ -1904,7 +1912,7 @@ async function handleMessage(
     } else {
       // Вход без ссылки на сходку открывает корневое меню: из него видно
       // всё, что доступно человеку (PER-592).
-      outcome = await openMenu(ctx, person, useCase);
+      outcome = await openMenu(ctx, runtime, person, useCase);
     }
   } catch (cause) {
     if (isScreenDeliveryFailure(cause)) {
@@ -1947,6 +1955,8 @@ async function handleCallback(
       // перед parser аукционного дерева и открываем карточку новым сообщением.
       const traced = data.startsWith("v1:t:auc:");
       const auctionData = traced ? `v1:${data.slice("v1:t:".length)}` : data;
+      // Вход из «Событий» (PER-669) — домен `aue`; дерево разбирает `auc`.
+      const treeData = auctionEntryOf(auctionData).data;
       if (traced) ctx.fresh = true;
       useCase = "view_auction";
       const pressedId = ctx.callbackQuery?.message?.message_id;
@@ -1954,14 +1964,14 @@ async function handleCallback(
       // новым сообщением; не дал Telegram удалить — правится на месте.
       // «Как это работает» под вопросом лимита задаёт его заново тем же
       // путём: нажатый вопрос удаляется, новый приходит следом (PER-517).
-      if (isAuctionQuestion(data) || replacesAuctionQuestion(data)) {
+      if (isAuctionQuestion(treeData) || replacesAuctionQuestion(treeData)) {
         if (pressedId !== undefined) {
           questions.delete(questionKey(ctx.chat?.id, pressedId));
         }
         const deleted = await deletePressed(ctx);
         // Вопрос под «Как это работает», который Telegram удалить не дал,
         // остаётся живым: клавиатура с шагом в «Отмене» с него не снимается.
-        ctx.pressedGone = deleted || replacesAuctionQuestion(data);
+        ctx.pressedGone = deleted || replacesAuctionQuestion(treeData);
         ctx.fresh = ctx.pressedGone;
       }
       await dropOpenQuestions(ctx, questions, pressedId);
@@ -2031,7 +2041,12 @@ async function handleCallback(
     }
     if (action.kind === "auction-faq") {
       useCase = "view_auction";
-      outcome = await handleAuctionFaqCallback(ctx, runtime, action.auction);
+      outcome = await handleAuctionFaqCallback(
+        ctx,
+        runtime,
+        action.auction,
+        action.viaEvents === true,
+      );
       return;
     }
     useCase = callbackUseCase(action.kind);
@@ -3067,9 +3082,13 @@ async function handleCallback(
       outcome = await openNextMeetup(ctx, runtime, person, useCase);
       return;
     }
+    if (action.kind === "events") {
+      outcome = await openEvents(ctx, runtime, person, useCase);
+      return;
+    }
     // «‹ Меню» и прежние кнопки «Меню» открывают корневое меню (PER-592).
     if (action.kind === "home") {
-      outcome = await openMenu(ctx, person, useCase);
+      outcome = await openMenu(ctx, runtime, person, useCase);
       return;
     }
     if (action.kind === "hub" || action.kind === "outdated") {
@@ -5300,6 +5319,7 @@ const commandUseCase: Record<SectionCommand, ProductUseCase> = {
   menu: "find_meetup",
   meetups: "find_meetup",
   next: "view_meetup",
+  events: "view_auction",
   settings: "manage_notifications",
   manage: "create_meetup",
   help: "find_meetup",
@@ -5311,6 +5331,7 @@ const commandRetry: Record<SectionCommand, string> = {
   menu: toMenu.data,
   meetups: "v1:nav:hub",
   next: "v1:nav:next",
+  events: toEvents.data,
   settings: "v1:nav:settings",
   manage: "v1:manage:menu",
   help: "v1:nav:help",
@@ -5346,11 +5367,13 @@ async function handleSectionCommand(
   const person = identity.person;
   switch (command) {
     case "menu":
-      return openMenu(ctx, person, useCase);
+      return openMenu(ctx, runtime, person, useCase);
     case "meetups":
       return openNavScreen(ctx, runtime, person, "hub", useCase);
     case "next":
       return openNextMeetup(ctx, runtime, person, useCase);
+    case "events":
+      return openEvents(ctx, runtime, person, useCase);
     case "settings":
       await showScreen(ctx, settingsScreen());
       return {
@@ -5392,13 +5415,110 @@ async function handleSectionCommand(
 // вход без ссылки на сходку, «‹ Меню» с разделов и прежние кнопки «Меню».
 async function openMenu(
   ctx: UpdateContext,
+  runtime: BotRuntime,
   person: Person,
   useCase: ProductUseCase,
 ): Promise<BoundaryOutcome> {
-  await showScreen(ctx, menuScreen(person));
+  // Меню — горячий путь `/start` и «‹ Меню»: медленный Auction его не держит,
+  // а события после срока пропадают, как при отказе (PER-669).
+  const events = await within(
+    currentEvents(ctx, runtime, person, useCase),
+    menuEventsBudgetMs,
+    { kind: "unavailable" as const },
+  );
+  await showScreen(
+    ctx,
+    menuScreen(person, {
+      events: events.kind === "ok" ? events.events : [],
+      timeZone: runtime.communityTimeZone ?? "UTC",
+      today: communityToday(ctx),
+    }),
+  );
   return {
     level: "info",
-    message: "menu sent",
+    message:
+      events.kind === "ok" ? "menu sent" : "menu sent; events unavailable",
+    result: "ok",
+    use_case: useCase,
+  };
+}
+
+// Идущие события расширений (PER-669): сегодня — аукцион сообщества в онлайн-
+// торгах, итогах, перерыве или финале. Торги открыты не больше чем у одного
+// аукциона (PER-603), поэтому событие аукциона — одно. Отказ Auction меню не
+// роняет: кнопка и строка событий пропадают, а запись границы называет
+// деградацию.
+async function currentEvents(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  useCase: ProductUseCase,
+): Promise<{ kind: "ok"; events: HubEvent[] } | { kind: "unavailable" }> {
+  if (runtime.auction === undefined) return { kind: "ok", events: [] };
+  const current = await runtime.auction.currentAuction(
+    person,
+    rpcCall(ctx, useCase),
+  );
+  if (current.kind !== "ok") return { kind: "unavailable" };
+  const { auctionId, auction } = current;
+  return auctionId === undefined ||
+    auction === undefined ||
+    !isAuctionEvent(auction)
+    ? { kind: "ok", events: [] }
+    : { kind: "ok", events: [{ kind: "auction", auctionId, auction }] };
+}
+
+const menuEventsBudgetMs = 1_500;
+
+// Ответ работы или запасной, если работа не успела к сроку или отказала.
+async function within<T>(
+  work: Promise<T>,
+  ms: number,
+  fallback: T,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  try {
+    return await Promise.race([work.catch(() => fallback), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// «События» (PER-669) — раздел под меню. Отказ Auction — кадр сбоя с
+// «Повторить»: раздел только из событий и состоит.
+async function openEvents(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  const events = await currentEvents(ctx, runtime, person, useCase);
+  if (events.kind === "unavailable") {
+    await showRefusal(ctx, unavailableText, exitRetry(toEvents.data));
+    return {
+      level: "error",
+      message: "events rejected",
+      result: "error",
+      use_case: useCase,
+      identity_id: person.identityId,
+      error_category: "dependency_unavailable",
+      error: "auction_unavailable",
+    };
+  }
+  await showScreen(
+    ctx,
+    eventsScreen(
+      events.events,
+      runtime.communityTimeZone ?? "UTC",
+      communityToday(ctx),
+    ),
+  );
+  return {
+    level: "info",
+    message: "events sent",
     result: "ok",
     use_case: useCase,
   };
@@ -5470,7 +5590,7 @@ async function applyForHub(
       true,
     );
   }
-  return openMenu(ctx, entry.person, useCase);
+  return openMenu(ctx, runtime, entry.person, useCase);
 }
 
 /**
@@ -7189,9 +7309,10 @@ async function handleAuctionFaqCallback(
   ctx: UpdateContext,
   runtime: BotRuntime,
   auction: string,
+  fromEvents: boolean,
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "view_auction";
-  const data = auctionFaqData(auction);
+  const data = auctionFaqData(auction, fromEvents);
   const identity = await resolvePerson(ctx, runtime, useCase, data);
   if (identity.kind === "failed") return identity.outcome;
   const denied = await denyHubAccessIfNeeded(
@@ -7203,7 +7324,10 @@ async function handleAuctionFaqCallback(
   );
   if (denied !== undefined) return denied;
 
-  await showScreen(ctx, auctionFaqScreen(runtime.faq ?? defaultFaq, auction));
+  await showScreen(
+    ctx,
+    auctionFaqScreen(runtime.faq ?? defaultFaq, auction, fromEvents),
+  );
   return {
     level: "info",
     message: "auction FAQ screen sent",
@@ -7229,6 +7353,9 @@ async function handleAuctionCallback(
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "view_auction";
   const identity = await resolvePerson(ctx, runtime, useCase, data);
+  // Вход из «Событий» (PER-669): дерево разбирает кнопку без отметки, а
+  // готовый экран её получает обратно — повтор после сбоя идёт исходной.
+  const { data: treeData, entry } = auctionEntryOf(data);
   if (identity.kind === "failed") return identity.outcome;
   const denied = await denyHubAccessIfNeeded(
     ctx,
@@ -7256,10 +7383,10 @@ async function handleAuctionCallback(
   const { answer } = delivery;
   const input: AuctionUpdate["input"] =
     answer === undefined
-      ? { kind: "callback", data }
+      ? { kind: "callback", data: treeData }
       : {
           kind: "reply",
-          data,
+          data: treeData,
           ...(answer.text === undefined ? {} : { text: answer.text }),
         };
   let result: AuctionResult;
@@ -7293,7 +7420,7 @@ async function handleAuctionCallback(
     // NOT_FOUND у `GetLot`, им начинаются и карточка, и хронология. Лента на
     // аукцион, которого нет, отвечает пустой страницей, так что её отказ —
     // всегда сбой.
-    const parsed = parseAuctionCallback(data);
+    const parsed = parseAuctionCallback(treeData);
     const notFound =
       cause instanceof ConnectError &&
       cause.code === Code.NotFound &&
@@ -7370,7 +7497,8 @@ async function handleAuctionCallback(
       : await auctionAcceptsLots(ctx, runtime, person, feedAuctionId);
   const view: AuctionView = {
     body: result.body,
-    rootParent: rootParentOf(ctx, result.body),
+    rootParent: rootParentOf(ctx, result.body, entry),
+    entry,
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: communityToday(ctx),
@@ -7436,12 +7564,19 @@ async function handleAuctionCallback(
   };
 }
 
-// Родитель корня аукциона: меню «Расширения» его сходки, если бот её видел,
-// иначе «Сходки» (ADR-030, дополнение 2026-10-04; PER-605). Остальные экраны
+// Родитель корня аукциона: «События», если аукцион открыт из них (PER-669),
+// иначе меню «Расширения» его сходки, если бот её видел, иначе «Сходки»
+// (ADR-030, дополнение 2026-10-04; PER-605). Остальные экраны
 // аукциона возвращают в корень сами: ему хватает идентификатора аукциона.
-function rootParentOf(ctx: UpdateContext, body: AuctionScreenBody): Parent {
+function rootParentOf(
+  ctx: UpdateContext,
+  body: AuctionScreenBody,
+  entry: AuctionEntry,
+): Parent {
   for (const block of body.blocks) {
     if (block.kind !== "root") continue;
+    // Открыт из «Событий» — туда и возвращает (PER-669).
+    if (entry === "events") return toEvents;
     const meetupId = ctx.auctionParents?.meetupOf(block.auctionId);
     return meetupId === undefined
       ? toMeetups
@@ -8981,7 +9116,11 @@ function auctionQuestionOf(replied: unknown): string | undefined {
   return parsed.data.reply_markup.inline_keyboard
     .flat()
     .map((button) => button.callback_data)
-    .find((data): data is string => isAuctionQuestion(data));
+    .find(
+      (data): data is string =>
+        typeof data === "string" &&
+        isAuctionQuestion(auctionEntryOf(data).data),
+    );
 }
 
 /** Момент публикации выбирают в режимах `p` и `d`; остальные — дата сходки. */
@@ -9109,6 +9248,7 @@ function callbackUseCase(
     | "meetup-extensions"
     | "help"
     | "next"
+    | "events"
     | "manage-group"
     | "hub"
     | "archive"
@@ -9341,6 +9481,8 @@ function callbackUseCase(
       return "find_meetup";
     case "next":
       return "view_meetup";
+    case "events":
+      return "view_auction";
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;

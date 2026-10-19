@@ -11,29 +11,31 @@ import type { LotView, ResolvedIdentity } from "./ports.js";
 // Правила тела экрана (дизайн-код, «Аукцион: тело, шлюз, оболочка»): тело,
 // которое шлюз отдаёт обоим ботам, держит предел `callback_data`, по кнопке в
 // ряду — пара только у листания, у подтверждения `[Да, …] [Нет]` (решение
-// владельца 10 октября 2026 года) и у групп карточки лота (PER-594) — и место
-// под ряд навигации оболочки.
+// владельца 10 октября 2026 года) и у групп карточки лота (PER-594), три —
+// только у листания лотов с «Обновить» посередине (PER-669), — и место под ряд
+// навигации оболочки.
 // Подписи, заголовок и навигацию проверяет линтер экрана бота, который тело
 // показал.
 
 const rules: BodyRules = {
   pair: (row) =>
-    row.every(({ action }) =>
-      [
-        "feed.prev",
-        "feed.next",
-        "history.prev",
-        "history.next",
-        "lot.prev",
-        "lot.next",
-      ].includes(action),
-    ) ||
+    (row.length === 2 &&
+      row.every(({ action }) =>
+        ["feed.prev", "feed.next", "history.prev", "history.next"].includes(
+          action,
+        ),
+      )) ||
     [
       "confirm.yes|confirm.no",
-      // Пары карточки лота складываются по смыслу (PER-594, PER-644).
+      // Пары карточки лота складываются по смыслу (PER-594, PER-644,
+      // PER-669), листание лотов — с «Обновить» посередине.
       "lot.bid-custom|lot.proxy",
-      "lot.refresh|lot.follow",
-      "lot.refresh|lot.unfollow",
+      "lot.history|lot.follow",
+      "lot.history|lot.unfollow",
+      "lot.prev|lot.refresh|lot.next",
+      "lot.prev|lot.refresh",
+      "lot.refresh|lot.next",
+      "lot.prev|lot.next",
     ].includes(row.map(({ action }) => action).join("|")),
   // Общий потолок двенадцать рядов. Оболочка бота аукциона сегодня ставит
   // под телом два ряда — FAQ и меню, — и пока исключение `rows` ленты в её

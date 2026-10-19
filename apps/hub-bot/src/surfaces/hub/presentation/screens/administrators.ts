@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { refreshLabel } from "../../../../core/pictograms.js";
 import type {
   Administrator,
   AppointAdministratorResult,
@@ -112,7 +113,7 @@ export function administratorsScreen(
     );
   }
   nextRow(keyboard).text("Назначить", appointData);
-  nextRow(keyboard).text("Обновить", toAdministrators.data);
+  nextRow(keyboard).text(refreshLabel, toAdministrators.data);
   return {
     id: "administrators",
     text: screenText(

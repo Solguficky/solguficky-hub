@@ -2757,8 +2757,8 @@ describe("favorite lots", () => {
     expect(card.keyboard.map((row) => row.map((b) => b.text))).toEqual([
       [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
-      ["Обновить", "Добавить в избранное"],
-      ["Ставки"],
+      ["Ставки", "Добавить в избранное"],
+      ["🔄 Обновить"],
       ["‹ Лоты"],
     ]);
     expect(card.text).toContain("Описание пока не добавлено.");

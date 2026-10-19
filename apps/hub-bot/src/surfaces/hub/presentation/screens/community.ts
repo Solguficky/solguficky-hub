@@ -1,4 +1,5 @@
 import { InlineKeyboard } from "grammy";
+import { refreshLabel } from "../../../../core/pictograms.js";
 import { applicationCode } from "../../application/hub-access.js";
 import type {
   CommunityCircle,
@@ -31,8 +32,6 @@ import {
 } from "./kit.js";
 import { canGrantAdmins } from "./menu.js";
 import type { ShownScreen } from "./show.js";
-
-const refreshLabel = "Обновить";
 
 /** Какой из экранов состава показать. */
 export type CommunityView =

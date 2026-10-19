@@ -413,11 +413,12 @@ const lot = (image: boolean): AuctionScreenBody => ({
       { action: "lot.bid-custom", callbackData: "v1:auc:ab:lot-1:1" },
       { action: "lot.proxy", callbackData: "v1:auc:ax:lot-1:1" },
     ],
-    [{ action: "lot.refresh", callbackData: "v1:auc:lot:lot-1:1" }],
     [{ action: "lot.history", callbackData: "v1:auc:hist:lot-1:1:999" }],
-    // Листание лотов (PER-644): соседи в порядке ленты.
+    // Листание лотов (PER-644): соседи в порядке ленты, «Обновить» посередине
+    // (PER-669).
     [
       { action: "lot.prev", callbackData: "v1:auc:lot:lot-0:1" },
+      { action: "lot.refresh", callbackData: "v1:auc:lot:lot-1:1" },
       { action: "lot.next", callbackData: "v1:auc:lot:lot-2:1" },
     ],
     [{ action: "lot.back", callbackData: "v1:auc:feed:auc-1:1" }],
@@ -425,8 +426,8 @@ const lot = (image: boolean): AuctionScreenBody => ({
 });
 
 // Карточка с кнопкой избранного (PER-495): ставка по шагу, своя сумма с
-// автоставкой, «Обновить» с избранным, «Ставки», листание и навигация —
-// шесть рядов, предел карточки (PER-644).
+// автоставкой, «Ставки» с избранным, листание с «Обновить» и навигация —
+// пять рядов, предел карточки (PER-669).
 const withFollow = (following: boolean): AuctionScreenBody => {
   const body = lot(false);
   return {
@@ -434,7 +435,7 @@ const withFollow = (following: boolean): AuctionScreenBody => {
       block.kind === "lot" ? { ...block, following } : block,
     ),
     keyboard: body.keyboard.map((row) =>
-      row.some((button) => button.action === "lot.refresh")
+      row.some((button) => button.action === "lot.history")
         ? [
             ...row,
             following

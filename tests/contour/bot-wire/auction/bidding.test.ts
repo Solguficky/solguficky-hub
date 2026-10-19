@@ -119,10 +119,10 @@ describe("auction through both bots", () => {
     await admin.presses("🧩 Расширения");
     // Первый вызов холодного Auction дольше бюджета действия: меню называет
     // сбой с «Повторить», а не прячет аукцион.
-    await eventually(admin, "Включить аукцион", () =>
+    await eventually(admin, "🛠 Включить аукцион", () =>
       admin.presses("Повторить"),
     );
-    await admin.presses("Включить аукцион");
+    await admin.presses("🛠 Включить аукцион");
     // Повтор включения отвечает тем же аукционом: ключ выводит Auction.
     // Вход в раздел аукциона несёт его знак (PER-644).
     await eventually(admin, "🔨 Аукцион", () => admin.presses("Повторить"));
@@ -137,7 +137,7 @@ describe("auction through both bots", () => {
       }
     });
     await admin.presses("🔨 Лоты");
-    await admin.presses("Добавить лот");
+    await admin.presses("🛠 Добавить лот");
     await admin.says("Кружка");
     // Цепочка нового лота (PER-618): после названия — цена, способ шага, шаг
     // и фото по порядку. Чтение лота под ценой ждёт отстающую read model.
@@ -146,7 +146,7 @@ describe("auction through both bots", () => {
     await admin.says("100");
     await admin.presses("Пропустить");
     expect(plain(admin.sees())).toContain("Лот готов");
-    await admin.presses("Изменить лот");
+    await admin.presses("🛠 Изменить лот");
     // Лот, который форма только что завела, чтения ещё могут не знать: кадр
     // «Лот не найден» несёт «Повторить».
     await eventually(admin, "Название", () => admin.presses("Повторить"));
@@ -162,7 +162,7 @@ describe("auction through both bots", () => {
     const to = communityStamp(new Date(Date.now() + 2 * day));
     await admin.presses("‹ Лоты");
     await admin.presses("‹ Аукцион");
-    await admin.presses("Пульт");
+    await admin.presses("🛠 Пульт");
     await admin.presses("Сроки недели");
     await admin.says(`${from} — ${to}`);
     await admin.presses("‹ Пульт");
@@ -190,7 +190,7 @@ describe("auction through both bots", () => {
     await member.presses(lotRow(member, lotTitle) ?? lotTitle);
     // Аукцион открывает лоты реестра сам, вслед за командой открытия недели.
     await eventually(member, "По шагу (1 100 ₽)", () =>
-      member.presses("Обновить"),
+      member.presses("🔄 Обновить"),
     );
     // Первая ставка: имя спрашивается до подтверждения, и подтверждение одно
     // (PER-595).
@@ -265,7 +265,7 @@ describe("auction through both bots", () => {
     // названию, а цену показывает карточка.
     await guest.presses(lotRow(guest, lotTitle) ?? lotTitle);
     await eventually(guest, "По шагу (1 200 ₽)", () =>
-      guest.presses("Обновить"),
+      guest.presses("🔄 Обновить"),
     );
     await pressesAmount(guest, "По шагу (1 200 ₽)");
     await guest.presses("Взять псевдоним");

@@ -12,7 +12,11 @@ import {
   AuctionService,
   type ConfigInvalid,
 } from "../../../../gen/auction/v1/auction_service_pb.js";
-import type { AuctionSummaryView, Money } from "../../../auction-ui/index.js";
+import type {
+  AuctionStageView,
+  AuctionSummaryView,
+  Money,
+} from "../../../auction-ui/index.js";
 import { auctionSummaryViewOf } from "../../../core/auction/auction.js";
 import {
   bidOutcomeOf,
@@ -130,6 +134,11 @@ const currentAuctionPageLimit = 20;
 // Ближайший по началу онлайн-торгов; без онлайн-фазы — последним.
 function openingOf(opensAt: string | undefined): number {
   return opensAt === undefined ? Number.POSITIVE_INFINITY : Date.parse(opensAt);
+}
+
+// Запланированный аукцион ещё не идёт: среди активных он — после открытых.
+function pendingOf(stage: AuctionStageView): number {
+  return stage === "scheduled" || stage === "draft" ? 1 : 0;
 }
 
 export type AuctionClient = MeetupAuctions &
@@ -281,12 +290,18 @@ export function createAuctionAdapter(
     async currentAuction(person, meta) {
       try {
         const auctions = await listActive(person, meta);
+        // Открытый аукцион идёт раньше запланированного (PER-669): аукцион,
+        // которому слот торгов не дал открыться, не заслоняет идущий финал.
         const [current] = auctions.sort(
-          (a, b) => openingOf(a.opensAt) - openingOf(b.opensAt),
+          (a, b) =>
+            pendingOf(a.stage) - pendingOf(b.stage) ||
+            openingOf(a.opensAt) - openingOf(b.opensAt),
         );
+        // Снимок едет вместе с идентификатором: по стадии меню решает, идёт
+        // ли аукцион как событие (PER-669).
         return current === undefined
           ? { kind: "ok" }
-          : { kind: "ok", auctionId: current.auctionId };
+          : { kind: "ok", auctionId: current.auctionId, auction: current };
       } catch (cause) {
         return toFailure(cause);
       }

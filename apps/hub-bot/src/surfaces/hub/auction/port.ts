@@ -510,8 +510,8 @@ export type AuctionScreenPorts = {
 export type AuctionScreens = {
   screenPorts(meta?: RpcMetadata): AuctionScreenPorts;
   // Идущий аукцион — ближайший активный (PER-595): в нём человек выбирает имя
-  // из «Настроек». Торги открыты у одного аукциона (RFC-017); нет активного —
-  // `auctionId` нет.
+  // из «Настроек», а по его стадии меню показывает событие (PER-669). Торги
+  // открыты у одного аукциона (RFC-017); нет активного — `auctionId` нет.
   currentAuction(
     person: Person,
     meta?: RpcMetadata,

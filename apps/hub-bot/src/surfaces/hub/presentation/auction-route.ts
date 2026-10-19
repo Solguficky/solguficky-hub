@@ -9,6 +9,7 @@ import {
 } from "../../../auction-ui/index.js";
 import type { Person } from "../application/types.js";
 import { viewerOf } from "../auction/port.js";
+import { eventsEntryDomain } from "./screens/kit.js";
 
 // Торговое нажатие в боте хаба (ADR-044, «Доступ как обязательный шлюз»):
 // личность уже разрешена краем, один раз на update, и уезжает в шлюз пакета
@@ -31,14 +32,16 @@ export function hubTradeCallback(input: {
 }
 
 /**
- * Кнопка принадлежит аукциону: второй сегмент — домен `auc`, даже если сама
- * кнопка нечитаема. Всё остальное, включая кнопки хаба без версии, разбирает
+ * Кнопка принадлежит аукциону: второй сегмент — домен `auc` или `aue` —
+ * то же дерево со входом из «Событий» (PER-669), — даже если сама кнопка
+ * нечитаема. Всё остальное, включая кнопки хаба без версии, разбирает
  * `parse-callback.ts`: пакет назвал бы их нечитаемыми, а не чужими.
  */
 export function isAuctionCallback(data: string): boolean {
   const segments = data.split(":");
   return (
     segments[1] === AUCTION_CALLBACK_DOMAIN ||
+    segments[1] === eventsEntryDomain ||
     (segments[1] === "t" && segments[2] === AUCTION_CALLBACK_DOMAIN)
   );
 }

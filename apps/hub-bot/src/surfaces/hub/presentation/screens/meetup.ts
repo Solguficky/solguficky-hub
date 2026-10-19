@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import type { AuctionSummaryView } from "../../../../auction-ui/index.js";
 import {
+  adminLabel,
   emptyDescription,
   extensionsLabel,
   marked,
@@ -446,12 +447,13 @@ const unsubscribedHint =
 
 // Кнопки карточки — входы в разделы сходки, и каждая несёт знак своего
 // раздела, тот же, что в тексте (решение владельца по прогону 14 октября 2026
-// года, PER-644). Возврат «‹ …» знака не несёт.
-const editLabel = marked(pictogram.edit, "Изменить");
-const statusLabel = marked(pictogram.status, "Статус");
+// года, PER-644). Действия управления несут один знак 🛠 (PER-669). Возврат
+// «‹ …» знака не несёт.
+const editLabel = adminLabel("Изменить");
+const statusLabel = adminLabel("Статус");
 const materialsLabel = (count: number) =>
   marked(pictogram.materials, `Материалы (${count})`);
-const broadcastLabel = marked(pictogram.broadcast, "Написать подписчикам");
+const broadcastLabel = adminLabel("Написать подписчикам");
 const subscribeLabel = marked(pictogram.on, "Подписаться на сходку");
 const unsubscribeLabel = marked(pictogram.off, "Отписаться");
 export const meetupNotificationsLabel = marked(

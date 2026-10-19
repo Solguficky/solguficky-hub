@@ -31,9 +31,11 @@ import type {
 } from "../../../../auction-ui/index.js";
 import { money, truncate } from "../../../../core/format.js";
 import {
+  adminLabel,
   emptyDescription,
   marked,
   pictogram,
+  refreshLabel,
 } from "../../../../core/pictograms.js";
 import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import type { ImageKey } from "../lot-photos.js";
@@ -74,10 +76,12 @@ import {
 import { stageWords } from "./auction-stage.js";
 import { toSettingsExtensions } from "./extensions.js";
 import {
+  type AuctionEntry,
   addLotLabel,
   bullet,
   buttonText,
   escapeHtml,
+  keyboardViaEvents,
   nextRow,
   type Parent,
   pagedTitle,
@@ -108,6 +112,11 @@ export type AuctionView = {
    * пульт возвращают в корень: ему хватает идентификатора аукциона.
    */
   rootParent: Parent;
+  /**
+   * Вход в дерево (PER-669): из «Событий» кнопки дерева на экране несут
+   * отметку входа, и корень возвращает туда. Нет поля — вход со сходки.
+   */
+  entry?: AuctionEntry;
   presentation: "rich" | "plain";
   timeZone: string;
   today: CommunityDay;
@@ -138,9 +147,10 @@ export type AuctionView = {
 
 // Входы в форму лота — ряды оболочки хаба, а не тела: у бота аукциона формы
 // нет, и тело у двух ботов остаётся одним.
-const editLotLabel = "Изменить лот";
+// Знак управления — 🛠 (PER-669): экраны аукциона видит и участник.
+const editLotLabel = adminLabel("Изменить лот");
 // Пульт аукциона (PER-320) — ряд оболочки хаба в корне аукциона.
-const consoleLabel = "Пульт";
+const consoleLabel = adminLabel("Пульт");
 const favoritesLabel = "Избранное";
 
 /**
@@ -171,6 +181,12 @@ const titleLimit = 256;
 const plainTextLimit = 4096;
 
 export function auctionScreen(view: AuctionView): AuctionShown {
+  const shown = auctionScreenOf(view);
+  if (view.entry === "events") keyboardViaEvents(shown.screen.keyboard);
+  return shown;
+}
+
+function auctionScreenOf(view: AuctionView): AuctionShown {
   // Лист ставки (PER-317): подтверждение, исход, вопрос и выбор имени — свои
   // экраны; отказ и непринятый ответ — тоже (PER-472).
   for (const block of view.body.blocks) {
@@ -392,17 +408,21 @@ function rootScreen(
   if (predictions !== undefined) {
     keyboard.text(predictionButtonLabel, predictions.callbackData).row();
   }
-  if (view.canManage === true) {
-    keyboard.text(consoleLabel, consoleViewData(token));
-  }
   if (raffle !== undefined) {
-    keyboard.text(raffleButtonLabel, raffle.callbackData);
+    keyboard.text(raffleButtonLabel, raffle.callbackData).row();
   }
-  nextRow(keyboard);
   if (favorites !== undefined) {
     keyboard.text(favoritesLabel, favorites.callbackData);
   }
-  keyboard.text("Правила и FAQ", auctionFaqData(token));
+  keyboard.text(
+    "Правила и FAQ",
+    auctionFaqData(token, view.entry === "events"),
+  );
+  // «🛠 Пульт» — своим рядом над возвратом (PER-669): действие управления не
+  // делит ряд с кнопками участника.
+  if (view.canManage === true) {
+    nextRow(keyboard).text(consoleLabel, consoleViewData(token));
+  }
   const moment = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);
   const online =
@@ -518,6 +538,10 @@ function lotScreen(
       return false;
     });
     if (content.length === 0) continue;
+    // «🛠 Изменить лот» — своим рядом над листанием (PER-669): действие
+    // управления не делит ряд с кнопками участника, а листание и возврат —
+    // последние ряды карточки.
+    if (content.some(isPagerButton)) editRow(keyboard, view, lot);
     nextRow(keyboard);
     for (const button of content) {
       keyboard.text(lotLabel(button), button.callbackData);
@@ -526,9 +550,7 @@ function lotScreen(
   if (back === undefined) {
     throw new Error("lot body without a way back to the feed");
   }
-  if (view.canManage === true && preview === undefined) {
-    nextRow(keyboard).text(editLotLabel, lotFormData(uuidToToken(lot.lotId)));
-  }
+  editRow(keyboard, view, lot);
   const title = truncate(lot.card?.title ?? untitled, titleLimit);
   // Пустое описание — та же заглушка, что у карточки сходки (дизайн-код,
   // «Карточка»; PER-594).
@@ -613,10 +635,34 @@ function plainLot(
   return join(truncate(description, description.length - overflow));
 }
 
+// Ряд листания карточки лота: соседи и «Обновить» между ними.
+function isPagerButton(button: AuctionButton): boolean {
+  return (
+    button.action === "lot.prev" ||
+    button.action === "lot.next" ||
+    button.action === "lot.refresh"
+  );
+}
+
+// Вход в форму лота ставится один раз: над листанием или, если его нет, над
+// возвратом. Повторный вызов ряд не добавляет.
+function editRow(
+  keyboard: InlineKeyboard,
+  view: AuctionView,
+  lot: Extract<AuctionBlock, { kind: "lot" }>,
+): void {
+  if (view.canManage !== true || view.preview !== undefined) return;
+  const placed = keyboard.inline_keyboard.some((row) =>
+    row.some((button) => button.text === editLotLabel),
+  );
+  if (placed) return;
+  nextRow(keyboard).text(editLotLabel, lotFormData(uuidToToken(lot.lotId)));
+}
+
 function lotLabel(button: AuctionButton): string {
   switch (button.action) {
     case "lot.refresh":
-      return "Обновить";
+      return refreshLabel;
     case "lot.history":
       return "Ставки";
     case "lot.bid-step":

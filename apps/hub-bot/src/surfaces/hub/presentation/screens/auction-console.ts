@@ -1,5 +1,6 @@
 import { InlineKeyboard } from "grammy";
 import type { LotStatusView } from "../../../../auction-ui/index.js";
+import { refreshLabel } from "../../../../core/pictograms.js";
 import {
   acceptsLots,
   activeLot,
@@ -415,7 +416,7 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
   } else {
     keyboard.text("Открыть следующий лот", consoleNextLotData(auction));
   }
-  nextRow(keyboard).text("Обновить", consoleViewData(auction));
+  nextRow(keyboard).text(refreshLabel, consoleViewData(auction));
   const trading = tradingLines(console);
   return {
     id: "auction-console",

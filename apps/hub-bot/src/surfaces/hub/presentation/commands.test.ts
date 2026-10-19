@@ -38,6 +38,7 @@ describe("bot command menu", () => {
         { command: "menu", description: "Меню" },
         { command: "meetups", description: "Сходки" },
         { command: "next", description: "Ближайшая сходка" },
+        { command: "events", description: "События" },
         { command: "settings", description: "Настройки" },
         { command: "help", description: "Помощь" },
       ],
@@ -74,6 +75,7 @@ describe("bot command menu", () => {
       "menu",
       "meetups",
       "next",
+      "events",
       "settings",
       "help",
     ]);
@@ -81,6 +83,7 @@ describe("bot command menu", () => {
       "menu",
       "meetups",
       "next",
+      "events",
       "settings",
       "manage",
       "help",

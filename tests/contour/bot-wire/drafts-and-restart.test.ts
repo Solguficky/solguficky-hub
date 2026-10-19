@@ -89,7 +89,7 @@ describe("висящие вопросы формы", () => {
     const meetupId = unusedMeetupId();
     await direct.createDraftAsAdmin(adminId, meetupId);
     await person.opensLink(meetupId);
-    await person.presses("✏️ Изменить");
+    await person.presses("🛠 Изменить");
     await person.presses("Место");
 
     wire.restart();

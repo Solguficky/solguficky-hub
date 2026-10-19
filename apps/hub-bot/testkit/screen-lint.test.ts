@@ -281,7 +281,18 @@ describe("inspectCall", () => {
       });
 
     expect(tree([[key("Место"), key("Описание")]])).toEqual(["rows"]);
-    expect(tree([[key("✏️ Изменить"), key("🏷 Статус")]])).toEqual([]);
+    expect(tree([[key("🛠 Изменить"), key("🛠 Статус")]])).toEqual([]);
+    // Кнопка управления не делит ряд с кнопкой участника (PER-669), даже в
+    // паре, которую дизайн-код называет.
+    expect(tree([[key("🛠 Пульт"), key("Розыгрыш")]])).toEqual(["rows", "rows"]);
+    // Листание лотов — ряд из трёх, который дизайн-код называет (PER-669).
+    expect(tree([[key("◀️"), key("🔄 Обновить"), key("▶️")]])).toEqual([
+      "vocabulary",
+    ]);
+    expect(tree([[key("◀️"), key("🔄 Обновить"), key("Ставки")]])).toEqual([
+      "rows",
+      "vocabulary",
+    ]);
     expect(tree([[key("Программа вечера"), key("🗑 Убрать")]])).toEqual([]);
     expect(tree([[key("✔️ Допустить"), key("✖️ Отказать")]])).toEqual([]);
     expect(tree([[key("✔️ Допустить"), key("Закрыть")]])).toEqual(["rows"]);
@@ -343,7 +354,7 @@ describe("inspectCall", () => {
       rulesOf(
         "editMessageText",
         screen("archive", "<b>Архив</b>", [
-          [key("Обновить")],
+          [key("🔄 Обновить")],
           [key("‹ Сходки")],
         ]),
       ),
@@ -352,7 +363,7 @@ describe("inspectCall", () => {
       rulesOf(
         "editMessageText",
         screen("community", "<b>Состав сообщества</b>", [
-          [key("Обновить")],
+          [key("🔄 Обновить")],
           [key("‹ Сходки")],
         ]),
       ),
@@ -466,12 +477,12 @@ describe("inspectCall", () => {
         [screenTag]: "card",
       });
 
-    expect(rows([[key("✏️ Изменить"), key("🏷 Статус")]])).toEqual([]);
+    expect(rows([[key("🛠 Изменить"), key("🛠 Статус")]])).toEqual([]);
     expect(
       rows([[key("18:00"), key("19:00"), key("20:00"), key("21:00")]]),
     ).toEqual([]);
     expect(
-      rows([[key("✏️ Изменить"), key("🏷 Статус"), key("Материалы")]]),
+      rows([[key("🛠 Изменить"), key("🛠 Статус"), key("Материалы")]]),
     ).toEqual(["rows"]);
     expect(
       rows([[key("1")], [key("2")], [key("3")], [key("4")], [key("5")]]),
@@ -528,7 +539,7 @@ describe("inspectCall", () => {
     expect(
       rulesOf(
         "editMessageText",
-        screen("old", "Архив сходок", [[key("Обновить")]], {
+        screen("old", "Архив сходок", [[key("🔄 Обновить")]], {
           parse_mode: undefined,
         }),
       ),

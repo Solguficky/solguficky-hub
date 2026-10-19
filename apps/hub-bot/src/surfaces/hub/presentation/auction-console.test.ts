@@ -524,7 +524,7 @@ function press(data: string): Update {
         message_id: 9,
         date: 0,
         chat: { id: 42, type: "private", first_name: "tester" },
-        text: "Пульт",
+        text: "🛠 Пульт",
       },
     } as never,
   };
@@ -659,8 +659,8 @@ const unpriced: ConsoleLot = {
 };
 
 describe("entry into the auction console", () => {
-  // Пульт — ряд корня аукциона (PER-605), а «Добавить лот» остаётся над
-  // списком лотов.
+  // Пульт — ряд корня аукциона (PER-605) своим рядом над возвратом
+  // (PER-669), а «Добавить лот» остаётся над списком лотов.
   it("shows the console in the auction root to the administrator only", async () => {
     const auction = fakeAuction({ lots: [vase] });
     const admin = harness("admin", auction);
@@ -669,15 +669,15 @@ describe("entry into the auction console", () => {
     const root = last(admin.calls);
     expect(labels(root).slice(0, 3)).toEqual([
       ["🔨 Лоты"],
-      ["Пульт"],
       ["Правила и FAQ"],
+      ["🛠 Пульт"],
     ]);
-    expect(dataOf(root, "Пульт")).toBe(consoleData);
+    expect(dataOf(root, "🛠 Пульт")).toBe(consoleData);
 
     const member = harness("member", auction);
     await member.bot.init();
     await member.bot.handleUpdate(press(rootData));
-    expect(JSON.stringify(shown(member.calls))).not.toContain("Пульт");
+    expect(JSON.stringify(shown(member.calls))).not.toContain("🛠 Пульт");
   });
 
   // «Добавить лот» — пока онлайн-неделя не открыта (PER-468): после старта
@@ -688,14 +688,14 @@ describe("entry into the auction console", () => {
       const { bot, calls } = harness("admin", auction);
       await bot.init();
       await bot.handleUpdate(press(feedData));
-      expect(labels(last(calls))[0]).toEqual(["Добавить лот"]);
+      expect(labels(last(calls))[0]).toEqual(["🛠 Добавить лот"]);
       expect(auction.sent("getAuctionConsole")).toHaveLength(1);
     }
   });
 
-  // Розыгрыш открыт с онлайн-недели: у администратора он встаёт в корне
-  // парой к «Пульту», у участника — своим рядом.
-  it("pairs the raffle with the console in the root once the online week is open", async () => {
+  // Розыгрыш открыт с онлайн-недели: он встаёт в корне своим рядом, и
+  // «🛠 Пульт» ряд с ним не делит (PER-669).
+  it("puts the raffle in its own row apart from the console once the online week is open", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       lots: [vase],
@@ -704,9 +704,10 @@ describe("entry into the auction console", () => {
     const admin = harness("admin", auction);
     await admin.bot.init();
     await admin.bot.handleUpdate(press(rootData));
-    expect(labels(last(admin.calls)).slice(1, 3)).toEqual([
-      ["Пульт", "Розыгрыш"],
+    expect(labels(last(admin.calls)).slice(1, 4)).toEqual([
+      ["Розыгрыш"],
       ["Правила и FAQ"],
+      ["🛠 Пульт"],
     ]);
 
     const member = harness("member", auction);
@@ -724,7 +725,7 @@ describe("entry into the auction console", () => {
     await bot.init();
     await bot.handleUpdate(press(feedData));
     const feed = last(calls);
-    expect(JSON.stringify(feed)).not.toContain("Добавить лот");
+    expect(JSON.stringify(feed)).not.toContain("🛠 Добавить лот");
     expect(labels(feed).at(-1)).toEqual(["‹ Аукцион"]);
   });
 
@@ -733,7 +734,7 @@ describe("entry into the auction console", () => {
     const { bot, calls } = harness("admin", auction);
     await bot.init();
     await bot.handleUpdate(press(feedData));
-    expect(labels(last(calls))[0]).toEqual(["Добавить лот"]);
+    expect(labels(last(calls))[0]).toEqual(["🛠 Добавить лот"]);
   });
 
   // Пульт и каталог лотов — одно право вести сходки (RFC-016): держатель
@@ -751,8 +752,8 @@ describe("entry into the auction console", () => {
     await bot.init();
 
     await bot.handleUpdate(press(feedData));
-    expect(JSON.stringify(last(calls))).not.toContain("Пульт");
-    expect(JSON.stringify(last(calls))).not.toContain("Добавить лот");
+    expect(JSON.stringify(last(calls))).not.toContain("🛠 Пульт");
+    expect(JSON.stringify(last(calls))).not.toContain("🛠 Добавить лот");
     expect(auction.sent("getAuctionConsole")).toEqual([]);
 
     await bot.handleUpdate(press(`v1:lot:new:${auctionToken}`));
@@ -1314,7 +1315,7 @@ describe("raffle of the week", () => {
       press(dataOf(last(history), "✔️ Да, открыть неделю")),
     );
     await next(() => press(rootData));
-    expect(labels(last(calls))[1]).toEqual(["Пульт", "Розыгрыш"]);
+    expect(labels(last(calls))[1]).toEqual(["Розыгрыш"]);
   });
 
   it("keeps the moment over new dates and the final and names it when new dates cut it off", async () => {
@@ -1899,7 +1900,7 @@ describe("final of the auctioneer", () => {
     );
     expect(labels(last(calls))).toEqual([
       ["Начать финал"],
-      ["Обновить"],
+      ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);
 
@@ -1917,7 +1918,7 @@ describe("final of the auctioneer", () => {
     expect(labels(panel)).toEqual([
       ["Поднять цену"],
       ["Продать"],
-      ["Обновить"],
+      ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);
 
@@ -1971,7 +1972,7 @@ describe("final of the auctioneer", () => {
     expect(plain(last(calls))).toContain("1. Ваза — продан за 1 200 ₽");
     expect(labels(last(calls))).toEqual([
       ["Открыть следующий лот"],
-      ["Обновить"],
+      ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);
 
