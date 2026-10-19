@@ -12,7 +12,6 @@ import {
   ApplicationCardSchema,
   ApplicationOutcome,
   AppointAdministratorResponseSchema,
-  CommunityFilter,
   DecideApplicationResponseSchema,
   DismissAdministratorResponseSchema,
   GetCommunityMemberResponseSchema,
@@ -598,21 +597,21 @@ describe("community administrator", () => {
           telegramUserId: 42n,
           admitted: true,
           circle: Circle.MEMBER,
-          auctionModeration: true,
+          grantedRights: [AccessRight.ADMIT_BIDDERS],
         },
         {
           identityId: "guest",
           telegramUserId: 43n,
           admitted: false,
           circle: Circle.GUEST,
-          auctionModeration: false,
+          grantedRights: [AccessRight.PLACE_BIDS],
         },
         {
           identityId: "newcomer",
           telegramUserId: 0n,
           admitted: false,
           circle: Circle.UNSPECIFIED,
-          auctionModeration: false,
+          grantedRights: [],
         },
         // Старый Identity круга не присылает, участника называет admitted.
         {
@@ -620,7 +619,7 @@ describe("community administrator", () => {
           telegramUserId: 44n,
           admitted: true,
           circle: Circle.UNSPECIFIED,
-          auctionModeration: false,
+          grantedRights: [],
         },
       ],
     });
@@ -658,7 +657,7 @@ describe("community administrator", () => {
     expect(listCommunityMembers).toHaveBeenCalledWith(
       {
         actor: { identityId: actor.identityId },
-        filter: CommunityFilter.AUCTION_MODERATORS,
+        grantedRight: AccessRight.ADMIT_BIDDERS,
       },
       expect.anything(),
     );
@@ -674,7 +673,7 @@ describe("community administrator", () => {
             telegramUserId: 42n,
             admitted: true,
             circle: Circle.MEMBER,
-            auctionModeration: false,
+            grantedRights: [],
           },
         },
       }),
@@ -740,21 +739,16 @@ describe("auction moderation administrator", () => {
     > = {},
   ) {
     return createAuctionModerationAdministrator({
-      grantAuctionModeration: vi.fn(),
-      revokeAuctionModeration: vi.fn(),
+      grantRight: vi.fn(),
+      revokeRight: vi.fn(),
       ...overrides,
     });
   }
 
   it("sends the actor and the member on grant and revoke", async () => {
-    const grantAuctionModeration = vi.fn().mockResolvedValue({ changed: true });
-    const revokeAuctionModeration = vi
-      .fn()
-      .mockResolvedValue({ changed: false });
-    const administrator = moderation({
-      grantAuctionModeration,
-      revokeAuctionModeration,
-    });
+    const grantRight = vi.fn().mockResolvedValue({ changed: true });
+    const revokeRight = vi.fn().mockResolvedValue({ changed: false });
+    const administrator = moderation({ grantRight, revokeRight });
 
     await expect(
       administrator.grantAuctionModeration(actor, memberId),
@@ -765,15 +759,10 @@ describe("auction moderation administrator", () => {
     const request = {
       actor: { identityId: actor.identityId },
       identityId: memberId,
+      right: AccessRight.ADMIT_BIDDERS,
     };
-    expect(grantAuctionModeration).toHaveBeenCalledWith(
-      request,
-      expect.anything(),
-    );
-    expect(revokeAuctionModeration).toHaveBeenCalledWith(
-      request,
-      expect.anything(),
-    );
+    expect(grantRight).toHaveBeenCalledWith(request, expect.anything());
+    expect(revokeRight).toHaveBeenCalledWith(request, expect.anything());
   });
 
   it.each([
@@ -782,8 +771,7 @@ describe("auction moderation administrator", () => {
     [Code.Unavailable, "unavailable"],
   ])("maps grant failure %s to %s", async (code, kind) => {
     const administrator = moderation({
-      grantAuctionModeration: () =>
-        Promise.reject(new ConnectError("refused", code)),
+      grantRight: () => Promise.reject(new ConnectError("refused", code)),
     });
 
     await expect(

@@ -24,7 +24,7 @@ func TestAuctionQueueAdmissionGrantsGuestWithAuctionRight(t *testing.T) {
 	svc, db := newIdentityService(t)
 	adminID := seedAdmin(t, svc, db, 6501)
 	moderatorID := seedMember(t, svc, db, 6502)
-	changeMember(t, svc.GrantAuctionModeration, adminID, moderatorID, true)
+	changeRight(t, svc.GrantRight, adminID, moderatorID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, true)
 
 	first := requestAccess(t, svc, accessRequest{telegramUserID: 6503, queue: auctionQueue, firstName: "Anna"})
 	again := requestAccess(t, svc, accessRequest{telegramUserID: 6503, queue: auctionQueue, firstName: "Bob"})
@@ -90,25 +90,25 @@ func TestAuctionModerationIsGrantedAndRevokedByMembershipManager(t *testing.T) {
 	guestID := seedProfile(t, db, 6524)
 	mustChange(t)(svc.grantCircle(t.Context(), guestID, circleGuest, uuid.NullUUID{}))
 
-	_, err := svc.GrantAuctionModeration(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: adminActor(outsiderID), IdentityId: memberID})
+	_, err := svc.GrantRight(t.Context(), &identityv1.ChangeRightRequest{Actor: adminActor(outsiderID), IdentityId: memberID, Right: identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS})
 	assertCode(t, err, codes.PermissionDenied)
-	_, err = svc.GrantAuctionModeration(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: adminActor(adminID), IdentityId: guestID})
+	_, err = svc.GrantRight(t.Context(), &identityv1.ChangeRightRequest{Actor: adminActor(adminID), IdentityId: guestID, Right: identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS})
 	assertCode(t, err, codes.FailedPrecondition)
 
-	changeMember(t, svc.GrantAuctionModeration, adminID, memberID, true)
-	changeMember(t, svc.GrantAuctionModeration, adminID, memberID, false)
-	changeMember(t, svc.GrantAuctionModeration, adminID, adminID, false)
+	changeRight(t, svc.GrantRight, adminID, memberID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, true)
+	changeRight(t, svc.GrantRight, adminID, memberID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, false)
+	changeRight(t, svc.GrantRight, adminID, adminID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, false)
 	resolved := resolveDirect(t, svc, 6522, "")
 	if resolved.GetCircle() != identityv1.Circle_CIRCLE_MEMBER ||
 		!slices.Contains(resolved.GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS) {
 		t.Fatalf("after grant: circle=%v rights=%v", resolved.GetCircle(), resolved.GetRights())
 	}
 
-	_, err = svc.RevokeAuctionModeration(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: adminActor(memberID), IdentityId: memberID})
+	_, err = svc.RevokeRight(t.Context(), &identityv1.ChangeRightRequest{Actor: adminActor(memberID), IdentityId: memberID, Right: identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS})
 	assertCode(t, err, codes.PermissionDenied)
-	changeMember(t, svc.RevokeAuctionModeration, adminID, memberID, true)
-	changeMember(t, svc.RevokeAuctionModeration, adminID, memberID, false)
-	changeMember(t, svc.RevokeAuctionModeration, adminID, adminID, false)
+	changeRight(t, svc.RevokeRight, adminID, memberID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, true)
+	changeRight(t, svc.RevokeRight, adminID, memberID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, false)
+	changeRight(t, svc.RevokeRight, adminID, adminID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, false)
 	assertEvents(t, db, memberID,
 		"v1 profile_registered() {}[] blocked=false",
 		"v2 circle_changed() member{access_hub,place_bids}[] blocked=false",
@@ -128,8 +128,8 @@ func TestCircleChangeDropsGrantedAuctionModeration(t *testing.T) {
 	adminID := seedAdmin(t, svc, db, 6531)
 	demotedID := seedMember(t, svc, db, 6532)
 	promotedID := seedMember(t, svc, db, 6533)
-	changeMember(t, svc.GrantAuctionModeration, adminID, demotedID, true)
-	changeMember(t, svc.GrantAuctionModeration, adminID, promotedID, true)
+	changeRight(t, svc.GrantRight, adminID, demotedID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, true)
+	changeRight(t, svc.GrantRight, adminID, promotedID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, true)
 
 	changeMember(t, svc.DemoteCommunityMember, adminID, demotedID, true)
 	if rights := resolveDirect(t, svc, 6532, "").GetRights(); !slices.Equal(rights, []identityv1.AccessRight{identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS}) {
@@ -148,7 +148,7 @@ func TestCircleChangeDropsGrantedAuctionModeration(t *testing.T) {
 // Отзыв place_bids оставляет гостя гостем без прав (ADR-064, пункт 9; С-3);
 // отзыв записан отказом declined по очереди аукциона, повторный /start заявку
 // не ставит, а пересмотр отказа возвращает право поводом right_granted.
-func TestRevokeAuctionRightLeavesGuestWithoutRights(t *testing.T) {
+func TestRevokePlaceBidsLeavesGuestWithoutRights(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	adminID := seedAdmin(t, svc, db, 6541)
@@ -156,11 +156,11 @@ func TestRevokeAuctionRightLeavesGuestWithoutRights(t *testing.T) {
 	guestID := seedProfile(t, db, 6543)
 	mustChange(t)(svc.grantCircle(t.Context(), guestID, circleGuest, uuid.NullUUID{}))
 
-	_, err := svc.RevokeAuctionRight(t.Context(), &identityv1.ChangeCommunityMemberRequest{Actor: adminActor(memberID), IdentityId: guestID})
+	_, err := svc.RevokeRight(t.Context(), &identityv1.ChangeRightRequest{Actor: adminActor(memberID), IdentityId: guestID, Right: identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS})
 	assertCode(t, err, codes.PermissionDenied)
-	changeMember(t, svc.RevokeAuctionRight, adminID, memberID, false)
-	changeMember(t, svc.RevokeAuctionRight, adminID, guestID, true)
-	changeMember(t, svc.RevokeAuctionRight, adminID, guestID, false)
+	changeRight(t, svc.RevokeRight, adminID, memberID, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, false)
+	changeRight(t, svc.RevokeRight, adminID, guestID, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, true)
+	changeRight(t, svc.RevokeRight, adminID, guestID, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, false)
 
 	resolved := resolveDirect(t, svc, 6543, "")
 	if resolved.GetCircle() != identityv1.Circle_CIRCLE_GUEST || len(resolved.GetRights()) != 0 || resolved.GetBlocked() {
@@ -193,27 +193,27 @@ func TestRevokeAuctionRightLeavesGuestWithoutRights(t *testing.T) {
 }
 
 // Список держателей admit_bidders отличает выданную запись, которую снимает
-// RevokeAuctionModeration, от права, пришедшего с набором admin.
-func TestListAuctionModeratorsMarksRevocableGrants(t *testing.T) {
+// RevokeRight, от права, пришедшего с набором admin.
+func TestListRightHoldersMarksRevocableGrants(t *testing.T) {
 	t.Parallel()
 	svc, db := newIdentityService(t)
 	adminID := seedAdmin(t, svc, db, 6551)
 	moderatorID := seedMember(t, svc, db, 6552)
 	seedMember(t, svc, db, 6553)
-	changeMember(t, svc.GrantAuctionModeration, adminID, moderatorID, true)
+	changeRight(t, svc.GrantRight, adminID, moderatorID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, true)
 
-	_, err := svc.ListAuctionModerators(t.Context(), &identityv1.ListAuctionModeratorsRequest{Actor: adminActor(moderatorID)})
+	_, err := svc.ListRightHolders(t.Context(), &identityv1.ListRightHoldersRequest{Actor: adminActor(moderatorID), Right: identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS})
 	assertCode(t, err, codes.PermissionDenied)
-	list, err := svc.ListAuctionModerators(t.Context(), &identityv1.ListAuctionModeratorsRequest{Actor: adminActor(adminID)})
+	list, err := svc.ListRightHolders(t.Context(), &identityv1.ListRightHoldersRequest{Actor: adminActor(adminID), Right: identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS})
 	if err != nil {
 		t.Fatalf("list moderators: %v", err)
 	}
 	got := map[string]bool{}
-	for _, moderator := range list.GetModerators() {
-		got[moderator.GetIdentityId()] = moderator.GetRevocable()
+	for _, holder := range list.GetHolders() {
+		got[holder.GetIdentityId()] = holder.GetRevocable()
 	}
 	if len(got) != 2 || got[adminID] || !got[moderatorID] {
-		t.Fatalf("moderators = %v", list.GetModerators())
+		t.Fatalf("moderators = %v", list.GetHolders())
 	}
 }
 
@@ -227,7 +227,7 @@ func TestCheckAccessRightReadsCurrentState(t *testing.T) {
 	memberID := seedMember(t, svc, db, 6562)
 	blockedID := seedMember(t, svc, db, 6563)
 	mustChange(t)(svc.block(t.Context(), blockedID, uuid.NullUUID{}))
-	changeMember(t, svc.GrantAuctionModeration, adminID, memberID, true)
+	changeRight(t, svc.GrantRight, adminID, memberID, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, true)
 
 	check := func(identityID string, right identityv1.AccessRight) bool {
 		t.Helper()
@@ -259,6 +259,24 @@ func seedMember(t *testing.T, svc identityService, db *sql.DB, telegramUserID in
 	identityID := seedProfile(t, db, telegramUserID)
 	mustChange(t)(svc.grantCircle(t.Context(), identityID, circleMember, uuid.NullUUID{}))
 	return identityID
+}
+
+// changeRight выдаёт или снимает запись права от имени актора и сверяет changed.
+func changeRight(
+	t *testing.T,
+	call func(context.Context, *identityv1.ChangeRightRequest) (*identityv1.ChangeCommunityMemberResponse, error),
+	actorID, identityID string,
+	right identityv1.AccessRight,
+	want bool,
+) {
+	t.Helper()
+	resp, err := call(t.Context(), &identityv1.ChangeRightRequest{Actor: adminActor(actorID), IdentityId: identityID, Right: right})
+	if err != nil {
+		t.Fatalf("change %v of %s: %v", right, identityID, err)
+	}
+	if resp.GetChanged() != want {
+		t.Fatalf("change %v of %s: changed=%t, want %t", right, identityID, resp.GetChanged(), want)
+	}
 }
 
 // changeMember вызывает операцию над человеком от имени актора и сверяет changed.

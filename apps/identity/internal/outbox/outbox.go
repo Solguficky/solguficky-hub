@@ -34,8 +34,8 @@ const (
 	// решением или пересмотром. Пишется после выдач той же транзакции; событие
 	// называет очередь.
 	ApplicationAdmitted Occasion = "application_admitted"
-	// RightGranted — право выдано поштучной записью: admit_bidders участнику или
-	// place_bids гостю, у которого круг уже есть. Запись, пришедшая со сменой
+	// RightGranted — право выдано поштучной записью: admit_bidders или
+	// run_auctions участнику или place_bids гостю, у которого круг уже есть. Запись, пришедшая со сменой
 	// круга, едет снимком circle_changed и этого повода не даёт.
 	RightGranted Occasion = "right_granted"
 	// RightRevoked — поштучная запись снята, и права у человека больше нет.

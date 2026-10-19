@@ -17,11 +17,12 @@ lint:
 breaking:
   use:
     - FILE
-  # Перенос значения, а не его удаление: enum PredictionNomination переехал из
-  # схемы сервиса в auction.proto, чтобы его назвал и факт шины (PER-490). На
-  # проводе это то же значение auction.v1.PredictionNomination, и все
-  # потребители меняются тем же изменением, поэтому FILE видит только удаление
-  # из файла. Исключение снимает следующее изменение схем.
-  ignore_only:
-    ENUM_NO_DELETE:
-      - auction/v1/auction_service.proto
+  # Переход без переходного периода по решению владельца (PER-651): поштучные
+  # записи прав выдаются, снимаются и читаются общими GrantRight, RevokeRight и
+  # ListRightHolders, а GrantAuctionModeration, RevokeAuctionModeration,
+  # RevokeAuctionRight, ListAuctionModerators, флаг auction_moderation и фильтр
+  # COMMUNITY_FILTER_AUCTION_MODERATORS удалены вместе с переводом бота хаба в
+  # том же изменении. Номера и имена зарезервированы. Исключение снимает
+  # следующее изменение схем.
+  ignore:
+    - identity/v1/identity_service.proto

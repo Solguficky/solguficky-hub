@@ -14,6 +14,7 @@ type AccessRight =
     | AdmitBidders
     | ManageMeetups
     | GrantAdmins
+    | RunAuctions
 
 /// Кто спрашивает. Личность и права приходят одним значением, потому что решение о
 /// допуске принимается по ним обоим: Meetups за фактами о человеке не ходит и готового

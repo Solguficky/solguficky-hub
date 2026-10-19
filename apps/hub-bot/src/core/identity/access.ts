@@ -33,6 +33,8 @@ function rightName(right: WireRight): AccessRight | undefined {
       return "manage-meetups";
     case WireRight.GRANT_ADMINS:
       return "grant-admins";
+    case WireRight.RUN_AUCTIONS:
+      return "run-auctions";
     case WireRight.UNSPECIFIED:
       return undefined;
     default:
@@ -72,6 +74,8 @@ function rightValue(right: AccessRight): WireRight {
       return WireRight.MANAGE_MEETUPS;
     case "grant-admins":
       return WireRight.GRANT_ADMINS;
+    case "run-auctions":
+      return WireRight.RUN_AUCTIONS;
     default: {
       const _exhaustive: never = right;
       return _exhaustive;

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	identityv1 "github.com/Solguficky/solguficky-hub/apps/identity/gen/identity/v1"
 	"github.com/google/uuid"
 )
 
@@ -40,7 +41,7 @@ func TestEveryGrantPathLeavesOneActiveCircle(t *testing.T) {
 
 	// Снимок outbox несёт круг, права и наборы после выдачи — те же, что ответ.
 	circle, rights, presets := lastSnapshot(t, db, guest)
-	if circle != circleMember || rights != "access_hub,admit_bidders,manage_meetups,manage_members,place_bids" || presets != "admin" {
+	if circle != circleMember || rights != "access_hub,admit_bidders,manage_meetups,manage_members,place_bids,run_auctions" || presets != "admin" {
 		t.Fatalf("admin snapshot: circle=%q rights=%q presets=%q", circle, rights, presets)
 	}
 	circle, rights, presets = lastSnapshot(t, db, applicant)
@@ -61,7 +62,7 @@ func TestPresetsCarryOnlyTheirOwnRights(t *testing.T) {
 
 	admin := seedProfile(t, db, 9912)
 	mustChange(t)(svc.grantPreset(t.Context(), admin, presetAdmin, maintainerActor()))
-	assertRights(t, svc, admin, rightAccessHub, rightAdmitBidders, rightManageMeetups, rightManageMembers, rightPlaceBids)
+	assertRights(t, svc, admin, rightAccessHub, rightAdmitBidders, rightManageMeetups, rightManageMembers, rightPlaceBids, rightRunAuctions)
 }
 
 func lastSnapshot(t *testing.T, db *sql.DB, identityID string) (string, string, string) {
@@ -83,7 +84,7 @@ func TestAdminPresetReplacesAdmitBiddersRecord(t *testing.T) {
 	svc, db := newIdentityService(t)
 	manager := seedAdmin(t, svc, db, 9921)
 	member := seedMember(t, svc, db, 9922)
-	changeMember(t, svc.GrantAuctionModeration, manager, member, true)
+	changeRight(t, svc.GrantRight, manager, member, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, true)
 
 	mustChange(t)(svc.grantPreset(t.Context(), member, presetAdmin, maintainerActor()))
 	assertActiveRights(t, db, member)

@@ -102,7 +102,7 @@ type SourceChannelAdminRpc = Pick<
 >;
 type AuctionModerationRpc = Pick<
   Client<typeof IdentityService>,
-  "grantAuctionModeration" | "revokeAuctionModeration"
+  "grantRight" | "revokeRight"
 >;
 type AdministratorRpc = Pick<
   Client<typeof IdentityService>,
@@ -200,7 +200,7 @@ export function createCommunityAdministrator(
         const wireActor = actorMessage(actor);
         const [members, usernames] = await Promise.all([
           rpc.listCommunityMembers(
-            { actor: wireActor, filter: wireFilter[filter] },
+            { actor: wireActor, ...wireFilter[filter] },
             options(meta),
           ),
           rpc.listAllowedUsernames({ actor: wireActor }, options(meta)),
@@ -274,10 +274,17 @@ export function createCommunityAdministrator(
   };
 }
 
-const wireFilter: Readonly<Record<CommunityFilter, WireCommunityFilter>> = {
-  members: WireCommunityFilter.MEMBERS,
-  guests: WireCommunityFilter.GUESTS,
-  moderators: WireCommunityFilter.AUCTION_MODERATORS,
+// Модераторы — держатели записи `ADMIT_BIDDERS`: фильтр по выданному праву,
+// а не по кругу (PER-651).
+const wireFilter: Readonly<
+  Record<
+    CommunityFilter,
+    { filter?: WireCommunityFilter; grantedRight?: WireRight }
+  >
+> = {
+  members: { filter: WireCommunityFilter.MEMBERS },
+  guests: { filter: WireCommunityFilter.GUESTS },
+  moderators: { grantedRight: WireRight.ADMIT_BIDDERS },
 };
 
 // Старый Identity круга не присылает: участника тогда называет `admitted`, а
@@ -298,7 +305,7 @@ function communityMemberOf(member: WireCommunityMember): CommunityMember {
         : member.circle === WireCircle.GUEST
           ? "guest"
           : "none",
-    auctionModeration: member.auctionModeration,
+    auctionModeration: member.grantedRights.includes(WireRight.ADMIT_BIDDERS),
   };
 }
 
@@ -356,7 +363,8 @@ export function createApplicationAdministrator(
   };
 }
 
-// Право модерации аукциона (ADR-064, пункт 7): выдача и отзыв.
+// Право модерации аукциона (ADR-064, пункт 7): выдача и отзыв записи
+// `ADMIT_BIDDERS` общими GrantRight и RevokeRight (PER-651).
 // FAILED_PRECONDITION у выдачи — штатный ответ: человек не участник или
 // заблокирован.
 export function createAuctionModerationAdministrator(
@@ -373,8 +381,12 @@ export function createAuctionModerationAdministrator(
   return {
     async grantAuctionModeration(actor, identityId, meta) {
       try {
-        const response = await rpc.grantAuctionModeration(
-          { actor: actorMessage(actor), identityId },
+        const response = await rpc.grantRight(
+          {
+            actor: actorMessage(actor),
+            identityId,
+            right: WireRight.ADMIT_BIDDERS,
+          },
           options(meta),
         );
         return { kind: "ok", value: response.changed };
@@ -390,8 +402,12 @@ export function createAuctionModerationAdministrator(
     },
     async revokeAuctionModeration(actor, identityId, meta) {
       try {
-        const response = await rpc.revokeAuctionModeration(
-          { actor: actorMessage(actor), identityId },
+        const response = await rpc.revokeRight(
+          {
+            actor: actorMessage(actor),
+            identityId,
+            right: WireRight.ADMIT_BIDDERS,
+          },
           options(meta),
         );
         return { kind: "ok", value: response.changed };

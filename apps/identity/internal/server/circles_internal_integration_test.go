@@ -111,7 +111,7 @@ func TestPresetsAreHeldTogetherAndRevokedApart(t *testing.T) {
 	identityID := seedProfile(t, db, 9311)
 	mustChange(t)(svc.grantPreset(t.Context(), identityID, presetMaintainer, uuid.NullUUID{}))
 	mustChange(t)(svc.grantPreset(t.Context(), identityID, presetAdmin, uuid.NullUUID{}))
-	assertRights(t, svc, identityID, rightAccessHub, rightAdmitBidders, rightGrantAdmins, rightManageMeetups, rightManageMembers, rightPlaceBids)
+	assertRights(t, svc, identityID, rightAccessHub, rightAdmitBidders, rightGrantAdmins, rightManageMeetups, rightManageMembers, rightPlaceBids, rightRunAuctions)
 
 	mustChange(t)(svc.revokePreset(t.Context(), identityID, presetAdmin, uuid.NullUUID{}))
 	assertRights(t, svc, identityID, rightAccessHub, rightGrantAdmins, rightPlaceBids)

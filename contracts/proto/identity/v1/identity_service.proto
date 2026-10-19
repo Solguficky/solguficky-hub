@@ -53,22 +53,23 @@ service IdentityService {
   // FAILED_PRECONDITION, as by BlockCommunityMember: the preset is revoked
   // first by its own grantor.
   rpc DemoteCommunityMember(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
-  // Grants ACCESS_RIGHT_ADMIT_BIDDERS to a member, on behalf of a holder of
-  // ACCESS_RIGHT_MANAGE_MEMBERS.
-  rpc GrantAuctionModeration(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
-  // Revokes the granted ACCESS_RIGHT_ADMIT_BIDDERS. A right that comes with a
-  // preset is not revoked by it.
-  rpc RevokeAuctionModeration(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
-  // Lists the people holding ACCESS_RIGHT_ADMIT_BIDDERS, on behalf of a holder
-  // of ACCESS_RIGHT_MANAGE_MEMBERS.
-  rpc ListAuctionModerators(ListAuctionModeratorsRequest) returns (ListAuctionModeratorsResponse);
-  // Revokes ACCESS_RIGHT_PLACE_BIDS granted to a guest, on behalf of a holder
-  // of ACCESS_RIGHT_ADMIT_BIDDERS. The guest keeps the circle with whatever
+  // Grants a right one by one to a member, on behalf of the holder of the
+  // right that issues it: ACCESS_RIGHT_MANAGE_MEMBERS issues
+  // ACCESS_RIGHT_ADMIT_BIDDERS and ACCESS_RIGHT_RUN_AUCTIONS. A right that is
+  // not granted one by one is refused with INVALID_ARGUMENT; a person outside
+  // the member circle or blocked with FAILED_PRECONDITION.
+  rpc GrantRight(ChangeRightRequest) returns (ChangeCommunityMemberResponse);
+  // Revokes a right granted one by one, on behalf of the holder of the right
+  // that issues it. A right that comes with the circle or a preset is not
+  // revoked by it. ACCESS_RIGHT_PLACE_BIDS is revoked from a guest by a holder
+  // of ACCESS_RIGHT_ADMIT_BIDDERS: the guest keeps the circle with whatever
   // rights remain, and the revocation is recorded as a declined application in
-  // the auction queue: a later RequestAccess there answers DECLINED until the
-  // refusal is reconsidered. A right that comes with a circle is not revoked
-  // by it.
-  rpc RevokeAuctionRight(ChangeCommunityMemberRequest) returns (ChangeCommunityMemberResponse);
+  // the auction queue, so a later RequestAccess there answers DECLINED until
+  // the refusal is reconsidered.
+  rpc RevokeRight(ChangeRightRequest) returns (ChangeCommunityMemberResponse);
+  // Lists the people holding a right that is granted one by one, on behalf of
+  // the holder of the right that issues it.
+  rpc ListRightHolders(ListRightHoldersRequest) returns (ListRightHoldersResponse);
   rpc ListAllowedUsernames(ListAllowedUsernamesRequest) returns (ListAllowedUsernamesResponse);
   rpc AddAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
   rpc RemoveAllowedUsername(ChangeAllowedUsernameRequest) returns (ChangeAllowedUsernameResponse);
@@ -108,28 +109,35 @@ message CommunityMember {
   // it; admitted tells a member apart in both cases.
   Circle circle = 5;
 
-  // True when ACCESS_RIGHT_ADMIT_BIDDERS is granted one by one, so that
-  // RevokeAuctionModeration takes it away. A person of the list holds no
-  // preset, so the right never comes with one here. Always false from an
-  // older server.
-  bool auction_moderation = 6;
+  // Replaced by granted_rights.
+  reserved 6;
+  reserved "auction_moderation";
+
+  // The rights granted one by one, which RevokeRight takes away. A right that
+  // comes only with the circle or a preset is not listed here.
+  repeated AccessRight granted_rights = 7;
 }
 
-// Narrows the list. Every value but COMMUNITY_FILTER_UNSPECIFIED leaves out
-// the people without a circle.
+// Narrows the list by circle. Every value but COMMUNITY_FILTER_UNSPECIFIED
+// leaves out the people without a circle.
 enum CommunityFilter {
+  // Replaced by ListCommunityMembersRequest.granted_right.
+  reserved 3;
+  reserved "COMMUNITY_FILTER_AUCTION_MODERATORS";
+
   // Everyone of the list, the people without a circle included.
   COMMUNITY_FILTER_UNSPECIFIED = 0;
   COMMUNITY_FILTER_MEMBERS = 1;
   COMMUNITY_FILTER_GUESTS = 2;
-  // The people with auction_moderation.
-  COMMUNITY_FILTER_AUCTION_MODERATORS = 3;
 }
 
 message ListCommunityMembersRequest {
   IdentityActor actor = 1;
   // An older server ignores it and lists everyone.
   CommunityFilter filter = 2;
+  // When set, narrows the list further to the people with this right in
+  // granted_rights. An unknown value is refused with INVALID_ARGUMENT.
+  AccessRight granted_right = 3;
 }
 message ListCommunityMembersResponse { repeated CommunityMember members = 1; }
 
@@ -163,22 +171,32 @@ message ChangeCommunityMemberRequest {
 }
 message ChangeCommunityMemberResponse { bool changed = 1; }
 
-// A holder of ACCESS_RIGHT_ADMIT_BIDDERS.
-message AuctionModerator {
+// A right granted or revoked one by one on behalf of the actor.
+message ChangeRightRequest {
+  IdentityActor actor = 1;
+  // Canonical lowercase UUID string.
+  string identity_id = 2;
+  AccessRight right = 3;
+}
+
+// A holder of the right asked for in ListRightHolders.
+message RightHolder {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
   // Username without the leading '@'. Absent when the account has none.
   optional string telegram_username = 2;
-  // Telegram user id, for naming a moderator without a username.
+  // Telegram user id, for naming a holder without a username.
   int64 telegram_user_id = 3;
-  // True when the right was granted one by one, so that
-  // RevokeAuctionModeration takes it away. False when it comes only with
-  // PRESET_ADMIN.
+  // True when the right was granted one by one, so that RevokeRight takes it
+  // away. False when it comes only with the circle or a preset.
   bool revocable = 4;
 }
 
-message ListAuctionModeratorsRequest { IdentityActor actor = 1; }
-message ListAuctionModeratorsResponse { repeated AuctionModerator moderators = 1; }
+message ListRightHoldersRequest {
+  IdentityActor actor = 1;
+  AccessRight right = 2;
+}
+message ListRightHoldersResponse { repeated RightHolder holders = 1; }
 
 message ListAllowedUsernamesRequest { IdentityActor actor = 1; }
 message ListAllowedUsernamesResponse { repeated string usernames = 1; }
