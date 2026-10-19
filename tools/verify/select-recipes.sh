@@ -7,12 +7,21 @@
 # same recipes locally, and a path CI ignores is ignored here too.
 #
 # Usage:
-#   select-recipes.sh              changed paths come from git: everything that
-#                                  differs from the merge base with
-#                                  origin/develop, committed or not, plus
-#                                  untracked files
-#   select-recipes.sh --paths F    changed paths are read from file F, one per
-#                                  line; the fixture test uses this form
+#   select-recipes.sh [--full] [--deferred] [--paths F]
+#
+#   no --paths     changed paths come from git: everything that differs from
+#                  the merge base with origin/develop, committed or not, plus
+#                  untracked files
+#   --paths F      changed paths are read from file F, one per line; the
+#                  fixture test uses this form
+#   --full         heavy groups are selected too, as CI selects them
+#   --deferred     prints the heavy groups the change hits instead of recipes,
+#                  on one line; they are the CI jobs a delivery waits for
+#
+# By default the selection is local: heavy groups — JVM and .NET builds that
+# exhaust a laptop shared with other trees — are left to CI, and their names
+# go to stderr as "уходит в CI". stdout carries recipes only: `verify-changed`
+# passes it to just as is.
 #
 # VERIFY_SELECT_WORKFLOW overrides the workflow file; only the fixture test
 # sets it.
@@ -31,6 +40,10 @@ workflow=${VERIFY_SELECT_WORKFLOW:-$root/.github/workflows/ci.yml}
 always="check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready"
 groups="contracts identity hub-bot community-site-api bot-console auction-seed apphost meetups notifications auction nats-tester"
 skipped_filters="contour"
+# Groups that run only in CI unless --full. Each name is also the id of the
+# CI job a delivery waits for, so a name without such a job fails the
+# selection instead of leaving a delivery to wait for nothing.
+heavy="apphost meetups notifications auction"
 
 recipes_of() {
     case $1 in
@@ -53,28 +66,40 @@ trap 'rm -rf "$scratch"' EXIT
 paths="$scratch/paths"
 filters="$scratch/filters"
 
-case ${1:-} in
-    --paths)
-        [ -n "${2:-}" ] || { echo "select-recipes: --paths needs a file" >&2; exit 2; }
-        cat "$2" > "$paths"
-        ;;
-    "")
-        base=$(git merge-base HEAD origin/develop 2>/dev/null) || {
-            echo "select-recipes: no merge base with origin/develop — run git fetch origin" >&2
-            exit 1
-        }
-        # --no-renames lists the old path of a move too: a file moved out of a
-        # component changes that component as much as one deleted from it.
-        {
-            git -c core.quotepath=off diff --name-only --no-renames "$base"
-            git -c core.quotepath=off ls-files --others --exclude-standard
-        } > "$paths"
-        ;;
-    *)
-        echo "select-recipes: unknown argument $1" >&2
-        exit 2
-        ;;
-esac
+full=0
+deferred_only=0
+paths_from=""
+while [ $# -gt 0 ]; do
+    case $1 in
+        --full) full=1 ;;
+        --deferred) deferred_only=1 ;;
+        --paths)
+            [ -n "${2:-}" ] || { echo "select-recipes: --paths needs a file" >&2; exit 2; }
+            paths_from=$2
+            shift
+            ;;
+        *)
+            echo "select-recipes: unknown argument $1" >&2
+            exit 2
+            ;;
+    esac
+    shift
+done
+
+if [ -n "$paths_from" ]; then
+    cat "$paths_from" > "$paths"
+else
+    base=$(git merge-base HEAD origin/develop 2>/dev/null) || {
+        echo "select-recipes: no merge base with origin/develop — run git fetch origin" >&2
+        exit 1
+    }
+    # --no-renames lists the old path of a move too: a file moved out of a
+    # component changes that component as much as one deleted from it.
+    {
+        git -c core.quotepath=off diff --name-only --no-renames "$base"
+        git -c core.quotepath=off ls-files --others --exclude-standard
+    } > "$paths"
+fi
 
 [ -f "$workflow" ] || { echo "select-recipes: no workflow at $workflow" >&2; exit 1; }
 
@@ -118,6 +143,16 @@ for group in $groups; do
         exit 1
     }
 done
+for group in $heavy; do
+    case " $groups " in
+        *" $group "*) ;;
+        *) echo "select-recipes: heavy group '$group' is not a group here" >&2; exit 1 ;;
+    esac
+    tr -d '\r' < "$workflow" | grep -q "^  $group:[ 	]*\$" || {
+        echo "select-recipes: heavy group '$group' has no CI job of that name in $workflow" >&2
+        exit 1
+    }
+done
 
 # Only the two glob forms ci.yml uses are understood: an exact path and a
 # directory prefix ending in /**. Anything else fails instead of matching
@@ -143,9 +178,24 @@ hit=$(awk -F '\t' '
 ' "$filters" "$paths") || { echo "select-recipes: cannot read the filters of $workflow" >&2; exit 1; }
 
 out=$always
+deferred=""
 for group in $groups; do
     if printf '%s\n' "$hit" | grep -qx "$group"; then
+        case " $heavy " in
+            *" $group "*)
+                if [ "$full" -eq 0 ]; then
+                    deferred="${deferred:+$deferred }$group"
+                    continue
+                fi
+                ;;
+        esac
         out="$out $(recipes_of "$group")"
     fi
 done
+
+if [ "$deferred_only" -eq 1 ]; then
+    [ -z "$deferred" ] || echo "$deferred"
+    exit 0
+fi
+[ -z "$deferred" ] || echo "select-recipes: уходит в CI: $deferred" >&2
 echo "$out"
