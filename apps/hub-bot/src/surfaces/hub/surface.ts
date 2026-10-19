@@ -21,6 +21,10 @@ import { createDispatcher } from "./application/dispatcher.js";
 import { createAuctionClient } from "./auction/client.js";
 import { communityDay } from "./community-time.js";
 import { readHubConfig } from "./config.js";
+import {
+  createAccessRequestRender,
+  logBodyMissing,
+} from "./delivery/access-request.js";
 import { decodeNotification } from "./delivery/notification.js";
 import { createIdentityClient } from "./identity/client.js";
 import { createMeetupsClient } from "./meetups/client.js";
@@ -198,6 +202,19 @@ export const hubSurface: SurfaceDefinition = ({
     onTitleMissing: logMissingTitle(logger),
     frequencyButton: auction !== undefined,
   });
+  // Оповещение о заявке несёт её тело (PER-634): карточку бот читает при
+  // доставке из очереди правами получателя, тем же вызовом, что экран заявки.
+  const renderAccessRequest = createAccessRequestRender({
+    read: (identityId, queue, after, requestId) =>
+      identity.readApplicationQueue(
+        { identityId },
+        queue,
+        after,
+        requestId === undefined ? undefined : rpcMeta({ requestId }),
+      ),
+    now: Date.now,
+    onBodyMissing: logBodyMissing(logger),
+  });
   const sender = createNotificationSender(
     createNotificationApi(token, environment),
     hub.auctionBotUsername,
@@ -226,8 +243,12 @@ export const hubSurface: SurfaceDefinition = ({
               },
               // Вести хаба рисует отправитель, соседи им не нужны. Весть о лоте
               // собирает общий рендер двух ботов (PER-598): право получателя у
-              // Identity и название лота у Auction.
+              // Identity и название лота у Auction. Оповещение о заявке читает
+              // её карточку у Identity (PER-634).
               render: async (content, context) => {
+                if (content.kind === "access-requested") {
+                  return renderAccessRequest(content, context);
+                }
                 if (!isLotNotice(content)) {
                   return { kind: "ready", message: content };
                 }

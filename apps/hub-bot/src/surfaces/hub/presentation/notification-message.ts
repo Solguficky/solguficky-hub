@@ -12,6 +12,8 @@ import type {
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
 import { renderRaffleNotice } from "../../../core/notifications/raffle-notice.js";
+import { admitLabel, declineLabel } from "../../../core/pictograms.js";
+import type { AccessRequestView } from "../delivery/access-request.js";
 import type {
   LocalDate,
   LocalDateTime,
@@ -23,9 +25,12 @@ import type {
 import { managerCommands } from "./commands.js";
 import { uuidToToken } from "./meetup-deep-link.js";
 import {
+  cardCursorData,
   type NotifiedMeetupCategory,
+  queueDomain,
   traceCallback,
 } from "./parse-callback.js";
+import { applicationCardBody, cursorOf } from "./screens/application.js";
 
 // Кнопка отключения несёт целевое состояние, как переключатель P-09: повторное
 // нажатие даёт то же «выключено», а не включает категорию обратно.
@@ -64,10 +69,12 @@ export function createNotificationApi(
 }
 
 // Клавиатуры нет, когда вести некуда: пустая разметка — тоже разметка, и
-// отправлять её незачем.
+// отправлять её незачем. HTML — у вести, которая несёт чужой текст, уже
+// экранированный тем же кодом, что экран.
 export type NotificationMessage = {
   text: string;
   keyboard: InlineKeyboard | undefined;
+  format?: "HTML";
 };
 
 // Изменения и материалы получают подписчики конкретной сходки, и настройка у
@@ -86,6 +93,7 @@ export function disableMeetupCategoryCallback(
 // право получателя и название лота у соседей, а соседей отправитель не зовёт.
 export type OutgoingNotification =
   | Exclude<RenderableContent, LotNotice>
+  | AccessRequestView
   | { kind: "lot-notice"; view: LotNoticeView };
 
 // Кадр по образцу P-11: заголовок называет повод и сходку, строки ниже — что
@@ -95,32 +103,12 @@ export function renderNotification(
   content: OutgoingNotification,
   auctionBotUsername?: string,
 ): NotificationMessage {
-  if (content.kind === "access-requested") {
-    // Повод и переход в очередь, где заявку решают, и выключатель категории.
-    const disable = (keyboard: InlineKeyboard) =>
-      keyboard.text(
-        "Не присылать запросы доступа",
-        disableAccessRequestCallback,
-      );
-    // Кнопка следа ведёт в очередь заявки: карточка придёт новым сообщением,
-    // а уведомление останется в истории. Идентификатора заявки в поводе нет
-    // (notifications.v1 AccessRequested), поэтому очередь открывается с начала.
-    // Аукционная заявка — в очередь аукциона, где допуск выдаёт право
-    // ставить, а не круг участника (PER-534).
-    const auction = content.queue === "auction";
-    return {
-      text: auction
-        ? "Новая заявка на участие в аукционе"
-        : "Новая заявка на доступ в сообщество",
-      keyboard: disable(
-        new InlineKeyboard()
-          .text(
-            "Открыть заявки",
-            traceCallback(auction ? "v1:aq:q" : "v1:cm:q"),
-          )
-          .row(),
-      ),
-    };
+  if (
+    content.kind === "access-requested" ||
+    content.kind === "access-request-card" ||
+    content.kind === "access-request-decided"
+  ) {
+    return renderAccessRequest(content);
   }
   if (content.kind === "access-granted") {
     // Тот же текст, что слал экран состава до PER-442: сменился носитель, а
@@ -397,6 +385,62 @@ function formatWhen(when: MeetupWhen): string {
   }
 }
 
+// Оповещение о заявке (PER-634). Кнопки под ним — следы: экран по ним
+// приходит новым сообщением, а оповещение остаётся в истории как было.
+// Выключатель категории стоит под каждым видом.
+function renderAccessRequest(content: AccessRequestView): NotificationMessage {
+  const disable = (keyboard: InlineKeyboard) =>
+    keyboard.text("Не присылать запросы доступа", disableAccessRequestCallback);
+  // Аукционная заявка — в очередь аукциона, где допуск выдаёт право ставить,
+  // а не круг участника (PER-534).
+  const title =
+    content.queue === "auction"
+      ? "Новая заявка на участие в аукционе"
+      : "Новая заявка на доступ в сообщество";
+  const domain = queueDomain(content.queue);
+  const openQueue = () =>
+    new InlineKeyboard().text("Открыть заявки", traceCallback(`${domain}:q`));
+  switch (content.kind) {
+    // Тело заявки и решение тем же путём, что карточка очереди: те же данные
+    // кнопок «Допустить» и «Отказать», те же проверки права и исхода.
+    // Решённую с тех пор заявку кнопка не решает: Identity отвечает «уже
+    // решено», и бот говорит это так же, как под карточкой очереди.
+    case "access-request-card": {
+      const { application } = content;
+      const data = cardCursorData(cursorOf(application));
+      const keyboard = new InlineKeyboard()
+        .text(admitLabel, traceCallback(`${domain}:qa:${data}`))
+        .text(declineLabel, traceCallback(`${domain}:qd:${data}`))
+        .row();
+      if (application.telegramUsername !== undefined) {
+        keyboard
+          .url("Профиль ↗", `https://t.me/${application.telegramUsername}`)
+          .row();
+      }
+      return {
+        text: `${title}\n\n${applicationCardBody(application, content.shownAtMs)}`,
+        keyboard: disable(keyboard),
+        format: "HTML",
+      };
+    }
+    // Заявку решил другой администратор, пока факт шёл: решать нечего, а
+    // очередь, где лежат остальные, — по кнопке.
+    case "access-request-decided":
+      return {
+        text: `${title}\n\nЭту заявку уже решили.`,
+        keyboard: disable(openQueue().row()),
+      };
+    // Без права очереди или без курсора в факте — один повод и переход в
+    // очередь с начала, как до PER-634.
+    case "access-requested":
+      return { text: title, keyboard: disable(openQueue().row()) };
+    default: {
+      const _exhaustive: never = content;
+      return _exhaustive;
+    }
+  }
+}
+
 function tentative(isTentative: boolean, value: string): string {
   return isTentative ? `Предварительно: ${value}` : value;
 }
@@ -442,6 +486,9 @@ export function createNotificationSender(
           ...(message.keyboard === undefined
             ? {}
             : { reply_markup: message.keyboard }),
+          ...(message.format === undefined
+            ? {}
+            : { parse_mode: message.format }),
           link_preview_options: { is_disabled: true },
         });
         // Назначенному администратором — команда `/manage` в списке его чата

@@ -77,6 +77,9 @@ public class AccessRequestFactTests
             fact.Cause.IdentityEventId.ShouldBe(application.EventId);
             fact.TypeCase.ShouldBe(Notification.TypeOneofCase.AccessRequested);
             fact.AccessRequested.Queue.ShouldBe(ApplicationQueue.Community);
+            // Курсор заявки — тот, что прислал Identity: по нему бот читает карточку.
+            fact.AccessRequested.ApplicationId.ShouldBe(application.ApplicationSubmitted.ApplicationId);
+            fact.AccessRequested.CreatedAt.ShouldBe(application.ApplicationSubmitted.CreatedAt);
             fact.HasNotAfter.ShouldBeTrue();
             fact.HasRequestId.ShouldBeFalse();
         }

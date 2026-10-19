@@ -311,7 +311,8 @@ public static class NotificationFacts
 
     /// <summary>
     /// Факт «новая заявка» одному администратору. Заявитель в сообщение не
-    /// попадает: кто просит и откуда пришёл, модератор читает в очереди.
+    /// попадает: кто просит и откуда пришёл, модератор читает в очереди — по
+    /// курсору заявки, если событие Identity его принесло.
     /// </summary>
     /// <param name="fact">Событие Identity об открытой заявке.</param>
     public static Notification AccessRequested(
@@ -333,7 +334,12 @@ public static class NotificationFacts
             requestId: null,
             now,
             notAfter);
-        notification.AccessRequested = new V1.AccessRequested { Queue = ContractQueue(fact) };
+        notification.AccessRequested = new V1.AccessRequested
+        {
+            Queue = ContractQueue(fact),
+            ApplicationId = fact.Application?.Id ?? string.Empty,
+            CreatedAt = fact.Application?.CreatedAt ?? string.Empty,
+        };
 
         return notification;
     }

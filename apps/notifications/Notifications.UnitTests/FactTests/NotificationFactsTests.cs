@@ -264,6 +264,34 @@ public class NotificationFactsTests
     }
 
     [Fact]
+    public void AccessRequested_Application_CarriesTheApplicationCursor()
+    {
+        var message = EventFactory.Application(EventFactory.NewId(), version: 2, Identity.V1.Circle.Member);
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(message))
+            .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
+
+        var notification = NotificationFacts.AccessRequested(NotificationId, RecipientId, fact, Now, NotAfter);
+
+        notification.AccessRequested.ApplicationId.ShouldBe(message.ApplicationSubmitted.ApplicationId);
+        notification.AccessRequested.CreatedAt.ShouldBe(message.ApplicationSubmitted.CreatedAt);
+    }
+
+    [Fact]
+    public void AccessRequested_ApplicationWithoutCursor_LeavesItEmpty()
+    {
+        var message = EventFactory.Application(EventFactory.NewId(), version: 2, Identity.V1.Circle.Member);
+        message.ApplicationSubmitted.ApplicationId = string.Empty;
+        message.ApplicationSubmitted.CreatedAt = string.Empty;
+        var fact = ReplicaMapping.Identity(EventFactory.Bytes(message))
+            .ShouldBeOfType<Decoded.Fact>().Event.ShouldBeOfType<IdentityFact>();
+
+        var notification = NotificationFacts.AccessRequested(NotificationId, RecipientId, fact, Now, NotAfter);
+
+        notification.AccessRequested.ApplicationId.ShouldBeEmpty();
+        notification.AccessRequested.CreatedAt.ShouldBeEmpty();
+    }
+
+    [Fact]
     public void AccessRequested_OtherOccasion_Throws()
     {
         var fact = ReplicaMapping.Identity(EventFactory.Bytes(EventFactory.Identity(EventFactory.NewId(), version: 2)))

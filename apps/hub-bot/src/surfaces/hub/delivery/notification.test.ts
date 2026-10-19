@@ -608,6 +608,63 @@ describe("decodeNotification", () => {
       });
     });
 
+    const withCursor = (applicationId: string, createdAt: string) =>
+      published((message) => {
+        message.type = {
+          case: "accessRequested",
+          value: create(AccessRequestedSchema, {
+            queue: ApplicationQueue.COMMUNITY,
+            applicationId,
+            createdAt,
+          }),
+        };
+      });
+
+    // Курсор заявки — то, по чему бот прочитает её карточку (PER-634).
+    it("decodes the application cursor", () => {
+      expect(
+        decodeNotification(
+          withCursor(
+            "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903",
+            "2026-10-12T18:05:07.040Z",
+          ),
+        ),
+      ).toMatchObject({
+        kind: "ok",
+        notification: {
+          content: {
+            kind: "access-requested",
+            queue: "community",
+            application: {
+              applicationId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903",
+              createdAtMs: Date.UTC(2026, 9, 12, 18, 5, 7, 40),
+            },
+          },
+        },
+      });
+    });
+
+    // Факт старше курсора или с неразборчивым курсором остаётся поводом:
+    // модератор теряет тело заявки, но не весть о ней.
+    it.each([
+      ["", ""],
+      ["0198F2A4-7C1E-7D3A-9B21-4F8E12AB3903", "2026-10-12T18:05:07.040Z"],
+      ["not-a-uuid", "2026-10-12T18:05:07.040Z"],
+      ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", ""],
+      ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", "yesterday"],
+      ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", "2026-10-12T18:05:07Z"],
+      ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903", "2026-10-12T21:05:07.040+03:00"],
+    ])("decodes a request without a readable cursor (%s, %s)", (id, at) => {
+      const decoded = decodeNotification(withCursor(id, at));
+      expect(decoded).toMatchObject({
+        kind: "ok",
+        notification: { content: { kind: "access-requested" } },
+      });
+      expect(
+        decoded.kind === "ok" && "application" in decoded.notification.content,
+      ).toBe(false);
+    });
+
     // Без очереди некуда вести модератора: это дефект издателя, а не повод
     // звать администратора.
     it("rejects a request without a queue", () => {

@@ -1853,7 +1853,7 @@ function parseApplicationQueue(
 }
 
 /** Домен кнопок очереди: `v1:cm` — сообщество, `v1:aq` — аукцион. */
-export function queueDomain(queue: ApplicationQueue): string {
+export function queueDomain(queue: ApplicationQueue): "v1:cm" | "v1:aq" {
   return queue === "community" ? "v1:cm" : "v1:aq";
 }
 

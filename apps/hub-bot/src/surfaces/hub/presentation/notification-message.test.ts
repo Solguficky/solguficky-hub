@@ -512,6 +512,134 @@ describe("access request", () => {
   });
 });
 
+describe("access request with the application", () => {
+  const stop = expect.objectContaining({
+    text: "Не присылать запросы доступа",
+    callback_data: "v1:notify:off:access",
+  });
+  const applicationId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903";
+  const createdAtMs = Date.UTC(2026, 9, 12, 18, 5, 7, 40);
+
+  // Тело заявки — те же строки, что карточка очереди, а решение — те же
+  // данные кнопок с пометкой следа: экран исхода придёт новым сообщением.
+  it("shows the application with admit and decline of the queue card", () => {
+    const content: OutgoingNotification = {
+      kind: "access-request-card",
+      queue: "community",
+      application: {
+        applicationId,
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3904",
+        telegramUserId: 7110n,
+        telegramUsername: "alice_b",
+        firstName: "Алиса <3",
+        circle: "member",
+        source: { kind: "channel", label: "Ярмарка" },
+        createdAtMs,
+      },
+      shownAtMs: createdAtMs + 5 * 60_000,
+    };
+    const message = renderNotification(content);
+
+    expect(message.format).toBe("HTML");
+    expect(message.text).toBe(
+      [
+        "Новая заявка на доступ в сообщество",
+        "",
+        "Алиса &lt;3 (@alice_b)",
+        "Пришёл: канал «Ярмарка» · 5 минут назад",
+      ].join("\n"),
+    );
+    const data = `AZjypHwefTqbIU-OEqs5Aw:${createdAtMs.toString(36)}`;
+    expect(buttons(content)).toEqual([
+      expect.objectContaining({ callback_data: `v1:t:cm:qa:${data}` }),
+      expect.objectContaining({ callback_data: `v1:t:cm:qd:${data}` }),
+      expect.objectContaining({
+        text: "Профиль ↗",
+        url: "https://t.me/alice_b",
+      }),
+      stop,
+    ]);
+  });
+
+  it("names the auction queue in the decision buttons", () => {
+    const content: OutgoingNotification = {
+      kind: "access-request-card",
+      queue: "auction",
+      application: {
+        applicationId,
+        identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3904",
+        telegramUserId: 7110n,
+        circle: "public",
+        source: { kind: "none" },
+        createdAtMs,
+      },
+      shownAtMs: createdAtMs,
+    };
+    expect(renderNotification(content).text).toContain(
+      "Новая заявка на участие в аукционе",
+    );
+    expect(
+      buttons(content).map(
+        (button) => (button as { callback_data?: string }).callback_data,
+      ),
+    ).toEqual([
+      expect.stringMatching(/^v1:t:aq:qa:/),
+      expect.stringMatching(/^v1:t:aq:qd:/),
+      "v1:notify:off:access",
+    ]);
+  });
+
+  // Заявку решили до доставки: решать нечего, остальные — в очереди.
+  it("says a decided application was decided and leads to the queue", () => {
+    const content: OutgoingNotification = {
+      kind: "access-request-decided",
+      queue: "community",
+    };
+    const message = renderNotification(content);
+    expect(message.text).toBe(
+      "Новая заявка на доступ в сообщество\n\nЭту заявку уже решили.",
+    );
+    expect(message.format).toBeUndefined();
+    expect(buttons(content)).toEqual([
+      expect.objectContaining({
+        text: "Открыть заявки",
+        callback_data: "v1:t:cm:q",
+      }),
+      stop,
+    ]);
+  });
+
+  it("sends the card as HTML", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({});
+    const sender = createNotificationSender({
+      sendMessage,
+      setMyCommands: vi.fn(),
+      deleteMyCommands: vi.fn(),
+    } as never);
+    await sender.send({
+      telegramUserId: 7110n,
+      message: {
+        kind: "access-request-card",
+        queue: "community",
+        application: {
+          applicationId,
+          identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3904",
+          telegramUserId: 7110n,
+          circle: "member",
+          source: { kind: "none" },
+          createdAtMs,
+        },
+        shownAtMs: createdAtMs,
+      },
+    });
+    expect(sendMessage).toHaveBeenCalledWith(
+      7110,
+      expect.any(String),
+      expect.objectContaining({ parse_mode: "HTML" }),
+    );
+  });
+});
+
 describe("access granted", () => {
   // Прежнее сообщение экрана состава: тот же текст и кнопка следа в корень
   // «Сходки» (решение владельца 10 октября 2026 года).

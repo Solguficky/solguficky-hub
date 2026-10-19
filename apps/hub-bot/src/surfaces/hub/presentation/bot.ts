@@ -100,6 +100,7 @@ import type {
 } from "../application/types.js";
 import { type AuctionScreens, viewerOf } from "../auction/port.js";
 import { type CommunityDay, isBeforeDay } from "../community-time.js";
+import { cursorAtApplication } from "../identity/application-cursor.js";
 import {
   type AccessRequester,
   type Administrator,
@@ -4847,27 +4848,16 @@ function sourceChannelsForbiddenOutcome(person: Person): BoundaryOutcome {
   };
 }
 
-// Курсор очереди из кнопки. `after` — следующая заявка за этой. `at` — эта же,
-// если она ещё открыта: тот же момент и предшествующий UUID, и сравнение
-// «(момент, id) больше курсора» начинает ровно с неё. Момент на миллисекунду
-// раньше тут не годится: у двух заявок одной миллисекунды он вернул бы первую.
+// Курсор очереди из кнопки. `after` — следующая заявка за этой, `at` — эта же,
+// если она ещё открыта (`cursorAtApplication`).
 function queueCursor(
   cursor: CardCursor,
   from: "after" | "at",
 ): ApplicationCursor {
   const applicationId = tokenToUuid(cursor.token);
-  return {
-    createdAtMs: cursor.createdAtMs,
-    applicationId:
-      from === "after" ? applicationId : previousUuid(applicationId),
-  };
-}
-
-function previousUuid(uuid: string): string {
-  const value = BigInt(`0x${uuid.replaceAll("-", "")}`);
-  // Нулевого UUIDv7 не бывает; на нём курсор просто начнёт с момента.
-  const hex = (value === 0n ? 0n : value - 1n).toString(16).padStart(32, "0");
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  return from === "after"
+    ? { createdAtMs: cursor.createdAtMs, applicationId }
+    : cursorAtApplication({ applicationId, createdAtMs: cursor.createdAtMs });
 }
 
 function readApplicationQueue(
