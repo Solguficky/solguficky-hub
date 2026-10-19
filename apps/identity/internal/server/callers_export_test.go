@@ -14,6 +14,7 @@ import (
 var CallerTokens = map[Caller]string{
 	CallerHubBot:        "bot-token",
 	CallerAuctionBot:    "auction-bot-token",
+	CallerSupportBot:    "support-bot-token",
 	CallerMeetups:       "meetups-token",
 	CallerNotifications: "notifications-token",
 	CallerAuction:       "auction-token",

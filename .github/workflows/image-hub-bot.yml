@@ -1,8 +1,9 @@
 name: Image Hub Bot
 
-# Production-образ пакета ботов по apps/hub-bot/Containerfile — один на бот
-# хаба и бот аукциона: процессы различает переменная BOT_SURFACE, а workload
-# auction-bot в чарте читает ключ образа hub-bot (ADR-064, п. 18). Pull request
+# Production-образ пакета ботов по apps/hub-bot/Containerfile — один на боты
+# хаба, аукциона и поддержки: процессы различает переменная BOT_SURFACE, а
+# workload'ы auction-bot и support-bot в чарте читают ключ образа hub-bot
+# (ADR-064, п. 18; ADR-068, п. 1). Pull request
 # только собирает образ и проверяет его: в GHCR ничего не пишется, и права
 # записи код из PR не получает. Push в stage публикует образ — кандидата на
 # stage. Мерж в main образ не пересобирает: на прод едет тот же digest, что

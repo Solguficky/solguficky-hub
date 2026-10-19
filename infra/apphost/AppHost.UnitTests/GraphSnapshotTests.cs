@@ -26,7 +26,13 @@ public class GraphSnapshotTests
     /// </summary>
     [Fact]
     public Task Hub_RunModel_MatchesSnapshot() =>
-        MatchAsync(["--profile", "hub"], "hub.run.txt");
+        MatchAsync(HubArgs, "hub.run.txt");
+
+    /// <summary>
+    /// Имя бота поддержки — настройка, которой в CI нет (SupportBotLink): без
+    /// неё снимок не показал бы адресов, которые получают два других бота.
+    /// </summary>
+    private static readonly string[] HubArgs = ["--profile", "hub", "--SupportBot:Username=solguficky_support_bot"];
 
     /// <summary>
     /// Bind молчит, если узла нет: локально это свойство среза, а в чарте —
@@ -85,20 +91,20 @@ public class GraphSnapshotTests
     private static string[] PublishArgs() =>
         ["--operation", "publish", "--publisher", "default", "--output-path", Path.GetTempPath()];
 
-    private static string[] SnapshotArgs(bool publish) => publish ? PublishArgs() : ["--profile", "hub"];
+    private static string[] SnapshotArgs(bool publish) => publish ? PublishArgs() : HubArgs;
 
     [Fact]
     public async Task Hub_Rendering_IsStableAcrossOtherModels()
     {
         var cancellationToken = TestContext.Current.CancellationToken;
-        var first = await GraphSnapshot.RenderAsync(["--profile", "hub"], cancellationToken);
+        var first = await GraphSnapshot.RenderAsync(HubArgs, cancellationToken);
 
         await GraphSnapshot.RenderAsync(
             PublishArgs(),
             cancellationToken);
         await GraphSnapshot.RenderAsync(["--profile", "identity"], cancellationToken);
 
-        var last = await GraphSnapshot.RenderAsync(["--profile", "hub"], cancellationToken);
+        var last = await GraphSnapshot.RenderAsync(HubArgs, cancellationToken);
         Lines(last).ShouldBe(Lines(first));
     }
 

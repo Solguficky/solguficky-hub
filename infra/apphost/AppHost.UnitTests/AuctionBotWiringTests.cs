@@ -170,6 +170,30 @@ public class AuctionBotWiringTests
         environment.ShouldNotContainKey("AUCTION_BOT_AUCTION_ID");
     }
 
+    /// <summary>
+    /// Вход в бот поддержки (ADR-068, п. 2): имя для кадра ожидания и готовая
+    /// «Задать вопрос ↗» FAQ с меткой своего бота — код FAQ её уже читает.
+    /// </summary>
+    [Fact]
+    public async Task AuctionBot_GetsTheSupportBotUsernameAndQuestionUrl()
+    {
+        var (bot, _) = Materialize("prod", supportBotUsername: " solguficky_support_bot ");
+        var environment = await EnvironmentAsync(bot);
+
+        environment["BOT_SUPPORT_BOT_USERNAME"].ShouldBe("solguficky_support_bot");
+        environment["AUCTION_FAQ_QUESTION_URL"].ShouldBe("https://t.me/solguficky_support_bot?start=auction");
+    }
+
+    [Fact]
+    public async Task AuctionBot_WithoutSupportBotUsername_GetsNeitherVariable()
+    {
+        var (bot, _) = Materialize("prod");
+        var environment = await EnvironmentAsync(bot);
+
+        environment.ShouldNotContainKey("BOT_SUPPORT_BOT_USERNAME");
+        environment.ShouldNotContainKey("AUCTION_FAQ_QUESTION_URL");
+    }
+
     [Fact]
     public async Task AuctionBot_TestEnvironment_TakesTheTestToken()
     {
@@ -181,7 +205,10 @@ public class AuctionBotWiringTests
     }
 
     private static (IResource Bot, ServiceGraphContext Context) Materialize(
-        string telegramEnvironment, string? staleAuctionId = null, bool withNotifications = true)
+        string telegramEnvironment,
+        string? staleAuctionId = null,
+        bool withNotifications = true,
+        string? supportBotUsername = null)
     {
         var builder = DistributedApplication.CreateBuilder(
             new DistributedApplicationOptions { Args = [], DisableDashboard = true });
@@ -202,6 +229,7 @@ public class AuctionBotWiringTests
             ["Parameters:hub-bot-token"] = "222:hub",
             ["Parameters:hub-bot-test-token"] = "333:hub-test",
             ["AuctionBot:AuctionId"] = staleAuctionId,
+            [SupportBotLink.UsernameKey] = supportBotUsername,
         });
         if (withNotifications)
         {

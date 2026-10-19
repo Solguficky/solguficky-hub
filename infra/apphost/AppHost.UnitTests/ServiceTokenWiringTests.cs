@@ -24,11 +24,12 @@ public class ServiceTokenWiringTests
     private const string HubBot = AppHostNames.Resources.HubBot;
     private const string Auction = AppHostNames.Resources.Auction;
     private const string AuctionBot = AppHostNames.Resources.AuctionBot;
+    private const string SupportBot = AppHostNames.Resources.SupportBot;
 
     /// <summary>Колонка Caller в integration.md: вызываемый — его вызывающие.</summary>
     private static readonly Dictionary<string, string[]> Callers = new()
     {
-        [Identity] = [HubBot, AuctionBot, Meetups, Notifications],
+        [Identity] = [HubBot, AuctionBot, SupportBot, Meetups, Notifications],
         [Meetups] = [HubBot, Notifications, Auction],
         [Notifications] = [HubBot, AuctionBot],
     };
@@ -88,10 +89,12 @@ public class ServiceTokenWiringTests
 
         var expected = new Dictionary<string, string[]>
         {
-            [Identity] = ["IDENTITY_CALLER_TOKEN_AUCTION", "IDENTITY_CALLER_TOKEN_AUCTION_BOT", "IDENTITY_CALLER_TOKEN_HUB_BOT", "IDENTITY_CALLER_TOKEN_MEETUPS", "IDENTITY_CALLER_TOKEN_NOTIFICATIONS"],
+            [Identity] = ["IDENTITY_CALLER_TOKEN_AUCTION", "IDENTITY_CALLER_TOKEN_AUCTION_BOT", "IDENTITY_CALLER_TOKEN_HUB_BOT", "IDENTITY_CALLER_TOKEN_MEETUPS", "IDENTITY_CALLER_TOKEN_NOTIFICATIONS", "IDENTITY_CALLER_TOKEN_SUPPORT_BOT"],
             [Meetups] = ["MEETUPS_CALLER_TOKEN_AUCTION", "MEETUPS_CALLER_TOKEN_HUB_BOT", "MEETUPS_CALLER_TOKEN_NOTIFICATIONS", "MEETUPS_SERVICE_TOKEN"],
             [Notifications] = ["NOTIFICATIONS_CALLER_TOKEN_AUCTION_BOT", "NOTIFICATIONS_CALLER_TOKEN_HUB_BOT", "NOTIFICATIONS_SERVICE_TOKEN"],
             [HubBot] = ["BOT_SERVICE_TOKEN"],
+            // Бот поддержки зовёт одну Identity (ADR-068, п. 3).
+            [SupportBot] = ["BOT_SERVICE_TOKEN"],
         };
 
         tokens.Keys.Order(StringComparer.Ordinal).ToArray().ShouldBe(expected.Keys.Order(StringComparer.Ordinal).ToArray());
@@ -113,7 +116,7 @@ public class ServiceTokenWiringTests
 
         // Пустой реестр прошёл бы цикл без единой проверки.
         parameters.Select(parameter => parameter.Name).Order(StringComparer.Ordinal).ToArray().ShouldBe(
-            ["auction-bot-service-token", "auction-service-token", "hub-bot-service-token", "meetups-service-token", "notifications-service-token"]);
+            ["auction-bot-service-token", "auction-service-token", "hub-bot-service-token", "meetups-service-token", "notifications-service-token", "support-bot-service-token"]);
         foreach (var parameter in parameters)
         {
             parameter.Secret.ShouldBeTrue(parameter.Name);
@@ -221,8 +224,8 @@ public class ServiceTokenWiringTests
 
     private static string Env(string resource) => resource.ToUpperInvariant().Replace('-', '_');
 
-    // Два бота — один пакет и одно имя переменной своего токена (ADR-064, п. 18);
+    // Три бота — один пакет и одно имя переменной своего токена (ADR-064, п. 18);
     // остальные вызывающие читают имя, выведенное из узла.
     private static string CallerVariable(string caller) =>
-        caller is HubBot or AuctionBot ? "BOT_SERVICE_TOKEN" : $"{Env(caller)}_SERVICE_TOKEN";
+        caller is HubBot or AuctionBot or SupportBot ? "BOT_SERVICE_TOKEN" : $"{Env(caller)}_SERVICE_TOKEN";
 }

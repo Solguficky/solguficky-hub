@@ -24,6 +24,7 @@ hub-bot: ExecutableResource
   env: BOT_ENVIRONMENT=prod
   env: BOT_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
   env: BOT_SERVICE_TOKEN={hub-bot-service-token.value}
+  env: BOT_SUPPORT_BOT_USERNAME=solguficky_support_bot
   env: BOT_SURFACE=hub
   env: BOT_TOKEN={hub-bot-token.value}
   env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
@@ -60,6 +61,7 @@ identity: ExecutableResource
   env: IDENTITY_CALLER_TOKEN_HUB_BOT={hub-bot-service-token.value}
   env: IDENTITY_CALLER_TOKEN_MEETUPS={meetups-service-token.value}
   env: IDENTITY_CALLER_TOKEN_NOTIFICATIONS={notifications-service-token.value}
+  env: IDENTITY_CALLER_TOKEN_SUPPORT_BOT={support-bot-service-token.value}
   env: IDENTITY_DATABASE_URL=postgresql://postgres:{postgres-password.value}@{postgres.bindings.tcp.host}:{postgres.bindings.tcp.port}/identity?sslmode=disable
   env: IDENTITY_GRPC_ADDR=:{identity.bindings.grpc.targetPort}
   env: IDENTITY_MAINTAINER_TOKEN={identity-maintainer-token.value}
@@ -79,6 +81,7 @@ identity: ExecutableResource
   relationship: Reference notifications-service-token
   relationship: Reference postgres
   relationship: Reference postgres-password
+  relationship: Reference support-bot-service-token
   relationship: WaitFor identity-build
   relationship: WaitFor identity-db
   relationship: WaitFor nats
@@ -203,3 +206,33 @@ postgres: PostgresServerResource
   env: POSTGRES_USER=postgres
   mount: Volume solguficky-<tree>-postgres-data -> /var/lib/postgresql/data
   health: postgres_check
+support-bot: ExecutableResource
+  command: node
+  workdir: <repo>/apps/hub-bot
+  arg: dist/src/main.js
+  env: BOT_COMMUNITY_TIME_ZONE=Europe/Moscow
+  env: BOT_ENVIRONMENT=prod
+  env: BOT_NATS_URL=nats://nats:{nats-password.value}@{nats.bindings.tcp.host}:{nats.bindings.tcp.port}
+  env: BOT_SERVICE_TOKEN={support-bot-service-token.value}
+  env: BOT_SUPPORT_GROUP_ID={support-bot-group-id.value}
+  env: BOT_SURFACE=support
+  env: BOT_TOKEN={support-bot-token.value}
+  env: IDENTITY_GRPC_URL={identity.bindings.grpc.url}
+  waits: bot-build WaitForCompletion
+  waits: identity WaitUntilHealthy
+  waits: nats WaitUntilHealthy
+  relationship: Reference identity
+  relationship: Reference nats
+  relationship: Reference nats-password
+  relationship: Reference support-bot-group-id
+  relationship: Reference support-bot-service-token
+  relationship: Reference support-bot-token
+  relationship: WaitFor bot-build
+  relationship: WaitFor identity
+  relationship: WaitFor nats
+support-bot-group-id: ParameterResource
+  secret: False
+support-bot-service-token: ParameterResource
+  secret: True
+support-bot-token: ParameterResource
+  secret: True

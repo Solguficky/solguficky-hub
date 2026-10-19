@@ -34,6 +34,9 @@ public static class AppHostNames
 
         // Бот аукциона (ADR-044).
         public const string AuctionBot = "auction-bot";
+
+        // Бот поддержки (ADR-068).
+        public const string SupportBot = "support-bot";
     }
 
     /// <summary>
