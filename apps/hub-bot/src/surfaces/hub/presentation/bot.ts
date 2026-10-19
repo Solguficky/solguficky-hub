@@ -32,7 +32,10 @@ import {
   liveCardOf,
   liveEditFailure,
 } from "../../../core/auction/live-cards.js";
-import { reportLiveEditFailure } from "../../../core/auction/live-failures.js";
+import {
+  reportLiveConsoleFailure,
+  reportLiveEditFailure,
+} from "../../../core/auction/live-failures.js";
 import type { AuctionWatches } from "../../../core/auction/watch.js";
 import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import { createBotShell, type ShellContext } from "../../../core/bot/shell.js";
@@ -150,6 +153,12 @@ import {
 } from "./auction-route.js";
 import { parseBroadcastPreview } from "./broadcast-input.js";
 import { decideHubEntry, hubAccessRequest } from "./hub-entry.js";
+import {
+  createLiveConsoles,
+  type LiveConsoleEntry,
+  type LiveConsoleRead,
+  type LiveConsoles,
+} from "./live-console.js";
 import { parseLotPhoto } from "./lot-photo-input.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
@@ -222,6 +231,7 @@ import {
 } from "./screens/auction.js";
 import {
   auctionDiscardedText,
+  type ConsoleScreenView,
   closeConfirmScreen,
   closedScreen,
   consoleMeetupText,
@@ -711,6 +721,10 @@ type UpdateContext = ShellContext & {
   // карточку заново: без неё нажатие под карточкой её из реестра снимает.
   liveCards?: LiveCards;
   liveShown?: boolean;
+  // Открытые пульты ведущего (PER-566) и отметка, что этот update показал
+  // пульт финала: без неё нажатие под пультом его из реестра снимает.
+  liveConsoles?: LiveConsoles;
+  liveConsoleShown?: boolean;
 };
 
 type BoundaryOutcome =
@@ -766,17 +780,37 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
           edit: (card, body) =>
             editLiveLotCard(bot.api, { card, body, runtime, lotPhotos }),
         });
+  const liveConsoles =
+    runtime.live === undefined
+      ? undefined
+      : createLiveConsoles({
+          watches: runtime.live.watches,
+          limiter: runtime.live.limiter,
+          read: (entry) => readLiveConsole(runtime, entry),
+          edit: (entry, screen) =>
+            editLiveConsole(bot.api, runtime, entry, screen),
+        });
   bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
     ctx.communityTimeZone = runtime.communityTimeZone ?? "UTC";
     ctx.auctionParents = auctionParents;
     if (liveCards !== undefined) ctx.liveCards = liveCards;
+    if (liveConsoles !== undefined) ctx.liveConsoles = liveConsoles;
     await next();
     // Нажатие под карточкой финала показало другой экран — меню, сходку,
     // вопрос: правка по потоку вернула бы карточку поверх него (PER-336).
     const pressed = ctx.callbackQuery?.message;
     if (liveCards !== undefined && pressed !== undefined && !ctx.liveShown) {
       liveCards.shown(pressed.chat.id, pressed.message_id, undefined);
+    }
+    // То же у пульта ведущего (PER-566): исход команды или другой экран в
+    // сообщении пульта снимает его с правки по потоку.
+    if (
+      liveConsoles !== undefined &&
+      pressed !== undefined &&
+      !ctx.liveConsoleShown
+    ) {
+      liveConsoles.shown(pressed.chat.id, pressed.message_id, undefined);
     }
     // Команды кнопки меню клиента — по правам, на каждом действии, где
     // личность разрешена, а не только на `/start` (PER-592): держателю права
@@ -6926,19 +6960,36 @@ async function renderConsoleResult(
         result.holder === undefined
           ? undefined
           : await withMeetupTitle(ctx, runtime, context.person, result.holder);
-      await showScreen(
-        ctx,
-        consoleScreen({
-          console: result.console,
-          ...(result.note === undefined ? {} : { note: result.note }),
-          ...(result.noteLot === undefined ? {} : { noteLot: result.noteLot }),
-          ...(holder === undefined ? {} : { holder }),
-          page: context.page ?? 0,
-          sort: context.sort ?? defaultConsoleSort,
-          timeZone,
-          today: communityToday(ctx),
-        }),
-      );
+      const view: ConsoleScreenView = {
+        console: result.console,
+        ...(result.note === undefined ? {} : { note: result.note }),
+        ...(result.noteLot === undefined ? {} : { noteLot: result.noteLot }),
+        ...(holder === undefined ? {} : { holder }),
+        page: context.page ?? 0,
+        sort: context.sort ?? defaultConsoleSort,
+        timeZone,
+        today: communityToday(ctx),
+      };
+      const sent = await showScreen(ctx, consoleScreen(view));
+      // Пульт финала (PER-566): сообщение, в котором он оказался, правится
+      // дальше по потоку аукциона. Без нового сообщения пульт остался в
+      // нажатом — тот же экран или правка без ответа.
+      const chatId = ctx.chat?.id;
+      const pressed = ctx.callbackQuery?.message;
+      const messageId =
+        sent?.message_id ??
+        (ctx.fresh === true ? undefined : pressed?.message_id);
+      if (
+        ctx.liveConsoles !== undefined &&
+        chatId !== undefined &&
+        messageId !== undefined
+      ) {
+        const kept = ctx.liveConsoles.shown(chatId, messageId, {
+          person: context.person,
+          view,
+        });
+        if (messageId === pressed?.message_id) ctx.liveConsoleShown = kept;
+      }
       return handled(
         result.note === undefined
           ? "auction console sent"
@@ -7692,6 +7743,62 @@ async function deliverAuctionScreen(
     }
     warn("lot image rejected by Telegram", cause);
     return shownIn("lot image rejected", shown.screen);
+  }
+}
+
+// Чтение пульта ведущего вне update (PER-566): тот же юзкейс, что у
+// «Обновить», правами ведущего, открывшего пульт. Страница и сортировка — те,
+// что он видит.
+async function readLiveConsole(
+  runtime: BotRuntime,
+  entry: LiveConsoleEntry,
+): Promise<LiveConsoleRead> {
+  const result = await runtime.dispatcher.execute({
+    identity: entry.person,
+    auctionId: entry.auctionId,
+    intent: "view-auction-console",
+    requestId: createUuidV7(),
+    useCase: "manage_auction",
+  });
+  switch (result.kind) {
+    case "auction-console":
+      return {
+        kind: "console",
+        view: {
+          console: result.console,
+          page: entry.view.page,
+          sort: entry.view.sort,
+          timeZone: runtime.communityTimeZone ?? "UTC",
+          today: (runtime.today ?? utcToday)(),
+        },
+      };
+    case "auction-console-refused":
+      return { kind: "refused" };
+    default:
+      reportLiveConsoleFailure(runtime.logger, result.kind);
+      return { kind: "failed" };
+  }
+}
+
+// Правка пульта ведущего вне update (PER-566): отказы Telegram разбираются
+// так же, как у карточки финала.
+async function editLiveConsole(
+  api: Bot<UpdateContext>["api"],
+  runtime: BotRuntime,
+  entry: LiveConsoleEntry,
+  screen: ShownScreen,
+): Promise<LiveEditOutcome> {
+  try {
+    await api.editMessageText(entry.chatId, entry.messageId, screen.text, {
+      ...screenMark(screen.id),
+      reply_markup: screen.keyboard,
+      ...(screen.format === "HTML" ? { parse_mode: "HTML" as const } : {}),
+    });
+    return { kind: "done" };
+  } catch (cause) {
+    return liveEditFailure(cause, (error) =>
+      reportLiveEditFailure(runtime.logger, error),
+    );
   }
 }
 

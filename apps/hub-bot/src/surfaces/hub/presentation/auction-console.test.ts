@@ -2,6 +2,7 @@ import type { Update } from "grammy/types";
 import { describe, expect, it } from "vitest";
 import {
   createHarness,
+  type HarnessOptions,
   type RecordedCall,
 } from "../../../../testkit/harness.js";
 import {
@@ -12,6 +13,15 @@ import {
   type Money,
   type RaffleView,
 } from "../../../auction-ui/index.js";
+import type {
+  AuctionWatches,
+  AuctionWatchState,
+} from "../../../core/auction/watch.js";
+import {
+  type Clock,
+  createEditLimiter,
+  type EditLimiter,
+} from "../../../core/bot/edit-limiter.js";
 import {
   createDispatcher,
   type Dispatcher,
@@ -492,6 +502,8 @@ function harness(
   calls: RecordedCall[] = [],
   rights?: readonly AccessRight[],
   auctionBotUsername?: string,
+  // Живой пульт (PER-566): поток, темп правок и ответы Telegram на правки.
+  extra: Pick<HarnessOptions, "live" | "respond"> = {},
 ) {
   return createHarness(
     identity(holder, rights),
@@ -508,6 +520,7 @@ function harness(
       auction: auction.port,
       communityTimeZone: timeZone,
       ...(auctionBotUsername === undefined ? {} : { auctionBotUsername }),
+      ...extra,
     },
   );
 }
@@ -2702,5 +2715,375 @@ describe("day summary without lots", () => {
     const screen = plain(last(calls));
     expect(screen).toContain("Лотов в аукционе пока нет.");
     expect(screen).not.toContain("Ставок не было.");
+  });
+});
+
+// Живой пульт ведущего (PER-566): после чужой ставки пульт финала правится по
+// потоку аукциона без нажатия, а состояние потока — только повод перечитать
+// пульт тем же чтением, что «Обновить». Поток подменён: тест сам кладёт в него
+// состояния, обрыв и конец.
+describe("live console of the auctioneer", () => {
+  const leaderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ee";
+  const live = (lotId: string, version: number, price: number): LotView => ({
+    ...trading(lotId, lotId === vaseId ? "Ваза" : "Кружка", price),
+    version,
+    nextPrice: rub(price + 10_000),
+    status: {
+      kind: "trading",
+      currentPrice: rub(price),
+      leaderId,
+      phase: "live",
+    },
+  });
+  const entry = (lot: LotView): ConsoleLot => ({
+    lot,
+    bidCount: 2,
+    uniqueParticipantCount: 1,
+    markedForFinal: true,
+    overdue: false,
+  });
+  // Финал идёт, Ваза торгуется первой.
+  const running = () => {
+    const auction = fakeAuction({
+      status: "final",
+      week: { ...week, final: true },
+      lots: [entry(live(vaseId, 3, 120_000)), entry(live(mugId, 3, 50_000))],
+      lineup: [vaseId, mugId],
+      bids: [{ amount: rub(120_000), participantId: leaderId }],
+      names: { [leaderId]: "Бэтмен" },
+    });
+    auction.state.lineup = { order: [vaseId, mugId], activeLotId: vaseId };
+    return auction;
+  };
+
+  // Ставка в Auction: цена лота растёт вместе с его версией.
+  const bid = (
+    auction: ReturnType<typeof running>,
+    version: number,
+    price: number,
+  ) => {
+    const lot = live(vaseId, version, price);
+    auction.state.lots = auction.state.lots.map((each) =>
+      each.lot.lotId === vaseId ? entry(lot) : each,
+    );
+    return lot;
+  };
+
+  type Subscriber = {
+    listener: (state: AuctionWatchState) => void;
+    ended?: () => void;
+    interrupted?: () => void;
+  };
+
+  function stream() {
+    const subscribers = new Set<Subscriber>();
+    const watches: AuctionWatches = {
+      subscribe(_auctionId, _viewer, listener, ended, interrupted) {
+        const subscriber: Subscriber = {
+          listener,
+          ...(ended === undefined ? {} : { ended }),
+          ...(interrupted === undefined ? {} : { interrupted }),
+        };
+        subscribers.add(subscriber);
+        return () => subscribers.delete(subscriber);
+      },
+      open: () => (subscribers.size > 0 ? 1 : 0),
+      close: () => subscribers.clear(),
+    };
+    const each = (run: (subscriber: Subscriber) => void) => {
+      for (const subscriber of [...subscribers]) run(subscriber);
+    };
+    return {
+      watches,
+      subscribers,
+      emit(activeLot: LotView, finished = false) {
+        each((subscriber) =>
+          subscriber.listener({
+            auctionId,
+            finished,
+            activeLot,
+            lineup: [activeLot],
+          }),
+        );
+      },
+      interrupt: () => each((subscriber) => subscriber.interrupted?.()),
+      end: () => each((subscriber) => subscriber.ended?.()),
+    };
+  }
+
+  const immediate: EditLimiter = {
+    submit: (_chat, _key, task) => {
+      void task();
+    },
+    drop: () => {},
+    waiting: () => 0,
+    close: () => {},
+  };
+
+  const flush = async () => {
+    for (let i = 0; i < 50; i += 1) await Promise.resolve();
+  };
+
+  // Правки сообщения пульта: нажатие правит сообщение 9 тоже, поэтому тест
+  // считает правки после него.
+  const edits = (calls: readonly RecordedCall[]) =>
+    calls.filter(
+      (call) =>
+        call.method === "editMessageText" &&
+        (call.payload as { message_id?: number }).message_id === 9,
+    );
+
+  const setup = async (
+    limiter: EditLimiter = immediate,
+    respond?: HarnessOptions["respond"],
+  ) => {
+    const watch = stream();
+    const auction = running();
+    const { bot, calls } = harness("admin", auction, [], undefined, undefined, {
+      live: {
+        watches: watch.watches,
+        limiter,
+        names: { getDisplayNames: async () => ({}) },
+      },
+      ...(respond === undefined ? {} : { respond }),
+    });
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    return { bot, calls, auction, watch };
+  };
+
+  it("shows the new price after a bid without a press", async () => {
+    const { calls, auction, watch } = await setup();
+    expect(plain(last(calls))).toContain("Цена: 1 200 ₽, следующая: 1 300 ₽.");
+    expect(watch.subscribers.size).toBe(1);
+    const before = edits(calls).length;
+    const reads = auction.sent("getAuctionConsole").length;
+
+    watch.emit(bid(auction, 4, 130_000));
+    await flush();
+
+    expect(edits(calls)).toHaveLength(before + 1);
+    const edited = edits(calls).at(-1)?.payload as Sent;
+    expect(plain(edited)).toContain("Цена: 1 300 ₽, следующая: 1 400 ₽.");
+    expect(plain(edited)).toContain("Лидер: Бэтмен.");
+    expect(labels(edited)).toEqual([
+      ["Поднять цену"],
+      ["Продать"],
+      ["🔄 Обновить"],
+      ["‹ Аукцион"],
+    ]);
+    expect(auction.sent("getAuctionConsole")).toHaveLength(reads + 1);
+  });
+
+  it("does not read the console again for a state it already shows", async () => {
+    const { calls, auction, watch } = await setup();
+    const before = edits(calls).length;
+    const reads = auction.sent("getAuctionConsole").length;
+
+    watch.emit(live(vaseId, 3, 120_000));
+    await flush();
+
+    expect(edits(calls)).toHaveLength(before);
+    expect(auction.sent("getAuctionConsole")).toHaveLength(reads);
+  });
+
+  // Рестарт Auction посреди финала: поток рвётся, и пульт говорит, что цена
+  // могла устареть, не спрашивая лежащий Auction; первое состояние после
+  // переподключения перечитывает пульт и пометку снимает.
+  it("marks the price stale while the stream reconnects", async () => {
+    const { calls, auction, watch } = await setup();
+    const before = edits(calls).length;
+    const reads = auction.sent("getAuctionConsole").length;
+
+    watch.interrupt();
+    watch.interrupt();
+    await flush();
+
+    expect(edits(calls)).toHaveLength(before + 1);
+    const marked = edits(calls).at(-1)?.payload as Sent;
+    expect(plain(marked)).toContain(
+      "Связь с аукционом прервалась — цена могла устареть. Нажми «Обновить».",
+    );
+    expect(plain(marked)).toContain("Цена: 1 200 ₽, следующая: 1 300 ₽.");
+    expect(auction.sent("getAuctionConsole")).toHaveLength(reads);
+
+    watch.emit(live(vaseId, 3, 120_000));
+    await flush();
+
+    expect(edits(calls)).toHaveLength(before + 2);
+    const restored = edits(calls).at(-1)?.payload as Sent;
+    expect(plain(restored)).not.toContain("Связь с аукционом прервалась");
+    expect(plain(restored)).toContain("Цена: 1 200 ₽, следующая: 1 300 ₽.");
+  });
+
+  it("marks the price stale when the console cannot be read", async () => {
+    const { calls, auction, watch } = await setup();
+    auction.port.getAuctionConsole = async () => {
+      throw new Error("unavailable");
+    };
+
+    watch.emit(bid(auction, 4, 130_000));
+    await flush();
+
+    const marked = edits(calls).at(-1)?.payload as Sent;
+    expect(plain(marked)).toContain("Связь с аукционом прервалась");
+    expect(plain(marked)).toContain("Цена: 1 200 ₽");
+  });
+
+  // Чтение по потоку снимает пульт сразу, а отдаёт по сигналу теста: так
+  // видно, что случилось, пока оно было в полёте.
+  const heldRead = (auction: ReturnType<typeof running>) => {
+    const original = auction.port.getAuctionConsole;
+    let release: () => void = () => {};
+    let held = true;
+    auction.port.getAuctionConsole = async (...args) => {
+      const result = await original(...args);
+      if (held) {
+        held = false;
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+      return result;
+    };
+    return () => release();
+  };
+
+  it("keeps the stale mark when the stream breaks off during a read", async () => {
+    const { calls, auction, watch } = await setup();
+    const release = heldRead(auction);
+
+    watch.emit(bid(auction, 4, 130_000));
+    await flush();
+    watch.interrupt();
+    await flush();
+    release();
+    await flush();
+
+    const shown = edits(calls).at(-1)?.payload as Sent;
+    expect(plain(shown)).toContain("Связь с аукционом прервалась");
+    expect(plain(shown)).toContain("Цена: 1 300 ₽");
+  });
+
+  it("does not paint a read older than the press over it", async () => {
+    const { bot, calls, auction, watch } = await setup();
+    const release = heldRead(auction);
+
+    watch.emit(bid(auction, 4, 130_000));
+    await flush();
+    bid(auction, 5, 140_000);
+    await bot.handleUpdate(press(consoleData));
+    expect(plain(last(calls))).toContain("Цена: 1 400 ₽");
+    release();
+    await flush();
+
+    expect(plain(last(calls))).toContain("Цена: 1 400 ₽");
+  });
+
+  it("stops following the stream once another screen takes the message", async () => {
+    const { bot, calls, auction, watch } = await setup();
+    await bot.handleUpdate(press(rootData));
+    expect(watch.subscribers.size).toBe(0);
+    const before = edits(calls).length;
+
+    watch.emit(bid(auction, 4, 130_000));
+    await flush();
+
+    expect(edits(calls)).toHaveLength(before);
+  });
+
+  it("shows the last state and leaves the stream when the final is over", async () => {
+    const { calls, auction, watch } = await setup();
+    auction.state.status = "finished";
+    auction.state.lineup = { order: [vaseId, mugId] };
+
+    watch.emit(live(vaseId, 5, 130_000), true);
+    watch.end();
+    await flush();
+
+    expect(plain(last(calls))).toContain("Аукцион завершён.");
+    expect(watch.subscribers.size).toBe(0);
+  });
+
+  // Залп ставок: правка идёт не чаще раза в секунду на чат, чтение — одно на
+  // правку, последняя цена не теряется, а `429` встаёт паузой, которую назвал
+  // Telegram, а не повтором подряд.
+  it("keeps to the edit limits of Telegram under a volley of bids", async () => {
+    let now = 0;
+    const timers: { at: number; run: () => void; live: boolean }[] = [];
+    const clock: Clock = {
+      now: () => now,
+      later(run, ms) {
+        const timer = { at: now + ms, run, live: true };
+        timers.push(timer);
+        return () => {
+          timer.live = false;
+        };
+      },
+    };
+    const advance = async (ms: number) => {
+      const until = now + ms;
+      await flush();
+      for (;;) {
+        const due = timers
+          .filter((t) => t.live && t.at <= until)
+          .sort((a, b) => a.at - b.at)[0];
+        if (due === undefined) break;
+        due.live = false;
+        now = Math.max(now, due.at);
+        due.run();
+        await flush();
+      }
+      now = until;
+      await flush();
+    };
+    let tooMany = 0;
+    const { calls, auction, watch } = await setup(
+      createEditLimiter({ clock }),
+      (method, payload) => {
+        if (
+          method !== "editMessageText" ||
+          (payload as { message_id?: number }).message_id !== 9 ||
+          tooMany === 0
+        ) {
+          return undefined;
+        }
+        tooMany -= 1;
+        return {
+          ok: false,
+          error_code: 429,
+          description: "Too Many Requests: retry after 2",
+          parameters: { retry_after: 2 },
+        };
+      },
+    );
+    const before = edits(calls).length;
+    const reads = auction.sent("getAuctionConsole").length;
+
+    for (let step = 1; step <= 50; step += 1) {
+      watch.emit(bid(auction, 3 + step, 120_000 + step * 10_000));
+    }
+    await advance(0);
+    expect(edits(calls)).toHaveLength(before + 1);
+    await advance(999);
+    expect(edits(calls)).toHaveLength(before + 1);
+    await advance(1);
+    expect(edits(calls)).toHaveLength(before + 2);
+    expect(plain(edits(calls).at(-1)?.payload as Sent)).toContain(
+      "Цена: 6 200 ₽",
+    );
+    expect(auction.sent("getAuctionConsole")).toHaveLength(reads + 2);
+
+    tooMany = 1;
+    watch.emit(bid(auction, 60, 700_000));
+    await advance(1_000);
+    const refused = edits(calls).length;
+    await advance(1_999);
+    expect(edits(calls)).toHaveLength(refused);
+    await advance(1);
+    expect(edits(calls)).toHaveLength(refused + 1);
+    expect(plain(edits(calls).at(-1)?.payload as Sent)).toContain(
+      "Цена: 7 000 ₽",
+    );
   });
 });

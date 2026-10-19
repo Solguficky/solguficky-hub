@@ -37,6 +37,18 @@ export function reportLiveEditFailure(
   });
 }
 
+// Пульт ведущего (PER-566) перечитывается по потоку вне update: отказ чтения
+// оставляет на экране последний пульт с пометкой обрыва.
+export function reportLiveConsoleFailure(logger: Logger, error: string): void {
+  countFailure("dependency_unavailable");
+  logger.warn("live auction console refresh failed", {
+    operation: "refresh_live_console",
+    result: "error",
+    error_category: "dependency_unavailable",
+    error,
+  });
+}
+
 function messageOf(cause: unknown): string {
   return cause instanceof Error ? cause.message : String(cause);
 }
