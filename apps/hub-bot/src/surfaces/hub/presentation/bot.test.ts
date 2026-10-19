@@ -1241,7 +1241,7 @@ describe("presentation adapter", () => {
     );
     await bot.init();
     await bot.handleUpdate(messageUpdate());
-    expect(buttonLabels(calls[0])).toContain("Управление");
+    expect(buttonLabels(calls[0])).toContain("🛠 Управление");
     expect(commands).toEqual([
       {
         method: "setMyCommands",

@@ -97,6 +97,16 @@ export const screenCatalog = {
     title: "Помощь",
     parent: "menu",
   },
+  // «События» (PER-669): идущие события расширений сходок — сегодня аукцион
+  // от онлайн-торгов до конца финала. Кнопка в меню — пока событие идёт,
+  // команда `/events` — всегда; корень аукциона из него возвращает сюда.
+  events: {
+    class: "screen",
+    nav: "tree",
+    title: "События",
+    parent: "menu",
+    backName: "События",
+  },
   manage: {
     class: "screen",
     nav: "tree",
@@ -572,10 +582,11 @@ export type ScreenId = keyof typeof screenCatalog;
 export const meetupLists = ["meetups", "archive", "hidden"] as const;
 
 /**
- * Куда возвращает корень аукциона: в меню «Расширения» сходки либо, если она
+ * Куда возвращает корень аукциона: по входу (PER-669) — в «События», если
+ * аукцион открыт оттуда, иначе в меню «Расширения» сходки, а если она
  * неизвестна, в «Сходки».
  */
-export const auctionRootParents = ["extensions", "meetups"] as const;
+export const auctionRootParents = ["extensions", "events", "meetups"] as const;
 
 /** Родитель пункта управления: группа либо само «Управление». */
 export const manageParents = {

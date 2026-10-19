@@ -232,6 +232,8 @@ type PlainAction =
   | { kind: "settings" }
   | { kind: "help" }
   | { kind: "next" }
+  // «События» (PER-669): идущие события расширений сходок.
+  | { kind: "events" }
   // Списки листаются: страница едет в кнопке листания, без неё — первая.
   | { kind: "hub"; page?: number }
   | { kind: "archive"; page?: number }
@@ -942,6 +944,7 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:nav:ext") return { kind: "settings-extensions" };
   if (parsed.data === "v1:nav:help") return { kind: "help" };
   if (parsed.data === "v1:nav:next") return { kind: "next" };
+  if (parsed.data === "v1:nav:events") return { kind: "events" };
   if (parts.length === 4 && parts[1] === "manage" && parts[2] === "g") {
     const group = manageGroupOf(parts[3] ?? "");
     return group === undefined

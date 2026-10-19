@@ -159,6 +159,51 @@ export function auctionRootData(auctionId: string): string {
   return encodeAuctionCallback({ kind: "root", auctionId });
 }
 
+/** Раздел «События» (PER-669): идущие события расширений сходок. */
+export const toEvents: Parent = { name: "События", data: "v1:nav:events" };
+
+// Вход в аукционное дерево (PER-669): из «Событий» кнопки аукциона несут
+// домен `aue` вместо `auc`, той же длины, и корень возвращает в «События», а не
+// в «Расширения» сходки. Дерево о входе не знает: хаб снимает отметку перед
+// шлюзом и ставит её на кнопки готового экрана, поэтому байтов у кнопок не
+// прибавляется и ставка с подтверждением вход тоже сохраняет.
+const treePrefix = "v1:auc:";
+const eventsPrefix = "v1:aue:";
+export const eventsEntryDomain = "aue";
+export type AuctionEntry = "meetup" | "events";
+
+/** Кнопка аукционного дерева со входом из «Событий». */
+export function viaEvents(data: string): string {
+  return data.startsWith(treePrefix)
+    ? `${eventsPrefix}${data.slice(treePrefix.length)}`
+    : data;
+}
+
+/** Данные дерева без отметки входа и сам вход. */
+export function auctionEntryOf(data: string): {
+  data: string;
+  entry: AuctionEntry;
+} {
+  return data.startsWith(eventsPrefix)
+    ? {
+        data: `${treePrefix}${data.slice(eventsPrefix.length)}`,
+        entry: "events",
+      }
+    : { data, entry: "meetup" };
+}
+
+/** Все кнопки дерева на клавиатуре — со входом из «Событий». */
+export function keyboardViaEvents(keyboard: InlineKeyboard): InlineKeyboard {
+  for (const row of keyboard.inline_keyboard) {
+    for (const button of row) {
+      if ("callback_data" in button && button.callback_data !== undefined) {
+        button.callback_data = viaEvents(button.callback_data);
+      }
+    }
+  }
+  return keyboard;
+}
+
 /** Возврат в корень аукциона: ему хватает идентификатора аукциона. */
 export function toAuctionRoot(auctionId: string): Parent {
   return { name: "Аукцион", data: auctionRootData(auctionId) };

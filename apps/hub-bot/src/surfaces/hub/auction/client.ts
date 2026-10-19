@@ -284,9 +284,11 @@ export function createAuctionAdapter(
         const [current] = auctions.sort(
           (a, b) => openingOf(a.opensAt) - openingOf(b.opensAt),
         );
+        // Снимок едет вместе с идентификатором: по стадии меню решает, идёт
+        // ли аукцион как событие (PER-669).
         return current === undefined
           ? { kind: "ok" }
-          : { kind: "ok", auctionId: current.auctionId };
+          : { kind: "ok", auctionId: current.auctionId, auction: current };
       } catch (cause) {
         return toFailure(cause);
       }

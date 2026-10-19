@@ -9,8 +9,10 @@ import {
   supportLabel,
 } from "../../../../core/entry.js";
 import type { BotCommand } from "../../../../core/menu-commands.js";
-import { extensionsLabel } from "../../../../core/pictograms.js";
+import { adminLabel, extensionsLabel } from "../../../../core/pictograms.js";
+import type { CommunityDay } from "../../community-time.js";
 import { botCommands, managerCommands } from "../commands.js";
+import { eventLines, type HubEvent } from "./events.js";
 import { settingsExtensionsData } from "./extensions.js";
 import {
   bullet,
@@ -18,6 +20,7 @@ import {
   nextRow,
   type Parent,
   screenText,
+  toEvents,
   toManage,
   toMeetups,
   toMenu,
@@ -70,37 +73,50 @@ export function commandsFor(person: Viewer): readonly BotCommand[] {
   return canOpenManagement(person) ? managerCommands : botCommands;
 }
 
+/** Идущие события для меню: время сообщества и сами события (PER-669). */
+export type MenuEvents = {
+  events: readonly HubEvent[];
+  timeZone: string;
+  today: CommunityDay;
+};
+
 /**
- * Корневое меню: разделы бота кнопками в порядке списка команд — тот же
- * источник, `commandsFor`, поэтому кнопки меню и команды одного человека не
- * расходятся. «Управление» — держателю права управления. Возврата у корня нет.
+ * Корневое меню (PER-669; решение владельца по отзыву тестовой группы
+ * 19 октября 2026 года): `[Сходки][Ближайшая сходка]`, `[События]` — пока
+ * идёт хотя бы одно событие, `[Настройки][Помощь]` и «🛠 Управление» своим
+ * рядом держателю права управления. Без событий — ни кнопки, ни строки о них:
+ * бот не шумит. Те же разделы — команды кнопки меню клиента. Возврата у
+ * корня нет.
  */
-export function menuScreen(person: Viewer): ShownScreen {
-  const keyboard = new InlineKeyboard();
-  for (const entry of commandsFor(person)) {
-    const data = sectionData[entry.command];
-    if (data !== undefined) nextRow(keyboard).text(entry.description, data);
+export function menuScreen(person: Viewer, current?: MenuEvents): ShownScreen {
+  const keyboard = new InlineKeyboard()
+    .text("Сходки", toMeetups.data)
+    .text("Ближайшая сходка", "v1:nav:next");
+  const events = current?.events ?? [];
+  if (events.length > 0) nextRow(keyboard).text(toEvents.name, toEvents.data);
+  nextRow(keyboard).text("Настройки", toSettings.data).text("Помощь", helpData);
+  if (canOpenManagement(person)) {
+    nextRow(keyboard).text(adminLabel("Управление"), toManage.data);
   }
+  const lines =
+    current === undefined
+      ? []
+      : eventLines(events, current.timeZone, current.today);
   return {
     id: "menu",
     text: screenText(
       menuTitle,
       "Разделы бота. Те же разделы — в кнопке меню рядом с полем ввода.",
+      lines.length === 0
+        ? undefined
+        : ["Идут события:", ...lines.map(escapeHtml)].join("\n"),
     ),
     keyboard,
     format: "HTML",
   };
 }
 
-// Кнопка раздела в меню — те же данные, что «Повторить» под его командой.
-// Своей команды `/menu` у меню кнопки нет.
-const sectionData: Readonly<Record<string, string | undefined>> = {
-  meetups: toMeetups.data,
-  next: "v1:nav:next",
-  settings: toSettings.data,
-  manage: toManage.data,
-  help: "v1:nav:help",
-};
+const helpData = "v1:nav:help";
 
 /**
  * Группы «Управления» (решение владельца 10 октября 2026 года): вместо девяти

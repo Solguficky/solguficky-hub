@@ -76,9 +76,11 @@ import {
 import { stageWords } from "./auction-stage.js";
 import { toSettingsExtensions } from "./extensions.js";
 import {
+  type AuctionEntry,
   bullet,
   buttonText,
   escapeHtml,
+  keyboardViaEvents,
   nextRow,
   type Parent,
   pagedTitle,
@@ -109,6 +111,11 @@ export type AuctionView = {
    * пульт возвращают в корень: ему хватает идентификатора аукциона.
    */
   rootParent: Parent;
+  /**
+   * Вход в дерево (PER-669): из «Событий» кнопки дерева на экране несут
+   * отметку входа, и корень возвращает туда. Нет поля — вход со сходки.
+   */
+  entry?: AuctionEntry;
   presentation: "rich" | "plain";
   timeZone: string;
   today: CommunityDay;
@@ -174,6 +181,12 @@ const titleLimit = 256;
 const plainTextLimit = 4096;
 
 export function auctionScreen(view: AuctionView): AuctionShown {
+  const shown = auctionScreenOf(view);
+  if (view.entry === "events") keyboardViaEvents(shown.screen.keyboard);
+  return shown;
+}
+
+function auctionScreenOf(view: AuctionView): AuctionShown {
   // Лист ставки (PER-317): подтверждение, исход, вопрос и выбор имени — свои
   // экраны; отказ и непринятый ответ — тоже (PER-472).
   for (const block of view.body.blocks) {
