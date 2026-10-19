@@ -105,11 +105,13 @@ function listLine(
     : `• ${readableDay(meetup.schedule, today)} — ${title}${tail}`;
 }
 
+// `head` — ряд действия над списком: он идёт первым.
 function listRows(
   page: Page<MeetupSummary>,
   today: CommunityDay,
+  head?: InlineKeyboard,
 ): InlineKeyboard {
-  const keyboard = new InlineKeyboard();
+  const keyboard = head === undefined ? new InlineKeyboard() : head.row();
   for (const meetup of page.items) {
     keyboard.text(...meetupButton(meetup, today)).row();
   }
@@ -128,12 +130,15 @@ function listKeyboard(
 /**
  * «Сходки» — основной раздел (прежде «Ближайшие сходки»), ребёнок корневого
  * меню (PER-592): «Архив» — его дочерний экран последним рядом содержимого,
- * перед листанием, а последний ряд — «‹ Меню».
+ * перед листанием, а последний ряд — «‹ Меню». Держателю права вести сходки
+ * первым рядом — «Создать сходку» (прогон 12.10 №45, 14.10 №55): `newMeetupToken`
+ * — id будущей сходки, рождённый при отрисовке.
  */
 export function meetupsScreen(
   meetups: readonly MeetupSummary[],
   requestedPage: number,
   today: CommunityDay,
+  newMeetupToken?: string,
 ): ShownScreen {
   const title = "Сходки";
   // Сходки с датой идут первыми, и страница режется по этому порядку: секции
@@ -164,7 +169,9 @@ export function meetupsScreen(
         ? screenText(
             title,
             "Пока ни одной запланированной сходки нет.",
-            "Когда организатор создаст новую, она появится здесь.",
+            newMeetupToken === undefined
+              ? "Когда организатор создаст новую, она появится здесь."
+              : "Новую создаёт кнопка ниже: сначала это черновик, участники увидят сходку после публикации.",
           )
         : screenText(
             pagedTitle(title, page),
@@ -173,7 +180,18 @@ export function meetupsScreen(
           ),
     keyboard: withNav(
       withPager(
-        nextRow(listRows(page, today)).text(toArchive.name, toArchive.data),
+        nextRow(
+          listRows(
+            page,
+            today,
+            newMeetupToken === undefined
+              ? undefined
+              : new InlineKeyboard().text(
+                  "Создать сходку",
+                  `v1:manage:new:${newMeetupToken}:s`,
+                ),
+          ),
+        ).text(toArchive.name, toArchive.data),
         page,
         (to) => `v1:nav:hub:${to}`,
       ),
@@ -231,8 +249,7 @@ export function hiddenScreen(
   meetups: readonly MeetupSummary[],
   requestedPage: number,
   today: CommunityDay,
-  // Родитель — группа «Сходки и объявления» либо само «Управление»
-  // (`manageItemParent`).
+  // Родитель — группа «Сходки и объявления» (`manageItemParent`).
   parent: Parent = toManage,
 ): ShownScreen {
   const title = "Скрытые сходки";
@@ -506,8 +523,12 @@ export function cardScreen(view: CardView): ShownScreen {
       ),
     ),
   ];
-  // Подсказка о подписке стоит под карточкой.
-  const hint = view.subscribed === false ? unsubscribedHint : undefined;
+  // Подсказка о подписке стоит под карточкой. Автору её нет: сообщения
+  // организатора этой сходки — его собственные (прогон 14.10, №101).
+  const hint =
+    view.subscribed === false && view.author?.kind !== "self"
+      ? unsubscribedHint
+      : undefined;
   return {
     id: "card",
     text: cardText({
@@ -537,20 +558,16 @@ function cardText(parts: {
    */
   posters?: string | undefined;
 }): string {
-  const { title, body, presentation } = parts;
-  const paragraph = (text: string | undefined) =>
-    text === undefined
-      ? undefined
-      : presentation === "rich"
-        ? `<p>${escapeHtml(text)}</p>`
-        : escapeHtml(text);
-  const card =
-    presentation === "rich"
-      ? `${parts.posters ?? ""}<h1>${title}</h1><p>${body.join("<br>")}</p>`
-      : `<b>${title}</b>\n\n${body.join("\n")}`;
-  return [card, paragraph(parts.hint)]
-    .filter((part) => part !== undefined)
-    .join(presentation === "rich" ? "" : "\n\n");
+  const { title, body, presentation, hint } = parts;
+  // Подсказка в богатой карточке идёт тем же абзацем через пустую строку, как
+  // блок материалов: отдельный `<p>` клиент ставит вплотную к последней строке
+  // (прогон 14.10, №101).
+  if (presentation === "rich") {
+    const lines = hint === undefined ? body : [...body, "", escapeHtml(hint)];
+    return `${parts.posters ?? ""}<h1>${title}</h1><p>${lines.join("<br>")}</p>`;
+  }
+  const card = `<b>${title}</b>\n\n${body.join("\n")}`;
+  return hint === undefined ? card : `${card}\n\n${escapeHtml(hint)}`;
 }
 
 /**

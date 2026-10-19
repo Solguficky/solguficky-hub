@@ -290,7 +290,11 @@ type PlainAction =
       queue: ApplicationQueue;
       cursor: CardCursor;
     }
-  | { kind: "create-meetup"; token: string }
+  // «Создать сходку» (прогон 14.10, №14 и №54): токен — id будущей сходки,
+  // рождённый при отрисовке; сходки ещё нет, она рождается ответом на вопрос
+  // о названии. `from` — кнопка стоит в «Сходках» (№45), и «Отмена» вопроса
+  // ведёт туда, а не в группу «Сходки и объявления».
+  | { kind: "create-meetup"; token: string; from?: "meetups" }
   // Команда публикации. С версией — «Да» подтверждения с черновика (решение
   // владельца 10 октября 2026 года); без версии — «Да, опубликовать» кадра
   // конфликта и кнопки, оставшиеся в чатах до подтверждения.
@@ -494,9 +498,22 @@ type PlainAction =
   | { kind: "outdated" }
   | { kind: "malformed" };
 
+/** Откуда нажата «Создать сходку»: группа управления или «Сходки». */
+export type NewMeetupOrigin = "manage" | "meetups";
+
 /** Что спросил вопрос: этого хватает, чтобы принять ответ на него. */
 export type QuestionStep =
-  | { kind: "field"; mode: "create" | "edit"; token: string; field: FormField }
+  // `fresh` — вопрос о названии новой сходки с кнопки «Создать сходку»
+  // (прогон 14.10, №14): сходки ещё нет, её рождает ответ. Значение — откуда
+  // задан вопрос: группа «Сходки и объявления» (`fg`) или «Сходки» (`fn`);
+  // туда ведут «Отмена» и возврат. `fc` — вопрос с существующего черновика.
+  | {
+      kind: "field";
+      mode: "create" | "edit";
+      token: string;
+      field: FormField;
+      fresh?: NewMeetupOrigin;
+    }
   | { kind: "publish-moment"; token: string; origin: PublishOrigin }
   // Версия карточки, с которой начато прикрепление: она доезжает до кнопки
   // подтверждения и уходит в `expected_version` (PER-393).
@@ -850,7 +867,7 @@ function stepData(step: QuestionStep): string {
     case "final-ask":
       return `v1:q:fa:${step.auction}:${step.position}`;
     case "field":
-      return `v1:q:${step.mode === "edit" ? "fe" : "fc"}:${step.token}:${step.field}`;
+      return `v1:q:${step.mode === "edit" ? "fe" : step.fresh === "meetups" ? "fn" : step.fresh === "manage" ? "fg" : "fc"}:${step.token}:${step.field}`;
     case "publish-moment":
       // `pd` — вопрос задан с черновика: «Отмена» возвращает на него.
       return `v1:q:${step.origin === "draft" ? "pd" : "pm"}:${step.token}`;
@@ -1099,6 +1116,8 @@ export function parseCallback(raw: unknown): CallbackAction {
   }
   if (parts.length === 4 && parts[2] === "new")
     return { kind: "create-meetup", token: token.data };
+  if (parts.length === 5 && parts[2] === "new" && parts[4] === "s")
+    return { kind: "create-meetup", token: token.data, from: "meetups" };
   if (parts.length === 4 && parts[2] === "publish")
     return { kind: "publish-meetup", token: token.data };
   if (parts.length === 5 && parts[2] === "publish") {
@@ -1591,7 +1610,12 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
       ? { kind: "material-source", token: token.data, version: version.data }
       : undefined;
   }
-  if (parts[2] === "fe" || parts[2] === "fc") {
+  if (
+    parts[2] === "fe" ||
+    parts[2] === "fc" ||
+    parts[2] === "fn" ||
+    parts[2] === "fg"
+  ) {
     const field = FormFieldSchema.safeParse(parts[4]);
     return field.success
       ? {
@@ -1599,6 +1623,11 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
           mode: parts[2] === "fe" ? "edit" : "create",
           token: token.data,
           field: field.data,
+          ...(parts[2] === "fn"
+            ? { fresh: "meetups" as const }
+            : parts[2] === "fg"
+              ? { fresh: "manage" as const }
+              : {}),
         }
       : undefined;
   }

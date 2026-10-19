@@ -16,7 +16,6 @@ import {
 } from "../parse-callback.js";
 import { toAdministrators } from "./administrators.js";
 import {
-  bullet,
   confirmKeyboard,
   escapeHtml,
   nextRow,
@@ -128,7 +127,7 @@ function filterLabel(filter: CommunityFilter, current: CommunityFilter) {
 export type CommunityScreenOptions = {
   // Исход последнего действия над разрешёнными никами.
   notice?: string | undefined;
-  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  // Родитель — группа пункта (`manageItemParent`).
   parent?: Parent;
   // Кто смотрит: его строка списка помечена «(ты)», как у администраторов.
   viewerId?: string;
@@ -151,19 +150,27 @@ export function communityScreen(
   }
 }
 
-// Строка человека в тексте списка: смотрящий помечен «(ты)», модерация —
-// только под фильтром участников: под фильтром модераторов её видно и так.
-function memberLine(
-  member: CommunityMember,
+// Сводка над кнопками людей (прогон 14.10, №53): ники только на кнопках, а
+// текст называет, сколько из них модерирует аукцион, — под фильтром
+// модераторов это видно и так.
+function moderationSummary(
+  people: readonly CommunityMember[],
   filter: CommunityFilter,
+): string | undefined {
+  if (filter !== "members") return undefined;
+  const moderators = people.filter((member) => member.auctionModeration).length;
+  return moderators === 0 ? undefined : `Модерируют аукцион: ${moderators}.`;
+}
+
+// Кнопка человека в списке: смотрящий помечен «(ты)», как строка списка
+// администраторов.
+function memberButton(
+  member: CommunityMember,
   viewerId: string | undefined,
 ): string {
-  const self = member.identityId === viewerId ? " (ты)" : "";
-  const moderation =
-    filter === "members" && member.auctionModeration
-      ? " · модерирует аукцион"
-      : "";
-  return bullet(`${memberHtml(member)}${self}${moderation}`);
+  return member.identityId === viewerId
+    ? `${memberLabel(member)} (ты)`
+    : memberLabel(member);
 }
 
 /**
@@ -203,7 +210,10 @@ function listScreen(
     )
     .text("Разрешённые ники", "v1:cm:u");
   for (const member of page.items) {
-    nextRow(keyboard).text(memberLabel(member), memberData("v", member, shown));
+    nextRow(keyboard).text(
+      memberButton(member, viewerId),
+      memberData("v", member, shown),
+    );
   }
   withPager(keyboard, page, (target) =>
     communityListData({ filter: place.filter, page: target }),
@@ -215,9 +225,7 @@ function listScreen(
       `${filterTitles[place.filter]}: ${people.length}`,
       page.items.length === 0
         ? emptyTexts[place.filter]
-        : page.items
-            .map((member) => memberLine(member, place.filter, viewerId))
-            .join("\n"),
+        : moderationSummary(people, place.filter),
     ),
     keyboard: withNav(keyboard, parent),
     format: "HTML",

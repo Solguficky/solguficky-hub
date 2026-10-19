@@ -28,8 +28,10 @@ import type { ShownScreen } from "./show.js";
 // очереди держит Identity: от старых к новым. Очередей две (ADR-064, пункт 12),
 // и домен кнопок называет очередь: курсор одной другую не ставит.
 
+// Очередь хаба называется «сообщество», как в оповещении о заявке: одно слово
+// для одной очереди (прогон 14.10, №50).
 const circleLabel: Record<ApplicationCard["circle"], string> = {
-  member: "хаб",
+  member: "сообщество",
   public: "аукцион",
 };
 
@@ -96,6 +98,19 @@ export function ageLabel(createdAtMs: number, nowMs: number): string {
 }
 
 /**
+ * Строка о допущенном над следующей карточкой или концом очереди (прогон 14.10,
+ * №51): всплывающий ответ в части клиентов не виден. По нику, без ника — тем
+ * же именем и кодом, что карточка.
+ */
+export function admittedNote(application: ApplicationCard): string {
+  const who =
+    application.telegramUsername === undefined
+      ? personHtml(application)
+      : escapeHtml(`@${application.telegramUsername}`);
+  return `${who} допущен.`;
+}
+
+/**
  * Тело карточки заявки: кто просит и откуда пришёл. Одно у экрана очереди и
  * у оповещения о заявке (PER-634): модератор решает по одним и тем же строкам.
  */
@@ -119,8 +134,10 @@ export function applicationCardScreen(
   { application, position }: { application: ApplicationCard; position: number },
   total: number,
   nowMs: number,
-  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  // Родитель — группа пункта (`manageItemParent`).
   parent: Parent = toManage,
+  // Строка о только что допущенном (`admittedNote`).
+  note?: string,
 ): ShownScreen {
   const cursor = cursorOf(application);
   const data = cardCursorData(cursor);
@@ -137,6 +154,7 @@ export function applicationCardScreen(
     id: "application",
     text: screenText(
       `Заявка ${position} из ${total} · ${circleLabel[application.circle]}`,
+      note === undefined ? undefined : `${note} Следующая заявка:`,
       applicationCardBody(application, nowMs),
     ),
     keyboard,
@@ -153,8 +171,10 @@ export function applicationQueueEndScreen(
   queue: ApplicationQueue,
   total: number,
   afterCursor: boolean,
-  // Родитель — группа пункта либо само «Управление» (`manageItemParent`).
+  // Родитель — группа пункта (`manageItemParent`).
   parent: Parent = toManage,
+  // Строка о только что допущенном (`admittedNote`).
+  note?: string,
 ): ShownScreen {
   const keyboard = new InlineKeyboard();
   if (afterCursor && total > 0) {
@@ -164,6 +184,7 @@ export function applicationQueueEndScreen(
     id: "application",
     text: screenText(
       queueTitle(queue),
+      note,
       total === 0
         ? "Новых заявок нет."
         : afterCursor
@@ -188,7 +209,7 @@ export function declineConfirmScreen(
   const consequence =
     application.circle === "public"
       ? `Заявка ${person} в аукцион будет отклонена. Профиль не блокируется, и путь в сообщество остаётся открытым.`
-      : `Заявка ${person} в хаб будет отклонена. Доступ к аукциону, если он есть, останется.`;
+      : `Заявка ${person} в сообщество будет отклонена. Доступ к аукциону, если он есть, останется.`;
   const cursor = cursorOf(application);
   return {
     id: "application-decline-confirm",

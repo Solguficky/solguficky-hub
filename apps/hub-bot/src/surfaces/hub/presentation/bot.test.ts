@@ -1175,23 +1175,13 @@ describe("presentation adapter", () => {
     ).toBe(menuText);
   });
 
+  // «Создать сходку» только задаёт вопрос о названии (прогон 14.10, №14):
+  // Meetups не зовётся ни нажатием, ни чужим ответом.
   it("does not dispatch another user's answer to a pending question", async () => {
-    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValueOnce({
-      kind: "ask",
-      field: "title",
-      meetup: {
-        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
-        title: "",
-        description: "",
-        venue: "",
-        lifecycle: "planned",
-        visibility: "hidden",
-        author: "0192f0a0-0000-7000-8000-00000000a001",
-        version: 1,
-        materials: [],
-      },
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
     });
-    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(
       callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
@@ -1204,7 +1194,7 @@ describe("presentation adapter", () => {
         replyFromId: 1,
       }),
     );
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
   });
   // Вход открывает корневое меню (PER-592): из него видно всё, что доступно
   // человеку, а у участника без права управления списка команд чата нет, и
@@ -1673,7 +1663,7 @@ describe("presentation adapter", () => {
     expect(calls[1]).toMatchObject({
       method: "editMessageText",
       payload: {
-        text: "<b>Состав сообщества</b>\n\nУчастники: 2\n\n• @admin (ты)\n• @member",
+        text: "<b>Состав сообщества</b>\n\nУчастники: 2",
       },
     });
     expect(labelsOf(calls[1]?.payload)).toEqual([
@@ -1681,7 +1671,7 @@ describe("presentation adapter", () => {
       "Гости",
       "Модераторы",
       "Разрешённые ники",
-      "@admin",
+      "@admin (ты)",
       "@member",
       "‹ Участники",
     ]);
@@ -1723,8 +1713,9 @@ describe("presentation adapter", () => {
       expect.anything(),
     );
     expect(calls.at(-1)?.payload).toMatchObject({
-      text: "<b>Состав сообщества</b>\n\nГости: 1\n\n• @guest",
+      text: "<b>Состав сообщества</b>\n\nГости: 1",
     });
+    expect(labelsOf(calls.at(-1)?.payload)).toContain("@guest");
   });
 
   describe("closing access", () => {
@@ -1986,8 +1977,10 @@ describe("presentation adapter", () => {
       });
     });
 
+    // Допуск читает карточку до решения: экран после него называет
+    // допущенного (прогон 14.10, №51).
     it("admits and edits the card into the next one", async () => {
-      const identity = moderating([shown(second, 1, 1)]);
+      const identity = moderating([shown(first, 1, 2), shown(second, 1, 1)]);
       const { bot, calls } = createHarness(identity);
       await bot.init();
 
@@ -2010,12 +2003,49 @@ describe("presentation adapter", () => {
       ]);
       expect(calls[0]?.payload).toMatchObject({ text: "Человек допущен." });
       expect(JSON.stringify(calls[1]?.payload)).toContain(
-        "Заявка 1 из 1 · хаб",
+        "Заявка 1 из 1 · сообщество",
+      );
+      expect(JSON.stringify(calls[1]?.payload)).toContain(
+        "@ivan_p допущен. Следующая заявка:",
       );
     });
 
+    it("names the admitted over the end of the queue", async () => {
+      const identity = moderating([
+        shown(first, 1, 1),
+        { kind: "ok", value: { total: 0 } },
+      ]);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:qa:${cursorOf(first)}`));
+
+      expect(calls[1]?.payload).toMatchObject({
+        text: "<b>Заявки</b>\n\n@ivan_p допущен.\n\nНовых заявок нет.",
+      });
+    });
+
+    // Чтение до решения не прошло — решение идёт, строки о допущенном нет.
+    it("admits without the note when the card could not be read first", async () => {
+      const identity = moderating([]);
+      identity.readApplicationQueue
+        .mockResolvedValueOnce({
+          kind: "unavailable",
+          cause: new Error("down"),
+        })
+        .mockResolvedValueOnce(shown(second, 1, 1));
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:qa:${cursorOf(first)}`));
+
+      expect(identity.admitApplication).toHaveBeenCalledOnce();
+      expect(JSON.stringify(calls.at(-1)?.payload)).toContain("Пётр (@petr)");
+      expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("допущен");
+    });
+
     it("tells the second administrator who decided and how, then moves on", async () => {
-      const identity = moderating([shown(second, 1, 1)]);
+      const identity = moderating([shown(first, 1, 2), shown(second, 1, 1)]);
       identity.admitApplication.mockResolvedValue({
         kind: "ok",
         value: {
@@ -2034,13 +2064,15 @@ describe("presentation adapter", () => {
       });
       expect(calls[1]).toMatchObject({ method: "editMessageText" });
       expect(JSON.stringify(calls[1]?.payload)).toContain("Пётр (@petr)");
+      // Решено раньше и не этим нажатием — строки о допуске нет.
+      expect(JSON.stringify(calls[1]?.payload)).not.toContain("допущен");
     });
 
     // Оповещение о заявке несёт те же кнопки с пометкой следа (PER-634):
     // решение то же, а следующая карточка приходит новым сообщением, и
     // оповещение остаётся в истории как было.
     it("admits from the notification and sends the next card anew", async () => {
-      const identity = moderating([shown(second, 1, 1)]);
+      const identity = moderating([shown(first, 1, 2), shown(second, 1, 1)]);
       const { bot, calls } = createHarness(identity);
       await bot.init();
 
@@ -2057,7 +2089,7 @@ describe("presentation adapter", () => {
       ]);
       expect(calls[0]?.payload).toMatchObject({ text: "Человек допущен." });
       expect(JSON.stringify(calls[1]?.payload)).toContain(
-        "Заявка 1 из 1 · хаб",
+        "Заявка 1 из 1 · сообщество",
       );
     });
 
@@ -2083,7 +2115,7 @@ describe("presentation adapter", () => {
     });
 
     it("keeps the same card when the decision was not saved", async () => {
-      const identity = moderating([shown(first, 1, 1)]);
+      const identity = moderating([shown(first, 1, 1), shown(first, 1, 1)]);
       identity.admitApplication.mockResolvedValue({
         kind: "unavailable",
         cause: new Error("down"),
@@ -2293,7 +2325,7 @@ describe("presentation adapter", () => {
     it.each([400, 403, 500])(
       "shows a failure frame when Telegram rejects a card with %s",
       async (errorCode) => {
-        const identity = moderating([shown(second, 1, 1)]);
+        const identity = moderating([shown(first, 1, 2), shown(second, 1, 1)]);
         const { bot, calls, records } = createHarness(identity);
         bot.api.config.use((prev, method, payload, signal) =>
           "text" in payload && String(payload.text).startsWith("<b>Заявка ")
@@ -2380,7 +2412,7 @@ describe("presentation adapter", () => {
       );
       const text = JSON.stringify(calls.at(-1)?.payload);
       expect(text).toContain("@refused — заявка в аукцион, заблокирован");
-      expect(text).toContain("@refused — заявка в хаб, отклонена");
+      expect(text).toContain("@refused — заявка в сообщество, отклонена");
     });
 
     it("does not open the list for a non-administrator", async () => {
@@ -3151,7 +3183,7 @@ describe("presentation adapter", () => {
           ? {
               kind: "resolved",
               identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
-              rights: ["access-hub", "place-bids"],
+              rights: ["access-hub", "place-bids", "manage-meetups"],
               blocked: false,
             }
           : { kind: "unavailable", cause: new Error("down") },
@@ -3524,20 +3556,13 @@ describe("presentation adapter", () => {
   /// может, только отправив значение заново (PER-78).
   it("shows the current meetup and the saved value on a version conflict", async () => {
     const changed = { ...publishedMeetup(), title: "Чужая правка", version: 2 };
-    const execute = vi
-      .fn<Dispatcher["execute"]>()
-      .mockResolvedValueOnce({
-        kind: "ask",
-        field: "title",
-        meetup: draftMeetup(),
-      })
-      .mockResolvedValueOnce({
-        kind: "conflict",
-        meetup: changed,
-        field: "title",
-        input: "Моя правка",
-      });
-    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValueOnce({
+      kind: "conflict",
+      meetup: changed,
+      field: "title",
+      input: "Моя правка",
+    });
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -4078,7 +4103,24 @@ describe("presentation adapter", () => {
     },
     {
       name: "form value rejected by Meetups",
-      update: () => callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+      update: () =>
+        replyUpdate({
+          text: "Настолки",
+          fromId: 42,
+          replyMessageId: 8,
+          replyFromId: 1,
+          replyText: "Как называется сходка?",
+          replyMarkup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Отмена",
+                  callback_data: "v1:q:fc:AZLzpLXGfY6fChssPU5fYA:title:42",
+                },
+              ],
+            ],
+          },
+        }),
       result: {
         kind: "ask" as const,
         field: "title" as const,
@@ -4299,22 +4341,8 @@ describe("presentation adapter", () => {
   // Ответ, у которого клиент потерял реплай (Web K, нажатие мимо), пришёл
   // обычным текстом: подсказка говорит, как ответить на открытый вопрос.
   it("hints how to answer an open question at text without a reply", async () => {
-    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValueOnce({
-      kind: "ask",
-      field: "title",
-      meetup: {
-        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
-        title: "",
-        description: "",
-        venue: "",
-        lifecycle: "planned",
-        visibility: "hidden",
-        author: "0192f0a0-0000-7000-8000-00000000a001",
-        version: 1,
-        materials: [],
-      },
-    });
-    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -4322,7 +4350,7 @@ describe("presentation adapter", () => {
       callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
     );
     await bot.handleUpdate(messageUpdate("Настолки"));
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
     expect(sendMessageText(calls.at(-1))).toBe(strayAnswerText);
     expect(records.at(-1)?.message).toBe("stray answer hinted");
   });
@@ -4442,7 +4470,7 @@ describe("presentation adapter", () => {
       expect(admin.calls[0]).toMatchObject({
         method: "sendMessage",
         payload: {
-          text: "<b>Управление</b>",
+          text: "<b>Управление</b>\n\nСходки, заявки и участники сообщества — по группам.",
           reply_markup: {
             inline_keyboard: [
               [{ text: "Сходки и объявления", callback_data: "v1:manage:g:m" }],
@@ -4832,13 +4860,10 @@ describe("presentation adapter", () => {
     {
       name: "draft",
       data: "v1:manage:new:AZLzpLXGfY6fChssPU5fYA",
-      result: {
-        kind: "ask" as const,
-        field: "title" as const,
-        meetup: draftMeetup(),
-      },
+      roles: "admin" as const,
+      result: undefined,
       use_case: "create_meetup",
-      message: "meetup form step sent",
+      message: "meetup title requested",
     },
     {
       name: "publish",
@@ -5005,22 +5030,8 @@ describe("presentation adapter", () => {
   });
 
   it("records a foreign answer to a pending question", async () => {
-    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValueOnce({
-      kind: "ask",
-      field: "title",
-      meetup: {
-        id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
-        title: "",
-        description: "",
-        venue: "",
-        lifecycle: "planned",
-        visibility: "hidden",
-        author: "0192f0a0-0000-7000-8000-00000000a001",
-        version: 1,
-        materials: [],
-      },
-    });
-    const { bot, calls, records } = createHarness(resolvedIdentity(), {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
     await bot.init();
@@ -5979,6 +5990,52 @@ describe("questions", () => {
     const shown = JSON.stringify(calls.at(-1)?.payload);
     expect(shown).toContain(`v1:manage:republish:${token}:d`);
     expect(shown).not.toContain("v1:manage:cancel:");
+  });
+
+  // Сходки по вопросу «Создать сходку» ещё нет (прогон 14.10, №14): отказ на
+  // ответ без текста задаёт тот же вопрос и возвращает в «Сходки», а не в
+  // несуществующий черновик.
+  it("asks the title of a new meetup again after an answer without text", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate(`v1:manage:new:${token}:s`));
+    const before = calls.length;
+    const update = replyUpdate({
+      text: "",
+      fromId: 42,
+      replyMessageId: lastQuestionId(calls),
+      replyFromId: 1,
+      replyText: "Как называется сходка?",
+      replyMarkup: cancel(`v1:q:fn:${token}:title:42`),
+    });
+    const message = update.message as unknown as Record<string, unknown>;
+    delete message["text"];
+    Object.assign(message, {
+      sticker: { file_id: "s", file_unique_id: "u" },
+    });
+
+    await bot.handleUpdate(update);
+
+    const asked = calls
+      .slice(before)
+      .find((call) => call.method === "sendMessage");
+    expect(asked?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "Ввести заново",
+              callback_data: `v1:manage:new:${token}:s`,
+            },
+          ],
+          [{ text: "‹ Сходки", callback_data: "v1:nav:hub" }],
+        ],
+      },
+    });
+    expect(execute).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -7296,11 +7353,10 @@ describe("deferred publication frames", () => {
 
   it("shows the draft with its fields and both ways to publish after the title", async () => {
     const draft = draftMeetup();
-    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
-      request.intent === "create-meetup"
-        ? { kind: "ask", field: "title", meetup: draft }
-        : { kind: "draft", meetup: draft },
-    );
+    const execute = vi.fn<Dispatcher["execute"]>(async () => ({
+      kind: "draft",
+      meetup: draft,
+    }));
     const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
@@ -8057,11 +8113,11 @@ describe("past meetup date", () => {
 
   it("answers a past date with a confirmation frame that carries the date", async () => {
     const meetup = draftMeetup();
-    const execute = vi.fn<Dispatcher["execute"]>(async (request) =>
-      request.intent === "create-meetup"
-        ? { kind: "ask", field: "schedule", meetup }
-        : { kind: "confirm-past-schedule", meetup, schedule: pastSchedule },
-    );
+    const execute = vi.fn<Dispatcher["execute"]>(async () => ({
+      kind: "confirm-past-schedule",
+      meetup,
+      schedule: pastSchedule,
+    }));
     const { bot, calls, records } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
@@ -8306,7 +8362,7 @@ describe("broadcast frames", () => {
     ]);
     expect(calls[1]?.payload).toMatchObject({
       message_id: 9,
-      text: "<b>Управление</b>",
+      text: "<b>Управление</b>\n\nСходки, заявки и участники сообщества — по группам.",
     });
   });
 
@@ -8320,7 +8376,7 @@ describe("broadcast frames", () => {
       await bot.handleUpdate(callbackUpdate(`v1:manage:g:${group}`));
     }
     expect(calls[1]?.payload).toMatchObject({
-      text: "<b>Сходки и объявления</b>",
+      text: "<b>Сходки и объявления</b>\n\nНовые сходки, черновики и объявления всему сообществу.",
       reply_markup: {
         inline_keyboard: [
           [{ text: "Создать сходку" }],
@@ -8331,7 +8387,7 @@ describe("broadcast frames", () => {
       },
     });
     expect(calls[3]?.payload).toMatchObject({
-      text: "<b>Заявки и отказы</b>",
+      text: "<b>Заявки и отказы</b>\n\nОчереди заявок и тех, кому отказано.",
       reply_markup: {
         inline_keyboard: [
           [{ text: "Заявки", callback_data: "v1:cm:q" }],
@@ -8343,7 +8399,7 @@ describe("broadcast frames", () => {
       },
     });
     expect(calls[5]?.payload).toMatchObject({
-      text: "<b>Участники</b>",
+      text: "<b>Участники</b>\n\nКто в сообществе и с какими правами.",
       reply_markup: {
         inline_keyboard: [
           [{ text: "Состав сообщества", callback_data: "v1:community:list" }],
@@ -9006,25 +9062,31 @@ describe("auction queue and moderation", () => {
     };
   }
 
-  // Одна видимая группа — «Управление» сразу показывает её пункты (решение
-  // владельца 10 октября 2026 года), а их возврат ведёт в «Управление».
+  // Одна видимая группа тоже идёт кнопкой (решение владельца по прогону
+  // 14.10, №49): пункт стоит в своей группе при любых правах, и возврат
+  // ведёт в неё.
   it("shows the moderator only the auction items of management", async () => {
     const identity = queue(moderatorRights);
     const { bot, calls } = createHarness(identity);
     await bot.init();
 
     await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
-
-    // PER-636: у каждой кнопки очереди — число; очередь модератора отдаёт одну
-    // заявку и ни одного отказа.
     expect(labelsOf(calls.at(-1)?.payload)).toEqual([
-      "Заявки в аукцион (1)",
-      "Отказанные в аукцион (0)",
+      "Заявки и отказы",
       "‹ Меню",
     ]);
 
+    // PER-636: у каждой кнопки очереди — число; очередь модератора отдаёт одну
+    // заявку и ни одного отказа.
+    await bot.handleUpdate(callbackUpdate("v1:manage:g:a"));
+    expect(labelsOf(calls.at(-1)?.payload)).toEqual([
+      "Заявки в аукцион (1)",
+      "Отказанные в аукцион (0)",
+      "‹ Управление",
+    ]);
+
     await bot.handleUpdate(callbackUpdate("v1:aq:r"));
-    expect(labelsOf(calls.at(-1)?.payload).at(-1)).toBe("‹ Управление");
+    expect(labelsOf(calls.at(-1)?.payload).at(-1)).toBe("‹ Заявки и отказы");
   });
 
   it("puts /manage into the chat commands by right, and not of a plain member", async () => {
@@ -9257,7 +9319,7 @@ describe("auction queue and moderation", () => {
     expect(JSON.stringify(calls.at(-1))).not.toContain("v1:manage:menu");
 
     rights = moderatorRights;
-    await bot.handleUpdate(callbackUpdate("v1:manage:menu"));
+    await bot.handleUpdate(callbackUpdate("v1:manage:g:a"));
     expect(labelsOf(calls.at(-1)?.payload)).toContain("Заявки в аукцион");
 
     rights = MEMBER_RIGHTS;

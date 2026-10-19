@@ -130,6 +130,9 @@ export const toSettings: Parent = {
   name: "Настройки",
   data: "v1:nav:settings",
 };
+/** Вход в вопрос о новом лоте: в ленте и на исходе «Аукцион включён». */
+export const addLotLabel = "Добавить лот";
+
 export const toManage: Parent = { name: "Управление", data: "v1:manage:menu" };
 export const toHidden: Parent = { name: "Скрытые", data: "v1:manage:hidden" };
 export const toSourceChannels: Parent = { name: "Каналы", data: "v1:sc:l" };

@@ -46,6 +46,12 @@ export const pictogram = {
   won: "✅",
   /** Пояснение автоставки голосом помощника (PER-595). */
   hint: "💡",
+  /** Ряд «Название» экрана «Изменить лот» (прогон 12.10, №18). */
+  title: "🔖",
+  /** Ряд «Описание» экрана «Изменить лот» (прогон 12.10, №18). */
+  description: "📝",
+  /** Ряд «Фото» экрана «Изменить лот» (прогон 12.10, №18). */
+  photo: "🖼",
 } as const;
 
 export type Pictogram = (typeof pictogram)[keyof typeof pictogram];
@@ -71,11 +77,19 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.status]: ["Статус"],
   [pictogram.broadcast]: ["Написать подписчикам"],
   [pictogram.settings]: ["Уведомления сходки"],
-  [pictogram.price]: ["Цена: ", "Стартовая цена: ", "Цена продажи: "],
+  [pictogram.price]: [
+    "Цена: ",
+    "Стартовая цена: ",
+    "Цена продажи: ",
+    "Цена и шаг",
+  ],
   [pictogram.leader]: ["Лидер: ", "Победитель: "],
   [pictogram.deadline]: ["Торги до: "],
   [pictogram.won]: ["Твой лот", "твой лот"],
   [pictogram.hint]: ["Подсказка:"],
+  [pictogram.title]: ["Название"],
+  [pictogram.description]: ["Описание"],
+  [pictogram.photo]: ["Фото"],
 };
 
 /**

@@ -1,6 +1,7 @@
 import { InlineKeyboard } from "grammy";
 import { encodeAuctionCallback } from "../../../../auction-ui/index.js";
-import { lotCurrency } from "../../application/lot-form.js";
+import { marked, pictogram } from "../../../../core/pictograms.js";
+import { isSold, lotCurrency } from "../../application/lot-form.js";
 import type {
   LotAskError,
   LotFormView,
@@ -18,6 +19,7 @@ import {
 import { money, truncate } from "./auction.js";
 import {
   escapeHtml,
+  nextRow,
   outcomeText,
   type Parent,
   screenText,
@@ -109,7 +111,11 @@ function termsLines(terms: LotTermsView): string[] {
         ...stepTermsLines(terms),
       ];
     case "closed":
-      return ["Торги по лоту начались: цену и шаг изменить нельзя."];
+      return terms.soldFor === undefined
+        ? ["Торги по лоту начались: цену и шаг изменить нельзя."]
+        : [
+            `Лот продан за ${money(terms.soldFor)}: название, описание и фото больше не меняются.`,
+          ];
     default: {
       const _exhaustive: never = terms;
       return _exhaustive;
@@ -174,20 +180,39 @@ export function lotSavedScreen(lot: LotFormView, outcome: string): ShownScreen {
   };
 }
 
+/**
+ * Экран правки лота: поля по два в ряд со знаками (прогон 12.10, №17 и №18).
+ * После старта торгов ряда «Цена и шаг» нет; у проданного лота нет и рядов
+ * названия, описания и фото (решение владельца 15 октября 2026 года).
+ */
 export function lotFormScreen(lot: LotFormView): ShownScreen {
   const token = uuidToToken(lot.lotId);
-  const keyboard = new InlineKeyboard()
-    .text("Название", lotAskData(token, "title"))
-    .row()
-    .text("Описание", lotAskData(token, "description"))
-    .row()
-    .text("Фото", lotAskData(token, "image"));
-  if (lot.terms.kind !== "closed") {
-    keyboard.row().text("Цена и шаг", lotAskData(token, "price"));
-  }
+  const sold = isSold(lot.terms);
+  const fields: [label: string, data: string][] = [
+    ...(sold
+      ? []
+      : ([
+          [marked(pictogram.title, "Название"), lotAskData(token, "title")],
+          [
+            marked(pictogram.description, "Описание"),
+            lotAskData(token, "description"),
+          ],
+          [marked(pictogram.photo, "Фото"), lotAskData(token, "image")],
+        ] satisfies [string, string][])),
+    ...(lot.terms.kind === "closed"
+      ? []
+      : ([
+          [marked(pictogram.price, "Цена и шаг"), lotAskData(token, "price")],
+        ] satisfies [string, string][])),
+  ];
+  const keyboard = new InlineKeyboard();
+  fields.forEach(([label, data], index) => {
+    if (index > 0 && index % 2 === 0) keyboard.row();
+    keyboard.text(label, data);
+  });
   // Предпросмотр (PER-512) — и после старта торгов: участник видит ту же
   // карточку, только с ценой.
-  keyboard.row().text("Глазами участника", lotPreviewData(token));
+  nextRow(keyboard).text("Глазами участника", lotPreviewData(token));
   return {
     id: "lot-form",
     text: screenText(
@@ -346,6 +371,7 @@ export const lotRefusalText: Record<
 > = {
   "lots-frozen": "Торги уже начались. Добавить лот в этот аукцион нельзя.",
   "terms-closed": "Торги уже начались. Цену и шаг лота изменить нельзя.",
+  "lot-sold": "Лот продан. Название, описание и фото больше не меняются.",
   "lot-not-found": "Лот не найден или больше недоступен.",
   "auction-not-found": "Аукцион не найден. Открой сходку заново.",
   "lot-not-in-auction": "Лот сняли с аукциона. Цену и шаг ему задать нельзя.",

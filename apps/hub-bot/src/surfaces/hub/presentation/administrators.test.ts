@@ -224,7 +224,11 @@ function question(calls: readonly RecordedCall[]) {
   return { payload: calls[index]?.payload as Sent, messageId: 100 + index + 1 };
 }
 
-function answer(calls: readonly RecordedCall[], text: string): Update {
+function answer(
+  calls: readonly RecordedCall[],
+  text: string,
+  username?: string,
+): Update {
   const asked = question(calls);
   return {
     update_id: 4,
@@ -232,7 +236,12 @@ function answer(calls: readonly RecordedCall[], text: string): Update {
       message_id: 10,
       date: 0,
       chat: { id: 42, type: "private", first_name: "tester" },
-      from: { id: 42, is_bot: false, first_name: "tester" },
+      from: {
+        id: 42,
+        is_bot: false,
+        first_name: "tester",
+        ...(username === undefined ? {} : { username }),
+      },
       text,
       reply_to_message: {
         message_id: asked.messageId,
@@ -258,21 +267,30 @@ async function started(rights: readonly AccessRight[]) {
 async function appoint(
   harness: Awaited<ReturnType<typeof started>>,
   text: string,
+  // Ник того, кто отвечает, — по нему подтверждение узнаёт назначение себя.
+  from?: string,
 ) {
   await harness.bot.handleUpdate(press("v1:ad:n"));
-  await harness.bot.handleUpdate(answer(harness.calls, text));
+  await harness.bot.handleUpdate(answer(harness.calls, text, from));
   const confirm = last(harness.calls);
   await harness.bot.handleUpdate(press(dataOf(confirm, "✔️ Да, назначить")));
   return confirm;
 }
 
 describe("administrators in the hub bot", () => {
-  it("shows a maintainer without the admin preset only this item", async () => {
+  // Одна видимая группа тоже идёт кнопкой: «Администраторы» стоят в
+  // «Участниках» при любых правах (прогон 14.10, №49).
+  it("shows a maintainer without the admin preset the group of this item", async () => {
     const harness = await started(MAINTAINER_RIGHTS);
 
     await harness.bot.handleUpdate(command("/manage"));
+    expect(labels(last(harness.calls))).toEqual(["Участники", "‹ Меню"]);
 
-    expect(labels(last(harness.calls))).toEqual(["Администраторы", "‹ Меню"]);
+    await harness.bot.handleUpdate(press("v1:manage:g:p"));
+    expect(labels(last(harness.calls))).toEqual([
+      "Администраторы",
+      "‹ Управление",
+    ]);
   });
 
   it("keeps the item from an administrator without grant_admins", async () => {
@@ -296,7 +314,7 @@ describe("administrators in the hub bot", () => {
       "Снять @peer",
       "Назначить",
       "Обновить",
-      "‹ Управление",
+      "‹ Участники",
     ]);
   });
 
@@ -318,21 +336,29 @@ describe("administrators in the hub bot", () => {
       "Снять @Peer · id 46",
       "Назначить",
       "Обновить",
-      "‹ Управление",
+      "‹ Участники",
     ]);
   });
 
+  // Назначение себя говорит на «ты» (прогон 14.10, №47): подтверждение узнаёт
+  // свой ник без учёта регистра, итог — свой id в ответе Identity.
   it("appoints the maintainer to admin through the confirmation", async () => {
     const harness = await started(MAINTAINER_RIGHTS);
 
-    const confirm = await appoint(harness, "@Keeper");
+    const confirm = await appoint(harness, "@Keeper", "keeper");
 
     expect(plain(confirm)).toContain("Назначить администратором?");
     // Ник — предмет экрана: жирным абзацем без кавычек (PER-594).
     expect(confirm.text).toContain("\n\n<b>@Keeper</b>\n\n");
+    expect(plain(confirm)).toContain(
+      "Это ты: ты сможешь решать заявки, вести состав и сходки, и тебе придёт сообщение о назначении.",
+    );
     expect(harness.sent("appoint")).toHaveLength(1);
     expect(harness.sent("appoint")[0]?.args[1]).toBe("Keeper");
-    expect(plain(last(harness.calls))).toContain("Администратор назначен");
+    expect(plain(last(harness.calls))).toContain("Ты назначен администратором");
+    expect(plain(last(harness.calls))).toContain(
+      "Тебе придёт сообщение о назначении.",
+    );
     expect(labels(last(harness.calls))).toEqual(["‹ Администраторы"]);
 
     await harness.bot.handleUpdate(press("v1:ad:l"));
@@ -340,6 +366,22 @@ describe("administrators in the hub bot", () => {
       "@keeper (ты) · мейнтейнер, администратор",
     );
     expect(labels(last(harness.calls))).toContain("Снять @keeper");
+  });
+
+  // Негативный путь №47: другой человек — третье лицо, как раньше.
+  it("speaks of another person in the third person", async () => {
+    const harness = await started(MAINTAINER_RIGHTS);
+
+    const confirm = await appoint(harness, "alice", "keeper");
+
+    expect(plain(confirm)).toContain(
+      "Человек сможет решать заявки, вести состав и сходки, и ему придёт сообщение о назначении.",
+    );
+    expect(plain(confirm)).not.toContain("Это ты");
+    expect(plain(last(harness.calls))).toContain("Администратор назначен");
+    expect(plain(last(harness.calls))).toContain(
+      "Человеку придёт сообщение о назначении.",
+    );
   });
 
   it("appoints nobody when the confirmation is declined", async () => {

@@ -12,10 +12,15 @@ import type {
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
 import { renderRaffleNotice } from "../../../core/notifications/raffle-notice.js";
-import { admitLabel, declineLabel } from "../../../core/pictograms.js";
+import {
+  admitLabel,
+  declineLabel,
+  marked,
+  pictogram,
+} from "../../../core/pictograms.js";
+import type { CommunityDay } from "../community-time.js";
 import type { AccessRequestView } from "../delivery/access-request.js";
 import type {
-  LocalDate,
   LocalDateTime,
   MeetupAspect,
   MeetupWhen,
@@ -31,6 +36,7 @@ import {
   traceCallback,
 } from "./parse-callback.js";
 import { applicationCardBody, cursorOf } from "./screens/application.js";
+import { readableDay, readableMoment, toManage } from "./screens/kit.js";
 
 // Кнопка отключения несёт целевое состояние, как переключатель P-09: повторное
 // нажатие даёт то же «выключено», а не включает категорию обратно.
@@ -98,10 +104,13 @@ export type OutgoingNotification =
 
 // Кадр по образцу P-11: заголовок называет повод и сходку, строки ниже — что
 // нужно знать, не открывая карточку. Одно сообщение на повод, карточка целиком
-// не повторяется: описание и ссылка на календарь только называются.
+// не повторяется: описание и ссылка на календарь только называются. `today` —
+// день сообщества: дата сходки читается, как на карточке, и чужой год
+// называется; без него год не называется.
 export function renderNotification(
   content: OutgoingNotification,
   auctionBotUsername?: string,
+  today?: CommunityDay,
 ): NotificationMessage {
   if (
     content.kind === "access-requested" ||
@@ -122,14 +131,16 @@ export function renderNotification(
     };
   }
   if (content.kind === "preset-granted") {
-    // Кнопка следа — «Сходки» придут новым сообщением, а весть о правах
-    // останется в истории. «Управление» — команда `/manage`: отправитель
-    // ставит её в список команд чата (решение владельца 10 октября 2026 года).
+    // Кнопка следа — «Управление» придёт новым сообщением, а весть о правах
+    // останется в истории. Команду `/manage` отправитель ставит в список
+    // команд чата (решение владельца 10 октября 2026 года). Прежних прав
+    // получателя факт не несёт, поэтому текст говорит, что есть, а не что
+    // появилось: у мейнтейнера «Управление» было и до набора (прогон 14.10, №48).
     return {
-      text: "Тебе выданы права администратора сообщества. В меню команд появилось «Управление» — /manage.",
+      text: "Тебе выданы права администратора сообщества: заявки, состав и сходки. Они собраны в «Управлении» — кнопка ниже или команда /manage.",
       keyboard: new InlineKeyboard().text(
-        "Сходки",
-        traceCallback("v1:nav:hub"),
+        toManage.name,
+        traceCallback("v1:manage:menu"),
       ),
     };
   }
@@ -175,6 +186,7 @@ export function renderNotification(
     };
   }
   const meetup = content.meetup;
+  const day = today ?? sameYearAs(meetup.when);
   const open = () =>
     new InlineKeyboard().text(
       "Открыть сходку",
@@ -185,22 +197,27 @@ export function renderNotification(
   switch (content.kind) {
     case "meetup-published":
       return {
-        text: [headline("Новая сходка", meetup), ...whenAndWhere(meetup)].join(
-          "\n",
-        ),
+        text: [
+          headline("Новая сходка", meetup),
+          ...whenAndWhere(meetup, day),
+        ].join("\n"),
         keyboard: open()
           .row()
           .text("Не присылать новые сходки", disablePublishedCallback),
       };
+    // У отменённой сходки изменений больше не будет, и выключать нечего:
+    // под отменой одна «Открыть сходку» (прогон 14.10, №105).
     case "meetup-changed":
       return {
-        text: renderChange(content).join("\n"),
-        keyboard: open()
-          .row()
-          .text(
-            "Не присылать изменения этой сходки",
-            disableMeetupCategoryCallback(meetup.id, "changes"),
-          ),
+        text: renderChange(content, day).join("\n"),
+        keyboard: isCancellation(content)
+          ? open()
+          : open()
+              .row()
+              .text(
+                "Не присылать изменения этой сходки",
+                disableMeetupCategoryCallback(meetup.id, "changes"),
+              ),
       };
     // Материал бывает и ссылкой, и файлом, поэтому повод назван материалом, а
     // не сообщением. Название сходки стоит в кавычках: через двоеточие оно
@@ -225,9 +242,10 @@ export function renderNotification(
     }
     case "meetup-reminder":
       return {
-        text: [headline("Напоминание", meetup), ...whenAndWhere(meetup)].join(
-          "\n",
-        ),
+        text: [
+          headline("Напоминание", meetup),
+          ...whenAndWhere(meetup, day),
+        ].join("\n"),
         keyboard: open()
           .row()
           .text("Не присылать напоминания", disableReminderCallback),
@@ -256,7 +274,7 @@ export function renderNotification(
       return {
         text: [
           headline("Сходка снята с публикации", meetup),
-          formatWhen(meetup.when),
+          whenLine(meetup.when, day),
         ].join("\n"),
         keyboard: undefined,
       };
@@ -301,13 +319,18 @@ const aspectLabels: Record<MeetupAspect, string> = {
   other: "другие сведения",
 };
 
+function isCancellation(content: ChangeContent): boolean {
+  return (
+    content.aspects.includes("lifecycle") && content.lifecycle === "cancelled"
+  );
+}
+
 // Старых значений контракт не несёт, поэтому текст говорит, что изменилось, и
 // показывает, как стало. Смена состояния, о которой заголовок говорит сам, —
 // отмена, проведение, возврат в публикацию — в перечень не повторяется.
-function renderChange(content: ChangeContent): string[] {
+function renderChange(content: ChangeContent, today: CommunityDay): string[] {
   const { meetup, aspects } = content;
-  const cancelled =
-    aspects.includes("lifecycle") && content.lifecycle === "cancelled";
+  const cancelled = isCancellation(content);
   const held = aspects.includes("lifecycle") && content.lifecycle === "held";
   const returned =
     aspects.includes("visibility") && content.visibility === "visible";
@@ -335,7 +358,7 @@ function renderChange(content: ChangeContent): string[] {
   const kind = meetup.kind.trim();
   if (aspects.includes("kind") && kind !== "") lines.push(`Вид: ${kind}`);
   // Отменённой сходке дата и место уже ни к чему: главное сказано заголовком.
-  if (!cancelled) lines.push(...whenAndWhere(meetup));
+  if (!cancelled) lines.push(...whenAndWhere(meetup, today));
   return lines;
 }
 
@@ -355,34 +378,59 @@ function headline(lead: string, meetup: NotifiedMeetup): string {
   return title === "" ? lead : `${lead}: ${title}`;
 }
 
-function whenAndWhere(meetup: NotifiedMeetup): string[] {
+// Дата и место — тем же видом и с теми же знаками, что на карточке сходки
+// («📅 Когда: 14 октября, ср, 12:00», «📍 Где: …»): весть и карточка, куда она
+// ведёт, читаются одинаково (прогон 14.10, №60).
+function whenAndWhere(meetup: NotifiedMeetup, today: CommunityDay): string[] {
   const venue = meetup.venue.trim();
   return venue === ""
-    ? [formatWhen(meetup.when)]
-    : [formatWhen(meetup.when), `Место: ${venue}`];
+    ? [whenLine(meetup.when, today)]
+    : [whenLine(meetup.when, today), marked(pictogram.where, `Где: ${venue}`)];
 }
 
-function formatWhen(when: MeetupWhen): string {
+function whenLine(when: MeetupWhen, today: CommunityDay): string {
+  return marked(pictogram.when, `Когда: ${formatWhen(when, today)}`);
+}
+
+function formatWhen(when: MeetupWhen, today: CommunityDay): string {
   switch (when.kind) {
     case "no-date":
-      return "Дата пока не назначена";
+      return "дата пока не назначена";
     case "day":
-      return tentative(when.tentative, formatDate(when.date));
+      return tentative(when.tentative, readableDay(when.date, today));
     case "day-start":
-      return tentative(when.tentative, formatDateTime(when.at));
+      return tentative(when.tentative, readableMoment(when.at, today));
     case "interval": {
       const sameDay =
         when.start.year === when.end.year &&
         when.start.month === when.end.month &&
         when.start.day === when.end.day;
-      const end = sameDay ? formatTime(when.end) : formatDateTime(when.end);
-      return tentative(when.tentative, `${formatDateTime(when.start)}–${end}`);
+      const end = sameDay
+        ? formatTime(when.end)
+        : readableMoment(when.end, today);
+      return tentative(
+        when.tentative,
+        `${readableMoment(when.start, today)}–${end}`,
+      );
     }
     default: {
       const _exhaustive: never = when;
       return _exhaustive;
     }
   }
+}
+
+// День сообщества без отправителя — год самой сходки: тогда год не называется.
+function sameYearAs(when: MeetupWhen): CommunityDay {
+  const year =
+    when.kind === "no-date"
+      ? 0
+      : when.kind === "day"
+        ? when.date.year
+        : when.kind === "day-start"
+          ? when.at.year
+          : when.start.year;
+  return { year, month: 1, day: 1 };
 }
 
 // Оповещение о заявке (PER-634). Кнопки под ним — следы: экран по ним
@@ -442,21 +490,11 @@ function renderAccessRequest(content: AccessRequestView): NotificationMessage {
 }
 
 function tentative(isTentative: boolean, value: string): string {
-  return isTentative ? `Предварительно: ${value}` : value;
-}
-
-// Тот же вид `ДД.ММ.ГГГГ ЧЧ:ММ`, что у карточки и формы сходки: дата в
-// уведомлении и в карточке, куда оно ведёт, читается одинаково.
-function formatDate(value: LocalDate): string {
-  return `${pad(value.day)}.${pad(value.month)}.${value.year}`;
+  return isTentative ? `предварительно ${value}` : value;
 }
 
 function formatTime(value: LocalDateTime): string {
   return `${pad(value.hours)}:${pad(value.minutes)}`;
-}
-
-function formatDateTime(value: LocalDateTime): string {
-  return `${formatDate(value)} ${formatTime(value)}`;
 }
 
 function pad(part: number): string {
@@ -471,14 +509,19 @@ export type SendMessageApi = Pick<
 // Содержимое рисуется здесь же, при отправке: соседи для текста хабу не
 // нужны, и рендер пакета доставки отдаёт содержимое как есть. `auctionBotUsername`
 // нужен одному сообщению — вести о понижении, которая вручает ссылку на бот
-// аукциона (PER-537).
+// аукциона (PER-537); `today` — день сообщества для дат сходки.
 export function createNotificationSender(
   api: SendMessageApi,
   auctionBotUsername?: string,
+  today?: () => CommunityDay,
 ): NotificationSender<OutgoingNotification> {
   return {
     async send({ telegramUserId, message: content }) {
-      const message = renderNotification(content, auctionBotUsername);
+      const message = renderNotification(
+        content,
+        auctionBotUsername,
+        today?.(),
+      );
       try {
         // Личный чат с человеком имеет id самого человека. Telegram держит id в
         // 52 битах, поэтому переход из bigint в number точен.

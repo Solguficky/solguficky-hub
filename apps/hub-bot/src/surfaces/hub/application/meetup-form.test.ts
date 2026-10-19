@@ -19,16 +19,23 @@ const empty: MeetupSnapshot = {
   materials: [],
 };
 
-function harness() {
+// `existing: false` — сходки ещё нет: Meetups её не находит, пока бот не
+// создаст черновик (прогон 14.10, №14 и №54).
+function harness({ existing = true }: { existing?: boolean } = {}) {
   let snapshot = empty;
+  let exists = existing;
   const meetups: Meetups = {
     listVisible: vi.fn(async () => ({ kind: "ok" as const, meetups: [] })),
     listArchived: vi.fn(async () => ({ kind: "ok" as const, meetups: [] })),
-    createDraft: vi.fn(async (_person, id) => ({
-      kind: "ok" as const,
-      meetup: { ...snapshot, id },
-    })),
-    get: vi.fn(async () => ({ kind: "ok" as const, meetup: snapshot })),
+    createDraft: vi.fn(async (_person, id) => {
+      exists = true;
+      return { kind: "ok" as const, meetup: { ...snapshot, id } };
+    }),
+    get: vi.fn(async () =>
+      exists
+        ? { kind: "ok" as const, meetup: snapshot }
+        : { kind: "not-found" as const },
+    ),
     changeAttributes: vi.fn(async (_person, meetup) => {
       snapshot = meetup;
       return { kind: "ok" as const, meetup };
@@ -79,21 +86,17 @@ function harness() {
 const today = { year: 2026, month: 9, day: 1 };
 
 describe("meetup creation form", () => {
-  it("creates the draft on entry and persists every completed step", async () => {
-    const { dispatcher, meetups } = harness();
-    const created = await dispatcher.execute({
-      identity,
-      intent: "create-meetup",
-      meetupId: empty.id,
-    });
-    expect(created).toMatchObject({ kind: "ask", field: "title" });
-    if (created.kind !== "ask") return;
+  // Черновик рождается ответом с названием, а не нажатием «Создать сходку»:
+  // «Отмена» до ответа не оставляет «Без названия» (прогон 14.10, №14 и №54).
+  it("creates the draft with its title and persists every completed step", async () => {
+    const { dispatcher, meetups } = harness({ existing: false });
     const titled = await dispatcher.execute({
       identity,
       intent: "set-meetup-field",
       field: "title",
       value: "Осенняя сходка",
-      meetupId: created.meetup.id,
+      meetupId: empty.id,
+      fresh: true,
     });
     // После названия форма больше не ведёт по полям: черновик показывается
     // целиком, и следующее поле человек выбирает сам.
@@ -108,8 +111,113 @@ describe("meetup creation form", () => {
     });
     expect(scheduled).toMatchObject({ kind: "draft" });
     expect(meetups.createDraft).toHaveBeenCalledOnce();
+    expect(meetups.createDraft).toHaveBeenCalledWith(
+      identity,
+      empty.id,
+      undefined,
+    );
     expect(meetups.changeAttributes).toHaveBeenCalledOnce();
     expect(meetups.setSchedule).toHaveBeenCalledOnce();
+  });
+
+  // Название не записалось после рождения черновика: повтор ответа находит
+  // тот же черновик по id и второго не создаёт.
+  it("keeps one draft when the title is sent again after a failed write", async () => {
+    const { dispatcher, meetups } = harness({ existing: false });
+    const write = meetups.changeAttributes;
+    meetups.changeAttributes = vi
+      .fn<Meetups["changeAttributes"]>()
+      .mockResolvedValueOnce({ kind: "unavailable", cause: new Error("down") })
+      .mockImplementation(write);
+    const request = {
+      identity,
+      intent: "set-meetup-field" as const,
+      field: "title" as const,
+      value: "Осенняя сходка",
+      meetupId: empty.id,
+      fresh: true as const,
+    };
+
+    const failed = await dispatcher.execute(request);
+    const repeated = await dispatcher.execute(request);
+
+    expect(failed).toMatchObject({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+    expect(repeated).toMatchObject({
+      kind: "draft",
+      meetup: { title: "Осенняя сходка" },
+    });
+    expect(meetups.createDraft).toHaveBeenCalledOnce();
+    expect(meetups.changeAttributes).toHaveBeenCalledTimes(2);
+  });
+
+  // Остальные поля задаются с черновика: их ответ черновика не создаёт.
+  // Старая кнопка «Создать сходку» несёт id уже созданной сходки: ответ на
+  // её вопрос не переименовывает готовую сходку — ни названную, ни
+  // опубликованную.
+  it.each([
+    ["a titled draft", { title: "Осенняя сходка" }],
+    ["a published meetup", { visibility: "visible" as const }],
+  ])(
+    "leaves %s alone on an answer to an old create button",
+    async (_name, state) => {
+      const { dispatcher, meetups } = harness();
+      meetups.get = vi.fn(async () => ({
+        kind: "ok" as const,
+        meetup: { ...empty, ...state },
+      }));
+
+      const result = await dispatcher.execute({
+        identity,
+        intent: "set-meetup-field",
+        field: "title",
+        value: "Чужое название",
+        meetupId: empty.id,
+        fresh: true,
+      });
+
+      expect(result).toMatchObject({ kind: "meetup-exists" });
+      expect(meetups.createDraft).not.toHaveBeenCalled();
+      expect(meetups.changeAttributes).not.toHaveBeenCalled();
+    },
+  );
+
+  // Вопрос о названии с существующего черновика («Ввести заново») черновика
+  // не создаёт и название меняет, как раньше.
+  it("renames the existing draft from its own title question", async () => {
+    const { dispatcher, meetups } = harness();
+    meetups.get = vi.fn(async () => ({
+      kind: "ok" as const,
+      meetup: { ...empty, title: "Старое" },
+    }));
+
+    const result = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "title",
+      value: "Новое",
+      meetupId: empty.id,
+    });
+
+    expect(result).toMatchObject({ kind: "draft", meetup: { title: "Новое" } });
+    expect(meetups.createDraft).not.toHaveBeenCalled();
+  });
+
+  it("creates no draft for another field of a meetup that is not there", async () => {
+    const { dispatcher, meetups } = harness({ existing: false });
+
+    const result = await dispatcher.execute({
+      identity,
+      intent: "set-meetup-field",
+      field: "venue",
+      value: "Циферблат",
+      meetupId: empty.id,
+    });
+
+    expect(result).toMatchObject({ kind: "dependency-rejected" });
+    expect(meetups.createDraft).not.toHaveBeenCalled();
   });
 
   it("repeats an unparsed schedule step without changing the saved meetup", async () => {
@@ -202,17 +310,21 @@ describe("meetup creation form", () => {
   });
 
   it("forwards an ordinary user and surfaces the Meetups refusal", async () => {
-    const meetups = harness().meetups;
+    const meetups = harness({ existing: false }).meetups;
     meetups.createDraft = vi.fn(async () => ({ kind: "forbidden" as const }));
     const dispatcher = createDispatcher(meetups);
     await expect(
       dispatcher.execute({
         identity: { ...identity, rights: [] },
-        intent: "create-meetup",
+        intent: "set-meetup-field",
+        field: "title",
+        value: "Осенняя сходка",
         meetupId: empty.id,
+        fresh: true,
       }),
     ).resolves.toEqual({ kind: "dependency-rejected", reason: "forbidden" });
     expect(meetups.createDraft).toHaveBeenCalledOnce();
+    expect(meetups.changeAttributes).not.toHaveBeenCalled();
   });
 
   it("passes the rejection cause on without a text for the person", async () => {
