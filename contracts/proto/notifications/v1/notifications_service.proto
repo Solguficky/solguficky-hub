@@ -46,25 +46,19 @@ service NotificationsService {
   rpc BroadcastToMeetupSubscribers(BroadcastToMeetupSubscribersRequest) returns (BroadcastAccepted);
   rpc BroadcastToCommunity(BroadcastToCommunityRequest) returns (BroadcastAccepted);
 
-  // Release notes: what the image of the caller's bot carries that the
-  // environment has not seen before. These three operations belong to no
-  // person, and none of them carries the surface: the caller's token names it,
-  // and a surface reads and writes only its own records and summaries.
+  // Release notes: what the image of the caller's bot carries. These three
+  // operations belong to no person, and none of them carries the surface: the
+  // caller's token names it, and a surface reads and writes only its own
+  // records and summaries.
   //
-  // The bot reports its whole set at every start and repeats a failed call, so
-  // the report is idempotent by the set, not by a request id. The first report
-  // of a surface in an environment — an empty set included — marks the whole set
-  // of that surface reported without creating a summary: the environment never
-  // announces what it saw before it knew the surface at all.
+  // A report is the whole set, never a delta: a repeated set changes nothing.
   rpc ReportReleaseNotes(ReportReleaseNotesRequest) returns (ReleaseNotesAccepted);
 
-  // The summaries of the caller's surface, newest first. The screen of the
-  // latest summary is this call without a cursor.
+  // The summaries of the caller's surface, newest first.
   rpc ListReleaseSummaries(ListReleaseSummariesRequest) returns (ReleaseSummaries);
 
-  // One summary with its neighbours. A button under an old message names its
-  // own summary, and paging to either side reads one page from there rather
-  // than walking the history from the newest.
+  // One summary of the caller's surface together with the summaries adjacent to
+  // it.
   rpc GetReleaseSummary(GetReleaseSummaryRequest) returns (ReleaseSummaryWithNeighbours);
 }
 
@@ -333,18 +327,14 @@ message BroadcastAccepted {
 
 message ReportReleaseNotesRequest {
   // Ids of the records the image of the caller's bot carries: the whole set,
-  // never a delta. The order is the image's own order of the records, and it is
-  // the order in which records the environment has not seen enter a summary.
-  // A repeated set changes nothing. An empty set is a value, not an absent
-  // field: it is how a surface whose image carries no record still marks itself
-  // reported.
+  // never a delta. The order is the image's own order of the records. A
+  // repeated set changes nothing. An empty set is a value, not an absent field.
   repeated string record_ids = 1;
 }
 
-// Server-produced acknowledgement. Acceptance is not a summary and not a
-// delivery: the summary is made at the daily hour and reaches people as a fact,
-// so what the bot shows it learns from the bus, not from this answer. A set
-// that was already seen changes nothing and is not an error.
+// Server-produced acknowledgement. Acceptance is not delivery: the service
+// publishes addressed facts and learns nothing about their outcome. A set that
+// was already seen changes nothing and is not an error.
 message ReleaseNotesAccepted {
   // RFC 3339 UTC instant at which this report was accepted.
   string accepted_at = 1;
@@ -372,10 +362,7 @@ message GetReleaseSummaryRequest {
   string summary_id = 1;
 }
 
-// One summary of the caller's surface and where it stands among the summaries
-// of that surface. The neighbours are computed by this read, not stored: a
-// summary is never rewritten, so its neighbours change only by other summaries
-// appearing.
+// One summary of the caller's surface and the summaries adjacent to it.
 message ReleaseSummaryWithNeighbours {
   ReleaseSummary summary = 1;
 

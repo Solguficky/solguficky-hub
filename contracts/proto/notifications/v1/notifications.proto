@@ -132,8 +132,7 @@ message Notification {
     // A daily summary of what is new in the bot was created for the surface of
     // this recipient. One fact per recipient of that surface who has the
     // category on. The text of the records is absent: it lives in the image of
-    // the surface's bot, and a channel that knows none of the records renders
-    // nothing.
+    // the surface's bot.
     ReleaseSummary release_summary = 27;
   }
 
@@ -190,10 +189,8 @@ message Cause {
 
 // A day of release notes of one surface: the records the environment saw for
 // the first time that day, named by id. The text is deliberately absent — it
-// lives in the image of the surface's bot, which also decides what to do with a
-// record it does not know. The same message answers the summary read of the
-// service contract, so that the channel and the "what's new" screen name a
-// summary the same way.
+// lives in the image of the surface's bot. The same message answers the summary
+// read of the service contract.
 message ReleaseSummary {
   // Canonical lowercase UUIDv7 with hyphens. Stable id of the summary: a
   // channel uses it as the target of the button under a delivered summary and

@@ -51,15 +51,27 @@ public class NotificationCategoriesTests
     [Fact]
     public void DefaultEnabled_Reminder_IsDisabled()
     {
-        // Единственная выключенная по умолчанию категория таблицы продукта.
+        // Единственная категория таблицы продукта с постоянным умолчанием,
+        // выключенная по умолчанию.
         NotificationCategories.DefaultEnabled(NotificationCategory.MeetupReminder).ShouldBeFalse();
     }
 
     [Fact]
-    public void DefaultEnabled_EveryCategoryButReminder_IsEnabled()
+    public void DefaultEnabled_ReleaseNotes_IsDisabled()
+    {
+        // Умолчание этой категории — параметр среды, а не константа
+        // (ADR-069, п. 5): stage включает её, прод — нет. Пока параметр не
+        // читается (PER-628), словарь несёт прод-значение таблицы продукта, и
+        // stage включает категорию параметром, а не правкой этого словаря.
+        NotificationCategories.DefaultEnabled(NotificationCategory.ReleaseNotes).ShouldBeFalse();
+    }
+
+    [Fact]
+    public void DefaultEnabled_EveryCategoryButReminderAndReleaseNotes_IsEnabled()
     {
         var enabled = NotificationCategories.All
-            .Where(category => category != NotificationCategory.MeetupReminder);
+            .Where(category => category != NotificationCategory.MeetupReminder
+                && category != NotificationCategory.ReleaseNotes);
 
         enabled.ShouldAllBe(category => NotificationCategories.DefaultEnabled(category));
     }

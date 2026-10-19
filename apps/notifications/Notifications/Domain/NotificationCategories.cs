@@ -54,7 +54,8 @@ public static class NotificationCategories
         (NotificationCategory.MeetupChanged, new CategoryDefinition("meetup_changed", true, true)),
         (NotificationCategory.MeetupMaterial, new CategoryDefinition("meetup_material", true, true)),
 
-        // Единственная категория, выключенная по умолчанию.
+        // Единственная категория с постоянным умолчанием, выключенная по
+        // умолчанию; у «Нового в боте» умолчание задаёт среда (ADR-069, п. 5).
         (NotificationCategory.MeetupReminder, new CategoryDefinition("meetup_reminder", false, true)),
 
         (NotificationCategory.OrganizerMessage, new CategoryDefinition("organizer_message", true, true)),
@@ -72,10 +73,17 @@ public static class NotificationCategories
 
         // Сводка выпуска: «Новое в боте». Только глобальная — сводка
         // принадлежит поверхности бота, а не сходке, и переопределять её у
-        // сходки негде. Значение по умолчанию берётся отсюда, когда процесс не
-        // задал своё: продукт хочет решать это параметром среды, а не
-        // константой (ADR-069, п. 5), и чтение параметра — PER-628.
-        (NotificationCategory.ReleaseNotes, new CategoryDefinition("release_notes", true, false)),
+        // сходки негде. Умолчание этого словаря — прод: для сообщества
+        // категория выключена, пока человек не включит её сам, а stage
+        // включает её параметром среды (ADR-069, п. 5; таблица продукта —
+        // docs/product/overview.md). Чтение параметра — PER-628, и до неё
+        // здесь стоит именно прод-значение, а не тестовое.
+        //
+        // Аудитории нет намеренно: в хабе весь бот доступен только держателю
+        // `access_hub`, а в боте аукциона — держателю его права, поэтому
+        // переключатель видит лишь тот, кому сводка и положена. Одна строка
+        // на две поверхности не выразила бы оба права, а сузила бы одно.
+        (NotificationCategory.ReleaseNotes, new CategoryDefinition("release_notes", false, false)),
     ];
 
     private static readonly IReadOnlyDictionary<NotificationCategory, CategoryDefinition> ByCategory =
