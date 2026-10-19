@@ -78,9 +78,10 @@ message LotEvent {
 // The public state of a lot after an event.
 //
 // It is defined here and does not reuse the state of the service contract. The
-// fields coincide today, but separate definitions keep a change of the read API
-// from silently becoming a change of this contract. Field numbers match
-// auction.v1.LotSnapshot so that the two stay readable side by side.
+// fields otherwise coincide, but separate definitions keep a change of the read
+// API from silently becoming a change of this contract. Field numbers match
+// auction.v1.LotSnapshot so that the two stay readable side by side, except the
+// windows of reduced step, which only this state carries (number 19).
 message LotState {
   // The version is a value of the envelope and is not repeated here: two copies
   // of one number can disagree. Numbers 5 and 6 carry values LotSnapshot computes
@@ -89,7 +90,8 @@ message LotState {
   // 15 is the bid count of the read model: a consumer of the bus counts the
   // bid_placed facts it receives. Numbers 16 to 18 are the regular step and the
   // windows of reduced step at the instant LotSnapshot answers: they depend on
-  // the clock of the reader, and a fact holds one instant.
+  // the clock of the reader, and a fact holds one instant, so the windows of the
+  // lot come as data in number 19 instead.
   reserved 4, 5, 6, 7, 15, 16, 17, 18;
 
   // Canonical lowercase UUIDv7 with hyphens.
@@ -116,6 +118,28 @@ message LotState {
     UnsoldReason unsold = 13;
     WithdrawnReason withdrawn = 14;
   }
+
+  // The windows of reduced bid step the lot recorded, by ascending start, as in
+  // its state. Set only while the lot is trading; empty on a lot with no windows
+  // and on a lot in the live final, which does not carry them. These are data of
+  // the fact, unlike numbers 16 to 18: they do not depend on the clock of the
+  // reader. Every window is in the currency of the lot: a window in another
+  // currency is not recorded by the lot and does not appear here.
+  repeated StepWindow step_windows = 19;
+}
+
+// A window of reduced bid step of one lot as the lot recorded it: the half-open
+// interval [from, until) with the step in force in it. It is not the window of
+// LotSnapshot: that one answers at an instant, while this one is the recorded
+// window itself.
+message StepWindow {
+  // RFC 3339 instant in UTC: the first instant of the window.
+  string from = 1;
+
+  // RFC 3339 instant in UTC: the first instant after the window.
+  string until = 2;
+
+  Money step = 3;
 }
 
 // The lot came into existence: its auction recorded it in the registry and the lot

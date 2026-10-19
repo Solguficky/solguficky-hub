@@ -55,15 +55,44 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
 
     // Снимок факта на шине и снимок чтения — два определения с обещанием «номера
     // полей совпадают». Ни buf, ни гейт nats-tester их не сравнивают: до этого
-    // теста зеркальность держалась на комментарии в схеме.
+    // теста зеркальность держалась на комментарии в схеме. Обратное исключение —
+    // окна лота: шина несёт их данными (номер 19), а чтение отдаёт окна,
+    // посчитанные на момент ответа (номера 16–18), и потому списка не несёт
+    // (ADR-047, дополнение 2026-10-12, «Источник»).
     "keeps the lot state of the bus aligned with the read snapshot field for field" in {
       val state = shape(LotState.javaDescriptor)
       val snapshot = shape(LotSnapshot.javaDescriptor)
       val reservedByState = LotState.javaDescriptor.toProto.getReservedRangeList.asScala
         .flatMap(range => range.getStart until range.getEnd)
+      val busOnly = Set(LotState.javaDescriptor.findFieldByName("step_windows").getNumber)
 
-      state.foreach { case (number, field) => snapshot.get(number) shouldBe Some(field) }
+      state.foreach { case (number, field) =>
+        if (!busOnly.contains(number)) snapshot.get(number) shouldBe Some(field)
+      }
+      (state.keySet -- snapshot.keySet) should contain theSameElementsAs busOnly
       (snapshot.keySet -- state.keySet) should contain theSameElementsAs reservedByState
+    }
+
+    // Исключение не снимает с поля проверку: номер, вид и тип шинного поля
+    // держатся явно, иначе его форма могла бы смениться незаметно для зеркала.
+    "keeps the bus-only windows a repeated message of their own type" in {
+      val windows = LotState.javaDescriptor.findFieldByName("step_windows")
+      val reserved = LotState.javaDescriptor.toProto.getReservedRangeList.asScala
+        .flatMap(range => range.getStart until range.getEnd)
+
+      windows.getNumber shouldBe 19
+      windows.getType shouldBe FieldDescriptor.Type.MESSAGE
+      windows.isRepeated shouldBe true
+      windows.getMessageType.getFullName shouldBe "auction.v1.StepWindow"
+      windows.getMessageType.getFields.asScala.map(field => field.getName -> field.getNumber) shouldBe Seq(
+        "from" -> 1,
+        "until" -> 2,
+        "step" -> 3
+      )
+      windows.getMessageType.findFieldByName("from").getType shouldBe FieldDescriptor.Type.STRING
+      windows.getMessageType.findFieldByName("until").getType shouldBe FieldDescriptor.Type.STRING
+      windows.getMessageType.findFieldByName("step").getMessageType.getFullName shouldBe "auction.v1.Money"
+      reserved should contain allOf (16, 17, 18)
     }
 
     // Тот же довод для аукциона, с обратным исключением: шина несёт сходку

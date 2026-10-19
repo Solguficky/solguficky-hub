@@ -587,6 +587,7 @@ object LotJournal {
 
   /**
    * Окна И-21: в валюте лота, `from` раньше `until`, без пересечений. Иное — испорченный журнал, а не торги без окна.
+   * Порядок состояния — по возрастанию начала: так их пишет `Lot.decide(OpenLot)`, и так их читает шина.
    */
   private def restoreWindows(stored: Option[List[StoredStepWindow]], config: LotConfig): List[StepWindow] = {
     val windows = stored.getOrElse(Nil).map(window => StepWindow(window.from, window.until, restoreMoney(window.step)))
@@ -596,7 +597,7 @@ object LotJournal {
     val ordered = windows.sortBy(_.from)
     if (ordered.zip(ordered.drop(1)).exists((earlier, later) => later.from.isBefore(earlier.until)))
       corrupted("overlapping step windows of one lot")
-    windows
+    ordered
   }
 
   private[entity] def storeMoney(money: Money): StoredMoney = StoredMoney(money.minorUnits, money.currency.value)

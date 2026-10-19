@@ -71,8 +71,9 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
         Some("events.auction.lot_resumed")
       )
       message(steps(5)._2).getState.status.isHeld shouldBe true
-      val live = message(steps(6)._2).getState.getTrading
-      (live.phase, live.deadline) shouldBe (model.LotPhase.LOT_PHASE_LIVE, None)
+      val liveState = message(steps(6)._2).getState
+      (liveState.getTrading.phase, liveState.getTrading.deadline) shouldBe (model.LotPhase.LOT_PHASE_LIVE, None)
+      liveState.stepWindows shouldBe empty
     }
 
     "publish the withdrawal with the reason of the cancelled auction in the state of the lot" in {
@@ -133,6 +134,53 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       trading.status.trading.flatMap(_.currentPrice) shouldBe Some(model.Money(10500, "RUB"))
       trading.status.trading.flatMap(_.leaderId) shouldBe Some(participant(2).value.toString)
       trading.status.trading.flatMap(_.leadingBidId) shouldBe Some(bid(1).value.toString)
+    }
+
+    "publish the windows the lot recorded at opening with the opened state" in {
+      val windows = message(facts(lotDrafted, lotScheduled, openedWithWindows).last._2).getState.stepWindows
+
+      windows shouldBe Seq(
+        bus.StepWindow(
+          from = "2026-10-05T12:00:00Z",
+          until = "2026-10-05T14:00:00Z",
+          step = Some(model.Money(100, "RUB"))
+        )
+      )
+    }
+
+    "publish no windows for a lot opened without one" in {
+      message(facts(lotDrafted, lotScheduled, opened).last._2).getState.stepWindows shouldBe empty
+    }
+
+    "publish the recorded windows by ascending start" in {
+      val earlier = stepWindow("12:00", "14:00", step = 10)
+      val later = stepWindow("15:00", "16:00", step = 20)
+      val openedWithBoth = Lot
+        .decide(lotIn(LotState.Scheduled(lotScheduled.schedule)), openLot(3).copy(stepWindows = List(later, earlier)))
+        .toOption
+        .collect { case Decision.Accepted(event: LotEvent.LotOpened, _) => event }
+        .getOrElse(fail("expected the lot to open"))
+
+      val windows = message(facts(lotDrafted, lotScheduled, openedWithBoth).last._2).getState.stepWindows
+      windows.map(window => (window.from, window.step.map(_.minorUnits))) shouldBe Seq(
+        ("2026-10-07T12:00:00Z", Some(10L)),
+        ("2026-10-07T15:00:00Z", Some(20L))
+      )
+    }
+
+    "leave out the window of another currency the lot did not record" in {
+      val own = stepWindow("12:00", "14:00", step = 10)
+      val foreign = stepWindow("15:00", "16:00", step = 20, currency = eur)
+      val inOwnCurrency = Lot
+        .decide(lotIn(LotState.Scheduled(lotScheduled.schedule)), openLot(3).copy(stepWindows = List(foreign, own)))
+        .toOption
+        .collect { case Decision.Accepted(event: LotEvent.LotOpened, _) => event }
+        .getOrElse(fail("expected the lot to open"))
+
+      val windows = message(facts(lotDrafted, lotScheduled, inOwnCurrency).last._2).getState.stepWindows
+      windows.map(window => (window.from, window.until, window.step)) shouldBe Seq(
+        ("2026-10-07T12:00:00Z", "2026-10-07T14:00:00Z", Some(model.Money(10, "RUB")))
+      )
     }
 
     "say who led before the bid and how the bid was placed" in {
