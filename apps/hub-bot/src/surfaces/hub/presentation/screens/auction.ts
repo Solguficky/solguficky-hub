@@ -414,7 +414,10 @@ function rootScreen(
   if (favorites !== undefined) {
     keyboard.text(favoritesLabel, favorites.callbackData);
   }
-  keyboard.text("Правила и FAQ", auctionFaqData(token));
+  keyboard.text(
+    "Правила и FAQ",
+    auctionFaqData(token, view.entry === "events"),
+  );
   // «🛠 Пульт» — своим рядом над возвратом (PER-669): действие управления не
   // делит ряд с кнопками участника.
   if (view.canManage === true) {

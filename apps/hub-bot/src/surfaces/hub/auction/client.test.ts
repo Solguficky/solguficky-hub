@@ -1024,6 +1024,40 @@ describe("auction console adapter", () => {
     expect(tokens).toEqual(["", "next"]);
   });
 
+  // PER-669: идущий аукцион — открытый, даже если запланированный стоит
+  // раньше по началу торгов: слот торгов не дал тому открыться.
+  it("prefers an opened auction over a scheduled one as the current auction", async () => {
+    const holder = "0190f2a0-0000-7000-8000-000000000021";
+    const reading = adapter({
+      listAuctions: async () =>
+        create(ListAuctionsResponseSchema, {
+          auctions: [
+            create(AuctionSnapshotSchema, {
+              id: auctionId,
+              status: {
+                case: "scheduled",
+                value: create(AuctionState_ScheduledSchema, {}),
+              },
+            }),
+            create(AuctionSnapshotSchema, {
+              id: holder,
+              status: {
+                case: "prebidding",
+                value: create(AuctionState_PrebiddingSchema, {}),
+              },
+            }),
+          ],
+          nextPageToken: "",
+        }),
+    });
+
+    await expect(reading.currentAuction(admin)).resolves.toEqual({
+      kind: "ok",
+      auctionId: holder,
+      auction: { auctionId: holder, stage: "prebidding", final: false },
+    });
+  });
+
   it("reads a refused list of the active auctions as a failure", async () => {
     const reading = adapter({
       listAuctions: () =>

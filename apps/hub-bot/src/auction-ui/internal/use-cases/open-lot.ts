@@ -150,7 +150,7 @@ function lotBody(input: {
   // отметка избранного — взгляд на лот, а «Обновить» встаёт в середину
   // листания — «предыдущий, этот же, следующий» — над возвратом (решение
   // владельца по отзыву тестовой группы 19 октября 2026 года, PER-669).
-  const watch = [...history, ...followButtons(lot, input.page, following)];
+  const lookRow = [...history, ...followButtons(lot, input.page, following)];
   return {
     blocks: [
       {
@@ -166,7 +166,7 @@ function lotBody(input: {
     ],
     keyboard: [
       ...bidRows(lot, input.viewer, input.page),
-      ...(watch.length === 0 ? [] : [watch]),
+      ...(lookRow.length === 0 ? [] : [lookRow]),
       ...pagerRows(input.neighbors, refresh),
       [
         {

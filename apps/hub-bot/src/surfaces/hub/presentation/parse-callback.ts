@@ -305,7 +305,8 @@ type PlainAction =
   // «Включить аукцион» на карточке сходки (PER-307). Кнопки входа в аукцион
   // здесь нет: она домена `auc`, и её пишет и разбирает аукционное дерево.
   | { kind: "manage-meetups"; token: string }
-  | { kind: "auction-faq"; auction: string }
+  // Хвост `e` — вход из «Событий» (PER-669): возврат FAQ несёт его в корень.
+  | { kind: "auction-faq"; auction: string; viaEvents?: true }
   // Форма лота администратора (PER-319). Кнопки несут лот, а новый лот —
   // аукцион: сходку форма не называет, её знает Auction.
   | { kind: "lot-new"; auction: string }
@@ -806,9 +807,9 @@ const QuoteSchema = z
         : { kind: "sale", minorUnits: Number.parseInt(raw, 36) },
   );
 
-/** Кнопка FAQ из корня ленты аукциона сходки. */
-export function auctionFaqData(auction: string): string {
-  return `v1:faq:${auction}`;
+/** Кнопка FAQ из корня ленты аукциона сходки; `viaEvents` — вход из «Событий». */
+export function auctionFaqData(auction: string, viaEvents = false): string {
+  return viaEvents ? `v1:faq:${auction}:e` : `v1:faq:${auction}`;
 }
 
 /**
@@ -1092,8 +1093,11 @@ export function parseCallback(raw: unknown): CallbackAction {
   }
   if (parts[1] === "faq") {
     const auction = TokenSchema.safeParse(parts[2]);
-    return parts.length === 3 && auction.success
-      ? { kind: "auction-faq", auction: auction.data }
+    if (!auction.success) return { kind: "malformed" };
+    if (parts.length === 3)
+      return { kind: "auction-faq", auction: auction.data };
+    return parts.length === 4 && parts[3] === "e"
+      ? { kind: "auction-faq", auction: auction.data, viaEvents: true }
       : { kind: "malformed" };
   }
   const token = TokenSchema.safeParse(parts[3]);

@@ -151,7 +151,7 @@ function fakeAuction(
     // псевдоним — этот отказ, если он задан.
     nameless?: { aliasRefusal?: "alias-taken" };
     // Идущий аукцион сообщества (PER-595, PER-669); по умолчанию — нет его.
-    current?: () => MeetupAuctionResult;
+    current?: () => MeetupAuctionResult | Promise<MeetupAuctionResult>;
   } = {},
 ) {
   const shownLot = options.lot ?? lot;
@@ -1863,6 +1863,38 @@ describe("events of the hub", () => {
     expect(
       (data(lastScreen(calls), "‹ Лоты") ?? "").startsWith("v1:aue:"),
     ).toBe(true);
+  });
+
+  it("returns from the rules to the root opened from the events", async () => {
+    const auction = fakeAuction({ existing: true, current: trading });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(rootData.replace("v1:auc:", "v1:aue:")));
+    const faq = data(lastScreen(calls), "Правила и FAQ") ?? "";
+    expect(faq.endsWith(":e")).toBe(true);
+    await bot.handleUpdate(press(faq));
+    expect(data(lastScreen(calls), "‹ Аукцион")).toBe(
+      rootData.replace("v1:auc:", "v1:aue:"),
+    );
+  });
+
+  // Меню — горячий путь: медленный Auction его не держит дольше срока.
+  it("opens the menu without the events when Auction is slow", async () => {
+    const auction = fakeAuction({
+      existing: true,
+      current: () => new Promise<MeetupAuctionResult>(() => {}),
+    });
+    const { bot, calls } = harness("member", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(menuData));
+    expect(labels(lastScreen(calls))).toEqual([
+      ["Сходки", "Ближайшая сходка"],
+      ["Настройки", "Помощь"],
+    ]);
   });
 
   it("keeps the meetup way back for the root opened from the meetup", async () => {

@@ -2026,7 +2026,12 @@ async function handleCallback(
     }
     if (action.kind === "auction-faq") {
       useCase = "view_auction";
-      outcome = await handleAuctionFaqCallback(ctx, runtime, action.auction);
+      outcome = await handleAuctionFaqCallback(
+        ctx,
+        runtime,
+        action.auction,
+        action.viaEvents === true,
+      );
       return;
     }
     useCase = callbackUseCase(action.kind);
@@ -5363,7 +5368,13 @@ async function openMenu(
   person: Person,
   useCase: ProductUseCase,
 ): Promise<BoundaryOutcome> {
-  const events = await currentEvents(ctx, runtime, person, useCase);
+  // Меню — горячий путь `/start` и «‹ Меню»: медленный Auction его не держит,
+  // а события после срока пропадают, как при отказе (PER-669).
+  const events = await within(
+    currentEvents(ctx, runtime, person, useCase),
+    menuEventsBudgetMs,
+    { kind: "unavailable" as const },
+  );
   await showScreen(
     ctx,
     menuScreen(person, {
@@ -5404,6 +5415,25 @@ async function currentEvents(
     !isAuctionEvent(auction)
     ? { kind: "ok", events: [] }
     : { kind: "ok", events: [{ kind: "auction", auctionId, auction }] };
+}
+
+const menuEventsBudgetMs = 1_500;
+
+// Ответ работы или запасной, если работа не успела к сроку или отказала.
+async function within<T>(
+  work: Promise<T>,
+  ms: number,
+  fallback: T,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), ms);
+  });
+  try {
+    return await Promise.race([work.catch(() => fallback), late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 // «События» (PER-669) — раздел под меню. Отказ Auction — кадр сбоя с
@@ -7217,9 +7247,10 @@ async function handleAuctionFaqCallback(
   ctx: UpdateContext,
   runtime: BotRuntime,
   auction: string,
+  fromEvents: boolean,
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "view_auction";
-  const data = auctionFaqData(auction);
+  const data = auctionFaqData(auction, fromEvents);
   const identity = await resolvePerson(ctx, runtime, useCase, data);
   if (identity.kind === "failed") return identity.outcome;
   const denied = await denyHubAccessIfNeeded(
@@ -7231,7 +7262,10 @@ async function handleAuctionFaqCallback(
   );
   if (denied !== undefined) return denied;
 
-  await showScreen(ctx, auctionFaqScreen(runtime.faq ?? defaultFaq, auction));
+  await showScreen(
+    ctx,
+    auctionFaqScreen(runtime.faq ?? defaultFaq, auction, fromEvents),
+  );
   return {
     level: "info",
     message: "auction FAQ screen sent",
