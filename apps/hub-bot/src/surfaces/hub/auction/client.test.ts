@@ -72,6 +72,7 @@ function adapter(rpc: {
   getLot?: Call;
   getAuctionConsole?: Call;
   getAuctionLotStatistics?: Call;
+  getAuctionDaySummary?: Call;
   scheduleAuction?: Call;
   startPrebidding?: Call;
   discardAuction?: Call;
@@ -111,6 +112,7 @@ function adapter(rpc: {
     getLotImage: notUsed,
     getAuctionConsole: (rpc.getAuctionConsole ?? notUsed) as never,
     getAuctionLotStatistics: (rpc.getAuctionLotStatistics ?? notUsed) as never,
+    getAuctionDaySummary: (rpc.getAuctionDaySummary ?? notUsed) as never,
     scheduleAuction: (rpc.scheduleAuction ?? notUsed) as never,
     startPrebidding: (rpc.startPrebidding ?? notUsed) as never,
     discardAuction: (rpc.discardAuction ?? notUsed) as never,

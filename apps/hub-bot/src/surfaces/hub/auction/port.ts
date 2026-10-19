@@ -186,6 +186,32 @@ export type LotStatisticsReadResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
+// Сводка дня торгов (PER-492): агрегаты лота за окно, которое называет бот.
+// Лот без ставок в окне приходит с нулём и без цены, а не пропускается, —
+// «ставок не было» бот читает по всему реестру, а не по отсутствию строк.
+export type DayLotStatistics = {
+  lotId: string;
+  bidCount: number;
+  maxPrice?: Money;
+  growth?: Money;
+};
+
+/** Окно сводки дня: аукцион и границы суток, которые называет бот (PER-492). */
+export type DayWindow = {
+  auctionId: string;
+  /** RFC 3339 в UTC: первый миг окна. */
+  from: string;
+  /** RFC 3339 в UTC: первый миг после окна; строго позже `from`. */
+  until: string;
+};
+
+export type DaySummaryReadResult =
+  | { kind: "ok"; lots: readonly DayLotStatistics[] }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
 // Из отказов конфигурации человек может вызвать «конец не позже начала» и
 // отказы окон «Счастливых часов» (PER-504): окно вне недели, пересечение двух
 // окон по общему лоту, шаг окна и окно без лотов, — а также момент закрытия
@@ -378,6 +404,13 @@ export type AuctionConsoles = {
     auctionId: string,
     meta?: RpcMetadata,
   ): Promise<LotStatisticsReadResult>;
+  // Сводка дня (PER-492): окно называет бот — часового пояса сообщества
+  // Auction не знает, и сутки считает край.
+  getAuctionDaySummary(
+    person: Person,
+    day: DayWindow,
+    meta?: RpcMetadata,
+  ): Promise<DaySummaryReadResult>;
   scheduleAuction(
     person: Person,
     config: AuctionWeekConfig,

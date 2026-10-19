@@ -100,6 +100,7 @@ import auction.projection.AuctionSnapshotView
 import auction.projection.AuctionViews
 import auction.projection.AuctionWatchView
 import auction.projection.AuctionWatchViews
+import auction.projection.DayLotStatisticsView
 import auction.projection.LotImageView
 import auction.projection.BidRecord
 import auction.projection.LotSnapshotView
@@ -287,6 +288,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[BidRecord]]] =
       fail("the history was touched")
     def statistics(auctionId: UUID): Future[List[LotStatisticsView]] = fail("the statistics were read")
+    def dayStatistics(auctionId: UUID, from: Instant, until: Instant): Future[List[DayLotStatisticsView]] =
+      fail("the day statistics were read")
   }
 
   private object UntouchableViews extends Views

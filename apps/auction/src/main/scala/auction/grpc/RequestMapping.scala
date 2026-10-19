@@ -50,6 +50,7 @@ import auction.v1.auction_service.EditLotCardRequest
 import auction.v1.auction_service.FreezeFinalLineupRequest
 import auction.v1.auction_service.GetAuctionConsoleRequest
 import auction.v1.auction_service.GetAuctionLotStatisticsRequest
+import auction.v1.auction_service.GetAuctionDaySummaryRequest
 import auction.v1.auction_service.GetDisplayNamesRequest
 import auction.v1.auction_service.GetLotImageRequest
 import auction.v1.auction_service.GetLotRequest
@@ -166,6 +167,9 @@ final case class AuctionQuery(auctionId: AuctionId, acting: Acting)
 
 /** Чтение пульта администратора: аукцион сходки и тот, кто смотрит. */
 final case class ConsoleQuery(auctionId: AuctionId, acting: Acting)
+
+/** Сводка дня торгов: аукцион сходки и окно `[from, until)`, за которое считается статистика лотов. */
+final case class DaySummaryQuery(auctionId: AuctionId, acting: Acting, from: Instant, until: Instant)
 
 /** Подписка на поток аукциона сходки: аукцион и тот, кто смотрит. */
 final case class WatchQuery(auctionId: AuctionId, acting: Acting)
@@ -371,6 +375,15 @@ object RequestMapping {
   /** Статистика лотов несёт то же, что пульт: аукцион сходки и смотрящего, которого Meetups проверит на право. */
   def getAuctionLotStatistics(request: GetAuctionLotStatisticsRequest): Either[FormError, ConsoleQuery] =
     administered(request.viewer, request.auctionId)
+
+  /** Сводка дня торгов: то же право, что у пульта, и окно, которое называет вызывающий. */
+  def getAuctionDaySummary(request: GetAuctionDaySummaryRequest): Either[FormError, DaySummaryQuery] =
+    for {
+      query <- administered(request.viewer, request.auctionId)
+      from <- instant("from", request.from)
+      until <- instant("until", request.until)
+      _ <- Either.cond(until.isAfter(from), (), FormError("until"))
+    } yield DaySummaryQuery(query.auctionId, query.acting, from, until)
 
   /** Чтение итогов прогнозов смотрящим: аукцион сходки; право `place_bids` граница проверит до чтения. */
   def getPredictionResults(request: GetPredictionResultsRequest): Either[FormError, PredictionQuery] =

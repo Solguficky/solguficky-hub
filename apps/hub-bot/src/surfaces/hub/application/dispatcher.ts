@@ -226,6 +226,7 @@ export function createDispatcher(
             ? { kind: "rejected", reason: "auction-not-configured" }
             : lotForm(request);
         case "view-auction-console":
+        case "view-day-summary":
         case "ask-auction-week":
         case "prepare-auction-week-start":
         case "schedule-auction-week":

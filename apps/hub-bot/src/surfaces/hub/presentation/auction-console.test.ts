@@ -26,6 +26,7 @@ import type {
   AuctionScreens,
   AuctionWeekConfig,
   ConsoleReadResult,
+  DayLotStatistics,
   FinalistResult,
   LotAdministration,
   LotClosure,
@@ -129,6 +130,9 @@ function fakeAuction(
     // и какие лоты он сам считает удержанными, если не те, что в пульте.
     freezeFailures?: number;
     heldByAuction?: readonly string[];
+    // Сводка дня (PER-492): агрегаты окна, которые отдаёт Auction; окно,
+    // которое назвал бот, тест читает по `windows`.
+    day?: readonly DayLotStatistics[];
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -160,6 +164,9 @@ function fakeAuction(
     );
   };
   const commands: Command[] = [];
+  // Окно, которое бот назвал суточному чтению (PER-492): день сообщества и
+  // часы бота, а не то, что придумал бы Auction.
+  const windows: { auctionId: string; from: string; until: string }[] = [];
   const notUsed = async (): Promise<never> => {
     throw new Error("not used");
   };
@@ -220,6 +227,13 @@ function fakeAuction(
           uniqueParticipantCount: each.uniqueParticipantCount,
         })),
       };
+    },
+    async getAuctionDaySummary(
+      _person: unknown,
+      day: { auctionId: string; from: string; until: string },
+    ) {
+      windows.push(day);
+      return { kind: "ok" as const, lots: options.day ?? [] };
     },
     async scheduleAuction(_person, config: AuctionWeekConfig) {
       commands.push({ method: "scheduleAuction", args: config });
@@ -465,6 +479,7 @@ function fakeAuction(
     port,
     state,
     commands,
+    windows,
     sent: (method: string) =>
       commands.filter((command) => command.method === method),
   };
@@ -476,6 +491,7 @@ function harness(
   auction: ReturnType<typeof fakeAuction>,
   calls: RecordedCall[] = [],
   rights?: readonly AccessRight[],
+  auctionBotUsername?: string,
 ) {
   return createHarness(
     identity(holder, rights),
@@ -488,7 +504,11 @@ function harness(
     undefined,
     "plain",
     today,
-    { auction: auction.port, communityTimeZone: timeZone },
+    {
+      auction: auction.port,
+      communityTimeZone: timeZone,
+      ...(auctionBotUsername === undefined ? {} : { auctionBotUsername }),
+    },
   );
 }
 
@@ -758,6 +778,8 @@ describe("entry into the auction console", () => {
       `v1:ac:w:${auctionToken}`,
       `v1:ac:o:${auctionToken}`,
       `v1:ac:s:${auctionToken}:${uuidToToken(vaseId)}:0`,
+      // Сводка дня (PER-492): кнопка пульта — того же права, что и пульт.
+      `v1:ac:ds:${auctionToken}`,
     ]) {
       await bot.handleUpdate(press(data));
       expect(last(calls).text).toContain("Это действие тебе недоступно.");
@@ -904,6 +926,7 @@ describe("auction console", () => {
     );
     expect(labels(screen)).toEqual([
       ["Ставки", "Люди", "Рост"],
+      ["Сводка дня"],
       ["В финал · Ваза"],
       ["Снять из финала · Кружка"],
       ["‹ Аукцион"],
@@ -991,6 +1014,7 @@ describe("week of the auction", () => {
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
       ["Сроки недели"],
+      ["Сводка дня"],
       ["🗑 Удалить аукцион"],
       ["‹ Аукцион"],
     ]);
@@ -1053,7 +1077,7 @@ describe("week of the auction", () => {
       ["Ставки", "Люди", "Рост"],
       ["Сроки недели"],
       ["Вкл · Финал"],
-      ["Счастливые часы"],
+      ["Счастливые часы", "Сводка дня"],
       ["Розыгрыш"],
       ["Открыть онлайн-неделю"],
       ["🗑 Удалить аукцион"],
@@ -1648,6 +1672,7 @@ describe("final selection", () => {
 
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
+      ["Сводка дня"],
       ["Снять из финала · Кружка"],
       ["‹ Аукцион"],
     ]);
@@ -1701,6 +1726,7 @@ describe("final selection", () => {
     );
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
+      ["Сводка дня"],
       ["‹ Аукцион"],
     ]);
   });
@@ -2526,5 +2552,109 @@ describe("happy hours", () => {
     await bot.handleUpdate(press(dataOf(last(calls), "Окно 1")));
     expect(plain(last(calls))).toContain("• Ваза");
     expect(labels(last(calls))).toEqual([["‹ Счастливые часы"]]);
+  });
+});
+
+describe("day summary screen", () => {
+  const auctionBot = "solguficky_auction_bot";
+  const summaryData = `v1:ac:ds:${auctionToken}`;
+
+  it("shows the three metrics of the day with links to the lots in the auction bot", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      lots: [vase, mug],
+      day: [
+        {
+          lotId: vaseId,
+          bidCount: 4,
+          maxPrice: rub(180_000),
+          growth: rub(60_000),
+        },
+        {
+          lotId: mugId,
+          bidCount: 7,
+          maxPrice: rub(50_000),
+          growth: rub(10_000),
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction, [], undefined, auctionBot);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(summaryData));
+
+    const screen = plain(last(calls));
+    expect(screen).toContain("Сводка дня");
+    expect(screen).toContain("Новые максимумы цены:");
+    expect(screen).toContain("Спорнее всех:");
+    expect(screen).toContain("Больше всех выросла цена:");
+    expect(screen).toContain(
+      `https://t.me/${auctionBot}?start=l_${uuidToToken(vaseId)}`,
+    );
+    expect(screen).toContain(
+      `https://t.me/${auctionBot}?start=l_${uuidToToken(mugId)}`,
+    );
+    // Оба лота — в сводке: дороже всех Ваза, оспореннее всех Кружка.
+    expect(screen).toContain("Ваза");
+    expect(screen).toContain("Кружка");
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+    expect(auction.windows).toEqual([
+      {
+        auctionId,
+        from: "2026-10-05T21:00:00Z",
+        until: now.toISOString(),
+      },
+    ]);
+  });
+
+  it("says a day without bids had none instead of an empty screen", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      lots: [vase, mug],
+      day: [
+        { lotId: vaseId, bidCount: 0 },
+        { lotId: mugId, bidCount: 0 },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction, [], undefined, auctionBot);
+    await bot.init();
+
+    await bot.handleUpdate(press(summaryData));
+
+    const screen = plain(last(calls));
+    expect(screen).toContain("Сводка дня");
+    expect(screen).toContain("Ставок не было.");
+    expect(screen).not.toContain("Новые максимумы цены:");
+  });
+
+  it("leaves the lots without links when the auction bot has no name", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      lots: [vase],
+      day: [{ lotId: vaseId, bidCount: 1, maxPrice: rub(120_000) }],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(summaryData));
+
+    const screen = plain(last(calls));
+    expect(screen).toContain("Ваза");
+    expect(screen).not.toContain("https://t.me/");
+  });
+});
+
+describe("day summary without lots", () => {
+  it("says the auction has no lots instead of a day without bids", async () => {
+    const auction = fakeAuction({ status: "prebidding", lots: [], day: [] });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(`v1:ac:ds:${auctionToken}`));
+
+    const screen = plain(last(calls));
+    expect(screen).toContain("Лотов в аукционе пока нет.");
+    expect(screen).not.toContain("Ставок не было.");
   });
 });

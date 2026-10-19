@@ -408,6 +408,87 @@ describe("auction bot", () => {
     expect(JSON.stringify(calls[0]?.payload)).not.toContain("‹ ");
   });
 
+  // Ссылка на лот `l_<токен>` (PER-492) открывает карточку лота: цель названа
+  // самой ссылкой, поэтому отметка FAQ её не перекрывает — та закрывает вход в
+  // дерево без цели.
+  it("opens the lot of a lot link without the FAQ gate", async () => {
+    const token = Buffer.from(lotId.replaceAll("-", ""), "hex").toString(
+      "base64url",
+    );
+    const ports: PortsFactory = (requestId, deadlineAt) => ({
+      ...publicPorts(requestId, deadlineAt),
+      faq: {
+        ...publicPorts(requestId, deadlineAt).faq,
+        acknowledged: async () => false,
+      },
+    });
+    const { bot, calls } = makeBot(ports);
+    await bot.handleUpdate(
+      startUpdate({
+        message_id: 1,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: `/start l_${token}`,
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      }),
+    );
+    expect(JSON.stringify(calls.at(-1)?.payload)).toContain("Кружка");
+    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("Что продаём");
+  });
+
+  // Отказ Auction на приходе по ссылке — тот же кадр недоступности с
+  // «Повторить», что у нажатия, а не тишина: ветка ссылки стоит внутри try.
+  it("answers the unavailable frame when Auction is down on a lot link", async () => {
+    const token = Buffer.from(lotId.replaceAll("-", ""), "hex").toString(
+      "base64url",
+    );
+    const ports: PortsFactory = (requestId, deadlineAt) => ({
+      ...publicPorts(requestId, deadlineAt),
+      auction: {
+        ...publicPorts(requestId, deadlineAt).auction,
+        getLot: () =>
+          Promise.reject(new ConnectError("down", Code.Unavailable)),
+      },
+    });
+    const { bot, calls } = makeBot(ports);
+    await bot.handleUpdate(
+      startUpdate({
+        message_id: 1,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: `/start l_${token}`,
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      }),
+    );
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Аукцион сейчас недоступен"),
+    });
+  });
+
+  // Токен лота — недоверенный хвост: обрезанный или подделанный, он не
+  // открывает ничего, и приход читается как `/start` без цели.
+  it("answers a broken lot link like a plain /start", async () => {
+    const broken = Buffer.from(lotId.replaceAll("-", ""), "hex")
+      .toString("base64url")
+      .slice(0, 21);
+    const { bot, calls } = makeBot(publicPorts);
+    await bot.handleUpdate(
+      startUpdate({
+        message_id: 1,
+        date: 0,
+        chat: privateChat,
+        from,
+        text: `/start l_${broken}`,
+        entities: [{ type: "bot_command", offset: 0, length: 6 }],
+      }),
+    );
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringMatching(/^<b>Меню<\/b>/),
+    });
+  });
+
   it("answers /start with a channel or a foreign payload like a plain /start", async () => {
     const answer = async (text: string) => {
       const { bot, calls } = makeBot(publicPorts);

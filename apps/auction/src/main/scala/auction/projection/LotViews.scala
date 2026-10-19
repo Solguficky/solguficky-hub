@@ -82,6 +82,35 @@ final case class LotStatisticsView(
     else Money(current.minorUnits - start.minorUnits, start.currency)
 }
 
+/**
+ * Статистика лота за окно (PER-492): сколько принятых ставок лот получил в окне, до какой цены он в нём дошёл и какова
+ * была его цена к открытию окна. Число ставок и максимум считаются по строкам `lot_bid` окна, `priceBefore` — цена
+ * последней ставки до окна, а без ставок до него — стартовая цена `LotOpened`. Полей участников здесь нет намеренно:
+ * сводка дня зовёт лот по цене и оспоренности, а не по людям.
+ */
+final case class DayLotStatisticsView(
+    lotId: UUID,
+    bidCount: Long,
+    maxPrice: Option[Money],
+    priceBefore: Option[Money]
+) {
+
+  /**
+   * Рост за окно — максимум окна минус цена, с которой окно открылось, абсолютная сумма в валюте лота. Ставок в окне не
+   * было — роста нет; цены к открытию окна не было — тоже. Расхождение валют — испорченный read model, а не нулевой
+   * рост.
+   */
+  def growth: Option[Money] =
+    maxPrice.flatMap(top => priceBefore.map(before => difference(top, before)))
+
+  private def difference(top: Money, before: Money): Money =
+    if (top.currency != before.currency)
+      throw IllegalStateException(
+        s"lot $lotId trades in ${top.currency.value}, opened in ${before.currency.value}"
+      )
+    else Money(top.minorUnits - before.minorUnits, before.currency)
+}
+
 /** Изображение лота так, как оно лежит в строке каталога: байты, тип и версия этих байтов. */
 final case class LotImageView(content: IArray[Byte], mediaType: String, version: String)
 
@@ -118,4 +147,11 @@ trait LotViews {
    * model ещё не знает, в выдачу не попадает, как у `registryPage`.
    */
   def statistics(auctionId: UUID): Future[List[LotStatisticsView]]
+
+  /**
+   * Статистика каждого лота реестра аукциона сходки за окно `[from, until)` по возрастанию `lot_id`, без страниц. Лот
+   * реестра, которого read model ещё не знает, в выдачу не попадает, как у `registryPage`; лот без ставок в окне
+   * приходит с нулём ставок и без цены, а не пропускается — «ставок не было» читается потребителем по всем лотам.
+   */
+  def dayStatistics(auctionId: UUID, from: Instant, until: Instant): Future[List[DayLotStatisticsView]]
 }

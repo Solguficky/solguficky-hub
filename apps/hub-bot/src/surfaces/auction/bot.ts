@@ -50,7 +50,7 @@ import {
   routeAuctionStart,
 } from "./route.js";
 import { screenMark } from "./screen-catalog.js";
-import { sourceCodeOf } from "./start-payload.js";
+import { startPayloadOf } from "./start-payload.js";
 import { startWaiting } from "./waiting.js";
 
 // Операция команды в логе: имя раздела, который она открывает.
@@ -213,12 +213,17 @@ export function createBot(options: BotOptions): Bot<UpdateContext> {
   }
 
   direct.command("start", (ctx) => {
-    const sourceCode = sourceCodeOf(ctx.match);
+    const payload = startPayloadOf(ctx.match);
     return answerCommand(ctx, {
       operation: "start",
       route: (ports) =>
         routeAuctionStart({
-          ...(sourceCode === undefined ? {} : { sourceCode }),
+          ...(payload.sourceCode === undefined
+            ? {}
+            : { sourceCode: payload.sourceCode }),
+          ...(payload.lotToken === undefined
+            ? {}
+            : { lotToken: payload.lotToken }),
           ports,
           user: userOf(ctx.from),
           firstName: ctx.from.first_name,

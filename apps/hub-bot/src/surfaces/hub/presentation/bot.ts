@@ -237,6 +237,7 @@ import {
   windowScreen,
   windowsScreen,
 } from "./screens/auction-console.js";
+import { daySummaryScreen } from "./screens/auction-day-summary.js";
 import { auctionFaqScreen } from "./screens/auction-faq.js";
 import type { ScreenId } from "./screens/catalog.js";
 import {
@@ -2128,6 +2129,7 @@ async function handleCallback(
       action.kind === "console-close" ||
       action.kind === "console-close-confirm" ||
       action.kind === "console-windows" ||
+      action.kind === "console-day-summary" ||
       action.kind === "console-window" ||
       action.kind === "console-window-ask" ||
       action.kind === "console-window-lot" ||
@@ -6427,6 +6429,7 @@ async function handleConsoleCallback(
         | "console-close"
         | "console-close-confirm"
         | "console-windows"
+        | "console-day-summary"
         | "console-window"
         | "console-window-ask"
         | "console-window-lot"
@@ -6608,6 +6611,13 @@ async function handleConsoleCallback(
         await runtime.dispatcher.execute({
           ...call,
           intent: "view-step-windows",
+        }),
+      );
+    case "console-day-summary":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-day-summary",
         }),
       );
     case "console-window":
@@ -6807,6 +6817,20 @@ async function renderConsoleResult(
           ? "auction raffle requested"
           : "auction raffle asked again",
       );
+    case "auction-day-summary":
+      await showScreen(
+        ctx,
+        daySummaryScreen({
+          auctionId: result.auctionId,
+          day: result.day,
+          today: communityToday(ctx),
+          lots: result.lots,
+          ...(runtime.auctionBotUsername === undefined
+            ? {}
+            : { auctionBotUsername: runtime.auctionBotUsername }),
+        }),
+      );
+      return handled("auction day summary sent");
     case "step-windows":
       await showScreen(
         ctx,
@@ -8986,6 +9010,7 @@ function callbackUseCase(
     | "console-close"
     | "console-close-confirm"
     | "console-windows"
+    | "console-day-summary"
     | "console-window"
     | "console-window-ask"
     | "console-window-lot"
@@ -9140,6 +9165,7 @@ function callbackUseCase(
     case "console-close":
     case "console-close-confirm":
     case "console-windows":
+    case "console-day-summary":
     case "console-window":
     case "console-window-ask":
     case "console-window-lot":

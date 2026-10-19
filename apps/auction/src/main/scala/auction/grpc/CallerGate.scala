@@ -44,6 +44,7 @@ object MethodAccess {
     "WatchAuction" -> bots,
     "GetAuctionConsole" -> Set(Caller.HubBot),
     "GetAuctionLotStatistics" -> Set(Caller.HubBot),
+    "GetAuctionDaySummary" -> Set(Caller.HubBot),
     "GetMeetupAuction" -> Set(Caller.HubBot),
     "GetAuction" -> bots,
     "ListAuctions" -> bots,

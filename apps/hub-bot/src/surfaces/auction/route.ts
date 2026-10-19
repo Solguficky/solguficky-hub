@@ -5,6 +5,7 @@ import {
   admission,
   applicationQueue,
   decideEntry,
+  encodeAuctionCallback,
   handleAuctionUpdate,
   parseAuctionCallback,
   type ResolvedIdentity,
@@ -25,6 +26,7 @@ import {
   parseEntryCallback,
   startCallback,
 } from "./faq.js";
+import { lotIdOf } from "./start-payload.js";
 
 // Отказ зависимости для записи в лог: класс по словарю logging.md и код gRPC.
 // Человеку ни то ни другое не показывается.
@@ -151,6 +153,7 @@ export function routeAuctionStart(input: {
   user: TelegramUser;
   firstName: string;
   sourceCode?: string;
+  lotToken?: string;
 }): Promise<RouteOutcome> {
   return routeEntry({
     ports: input.ports,
@@ -161,6 +164,7 @@ export function routeAuctionStart(input: {
       ...(input.sourceCode === undefined
         ? {}
         : { sourceCode: input.sourceCode }),
+      ...(input.lotToken === undefined ? {} : { lotToken: input.lotToken }),
     },
   });
 }
@@ -169,7 +173,12 @@ async function routeEntry(input: {
   ports: EntryPorts;
   user: TelegramUser;
   action:
-    | { kind: "start"; firstName: string; sourceCode?: string }
+    | {
+        kind: "start";
+        firstName: string;
+        sourceCode?: string;
+        lotToken?: string;
+      }
     | { kind: "callback"; data: string; firstName: string }
     | { kind: "reply"; data: string; text?: string };
 }): Promise<RouteOutcome> {
@@ -179,11 +188,16 @@ async function routeEntry(input: {
       : undefined;
   // `/start` — команда либо её повтор кнопкой после сбоя: он разрешает
   // личность, а код канала несёт дальше, в кнопку «Подать заявку».
-  const starting: { sourceCode?: string } | undefined =
+  const starting: { sourceCode?: string; lotToken?: string } | undefined =
     input.action.kind === "start"
-      ? input.action.sourceCode === undefined
-        ? {}
-        : { sourceCode: input.action.sourceCode }
+      ? {
+          ...(input.action.sourceCode === undefined
+            ? {}
+            : { sourceCode: input.action.sourceCode }),
+          ...(input.action.lotToken === undefined
+            ? {}
+            : { lotToken: input.action.lotToken }),
+        }
       : local?.action === "start"
         ? local.sourceCode === undefined
           ? {}
@@ -263,6 +277,54 @@ async function routeEntry(input: {
   }
   const { viewer } = identity;
   const identityId = viewer.identityId;
+  // Экран торгового результата: тем же путём идёт и ссылка на лот `l_<токен>`,
+  // и нажатие. Тело пакета, отказ доступа и устаревший экран.
+  const auctionOutcome = async (
+    result: AuctionResult,
+  ): Promise<RouteOutcome> => {
+    switch (result.kind) {
+      case "screen": {
+        const root = result.body.blocks.find((block) => block.kind === "root");
+        // Родитель корня аукциона — список, в котором аукцион стоит сейчас, а
+        // не путь, которым человек пришёл (дизайн-код, «Дерево бота
+        // аукциона»): корень, открытый из прошедших или с ленты по кнопке
+        // уведомления, возвращает туда же, куда и открытый из активных. Не
+        // активный аукцион — прошедший: черновика бот аукциона не показывает.
+        const parent: ListAction | undefined =
+          root === undefined
+            ? undefined
+            : (
+                  await readAuctions({
+                    catalog: input.ports.catalog,
+                    viewer,
+                    listing: "active",
+                  })
+                ).some((auction) => auction.auctionId === root.auctionId)
+              ? "auctions"
+              : "past";
+        return {
+          screen: {
+            kind: "auction",
+            body: result.body,
+            ...(parent === undefined ? {} : { parent }),
+          },
+          identityId,
+          viewer,
+        };
+      }
+      case "denied":
+        return {
+          screen: { kind: "denied", reason: result.reason },
+          identityId,
+        };
+      case "unreadable":
+        return { screen: { kind: "outdated" }, identityId };
+      default: {
+        const _exhaustive: never = result;
+        return _exhaustive;
+      }
+    }
+  };
   // Право перепроверяется на каждом действии той же политикой, что у шлюза:
   // старая клавиатура и отметка FAQ доступа не дают, а участник сообщества
   // получает переход в бот хаба и на экранах оболочки.
@@ -292,6 +354,25 @@ async function routeEntry(input: {
   // закрыты ею по-прежнему.
   const menu = { screen: { kind: "menu" }, identityId } as const;
   try {
+    // Ссылка на лот `l_<токен>` (PER-492) открывает карточку лота: цель названа
+    // самой ссылкой, поэтому отметка FAQ её не перекрывает — та закрывает вход в
+    // дерево без цели, `/start` и разделы. Токен недоверенный: не разобранный,
+    // он не открывает ничего, и приход идёт обычным `/start`. Отказ Auction на
+    // этом пути — тот же кадр недоступности, что у нажатия, а не тишина: ветка
+    // стоит внутри `try`.
+    if (starting?.lotToken !== undefined) {
+      const lotId = lotIdOf(starting.lotToken);
+      if (lotId !== undefined) {
+        return await auctionOutcome(
+          await tradeCallback({
+            ports: input.ports,
+            identity,
+            user: input.user,
+            data: encodeAuctionCallback({ kind: "lot", lotId, page: 0 }),
+          }),
+        );
+      }
+    }
     const action = local?.action;
     if (action === "faq" || action === "details" || action === "question") {
       return { screen: { kind: action }, identityId };
@@ -358,57 +439,17 @@ async function routeEntry(input: {
       return await listScreen(action);
     }
     const { action: update } = input;
-    const result = await tradeCallback({
-      ports: input.ports,
-      identity,
-      user: input.user,
-      data: update.data,
-      ...(update.kind === "reply"
-        ? { reply: update.text === undefined ? {} : { text: update.text } }
-        : {}),
-    });
-    switch (result.kind) {
-      case "screen": {
-        const root = result.body.blocks.find((block) => block.kind === "root");
-        // Родитель корня аукциона — список, в котором аукцион стоит сейчас, а
-        // не путь, которым человек пришёл (дизайн-код, «Дерево бота
-        // аукциона»): корень, открытый из прошедших или с ленты по кнопке
-        // уведомления, возвращает туда же, куда и открытый из активных. Не
-        // активный аукцион — прошедший: черновика бот аукциона не показывает.
-        const parent: ListAction | undefined =
-          root === undefined
-            ? undefined
-            : (
-                  await readAuctions({
-                    catalog: input.ports.catalog,
-                    viewer,
-                    listing: "active",
-                  })
-                ).some((auction) => auction.auctionId === root.auctionId)
-              ? "auctions"
-              : "past";
-        return {
-          screen: {
-            kind: "auction",
-            body: result.body,
-            ...(parent === undefined ? {} : { parent }),
-          },
-          identityId,
-          viewer,
-        };
-      }
-      case "denied":
-        return {
-          screen: { kind: "denied", reason: result.reason },
-          identityId,
-        };
-      case "unreadable":
-        return { screen: { kind: "outdated" }, identityId };
-      default: {
-        const _exhaustive: never = result;
-        return _exhaustive;
-      }
-    }
+    return await auctionOutcome(
+      await tradeCallback({
+        ports: input.ports,
+        identity,
+        user: input.user,
+        data: update.data,
+        ...(update.kind === "reply"
+          ? { reply: update.text === undefined ? {} : { text: update.text } }
+          : {}),
+      }),
+    );
   } catch (cause) {
     return { screen: unavailable, identityId, failure: classify(cause) };
   }

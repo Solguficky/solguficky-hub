@@ -7,6 +7,7 @@ import {
   consoleCloseConfirmData,
   consoleCloseData,
   consoleConfirmData,
+  consoleDaySummaryData,
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
@@ -1160,6 +1161,10 @@ describe("auction console callbacks", () => {
     const window = { index: 99, print: "z0a9q" };
     const cases = [
       [consoleWindowsData(auction), { kind: "console-windows", auction }],
+      [
+        consoleDaySummaryData(auction),
+        { kind: "console-day-summary", auction },
+      ],
       [consoleWindowAskData(auction), { kind: "console-window-ask", auction }],
       [
         consoleWindowData(auction, window),
