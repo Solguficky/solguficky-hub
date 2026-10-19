@@ -107,6 +107,18 @@ final class LotJournalSpec
         )
     }
 
+    "read the recorded windows by ascending start whatever order the row lists" in {
+      val earlier = StepWindow(Instant.parse("2026-10-05T12:00:00Z"), Instant.parse("2026-10-05T14:00:00Z"), money(100))
+      val later = StepWindow(Instant.parse("2026-10-05T15:00:00Z"), Instant.parse("2026-10-05T16:00:00Z"), money(50))
+      val listed = openedWithWindows.copy(stepWindows = List(later, earlier))
+
+      LotJournal.envelope(1, storedEvent(listed)) shouldBe Envelope(
+        1,
+        op(1),
+        listed.copy(stepWindows = List(earlier, later))
+      )
+    }
+
     "read an opening written before the auction and the schedule into the same event" in {
       val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
 

@@ -6,6 +6,8 @@ import auction.entity.LotJournal
 import auction.lot.BidOrigin
 import auction.lot.LotEvent
 import auction.lot.LotState
+import auction.lot.Phase
+import auction.lot.StepWindow
 import auction.projection.AppliedEvent
 import auction.projection.LotViewRow
 import auction.v1.auction as model
@@ -94,11 +96,24 @@ object LotFacts {
           .withConfig(LotValues.config(schedule.config))
           .withScheduled(model.LotSchedule(Some(LotValues.money(schedule.startingPrice))))
       case LotState.Trading(trading) =>
-        base.withConfig(LotValues.config(trading.config)).withTrading(LotValues.trading(trading))
+        base
+          .withConfig(LotValues.config(trading.config))
+          .withTrading(LotValues.trading(trading))
+          // Окна действуют только в онлайн-фазе: живой финал их не несёт (ADR-047, П-03), и публикатор
+          // держит это обещание схемы, а не полагается на форму состояния.
+          .withStepWindows(if (trading.phase == Phase.Online) trading.stepWindows.map(stepWindow) else Nil)
       case LotState.Held(held) => base.withConfig(LotValues.config(held.config)).withHeld(LotValues.held(held))
       case LotState.Sold(sale) => base.withSold(LotValues.sale(sale))
       case LotState.Unsold(reason) => base.withUnsold(LotValues.unsold(reason))
       case LotState.Withdrawn(reason) => base.withWithdrawn(LotValues.withdrawn(reason))
     }
   }
+
+  /** Окно сниженного шага как данные факта: записанный полуинтервал `[from, until)` и его сумма. */
+  private def stepWindow(window: StepWindow): bus.StepWindow =
+    bus.StepWindow(
+      from = LotValues.instant(window.from),
+      until = LotValues.instant(window.until),
+      step = Some(LotValues.money(window.step))
+    )
 }
