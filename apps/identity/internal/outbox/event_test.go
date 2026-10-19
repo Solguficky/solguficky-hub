@@ -168,6 +168,9 @@ func TestRecordMessageSetsExactlyTheOccasionBranch(t *testing.T) {
 		{outbox.Record{Occasion: outbox.RightGranted, Right: "admit_bidders"}, func(e *identityv1.IdentityEvent) bool {
 			return e.GetRightGranted().GetRight() == identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS
 		}},
+		{outbox.Record{Occasion: outbox.RightGranted, Right: "run_auctions"}, func(e *identityv1.IdentityEvent) bool {
+			return e.GetRightGranted().GetRight() == identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS
+		}},
 		{outbox.Record{Occasion: outbox.RightRevoked, Right: "place_bids"}, func(e *identityv1.IdentityEvent) bool {
 			return e.GetRightRevoked().GetRight() == identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS
 		}},

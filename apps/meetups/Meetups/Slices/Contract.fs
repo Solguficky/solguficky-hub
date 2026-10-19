@@ -153,6 +153,7 @@ module Inbound =
         | Identity.V1.AccessRight.AdmitBidders -> Some AdmitBidders
         | Identity.V1.AccessRight.ManageMeetups -> Some ManageMeetups
         | Identity.V1.AccessRight.GrantAdmins -> Some GrantAdmins
+        | Identity.V1.AccessRight.RunAuctions -> Some RunAuctions
         | _ -> None
 
     let viewer (value: Meetups.V1.Viewer) : Result<Viewer, InvalidRequest> =

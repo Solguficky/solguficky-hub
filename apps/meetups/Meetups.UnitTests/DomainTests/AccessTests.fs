@@ -37,6 +37,7 @@ let ``Manage meetups should be recognised among several rights`` () =
                         AdmitBidders
                         ManageMeetups
                         GrantAdmins
+                        RunAuctions
                     ]
         }
 
@@ -54,6 +55,7 @@ let ``Command should be refused for a viewer holding only another right`` () =
                 ManageMembers
                 AdmitBidders
                 GrantAdmins
+                RunAuctions
             ]
             |> List.forall (fun right ->
                 let viewer =

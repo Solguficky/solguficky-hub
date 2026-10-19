@@ -67,7 +67,7 @@ func TestAppointAdministratorByUsernameIsIdempotentAndNamesTheGrantor(t *testing
 	assertRightSet(t, resolve(t, f.client, 8201, new("Alice_Smith")).GetRights(),
 		identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS,
 		identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERS,
-		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS)
+		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS)
 	assertPresetJournalActor(t, f.db, target, "grant", f.maintainer)
 	assertPresetGrantedBy(t, f.db, target, "admin", f.maintainer)
 }

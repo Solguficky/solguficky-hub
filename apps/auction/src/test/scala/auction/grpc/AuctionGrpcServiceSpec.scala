@@ -875,7 +875,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
           AccessRightMessage.ACCESS_RIGHT_MANAGE_MEMBERS,
           AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS,
           AccessRightMessage.ACCESS_RIGHT_ADMIT_BIDDERS,
-          AccessRightMessage.ACCESS_RIGHT_GRANT_ADMINS
+          AccessRightMessage.ACCESS_RIGHT_GRANT_ADMINS,
+          AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS
         )
       )
       withoutAuction.foreach { rights =>
@@ -890,7 +891,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
           AccessRightMessage.ACCESS_RIGHT_MANAGE_MEMBERS,
           AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS,
           AccessRightMessage.ACCESS_RIGHT_ADMIT_BIDDERS,
-          AccessRightMessage.ACCESS_RIGHT_GRANT_ADMINS
+          AccessRightMessage.ACCESS_RIGHT_GRANT_ADMINS,
+          AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS
         )
       )
       statusOf(service(Unreachable).placeBid(validBid.withViewer(administrative))) shouldBe

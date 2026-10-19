@@ -155,6 +155,7 @@ func TestResolveIdentityReturnsExistingPreset(t *testing.T) {
 		identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS,
 		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERS,
 		identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS,
+		identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS,
 	)
 	if second.GetCircle() != identityv1.Circle_CIRCLE_MEMBER ||
 		!slices.Equal(second.GetPresets(), []identityv1.Preset{identityv1.Preset_PRESET_ADMIN}) {
@@ -212,6 +213,7 @@ func TestResolveIdentityDerivesRightsFromCircleAndPresets(t *testing.T) {
 		bidders  = identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS
 		meetups  = identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS
 		grantors = identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS
+		auctions = identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS
 		member   = identityv1.Circle_CIRCLE_MEMBER
 		guest    = identityv1.Circle_CIRCLE_GUEST
 	)
@@ -224,7 +226,7 @@ func TestResolveIdentityDerivesRightsFromCircleAndPresets(t *testing.T) {
 	}{
 		{
 			"admin", func(id string) { insertPreset(t, db, id, "admin") }, member,
-			[]identityv1.AccessRight{bids, hub, members, bidders, meetups},
+			[]identityv1.AccessRight{bids, hub, members, bidders, meetups, auctions},
 			[]identityv1.Preset{identityv1.Preset_PRESET_ADMIN},
 		},
 		{

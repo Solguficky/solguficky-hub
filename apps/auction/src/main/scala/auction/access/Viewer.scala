@@ -14,6 +14,7 @@ enum AccessRight {
   case AdmitBidders
   case ManageMeetups
   case GrantAdmins
+  case RunAuctions
 }
 
 /**

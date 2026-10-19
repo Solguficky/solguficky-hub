@@ -670,6 +670,7 @@ object RequestMapping {
       case AccessRightMessage.ACCESS_RIGHT_ADMIT_BIDDERS => Some(AccessRight.AdmitBidders)
       case AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS => Some(AccessRight.ManageMeetups)
       case AccessRightMessage.ACCESS_RIGHT_GRANT_ADMINS => Some(AccessRight.GrantAdmins)
+      case AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS => Some(AccessRight.RunAuctions)
       case AccessRightMessage.ACCESS_RIGHT_UNSPECIFIED | AccessRightMessage.Unrecognized(_) => None
     }
 

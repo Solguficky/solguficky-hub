@@ -42,7 +42,7 @@ SELECT EXISTS (SELECT 1 FROM identity_presets WHERE identity_id = $1 AND revoked
 
 // serviceRecords — записи служебных прав. Служебные права требуют круг member
 // (п. 9): понижение в guest их снимает.
-var serviceRecords = []string{rightAdmitBidders}
+var serviceRecords = []string{rightAdmitBidders, rightRunAuctions}
 
 // Отказы ядра, которые поверхность переводит в статусы gRPC. Они отделены от
 // отказа хранилища: тот граница прячет за internal.

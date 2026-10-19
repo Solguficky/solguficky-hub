@@ -153,7 +153,7 @@ func TestDemoteAndBlockOfPresetHolderFailPrecondition(t *testing.T) {
 			t.Fatalf("preset holder %s was blocked", targetID)
 		}
 	}
-	assertRightSet(t, resolveDirect(t, svc, 8441, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERS, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS)
+	assertRightSet(t, resolveDirect(t, svc, 8441, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, identityv1.AccessRight_ACCESS_RIGHT_ADMIT_BIDDERS, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEMBERS, identityv1.AccessRight_ACCESS_RIGHT_MANAGE_MEETUPS, identityv1.AccessRight_ACCESS_RIGHT_RUN_AUCTIONS)
 	assertRightSet(t, resolveDirect(t, svc, 8442, "").GetRights(), identityv1.AccessRight_ACCESS_RIGHT_ACCESS_HUB, identityv1.AccessRight_ACCESS_RIGHT_PLACE_BIDS, identityv1.AccessRight_ACCESS_RIGHT_GRANT_ADMINS)
 
 	// Снятый набор защиту снимает: администратор, лишённый набора, понижается.
