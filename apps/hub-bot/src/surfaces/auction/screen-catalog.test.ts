@@ -1140,6 +1140,29 @@ const notifications = [
     new Map([["0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0", "Банка солёных грибов"]]),
     true,
   ),
+  // Анонс финала (PER-478): простой анонс и старт — без клавиатуры, «твой лот в
+  // финале» — ряд на свой лот.
+  ...[[], ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1"]].map((yourLotIds) =>
+    renderNotification(
+      {
+        kind: "final-lineup",
+        auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+        lineup: [
+          { lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0", price: rub(500) },
+          { lotId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1", price: rub(700) },
+        ],
+        yourLotIds,
+      },
+      new Map([
+        ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0", "Банка солёных грибов"],
+        ["0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1", "Кружка"],
+      ]),
+    ),
+  ),
+  renderNotification({
+    kind: "final-started",
+    auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+  }),
   renderNotification({ kind: "access-granted" }),
   // Весть о смене круга — без клавиатуры (PER-537).
   renderNotification({ kind: "circle-promoted" }),

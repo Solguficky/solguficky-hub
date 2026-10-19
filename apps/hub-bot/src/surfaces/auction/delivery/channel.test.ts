@@ -14,6 +14,7 @@ import type { Logger } from "../../../core/logging.js";
 import {
   createNotificationSender,
   createRenderMessage,
+  isTraceCallback,
   parseTraceCallback,
 } from "./message.js";
 import { decodeNotification } from "./notification.js";
@@ -51,6 +52,38 @@ function lotFact(
           value: {
             lotId,
             currentPrice: { minorUnits: 150_000n, currency: "RUB" },
+          },
+        },
+      }),
+    ),
+    info: { deliveryCount: 1 },
+    ack: vi.fn(),
+    nak: vi.fn(),
+    term: vi.fn(),
+  };
+}
+
+// Анонс состава финала (PER-478): получатель вёл первый лот состава.
+function finalLineup(id: number, recipient = 42) {
+  return {
+    data: toBinary(
+      NotificationSchema,
+      create(NotificationSchema, {
+        notificationId: `0198f2a4-7c1e-7d3a-9b21-${String(id).padStart(12, "0")}`,
+        recipientId: `0198f2a4-7c1e-7d3a-9b21-${String(recipient).padStart(12, "0")}`,
+        createdAt: "2026-10-04T10:00:00Z",
+        type: {
+          case: "auctionFinalLineup",
+          value: {
+            auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+            meetupId: "0198f2a4-7c1e-7d3a-9b21-000000000099",
+            lineup: [
+              {
+                lotId,
+                price: { minorUnits: 150_000n, currency: "RUB" },
+              },
+            ],
+            yourLotIds: [lotId],
           },
         },
       }),
@@ -180,5 +213,28 @@ describe("auction delivery channel", () => {
     expect(first.nak).not.toHaveBeenCalled();
     expect(second.ack).toHaveBeenCalledOnce();
     expect(sendMessage.mock.calls.map(([chatId]) => chatId)).toEqual([41, 42]);
+  });
+
+  // Критерии приёмки PER-478: анонс со своим лотом доходит одним сообщением с
+  // кнопкой карточки лота — следом, который открывает её новым сообщением, — и
+  // повтор того же факта второго сообщения не даёт.
+  it("delivers the final lineup once with a traced button to the own lot", async () => {
+    const journal = memoryJournal();
+    const sendMessage = vi.fn().mockResolvedValue({});
+    const first = finalLineup(7);
+    await channel(journal, sendMessage)(first);
+    const redelivered = finalLineup(7);
+    await channel(journal, sendMessage)(redelivered);
+    expect(first.ack).toHaveBeenCalledOnce();
+    expect(redelivered.ack).toHaveBeenCalledOnce();
+    expect(sendMessage).toHaveBeenCalledOnce();
+    const [chatId, text, options] = sendMessage.mock.calls[0] ?? [];
+    expect(chatId).toBe(42);
+    expect(text).toContain("Твой лот в финале аукциона.");
+    expect(text).toContain("«Кружка»");
+    const button = options.reply_markup.inline_keyboard[0][0];
+    expect(button.text).toBe("Кружка");
+    expect(isTraceCallback(button.callback_data)).toBe(true);
+    expect(parseTraceCallback(button.callback_data)).toContain(":lot:");
   });
 });

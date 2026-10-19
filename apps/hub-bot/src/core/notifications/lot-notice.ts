@@ -143,7 +143,7 @@ const CANONICAL_UUID =
 
 // Из идентификатора лота собирается кнопка: не каноническая форма уронила бы
 // кодировщик на отправке, а не на разборе.
-function canonical(id: string): string | undefined {
+export function canonical(id: string): string | undefined {
   return CANONICAL_UUID.test(id) ? id : undefined;
 }
 
@@ -152,7 +152,7 @@ function canonical(id: string): string | undefined {
 // формы уронил бы форматирование на каждой попытке.
 const CURRENCY = /^[A-Z]{3}$/;
 
-function toMoney(money: WireMoney | undefined): NoticeMoney | undefined {
+export function toMoney(money: WireMoney | undefined): NoticeMoney | undefined {
   if (money === undefined || !CURRENCY.test(money.currency)) return undefined;
   const minorUnits = Number(money.minorUnits);
   if (!Number.isSafeInteger(minorUnits) || minorUnits < 0) return undefined;
@@ -420,7 +420,10 @@ function digestLine(line: LotActivityLine, title: string | undefined): string {
     : `• ${lot} — автоставка отвечала, но тебя перебили: ${price}`;
 }
 
-function quoted(title: string | undefined, limit: number): string | undefined {
+export function quoted(
+  title: string | undefined,
+  limit: number,
+): string | undefined {
   return title === undefined || title === ""
     ? undefined
     : `«${truncate(title, limit)}»`;

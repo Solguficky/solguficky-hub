@@ -1,6 +1,7 @@
 import { GrammyError, HttpError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
 import { encodeAuctionCallback } from "../../../auction-ui/index.js";
+import { renderFinalNotice } from "../../../core/notifications/final-notice.js";
 import {
   createLotNoticeRender,
   type LotNotice,
@@ -95,6 +96,46 @@ function grammyError(code: number, retryAfter?: number): GrammyError {
 }
 
 describe("renderNotification", () => {
+  // Анонс финала (PER-478): свой лот — ряд с его названием, след на карточку
+  // лота аукционного дерева; у старта финала клавиатуры нет.
+  it("traces the own lot of the final lineup and sends the started final bare", () => {
+    const view = renderFinalNotice(
+      {
+        kind: "final-lineup",
+        auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+        lineup: [{ lotId, price: { minorUnits: 50_000, currency: "RUB" } }],
+        yourLotIds: [lotId],
+      },
+      { titles: new Map([[lotId, "Кружка"]]) },
+    );
+    const lineup = renderNotification({ kind: "lot-notice", view });
+    expect(lineup.text.split("\n")[0]).toBe(
+      "Твой лот в финале аукциона. Состав финала:",
+    );
+    expect(lineup.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "Кружка",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "lot", lotId, page: 0 }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+    const started = renderNotification({
+      kind: "lot-notice",
+      view: renderFinalNotice(
+        {
+          kind: "final-started",
+          auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+        },
+        { titles: new Map() },
+      ),
+    });
+    expect(started).toEqual({
+      text: "Начался финал аукциона.",
+      keyboard: undefined,
+    });
+  });
+
   // Итог розыгрыша (PER-620): победителю своя фраза, остальным — номер
   // выигравшего билета и свой; кнопка следа ведёт на экран итога.
   it("tells the winner and the others the raffle result with a traced button", () => {

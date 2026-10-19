@@ -24,6 +24,10 @@ import {
   toDeliveryNotification,
 } from "../../../core/delivery/index.js";
 import {
+  type FinalNotice,
+  finalNoticeOf,
+} from "../../../core/notifications/final-notice.js";
+import {
   type LotNotice,
   lotNoticeOf,
 } from "../../../core/notifications/lot-notice.js";
@@ -114,6 +118,8 @@ export type RenderableContent =
   // перебитие, ответ автоставки, покупку и сводку — те же, что у бота аукциона
   // (PER-598).
   | LotNotice
+  // Анонс состава и старта финала (PER-478) — тот же, что у бота аукциона.
+  | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота аукциона.
   | RaffleNotice
   // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
@@ -264,6 +270,9 @@ function toContent(message: Notification): NotificationContent | undefined {
     case "lotActivityDigest":
     case "lotReminder":
       return lotNoticeOf(type);
+    case "auctionFinalLineup":
+    case "auctionFinalStarted":
+      return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
     default:

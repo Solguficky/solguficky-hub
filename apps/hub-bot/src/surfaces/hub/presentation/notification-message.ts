@@ -7,6 +7,7 @@ import {
   type SendResult,
 } from "../../../core/delivery/index.js";
 import { registerChatCommands } from "../../../core/menu-commands.js";
+import type { FinalNotice } from "../../../core/notifications/final-notice.js";
 import type {
   LotNotice,
   LotNoticeView,
@@ -94,11 +95,12 @@ export function disableMeetupCategoryCallback(
   return `v1:notify:moff:${uuidToToken(meetupId)}:${category}`;
 }
 
-// Что уходит отправителю. Вести хаба он рисует сам, а весть о лоте приходит уже
-// собранной общим рендером двух ботов (`lot-notice.ts`, PER-598): ему нужны
-// право получателя и название лота у соседей, а соседей отправитель не зовёт.
+// Что уходит отправителю. Вести хаба он рисует сам, а весть о лоте и анонс
+// финала приходят уже собранными общими рендерами двух ботов (`lot-notice.ts`,
+// PER-598; `final-notice.ts`, PER-478): им нужны право получателя и название
+// лота у соседей, а соседей отправитель не зовёт.
 export type OutgoingNotification =
-  | Exclude<RenderableContent, LotNotice>
+  | Exclude<RenderableContent, LotNotice | FinalNotice>
   | AccessRequestView
   | { kind: "lot-notice"; view: LotNoticeView };
 
@@ -287,8 +289,10 @@ export function renderNotification(
 
 // Кнопки общего рендера — следы хаба: лот — кнопка лота аукционного дерева,
 // частота — «Аукцион» в «Настройки» → «Расширения» (PER-605). Карточка и
-// экран приходят новым сообщением, уведомление остаётся в истории.
-function lotKeyboard(view: LotNoticeView): InlineKeyboard {
+// экран приходят новым сообщением, уведомление остаётся в истории. У анонса
+// финала без своих лотов и у старта финала рядов нет — и клавиатуры тоже.
+function lotKeyboard(view: LotNoticeView): InlineKeyboard | undefined {
+  if (view.rows.length === 0) return undefined;
   return InlineKeyboard.from(
     view.rows.map((row) =>
       row.map((button) =>

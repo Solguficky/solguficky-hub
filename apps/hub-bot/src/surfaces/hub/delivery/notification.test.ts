@@ -12,6 +12,8 @@ import {
 import {
   AccessGrantedSchema,
   AccessRequestedSchema,
+  AuctionFinalLineupSchema,
+  AuctionFinalStartedSchema,
   CircleChangedSchema,
   CommunityAnnouncementSchema,
   LotActivityKind,
@@ -271,6 +273,49 @@ describe("decodeNotification", () => {
     expect(decoded).toMatchObject({
       kind: "ok",
       notification: { content: { kind: "lot-activity-digest" } },
+    });
+  });
+
+  // Анонс финала (PER-478) участнику доставляет бот хаба, как вести о лотах
+  // (ADR-064, п. 16): без разбора ветка ушла бы в отказ `unrendered_type`.
+  it("decodes the final lineup and the started final for a community member", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const lotId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d0";
+    const fact = (type: Notification["type"]) =>
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type,
+          }),
+        ),
+      );
+    expect(
+      fact({
+        case: "auctionFinalLineup",
+        value: create(AuctionFinalLineupSchema, {
+          auctionId,
+          lineup: [{ lotId, price: { minorUnits: 50_000n, currency: "RUB" } }],
+          yourLotIds: [lotId],
+        }),
+      }),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "final-lineup", auctionId, yourLotIds: [lotId] },
+      },
+    });
+    expect(
+      fact({
+        case: "auctionFinalStarted",
+        value: create(AuctionFinalStartedSchema, { auctionId }),
+      }),
+    ).toMatchObject({
+      kind: "ok",
+      notification: { content: { kind: "final-started", auctionId } },
     });
   });
 

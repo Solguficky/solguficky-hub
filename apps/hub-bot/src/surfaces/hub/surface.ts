@@ -10,8 +10,13 @@ import {
 } from "../../core/delivery/index.js";
 import { countFailure } from "../../core/failures.js";
 import {
+  createFinalNoticeRender,
+  isFinalNotice,
+} from "../../core/notifications/final-notice.js";
+import {
   createLotNoticeRender,
   isLotNotice,
+  type LotNoticeReads,
   logMissingTitle,
 } from "../../core/notifications/lot-notice.js";
 import type { SurfaceDefinition } from "../../core/process.js";
@@ -185,25 +190,32 @@ export const hubSurface: SurfaceDefinition = ({
   });
   // Без Auction аукционных фактов нет, а пришедший всё равно уходит — без
   // названия и без кнопки частоты: её экран живёт в расширении аукциона.
+  const noticeReads: LotNoticeReads | undefined =
+    auction === undefined
+      ? undefined
+      : {
+          holdsPlaceBids: (identityId, requestId) =>
+            identity.holdsPlaceBids(
+              identityId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
+          lotTitle: (identityId, lotId, requestId) =>
+            auction.lotTitle(
+              identityId,
+              lotId,
+              requestId === undefined ? undefined : rpcMeta({ requestId }),
+            ),
+        };
   const renderLot = createLotNoticeRender({
-    reads:
-      auction === undefined
-        ? undefined
-        : {
-            holdsPlaceBids: (identityId, requestId) =>
-              identity.holdsPlaceBids(
-                identityId,
-                requestId === undefined ? undefined : rpcMeta({ requestId }),
-              ),
-            lotTitle: (identityId, lotId, requestId) =>
-              auction.lotTitle(
-                identityId,
-                lotId,
-                requestId === undefined ? undefined : rpcMeta({ requestId }),
-              ),
-          },
+    reads: noticeReads,
     onTitleMissing: logMissingTitle(logger),
     frequencyButton: auction !== undefined,
+  });
+  // Анонс финала (PER-478) — тот же общий рендер и те же чтения, что у бота
+  // аукциона; у отправителя он едет видом вести о лоте.
+  const renderFinal = createFinalNoticeRender({
+    reads: noticeReads,
+    onTitleMissing: logMissingTitle(logger),
   });
   // Оповещение о заявке несёт её тело (PER-634): карточку бот читает при
   // доставке из очереди правами получателя, тем же вызовом, что экран заявки.
@@ -246,17 +258,20 @@ export const hubSurface: SurfaceDefinition = ({
                   ),
               },
               // Вести хаба рисует отправитель, соседи им не нужны. Весть о лоте
-              // собирает общий рендер двух ботов (PER-598): право получателя у
-              // Identity и название лота у Auction. Оповещение о заявке читает
-              // её карточку у Identity (PER-634).
+              // и анонс финала собирают общие рендеры двух ботов (PER-598,
+              // PER-478): право получателя у Identity и название лота у
+              // Auction. Оповещение о заявке читает её карточку у Identity
+              // (PER-634).
               render: async (content, context) => {
                 if (content.kind === "access-requested") {
                   return renderAccessRequest(content, context);
                 }
-                if (!isLotNotice(content)) {
+                if (!isLotNotice(content) && !isFinalNotice(content)) {
                   return { kind: "ready", message: content };
                 }
-                const rendered = await renderLot(content, context);
+                const rendered = isFinalNotice(content)
+                  ? await renderFinal(content, context)
+                  : await renderLot(content, context);
                 return rendered.kind === "ready"
                   ? {
                       kind: "ready",

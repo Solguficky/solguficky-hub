@@ -10,6 +10,11 @@ import {
   type RenderMessage,
 } from "../../../core/delivery/index.js";
 import {
+  createFinalNoticeRender,
+  isFinalNotice,
+  renderFinalNotice,
+} from "../../../core/notifications/final-notice.js";
+import {
   checkPlaceBids,
   createLotNoticeRender,
   type LotNoticeReads,
@@ -88,10 +93,11 @@ export function parseTraceCallback(data: string): string | undefined {
 // лота — общий порт двух ботов.
 export type NotificationReads = LotNoticeReads;
 
-// Сборка сообщения. Вести о лотах собирает общий рендер двух ботов
-// (`lot-notice.ts`): без права `place-bids` уведомление не уходит, недоступный
-// Auction роняет только название. Допуск к аукциону тоже требует права: кнопка
-// ведёт в FAQ, который без него не откроется.
+// Сборка сообщения. Вести о лотах и анонс финала собирают общие рендеры двух
+// ботов (`lot-notice.ts`, `final-notice.ts`): без права `place-bids`
+// уведомление не уходит, недоступный Auction роняет только названия. Допуск к
+// аукциону тоже требует права: кнопка ведёт в FAQ, который без него не
+// откроется.
 //
 // `frequencyButton` — у бота есть Notifications, и под вестью о торгах стоит
 // «Частота уведомлений».
@@ -105,6 +111,7 @@ export function createRenderMessage(
     onTitleMissing,
     frequencyButton,
   });
+  const renderFinal = createFinalNoticeRender({ reads, onTitleMissing });
   return async (content, context) => {
     // Весть о смене круга (PER-537) — не о торгах: право ставить бот для неё не
     // спрашивает, и кнопки, которая упёрлась бы в тот же отказ, у неё нет.
@@ -124,7 +131,9 @@ export function createRenderMessage(
         }
       );
     }
-    const rendered = await renderLot(content, context);
+    const rendered = isFinalNotice(content)
+      ? await renderFinal(content, context)
+      : await renderLot(content, context);
     return rendered.kind === "ready"
       ? { kind: "ready", message: traceMessage(rendered.message) }
       : rendered;
@@ -149,11 +158,15 @@ export function renderNotification(
     return { text: "Тебя приняли в сообщество." };
   }
   if (content.kind === "raffle-result") return raffleMessage(content);
+  if (isFinalNotice(content)) {
+    return traceMessage(renderFinalNotice(content, { titles }));
+  }
   return traceMessage(renderLotNotice(content, { titles, frequencyButton }));
 }
 
 // Кнопки общего рендера — следы этой поверхности: лот — кнопка лота дерева,
-// частота — экран `/notifications`.
+// частота — экран `/notifications`. У анонса без своих лотов и у старта финала
+// рядов нет, и клавиатура не уходит.
 function traceMessage(view: LotNoticeView): NotificationMessage {
   return {
     text: view.text,
