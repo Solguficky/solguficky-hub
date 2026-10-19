@@ -35,7 +35,7 @@ describe("readAuctionConfig", () => {
 
   // Имя бота поддержки — адрес кнопки кадра ожидания допуска (PER-625,
   // ADR-068): без него кнопки нет, а чужое имя — отказ конфигурации.
-  it("reads the support bot name and refuses a wrong one", () => {
+  it("reads the support bot name", () => {
     expect(
       readAuctionConfig({ BOT_SUPPORT_BOT_USERNAME: "solguficky_support_bot" }),
     ).toEqual({
@@ -44,13 +44,19 @@ describe("readAuctionConfig", () => {
         supportBotUsername: "solguficky_support_bot",
       }),
     });
+  });
+
+  it("refuses a support bot name that is not a bot username", () => {
     expect(
       readAuctionConfig({ BOT_SUPPORT_BOT_USERNAME: "@support_bot" }),
     ).toEqual({
       ok: false,
       error: "BOT_SUPPORT_BOT_USERNAME must be a Telegram bot username",
     });
-    const unset = readAuctionConfig({});
-    expect(unset.ok && "supportBotUsername" in unset.config).toBe(false);
+  });
+
+  it("leaves the support bot off without its name", () => {
+    const result = readAuctionConfig({});
+    expect(result.ok && "supportBotUsername" in result.config).toBe(false);
   });
 });
