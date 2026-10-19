@@ -157,15 +157,20 @@ public class NotificationPreferencesTests
                 IdentityId = Guid.CreateVersion7().ToString("D"),
             });
 
-        snapshot.Categories.Count.ShouldBe(6);
+        snapshot.Categories.Count.ShouldBe(7);
         Enabled(snapshot.Categories, NotificationCategory.MeetupPublished).ShouldBeTrue();
         Enabled(snapshot.Categories, NotificationCategory.MeetupChanged).ShouldBeTrue();
         Enabled(snapshot.Categories, NotificationCategory.MeetupMaterial).ShouldBeTrue();
         Enabled(snapshot.Categories, NotificationCategory.OrganizerMessage).ShouldBeTrue();
         Enabled(snapshot.Categories, NotificationCategory.CommunityAnnouncement).ShouldBeTrue();
 
-        // Напоминание — единственная выключенная по умолчанию категория.
+        // Напоминание — единственная категория с постоянным умолчанием,
+        // выключенная по умолчанию.
         Enabled(snapshot.Categories, NotificationCategory.MeetupReminder).ShouldBeFalse();
+
+        // У «Нового в боте» умолчание задаёт среда (ADR-069, п. 5); словарь
+        // несёт прод-значение — выключено.
+        Enabled(snapshot.Categories, NotificationCategory.ReleaseNotes).ShouldBeFalse();
     }
 
     [Fact]
