@@ -56,6 +56,9 @@ object ScreenRoutes {
       "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
   )
 
+  /** Страница и её файлы меняются с выкладкой и адреса с версией не несут, поэтому кэш их перепроверяет. */
+  private val pageHeaders = respondWithHeaders(`Cache-Control`(CacheDirectives.`no-cache`), Policy)
+
   def route(feed: ScreenFeed, views: ScreenViews, heartbeat: FiniteDuration): Route = {
     val html = page(heartbeat)
     pathPrefix("screen") {
@@ -63,9 +66,7 @@ object ScreenRoutes {
         concat(
           path("assets" / Segment) { name =>
             if (Assets.contains(name))
-              respondWithHeaders(`Cache-Control`(CacheDirectives.`no-cache`), Policy)(
-                getFromResource(s"screen/$name")
-              )
+              pageHeaders(getFromResource(s"screen/$name"))
             else complete(StatusCodes.NotFound)
           },
           pathPrefix(JavaUUID) { auctionId =>
@@ -73,9 +74,7 @@ object ScreenRoutes {
               // Страница одна на все аукционы и о сходке не спрашивает: «не найдено» скажет поток, а одинаковый
               // ответ на любой идентификатор ничего не выдаёт.
               pathEndOrSingleSlash {
-                respondWithHeaders(`Cache-Control`(CacheDirectives.`no-cache`), Policy)(
-                  complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, html))
-                )
+                pageHeaders(complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, html)))
               },
               path("events")(events(feed, auctionId, heartbeat)),
               path("lots" / JavaUUID / "images" / Segment) { (lotId, version) =>

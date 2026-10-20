@@ -232,12 +232,15 @@ final class ScreenRoutesSpec
       )
     }
 
-    "serve a named asset as JavaScript and refuse a name outside the list" in {
+    "serve a named asset as JavaScript" in {
       Get("/screen/assets/connection.js") ~> routeOf() ~> check {
         status shouldBe StatusCodes.OK
         mediaType.subType shouldBe "javascript"
         responseAs[String] should include("export function silenceLimit")
       }
+    }
+
+    "answer not found for a resource outside the asset list" in {
       Get("/screen/assets/index.html") ~> routeOf() ~> check(status shouldBe StatusCodes.NotFound)
       Get("/screen/assets/..") ~> routeOf() ~> check(status shouldBe StatusCodes.NotFound)
     }

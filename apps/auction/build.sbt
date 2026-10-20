@@ -195,11 +195,17 @@ lazy val auction = (project in file("."))
       val suites = output.events.values
       val skipped =
         suites.map(s => s.ignoredCount + s.canceledCount + s.pendingCount + s.skippedCount).sum
-      if (skipped == 0) output
+      // Отбор по суффиксу молча пуст, если сьют уровня переименовали: шаг CI
+      // такого уровня был бы зелёным, не запустив ни одного теста.
+      val emptyLevel = (integrationTests || browserTests) && suites.isEmpty
+      if (skipped == 0 && !emptyLevel) output
       else {
-        streams.value.log.error(
-          s"пропущено тестов: $skipped — пропуск не равен прохождению, прогон считается упавшим"
-        )
+        if (skipped > 0)
+          streams.value.log.error(
+            s"пропущено тестов: $skipped — пропуск не равен прохождению, прогон считается упавшим"
+          )
+        if (emptyLevel)
+          streams.value.log.error("уровень выбран переменной, но ни один сьют под него не попал")
         output.copy(overall = TestResult.Failed)
       }
     },

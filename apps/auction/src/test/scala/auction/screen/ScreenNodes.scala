@@ -100,6 +100,10 @@ trait ScreenNodes { self: Suite & Matchers & ScalaFutures & Eventually & Postgre
         .placeBid(lot.value, PlaceBid(who, price, newOp(), BidSource.Bot), Initiator.Participant(who))
         .futureValue
         .isRight shouldBe true
+
+    /** Ведущий закрывает лот финала; за последним лотом состава аукцион завершается (PER-607). */
+    def close(auction: AuctionId, lot: LotId): Unit =
+      commands.closeLot(auction, lot, newOp(), person).futureValue.isRight shouldBe true
   }
 
   protected def withNode[A](

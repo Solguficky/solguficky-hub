@@ -208,11 +208,12 @@ verify-changed:
 # у vitest reporter'ом vitest.fail-on-skip.ts, у ScalaTest обёрткой
 # `Test / executeTests` в build.sbt.
 # Нужны Docker и PostgreSQL для Identity по адресу из IDENTITY_DATABASE_URL —
-# умолчания нет; линт, формат и контракты сюда не входят — их держит `verify`.
+# умолчания нет; браузерный сьют Auction при первом прогоне скачивает Chromium.
+# Линт, формат и контракты сюда не входят — их держит `verify`.
 # Живой контур Telegram (L3, `telegram-live-test`) не входит тоже: ему нужны
 # секреты и сам Telegram. `identity-test-integration` гоняет под тегом и
 # unit-тесты, поэтому `identity-test` здесь не повторяется.
-test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration contour-test contour-bot-test
+test-all: identity-test-integration hub-bot-test hub-bot-test-integration community-site-api-test apphost-test meetups-test meetups-test-integration notifications-test notifications-test-integration auction-test auction-test-integration auction-test-browser contour-test contour-bot-test
 
 # Тулинг всех компонентов, которые гоняет `verify`: один раз после клонирования или создания рабочего дерева, до первого гейта. В `verify` не входит: гейт не ходит в сеть.
 tools: identity-tools hub-bot-tools community-site-api-tools bot-console-tools auction-seed-tools dotnet-tools auction-tools nats-tester-tools
@@ -650,8 +651,8 @@ auction-test-integration:
 # Chromium той версии, что у Playwright в build.sbt, драйвер скачивает сам при
 # первом прогоне; системные библиотеки Linux он не ставит — в CI их ставит
 # отдельный шаг. За перехватом TLS на машине драйвер (Node) падает на
-# сертификате: NODE_USE_SYSTEM_CA=1 даёт ему хранилище системы. В `verify` и
-# `test-all` не входит, в CI — шаг джобы auction.
+# сертификате: NODE_USE_SYSTEM_CA=1 даёт ему хранилище системы. Это L1
+# Auction: в `verify` не входит, входит в `test-all`, в CI — шаг джобы auction.
 #
 # Страница экрана зала в Chromium против настоящего узла; нужны Docker и сеть
 auction-test-browser:

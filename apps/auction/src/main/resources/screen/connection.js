@@ -48,7 +48,7 @@ export const initial = Object.freeze({ status: "connecting", view: null });
  * Пришёл снимок: он заменяет представление целиком и снимает предупреждение. Схему, которой страница не знает, она
  * не рисует и остаётся в «Подключении»: новая форма после выкладки сервера требует новой страницы.
  */
-export function onSnapshot(_current, data) {
+export function onSnapshot(data) {
   let view;
   try {
     view = JSON.parse(data);
@@ -72,6 +72,18 @@ export function onMissing() {
   return { status: "missing", view: null };
 }
 
+/** Период heartbeat по умолчанию — тот же, что в `application.conf` сервиса. */
+export const DEFAULT_HEARTBEAT_MS = 5000;
+
+/**
+ * Период heartbeat из разметки страницы. Нечисло или неположительное значение дало бы сторожу `NaN`, а `setTimeout`
+ * с `NaN` срабатывает сразу и рвал бы каждое подключение, поэтому такое значение заменяется умолчанием.
+ */
+export function heartbeatOf(content) {
+  const value = Number(content);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_HEARTBEAT_MS;
+}
+
 /**
  * Предел тишины: heartbeat приходит после периода тишины, а не по часам, поэтому живой поток молчит до одного
  * периода и сетевой задержки. Три периода не путают тишину торгов с обрывом.
@@ -80,11 +92,14 @@ export function silenceLimit(heartbeatMs) {
   return heartbeatMs * 3;
 }
 
+/** Самая длинная пауза перед повтором без случайной добавки. */
+export const MAX_RETRY_MS = 30000;
+
 /**
- * Пауза перед повтором: растёт вдвое до 30 секунд, и к ней прибавляется случайная доля до половины паузы, чтобы
+ * Пауза перед повтором: растёт вдвое до `MAX_RETRY_MS`, и к ней прибавляется случайная доля до половины паузы, чтобы
  * отказанные по пределу подключения не вернулись разом (ADR-040, «Нагрузка»). `random` — число из [0, 1).
  */
 export function retryDelay(attempt, random) {
-  const base = Math.min(1000 * 2 ** attempt, 30000);
+  const base = Math.min(1000 * 2 ** Math.min(attempt, 15), MAX_RETRY_MS);
   return base + Math.floor((random * base) / 2);
 }

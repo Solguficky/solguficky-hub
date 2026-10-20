@@ -83,15 +83,15 @@ final class ScreenPageBrowserSpec
         val chromium = browser()
         try {
           val page = chromium.newPage()
-          page.addInitScript(History)
+          page.addInitScript(StatusRecorder)
           page.navigate(s"http://127.0.0.1:${proxy.port}/screen/${auction.value}")
 
           // Первое открытие: Meetups ещё не ответил, снимка нет — цена и лидер не выдумываются.
-          status(page, "connecting")
+          awaitStatus(page, "connecting")
           assertThat(page.locator("#screen")).hasText("Подключение…")
           assertThat(page.locator(".price")).hasCount(0)
           standings.release()
-          status(page, "live")
+          awaitStatus(page, "live")
           assertThat(page.locator("#banner")).isHidden()
           // История пишется: без неё проверка окна ниже прошла бы на пустом списке.
           history(page) should contain("live")
@@ -99,7 +99,7 @@ final class ScreenPageBrowserSpec
           // Обрыв: сеть замолкла, соединение не закрыто. Предупреждение — не позже предела тишины.
           proxy.silence()
           val cut = System.nanoTime()
-          status(page, "stale", within = silence + 2.seconds)
+          awaitStatus(page, "stale", within = silence + 2.seconds)
           (System.nanoTime() - cut).nanos should be <= silence + 1.second
           assertThat(page.locator("#banner")).isVisible()
           val stale = digits(page)
@@ -109,20 +109,27 @@ final class ScreenPageBrowserSpec
           node.bid(lot, next, participant(2))
 
           // Соединение открылось, а снимок не пришёл: предупреждение остаётся, цена — прежняя. Сторож страницы
-          // всё равно вернул бы «stale» через предел тишины, поэтому проверяется вся история, а не итог.
+          // всё равно вернул бы «stale» через предел тишины, поэтому проверяется вся история за весь предел, а
+          // не итог.
           val mark = history(page).size
           proxy.headersOnly()
           eventually(proxy.headersOnlyResponses should be > 0)
-          Thread.sleep(heartbeat.toMillis)
+          Thread.sleep(silence.toMillis)
           history(page).drop(mark) should not contain "live"
-          status(page, "stale")
+          awaitStatus(page, "stale")
           digits(page) shouldBe stale
 
           // Сеть вернулась: предупреждение снимает только новый снимок, и он несёт ставку из обрыва.
           proxy.restore()
-          status(page, "live", within = 60.seconds)
+          awaitStatus(page, "live", within = 60.seconds)
           assertThat(page.locator("#banner")).isHidden()
           digits(page) shouldBe expected(next)
+
+          // Вне активного лота: ведущий закрыл последний лот состава, и экран показывает итог сбора.
+          node.close(auction, lot)
+          assertThat(page.locator(".title")).hasText("Аукцион завершён")
+          assertThat(page.locator(".totals")).containsText("1 лот")
+          awaitStatus(page, "live")
         } finally {
           chromium.close()
           proxy.close()
@@ -136,7 +143,7 @@ final class ScreenPageBrowserSpec
    * состояния, которое страница успела показать и сменить. Скрипт идёт до разбора разметки, когда корневого элемента
    * ещё может не быть, поэтому наблюдается сам документ.
    */
-  private val History =
+  private val StatusRecorder =
     """window.statusHistory = [];
       |new MutationObserver((records) => {
       |  for (const record of records) window.statusHistory.push(record.target.dataset.status);
@@ -146,7 +153,7 @@ final class ScreenPageBrowserSpec
   private def history(page: Page): List[String] =
     page.evaluate("() => window.statusHistory").asInstanceOf[java.util.List[?]].asScala.map(_.toString).toList
 
-  private def status(page: Page, value: String, within: FiniteDuration = 10.seconds): Unit =
+  private def awaitStatus(page: Page, value: String, within: FiniteDuration = 10.seconds): Unit =
     assertThat(page.locator("body"))
       .hasAttribute("data-status", value, LocatorAssertions.HasAttributeOptions().setTimeout(within.toMillis.toDouble))
 

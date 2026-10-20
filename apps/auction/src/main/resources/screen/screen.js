@@ -2,18 +2,37 @@
 // EventSource не отдаёт странице комментарий `: heartbeat`, не замечает тихого обрыва и после отказа `503`
 // не переподключается вовсе, а странице нужны и сторож тишины, и повтор с растущей паузой.
 
-import { createSseParser, initial, onLost, onMissing, onSnapshot, retryDelay, silenceLimit } from "./connection.js";
+import {
+  createSseParser,
+  heartbeatOf,
+  initial,
+  MAX_RETRY_MS,
+  onLost,
+  onMissing,
+  onSnapshot,
+  retryDelay,
+  silenceLimit,
+} from "./connection.js";
 
-const heartbeatMs = Number(document.querySelector('meta[name="screen-heartbeat"]')?.getAttribute("content"));
+const heartbeatMs = heartbeatOf(document.querySelector('meta[name="screen-heartbeat"]')?.getAttribute("content"));
 const eventsUrl = `${location.pathname.replace(/\/+$/, "")}/events`;
 const main = document.getElementById("screen");
 const banner = document.getElementById("banner");
 
 let current = initial;
 
+/**
+ * Снимок неожиданной формы не должен останавливать цикл подключения: отрисовка, которая упала, оставляет экран в
+ * «Подключении», а следующий снимок рисуется заново.
+ */
 function apply(next) {
   current = next;
-  render(current);
+  try {
+    render(current);
+  } catch (error) {
+    console.error("screen: state is not drawable", error);
+    main.replaceChildren(message("Подключение…"));
+  }
 }
 
 /**
@@ -46,7 +65,7 @@ async function connect() {
       watch();
       for (const event of parser.push(value)) {
         if (event.event !== "state") continue;
-        apply(onSnapshot(current, event.data));
+        apply(onSnapshot(event.data));
         delivered = true;
       }
     }
@@ -60,17 +79,18 @@ async function connect() {
 }
 
 async function run() {
-  render(current);
+  apply(current);
   for (let attempt = 0; ; attempt++) {
+    const startedAt = Date.now();
     const outcome = await connect();
-    if (outcome === "missing") {
-      // Аукциона нет: удалён, не существует или сходка скрыта. Ссылку обновит человек, а не страница.
-      apply(onMissing());
-      return;
-    }
-    // Подключение, давшее снимок, сбрасывает паузу: обрыв после часа торгов не ждёт как десятый отказ подряд.
-    if (outcome === "delivered") attempt = 0;
-    apply(onLost(current));
+    // Аукциона нет: удалён, ещё не создан или сходка скрыта. Экран зала открывают заранее, а удалённый до торгов
+    // аукцион рождается заново под тем же идентификатором, поэтому страница спрашивает дальше с той же паузой.
+    if (outcome === "missing") apply(onMissing());
+    else apply(onLost(current));
+    // Паузу сбрасывает только соединение, которое дало снимок и продержалось дольше самой длинной паузы: обрыв
+    // после часа торгов не ждёт как десятый отказ подряд, а узел, падающий сразу после снимка, не получает
+    // переподключений каждую секунду от каждого экрана.
+    if (outcome === "delivered" && Date.now() - startedAt >= MAX_RETRY_MS) attempt = 0;
     await new Promise((resume) => setTimeout(resume, retryDelay(attempt, Math.random())));
   }
 }
@@ -95,9 +115,9 @@ function render(state) {
 function phase(view) {
   switch (view.phase) {
     case "upcoming":
-      return [heading("Аукцион"), line("finale", view.final ? finalAt(view.final_at) : "Торги идут онлайн")];
+      return [heading("Аукцион"), line("finale", view.final ? finalAt() : "Торги идут онлайн")];
     case "lineup":
-      return [heading("Состав финала"), lineup(view.lineup), line("finale", finalAt(view.final_at))];
+      return [heading("Состав финала"), lineup(view.lineup), line("finale", finalAt())];
     case "lot":
       return [live(view.lot)];
     case "between":
@@ -111,8 +131,11 @@ function phase(view) {
   }
 }
 
-/** Ориентировочного времени финала у аукциона пока нет: поток всегда отдаёт `null`, и экран пишет «скоро». */
-function finalAt(_value) {
+/**
+ * Ориентировочного времени финала у аукциона пока нет: поток всегда отдаёт `final_at: null`, и экран пишет
+ * «скоро». Обратный отсчёт придёт вместе с полем.
+ */
+function finalAt() {
   return "Финал скоро";
 }
 
