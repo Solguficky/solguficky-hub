@@ -6987,9 +6987,7 @@ describe("notification frames", () => {
       expect(methods).toContain("sendMessage");
       expect(methods).not.toContain("editMessageText");
       const sent = screen(calls.find((call) => call.method === "sendMessage"));
-      expect(JSON.stringify(sent.reply_markup)).toContain(
-        "Перебили: о каждом",
-      );
+      expect(JSON.stringify(sent.reply_markup)).toContain("Перебили: о каждом");
       expect(sent.reply_markup?.inline_keyboard.at(-1)).toEqual([
         { text: "‹ Аукцион", callback_data: "v1:nav:exta" },
       ]);
