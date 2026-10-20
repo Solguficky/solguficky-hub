@@ -129,6 +129,8 @@ export type CommunityMember = {
   // набора admin, который тоже в составе (PER-618), право от набора, а не
   // записью, и здесь оно ложно.
   auctionModeration: boolean;
+  // Запись run_auctions (ADR-070, п. 1) — так же: у набора admin ложно.
+  auctionRunning: boolean;
 };
 // Фильтр состава (PER-547): люди без круга не входят ни в один.
 export type CommunityFilter = "members" | "guests" | "moderators";
@@ -285,23 +287,29 @@ export type ApplicationAdministrator = {
   ): Promise<ReconsiderResult>;
 };
 
-// `not-member` у выдачи — человек не участник или заблокирован: модерацию
+// Право, которое участнику выдают поштучной записью с карточки состава:
+// модерация аукциона (ADR-065, п. 4) и ведение аукциона (ADR-070, п. 1).
+export type RecordRight = "admit-bidders" | "run-auctions";
+
+// `not-member` у выдачи — человек не участник или заблокирован: запись
 // получает только участник, который остаётся в своём круге.
-export type GrantModerationResult =
+export type GrantRecordResult =
   | IdentityAdminResult<boolean>
   | { kind: "not-member" };
 
-// Выдача и отзыв права модерации аукциона — у держателя права управлять
-// составом; Identity решает это сам по своему хранилищу.
-export type AuctionModerationAdministrator = {
-  grantAuctionModeration(
+// Выдача и отзыв записи — у держателя права управлять составом; Identity
+// решает это сам по своему хранилищу.
+export type RightRecordAdministrator = {
+  grantRightRecord(
     actor: IdentityActor,
     identityId: string,
+    right: RecordRight,
     meta?: RpcMetadata,
-  ): Promise<GrantModerationResult>;
-  revokeAuctionModeration(
+  ): Promise<GrantRecordResult>;
+  revokeRightRecord(
     actor: IdentityActor,
     identityId: string,
+    right: RecordRight,
     meta?: RpcMetadata,
   ): Promise<IdentityAdminResult<boolean>>;
 };

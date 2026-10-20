@@ -44,7 +44,7 @@ const lotData = (lotId: string) =>
 const rub = (minorUnits: number): Money => ({ minorUnits, currency: "RUB" });
 
 // Права, как их выводит Identity (RFC-016): набор `admin` несёт право вести
-// сходки с каталогом лотов, участник — только права хаба и ставок.
+// аукцион с каталогом лотов (ADR-070), участник — только права хаба и ставок.
 function identity(holder: "admin" | "member") {
   const rights: readonly AccessRight[] =
     holder === "admin"
@@ -54,6 +54,7 @@ function identity(holder: "admin" | "member") {
           "manage-members",
           "admit-bidders",
           "manage-meetups",
+          "run-auctions",
         ]
       : ["access-hub", "place-bids"];
   return {

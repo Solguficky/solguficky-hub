@@ -115,16 +115,17 @@ import {
   type ApplicationCursor,
   type ApplicationModerator,
   type ApplicationQueueRead,
-  type AuctionModerationAdministrator,
   type CommunityAdministrator,
   type CommunityMemberResult,
   type CommunitySnapshot,
-  type GrantModerationResult,
+  type GrantRecordResult,
   type IdentityAdminResult,
   type IdentityResolver,
   type OrganizerResolver,
   type ReconsiderResult,
+  type RecordRight,
   type RefusedApplication,
+  type RightRecordAdministrator,
   type SourceChannel,
   type SourceChannelAdministrator,
   type TelegramRecipientResolver,
@@ -338,6 +339,7 @@ import {
   canManageMeetups,
   canManageMembers,
   canOpenManagement,
+  canRunAuctions,
   commandsFor,
   helpScreen,
   manageGroupScreen,
@@ -398,7 +400,7 @@ export type BotRuntime = {
     Partial<ApplicationAdministrator> &
     Partial<SourceChannelAdministrator> &
     Partial<ApplicationModerator> &
-    Partial<AuctionModerationAdministrator> &
+    Partial<RightRecordAdministrator> &
     Partial<AdministratorManager> &
     Partial<OrganizerResolver> &
     Partial<TelegramRecipientResolver>;
@@ -496,8 +498,21 @@ const communityForbiddenText =
 const refusedForbiddenText =
   "Пересматривать отказы может только администратор.";
 const auctionQueueForbiddenText = "Заявки в аукцион решает модератор аукциона.";
-const moderatorsForbiddenText =
-  "Выдавать модерацию аукциона может тот, кто управляет составом.";
+// Тексты записей прав с карточки человека (PER-547, PER-654).
+const recordTexts: Readonly<
+  Record<RecordRight, { granted: string; revoked: string; forbidden: string }>
+> = {
+  "admit-bidders": {
+    granted: "Модерация выдана.",
+    revoked: "Модерация отозвана.",
+    forbidden: "Выдавать модерацию аукциона может тот, кто управляет составом.",
+  },
+  "run-auctions": {
+    granted: "Ведение аукциона выдано.",
+    revoked: "Ведение аукциона снято.",
+    forbidden: "Выдавать ведение аукциона может тот, кто управляет составом.",
+  },
+};
 const administratorsForbiddenText =
   "Назначать и снимать администраторов может только мейнтейнер.";
 const channelSavedListFailedText =
@@ -1394,9 +1409,9 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      // Вопрос задаётся только администратору, но старый вопрос остаётся в
-      // чате: отказ приходит до Auction, как у формы лота.
-      if (!canManageMeetups(identity.person)) {
+      // Вопрос задаётся только держателю права вести аукцион, но старый
+      // вопрос остаётся в чате: отказ приходит до Auction, как у формы лота.
+      if (!canRunAuctions(identity.person)) {
         await answered();
         outcome = await refuseConsole(ctx, identity.person);
         return;
@@ -1463,7 +1478,7 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      if (!canManageMeetups(identity.person)) {
+      if (!canRunAuctions(identity.person)) {
         await answered();
         outcome = await refuseConsole(ctx, identity.person);
         return;
@@ -1520,7 +1535,7 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      if (!canManageMeetups(identity.person)) {
+      if (!canRunAuctions(identity.person)) {
         await answered();
         outcome = await refuseLotForm(ctx, identity.person);
         return;
@@ -1566,11 +1581,11 @@ async function handleMessage(
         outcome = denied;
         return;
       }
-      // Вопрос формы задаётся только администратору, но старый вопрос остаётся
-      // в чате, и шаг его кнопки можно прислать и чужой. Отказ приходит до
-      // Auction: иначе цена прошла бы разбор и человек получил бы второй
-      // вопрос вместо отказа.
-      if (!canManageMeetups(identity.person)) {
+      // Вопрос формы задаётся только держателю права вести аукцион, но старый
+      // вопрос остаётся в чате, и шаг его кнопки можно прислать и чужой.
+      // Отказ приходит до Auction: иначе цена прошла бы разбор и человек
+      // получил бы второй вопрос вместо отказа.
+      if (!canRunAuctions(identity.person)) {
         await answered();
         outcome = await refuseLotForm(ctx, identity.person);
         return;
@@ -2187,8 +2202,8 @@ async function handleCallback(
       };
       return;
     }
-    // Форма лота (PER-319): входы в неё видит только держатель права
-    // администрировать аукцион — по нему Auction пускает в каталог, — но старая
+    // Форма лота (PER-319): входы в неё видит только держатель права вести
+    // аукцион — по нему Auction пускает в каталог (PER-652), — но старая
     // кнопка остаётся в чате. Вопрос отказал бы лишь после набора ответа, а
     // экран правки без права ничего сделать не даёт, поэтому отказ приходит
     // здесь. Право на сами команды решают Auction и Meetups.
@@ -2199,7 +2214,7 @@ async function handleCallback(
       action.kind === "lot-step-mode" ||
       action.kind === "lot-skip"
     ) {
-      outcome = canManageMeetups(person)
+      outcome = canRunAuctions(person)
         ? await handleLotFormCallback(ctx, runtime, questions, person, action)
         : await refuseLotForm(ctx, person);
       return;
@@ -2207,7 +2222,7 @@ async function handleCallback(
     // Лот глазами участника (PER-512) — экран формы и тот же отказ без права:
     // поддельная кнопка не открывает лот до Auction.
     if (action.kind === "lot-view") {
-      outcome = canManageMeetups(person)
+      outcome = canRunAuctions(person)
         ? await handleLotPreviewCallback(
             ctx,
             runtime,
@@ -2218,8 +2233,8 @@ async function handleCallback(
         : await refuseLotForm(ctx, person);
       return;
     }
-    // Пульт аукциона (PER-320): вход видит только администратор, старая
-    // кнопка получает отказ до Auction. Право на чтение и команды решает
+    // Пульт аукциона (PER-320): вход видит только держатель права вести
+    // аукцион (PER-654), старая кнопка получает отказ до Auction. Право на чтение и команды решает
     // Auction у Meetups и отвечает своим отказом.
     if (
       action.kind === "console-view" ||
@@ -2246,7 +2261,7 @@ async function handleCallback(
       action.kind === "console-window-lot" ||
       action.kind === "console-window-remove"
     ) {
-      outcome = canManageMeetups(person)
+      outcome = canRunAuctions(person)
         ? await handleConsoleCallback(ctx, runtime, questions, person, action)
         : await refuseConsole(ctx, person);
       return;
@@ -2699,35 +2714,34 @@ async function handleCallback(
       outcome = adminOutcome(result, person.identityId);
       return;
     }
-    if (
-      action.kind === "grant-moderation" ||
-      action.kind === "revoke-moderation"
-    ) {
+    if (action.kind === "grant-record" || action.kind === "revoke-record") {
       const identityId = tokenToUuid(action.token);
-      const moderation = runtime.identity;
-      const result: GrantModerationResult =
-        action.kind === "grant-moderation"
-          ? moderation.grantAuctionModeration === undefined
+      const records = runtime.identity;
+      const result: GrantRecordResult =
+        action.kind === "grant-record"
+          ? records.grantRightRecord === undefined
             ? {
                 kind: "unavailable",
-                cause: new Error("auction moderation is not configured"),
+                cause: new Error("right records are not configured"),
               }
-            : await moderation.grantAuctionModeration(
+            : await records.grantRightRecord(
                 person,
                 identityId,
+                action.right,
                 rpcCall(ctx, "manage_community"),
               )
-          : moderation.revokeAuctionModeration === undefined
+          : records.revokeRightRecord === undefined
             ? {
                 kind: "unavailable",
-                cause: new Error("auction moderation is not configured"),
+                cause: new Error("right records are not configured"),
               }
-            : await moderation.revokeAuctionModeration(
+            : await records.revokeRightRecord(
                 person,
                 identityId,
+                action.right,
                 rpcCall(ctx, "manage_community"),
               );
-      await waiting.answer(moderationToast(action.kind, result));
+      await waiting.answer(recordToast(action.kind, action.right, result));
       // После команды карточка перечитывается из Identity: она показывает то,
       // что сохранилось, а не то, что нажали.
       await renderCommunityMember(
@@ -4185,8 +4199,12 @@ async function handleCallback(
       });
       return;
     }
-    if (action.kind === "manage-meetups") {
-      outcome = await enableAuction(ctx, runtime, person, action.token);
+    // «Включить аукцион» видит только держатель права вести аукцион, но старая
+    // кнопка остаётся в чате: отказ приходит до Auction (PER-654).
+    if (action.kind === "enable-auction") {
+      outcome = canRunAuctions(person)
+        ? await enableAuction(ctx, runtime, person, action.token)
+        : await refuseEnableAuction(ctx, person, action.token);
       return;
     }
     const _exhaustive: never = action;
@@ -4838,21 +4856,23 @@ function forbiddenToast(queue: ApplicationQueue): string {
   return queueTexts[queue].toast;
 }
 
-function moderationToast(
-  kind: "grant-moderation" | "revoke-moderation",
-  result: GrantModerationResult,
+function recordToast(
+  kind: "grant-record" | "revoke-record",
+  right: RecordRight,
+  result: GrantRecordResult,
 ): string {
+  const texts = recordTexts[right];
   switch (result.kind) {
     case "ok":
       return !result.value
         ? "Состояние уже было актуальным."
-        : kind === "grant-moderation"
-          ? "Модерация выдана."
-          : "Модерация отозвана.";
+        : kind === "grant-record"
+          ? texts.granted
+          : texts.revoked;
     case "not-member":
       return "Выдать нельзя: человек не участник сообщества.";
     case "forbidden":
-      return moderatorsForbiddenText;
+      return texts.forbidden;
     case "invalid":
       return "Изменение не сохранилось. Список перечитан заново.";
     default:
@@ -6050,7 +6070,7 @@ async function openMeetupExtensions(
       extensionsScreen({
         meetup: result.meetup,
         auction: result.auction,
-        manageable: canManageMeetups(person),
+        manageable: canRunAuctions(person),
       }),
     );
   } else {
@@ -6079,9 +6099,9 @@ async function openMeetupExtensions(
   });
 }
 
-// «Включить аукцион» в меню «Расширения» сходки (PER-307, PER-605). Право
-// решает Auction, спрашивая Meetups; край кнопку только показывает
-// администратору. Ключ команды рождается на нажатие, а аукцион сходки один при
+// «Включить аукцион» в меню «Расширения» сходки (PER-307, PER-605). Край
+// показывает и пропускает кнопку держателю права вести аукцион (PER-654), а
+// команду решает Auction, спрашивая Meetups. Ключ команды рождается на нажатие, а аукцион сходки один при
 // любом их числе: повторное нажатие отвечает тем же аукционом.
 async function enableAuction(
   ctx: UpdateContext,
@@ -6741,7 +6761,25 @@ async function showLotFailure(
   };
 }
 
-// Кнопка или ответ формы лота от человека без права вести сходки.
+// «Включить аукцион» от человека без права вести аукцион (PER-654).
+async function refuseEnableAuction(
+  ctx: UpdateContext,
+  person: Person,
+  token: string,
+): Promise<BoundaryOutcome> {
+  await showRefusal(ctx, forbiddenText, exitToExtensions(token));
+  return {
+    level: "warn",
+    message: "auction enabling rejected",
+    result: "error",
+    use_case: "enable_auction",
+    identity_id: person.identityId,
+    error_category: "authorization",
+    error: "enable_auction_forbidden",
+  };
+}
+
+// Кнопка или ответ формы лота от человека без права вести аукцион.
 async function refuseLotForm(
   ctx: UpdateContext,
   person: Person,
@@ -7478,7 +7516,7 @@ function askFinalPrice(
   return askQuestion(ctx, questions, pending, finalAskText(ask), ask.replaces);
 }
 
-// Кнопка или ответ пульта от человека без права вести сходки.
+// Кнопка или ответ пульта от человека без права вести аукцион.
 async function refuseConsole(
   ctx: UpdateContext,
   person: Person,
@@ -7679,9 +7717,9 @@ async function handleAuctionCallback(
       return unexpectedOutcome(String(_exhaustive), undefined, useCase);
     }
   }
-  const canManage = canManageMeetups(person);
+  const canManage = canRunAuctions(person);
   // Статус нужен только ряду «Добавить лот»; читается он у пульта, который
-  // Auction отдаёт администратору сходки.
+  // Auction отдаёт держателю права вести аукцион.
   const feedAuctionId = canManage ? feedAuctionOf(result.body) : undefined;
   const canAddLots =
     feedAuctionId === undefined
@@ -7694,8 +7732,8 @@ async function handleAuctionCallback(
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: communityToday(ctx),
-    // Пульт и входы в форму лота видит держатель права вести сходки — того
-    // же, что правка сходки и «Включить аукцион» (RFC-016).
+    // Пульт и входы в форму лота видит держатель права вести аукцион — того
+    // же, что «Включить аукцион» (ADR-070, RFC-016).
     canManage,
     ...(canAddLots === undefined ? {} : { canAddLots }),
   };
@@ -7964,7 +8002,7 @@ async function editLiveLotCard(
     presentation: runtime.presentation ?? "rich",
     timeZone: runtime.communityTimeZone ?? "UTC",
     today: (runtime.today ?? utcToday)(),
-    canManage: canManageMeetups(card.viewer),
+    canManage: canRunAuctions(card.viewer),
   };
   const shown = auctionScreen(view);
   const key = shown.image;
@@ -9516,8 +9554,8 @@ function callbackUseCase(
     | "refused-applications"
     | "ask-reconsider"
     | "reconsider"
-    | "grant-moderation"
-    | "revoke-moderation"
+    | "grant-record"
+    | "revoke-record"
     | "administrators"
     | "ask-appoint-administrator"
     | "confirm-appoint-administrator"
@@ -9536,7 +9574,7 @@ function callbackUseCase(
     | "manage-field"
     | "manage-draft"
     | "manage-status"
-    | "manage-meetups"
+    | "enable-auction"
     | "lot-new"
     | "lot-form"
     | "lot-view"
@@ -9668,8 +9706,8 @@ function callbackUseCase(
     case "ask-block-member":
     case "block-member":
     case "remove-allowed-username":
-    case "grant-moderation":
-    case "revoke-moderation":
+    case "grant-record":
+    case "revoke-record":
     case "administrators":
     case "ask-appoint-administrator":
     case "confirm-appoint-administrator":
@@ -9692,7 +9730,7 @@ function callbackUseCase(
     case "notify-subscription":
     case "notify-set-meetup":
       return "manage_notifications";
-    case "manage-meetups":
+    case "enable-auction":
       return "enable_auction";
     case "lot-new":
     case "lot-form":
