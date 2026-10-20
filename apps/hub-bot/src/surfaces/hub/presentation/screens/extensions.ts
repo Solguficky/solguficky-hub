@@ -112,33 +112,63 @@ export function auctionEnabledScreen(view: {
 }
 
 /**
- * «Расширения» в «Настройках»: у каждого расширения — свои настройки. У
- * аукциона это частота сообщений «перебили» и, пока идёт аукцион, имя в нём
- * (PER-595); без Auction у бота расширений нет.
+ * «Расширения» в «Настройках»: только список расширений, у каждого — свои
+ * настройки за его пунктом (решение владельца по прогону 14 октября 2026
+ * года, №74). Расширение пока одно — аукцион; без Auction у бота расширений
+ * нет.
  */
-export function settingsExtensionsScreen(
-  auction: boolean,
-  nameAuctionId?: string,
-): ShownScreen {
+export function settingsExtensionsScreen(auction: boolean): ShownScreen {
   const keyboard = new InlineKeyboard();
-  if (auction) keyboard.text(auctionLabel, "v1:notify:outbid").row();
-  if (auction && nameAuctionId !== undefined) {
-    keyboard
-      .text(
-        nameSettingsTitle,
-        encodeAuctionCallback({ kind: "name", auctionId: nameAuctionId }),
-      )
-      .row();
-  }
+  if (auction) keyboard.text(auctionLabel, settingsAuctionData).row();
   return {
     id: "settings-extensions",
     text: screenText(
       "Расширения",
       auction
-        ? `Настройки расширений сходок. Аукцион — как часто писать, что твою ставку перебили.${nameAuctionId === undefined ? "" : " Имя в аукционе — под каким именем ты ставишь в идущем аукционе."}`
+        ? "Настройки расширений сходок: у каждого расширения — свои."
         : "Расширений пока нет.",
     ),
     keyboard: withNav(keyboard, toSettings),
     format: "HTML",
   };
 }
+
+/** «Аукцион» в «Расширениях» настроек: его уведомления и имя в нём. */
+export const settingsAuctionData = "v1:nav:exta";
+
+export const toSettingsAuction: Parent = {
+  name: "Аукцион",
+  data: settingsAuctionData,
+};
+
+/**
+ * Настройки расширения «Аукцион» (№74): «Уведомления» — частота «перебили»,
+ * «Перебили в финале» и анонс финала — и, пока идёт аукцион, «Имя в
+ * аукционе» (PER-595).
+ */
+export function settingsAuctionScreen(nameAuctionId?: string): ShownScreen {
+  const keyboard = new InlineKeyboard().text(
+    "Уведомления",
+    auctionNotificationsData,
+  );
+  if (nameAuctionId !== undefined) {
+    keyboard
+      .row()
+      .text(
+        nameSettingsTitle,
+        encodeAuctionCallback({ kind: "name", auctionId: nameAuctionId }),
+      );
+  }
+  return {
+    id: "settings-auction",
+    text: screenText(
+      "Аукцион",
+      `Уведомления — когда писать о торгах.${nameAuctionId === undefined ? "" : " Имя в аукционе — под каким именем ты ставишь в идущем аукционе."}`,
+    ),
+    keyboard: withNav(keyboard, toSettingsExtensions),
+    format: "HTML",
+  };
+}
+
+/** Экран уведомлений аукциона; те же данные у «Частоты уведомлений» под вестью. */
+export const auctionNotificationsData = "v1:notify:outbid";

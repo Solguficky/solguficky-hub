@@ -74,7 +74,7 @@ import {
   raffleScreen,
 } from "./auction-raffle.js";
 import { stageWords } from "./auction-stage.js";
-import { toSettingsExtensions } from "./extensions.js";
+import { toSettingsAuction } from "./extensions.js";
 import {
   type AuctionEntry,
   addLotLabel,
@@ -254,13 +254,14 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
         return {
           screen: predictionAnswerRefusedScreen(block, view.body.keyboard),
         };
-      // Имя в аукционе из «Настроек» (PER-595): вход — в «Расширениях».
+      // Имя в аукционе из «Настроек» (PER-595): вход — в «Аукционе»
+      // «Расширений» настроек (№74).
       case "name-settings":
         return {
           screen: nameSettingsScreen(
             block,
             view.body.keyboard,
-            toSettingsExtensions,
+            toSettingsAuction,
           ),
         };
       case "name-question":

@@ -74,6 +74,7 @@ public class MigrationsTests
             "lot_reminder",
             "raffle_result",
             "release_notes_preference",
+            "live_final_outbid_preference",
         ]);
 
         var main = names.IndexOf("orleans_main");

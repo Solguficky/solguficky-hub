@@ -73,6 +73,22 @@ public static class AuctionFixtures
         await work.Commit(Cancellation);
     }
 
+    /// <summary>Выключатель перебитий в живом финале участника, как его записала бы команда.</summary>
+    public static async Task SetLiveFinalOutbids(IsolatedDatabase db, string identityId, bool enabled)
+    {
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        await using var work = await UnitOfWork.Begin(source, Cancellation);
+        await OutbidStore.SetLiveFinal(work, Guid.Parse(identityId), enabled, EventFactory.Committed, Cancellation);
+        await work.Commit(Cancellation);
+    }
+
+    /// <summary>Та же ставка, но на лоте живого финала (<c>LOT_PHASE_LIVE</c>).</summary>
+    public static global::Auction.V1.LotEvent Live(global::Auction.V1.LotEvent bid)
+    {
+        bid.State.Trading.Phase = global::Auction.V1.LotPhase.Live;
+        return bid;
+    }
+
     /// <summary>Закрывает все окна, наступившие к моменту, как это сделал бы проход.</summary>
     public static async Task<int> CloseDueWindows(AuctionStore store, DateTimeOffset now)
     {

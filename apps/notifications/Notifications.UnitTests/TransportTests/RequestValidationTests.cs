@@ -112,7 +112,14 @@ public class RequestValidationTests
     public void AuctionPreferences_OnlyFinalNamed_LeavesFrequencyUnchanged()
     {
         RequestValidation.AuctionPreferences(new SetAuctionNotificationPreferencesRequest { FinalAnnouncements = false })
-            .ShouldBe((null, false));
+            .ShouldBe((null, false, null));
+    }
+
+    [Fact]
+    public void AuctionPreferences_OnlyLiveFinalNamed_LeavesOthersUnchanged()
+    {
+        RequestValidation.AuctionPreferences(new SetAuctionNotificationPreferencesRequest { LiveFinalOutbids = true })
+            .ShouldBe((null, null, true));
     }
 
     [Fact]

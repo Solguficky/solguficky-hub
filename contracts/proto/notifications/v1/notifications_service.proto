@@ -166,7 +166,7 @@ message GetAuctionNotificationPreferencesRequest {
   string identity_id = 1;
 }
 
-// Changes one or both settings. An absent field leaves its setting as it is.
+// Changes one or more settings. An absent field leaves its setting as it is.
 message SetAuctionNotificationPreferencesRequest {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
@@ -176,10 +176,13 @@ message SetAuctionNotificationPreferencesRequest {
 
   // Target state, never a toggle of the current value.
   optional bool final_announcements = 3;
+
+  // Target state, never a toggle of the current value.
+  optional bool live_final_outbids = 4;
 }
 
 // Server-produced state, total: a setting the person never touched carries the
-// product default — EVERY and true — not UNSPECIFIED or an absent value.
+// product default — EVERY, true and false — not UNSPECIFIED or an absent value.
 message AuctionNotificationPreferences {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
@@ -189,10 +192,16 @@ message AuctionNotificationPreferences {
   // Whether the announcements of an auction final — auction_final_lineup and
   // auction_final_started — reach the person.
   bool final_announcements = 3;
+
+  // Whether outbids and the answers of the person's own proxy limit on a lot in
+  // the live final reach the person, each one on its own. The outbid frequency
+  // does not apply there: false withholds them, true sends every one.
+  bool live_final_outbids = 4;
 }
 
 // A fixed list rather than a number of minutes: only these intervals exist.
-// It governs outbids and the answers of the person's own proxy limit alike;
+// It governs outbids and the answers of the person's own proxy limit alike,
+// except on a lot in the live final, where live_final_outbids decides instead;
 // purchases are not affected. The interval is counted per person, across lots.
 enum OutbidFrequency {
   // No value: the field is unset or the value is unknown to the consumer.
