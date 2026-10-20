@@ -263,6 +263,11 @@ export function createDispatcher(
         case "add-step-window":
         case "set-step-window-lot":
         case "remove-step-window":
+        case "ask-step-window-launch":
+        case "add-step-window-launch":
+        case "set-step-window-launch-lot":
+        case "view-step-window-launch":
+        case "launch-step-window":
           return auctionConsole === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : auctionConsole(request);

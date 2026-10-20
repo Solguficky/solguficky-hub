@@ -28,6 +28,9 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
     status: statusOf(auction.status),
     ...(week === undefined ? {} : { week }),
     ...(lineup === undefined ? {} : { lineup }),
+    // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает, а
+    // пульт показывает их рядом с объявленными.
+    launchedWindows: console.launchedStepWindows.map(windowOf),
     lots: console.lots.map(consoleLotOf),
   };
 }

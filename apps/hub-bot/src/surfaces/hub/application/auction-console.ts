@@ -7,6 +7,7 @@ import type {
   AuctionConsoles,
   AuctionFailure,
   ConsoleReadResult,
+  LaunchStepWindowResult,
   LotClosure,
   LotStatisticsReadResult,
   ScheduleAuctionResult,
@@ -24,6 +25,7 @@ import type {
   DaySummaryLot,
   ExecuteResult,
   FinalTrading,
+  LaunchDraft,
   LineupPick,
   LotAmount,
   RaffleAskError,
@@ -33,6 +35,7 @@ import type {
   WindowAskError,
   WindowRef,
 } from "./types.js";
+import { launchLotLimit } from "./types.js";
 
 // Пульт аукциона администратора (PER-320): сроки онлайн-недели и финал,
 // открытие недели и отметка лотов для финала; в финале он же — пульт ведущего
@@ -205,6 +208,131 @@ export function windowPrint(window: StepWindow): string {
   return print(
     `${window.from}|${window.until}|${window.step.minorUnits}|${window.step.currency}`,
   );
+}
+
+/**
+ * Реестр лотов по возрастанию идентификатора: номера лотов в кнопке запуска
+ * окна указывают в него. Порядок задаёт сравнение строк, а не `localeCompare`:
+ * порядок locale зависит от языка среды, а кнопка переживает перезапуск
+ * процесса (PER-615).
+ */
+export function sortedLots(console: AuctionConsoleView): readonly ConsoleLot[] {
+  return [...console.lots].sort((a, b) =>
+    a.lot.lotId < b.lot.lotId ? -1 : a.lot.lotId > b.lot.lotId ? 1 : 0,
+  );
+}
+
+/** Идентификаторы лотов реестра в том же порядке, что `sortedLots`. */
+export function sortedLotIds(console: AuctionConsoleView): readonly string[] {
+  return sortedLots(console).map((each) => each.lot.lotId);
+}
+
+/**
+ * Лоты реестра, которые запускаемое окно может назвать (PER-615): набор едет в
+ * кнопке пульта битовой маской, а она несёт 64 лота. Реестр больше — окно
+ * накрывает первые лоты, и пульт говорит об этом на экране запуска.
+ */
+export function launchableLots(
+  console: AuctionConsoleView,
+): readonly ConsoleLot[] {
+  return sortedLots(console).slice(0, launchLotLimit);
+}
+
+// Разбор ответа на вопрос о запуске окна: сроки и шаг. Итог запуска —
+// другое, его приносит Auction.
+export type LaunchParse =
+  | { kind: "ok"; from?: string; until: string; step: LotAmount }
+  | { kind: "rejected"; error: WindowAskError };
+
+// Слово «сейчас» вместо начала окна: начало — момент, в который сервис решил
+// команду (ADR-047, дополнение 2026-10-12).
+const launchNow = "сейчас";
+
+/**
+ * Запуск окна по ходу торгов (PER-615) одним ответом: начало — «сейчас» или
+ * момент, конец — момент, шаг — целые рубли. Вид ответа — как у объявленного
+ * окна, только начало может быть «сейчас»: `сейчас — 21.10.2026 21:00, 50`
+ * либо `21.10.2026 18:00 — 21.10.2026 21:00, 50`.
+ *
+ * Окно лежит внутри онлайн-недели — так же, как требует Auction. Проверка
+ * здесь, а не отказом сервиса: черновик едет в кнопке, и сроки вне недели не
+ * помещаются в её поля.
+ */
+export function parseLaunch(
+  raw: string,
+  timeZone: string,
+  now: Date,
+  week?: AuctionWeek,
+): LaunchParse {
+  const text = raw.trim();
+  const comma = text.lastIndexOf(",");
+  if (comma === -1) return { kind: "rejected", error: "window-format" };
+  const step = parseRubles(text.slice(comma + 1));
+  if (step.kind === "rejected") return { kind: "rejected", error: step.reason };
+  // Верхняя граница недели: без неё запускаемое окно не имеет конца.
+  const closesAt = week?.closesAt;
+  const head = text.slice(0, comma).trim();
+  const startsNow = head.toLowerCase().startsWith(launchNow);
+  if (startsNow) {
+    const until = parseEnd(head.slice(launchNow.length), timeZone, now);
+    if (until.kind === "rejected") {
+      return { kind: "rejected", error: windowErrorOf[until.error] };
+    }
+    if (
+      closesAt !== undefined &&
+      Date.parse(until.until) > Date.parse(closesAt)
+    ) {
+      return { kind: "rejected", error: "window-outside-week" };
+    }
+    return {
+      kind: "ok",
+      until: until.until,
+      step: { minorUnits: step.rubles * 100, currency: lotCurrency },
+    };
+  }
+  const interval = parseWeek(head, timeZone, now);
+  if (interval.kind === "rejected") {
+    return { kind: "rejected", error: windowErrorOf[interval.error] };
+  }
+  // Заданное начало раньше момента команды — окно не действует задним числом;
+  // решает Auction, но понятный текст бот даёт сам.
+  if (Date.parse(interval.opensAt) < now.getTime()) {
+    return { kind: "rejected", error: "window-in-past" };
+  }
+  const opensAt = week?.opensAt;
+  if (
+    (opensAt !== undefined &&
+      Date.parse(interval.opensAt) < Date.parse(opensAt)) ||
+    (closesAt !== undefined &&
+      Date.parse(interval.closesAt) > Date.parse(closesAt))
+  ) {
+    return { kind: "rejected", error: "window-outside-week" };
+  }
+  return {
+    kind: "ok",
+    from: interval.opensAt,
+    until: interval.closesAt,
+    step: { minorUnits: step.rubles * 100, currency: lotCurrency },
+  };
+}
+
+type EndResult =
+  | { kind: "ok"; until: string }
+  | { kind: "rejected"; error: WeekAskError };
+
+// Конец окна запуска одним моментом по времени сообщества.
+function parseEnd(raw: string, timeZone: string, now: Date): EndResult {
+  const text = raw.trim().replace(/^[-‒–—]\s*/, "");
+  const match = rafflePattern.exec(text);
+  if (match === null) return { kind: "rejected", error: "week-format" };
+  const local = calendarMoment(match.slice(1).map(Number));
+  if (local === undefined) return { kind: "rejected", error: "week-moment" };
+  const until = communityInstant(local, timeZone);
+  if (until === undefined) return { kind: "rejected", error: "week-moment" };
+  if (Date.parse(until) <= now.getTime()) {
+    return { kind: "rejected", error: "week-ended" };
+  }
+  return { kind: "ok", until };
 }
 
 // Пять знаков base36 от строки (FNV-1a): отпечаток для кнопки пульта.
@@ -1970,6 +2098,275 @@ export function createAuctionConsole(
       : windowsRefused(request, scheduled);
   }
 
+  // Запуск окна сниженного шага по ходу торгов (PER-615). Окно дописывается
+  // к списку аукциона, а не заменяет конфигурацию: после открытия недели
+  // конфигурация заморожена. Запуск доступен, пока идут онлайн-торги, а
+  // неделя без конца запуска не имеет: верхней границы окна нет.
+  function launchable(console: AuctionConsoleView, at: Date): boolean {
+    return (
+      console.status === "prebidding" &&
+      !weekEnded(console, at) &&
+      console.week?.closesAt !== undefined
+    );
+  }
+
+  // Гейт запуска: идут онлайн-торги, неделя не кончилась, в реестре есть лоты.
+  // Отказ — исход экрана окон, а не вопроса.
+  function launchRefusal(
+    console: AuctionConsoleView,
+  ): ExecuteResult | undefined {
+    if (!launchable(console, now())) {
+      return { kind: "step-windows", console, note: { kind: "launch-closed" } };
+    }
+    if (console.lots.length === 0) {
+      return { kind: "step-windows", console, note: { kind: "no-lots" } };
+    }
+    return undefined;
+  }
+
+  // Вопрос о запуске: сроки недели и аукцион — из пульта, прочитанного до
+  // вопроса. Тот же вопрос возвращается с текстом отказа.
+  function launchAsk(
+    auctionId: string,
+    console: AuctionConsoleView,
+  ): {
+    kind: "step-window-launch-ask";
+    auctionId: string;
+    week?: AuctionWeek;
+  } {
+    return {
+      kind: "step-window-launch-ask",
+      auctionId,
+      ...(console.week === undefined ? {} : { week: console.week }),
+    };
+  }
+
+  // Вопрос о запуске окна: пульт читается до него, потому что вопрос
+  // называет сроки недели, а запускается окно только в онлайн-торгах.
+  async function askLaunch(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "ask-step-window-launch" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const refusal = launchRefusal(console);
+    if (refusal !== undefined) return refusal;
+    return launchAsk(request.auctionId, console);
+  }
+
+  // Ответ на вопрос о запуске: сроки и шаг разбираются тем же правилом, что у
+  // объявленного окна, а лоты по умолчанию все — «все» это выбор всех, лишние
+  // организатор снимает на экране запуска (как у объявленного окна, решение
+  // владельца 11 октября 2026 года).
+  async function addLaunch(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "add-step-window-launch" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const asked = launchAsk(request.auctionId, console);
+    const refusal = launchRefusal(console);
+    if (refusal !== undefined) return refusal;
+    const parsed = parseLaunch(request.value, timeZone, now(), console.week);
+    if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
+    return {
+      kind: "step-window-launch",
+      console,
+      draft: {
+        ...(parsed.from === undefined ? {} : { from: parsed.from }),
+        until: parsed.until,
+        step: parsed.step,
+        lots: launchableLots(console).map((_, at) => at),
+      },
+      at: { page: 0 },
+    };
+  }
+
+  // Лот запускаемого окна: набор едет в кнопке, поэтому переключатель
+  // переворачивает состояние набора, а не читает его у сервиса.
+  async function setLaunchLot(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "set-step-window-launch-lot" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const refusal = launchRefusal(console);
+    if (refusal !== undefined) return refusal;
+    const registry = sortedLotIds(console);
+    const { lot } = request;
+    if (lot < 0 || lot >= registry.length) {
+      return { kind: "step-windows", console, note: { kind: "changed" } };
+    }
+    const selected = request.draft.lots.includes(lot);
+    const lots = selected
+      ? request.draft.lots.filter((at) => at !== lot)
+      : [...request.draft.lots, lot].sort((a, b) => a - b);
+    // Пустого окна Auction не принимает: последний лот снять нельзя.
+    if (lots.length === 0) {
+      return { kind: "step-windows", console, note: { kind: "launch-empty" } };
+    }
+    return {
+      kind: "step-window-launch",
+      console,
+      draft: { ...request.draft, lots },
+      at: { lot },
+      toggled: { selected: !selected },
+    };
+  }
+
+  // Экран запуска окна на странице лотов: черновик едет в кнопке, а страница
+  // — в ней же.
+  async function viewLaunch(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "view-step-window-launch" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const refusal = launchRefusal(console);
+    if (refusal !== undefined) return refusal;
+    return {
+      kind: "step-window-launch",
+      console,
+      draft: request.draft,
+      at: { page: request.page },
+    };
+  }
+
+  // Сама команда запуска. Отказ Auction приходит текстом формы — тем же, что
+  // у планирования окна, а новые случаи (начало в прошлом, торги не идут, лот
+  // не открыт, пересечение) получают свои тексты.
+  async function launchWindow(
+    request: Extract<AuctionConsoleRequest, { intent: "launch-step-window" }>,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    const asked = launchAsk(request.auctionId, console);
+    const refusal = launchRefusal(console);
+    if (refusal !== undefined) return refusal;
+    const registry = sortedLotIds(console);
+    const lotIds = request.draft.lots
+      .map((at) => registry[at])
+      .filter((lotId): lotId is string => lotId !== undefined);
+    if (lotIds.length === 0) {
+      return { kind: "step-windows", console, note: { kind: "launch-empty" } };
+    }
+    const launched = await consoles.launchStepWindow(
+      request.identity,
+      {
+        auctionId: request.auctionId,
+        opId: request.opId,
+        ...(request.draft.from === undefined
+          ? {}
+          : { from: request.draft.from }),
+        until: request.draft.until,
+        step: request.draft.step,
+        lotIds,
+      },
+      rpcMeta(request),
+    );
+    return launchOutcome(console, asked, request, launched, lotIds);
+  }
+
+  function launchOutcome(
+    console: AuctionConsoleView,
+    asked: {
+      kind: "step-window-launch-ask";
+      auctionId: string;
+      week?: AuctionWeek;
+    },
+    request: Extract<AuctionConsoleRequest, { intent: "launch-step-window" }>,
+    launched: LaunchStepWindowResult,
+    lotIds: readonly string[],
+  ): ExecuteResult {
+    switch (launched.kind) {
+      case "ok":
+        return {
+          kind: "step-windows",
+          console: {
+            ...console,
+            launchedWindows: [
+              ...console.launchedWindows,
+              {
+                from: launched.from,
+                until: launched.until,
+                step: request.draft.step,
+                lotIds,
+              },
+            ],
+          },
+          note: {
+            kind: "launched",
+            from: launched.from,
+            until: launched.until,
+            step: request.draft.step,
+          },
+        };
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "meetup-cancelled":
+        return meetupCancelled;
+      case "auction-not-found":
+        return auctionNotFound;
+      case "not-in-prebidding":
+        return { ...asked, error: "window-not-in-prebidding" };
+      case "window-in-past":
+        return { ...asked, error: "window-in-past" };
+      case "window-outside-phase":
+        return { ...asked, error: "window-outside-week" };
+      case "window-step-invalid":
+        return { ...asked, error: "window-step" };
+      case "lot-not-in-auction":
+        return {
+          ...asked,
+          error: "window-lot-not-in-auction",
+          lot: titleOfLot(console, launched.lotId),
+        };
+      case "lot-not-open":
+        return {
+          ...asked,
+          error: "window-lot-not-open",
+          lot: titleOfLot(console, launched.lotId),
+        };
+      case "windows-overlap":
+        return {
+          ...asked,
+          error: "launch-overlap",
+          lot: titleOfLot(console, launched.lotId),
+          other: { from: launched.from, until: launched.until },
+        };
+      case "window-lots-empty":
+        // Бот не отправляет пустой набор лотов: отказ — дефект сборки формы.
+        return failed({
+          kind: "invalid",
+          cause: new Error("launch step window refused an empty lot set"),
+        });
+      default:
+        return failed(launched);
+    }
+  }
+
+  // Название лота для текста отказа: лот назван, но карточки у него может не
+  // быть — тогда отказ называет лот по идентификатору.
+  function titleOfLot(console: AuctionConsoleView, lotId: string): string {
+    const entry = console.lots.find((each) => each.lot.lotId === lotId);
+    const title = entry?.lot.card?.title;
+    return title === undefined ? lotId : title;
+  }
+
   return async function auctionConsole(
     request: AuctionConsoleRequest,
   ): Promise<ExecuteResult> {
@@ -2020,7 +2417,11 @@ export function createAuctionConsole(
         const current = await read(request);
         return current.kind === "refused"
           ? current.result
-          : { kind: "step-windows", console: current.console };
+          : {
+              kind: "step-windows",
+              console: current.console,
+              launch: launchable(current.console, now()),
+            };
       }
       case "view-step-window":
         return viewWindow(request);
@@ -2032,6 +2433,16 @@ export function createAuctionConsole(
         return setWindowLot(request);
       case "remove-step-window":
         return removeWindow(request);
+      case "ask-step-window-launch":
+        return askLaunch(request);
+      case "add-step-window-launch":
+        return addLaunch(request);
+      case "set-step-window-launch-lot":
+        return setLaunchLot(request);
+      case "view-step-window-launch":
+        return viewLaunch(request);
+      case "launch-step-window":
+        return launchWindow(request);
       default: {
         const _exhaustive: never = request;
         return _exhaustive;

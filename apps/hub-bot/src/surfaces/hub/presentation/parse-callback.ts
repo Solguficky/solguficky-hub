@@ -8,6 +8,7 @@ import type {
   CloseQuote,
   ConsoleSort,
   FormField,
+  LaunchDraft,
   LineupPick,
   LotStepMode,
   LotTextField,
@@ -19,6 +20,7 @@ import type {
   MeetupCategory,
   NotificationCategory,
 } from "../notifications/port.js";
+import { decodeLaunchDraft, encodeLaunchDraft } from "./launch-draft.js";
 import { type ManageGroup, manageGroupOf } from "./screens/menu.js";
 
 const CallbackSchema = z.string().max(64);
@@ -94,6 +96,13 @@ const WindowIndexSchema = z
   .regex(/^(0|[1-9]\d?)$/)
   .transform(Number);
 const WindowPrintSchema = z.string().regex(/^[0-9a-z]{5}$/);
+// Номер лота запускаемого окна в кнопке пульта (PER-615): номер в
+// отсортированном реестре с нуля — знак base36, шестидесяти четырёх лотов
+// хватает с запасом.
+const LaunchLotSchema = z
+  .string()
+  .regex(/^(0|[1-9a-z]{1,2})$/)
+  .transform((text) => Number.parseInt(text, 36));
 // Порядок состава финала в кнопке (PER-619): номер лота в наборе удержанных —
 // знак base36, не больше двадцати четырёх; `-` — ещё ничего не выбрано.
 const emptyLineupOrder = "-";
@@ -388,6 +397,23 @@ type PlainAction =
       selected: boolean;
     }
   | { kind: "console-window-remove"; auction: string; window: WindowRef }
+  // Запуск окна сниженного шага по ходу торгов (PER-615): начать запуск,
+  // переключить лот запускаемого окна, запустить и листать лоты. Черновик
+  // едет в кнопке — состояния у пульта нет.
+  | { kind: "console-window-launch"; auction: string }
+  | {
+      kind: "console-window-launch-lot";
+      auction: string;
+      draft: LaunchDraft;
+      lot: number;
+    }
+  | { kind: "console-window-launch-go"; auction: string; draft: LaunchDraft }
+  | {
+      kind: "console-window-launch-page";
+      auction: string;
+      draft: LaunchDraft;
+      page: number;
+    }
   // Состав финала (PER-619): начать выбор порядка, выбрать следующий лот
   // или страницу и «Да» подтверждения с полным порядком.
   | { kind: "console-lineup"; auction: string; pick?: LineupPick; page: number }
@@ -600,6 +626,9 @@ export type QuestionStep =
   // Новое окно «Счастливых часов» (PER-504): аукцион, а сроки недели и окна
   // ответ читает у Auction заново.
   | { kind: "console-window"; auction: string }
+  // Запуск окна по ходу торгов (PER-615): аукцион, а сроки недели и окна
+  // ответ читает у Auction заново.
+  | { kind: "console-launch"; auction: string }
   // Следующая цена лота финала (PER-337): аукцион и номер лота в составе.
   | { kind: "final-ask"; auction: string; position: number }
   // «Другой человек…» «Ставок зала» (PER-565): аукцион, а людей и цену ответ
@@ -786,6 +815,42 @@ export function consoleWindowRemoveData(
   return `v1:ac:hx:${auction}:${window.index}:${window.print}`;
 }
 
+/** «Запустить окно»: вопрос о начале, конце и шаге (PER-615). */
+export function consoleWindowLaunchData(auction: string): string {
+  return `v1:ac:hl:${auction}`;
+}
+
+/**
+ * Запуск окна по ходу торгов (PER-615): черновик едет в кнопке — состояния у
+ * пульта нет, а лот в кнопку не помещается. Номер лота — в отсортированном
+ * реестре, набор — маской по нему.
+ */
+export function consoleWindowLaunchGoData(
+  auction: string,
+  draft: LaunchDraft,
+): string {
+  return `v1:ac:hm:${auction}:${encodeLaunchDraft(draft)}`;
+}
+
+/** Лот запускаемого окна: номер лота в отсортированном реестре, набор — в маске. */
+export function consoleWindowLaunchLotData(
+  auction: string,
+  draft: LaunchDraft,
+  lot: number,
+): string {
+  return `v1:ac:ht:${auction}:${encodeLaunchDraft(draft)}:${lot.toString(36)}`;
+}
+
+/** Страница лотов запускаемого окна. */
+export function consoleWindowLaunchPageData(
+  auction: string,
+  draft: LaunchDraft,
+  page = 0,
+): string {
+  const base = `v1:ac:hp:${auction}:${encodeLaunchDraft(draft)}`;
+  return page === 0 ? base : `${base}:${page}`;
+}
+
 /** «Объявить состав финала» и «Заново»: выбор порядка с первого лота. */
 export function consoleLineupData(auction: string): string {
   return `v1:ac:l:${auction}`;
@@ -954,6 +1019,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ar:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
+    case "console-launch":
+      return `v1:q:al:${step.auction}`;
     case "final-ask":
       return `v1:q:fa:${step.auction}:${step.position}`;
     case "floor-search":
@@ -1503,6 +1570,43 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 6 && window !== undefined
         ? { kind: "console-window-remove", auction: auction.data, window }
         : { kind: "malformed" };
+    case "hl":
+      return parts.length === 4
+        ? { kind: "console-window-launch", auction: auction.data }
+        : { kind: "malformed" };
+    case "hm": {
+      const draft = decodeLaunchDraft(parts[4] ?? "");
+      return parts.length === 5 && draft !== undefined
+        ? { kind: "console-window-launch-go", auction: auction.data, draft }
+        : { kind: "malformed" };
+    }
+    case "ht": {
+      const draft = decodeLaunchDraft(parts[4] ?? "");
+      const lot = LaunchLotSchema.safeParse(parts[5]);
+      return parts.length === 6 && draft !== undefined && lot.success
+        ? {
+            kind: "console-window-launch-lot",
+            auction: auction.data,
+            draft,
+            lot: lot.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "hp": {
+      const draft = decodeLaunchDraft(parts[4] ?? "");
+      // Страница без номера — первая: как у других экранов пульта.
+      const page = PageSchema.safeParse(parts[5] ?? "0");
+      return (parts.length === 5 || parts.length === 6) &&
+        draft !== undefined &&
+        page.success
+        ? {
+            kind: "console-window-launch-page",
+            auction: auction.data,
+            draft,
+            page: page.data,
+          }
+        : { kind: "malformed" };
+    }
     case "v": {
       if (parts.length > 6) return { kind: "malformed" };
       const page = PageSchema.safeParse(parts[4] ?? "0");
@@ -1694,6 +1798,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-window", auction: token.data };
       case "fs":
         return { kind: "floor-search", auction: token.data };
+      case "al":
+        return { kind: "console-launch", auction: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":

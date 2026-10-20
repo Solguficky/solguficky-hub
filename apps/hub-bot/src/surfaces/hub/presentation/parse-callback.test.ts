@@ -25,6 +25,10 @@ import {
   consoleWeekData,
   consoleWindowAskData,
   consoleWindowData,
+  consoleWindowLaunchData,
+  consoleWindowLaunchGoData,
+  consoleWindowLaunchLotData,
+  consoleWindowLaunchPageData,
   consoleWindowLotData,
   consoleWindowRemoveData,
   consoleWindowsData,
@@ -1301,6 +1305,60 @@ describe("auction console callbacks", () => {
     `v1:ac:hs:${"2u8Fx81oUEiwPctIYOjccw"}:1:z0a9q`,
     `v1:ac:h:${"2u8Fx81oUEiwPctIYOjccw"}:1`,
   ])("refuses a malformed happy hours button %s", (data) => {
+    expect(parseCallback(data)).toEqual({ kind: "malformed" });
+  });
+
+  it("parses every button of the window launch within the byte budget", () => {
+    // Худший случай: шестьдесят четыре лота в реестре и страница из четырёх
+    // цифр — черновик несёт в кнопке набор лотов маской.
+    const draft = {
+      from: "2026-10-20T15:00:00Z",
+      until: "2026-10-20T18:00:00Z",
+      step: { minorUnits: 5_000, currency: "RUB" },
+      lots: [0, 1, 63],
+    };
+    const cases = [
+      [
+        consoleWindowLaunchData(auction),
+        { kind: "console-window-launch", auction },
+      ],
+      [
+        consoleWindowLaunchGoData(auction, draft),
+        { kind: "console-window-launch-go", auction, draft },
+      ],
+      [
+        consoleWindowLaunchLotData(auction, draft, 63),
+        { kind: "console-window-launch-lot", auction, draft, lot: 63 },
+      ],
+      [
+        consoleWindowLaunchPageData(auction, draft, 9999),
+        { kind: "console-window-launch-page", auction, draft, page: 9999 },
+      ],
+      // Первая страница без номера — как у других экранов пульта.
+      [
+        consoleWindowLaunchPageData(auction, draft, 0),
+        { kind: "console-window-launch-page", auction, draft, page: 0 },
+      ],
+    ] as const;
+
+    for (const [data, action] of cases) {
+      expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    expect(
+      parseCallback(questionData({ kind: "console-launch", auction }, 42)),
+    ).toEqual({
+      kind: "question",
+      step: { kind: "console-launch", auction },
+      askedBy: 42,
+    });
+  });
+
+  it.each([
+    `v1:ac:ht:${"2u8Fx81oUEiwPctIYOjccw"}:broken:1`,
+    `v1:ac:hm:${"2u8Fx81oUEiwPctIYOjccw"}:broken`,
+    `v1:ac:hp:${"2u8Fx81oUEiwPctIYOjccw"}:broken:1`,
+  ])("refuses a malformed window launch button %s", (data) => {
     expect(parseCallback(data)).toEqual({ kind: "malformed" });
   });
 

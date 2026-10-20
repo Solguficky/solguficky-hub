@@ -1781,6 +1781,11 @@ message AuctionConsole {
   // Every lot of the registry, in no particular order. The registry is not paged:
   // the administrator enters its lots one by one.
   repeated ConsoleLot lots = 2;
+
+  // The windows of reduced bid step launched during the online phase, in the
+  // order they were launched. The windows of the configuration are in
+  // auction.config.step_windows. Empty is a real value: no window was launched.
+  repeated AuctionStepWindow launched_step_windows = 3;
 }
 
 message ConsoleLot {

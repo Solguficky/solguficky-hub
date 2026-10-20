@@ -5,6 +5,8 @@ import {
   acceptsLots,
   activeLot,
   heldLots,
+  launchableLots,
+  sortedLots,
   windowLimit,
   windowPrint,
 } from "../../application/auction-console.js";
@@ -17,6 +19,7 @@ import type {
   ConsoleSort,
   ConsoleSortMetric,
   FinalAskError,
+  LaunchDraft,
   LineupPick,
   LotAmount,
   RaffleAskError,
@@ -51,6 +54,10 @@ import {
   consoleWeekData,
   consoleWindowAskData,
   consoleWindowData,
+  consoleWindowLaunchData,
+  consoleWindowLaunchGoData,
+  consoleWindowLaunchLotData,
+  consoleWindowLaunchPageData,
   consoleWindowLotData,
   consoleWindowRemoveData,
   consoleWindowsData,
@@ -237,10 +244,12 @@ function finalLine(week: AuctionWeek): string {
 }
 
 // Окна видны в снимке пульта строкой (PER-504); сами окна — на своём экране.
-function windowsLines(week: AuctionWeek): string[] {
-  return week.windows.length === 0
-    ? []
-    : [`Счастливые часы: ${windowsLabel(week.windows.length)}.`];
+// Окна видны в снимке пульта строкой (PER-504); запущенные по ходу торгов
+// (PER-615) считаются с объявленными — пульт показывает их рядом.
+function windowsLines(console: AuctionConsoleView): string[] {
+  const count =
+    (console.week?.windows.length ?? 0) + console.launchedWindows.length;
+  return count === 0 ? [] : [`Счастливые часы: ${windowsLabel(count)}.`];
 }
 
 // Розыгрыш (PER-593) виден строкой всегда: без момента у участников нет
@@ -306,7 +315,7 @@ function statusLines(view: ConsoleScreenView): string[] {
         : [
             weekLine(week, view),
             finalLine(week),
-            ...windowsLines(week),
+            ...windowsLines(view.console),
             raffleLine(week, view),
           ];
     case "prebidding":
@@ -316,7 +325,11 @@ function statusLines(view: ConsoleScreenView): string[] {
           : `Идут онлайн-торги до ${moment(week.closesAt, view)}.`,
         ...(week === undefined
           ? []
-          : [finalLine(week), ...windowsLines(week), raffleLine(week, view)]),
+          : [
+              finalLine(week),
+              ...windowsLines(view.console),
+              raffleLine(week, view),
+            ]),
       ];
     case "settling":
       return [
@@ -659,9 +672,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     console.status === "scheduled" &&
     week?.opensAt !== undefined &&
     week.closesAt !== undefined;
-  const windowsShown =
-    scheduled ||
-    (console.status === "prebidding" && (week?.windows.length ?? 0) > 0);
+  const windowsShown = scheduled || console.status === "prebidding";
   // «Сводка дня» (PER-492) идёт рядом со «Счастливыми часами», где этот ряд
   // есть: в онлайн-торгах с окнами и восемью лотами отдельный ряд вывел бы
   // пульт за двенадцать. Без окон — сразу под сортировкой.
@@ -684,11 +695,9 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       );
     }
     nextRow(keyboard).text("Открыть онлайн-неделю", consoleOpenData(auction));
-  } else if (
-    console.status === "prebidding" &&
-    (week?.windows.length ?? 0) > 0
-  ) {
-    // После открытия окна только видны: править их уже нельзя.
+  } else if (console.status === "prebidding") {
+    // После открытия окна только видны: править их уже нельзя. Ряд есть и
+    // без окон: в нём запускается окно по ходу торгов (PER-615).
     nextRow(keyboard)
       .text("Счастливые часы", consoleWindowsData(auction))
       .text("Сводка дня", consoleDaySummaryData(auction));
@@ -1195,6 +1204,9 @@ export type WindowsScreenView = {
   note?: WindowNote | undefined;
   timeZone: string;
   today: CommunityDay;
+  // Запуск окна доступен (PER-615): идут онлайн-торги и общий дедлайн не
+  // прошёл. Решает край по часам бота — статус аукциона может отставать.
+  launch?: boolean | undefined;
 };
 
 function windowsOf(console: AuctionConsoleView): readonly StepWindow[] {
@@ -1226,7 +1238,10 @@ function lotsOfWindow(window: StepWindow, console: AuctionConsoleView): string {
   ].join(" · ");
 }
 
-export function windowNoteText(note: WindowNote): string {
+export function windowNoteText(
+  note: WindowNote,
+  view: { timeZone: string; today: CommunityDay },
+): string {
   switch (note.kind) {
     case "saved":
       return `Окно ${note.window} сохранено. В нём все лоты аукциона — лишние сними на экране окна.`;
@@ -1242,6 +1257,15 @@ export function windowNoteText(note: WindowNote): string {
       return `Окон уже ${windowLimit}. Удали лишнее окно, чтобы добавить новое.`;
     case "overlap":
       return `Лот уже в окне ${note.other}, а оно пересекается с окном ${note.window} по времени. Сначала убери лот из окна ${note.other}.`;
+    case "launched": {
+      const local = (instant: string) =>
+        readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+      return `Окно запущено: с ${local(note.from)} до ${local(note.until)}, шаг ${money(note.step)}.`;
+    }
+    case "launch-closed":
+      return "Запуск окна доступен только во время онлайн-торгов.";
+    case "launch-empty":
+      return "Окну нужны лоты. Оставь хотя бы один.";
     default: {
       const _exhaustive: never = note;
       return _exhaustive;
@@ -1265,12 +1289,13 @@ export function windowsScreen(view: WindowsScreenView): ShownScreen {
   if (view.note !== undefined) {
     return {
       id: "outcome",
-      text: outcomeText(windowNoteText(view.note)),
+      text: outcomeText(windowNoteText(view.note, view)),
       keyboard: withNav(new InlineKeyboard(), toWindows(auction)),
       format: "HTML",
     };
   }
   const windows = windowsOf(console);
+  const launched = console.launchedWindows;
   const editable = acceptsLots(console.status);
   const keyboard = new InlineKeyboard();
   // Окно открывается и после открытия недели — только для просмотра его лотов.
@@ -1282,6 +1307,10 @@ export function windowsScreen(view: WindowsScreenView): ShownScreen {
   });
   if (editable && windows.length < windowLimit) {
     nextRow(keyboard).text("Добавить окно", consoleWindowAskData(auction));
+  }
+  // Запуск окна по ходу торгов (PER-615): действие есть, пока идут онлайн-торги.
+  if (view.launch === true) {
+    nextRow(keyboard).text("Запустить окно", consoleWindowLaunchData(auction));
   }
   return {
     id: "step-windows",
@@ -1299,6 +1328,16 @@ export function windowsScreen(view: WindowsScreenView): ShownScreen {
               ),
             )
             .join("\n"),
+      launched.length === 0
+        ? undefined
+        : [
+            "Запущенные окна:",
+            ...launched.map((window) =>
+              escapeHtml(
+                `• ${spanLine(window, view)} · ${lotsOfWindow(window, console)}`,
+              ),
+            ),
+          ].join("\n"),
     ),
     keyboard: withNav(keyboard, {
       name: "Пульт",
@@ -1406,6 +1445,10 @@ export function windowAskErrorText(
     timeZone: string;
     week?: AuctionWeek | undefined;
     window?: number | undefined;
+    // Отказ запуска окна (PER-615) называет лот и границы окна, с которым
+    // запущенное пересеклось: номер окна у запуска нет.
+    lot?: string | undefined;
+    other?: { from: string; until: string } | undefined;
   },
 ): string {
   switch (error) {
@@ -1433,6 +1476,23 @@ export function windowAskErrorText(
         : `Окно пересекается с окном ${context.window}, а лоты у них общие. Сдвинь время или удали окно ${context.window}.`;
     case "window-step":
       return "Шаг окна не принят: он должен быть больше нуля.";
+    case "window-in-past":
+      return "Начало окна уже прошло. Запусти окно с текущего момента или с будущего.";
+    case "window-not-in-prebidding":
+      return "Запуск окна доступен только во время онлайн-торгов.";
+    case "window-lot-not-in-auction":
+      return `Лот «${context.lot ?? "—"}» не в реестре аукциона.`;
+    case "window-lot-not-open":
+      return `Лот «${context.lot ?? "—"}» не в торгах: запустить окно на нём нельзя.`;
+    case "launch-overlap": {
+      const other =
+        context.other === undefined
+          ? undefined
+          : `${formatLocalMoment(communityLocalTime(context.other.from, context.timeZone))} — ${formatLocalMoment(communityLocalTime(context.other.until, context.timeZone))}`;
+      return other === undefined
+        ? "Окно пересекается с другим окном, а лоты у них общие. Сдвинь время."
+        : `Окно пересекается с другим окном по лоту «${context.lot ?? "—"}»: ${other}. Сдвинь время.`;
+    }
     default: {
       const _exhaustive: never = error;
       return _exhaustive;
@@ -1452,6 +1512,13 @@ export const windowPrompt =
   "Окно по времени сообщества: начало и конец через тире, затем шаг в целых рублях через запятую. Окно — внутри недели, шаг — меньше обычного.\nНапример: 21.10.2026 18:00 — 21.10.2026 21:00, 50";
 
 /**
+ * Вопрос о запуске окна по ходу торгов (PER-615): начало — «сейчас» или
+ * момент, конец — момент, шаг — целыми рублями.
+ */
+export const launchPrompt =
+  "Окно по времени сообщества: начало — «сейчас» или момент, конец — момент, затем шаг в целых рублях через запятую. Окно — внутри онлайн-недели, шаг — меньше обычного.\nНапример: сейчас — 21.10.2026 21:00, 50";
+
+/**
  * Вопрос о новом окне (дизайн-код, «Вопросы»): сроки недели в том же виде, в
  * каком вводят окно, и образец.
  */
@@ -1464,6 +1531,87 @@ export function windowQuestionText(
     ...(span === undefined ? [] : [`Неделя: ${span}`]),
     windowPrompt,
   ].join("\n");
+}
+
+/** Вопрос о запуске окна: сроки недели и вид ответа — как у объявленного окна. */
+export function launchQuestionText(
+  timeZone: string,
+  week?: AuctionWeek,
+): string {
+  const span = weekSpan(timeZone, week);
+  return [
+    ...(span === undefined ? [] : [`Неделя: ${span}`]),
+    launchPrompt,
+  ].join("\n");
+}
+
+/**
+ * Запуск окна по ходу торгов (PER-615): сроки и шаг запускаемого окна, лоты
+ * реестра переключателями и ряд запуска. Черновик едет в кнопке: состояния у
+ * пульта нет, а лот в кнопку не помещается.
+ */
+export function launchScreen(view: {
+  console: AuctionConsoleView;
+  draft: LaunchDraft;
+  at: { page: number } | { lot: number };
+  timeZone: string;
+  today: CommunityDay;
+}): ShownScreen {
+  const { console, draft } = view;
+  const auction = uuidToToken(console.auctionId);
+  const lots = launchableLots(console);
+  const registry = sortedLots(console);
+  const selected = new Set(draft.lots);
+  const requested =
+    "page" in view.at ? view.at.page : Math.floor(view.at.lot / pageSize);
+  const page = paginate(lots, requested);
+  const keyboard = new InlineKeyboard();
+  const title = pagedTitle("Запуск окна", page);
+  for (const entry of page.items) {
+    const at = indexOf(lots, entry);
+    const on = selected.has(at);
+    nextRow(keyboard).text(
+      buttonText(toggleLabel(titleOf(entry), on)),
+      consoleWindowLaunchLotData(auction, draft, at),
+    );
+  }
+  withPager(keyboard, page, (target) =>
+    consoleWindowLaunchPageData(auction, draft, target),
+  );
+  nextRow(keyboard).text(
+    "Запустить окно",
+    consoleWindowLaunchGoData(auction, draft),
+  );
+  const local = (instant: string) =>
+    readableMoment(communityLocalTime(instant, view.timeZone), view.today);
+  // Начало «сейчас» — момент, в который сервис решил команду, и назвать его
+  // нечем: пульт пишет «сейчас».
+  const from = draft.from === undefined ? "сейчас" : local(draft.from);
+  return {
+    id: "step-window-launch",
+    text: screenText(
+      title,
+      escapeHtml(
+        `с ${from} до ${local(draft.until)}, шаг ${money(draft.step)}`,
+      ),
+      escapeHtml("Вкл — лот в окне, Выкл — шаг у лота обычный."),
+      escapeHtml(`лотов ${selected.size} из ${lots.length}`),
+      // Набор лотов едет в кнопке пульта битовой маской (PER-615): реестр
+      // больше окна не накрывает, и пульт говорит об этом прямо.
+      registry.length > lots.length
+        ? escapeHtml(
+            `Окно накрывает первые ${lots.length} лотов реестра — остальные в него не входят.`,
+          )
+        : undefined,
+    ),
+    keyboard: withNav(keyboard, toWindows(auction)),
+    format: "HTML",
+  };
+}
+
+// Номер лота в отсортированном реестре: номера лотов запуска едут в кнопке.
+function indexOf(lots: readonly ConsoleLot[], entry: ConsoleLot): number {
+  return lots.findIndex((each) => each.lot.lotId === entry.lot.lotId);
 }
 
 /** Текст кадра отказа пульту; отказ по праву несёт общий текст хаба. */
