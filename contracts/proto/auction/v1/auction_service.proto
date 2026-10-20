@@ -545,10 +545,8 @@ message LotHistoryEntry {
 // An accepted bid as BidPlaced recorded it. A folded chain of proxy bids is one
 // entry with the final amount. The proxy limit is never carried.
 //
-// A bid of a participant later removed from the lot stays in the history with
-// removed set: it no longer counts, and the removal entry after it tells the
-// price and the leader the lot went on with. Bids of others, the proxy bids that
-// answered the removed participant among them, stay as they were.
+// A bid of a participant later removed from the lot keeps its entry, with removed
+// set.
 message HistoryBid {
   // Canonical lowercase UUIDv7 with hyphens.
   string bid_id = 1;
@@ -1292,18 +1290,15 @@ message PreviewParticipantRemovalRequest {
 }
 
 message PreviewParticipantRemovalResponse {
-  // Exactly one is set. The refusal is the one RemoveParticipant would answer at
-  // the same moment, except that a preview never answers lot_changed.
+  // Exactly one is set. A preview never carries lot_changed.
   oneof outcome {
     ParticipantRemovalPreview preview = 1;
     ParticipantRemovalRefusal refused = 2;
   }
 }
 
-// What the lot would be after the removal, decided now and not recorded. It holds
-// only while the lot stays at version: pass version as
-// RemoveParticipantRequest.expected_version, and any later change of the lot
-// refuses the removal with lot_changed instead of recording another outcome.
+// What the lot would be after the removal, not recorded. Meant for
+// RemoveParticipantRequest.expected_version through version.
 message ParticipantRemovalPreview {
   // The price after the removal. Never higher than the current price.
   Money price = 1;
@@ -1334,7 +1329,7 @@ message RemoveParticipantRequest {
   string participant_id = 4;
 
   // ParticipantRemovalPreview.version the administrator confirmed. Required: 0 is
-  // not a value. The removal is recorded only while the lot is still at it.
+  // not a value.
   int64 expected_version = 5;
 
   // Caller-generated canonical lowercase UUIDv7 with hyphens.
@@ -1351,8 +1346,8 @@ message RemoveParticipantResponse {
 
 message ParticipantRemovalAccepted {
   // The LotSnapshot.version from which GetLot shows the whole removal: the new
-  // leader and price and the extension it triggered. A repeat of the same op_id
-  // answers the version of the lot at that moment, which may be higher.
+  // leader and price and the extension it triggered. On a repeat of the same
+  // op_id it may be higher than that.
   int64 lot_version = 1;
 }
 
@@ -1384,8 +1379,7 @@ message NotALotParticipant {}
 
 message ParticipantAlreadyRemoved {}
 
-// The lot changed after the preview: expected_version is no longer its version.
-// The outcome the administrator confirmed may not hold any more; preview again.
+// expected_version is no longer the version of the lot.
 message LotChanged {}
 
 message LaunchStepWindowRequest {

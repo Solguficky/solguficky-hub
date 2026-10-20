@@ -24,8 +24,7 @@ import java.util.UUID
  * по дедлайну. `Declined` — лот отклонил `OpenLot`. `NotOpened` — лот так и не открыт, а открывать поздно: общий
  * дедлайн прошёл. `Unanswered` — ответ не пришёл. `Held` — лот удержан для финала (П-09). `Closed` — лот продан или
  * закрыт без продажи. В отменённом аукционе (ADR-047, дополнение 2026-10-12): `Withdrawing` — `WithdrawLot` ушёл,
- * ответа нет; `Withdrawn` — лот снят; `Closed` — лот ответил, что уже завершён, и остался как был. `Removing` — в
- * перерыве удержанному лоту ушло снятие участника, ответа нет (PER-658): цена лота может измениться.
+ * ответа нет; `Withdrawn` — лот снят; `Closed` — лот ответил, что уже завершён, и остался как был.
  */
 enum LotStanding {
   case Asked
@@ -39,7 +38,6 @@ enum LotStanding {
   case Closed
   case Withdrawing
   case Withdrawn
-  case Removing
 
   /**
    * Лот больше не держит конец онлайн-торгов (RFC-011, `awaiting`): закрыт, удержан или так и не открывался. Лот без
@@ -48,7 +46,7 @@ enum LotStanding {
   def settled: Boolean =
     this match {
       case Closed | Held | Declined(_) | NotOpened | Withdrawn => true
-      case Asked | Opening | Active | Closing | Unanswered | Withdrawing | Removing => false
+      case Asked | Opening | Active | Closing | Unanswered | Withdrawing => false
     }
 }
 
@@ -123,7 +121,15 @@ enum LotInstruction {
  * Recovery начинает с пустого и шлёт каждое запущенное окно каждому его лоту заново: `op_id` доставки тот же, и лот,
  * уже записавший окно, второго события не пишет.
  */
-final case class LotRoster(lots: Map[LotId, LotStanding], deliveries: Map[(OpId, LotId), WindowDelivery] = Map.empty) {
+/**
+ * `removals` — сколько снятий участника ушло лоту и ещё не получило ответа (PER-658). Пока хоть одно в пути, цена
+ * удержанного лота может измениться, и состав финала не известен; знание о самом лоте снятие не трогает.
+ */
+final case class LotRoster(
+    lots: Map[LotId, LotStanding],
+    deliveries: Map[(OpId, LotId), WindowDelivery] = Map.empty,
+    removals: Map[LotId, Int] = Map.empty
+) {
 
   /** Лоты, подтвердившие открытие. */
   def active: Set[LotId] = lots.collect { case (lot, LotStanding.Active) => lot }.toSet
@@ -403,26 +409,28 @@ object LotRoster {
     }
 
   /**
-   * Снятие участника ушло лоту (ADR-072, «Открыто»; PER-658). В перерыве удержанный лот до ответа — `Removing`: так же,
-   * как закрытие ведущим, он держит знание о составе, и заморозка, пришедшая до ответа, отвечает «состав пока не
-   * известен», а не берёт в состав цену, которую снятие вот-вот изменит. Лот, о котором аукцион знает другое, — уже
-   * закрываемый ведущим, — шаг не трогает. В остальных фазах гонки с заморозкой нет, и знание не меняется.
+   * Снятие участника ушло лоту (ADR-072, «Открыто»; PER-658). Пока оно в пути — в какой бы фазе ни ушло, — состав
+   * финала не известен: заморозка, пришедшая до ответа, отвечает «состав пока не известен», а не берёт в состав цену,
+   * которую снятие вот-вот изменит. Снятия считаются, а не отмечаются: ответ на одно не открывает заморозку, пока в
+   * пути другое. Знание о самом лоте шаг не трогает.
    */
-  def removingParticipant(auction: Auction, roster: LotRoster, lot: LotId): LotRoster =
-    (auction.state, roster.lots.get(lot)) match {
-      case (AuctionState.Break(_, _), Some(LotStanding.Held)) => roster.mark(lot, LotStanding.Removing)
-      case _ => roster
-    }
+  def removingParticipant(roster: LotRoster, lot: LotId): LotRoster =
+    roster.copy(removals = roster.removals.updated(lot, roster.removals.getOrElse(lot, 0) + 1))
 
   /**
-   * Лот ответил на снятие участника. Удержанным он остаётся при любом ответе, но за время в пути его мог продать
-   * ведущий, поэтому истину даёт вопрос о состоянии, а не догадка; до его ответа состав по-прежнему не известен.
+   * Лот ответил на снятие участника или ответа не дождались. Снятие больше не в пути; удержанный по знанию лот аукцион
+   * спрашивает заново: снятие могло изменить его цену, а за время в пути его мог продать ведущий. Вопрос встаёт в
+   * очередь лота после самого снятия, и до ответа на него состав по-прежнему не известен. Лот, о котором аукцион знает
+   * другое, — открываемый, закрываемый, — шаг не трогает.
    */
-  def participantRemovalAnswered(roster: LotRoster, lot: LotId): (LotRoster, List[LotInstruction]) =
-    roster.lots.get(lot) match {
-      case Some(LotStanding.Removing) => ask(roster, List(lot))
-      case _ => (roster, Nil)
+  def participantRemovalAnswered(roster: LotRoster, lot: LotId): (LotRoster, List[LotInstruction]) = {
+    val left = roster.removals.getOrElse(lot, 0) - 1
+    val settled = roster.copy(removals = if (left > 0) roster.removals.updated(lot, left) else roster.removals - lot)
+    settled.lots.get(lot) match {
+      case Some(LotStanding.Held) => ask(settled, List(lot))
+      case _ => (settled, Nil)
     }
+  }
 
   /**
    * Лот ответил на закрытие ведущим. Принятое — лот закрыт, и перерыв, в котором не осталось удержанных, кончается.
@@ -525,7 +533,7 @@ object LotRoster {
    */
   def lineup(auction: Auction, roster: LotRoster): Option[Set[LotId]] =
     auction.state match {
-      case AuctionState.Break(_, _) if complete(auction, roster) => Some(roster.held)
+      case AuctionState.Break(_, _) if complete(auction, roster) && roster.removals.isEmpty => Some(roster.held)
       case _ => None
     }
 
@@ -584,10 +592,7 @@ object LotRoster {
    */
   def unanswered(roster: LotRoster, lot: LotId): LotRoster =
     roster.lots.get(lot) match {
-      case Some(
-            LotStanding.Asked | LotStanding.Opening | LotStanding.Closing | LotStanding.Withdrawing |
-            LotStanding.Removing
-          ) =>
+      case Some(LotStanding.Asked | LotStanding.Opening | LotStanding.Closing | LotStanding.Withdrawing) =>
         roster.mark(lot, LotStanding.Unanswered)
       case _ => roster
     }

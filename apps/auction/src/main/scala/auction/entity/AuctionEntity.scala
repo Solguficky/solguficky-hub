@@ -258,8 +258,7 @@ object AuctionEntity {
 
   /**
    * Снятие участника с лота реестра (ADR-072; PER-658): та же форма, что `Select`. Ответ — номер лота, с которого
-   * чтение показывает снятие целиком. В перерыве лот до ответа держит знание о составе
-   * (`LotRoster.removingParticipant`).
+   * чтение показывает снятие целиком. Пока снятие в пути, состав финала не известен (`LotRoster.removingParticipant`).
    */
   final case class RemoveParticipantFromLot(
       command: RemoveLotParticipant,
@@ -465,7 +464,7 @@ object AuctionEntity {
   ) extends Command
 
   /** Ответ лота на снятие участника вместе с тем, кому его отдать; неудача — ответа нет. */
-  private[entity] final case class ParticipantRemoved(
+  private[entity] final case class LotParticipantRemoved(
       lot: LotId,
       replyTo: ActorRef[Either[ParticipantRemovalRejected, Long]],
       answer: Try[Either[RemoveParticipantRejected, Long]]
@@ -1188,19 +1187,25 @@ object AuctionEntity {
               Auction.decide(state.auction, removal) match {
                 case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
                 case Right(command) =>
-                  Effect.none.thenRun { after =>
-                    roster = LotRoster.removingParticipant(after.auction, roster, removal.lot)
+                  Effect.none.thenRun { _ =>
+                    roster = LotRoster.removingParticipant(roster, removal.lot)
                     context.pipeToSelf(lots.removeParticipant(removal.lot, command, initiator))(
-                      ParticipantRemoved(removal.lot, replyTo, _)
+                      LotParticipantRemoved(removal.lot, replyTo, _)
                     )
                   }
               }
-            case ParticipantRemoved(lot, replyTo, Success(answer)) =>
+            case LotParticipantRemoved(lot, replyTo, Success(answer)) =>
               Effect.none.thenRun { _ =>
                 follow(LotRoster.participantRemovalAnswered(roster, lot))
                 replyTo ! answer.left.map(ParticipantRemovalRejected.ByLot(_))
               }
-            case ParticipantRemoved(lot, _, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
+            // Ответа не дождались, но снятие могло записаться: оно больше не в пути, удержанный лот спрашивается
+            // заново, а прочее знание о лоте остаётся за своими командами.
+            case LotParticipantRemoved(lot, _, Failure(failure)) =>
+              Effect.none.thenRun { _ =>
+                logUnanswered(lot, failure)
+                follow(LotRoster.participantRemovalAnswered(roster, lot))
+              }
             case PreviewParticipantRemoval(preview, replyTo) =>
               Auction.decide(state.auction, preview) match {
                 case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
