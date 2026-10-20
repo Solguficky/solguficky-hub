@@ -124,6 +124,8 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionOutcome.AuctionForgotten => "auction_forgotten",
             AuctionOutcome.RaffleAnnounced => "raffle_announced",
             AuctionOutcome.PredictionResultsAnnounced => "prediction_results_announced",
+            AuctionOutcome.AuctionCancelled => "auction_cancelled",
+            AuctionOutcome.AuctionEnded => "auction_ended",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),
         }, application.FactsCreated);
     }

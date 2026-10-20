@@ -12,12 +12,14 @@ namespace Notifications.Auction;
 public enum LotStatus { Draft, Scheduled, Trading, Held, Sold, Unsold, Withdrawn }
 
 /// <summary>
-/// Снимок лота, который нужен избранному: дедлайн, лидер и положение. Дедлайна
-/// нет у лота без торгов, у лота, который ведёт человек, и у удержанного для
-/// финала; лидера нет до первой ставки. У проданного лидер — победитель.
+/// Снимок лота, который нужен избранному: аукцион, дедлайн, лидер и положение.
+/// Дедлайна нет у лота без торгов, у лота, который ведёт человек, и у
+/// удержанного для финала; лидера нет до первой ставки. У проданного лидер —
+/// победитель, и только у него есть цена продажи: её называет извещение об
+/// отмене аукциона (PER-604).
 /// </summary>
-public sealed record LotSnapshot(Guid LotId, long Version, DateTimeOffset OccurredAt, LotStatus Status,
-    DateTimeOffset? Deadline, Guid? Leader)
+public sealed record LotSnapshot(Guid LotId, Guid AuctionId, long Version, DateTimeOffset OccurredAt, LotStatus Status,
+    DateTimeOffset? Deadline, Guid? Leader, Money? SalePrice = null)
 {
     public bool Terminal => Status is LotStatus.Sold or LotStatus.Unsold or LotStatus.Withdrawn;
 }
@@ -53,7 +55,7 @@ public sealed record AuctionBid(Guid EventId, Guid LotId, Guid AuctionId, long V
 }
 
 /// <summary>Проверенная продажа: победитель и цена из state.sold; снимок — как у ставки.</summary>
-public sealed record AuctionSale(Guid EventId, Guid LotId, long Version, DateTimeOffset OccurredAt,
+public sealed record AuctionSale(Guid EventId, Guid LotId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
     Guid Winner, Money Price, LotSnapshot? Snapshot);
 
 /// <summary>Повод финала аукциона: заморозка состава или старт.</summary>
@@ -96,8 +98,20 @@ public sealed record PredictionParticipant(Guid ParticipantId, IReadOnlyList<Pre
 public sealed record PredictionSettlement(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
     bool Manual, IReadOnlyList<PredictionOutcome> Nominations, IReadOnlyList<PredictionParticipant> Participants);
 
-/// <summary>Аукцион пришёл в конечное положение: круг анонса больше не нужен.</summary>
-public sealed record AuctionClosed(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt);
+/// <summary>
+/// Чем кончился аукцион: торги прошли, отменены после старта или аукцион удалён
+/// до торгов. Удалённый конечного положения не получает и рождается заново под
+/// тем же идентификатором (ADR-047, дополнение 2026-10-09).
+/// </summary>
+public enum AuctionEnd { Finished, Cancelled, Discarded }
+
+/// <summary>
+/// Аукцион кончился: круг анонса и избранное его лотов больше не нужны
+/// (ADR-063, дополнение 2026-10-12). Реестр — лоты из снимка: по нему удалённый
+/// аукцион чистит избранное, не задевая лоты нового рождения.
+/// </summary>
+public sealed record AuctionClosed(Guid EventId, Guid AuctionId, Guid MeetupId, long Version, DateTimeOffset OccurredAt,
+    AuctionEnd End, IReadOnlyList<Guid> Registry);
 
 public abstract record AuctionDecoded
 {
@@ -113,7 +127,8 @@ public abstract record AuctionDecoded
 }
 
 /// <summary>
-/// Разбор фактов лота и тех фактов аукциона, что нужны анонсу финала. Тип
+/// Разбор фактов лота и тех фактов аукциона, что нужны анонсу финала и концу
+/// избранного. Тип
 /// сообщения выбирает subject: факт аукциона не декодируется как LotEvent, а
 /// факты счёта не декодируются вовсе.
 /// </summary>
@@ -171,7 +186,7 @@ public static class AuctionMapping
         // Снимок, который не разобрался, отравляет только факт без повода: у
         // ставки и продажи повод проверяется своими полями, и кривой дедлайн
         // не должен стоить человеку «перебили» или «покупки».
-        var snapshot = Snapshot(state, lotId, message.Version, occurredAt);
+        var snapshot = Snapshot(state, lotId, Guid.Parse(state.AuctionId), message.Version, occurredAt);
         return occasion switch
         {
             LotEvent.OccasionOneofCase.BidPlaced => DecodeBid(message, eventId, lotId, occurredAt, snapshot),
@@ -224,21 +239,44 @@ public static class AuctionMapping
         var auctionId = Guid.Parse(message.AuctionId);
 
         // Каталог без удержанных лотов кончает аукцион тем же prebidding_ended:
-        // какой из двух исходов случился, говорит снимок.
-        if (occasion is AuctionEvent.OccasionOneofCase.AuctionFinished or AuctionEvent.OccasionOneofCase.PrebiddingEnded)
+        // какой из двух исходов случился, говорит снимок, а не имя факта.
+        AuctionEnd? end = (occasion, state.StatusCase) switch
         {
-            if (state.StatusCase == AuctionState.StatusOneofCase.Finished)
+            (AuctionEvent.OccasionOneofCase.PrebiddingEnded or AuctionEvent.OccasionOneofCase.AuctionFinished,
+                AuctionState.StatusOneofCase.Finished) => AuctionEnd.Finished,
+            (AuctionEvent.OccasionOneofCase.AuctionCancelled, AuctionState.StatusOneofCase.Cancelled) => AuctionEnd.Cancelled,
+            (AuctionEvent.OccasionOneofCase.AuctionDiscarded, AuctionState.StatusOneofCase.Discarded) => AuctionEnd.Discarded,
+            _ => null,
+        };
+        if (end is null)
+        {
+            switch (occasion)
             {
-                return new AuctionDecoded.Closed(new AuctionClosed(eventId, auctionId, message.Version, occurredAt));
+                case AuctionEvent.OccasionOneofCase.PrebiddingEnded:
+                    return new AuctionDecoded.Ignored();
+                case AuctionEvent.OccasionOneofCase.AuctionFinished or AuctionEvent.OccasionOneofCase.AuctionCancelled
+                    or AuctionEvent.OccasionOneofCase.AuctionDiscarded:
+                    return new AuctionDecoded.Poison($"{subject} state is not the status of its occasion");
             }
-            return occasion == AuctionEvent.OccasionOneofCase.PrebiddingEnded
-                ? new AuctionDecoded.Ignored()
-                : new AuctionDecoded.Poison("auction_finished state is not finished");
         }
 
         if (!Id(state.MeetupId, out var meetupId))
         {
             return new AuctionDecoded.Poison("meetup_id is not a canonical UUIDv7");
+        }
+        if (end is { } ended)
+        {
+            var registry = new List<Guid>(state.LotIds.Count);
+            foreach (var lot in state.LotIds)
+            {
+                if (!Id(lot, out var lotId) || registry.Contains(lotId))
+                {
+                    return new AuctionDecoded.Poison("registry lot id is invalid or repeated");
+                }
+                registry.Add(lotId);
+            }
+            return new AuctionDecoded.Closed(new AuctionClosed(eventId, auctionId, meetupId, message.Version, occurredAt,
+                ended, registry));
         }
         var (order, final) = occasion == AuctionEvent.OccasionOneofCase.FinalLineupFrozen
             ? (state.LineupFrozen?.Order, FinalOccasion.LineupFrozen)
@@ -410,14 +448,15 @@ public static class AuctionMapping
 
     // Неизвестное положение — яд, а не «ничего не менять»: снимок без
     // положения затёр бы реплику версией без содержания.
-    private static LotSnapshot? Snapshot(LotState state, Guid lotId, long version, DateTimeOffset occurredAt)
+    private static LotSnapshot? Snapshot(LotState state, Guid lotId, Guid auctionId, long version,
+        DateTimeOffset occurredAt)
     {
         switch (state.StatusCase)
         {
             case LotState.StatusOneofCase.Draft:
-                return new LotSnapshot(lotId, version, occurredAt, LotStatus.Draft, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Draft, null, null);
             case LotState.StatusOneofCase.Scheduled:
-                return new LotSnapshot(lotId, version, occurredAt, LotStatus.Scheduled, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Scheduled, null, null);
             case LotState.StatusOneofCase.Trading:
             {
                 var trading = state.Trading;
@@ -428,21 +467,21 @@ public static class AuctionMapping
                     deadline = parsed;
                 }
                 return Leader(trading.HasLeaderId, trading.LeaderId, out var leader)
-                    ? new LotSnapshot(lotId, version, occurredAt, LotStatus.Trading, deadline, leader)
+                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Trading, deadline, leader)
                     : null;
             }
             case LotState.StatusOneofCase.Held:
                 return Leader(state.Held.HasLeaderId, state.Held.LeaderId, out var held)
-                    ? new LotSnapshot(lotId, version, occurredAt, LotStatus.Held, null, held)
+                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Held, null, held)
                     : null;
             case LotState.StatusOneofCase.Sold:
-                return Id(state.Sold.WinnerId, out var winner)
-                    ? new LotSnapshot(lotId, version, occurredAt, LotStatus.Sold, null, winner)
+                return Id(state.Sold.WinnerId, out var winner) && state.Sold.Price is { } sale && Price(sale)
+                    ? new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Sold, null, winner, sale.Clone())
                     : null;
             case LotState.StatusOneofCase.Unsold:
-                return new LotSnapshot(lotId, version, occurredAt, LotStatus.Unsold, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Unsold, null, null);
             case LotState.StatusOneofCase.Withdrawn:
-                return new LotSnapshot(lotId, version, occurredAt, LotStatus.Withdrawn, null, null);
+                return new LotSnapshot(lotId, auctionId, version, occurredAt, LotStatus.Withdrawn, null, null);
             default:
                 return null;
         }
@@ -516,8 +555,8 @@ public static class AuctionMapping
         {
             return new AuctionDecoded.Poison("lot_sold winner, bid, price, currency or sold_at is invalid");
         }
-        return new AuctionDecoded.Sale(new AuctionSale(eventId, lotId, message.Version, occurredAt, winner, price.Clone(),
-            snapshot));
+        return new AuctionDecoded.Sale(new AuctionSale(eventId, lotId, Guid.Parse(state.AuctionId), message.Version,
+            occurredAt, winner, price.Clone(), snapshot));
     }
 
     // RFC 3339 точность не ограничивает, а Auction пишет Instant.toString:

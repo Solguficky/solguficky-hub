@@ -12,6 +12,7 @@ public enum AuctionOutcome
 {
     Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected, LotReplicated,
     FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced, PredictionResultsAnnounced,
+    AuctionCancelled, AuctionEnded,
 }
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
@@ -38,21 +39,29 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
         }
 
-        // Реплика и отметка — той же транзакцией, что ключ: повтор события до
-        // них не доходит, а дошедший после чистки ключа гаснет на версии
-        // реплики и первичном ключе отметки. Отметку получает лидер ставки
-        // (state.trading.leader_id), ручной и автоставки одинаково, если на этом
-        // лоте у него не было ни отметки, ни снятия (ADR-063, п. 2).
-        if (bid.Snapshot is { } snapshot)
+        // Ставка кончившегося аукциона пришла позже его конца: ни реплики, ни
+        // отметки, ни круга анонса она не создаёт (ADR-063, дополнение
+        // 2026-10-12). Блокировка аукциона держит порядок с его концом.
+        await AuctionEndStore.LockShared(work, bid.AuctionId, cancellationToken);
+        var ended = await AuctionEndStore.Read(work, bid.AuctionId, cancellationToken);
+        if (ended is null)
         {
-            await LotReplicaStore.Apply(work, snapshot, now, cancellationToken);
-        }
-        await FavoriteStore.AutoFollow(work, bid.Leader, bid.LotId, now, cancellationToken);
+            // Реплика и отметка — той же транзакцией, что ключ: повтор события до
+            // них не доходит, а дошедший после чистки ключа гаснет на версии
+            // реплики и первичном ключе отметки. Отметку получает лидер ставки
+            // (state.trading.leader_id), ручной и автоставки одинаково, если на этом
+            // лоте у него не было ни отметки, ни снятия (ADR-063, п. 2).
+            if (bid.Snapshot is { } snapshot)
+            {
+                await LotReplicaStore.Apply(work, snapshot, now, cancellationToken);
+            }
+            await FavoriteStore.AutoFollow(work, bid.Leader, bid.LotId, now, cancellationToken);
 
-        // Лидер ставки — участник аукциона и адресат анонса финала (PER-477).
-        // Ручная ставка, перебитая той же командой, тоже участие: человек
-        // ставил, а лидерство он потерял уже чужой автоставкой.
-        await FinalStore.AddBidder(work, bid.AuctionId, bid.Leader, now, cancellationToken);
+            // Лидер ставки — участник аукциона и адресат анонса финала (PER-477).
+            // Ручная ставка, перебитая той же командой, тоже участие: человек
+            // ставил, а лидерство он потерял уже чужой автоставкой.
+            await FinalStore.AddBidder(work, bid.AuctionId, bid.Leader, now, cancellationToken);
+        }
 
         var created = new Dictionary<string, int>();
         var notAfter = now + options.Value.StaleAfter;
@@ -123,6 +132,19 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
                 cancellationToken,
                 await NotificationStore.DeliverySurface(work, proxy.RecipientId, cancellationToken));
         }
+
+        // Лидер поздней ставки отменённого аукциона узнаёт об отмене, даже если
+        // отметки у него не было: повод — сам факт отмены, и уже извещённый
+        // гаснет на ключе (тип, повод, получатель) (ADR-047, «Факт отмены»).
+        if (ended is { End: AuctionEnd.Cancelled } cancelled)
+        {
+            var notification = AuctionFacts.Cancellation(Guid.CreateVersion7(now), bid.Leader, bid.AuctionId,
+                cancelled.MeetupId, cancelled.EventId, [], now, notAfter);
+            created[AuctionFacts.AuctionCancelledType] = await NotificationStore.AddAddressed(work, notification,
+                AuctionFacts.AuctionCancelledType, AuctionFacts.AuctionCauseKind, cancelled.EventId.ToString(), now,
+                notAfter, cancellationToken,
+                await NotificationStore.DeliverySurface(work, bid.Leader, cancellationToken));
+        }
         await work.Commit(cancellationToken);
         return new AuctionApplication(outcome, created);
     }
@@ -143,7 +165,10 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
         }
 
-        if (sale.Snapshot is { } snapshot)
+        // Продажа кончившегося аукциона остаётся продажей и покупку извещает, но
+        // реплику его лота уже не воскрешает.
+        await AuctionEndStore.LockShared(work, sale.AuctionId, cancellationToken);
+        if (sale.Snapshot is { } snapshot && await AuctionEndStore.Read(work, sale.AuctionId, cancellationToken) is null)
         {
             await LotReplicaStore.Apply(work, snapshot, now, cancellationToken);
         }
@@ -183,6 +208,15 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, fact.EventId, now, cancellationToken) == 0)
         {
             return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        // Факт лота кончившегося аукциона — например, снятие после отмены — ни
+        // реплики, ни удержания для анонса не пишет.
+        await AuctionEndStore.LockShared(work, fact.Snapshot.AuctionId, cancellationToken);
+        if (await AuctionEndStore.Read(work, fact.Snapshot.AuctionId, cancellationToken) is not null)
+        {
+            await work.Commit(cancellationToken);
+            return new AuctionApplication(AuctionOutcome.AuctionEnded, new Dictionary<string, int>());
         }
 
         await LotReplicaStore.Apply(work, fact.Snapshot, now, cancellationToken);
@@ -253,7 +287,16 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         return new AuctionApplication(outcome, new Dictionary<string, int> { [type] = created });
     }
 
-    /// <summary>Конец аукциона: круг анонса и удержания лотов больше не нужны.</summary>
+    /// <summary>
+    /// Конец аукциона: круг анонса и удержания лотов больше не нужны, а
+    /// избранное его лотов уходит — реплики, отметки, живые и снятые, и
+    /// несработавшие задания напоминания (ADR-063, дополнение 2026-10-12).
+    /// Прошедший и отменённый аукцион пишут строку «аукцион закончен», которая
+    /// не даёт старому факту лота воскресить реплику и отметку; удалённый до
+    /// торгов её не пишет — он рождается заново под тем же идентификатором.
+    /// Отмена ещё и извещает причастных: по факту на человека, покупателю — со
+    /// своими покупками.
+    /// </summary>
     public async Task<AuctionApplication> Apply(AuctionClosed closed, DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
@@ -262,10 +305,43 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
         }
 
+        // Порядок держит ручную отметку: удаление реплики ждёт отметку в полёте,
+        // и только после него причастные читаются вместе с ней. Новая отметка
+        // после удаления реплики получает «лот неизвестен».
+        await AuctionEndStore.Lock(work, closed.AuctionId, cancellationToken);
+        var lots = await AuctionEndStore.TakeLots(work, closed, cancellationToken);
+        var lotIds = lots.Select(lot => lot.LotId).ToArray();
+        var followers = closed.End == AuctionEnd.Cancelled
+            ? await FavoriteStore.Followers(work, lotIds, cancellationToken)
+            : [];
+        await FavoriteStore.Forget(work, lotIds, cancellationToken);
+        await AuctionEndStore.CancelReminders(work, lotIds, cancellationToken);
+        if (closed.End != AuctionEnd.Discarded)
+        {
+            await AuctionEndStore.Mark(work, closed, now, cancellationToken);
+        }
         await FinalStore.Forget(work, closed.AuctionId, cancellationToken);
 
+        if (closed.End != AuctionEnd.Cancelled)
+        {
+            await work.Commit(cancellationToken);
+            return new AuctionApplication(AuctionOutcome.AuctionForgotten, new Dictionary<string, int>());
+        }
+
+        var notAfter = now + options.Value.StaleAfter;
+        var created = 0;
+        foreach (var (recipient, purchases) in AuctionFacts.CancellationAudience(followers, lots))
+        {
+            var notification = AuctionFacts.Cancellation(Guid.CreateVersion7(now), recipient, closed.AuctionId,
+                closed.MeetupId, closed.EventId, purchases, now, notAfter);
+            created += await NotificationStore.AddAddressed(work, notification, AuctionFacts.AuctionCancelledType,
+                AuctionFacts.AuctionCauseKind, closed.EventId.ToString(), now, notAfter, cancellationToken,
+                await NotificationStore.DeliverySurface(work, recipient, cancellationToken));
+        }
+
         await work.Commit(cancellationToken);
-        return new AuctionApplication(AuctionOutcome.AuctionForgotten, new Dictionary<string, int>());
+        return new AuctionApplication(AuctionOutcome.AuctionCancelled,
+            new Dictionary<string, int> { [AuctionFacts.AuctionCancelledType] = created });
     }
 
     /// <summary>
