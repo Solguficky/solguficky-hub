@@ -229,30 +229,34 @@ public class AuctionEndTests
 
     /// <summary>
     /// Удалённый до торгов аукцион чистит избранное лотов своего реестра, но
-    /// строки «закончен» не пишет: лот нового рождения под тем же
-    /// <c>auction_id</c> получает реплику и отметку как обычно.
+    /// строки «закончен» не пишет и круг анонса не трогает: ставка нового
+    /// рождения под тем же <c>auction_id</c>, обогнавшая запоздавшее удаление,
+    /// сохраняет реплику, отметку и место в круге, а следующая ставка нового
+    /// рождения тоже их получает.
     /// </summary>
     [Fact]
-    public async Task When_AuctionDiscarded_Expect_RegistryCleanedAndNewBirthLotReplicated()
+    public async Task When_AuctionDiscarded_Expect_RegistryCleanedAndNewBirthKept()
     {
         using var db = Database();
         await using var source = NpgsqlDataSource.Create(db.ConnectionString);
         var store = Store(source);
         var favorites = Favorites(source);
         var auction = EventFactory.AuctionOfMeetup();
-        var (old, reborn) = (EventFactory.NewId(), EventFactory.NewId());
+        var (old, reborn, later) = (EventFactory.NewId(), EventFactory.NewId(), EventFactory.NewId());
         var person = Guid.CreateVersion7();
         await store.Apply(LotFact("lot_drafted", InAuction(EventFactory.Drafted(old), auction)), Now, Cancellation);
         await favorites.Follow(person, Guid.Parse(old), Cancellation);
+        await store.Apply(Decode(EventFactory.Bid(reborn, leader: person.ToString(), auction: auction)), Now, Cancellation);
 
         var applied = await store.Apply(Closed(EventFactory.AuctionDiscarded(auction, EventFactory.NewId(), old)), Now,
             Cancellation);
-        await store.Apply(Decode(EventFactory.Bid(reborn, leader: person.ToString(), auction: auction)), Now, Cancellation);
+        await store.Apply(Decode(EventFactory.Bid(later, leader: person.ToString(), auction: auction)), Now, Cancellation);
 
         applied.Outcome.ShouldBe(AuctionOutcome.AuctionForgotten);
         (await Count(db, "auction_ended")).ShouldBe(0);
-        (await favorites.List(person, Cancellation)).ShouldBe([Guid.Parse(reborn)]);
-        (await Count(db, "lot_replica")).ShouldBe(1);
+        (await favorites.List(person, Cancellation)).ShouldBe([Guid.Parse(reborn), Guid.Parse(later)], ignoreOrder: true);
+        (await Count(db, "lot_replica")).ShouldBe(2);
+        (await Count(db, "auction_bidder")).ShouldBe(1);
     }
 
     /// <summary>Строка «аукцион закончен» уходит той же чисткой по сроку, что реплика.</summary>

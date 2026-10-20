@@ -341,11 +341,14 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             : [];
         await FavoriteStore.Forget(work, lotIds, cancellationToken);
         await AuctionEndStore.CancelReminders(work, lotIds, cancellationToken);
+        // Удалённый до торгов круга анонса не имеет: ставок и удержаний у него не
+        // было, а круг по тому же auction_id — уже нового рождения, чья ставка
+        // могла обогнать запоздавшее удаление.
         if (closed.End != AuctionEnd.Discarded)
         {
             await AuctionEndStore.Mark(work, closed, now, cancellationToken);
+            await FinalStore.Forget(work, closed.AuctionId, cancellationToken);
         }
-        await FinalStore.Forget(work, closed.AuctionId, cancellationToken);
 
         if (closed.End != AuctionEnd.Cancelled)
         {
