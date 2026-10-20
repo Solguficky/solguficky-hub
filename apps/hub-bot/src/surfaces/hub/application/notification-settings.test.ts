@@ -49,6 +49,8 @@ function notificationsStub(overrides: Partial<Notifications>): Notifications {
     setAuctionNotifications: vi.fn(),
     broadcastToMeetupSubscribers: vi.fn(),
     broadcastToCommunity: vi.fn(),
+    previewMeetupBroadcast: vi.fn(),
+    previewCommunityBroadcast: vi.fn(),
     ...overrides,
   };
 }

@@ -251,6 +251,27 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
         return Map(broadcastId, result);
     }
 
+    public override async Task<BroadcastAudience> PreviewMeetupBroadcast(
+        PreviewMeetupBroadcastRequest request,
+        ServerCallContext context)
+    {
+        var authorId = RequestValidation.IdentityId(request.IdentityId);
+        var meetupId = RequestValidation.MeetupId(request.MeetupId);
+        var result = await broadcasts.PreviewMeetup(authorId, meetupId, Chain(context));
+
+        return Map(result);
+    }
+
+    public override async Task<BroadcastAudience> PreviewCommunityBroadcast(
+        PreviewCommunityBroadcastRequest request,
+        ServerCallContext context)
+    {
+        var authorId = RequestValidation.IdentityId(request.IdentityId);
+        var result = await broadcasts.PreviewCommunity(authorId, Chain(context));
+
+        return Map(result);
+    }
+
     // Заголовки цепочки приходят метаданными gRPC, а не полями запроса
     // (docs/architecture/integration.md). Пустые значения — то же, что
     // отсутствие: своего id сервис не рождает.
@@ -292,6 +313,21 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
                 "the meetup is not replicated yet"),
 
             _ => throw new InvalidOperationException($"unexpected broadcast result {result}"),
+        };
+
+    private static BroadcastAudience Map(BroadcastPreview result) =>
+        (result.Authority.Verdict, result.Audience) switch
+        {
+            (AuthorityVerdict.Denied, _) => throw Refused(StatusCode.PermissionDenied, "not allowed to broadcast"),
+            (AuthorityVerdict.Unavailable, _) => throw Refused(
+                StatusCode.Unavailable,
+                "the owner of the resource is unavailable and the right is not confirmed"),
+            (AuthorityVerdict.Failed, _) => throw Refused(StatusCode.Internal, "the right check failed"),
+            (_, AudienceRead.MeetupNotReplicated) => throw Refused(
+                StatusCode.Unavailable,
+                "the meetup is not replicated yet"),
+            (_, AudienceRead.Counted counted) => new BroadcastAudience { RecipientCount = counted.RecipientCount },
+            _ => throw new InvalidOperationException($"unexpected broadcast preview {result}"),
         };
 
     private static BroadcastAccepted Accepted(Guid broadcastId, DateTimeOffset acceptedAt, bool created) =>

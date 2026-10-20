@@ -301,6 +301,7 @@ export type ExecuteRequest =
     }
   | NotificationRequest
   | BroadcastRequest
+  | PreviewBroadcastRequest
   | LotFormRequest
   | AuctionConsoleRequest;
 
@@ -734,6 +735,15 @@ export type BroadcastRequest = {
   deadlineAt?: number;
 };
 
+export type PreviewBroadcastRequest = {
+  identity: Person;
+  intent: "preview-broadcast";
+  audience: BroadcastAudience;
+  requestId?: string;
+  useCase?: string;
+  deadlineAt?: number;
+};
+
 // Подписка и категории — две независимые плоскости, и намерения их не смешивают:
 // «слежу за этой сходкой» не выводится из набора категорий и не выводит его.
 export type NotificationRequest =
@@ -1142,6 +1152,11 @@ export type ExecuteResult =
       kind: "broadcast-accepted";
       audience: BroadcastAudience;
       repeated?: true;
+    }
+  | {
+      kind: "broadcast-audience";
+      audience: BroadcastAudience;
+      recipientCount: number;
     }
   | { kind: "material-attached"; meetup: MeetupSnapshot }
   | { kind: "material-removed"; meetup: MeetupSnapshot }

@@ -40,6 +40,17 @@ public abstract record BroadcastOutcome
     public sealed record MeetupNotReplicated : BroadcastOutcome;
 }
 
+public abstract record AudienceRead
+{
+    private AudienceRead()
+    {
+    }
+
+    public sealed record Counted(int RecipientCount) : AudienceRead;
+
+    public sealed record MeetupNotReplicated : AudienceRead;
+}
+
 /// <summary>
 /// Ключ идемпотентности рассылки в таблице <c>broadcast</c> и её разворот в
 /// адресные факты одной транзакцией.
@@ -136,6 +147,35 @@ public sealed class BroadcastStore(NpgsqlDataSource source)
         await work.Commit(cancellationToken);
 
         return new BroadcastOutcome.Accepted(acceptedAt, facts);
+    }
+
+    public async Task<AudienceRead> ReadMeetupAudience(
+        Guid authorId,
+        Guid meetupId,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+
+        if (await ReplicaStore.Meetup(work, meetupId, cancellationToken) is null)
+        {
+            return new AudienceRead.MeetupNotReplicated();
+        }
+
+        var count = await NotificationStore.CountOrganizerRecipients(
+            work,
+            meetupId,
+            authorId,
+            cancellationToken);
+
+        return new AudienceRead.Counted(count);
+    }
+
+    public async Task<AudienceRead> ReadCommunityAudience(Guid authorId, CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        var count = await NotificationStore.CountCommunityRecipients(work, authorId, cancellationToken);
+
+        return new AudienceRead.Counted(count);
     }
 
     private static async Task<BroadcastOutcome> Existing(

@@ -1,6 +1,10 @@
 import { rpcMeta } from "../../../core/rpc-metadata.js";
 import type { Notifications } from "../notifications/port.js";
-import type { BroadcastRequest, ExecuteResult } from "./types.js";
+import type {
+  BroadcastRequest,
+  ExecuteResult,
+  PreviewBroadcastRequest,
+} from "./types.js";
 
 // Предел сообщения Telegram в UTF-16-единицах — тот же, которым Notifications
 // ограничивает тело рассылки (docs/architecture/integration.md). Длина строки
@@ -28,10 +32,18 @@ export function checkBroadcastBody(text: string): BroadcastBodyCheck {
 export function createBroadcasts(
   notifications: Pick<
     Notifications,
-    "broadcastToMeetupSubscribers" | "broadcastToCommunity"
+    | "broadcastToMeetupSubscribers"
+    | "broadcastToCommunity"
+    | "previewMeetupBroadcast"
+    | "previewCommunityBroadcast"
   >,
 ) {
-  return async (request: BroadcastRequest): Promise<ExecuteResult> => {
+  return async (
+    request: BroadcastRequest | PreviewBroadcastRequest,
+  ): Promise<ExecuteResult> => {
+    if (request.intent === "preview-broadcast") {
+      return previewBroadcast(notifications, request);
+    }
     const meta = rpcMeta(request);
     const broadcast = {
       identityId: request.identity.identityId,
@@ -63,4 +75,42 @@ export function createBroadcasts(
     }
     return { kind: "dependency-rejected", reason: result.kind };
   };
+}
+
+async function previewBroadcast(
+  notifications: Pick<
+    Notifications,
+    "previewMeetupBroadcast" | "previewCommunityBroadcast"
+  >,
+  request: PreviewBroadcastRequest,
+): Promise<ExecuteResult> {
+  const meta = rpcMeta(request);
+  const result =
+    request.audience.kind === "meetup"
+      ? await notifications.previewMeetupBroadcast(
+          {
+            identityId: request.identity.identityId,
+            meetupId: request.audience.meetupId,
+          },
+          meta,
+        )
+      : await notifications.previewCommunityBroadcast(
+          { identityId: request.identity.identityId },
+          meta,
+        );
+  if (result.kind === "ok") {
+    return {
+      kind: "broadcast-audience",
+      audience: request.audience,
+      recipientCount: result.recipientCount,
+    };
+  }
+  if (result.kind === "invalid") {
+    return {
+      kind: "dependency-rejected",
+      reason: "invalid",
+      cause: result.cause,
+    };
+  }
+  return { kind: "dependency-rejected", reason: result.kind };
 }

@@ -5716,10 +5716,18 @@ describe("confirmations", () => {
   });
 
   it("asks before a broadcast with a red answer and returns a refusal to the meetup", async () => {
-    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
-      kind: "meetup-card",
-      meetup: publishedMeetup(),
-    });
+    const meetup = publishedMeetup();
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockImplementation(async (request) =>
+        request.intent === "preview-broadcast"
+          ? {
+              kind: "broadcast-audience" as const,
+              audience: request.audience,
+              recipientCount: 2,
+            }
+          : { kind: "meetup-card" as const, meetup },
+      );
     const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
@@ -8597,11 +8605,19 @@ describe("broadcast frames", () => {
     });
   });
 
-  it("previews the text and warns of irreversibility before anything is sent", async () => {
+  it("previews the text and names how many people will receive it", async () => {
     const meetup = publishedMeetup();
     const execute = vi
       .fn<Dispatcher["execute"]>()
-      .mockResolvedValue({ kind: "meetup-card", meetup });
+      .mockImplementation(async (request) =>
+        request.intent === "preview-broadcast"
+          ? {
+              kind: "broadcast-audience" as const,
+              audience: request.audience,
+              recipientCount: 3,
+            }
+          : { kind: "meetup-card" as const, meetup },
+      );
     const { bot, calls } = createHarness(resolvedIdentity("admin"), {
       execute,
     });
@@ -8623,17 +8639,25 @@ describe("broadcast frames", () => {
         ([request]) => request.intent === "send-broadcast",
       ),
     ).toBe(false);
-    // Сходку читают при вопросе и не перечитывают на ответе: сбой Meetups в
-    // этот момент не должен стоить человеку набранного текста.
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(
+      execute.mock.calls.filter(
+        ([request]) => request.intent === "view-meetup",
+      ),
+    ).toHaveLength(1);
+    expect(
+      execute.mock.calls.filter(
+        ([request]) => request.intent === "preview-broadcast",
+      ),
+    ).toHaveLength(1);
     const preview = sentMessages(calls).at(-2);
     const confirmation = sentMessages(calls).at(-1);
-    // Предпросмотр — ровно текст рассылки, без заголовка и числа получателей.
     expect(sendMessageText(preview)).toBe(body);
     const text = sendMessageText(confirmation) ?? "";
     expect(text).toContain("Отменить отправку будет нельзя");
     expect(text).toContain("«Настолки»");
-    expect(text).not.toMatch(/\d/);
+    expect(text).toContain("включены сообщения организатора");
+    expect(text).toContain("Его получит 3 человека.");
+    expect(JSON.stringify(confirmation?.payload)).toContain("Да, отправить");
     expect(confirmation?.payload).toMatchObject({
       reply_parameters: { message_id: expect.any(Number) },
     });
@@ -8641,6 +8665,115 @@ describe("broadcast frames", () => {
       new RegExp(`v1:bc:ms:${meetupToken}:[A-Za-z0-9_-]{22}`),
     );
     expect(JSON.stringify(confirmation?.payload)).toContain("v1:bc:no");
+  });
+
+  it("warns that nobody will receive the announcement and still offers to send", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "broadcast-audience",
+      audience: { kind: "community" },
+      recipientCount: 0,
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:bc:c"));
+    await bot.handleUpdate(
+      replyUpdate({
+        text: body,
+        fromId: 42,
+        replyMessageId: lastQuestionId(calls),
+        replyFromId: 1,
+      }),
+    );
+
+    const confirmation = sentMessages(calls).at(-1);
+    const text = sendMessageText(confirmation) ?? "";
+    expect(text).toContain("Сообщение никто не получит.");
+    expect(text).toContain("включены объявления");
+    expect(text).not.toContain("Его получит");
+    expect(JSON.stringify(confirmation?.payload)).toContain("Да, отправить");
+    expect(execute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: "preview-broadcast",
+        audience: { kind: "community" },
+      }),
+    );
+  });
+
+  it("does not offer to send when the audience count is unknown", async () => {
+    const meetup = publishedMeetup();
+    const execute = vi
+      .fn<Dispatcher["execute"]>()
+      .mockImplementation(async (request) =>
+        request.intent === "preview-broadcast"
+          ? {
+              kind: "dependency-rejected" as const,
+              reason: "unavailable" as const,
+            }
+          : { kind: "meetup-card" as const, meetup },
+      );
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate(`v1:bc:m:${meetupToken}`));
+    const questionId = lastQuestionId(calls);
+    const beforeReply = calls.length;
+    await bot.handleUpdate(
+      replyUpdate({
+        text: body,
+        fromId: 42,
+        replyMessageId: questionId,
+        replyFromId: 1,
+      }),
+    );
+
+    const frame = sentMessages(calls).at(-1);
+    const text = sendMessageText(frame) ?? "";
+    expect(text).toContain("Ничего не отправлено");
+    expect(text).toContain("сколько человек получит сообщение");
+    expect(JSON.stringify(frame?.payload)).not.toContain("Да, отправить");
+    expect(
+      calls
+        .slice(beforeReply)
+        .some((call) => call.method === "editMessageReplyMarkup"),
+    ).toBe(false);
+  });
+
+  it("closes the question when the audience count cannot be retried", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "rejected",
+      reason: "notifications-not-configured",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:bc:c"));
+    const beforeReply = calls.length;
+    await bot.handleUpdate(
+      replyUpdate({
+        text: body,
+        fromId: 42,
+        replyMessageId: lastQuestionId(calls),
+        replyFromId: 1,
+      }),
+    );
+
+    const frame = sentMessages(calls).at(-1);
+    const text = sendMessageText(frame) ?? "";
+    expect(text).toContain("Ничего не отправлено");
+    expect(text).not.toContain("ещё раз");
+    expect(JSON.stringify(frame?.payload)).not.toContain("Да, отправить");
+    expect(
+      calls
+        .slice(beforeReply)
+        .some((call) => call.method === "editMessageReplyMarkup"),
+    ).toBe(true);
   });
 
   it("refuses a broadcast that is too long to send with a re-entry button", async () => {

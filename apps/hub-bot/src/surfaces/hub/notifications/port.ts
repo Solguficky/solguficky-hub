@@ -67,6 +67,10 @@ export type BroadcastResult =
   | { kind: "ok"; created: boolean }
   | NotificationFailure;
 
+export type BroadcastAudienceCount =
+  | { kind: "ok"; recipientCount: number }
+  | NotificationFailure;
+
 // Автор, ключ и текст. Круга адресатов в команде нет: его разворачивает сервис,
 // и право на рассылку он проверяет сам, какой бы ни была поверхность.
 export type Broadcast = {
@@ -125,4 +129,12 @@ export type Notifications = {
     broadcast: Broadcast,
     meta?: RpcMetadata,
   ): Promise<BroadcastResult>;
+  previewMeetupBroadcast(
+    request: { identityId: string; meetupId: string },
+    meta?: RpcMetadata,
+  ): Promise<BroadcastAudienceCount>;
+  previewCommunityBroadcast(
+    request: { identityId: string },
+    meta?: RpcMetadata,
+  ): Promise<BroadcastAudienceCount>;
 };

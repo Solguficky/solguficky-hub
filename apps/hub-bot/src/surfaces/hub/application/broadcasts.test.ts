@@ -5,7 +5,11 @@ import {
   checkBroadcastBody,
   createBroadcasts,
 } from "./broadcasts.js";
-import type { BroadcastRequest, Person } from "./types.js";
+import type {
+  BroadcastRequest,
+  Person,
+  PreviewBroadcastRequest,
+} from "./types.js";
 
 const identity: Person = {
   identityId: "identity-id",
@@ -25,12 +29,20 @@ function request(overrides: Partial<BroadcastRequest> = {}): BroadcastRequest {
 
 function notificationsStub(
   overrides: Partial<
-    Pick<Notifications, "broadcastToMeetupSubscribers" | "broadcastToCommunity">
+    Pick<
+      Notifications,
+      | "broadcastToMeetupSubscribers"
+      | "broadcastToCommunity"
+      | "previewMeetupBroadcast"
+      | "previewCommunityBroadcast"
+    >
   >,
 ) {
   return {
     broadcastToMeetupSubscribers: vi.fn(),
     broadcastToCommunity: vi.fn(),
+    previewMeetupBroadcast: vi.fn(),
+    previewCommunityBroadcast: vi.fn(),
     ...overrides,
   };
 }
@@ -119,6 +131,52 @@ describe("broadcasts", () => {
     expect(result).toEqual({
       kind: "dependency-rejected",
       reason: "forbidden",
+    });
+  });
+
+  it("reads the meetup audience without sending", async () => {
+    const notifications = notificationsStub({
+      previewMeetupBroadcast: vi
+        .fn()
+        .mockResolvedValue({ kind: "ok", recipientCount: 3 }),
+    });
+    const preview: PreviewBroadcastRequest = {
+      identity,
+      intent: "preview-broadcast",
+      audience: { kind: "meetup", meetupId: "meetup-id" },
+    };
+
+    const result = await createBroadcasts(notifications)(preview);
+
+    expect(result).toEqual({
+      kind: "broadcast-audience",
+      audience: preview.audience,
+      recipientCount: 3,
+    });
+    expect(notifications.previewMeetupBroadcast).toHaveBeenCalledWith(
+      { identityId: "identity-id", meetupId: "meetup-id" },
+      undefined,
+    );
+    expect(notifications.broadcastToMeetupSubscribers).not.toHaveBeenCalled();
+  });
+
+  it("reads an empty community audience as zero", async () => {
+    const notifications = notificationsStub({
+      previewCommunityBroadcast: vi
+        .fn()
+        .mockResolvedValue({ kind: "ok", recipientCount: 0 }),
+    });
+
+    const result = await createBroadcasts(notifications)({
+      identity,
+      intent: "preview-broadcast",
+      audience: { kind: "community" },
+    });
+
+    expect(result).toEqual({
+      kind: "broadcast-audience",
+      audience: { kind: "community" },
+      recipientCount: 0,
     });
   });
 });

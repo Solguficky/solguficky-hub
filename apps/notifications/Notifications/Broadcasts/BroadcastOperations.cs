@@ -12,6 +12,8 @@ namespace Notifications.Broadcasts;
 /// <param name="Outcome">Пусто, если право не подтверждено и до ключа команда не дошла.</param>
 public sealed record BroadcastResult(AuthorityAnswer Authority, BroadcastOutcome? Outcome);
 
+public sealed record BroadcastPreview(AuthorityAnswer Authority, AudienceRead? Audience);
+
 /// <summary>
 /// Две ручные рассылки одним механизмом (ADR-028 §7): разные авторизация и
 /// аудитория, общий приём ключа и разворот в адресные факты. Транспорт сюда не
@@ -63,6 +65,46 @@ public sealed class BroadcastOperations(
             answer,
             new AcceptedBroadcast(broadcastId, NotificationFacts.CommunityAnnouncementType, authorId, null, body, forwarded.RequestId),
             forwarded);
+    }
+
+    public async Task<BroadcastPreview> PreviewMeetup(Guid authorId, Guid meetupId, Forwarded forwarded)
+    {
+        var answer = await authority.MeetupBroadcast(authorId, meetupId, forwarded);
+
+        if (answer.Verdict != AuthorityVerdict.Granted)
+        {
+            WritePreview(forwarded, "declined", NotificationFacts.OrganizerMessageType, authorId, meetupId, answer, null);
+            return new BroadcastPreview(answer, null);
+        }
+
+        var read = await store.ReadMeetupAudience(authorId, meetupId, forwarded.Cancellation);
+        WritePreview(
+            forwarded,
+            read is AudienceRead.Counted ? "counted" : "meetup_not_replicated",
+            NotificationFacts.OrganizerMessageType,
+            authorId,
+            meetupId,
+            answer,
+            read is AudienceRead.Counted counted ? counted.RecipientCount : null);
+
+        return new BroadcastPreview(answer, read);
+    }
+
+    public async Task<BroadcastPreview> PreviewCommunity(Guid authorId, Forwarded forwarded)
+    {
+        var answer = await authority.CommunityAnnouncement(authorId, forwarded);
+
+        if (answer.Verdict != AuthorityVerdict.Granted)
+        {
+            WritePreview(forwarded, "declined", NotificationFacts.CommunityAnnouncementType, authorId, null, answer, null);
+            return new BroadcastPreview(answer, null);
+        }
+
+        var read = await store.ReadCommunityAudience(authorId, forwarded.Cancellation);
+        var count = read is AudienceRead.Counted counted ? counted.RecipientCount : (int?)null;
+        WritePreview(forwarded, "counted", NotificationFacts.CommunityAnnouncementType, authorId, null, answer, count);
+
+        return new BroadcastPreview(answer, read);
     }
 
     private async Task<BroadcastResult> Accept(
@@ -139,5 +181,52 @@ public sealed class BroadcastOperations(
         }
 
         return fields;
+    }
+
+    private void WritePreview(
+        Forwarded forwarded,
+        string outcome,
+        string type,
+        Guid authorId,
+        Guid? meetupId,
+        AuthorityAnswer answer,
+        int? recipientCount)
+    {
+        var fields = new Dictionary<string, object>(StringComparer.Ordinal)
+        {
+            ["service"] = NotificationsHost.ServiceId,
+            ["operation"] = "broadcast_preview",
+            ["outcome"] = outcome,
+            ["type"] = type,
+            ["identity_id"] = authorId.ToString(),
+        };
+
+        if (meetupId is { } meetup)
+        {
+            fields["meetup_id"] = meetup.ToString();
+        }
+
+        if (answer.Verdict != AuthorityVerdict.Granted)
+        {
+            fields["verdict"] = answer.Verdict.ToString();
+            fields["reason"] = answer.Reason;
+        }
+
+        if (recipientCount is { } count)
+        {
+            fields["recipient_count"] = count;
+        }
+
+        if (forwarded.RequestId is { } requestId)
+        {
+            fields["request_id"] = requestId;
+        }
+
+        if (forwarded.UseCase is { } useCase)
+        {
+            fields["use_case"] = useCase;
+        }
+
+        OperationLog.Write(logger, LogLevel.Information, null, fields);
     }
 }

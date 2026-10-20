@@ -28,6 +28,7 @@ import {
 import { type RpcClientOptions, traceRpc } from "../../../core/tracing.js";
 import type {
   AuctionNotificationsResult,
+  BroadcastAudienceCount,
   BroadcastResult,
   CategoryState,
   GlobalPreferences,
@@ -52,6 +53,8 @@ type NotificationsRpc = Pick<
   | "setAuctionNotificationPreferences"
   | "broadcastToMeetupSubscribers"
   | "broadcastToCommunity"
+  | "previewMeetupBroadcast"
+  | "previewCommunityBroadcast"
 >;
 
 // Избранные лоты (PER-495) — порт аукционного дерева на том же соединении:
@@ -153,6 +156,19 @@ export function createNotificationsAdapter(
       return toFailure(cause);
     }
   };
+  const audience = async (
+    operation: () => Promise<{ recipientCount: number }>,
+  ): Promise<BroadcastAudienceCount> => {
+    try {
+      const response = await operation();
+      return Number.isInteger(response.recipientCount) &&
+        response.recipientCount >= 0
+        ? { kind: "ok", recipientCount: response.recipientCount }
+        : { kind: "invalid", cause: response.recipientCount };
+    } catch (cause) {
+      return toFailure(cause);
+    }
+  };
   // Частота вне словаря — `UNSPECIFIED` или число новее бота — ответ вне
   // контракта: сервер отдаёт умолчание `EVERY` сам, и бот его не додумывает.
   const auctionSettings = async (
@@ -196,6 +212,14 @@ export function createNotificationsAdapter(
           { identityId, id: broadcastId, body },
           options(meta),
         ),
+      ),
+    previewMeetupBroadcast: ({ identityId, meetupId }, meta) =>
+      audience(() =>
+        rpc.previewMeetupBroadcast({ identityId, meetupId }, options(meta)),
+      ),
+    previewCommunityBroadcast: ({ identityId }, meta) =>
+      audience(() =>
+        rpc.previewCommunityBroadcast({ identityId }, options(meta)),
       ),
     getGlobalPreferences: (identityId, meta) =>
       global(() =>

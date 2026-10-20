@@ -46,6 +46,10 @@ service NotificationsService {
   rpc BroadcastToMeetupSubscribers(BroadcastToMeetupSubscribersRequest) returns (BroadcastAccepted);
   rpc BroadcastToCommunity(BroadcastToCommunityRequest) returns (BroadcastAccepted);
 
+  // A read. No idempotency key, no body and no names.
+  rpc PreviewMeetupBroadcast(PreviewMeetupBroadcastRequest) returns (BroadcastAudience);
+  rpc PreviewCommunityBroadcast(PreviewCommunityBroadcastRequest) returns (BroadcastAudience);
+
   // Release notes: what the image of the caller's bot carries. These three
   // operations belong to no person, and none of them carries the surface: the
   // caller's token names it, and a surface reads and writes only its own
@@ -332,6 +336,26 @@ message BroadcastAccepted {
 
   // False when this call matched an already-accepted id.
   bool created = 3;
+}
+
+message PreviewMeetupBroadcastRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The author asking.
+  string identity_id = 1;
+
+  // Canonical lowercase UUIDv7 string with hyphens.
+  string meetup_id = 2;
+}
+
+message PreviewCommunityBroadcastRequest {
+  // Canonical lowercase UUIDv7 string with hyphens. The author asking.
+  string identity_id = 1;
+
+  // The audience is deliberately absent, as in BroadcastToCommunity.
+}
+
+// Names are absent. Zero is a present value, not an absent field.
+message BroadcastAudience {
+  int32 recipient_count = 1;
 }
 
 message ReportReleaseNotesRequest {
