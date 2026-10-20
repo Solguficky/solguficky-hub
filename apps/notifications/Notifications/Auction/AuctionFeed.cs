@@ -14,6 +14,12 @@ public static class AuctionFeed
     /// факт журнала розыгрыша на шине, сообщение — <c>RaffleEvent</c>.
     /// </summary>
     public const string RaffleDrawnSubject = "events.auction.raffle_drawn";
+
+    /// <summary>
+    /// Итоги прогнозов аукциона (ADR-067, PER-567): единственный факт журнала
+    /// итогов на шине, сообщение — <c>PredictionResultsEvent</c>.
+    /// </summary>
+    public const string PredictionResultsSettledSubject = "events.auction.prediction_results_settled";
     public static readonly EventFeed Feed = new(Source, "AUCTION_EVENTS", "notifications-auction-events");
 
     /// <summary>

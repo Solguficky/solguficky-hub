@@ -74,6 +74,28 @@ public sealed record AuctionFinal(Guid EventId, Guid AuctionId, Guid MeetupId, l
 public sealed record RaffleDraw(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
     IReadOnlyList<Guid> Tickets, int WinningTicket);
 
+/// <summary>
+/// Итог номинации: лоты, делившие первое место, или число — ровно одно из
+/// двух, — сколько угадали и имена угадавших. Стёртого имени нет, а в числе
+/// угадавших он остаётся.
+/// </summary>
+public sealed record PredictionOutcome(PredictionNomination Nomination, IReadOnlyList<Guid>? Lots, long? Number,
+    int Winners, IReadOnlyList<string> WinnerNames);
+
+/// <summary>Свой результат по номинации: угадал или нет, и отклонение промахнувшегося числа.</summary>
+public sealed record PredictionAnswer(PredictionNomination Nomination, bool Guessed, long? Deviation);
+
+/// <summary>Сделавший прогноз и его результаты по номинациям, на которые он ответил.</summary>
+public sealed record PredictionParticipant(Guid ParticipantId, IReadOnlyList<PredictionAnswer> Answers);
+
+/// <summary>
+/// Проверенные итоги прогнозов аукциона (ADR-067, PER-567). У ручной отметки
+/// подсчитанных итогов нет, поэтому нет и адресатов, даже если строки
+/// участников пришли.
+/// </summary>
+public sealed record PredictionSettlement(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
+    bool Manual, IReadOnlyList<PredictionOutcome> Nominations, IReadOnlyList<PredictionParticipant> Participants);
+
 /// <summary>Аукцион пришёл в конечное положение: круг анонса больше не нужен.</summary>
 public sealed record AuctionClosed(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt);
 
@@ -85,6 +107,7 @@ public abstract record AuctionDecoded
     public sealed record Final(AuctionFinal Value) : AuctionDecoded;
     public sealed record Closed(AuctionClosed Value) : AuctionDecoded;
     public sealed record Raffle(RaffleDraw Value) : AuctionDecoded;
+    public sealed record Predictions(PredictionSettlement Value) : AuctionDecoded;
     public sealed record Poison(string Reason) : AuctionDecoded;
     public sealed record Ignored : AuctionDecoded;
 }
@@ -98,13 +121,17 @@ public static class AuctionMapping
 {
     public static AuctionDecoded Decode(string subject, ReadOnlyMemory<byte> payload)
     {
-        // В доменном стриме есть LotEvent, AuctionEvent, InvoiceEvent и
-        // RaffleEvent. Этот модуль ведёт реплику лота по каждому его факту, а
-        // поводы дают ставка, продажа, факты финала аукциона и жеребьёвка
-        // розыгрыша; счёт он не читает.
+        // В доменном стриме есть LotEvent, AuctionEvent, InvoiceEvent,
+        // RaffleEvent и PredictionResultsEvent. Этот модуль ведёт реплику лота
+        // по каждому его факту, а поводы дают ставка, продажа, факты финала
+        // аукциона, жеребьёвка розыгрыша и итоги прогнозов; счёт он не читает.
         if (subject == AuctionFeed.RaffleDrawnSubject)
         {
             return DecodeRaffle(payload);
+        }
+        if (subject == AuctionFeed.PredictionResultsSettledSubject)
+        {
+            return DecodePredictionResults(payload);
         }
         if (AuctionFeed.AuctionSubjects.TryGetValue(subject, out var auctionOccasion))
         {
@@ -280,6 +307,106 @@ public static class AuctionMapping
         return new AuctionDecoded.Raffle(new RaffleDraw(eventId, Guid.Parse(message.RaffleId), message.Version,
             occurredAt, tickets, (int)state.WinningTicket));
     }
+
+    // Факт итогов один на аукцион, и яд теряет его для всех сразу, поэтому
+    // ядом остаётся только то, что исказило бы сообщение, — номинация без
+    // значения, повтор участника, ответ без исхода. Пустое имя угадавшего
+    // пропускается: число угадавших его и так считает, как стёртое.
+    private static AuctionDecoded DecodePredictionResults(ReadOnlyMemory<byte> payload)
+    {
+        PredictionResultsEvent message;
+        try
+        {
+            message = PredictionResultsEvent.Parser.ParseFrom(payload.Span);
+        }
+        catch (InvalidProtocolBufferException)
+        {
+            return new AuctionDecoded.Poison("not an auction.v1.PredictionResultsEvent");
+        }
+
+        if (!Id(message.EventId, out var eventId) || !AuctionId(message.PredictionResultsId) || message.Version < 1)
+        {
+            return new AuctionDecoded.Poison("event_id, prediction_results_id or version is invalid");
+        }
+        if (!Instant(message.OccurredAt, out var occurredAt))
+        {
+            return new AuctionDecoded.Poison("occurred_at is not an RFC 3339 UTC instant");
+        }
+        if (message.OccasionCase != PredictionResultsEvent.OccasionOneofCase.PredictionResultsSettled)
+        {
+            return new AuctionDecoded.Poison($"{AuctionFeed.PredictionResultsSettledSubject} subject does not match occasion");
+        }
+        if (message.State is not { } state || state.AuctionId != message.PredictionResultsId)
+        {
+            return new AuctionDecoded.Poison("results state is missing or names another auction");
+        }
+
+        var nominations = new List<PredictionOutcome>(state.Nominations.Count);
+        foreach (var outcome in state.Nominations)
+        {
+            if (!Nomination(outcome.Nomination) || nominations.Any(known => known.Nomination == outcome.Nomination))
+            {
+                return new AuctionDecoded.Poison("nomination is unknown or repeated");
+            }
+            var names = outcome.WinnerNames.Select(winner => winner.Name)
+                .Where(name => !string.IsNullOrWhiteSpace(name)).ToArray();
+            switch (outcome.ValueCase)
+            {
+                case NominationOutcome.ValueOneofCase.Number:
+                    nominations.Add(new PredictionOutcome(outcome.Nomination, null, outcome.Number, (int)outcome.Winners, names));
+                    break;
+                case NominationOutcome.ValueOneofCase.Lots:
+                    var lots = new List<Guid>(outcome.Lots.LotIds.Count);
+                    foreach (var lot in outcome.Lots.LotIds)
+                    {
+                        if (!Id(lot, out var lotId)) return new AuctionDecoded.Poison("winning lot id is invalid");
+                        lots.Add(lotId);
+                    }
+                    if (lots.Count == 0) return new AuctionDecoded.Poison("lot nomination has no winning lot");
+                    nominations.Add(new PredictionOutcome(outcome.Nomination, lots, null, (int)outcome.Winners, names));
+                    break;
+                default:
+                    return new AuctionDecoded.Poison("nomination has no final value");
+            }
+        }
+
+        var participants = new List<PredictionParticipant>(state.Participants.Count);
+        foreach (var participant in state.Participants)
+        {
+            if (!Id(participant.ParticipantId, out var participantId) ||
+                participants.Any(known => known.ParticipantId == participantId))
+            {
+                return new AuctionDecoded.Poison("participant id is invalid or repeated");
+            }
+            var answers = new List<PredictionAnswer>(participant.Participation.Count);
+            foreach (var answer in participant.Participation)
+            {
+                if (!Nomination(answer.Nomination) || answers.Any(known => known.Nomination == answer.Nomination))
+                {
+                    return new AuctionDecoded.Poison("participation nomination is unknown or repeated");
+                }
+                switch (answer.ResultCase)
+                {
+                    case Participation.ResultOneofCase.Guessed:
+                        answers.Add(new PredictionAnswer(answer.Nomination, true, null));
+                        break;
+                    case Participation.ResultOneofCase.Missed:
+                        answers.Add(new PredictionAnswer(answer.Nomination, false,
+                            answer.Missed.HasDeviation ? answer.Missed.Deviation : null));
+                        break;
+                    default:
+                        return new AuctionDecoded.Poison("participation has no result");
+                }
+            }
+            participants.Add(new PredictionParticipant(participantId, answers));
+        }
+
+        return new AuctionDecoded.Predictions(new PredictionSettlement(eventId, Guid.Parse(message.PredictionResultsId),
+            message.Version, occurredAt, state.Manual, nominations, participants));
+    }
+
+    private static bool Nomination(PredictionNomination nomination) =>
+        nomination != PredictionNomination.Unspecified && Enum.IsDefined(nomination);
 
     // Неизвестное положение — яд, а не «ничего не менять»: снимок без
     // положения затёр бы реплику версией без содержания.

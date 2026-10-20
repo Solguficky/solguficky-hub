@@ -21,6 +21,55 @@ public static class AuctionFacts
     public const string RaffleResultType = "raffle_result";
     public const string RaffleCauseKind = "auction_raffle_event";
 
+    public const string PredictionResultsType = "prediction_results";
+    public const string PredictionResultsCauseKind = "auction_prediction_results_event";
+
+    /// <summary>
+    /// Итоги прогнозов одному сделавшему прогноз: итог каждой разыгранной
+    /// номинации с именами угадавших и свой результат по ним. Ответ на
+    /// неразыгранную номинацию Auction считает промахом без отклонения, но
+    /// промаха там нет — итога нет, — и в факт он не идёт. Чужие ответы в нём не
+    /// названы — только имена угадавших.
+    /// </summary>
+    public static Notification PredictionResults(Guid notificationId, PredictionParticipant participant,
+        PredictionSettlement settlement, DateTimeOffset now, DateTimeOffset notAfter)
+    {
+        var body = new PredictionResults { AuctionId = settlement.AuctionId.ToString() };
+        body.Nominations.AddRange(settlement.Nominations.Select(Outcome));
+        var played = settlement.Nominations.Select(outcome => outcome.Nomination).ToHashSet();
+        body.Yours.AddRange(participant.Answers.Where(answer => played.Contains(answer.Nomination)).Select(answer =>
+        {
+            var own = new PredictionOwnResult { Nomination = answer.Nomination, Guessed = answer.Guessed };
+            if (answer.Deviation is { } deviation) own.Deviation = deviation;
+            return own;
+        }));
+        return new Notification
+        {
+            NotificationId = notificationId.ToString(),
+            RecipientId = participant.ParticipantId.ToString(),
+            CreatedAt = now.ToUniversalTime().ToString("O"),
+            NotAfter = notAfter.ToUniversalTime().ToString("O"),
+            Cause = new Cause { AuctionPredictionResultsEventId = settlement.EventId.ToString() },
+            PredictionResults = body,
+        };
+    }
+
+    private static PredictionNominationOutcome Outcome(PredictionOutcome outcome)
+    {
+        var result = new PredictionNominationOutcome { Nomination = outcome.Nomination, Winners = (uint)outcome.Winners };
+        if (outcome.Lots is { } lots)
+        {
+            result.Lots = new PredictionLots();
+            result.Lots.LotIds.AddRange(lots.Select(lot => lot.ToString()));
+        }
+        else
+        {
+            result.Number = outcome.Number ?? throw new ArgumentException("nomination has no final value", nameof(outcome));
+        }
+        result.WinnerNames.AddRange(outcome.WinnerNames);
+        return result;
+    }
+
     /// <summary>
     /// Итог жеребьёвки одному владельцу билета: свой номер, выигравший и
     /// число билетов. Выиграл ли он, канал видит по совпадению номеров.
