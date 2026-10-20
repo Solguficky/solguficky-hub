@@ -2363,10 +2363,9 @@ describe("auction notification settings", () => {
     });
   });
 
-  // Запись 33 прогона 12.10: выбранный режим отмечен на своей кнопке, а
-  // пояснение говорит о сводке, об анонсе финала и о том, что покупку
-  // настройки не трогают.
-  it("marks the current frequency, shows the final switch and explains both", async () => {
+  // Пояснение говорит о сводке, об анонсе финала, о «перебили в финале»
+  // и о том, что покупку настройки не трогают.
+  it("shows the current frequency, both switches and the explanation", async () => {
     const { bot, calls } = makeBot(withOutbid(stored("15")));
     await bot.handleUpdate(lotPress({ data: notifyCallback() }));
     expect(calls.at(-1)?.method).toBe("editMessageText");

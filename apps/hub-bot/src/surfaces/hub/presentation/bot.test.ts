@@ -6771,7 +6771,7 @@ describe("notification frames", () => {
     // Запись 33 прогона 12.10: выбранный режим отмечен на своей кнопке, а
     // пояснение говорит о сводке, об анонсе финала и о том, что покупку
     // настройки не трогают. Под режимами — выключатель финала (PER-539).
-    it("shows the five modes, marks the current one and the final switch", async () => {
+    it("shows the current frequency and both auction switches", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
         settings: {

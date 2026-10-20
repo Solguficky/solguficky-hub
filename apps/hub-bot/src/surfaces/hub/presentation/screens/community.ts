@@ -115,7 +115,7 @@ function inFilter(member: CommunityMember, filter: CommunityFilter): boolean {
   }
 }
 
-/** Подпись фильтра: у выбранного — отметка «• », как у выбора частоты. */
+/** Подпись фильтра: у выбранного — отметка «• ». */
 function filterLabel(filter: CommunityFilter, current: CommunityFilter) {
   return filter === current
     ? `• ${filterLabels[filter]}`
