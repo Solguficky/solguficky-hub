@@ -555,6 +555,79 @@ final class AuctionGrpcIntegrationSpec
         eventually(console() shouldBe Seq((lot, false, false)))
     }
 
+    // Критерии приёмки PER-658: без права — отказ и лот прежний; предпросмотр ничего не пишет и совпадает со снятием;
+    // после снятия GetLot и хронология показывают нового лидера, цену и снятую ставку, а bid_count её не считает.
+    "removes a participant after a preview through the wire, and the reads show the lot as if they never bid" in withNode {
+      node =>
+        val auction = enable(node, newId()).getAccepted.auctionId
+        val lot = newId()
+        asHubBot(node.client.addLot())
+          .invoke(wire.AddLotRequest(Some(administrator), auction, lot, newId()))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        val closesAt = Instant.now().plus(30, ChronoUnit.DAYS).truncatedTo(ChronoUnit.SECONDS)
+        val config = auctionConfig(closesAt.minus(31, ChronoUnit.DAYS).toString, closesAt.toString)
+        asHubBot(node.client.scheduleAuction())
+          .invoke(wire.ScheduleAuctionRequest(Some(administrator), auction, newId(), Some(config)))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        asHubBot(node.client.scheduleLot()).invoke(schedule(auction, lot)).futureValue.outcome.isAccepted shouldBe true
+        asHubBot(node.client.startPrebidding())
+          .invoke(wire.StartPrebiddingRequest(Some(administrator), auction, newId()))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        val lotId = UUID.fromString(lot)
+        eventually(currentPrice(node, lotId) shouldBe Money(500000, CurrencyCode("RUB")))
+        val sale = AuctionId(UUID.fromString(auction))
+        val honest = named(node, sale, "Кот")
+        val cheat = named(node, sale, "Пёс")
+        asHubBot(node.client.placeBid()).invoke(bid(lotId, 525000, honest)).futureValue.outcome.isAccepted shouldBe true
+        asHubBot(node.client.placeBid()).invoke(bid(lotId, 600000, cheat)).futureValue.outcome.isAccepted shouldBe true
+        def preview() =
+          asHubBot(node.client.previewParticipantRemoval())
+            .invoke(wire.PreviewParticipantRemovalRequest(Some(administrator), auction, lot, cheat.identityId))
+            .futureValue
+        def remove(who: wire.Viewer, version: Long, op: String) =
+          asHubBot(node.client.removeParticipant())
+            .invoke(wire.RemoveParticipantRequest(Some(administrator), auction, lot, who.identityId, version, op))
+            .futureValue
+        def read() = asHubBot(node.client.getLot()).invoke(wire.GetLotRequest(Some(honest), lot)).futureValue
+
+        node.authority.answer = Authority.NotAdministrator
+        preview().getRefused.reason.isNotMeetupAdministrator shouldBe true
+        remove(cheat, 6, newId()).getRefused.reason.isNotMeetupAdministrator shouldBe true
+        node.authority.answer = Authority.Granted(Standings.published)
+        currentPrice(node, lotId) shouldBe Money(600000, CurrencyCode("RUB"))
+
+        val previewed = preview().getPreview
+        (previewed.leaderId, previewed.price) shouldBe (Some(honest.identityId), Some(MoneyMessage(525000, "RUB")))
+        currentPrice(node, lotId) shouldBe Money(600000, CurrencyCode("RUB"))
+        val op = newId()
+        val accepted = remove(cheat, previewed.version, op).getAccepted
+        accepted.lotVersion shouldBe previewed.version + 1
+        remove(cheat, previewed.version, op).outcome.isAccepted shouldBe true
+        remove(honest, previewed.version, newId()).getRefused.reason.isLotChanged shouldBe true
+
+        val snapshot = eventually {
+          val found = read()
+          found.version should be >= accepted.lotVersion
+          found
+        }
+        (snapshot.getTrading.leaderId, snapshot.getTrading.currentPrice) shouldBe
+          (previewed.leaderId, previewed.price)
+        snapshot.bidCount shouldBe 1
+        val entries = asHubBot(node.client.listLotHistory())
+          .invoke(wire.ListLotHistoryRequest(Some(honest), lot))
+          .futureValue
+          .entries
+        entries.map(entry => entry.kind.bid.map(bid => (bid.participantId, bid.removed))) shouldBe
+          Seq(Some((honest.identityId, false)), Some((cheat.identityId, true)), None)
+        entries.last.getRemoval shouldBe wire.HistoryRemoval(previewed.price, previewed.leaderId)
+    }
+
     "refuses scheduling and opening from the auction bot at the boundary, before meetups and the auction" in withNode {
       node =>
         val auction = enable(node, newId()).getAccepted.auctionId

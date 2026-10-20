@@ -10,6 +10,7 @@ import auction.lot.Money
 import auction.projection.DayLotStatisticsView
 import auction.projection.LotImageView
 import auction.projection.BidRecord
+import auction.projection.HistoryRecord
 import auction.projection.LotSnapshotView
 import auction.projection.LotStatisticsView
 import auction.projection.LotViewJson
@@ -33,8 +34,9 @@ import scala.concurrent.Future
  */
 final class SlickLotViews(database: Database, json: LotViewJson)(using ExecutionContext) extends LotViews {
 
-  // Число ставок лота `v` — одно выражение у снимка и у статистики: контракт требует, чтобы они совпадали.
-  private val BidCountSql = "(SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id)"
+  // Число ставок лота `v` — одно выражение у снимка и у статистики: контракт требует, чтобы они совпадали. Ставки
+  // снятого участника не считаются (ADR-072, PER-658).
+  private val BidCountSql = "(SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id AND NOT b.removed)"
 
   private given GetResult[LotSnapshotView] = GetResult { row =>
     val lotId = UUID.fromString(row.nextString())
@@ -101,31 +103,55 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
             FROM lot_view v JOIN lot_catalog c ON c.lot_id = v.lot_id
             WHERE v.lot_id = ${lotId.toString}::uuid AND c.image IS NOT NULL""".as[LotImageView].headOption
     )
-  private given GetResult[BidRecord] = GetResult { row =>
-    BidRecord(
-      lotId = UUID.fromString(row.nextString()),
-      sequence = row.nextLong(),
-      bidId = UUID.fromString(row.nextString()),
-      participant = UUID.fromString(row.nextString()),
-      minorUnits = row.nextLong(),
-      currency = row.nextString(),
-      origin = row.nextString(),
-      source = row.nextStringOption(),
-      occurredAt = row.nextTimestamp().toInstant
-    )
+  // Строка ставки и строка снятия — одна выборка с общими колонками: у снятия пусты поля ставки, у ставки — лидер.
+  private given GetResult[HistoryRecord] = GetResult { row =>
+    val lotId = UUID.fromString(row.nextString())
+    val sequence = row.nextLong()
+    val kind = row.nextString()
+    val bidId = row.nextStringOption()
+    val participant = row.nextStringOption()
+    val minorUnits = row.nextLong()
+    val currency = row.nextString()
+    val origin = row.nextStringOption()
+    val source = row.nextStringOption()
+    val removed = row.nextBoolean()
+    val leader = row.nextStringOption().map(UUID.fromString)
+    val occurredAt = row.nextTimestamp().toInstant
+    kind match {
+      case "bid" =>
+        HistoryRecord.Bid(
+          BidRecord(
+            lotId = lotId,
+            sequence = sequence,
+            bidId = UUID.fromString(bidId.get),
+            participant = UUID.fromString(participant.get),
+            minorUnits = minorUnits,
+            currency = currency,
+            origin = origin.get,
+            source = source,
+            occurredAt = occurredAt,
+            removed = removed
+          )
+        )
+      case _ => HistoryRecord.Removal(sequence, minorUnits, currency, leader, occurredAt)
+    }
   }
 
-  def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[BidRecord]]] = {
+  def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[HistoryRecord]]] = {
     val id = lotId.toString
     // Номер события начинается с 1, поэтому первая страница — тот же запрос с нулём.
     val from = after.getOrElse(0L)
     val read = for {
       known <- sql"""SELECT 1 FROM lot_view WHERE lot_id = $id::uuid""".as[Int].headOption
-      bids <- sql"""SELECT lot_id::text, sequence, bid_id::text, participant_id::text, minor_units, currency, origin,
-                       source, occurred_at
-                FROM lot_bid WHERE lot_id = $id::uuid AND sequence > $from
-                ORDER BY sequence LIMIT $limit""".as[BidRecord]
-    } yield known.map(_ => bids.toList)
+      entries <- sql"""SELECT lot_id::text, sequence, 'bid', bid_id::text, participant_id::text, minor_units, currency,
+                         origin, source, removed, NULL, occurred_at
+                       FROM lot_bid WHERE lot_id = $id::uuid AND sequence > $from
+                       UNION ALL
+                       SELECT lot_id::text, sequence, 'removal', NULL, NULL, minor_units, currency,
+                         NULL, NULL, false, leader_id::text, occurred_at
+                       FROM lot_removal WHERE lot_id = $id::uuid AND sequence > $from
+                       ORDER BY sequence LIMIT $limit""".as[HistoryRecord]
+    } yield known.map(_ => entries.toList)
     database.run(read)
   }
 
@@ -161,10 +187,11 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
   def statistics(auctionId: UUID): Future[List[LotStatisticsView]] =
     database.run(
       sql"""SELECT v.lot_id::text, v.state::text, s.minor_units, s.currency, #$BidCountSql,
-                   (SELECT COUNT(*) FROM lot_participant p WHERE p.lot_id = v.lot_id),
-                   (SELECT b.occurred_at FROM lot_bid b WHERE b.lot_id = v.lot_id ORDER BY b.sequence DESC LIMIT 1),
+                   (SELECT COUNT(*) FROM lot_participant p WHERE p.lot_id = v.lot_id AND NOT p.removed),
+                   (SELECT b.occurred_at FROM lot_bid b WHERE b.lot_id = v.lot_id AND NOT b.removed
+                      ORDER BY b.sequence DESC LIMIT 1),
                    h.minor_units, h.currency, (l.lot_id IS NOT NULL),
-                   (SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id
+                   (SELECT COUNT(*) FROM lot_bid b WHERE b.lot_id = v.lot_id AND NOT b.removed
                       AND res.sequence IS NOT NULL AND b.sequence > res.sequence)
             FROM auction_lot r JOIN lot_view v ON v.lot_id = r.lot_id
             LEFT JOIN lot_starting_price s ON s.lot_id = v.lot_id
@@ -196,21 +223,28 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
     database.run(
       sql"""SELECT v.lot_id::text,
                    (SELECT COUNT(*) FROM lot_bid b
-                      WHERE b.lot_id = v.lot_id AND b.occurred_at >= $windowFrom AND b.occurred_at < $windowUntil),
+                      WHERE b.lot_id = v.lot_id AND NOT b.removed
+                        AND b.occurred_at >= $windowFrom AND b.occurred_at < $windowUntil),
                    t.minor_units, t.currency,
                    COALESCE(p.minor_units, s.minor_units), COALESCE(p.currency, s.currency)
             FROM auction_lot r JOIN lot_view v ON v.lot_id = r.lot_id
             LEFT JOIN LATERAL (
               SELECT b.minor_units, b.currency
               FROM lot_bid b
-              WHERE b.lot_id = v.lot_id AND b.occurred_at >= $windowFrom AND b.occurred_at < $windowUntil
+              WHERE b.lot_id = v.lot_id AND NOT b.removed
+                AND b.occurred_at >= $windowFrom AND b.occurred_at < $windowUntil
               ORDER BY b.minor_units DESC, b.sequence DESC LIMIT 1
             ) t ON TRUE
             LEFT JOIN LATERAL (
-              SELECT b.minor_units, b.currency
-              FROM lot_bid b
-              WHERE b.lot_id = v.lot_id AND b.occurred_at < $windowFrom
-              ORDER BY b.sequence DESC LIMIT 1
+              SELECT e.minor_units, e.currency
+              FROM (
+                SELECT b.sequence, b.minor_units, b.currency FROM lot_bid b
+                WHERE b.lot_id = v.lot_id AND NOT b.removed AND b.occurred_at < $windowFrom
+                UNION ALL
+                SELECT x.sequence, x.minor_units, x.currency FROM lot_removal x
+                WHERE x.lot_id = v.lot_id AND x.occurred_at < $windowFrom
+              ) e
+              ORDER BY e.sequence DESC LIMIT 1
             ) p ON TRUE
             LEFT JOIN lot_starting_price s ON s.lot_id = v.lot_id
             WHERE r.auction_id = ${auctionId.toString}::uuid

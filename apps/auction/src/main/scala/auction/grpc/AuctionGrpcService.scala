@@ -353,7 +353,8 @@ final class AuctionGrpcService(
             case Some(found) =>
               val page = found.take(query.limit)
               val next =
-                if (found.sizeIs > query.limit) page.lastOption.map(bid => SequenceToken.encode(bid.sequence)) else None
+                if (found.sizeIs > query.limit) page.lastOption.map(entry => SequenceToken.encode(entry.position))
+                else None
               Future.successful(wire.ListLotHistoryResponse(page.map(HistoryMapping.entry), next.getOrElse("")))
           }
     }
@@ -663,6 +664,36 @@ final class AuctionGrpcService(
           .deselectForFinal(command.auctionId, command.lotId, command.opId, command.acting.participant)
           .recoverWith(awaited)
           .flatMap(outcome => ResponseMapping.deselectForFinal(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
+   * Предпросмотр снятия участника с лота (ADR-072; PER-658): право у Meetups, фазу, реестр и состав финала решает
+   * аукцион, а итог — лот тем же решением, что у снятия, без записи.
+   */
+  def previewParticipantRemoval(
+      in: wire.PreviewParticipantRemovalRequest
+  ): Future[wire.PreviewParticipantRemovalResponse] =
+    RequestMapping.previewParticipantRemoval(in) match {
+      case Left(error) => invalid(error)
+      case Right(preview) =>
+        auctions
+          .previewParticipantRemoval(preview.auctionId, preview.command, preview.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.previewParticipantRemoval(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
+   * Снятие участника с лота (ADR-072; PER-658): путь выбора финалиста. Лот сверяет номер из предпросмотра и пишет итог,
+   * только если лот от него не ушёл; ответ — номер лота, с которого чтение показывает снятие целиком.
+   */
+  def removeParticipant(in: wire.RemoveParticipantRequest): Future[wire.RemoveParticipantResponse] =
+    RequestMapping.removeParticipant(in) match {
+      case Left(error) => invalid(error)
+      case Right(removal) =>
+        auctions
+          .removeParticipant(removal.auctionId, removal.command, removal.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.removeParticipant(outcome).fold(refuse, Future.successful))
     }
 
   /**

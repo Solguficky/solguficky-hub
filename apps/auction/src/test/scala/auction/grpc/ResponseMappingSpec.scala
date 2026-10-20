@@ -6,6 +6,7 @@ import auction.aggregate.CancellationRefusal
 import auction.aggregate.DiscardRefusal
 import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.OpeningRefusal
+import auction.aggregate.ParticipantRemovalRefusal
 import auction.aggregate.SchedulingRefusal
 import auction.aggregate.RemovalRefusal
 import auction.aggregate.FinalChoiceRefusal
@@ -26,6 +27,7 @@ import auction.lot.Envelope
 import auction.lot.LotEvent
 import auction.lot.LotFixtures.*
 import auction.lot.PlaceBidRejected
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.SetProxyLimitRejected
 import auction.lot.StepPolicyInvalid
@@ -339,6 +341,48 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
         Status.Code.UNAVAILABLE
       ResponseMapping.startPrebidding(Left(OpeningRefusal.Denied(Denial.AuctionNotFound))).left.value.getCode shouldBe
         Status.Code.NOT_FOUND
+    }
+
+    // PER-658: снятие отвечает номером лота, предпросмотр — итогом, а отказы — значениями, кроме сбоев.
+    "answers a removal with the lot version, a preview with its outcome, and the refusals as values" in {
+      ResponseMapping.removeParticipant(Right(14)).value.getAccepted.lotVersion shouldBe 14
+      val removed: LotEvent.ParticipantRemoved =
+        LotEvent.ParticipantRemoved(participant(1), money(21000), Some(participant(2)), Some(bid(9)))
+      val preview = ResponseMapping
+        .previewParticipantRemoval(Right(LotEntity.RemovalPreview(removed, Some(deadline), 12)))
+        .value
+        .getPreview
+      (preview.getPrice.minorUnits, preview.leaderId, preview.extendedDeadline, preview.version) shouldBe
+        (21000L, Some(participant(2).value.toString), Some(deadline.toString), 12L)
+      for (
+        refusal <- List(
+          ParticipantRemovalRefusal.LineupFrozen,
+          ParticipantRemovalRefusal.NotInPrebidding,
+          ParticipantRemovalRefusal.LotNotInAuction,
+          ParticipantRemovalRefusal.Denied(Denial.NotAdministrator),
+          ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.LotChanged),
+          ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.NotALotParticipant),
+          ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.ParticipantAlreadyRemoved),
+          ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.DeadlinePassed)
+        )
+      ) {
+        ResponseMapping.removeParticipant(Left(refusal)).value.getRefused.reason.isDefined shouldBe true
+        ResponseMapping.previewParticipantRemoval(Left(refusal)).value.getRefused.reason.isDefined shouldBe true
+      }
+      ResponseMapping
+        .removeParticipant(Left(ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.LotChanged)))
+        .value
+        .getRefused
+        .reason
+        .isLotChanged shouldBe true
+      ResponseMapping
+        .removeParticipant(Left(ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.OpIdTaken)))
+        .left
+        .map(_.getCode) shouldBe Left(Status.Code.ALREADY_EXISTS)
+      ResponseMapping
+        .removeParticipant(Left(ParticipantRemovalRefusal.Denied(Denial.Unavailable)))
+        .left
+        .map(_.getCode) shouldBe Left(Status.Code.UNAVAILABLE)
     }
 
     "answers an image read with the stored bytes, their type and their own version" in {

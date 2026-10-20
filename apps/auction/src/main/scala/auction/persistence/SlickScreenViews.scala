@@ -89,7 +89,7 @@ final class SlickScreenViews(database: Database, auctions: AuctionViewJson, lots
   // Порядок — журнала, а не часов: события одной команды делят время.
   private def recentBidsAction(lotId: UUID): DBIO[List[RecentBid]] =
     sql"""SELECT participant_id::text, minor_units, currency, origin, source FROM lot_bid
-          WHERE lot_id = ${lotId.toString}::uuid ORDER BY sequence DESC LIMIT ${Screen.RecentBids}"""
+          WHERE lot_id = ${lotId.toString}::uuid AND NOT removed ORDER BY sequence DESC LIMIT ${Screen.RecentBids}"""
       .as[(String, Long, String, String, Option[String])]
       .map(_.toList.map { (participant, minor, currency, origin, source) =>
         RecentBid(

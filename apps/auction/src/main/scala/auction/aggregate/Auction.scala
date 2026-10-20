@@ -13,6 +13,9 @@ import auction.lot.Money
 import auction.lot.CloseLot
 import auction.lot.CloseReason
 import auction.lot.OpId
+import auction.lot.ParticipantId
+import auction.lot.RemoveParticipant
+import auction.lot.RemoveParticipantRejected
 import auction.lot.Sale
 import auction.lot.ScheduleLot
 import auction.lot.ScheduleLotRejected
@@ -138,6 +141,15 @@ final case class ScheduleAuctionLot(lot: LotId, startingPrice: Money, stepPolicy
 final case class SelectForFinal(lot: LotId, opId: OpId)
 
 final case class DeselectForFinal(lot: LotId, opId: OpId)
+
+/**
+ * Снятие участника с лота реестра (ADR-072; PER-658). Как у выбора финалиста, решение аукциона — команда лоту с тем же
+ * `op_id`, а событие пишет только лот. `expectedVersion` — номер лота из предпросмотра, его сверяет лот.
+ */
+final case class RemoveLotParticipant(lot: LotId, participant: ParticipantId, expectedVersion: Long, opId: OpId)
+
+/** Предпросмотр того же снятия: решение аукциона то же, а лот решает без записи. */
+final case class PreviewLotParticipantRemoval(lot: LotId, participant: ParticipantId)
 
 /**
  * Ask ведущего лоту реестра (RFC-011, П-08). Аукцион — прокси к команде лота: он проверяет только, что лот в его
@@ -421,6 +433,21 @@ enum FinalChoiceRejected[+R] {
   case LotNotInAuction extends FinalChoiceRejected[Nothing]
   case SelectionNotApplicable extends FinalChoiceRejected[Nothing]
   case ByLot(rejected: R)
+}
+
+/**
+ * Отказы снятия участника с лота (ADR-072, п. 4; PER-658): аукциона нет, торги ещё не начались, лота нет в реестре,
+ * состав финала заморожен — это решает аукцион, — либо отказал лот. `LineupFrozen` — лот в составе и ещё не вышел в
+ * финал: его цена вошла в состав и прогнозы. Закрытым лотам состава и вышедшему в финал отвечает лот — `LotNotOpen` и
+ * `NotInOnlinePhase`. В завершённом и отменённом аукционе отказывает сам аукцион отказом лота `LotNotOpen`: отменённый
+ * снимает лоты не сразу, и лот, до которого снятие ещё не дошло, иначе принял бы команду.
+ */
+enum ParticipantRemovalRejected {
+  case AuctionNotFound
+  case NotInPrebidding
+  case LotNotInAuction
+  case LineupFrozen
+  case ByLot(rejected: RemoveParticipantRejected)
 }
 
 /**
@@ -782,6 +809,25 @@ object Auction {
     choice(auction, command.lot)(UnmarkForFinal(command.opId))
 
   /**
+   * Снятие участника с лота реестра. Окна `seen` нет, как у отметки: повтор `op_id` узнаёт лот. Фаза лота, дедлайн,
+   * участник и номер — решения лота; аукцион отвечает только за то, чего лот не знает: реестр и состав финала.
+   */
+  def decide(
+      auction: Auction,
+      command: RemoveLotParticipant
+  ): Either[ParticipantRemovalRejected, RemoveParticipant] =
+    removable(auction, command.lot).map(_ =>
+      RemoveParticipant(command.participant, command.opId, command.expectedVersion)
+    )
+
+  /** Предпросмотр снятия — те же правила аукциона; ответ — участник, которого лот снимет без записи. */
+  def decide(
+      auction: Auction,
+      command: PreviewLotParticipantRemoval
+  ): Either[ParticipantRemovalRejected, ParticipantId] =
+    removable(auction, command.lot).map(_ => command.participant)
+
+  /**
    * Ask ведущего лоту реестра. Окна `seen` нет, как у `ScheduleAuctionLot`: повтор `op_id` узнаёт лот. Фазу аукциона
    * ask не проверяет: объявить цену можно любому лоту в торгах (П-08), а лот вне торгов отвечает сам.
    */
@@ -856,6 +902,21 @@ object Auction {
         .orElse(overlap)
         .toLeft(AuctionDecision.Accepted(AuctionEvent.StepWindowLaunched(window)))
   }
+
+  private def removable(auction: Auction, lot: LotId): Either[ParticipantRemovalRejected, Unit] =
+    auction.state match {
+      case AuctionState.Initial => Left(ParticipantRemovalRejected.AuctionNotFound)
+      case AuctionState.Draft | AuctionState.Scheduled(_) => Left(ParticipantRemovalRejected.NotInPrebidding)
+      case _ if !auction.lots.contains(lot) => Left(ParticipantRemovalRejected.LotNotInAuction)
+      case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) => Right(())
+      case AuctionState.LineupFrozen(_, _, order) =>
+        if (order.contains(lot)) Left(ParticipantRemovalRejected.LineupFrozen) else Right(())
+      case AuctionState.Final(_, _, order, activated, _) =>
+        if (order.contains(lot) && !activated.contains(lot)) Left(ParticipantRemovalRejected.LineupFrozen)
+        else Right(())
+      case AuctionState.Finished(_, _) | AuctionState.Cancelled(_, _, _) =>
+        Left(ParticipantRemovalRejected.ByLot(RemoveParticipantRejected.LotNotOpen))
+    }
 
   private def choice[C](auction: Auction, lot: LotId)(command: C): Either[FinalChoiceRejected[Nothing], C] =
     auction.state match {

@@ -91,7 +91,9 @@ message LotSchedule {
 
 // A lot in trading: bids are accepted.
 message LotTrading {
-  // The last accepted price; before the first bid it is the starting price.
+  // The last accepted price; before the first bid it is the starting price. After
+  // a participant was removed it is the price the lot went on with, which may be
+  // lower than an accepted bid.
   Money current_price = 1;
 
   // The price the auctioneer announced. Unset when no ask was announced; it is
@@ -99,11 +101,13 @@ message LotTrading {
   Money ask = 2;
 
   // Canonical lowercase UUIDv7 with hyphens: the platform identity of the leading
-  // participant. Unset before the first bid.
+  // participant. Unset before the first bid, and after a removal that left
+  // nobody to lead.
   optional string leader_id = 3;
 
   // Canonical lowercase UUIDv7 with hyphens: the bid that holds the lead. Set
-  // exactly when leader_id is set.
+  // exactly when leader_id is set. After a removal it may name the position the
+  // removal recorded for the leader rather than a bid of the history.
   optional string leading_bid_id = 4;
 
   // RFC 3339 instant in UTC. Unset when the lot is led by a person and closes on
@@ -119,11 +123,11 @@ message LotTrading {
 // A lot selected for the live final, held between the common deadline and its
 // turn in the final. It has neither a deadline nor an ask, and it accepts no bids.
 message LotHeld {
-  // The price the lot had when it was held.
+  // The price the lot had when it was held, or the price a removal left it with.
   Money current_price = 1;
 
   // Canonical lowercase UUIDv7 with hyphens. Unset when the lot was held without
-  // a bid.
+  // a bid, and after a removal that left nobody to lead.
   optional string leader_id = 2;
 
   // Canonical lowercase UUIDv7 with hyphens. Set exactly when leader_id is set.

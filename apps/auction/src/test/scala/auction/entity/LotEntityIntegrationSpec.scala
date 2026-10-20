@@ -112,10 +112,16 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
     replies.receiveMessage(patience).map(_.envelope)
   }
 
-  private def removeOn(kit: ActorTestKit, entity: ActorRef[LotEntity.Command], who: Int, opN: Int) = {
-    val replies = kit.createTestProbe[Either[RemoveParticipantRejected, Envelope]]()
-    entity ! LotEntity.Remove(removeParticipant(who, opN), Initiator.Operator(participant(9)), replies.ref)
+  private def previewOn(kit: ActorTestKit, entity: ActorRef[LotEntity.Command], who: Int) = {
+    val replies = kit.createTestProbe[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]]()
+    entity ! LotEntity.PreviewRemoval(participant(who), replies.ref)
     replies.receiveMessage(patience)
+  }
+
+  private def removeOn(kit: ActorTestKit, entity: ActorRef[LotEntity.Command], who: Int, opN: Int, version: Long) = {
+    val replies = kit.createTestProbe[Either[RemoveParticipantRejected, LotEntity.Recorded]]()
+    entity ! LotEntity.Remove(removeParticipant(who, opN, version), Initiator.Operator(participant(9)), replies.ref)
+    replies.receiveMessage(patience).map(_.envelope)
   }
 
   /** Snapshot прежней формы: у торгов нет истории, как у snapshot, записанного до PER-657. */
@@ -302,14 +308,16 @@ final class LotEntityIntegrationSpec extends AnyWordSpec with Matchers with Post
       val second = node(database)
       try {
         val entity = lot(second, id, snapshotEvery = 2)
-        val removed = removeOn(second, entity, who = 3, opN = 7)
+        val preview = previewOn(second, entity, who = 3).toOption.get
+        val removed = removeOn(second, entity, who = 3, opN = 7, preview.version)
         val after = tradingOf(read(second, entity))
 
         removed.map(_.event) shouldBe Right(
           LotEvent.ParticipantRemoved(participant(3), money(210), Some(participant(1)), after.leadingBidId)
         )
+        (preview.removed.leader, preview.removed.price) shouldBe (Some(participant(1)), money(210))
         (after.leader, after.currentPrice) shouldBe (Some(participant(1)), money(210))
-        removeOn(second, entity, who = 3, opN = 7) shouldBe removed
+        removeOn(second, entity, who = 3, opN = 7, preview.version) shouldBe removed
       } finally second.shutdownTestKit()
     }
 

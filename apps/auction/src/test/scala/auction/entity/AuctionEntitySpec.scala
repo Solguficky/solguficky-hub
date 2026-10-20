@@ -24,7 +24,10 @@ import auction.lot.MarkForFinal
 import auction.lot.MarkForFinalRejected
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.ParticipantId
 import auction.lot.PlaceBid
+import auction.lot.RemoveParticipant
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ResumeLot
 import auction.lot.ResumeLotRejected
 import auction.lot.Sale
@@ -221,6 +224,36 @@ final class AuctionEntitySpec
           Future.successful(
             Lot.decide(lots(lot), command, now()).map(decision => written(lot, command.opId, decision)).map(_ => ())
           )
+      }
+
+    /** Снятие участника: лот решает по своему ядру, номер лота подделка не ведёт и принимает любой. */
+    def removeParticipant(
+        lot: LotId,
+        command: RemoveParticipant,
+        initiator: Initiator
+    ): Future[Either[RemoveParticipantRejected, Long]] =
+      synchronized {
+        choices :+= (lot, command, initiator)
+        if (lost(lot)) Promise[Either[RemoveParticipantRejected, Long]]().future
+        else
+          Future.successful(
+            Lot
+              .decide(lots(lot), command, command.expectedVersion, LotFixtures.position(92), now())
+              .map(decision => written(lot, command.opId, decision))
+              .map(_ => lots(lot).seen.size.toLong)
+          )
+      }
+
+    def previewRemoval(
+        lot: LotId,
+        participant: ParticipantId
+    ): Future[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]] =
+      synchronized {
+        val removal = RemoveParticipant(participant, LotFixtures.op(93), 0)
+        Future.successful(Lot.decide(lots(lot), removal, 0, LotFixtures.position(93), now()).map {
+          case Decision.Accepted(removed: LotEvent.ParticipantRemoved, _) => LotEntity.RemovalPreview(removed, None, 0)
+          case other => fail(s"a preview decided $other")
+        })
       }
 
     def advanceAsk(lot: LotId, command: AdvanceAsk, initiator: Initiator): Future[Either[AdvanceAskRejected, Unit]] =

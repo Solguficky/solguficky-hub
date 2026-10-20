@@ -294,10 +294,17 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
         bidOf(who = 2, amount = 200, opN = 5)
         bidOf(who = 3, amount = 310, opN = 6)
 
-        val removed = entity.runCommand[Either[RemoveParticipantRejected, Envelope]](
-          LotEntity.Remove(removeParticipant(who = 3, opN = 7), organizer, _)
+        val preview = entity.runCommand[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]](
+          LotEntity.PreviewRemoval(participant(3), _)
+        )
+        val version = preview.reply.map(_.version).toOption.get
+        val removed = entity.runCommand[Either[RemoveParticipantRejected, LotEntity.Recorded]](
+          LotEntity.Remove(removeParticipant(who = 3, opN = 7, version), organizer, _)
         )
 
+        (preview.events, preview.state.sequence) shouldBe (Nil, version)
+        preview.reply.map(p => (p.removed.leader, p.removed.price)) shouldBe Right((Some(participant(1)), money(210)))
+        removed.reply.map(_.lotVersion) shouldBe Right(version + 1)
         removed.events.map(row => (row.event.kind, row.actor.kind)) shouldBe List(("ParticipantRemoved", "Operator"))
         val after = tradingOf(removed.state.lot)
         (after.leader, after.currentPrice) shouldBe (Some(participant(1)), money(210))
@@ -306,10 +313,14 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
         restarted shouldBe removed.state
         bidOf(who = 3, amount = 400, opN = 8).reply shouldBe Left(PlaceBidRejected.ParticipantRemovedFromLot)
         limitOf(who = 3, max = 500, opN = 9).reply shouldBe Left(SetProxyLimitRejected.ParticipantRemovedFromLot)
-        val repeated = entity.runCommand[Either[RemoveParticipantRejected, Envelope]](
-          LotEntity.Remove(removeParticipant(who = 3, opN = 7), organizer, _)
+        val repeated = entity.runCommand[Either[RemoveParticipantRejected, LotEntity.Recorded]](
+          LotEntity.Remove(removeParticipant(who = 3, opN = 7, version), organizer, _)
         )
-        (repeated.events, repeated.reply) shouldBe (Nil, removed.reply)
+        (repeated.events, repeated.reply.map(_.envelope)) shouldBe (Nil, removed.reply.map(_.envelope))
+        val stale = entity.runCommand[Either[RemoveParticipantRejected, LotEntity.Recorded]](
+          LotEntity.Remove(removeParticipant(who = 1, opN = 10, version), organizer, _)
+        )
+        (stale.events, stale.reply) shouldBe (Nil, Left(RemoveParticipantRejected.LotChanged))
       }
     }
 

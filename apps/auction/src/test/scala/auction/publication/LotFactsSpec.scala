@@ -27,7 +27,8 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
   }
 
   private def facts(events: LotEvent*): List[(AppliedEvent, Option[Fact])] =
-    applied(events*).map(step => step -> LotFacts.fact(step))
+    val steps = applied(events*)
+    steps.zip(None :: steps.map(step => Some(step.row))).map((step, before) => step -> LotFacts.fact(step, before))
 
   private def message(fact: Option[Fact]): bus.LotEvent =
     bus.LotEvent.parseFrom(fact.getOrElse(fail("expected a published fact")).payload)
@@ -59,6 +60,18 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       fact.map(_.subject) shouldBe Some("events.auction.deadline_extended")
       val trading = message(fact).getState.getTrading
       (trading.deadline, trading.extensionsUsed) shouldBe (Some(deadline.plusSeconds(120).toString), 1)
+    }
+
+    // ADR-072, п. 5: снимок после снятия и прежний лидер, как у ставки; кого сняли, факт не называет.
+    "publish the removal of a participant with the leader before it and the lot it left in the state" in {
+      val removed = LotEvent.ParticipantRemoved(participant(2), money(10000), None, None)
+      val (_, fact) = facts(lotDrafted, lotScheduled, opened, placed, removed).last
+
+      fact.map(_.subject) shouldBe Some("events.auction.participant_removed")
+      val body = message(fact)
+      body.getParticipantRemoved.previousLeaderId shouldBe Some(participant(2).value.toString)
+      (body.getState.getTrading.leaderId, body.getState.getTrading.getCurrentPrice.minorUnits) shouldBe (None, 10000L)
+      bus.ParticipantRemoved.scalaDescriptor.fields.map(_.name) shouldBe Seq("previous_leader_id")
     }
 
     "publish the hold and the resume but keep the mark off the bus" in {
@@ -229,6 +242,6 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       List(lotDrafted, lotScheduled, opened).zipWithIndex.map((event, index) => (index + 1L, stored(index + 1, event)))
     val numbered = opening :+ (4L, LotJournal.store(uuid(4), transaction(4, initiator), event))
     val steps = LotView.replay(None, lotId, numbered).fold(defect => fail(defect.toString), done => done)
-    message(LotFacts.fact(steps.last)).getBidPlaced
+    message(LotFacts.fact(steps.last, steps.init.lastOption.map(_.row))).getBidPlaced
   }
 }

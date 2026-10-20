@@ -1,5 +1,6 @@
 package auction.persistence
 
+import auction.projection.HistoryRecord
 import auction.testkit.PostgresFixture
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.scalatest.concurrent.ScalaFutures
@@ -8,6 +9,7 @@ import org.scalatest.time.Seconds
 import org.scalatest.time.Span
 import org.scalatest.wordspec.AnyWordSpec
 
+import java.time.Instant
 import java.util.UUID
 
 final class LotHistoryIntegrationSpec extends AnyWordSpec with Matchers with ScalaFutures with PostgresFixture {
@@ -53,8 +55,29 @@ final class LotHistoryIntegrationSpec extends AnyWordSpec with Matchers with Sca
     "reads the bids of a lot by journal position, not by the time they carry, and continues after a position" in {
       val (database, lotId) = seeded(Seq(9L, 3L, 12L, 4L, 7L))
       withViews(database) { views =>
-        views.history(lotId, None, 3).futureValue.map(_.map(_.sequence)) shouldBe Some(List(3L, 4L, 7L))
-        views.history(lotId, Some(7L), 3).futureValue.map(_.map(_.sequence)) shouldBe Some(List(9L, 12L))
+        views.history(lotId, None, 3).futureValue.map(_.map(_.position)) shouldBe Some(List(3L, 4L, 7L))
+        views.history(lotId, Some(7L), 3).futureValue.map(_.map(_.position)) shouldBe Some(List(9L, 12L))
+      }
+    }
+
+    "reads a removal of a participant in its journal position, between the bids, and the removed bid marked" in {
+      val (database, lotId) = seeded(Seq(3L, 4L, 7L))
+      val leader = UUID.randomUUID()
+      withConnection(database) { connection =>
+        val statement = connection.createStatement()
+        statement.executeUpdate(s"UPDATE lot_bid SET removed = true WHERE lot_id = '$lotId' AND sequence = 4")
+        statement.executeUpdate(
+          s"""INSERT INTO lot_removal (lot_id, sequence, minor_units, currency, leader_id, occurred_at)
+              VALUES ('$lotId', 5, 103, 'RUB', '$leader', TIMESTAMPTZ '2026-10-04 12:00:00+00')"""
+        )
+      }
+      withViews(database) { views =>
+        val entries = views.history(lotId, None, 10).futureValue.getOrElse(fail("the lot is known"))
+        entries.map {
+          case HistoryRecord.Bid(bid) => (bid.sequence, bid.removed)
+          case removal: HistoryRecord.Removal => (removal.sequence, false)
+        } shouldBe List((3L, false), (4L, true), (5L, false), (7L, false))
+        entries(2) shouldBe HistoryRecord.Removal(5, 103, "RUB", Some(leader), Instant.parse("2026-10-04T12:00:00Z"))
       }
     }
 

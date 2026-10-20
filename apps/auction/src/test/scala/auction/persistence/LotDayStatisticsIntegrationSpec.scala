@@ -133,6 +133,36 @@ final class LotDayStatisticsIntegrationSpec extends AnyWordSpec with Matchers wi
       }
     }
 
+    // PER-658: снятая ставка не считается, а снятие до окна — цена, с которой лот вошёл в окно.
+    "leaves the bids of a removed participant out and opens the window at the price a removal left" in {
+      val database = freshDatabase()
+      JournalSchema.migrate(database)
+      val lotId = withConnection(database) { connection =>
+        val id = lot(connection, registered = true)
+        startingPrice(connection, id, 100)
+        bid(connection, id, 300, before)
+        bid(connection, id, 800, before.plusSeconds(60))
+        connection
+          .createStatement()
+          .executeUpdate(
+            s"""INSERT INTO lot_removal (lot_id, sequence, minor_units, currency, leader_id, occurred_at)
+                VALUES ('$id', 3, 300, 'RUB', NULL, '${before.plusSeconds(120)}'::timestamptz)"""
+          )
+        bid(connection, id, 400, windowFrom.plusSeconds(60))
+        bid(connection, id, 2_000, windowFrom.plusSeconds(120))
+        connection
+          .createStatement()
+          .executeUpdate(s"UPDATE lot_bid SET removed = true WHERE lot_id = '$id' AND minor_units IN (800, 2000)")
+        id
+      }
+      withViews(database) { views =>
+        val single = views.dayStatistics(auctionId, windowFrom, windowUntil).futureValue
+        single.map(each => (each.lotId, each.bidCount, each.maxPrice, each.priceBefore)) shouldBe List(
+          (lotId, 1L, Some(Money(400, CurrencyCode("RUB"))), Some(Money(300, CurrencyCode("RUB"))))
+        )
+      }
+    }
+
     "falls back to the starting price when the window is the lot's first trading" in {
       val database = freshDatabase()
       JournalSchema.migrate(database)
