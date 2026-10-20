@@ -405,6 +405,25 @@ type PlainAction =
       op: string;
       quote: CloseQuote;
     }
+  // «Ставки зала» помощника (PER-565, ADR-070 п. 4): экран со страницей
+  // людей, вопрос «Другой человек…», кнопка человека, «Да» подтверждения и
+  // кнопка лидера. Кнопка человека и «Да» называют лот, а не аукцион: лот,
+  // человек и цена рядом с аукционом в 64 байта не помещаются.
+  | { kind: "console-floor"; auction: string; page: number }
+  | { kind: "console-floor-search"; auction: string }
+  | {
+      kind: "console-floor-pick";
+      lot: string;
+      person: string;
+      minorUnits: number;
+    }
+  | {
+      kind: "console-floor-confirm";
+      lot: string;
+      person: string;
+      minorUnits: number;
+    }
+  | { kind: "console-floor-leader"; auction: string }
   // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
   | { kind: "manage-publish"; token: string; origin: PublishOrigin }
   | { kind: "manage-confirm-publish"; token: string; version: number }
@@ -581,7 +600,10 @@ export type QuestionStep =
   // ответ читает у Auction заново.
   | { kind: "console-window"; auction: string }
   // Следующая цена лота финала (PER-337): аукцион и номер лота в составе.
-  | { kind: "final-ask"; auction: string; position: number };
+  | { kind: "final-ask"; auction: string; position: number }
+  // «Другой человек…» «Ставок зала» (PER-565): аукцион, а людей и цену ответ
+  // читает у Auction заново.
+  | { kind: "floor-search"; auction: string };
 
 /** Ряд экрана правки лота: текст карточки, фото либо цена с шагом, парой. */
 export type LotFormField = LotTextField | "image" | "price";
@@ -833,6 +855,50 @@ export function consoleCloseConfirmData(
   return `v1:ac:k:${auction}:${position}:${op}:${named}`;
 }
 
+/**
+ * «Ставки зала» (PER-565): `v1:ac:b:<аукцион>[:<страница>]`. Экран и его
+ * «Обновить» — одна кнопка.
+ */
+export function floorData(auction: string, page = 0): string {
+  return page === 0 ? `v1:ac:b:${auction}` : `v1:ac:b:${auction}:${page}`;
+}
+
+/** «Другой человек…»: вопрос об имени. */
+export function floorSearchData(auction: string): string {
+  return `v1:ac:bs:${auction}`;
+}
+
+/** Кнопка лидера: ставка за него не нужна, Auction её не видит. */
+export function floorLeaderData(auction: string): string {
+  return `v1:ac:bl:${auction}`;
+}
+
+/**
+ * Кнопка человека зала и «Да» подтверждения: лот, человек и цена в минорных
+ * единицах по основанию 36. Семь знаков — до восьмисот миллиардов рублей, и
+ * строка занимает до 62 байт из 64.
+ */
+export function floorPickData(
+  lot: string,
+  person: string,
+  minorUnits: number,
+): string {
+  return `v1:ac:bp:${lot}:${person}:${minorUnits.toString(36)}`;
+}
+
+export function floorConfirmData(
+  lot: string,
+  person: string,
+  minorUnits: number,
+): string {
+  return `v1:ac:by:${lot}:${person}:${minorUnits.toString(36)}`;
+}
+
+const FloorAmountSchema = z
+  .string()
+  .regex(/^[1-9a-z][0-9a-z]{0,6}$/)
+  .transform((raw) => Number.parseInt(raw, 36));
+
 const noSaleQuote = "x";
 const QuoteSchema = z
   .string()
@@ -889,6 +955,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:ah:${step.auction}`;
     case "final-ask":
       return `v1:q:fa:${step.auction}:${step.position}`;
+    case "floor-search":
+      return `v1:q:fs:${step.auction}`;
     case "field":
       return `v1:q:${step.mode === "edit" ? "fe" : step.fresh === "meetups" ? "fn" : step.fresh === "manage" ? "fg" : "fc"}:${step.token}:${step.field}`;
     case "publish-moment":
@@ -1348,7 +1416,9 @@ function parseLot(parts: readonly string[]): CallbackAction {
 // `v1:ac:hw:<аукцион>:<окно>:<отпечаток>[:<страница>]`,
 // `v1:ac:<hs|hd>:<аукцион>:<окно>:<отпечаток>:<лот>` и
 // `v1:ac:hx:<аукцион>:<окно>:<отпечаток>`. Розыгрыш (PER-593):
-// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`.
+// `v1:ac:r:<аукцион>` и `v1:ac:rx:<аукцион>`. «Ставки зала» (PER-565):
+// `v1:ac:b:<аукцион>[:<страница>]`, `v1:ac:<bs|bl>:<аукцион>` и
+// `v1:ac:<bp|by>:<лот>:<человек>:<цена>`.
 function parseConsole(parts: readonly string[]): CallbackAction {
   const auction = TokenSchema.safeParse(parts[3]);
   if (!auction.success) return { kind: "malformed" };
@@ -1359,6 +1429,37 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       ? { index: index.data, print: print.data }
       : undefined;
   switch (parts[2]) {
+    case "b": {
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return (parts.length === 4 || parts.length === 5) && page.success
+        ? { kind: "console-floor", auction: auction.data, page: page.data }
+        : { kind: "malformed" };
+    }
+    case "bs":
+      return parts.length === 4
+        ? { kind: "console-floor-search", auction: auction.data }
+        : { kind: "malformed" };
+    case "bl":
+      return parts.length === 4
+        ? { kind: "console-floor-leader", auction: auction.data }
+        : { kind: "malformed" };
+    // Третья часть здесь — лот, а не аукцион: токен у них одной формы.
+    case "bp":
+    case "by": {
+      const person = TokenSchema.safeParse(parts[4]);
+      const amount = FloorAmountSchema.safeParse(parts[5]);
+      return parts.length === 6 && person.success && amount.success
+        ? {
+            kind:
+              parts[2] === "bp"
+                ? "console-floor-pick"
+                : "console-floor-confirm",
+            lot: auction.data,
+            person: person.data,
+            minorUnits: amount.data,
+          }
+        : { kind: "malformed" };
+    }
     case "ds":
       return parts.length === 4
         ? { kind: "console-day-summary", auction: auction.data }
@@ -1590,6 +1691,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-raffle", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
+      case "fs":
+        return { kind: "floor-search", auction: token.data };
       case "pm":
         return { kind: "publish-moment", token: token.data, origin: "status" };
       case "pd":

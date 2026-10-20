@@ -22,9 +22,11 @@ import {
   GetAuctionLotStatisticsResponseSchema,
   GetMeetupAuctionResponseSchema,
   GetRaffleResponseSchema,
+  ListAuctionNamesResponseSchema,
   ListAuctionsResponseSchema,
   ListLotHistoryResponseSchema,
   LotSnapshotSchema,
+  PlaceBidResponseSchema,
   RaffleSchema,
   RaffleStatus,
   ScheduleAuctionResponseSchema,
@@ -87,6 +89,8 @@ function adapter(rpc: {
   getDisplayNames?: Call;
   listAuctions?: Call;
   getRaffle?: Call;
+  listAuctionNames?: Call;
+  placeBid?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -100,7 +104,8 @@ function adapter(rpc: {
     listAuctionLots: notUsed,
     listLotHistory: (rpc.listLotHistory ?? notUsed) as never,
     getDisplayNames: (rpc.getDisplayNames ?? notUsed) as never,
-    placeBid: notUsed,
+    listAuctionNames: (rpc.listAuctionNames ?? notUsed) as never,
+    placeBid: (rpc.placeBid ?? notUsed) as never,
     setProxyLimit: notUsed,
     chooseDisplayName: notUsed,
     getAuction: notUsed,
@@ -1561,5 +1566,132 @@ describe("lot info reader", () => {
     await expect(
       createLotInfoReader({ getLot }).lotInfo(identityId, lotId),
     ).resolves.toEqual({ title: "" });
+  });
+});
+
+// «Ставки зала» (PER-565, ADR-070): имена аукциона и ставка `source = FLOOR`
+// за человека зала. Отказ — значение ответа, повтора нет.
+describe("floor bids adapter", () => {
+  const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
+  const participantId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+  const amount = { minorUnits: 130_000, currency: "RUB" };
+  const refused = (reason: unknown) =>
+    adapter({
+      placeBid: async () =>
+        create(PlaceBidResponseSchema, {
+          outcome: { case: "refused", value: { reason: reason as never } },
+        }),
+    });
+
+  it("places the bid from the room for the named participant", async () => {
+    const sent: unknown[] = [];
+    const floor = adapter({
+      placeBid: async (request: unknown) => {
+        sent.push(request);
+        return create(PlaceBidResponseSchema, {
+          outcome: {
+            case: "accepted",
+            value: { bidId: opId, lotVersion: 7n },
+          },
+        });
+      },
+    });
+
+    await expect(
+      floor.placeFloorBid(admin, { lotId, participantId, amount, opId }),
+    ).resolves.toEqual({ kind: "accepted", lotVersion: 7 });
+    expect(sent).toEqual([
+      expect.objectContaining({
+        viewer: wireAdmin,
+        lotId,
+        opId,
+        source: BidSource.FLOOR,
+        participantId,
+        amount: { minorUnits: 130_000n, currency: "RUB" },
+      }),
+    ]);
+  });
+
+  it("reads every floor refusal as a value", async () => {
+    const cases: [unknown, unknown][] = [
+      [
+        {
+          case: "bidNotAtNextPrice",
+          value: { expected: { minorUnits: 140_000n, currency: "RUB" } },
+        },
+        {
+          kind: "bid-not-at-next-price",
+          expected: { ...amount, minorUnits: 140_000 },
+        },
+      ],
+      [
+        { case: "bidderIsLeader", value: { currentPrice: amount } },
+        { kind: "bidder-is-leader" },
+      ],
+      [{ case: "lotNotOpen", value: {} }, { kind: "lot-not-open" }],
+      [
+        { case: "displayNameNotChosen", value: {} },
+        { kind: "display-name-not-chosen" },
+      ],
+      [
+        { case: "participantCannotBid", value: {} },
+        { kind: "participant-cannot-bid" },
+      ],
+      [
+        { case: "participantRemovedFromLot", value: {} },
+        { kind: "removed-from-lot" },
+      ],
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+    ];
+    for (const [reason, outcome] of cases) {
+      await expect(
+        refused(reason).placeFloorBid(admin, {
+          lotId,
+          participantId,
+          amount,
+          opId,
+        }),
+      ).resolves.toEqual(outcome);
+    }
+    await expect(
+      refused({ case: "currencyMismatch", value: {} }).placeFloorBid(admin, {
+        lotId,
+        participantId,
+        amount,
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  it("does not repeat a floor bid that got no answer", async () => {
+    const placeBid = vi.fn(() =>
+      Promise.reject(new ConnectError("deadline", Code.DeadlineExceeded)),
+    );
+    await expect(
+      adapter({ placeBid }).placeFloorBid(admin, {
+        lotId,
+        participantId,
+        amount,
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "timeout" });
+    expect(placeBid).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads the names of the auction", async () => {
+    const floor = adapter({
+      listAuctionNames: async () =>
+        create(ListAuctionNamesResponseSchema, {
+          names: [{ participantId, name: { text: "Аня" } }],
+        }),
+    });
+    await expect(floor.listAuctionNames(admin, auctionId)).resolves.toEqual({
+      kind: "ok",
+      names: [{ participantId, name: "Аня" }],
+    });
   });
 });
