@@ -205,8 +205,8 @@ object Lot {
    * транзакции — всегда событие самой команды, не производная ставка прокси, и участник в нём — инициатор. Чужой
    * участник или команда другого вида с тем же `op_id` получает `conflict`: исходный ответ выдал бы чужой `bid_id`, а
    * исполнение заново записало бы вторую транзакцию под тем же `op_id`. Инициатор в окне не хранится, поэтому журнал и
-   * snapshot прежней формы читаются тем же состоянием. У `ScheduleLot`, `MarkForFinal`, `UnmarkForFinal`, `ResumeLot` и
-   * `WithdrawLot` участника в событии нет, и своя команда — событие того же вида.
+   * snapshot прежней формы читаются тем же состоянием. У `ScheduleLot`, `MarkForFinal`, `UnmarkForFinal`, `ResumeLot`,
+   * `WithdrawLot` и `AddStepWindow` участника в событии нет, и своя команда — событие того же вида.
    */
   private def repeatOf[R](lot: Lot, opId: OpId, conflict: R)(own: LotEvent => Boolean): Option[Either[R, Decision]] =
     lot.seen.get(opId).map(original => if (own(original.event)) Right(Decision.Repeated(original)) else Left(conflict))
@@ -353,6 +353,34 @@ object Lot {
         case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) =>
           Right(Decision.Accepted(LotEvent.LotWithdrawn(command.reason)))
         case LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) => Left(WithdrawLotRejected.LotAlreadyClosed)
+      }
+    }
+
+  /**
+   * Окно, запущенное по ходу торгов (ADR-047, дополнение 2026-10-12, И-21): лот в торгах онлайн-этапа дописывает его к
+   * своим окнам событием `StepWindowAdded`. Закрытый, снятый, удержанный и уже вышедший в живой финал лот отвечает
+   * `LotNotOpen`, и аукцион его не ждёт. Повтор — только своей команды: аукцион шлёт её после рестарта с тем же
+   * `op_id`.
+   *
+   * `None` — принято без записи. Окно в чужой валюте лот отбрасывает так же, как при открытии: валюты лота аукцион не
+   * знает. Окно, пересекающееся с окном лота, тоже не пишется: пересечения проверяет аукцион по всем окнам, и такой
+   * запуск до лота не доходит, а записанное пересечение сделало бы журнал нечитаемым (И-21).
+   */
+  def decide(lot: Lot, command: AddStepWindow): Either[AddStepWindowRejected, Option[Decision]] =
+    repeatOf(lot, command.opId, AddStepWindowRejected.OpIdTaken) {
+      case _: LotEvent.StepWindowAdded => true
+      case _ => false
+    }.map(_.map(Some(_))).getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(AddStepWindowRejected.LotNotFound)
+        case LotState.Trading(trading) if trading.phase == Phase.Online =>
+          val window = command.window
+          if (window.step.currency != trading.config.currency || trading.stepWindows.exists(_.overlaps(window)))
+            Right(None)
+          else Right(Some(Decision.Accepted(LotEvent.StepWindowAdded(window))))
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Trading(_) | LotState.Held(_) |
+            LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
+          Left(AddStepWindowRejected.LotNotOpen)
       }
     }
 
@@ -627,9 +655,9 @@ object Lot {
    *
    * Удержание `LotHeldForFinal` переносит цену, лидера, лимиты и счётчик продлений из торгов как есть, а возврат
    * `LotResumed` строит торги живого финала из удержания: фаза `Live`, без дедлайна и ask, отметка снята (П-09).
-   * `AskAdvanced` ставит ask и больше ничего не трогает: цену и лидера меняет только ставка (П-08). Окон сниженного
-   * шага удержание не несёт (RFC-011, «Состояние лота»), и в финале их нет; правило шага не применяет их в `Live` и
-   * тогда, когда они в состоянии лежат.
+   * `AskAdvanced` ставит ask и больше ничего не трогает: цену и лидера меняет только ставка (П-08). `StepWindowAdded`
+   * дописывает окно к окнам торгов в порядке начала (И-21). Окон сниженного шага удержание не несёт (RFC-011,
+   * «Состояние лота»), и в финале их нет; правило шага не применяет их в `Live` и тогда, когда они в состоянии лежат.
    */
   def apply(lot: Lot, envelope: Envelope): Lot = {
     val state = (lot.state, envelope.event) match {
@@ -668,6 +696,8 @@ object Lot {
         )
       case (LotState.Held(held), LotEvent.LotResumed) => LotState.Trading(resumed(held))
       case (LotState.Trading(trading), LotEvent.AskAdvanced(ask)) => LotState.Trading(trading.copy(ask = Some(ask)))
+      case (LotState.Trading(trading), LotEvent.StepWindowAdded(window)) =>
+        LotState.Trading(trading.copy(stepWindows = (trading.stepWindows :+ window).sortBy(_.from)))
       case (LotState.Trading(trading), placed: LotEvent.BidPlaced) => LotState.Trading(bidden(trading, placed))
       case (LotState.Trading(trading), LotEvent.DeadlineExtended(deadline, extensionsUsed)) =>
         LotState.Trading(trading.copy(deadline = Some(deadline), extensionsUsed = extensionsUsed))

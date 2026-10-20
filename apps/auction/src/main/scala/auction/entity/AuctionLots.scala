@@ -4,6 +4,8 @@ import auction.aggregate.CloseAuctionLotRejected
 import auction.aggregate.Closure
 import auction.aggregate.LotEnding
 import auction.catalog.LotId
+import auction.lot.AddStepWindow
+import auction.lot.AddStepWindowRejected
 import auction.lot.AdvanceAsk
 import auction.lot.AdvanceAskRejected
 import auction.lot.CloseLot
@@ -79,6 +81,12 @@ trait AuctionLots {
 
   /** Снятие лота отменённым аукционом (ADR-047, дополнение 2026-10-12); подтверждение — только его `LotWithdrawn`. */
   def withdraw(lot: LotId, command: WithdrawLot): Future[Either[WithdrawLotRejected, Unit]]
+
+  /**
+   * Окно, запущенное по ходу торгов (ADR-047, дополнение 2026-10-12). Подтверждение — и записанное окно, и принятое без
+   * записи: окно в чужой валюте лот отбрасывает, и ждать от него больше нечего.
+   */
+  def addWindow(lot: LotId, command: AddStepWindow): Future[Either[AddStepWindowRejected, Unit]]
 }
 
 object AuctionLots {
@@ -152,6 +160,13 @@ object AuctionLots {
       def withdraw(lot: LotId, command: WithdrawLot): Future[Either[WithdrawLotRejected, Unit]] =
         entity(lot)
           .ask[Either[WithdrawLotRejected, Envelope]](LotEntity.Withdraw(command, Initiator.Scheduler, _))
+          .map(_.map(_ => ()))(using ExecutionContext.parasitic)
+
+      // Доставляет окно аукцион, а не человек: после рестарта он шлёт его сам. Кто запустил окно, называет строка
+      // `StepWindowLaunched`; чужой `op_id` лот отклоняет `OpIdTaken`.
+      def addWindow(lot: LotId, command: AddStepWindow): Future[Either[AddStepWindowRejected, Unit]] =
+        entity(lot)
+          .ask[Either[AddStepWindowRejected, Option[Envelope]]](LotEntity.AddWindow(command, Initiator.Scheduler, _))
           .map(_.map(_ => ()))(using ExecutionContext.parasitic)
     }
 

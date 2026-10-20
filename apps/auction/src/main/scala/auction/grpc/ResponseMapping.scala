@@ -14,6 +14,9 @@ import auction.aggregate.LotEnding
 import auction.aggregate.NextLotRefusal
 import auction.aggregate.Drafted
 import auction.aggregate.FinalChoiceRefusal
+import auction.aggregate.LaunchRefusal
+import auction.aggregate.LaunchStepWindowRejected
+import auction.aggregate.StepWindowConfig
 import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.OpeningRefusal
 import auction.aggregate.RemovalRefusal
@@ -753,6 +756,57 @@ object ResponseMapping {
             FinalChoiceRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
           ) =>
         throw new IllegalStateException(s"final deselection answered $denial")
+    }
+  }
+
+  /**
+   * Запуск окна сниженного шага: принятое окно отдаётся с моментами, которые записал аукцион, — начало без `from` им
+   * подставлено. `OpIdTaken` — статус, как у остальных команд аукциона.
+   */
+  def launchStepWindow(
+      outcome: Either[LaunchRefusal, StepWindowConfig]
+  ): Either[Status, wire.LaunchStepWindowResponse] = {
+    import wire.LaunchStepWindowRefusal.Reason
+    def refused(reason: Reason) =
+      Right(wire.LaunchStepWindowResponse().withRefused(wire.LaunchStepWindowRefusal(reason)))
+    outcome match {
+      case Right(window) =>
+        val accepted = wire.StepWindowLaunchAccepted(LotValues.instant(window.from), LotValues.instant(window.until))
+        Right(wire.LaunchStepWindowResponse().withAccepted(accepted))
+      case Left(LaunchRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.NotInPrebidding)) =>
+        refused(Reason.NotInPrebidding(wire.NotInPrebidding()))
+      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.StepWindowInPast)) =>
+        refused(Reason.StepWindowInPast(wire.StepWindowInPast()))
+      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.StepWindowOutsideOnlinePhase)) =>
+        refused(Reason.StepWindowOutsideOnlinePhase(wire.LaunchedStepWindowOutsideOnlinePhase()))
+      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.StepWindowStepInvalid)) =>
+        refused(Reason.StepWindowStepInvalid(wire.LaunchedStepWindowStepInvalid()))
+      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.StepWindowLotsEmpty)) =>
+        refused(Reason.StepWindowLotsEmpty(wire.LaunchedStepWindowLotsEmpty()))
+      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.LotNotInAuction(lot))) =>
+        refused(Reason.LotNotInAuction(wire.StepWindowLotNotInAuction(lot.value.toString)))
+      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.LotNotOpen(lot))) =>
+        refused(Reason.LotNotOpen(wire.StepWindowLotNotOpen(lot.value.toString)))
+      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.StepWindowsOverlap(lot, existing))) =>
+        val overlap = wire.LaunchedStepWindowsOverlap(
+          lot.value.toString,
+          LotValues.instant(existing.from),
+          LotValues.instant(existing.until)
+        )
+        refused(Reason.StepWindowsOverlap(overlap))
+      case Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(LaunchRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(LaunchRefusal.Denied(Denial.MeetupNotFound)) => refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(LaunchRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(LaunchRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(LaunchRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            LaunchRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"step window launch answered $denial")
     }
   }
 

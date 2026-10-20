@@ -126,6 +126,16 @@ enum FinalChoiceRefusal[+R] {
 }
 
 /**
+ * Отказ запуска окна сниженного шага: проверка до агрегата или решение агрегата. `OpIdTaken` — под этим `op_id`
+ * записана другая команда аукциона, и исходного окна, которое вернул бы повтор, нет.
+ */
+enum LaunchRefusal {
+  case Denied(denial: Denial)
+  case Rejected(rejected: LaunchStepWindowRejected)
+  case OpIdTaken
+}
+
+/**
  * Отказ ask ведущего: проверка до агрегата, реестр аукциона или решение самого лота. `OpIdTaken` — под этим `op_id`
  * записана команда аукциона, а не ask.
  */
@@ -202,6 +212,10 @@ enum ClosingRefusal {
  *
  * Команды финала (PER-334) — команды самого аукциона, как открытие торгов: событие пишет он, и повтор `op_id` получает
  * исходный ответ из его окна. Повтор `StartNextLot` отвечает лотом исходной активации, не спрашивая Meetups.
+ *
+ * Запуск окна сниженного шага (ADR-047, дополнение 2026-10-12) — команда самого аукциона: событие пишет он, и повтор
+ * `op_id` получает исходное окно раньше права, фазы, времени и пересечений. Как у открытия, повтор идёт в entity мимо
+ * Meetups и дошлёт окно лотам, не ответившим раньше.
  *
  * Ask ведущего (PER-293) идёт тем же путём, что отметка: аукцион — прокси к команде лота, он проверяет реестр и шлёт
  * лоту `AdvanceAsk`, а фазу и цену судит лот; событие пишет лот, и повтор `op_id` узнаёт он.
@@ -397,6 +411,38 @@ final class AuctionCommands(
       auctions.deselectForFinal(auctionId, DeselectForFinal(lot, opId), Initiator.Operator(person))
     }
 
+  /** Запуск окна сниженного шага; ответ — записанное окно, с началом, которое подставил сервер, если его не задали. */
+  def launchStepWindow(
+      auctionId: AuctionId,
+      command: LaunchStepWindow,
+      person: ParticipantId
+  ): Future[Either[LaunchRefusal, StepWindowConfig]] =
+    auctions.inspect(auctionId, command.opId).flatMap {
+      // Мимо Meetups в entity идёт только повтор самого запуска: события он не пишет, но дошлёт окно лотам, не
+      // ответившим раньше. `op_id` другой команды до entity не доходит.
+      case Inspection.Repeated(original) =>
+        original.event match {
+          case AuctionEvent.StepWindowLaunched(_) => launch(auctionId, command, person)
+          case _ => Future.successful(Left(LaunchRefusal.OpIdTaken))
+        }
+      case Inspection.Absent => Future.successful(Left(LaunchRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, LaunchRefusal.Denied(_))(launch(auctionId, command, person))
+    }
+
+  private def launch(
+      auctionId: AuctionId,
+      command: LaunchStepWindow,
+      person: ParticipantId
+  ): Future[Either[LaunchRefusal, StepWindowConfig]] =
+    auctions.launchStepWindow(auctionId, command, Initiator.Operator(person)).map {
+      case Right(AuctionAnswer.Written(envelope)) => launchedBy(envelope)
+      case Right(AuctionAnswer.Unchanged) =>
+        throw new IllegalStateException(s"auction $auctionId launched a step window without an event")
+      case Left(LaunchStepWindowRejected.AuctionNotFound) => Left(LaunchRefusal.Denied(Denial.AuctionNotFound))
+      case Left(rejected) => Left(LaunchRefusal.Rejected(rejected))
+    }
+
   /** Ask ведущего лоту реестра (RFC-011, П-08); инициатор у лота — ведущий. */
   def advanceAsk(
       auctionId: AuctionId,
@@ -590,6 +636,13 @@ final class AuctionCommands(
       case Authority.Unavailable => Future.successful(Left(deny(Denial.Unavailable)))
     }
 
+  /** Окно исходного запуска; `op_id` под другим событием — чужая команда. */
+  private def launchedBy(envelope: AuctionEnvelope): Either[LaunchRefusal, StepWindowConfig] =
+    envelope.event match {
+      case AuctionEvent.StepWindowLaunched(window) => Right(window)
+      case _ => Left(LaunchRefusal.OpIdTaken)
+    }
+
   /** Лот родился в этом аукционе — сейчас или раньше. `false` — он уже есть, но в другом аукционе. */
   private def born(auctionId: AuctionId, lot: LotId, opId: OpId, person: ParticipantId): Future[Boolean] =
     lots.draftLot(lot.value, DraftLot(auctionId, opId), Initiator.Operator(person)).flatMap {
@@ -609,7 +662,7 @@ final class AuctionCommands(
           AuctionEvent.PrebiddingStarted | AuctionEvent.AuctionDiscarded | AuctionEvent.AuctionCancelled |
           AuctionEvent.PrebiddingDeadlineReached | AuctionEvent.PrebiddingEnded(_) | AuctionEvent.FinalLineupFrozen(_) |
           AuctionEvent.FinalStarted | AuctionEvent.FinalLotActivated(_) | AuctionEvent.FinalLotCompleted(_) |
-          AuctionEvent.AuctionFinished =>
+          AuctionEvent.AuctionFinished | AuctionEvent.StepWindowLaunched(_) =>
         false
     }
 }

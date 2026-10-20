@@ -27,7 +27,8 @@
         "deadlineExtended": null,
         "lotHeldForFinal": null,
         "askAdvanced": null,
-        "lotWithdrawn": null
+        "lotWithdrawn": null,
+        "stepWindowAdded": null
       }
     },
     {
@@ -85,7 +86,8 @@
         "deadlineExtended": null,
         "lotHeldForFinal": null,
         "askAdvanced": null,
-        "lotWithdrawn": null
+        "lotWithdrawn": null,
+        "stepWindowAdded": null
       }
     },
     {
@@ -145,7 +147,8 @@
         "deadlineExtended": null,
         "lotHeldForFinal": null,
         "askAdvanced": null,
-        "lotWithdrawn": null
+        "lotWithdrawn": null,
+        "stepWindowAdded": null
       }
     },
     {
@@ -175,7 +178,8 @@
         "deadlineExtended": null,
         "lotHeldForFinal": null,
         "askAdvanced": null,
-        "lotWithdrawn": null
+        "lotWithdrawn": null,
+        "stepWindowAdded": null
       }
     },
     {
@@ -196,7 +200,8 @@
         "askAdvanced": null,
         "lotWithdrawn": {
           "reason": "AuctionCancelled"
-        }
+        },
+        "stepWindowAdded": null
       }
     }
   ]

@@ -78,6 +78,8 @@ object LotFacts {
       case LotEvent.AskAdvanced(_) => Some("ask_advanced" -> bus.LotEvent.Occasion.AskAdvanced(bus.AskAdvanced()))
       case LotEvent.LotWithdrawn(_) =>
         Some("lot_withdrawn" -> bus.LotEvent.Occasion.LotWithdrawn(bus.LotWithdrawn()))
+      case LotEvent.StepWindowAdded(_) =>
+        Some("step_window_added" -> bus.LotEvent.Occasion.StepWindowAdded(bus.StepWindowAdded()))
       // Отметка — рабочий выбор организатора до заморозки состава: публичным факт становится только удержание.
       case LotEvent.ProxyLimitSet(_, _) | LotEvent.ProxyLimitWithdrawn(_) | LotEvent.LotMarkedForFinal |
           LotEvent.LotUnmarkedForFinal =>

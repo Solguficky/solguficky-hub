@@ -79,6 +79,13 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
 
+  /** Запуск окна сниженного шага. Ответ — после записи `StepWindowLaunched`, лотов он не ждёт. */
+  def launchStepWindow(
+      auctionId: AuctionId,
+      command: LaunchStepWindow,
+      initiator: Initiator
+  ): Future[Either[LaunchStepWindowRejected, AuctionAnswer]]
+
   /** Ask ведущего лоту реестра. Ответ приходит после ответа лота, как у `scheduleLot`. */
   def advanceAsk(
       auctionId: AuctionId,
@@ -197,6 +204,13 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]] =
         entity(auctionId).ask(AuctionEntity.Deselect(command, initiator, _))
+
+      def launchStepWindow(
+          auctionId: AuctionId,
+          command: LaunchStepWindow,
+          initiator: Initiator
+      ): Future[Either[LaunchStepWindowRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Launch(command, initiator, _))
 
       def advanceAsk(
           auctionId: AuctionId,

@@ -99,7 +99,7 @@ final case class StoredLotWithdrawn(reason: String)
 /**
  * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а аукцион лежит в конверте строки. Так
  * же без секции `LotMarkedForFinal` и `LotResumed`. Секции добавлялись в конец: строка, записанная до них, читает
- * недостающую как пустую.
+ * недостающую как пустую. `stepWindowAdded` — окно, запущенное по ходу торгов (ADR-047, дополнение 2026-10-12).
  */
 final case class StoredEvent(
     kind: String,
@@ -113,7 +113,8 @@ final case class StoredEvent(
     deadlineExtended: Option[StoredDeadlineExtended],
     lotHeldForFinal: Option[StoredLotHeldForFinal],
     askAdvanced: Option[StoredAskAdvanced] = None,
-    lotWithdrawn: Option[StoredLotWithdrawn] = None
+    lotWithdrawn: Option[StoredLotWithdrawn] = None,
+    stepWindowAdded: Option[StoredStepWindow] = None
 )
 
 object StoredEvent {
@@ -362,6 +363,8 @@ object LotJournal {
         StoredEvent.of("AskAdvanced").copy(askAdvanced = Some(StoredAskAdvanced(storeMoney(ask))))
       case LotEvent.LotWithdrawn(reason) =>
         StoredEvent.of("LotWithdrawn").copy(lotWithdrawn = Some(StoredLotWithdrawn(reason.toString)))
+      case LotEvent.StepWindowAdded(window) =>
+        StoredEvent.of("StepWindowAdded").copy(stepWindowAdded = Some(storeWindow(window)))
     }
 
   /**
@@ -380,7 +383,8 @@ object LotJournal {
       stored.deadlineExtended,
       stored.lotHeldForFinal,
       stored.askAdvanced,
-      stored.lotWithdrawn
+      stored.lotWithdrawn,
+      stored.stepWindowAdded
     ).count(_.isDefined)
     def mismatch: Nothing = corrupted(s"lot event of kind ${stored.kind} with sections that do not match it")
     (stored.kind, sections) match {
@@ -441,6 +445,13 @@ object LotJournal {
       case ("LotWithdrawn", 1) =>
         stored.lotWithdrawn.fold(mismatch) { withdrawn =>
           LotEvent.LotWithdrawn(restoreEnum("withdrawn reason", withdrawn.reason)(WithdrawnReason.valueOf))
+        }
+      // Валюту и пересечения окна сверяет свёртка состояния: у события нет конфигурации лота.
+      case ("StepWindowAdded", 1) =>
+        stored.stepWindowAdded.fold(mismatch) { added =>
+          val window = restoreWindow(added)
+          if (!window.from.isBefore(window.until)) corrupted("step window that ends before it starts")
+          LotEvent.StepWindowAdded(window)
         }
       case _ => mismatch
     }
@@ -581,16 +592,20 @@ object LotJournal {
     }
 
   private def storeWindows(windows: List[StepWindow]): Option[List[StoredStepWindow]] =
-    Option.when(windows.nonEmpty)(
-      windows.map(window => StoredStepWindow(window.from, window.until, storeMoney(window.step)))
-    )
+    Option.when(windows.nonEmpty)(windows.map(storeWindow))
+
+  private def storeWindow(window: StepWindow): StoredStepWindow =
+    StoredStepWindow(window.from, window.until, storeMoney(window.step))
+
+  private def restoreWindow(stored: StoredStepWindow): StepWindow =
+    StepWindow(stored.from, stored.until, restoreMoney(stored.step))
 
   /**
    * Окна И-21: в валюте лота, `from` раньше `until`, без пересечений. Иное — испорченный журнал, а не торги без окна.
    * Порядок состояния — по возрастанию начала: так их пишет `Lot.decide(OpenLot)`, и так их читает шина.
    */
   private def restoreWindows(stored: Option[List[StoredStepWindow]], config: LotConfig): List[StepWindow] = {
-    val windows = stored.getOrElse(Nil).map(window => StepWindow(window.from, window.until, restoreMoney(window.step)))
+    val windows = stored.getOrElse(Nil).map(restoreWindow)
     if (windows.exists(_.step.currency != config.currency)) corrupted("step window in another currency than the lot")
     if (windows.exists(window => !window.from.isBefore(window.until)))
       corrupted("step window that ends before it starts")

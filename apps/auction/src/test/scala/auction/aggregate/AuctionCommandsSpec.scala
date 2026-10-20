@@ -103,6 +103,13 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(deselectAnswer)
     }
 
+    var launchAnswer: Either[LaunchStepWindowRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def launchStepWindow(auctionId: AuctionId, command: LaunchStepWindow, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(launchAnswer)
+    }
+
     var askAnswer: Either[AdvanceLotAskRejected, Unit] = Right(())
 
     def advanceAsk(auctionId: AuctionId, command: AdvanceLotAsk, initiator: Initiator) = {
@@ -767,6 +774,50 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         .futureValue shouldBe Left(ClosingRefusal.Denied(Denial.NotAdministrator))
       repeated.commands shouldBe empty
       stranger.commands shouldBe empty
+    }
+
+    "passes a repeated step window launch to the auction without asking meetups and answers the original window" in {
+      val window = StepWindowConfig(deadline, deadline.plusSeconds(3600), money(1), Set(lot))
+      val original = AuctionEnvelope(5, op(7), AuctionEvent.StepWindowLaunched(window))
+      val repeated = Auctions(Inspection.Repeated(original))
+      repeated.launchAnswer = Right(AuctionAnswer.Written(original))
+      val meetups = Meetups(Authority.NotAdministrator)
+      val command = LaunchStepWindow(None, deadline.plusSeconds(3600), money(1), List(lot), op(7))
+
+      AuctionCommands(repeated, noLots, meetups).launchStepWindow(auctionOfMeetup, command, person).futureValue shouldBe
+        Right(window)
+      meetups.asked shouldBe 0
+      repeated.commands shouldBe List(command)
+    }
+
+    "refuses a launch under the op_id of another auction command, an absent auction and a stranger" in {
+      val command = LaunchStepWindow(None, deadline, money(1), List(lot), op(7))
+      val taken = Auctions(Inspection.Repeated(AuctionEnvelope(4, op(7), AuctionEvent.PrebiddingStarted)))
+      AuctionCommands(taken, noLots, granted).launchStepWindow(auctionOfMeetup, command, person).futureValue shouldBe
+        Left(LaunchRefusal.OpIdTaken)
+      AuctionCommands(Auctions(Inspection.Absent), noLots, granted)
+        .launchStepWindow(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(LaunchRefusal.Denied(Denial.AuctionNotFound))
+      val stranger = Auctions(Inspection.Present(meetup, registryOpen = false))
+      AuctionCommands(stranger, noLots, Meetups(Authority.NotAdministrator))
+        .launchStepWindow(auctionOfMeetup, command, person)
+        .futureValue shouldBe Left(LaunchRefusal.Denied(Denial.NotAdministrator))
+      stranger.commands shouldBe empty
+    }
+
+    "hands a granted launch to the auction as the administrator and returns the recorded window" in {
+      val window = StepWindowConfig(deadline, deadline.plusSeconds(3600), money(1), Set(lot))
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      auctions.launchAnswer =
+        Right(AuctionAnswer.Written(AuctionEnvelope(5, op(7), AuctionEvent.StepWindowLaunched(window))))
+      val command = LaunchStepWindow(None, deadline.plusSeconds(3600), money(1), List(lot), op(7))
+
+      AuctionCommands(auctions, noLots, granted).launchStepWindow(auctionOfMeetup, command, person).futureValue shouldBe
+        Right(window)
+      auctions.commands shouldBe List(command)
+      auctions.launchAnswer = Left(LaunchStepWindowRejected.LotNotOpen(lot))
+      AuctionCommands(auctions, noLots, granted).launchStepWindow(auctionOfMeetup, command, person).futureValue shouldBe
+        Left(LaunchRefusal.Rejected(LaunchStepWindowRejected.LotNotOpen(lot)))
     }
 
     "grants the console only once meetups confirms the administrator" in {

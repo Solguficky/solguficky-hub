@@ -140,6 +140,19 @@ final case class DeselectForFinal(lot: LotId, opId: OpId)
 final case class AdvanceLotAsk(lot: LotId, newAsk: Money, opId: OpId)
 
 /**
+ * Запуск окна сниженного шага по ходу онлайн-торгов (ADR-047, дополнение 2026-10-12): вход той же формы, что окно
+ * конфигурации, но `from` необязателен — без него окно начинается с серверного момента команды. Лоты идут в порядке
+ * запроса, повторы — один лот: отказ называет первый лот, на котором споткнулся.
+ */
+final case class LaunchStepWindow(from: Option[Instant], until: Instant, step: Money, lots: List[LotId], opId: OpId)
+
+/**
+ * Окно, которое аукцион запустил, и `op_id` запуска: от него выводятся `op_id` доставки окна лотам
+ * ([[LotRoster.windowOf]]), одинаковые после любого рестарта.
+ */
+final case class LaunchedWindow(opId: OpId, window: StepWindowConfig)
+
+/**
  * Общий дедлайн онлайн-торгов (RFC-011, `EndPrebidding`). Отдаёт её не человек, а таймер entity на `closesAt`, поэтому
  * в контракте такой команды нет; `now` — часы entity в момент срабатывания.
  */
@@ -223,6 +236,7 @@ enum AuctionEvent {
   case FinalLotActivated(lot: LotId)
   case FinalLotCompleted(lot: LotId)
   case AuctionFinished
+  case StepWindowLaunched(window: StepWindowConfig)
 }
 
 /** Строка журнала аукциона в той части конверта, которую читает ядро; `sequence` назначает тот, кто пишет журнал. */
@@ -390,6 +404,25 @@ enum FinalChoiceRejected[+R] {
 }
 
 /**
+ * Отказы запуска окна сниженного шага (ADR-047, дополнение 2026-10-12) в порядке проверки. Случаи окна — те же, что у
+ * `ConfigInvalid` дополнения 2026-10-08, и проверяются против конфигурации торгов. `StepWindowInPast` — заданное `from`
+ * раньше серверного момента команды. `LotNotInAuction` и `LotNotOpen` называют первый такой лот в порядке запроса:
+ * `LotNotOpen` — аукцион не знает, что лот в торгах (И-14). `StepWindowsOverlap` называет общий лот и окно, объявленное
+ * или запущенное раньше, с которым запуск пересёкся.
+ */
+enum LaunchStepWindowRejected {
+  case AuctionNotFound
+  case NotInPrebidding
+  case StepWindowInPast
+  case StepWindowOutsideOnlinePhase
+  case StepWindowStepInvalid
+  case StepWindowLotsEmpty
+  case LotNotInAuction(lot: LotId)
+  case LotNotOpen(lot: LotId)
+  case StepWindowsOverlap(lot: LotId, existing: StepWindowConfig)
+}
+
+/**
  * Исход принятой команды.
  *
  * `Unchanged` — команда принята, но событие не нужно: аукцион у сходки уже есть. Такой ответ в окно `seen` не попадает,
@@ -418,13 +451,15 @@ enum Inspection {
  *
  * `meetup` пуста ровно в `Initial` и после рождения не меняется. Реестр `lots` меняется только в `Draft` и `Scheduled`
  * (И-20). `seen` — то же окно, что у лота: `seen(op_id) ⟺ в журнале есть событие с этим op_id`, и пишет его только
- * [[Auction.apply]].
+ * [[Auction.apply]]. `launched` — окна сниженного шага, запущенные по ходу торгов, в порядке записи (ADR-047,
+ * дополнение 2026-10-12): объявленные лежат в конфигурации, и пересечения запуск проверяет по обоим спискам.
  */
 final case class Auction(
     state: AuctionState,
     meetup: Option[MeetupId],
     lots: Set[LotId],
-    seen: Map[OpId, AuctionEnvelope]
+    seen: Map[OpId, AuctionEnvelope],
+    launched: List[LaunchedWindow] = Nil
 )
 
 object Auction {
@@ -699,6 +734,71 @@ object Auction {
       case _ => Right(AdvanceAsk(command.newAsk, command.opId))
     }
 
+  /**
+   * Запуск окна сниженного шага (ADR-047, дополнение 2026-10-12). Повтор `op_id` узнаётся раньше фазы, времени и
+   * пересечений: иначе повтор после потерянного ответа получил бы `StepWindowInPast` или пересечение с самим собой.
+   * `now` — серверный момент команды: начало окна без `from` и граница «в прошлом». `active` — лоты, чьё открытие
+   * аукцион подтвердил (И-14): окно, обогнавшее `OpenLot`, пропало бы у лота молча, оставаясь в проверке пересечений.
+   *
+   * Онлайн-этап без `closesAt` верхней границы не имеет, и запуск отвечает `StepWindowOutsideOnlinePhase`, как
+   * объявленному окну без конца этапа отвечает `StepWindowWithoutClosesAt`. Открытие торгов со временем не сверяется,
+   * поэтому начало этапа проверяет сам запуск.
+   */
+  def decide(
+      auction: Auction,
+      command: LaunchStepWindow,
+      now: Instant,
+      active: Set[LotId]
+  ): Either[LaunchStepWindowRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(LaunchStepWindowRejected.AuctionNotFound)
+          case AuctionState.Prebidding(config, _) => launched(auction, config, command, now, active)
+          case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            Left(LaunchStepWindowRejected.NotInPrebidding)
+        }
+    }
+
+  private def launched(
+      auction: Auction,
+      config: AuctionConfig,
+      command: LaunchStepWindow,
+      now: Instant,
+      active: Set[LotId]
+  ): Either[LaunchStepWindowRejected, AuctionDecision] = {
+    val from = command.from.getOrElse(now)
+    val lots = command.lots.distinct
+    val window = StepWindowConfig(from, command.until, command.step, lots.toSet)
+    val currency = config.lotDefaults.fold(LotTerms.platform.currency)(_.currency)
+    val within = config.onlinePhase.exists { phase =>
+      phase.closesAt.exists { closesAt =>
+        !from.isBefore(phase.opensAt) && from.isBefore(command.until) && !command.until.isAfter(closesAt)
+      }
+    }
+    val existing = config.stepWindows ++ auction.launched.map(_.window)
+    def overlap: Option[LaunchStepWindowRejected] =
+      existing.iterator
+        .filter(other => other.from.isBefore(window.until) && window.from.isBefore(other.until))
+        .flatMap(other => lots.find(other.lots.contains).map(LaunchStepWindowRejected.StepWindowsOverlap(_, other)))
+        .nextOption()
+    if (from.isBefore(now)) Left(LaunchStepWindowRejected.StepWindowInPast)
+    else if (!within) Left(LaunchStepWindowRejected.StepWindowOutsideOnlinePhase)
+    else if (command.step.minorUnits <= 0 || command.step.currency != currency)
+      Left(LaunchStepWindowRejected.StepWindowStepInvalid)
+    else if (lots.isEmpty) Left(LaunchStepWindowRejected.StepWindowLotsEmpty)
+    else
+      lots
+        .find(!auction.lots.contains(_))
+        .map(LaunchStepWindowRejected.LotNotInAuction(_))
+        .orElse(lots.find(!active.contains(_)).map(LaunchStepWindowRejected.LotNotOpen(_)))
+        .orElse(overlap)
+        .toLeft(AuctionDecision.Accepted(AuctionEvent.StepWindowLaunched(window)))
+  }
+
   private def choice[C](auction: Auction, lot: LotId)(command: C): Either[FinalChoiceRejected[Nothing], C] =
     auction.state match {
       case AuctionState.Initial => Left(FinalChoiceRejected.AuctionNotFound)
@@ -941,6 +1041,8 @@ object Auction {
         auction.copy(state = AuctionState.Finished(config, startedBy))
       case (AuctionState.Break(config, startedBy), AuctionEvent.AuctionFinished) =>
         auction.copy(state = AuctionState.Finished(config, startedBy))
+      case (AuctionState.Prebidding(_, _), AuctionEvent.StepWindowLaunched(window)) =>
+        auction.copy(launched = auction.launched :+ LaunchedWindow(envelope.opId, window))
       case (current, AuctionEvent.AuctionCancelled) =>
         current match {
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |

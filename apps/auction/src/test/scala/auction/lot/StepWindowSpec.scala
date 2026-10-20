@@ -203,6 +203,72 @@ final class StepWindowSpec extends AnyWordSpec with Matchers with ScalaCheckDriv
       Lot.nextWindow(state, at("16:00")) shouldBe None
     }
 
+    "lower the step from the start of a launched window and keep the regular step before it" in {
+      val (added, journal) =
+        Journal.of(trading(price = 100, leader = leader)).addWindow(AddStepWindow(happyHours, op(1)))
+
+      added shouldBe Right(Some(Decision.Accepted(LotEvent.StepWindowAdded(happyHours))))
+      bidAt(journal.lot, 101, "11:59:59") shouldBe Left(PlaceBidRejected.BidBelowMinimum(money(110)))
+      placedAmount(bidAt(journal.lot, 101, "12:00")) shouldBe Some(money(101))
+    }
+
+    "append a launched window to the announced ones in the order they start" in {
+      val earlier = stepWindow("10:00", "11:00", step = 2)
+      val (_, journal) = Journal.of(windowed()).addWindow(AddStepWindow(earlier, op(1)))
+
+      tradingOf(journal.lot).stepWindows shouldBe List(earlier, happyHours)
+    }
+
+    "restore a launched window on replay after the windows of LotOpened" in {
+      val later = stepWindow("15:00", "16:00", step = 2)
+      val (_, opened) = Journal.of(scheduled()).open(OpenLot(Some(deadline), op(1), List(happyHours)))
+      val (_, launched) = opened.addWindow(AddStepWindow(later, op(2)))
+
+      tradingOf(Lot.replay(scheduled(), launched.entries)).stepWindows shouldBe List(happyHours, later)
+    }
+
+    "answer a launched window delivered again with the original event and write nothing" in {
+      val command = AddStepWindow(happyHours, op(1))
+      val (_, first) = Journal.of(trading(price = 100)).addWindow(command)
+      val (again, second) = first.addWindow(command)
+
+      again shouldBe Right(Some(Decision.Repeated(first.entries.head)))
+      second shouldBe first
+    }
+
+    "refuse a launched window whose op_id another command of the lot has taken" in {
+      val (_, marked) = Journal.of(trading(price = 100)).mark(markForFinal(1))
+
+      marked.addWindow(AddStepWindow(happyHours, op(1)))._1 shouldBe Left(AddStepWindowRejected.OpIdTaken)
+    }
+
+    "take a launched window in another currency without recording it" in {
+      val foreign = stepWindow("12:00", "14:00", step = 1, currency = eur)
+      val (added, journal) = Journal.of(trading(price = 100)).addWindow(AddStepWindow(foreign, op(1)))
+
+      added shouldBe Right(None)
+      journal.entries shouldBe empty
+    }
+
+    "take a launched window overlapping a window of the lot without recording it" in {
+      val overlapping = stepWindow("13:00", "15:00", step = 2)
+      val (added, journal) = Journal.of(windowed()).addWindow(AddStepWindow(overlapping, op(1)))
+
+      added shouldBe Right(None)
+      tradingOf(journal.lot).stepWindows shouldBe List(happyHours)
+    }
+
+    "refuse a launched window on a lot that is not trading online" in {
+      val command = AddStepWindow(happyHours, op(1))
+      val live = trading(price = 1000, policy = fixedHundred, phase = Phase.Live, closesAt = None)
+
+      Lot.decide(sold(100, participant(1)), command) shouldBe Left(AddStepWindowRejected.LotNotOpen)
+      Lot.decide(held(100, participant(1)), command) shouldBe Left(AddStepWindowRejected.LotNotOpen)
+      Lot.decide(live, command) shouldBe Left(AddStepWindowRejected.LotNotOpen)
+      Lot.decide(scheduled(), command) shouldBe Left(AddStepWindowRejected.LotNotOpen)
+      Lot.decide(Lot.initial, command) shouldBe Left(AddStepWindowRejected.LotNotFound)
+    }
+
     "carry no window through the hold, so the lot resumed for the final has none" in {
       val lot = trading(price = 100, markedForFinal = true, stepWindows = List(happyHours))
       val (_, held) = Journal.of(lot).close(closeLot(1), now = deadline)

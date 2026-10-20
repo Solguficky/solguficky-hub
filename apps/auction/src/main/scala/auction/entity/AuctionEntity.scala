@@ -2,6 +2,7 @@ package auction.entity
 
 import auction.aggregate.*
 import auction.catalog.LotId
+import auction.lot.AddStepWindowRejected
 import auction.lot.AdvanceAskRejected
 import auction.lot.AuctionId
 import auction.lot.CloseLotRejected
@@ -288,6 +289,17 @@ object AuctionEntity {
       replyTo: ActorRef[Either[CloseAuctionLotRejected, LotEnding]]
   ) extends Command
 
+  /**
+   * Запуск окна сниженного шага (ADR-047, дополнение 2026-10-12): событие `StepWindowLaunched`. Ответ — после записи;
+   * лотам окно уходит после неё, и ответ их не ждёт. Повтор того же `op_id` события не пишет, но дошлёт окно лотам, не
+   * ответившим раньше; ответ на повтор — исходный конверт, каким бы событием он ни был.
+   */
+  final case class Launch(
+      command: LaunchStepWindow,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[LaunchStepWindowRejected, AuctionAnswer]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Auction]) extends Command
 
   /** Что аукцион сейчас знает о лотах реестра. Ничего не пишет и лотов не спрашивает. */
@@ -339,6 +351,13 @@ object AuctionEntity {
 
   /** Ответ розыгрыша на открытие; неудача — ответа нет, и открытие повторится на тике переспроса. */
   private[entity] final case class RaffleAnswered(answer: Try[Done]) extends Command
+
+  /** Ответ лота на `AddStepWindow` окна, запущенного под `launch`; неудача — ответа нет. */
+  private[entity] final case class WindowAnswered(
+      launch: OpId,
+      lot: LotId,
+      answer: Try[Either[AddStepWindowRejected, Unit]]
+  ) extends Command
 
   /** Ответ лота на `WithdrawLot`; неудача — ответа нет. */
   private[entity] final case class LotWithdrew(lot: LotId, answer: Try[Either[WithdrawLotRejected, Unit]])
@@ -503,6 +522,8 @@ object AuctionEntity {
             // Записать событие можно только в обработке команды, поэтому шаги финала — сообщением себе, как `Settle`.
             case LotInstruction.Complete(lot) => context.self ! FinalLotEnded(lot)
             case LotInstruction.Finish => context.self ! FinishDue
+            case LotInstruction.AddWindow(lot, launch, command) =>
+              context.pipeToSelf(lots.addWindow(lot, command))(WindowAnswered(launch, lot, _))
           }
         }
 
@@ -855,6 +876,22 @@ object AuctionEntity {
                 )
               }
             case Roster(replyTo) => Effect.reply(replyTo)(roster)
+            case Launch(launch, initiator, replyTo) =>
+              Auction.decide(state.auction, launch, clock.instant(), roster.active) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(decision) =>
+                  record(state.auction, decision, launch.opId, initiator, clock, newId) { (auction, answer) =>
+                    replyTo ! Right(answer)
+                    follow(LotRoster.launched(auction, roster, launch.opId))
+                  }
+              }
+            case WindowAnswered(launch, lot, Success(_)) =>
+              Effect.none.thenRun(_ => roster = LotRoster.windowAnswered(roster, launch, lot))
+            case WindowAnswered(launch, lot, Failure(failure)) =>
+              Effect.none.thenRun { _ =>
+                logUnanswered(lot, failure)
+                roster = LotRoster.windowUnanswered(roster, launch, lot)
+              }
             case LotObserved(lot, Success(lotState)) =>
               Effect.none.thenRun(after => follow(LotRoster.observed(after.auction, roster, lot, lotState)))
             case LotObserved(lot, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))

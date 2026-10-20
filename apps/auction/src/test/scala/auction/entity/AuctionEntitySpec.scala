@@ -4,6 +4,8 @@ import auction.aggregate.*
 import auction.aggregate.AuctionFixtures.*
 import auction.catalog.LotId
 import auction.entity.JournalFixtures.*
+import auction.lot.AddStepWindow
+import auction.lot.AddStepWindowRejected
 import auction.lot.AdvanceAsk
 import auction.lot.AdvanceAskRejected
 import auction.lot.CloseLot
@@ -243,6 +245,17 @@ final class AuctionEntitySpec
       else Future.successful(answer)
     }
 
+    private var windows = Vector.empty[(LotId, AddStepWindow)]
+
+    def added: Vector[(LotId, AddStepWindow)] = synchronized(windows)
+
+    /** Окно, запущенное по ходу торгов; `lost` — лот окно принял, но ответ потерялся. */
+    def addWindow(lot: LotId, command: AddStepWindow): Future[Either[AddStepWindowRejected, Unit]] = synchronized {
+      windows :+= lot -> command
+      val answer = Lot.decide(lots(lot), command).map(_.foreach(written(lot, command.opId, _)))
+      if (lost(lot)) Promise[Either[AddStepWindowRejected, Unit]]().future else Future.successful(answer)
+    }
+
     private def opening(event: LotEvent): Option[Instant] =
       event match {
         case opened: LotEvent.LotOpened => opened.deadline
@@ -387,6 +400,11 @@ final class AuctionEntitySpec
   private def start(opN: Int) =
     entity.runCommand[Either[OpeningRejected, AuctionAnswer]](
       AuctionEntity.Start(StartPrebidding(op(opN)), administrator, _)
+    )
+
+  private def launch(opN: Int, from: Option[Instant], until: Instant, chosen: List[LotId] = List(lot)) =
+    entity.runCommand[Either[LaunchStepWindowRejected, AuctionAnswer]](
+      AuctionEntity.Launch(LaunchStepWindow(from, until, LotFixtures.money(1), chosen, op(opN)), administrator, _)
     )
 
   private def discard(opN: Int) =
@@ -1147,6 +1165,74 @@ final class AuctionEntitySpec
       eventually(roster.lots(other) shouldBe LotStanding.Declined(OpenLotRejected.LotNotScheduled))
       lots.opens.map(_._1) shouldBe Vector(lot, other)
       start(opening + 1).reply shouldBe Left(OpeningRejected.ByAuction(StartPrebiddingRejected.AuctionNotScheduled))
+    }
+
+    "records a launched window, answers before the lots and delivers it to each lot under a derived op_id" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      val window =
+        StepWindowConfig(opensAt.plusSeconds(7200), opensAt.plusSeconds(10800), LotFixtures.money(1), Set(lot))
+
+      launch(opening + 1, Some(window.from), window.until).reply shouldBe
+        Right(AuctionAnswer.Written(AuctionEnvelope(5, op(opening + 1), AuctionEvent.StepWindowLaunched(window))))
+      eventually(roster.deliveries shouldBe Map((op(opening + 1), lot) -> WindowDelivery.Delivered))
+      lots.added shouldBe Vector(lot -> LotRoster.windowOf(LaunchedWindow(op(opening + 1), window), lot))
+      lots.stateNow(lot) match {
+        case LotState.Trading(trading) =>
+          trading.stepWindows shouldBe List(auction.lot.StepWindow(window.from, window.until, window.step))
+        case other => fail(s"the lot is not trading: $other")
+      }
+    }
+
+    "answers a repeated launch with the original envelope and writes nothing" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      val first = launch(opening + 1, None, opensAt.plusSeconds(10800))
+      time.instant0 = opensAt.plusSeconds(5400)
+
+      val repeated = launch(opening + 1, None, opensAt.plusSeconds(10800))
+
+      repeated.events shouldBe empty
+      repeated.reply shouldBe first.reply
+      eventually(lots.added should have size 1)
+    }
+
+    "refuses a lot whose opening it has not confirmed and writes nothing" in {
+      val opening = scheduledWith(lot, other)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.lots(other) shouldBe LotStanding.Declined(OpenLotRejected.LotNotScheduled))
+
+      val refused = launch(opening + 1, None, opensAt.plusSeconds(10800), List(lot, other))
+
+      refused.reply shouldBe Left(LaunchStepWindowRejected.LotNotOpen(other))
+      refused.events shouldBe empty
+      lots.added shouldBe empty
+    }
+
+    "delivers a launched window again after a restart under the same op_id, and the lot records it once" in {
+      val opening = scheduledWith(lot)
+      time.instant0 = opensAt.plusSeconds(3600)
+      start(opening)
+      eventually(roster.active shouldBe Set(lot))
+      lots.lost = Set(lot)
+      launch(opening + 1, None, opensAt.plusSeconds(10800)).reply.isRight shouldBe true
+      eventually(lots.added should have size 1)
+      lots.lost = Set.empty
+
+      entity.restart()
+
+      eventually(roster.deliveries.values.toSet shouldBe Set(WindowDelivery.Delivered))
+      lots.added.map(_._2.opId).distinct should have size 1
+      lots.added should have size 2
+      lots.stateNow(lot) match {
+        case LotState.Trading(trading) => trading.stepWindows should have size 1
+        case other => fail(s"the lot is not trading: $other")
+      }
     }
 
     "asks no lot after a restart before prebidding" in {

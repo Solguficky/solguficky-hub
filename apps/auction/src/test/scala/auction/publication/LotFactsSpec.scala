@@ -84,6 +84,22 @@ final class LotFactsSpec extends AnyWordSpec with Matchers {
       message(fact).getState.status.withdrawn shouldBe Some(model.WithdrawnReason.WITHDRAWN_REASON_AUCTION_CANCELLED)
     }
 
+    "publish a launched window on step_window_added with every window of the lot in the state" in {
+      val launched = StepWindow(
+        java.time.Instant.parse("2026-10-06T12:00:00Z"),
+        java.time.Instant.parse("2026-10-06T13:00:00Z"),
+        money(50)
+      )
+      val (_, fact) = facts(lotDrafted, lotScheduled, openedWithWindows, LotEvent.StepWindowAdded(launched)).last
+
+      fact.map(_.subject) shouldBe Some("events.auction.step_window_added")
+      message(fact).occasion.isStepWindowAdded shouldBe true
+      message(fact).getState.stepWindows.map(window => (window.from, window.until)) shouldBe List(
+        "2026-10-05T12:00:00Z" -> "2026-10-05T14:00:00Z",
+        "2026-10-06T12:00:00Z" -> "2026-10-06T13:00:00Z"
+      )
+    }
+
     "publish the ask of the auctioneer with the ask in the state of the lot" in {
       val steps = facts(lotDrafted, lotScheduled, opened, LotEvent.AskAdvanced(money(50000)))
 

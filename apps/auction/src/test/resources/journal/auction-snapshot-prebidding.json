@@ -20,7 +20,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -37,7 +38,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -83,7 +85,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -98,7 +101,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     }
   ],
@@ -138,5 +142,6 @@
   "order": null,
   "activated": null,
   "cancelledBy": null,
-  "completed": null
+  "completed": null,
+  "launched": null
 }

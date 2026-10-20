@@ -127,6 +127,16 @@ object LotEntity {
       replyTo: ActorRef[Either[WithdrawLotRejected, Envelope]]
   ) extends Command
 
+  /**
+   * Окно сниженного шага, запущенное по ходу торгов; шлёт аукцион (ADR-047, дополнение 2026-10-12). `None` в ответе —
+   * лот принял окно без записи: оно в чужой валюте.
+   */
+  final case class AddWindow(
+      command: AddStepWindow,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[AddStepWindowRejected, Option[Envelope]]]
+  ) extends Command
+
   final case class Get(replyTo: ActorRef[Lot]) extends Command
 
   /**
@@ -192,6 +202,15 @@ object LotEntity {
         record(state, Lot.decide(lot, ask, BidId(newId()), now), ask.opId, initiator, replyTo, now, newId)
       case Withdraw(withdrawal, initiator, replyTo) =>
         record(state, Lot.decide(lot, withdrawal), withdrawal.opId, initiator, replyTo, now, newId)
+      case AddWindow(add, initiator, replyTo) =>
+        Lot.decide(lot, add) match {
+          case Right(None) => Effect.reply(replyTo)(Right(None))
+          case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+          case Right(Some(decision)) =>
+            recordWith(state, Right(decision), add.opId, initiator, replyTo, now, newId)((envelope, _) =>
+              Some(envelope)
+            )
+        }
       case Get(replyTo) =>
         Effect.reply(replyTo)(lot)
     }

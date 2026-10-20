@@ -49,6 +49,7 @@ service AuctionService {
   rpc CancelAuction(CancelAuctionRequest) returns (CancelAuctionResponse);
   rpc SelectForFinal(SelectForFinalRequest) returns (SelectForFinalResponse);
   rpc DeselectForFinal(DeselectForFinalRequest) returns (DeselectForFinalResponse);
+  rpc LaunchStepWindow(LaunchStepWindowRequest) returns (LaunchStepWindowResponse);
   rpc FreezeFinalLineup(FreezeFinalLineupRequest) returns (FreezeFinalLineupResponse);
   rpc StartFinal(StartFinalRequest) returns (StartFinalResponse);
   rpc StartNextLot(StartNextLotRequest) returns (StartNextLotResponse);
@@ -1189,6 +1190,101 @@ message DeselectForFinalRefusal {
 
 // The auction is not in prebidding: the lots are not trading online yet.
 message NotInPrebidding {}
+
+message LaunchStepWindowRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // RFC 3339 instant in UTC: the first instant of the window. Unset starts the
+  // window at the instant the server decides the command; it is then absent, not
+  // empty.
+  optional string from = 3;
+
+  // RFC 3339 instant in UTC: the first instant after the window. Required.
+  string until = 4;
+
+  // The bid step inside the window, in the currency of the lots. Required.
+  Money step = 5;
+
+  // Canonical lowercase UUIDv7 with hyphens, each the id of a lot in the registry
+  // of the auction the window applies to. Repeats are one lot.
+  repeated string lot_ids = 6;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 7;
+}
+
+message LaunchStepWindowResponse {
+  // Exactly one is set.
+  oneof outcome {
+    StepWindowLaunchAccepted accepted = 1;
+    LaunchStepWindowRefusal refused = 2;
+  }
+}
+
+// The window as the auction recorded it. A repeated op_id answers with the same
+// instants.
+message StepWindowLaunchAccepted {
+  // RFC 3339 instant in UTC: the first instant of the window - the one in the
+  // request, or the instant the server decided the command when it was unset.
+  string from = 1;
+
+  // RFC 3339 instant in UTC: the first instant after the window.
+  string until = 2;
+}
+
+message LaunchStepWindowRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    NotInPrebidding not_in_prebidding = 4;
+    StepWindowInPast step_window_in_past = 5;
+    LaunchedStepWindowOutsideOnlinePhase step_window_outside_online_phase = 6;
+    LaunchedStepWindowStepInvalid step_window_step_invalid = 7;
+    LaunchedStepWindowLotsEmpty step_window_lots_empty = 8;
+    StepWindowLotNotInAuction lot_not_in_auction = 9;
+    StepWindowLotNotOpen lot_not_open = 10;
+    LaunchedStepWindowsOverlap step_windows_overlap = 11;
+  }
+}
+
+// The refusals of a launch carry no window index, unlike their namesakes in
+// ConfigInvalid: a launch names one window.
+message StepWindowInPast {}
+
+message LaunchedStepWindowOutsideOnlinePhase {}
+
+message LaunchedStepWindowStepInvalid {}
+
+message LaunchedStepWindowLotsEmpty {}
+
+message StepWindowLotNotInAuction {
+  // Canonical lowercase UUIDv7 with hyphens: the first lot of lot_ids, in request
+  // order, that is not in the registry of the auction.
+  string lot_id = 1;
+}
+
+message StepWindowLotNotOpen {
+  // Canonical lowercase UUIDv7 with hyphens: the first such lot of lot_ids, in
+  // request order.
+  string lot_id = 1;
+}
+
+message LaunchedStepWindowsOverlap {
+  // Canonical lowercase UUIDv7 with hyphens: a lot the two windows share.
+  string lot_id = 1;
+
+  // RFC 3339 instant in UTC: the first instant of the window the launch meets.
+  string from = 2;
+
+  // RFC 3339 instant in UTC: the first instant after the window the launch meets.
+  string until = 3;
+}
 
 // The lot is already in the live final.
 message NotInOnlinePhase {}

@@ -230,6 +230,7 @@ object GrpcBoundary {
     def cancelAuction(in: wire.CancelAuctionRequest): Future[wire.CancelAuctionResponse] = refuse
     def selectForFinal(in: wire.SelectForFinalRequest): Future[wire.SelectForFinalResponse] = refuse
     def deselectForFinal(in: wire.DeselectForFinalRequest): Future[wire.DeselectForFinalResponse] = refuse
+    def launchStepWindow(in: wire.LaunchStepWindowRequest): Future[wire.LaunchStepWindowResponse] = refuse
     def freezeFinalLineup(in: wire.FreezeFinalLineupRequest): Future[wire.FreezeFinalLineupResponse] = refuse
     def startFinal(in: wire.StartFinalRequest): Future[wire.StartFinalResponse] = refuse
     def startNextLot(in: wire.StartNextLotRequest): Future[wire.StartNextLotResponse] = refuse

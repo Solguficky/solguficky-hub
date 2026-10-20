@@ -76,6 +76,29 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       keepsGolden("auction-scheduled-with-step-windows", stored(windowed, 3))
     }
 
+    "keeps the stored form of a launched window and of a snapshot that holds it equal to their golden files" in {
+      val window = StepWindowConfig(
+        java.time.Instant.parse("2026-10-05T12:00:00Z"),
+        java.time.Instant.parse("2026-10-05T14:00:00Z"),
+        money(100),
+        Set(lot)
+      )
+      val launched = AuctionEnvelope(5, op(5), AuctionEvent.StepWindowLaunched(window))
+      keepsGolden("step-window-launched", stored(launched.event, 5))
+      val after = Auction.apply(prebidding, launched)
+      after.launched shouldBe List(LaunchedWindow(op(5), window))
+      keepsGolden("auction-snapshot-launched", AuctionJournal.storeAuction(after, sequence = 5))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(after, sequence = 5)) shouldBe after
+    }
+
+    "refuses a launched window with no lot instead of recording it" in {
+      val body = stored(
+        AuctionEvent.StepWindowLaunched(StepWindowConfig(decidedAt, decidedAt.plusSeconds(60), money(100), Set.empty)),
+        5
+      )
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreEvent(body.event)
+    }
+
     "keeps the stored form of a schedule without lot defaults and reads it back as one" in {
       val bare = AuctionEvent.AuctionScheduled(AuctionFixtures.config(AuctionFixtures.configInput(lotDefaults = None)))
       keepsGolden("auction-scheduled-without-defaults", stored(bare, 3))

@@ -86,6 +86,9 @@ object AuctionFacts {
         Some("auction_discarded" -> bus.AuctionEvent.Occasion.AuctionDiscarded(bus.AuctionDiscarded()))
       case AuctionEvent.AuctionCancelled =>
         Some("auction_cancelled" -> bus.AuctionEvent.Occasion.AuctionCancelled(bus.AuctionCancelled()))
+      // Запущенное окно публикуют его лоты фактом `step_window_added`: окна — данные лота, а не аукциона (ADR-047,
+      // дополнение 2026-10-12).
+      case AuctionEvent.StepWindowLaunched(_) => None
     }
 
   /** Публичное состояние аукциона: сходка, конфигурация, реестр по возрастанию `lot_id` и статус. */
