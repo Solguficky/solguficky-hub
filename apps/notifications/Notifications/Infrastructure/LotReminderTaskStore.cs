@@ -75,6 +75,20 @@ public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTel
         WHERE task_id = @TaskId AND state = 'scheduled';
         """;
 
+    // Последнее задание лота, живое или сработавшее, под блокировкой: с ней
+    // поздняя отметка и срабатывание не разминутся. Срабатывание, захватившее
+    // строку раньше, отметка ждёт и видит уже «сработало»; отметку, взявшую
+    // строку раньше, ждёт захват срабатывания, и его разворот следящих её
+    // видит. Сработавшее у лота одно, а живого после него не бывает.
+    private const string LockLatestSql = """
+        SELECT task_id AS TaskId, state = 'fired' AS Fired
+        FROM lot_reminder_task
+        WHERE lot_id = @LotId AND state IN ('scheduled', 'fired')
+        ORDER BY created_at DESC
+        LIMIT 1
+        FOR SHARE;
+        """;
+
     /// <summary>Живое задание лота, если оно есть.</summary>
     public async Task<LiveLotReminderTask?> Live(Guid lotId, CancellationToken cancellationToken)
     {
@@ -207,9 +221,34 @@ public sealed class LotReminderTaskStore(NpgsqlDataSource source, LotReminderTel
         return new LotFireResult(LotFireOutcome.Sent, facts);
     }
 
+    /// <summary>
+    /// Напоминание человеку, который отметил лот позже срабатывания (PER-647),
+    /// в транзакции <paramref name="work" /> самой отметки.
+    /// </summary>
+    /// <remarks>
+    /// Задание ещё живое — делать нечего: человек попадёт в разворот
+    /// срабатывания. Задания нет — у лота нет дедлайна, о котором напоминать.
+    /// </remarks>
+    public static async Task<FactCount> RemindLateFollower(
+        UnitOfWork work,
+        Guid identityId,
+        Guid lotId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var latest = (await work.Query<LatestRow>(LockLatestSql, new { LotId = lotId }, cancellationToken))
+            .SingleOrDefault();
+
+        return latest is { Fired: true }
+            ? await NotificationStore.AddLateLotReminder(work, latest.TaskId, lotId, identityId, now, cancellationToken)
+            : FactCount.None;
+    }
+
     // timestamptz читается как DateTime, а не DateTimeOffset — так его отображает
     // Npgsql. Перевод идёт через ToUniversalTime, как в ReminderTaskStore.
     private sealed record LiveRow(Guid task_id, DateTime deadline, DateTime due_at);
+
+    private sealed record LatestRow(Guid TaskId, bool Fired);
 
     private static DateTimeOffset Moment(DateTime value) => new(value.ToUniversalTime());
 }

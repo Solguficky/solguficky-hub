@@ -139,6 +139,10 @@ public class LotReminderTests
         }
         await env.Favorites().Unfollow(unfollowed, lot, TestContext.Current.CancellationToken);
 
+        // Отметка за два часа до дедлайна напоминания сразу не даёт: оно придёт
+        // в момент срабатывания, как раньше (PER-647).
+        (await env.Facts(NotificationFacts.LotReminderType)).ShouldBe(0);
+
         // Простоя не изображаем вызовом грина: момент сдвигается данными, а
         // напоминание достаёт sweeper — путь «кластер лежал» целиком.
         LotReminderProbe.MoveDueToPast(env.Db.ConnectionString, lot);
@@ -169,6 +173,90 @@ public class LotReminderTests
 
         env.Tasks().ShouldHaveSingleItem().State.ShouldBe("fired");
         (await env.Facts(NotificationFacts.LotReminderType)).ShouldBe(2);
+    }
+
+    /// <summary>
+    /// Отметка позже срабатывания получает напоминание сразу, той же командой
+    /// (PER-647): лот открыт за полчаса до дедлайна, задание сработало в пустоту.
+    /// Снятие с возвратом второго напоминания не даёт, лидер и заблокированный
+    /// его не получают, а продление после срабатывания становится сроком факта.
+    /// </summary>
+    [Fact]
+    public async Task When_FollowedAfterReminderFired_Expect_OneReminderAtOnce()
+    {
+        await using var env = await BusScenario.Start(Waiting);
+        var lot = Guid.Parse(env.LotId);
+        var token = TestContext.Current.CancellationToken;
+        var leader = await Person(env.Db, MemberHolding);
+        var late = await Person(env.Db, MemberHolding);
+        var blocked = await Person(env.Db, blocked: true, MemberHolding);
+        var afterExtension = await Person(env.Db, MemberHolding);
+
+        await env.Publish(OpenedSubject, env.Trading(
+            "lot_opened", version: 2, leader: leader.ToString(), deadline: DateTimeOffset.UtcNow.AddMinutes(30)));
+        var task = await Eventually(
+            () => Task.FromResult(env.Tasks().SingleOrDefault()), row => row?.State == "fired");
+        (await env.Facts(NotificationFacts.LotReminderType)).ShouldBe(0);
+
+        await env.Favorites().Follow(late, lot, token);
+
+        (await env.Recipients()).ShouldBe([late]);
+
+        await env.Favorites().Unfollow(late, lot, token);
+        await env.Favorites().Follow(late, lot, token);
+        await env.Favorites().Follow(late, lot, token);
+        await env.Favorites().Follow(leader, lot, token);
+        await env.Favorites().Follow(blocked, lot, token);
+
+        (await env.Recipients()).ShouldBe([late]);
+
+        var extended = DateTimeOffset.UtcNow.AddMinutes(35);
+        await env.Publish(ExtendedSubject, env.Trading(
+            "deadline_extended", version: 4, leader: leader.ToString(), deadline: extended));
+        await env.Favorites().Follow(afterExtension, lot, token);
+
+        (await env.Recipients()).ShouldBe([late, afterExtension], ignoreOrder: true);
+        env.Tasks().ShouldHaveSingleItem().State.ShouldBe("fired");
+
+        var rows = await Eventually(() => env.Reminders(), facts => facts.Count == 2);
+        rows.ShouldAllBe(row => row.Cause.ReminderTaskId == task!.TaskId.ToString());
+        var notAfter = rows.Single(row => row.RecipientId == afterExtension.ToString()).NotAfter;
+        DateTimeOffset.Parse(notAfter).ShouldBe(extended, TimeSpan.FromMilliseconds(1));
+    }
+
+    /// <summary>
+    /// Отметка, заставшая срабатывание посреди его транзакции, ждёт её коммита
+    /// и догоняет напоминание, а не теряет его между чтением следящих и
+    /// записью «сработало». Захват срабатывания изображает открытая транзакция.
+    /// </summary>
+    [Fact]
+    public async Task When_FollowMeetsFiringInFlight_Expect_ReminderAfterFiringCommits()
+    {
+        await using var env = await BusScenario.Start(Waiting);
+        var lot = Guid.Parse(env.LotId);
+        var token = TestContext.Current.CancellationToken;
+        var follower = await Person(env.Db, MemberHolding);
+
+        await env.Publish(OpenedSubject, env.Trading("lot_opened", version: 2));
+        var live = await Eventually(() => Task.FromResult(env.Live()), task => task is not null);
+
+        await using var firing = new NpgsqlConnection(env.Db.ConnectionString);
+        await firing.OpenAsync(token);
+        await using var claim = await firing.BeginTransactionAsync(token);
+        await firing.ExecuteAsync(
+            "UPDATE lot_reminder_task SET state = 'fired', fired_at = now() WHERE task_id = @TaskId;",
+            new { live!.TaskId },
+            claim);
+
+        var follow = env.Favorites().Follow(follower, lot, token);
+
+        await Task.Delay(TimeSpan.FromMilliseconds(500), token);
+        follow.IsCompleted.ShouldBeFalse();
+
+        await claim.CommitAsync(token);
+        await follow;
+
+        (await env.Recipients()).ShouldBe([follower]);
     }
 
     /// <summary>База, шина и силос одного лота. Люди, отметки и реплика — через настоящее событие.</summary>
@@ -245,7 +333,7 @@ public class LotReminderTests
 
         public LotReminderTaskRow? Live() => LotReminderProbe.Live(Db.ConnectionString, Guid.Parse(LotId));
 
-        public FavoriteOperations Favorites() => new(source, TimeProvider.System);
+        public FavoriteOperations Favorites() => new(source, TimeProvider.System, new FactTelemetry());
 
         public LotReminderTaskStore TaskStore() => new(source, new LotReminderTelemetry());
 
@@ -261,6 +349,13 @@ public class LotReminderTests
             return await connection.ExecuteScalarAsync<long>(
                 "SELECT count(*) FROM notification WHERE type = @Type;",
                 new { Type = type });
+        }
+
+        public async Task<IReadOnlyList<Guid>> Recipients()
+        {
+            await using var connection = new NpgsqlConnection(Db.ConnectionString);
+            return (await connection.QueryAsync<Guid>(
+                "SELECT recipient_id FROM notification WHERE type = 'lot_reminder' ORDER BY created_at;")).ToArray();
         }
 
         public async Task<IReadOnlyDictionary<string, string>> Surfaces()

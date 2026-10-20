@@ -72,7 +72,8 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     // Следящие за лотом с живой отметкой, кроме лидера и заблокированных
     // (ADR-063, п.3). Категории у повода нет, поэтому настройки не читаются;
     // права не фильтруют — отметку человек ставил себе сам. Круг решает только
-    // бот доставки.
+    // бот доставки. @Only сужает разворот до одного человека — поздней
+    // отметки (PER-647); пустой — все следящие.
     private const string FollowersSql = """
         SELECT follower.identity_id AS IdentityId,
                TRUE AS Enabled,
@@ -83,6 +84,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             AND follower.removed_at IS NULL
             AND NOT person.blocked
             AND person.identity_id IS DISTINCT FROM @Leader
+            AND (@Only::uuid IS NULL OR follower.identity_id = @Only)
         ORDER BY follower.identity_id;
         """;
 
@@ -666,11 +668,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     {
         var replica = await LotReplicaStore.Read(work, lotId, cancellationToken);
 
-        if (replica is null
-            || replica.Deadline is not { } current
-            || current != deadline
-            || deadline <= now
-            || replica.Status is LotStatus.Sold or LotStatus.Unsold or LotStatus.Withdrawn or LotStatus.Held)
+        if (RemindableDeadline(replica, now) is not { } current || current != deadline)
         {
             // Не «нет получателей», а «исполнять нечего»: различие несёт
             // вызывающий — от него зависит, останется задание сработавшим.
@@ -679,7 +677,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         var audience = await work.Query<AudienceRow>(
             FollowersSql,
-            new { LotId = lotId, Leader = replica.Leader },
+            new { LotId = lotId, replica!.Leader, Only = (Guid?)null },
             cancellationToken);
 
         return await Insert(
@@ -691,6 +689,58 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             deadline,
             cancellationToken);
     }
+
+    /// <summary>
+    /// Догоняет сработавшее напоминание о лоте для одного человека, который
+    /// отметил лот позже срабатывания (PER-647), и пишет факт в транзакции
+    /// <paramref name="work" /> — той же, что ставит отметку.
+    /// </summary>
+    /// <param name="taskId">Сработавшее задание лота — повод факта.</param>
+    /// <remarks>
+    /// Повод тот же, что у разворота срабатывания, поэтому второго напоминания
+    /// человеку не будет: ни снятие с возвратом, ни повтор команды, ни встреча
+    /// со срабатыванием не пройдут ключ повода. Сверка реплики та же, кроме
+    /// равенства дедлайнов: продление после срабатывания задание не
+    /// пересоздаёт, и сроком факта становится текущий дедлайн.
+    /// </remarks>
+    internal static async Task<FactCount> AddLateLotReminder(
+        UnitOfWork work,
+        Guid taskId,
+        Guid lotId,
+        Guid identityId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var replica = await LotReplicaStore.Read(work, lotId, cancellationToken);
+
+        if (RemindableDeadline(replica, now) is not { } deadline)
+        {
+            return FactCount.None;
+        }
+
+        var audience = await work.Query<AudienceRow>(
+            FollowersSql,
+            new { LotId = lotId, replica!.Leader, Only = (Guid?)identityId },
+            cancellationToken);
+
+        return await Insert(
+            work,
+            new FactCause(NotificationFacts.LotReminderType, NotificationFacts.ReminderTaskCause, taskId.ToString(), null, null),
+            audience,
+            (id, recipient) => NotificationFacts.LotReminder(id, recipient, taskId, lotId, now, deadline),
+            now,
+            deadline,
+            cancellationToken);
+    }
+
+    // Дедлайн, о котором ещё можно напомнить (ADR-063, п.3): у лота в конечном
+    // положении, удержанного для финала, без дедлайна или с прошедшим — нет.
+    private static DateTimeOffset? RemindableDeadline(LotReplica? replica, DateTimeOffset now) =>
+        replica is { Deadline: { } deadline }
+        && deadline > now
+        && replica.Status is not (LotStatus.Sold or LotStatus.Unsold or LotStatus.Withdrawn or LotStatus.Held)
+            ? deadline
+            : null;
 
     // Отмена — это сдвиг реплики в «отменена»: запоздавшее событие отмены
     // разницы не даёт и ничего не снимает, но и снимать ему нечего — то, что

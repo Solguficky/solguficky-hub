@@ -73,9 +73,11 @@ public static class FavoriteStore
     public static async Task<bool> KnownLot(UnitOfWork work, Guid lotId, CancellationToken cancellationToken) =>
         (await work.Query<Guid>(KnownLotSql, new { LotId = lotId }, cancellationToken)).Count > 0;
 
-    public static Task Follow(UnitOfWork work, Guid identityId, Guid lotId, DateTimeOffset now,
+    /// <summary>Ставит отметку. Возвращает, появилась ли она этим вызовом.</summary>
+    public static async Task<bool> Follow(UnitOfWork work, Guid identityId, Guid lotId, DateTimeOffset now,
         CancellationToken cancellationToken) =>
-        work.Execute(FollowSql, new { IdentityId = identityId, LotId = lotId, Now = now.UtcDateTime }, cancellationToken);
+        await
+        work.Execute(FollowSql, new { IdentityId = identityId, LotId = lotId, Now = now.UtcDateTime }, cancellationToken) > 0;
 
     public static Task Unfollow(UnitOfWork work, Guid identityId, Guid lotId, DateTimeOffset now,
         CancellationToken cancellationToken) =>
