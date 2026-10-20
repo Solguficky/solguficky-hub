@@ -46,8 +46,7 @@ service NotificationsService {
   rpc BroadcastToMeetupSubscribers(BroadcastToMeetupSubscribersRequest) returns (BroadcastAccepted);
   rpc BroadcastToCommunity(BroadcastToCommunityRequest) returns (BroadcastAccepted);
 
-  // How many people would receive a fact if the broadcast were accepted now.
-  // A read: no idempotency key, no body, no names. Not a delivery receipt.
+  // A read. No idempotency key, no body and no names.
   rpc PreviewMeetupBroadcast(PreviewMeetupBroadcastRequest) returns (BroadcastAudience);
   rpc PreviewCommunityBroadcast(PreviewCommunityBroadcastRequest) returns (BroadcastAudience);
 
@@ -354,8 +353,7 @@ message PreviewCommunityBroadcastRequest {
   // The audience is deliberately absent, as in BroadcastToCommunity.
 }
 
-// People who would receive a fact now. Names are absent. Zero is a count,
-// not an error: the broadcast can still be accepted and will create no facts.
+// Names are absent. Zero is a present value, not an absent field.
 message BroadcastAudience {
   int32 recipient_count = 1;
 }

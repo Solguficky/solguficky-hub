@@ -1207,9 +1207,10 @@ async function handleMessage(
           "new",
         );
         await answered(
-          preview.kind === "dependency-rejected"
+          preview.kind === "dependency-rejected" &&
+            (preview.reason === "timeout" || preview.reason === "unavailable")
             ? preview
-            : { kind: "dependency-rejected", reason: "unavailable" },
+            : undefined,
         );
         outcome = {
           ...screenBoundary(preview, {
@@ -1217,7 +1218,7 @@ async function handleMessage(
             okMessage: "broadcast confirmation sent",
             rejectedMessage: "broadcast preview rejected",
             useCase,
-            meetupId,
+            ...(meetupId === undefined ? {} : { meetupId }),
           }),
           identity_id: identity.person.identityId,
         };
@@ -4499,10 +4500,6 @@ function broadcastForbiddenOutcome(
   };
 }
 
-// Предпросмотр — сам текст отдельным сообщением, без заголовка и разметки:
-// ровно тот текст автора, что уйдёт получателям (заголовок и кнопки канал
-// добавит при доставке), и ровно то, что кнопка подтверждения потом прочтёт
-// обратно. Кадр подтверждения отвечает на него и несёт ключ рассылки.
 function broadcastCountLine(recipientCount: number): string {
   return recipientCount === 0
     ? "Сообщение никто не получит."
@@ -4519,9 +4516,19 @@ function previewFailureText(
   if (result.kind === "dependency-rejected" && result.reason === "invalid") {
     return "Сообщение не принято. Ничего не отправлено.";
   }
-  return "Не получилось узнать, сколько человек получит сообщение. Это на моей стороне. Ничего не отправлено.\n\nПришли текст ещё раз ответом на вопрос.";
+  if (
+    result.kind === "dependency-rejected" &&
+    (result.reason === "timeout" || result.reason === "unavailable")
+  ) {
+    return "Не получилось узнать, сколько человек получит сообщение. Это на моей стороне. Ничего не отправлено.\n\nПришли текст ещё раз ответом на вопрос.";
+  }
+  return "Не получилось узнать, сколько человек получит сообщение. Это на моей стороне. Ничего не отправлено.";
 }
 
+// Предпросмотр — сам текст отдельным сообщением, без заголовка и разметки:
+// ровно тот текст автора, что уйдёт получателям (заголовок и кнопки канал
+// добавит при доставке), и ровно то, что кнопка подтверждения потом прочтёт
+// обратно. Кадр подтверждения отвечает на него и несёт ключ рассылки.
 async function sendBroadcastConfirmation(
   ctx: UpdateContext,
   audience: BroadcastAudience,

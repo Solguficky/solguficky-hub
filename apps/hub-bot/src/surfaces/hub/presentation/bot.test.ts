@@ -8743,6 +8743,39 @@ describe("broadcast frames", () => {
     ).toBe(false);
   });
 
+  it("closes the question when the audience count cannot be retried", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "rejected",
+      reason: "notifications-not-configured",
+    });
+    const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+      execute,
+    });
+    await bot.init();
+
+    await bot.handleUpdate(callbackUpdate("v1:bc:c"));
+    const beforeReply = calls.length;
+    await bot.handleUpdate(
+      replyUpdate({
+        text: body,
+        fromId: 42,
+        replyMessageId: lastQuestionId(calls),
+        replyFromId: 1,
+      }),
+    );
+
+    const frame = sentMessages(calls).at(-1);
+    const text = sendMessageText(frame) ?? "";
+    expect(text).toContain("Ничего не отправлено");
+    expect(text).not.toContain("ещё раз");
+    expect(JSON.stringify(frame?.payload)).not.toContain("Да, отправить");
+    expect(
+      calls
+        .slice(beforeReply)
+        .some((call) => call.method === "editMessageReplyMarkup"),
+    ).toBe(true);
+  });
+
   it("refuses a broadcast that is too long to send with a re-entry button", async () => {
     const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
