@@ -4500,6 +4500,7 @@ describe("presentation adapter", () => {
       expect(member.calls[0]?.payload).toMatchObject({
         reply_markup: {
           inline_keyboard: [
+            [{ text: "Что нового", callback_data: "v1:wn" }],
             [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
@@ -4530,6 +4531,7 @@ describe("presentation adapter", () => {
       expect(calls[0]?.payload).toMatchObject({
         reply_markup: {
           inline_keyboard: [
+            [{ text: "Что нового", callback_data: "v1:wn" }],
             [
               {
                 text: "Написать в поддержку ↗",

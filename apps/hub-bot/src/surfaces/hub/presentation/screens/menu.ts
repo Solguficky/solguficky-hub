@@ -350,16 +350,17 @@ export function settingsScreen(): ShownScreen {
 const extensionsHelp = `Расширения сходки, например аукцион, — кнопка «${extensionsLabel}» в её карточке.`;
 
 /**
- * «Помощь» — раздел под меню: текст о боте и команды строками, кнопка одна —
- * «‹ Меню». `welcome` — текст о боте, абзацы через пустую строку. С адресом
- * бота поддержки над «‹ Меню» стоит ряд «Написать в поддержку ↗» (PER-625).
+ * «Помощь» — раздел под меню: текст о боте и команды строками. Под текстом
+ * «Что нового», при адресе бота поддержки — «Написать в поддержку ↗»
+ * (PER-625), последним рядом «‹ Меню». `welcome` — текст о боте, абзацы через
+ * пустую строку.
  */
 export function helpScreen(
   person: Viewer,
   welcome: string,
   supportBotUsername?: string,
 ): ShownScreen {
-  const keyboard = new InlineKeyboard();
+  const keyboard = new InlineKeyboard().text("Что нового", "v1:wn").row();
   if (supportBotUsername !== undefined) {
     keyboard.url(supportLabel, supportBotLink(supportBotUsername, "hub")).row();
   }

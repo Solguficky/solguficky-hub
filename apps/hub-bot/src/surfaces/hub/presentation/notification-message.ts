@@ -37,7 +37,13 @@ import {
   traceCallback,
 } from "./parse-callback.js";
 import { applicationCardBody, cursorOf } from "./screens/application.js";
-import { readableDay, readableMoment, toManage } from "./screens/kit.js";
+import {
+  escapeHtml,
+  readableDay,
+  readableMoment,
+  toManage,
+} from "./screens/kit.js";
+import { releasePostData } from "./screens/release-notes.js";
 
 // Кнопка отключения несёт целевое состояние, как переключатель P-09: повторное
 // нажатие даёт то же «выключено», а не включает категорию обратно.
@@ -61,6 +67,8 @@ export const disableAnnouncementCallback = "v1:notify:off:announcement";
 // Заявка тоже не привязана к сходке. Категория одна на оба круга, поэтому
 // кнопка стоит и под заявкой в хаб, и под заявкой в аукцион.
 export const disableAccessRequestCallback = "v1:notify:off:access";
+
+export const disableReleaseCallback = "v1:notify:off:release";
 
 // Вызов Bot API обязан уложиться в ack_wait durable (30 с): иначе шина выдаст то
 // же сообщение второй раз, пока первая отправка ещё висит. Умолчание клиента
@@ -95,14 +103,26 @@ export function disableMeetupCategoryCallback(
   return `v1:notify:moff:${uuidToToken(meetupId)}:${category}`;
 }
 
+export type ReleaseNote = {
+  kind: "release-note";
+  day: string;
+  lines: readonly string[];
+  hidden: number;
+  summaryId: string;
+};
+
 // Что уходит отправителю. Вести хаба он рисует сам, а весть о лоте и анонс
 // финала приходят уже собранными общими рендерами двух ботов (`lot-notice.ts`,
 // PER-598; `final-notice.ts`, PER-478): им нужны право получателя и название
 // лота у соседей, а соседей отправитель не зовёт.
 export type OutgoingNotification =
-  | Exclude<RenderableContent, LotNotice | FinalNotice>
+  | Exclude<
+      RenderableContent,
+      LotNotice | FinalNotice | { kind: "release-summary" }
+    >
   | AccessRequestView
-  | { kind: "lot-notice"; view: LotNoticeView };
+  | { kind: "lot-notice"; view: LotNoticeView }
+  | ReleaseNote;
 
 // Кадр по образцу P-11: заголовок называет повод и сходку, строки ниже — что
 // нужно знать, не открывая карточку. Одно сообщение на повод, карточка целиком
@@ -185,6 +205,30 @@ export function renderNotification(
         "Не присылать объявления",
         disableAnnouncementCallback,
       ),
+    };
+  }
+  if (content.kind === "release-note") {
+    const extra =
+      content.hidden > 0
+        ? `…и ещё записей: ${content.hidden} — в «Что нового».`
+        : undefined;
+    return {
+      text: [
+        `<b>Новое в боте · ${escapeHtml(content.day)}</b>`,
+        [...content.lines.map((line) => `• ${escapeHtml(line)}`), extra]
+          .filter((line) => line !== undefined)
+          .join("\n"),
+      ].join("\n\n"),
+      keyboard: new InlineKeyboard()
+        .text(
+          "Что нового",
+          traceCallback(
+            releasePostData({ summaryId: content.summaryId, part: 1 }),
+          ),
+        )
+        .row()
+        .text("Не присылать новое в боте", disableReleaseCallback),
+      format: "HTML",
     };
   }
   const meetup = content.meetup;

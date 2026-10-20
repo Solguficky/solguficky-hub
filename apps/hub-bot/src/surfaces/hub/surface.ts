@@ -40,6 +40,9 @@ import {
   createNotificationApi,
   createNotificationSender,
 } from "./presentation/notification-message.js";
+import { releaseTraceDay } from "./presentation/screens/release-notes.js";
+import { toReleaseTrace } from "./release-lines.js";
+import { startReleaseNotesReport } from "./release-report.js";
 
 // Поверхность хаба (ADR-064, п. 18): процесс с `BOT_SURFACE=hub`. Здесь — её
 // клиенты, бот и разбор её веток уведомлений; процесс вокруг них общий
@@ -49,6 +52,7 @@ export const hubSurface: SurfaceDefinition = ({
   config,
   logger,
   tracing,
+  releaseNotes,
 }) => {
   const loaded = readHubConfig(env);
   if (!loaded.ok) return loaded;
@@ -105,7 +109,20 @@ export const hubSurface: SurfaceDefinition = ({
     auction === undefined
       ? undefined
       : { auctions: auction, timeZone: communityTimeZone },
+    releaseNotes,
   );
+  const releaseReport = startReleaseNotesReport({
+    recordIds: releaseNotes.idsFor("hub"),
+    logger,
+    report: async (recordIds) => {
+      const reported = await notifications.reportReleaseNotes(recordIds);
+      if (reported.kind === "ok") return { kind: "ok" };
+      return {
+        kind: "failed",
+        cause: "cause" in reported ? reported.cause : new Error(reported.kind),
+      };
+    },
+  });
   const identity = createIdentityClient(config.identityUrl, {
     communityTimeZone,
     tracing,
@@ -263,6 +280,25 @@ export const hubSurface: SurfaceDefinition = ({
               // Auction. Оповещение о заявке читает её карточку у Identity
               // (PER-634).
               render: async (content, context) => {
+                if (content.kind === "release-summary") {
+                  const day = releaseTraceDay(
+                    content.summarizedAt,
+                    communityTimeZone,
+                    today(),
+                  );
+                  if (day === undefined) {
+                    return {
+                      kind: "rejected",
+                      cause: new Error("release summary date"),
+                    };
+                  }
+                  return toReleaseTrace(
+                    releaseNotes,
+                    content.recordIds,
+                    content.summaryId,
+                    day,
+                  );
+                }
                 if (content.kind === "access-requested") {
                   return renderAccessRequest(content, context);
                 }
@@ -286,6 +322,7 @@ export const hubSurface: SurfaceDefinition = ({
             }),
         }),
       close() {
+        releaseReport.close();
         limiter.close();
         watches?.close();
         identity.close();

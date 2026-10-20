@@ -51,6 +51,9 @@ function notificationsStub(overrides: Partial<Notifications>): Notifications {
     broadcastToCommunity: vi.fn(),
     previewMeetupBroadcast: vi.fn(),
     previewCommunityBroadcast: vi.fn(),
+    reportReleaseNotes: vi.fn(),
+    listReleaseSummaries: vi.fn(),
+    getReleaseSummary: vi.fn(),
     ...overrides,
   };
 }

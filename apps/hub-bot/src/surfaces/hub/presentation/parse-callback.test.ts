@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { maxLotRubles } from "../application/lot-form.js";
+import { uuidToToken } from "./meetup-deep-link.js";
 import {
   auctionFaqData,
   cardCursorData,
@@ -38,6 +39,7 @@ import {
   questionData,
   traceCallback,
 } from "./parse-callback.js";
+import { releasePostData } from "./screens/release-notes.js";
 
 describe("callback parser", () => {
   it("parses a hub FAQ action with its auction target", () => {
@@ -128,6 +130,27 @@ describe("callback parser", () => {
     expect(parseCallback("v1:nav:start")).toEqual({ kind: "home" });
     expect(parseCallback("v1:nav:hub")).toEqual({ kind: "hub" });
     expect(parseCallback("v1:nav:archive")).toEqual({ kind: "archive" });
+  });
+
+  it("parses a release-notes post and the part carried in the button", () => {
+    const summaryId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+    const latest = releasePostData();
+    const part = releasePostData({ summaryId, part: 2 });
+    expect(Buffer.byteLength(part, "utf8")).toBeLessThanOrEqual(64);
+    expect(parseCallback(latest)).toEqual({ kind: "release-notes" });
+    expect(parseCallback(part)).toEqual({
+      kind: "release-notes",
+      token: uuidToToken(summaryId),
+      part: 2,
+    });
+    expect(
+      parseCallback(traceCallback(releasePostData({ summaryId, part: 1 }))),
+    ).toEqual({
+      kind: "release-notes",
+      token: uuidToToken(summaryId),
+      trace: true,
+    });
+    expect(parseCallback("v1:wn:not-a-token")).toEqual({ kind: "malformed" });
   });
 
   it("parses the publication confirmation with the version it was shown with", () => {

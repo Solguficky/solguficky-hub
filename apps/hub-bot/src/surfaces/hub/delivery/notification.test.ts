@@ -25,6 +25,7 @@ import {
   NotificationSchema,
   OrganizerMessageSchema,
   PresetGrantedSchema,
+  ReleaseSummarySchema,
 } from "../../../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
@@ -781,5 +782,33 @@ describe("decodeNotification", () => {
         );
       },
     );
+  });
+
+  it("decodes a release summary as record ids without their text", () => {
+    const summaryId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+    expect(
+      decodeNotification(
+        published((message) => {
+          message.type = {
+            case: "releaseSummary",
+            value: create(ReleaseSummarySchema, {
+              summaryId,
+              summarizedAt: "2026-10-14T12:00:00Z",
+              recordIds: ["known"],
+            }),
+          };
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "release-summary",
+          summaryId,
+          summarizedAt: "2026-10-14T12:00:00Z",
+          recordIds: ["known"],
+        },
+      },
+    });
   });
 });

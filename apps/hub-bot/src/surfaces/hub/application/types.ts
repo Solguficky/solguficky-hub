@@ -300,6 +300,7 @@ export type ExecuteRequest =
       deadlineAt?: number;
     }
   | NotificationRequest
+  | ReleaseNotesRequest
   | BroadcastRequest
   | PreviewBroadcastRequest
   | LotFormRequest
@@ -744,6 +745,16 @@ export type PreviewBroadcastRequest = {
   deadlineAt?: number;
 };
 
+export type ReleaseNotesRequest = {
+  identity: Person;
+  intent: "view-release-notes";
+  summaryId?: string;
+  part?: number;
+  requestId?: string;
+  useCase?: string;
+  deadlineAt?: number;
+};
+
 // Подписка и категории — две независимые плоскости, и намерения их не смешивают:
 // «слежу за этой сходкой» не выводится из набора категорий и не выводит его.
 export type NotificationRequest =
@@ -1055,6 +1066,17 @@ export type ExecuteResult =
       kind: "global-notification-settings";
       categories: readonly CategoryState<NotificationCategory>[];
     }
+  | {
+      kind: "release-post";
+      summaryId: string;
+      summarizedAt: string;
+      lines: readonly string[];
+      part: number;
+      partCount: number;
+      older?: { summaryId: string; part: number };
+      newer?: { summaryId: string; part: number };
+    }
+  | { kind: "release-empty" }
   | { kind: "auction-notifications"; settings: AuctionNotificationSettings }
   | { kind: "meetup-not-found" }
   // `error` — текст для человека. `rejected` — отказ Meetups, из-за которого
