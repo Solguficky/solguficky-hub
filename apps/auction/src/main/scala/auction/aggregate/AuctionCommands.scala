@@ -214,7 +214,8 @@ enum ClosingRefusal {
  * исходный ответ из его окна. Повтор `StartNextLot` отвечает лотом исходной активации, не спрашивая Meetups.
  *
  * Запуск окна сниженного шага (ADR-047, дополнение 2026-10-12) — команда самого аукциона: событие пишет он, и повтор
- * `op_id` получает исходное окно из его окна `seen` раньше права, фазы, времени и пересечений.
+ * `op_id` получает исходное окно раньше права, фазы, времени и пересечений. Как у открытия, повтор идёт в entity мимо
+ * Meetups и дошлёт окно лотам, не ответившим раньше.
  *
  * Ask ведущего (PER-293) идёт тем же путём, что отметка: аукцион — прокси к команде лота, он проверяет реестр и шлёт
  * лоту `AdvanceAsk`, а фазу и цену судит лот; событие пишет лот, и повтор `op_id` узнаёт он.
@@ -417,18 +418,29 @@ final class AuctionCommands(
       person: ParticipantId
   ): Future[Either[LaunchRefusal, StepWindowConfig]] =
     auctions.inspect(auctionId, command.opId).flatMap {
-      case Inspection.Repeated(original) => Future.successful(launchedBy(original))
+      // Мимо Meetups в entity идёт только повтор самого запуска: события он не пишет, но дошлёт окно лотам, не
+      // ответившим раньше. `op_id` другой команды до entity не доходит.
+      case Inspection.Repeated(original) =>
+        original.event match {
+          case AuctionEvent.StepWindowLaunched(_) => launch(auctionId, command, person)
+          case _ => Future.successful(Left(LaunchRefusal.OpIdTaken))
+        }
       case Inspection.Absent => Future.successful(Left(LaunchRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
-        authorized(meetup, person, MeetupGate.NotCancelled, LaunchRefusal.Denied(_)) {
-          auctions.launchStepWindow(auctionId, command, Initiator.Operator(person)).map {
-            case Right(AuctionAnswer.Written(envelope)) => launchedBy(envelope)
-            case Right(AuctionAnswer.Unchanged) =>
-              throw new IllegalStateException(s"auction $auctionId launched a step window without an event")
-            case Left(LaunchStepWindowRejected.AuctionNotFound) => Left(LaunchRefusal.Denied(Denial.AuctionNotFound))
-            case Left(rejected) => Left(LaunchRefusal.Rejected(rejected))
-          }
-        }
+        authorized(meetup, person, MeetupGate.NotCancelled, LaunchRefusal.Denied(_))(launch(auctionId, command, person))
+    }
+
+  private def launch(
+      auctionId: AuctionId,
+      command: LaunchStepWindow,
+      person: ParticipantId
+  ): Future[Either[LaunchRefusal, StepWindowConfig]] =
+    auctions.launchStepWindow(auctionId, command, Initiator.Operator(person)).map {
+      case Right(AuctionAnswer.Written(envelope)) => launchedBy(envelope)
+      case Right(AuctionAnswer.Unchanged) =>
+        throw new IllegalStateException(s"auction $auctionId launched a step window without an event")
+      case Left(LaunchStepWindowRejected.AuctionNotFound) => Left(LaunchRefusal.Denied(Denial.AuctionNotFound))
+      case Left(rejected) => Left(LaunchRefusal.Rejected(rejected))
     }
 
   /** Ask ведущего лоту реестра (RFC-011, П-08); инициатор у лота — ведущий. */

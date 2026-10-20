@@ -776,16 +776,18 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       stranger.commands shouldBe empty
     }
 
-    "answers a repeated step window launch with the original window without asking meetups" in {
+    "passes a repeated step window launch to the auction without asking meetups and answers the original window" in {
       val window = StepWindowConfig(deadline, deadline.plusSeconds(3600), money(1), Set(lot))
-      val repeated = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.StepWindowLaunched(window))))
+      val original = AuctionEnvelope(5, op(7), AuctionEvent.StepWindowLaunched(window))
+      val repeated = Auctions(Inspection.Repeated(original))
+      repeated.launchAnswer = Right(AuctionAnswer.Written(original))
       val meetups = Meetups(Authority.NotAdministrator)
       val command = LaunchStepWindow(None, deadline.plusSeconds(3600), money(1), List(lot), op(7))
 
       AuctionCommands(repeated, noLots, meetups).launchStepWindow(auctionOfMeetup, command, person).futureValue shouldBe
         Right(window)
       meetups.asked shouldBe 0
-      repeated.commands shouldBe empty
+      repeated.commands shouldBe List(command)
     }
 
     "refuses a launch under the op_id of another auction command, an absent auction and a stranger" in {
