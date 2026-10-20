@@ -5,6 +5,7 @@
 - [overview.md](overview.md) — продукт и принципы;
 - [use-cases.md](use-cases.md) — стабильные имена продуктовых сценариев;
 - [ideas.md](ideas.md) — непринятые и неприоритизированные идеи;
-- [future/auction.md](future/auction.md) — сохранённая спецификация будущего аукциона.
+- [future/auction.md](future/auction.md) — сохранённая спецификация будущего аукциона;
+- [future/playlist.md](future/playlist.md) — сценарий плейлиста сходки, первого модуля.
 
 Milestones, порядок исполнения и прогресс ведутся в Linear.
