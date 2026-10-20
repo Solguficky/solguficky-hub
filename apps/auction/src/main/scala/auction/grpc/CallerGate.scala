@@ -23,6 +23,7 @@ object MethodAccess {
     "ListLotHistory" -> bots,
     "ChooseDisplayName" -> bots,
     "GetDisplayNames" -> bots,
+    "ListAuctionNames" -> Set(Caller.HubBot),
     "GetFaqAcknowledgement" -> Set(Caller.AuctionBot),
     "AcknowledgeFaq" -> Set(Caller.AuctionBot),
     "GetLotImage" -> bots,

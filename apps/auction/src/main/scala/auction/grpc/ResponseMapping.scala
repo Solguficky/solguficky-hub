@@ -37,6 +37,7 @@ import auction.lot.UnmarkForFinalRejected
 import auction.lot.WithdrawProxyLimitRejected
 import auction.naming.DisplayKind
 import auction.naming.DisplayName
+import auction.naming.NamedParticipant
 import auction.naming.NamingRefusal
 import auction.projection.AuctionSnapshotView
 import auction.projection.LotImageView
@@ -120,6 +121,14 @@ object ResponseMapping {
   /** Ключ — каноническая строка идентификатора участника, та же, что пришла в запросе. */
   def displayNames(names: Map[ParticipantId, DisplayName]): wire.GetDisplayNamesResponse =
     wire.GetDisplayNamesResponse(names.map((participant, name) => participant.value.toString -> displayName(name)))
+
+  /** Имена аукциона в порядке, который посчитал сервис: сверху ставившие в финале. */
+  def auctionNames(names: List[NamedParticipant]): wire.ListAuctionNamesResponse =
+    wire.ListAuctionNamesResponse(
+      names.map(named =>
+        wire.AuctionName(participantId = named.participant.value.toString, name = Some(displayName(named.name)))
+      )
+    )
 
   private def displayName(name: DisplayName): wire.DisplayName = {
     val kind = name.kind match {

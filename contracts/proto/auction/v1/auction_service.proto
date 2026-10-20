@@ -35,6 +35,7 @@ service AuctionService {
   rpc ListLotHistory(ListLotHistoryRequest) returns (ListLotHistoryResponse);
   rpc ChooseDisplayName(ChooseDisplayNameRequest) returns (ChooseDisplayNameResponse);
   rpc GetDisplayNames(GetDisplayNamesRequest) returns (GetDisplayNamesResponse);
+  rpc ListAuctionNames(ListAuctionNamesRequest) returns (ListAuctionNamesResponse);
   rpc GetFaqAcknowledgement(GetFaqAcknowledgementRequest) returns (FaqAcknowledgement);
   rpc AcknowledgeFaq(AcknowledgeFaqRequest) returns (FaqAcknowledgement);
   rpc GetLotImage(GetLotImageRequest) returns (LotImage);
@@ -622,6 +623,27 @@ message GetDisplayNamesRequest {
 message GetDisplayNamesResponse {
   // Keyed by participant id. Every requested id is present.
   map<string, DisplayName> names = 1;
+}
+
+message ListAuctionNamesRequest {
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUID with hyphens, version 5 or 7: see LotState.auction_id.
+  string auction_id = 2;
+}
+
+message ListAuctionNamesResponse {
+  // Empty when nobody chose a name in the auction; an empty list is not an
+  // error.
+  repeated AuctionName names = 1;
+}
+
+message AuctionName {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string participant_id = 1;
+
+  // The chosen name, ready to show as is; never a placeholder.
+  DisplayName name = 2;
 }
 
 message GetFaqAcknowledgementRequest {

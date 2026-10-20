@@ -25,6 +25,7 @@ import auction.persistence.DatabaseSettings
 import auction.persistence.JournalDatabase
 import auction.persistence.SlickAuctionViews
 import auction.persistence.SlickAuctionWatchViews
+import auction.persistence.SlickFinalBids
 import auction.persistence.SlickLotViews
 import auction.persistence.SlickScreenViews
 import auction.projection.AuctionProjection
@@ -494,7 +495,8 @@ object AuctionNode {
       results = ResultsGateway.sharded(sharding, SlickResultsStore(system), askTimeout),
       watchViews = SlickAuctionWatchViews(system),
       changes = changes,
-      placeBidsRight = placeBidsRight
+      placeBidsRight = placeBidsRight,
+      finalBids = SlickFinalBids(system)
     )
     GrpcBoundary(callers, (caller, correlation, notes) => service.within(correlation, Some(caller), notes))
   }
