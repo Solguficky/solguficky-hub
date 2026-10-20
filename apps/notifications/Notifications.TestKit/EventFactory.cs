@@ -521,6 +521,62 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Итоги прогнозов (PER-567): две номинации — лот и число — и по участнику
+    /// на каждого из <paramref name="participants"/>. Первый угадал лот, все
+    /// промахнулись с числом на свой номер; угадавший назван «Первый».
+    /// </summary>
+    public static global::Auction.V1.PredictionResultsEvent PredictionResultsSettled(string auction,
+        params string[] participants)
+    {
+        var lot = NewId();
+        var message = new global::Auction.V1.PredictionResultsEvent
+        {
+            EventId = NewId(), PredictionResultsId = auction, Version = 1,
+            OccurredAt = Committed.AddMinutes(50).ToString("O"),
+            State = new global::Auction.V1.PredictionResultsState { AuctionId = auction },
+            PredictionResultsSettled = new global::Auction.V1.PredictionResultsSettled(),
+        };
+        var lotOutcome = new global::Auction.V1.NominationOutcome
+        {
+            Nomination = global::Auction.V1.PredictionNomination.MostExpensiveLot,
+            Lots = new global::Auction.V1.NominationLots(),
+            Winners = participants.Length > 0 ? 1u : 0u,
+        };
+        lotOutcome.Lots.LotIds.Add(lot);
+        if (participants.Length > 0)
+        {
+            lotOutcome.WinnerNames.Add(new global::Auction.V1.WinnerName { ParticipantId = participants[0], Name = "Первый" });
+        }
+        message.State.Nominations.Add(lotOutcome);
+        message.State.Nominations.Add(new global::Auction.V1.NominationOutcome
+        {
+            Nomination = global::Auction.V1.PredictionNomination.TotalSales, Number = 60_000,
+        });
+        for (var index = 0; index < participants.Length; index++)
+        {
+            var result = new global::Auction.V1.ParticipantResult { ParticipantId = participants[index] };
+            result.Participation.Add(index == 0
+                ? new global::Auction.V1.Participation
+                {
+                    Nomination = global::Auction.V1.PredictionNomination.MostExpensiveLot,
+                    Guessed = new global::Auction.V1.Guessed(),
+                }
+                : new global::Auction.V1.Participation
+                {
+                    Nomination = global::Auction.V1.PredictionNomination.MostExpensiveLot,
+                    Missed = new global::Auction.V1.Missed(),
+                });
+            result.Participation.Add(new global::Auction.V1.Participation
+            {
+                Nomination = global::Auction.V1.PredictionNomination.TotalSales,
+                Missed = new global::Auction.V1.Missed { Deviation = index + 1 },
+            });
+            message.State.Participants.Add(result);
+        }
+        return message;
+    }
+
     private static global::Auction.V1.AuctionEvent AuctionFact(string auction, string meetup, long version) => new()
     {
         EventId = NewId(), AuctionId = auction, Version = version,

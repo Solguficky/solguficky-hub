@@ -137,6 +137,11 @@ message Notification {
     // category on. The text of the records is absent: it lives in the image of
     // the surface's bot.
     ReleaseSummary release_summary = 27;
+
+    // The prediction results of an auction were settled. One fact per
+    // participant who predicted; nobody else receives it. No category governs
+    // it: one message per auction.
+    PredictionResults prediction_results = 28;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -187,6 +192,10 @@ message Cause {
     // Identifier of the release-notes summary that produced the fact. A
     // summary is created once, so it produces one fact per recipient.
     string release_summary_id = 9;
+
+    // event_id of the consumed Auction prediction results event. Stable across
+    // republication, therefore a transport repeat is recognized.
+    string auction_prediction_results_event_id = 10;
   }
 }
 
@@ -307,6 +316,62 @@ message RaffleResult {
 
   // How many tickets took part in the draw. At least 1.
   uint32 ticket_count = 4;
+}
+
+// The prediction results of an auction as the recipient sees them: the outcome
+// of every nomination that was played, who guessed it, and the recipient's own
+// result. What the others predicted is never carried: only the names of those
+// who guessed.
+message PredictionResults {
+  // Canonical lowercase UUID with hyphens, version 5 or 7: the auction of the
+  // results.
+  string auction_id = 1;
+
+  // Every nomination that was played, in the order of ADR-067. A nomination
+  // with no sales is absent.
+  repeated PredictionNominationOutcome nominations = 2;
+
+  // The recipient's own result, one entry per nomination in nominations that
+  // they answered, in the order of ADR-067. An answer to a nomination that was
+  // not played is absent: it has no result.
+  repeated PredictionOwnResult yours = 3;
+}
+
+message PredictionNominationOutcome {
+  // UNSPECIFIED is not a value.
+  auction.v1.PredictionNomination nomination = 1;
+
+  // The final value of the nomination. Exactly one is set.
+  oneof value {
+    PredictionLots lots = 2;
+    int64 number = 3;
+  }
+
+  // How many guessed. It counts a winner whose name was erased.
+  uint32 winners = 4;
+
+  // The display names of those who guessed, as the history of bids reads them.
+  // An erased name is absent, so there may be fewer names than winners.
+  repeated string winner_names = 5;
+}
+
+// The winning lots of a lot answer: every lot that shared the first place.
+message PredictionLots {
+  // Canonical lowercase UUIDv7 with hyphens.
+  repeated string lot_ids = 1;
+}
+
+message PredictionOwnResult {
+  // UNSPECIFIED is not a value.
+  auction.v1.PredictionNomination nomination = 1;
+
+  // True when the recipient named a winning lot or the number with the smallest
+  // deviation.
+  bool guessed = 2;
+
+  // The distance from the final value of a number answer that missed. Unset
+  // when guessed and for a lot answer: a wrong lot has no distance.
+  optional int64 deviation = 3;
 }
 
 message OrganizerMessage {
