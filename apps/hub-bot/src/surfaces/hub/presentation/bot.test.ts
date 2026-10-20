@@ -9719,6 +9719,32 @@ describe("auction queue and moderation", () => {
     expect(labelsOf(calls.at(-1)?.payload)).toEqual(["‹ Состав"]);
   });
 
+  it("lets Identity refuse a forged press granting running the auction", async () => {
+    const identity = {
+      ...moderation(false),
+      ...resolvedIdentity("member", false, moderatorRights),
+    };
+    identity.grantRightRecord.mockResolvedValue({ kind: "forbidden" });
+    identity.communityMember.mockResolvedValue({ kind: "forbidden" });
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(`v1:cm:ag:${uuidToToken(memberId)}:m0`),
+    );
+
+    expect(identity.grantRightRecord).toHaveBeenCalledWith(
+      expect.anything(),
+      memberId,
+      "run-auctions",
+      expect.anything(),
+    );
+    expect(calls.at(-2)?.payload).toMatchObject({
+      text: "Выдавать ведение аукциона может тот, кто управляет составом.",
+    });
+    expect(labelsOf(calls.at(-1)?.payload)).toEqual(["‹ Состав"]);
+  });
+
   it("offers no community item without the right to manage it", async () => {
     const identity = resolvedIdentity("member", false, moderatorRights);
     const { bot, calls } = createHarness(identity);
