@@ -600,6 +600,18 @@ jobs:
         working-directory: apps/auction
         env:
           AUCTION_INTEGRATION_TESTS: "1"
+      # Браузерный уровень (`*BrowserSpec`): страница экрана зала в Chromium
+      # против настоящего узла (PER-485). Chromium и его системные библиотеки
+      # ставит CLI того же Playwright, что в build.sbt, — версия браузера не
+      # расходится с драйвером. Сьюты отбирает своя переменная, как L1.
+      - name: Install Chromium for browser tests
+        run: sbt -batch "Test/runMain com.microsoft.playwright.CLI install --with-deps chromium"
+        working-directory: apps/auction
+      - name: Scala browser tests
+        run: sbt -batch test
+        working-directory: apps/auction
+        env:
+          AUCTION_BROWSER_TESTS: "1"
 
   # nats-tester — единственный потребитель схем, чей сгенерированный код лежит
   # в Git: инструмент ставится без protoc, поэтому классы обязаны совпадать со

@@ -647,6 +647,16 @@ auction-test:
 auction-test-integration:
     cd apps/auction && AUCTION_INTEGRATION_TESTS=1 sbt -batch test
 
+# Chromium той версии, что у Playwright в build.sbt, драйвер скачивает сам при
+# первом прогоне; системные библиотеки Linux он не ставит — в CI их ставит
+# отдельный шаг. За перехватом TLS на машине драйвер (Node) падает на
+# сертификате: NODE_USE_SYSTEM_CA=1 даёт ему хранилище системы. В `verify` и
+# `test-all` не входит, в CI — шаг джобы auction.
+#
+# Страница экрана зала в Chromium против настоящего узла; нужны Docker и сеть
+auction-test-browser:
+    cd apps/auction && AUCTION_BROWSER_TESTS=1 sbt -batch test
+
 # scalafmtCheckAll не видит саму сборку, поэтому .sbt-файлы проверяет
 # отдельная задача — иначе build.sbt остаётся единственным неформатируемым
 # файлом компонента.

@@ -210,6 +210,39 @@ final class ScreenRoutesSpec
 
   }
 
+  "the screen page" should {
+
+    "serve the page with the heartbeat period of the service and without asking Meetups" in {
+      val standings = Standings(visible)
+      Get(s"/screen/$auctionId") ~> routeOf(standings = standings, heartbeat = 5.seconds) ~> check {
+        status shouldBe StatusCodes.OK
+        mediaType shouldBe MediaTypes.`text/html`
+        header("Cache-Control").map(_.value) shouldBe Some("no-cache")
+        header("Content-Security-Policy").map(_.value).getOrElse("") should include("script-src 'self'")
+        val body = responseAs[String]
+        body should include("""<meta name="screen-heartbeat" content="5000">""")
+        body should not include "{{"
+      }
+      standings.asked.get shouldBe 0
+    }
+
+    "serve the same page for an auction that does not exist" in {
+      Get(s"/screen/${UUID.randomUUID()}/") ~> routeOf(standings = Standings(StandingAnswer.Missing)) ~> check(
+        status shouldBe StatusCodes.OK
+      )
+    }
+
+    "serve a named asset as JavaScript and refuse a name outside the list" in {
+      Get("/screen/assets/connection.js") ~> routeOf() ~> check {
+        status shouldBe StatusCodes.OK
+        mediaType.subType shouldBe "javascript"
+        responseAs[String] should include("export function silenceLimit")
+      }
+      Get("/screen/assets/index.html") ~> routeOf() ~> check(status shouldBe StatusCodes.NotFound)
+      Get("/screen/assets/..") ~> routeOf() ~> check(status shouldBe StatusCodes.NotFound)
+    }
+  }
+
   "the lot image" should {
 
     "serve the current version with an unlimited cache lifetime" in {

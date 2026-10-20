@@ -1,0 +1,172 @@
+/* Экран зала читается с расстояния: крупный кегль от ширины окна, контраст, никаких элементов управления. */
+
+:root {
+  --bg: #0f1115;
+  --fg: #f4f4f5;
+  --muted: #a1a1aa;
+  --accent: #facc15;
+  --hall: #38bdf8;
+  --online: #a78bfa;
+  --alert-bg: #b91c1c;
+  --alert-fg: #ffffff;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: clamp(16px, 2.2vw, 40px);
+  line-height: 1.25;
+  cursor: none;
+}
+
+main {
+  padding: 3vh 4vw;
+}
+
+.banner {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.6em 4vw;
+  background: var(--alert-bg);
+  color: var(--alert-fg);
+  font-weight: 700;
+  font-size: 1.3em;
+}
+
+.message {
+  margin: 30vh 0 0;
+  text-align: center;
+  font-size: 2.4em;
+  color: var(--muted);
+}
+
+.card {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 4vw;
+  align-items: start;
+}
+
+.card:not(:has(.photo)) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.photo {
+  width: 100%;
+  max-height: 80vh;
+  object-fit: contain;
+  border-radius: 0.4em;
+}
+
+.title {
+  margin: 0 0 0.3em;
+  font-size: 2em;
+  line-height: 1.1;
+}
+
+.price {
+  font-size: clamp(64px, 11vw, 260px);
+  font-weight: 800;
+  line-height: 1;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.ask,
+.leader,
+.outcome,
+.next,
+.finale {
+  margin: 0.4em 0 0;
+  font-size: 1.4em;
+}
+
+.outcome {
+  font-size: 2.2em;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.next,
+.finale {
+  color: var(--muted);
+}
+
+.bids {
+  margin: 1em 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 1em;
+  padding: 0.25em 0;
+  border-top: 1px solid #27272a;
+}
+
+.bid-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bid-amount {
+  font-variant-numeric: tabular-nums;
+}
+
+.bid-channel {
+  min-width: 4.5em;
+  text-align: right;
+}
+
+.bid-channel.hall {
+  color: var(--hall);
+}
+
+.bid-channel.online {
+  color: var(--online);
+}
+
+.lineup {
+  font-size: 1.4em;
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.4em 1.5em;
+  font-size: 1.6em;
+}
+
+.totals dt {
+  color: var(--muted);
+}
+
+.totals dd {
+  margin: 0;
+}
+
+/* Связь потеряна: последний снимок остаётся, но цена и лидер не выдаются за актуальные. */
+body[data-status="stale"] main {
+  opacity: 0.45;
+  filter: grayscale(1);
+}
+
+body[data-status="stale"] .price {
+  text-decoration: line-through;
+}
