@@ -242,10 +242,14 @@ enum AuctionEvent {
 /** Строка журнала аукциона в той части конверта, которую читает ядро; `sequence` назначает тот, кто пишет журнал. */
 final case class AuctionEnvelope(sequence: Long, opId: OpId, event: AuctionEvent)
 
-/** Отказы `AddLot`: аукциона нет или реестр заморожен стартом торгов (И-20). */
+/**
+ * Отказы `AddLot`: аукциона нет, реестр заморожен стартом торгов (И-20) или лот рождён в прежнем рождении аукциона,
+ * удалённом до торгов (ADR-047, дополнение 2026-10-20): новое рождение начинается с нуля.
+ */
 enum AddLotRejected {
   case AuctionNotFound
   case LotsFrozen
+  case LotOfDiscardedAuction
 }
 
 /** Отказы `RemoveLot`: аукциона нет, реестр заморожен или лота нет в реестре. */
@@ -535,6 +539,10 @@ object Auction {
    * множество, а `op_id` попадает в окно `seen`. Ответ без события повтором не защищён, и запоздавший повтор после
    * `RemoveLot` вернул бы снятый лот. У включения аукциона ответ без события возможен, и его запоздавший повтор после
    * удаления рождает аукцион снова — это не возврат прежнего, а новое включение пустого аукциона.
+   *
+   * Лот прежнего рождения в реестр нового не возвращается (ADR-047, дополнение 2026-10-20): удаление сбрасывает аукцион
+   * целиком, а лот рождён под тем же `auction_id` и сам рождений не различает. Различает окно `seen`: удаление его не
+   * очищает, поэтому `LotAdded` раньше последнего `AuctionDiscarded` — лот прежнего рождения.
    */
   def decide(auction: Auction, command: AddLot): Either[AddLotRejected, AuctionDecision] =
     auction.seen.get(command.opId) match {
@@ -542,6 +550,8 @@ object Auction {
       case None =>
         auction.state match {
           case AuctionState.Initial => Left(AddLotRejected.AuctionNotFound)
+          case AuctionState.Draft | AuctionState.Scheduled(_) if discardedWith(auction, command.lot) =>
+            Left(AddLotRejected.LotOfDiscardedAuction)
           case AuctionState.Draft | AuctionState.Scheduled(_) =>
             Right(AuctionDecision.Accepted(AuctionEvent.LotAdded(command.lot)))
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
@@ -550,6 +560,14 @@ object Auction {
             Left(AddLotRejected.LotsFrozen)
         }
     }
+
+  /** Лот побывал в реестре рождения, которое удалено до торгов. */
+  private def discardedWith(auction: Auction, lot: LotId): Boolean = {
+    val envelopes = auction.seen.values
+    envelopes.filter(_.event == AuctionEvent.AuctionDiscarded).map(_.sequence).maxOption.exists { discarded =>
+      envelopes.exists(envelope => envelope.event == AuctionEvent.LotAdded(lot) && envelope.sequence < discarded)
+    }
+  }
 
   /** Лот из реестра. Лота нет в реестре — `LotNotInAuction`. */
   def decide(auction: Auction, command: RemoveLot): Either[RemoveLotRejected, AuctionDecision] =

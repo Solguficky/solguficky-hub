@@ -215,6 +215,28 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       reborn.lots shouldBe empty
     }
 
+    "refuses a lot of the discarded birth in the new one and accepts a new lot" in {
+      val removed = Auction.apply(holding(scheduled), AuctionEnvelope(9, op(9), AuctionEvent.LotRemoved(lot)))
+      val discarded = Auction.apply(removed, AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded))
+      val reborn = Auction.apply(discarded, AuctionEnvelope(11, op(11), AuctionEvent.AuctionDrafted(meetup)))
+      val fresh = LotId(new UUID(5L, 2L))
+
+      Auction.decide(reborn, AddLot(lot, op(12))) shouldBe Left(AddLotRejected.LotOfDiscardedAuction)
+      Auction.decide(reborn, AddLot(fresh, op(12))) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.LotAdded(fresh)))
+    }
+
+    "accepts a lot of the new birth again after it was removed" in {
+      val discarded = Auction.apply(holding(scheduled), AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded))
+      val reborn = Auction.apply(discarded, AuctionEnvelope(11, op(11), AuctionEvent.AuctionDrafted(meetup)))
+      val fresh = LotId(new UUID(5L, 2L))
+      val added = Auction.apply(reborn, AuctionEnvelope(12, op(12), AuctionEvent.LotAdded(fresh)))
+      val removed = Auction.apply(added, AuctionEnvelope(13, op(13), AuctionEvent.LotRemoved(fresh)))
+
+      Auction.decide(removed, AddLot(fresh, op(14))) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.LotAdded(fresh)))
+    }
+
     "refuses scheduling before it is born" in {
       Auction.decide(Auction.initial, ScheduleAuction(configInput(), op(2))) shouldBe
         Left(ScheduleAuctionRejected.AuctionNotFound)
