@@ -875,8 +875,8 @@ export function floorLeaderData(auction: string): string {
 
 /**
  * Кнопка человека зала и «Да» подтверждения: лот, человек и цена в минорных
- * единицах по основанию 36. Шесть знаков — до двадцати миллионов рублей, и
- * строка занимает 61 байт из 64.
+ * единицах по основанию 36. Семь знаков — до восьмисот миллиардов рублей, и
+ * строка занимает до 62 байт из 64.
  */
 export function floorPickData(
   lot: string,
@@ -896,7 +896,7 @@ export function floorConfirmData(
 
 const FloorAmountSchema = z
   .string()
-  .regex(/^[1-9a-z][0-9a-z]{0,5}$/)
+  .regex(/^[1-9a-z][0-9a-z]{0,6}$/)
   .transform((raw) => Number.parseInt(raw, 36));
 
 const noSaleQuote = "x";

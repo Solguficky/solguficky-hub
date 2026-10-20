@@ -65,17 +65,6 @@ function floorLotOf(lot: LotView, names: ReadonlyMap<string, string>) {
   return floor;
 }
 
-function sameAmount(
-  a: { minorUnits: number; currency: string } | undefined,
-  b: { minorUnits: number; currency: string },
-): boolean {
-  return (
-    a !== undefined &&
-    a.minorUnits === b.minorUnits &&
-    a.currency === b.currency
-  );
-}
-
 export function createFloorBids(consoles: AuctionConsoles) {
   type Read =
     | { kind: "ok"; floor: FloorView }
@@ -120,10 +109,10 @@ export function createFloorBids(consoles: AuctionConsoles) {
     const names = new Map(
       people.map((each) => [each.participantId, each.name]),
     );
-    const console = found.console;
+    const snapshot = found.console;
     const active =
-      console.status === "final" ? console.lineup?.activeLotId : undefined;
-    const entry = console.lots.find((each) => each.lot.lotId === active);
+      snapshot.status === "final" ? snapshot.lineup?.activeLotId : undefined;
+    const entry = snapshot.lots.find((each) => each.lot.lotId === active);
     let lot = entry === undefined ? undefined : floorLotOf(entry.lot, names);
     if (lot?.leaderId !== undefined && lot.leaderName === undefined) {
       const leader = await consoles.displayNames(
@@ -138,12 +127,12 @@ export function createFloorBids(consoles: AuctionConsoles) {
     return {
       kind: "ok",
       floor: {
-        auctionId: console.auctionId,
-        status: console.status,
+        auctionId: snapshot.auctionId,
+        status: snapshot.status,
         ...(lot === undefined ? {} : { lot }),
         people,
         versions: Object.fromEntries(
-          console.lots.map((each) => [each.lot.lotId, each.lot.version]),
+          snapshot.lots.map((each) => [each.lot.lotId, each.lot.version]),
         ),
       },
     };
@@ -204,11 +193,44 @@ export function createFloorBids(consoles: AuctionConsoles) {
     }
   }
 
-  // Сверка кнопки с экраном сейчас: лот тот же и торгуется, цена та же, и
-  // человек — среди людей зала. Расхождение — экран с новым лотом или ценой,
-  // а не ставка.
+  // Лот кнопки поверх экрана: снимок лота не старше пульта, а пульт читает ту
+  // же отстающую read model, поэтому экран берёт более свежее из двух. Версия
+  // лота уходит и в версии экрана: иначе поток счёл бы её новой и перечитал
+  // экран, стерев строку исхода.
+  function withLot(floor: FloorView, lot: LotView): FloorView {
+    if (floor.lot?.lotId !== lot.lotId || lot.version <= floor.lot.version) {
+      return floor;
+    }
+    const names = new Map(
+      floor.people.map((each) => [each.participantId, each.name]),
+    );
+    const fresh = floorLotOf(lot, names);
+    if (fresh === undefined) return floor;
+    return {
+      ...floor,
+      lot: {
+        ...fresh,
+        ...(fresh.leaderName === undefined &&
+        fresh.leaderId === floor.lot.leaderId &&
+        floor.lot.leaderName !== undefined
+          ? { leaderName: floor.lot.leaderName }
+          : {}),
+      },
+      versions: { ...floor.versions, [lot.lotId]: lot.version },
+    };
+  }
+
+  // Сверка кнопки с лотом сейчас: лот торгуется в живом финале, цена не ушла
+  // выше названной, и человек — среди людей зала. Расхождение — экран с новым
+  // лотом или ценой, а не ставка. Цена ниже названной — отставание чтения,
+  // а не ставка на другую цену: её решает Auction (`BidNotAtNextPrice`).
   type Checked =
-    | { kind: "ok"; floor: FloorView; lot: FloorLot; person: FloorPerson }
+    | {
+        kind: "ok";
+        floor: FloorView;
+        lot: FloorLot;
+        person: FloorPerson;
+      }
     | { kind: "refused"; result: ExecuteResult };
 
   async function checked(
@@ -218,25 +240,36 @@ export function createFloorBids(consoles: AuctionConsoles) {
     if (found.kind === "refused") return found;
     const current = await read({ ...request, auctionId: found.lot.auctionId });
     if (current.kind === "refused") return current;
-    const { floor } = current;
+    const floor = withLot(current.floor, found.lot);
     const screen = (note: FloorNote): Checked => ({
       kind: "refused",
       result: { kind: "floor-bids", floor, page: 0, note },
     });
-    const lot = floor.lot;
-    if (lot === undefined || lot.lotId !== request.target.lotId) {
+    const status = found.lot.status;
+    if (status.kind !== "trading" || status.phase !== "live") {
       return screen({ kind: "lot-changed" });
     }
-    if (!sameAmount(lot.nextPrice, request.target.amount)) {
+    const next = found.lot.nextPrice;
+    const { amount } = request.target;
+    if (
+      next === undefined ||
+      next.currency !== amount.currency ||
+      next.minorUnits > amount.minorUnits
+    ) {
       return screen({ kind: "price-changed" });
     }
     const person = floor.people.find(
       (each) => each.participantId === request.target.participantId,
     );
     if (person === undefined) return screen({ kind: "cannot-bid" });
-    if (lot.leaderId === person.participantId) {
+    if (
+      status.leaderId === person.participantId &&
+      next.minorUnits === amount.minorUnits
+    ) {
       return screen({ kind: "bidder-is-leader", name: person.name });
     }
+    const lot = floorLotOf(found.lot, new Map()) ?? floor.lot;
+    if (lot === undefined) return screen({ kind: "lot-changed" });
     return { kind: "ok", floor, lot, person };
   }
 
@@ -274,93 +307,128 @@ export function createFloorBids(consoles: AuctionConsoles) {
       },
       rpcMeta(request),
     );
+    // Экран после ответа. Лот — не старее версии из ответа: пульт читает ту же
+    // отстающую read model, и без дочитывания экран показал бы прежнюю цену.
+    // Чтение отказало — исход ставки важнее свежего экрана: без него помощник
+    // не узнал бы, прошла ли необратимая ставка. Экран тогда — прочитанный до
+    // команды, с пометкой, что цена могла устареть.
     const after = async (
-      note: FloorNote,
       lotVersion?: number,
-    ): Promise<ExecuteResult> => {
-      // Лот — не старее версии из ответа: пульт читает ту же отстающую read
-      // model, и без дочитывания экран показал бы прежнюю цену.
+    ): Promise<{ floor: FloorView; stale: boolean; fresh?: LotView }> => {
       const [fresh, current] = await Promise.all([
-        lotVersion === undefined
-          ? undefined
-          : lotRead(request, lotVersion).catch(() => undefined),
+        lotVersion === undefined ? undefined : lotRead(request, lotVersion),
         read({ ...request, auctionId: found.floor.auctionId }),
       ]);
-      if (current.kind === "refused") return current.result;
-      let floor = current.floor;
-      const names = new Map(
-        floor.people.map((each) => [each.participantId, each.name]),
-      );
-      if (
-        fresh?.kind === "ok" &&
-        floor.lot?.lotId === fresh.lot.lotId &&
-        fresh.lot.version > floor.lot.version
-      ) {
-        const lot = floorLotOf(fresh.lot, names);
-        if (lot !== undefined) floor = { ...floor, lot };
-      }
-      if (note.kind !== "accepted") {
-        return { kind: "floor-bids", floor, page: 0, note };
-      }
-      // Принято: лидер — тот, за кого ставили, либо автоставка ответила той
-      // же транзакцией и цена выше названной.
-      const lot = floor.lot;
-      const answered =
-        lot !== undefined &&
-        lot.lotId === request.target.lotId &&
-        lot.leaderId !== undefined &&
-        lot.leaderId !== person.participantId &&
-        lot.currentPrice.minorUnits > amount.minorUnits;
-      return {
-        kind: "floor-bids",
-        floor,
-        page: 0,
-        note: answered
-          ? {
-              kind: "proxy-answered",
-              name: person.name,
-              price: amount,
-              answer: lot.currentPrice,
-            }
-          : note,
-      };
+      const base = current.kind === "ok" ? current.floor : found.floor;
+      return fresh?.kind === "ok"
+        ? {
+            floor: withLot(base, fresh.lot),
+            stale: current.kind !== "ok",
+            fresh: fresh.lot,
+          }
+        : { floor: base, stale: current.kind !== "ok" };
     };
+    const shown = (
+      screen: { floor: FloorView; stale: boolean },
+      note: FloorNote,
+    ): ExecuteResult => ({
+      kind: "floor-bids",
+      floor: screen.floor,
+      page: 0,
+      note,
+      ...(screen.stale ? { stale: true as const } : {}),
+    });
     switch (placed.kind) {
-      case "accepted":
-        return after(
-          { kind: "accepted", name: person.name, price: amount },
-          placed.lotVersion > 0 ? placed.lotVersion : undefined,
+      case "accepted": {
+        const lotVersion =
+          placed.lotVersion > 0 ? placed.lotVersion : undefined;
+        const screen = await after(lotVersion);
+        const lot = screen.floor.lot;
+        const outbid =
+          lot !== undefined &&
+          lot.lotId === request.target.lotId &&
+          lot.leaderId !== undefined &&
+          lot.leaderId !== person.participantId &&
+          lot.currentPrice.minorUnits > amount.minorUnits;
+        if (!outbid) {
+          return shown(screen, {
+            kind: "accepted",
+            name: person.name,
+            price: amount,
+          });
+        }
+        // Лидер сменился той же командой — ответила автоставка: принятая
+        // ставка видна лотом ровно с версией из ответа. Лот новее — цену
+        // подняли уже после ставки, и кто, экран не знает.
+        return shown(
+          screen,
+          screen.fresh !== undefined && screen.fresh.version === lotVersion
+            ? {
+                kind: "proxy-answered",
+                name: person.name,
+                price: amount,
+                answer: lot.currentPrice,
+              }
+            : {
+                kind: "outbid",
+                name: person.name,
+                price: amount,
+                now: lot.currentPrice,
+              },
         );
+      }
       case "bid-not-at-next-price": {
-        // Имя лидера — из экрана после ответа: отказ его не несёт.
-        const result = await after({ kind: "price-taken", price: amount });
-        if (result.kind !== "floor-bids") return result;
-        const leader = result.floor.lot?.leaderName;
-        return {
-          ...result,
-          note: {
+        // Имя лидера — из экрана после ответа: отказ его не несёт. Следующую
+        // цену отказ называет сам, и экран её показывает, даже если чтение
+        // ещё не догнало чужую ставку, — как карточка финала.
+        const screen = await after();
+        const lot = screen.floor.lot;
+        const floor =
+          lot !== undefined &&
+          lot.lotId === request.target.lotId &&
+          (lot.nextPrice === undefined ||
+            lot.nextPrice.minorUnits < placed.expected.minorUnits)
+            ? { ...screen.floor, lot: { ...lot, nextPrice: placed.expected } }
+            : screen.floor;
+        const leader = floor.lot?.leaderName;
+        return shown(
+          { floor, stale: screen.stale },
+          {
             kind: "price-taken",
             price: amount,
             ...(leader === undefined ? {} : { leader }),
           },
-        };
+        );
       }
       case "bidder-is-leader":
-        return after({ kind: "bidder-is-leader", name: person.name });
+        return shown(await after(), {
+          kind: "bidder-is-leader",
+          name: person.name,
+        });
       case "lot-not-open":
-        return after({ kind: "lot-not-open" });
+        return shown(await after(), { kind: "lot-not-open" });
       case "display-name-not-chosen":
-        return after({ kind: "name-not-chosen", name: person.name });
+        return shown(await after(), {
+          kind: "name-not-chosen",
+          name: person.name,
+        });
       case "participant-cannot-bid":
-        return after({ kind: "cannot-bid", name: person.name });
+        return shown(await after(), { kind: "cannot-bid", name: person.name });
       case "removed-from-lot":
-        return after({ kind: "removed-from-lot", name: person.name });
+        return shown(await after(), {
+          kind: "removed-from-lot",
+          name: person.name,
+        });
       case "not-administrator":
       case "meetup-not-found":
         return notAdministrator;
       case "timeout":
       case "unavailable":
-        return after({ kind: "unanswered", name: person.name, price: amount });
+        return shown(await after(), {
+          kind: "unanswered",
+          name: person.name,
+          price: amount,
+        });
       default:
         return failed(placed);
     }

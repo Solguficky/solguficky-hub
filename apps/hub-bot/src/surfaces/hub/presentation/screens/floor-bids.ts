@@ -37,6 +37,8 @@ import type { ShownScreen } from "./show.js";
 // человек и цена едут в кнопке, и устаревшее нажатие ставку не ставит.
 
 const untitled = "Лот без названия";
+// Восемь рядов по два человека — страница экрана.
+const foundLimit = 16;
 const titleLimit = 120;
 
 export const floorTitle = "Ставки зала";
@@ -79,6 +81,8 @@ function noteText(note: FloorNote): string {
       return `Принято: ${note.name} — ${priceText(note.price)}.`;
     case "proxy-answered":
       return `Принято: ${note.name} — ${priceText(note.price)}, автоставка ответила ${priceText(note.answer)}.`;
+    case "outbid":
+      return `Принято: ${note.name} — ${priceText(note.price)}. Цену уже подняли: ${priceText(note.now)}.`;
     case "price-taken":
       return note.leader === undefined
         ? `${priceText(note.price)} уже взята.`
@@ -155,10 +159,22 @@ export function floorScreen(view: FloorScreenView): ShownScreen {
     if (floor.people.length === 0) {
       peopleLine = floorNoNamesText;
     } else {
-      const page = paginate(pairs(floor.people), view.page);
+      // Найденные по имени — одна страница: листание вело бы в полный
+      // список, а не дальше по найденным.
+      const page = paginate(
+        pairs(
+          view.search === undefined
+            ? floor.people
+            : floor.people.slice(0, foundLimit),
+        ),
+        view.search === undefined ? view.page : 0,
+      );
       title = pagedTitle(floorTitle, page);
       if (view.search !== undefined) {
-        peopleLine = `Нашлось по «${view.search}»: ${floor.people.length}.`;
+        peopleLine =
+          floor.people.length > foundLimit
+            ? `Нашлось по «${view.search}»: ${floor.people.length}. Показаны первые ${foundLimit} — уточни имя.`
+            : `Нашлось по «${view.search}»: ${floor.people.length}.`;
       }
       for (const row of page.items) {
         nextRow(keyboard);

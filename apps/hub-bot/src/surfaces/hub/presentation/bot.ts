@@ -197,6 +197,7 @@ import {
   consoleWindowsData,
   defaultConsoleSort,
   floorData,
+  floorPickData,
   floorSearchData,
   lotAskData,
   lotFormData,
@@ -7730,12 +7731,14 @@ async function handleFloorCallback(
 ): Promise<BoundaryOutcome> {
   const useCase: ProductUseCase = "manage_auction";
   const call = { identity: person, ...rpcCall(ctx, useCase) };
+  // «Повторить» после сбоя на «Да» ведёт к подтверждению, а не к ставке:
+  // ставка, ответ на которую потерялся, могла пройти (ADR-070 п. 5).
+  const retry =
+    action.kind === "console-floor-confirm"
+      ? floorPickData(action.lot, action.person, action.minorUnits)
+      : ctx.callbackQuery?.data;
   const render = (result: ExecuteResult) =>
-    renderFloorResult(ctx, runtime, result, {
-      person,
-      questions,
-      retry: ctx.callbackQuery?.data,
-    });
+    renderFloorResult(ctx, runtime, result, { person, questions, retry });
   switch (action.kind) {
     case "console-floor":
       return render(
@@ -7820,6 +7823,7 @@ async function renderFloorResult(
         page: result.page,
         ...(result.note === undefined ? {} : { note: result.note }),
         ...(result.search === undefined ? {} : { search: result.search }),
+        ...(result.stale === true ? { stale: true } : {}),
       };
       const sent = await showScreen(ctx, floorScreen(view));
       // Экран правится дальше по потоку аукциона, как пульт ведущего.

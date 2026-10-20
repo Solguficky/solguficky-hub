@@ -3660,4 +3660,148 @@ describe("floor bids of the assistant", () => {
       expect(watch.subscribers.size).toBe(0);
     });
   });
+
+  // Находки ревью PER-565: исход ставки важнее свежего экрана, «Повторить»
+  // не ставит ставку заново, отказ называет цену сам, автоставку отличает
+  // версия из ответа, найденные не листаются в полный список.
+  describe("outcomes under failures and races", () => {
+    const confirmOf = async (auction: ReturnType<typeof running>) => {
+      const opened = await open(auction);
+      await opened.bot.handleUpdate(
+        press(pick(last(opened.calls), "Аня — 1 300 ₽")),
+      );
+      const yes = last(opened.calls).reply_markup?.inline_keyboard[0]?.[0];
+      return { ...opened, yes: yes?.callback_data ?? "" };
+    };
+
+    it("keeps an accepted bid on screen when the read after it fails", async () => {
+      const auction = running();
+      const { bot, calls, yes } = await confirmOf(auction);
+      const read = auction.port.getAuctionConsole;
+      auction.port.getAuctionConsole = (...args) =>
+        auction.sent("placeFloorBid").length > 0
+          ? Promise.resolve({ kind: "unavailable", cause: new Error("down") })
+          : read(...args);
+
+      await bot.handleUpdate(press(yes));
+
+      expect(plain(last(calls))).toContain("Принято: Аня — 1 300 ₽.");
+      expect(plain(last(calls))).toContain(
+        "Связь с аукционом прервалась — цена могла устареть.",
+      );
+    });
+
+    it("retries a failed confirmation through the confirmation, not the bid", async () => {
+      const auction = running({ floorTimeout: true });
+      const { bot, calls, yes } = await confirmOf(auction);
+      auction.port.getAuctionConsole = () =>
+        Promise.resolve({ kind: "unavailable", cause: new Error("down") });
+      auction.port.floorLot = () =>
+        Promise.resolve({ kind: "unavailable", cause: new Error("down") });
+
+      await bot.handleUpdate(press(yes));
+
+      // Сверка до команды не прочиталась: ставки нет, а «Повторить» ведёт к
+      // подтверждению заново.
+      expect(auction.sent("placeFloorBid")).toEqual([]);
+      const retry = dataOf(last(calls), "Повторить");
+      expect(retry.startsWith("v1:ac:bp:")).toBe(true);
+    });
+
+    it("shows the next price the refusal names while the read lags", async () => {
+      const auction = running();
+      const place = auction.port.placeFloorBid;
+      auction.port.placeFloorBid = async (person, bid, meta) => {
+        const answer = await place(person, bid, meta);
+        return answer.kind === "accepted"
+          ? { kind: "bid-not-at-next-price", expected: rub(140_000) }
+          : answer;
+      };
+      const { bot, calls, yes } = await confirmOf(auction);
+      // Чтение ещё не видит чужой ставки: лот прежний.
+      auction.port.floorLot = async () => ({
+        kind: "ok",
+        lot: live(vaseId, 3, 120_000),
+      });
+      const read = auction.port.getAuctionConsole;
+      auction.port.getAuctionConsole = async (...args) => {
+        const result = await read(...args);
+        return result.kind === "ok"
+          ? {
+              ...result,
+              console: {
+                ...result.console,
+                lots: [
+                  entry(live(vaseId, 3, 120_000)),
+                  entry(live(mugId, 3, 50_000)),
+                ],
+              },
+            }
+          : result;
+      };
+
+      await bot.handleUpdate(press(yes));
+
+      expect(plain(last(calls))).toContain("1 300 ₽ уже взята — лидер Бэтмен.");
+      expect(plain(last(calls))).toContain("следующая: 1 400 ₽.");
+    });
+
+    it("lets Auction judge a price the lagging read shows lower", async () => {
+      const auction = running();
+      const { bot, calls } = await open(auction);
+      // Кнопка уже на 1 300 ₽, чтение лота ещё на прежней цене ниже.
+      auction.port.floorLot = async () => ({
+        kind: "ok",
+        lot: live(vaseId, 2, 110_000),
+      });
+      await bot.handleUpdate(press(pick(last(calls), "Аня — 1 300 ₽")));
+      expect(plain(last(calls))).toContain("Ставка зала: Аня — 1 300 ₽?");
+    });
+
+    it("does not call a later bid from the bot an answer of the proxy", async () => {
+      const auction = running();
+      const place = auction.port.placeFloorBid;
+      auction.port.placeFloorBid = async (person, bid, meta) => {
+        const answer = await place(person, bid, meta);
+        botBid(auction, 140_000);
+        return answer;
+      };
+      const { bot, calls, yes } = await confirmOf(auction);
+
+      await bot.handleUpdate(press(yes));
+
+      expect(plain(last(calls))).toContain(
+        "Принято: Аня — 1 300 ₽. Цену уже подняли: 1 400 ₽.",
+      );
+      expect(plain(last(calls))).not.toContain("автоставка");
+    });
+
+    it("shows the found people on one page without a pager to the full list", async () => {
+      const many = Array.from({ length: 18 }, (_, at) => ({
+        participantId: `0198f2a4-7c1e-7d3a-9b21-4f8e12ab35${String(at).padStart(2, "0")}`,
+        name: `Гость ${String(at + 1).padStart(2, "0")}`,
+      }));
+      const auction = running({ people: many });
+      const { bot, calls } = await open(auction);
+      await bot.handleUpdate(press(dataOf(last(calls), "Другой человек…")));
+      await bot.handleUpdate(answer(calls, { text: "гость" }));
+
+      const found = last(calls);
+      expect(plain(found)).toContain(
+        "Нашлось по «гость»: 18. Показаны первые 16 — уточни имя.",
+      );
+      expect(labels(found).flat()).not.toContain("→");
+      expect(labels(found)).toHaveLength(8 + 1);
+    });
+
+    it("reads a price beyond six base-36 digits from the button", () => {
+      const minorUnits = 36 ** 6 + 5;
+      const data = `v1:ac:bp:${uuidToToken(vaseId)}:${uuidToToken(anyaId)}:${minorUnits.toString(36)}`;
+      expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toMatchObject({
+        kind: "console-floor-pick",
+        minorUnits,
+      });
+    });
+  });
 });

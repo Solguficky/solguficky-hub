@@ -780,6 +780,8 @@ export type FloorNote =
       price: LotAmount;
       answer: LotAmount;
     }
+  // Принято, но цену уже подняли после ставки — кто, экран не знает.
+  | { kind: "outbid"; name: string; price: LotAmount; now: LotAmount }
   | { kind: "price-taken"; price: LotAmount; leader?: string }
   | { kind: "lot-changed" }
   | { kind: "price-changed" }
@@ -1026,6 +1028,9 @@ export type ExecuteResult =
       page: number;
       note?: FloorNote;
       search?: string;
+      // Чтение после ставки отказало: экран — прочитанный до неё, и цена
+      // могла устареть.
+      stale?: true;
     }
   // Вопрос «Другой человек…»: имя или его часть.
   | { kind: "floor-search-ask"; auctionId: string }
