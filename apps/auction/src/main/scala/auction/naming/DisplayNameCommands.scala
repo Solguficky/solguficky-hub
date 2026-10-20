@@ -21,6 +21,9 @@ trait DisplayNameStore {
 
   /** Выборы названных участников с признаком заморозки; участника без выбора в ответе нет. */
   def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, StoredName]]
+
+  /** Все выборы аукциона: участник без выбора в ответе не появляется. */
+  def all(auction: AuctionId): Future[Map[ParticipantId, StoredName]]
 }
 
 enum ChooseResult {
@@ -70,6 +73,16 @@ final class DisplayNameCommands(store: DisplayNameStore)(using ExecutionContext)
           participant -> DisplayNameRules.render(participant, stored.map(_.name), stored.exists(_.frozen))
         }.toMap
       }
+
+  /** Все выбранные имена аукциона для выбора человека зала (ADR-070, п. 3); заглушек здесь нет. */
+  def chosen(auction: AuctionId): Future[Map[ParticipantId, DisplayName]] =
+    store
+      .all(auction)
+      .map(
+        _.map((participant, stored) =>
+          participant -> DisplayNameRules.render(participant, Some(stored.name), stored.frozen)
+        )
+      )
 
   /** Проверка перед ставкой и прокси-лимитом: без выбранного имени участник в аукционе не ставит. */
   def requireChosen(auction: AuctionId, participant: ParticipantId): Future[Either[NameNotChosen.type, ChosenName]] =

@@ -799,6 +799,27 @@ final class AuctionGrpcIntegrationSpec
 
   "auction grpc" should {
 
+    "lists the auction names to the run_auctions holder and hides a bidder Identity refuses" in {
+      val (bidder, blocked) = (
+        viewer(AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS),
+        viewer(AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)
+      )
+      withNode { node =>
+        node.bidders.answer = participant => Future.successful(participant.value.toString != blocked.identityId)
+        val auction = freshAuction()
+        choose(node, bidder, auction, "Аня").outcome.isAccepted shouldBe true
+        choose(node, blocked, auction, "Боря").outcome.isAccepted shouldBe true
+        val assistant = viewer(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS)
+        val names = asHubBot(node.client.listAuctionNames())
+          .invoke(wire.ListAuctionNamesRequest(Some(assistant), auction.value.toString))
+          .futureValue
+          .names
+
+        names.map(_.participantId) shouldBe Seq(bidder.identityId)
+        names.head.getName.text shouldBe "Аня*"
+      }
+    }
+
     "places a bid through the wire and leaves the new price in the lot" in withNode { node =>
       val auction = freshAuction()
       val lotId = tradingLot(node, auction)

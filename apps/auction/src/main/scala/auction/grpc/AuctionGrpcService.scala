@@ -15,11 +15,14 @@ import auction.lot.BidSource
 import auction.lot.OpId
 import auction.lot.ParticipantId
 import auction.naming.DisplayNameCommands
+import auction.naming.DisplayName
+import auction.naming.NamedParticipant
 import auction.naming.NameNotChosen
 import auction.onboarding.FaqAcknowledgements
 import auction.projection.AuctionSnapshotView
 import auction.projection.AuctionViews
 import auction.projection.AuctionWatchViews
+import auction.projection.FinalBids
 import auction.prediction.PredictionGateway
 import auction.prediction.PredictionRound
 import auction.prediction.SubmitForecast
@@ -44,6 +47,8 @@ import org.slf4j.LoggerFactory
 
 import java.time.Clock
 import java.time.Duration
+import java.time.Instant
+import java.util.Locale
 import java.util.concurrent.TimeoutException
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -76,7 +81,8 @@ final class AuctionGrpcService(
     predictions: PredictionGateway = AuctionGrpcService.NoPredictions,
     results: ResultsGateway = AuctionGrpcService.NoResults,
     placeBidsRight: ParticipantId => Future[Boolean] = AuctionGrpcService.NoIdentity,
-    notes: OperationNotes = OperationNotes.discarded
+    notes: OperationNotes = OperationNotes.discarded,
+    finalBids: FinalBids = FinalBids.empty
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -108,7 +114,8 @@ final class AuctionGrpcService(
       predictions,
       results,
       placeBidsRight,
-      notes
+      notes,
+      finalBids
     )
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
@@ -354,6 +361,74 @@ final class AuctionGrpcService(
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(query) => names.names(query.auctionId, query.participants).map(ResponseMapping.displayNames)
     }
+
+  /**
+   * Имена аукциона для выбора человека зала (ADR-070, пп. 3–4): только держателю `run_auctions`. В список входят те,
+   * кто выбрал имя в аукционе и держит `place_bids`; не ответивший Identity человека не отсеивает. Сверху ставившие в
+   * финале, последний ставивший первым. Аукцион без выбранных имён отвечает пустым списком.
+   */
+  def listAuctionNames(in: wire.ListAuctionNamesRequest): Future[wire.ListAuctionNamesResponse] =
+    RequestMapping.listAuctionNames(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) if !query.acting.viewer.runsAuctions =>
+        refuse(Status.PERMISSION_DENIED.withDescription("viewer may not run the auction"))
+      case Right(query) =>
+        for {
+          chosen <- names.chosen(query.auctionId)
+          allowed <- allowedBidders(query.auctionId, chosen.keySet)
+          lastBids <- finalBids.lastBids(query.auctionId)
+        } yield ResponseMapping.auctionNames(ranked(chosen, allowed, lastBids))
+    }
+
+  /**
+   * Кого Identity подтвердил держателем `place_bids` (ADR-070, «Последствия»). Не ответивший Identity человека не
+   * отсеивает: финал не встаёт на сбое соседа, как у кандидатов розыгрыша. Пропущенная проверка пишется в журнал: на
+   * время сбоя в список мог попасть заблокированный, и это должно быть видно.
+   */
+  private def allowedBidders(auction: AuctionId, participants: Set[ParticipantId]): Future[Set[ParticipantId]] =
+    Future
+      .traverse(participants)(participant =>
+        Future
+          .delegate(placeBidsRight(participant))
+          .recover { case NonFatal(cause) =>
+            AuctionGrpcService.logger.warn(
+              "auction names right unconfirmed",
+              StructuredArguments.entries(
+                (Map[String, Any](
+                  "operation" -> AuctionGrpcService.AuctionNamesRightOperation,
+                  "result" -> "error",
+                  "error_category" -> "dependency_unavailable",
+                  "error" -> cause.getClass.getName,
+                  "auction_id" -> auction.value.toString
+                ) ++ correlation.requestId.filter(_.nonEmpty).map("request_id" -> _) ++
+                  correlation.useCase.filter(_.nonEmpty).map("use_case" -> _)).asJava
+              )
+            )
+            true
+          }
+          .map(participant -> _)
+      )
+      .map(_.collect { case (participant, true) => participant })
+
+  /**
+   * Порядок экрана помощника (ADR-070, п. 4): сверху ставившие в финале, последний ставивший первым; остальные — по
+   * тексту имени без учёта регистра. Момент последней ставки у человека один, поэтому порядок между людьми устойчив.
+   */
+  private def ranked(
+      chosen: Map[ParticipantId, DisplayName],
+      allowed: Set[ParticipantId],
+      lastBids: Map[ParticipantId, Instant]
+  ): List[NamedParticipant] =
+    chosen.toList
+      .filter((participant, _) => allowed(participant))
+      .sortBy { (participant, name) =>
+        val text = name.text
+        lastBids.get(participant) match {
+          case Some(at) => (0, -at.toEpochMilli, text.toLowerCase(Locale.ROOT), text)
+          case None => (1, 0L, text.toLowerCase(Locale.ROOT), text)
+        }
+      }
+      .map((participant, name) => NamedParticipant(participant, name))
 
   def getFaqAcknowledgement(in: wire.GetFaqAcknowledgementRequest): Future[wire.FaqAcknowledgement] =
     withParticipant(in.viewer)(participant => faq.acknowledged(participant).map(wire.FaqAcknowledgement(_)))
@@ -1020,6 +1095,9 @@ object AuctionGrpcService {
 
   /** Событие ставки зала, принятой без ответа Identity о праве человека. */
   val FloorRightOperation: String = "auction.floor_bid.right_unconfirmed"
+
+  /** Событие списка имён аукциона, собранного без ответа Identity о праве человека. */
+  val AuctionNamesRightOperation: String = "auction.names.right_unconfirmed"
 
   private val logger = LoggerFactory.getLogger(classOf[AuctionGrpcService])
 
