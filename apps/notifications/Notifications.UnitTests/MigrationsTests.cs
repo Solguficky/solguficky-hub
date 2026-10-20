@@ -75,6 +75,7 @@ public class MigrationsTests
             "raffle_result",
             "release_notes_preference",
             "live_final_outbid_preference",
+            "prediction_results",
             "release_notes",
         ]);
 
