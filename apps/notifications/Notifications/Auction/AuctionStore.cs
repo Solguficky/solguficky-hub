@@ -308,7 +308,7 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         // Порядок держит ручную отметку: удаление реплики ждёт отметку в полёте,
         // и только после него причастные читаются вместе с ней. Новая отметка
         // после удаления реплики получает «лот неизвестен».
-        await AuctionEndStore.Lock(work, closed.AuctionId, cancellationToken);
+        await AuctionEndStore.LockExclusive(work, closed.AuctionId, cancellationToken);
         var lots = await AuctionEndStore.TakeLots(work, closed, cancellationToken);
         var lotIds = lots.Select(lot => lot.LotId).ToArray();
         var followers = closed.End == AuctionEnd.Cancelled

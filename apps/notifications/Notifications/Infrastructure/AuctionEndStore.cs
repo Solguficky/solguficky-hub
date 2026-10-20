@@ -67,16 +67,23 @@ public static class AuctionEndStore
         work.Execute(LockSharedSql, new { AuctionId = auctionId }, cancellationToken);
 
     /// <summary>Исключительная блокировка аукциона на его конец.</summary>
-    public static Task Lock(UnitOfWork work, Guid auctionId, CancellationToken cancellationToken) =>
+    public static Task LockExclusive(UnitOfWork work, Guid auctionId, CancellationToken cancellationToken) =>
         work.Execute(LockSql, new { AuctionId = auctionId }, cancellationToken);
 
     public static async Task<EndedAuction?> Read(UnitOfWork work, Guid auctionId, CancellationToken cancellationToken)
     {
         var rows = await work.Query<Row>(ReadSql, new { AuctionId = auctionId }, cancellationToken);
-        return rows.Select(row => new EndedAuction(
-                row.Outcome == "cancelled" ? AuctionEnd.Cancelled : AuctionEnd.Finished, row.EventId, row.MeetupId))
-            .SingleOrDefault();
+        return rows.Select(row => new EndedAuction(FromStorage(row.Outcome), row.EventId, row.MeetupId)).SingleOrDefault();
     }
+
+    // Неизвестный исход — порча строки, а не «закончен как-нибудь»: CHECK схемы
+    // других значений не пускает.
+    private static AuctionEnd FromStorage(string outcome) => outcome switch
+    {
+        "finished" => AuctionEnd.Finished,
+        "cancelled" => AuctionEnd.Cancelled,
+        _ => throw new ArgumentOutOfRangeException(nameof(outcome)),
+    };
 
     /// <summary>Строка «аукцион закончен». Удалённому до торгов её не пишут.</summary>
     public static Task Mark(UnitOfWork work, AuctionClosed closed, DateTimeOffset now,
