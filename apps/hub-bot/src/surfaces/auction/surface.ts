@@ -136,6 +136,7 @@ export const auctionSurface: SurfaceDefinition = ({
                 clients.delivery.reads,
                 logMissingTitle(logger),
                 clients.outbidSettings,
+                config.communityTimeZone,
               ),
               sender,
             }),

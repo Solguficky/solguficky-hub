@@ -45,6 +45,10 @@ import {
 } from "../../../core/auction/watch.js";
 import { wireViewer } from "../../../core/identity/access.js";
 import {
+  type LotInfo,
+  lotInfoOf,
+} from "../../../core/notifications/lot-notice.js";
+import {
   callHeaders,
   callTimeoutMs,
   presentServiceToken,
@@ -174,7 +178,7 @@ export function createAuctionClient(
     onRaffleRefused,
   }: RpcClientOptions &
     Pick<AuctionAdapterOptions, "onNamesRefused" | "onRaffleRefused">,
-): AuctionClient & LotTitleReader {
+): AuctionClient & LotInfoReader {
   const sessionManager = new Http2SessionManager(baseUrl);
   const rpc = createClient(
     AuctionService,
@@ -192,7 +196,7 @@ export function createAuctionClient(
   });
   return {
     ...client,
-    ...createLotTitleReader(rpc, timeoutMs),
+    ...createLotInfoReader(rpc, timeoutMs),
     // Поток живёт, пока его не отпустит подписка: дедлайн транспорта по
     // умолчанию оборвал бы его через три секунды.
     watch: watchSourceOf(rpc, (signal) => ({ signal, timeoutMs: 0 })),
@@ -205,20 +209,20 @@ export function createAuctionClient(
 // Identity подтвердил шагом раньше: смотрящий несёт только его, а выдумывать
 // получателю права канал не вправе. Любой отказ — исключение со своим кодом:
 // какой из них лечится повтором, решает общий рендер уведомлений.
-export type LotTitleReader = {
-  lotTitle(
+export type LotInfoReader = {
+  lotInfo(
     identityId: string,
     lotId: string,
     meta?: RpcMetadata,
-  ): Promise<string>;
+  ): Promise<LotInfo>;
 };
 
-export function createLotTitleReader(
+export function createLotInfoReader(
   rpc: Pick<AuctionRpc, "getLot">,
   timeoutMs = 3_000,
-): LotTitleReader {
+): LotInfoReader {
   return {
-    async lotTitle(identityId, lotId, meta) {
+    async lotInfo(identityId, lotId, meta) {
       const snapshot = await rpc.getLot(
         {
           viewer: wireViewer({ identityId, rights: ["place-bids"] }),
@@ -226,8 +230,7 @@ export function createLotTitleReader(
         },
         { timeoutMs: callTimeoutMs(meta, timeoutMs), ...callHeaders(meta) },
       );
-      // Карточки у лота может не быть: тогда текст обходится без названия.
-      return snapshot.card?.title ?? "";
+      return lotInfoOf(snapshot);
     },
   };
 }
