@@ -1085,19 +1085,27 @@ export function finalAskErrorText(
 }
 
 /**
- * Вопрос о следующей цене лота финала: лот, текущая следующая цена и образец.
- * Ставка зала после ответа принимается ровно на эту цену (ADR-049).
+ * Вопрос о следующей цене лота финала: лот, текущая следующая цена, порог и
+ * образец. Порог — следующая цена, а не текущая (PER-640): ниже неё бот ответ
+ * не принимает. Образец — ближайшая сотня рублей выше порога. Ставка зала
+ * после ответа принимается ровно на эту цену (ADR-049).
  */
 export function finalAskText(ask: {
   title?: string | undefined;
   nextPrice?: LotAmount | undefined;
 }): string {
+  const lot = `Лот: ${truncate(ask.title ?? untitled, titleLimit)}`;
+  if (ask.nextPrice === undefined) {
+    return [
+      lot,
+      "Новая следующая цена в целых рублях, выше текущей. Например: 5000",
+    ].join("\n");
+  }
+  const sample = (Math.floor(ask.nextPrice.minorUnits / 10_000) + 1) * 100;
   return [
-    `Лот: ${truncate(ask.title ?? untitled, titleLimit)}`,
-    ...(ask.nextPrice === undefined
-      ? []
-      : [`Сейчас следующая цена: ${money(ask.nextPrice)}`]),
-    "Новая следующая цена в целых рублях, выше текущей. Например: 5000",
+    lot,
+    `Сейчас следующая цена: ${money(ask.nextPrice)}`,
+    `Новая следующая цена в целых рублях, выше ${money(ask.nextPrice)}. Например: ${sample}`,
   ].join("\n");
 }
 

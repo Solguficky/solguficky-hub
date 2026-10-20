@@ -2121,27 +2121,29 @@ describe("final of the auctioneer", () => {
       ["‹ Аукцион"],
     ]);
 
-    // Ask не выше текущей цены Auction отвергает, и бот называет порог.
+    // Порог вопроса — следующая цена (PER-640): сумма не выше неё до Auction
+    // не доходит, и исход называет тот же порог.
     await next((history) => press(dataOf(last(history), "Поднять цену")));
     const asked = question(calls).payload;
     expect(dataOf(asked, "Отмена")).toBe(`v1:q:fa:${auctionToken}:0:42`);
     expect(spaced(asked.text ?? "")).toContain(
-      "Лот: Ваза\nСейчас следующая цена: 1 300 ₽",
+      "Лот: Ваза\nСейчас следующая цена: 1 300 ₽\nНовая следующая цена в целых рублях, выше 1 300 ₽. Например: 1400",
     );
-    await next((history) => answer(history, { text: "1000" }));
+    await next((history) => answer(history, { text: "1250" }));
     expect(spaced(last(calls).text ?? "")).toBe(
-      "<b>Новая цена должна быть выше 1 200 ₽</b>",
+      "<b>Новая цена должна быть выше 1 300 ₽</b>",
     );
     expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+    expect(auction.sent("advanceAsk")).toEqual([]);
+    await next((history) => press(dataOf(last(history), "Ввести заново")));
+    await next((history) => answer(history, { text: "1300" }));
+    expect(spaced(last(calls).text ?? "")).toBe(
+      "<b>Новая цена должна быть выше 1 300 ₽</b>",
+    );
+    expect(auction.sent("advanceAsk")).toEqual([]);
     await next((history) => press(dataOf(last(history), "Ввести заново")));
     await next((history) => answer(history, { text: "1 500" }));
     expect(auction.sent("advanceAsk").map((each) => each.args)).toEqual([
-      {
-        auctionId,
-        lotId: vaseId,
-        opId: expect.any(String),
-        newAsk: rub(100_000),
-      },
       {
         auctionId,
         lotId: vaseId,

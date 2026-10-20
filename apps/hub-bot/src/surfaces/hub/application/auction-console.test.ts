@@ -1009,9 +1009,34 @@ describe("final of the auctioneer", () => {
     expect(result).not.toHaveProperty("note");
   });
 
-  it("asks again with the threshold Auction named for an ask below the current price", async () => {
-    const { run } = running(final([live(), held], lotId), {
-      ask: { kind: "ask-below-current-price", mustExceed: rub(1_000) },
+  it("asks again without Auction for an amount not above the next price", async () => {
+    const { run, asks } = running(final([live(), held], lotId));
+
+    for (const value of ["1 050", "1 100"]) {
+      await expect(
+        run({
+          ...call,
+          intent: "advance-final-ask",
+          position: 0,
+          value,
+          opId,
+        }),
+      ).resolves.toEqual({
+        kind: "final-ask",
+        auctionId,
+        position: 0,
+        title: "Картина",
+        nextPrice: rub(1_100),
+        error: "ask-below-current-price",
+        mustExceed: rub(1_100),
+      });
+    }
+    expect(asks).toEqual([]);
+  });
+
+  it("asks again with the threshold Auction named when the read lags behind", async () => {
+    const { run, asks } = running(final([live(), held], lotId), {
+      ask: { kind: "ask-below-current-price", mustExceed: rub(1_300) },
     });
 
     await expect(
@@ -1019,7 +1044,7 @@ describe("final of the auctioneer", () => {
         ...call,
         intent: "advance-final-ask",
         position: 0,
-        value: "900",
+        value: "1 200",
         opId,
       }),
     ).resolves.toEqual({
@@ -1029,8 +1054,9 @@ describe("final of the auctioneer", () => {
       title: "Картина",
       nextPrice: rub(1_100),
       error: "ask-below-current-price",
-      mustExceed: rub(1_000),
+      mustExceed: rub(1_300),
     });
+    expect(asks).toEqual([rub(1_200)]);
   });
 
   it("asks again without Auction for an amount that is not whole rubles", async () => {
