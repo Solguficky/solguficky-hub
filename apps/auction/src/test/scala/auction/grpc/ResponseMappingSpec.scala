@@ -150,6 +150,7 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
         .isUnsupportedImage shouldBe true
       ResponseMapping.editLotCard(Left(CatalogRefusal.UnsupportedImage)).getRefused.reason.isUnsupportedImage shouldBe
         true
+      ResponseMapping.editLotCard(Left(CatalogRefusal.CardClosed)).getRefused.reason.isCardClosed shouldBe true
     }
 
     "answers accepted conditions of a lot without data and every refusal of the right, the auction and the lot as a value" in {

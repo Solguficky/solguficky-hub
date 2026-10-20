@@ -210,6 +210,8 @@ object ResponseMapping {
             wire.CreateLotCardRefusal.Reason.UnsupportedImage(wire.UnsupportedImage())
           case CatalogRefusal.CardNotFound =>
             throw new IllegalStateException("lot catalog creation refused with CardNotFound")
+          case CatalogRefusal.CardClosed =>
+            throw new IllegalStateException("lot catalog creation refused with CardClosed")
         }
         wire.CreateLotCardResponse().withRefused(wire.CreateLotCardRefusal(reason))
     }
@@ -226,6 +228,7 @@ object ResponseMapping {
             wire.EditLotCardRefusal.Reason.ImageTooLarge(wire.ImageTooLarge(maxBytes.toLong))
           case CatalogRefusal.UnsupportedImage =>
             wire.EditLotCardRefusal.Reason.UnsupportedImage(wire.UnsupportedImage())
+          case CatalogRefusal.CardClosed => wire.EditLotCardRefusal.Reason.CardClosed(wire.CardClosed())
           case CatalogRefusal.CardConflict =>
             throw new IllegalStateException("lot catalog edit refused with CardConflict")
         }

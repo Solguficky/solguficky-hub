@@ -252,6 +252,7 @@ final class AuctionGrpcService(
         catalog
           .edit(card.viewer, card.lotId, card.title, card.description, card.image)
           .map(ResponseMapping.editLotCard)
+          .recoverWith(awaited)
     }
 
   def setProxyLimit(in: wire.SetProxyLimitRequest): Future[wire.SetProxyLimitResponse] =

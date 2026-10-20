@@ -146,6 +146,7 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(answer)
     }
     def auctionOf(lotId: UUID) = Future.successful(bornIn)
+    def stateOf(lotId: UUID): Future[LotState] = fail("the lot state was read")
     def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator) = fail("a bid was placed")
     def setProxyLimit(lotId: UUID, command: SetProxyLimit, initiator: Initiator) = fail("a limit was set")
     def withdrawProxyLimit(lotId: UUID, command: WithdrawProxyLimit, initiator: Initiator) =

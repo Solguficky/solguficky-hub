@@ -299,6 +299,12 @@ describe("auction adapter of the lot form", () => {
     await expect(missing.editLotCard(admin, card)).resolves.toEqual({
       kind: "card-not-found",
     });
+    const closed = adapter({
+      editLotCard: async () => refused(EditLotCardResponseSchema, "cardClosed"),
+    });
+    await expect(closed.editLotCard(admin, card)).resolves.toEqual({
+      kind: "card-closed",
+    });
     await expect(image.editLotCard(admin, card)).resolves.toMatchObject({
       kind: "invalid",
     });

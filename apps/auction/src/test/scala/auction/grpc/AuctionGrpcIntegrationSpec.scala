@@ -203,6 +203,51 @@ final class AuctionGrpcIntegrationSpec
 
   private given Timeout = Timeout(20.seconds)
 
+  private def createCard(node: Node, admin: wire.Viewer, lotId: UUID, title: String): Unit =
+    asHubBot(node.client.createLotCard())
+      .invoke(wire.CreateLotCardRequest(Some(admin), lotId.toString, title, ""))
+      .futureValue
+      .outcome
+      .isAccepted shouldBe true
+
+  private def editTitle(node: Node, admin: wire.Viewer, lotId: UUID, title: String): wire.EditLotCardResponse =
+    asHubBot(node.client.editLotCard())
+      .invoke(wire.EditLotCardRequest(Some(admin), lotId.toString, title, ""))
+      .futureValue
+
+  private def cardTitle(node: Node, admin: wire.Viewer, lotId: UUID): String =
+    asHubBot(node.client.getLot())
+      .invoke(wire.GetLotRequest(Some(admin), lotId.toString))
+      .futureValue
+      .card
+      .map(_.title)
+      .getOrElse(fail("the lot has no card"))
+
+  private def draft(node: Node, id: UUID): Unit =
+    node.sharding
+      .entityRefFor(LotEntity.TypeKey, id.toString)
+      .ask[Either[DraftLotRejected, Envelope]](LotEntity.Draft(draftLot(opN = 1), Initiator.Scheduler, _))
+      .futureValue
+      .isRight shouldBe true
+
+  private def bidOn(node: Node, id: UUID): Unit =
+    node.sharding
+      .entityRefFor(LotEntity.TypeKey, id.toString)
+      .ask[Either[PlaceBidRejected, LotEntity.Recorded]](
+        LotEntity.Bid(placeBid(1, 100, 4), Initiator.Participant(participant(1)), _)
+      )
+      .futureValue
+      .isRight shouldBe true
+
+  private def close(node: Node, id: UUID, opN: Int): Unit =
+    node.sharding
+      .entityRefFor(LotEntity.TypeKey, id.toString)
+      .ask[Either[CloseLotRejected, Envelope]](
+        LotEntity.Close(closeLot(opN, CloseReason.ByAuctioneer), Initiator.Scheduler, _)
+      )
+      .futureValue
+      .isRight shouldBe true
+
   /** Лот в торгах: рождение, планирование со стартовой ценой 100 и шагом 10, открытие. */
   private def tradingLot(node: Node, auction: AuctionId = auctionId(1)): UUID = {
     val id = UuidV7.generator(Clock.systemUTC())()
@@ -1076,6 +1121,43 @@ final class AuctionGrpcIntegrationSpec
         .invoke(wire.CreateLotCardRequest(Some(admin), lotId, "Другой", ""))
         .futureValue
       conflict.getRefused.reason.isCardConflict shouldBe true
+    }
+
+    "refuses to edit the card of a sold lot and of one closed without a sale, and still edits a title before trading opens" in withNode {
+      node =>
+        val admin = viewer(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS, AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)
+
+        val draftId = UuidV7.generator(Clock.systemUTC())()
+        createCard(node, admin, draftId, "Лот")
+        draft(node, draftId)
+        editTitle(node, admin, draftId, "Новое").getAccepted.title shouldBe "Новое"
+        eventually {
+          cardTitle(node, admin, draftId) shouldBe "Новое"
+        }
+
+        val unsoldId = tradingLot(node)
+        createCard(node, admin, unsoldId, "Лот")
+        close(node, unsoldId, 4)
+        editTitle(node, admin, unsoldId, "Другое").getRefused.reason.isCardClosed shouldBe true
+        eventually {
+          cardTitle(node, admin, unsoldId) shouldBe "Лот"
+        }
+
+        val soldId = tradingLot(node)
+        createCard(node, admin, soldId, "Лот")
+        bidOn(node, soldId)
+        close(node, soldId, 5)
+        val replaced = asHubBot(node.client.editLotCard())
+          .invoke(
+            wire
+              .EditLotCardRequest(Some(admin), soldId.toString, "Другое", "текст")
+              .withReplaceImage(upload(IArray.genericWrapArray(TestImages.png()).toArray))
+          )
+          .futureValue
+        replaced.getRefused.reason.isCardClosed shouldBe true
+        eventually {
+          cardTitle(node, admin, soldId) shouldBe "Лот"
+        }
     }
 
     "writes a lot image at the limit through the wire and reads the same bytes back with their version" in withNode {

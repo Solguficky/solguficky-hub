@@ -994,6 +994,8 @@ function cardResult(outcome: CardOutcome, sentImage: boolean): LotCardResult {
           return { kind: "card-conflict" };
         case "cardNotFound":
           return { kind: "card-not-found" };
+        case "cardClosed":
+          return { kind: "card-closed" };
         case "imageTooLarge":
           return sentImage
             ? {
