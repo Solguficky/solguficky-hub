@@ -82,7 +82,23 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
 
       JournalSchema.migrate(database) shouldBe 0
 
-      appliedVersions(database) shouldBe List("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15")
+      appliedVersions(database) shouldBe List(
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15"
+      )
     }
 
     "let two processes migrating the same empty database at once apply the schema exactly once" in {
@@ -94,7 +110,23 @@ final class JournalSchemaIntegrationSpec extends AnyWordSpec with Matchers with 
       )
 
       executed.sum shouldBe 15
-      appliedVersions(database) shouldBe List("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15")
+      appliedVersions(database) shouldBe List(
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15"
+      )
     }
   }
 }
