@@ -76,6 +76,7 @@ module Inbound =
         let relation (value: Meetups.V1.MeetupRelation) =
             match value with
             | Meetups.V1.MeetupRelation.CommunityAdministrator -> Some CommunityAdministrator
+            | Meetups.V1.MeetupRelation.AuctionRunner -> Some AuctionRunner
             | _ -> None
 
         let parsed = values |> Seq.map relation |> List.ofSeq

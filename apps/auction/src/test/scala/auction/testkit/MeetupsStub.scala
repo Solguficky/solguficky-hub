@@ -14,11 +14,12 @@ import scala.concurrent.duration.*
 
 /**
  * Meetups для сервиса, запущенного отдельным процессом: настоящий gRPC-сервер в JVM теста, который на
- * `CheckMeetupAuthority` подтверждает администратором одного человека, а остальным отвечает `PERMISSION_DENIED`, как
- * Meetups. С правом приходит состояние сходки — запланирована и видна, как у сходки, у которой открывают торги
- * (ADR-047, дополнение 2026-10-12): без него команды администратора отвечали бы `UNAVAILABLE`. Токен Auction он не
- * сверяет: провод Auction → Meetups держат L0 адаптера и контур, а здесь нужен только ответ о праве. Остальные методы
- * отвечают `UNIMPLEMENTED`: сервис их не зовёт.
+ * `CheckMeetupAuthority` подтверждает одного человека, и только в отношении «ведущий аукциона» — его держит
+ * `run_auctions` (ADR-070), — а остальным отвечает `PERMISSION_DENIED`, как Meetups. Так залп через процесс заодно
+ * доказывает, что Auction спрашивает именно это отношение. С правом приходит состояние сходки — запланирована и видна,
+ * как у сходки, у которой открывают торги (ADR-047, дополнение 2026-10-12): без него команды администратора отвечали бы
+ * `UNAVAILABLE`. Токен Auction он не сверяет: провод Auction → Meetups держат L0 адаптера и контур, а здесь нужен
+ * только ответ о праве. Остальные методы отвечают `UNIMPLEMENTED`: сервис их не зовёт.
  */
 final class MeetupsStub private (binding: Http.ServerBinding) {
 
@@ -38,7 +39,10 @@ object MeetupsStub {
     private def unused[T]: Future[T] = Future.failed(new GrpcServiceException(Status.UNIMPLEMENTED))
 
     def checkMeetupAuthority(in: wire.CheckMeetupAuthorityRequest): Future[wire.MeetupAuthority] =
-      if (in.identityId == administrator)
+      if (
+        in.identityId == administrator &&
+        in.acceptedRelations.contains(wire.MeetupRelation.MEETUP_RELATION_AUCTION_RUNNER)
+      )
         Future.successful(
           wire.MeetupAuthority(MeetupLifecycle.MEETUP_LIFECYCLE_PLANNED, MeetupVisibility.MEETUP_VISIBILITY_VISIBLE)
         )

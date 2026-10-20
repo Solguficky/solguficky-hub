@@ -65,8 +65,9 @@ object MeetupsSettings {
 }
 
 /**
- * Право человека на сходку у Meetups — `CheckMeetupAuthority` с отношением «администратор сообщества» (ADR-051). Без
- * кэша и без повторов: устаревшее разрешение равносильно пропущенной проверке (ADR-026).
+ * Право человека на сходку у Meetups — `CheckMeetupAuthority` с отношением «ведущий аукциона», то есть держатель
+ * `run_auctions` (ADR-051, ADR-070, п. 1): `manage_meetups` аукцион у сходки больше не открывает. Без кэша и без
+ * повторов: устаревшее разрешение равносильно пропущенной проверке (ADR-026).
  */
 final class GrpcMeetupAuthority(client: MeetupsServiceClient, token: String)(using ExecutionContext)
     extends MeetupAuthority {
@@ -80,7 +81,7 @@ final class GrpcMeetupAuthority(client: MeetupsServiceClient, token: String)(usi
         CheckMeetupAuthorityRequest(
           id = meetup.value.toString,
           identityId = person.value.toString,
-          acceptedRelations = Seq(MeetupRelation.MEETUP_RELATION_COMMUNITY_ADMINISTRATOR)
+          acceptedRelations = Seq(MeetupRelation.MEETUP_RELATION_AUCTION_RUNNER)
         )
       )
       .map(answer => Authority.Granted(GrpcMeetupAuthority.standing(answer)))

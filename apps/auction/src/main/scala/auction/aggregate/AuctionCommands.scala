@@ -45,7 +45,7 @@ object Correlation {
   val none: Correlation = Correlation(None, None)
 }
 
-/** Проверка права человека на сходку у её владельца — Meetups, с отношением «администратор сообщества». */
+/** Проверка права человека на сходку у её владельца — Meetups, с отношением «ведущий аукциона» (ADR-070). */
 trait MeetupAuthority {
   def check(meetup: MeetupId, person: ParticipantId, correlation: Correlation): Future[Authority]
 }
@@ -517,8 +517,7 @@ final class AuctionCommands(
 
   /**
    * Право вести торги аукциона — у Meetups, как у остальных команд администратора: ставку зала заносит помощник
-   * ведущего, держатель права администрировать сходку (integration.md, «Финал и его поток»). Аукцион без журнала —
-   * `AuctionNotFound` до вопроса Meetups.
+   * ведущего, держатель `run_auctions` (ADR-070, п. 2). Аукцион без журнала — `AuctionNotFound` до вопроса Meetups.
    */
   def hosts(auctionId: AuctionId, person: ParticipantId): Future[Either[Denial, Unit]] =
     current(auctionId).map(_.flatMap(_.meetup)).flatMap {

@@ -324,7 +324,15 @@ final class AuctionWatchIntegrationSpec
         .newServerAt("127.0.0.1", 0)
         .withSettings(AuctionNode.grpcServerSettings(kit.system))
         .bind(
-          AuctionNode.grpc(kit.system, sharding, callers, 10.seconds, Granted, AuctionNode.listenChanges(kit.system))
+          AuctionNode.grpc(
+            kit.system,
+            sharding,
+            callers,
+            10.seconds,
+            Granted,
+            _ => Future.successful(true),
+            AuctionNode.listenChanges(kit.system)
+          )
         )
         .futureValue
       val client = wire.AuctionServiceClient(

@@ -18,6 +18,7 @@ import auction.grpc.GrpcBoundary
 import auction.meetup.MeetupCancellationConsumer
 import auction.meetup.MeetupFactsSettings
 import auction.lot.AuctionId
+import auction.lot.ParticipantId
 import auction.naming.DisplayNameCommands
 import auction.persistence.DatabaseSettings
 import auction.persistence.JournalDatabase
@@ -451,9 +452,9 @@ object AuctionNode {
   }
 
   /**
-   * gRPC-граница узла: сервис поверх шардинга лотов и аукционов, каталога, имён участников, read model и права у
-   * Meetups, обёрнутый проверкой вызывающего и записью операции. Entity лота и аукциона к этому моменту уже
-   * зарегистрированы в `sharding`.
+   * gRPC-граница узла: сервис поверх шардинга лотов и аукционов, каталога, имён участников, read model, права у Meetups
+   * и права `place_bids` человека зала у Identity, обёрнутый проверкой вызывающего и записью операции. Entity лота и
+   * аукциона к этому моменту уже зарегистрированы в `sharding`.
    */
   def grpc(
       system: ActorSystem[?],
@@ -461,6 +462,7 @@ object AuctionNode {
       callers: CallerTable,
       askTimeout: FiniteDuration,
       authority: MeetupAuthority,
+      placeBidsRight: ParticipantId => Future[Boolean],
       changes: AuctionChanges,
       clock: Clock = Clock.systemUTC(),
       overdueGrace: java.time.Duration = AuctionGrpcService.DefaultOverdueGrace
@@ -485,9 +487,10 @@ object AuctionNode {
       predictions = PredictionGateway.sharded(sharding, SlickPredictionStore(system), askTimeout),
       results = ResultsGateway.sharded(sharding, SlickResultsStore(system), askTimeout),
       watchViews = SlickAuctionWatchViews(system),
-      changes = changes
+      changes = changes,
+      placeBidsRight = placeBidsRight
     )
-    GrpcBoundary(callers, (caller, correlation) => service.within(correlation, Some(caller)))
+    GrpcBoundary(callers, (caller, correlation, notes) => service.within(correlation, Some(caller), notes))
   }
 
   def readiness(system: ActorSystem[?], timeout: FiniteDuration): () => Future[Readiness] = {

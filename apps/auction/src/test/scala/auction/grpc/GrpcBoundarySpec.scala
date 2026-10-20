@@ -231,6 +231,34 @@ final class GrpcBoundarySpec
       written("request_id") shouldBe "req-7"
     }
 
+    "adds the fields the service noted to its record without letting them replace the frame" in {
+      val noting = GrpcBoundary(
+        table,
+        (_: Caller, _: auction.aggregate.Correlation, notes: OperationNotes) => {
+          notes.add(OperationNotes.Source, "FLOOR")
+          notes.add("result", "forged")
+          Stub
+        }
+      )
+      val request = HttpRequest(
+        method = HttpMethods.POST,
+        uri = "/auction.v1.AuctionService/PlaceBid",
+        headers = List(RawHeader("authorization", "Bearer hub")),
+        entity = HttpEntity(
+          ContentType(MediaType.customBinary("application", "grpc", MediaType.NotCompressible)),
+          ByteString(0.toByte) ++ ByteString(ByteBuffer.allocate(4).putInt(bid.serializedSize).array()) ++
+            ByteString(bid.toByteArray)
+        ),
+        protocol = HttpProtocols.`HTTP/2.0`
+      )
+      // Успешный унарный ответ несёт grpc-status трейлером в теле, а не заголовком: код читается из записи.
+      noting(request).futureValue.discardEntityBytes()
+      val written = record
+      written("grpc_code") shouldBe "OK"
+      written("source") shouldBe "FLOOR"
+      written("result") shouldBe "ok"
+    }
+
     "admits the hub bot to lot statistics with its token" in {
       statusOf(
         client

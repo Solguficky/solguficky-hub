@@ -71,6 +71,12 @@ object ResponseMapping {
       .PlaceBidResponse()
       .withRefused(wire.PlaceBidRefusal(wire.PlaceBidRefusal.Reason.DisplayNameNotChosen(wire.DisplayNameNotChosen())))
 
+  /** Человек, названный ставкой зала, не держит `place_bids` (ADR-070, п. 3): отказ рождается на границе. */
+  val participantCannotBid: wire.PlaceBidResponse =
+    wire
+      .PlaceBidResponse()
+      .withRefused(wire.PlaceBidRefusal(wire.PlaceBidRefusal.Reason.ParticipantCannotBid(wire.ParticipantCannotBid())))
+
   /**
    * Право помощника ведущего на ставку зала: отказ — значение ответа, как у команд администратора, `Unavailable` —
    * статус. Реестровых отказов у проверки права нет.

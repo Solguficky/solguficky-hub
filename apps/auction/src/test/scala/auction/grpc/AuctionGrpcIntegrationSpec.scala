@@ -21,6 +21,7 @@ import auction.testkit.PostgresFixture
 import auction.catalog.LotImage
 import auction.catalog.TestImages
 import auction.v1.auction.AntiSnipe as AntiSnipeMessage
+import auction.v1.auction.BidSource as BidSourceMessage
 import auction.v1.auction.AuctionConfig as AuctionConfigMessage
 import auction.v1.auction.ClosingByDeadline
 import auction.v1.auction.MixedClosing
@@ -137,11 +138,22 @@ final class AuctionGrpcIntegrationSpec
     }
   }
 
+  /** Identity узла для права `place_bids` человека зала: отвечает тем, что тест положил, и помнит, о ком спросили. */
+  private final class StubBidders {
+    @volatile var answer: ParticipantId => Future[Boolean] = _ => Future.successful(true)
+    @volatile var asked: List[ParticipantId] = Nil
+    def holdsRight(participant: ParticipantId): Future[Boolean] = {
+      asked :+= participant
+      answer(participant)
+    }
+  }
+
   private final case class Node(
       kit: ActorTestKit,
       sharding: ClusterSharding,
       client: wire.AuctionServiceClient,
-      authority: StubAuthority
+      authority: StubAuthority,
+      bidders: StubBidders
   )
 
   private def withNode[A](use: Node => A): A = {
@@ -155,6 +167,7 @@ final class AuctionGrpcIntegrationSpec
     val kit = ActorTestKit(s"auction-grpc-${UUID.randomUUID()}", nodeConfig(database))
     given ActorSystem[?] = kit.system
     val authority = StubAuthority()
+    val bidders = StubBidders()
     try {
       val clock = Clock.systemUTC()
       val sharding = AuctionNode.join(kit.system)
@@ -169,13 +182,21 @@ final class AuctionGrpcIntegrationSpec
         .newServerAt("127.0.0.1", 0)
         .withSettings(AuctionNode.grpcServerSettings(kit.system))
         .bind(
-          AuctionNode.grpc(kit.system, sharding, callers, 10.seconds, authority, AuctionNode.listenChanges(kit.system))
+          AuctionNode.grpc(
+            kit.system,
+            sharding,
+            callers,
+            10.seconds,
+            authority,
+            bidders.holdsRight,
+            AuctionNode.listenChanges(kit.system)
+          )
         )
         .futureValue
       val client = wire.AuctionServiceClient(
         GrpcClientSettings.connectToServiceAt("127.0.0.1", binding.localAddress.getPort).withTls(false)
       )
-      try use(Node(kit, sharding, client, authority))
+      try use(Node(kit, sharding, client, authority, bidders))
       finally client.close().futureValue
     } finally kit.shutdownTestKit()
   }
@@ -233,7 +254,7 @@ final class AuctionGrpcIntegrationSpec
 
   private def newId(): String = UuidV7.generator(Clock.systemUTC())().toString
 
-  private def administrator: wire.Viewer = viewer(AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS)
+  private def administrator: wire.Viewer = viewer(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS)
 
   private def enable(node: Node, meetup: String, op: String = newId()): wire.DraftAuctionResponse =
     asHubBot(node.client.draftAuction()).invoke(wire.DraftAuctionRequest(Some(administrator), meetup, op)).futureValue
@@ -723,6 +744,59 @@ final class AuctionGrpcIntegrationSpec
     who
   }
 
+  /**
+   * Лот финала в фазе `Live` без ставок: рождение в аукционе, условия, открытие с близким дедлайном, отметка для
+   * финала, удержание на дедлайне и возврат в торги. Следующая цена — стартовая, 100.
+   */
+  private def liveLot(node: Node, auction: AuctionId): UUID = {
+    val id = UuidV7.generator(Clock.systemUTC())()
+    val lot = node.sharding.entityRefFor(LotEntity.TypeKey, id.toString)
+    val deadline = Instant.now().plusSeconds(2)
+    lot
+      .ask[Either[DraftLotRejected, Envelope]](LotEntity.Draft(draftLot(opN = 1, of = auction), Initiator.Scheduler, _))
+      .futureValue
+      .isRight shouldBe true
+    lot
+      .ask[Either[ScheduleLotRejected, Envelope]](
+        LotEntity.Plan(scheduleLot(opN = 2), Initiator.Operator(participant(9)), _)
+      )
+      .futureValue
+      .isRight shouldBe true
+    lot
+      .ask[Either[OpenLotRejected, Envelope]](
+        LotEntity.Open(openLot(opN = 3, deadline = Some(deadline)), Initiator.Scheduler, _)
+      )
+      .futureValue
+      .isRight shouldBe true
+    lot
+      .ask[Either[MarkForFinalRejected, Envelope]](LotEntity.MarkFinal(markForFinal(opN = 4), Initiator.Scheduler, _))
+      .futureValue
+      .isRight shouldBe true
+    eventually {
+      lot
+        .ask[Either[CloseLotRejected, Envelope]](LotEntity.Close(closeLot(opN = 5), Initiator.Scheduler, _))
+        .futureValue
+        .isRight shouldBe true
+    }
+    lot
+      .ask[Either[ResumeLotRejected, Envelope]](LotEntity.Resume(resumeLot(opN = 6), Initiator.Scheduler, _))
+      .futureValue
+      .isRight shouldBe true
+    id
+  }
+
+  private def leaderOf(node: Node, lotId: UUID): Option[ParticipantId] =
+    node.sharding.entityRefFor(LotEntity.TypeKey, lotId.toString).ask[Lot](LotEntity.Get(_)).futureValue.state match {
+      case LotState.Trading(trading) => trading.leader
+      case other => fail(s"lot is not trading: $other")
+    }
+
+  /** Ставка зала: смотрящий — помощник, участник — человек в зале. */
+  private def floorBid(lotId: UUID, amount: Long, assistant: wire.Viewer, room: wire.Viewer): wire.PlaceBidRequest =
+    bid(lotId, amount, assistant)
+      .withSource(BidSourceMessage.BID_SOURCE_FLOOR)
+      .withParticipantId(room.identityId)
+
   "auction grpc" should {
 
     "places a bid through the wire and leaves the new price in the lot" in withNode { node =>
@@ -731,6 +805,37 @@ final class AuctionGrpcIntegrationSpec
       val response = asHubBot(node.client.placeBid()).invoke(bid(lotId, 150, named(node, auction)))
       response.futureValue.outcome.isAccepted shouldBe true
       currentPrice(node, lotId) shouldBe money(150)
+    }
+
+    "takes a floor bid of the assistant in the live final only for a person in the room who holds place_bids" in withNode {
+      node =>
+        val meetup = newId()
+        val auction = AuctionId(UUID.fromString(enable(node, meetup).getAccepted.auctionId))
+        val lotId = liveLot(node, auction)
+        val assistant = viewer(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS)
+        val blocked = named(node, auction, "Кот")
+        val blockedId = ParticipantId(UUID.fromString(blocked.identityId))
+        node.bidders.answer = participant => Future.successful(participant != blockedId)
+
+        asHubBot(node.client.placeBid())
+          .invoke(floorBid(lotId, 100, assistant, blocked))
+          .futureValue
+          .getRefused
+          .reason
+          .isParticipantCannotBid shouldBe true
+        node.bidders.asked shouldBe List(blockedId)
+        currentPrice(node, lotId) shouldBe money(100)
+        leaderOf(node, lotId) shouldBe None
+
+        // Identity молчит: ставка зала не останавливается, человек считается держателем права.
+        val room = named(node, auction, "Пёс")
+        node.bidders.answer = _ => Future.failed(new IllegalStateException("identity is silent"))
+        asHubBot(node.client.placeBid())
+          .invoke(floorBid(lotId, 100, assistant, room))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+        leaderOf(node, lotId) shouldBe Some(ParticipantId(UUID.fromString(room.identityId)))
     }
 
     "places a bid through the wire and answers the new price through GetLot and ListAuctionLots" in withNode { node =>
@@ -940,7 +1045,7 @@ final class AuctionGrpcIntegrationSpec
     }
 
     "creates a lot card for an administrator and answers the stored card" in withNode { node =>
-      val admin = viewer(AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS)
+      val admin = viewer(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS)
       val lotId = UuidV7.generator(Clock.systemUTC())().toString
       val created = asHubBot(node.client.createLotCard())
         .invoke(wire.CreateLotCardRequest(Some(admin), lotId, "Лот", "описание"))
@@ -954,7 +1059,7 @@ final class AuctionGrpcIntegrationSpec
 
     "writes a lot image at the limit through the wire and reads the same bytes back with their version" in withNode {
       node =>
-        val admin = viewer(AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS, AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)
+        val admin = viewer(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS, AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)
         val lotId = tradingLot(node)
         val atLimit = IArray.genericWrapArray(TestImages.jpeg(LotImage.MaxBytes)).toArray
         val created = asHubBot(node.client.createLotCard())
@@ -1012,7 +1117,7 @@ final class AuctionGrpcIntegrationSpec
         ) shouldBe Status.Code.NOT_FOUND
         // Карточка с изображением есть, а лота в read model нет: изображение не видно, как и лот.
         val cardOnly = UuidV7.generator(Clock.systemUTC())().toString
-        val admin = viewer(AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS, AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)
+        val admin = viewer(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS, AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)
         asHubBot(node.client.createLotCard())
           .invoke(
             wire.CreateLotCardRequest(
