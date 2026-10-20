@@ -64,10 +64,12 @@ object LotCatalogRules {
 }
 
 /**
- * Команды каталога. К хранилищу они идут только после того, как решение вернуло `Right`: отказ по правам и по полям
- * наступает до обращения к базе по построению, а не по порядку строк.
+ * Команды каталога. К хранилищу они идут только после `Right` и открытой карточки: отказ по правам, по полям и по
+ * закрытой карточке наступает до обращения к базе по построению, а не по порядку строк.
  */
-final class LotCatalogCommands(store: LotCatalogStore)(using ExecutionContext) {
+final class LotCatalogCommands(store: LotCatalogStore, standing: LotId => Future[CardStanding])(using
+    ExecutionContext
+) {
 
   def create(
       viewer: Viewer,
@@ -95,6 +97,10 @@ final class LotCatalogCommands(store: LotCatalogStore)(using ExecutionContext) {
   ): Future[Either[CatalogRefusal, LotCard]] =
     LotCatalogRules.edit(viewer, lotId, title, description, image) match {
       case Left(refusal) => Future.successful(Left(refusal))
-      case Right(change) => store.update(change).map(_.toRight(CatalogRefusal.CardNotFound))
+      case Right(change) =>
+        standing(change.lotId).flatMap {
+          case CardStanding.Closed => Future.successful(Left(CatalogRefusal.CardClosed))
+          case CardStanding.Open => store.update(change).map(_.toRight(CatalogRefusal.CardNotFound))
+        }
     }
 }

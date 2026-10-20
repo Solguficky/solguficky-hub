@@ -364,10 +364,13 @@ message EditLotCardRefusal {
     CardNotFound card_not_found = 3;
     ImageTooLarge image_too_large = 4;
     UnsupportedImage unsupported_image = 5;
+    CardClosed card_closed = 6;
   }
 }
 
 message NotAdmin {}
+
+message CardClosed {}
 
 message EmptyTitle {}
 

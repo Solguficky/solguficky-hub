@@ -37,6 +37,7 @@ import auction.aggregate.StartNextLot
 import auction.aggregate.StartNextLotRejected
 import auction.aggregate.StartPrebidding
 import auction.catalog.CardEdit
+import auction.catalog.CardStanding
 import auction.catalog.LotCard
 import auction.catalog.LotCatalogCommands
 import auction.catalog.LotCatalogStore
@@ -68,6 +69,7 @@ import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
 import auction.lot.Envelope
 import auction.lot.LotEvent
+import auction.lot.LotState
 import auction.lot.MarkForFinalRejected
 import auction.lot.UnmarkForFinalRejected
 import auction.lot.OpId
@@ -164,6 +166,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       fail("the lot was reached")
 
     def auctionOf(lotId: UUID): Future[Option[AuctionId]] = fail("the lot was reached")
+
+    def stateOf(lotId: UUID): Future[LotState] = fail("the lot was reached")
 
     def placeBid(
         lotId: UUID,
@@ -382,6 +386,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   private def service(
       lots: LotGateway,
+      catalog: LotCatalogCommands = LotCatalogCommands(UntouchableStore, _ => fail("the lot was asked")),
       faq: FaqAcknowledgements = UntouchableFaq,
       views: LotViews = UntouchableViews,
       auctions: AuctionCommands = AuctionCommands(new Auctions, Unreachable, NoMeetups),
@@ -400,7 +405,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   ) =
     AuctionGrpcService(
       lots,
-      LotCatalogCommands(UntouchableStore),
+      catalog,
       faq,
       views,
       auctions,
@@ -856,7 +861,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
           Future.successful(())
         }
       }
-      val auction = service(Unreachable, faq)
+      val auction = service(Unreachable, faq = faq)
       val read = wire.GetFaqAcknowledgementRequest(Some(viewer))
       val finish = wire.AcknowledgeFaqRequest(Some(viewer))
       auction.getFaqAcknowledgement(read).futureValue.acknowledged shouldBe false
@@ -872,7 +877,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         def acknowledged(participant: ParticipantId) = Future.failed(failure)
         def acknowledge(participant: ParticipantId) = Future.failed(failure)
       }
-      val auction = service(Unreachable, faq)
+      val auction = service(Unreachable, faq = faq)
       auction.getFaqAcknowledgement(wire.GetFaqAcknowledgementRequest(Some(viewer))).failed.futureValue shouldBe failure
       auction.acknowledgeFaq(wire.AcknowledgeFaqRequest(Some(viewer))).failed.futureValue shouldBe failure
     }
@@ -1058,6 +1063,21 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       val edit = wire.EditLotCardRequest(Some(admin), lot, "Лот", "").withReplaceImage(oversized)
       service(Unreachable).editLotCard(edit).futureValue.getRefused.reason.imageTooLarge shouldBe
         Some(wire.ImageTooLarge(LotImage.MaxBytes.toLong))
+    }
+
+    "refuses to edit the card of a closed lot before touching the store" in {
+      val admin = viewer.addRights(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS)
+      val commands = LotCatalogCommands(UntouchableStore, _ => Future.successful(CardStanding.Closed))
+      val edit = wire.EditLotCardRequest(Some(admin), lot, "Новое", "текст")
+      service(Unreachable, commands).editLotCard(edit).futureValue.getRefused.reason.isCardClosed shouldBe true
+    }
+
+    "answers DEADLINE_EXCEEDED when the lot does not answer an edit and leaves the card" in {
+      val admin = viewer.addRights(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS)
+      val commands =
+        LotCatalogCommands(UntouchableStore, _ => Future.failed(new java.util.concurrent.TimeoutException("ask")))
+      val edit = wire.EditLotCardRequest(Some(admin), lot, "Новое", "")
+      statusOf(service(Unreachable, commands).editLotCard(edit)) shouldBe Status.Code.DEADLINE_EXCEEDED
     }
 
     "refuses an image read from a viewer without the right to bid or of a wrong form before the read model" in {

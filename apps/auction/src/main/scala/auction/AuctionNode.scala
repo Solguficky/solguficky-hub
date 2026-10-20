@@ -11,6 +11,7 @@ import auction.entity.AuctionPredictions
 import auction.entity.AuctionRaffle
 import auction.entity.AuctionResults
 import auction.entity.AuctionSlot
+import auction.entity.LotCardGate
 import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.grpc.AuctionGrpcService
@@ -481,7 +482,10 @@ object AuctionNode {
     val raffleTickets = SlickRaffleTickets(system, names)
     val service = AuctionGrpcService(
       lots,
-      LotCatalogCommands(SlickLotCatalogStore(system)),
+      LotCatalogCommands(
+        SlickLotCatalogStore(system),
+        id => lots.stateOf(id.value).map(LotCardGate.standing)
+      ),
       SlickFaqAcknowledgements(system),
       SlickLotViews(system),
       AuctionCommands(AuctionGateway.sharded(sharding, askTimeout), lots, authority),

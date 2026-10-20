@@ -5,6 +5,7 @@ import auction.lot.DraftLot
 import auction.lot.DraftLotRejected
 import auction.lot.Envelope
 import auction.lot.Lot
+import auction.lot.LotState
 import auction.lot.PlaceBid
 import auction.lot.PlaceBidRejected
 import auction.lot.SetProxyLimit
@@ -30,6 +31,9 @@ trait LotGateway {
 
   /** Аукцион, в котором лот родился; `None` — лот не родился. Читает entity, а не read model. */
   def auctionOf(lotId: UUID): Future[Option[AuctionId]]
+
+  /** Состояние лота с entity, а не из read model. Лот без журнала — `Initial`. */
+  def stateOf(lotId: UUID): Future[LotState]
 
   /**
    * Ставка лоту. Неудачное `Future` — ответа нет: ask истёк (например, entity остановилась на отказе записи в журнал)
@@ -74,6 +78,12 @@ object LotGateway {
           .entityRefFor(LotEntity.TypeKey, lotId.toString)
           .ask[Lot](LotEntity.Get(_))
           .map(_.auction)(using ExecutionContext.parasitic)
+
+      def stateOf(lotId: UUID): Future[LotState] =
+        sharding
+          .entityRefFor(LotEntity.TypeKey, lotId.toString)
+          .ask[Lot](LotEntity.Get(_))
+          .map(_.state)(using ExecutionContext.parasitic)
 
       def placeBid(
           lotId: UUID,

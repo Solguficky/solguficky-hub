@@ -289,6 +289,12 @@ export function createLotForm(lots: LotAdministration) {
           ...(lot === undefined ? {} : { lot }),
           error: "unsupported-image",
         };
+      case "card-closed":
+        return {
+          kind: "lot-refused",
+          reason: "card-closed",
+          lotId: question.lotId,
+        };
       default:
         return failed(card);
     }
@@ -392,7 +398,7 @@ export function createLotForm(lots: LotAdministration) {
   // Проданный лот покупатель купил под этим названием, описанием и фото:
   // их правку бот не пропускает и из вопроса, заданного до продажи (решение
   // владельца 15 октября 2026 года). Гонку «продан между чтением и записью»
-  // закроет запрет в Auction (PER-638).
+  // закрывает отказ Auction `CardClosed` (PER-638).
   function soldRefusal(lot: LotFormView): ExecuteResult | undefined {
     return isSold(lot.terms)
       ? { kind: "lot-refused", reason: "lot-sold", lotId: lot.lotId }
@@ -463,8 +469,9 @@ export function createLotForm(lots: LotAdministration) {
     return cardRefused(written, question, current.lot);
   }
 
-  // Фото меняется в любом состоянии лота, кроме проданного, как название и
-  // описание: каталог торгов не касается (ADR-057). Правка заменяет оба текста, поэтому они
+  // Фото, как название и описание, бот не шлёт у проданного лота. У закрытого
+  // без продажи ряд остаётся, а Auction отвечает `CardClosed` (ADR-057). Правка
+  // заменяет оба текста, поэтому они
   // берутся из карточки, как у `setText`.
   async function setImage(
     request: Extract<LotFormRequest, { intent: "set-lot-image" }>,

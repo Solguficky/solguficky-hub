@@ -74,6 +74,7 @@ export type LotCardResult =
   | { kind: "empty-title" }
   | { kind: "card-conflict" }
   | { kind: "card-not-found" }
+  | { kind: "card-closed" }
   | { kind: "image-too-large"; maxBytes: number }
   | { kind: "unsupported-image" }
   | AuctionFailure;
