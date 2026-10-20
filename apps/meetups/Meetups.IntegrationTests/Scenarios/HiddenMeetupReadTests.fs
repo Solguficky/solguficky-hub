@@ -90,6 +90,7 @@ type HiddenMeetupReadTests() =
                     "GetMeetup"
                     "ListMeetupStates"
                     "CheckMeetupAuthority"
+                    "GetMeetupStanding"
                 ]
 
         test <@ contractReadOperations = operationsCoveredByThisSuite @>
@@ -232,6 +233,31 @@ type HiddenMeetupReadTests() =
             )
 
         test <@ refused = Some StatusCode.Unauthenticated @>
+
+    /// Состояние сходки — служебное чтение экрана зала Auction: скрытая сходка
+    /// приходит ему состоянием, по которому он сам отвечает «не найдено», а
+    /// другому вызывающему чтение закрыто ещё на транспорте (ADR-040, дополнение
+    /// 2026-10-19).
+    [<Fact>]
+    member _.``The standing read gives a hidden meetup's state to Auction alone``() =
+        use live = new LiveMeetupsHost()
+        let client = AuthenticatedClient.bot live.Channel
+        let hiddenId, _ = createDraft client
+
+        let standing =
+            (AuthenticatedClient.auction live.Channel).GetMeetupStanding(GetMeetupStandingRequest(Id = hiddenId))
+
+        let refused =
+            Rpc.codeOf (fun () ->
+                client.GetMeetupStanding(GetMeetupStandingRequest(Id = hiddenId))
+                |> ignore
+            )
+
+        test
+            <@
+                standing.Visibility = MeetupVisibility.Hidden
+                && refused = Some StatusCode.Unauthenticated
+            @>
 
     /// Проверка права — тоже вопрос о сходке, и ответ на него не должен выдавать
     /// скрытую: посторонний получает один и тот же отказ для скрытой и отсутствующей,

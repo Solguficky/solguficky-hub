@@ -40,3 +40,4 @@ let presenting (channel: GrpcChannel) token =
 
 let bot channel = presenting channel BotToken
 let notifications channel = presenting channel NotificationsToken
+let auction channel = presenting channel AuctionToken
