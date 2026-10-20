@@ -255,6 +255,7 @@ export function createDispatcher(
             ? { kind: "rejected", reason: "auction-not-configured" }
             : auctionConsole(request);
         case "send-broadcast":
+        case "preview-broadcast":
           return broadcasts === undefined
             ? { kind: "rejected", reason: "notifications-not-configured" }
             : broadcasts(request);

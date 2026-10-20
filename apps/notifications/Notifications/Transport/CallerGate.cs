@@ -37,6 +37,8 @@ public static class MethodAccess
             ["SetAuctionNotificationPreferences"] = BothBots,
             ["BroadcastToMeetupSubscribers"] = Bot,
             ["BroadcastToCommunity"] = Bot,
+            ["PreviewMeetupBroadcast"] = Bot,
+            ["PreviewCommunityBroadcast"] = Bot,
 
             // Сводки выпуска (PER-626) — пока только у бота хаба: поверхность
             // называет токен, а первую сводку выпускает один хаб. Бот аукциона

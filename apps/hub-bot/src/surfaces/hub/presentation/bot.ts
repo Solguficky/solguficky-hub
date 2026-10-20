@@ -287,6 +287,7 @@ import {
   heading,
   outcomeText,
   type Parent,
+  plural,
   readableMoment,
   refusalText,
   retryLabel,
@@ -1191,11 +1192,43 @@ async function handleMessage(
       // сходку, исчезнувшую за время набора, отклонит Notifications на отправке.
       // Вопрос снимается только после кадров: упавшая отправка оставляет его
       // ждать того же ответа.
+      const preview = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "preview-broadcast",
+        audience,
+        ...rpcCall(ctx, useCase),
+      });
+      if (preview.kind !== "broadcast-audience") {
+        await showFrame(
+          ctx,
+          "broadcast-result",
+          previewFailureText(preview, audience),
+          broadcastExit(audience),
+          "new",
+        );
+        await answered(
+          preview.kind === "dependency-rejected"
+            ? preview
+            : { kind: "dependency-rejected", reason: "unavailable" },
+        );
+        outcome = {
+          ...screenBoundary(preview, {
+            ok: ["broadcast-audience"],
+            okMessage: "broadcast confirmation sent",
+            rejectedMessage: "broadcast preview rejected",
+            useCase,
+            meetupId,
+          }),
+          identity_id: identity.person.identityId,
+        };
+        return;
+      }
       await sendBroadcastConfirmation(
         ctx,
         audience,
         checked.body,
         pending.meetupTitle,
+        preview.recipientCount,
       );
       await answered();
       outcome = {
@@ -4414,9 +4447,9 @@ function materialForbiddenOutcome(
   };
 }
 
-// Кадры рассылки. Числа получателей в них нет намеренно: `BroadcastAccepted`
-// подтверждает приём, а не доставку (docs/architecture/integration.md), и кадр
-// называет круг адресатов словами, а не цифрой, которую прочли бы как «дошло».
+// Кадры рассылки. Число — сколько человек получит сообщение сейчас. Пока
+// предпросмотр его не назвал, кадра отправки нет: `BroadcastAccepted`
+// подтверждает приём, а не доставку.
 const broadcastForbiddenText: Record<BroadcastAudience["kind"], string> = {
   meetup: "Писать подписчикам может только организатор сходки.",
   community: "Объявления сообществу доступны администратору.",
@@ -4470,11 +4503,31 @@ function broadcastForbiddenOutcome(
 // ровно тот текст автора, что уйдёт получателям (заголовок и кнопки канал
 // добавит при доставке), и ровно то, что кнопка подтверждения потом прочтёт
 // обратно. Кадр подтверждения отвечает на него и несёт ключ рассылки.
+function broadcastCountLine(recipientCount: number): string {
+  return recipientCount === 0
+    ? "Сообщение никто не получит."
+    : `Его получит ${plural(recipientCount, ["человек", "человека", "человек"])}.`;
+}
+
+function previewFailureText(
+  result: ExecuteResult,
+  audience: BroadcastAudience,
+): string {
+  if (result.kind === "dependency-rejected" && result.reason === "forbidden") {
+    return `${broadcastForbiddenText[audience.kind]} Ничего не отправлено.`;
+  }
+  if (result.kind === "dependency-rejected" && result.reason === "invalid") {
+    return "Сообщение не принято. Ничего не отправлено.";
+  }
+  return "Не получилось узнать, сколько человек получит сообщение. Это на моей стороне. Ничего не отправлено.\n\nПришли текст ещё раз ответом на вопрос.";
+}
+
 async function sendBroadcastConfirmation(
   ctx: UpdateContext,
   audience: BroadcastAudience,
   body: string,
   meetupTitle: string | undefined,
+  recipientCount: number,
 ): Promise<void> {
   const preview = await ctx.reply(body);
   const broadcastToken = uuidToToken(createUuidV7());
@@ -4491,7 +4544,7 @@ async function sendBroadcastConfirmation(
       ? "Отправить подписчикам?"
       : "Отправить объявление?";
   await ctx.reply(
-    `${heading(question)}\n\n${escapeHtml(recipients)}\n\n${broadcastIrreversibleText}`,
+    `${heading(question)}\n\n${escapeHtml(recipients)}\n\n${escapeHtml(broadcastCountLine(recipientCount))}\n\n${broadcastIrreversibleText}`,
     {
       reply_parameters: { message_id: preview.message_id },
       parse_mode: "HTML",

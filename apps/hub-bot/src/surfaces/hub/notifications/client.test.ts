@@ -216,6 +216,27 @@ describe("notifications client", () => {
     );
   });
 
+  it("reads a recipient count and rejects a count that is not a whole number", async () => {
+    const previewMeetupBroadcast = vi
+      .fn()
+      .mockResolvedValueOnce({ recipientCount: 3 })
+      .mockResolvedValueOnce({ recipientCount: -1 });
+    const notifications = adapter({ previewMeetupBroadcast });
+
+    await expect(
+      notifications.previewMeetupBroadcast({
+        identityId: "identity-id",
+        meetupId: "meetup-id",
+      }),
+    ).resolves.toEqual({ kind: "ok", recipientCount: 3 });
+    await expect(
+      notifications.previewMeetupBroadcast({
+        identityId: "identity-id",
+        meetupId: "meetup-id",
+      }),
+    ).resolves.toEqual({ kind: "invalid", cause: -1 });
+  });
+
   it.each([
     [Code.PermissionDenied, "forbidden"],
     [Code.AlreadyExists, "conflict"],

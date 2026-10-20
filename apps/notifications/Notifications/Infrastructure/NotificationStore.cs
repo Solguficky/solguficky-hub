@@ -874,6 +874,39 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             cancellationToken);
     }
 
+    internal static async Task<int> CountOrganizerRecipients(
+        UnitOfWork work,
+        Guid meetupId,
+        Guid authorId,
+        CancellationToken cancellationToken)
+    {
+        var audience = await Subscribers(
+            work,
+            meetupId,
+            NotificationFacts.OrganizerMessageCategory,
+            authorId,
+            cancellationToken);
+
+        return EnabledOf(audience).Length;
+    }
+
+    internal static async Task<int> CountCommunityRecipients(
+        UnitOfWork work,
+        Guid authorId,
+        CancellationToken cancellationToken)
+    {
+        var audience = await Community(
+            work,
+            NotificationFacts.CommunityAnnouncementCategory,
+            authorId,
+            cancellationToken);
+
+        return EnabledOf(audience).Length;
+    }
+
+    private static AudienceRow[] EnabledOf(IReadOnlyList<AudienceRow> audience) =>
+        audience.Where(static person => person.Enabled).ToArray();
+
     // Держатели права хаба с глобальной настройкой категории. Категория обязана быть
     // глобальной: переопределения по сходке запрос не читает.
     private static Task<IReadOnlyList<AudienceRow>> Community(
@@ -919,9 +952,9 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         DateTimeOffset notAfter,
         CancellationToken cancellationToken)
     {
-        var selected = audience.Where(person => person.Enabled).ToArray();
+        var selected = EnabledOf(audience);
         var recipients = selected.Select(person => person.IdentityId).ToArray();
-        var suppressed = audience.Count - recipients.Length;
+        var suppressed = audience.Count - selected.Length;
 
         if (recipients.Length == 0)
         {
