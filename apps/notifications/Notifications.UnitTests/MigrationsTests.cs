@@ -78,6 +78,7 @@ public class MigrationsTests
             "prediction_results",
             "release_notes",
             "auction_ended",
+            "lot_reminder_close_and_final_next",
             "access_request_by_queue",
         ]);
 

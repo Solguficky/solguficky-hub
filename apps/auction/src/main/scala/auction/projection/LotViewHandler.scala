@@ -73,11 +73,45 @@ final class LotViewHandler(rows: LotRows, gap: LotJournalGap)
           folded.startingPrice.foreach(recordStartingPrice(connection, lotId, _))
           folded.heldPrice.foreach(recordHeldPrice(connection, lotId, _))
           folded.resumedSequence.foreach(recordResumed(connection, lotId, _))
+          folded.removals.foreach(recordRemoval(connection, _))
       }
     }
   }
 
-  // Строка участника не удаляется: отзыв лимита участия не снимает, а повтор гасит первичный ключ.
+  /**
+   * Снятие участника (ADR-072, PER-658): его ставки и участие помечаются снятыми, а снятие ложится в хронологию. Строки
+   * ставок и участия пишутся раньше в той же транзакции, а после снятия у снятого их не бывает (И-22), поэтому пометка
+   * накрывает всё, что у него есть. Повтор события пропускает версия строки лота, а `ON CONFLICT` — на перестройку.
+   */
+  private def recordRemoval(connection: Connection, removal: RemovalRecord): Unit = {
+    List(
+      "UPDATE lot_bid SET removed = true WHERE lot_id = ? AND participant_id = ?",
+      "UPDATE lot_participant SET removed = true WHERE lot_id = ? AND participant_id = ?"
+    ).foreach { sql =>
+      Using.resource(connection.prepareStatement(sql)) { statement =>
+        statement.setObject(1, removal.lotId)
+        statement.setObject(2, removal.participant)
+        statement.executeUpdate()
+      }
+    }
+    Using.resource(
+      connection.prepareStatement(
+        """INSERT INTO lot_removal (lot_id, sequence, minor_units, currency, leader_id, occurred_at)
+          |VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (lot_id, sequence) DO NOTHING""".stripMargin
+      )
+    ) { statement =>
+      statement.setObject(1, removal.lotId)
+      statement.setLong(2, removal.sequence)
+      statement.setLong(3, removal.minorUnits)
+      statement.setString(4, removal.currency)
+      statement.setObject(5, removal.leader.orNull)
+      statement.setTimestamp(6, Timestamp.from(removal.occurredAt))
+      statement.executeUpdate()
+    }
+  }
+
+  // Строка участника не удаляется: отзыв лимита участия не снимает, а повтор гасит первичный ключ. Снятого участника
+  // помечает `recordRemoval`.
   private def addParticipant(connection: Connection, lotId: UUID, participant: UUID): Unit =
     Using.resource(
       connection.prepareStatement(

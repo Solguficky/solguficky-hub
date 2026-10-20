@@ -6,6 +6,7 @@ import auction.entity.LotJournal
 import auction.lot.BidOrigin
 import auction.lot.LotEvent
 import auction.lot.LotState
+import auction.lot.ParticipantId
 import auction.lot.Phase
 import auction.lot.StepWindow
 import auction.projection.AppliedEvent
@@ -27,10 +28,16 @@ object LotFacts {
 
   val SubjectPrefix: String = "events.auction."
 
-  def fact(applied: AppliedEvent): Option[Fact] =
+  /** Факты свёртки по порядку: строка до каждого события — строка после предыдущего, а до первого — `before`. */
+  def facts(before: Option[LotViewRow], applied: List[AppliedEvent]): List[Fact] =
+    applied.zip(before :: applied.map(step => Some(step.row))).flatMap((step, previous) => fact(step, previous))
+
+  /** Факт одного события; `before` — строка лота до него, из неё повод снятия берёт прежнего лидера. */
+  def fact(applied: AppliedEvent, before: Option[LotViewRow]): Option[Fact] =
     occasion(
       LotJournal.envelope(applied.sequence, applied.stored).event,
-      LotJournal.restoreInitiator(applied.stored.actor)
+      LotJournal.restoreInitiator(applied.stored.actor),
+      before.flatMap(leaderOf)
     ).map { (name, occasion) =>
       val message = bus.LotEvent(
         eventId = applied.stored.eventId.toString,
@@ -51,8 +58,15 @@ object LotFacts {
    * `initiator` — тот, чья команда записала событие: производная ставка, поставленная не командой самого участника,
    * отвечает другому (`answers_other_bidder`, PER-473). Флаг выводится из конверта, а не хранится в событии:
    * производную ставку пишут только ставка и прокси-лимит, а их инициатор — всегда участник.
+   *
+   * `previousLeader` — лидер лота до события. Его берёт только снятие участника (ADR-072, п. 5): ставка несёт прежнего
+   * лидера в самом событии, а снятие — нет, его итог — уже новый лидер.
    */
-  def occasion(event: LotEvent, initiator: Initiator): Option[(String, bus.LotEvent.Occasion)] =
+  def occasion(
+      event: LotEvent,
+      initiator: Initiator,
+      previousLeader: => Option[ParticipantId]
+  ): Option[(String, bus.LotEvent.Occasion)] =
     event match {
       case LotEvent.LotDrafted(_) => Some("lot_drafted" -> bus.LotEvent.Occasion.LotDrafted(bus.LotDrafted()))
       case LotEvent.LotScheduled(_) => Some("lot_scheduled" -> bus.LotEvent.Occasion.LotScheduled(bus.LotScheduled()))
@@ -84,8 +98,17 @@ object LotFacts {
       case LotEvent.ProxyLimitSet(_, _) | LotEvent.ProxyLimitWithdrawn(_) | LotEvent.LotMarkedForFinal |
           LotEvent.LotUnmarkedForFinal =>
         None
-      // Повода снятия в шине ещё нет: его вводит граница снятия (PER-658), а до неё команда снаружи не приходит.
-      case LotEvent.ParticipantRemoved(_, _, _, _) => None
+      // Кого сняли, кто и почему, факт не несёт: снимок называет нового лидера, повод — прежнего (ADR-072, п. 5).
+      case LotEvent.ParticipantRemoved(_, _, _, _) =>
+        val removed = bus.ParticipantRemoved(previousLeaderId = previousLeader.map(_.value.toString))
+        Some("participant_removed" -> bus.LotEvent.Occasion.ParticipantRemoved(removed))
+    }
+
+  private def leaderOf(row: LotViewRow): Option[ParticipantId] =
+    LotJournal.restoreLot(row.stored).state match {
+      case LotState.Trading(trading) => trading.leader
+      case LotState.Held(held) => held.leader
+      case _ => None
     }
 
   /** Публичное состояние лота: без прокси-лимитов и без того, что снимок ответа считает для одного смотрящего. */

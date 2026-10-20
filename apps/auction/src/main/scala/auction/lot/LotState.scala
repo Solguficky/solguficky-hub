@@ -312,9 +312,10 @@ final case class WithdrawLot(reason: WithdrawnReason, opId: OpId)
 
 /**
  * Снятие участника с лота целиком (ADR-072, п. 1): все его ставки и действующий лимит. Шлёт аукцион по команде
- * администратора сходки; администратор — инициатор конверта, в команду он не входит.
+ * администратора сходки; администратор — инициатор конверта, в команду он не входит. `expectedVersion` — номер лота, на
+ * котором администратор видел предпросмотр (PER-658): снятие необратимо, и итог, которого он не видел, не пишется.
  */
-final case class RemoveParticipant(participant: ParticipantId, opId: OpId)
+final case class RemoveParticipant(participant: ParticipantId, opId: OpId, expectedVersion: Long)
 
 /** Возврат удержанного лота в торги живого финала (П-09): без дедлайна и ask, в фазе `Live`. */
 final case class ResumeLot(opId: OpId)
@@ -562,6 +563,7 @@ enum AddStepWindowRejected {
  * в живом финале: ставки там ведёт ведущий. `DeadlinePassed` — дедлайн наступил, даже если закрытие ещё не пришло: тот
  * же судья, что у отметки финала. `NotALotParticipant` — у человека на лоте нет ни принятой ручной ставки, ни
  * выставленного лимита, в том числе снятого потом. `ParticipantAlreadyRemoved` — его уже сняли под другим `op_id`.
+ * `LotChanged` — лот ушёл от номера, на котором администратор видел предпросмотр (PER-658).
  */
 enum RemoveParticipantRejected {
   case LotNotFound
@@ -571,6 +573,7 @@ enum RemoveParticipantRejected {
   case DeadlinePassed
   case NotALotParticipant
   case ParticipantAlreadyRemoved
+  case LotChanged
 }
 
 /** Отказы `WithdrawProxyLimit`: у участника нет действующего лимита на этот лот. */

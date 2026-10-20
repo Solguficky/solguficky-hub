@@ -1,4 +1,5 @@
 using Notifications.Domain;
+using Notifications.Reminders;
 using Notifications.Replica;
 using Notifications.V1;
 
@@ -32,6 +33,25 @@ public static class NotificationFacts
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string LotReminderType = "lot_reminder";
+
+    /// <summary>
+    /// Второй момент напоминания о дедлайне лота, ближе к дедлайну (ADR-063,
+    /// дополнение 2026-10-20). Тип свой: два момента не должны совпасть на
+    /// одном ключе повода.
+    /// </summary>
+    /// <inheritdoc cref="MeetupPublishedType" />
+    public const string LotDeadlineCloseType = "lot_deadline_close";
+
+    /// <summary>
+    /// Тип факта по виду напоминания лота: у вида свой тип, иначе два момента
+    /// напоминания совпали бы на одном ключе повода.
+    /// </summary>
+    public static string TypeOf(LotReminderKind kind) => kind switch
+    {
+        LotReminderKind.Hour => LotReminderType,
+        LotReminderKind.Close => LotDeadlineCloseType,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
 
     /// <inheritdoc cref="MeetupPublishedType" />
     public const string OrganizerMessageType = "organizer_message";
@@ -246,6 +266,37 @@ public static class NotificationFacts
             now,
             notAfter);
         notification.LotReminder = new V1.LotReminder { LotId = lotId.ToString() };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Второе напоминание о дедлайне избранного лота одному получателю: ближе
+    /// к дедлайну, когда часовое осталось без ответа (ADR-063, дополнение
+    /// 2026-10-20).
+    /// </summary>
+    /// <param name="taskId">Сработавшее задание — повод факта.</param>
+    /// <param name="lotId">Лот, за которым человек следит; название канал читает у Auction.</param>
+    /// <param name="notAfter">
+    /// Дедлайн лота: напоминание, не ушедшее до дедлайна, уже шум, и релей снимет
+    /// его по сроку.
+    /// </param>
+    public static Notification LotDeadlineClose(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        Guid lotId,
+        DateTimeOffset now,
+        DateTimeOffset notAfter)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            notAfter);
+        notification.LotDeadlineClose = new V1.LotDeadlineClose { LotId = lotId.ToString() };
 
         return notification;
     }

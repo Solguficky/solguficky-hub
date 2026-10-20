@@ -79,6 +79,19 @@ function rpcs() {
             },
           },
         },
+        // Снятие участника бот покажет вместе с пультом (PER-659), а до
+        // него пропускает так же, как незнакомую запись.
+        {
+          sequence: 7n,
+          occurredAt: "2026-10-03T16:06:00Z",
+          kind: {
+            case: "removal",
+            value: {
+              price: { minorUnits: 150_000n, currency: "RUB" },
+              leaderId: "p-1",
+            },
+          },
+        },
       ],
       nextPageToken: "",
     })),
@@ -460,14 +473,16 @@ describe("notification reads", () => {
 
   // Право получателя Identity подтвердил шагом раньше; ролей Auction не
   // получает.
-  it("reads the lot title as the recipient with the auction right", async () => {
+  it("reads the lot as the recipient with the auction right", async () => {
     const getLot = vi.fn(async () => ({ card: { title: "Кружка" } }));
     const { reads } = createDeliveryPorts(
       {} as IdentityRpc,
       { getLot } as unknown as AuctionRpc,
       1_000,
     );
-    expect(await reads.lotTitle("id-1", "lot-1", "req-1")).toBe("Кружка");
+    expect(await reads.lotInfo("id-1", "lot-1", "req-1")).toEqual({
+      title: "Кружка",
+    });
     expect(getLot).toHaveBeenCalledExactlyOnceWith(
       {
         viewer: { identityId: "id-1", rights: [AccessRight.PLACE_BIDS] },
@@ -475,5 +490,27 @@ describe("notification reads", () => {
       },
       callOptions,
     );
+  });
+
+  // Дедлайн и число продлений анти-снайпом есть только у лота в торгах: у лота
+  // без торгов их нет, и текст остаётся без времени.
+  it("reads the deadline of a lot in trading", async () => {
+    const getLot = vi.fn(async () => ({
+      card: { title: "Кружка" },
+      status: {
+        case: "trading",
+        value: { deadline: "2026-10-20T19:45:00Z", extensionsUsed: 1 },
+      },
+    }));
+    const { reads } = createDeliveryPorts(
+      {} as IdentityRpc,
+      { getLot } as unknown as AuctionRpc,
+      1_000,
+    );
+    expect(await reads.lotInfo("id-1", "lot-1", "req-1")).toEqual({
+      title: "Кружка",
+      deadline: "2026-10-20T19:45:00Z",
+      extensionsUsed: 1,
+    });
   });
 });

@@ -121,14 +121,14 @@ describe("finalNoticeOf", () => {
 });
 
 describe("renderFinalNotice", () => {
-  const titles = new Map([
-    [lot(1), "Банка солёных грибов"],
-    [lot(2), "Кружка"],
+  const lots = new Map([
+    [lot(1), { title: "Банка солёных грибов" }],
+    [lot(2), { title: "Кружка" }],
   ]);
 
   // Три экрана задачи: простой анонс, «твой лот в финале» и старт финала.
   it("lists the lineup with prices and no button for the plain announcement", () => {
-    const view = renderFinalNotice(lineup(), { titles });
+    const view = renderFinalNotice(lineup(), { lots });
     expect(view.text).toBe(
       [
         "Объявлен состав финала аукциона:",
@@ -141,7 +141,7 @@ describe("renderFinalNotice", () => {
   });
 
   it("marks the recipient's lot and gives a row to its card", () => {
-    const view = renderFinalNotice(lineup([lot(2)]), { titles });
+    const view = renderFinalNotice(lineup([lot(2)]), { lots });
     expect(view.text.split("\n")[0]).toBe(
       "Твой лот в финале аукциона. Состав финала:",
     );
@@ -153,7 +153,7 @@ describe("renderFinalNotice", () => {
   });
 
   it("speaks of several lots of the recipient in plural", () => {
-    const view = renderFinalNotice(lineup([lot(1), lot(2)]), { titles });
+    const view = renderFinalNotice(lineup([lot(1), lot(2)]), { lots });
     expect(view.text.split("\n")[0]).toBe(
       "Твои лоты в финале аукциона. Состав финала:",
     );
@@ -162,7 +162,7 @@ describe("renderFinalNotice", () => {
 
   it("announces the started final without a button", () => {
     expect(
-      renderFinalNotice({ kind: "final-started", auctionId }, { titles }),
+      renderFinalNotice({ kind: "final-started", auctionId }, { lots }),
     ).toEqual({ text: "Начался финал аукциона.", rows: [] });
   });
 
@@ -170,7 +170,7 @@ describe("renderFinalNotice", () => {
   // Auction окончательно не отдал, кнопки не получает.
   it("keeps untitled lines and drops the button of a refused lot", () => {
     const view = renderFinalNotice(lineup([lot(1), lot(2)]), {
-      titles: new Map(),
+      lots: new Map(),
       refused: new Set([lot(1)]),
     });
     expect(view.text).toContain(`• Лот — ${p2}, лот за тобой`);
@@ -189,9 +189,7 @@ describe("renderFinalNotice", () => {
       })),
       yourLotIds: [],
     };
-    const lines = renderFinalNotice(many, { titles: new Map() }).text.split(
-      "\n",
-    );
+    const lines = renderFinalNotice(many, { lots: new Map() }).text.split("\n");
     expect(lines.filter((line) => line.startsWith("• "))).toHaveLength(
       LINEUP_LOT_LIMIT,
     );
@@ -211,7 +209,7 @@ describe("renderFinalNotice", () => {
       yourLotIds: [beyond],
     };
     const lines = renderFinalNotice(many, {
-      titles: new Map([[beyond, "Кружка"]]),
+      lots: new Map([[beyond, { title: "Кружка" }]]),
     }).text.split("\n");
     expect(lines).toContain(`• «Кружка» — ${money(rub(100))}, лот за тобой`);
     expect(lines.at(-1)).toBe("…и ещё лотов: 2.");
@@ -224,25 +222,25 @@ describe("createFinalNoticeRender", () => {
   });
 
   it("reads the titles of the lineup under the recipient's right", async () => {
-    const lotTitle = vi.fn(async (_: string, lotId: string) =>
-      lotId === lot(1) ? "Банка" : "Кружка",
-    );
+    const lotInfo = vi.fn(async (_: string, lotId: string) => ({
+      title: lotId === lot(1) ? "Банка" : "Кружка",
+    }));
     const render = createFinalNoticeRender({
-      reads: { holdsPlaceBids: async () => true, lotTitle },
+      reads: { holdsPlaceBids: async () => true, lotInfo },
       onTitleMissing: () => {},
     });
     const result = await render(lineup([lot(2)]), context);
     expect(result.kind).toBe("ready");
     if (result.kind !== "ready") return;
     expect(result.message.text).toContain(`• «Кружка» — ${p2}, лот за тобой`);
-    expect(lotTitle).toHaveBeenCalledWith(lot(42), lot(1), "r-1");
+    expect(lotInfo).toHaveBeenCalledWith(lot(42), lot(1), "r-1");
   });
 
   // Весть о торгах: без права `place-bids` она не уходит, как вести о лотах.
   it("withholds the announcement from a recipient without the right", async () => {
-    const lotTitle = vi.fn();
+    const lotInfo = vi.fn();
     const render = createFinalNoticeRender({
-      reads: { holdsPlaceBids: async () => false, lotTitle },
+      reads: { holdsPlaceBids: async () => false, lotInfo },
       onTitleMissing: () => {},
     });
     await expect(
@@ -251,7 +249,7 @@ describe("createFinalNoticeRender", () => {
     await expect(render(lineup(), context)).resolves.toEqual({
       kind: "ineligible",
     });
-    expect(lotTitle).not.toHaveBeenCalled();
+    expect(lotInfo).not.toHaveBeenCalled();
   });
 
   it("keeps the line of a refused lot and logs the refusal", async () => {
@@ -259,9 +257,9 @@ describe("createFinalNoticeRender", () => {
     const render = createFinalNoticeRender({
       reads: {
         holdsPlaceBids: async () => true,
-        lotTitle: async (_, lotId) => {
+        lotInfo: async (_, lotId) => {
           if (lotId === lot(2)) throw permanent;
-          return "Банка";
+          return { title: "Банка" };
         },
       },
       onTitleMissing,

@@ -323,6 +323,13 @@ function checkRules(
       named ||
       index === rows.length - 1 ||
       entry.nav === "root" ||
+      // Содержимое парами — люди «Ставок зала»; «Обновить» и возврат парой
+      // с ними не встают.
+      (entry.pairedContent === true &&
+        row.every(
+          (button) =>
+            button.text !== refreshLabel && !button.text.startsWith(backSign),
+        )) ||
       row.some((button) => button.text === removeMaterialLabel);
     // Кнопка управления не делит ряд с кнопкой участника (решение владельца
     // 19 октября 2026 года, PER-669). Исключение — действие над строкой

@@ -73,6 +73,7 @@ message LotEvent {
     LotHeldForFinal lot_held_for_final = 13;
     LotResumed lot_resumed = 14;
     StepWindowAdded step_window_added = 17;
+    ParticipantRemoved participant_removed = 18;
   }
 }
 
@@ -229,6 +230,19 @@ message LotResumed {}
 // is not carried. A window announced in the configuration comes with lot_opened
 // instead and never with this occasion.
 message StepWindowAdded {}
+
+// A participant was removed from the lot by the administrator of the meetup. The
+// state is the lot after the removal: the leader and the price it goes on with,
+// which may be lower than before. Who was removed, who removed them and why is
+// deliberately not carried.
+message ParticipantRemoved {
+  // Canonical lowercase UUIDv7 with hyphens: the participant who led before the
+  // removal. Absent when the lot had no leader - absent, not an empty string.
+  //
+  // It equals state leader_id when the removal kept the leader; the lead changed
+  // only when the two differ.
+  optional string previous_leader_id = 1;
+}
 
 // A recorded public fact about one auction: why it changed and what is
 // true about it now. The envelope is the one of LotEvent, field for field, so that

@@ -71,9 +71,13 @@ function buttons(content: OutgoingNotification): unknown[] {
 // своими следами (PER-598).
 async function lotNotice(notice: LotNotice) {
   const rendered = await createLotNoticeRender({
-    reads: { holdsPlaceBids: async () => true, lotTitle: async () => "Кружка" },
+    reads: {
+      holdsPlaceBids: async () => true,
+      lotInfo: async () => ({ title: "Кружка" }),
+    },
     onTitleMissing: () => {},
     frequencyButton: true,
+    timeZone: "Europe/Moscow",
   })(notice, { recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd" });
   if (rendered.kind !== "ready") throw new Error("the notice must render");
   return renderNotification({ kind: "lot-notice", view: rendered.message });
@@ -106,7 +110,7 @@ describe("renderNotification", () => {
         lineup: [{ lotId, price: { minorUnits: 50_000, currency: "RUB" } }],
         yourLotIds: [lotId],
       },
-      { titles: new Map([[lotId, "Кружка"]]) },
+      { lots: new Map([[lotId, { title: "Кружка" }]]) },
     );
     const lineup = renderNotification({ kind: "lot-notice", view });
     expect(lineup.text.split("\n")[0]).toBe(
@@ -127,7 +131,7 @@ describe("renderNotification", () => {
           kind: "final-started",
           auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
         },
-        { titles: new Map() },
+        { lots: new Map() },
       ),
     });
     expect(started).toEqual({

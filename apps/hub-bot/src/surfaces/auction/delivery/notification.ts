@@ -77,6 +77,8 @@ function toContent(
     case "lotPurchased":
     case "lotActivityDigest":
     case "lotReminder":
+    case "lotDeadlineClose":
+    case "auctionFinalLotNext":
       return lotNoticeOf(type);
     case "auctionFinalLineup":
     case "auctionFinalStarted":

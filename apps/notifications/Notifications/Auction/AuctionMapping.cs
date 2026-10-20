@@ -62,6 +62,14 @@ public sealed record AuctionSale(Guid EventId, Guid LotId, Guid AuctionId, long 
 public enum FinalOccasion { LineupFrozen, Started }
 
 /// <summary>
+/// Проверенный факт взятия лота в работу финала (ADR-063, дополнение
+/// 2026-10-20): активный лот и порядок состава. Из них известно, какой лот
+/// финала идёт следующим.
+/// </summary>
+public sealed record AuctionFinalLotActivated(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
+    Guid ActiveLotId, IReadOnlyList<Guid> Lineup);
+
+/// <summary>
 /// Проверенный факт финала (PER-477). Состав — лоты в порядке финала; у
 /// старта он тот же, но анонсу старта не нужен.
 /// </summary>
@@ -119,6 +127,7 @@ public abstract record AuctionDecoded
     public sealed record Sale(AuctionSale Value) : AuctionDecoded;
     public sealed record Lot(AuctionLotFact Value) : AuctionDecoded;
     public sealed record Final(AuctionFinal Value) : AuctionDecoded;
+    public sealed record FinalLotActivated(AuctionFinalLotActivated Value) : AuctionDecoded;
     public sealed record Closed(AuctionClosed Value) : AuctionDecoded;
     public sealed record Raffle(RaffleDraw Value) : AuctionDecoded;
     public sealed record Predictions(PredictionSettlement Value) : AuctionDecoded;
@@ -285,14 +294,37 @@ public static class AuctionMapping
         {
             return new AuctionDecoded.Poison($"{subject} state is not the status of its occasion");
         }
-        var lineup = new List<Guid>(order.Count);
-        foreach (var lot in order)
+
+        // Взятый в работу лот идёт перед следующим: из порядка состава известно,
+        // кто в финале следующий (ADR-063, дополнение 2026-10-20).
+        if (occasion == AuctionEvent.OccasionOneofCase.FinalLotActivated)
         {
-            if (!Id(lot, out var lotId) || lineup.Contains(lotId))
+            if (state.InFinal is not { } inFinal || !inFinal.HasActiveLotId ||
+                !Id(inFinal.ActiveLotId, out var activeLotId))
+            {
+                return new AuctionDecoded.Poison("final_lot_activated names no active lot");
+            }
+            if (Lineup(order) is not { } activated)
             {
                 return new AuctionDecoded.Poison("lineup lot id is invalid or repeated");
             }
-            lineup.Add(lotId);
+            if (activated.Count == 0)
+            {
+                return new AuctionDecoded.Poison("lineup is empty");
+            }
+            if (!activated.Contains(activeLotId))
+            {
+                // Активный лот вне состава — следующего по составу не назвать, и
+                // событие с таким снимком дефект издателя.
+                return new AuctionDecoded.Poison("final_lot_activated names a lot outside the lineup");
+            }
+            return new AuctionDecoded.FinalLotActivated(new AuctionFinalLotActivated(eventId, auctionId,
+                message.Version, occurredAt, activeLotId, activated));
+        }
+
+        if (Lineup(order) is not { } lineup)
+        {
+            return new AuctionDecoded.Poison("lineup lot id is invalid or repeated");
         }
         if (lineup.Count == 0)
         {
@@ -300,6 +332,21 @@ public static class AuctionMapping
         }
         return new AuctionDecoded.Final(new AuctionFinal(eventId, auctionId, meetupId, message.Version, occurredAt,
             final, lineup));
+    }
+
+    // Порядок состава: лоты в порядке финала, без повторов.
+    private static List<Guid>? Lineup(IReadOnlyList<string> order)
+    {
+        var lineup = new List<Guid>(order.Count);
+        foreach (var lot in order)
+        {
+            if (!Id(lot, out var lotId) || lineup.Contains(lotId))
+            {
+                return null;
+            }
+            lineup.Add(lotId);
+        }
+        return lineup;
     }
 
     // Пустой пул и непроведённый розыгрыш жеребьёвки не дают, поэтому факт без
