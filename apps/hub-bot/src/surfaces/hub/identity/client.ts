@@ -89,6 +89,7 @@ type IdentityAdminRpc = Pick<
   | "listCommunityMembers"
   | "getCommunityMember"
   | "blockCommunityMember"
+  | "demoteCommunityMember"
   | "listAllowedUsernames"
   | "addAllowedUsername"
   | "removeAllowedUsername"
@@ -254,6 +255,16 @@ export function createCommunityAdministrator(
     block: (actor, identityId, meta) =>
       change(() =>
         rpc.blockCommunityMember(
+          { actor: actorMessage(actor), identityId },
+          options(meta),
+        ),
+      ),
+    // Понижение (PER-642) отвечает тем же `changed`: заявку `declined` и
+    // событие `circle_changed` пишет Identity своей транзакцией, а весть о
+    // смене круга человеку доставляет доставка хаба.
+    demote: (actor, identityId, meta) =>
+      change(() =>
+        rpc.demoteCommunityMember(
           { actor: actorMessage(actor), identityId },
           options(meta),
         ),

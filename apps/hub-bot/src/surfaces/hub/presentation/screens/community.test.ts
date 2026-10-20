@@ -6,6 +6,7 @@ import {
   communityMemberRefusalText,
   communityMemberScreen,
   communityScreen,
+  demoteMemberConfirmScreen,
 } from "./community.js";
 import type { ShownScreen } from "./show.js";
 
@@ -199,6 +200,7 @@ describe("community member card", () => {
     expect(rows(screen)).toEqual([
       ["Выдать модерацию"],
       ["Выдать ведение аукциона"],
+      ["Понизить в гостя"],
       ["Закрыть доступ"],
       nav,
     ]);
@@ -206,6 +208,7 @@ describe("community member card", () => {
     expect(dataOf(screen, "Выдать ведение аукциона")).toBe(
       `v1:cm:ag:${token}:m2`,
     );
+    expect(dataOf(screen, "Понизить в гостя")).toBe(`v1:cm:dq:${token}:m2`);
     expect(dataOf(screen, "Закрыть доступ")).toBe(`v1:cm:bq:${token}:m2`);
     expect(dataOf(screen, "‹ Состав")).toBe("v1:cm:l:m2");
   });
@@ -231,7 +234,9 @@ describe("community member card", () => {
     );
   });
 
-  it("offers no records to a guest", () => {
+  // Понижать гостя некуда: у него и записей нет, а круг уже `guest`
+  // (PER-642). Кнопку понижения видит только участник.
+  it("offers neither records nor demotion to a guest", () => {
     const screen = communityMemberScreen(person(3, "guest"), {
       filter: "guests",
       page: 0,
@@ -241,6 +246,18 @@ describe("community member card", () => {
       "<b>Карточка человека</b>\n\n@user3\n\nКруг: гость",
     );
     expect(rows(screen)).toEqual([["Закрыть доступ"], nav]);
+  });
+
+  it("shows the outcome of the last action as a note under the person", () => {
+    const screen = communityMemberScreen(
+      person(1, "guest"),
+      { filter: "guests", page: 0 },
+      "Понижен до гостя.",
+    );
+
+    expect(screen.text).toBe(
+      "<b>Карточка человека</b>\n\n@user1\n\nПонижен до гостя.\n\nКруг: гость",
+    );
   });
 
   it.each([
@@ -291,6 +308,28 @@ describe("community allowed usernames", () => {
 
     expect(rows(screen)).toHaveLength(12);
     expect(dataOf(screen, "🗑 Убрать @nick8")).toBe("v1:cm:rm:1:nick8");
+  });
+});
+
+describe("demoting to guest", () => {
+  it("asks with a red confirmation and returns to the card", () => {
+    const place = { filter: "members", page: 1 } as const;
+    const screen = demoteMemberConfirmScreen(person(1, "member"), place);
+    const token = uuidToToken(id(1));
+
+    expect(screen.id).toBe("community-demote-confirm");
+    expect(screen.text).toBe(
+      "<b>Понизить до гостя?</b>\n\n@user1 станет гостем: служебные права снимаются, торги аукциона остаются. Вернуть участника из карточки нельзя — отказанную заявку пересматривают в «Отказанных».",
+    );
+    expect(rows(screen)).toEqual([["✔️ Да, понизить в гостя", "✖️ Нет"]]);
+    expect(dataOf(screen, "✔️ Да, понизить в гостя")).toBe(
+      `v1:cm:dy:${token}:m1`,
+    );
+    expect(dataOf(screen, "✖️ Нет")).toBe(`v1:cm:v:${token}:m1`);
+    const yes = screen.keyboard.inline_keyboard[0]?.[0];
+    expect(yes !== undefined && "style" in yes ? yes.style : undefined).toBe(
+      "danger",
+    );
   });
 });
 

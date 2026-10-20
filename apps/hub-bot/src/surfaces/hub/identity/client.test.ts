@@ -581,6 +581,7 @@ describe("community administrator", () => {
       listCommunityMembers: vi.fn(),
       getCommunityMember: vi.fn(),
       blockCommunityMember: vi.fn(),
+      demoteCommunityMember: vi.fn(),
       listAllowedUsernames: vi.fn().mockResolvedValue({ usernames: [] }),
       addAllowedUsername: vi.fn(),
       removeAllowedUsername: vi.fn(),
@@ -703,6 +704,29 @@ describe("community administrator", () => {
       { actor: { identityId: actor.identityId }, identityId: memberId },
       expect.anything(),
     );
+  });
+
+  it("demotes the member and reports whether the circle changed", async () => {
+    const demoteCommunityMember = vi.fn().mockResolvedValue({ changed: true });
+
+    await expect(
+      community({ demoteCommunityMember }).demote(actor, memberId),
+    ).resolves.toEqual({ kind: "ok", value: true });
+    expect(demoteCommunityMember).toHaveBeenCalledWith(
+      { actor: { identityId: actor.identityId }, identityId: memberId },
+      expect.anything(),
+    );
+  });
+
+  it("maps demote failure of a preset holder to invalid", async () => {
+    const administrator = community({
+      demoteCommunityMember: () =>
+        Promise.reject(new ConnectError("refused", Code.FailedPrecondition)),
+    });
+
+    await expect(administrator.demote(actor, memberId)).resolves.toMatchObject({
+      kind: "invalid",
+    });
   });
 
   it.each([

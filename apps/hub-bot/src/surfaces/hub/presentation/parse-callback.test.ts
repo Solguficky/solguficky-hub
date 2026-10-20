@@ -475,6 +475,22 @@ describe("callback parser", () => {
         },
       ],
       [
+        `v1:cm:dq:${token}:m0`,
+        {
+          kind: "ask-demote-member",
+          token,
+          place: { filter: "members", page: 0 },
+        },
+      ],
+      [
+        `v1:cm:dy:${token}:o2`,
+        {
+          kind: "demote-member",
+          token,
+          place: { filter: "moderators", page: 2 },
+        },
+      ],
+      [
         `v1:cm:by:${token}:o9999`,
         {
           kind: "block-member",
@@ -602,6 +618,9 @@ describe("callback parser", () => {
       `v1:cm:bq:${token}:x`,
       `v1:cm:bq:${token}:pshort`,
       `v1:cm:by:${token}:a`,
+      `v1:cm:dq:${token}`,
+      `v1:cm:dq:${token}:x`,
+      `v1:cm:dy:${token}:z0`,
       "v1:cm:rm:0",
       "v1:cm:rm:x:alice",
       "v1:cm:rm:0:al-ice",

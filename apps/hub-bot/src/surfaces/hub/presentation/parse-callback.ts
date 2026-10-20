@@ -250,6 +250,9 @@ type PlainAction =
   | { kind: "community-member"; token: string; place: CommunityPlace }
   | { kind: "ask-block-member"; token: string; place: CommunityPlace }
   | { kind: "block-member"; token: string; place: CommunityPlace }
+  // Понижение участника до гостя (PER-642): вопрос и его «Да».
+  | { kind: "ask-demote-member"; token: string; place: CommunityPlace }
+  | { kind: "demote-member"; token: string; place: CommunityPlace }
   | { kind: "remove-allowed-username"; username: string; page: number }
   // Записи прав с карточки человека: модерация аукциона (ADR-064, пункт 7) и
   // ведение аукциона (ADR-070, п. 1).
@@ -1739,7 +1742,8 @@ function parseAdministrators(parts: readonly string[]): CallbackAction {
 // Состав (PER-547): `l` — список с местом, `v` — карточка человека, `mg` и
 // `mv` — выдать и снять модерацию, `ag` и `av` — выдать и снять ведение
 // аукциона (PER-654), `bq` и `by` — вопрос о закрытии доступа и
-// его «Да»; у карточки и её действий — токен человека и место в списке. `u` —
+// его «Да», `dq` и `dy` — вопрос о понижении до гостя и его «Да» (PER-642);
+// у карточки и её действий — токен человека и место в списке. `u` —
 // ники, `rm` — убрать ник. Отказанные: `r` — список, `rq` и `ry` — вопрос о
 // пересмотре и его «Да»; токен у них — заявки, а не человека. Карточка заявки:
 // `q` — первая или следующая за курсором, `qc` — та же, `qa` — допустить, `qd`
@@ -1771,6 +1775,8 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
     case "mv":
     case "ag":
     case "av":
+    case "dq":
+    case "dy":
     case "bq":
     case "by": {
       const token = TokenSchema.safeParse(first);
@@ -1798,6 +1804,8 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
         v: "community-member",
         bq: "ask-block-member",
         by: "block-member",
+        dq: "ask-demote-member",
+        dy: "demote-member",
       } as const;
       return { kind: kinds[verb], token: token.data, place };
     }

@@ -265,6 +265,7 @@ import {
   communityMemberRefusalText,
   communityMemberScreen,
   communityScreen,
+  demoteMemberConfirmScreen,
   firstCommunityPlace,
 } from "./screens/community.js";
 import {
@@ -2622,7 +2623,8 @@ async function handleCallback(
     // Identity и отказывает значением ответа (PER-547).
     if (
       action.kind === "community-member" ||
-      action.kind === "ask-block-member"
+      action.kind === "ask-block-member" ||
+      action.kind === "ask-demote-member"
     ) {
       const result = await renderCommunityMember(
         ctx,
@@ -2630,7 +2632,11 @@ async function handleCallback(
         person,
         tokenToUuid(action.token),
         action.place,
-        action.kind === "ask-block-member" ? "close-access" : "card",
+        action.kind === "community-member"
+          ? "card"
+          : action.kind === "ask-block-member"
+            ? "close-access"
+            : "demote",
       );
       outcome = memberOutcome(result, person.identityId);
       return;
@@ -3116,6 +3122,37 @@ async function handleCallback(
             : { kind: "usernames", page: action.page },
         );
       }
+      outcome = adminOutcome(result, person.identityId);
+      return;
+    }
+    // Понижение до гостя (PER-642): Identity одной транзакцией меняет круг,
+    // пишет заявку `declined` и событие `circle_changed`, по которому человеку
+    // уходит весть о смене круга. Карточка перечитывается и показывает итог:
+    // она говорит то, что сохранилось, а не то, что нажали.
+    if (action.kind === "demote-member") {
+      const identityId = tokenToUuid(action.token);
+      const result =
+        runtime.identity.demote === undefined
+          ? {
+              kind: "unavailable" as const,
+              cause: new Error("community administration is not configured"),
+            }
+          : await runtime.identity.demote(
+              person,
+              identityId,
+              rpcCall(ctx, "manage_community"),
+            );
+      const demoted = result.kind === "ok" && result.value;
+      await waiting.answer(demoteToast(result));
+      await renderCommunityMember(
+        ctx,
+        runtime,
+        person,
+        identityId,
+        action.place,
+        "card",
+        demoted ? demotedNotice : undefined,
+      );
       outcome = adminOutcome(result, person.identityId);
       return;
     }
@@ -4723,7 +4760,8 @@ async function renderCommunityMember(
   actor: Person,
   identityId: string,
   place: CommunityPlace,
-  screen: "card" | "close-access",
+  screen: "card" | "close-access" | "demote",
+  notice?: string,
 ): Promise<CommunityMemberResult> {
   const result: CommunityMemberResult =
     runtime.identity.communityMember === undefined
@@ -4751,8 +4789,10 @@ async function renderCommunityMember(
   await showScreen(
     ctx,
     screen === "card"
-      ? communityMemberScreen(result.value, place)
-      : closeAccessConfirmScreen(result.value, place),
+      ? communityMemberScreen(result.value, place, notice)
+      : screen === "close-access"
+        ? closeAccessConfirmScreen(result.value, place)
+        : demoteMemberConfirmScreen(result.value, place),
   );
   return result;
 }
@@ -4875,6 +4915,23 @@ function recordToast(
       return texts.forbidden;
     case "invalid":
       return "Изменение не сохранилось. Список перечитан заново.";
+    default:
+      return "Не получилось сохранить. Попробуй ещё раз.";
+  }
+}
+
+// Итог понижения до гостя (PER-642). Ответ на нажатие называет то же, что и
+// строка карточки: понижение — смена круга, и человеку о ней ещё придёт весть.
+const demotedNotice = "Понижен до гостя.";
+
+function demoteToast(result: IdentityAdminResult<boolean>): string {
+  switch (result.kind) {
+    case "ok":
+      return result.value ? demotedNotice : "Состояние уже было актуальным.";
+    case "forbidden":
+      return "Это может только администратор.";
+    case "invalid":
+      return "Изменение не сохранилось. Экран перечитан заново.";
     default:
       return "Не получилось сохранить. Попробуй ещё раз.";
   }
@@ -9550,6 +9607,8 @@ function callbackUseCase(
     | "community-member"
     | "ask-block-member"
     | "block-member"
+    | "ask-demote-member"
+    | "demote-member"
     | "remove-allowed-username"
     | "refused-applications"
     | "ask-reconsider"
@@ -9705,6 +9764,8 @@ function callbackUseCase(
     case "community-member":
     case "ask-block-member":
     case "block-member":
+    case "ask-demote-member":
+    case "demote-member":
     case "remove-allowed-username":
     case "grant-record":
     case "revoke-record":

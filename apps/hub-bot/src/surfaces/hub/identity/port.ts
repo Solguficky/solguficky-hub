@@ -169,6 +169,16 @@ export type CommunityAdministrator = {
     identityId: string,
     meta?: RpcMetadata,
   ): Promise<IdentityAdminResult<boolean>>;
+  // Понижение участника до гостя (PER-642): тот же отказ по кругу `member`,
+  // что и отказ по заявке (ADR-060, п. 13). `false` — круга `member` у человека
+  // уже нет, в том числе у заблокированного. Держатель набора — отказ Identity
+  // (ADR-065, п. 8), а не значение ответа: карточку такого человека бот и так
+  // не показывает.
+  demote(
+    actor: IdentityActor,
+    identityId: string,
+    meta?: RpcMetadata,
+  ): Promise<IdentityAdminResult<boolean>>;
   addAllowedUsername(
     actor: IdentityActor,
     username: string,
