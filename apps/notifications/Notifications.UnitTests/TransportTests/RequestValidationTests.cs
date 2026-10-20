@@ -180,6 +180,68 @@ public class RequestValidationTests
         RequestValidation.Body("  ").ShouldBe("  ");
     }
 
+    [Fact]
+    public void RecordIds_EmptySet_IsAccepted()
+    {
+        // Пустой набор — значение: поверхность без записей отмечает себя принятой.
+        RequestValidation.RecordIds([]).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public void RecordIds_DistinctIds_KeepImageOrder()
+    {
+        RequestValidation.RecordIds(["b-second", "a-first"]).ShouldBe(["b-second", "a-first"]);
+    }
+
+    [Fact]
+    public void RecordIds_EmptyId_IsRejected()
+    {
+        Code(() => RequestValidation.RecordIds([string.Empty])).ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void RecordIds_IdWithNul_IsRejected()
+    {
+        Code(() => RequestValidation.RecordIds(["with" + (char)0 + "nul"])).ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void RecordIds_TooLongId_IsRejected()
+    {
+        Code(() => RequestValidation.RecordIds([new string('a', RequestValidation.MaxRecordIdLength + 1)]))
+            .ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void RecordIds_RepeatedId_IsRejected()
+    {
+        Code(() => RequestValidation.RecordIds(["same", "same"])).ShouldBe(StatusCode.InvalidArgument);
+    }
+
+    [Fact]
+    public void SummaryPageSize_Zero_IsServerDefault()
+    {
+        RequestValidation.SummaryPageSize(0).ShouldBe(RequestValidation.DefaultSummaryPageSize);
+    }
+
+    [Fact]
+    public void SummaryPageSize_AboveLimit_IsNarrowedToLimit()
+    {
+        RequestValidation.SummaryPageSize(uint.MaxValue).ShouldBe(RequestValidation.MaxSummaryPageSize);
+    }
+
+    [Fact]
+    public void SummaryPageToken_Empty_StartsFromNewest()
+    {
+        RequestValidation.SummaryPageToken(string.Empty).ShouldBeNull();
+    }
+
+    [Fact]
+    public void SummaryPageToken_Foreign_IsRejected()
+    {
+        Code(() => RequestValidation.SummaryPageToken("page-2")).ShouldBe(StatusCode.InvalidArgument);
+    }
+
     /// <summary>
     /// Код объявленного отказа. Неожиданное исключение наружу не глотается:
     /// тест, поймавший всё подряд, зеленел бы и на сломанной границе.

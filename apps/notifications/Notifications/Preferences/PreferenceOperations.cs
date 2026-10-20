@@ -22,7 +22,8 @@ namespace Notifications.Preferences;
 public sealed class PreferenceOperations(
     NpgsqlDataSource source,
     SubscriptionStore subscriptions,
-    PreferenceStore preferences)
+    PreferenceStore preferences,
+    CategoryDefaults defaults)
 {
     /// <summary>Подписывает человека на сходку и отдаёт снимок у этой сходки.</summary>
     public Task<MeetupPreferences> SubscribeToMeetup(
@@ -244,7 +245,7 @@ public sealed class PreferenceOperations(
     {
         var global = await preferences.ReadGlobal(work, identityId, cancellationToken);
 
-        return EffectivePreference.Global(identityId, global, rights);
+        return EffectivePreference.Global(identityId, global, rights, defaults);
     }
 }
 

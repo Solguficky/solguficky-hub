@@ -39,9 +39,12 @@ public static class EffectivePreference
     /// все сходки, включая будущие: копия, которую пришлось бы догонять, не
     /// создаётся вовсе. Отсутствие переопределения — наследование, поэтому
     /// удаление строки переопределения возвращает глобальное значение.
+    /// Умолчание берётся из <paramref name="defaults" /> среды; без них — из
+    /// словаря, то есть значение прода.
     /// </remarks>
-    public static bool Resolve(NotificationCategory category, bool? global, bool? @override) =>
-        @override ?? global ?? NotificationCategories.DefaultEnabled(category);
+    public static bool Resolve(NotificationCategory category, bool? global, bool? @override,
+        CategoryDefaults? defaults = null) =>
+        @override ?? global ?? (defaults ?? CategoryDefaults.Product).Of(category);
 
     /// <summary>Глобальный снимок по категориям словаря, видимым с этими правами.</summary>
     /// <param name="rights">Права человека; у заблокированного пусто.</param>
@@ -52,12 +55,15 @@ public static class EffectivePreference
     public static GlobalPreferences Global(
         Guid identityId,
         IReadOnlyDictionary<NotificationCategory, bool> global,
-        IReadOnlyCollection<string> rights) =>
+        IReadOnlyCollection<string> rights,
+        CategoryDefaults? defaults = null) =>
         new(
             identityId,
             NotificationCategories.All
                 .Where(category => NotificationCategories.IsVisibleTo(category, rights))
-                .Select(category => new CategoryState(category, Resolve(category, Lookup(global, category), null)))
+                .Select(category => new CategoryState(
+                    category,
+                    Resolve(category, Lookup(global, category), null, defaults)))
                 .ToArray());
 
     /// <summary>Снимок у сходки по категориям, которые сходка может нести.</summary>
