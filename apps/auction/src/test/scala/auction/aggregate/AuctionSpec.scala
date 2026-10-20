@@ -205,6 +205,58 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
         Right(AuctionDecision.Repeated(AuctionEnvelope(8, op(8), AuctionEvent.LotAdded(lot))))
     }
 
+    "is born hidden from participants, and a birth written before the visibility mark is visible" in {
+      Auction.decide(Auction.initial, DraftAuction(meetup, op(1))) shouldBe
+        AuctionDecision.Accepted(AuctionEvent.AuctionDrafted(meetup, hidden = true))
+      born.hidden shouldBe true
+      val legacy = AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup, hidden = false))
+      Auction.apply(Auction.initial, legacy).hidden shouldBe false
+    }
+
+    "is published and hidden again from a draft and once scheduled, writing an event each time" in {
+      for (auction <- List(born, scheduled)) {
+        val publishing = Auction.decide(auction, ChangeVisibility(published = true, op(10)))
+        publishing shouldBe Right(AuctionDecision.Accepted(AuctionEvent.AuctionPublished))
+        val published = applied(auction, publishing.toOption.get, 10, 10)
+        published.hidden shouldBe false
+        published.state shouldBe auction.state
+        // Уже видимый аукцион пишет публикацию ещё раз: запоздавший повтор не должен её отменить, как у `LotAdded`.
+        Auction.decide(published, ChangeVisibility(published = true, op(11))) shouldBe
+          Right(AuctionDecision.Accepted(AuctionEvent.AuctionPublished))
+        val hiding = Auction.decide(published, ChangeVisibility(published = false, op(12)))
+        hiding shouldBe Right(AuctionDecision.Accepted(AuctionEvent.AuctionHidden))
+        applied(published, hiding.toOption.get, 12, 12).hidden shouldBe true
+      }
+    }
+
+    "answers a repeated publication with the original envelope, whatever the visibility is now" in {
+      val published = Auction.apply(born, AuctionEnvelope(10, op(10), AuctionEvent.AuctionPublished))
+      val hidden = Auction.apply(published, AuctionEnvelope(11, op(11), AuctionEvent.AuctionHidden))
+      Auction.decide(hidden, ChangeVisibility(published = true, op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.AuctionPublished)))
+    }
+
+    "refuses to change its visibility before it is born and once prebidding started" in {
+      for (published <- List(true, false)) {
+        Auction.decide(Auction.initial, ChangeVisibility(published, op(4))) shouldBe
+          Left(VisibilityRejected.AuctionNotFound)
+        Auction.decide(started, ChangeVisibility(published, op(4))) shouldBe
+          Left(VisibilityRejected.AuctionAlreadyStarted)
+      }
+    }
+
+    "is published by the start of prebidding and stays visible after it" in {
+      scheduled.hidden shouldBe true
+      started.hidden shouldBe false
+    }
+
+    "is born hidden again after a discard of a published auction" in {
+      val published = Auction.apply(born, AuctionEnvelope(10, op(10), AuctionEvent.AuctionPublished))
+      val discarded = Auction.apply(published, AuctionEnvelope(11, op(11), AuctionEvent.AuctionDiscarded))
+      discarded.hidden shouldBe false
+      applied(discarded, Auction.decide(discarded, DraftAuction(meetup, op(12))), 12, 12).hidden shouldBe true
+    }
+
     "is born again at the same meetup after a discard, with an empty registry" in {
       val discarded = Auction.apply(holding(scheduled), AuctionEnvelope(10, op(10), AuctionEvent.AuctionDiscarded))
       val decision = Auction.decide(discarded, DraftAuction(meetup, op(11)))

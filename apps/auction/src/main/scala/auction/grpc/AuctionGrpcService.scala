@@ -6,6 +6,7 @@ import auction.aggregate.AuctionState
 import auction.aggregate.MeetupGate
 import auction.aggregate.Correlation
 import auction.aggregate.Denial
+import auction.access.Viewer
 import auction.catalog.LotCatalogCommands
 import auction.catalog.LotId
 import auction.entity.Initiator
@@ -49,6 +50,7 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.TimeoutException
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -292,7 +294,10 @@ final class AuctionGrpcService(
       case Right(query) =>
         views.find(query.lotId).flatMap {
           case Some(view) =>
-            Future.successful(SnapshotMapping.snapshot(view, query.acting.participant, clock.instant()))
+            concealed(view.auctionId, query.acting.viewer).flatMap {
+              case false => Future.successful(SnapshotMapping.snapshot(view, query.acting.participant, clock.instant()))
+              case true => refuse(Status.NOT_FOUND.withDescription("lot not found"))
+            }
           case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
         }
     }
@@ -310,15 +315,21 @@ final class AuctionGrpcService(
       case Right(query) =>
         // На одну строку больше страницы: так известно, есть ли продолжение, без второго запроса.
         val read = if (AuctionGrpcService.isMeetupAuction(query.auctionId)) views.registryPage else views.page
-        read(query.auctionId, query.after, query.limit + 1).map { found =>
-          val at = clock.instant()
-          val page = found.take(query.limit)
-          val next = if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.lotId)) else None
-          wire.ListAuctionLotsResponse(
-            page.map(SnapshotMapping.snapshot(_, query.acting.participant, at)),
-            next.getOrElse("")
-          )
-        }
+        concealed(query.auctionId, query.acting.viewer)
+          .flatMap {
+            case true => Future.successful(Vector.empty)
+            case false => read(query.auctionId, query.after, query.limit + 1)
+          }
+          .map { found =>
+            val at = clock.instant()
+            val page = found.take(query.limit)
+            val next =
+              if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.lotId)) else None
+            wire.ListAuctionLotsResponse(
+              page.map(SnapshotMapping.snapshot(_, query.acting.participant, at)),
+              next.getOrElse("")
+            )
+          }
     }
 
   /**
@@ -541,6 +552,50 @@ final class AuctionGrpcService(
           .flatMap(outcome => ResponseMapping.startPrebidding(outcome).fold(refuse, Future.successful))
     }
 
+  /** Публикация аукциона участникам (ADR-047, дополнение 2026-10-20): право у Meetups, состояние решает аукцион. */
+  def publishAuction(in: wire.PublishAuctionRequest): Future[wire.PublishAuctionResponse] =
+    RequestMapping.publishAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        changeVisibility(command).map(
+          _.fold(wire.PublishAuctionResponse().withAccepted(wire.AuctionVisibilityAccepted()))(
+            wire.PublishAuctionResponse().withRefused(_)
+          )
+        )
+    }
+
+  /** Снятие аукциона с публикации до торгов (ADR-047, дополнение 2026-10-20). */
+  def hideAuction(in: wire.HideAuctionRequest): Future[wire.HideAuctionResponse] =
+    RequestMapping.hideAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        changeVisibility(command).map(
+          _.fold(wire.HideAuctionResponse().withAccepted(wire.AuctionVisibilityAccepted()))(
+            wire.HideAuctionResponse().withRefused(_)
+          )
+        )
+    }
+
+  private def changeVisibility(command: VisibilityCommand): Future[Option[wire.AuctionVisibilityRefusal]] =
+    auctions
+      .changeVisibility(command.auctionId, command.published, command.opId, command.acting.participant)
+      .recoverWith(awaited)
+      .flatMap(outcome => ResponseMapping.auctionVisibility(outcome).fold(refuse, Future.successful))
+
+  /**
+   * Видимость аукциона смотрящему (ADR-047, дополнение 2026-10-20): скрытый видит только держатель `run_auctions`, и
+   * всем остальным чтения отвечают так, будто аукциона нет.
+   */
+  private def shown(viewer: Viewer)(view: AuctionSnapshotView): Boolean = viewer.runsAuctions || !view.auction.hidden
+
+  /**
+   * Аукцион лота скрыт от смотрящего. Аукциона нет в read model — тестовый аукцион из настройки бота без журнала или
+   * удалённый — значит, скрывать нечего.
+   */
+  private def concealed(auctionId: UUID, viewer: Viewer): Future[Boolean] =
+    if (viewer.runsAuctions) Future.successful(false)
+    else auctionViews.byId(auctionId).map(_.exists(view => !shown(viewer)(view)))
+
   /** Удаление аукциона до торгов (ADR-047, дополнение 2026-10-09): право у Meetups, состояние решает аукцион. */
   def discardAuction(in: wire.DiscardAuctionRequest): Future[wire.DiscardAuctionResponse] =
     RequestMapping.discardAuction(in) match {
@@ -690,7 +745,11 @@ final class AuctionGrpcService(
       case Right(query) =>
         auctionViews
           .byMeetup(query.meetup)
-          .map(found => wire.GetMeetupAuctionResponse(found.map(ResponseMapping.auctionSnapshot)))
+          .map(found =>
+            wire.GetMeetupAuctionResponse(
+              found.filter(shown(query.acting.viewer)).map(ResponseMapping.auctionSnapshot)
+            )
+          )
     }
 
   /**
@@ -704,9 +763,9 @@ final class AuctionGrpcService(
         auctionViews
           .byId(query.auctionId.value)
           .map { found =>
-            val shown =
+            val drafts =
               found.filter(view => view.auction.state != AuctionState.Draft || caller.contains(Caller.HubBot))
-            wire.GetAuctionResponse(shown.map(ResponseMapping.auctionSnapshot))
+            wire.GetAuctionResponse(drafts.filter(shown(query.acting.viewer)).map(ResponseMapping.auctionSnapshot))
           }
     }
 
@@ -714,7 +773,8 @@ final class AuctionGrpcService(
     RequestMapping.listAuctions(in) match {
       case Left(error) => invalid(error)
       case Right(query) =>
-        auctionViews.page(query.listing, query.after, query.limit + 1).map { found =>
+        val revealHidden = query.acting.viewer.runsAuctions
+        auctionViews.page(query.listing, query.after, query.limit + 1, revealHidden).map { found =>
           val page = found.take(query.limit)
           val next =
             if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.auctionId)) else None
@@ -767,11 +827,15 @@ final class AuctionGrpcService(
       case Right(query) if !query.acting.viewer.isParticipant =>
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(query) =>
-        raffles
-          .get(query.auctionId)
-          .recoverWith(awaited)
-          .flatMap(raffle => view(query.auctionId, query.acting.participant, raffle))
-          .map(found => wire.GetRaffleResponse(found))
+        concealed(query.auctionId.value, query.acting.viewer).flatMap {
+          case true => Future.successful(wire.GetRaffleResponse())
+          case false =>
+            raffles
+              .get(query.auctionId)
+              .recoverWith(awaited)
+              .flatMap(raffle => view(query.auctionId, query.acting.participant, raffle))
+              .map(found => wire.GetRaffleResponse(found))
+        }
     }
 
   /**

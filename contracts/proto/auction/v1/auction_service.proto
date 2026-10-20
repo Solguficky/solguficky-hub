@@ -46,6 +46,8 @@ service AuctionService {
   rpc ScheduleAuction(ScheduleAuctionRequest) returns (ScheduleAuctionResponse);
   rpc StartPrebidding(StartPrebiddingRequest) returns (StartPrebiddingResponse);
   rpc DiscardAuction(DiscardAuctionRequest) returns (DiscardAuctionResponse);
+  rpc PublishAuction(PublishAuctionRequest) returns (PublishAuctionResponse);
+  rpc HideAuction(HideAuctionRequest) returns (HideAuctionResponse);
   rpc CancelAuction(CancelAuctionRequest) returns (CancelAuctionResponse);
   rpc SelectForFinal(SelectForFinalRequest) returns (SelectForFinalResponse);
   rpc DeselectForFinal(DeselectForFinalRequest) returns (DeselectForFinalResponse);
@@ -387,6 +389,8 @@ message ImageTooLarge {
 
 message UnsupportedImage {}
 
+// A lot of a hidden auction is NOT_FOUND unless the viewer holds run_auctions,
+// as a lot that does not exist.
 message GetLotRequest {
   Viewer viewer = 1;
 
@@ -408,6 +412,8 @@ message ListAuctionLotsRequest {
 }
 
 message ListAuctionLotsResponse {
+  // Empty for a hidden auction unless the viewer holds run_auctions, as for an
+  // auction that does not exist.
   repeated LotSnapshot lots = 1;
 
   // Opaque continuation token. Empty means that the enumeration is complete.
@@ -1068,6 +1074,65 @@ message DiscardAuctionRefusal {
   }
 }
 
+// Shows the auction to participants. A new auction is hidden: until then only
+// holders of run_auctions read it. Allowed before prebidding starts; starting
+// prebidding publishes a hidden auction by itself. Publishing a published
+// auction is accepted.
+message PublishAuctionRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message PublishAuctionResponse {
+  // Exactly one is set.
+  oneof outcome {
+    AuctionVisibilityAccepted accepted = 1;
+    AuctionVisibilityRefusal refused = 2;
+  }
+}
+
+// Hides the auction from participants again: every read answers a viewer
+// without run_auctions as if the auction did not exist. Allowed before
+// prebidding starts. Hiding a hidden auction is accepted.
+message HideAuctionRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 3;
+}
+
+message HideAuctionResponse {
+  // Exactly one is set.
+  oneof outcome {
+    AuctionVisibilityAccepted accepted = 1;
+    AuctionVisibilityRefusal refused = 2;
+  }
+}
+
+// Carries nothing: AuctionSnapshot.hidden tells the visibility.
+message AuctionVisibilityAccepted {}
+
+message AuctionVisibilityRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    // Prebidding has started: the auction is published for good.
+    AuctionAlreadyStarted auction_already_started = 4;
+  }
+}
+
 message CancelAuctionRequest {
   // The administrator of the meetup of the auction, checked with the meetup.
   Viewer viewer = 1;
@@ -1714,7 +1779,8 @@ message GetMeetupAuctionRequest {
 
 message GetMeetupAuctionResponse {
   // Unset when the meetup has no auction: absent, not an error. A draft is
-  // returned here, unlike in ListAuctions.
+  // returned here, unlike in ListAuctions. A hidden auction is unset unless the
+  // viewer holds run_auctions: see AuctionSnapshot.hidden.
   AuctionSnapshot auction = 1;
 }
 
@@ -1728,7 +1794,8 @@ message GetAuctionRequest {
 message GetAuctionResponse {
   // Unset when there is no such auction for this caller: absent, not an error.
   // Whether a draft is returned depends on the caller, see
-  // docs/architecture/integration.md, section "Auction gRPC".
+  // docs/architecture/integration.md, section "Auction gRPC". A hidden auction
+  // is unset unless the viewer holds run_auctions: see AuctionSnapshot.hidden.
   AuctionSnapshot auction = 1;
 }
 
@@ -1757,6 +1824,7 @@ enum AuctionListing {
 }
 
 message ListAuctionsResponse {
+  // A hidden auction is listed only to a viewer holding run_auctions.
   repeated AuctionSnapshot auctions = 1;
 
   // Opaque continuation token. Empty means that the enumeration is complete.
@@ -1780,6 +1848,11 @@ message AuctionSnapshot {
   // Canonical lowercase UUIDv7 with hyphens: the registry of the auction. The
   // order carries no meaning.
   repeated string lot_ids = 3;
+
+  // The auction is hidden from participants: only a viewer holding run_auctions
+  // gets it, and every other read answers as if it did not exist. Never set
+  // once prebidding has started.
+  bool hidden = 5;
 
   // Where the auction is. Exactly one is set.
   oneof status {
@@ -1866,7 +1939,8 @@ message GetRaffleRequest {
 }
 
 message GetRaffleResponse {
-  // Unset when the auction has no raffle: absent, not an error.
+  // Unset when the auction has no raffle: absent, not an error. Unset for a
+  // hidden auction unless the viewer holds run_auctions.
   Raffle raffle = 1;
 }
 

@@ -41,6 +41,7 @@ import auction.v1.auction_service.CancelRaffleRegistrationRequest
 import auction.v1.auction_service.CloseLotRequest
 import auction.v1.auction_service.GetAuctionRequest
 import auction.v1.auction_service.GetRaffleRequest
+import auction.v1.auction_service.HideAuctionRequest
 import auction.v1.auction_service.RegisterForRaffleRequest
 import auction.v1.auction_service.ChooseDisplayNameRequest
 import auction.v1.auction_service.CreateLotCardRequest
@@ -66,6 +67,7 @@ import auction.v1.auction_service.ListAuctionsRequest
 import auction.v1.auction_service.ListLotHistoryRequest
 import auction.v1.auction_service.RemoveLotRequest
 import auction.v1.auction_service.PlaceBidRequest
+import auction.v1.auction_service.PublishAuctionRequest
 import auction.v1.auction_service.ScheduleAuctionRequest
 import auction.v1.auction_service.SelectForFinalRequest
 import auction.v1.auction_service.ScheduleLotRequest
@@ -146,6 +148,9 @@ final case class PrebiddingCommand(auctionId: AuctionId, opId: OpId, acting: Act
 
 /** Удаление аукциона до торгов. */
 final case class DiscardCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
+
+/** Публикация (`published`) или снятие аукциона сходки (ADR-047, дополнение 2026-10-20). */
+final case class VisibilityCommand(auctionId: AuctionId, published: Boolean, opId: OpId, acting: Acting)
 
 /** Отмена аукциона после старта торгов. */
 final case class CancelCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
@@ -485,6 +490,19 @@ object RequestMapping {
       auction <- meetupAuction(request.auctionId)
       opId <- uuidV7("op_id", request.opId)
     } yield DiscardCommand(auction, OpId(opId), acting)
+
+  def publishAuction(request: PublishAuctionRequest): Either[FormError, VisibilityCommand] =
+    visibility(request.viewer, request.auctionId, request.opId, published = true)
+
+  def hideAuction(request: HideAuctionRequest): Either[FormError, VisibilityCommand] =
+    visibility(request.viewer, request.auctionId, request.opId, published = false)
+
+  private def visibility(viewer: Option[ViewerMessage], auctionId: String, opId: String, published: Boolean) =
+    for {
+      acting <- acting(viewer)
+      auction <- meetupAuction(auctionId)
+      opId <- uuidV7("op_id", opId)
+    } yield VisibilityCommand(auction, published, OpId(opId), acting)
 
   def cancelAuction(request: CancelAuctionRequest): Either[FormError, CancelCommand] =
     for {

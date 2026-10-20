@@ -21,6 +21,7 @@ import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.OpeningRefusal
 import auction.aggregate.RemovalRefusal
 import auction.aggregate.SchedulingRefusal
+import auction.aggregate.VisibilityRefusal
 import auction.catalog.CatalogRefusal
 import auction.catalog.LotCard
 import auction.catalog.LotId
@@ -517,6 +518,34 @@ object ResponseMapping {
   private def discardRefused(reason: wire.DiscardAuctionRefusal.Reason): wire.DiscardAuctionResponse =
     wire.DiscardAuctionResponse().withRefused(wire.DiscardAuctionRefusal(reason))
 
+  /**
+   * Публикация и снятие (ADR-047, дополнение 2026-10-20) отвечают одной формой: `None` — принято, иначе именованный
+   * отказ, который вызывающий кладёт в ответ своей команды.
+   */
+  def auctionVisibility(
+      outcome: Either[VisibilityRefusal, Unit]
+  ): Either[Status, Option[wire.AuctionVisibilityRefusal]] = {
+    import wire.AuctionVisibilityRefusal.Reason
+    def refused(reason: Reason) = Right(Some(wire.AuctionVisibilityRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(None)
+      case Left(VisibilityRefusal.AuctionAlreadyStarted) =>
+        refused(Reason.AuctionAlreadyStarted(wire.AuctionAlreadyStarted()))
+      case Left(VisibilityRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(VisibilityRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(VisibilityRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(VisibilityRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(VisibilityRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            VisibilityRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"auction visibility answered $denial")
+    }
+  }
+
   def cancelAuction(outcome: Either[CancellationRefusal, Unit]): Either[Status, wire.CancelAuctionResponse] =
     outcome match {
       case Right(()) => Right(wire.CancelAuctionResponse().withAccepted(wire.AuctionCancelAccepted()))
@@ -892,6 +921,7 @@ object ResponseMapping {
       id = view.auctionId.toString,
       config = config.map(AuctionValues.config),
       lotIds = view.auction.lots.toList.map(_.value).sorted.map(_.toString),
+      hidden = view.auction.hidden,
       status = status
     )
   }

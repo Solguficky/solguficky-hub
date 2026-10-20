@@ -88,6 +88,12 @@ enum DiscardRefusal {
   case AuctionAlreadyStarted
 }
 
+/** Отказ публикации и снятия: проверка до агрегата или решение агрегата. */
+enum VisibilityRefusal {
+  case Denied(denial: Denial)
+  case AuctionAlreadyStarted
+}
+
 /** Отказ `CancelAuction`: проверка до агрегата или решение агрегата. */
 enum CancellationRefusal {
   case Denied(denial: Denial)
@@ -341,6 +347,30 @@ final class AuctionCommands(
           auctions.discard(auctionId, DiscardAuction(opId), Initiator.Operator(person)).map {
             case Left(DiscardAuctionRejected.AuctionNotFound) => Left(DiscardRefusal.Denied(Denial.AuctionNotFound))
             case Left(DiscardAuctionRejected.AuctionAlreadyStarted) => Left(DiscardRefusal.AuctionAlreadyStarted)
+            case Right(_) => Right(())
+          }
+        }
+    }
+
+  /**
+   * Публикация (`published`) или снятие аукциона до торгов (ADR-047, дополнение 2026-10-20). Порядок тот же, что у
+   * удаления; ворота — сходка не отменена.
+   */
+  def changeVisibility(
+      auctionId: AuctionId,
+      published: Boolean,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[VisibilityRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Right(()))
+      case Inspection.Absent => Future.successful(Left(VisibilityRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, VisibilityRefusal.Denied(_)) {
+          val command = ChangeVisibility(published, opId)
+          auctions.changeVisibility(auctionId, command, Initiator.Operator(person)).map {
+            case Left(VisibilityRejected.AuctionNotFound) => Left(VisibilityRefusal.Denied(Denial.AuctionNotFound))
+            case Left(VisibilityRejected.AuctionAlreadyStarted) => Left(VisibilityRefusal.AuctionAlreadyStarted)
             case Right(_) => Right(())
           }
         }
@@ -657,12 +687,13 @@ final class AuctionCommands(
 
   private def drafting(event: AuctionEvent): Boolean =
     event match {
-      case AuctionEvent.AuctionDrafted(_) => true
+      case AuctionEvent.AuctionDrafted(_, _) => true
       case AuctionEvent.LotAdded(_) | AuctionEvent.LotRemoved(_) | AuctionEvent.AuctionScheduled(_) |
           AuctionEvent.PrebiddingStarted | AuctionEvent.AuctionDiscarded | AuctionEvent.AuctionCancelled |
           AuctionEvent.PrebiddingDeadlineReached | AuctionEvent.PrebiddingEnded(_) | AuctionEvent.FinalLineupFrozen(_) |
           AuctionEvent.FinalStarted | AuctionEvent.FinalLotActivated(_) | AuctionEvent.FinalLotCompleted(_) |
-          AuctionEvent.AuctionFinished | AuctionEvent.StepWindowLaunched(_) =>
+          AuctionEvent.AuctionFinished | AuctionEvent.StepWindowLaunched(_) | AuctionEvent.AuctionPublished |
+          AuctionEvent.AuctionHidden =>
         false
     }
 }
