@@ -101,6 +101,7 @@ let ``Method access should cover the contract and admit only its declared caller
             match method with
             | "ListMeetupStates" -> Set.empty
             | "CheckMeetupAuthority" -> set [ Caller.Notifications; Caller.Auction ]
+            | "GetMeetupStanding" -> set [ Caller.Auction ]
             | _ -> Set.singleton Caller.HubBot
 
         test <@ callers = expected @>
@@ -144,6 +145,12 @@ let ``Caller gate should refuse known callers on methods that do not declare the
             && CallerGate.decide table (path "GetMeetup") "Bearer auction-secret" = GateDecision.NotDeclared
                 Caller.Auction
             && CallerGate.decide table (path "CheckMeetupAuthority") "Bearer auction-secret" = GateDecision.Admitted
+                Caller.Auction
+            && CallerGate.decide table (path "GetMeetupStanding") "Bearer notifications-secret" = GateDecision.NotDeclared
+                Caller.Notifications
+            && CallerGate.decide table (path "GetMeetupStanding") "Bearer bot-secret" = GateDecision.NotDeclared
+                Caller.HubBot
+            && CallerGate.decide table (path "GetMeetupStanding") "Bearer auction-secret" = GateDecision.Admitted
                 Caller.Auction
         @>
 

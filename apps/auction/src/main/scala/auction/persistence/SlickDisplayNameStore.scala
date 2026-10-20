@@ -8,6 +8,7 @@ import auction.naming.ChosenName
 import auction.naming.DisplayNameStore
 import auction.naming.StoredName
 import auction.naming.TelegramUsername
+import auction.watch.AuctionChanges
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.persistence.jdbc.db.SlickExtension
 import org.postgresql.util.PSQLException
@@ -41,7 +42,7 @@ final class SlickDisplayNameStore(database: Database)(using ExecutionContext) ex
                ON CONFLICT (auction_id, participant_id) DO UPDATE
                SET telegram_username = EXCLUDED.telegram_username, alias = EXCLUDED.alias, alias_key = EXCLUDED.alias_key
                WHERE NOT auction_display_name.frozen""".flatMap {
-          case 1 => DBIO.successful(ChooseResult.Written)
+          case 1 => announce(auction).map(_ => ChooseResult.Written)
           // Ноль строк значит, что строка есть и заморожена. Если её уже нет, «заморожено» соврало бы.
           case _ =>
             select(auction, Set(participant)).flatMap { rows =>
@@ -61,6 +62,14 @@ final class SlickDisplayNameStore(database: Database)(using ExecutionContext) ex
         case taken: PSQLException if violates(taken, AliasIndex) => ChooseResult.AliasTaken
       }
   }
+
+  /**
+   * Имя входит в снимок экрана зала (ADR-040, дополнение 2026-10-19), а проекции его не пишут: записанный выбор
+   * объявляет аукцион тем же сигналом, что проекции и карточка лота, иначе открытый экран смены имени не увидит.
+   * Заморозка сигнала не даёт: текст имени она не меняет.
+   */
+  private def announce(auction: AuctionId): DBIO[Unit] =
+    sql"""SELECT pg_notify(${AuctionChanges.Channel}, ${auction.value.toString})""".as[String].map(_ => ())
 
   def freeze(auction: AuctionId, participant: ParticipantId): Future[Boolean] =
     database

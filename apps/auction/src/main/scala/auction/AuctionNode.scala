@@ -2,6 +2,7 @@ package auction
 
 import auction.aggregate.AuctionCommands
 import auction.aggregate.MeetupAuthority
+import auction.boundary.ScreenRoutes
 import auction.catalog.LotCatalogCommands
 import auction.entity.AuctionEntity
 import auction.entity.AuctionGateway
@@ -25,6 +26,7 @@ import auction.persistence.JournalDatabase
 import auction.persistence.SlickAuctionViews
 import auction.persistence.SlickAuctionWatchViews
 import auction.persistence.SlickLotViews
+import auction.persistence.SlickScreenViews
 import auction.projection.AuctionProjection
 import auction.projection.AuctionViewHandler
 import auction.projection.LotProjection
@@ -64,6 +66,9 @@ import auction.results.ResultsForecasts
 import auction.results.ResultsGateway
 import auction.results.ResultsOutcomes
 import auction.results.ResultsStore
+import auction.screen.MeetupStandings
+import auction.screen.ScreenFeed
+import auction.screen.StreamLimit
 import auction.slot.SlotHolders
 import auction.slot.TradingSlotEntity
 import auction.watch.AuctionChanges
@@ -74,6 +79,7 @@ import org.apache.pekko.Done
 import org.apache.pekko.actor.CoordinatedShutdown
 import org.apache.pekko.http.scaladsl.model.HttpRequest
 import org.apache.pekko.http.scaladsl.model.HttpResponse
+import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.http.scaladsl.settings.ServerSettings
 import org.apache.pekko.actor.typed.ActorRef
 import org.apache.pekko.actor.typed.ActorSystem
@@ -491,6 +497,25 @@ object AuctionNode {
       placeBidsRight = placeBidsRight
     )
     GrpcBoundary(callers, (caller, correlation, notes) => service.within(correlation, Some(caller), notes))
+  }
+
+  /**
+   * Маршруты экрана зала (ADR-040, дополнение 2026-10-19): поток на тех же поводах, что `WatchAuction`, — `changes`
+   * общий с gRPC-границей, — и ворота по состоянию сходки у Meetups. Предел потоков и период heartbeat — из
+   * `auction.screen`.
+   */
+  def screen(system: ActorSystem[?], changes: AuctionChanges, standings: MeetupStandings): Route = {
+    val config = system.settings.config
+    import system.executionContext
+    val views = SlickScreenViews(system)
+    val feed = ScreenFeed(
+      views,
+      SlickDisplayNameStore(system),
+      standings,
+      changes,
+      StreamLimit(config.getInt("auction.screen.max-streams"))
+    )
+    ScreenRoutes.route(feed, views, config.getDuration("auction.screen.heartbeat").toScala)
   }
 
   def readiness(system: ActorSystem[?], timeout: FiniteDuration): () => Future[Readiness] = {
