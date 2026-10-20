@@ -8,7 +8,7 @@ name: Stage bump
 # есть — меняется только тот, кто читает коммит.
 #
 # Входы:
-#   file  — файл ops-репозитория: stage/test/values.yaml или stage/test/release.yaml.
+#   file  — файл ops-репозитория: envs/stage/values.yaml или envs/stage/release.yaml.
 #   key   — путь yq внутри файла, например .parameters.hub_bot.hub_bot_image.
 #   value — новое значение: `образ@sha256:...` или версия чарта.
 #   what  — что меняется, для заголовка коммита.

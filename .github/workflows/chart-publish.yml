@@ -5,7 +5,7 @@ name: Chart publish
 # публикует: его проверяет джоба apphost в ci.yml тем же рецептом
 # `just apphost-chart`. Push в stage публикует кандидата, как образы
 # (image-*.yml); промоушн — PR в ops-репозиторий, а не пересборка. Версия
-# кандидата уходит в stage/test/release.yaml ops-репозитория (stage-bump.yml),
+# кандидата уходит в envs/stage/release.yaml ops-репозитория (stage-bump.yml),
 # откуда stage выкатывает её сам (дополнение ADR-055 от 2026-10-07).
 #
 # Версия — 0.1.<номер прогона>: монотонна, поэтому HelmRelease с диапазоном
@@ -75,7 +75,7 @@ jobs:
     permissions: {}
     uses: ./.github/workflows/stage-bump.yml
     with:
-      file: stage/test/release.yaml
+      file: envs/stage/release.yaml
       key: .version
       value: ${{ needs.publish.outputs.version }}
       what: chart

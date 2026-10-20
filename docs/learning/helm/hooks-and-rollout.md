@@ -4,7 +4,7 @@
 
 - дифф PER-311 ([PR #366](https://github.com/Solguficky/solguficky-hub/pull/366)): `infra/apphost/AppHost/Configuration/Publish/HelmHookJob.cs`, `ClusterWorkload.cs`, `tools/apphost/check-chart.py`;
 - выкладки, откат и перезагрузка stage 06.10.2026;
-- проверочные команды, выполненные при записи разбора: helm 4.3.0 локально и учётка выкатки `test` на хосте.
+- проверочные команды, выполненные при записи разбора: helm 4.3.0 локально и учётка выкатки stage на хосте.
 
 Как устроен сам кластер — в [k3s.md](../self-hosting/k3s.md). Правила stage — в [stage.md](../../development/stage.md), решение о рантайме — в [ADR-055](../../decisions/ADR-055-k3s-runtime-from-aspire-chart.md).
 
@@ -195,7 +195,7 @@ sequenceDiagram
 
 ## Проверь себя
 
-Команды на хосте — под `ops` с `KUBECONFIG=~/.kube/test.yaml`. Локальные — helm 4.3.0.
+Команды на хосте — под `ops` с `KUBECONFIG=~/.kube/stage.yaml`. Локальные — helm 4.3.0.
 
 1. **Входят ли hook'и в релиз?** `helm get manifest hub | grep -c jetstream-topology` — `0`; `helm get hooks hub | grep "^# Source"` — ConfigMap, Secret и Job топологии.
 2. **В каком порядке Helm создал входы и Job?** `kubectl get job/jetstream-topology configmap/jetstream-topology-files -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp` — ConfigMap на секунду раньше Job.
@@ -203,4 +203,4 @@ sequenceDiagram
 4. **Перекатит ли под правка values?** На игрушечном чарте с аннотацией `checksum/config`: `helm template t . --set k=a | grep checksum` и то же с `k=b` — хеши разные.
 5. **Почему `dig`, а не `.Values.resources…`?** `helm template` с `{{ .Values.resources.hub_bot.memoryLimit }}` без ключа `resources` падает с `nil pointer evaluating interface {}.hub_bot`, а `dig` возвращает умолчание.
 6. **Поймает ли `helm lint` Deployment с `Recreate` и `rollingUpdate`?** Нет, `0 chart(s) failed`. Ловит API: `kubectl apply --dry-run=server -f …` — `spec.strategy.rollingUpdate: Forbidden`.
-7. **Удалит ли `helm uninstall` Job топологии?** Не проверялось: релиз stage живой, а второй релиз чарта хаба не влезет в квоту `test`. По документации — нет: «resources that a hook creates are not tracked or managed as part of the release». Проверь сам на игрушечном чарте с одним hook-ConfigMap: `helm install tmp ./tiny`, `helm uninstall tmp`, затем `kubectl get configmap` — hook-объект остаётся.
+7. **Удалит ли `helm uninstall` Job топологии?** Не проверялось: релиз stage живой, а второй релиз чарта хаба не влезет в квоту `stage`. По документации — нет: «resources that a hook creates are not tracked or managed as part of the release». Проверь сам на игрушечном чарте с одним hook-ConfigMap: `helm install tmp ./tiny`, `helm uninstall tmp`, затем `kubectl get configmap` — hook-объект остаётся.
