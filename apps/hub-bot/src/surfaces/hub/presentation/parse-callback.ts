@@ -54,7 +54,8 @@ const GlobalCategorySchema = z.enum([
   "reminder",
   "organizer",
   "announcement",
-  "access",
+  "access-community",
+  "access-auction",
   "release",
 ]);
 // Кнопка несёт целевое состояние, а не переворот: у двух человек, нажавших на

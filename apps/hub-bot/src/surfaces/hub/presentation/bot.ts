@@ -368,6 +368,7 @@ import {
   settingsScreen,
 } from "./screens/menu.js";
 import {
+  accessRequestCategories,
   auctionNotificationsChangeData,
   auctionNotificationsScreen,
   categoryLabels,
@@ -509,7 +510,7 @@ const auctionMeetupCancelledText =
 // потери права получает `PERMISSION_DENIED`, и ответ называет причину, а не
 // одно «недоступно».
 const accessRequestsForbiddenText =
-  "Запросы доступа настраивает только администратор.";
+  "Запросы доступа настраивает только тот, кто решает заявки этой очереди.";
 const managementForbiddenText = "Управление сходками доступно администратору.";
 const communityForbiddenText =
   "Управлять составом сообщества может только администратор.";
@@ -8548,7 +8549,9 @@ async function renderNotificationSettings(
 }
 
 function categoryForbiddenText(category: NotificationCategory): string {
-  return category === "access" ? accessRequestsForbiddenText : forbiddenText;
+  return accessRequestCategories.includes(category)
+    ? accessRequestsForbiddenText
+    : forbiddenText;
 }
 
 // Настройка у сходки сильнее общей, а снять её одной кнопкой контракт не даёт:

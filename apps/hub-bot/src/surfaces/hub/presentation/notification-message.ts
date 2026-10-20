@@ -64,9 +64,10 @@ export const telegramTextLimit = 4096;
 // Объявление ни к какой сходке не привязано, и категория у него только общая.
 export const disableAnnouncementCallback = "v1:notify:off:announcement";
 
-// Заявка тоже не привязана к сходке. Категория одна на оба круга, поэтому
-// кнопка стоит и под заявкой в хаб, и под заявкой в аукцион.
-export const disableAccessRequestCallback = "v1:notify:off:access";
+// Заявка не привязана к сходке, а очередь у неё есть, и категория у каждой
+// очереди своя: кнопка под оповещением выключает ту, из которой заявка пришла,
+// а не обе сразу (PER-635). Данные — категория очереди, как в экране настроек.
+export const disableAccessRequestPrefix = "v1:notify:off:access-";
 
 export const disableReleaseCallback = "v1:notify:off:release";
 
@@ -483,10 +484,16 @@ function sameYearAs(when: MeetupWhen): CommunityDay {
 
 // Оповещение о заявке (PER-634). Кнопки под ним — следы: экран по ним
 // приходит новым сообщением, а оповещение остаётся в истории как было.
-// Выключатель категории стоит под каждым видом.
+// Выключатель категории стоит под каждым видом и называет очередь заявки
+// (PER-635).
 function renderAccessRequest(content: AccessRequestView): NotificationMessage {
   const disable = (keyboard: InlineKeyboard) =>
-    keyboard.text("Не присылать запросы доступа", disableAccessRequestCallback);
+    keyboard.text(
+      content.queue === "auction"
+        ? "Не присылать запросы в аукцион"
+        : "Не присылать запросы в сообщество",
+      disableAccessRequestPrefix + content.queue,
+    );
   // Аукционная заявка — в очередь аукциона, где допуск выдаёт право ставить,
   // а не круг участника (PER-534).
   const title =

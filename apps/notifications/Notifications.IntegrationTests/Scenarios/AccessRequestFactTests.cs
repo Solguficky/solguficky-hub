@@ -45,12 +45,15 @@ public class AccessRequestFactTests
         var byDefault = await Person(db, AdminHolding);
         var explicitlyOn = await Person(db, AdminHolding);
         var switchedOff = await Person(db, AdminHolding);
+        var otherQueueOff = await Person(db, AdminHolding);
         var blockedAdmin = await Person(db, blocked: true, AdminHolding);
         var maintainer = await Person(db, MaintainerHolding);
         var member = await Person(db, MemberHolding);
         var auctionModerator = await Person(db, MemberHolding.With("admit_bidders"));
-        await Preference(db, explicitlyOn, null, "access_request", enabled: true);
-        await Preference(db, switchedOff, null, "access_request", enabled: false);
+        await Preference(db, explicitlyOn, null, "access_request_community", enabled: true);
+        await Preference(db, switchedOff, null, "access_request_community", enabled: false);
+        // Выключенная очередь аукциона заявку в сообщество не гасит (PER-635).
+        await Preference(db, otherQueueOff, null, "access_request_auction", enabled: false);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
         var telemetry = silo.Service<FactTelemetry>();
@@ -59,10 +62,11 @@ public class AccessRequestFactTests
         var application = EventFactory.Application(applicant, version: 2, Circle.Member);
         await nats.Publish(ApplicationSubmittedSubject, application);
 
-        var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
+        var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 3);
 
         // Модератор аукциона заявку в сообщество не решает и её не получает.
-        facts.Select(fact => Guid.Parse(fact.Fact.RecipientId)).ShouldBe([byDefault, explicitlyOn], ignoreOrder: true);
+        facts.Select(fact => Guid.Parse(fact.Fact.RecipientId))
+            .ShouldBe([byDefault, explicitlyOn, otherQueueOff], ignoreOrder: true);
         var recipients = facts.Select(fact => fact.Fact.RecipientId).ToList();
         recipients.ShouldNotContain(switchedOff.ToString());
         recipients.ShouldNotContain(blockedAdmin.ToString());
@@ -84,7 +88,7 @@ public class AccessRequestFactTests
             fact.HasRequestId.ShouldBeFalse();
         }
 
-        telemetry.Total("created").ShouldBe(2);
+        telemetry.Total("created").ShouldBe(3);
         telemetry.Total("suppressed").ShouldBe(1);
     }
 
@@ -103,19 +107,27 @@ public class AccessRequestFactTests
 
         var admin = await Person(db, AdminHolding);
         var auctionModerator = await Person(db, MemberHolding.With("admit_bidders"));
+        var communityOff = await Person(db, AdminHolding);
+        var auctionOff = await Person(db, AdminHolding);
         var member = await Person(db, MemberHolding);
         var maintainer = await Person(db, MaintainerHolding);
         var guest = await Person(db, GuestHolding);
+        // Выключенная очередь сообщества заявку в аукцион не гасит, а своя —
+        // гасит (PER-635).
+        await Preference(db, communityOff, null, "access_request_community", enabled: false);
+        await Preference(db, auctionOff, null, "access_request_auction", enabled: false);
 
         await using var silo = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url);
 
         var application = EventFactory.Application(EventFactory.NewId(), version: 2, Circle.Guest);
         await nats.Publish(ApplicationSubmittedSubject, application);
 
-        var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 2);
+        var facts = await Eventually(nats.PublishedFacts, facts => facts.Count == 3);
 
-        facts.Select(fact => Guid.Parse(fact.Fact.RecipientId)).ShouldBe([admin, auctionModerator], ignoreOrder: true);
+        facts.Select(fact => Guid.Parse(fact.Fact.RecipientId))
+            .ShouldBe([admin, auctionModerator, communityOff], ignoreOrder: true);
         var recipients = facts.Select(fact => fact.Fact.RecipientId).ToList();
+        recipients.ShouldNotContain(auctionOff.ToString());
         recipients.ShouldNotContain(member.ToString());
         recipients.ShouldNotContain(maintainer.ToString());
         recipients.ShouldNotContain(guest.ToString());
@@ -388,13 +400,16 @@ public class AccessRequestFactTests
     }
 
     /// <summary>
-    /// Кто получает факт, тот видит переключатель: администратор и участник с
-    /// правом модерации аукциона (ADR-064).
+    /// Кто получает факт, тот видит переключатель, и только своей очереди:
+    /// администратору видны обе, модератору аукциона — его (ADR-064, PER-635).
     /// </summary>
     [Theory]
-    [InlineData("admin")]
-    [InlineData("auction moderator")]
-    public async Task When_QueueModeratorReadsGlobalPreferences_Expect_AccessRequestsOnByDefault(string who)
+    [InlineData("admin", true, true)]
+    [InlineData("auction moderator", false, true)]
+    public async Task When_QueueModeratorReadsGlobalPreferences_Expect_OwnQueuesOnly(
+        string who,
+        bool communityVisible,
+        bool auctionVisible)
     {
         await using var service = await PreferencesUnderTest.Start();
         var moderator = await Person(service.Database, who == "admin" ? AdminHolding : MemberHolding.With("admit_bidders"));
@@ -402,12 +417,20 @@ public class AccessRequestFactTests
         var snapshot = await service.Client.GetGlobalNotificationPreferencesAsync(
             new GetGlobalNotificationPreferencesRequest { IdentityId = moderator.ToString("D") });
 
-        snapshot.Categories.Single(preference => preference.Category == NotificationCategory.AccessRequest)
-            .Enabled.ShouldBeTrue();
+        var seen = snapshot.Categories.Select(preference => preference.Category).ToList();
+        seen.Contains(NotificationCategory.AccessRequestCommunity).ShouldBe(communityVisible);
+        seen.Contains(NotificationCategory.AccessRequestAuction).ShouldBe(auctionVisible);
+        snapshot.Categories.Where(preference => preference.Category is
+                NotificationCategory.AccessRequestCommunity or NotificationCategory.AccessRequestAuction)
+            .ShouldAllBe(preference => preference.Enabled);
     }
 
+    /// <summary>
+    /// Модератор только очереди аукциона ставит свою категорию сам: это и есть
+    /// кнопка под оповещением, и отказ по чужому праву её не останавливает.
+    /// </summary>
     [Fact]
-    public async Task When_AuctionModeratorSwitchesAccessRequestsOff_Expect_SnapshotCarriesItOff()
+    public async Task When_AuctionOnlyModeratorSwitchesItsQueueOff_Expect_ItOffAndCommunityHidden()
     {
         await using var service = await PreferencesUnderTest.Start();
         var moderator = await Person(service.Database, MemberHolding.With("admit_bidders"));
@@ -415,16 +438,70 @@ public class AccessRequestFactTests
         var snapshot = await service.Client.SetGlobalCategoryPreferenceAsync(new SetGlobalCategoryPreferenceRequest
         {
             IdentityId = moderator.ToString("D"),
-            Category = NotificationCategory.AccessRequest,
+            Category = NotificationCategory.AccessRequestAuction,
             Enabled = false,
         });
 
-        snapshot.Categories.Single(preference => preference.Category == NotificationCategory.AccessRequest)
+        snapshot.Categories.Single(preference => preference.Category == NotificationCategory.AccessRequestAuction)
             .Enabled.ShouldBeFalse();
+        snapshot.Categories.Select(preference => preference.Category)
+            .ShouldNotContain(NotificationCategory.AccessRequestCommunity);
     }
 
     /// <summary>
-    /// Человек без права модерации категории не видит и поставить её не может:
+    /// Администратор держит оба права, и выключение одной очереди вторую не
+    /// гасит (PER-635).
+    /// </summary>
+    [Fact]
+    public async Task When_BothQueuesModeratorSwitchesOneOff_Expect_OtherStaysOn()
+    {
+        await using var service = await PreferencesUnderTest.Start();
+        var moderator = await Person(service.Database, AdminHolding);
+
+        var snapshot = await service.Client.SetGlobalCategoryPreferenceAsync(new SetGlobalCategoryPreferenceRequest
+        {
+            IdentityId = moderator.ToString("D"),
+            Category = NotificationCategory.AccessRequestAuction,
+            Enabled = false,
+        });
+
+        snapshot.Categories.Single(preference => preference.Category == NotificationCategory.AccessRequestAuction)
+            .Enabled.ShouldBeFalse();
+        snapshot.Categories.Single(preference => preference.Category == NotificationCategory.AccessRequestCommunity)
+            .Enabled.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// Держатель права одной очереди вторую не видит и не ставит: чужой
+    /// переключатель он бы выключил вслепую (PER-635).
+    /// </summary>
+    [Fact]
+    public async Task When_CommunityModeratorTouchesAuctionQueue_Expect_PermissionDenied()
+    {
+        await using var service = await PreferencesUnderTest.Start();
+        var moderator = await Person(service.Database, MemberHolding.With("manage_members"));
+
+        var snapshot = await service.Client.GetGlobalNotificationPreferencesAsync(
+            new GetGlobalNotificationPreferencesRequest { IdentityId = moderator.ToString("D") });
+        // Своя строка в снимке есть, чужая — нет: пустой снимок прошёл бы
+        // проверку отсутствия и ничего не доказывал.
+        snapshot.Categories.Select(preference => preference.Category)
+            .ShouldContain(NotificationCategory.AccessRequestCommunity);
+        snapshot.Categories.Select(preference => preference.Category)
+            .ShouldNotContain(NotificationCategory.AccessRequestAuction);
+
+        var refused = await Should.ThrowAsync<RpcException>(() =>
+            service.Client.SetGlobalCategoryPreferenceAsync(new SetGlobalCategoryPreferenceRequest
+            {
+                IdentityId = moderator.ToString("D"),
+                Category = NotificationCategory.AccessRequestAuction,
+                Enabled = false,
+            }).ResponseAsync);
+        refused.StatusCode.ShouldBe(StatusCode.PermissionDenied);
+    }
+
+    /// <summary>
+    /// Человек без права модерации категорий не видит и поставить их не может:
     /// ни участник хаба, ни мейнтейнер, ни гость, ни человек, которого реплика
     /// не знает.
     /// </summary>
@@ -447,16 +524,26 @@ public class AccessRequestFactTests
 
         var snapshot = await service.Client.GetGlobalNotificationPreferencesAsync(
             new GetGlobalNotificationPreferencesRequest { IdentityId = person.ToString("D") });
-        snapshot.Categories.Select(preference => preference.Category).ShouldNotContain(NotificationCategory.AccessRequest);
+        snapshot.Categories.Select(preference => preference.Category)
+            .ShouldNotContain(NotificationCategory.AccessRequestCommunity);
+        snapshot.Categories.Select(preference => preference.Category)
+            .ShouldNotContain(NotificationCategory.AccessRequestAuction);
 
-        var refused = await Should.ThrowAsync<RpcException>(() =>
-            service.Client.SetGlobalCategoryPreferenceAsync(new SetGlobalCategoryPreferenceRequest
-            {
-                IdentityId = person.ToString("D"),
-                Category = NotificationCategory.AccessRequest,
-                Enabled = true,
-            }).ResponseAsync);
-        refused.StatusCode.ShouldBe(StatusCode.PermissionDenied);
+        foreach (var category in new[]
+                 {
+                     NotificationCategory.AccessRequestCommunity,
+                     NotificationCategory.AccessRequestAuction,
+                 })
+        {
+            var refused = await Should.ThrowAsync<RpcException>(() =>
+                service.Client.SetGlobalCategoryPreferenceAsync(new SetGlobalCategoryPreferenceRequest
+                {
+                    IdentityId = person.ToString("D"),
+                    Category = category,
+                    Enabled = true,
+                }).ResponseAsync);
+            refused.StatusCode.ShouldBe(StatusCode.PermissionDenied);
+        }
 
         (await Scalar(service.Database, "SELECT count(*) FROM notification_preference;")).ShouldBe(0);
     }
@@ -471,14 +558,16 @@ public class AccessRequestFactTests
             service.Client.SetGlobalCategoryPreferenceAsync(new SetGlobalCategoryPreferenceRequest
             {
                 IdentityId = blocked.ToString("D"),
-                Category = NotificationCategory.AccessRequest,
+                Category = NotificationCategory.AccessRequestCommunity,
                 Enabled = false,
             }).ResponseAsync);
         refused.StatusCode.ShouldBe(StatusCode.PermissionDenied);
     }
 
-    [Fact]
-    public async Task When_AccessRequestsSetPerMeetup_Expect_InvalidArgument()
+    [Theory]
+    [InlineData(NotificationCategory.AccessRequestCommunity)]
+    [InlineData(NotificationCategory.AccessRequestAuction)]
+    public async Task When_AccessRequestsSetPerMeetup_Expect_InvalidArgument(NotificationCategory category)
     {
         await using var service = await PreferencesUnderTest.Start();
         var admin = await Person(service.Database, AdminHolding);
@@ -488,11 +577,51 @@ public class AccessRequestFactTests
             {
                 IdentityId = admin.ToString("D"),
                 MeetupId = Guid.CreateVersion7().ToString("D"),
-                Category = NotificationCategory.AccessRequest,
+                Category = category,
                 Enabled = false,
             }).ResponseAsync);
         refused.StatusCode.ShouldBe(StatusCode.InvalidArgument);
     }
+
+    /// <summary>
+    /// Сохранённое выключение прежней общей категории миграция переносит на обе
+    /// новые: кто выключал её, тот выключал и ту, и другую (PER-635).
+    /// </summary>
+    [Fact]
+    public async Task When_LegacyAccessRequestSettingMigrated_Expect_BothQueuesOff()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+
+        // Состояние до миграции: строки прежнего ключа и ограничение, которое
+        // их допускало.
+        var person = Guid.CreateVersion7();
+        var keptOn = Guid.CreateVersion7();
+        await Execute(db, """
+            ALTER TABLE notification_preference DROP CONSTRAINT notification_preference_category_known;
+            INSERT INTO notification_preference (identity_id, meetup_id, category, enabled, updated_at)
+            VALUES (@Person, NULL, 'access_request', false, now()),
+                   (@KeptOn, NULL, 'access_request', true, now());
+            """, new { Person = person, KeptOn = keptOn });
+
+        await Execute(db, Migrations.List().Single(migration => migration.Version == 37).Sql, new { });
+
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+        var stored = (await connection.QueryAsync<PreferenceRow>(
+                "SELECT identity_id AS IdentityId, category AS Category, enabled AS Enabled FROM notification_preference ORDER BY identity_id, category;"))
+            .ToList();
+
+        stored.ShouldBe(
+            [
+                new PreferenceRow(person, "access_request_auction", false),
+                new PreferenceRow(person, "access_request_community", false),
+                new PreferenceRow(keptOn, "access_request_auction", true),
+                new PreferenceRow(keptOn, "access_request_community", true),
+            ],
+            ignoreOrder: true);
+    }
+
+    private sealed record PreferenceRow(Guid IdentityId, string Category, bool Enabled);
 
     private static async Task Apply(NatsUnderTest nats, ReplicaTelemetry replica, string subject, IdentityEvent message)
     {

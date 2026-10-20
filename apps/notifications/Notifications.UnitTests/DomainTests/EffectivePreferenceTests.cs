@@ -92,20 +92,27 @@ public class EffectivePreferenceTests
 
         var snapshot = EffectivePreference.Global(Guid.NewGuid(), Nothing, rights);
 
-        snapshot.Categories.Select(state => state.Category).ShouldNotContain(NotificationCategory.AccessRequest);
+        snapshot.Categories.Select(state => state.Category).ShouldNotContain(NotificationCategory.AccessRequestCommunity);
+        snapshot.Categories.Select(state => state.Category).ShouldNotContain(NotificationCategory.AccessRequestAuction);
         snapshot.Categories.Select(state => state.Category)
-            .ShouldBe(NotificationCategories.All.Where(category => category != NotificationCategory.AccessRequest), ignoreOrder: true);
+            .ShouldBe(
+                NotificationCategories.All.Where(category => category != NotificationCategory.AccessRequestCommunity
+                    && category != NotificationCategory.AccessRequestAuction),
+                ignoreOrder: true);
     }
 
     [Fact]
-    public void Global_ModeratorWhoTurnedAccessRequestsOff_CarriesItOff()
+    public void Global_ModeratorWhoTurnedOneQueueOff_CarriesTheOtherOn()
     {
+        // Выключение одной очереди не гасит другую: это и есть смысл разделения
+        // категории (PER-635).
         var snapshot = EffectivePreference.Global(
             Guid.NewGuid(),
-            new Dictionary<NotificationCategory, bool> { [NotificationCategory.AccessRequest] = false },
-            ["access_hub", "place_bids", "admit_bidders"]);
+            new Dictionary<NotificationCategory, bool> { [NotificationCategory.AccessRequestAuction] = false },
+            ["access_hub", "place_bids", "manage_members", "admit_bidders"]);
 
-        Enabled(snapshot.Categories, NotificationCategory.AccessRequest).ShouldBeFalse();
+        Enabled(snapshot.Categories, NotificationCategory.AccessRequestAuction).ShouldBeFalse();
+        Enabled(snapshot.Categories, NotificationCategory.AccessRequestCommunity).ShouldBeTrue();
     }
 
     [Fact]

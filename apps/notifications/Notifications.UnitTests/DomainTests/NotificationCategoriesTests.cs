@@ -89,7 +89,8 @@ public class NotificationCategoriesTests
     public void MeetupScoped_AccessRequests_AreGlobalOnly()
     {
         // Заявка не привязана ни к одной сходке.
-        NotificationCategories.MeetupScoped.ShouldNotContain(NotificationCategory.AccessRequest);
+        NotificationCategories.MeetupScoped.ShouldNotContain(NotificationCategory.AccessRequestCommunity);
+        NotificationCategories.MeetupScoped.ShouldNotContain(NotificationCategory.AccessRequestAuction);
     }
 
     [Fact]
@@ -97,28 +98,37 @@ public class NotificationCategoriesTests
     {
         // Иначе очередь заявок копится незамеченной, пока каждый администратор
         // сам не найдёт настройку.
-        NotificationCategories.DefaultEnabled(NotificationCategory.AccessRequest).ShouldBeTrue();
+        NotificationCategories.DefaultEnabled(NotificationCategory.AccessRequestCommunity).ShouldBeTrue();
+        NotificationCategories.DefaultEnabled(NotificationCategory.AccessRequestAuction).ShouldBeTrue();
     }
 
     [Theory]
-    [InlineData(new[] { "access_hub", "place_bids", "manage_members", "admit_bidders" }, true)]
-    [InlineData(new[] { "access_hub", "place_bids", "admit_bidders" }, true)]
-    [InlineData(new[] { "access_hub", "place_bids", "manage_members" }, true)]
-    [InlineData(new[] { "access_hub", "place_bids" }, false)]
-    [InlineData(new[] { "place_bids" }, false)]
-    [InlineData(new string[0], false)]
-    public void IsVisibleTo_AccessRequests_OnlyToQueueModerators(string[] rights, bool visible)
+    [InlineData("manage_members", true, false)]
+    [InlineData("admit_bidders", false, true)]
+    [InlineData("access_hub", false, false)]
+    [InlineData("place_bids", false, false)]
+    [InlineData(null, false, false)]
+    public void IsVisibleTo_AccessRequests_OnlyToTheModeratorOfTheirOwnQueue(
+        string? right,
+        bool communityVisible,
+        bool auctionVisible)
     {
-        // Кто получает факт, тот видит переключатель: держатель права модерации
-        // хотя бы одной очереди (ADR-064).
-        NotificationCategories.IsVisibleTo(NotificationCategory.AccessRequest, rights).ShouldBe(visible);
+        // Кто получает факт, тот видит переключатель, и только своей очереди:
+        // держателю одной очередь другой не обещана (ADR-064, PER-635).
+        string[] rights = right is null ? [] : [right];
+
+        NotificationCategories.IsVisibleTo(NotificationCategory.AccessRequestCommunity, rights)
+            .ShouldBe(communityVisible);
+        NotificationCategories.IsVisibleTo(NotificationCategory.AccessRequestAuction, rights)
+            .ShouldBe(auctionVisible);
     }
 
     [Fact]
     public void IsVisibleTo_EveryOtherCategory_IsVisibleWithoutRights()
     {
         NotificationCategories.All
-            .Where(category => category != NotificationCategory.AccessRequest)
+            .Where(category => category != NotificationCategory.AccessRequestCommunity
+                && category != NotificationCategory.AccessRequestAuction)
             .ShouldAllBe(category => NotificationCategories.IsVisibleTo(category, Array.Empty<string>()));
     }
 

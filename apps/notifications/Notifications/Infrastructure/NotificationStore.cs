@@ -459,14 +459,17 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         }
 
         // Адресаты — держатели права модерации очереди, куда легла заявка
-        // (ADR-064, пункт 14). Заявитель исключается как исполнитель: правило
-        // «о себе не сообщают» держится и тут.
+        // (ADR-064, пункт 14), и отказываются они от категории своей очереди:
+        // выключение одной не гасит заявки другой (PER-635). Заявитель
+        // исключается как исполнитель: правило «о себе не сообщают» держится
+        // и тут.
+        var category = AccessQueues.RequestCategory(queue);
         var audience = await work.Query<AudienceRow>(
             AudienceSql,
             new
             {
-                Default = NotificationCategories.DefaultEnabled(NotificationFacts.AccessRequestCategory),
-                Category = NotificationCategories.Storage(NotificationFacts.AccessRequestCategory),
+                Default = NotificationCategories.DefaultEnabled(category),
+                Category = NotificationCategories.Storage(category),
                 Rights = new[] { AccessQueues.ModeratorRight(queue) },
                 Performer = (Guid?)fact.IdentityId,
             },

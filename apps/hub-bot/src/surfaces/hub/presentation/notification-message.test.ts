@@ -541,10 +541,14 @@ describe("organizer message", () => {
 });
 
 describe("access request", () => {
-  const stop = expect.objectContaining({
-    text: "Не присылать запросы доступа",
-    callback_data: "v1:notify:off:access",
-  });
+  const stop = (queue: "community" | "auction") =>
+    expect.objectContaining({
+      text:
+        queue === "auction"
+          ? "Не присылать запросы в аукцион"
+          : "Не присылать запросы в сообщество",
+      callback_data: `v1:notify:off:access-${queue}`,
+    });
 
   it("names the hub request, leads to its queue and offers to stop requests", () => {
     const content: OutgoingNotification = {
@@ -559,14 +563,14 @@ describe("access request", () => {
         text: "Открыть заявки",
         callback_data: "v1:t:cm:q",
       }),
-      stop,
+      stop("community"),
     ]);
   });
 
   // Очередь хаба допускает в участники: аукционную заявку ведут в очередь
-  // аукциона, где допуск выдаёт право ставить (PER-534). Категория у обеих
-  // очередей одна, и выключатель стоит под обеими.
-  it("leads the auction request to the auction queue, not the hub one", () => {
+  // аукциона, где допуск выдаёт право ставить (PER-534). Выключатель называет
+  // ту очередь, из которой заявка пришла (PER-635).
+  it("leads the auction request to the auction queue and stops only that queue", () => {
     const content: OutgoingNotification = {
       kind: "access-requested",
       queue: "auction",
@@ -579,16 +583,20 @@ describe("access request", () => {
         text: "Открыть заявки",
         callback_data: "v1:t:aq:q",
       }),
-      stop,
+      stop("auction"),
     ]);
   });
 });
 
 describe("access request with the application", () => {
-  const stop = expect.objectContaining({
-    text: "Не присылать запросы доступа",
-    callback_data: "v1:notify:off:access",
-  });
+  const stop = (queue: "community" | "auction") =>
+    expect.objectContaining({
+      text:
+        queue === "auction"
+          ? "Не присылать запросы в аукцион"
+          : "Не присылать запросы в сообщество",
+      callback_data: `v1:notify:off:access-${queue}`,
+    });
   const applicationId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3903";
   const createdAtMs = Date.UTC(2026, 9, 12, 18, 5, 7, 40);
 
@@ -629,7 +637,7 @@ describe("access request with the application", () => {
         text: "Профиль ↗",
         url: "https://t.me/alice_b",
       }),
-      stop,
+      stop("community"),
     ]);
   });
 
@@ -657,7 +665,7 @@ describe("access request with the application", () => {
     ).toEqual([
       expect.stringMatching(/^v1:t:aq:qa:/),
       expect.stringMatching(/^v1:t:aq:qd:/),
-      "v1:notify:off:access",
+      "v1:notify:off:access-auction",
     ]);
   });
 
@@ -677,7 +685,7 @@ describe("access request with the application", () => {
         text: "Открыть заявки",
         callback_data: "v1:t:cm:q",
       }),
-      stop,
+      stop("community"),
     ]);
   });
 

@@ -750,10 +750,15 @@ describe("notification callbacks", () => {
       category: "published",
       enabled: false,
     });
-    expect(parseCallback("v1:notify:gset:access:1")).toEqual({
+    expect(parseCallback("v1:notify:gset:access-community:1")).toEqual({
       kind: "notify-set-global",
-      category: "access",
+      category: "access-community",
       enabled: true,
+    });
+    expect(parseCallback("v1:notify:gset:access-auction:0")).toEqual({
+      kind: "notify-set-global",
+      category: "access-auction",
+      enabled: false,
     });
   });
 
@@ -770,9 +775,18 @@ describe("notification callbacks", () => {
       kind: "notify-disable-global",
       category: "announcement",
     });
-    expect(parseCallback("v1:notify:off:access")).toEqual({
+    expect(parseCallback("v1:notify:off:access-community")).toEqual({
       kind: "notify-disable-global",
-      category: "access",
+      category: "access-community",
+    });
+    expect(parseCallback("v1:notify:off:access-auction")).toEqual({
+      kind: "notify-disable-global",
+      category: "access-auction",
+    });
+    // Прежняя общая категория контрактом больше не существует: кнопка из
+    // старого сообщения не выключает ни одну очередь вслепую.
+    expect(parseCallback("v1:notify:off:access")).toEqual({
+      kind: "malformed",
     });
     expect(parseCallback("v1:notify:off:unknown")).toEqual({
       kind: "malformed",
@@ -803,7 +817,8 @@ describe("notification callbacks", () => {
       "reminder",
       "announcement",
       "published",
-      "access",
+      "access-community",
+      "access-auction",
     ]) {
       expect(parseCallback(`v1:notify:moff:${token}:${category}`)).toEqual({
         kind: "malformed",

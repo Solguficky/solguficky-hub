@@ -33,7 +33,7 @@ describe("notifications client", () => {
           { category: WireCategory.MEETUP_REMINDER, enabled: false },
           { category: WireCategory.ORGANIZER_MESSAGE, enabled: true },
           { category: WireCategory.COMMUNITY_ANNOUNCEMENT, enabled: true },
-          { category: WireCategory.ACCESS_REQUEST, enabled: false },
+          { category: WireCategory.ACCESS_REQUEST_COMMUNITY, enabled: false },
         ],
       }),
     });
@@ -50,7 +50,7 @@ describe("notifications client", () => {
           { category: "reminder", enabled: false },
           { category: "organizer", enabled: true },
           { category: "announcement", enabled: true },
-          { category: "access", enabled: false },
+          { category: "access-community", enabled: false },
         ],
       },
     });
@@ -85,7 +85,7 @@ describe("notifications client", () => {
         categories: [
           { category: WireCategory.MEETUP_CHANGED, enabled: true },
           { category: WireCategory.COMMUNITY_ANNOUNCEMENT, enabled: true },
-          { category: WireCategory.ACCESS_REQUEST, enabled: true },
+          { category: WireCategory.ACCESS_REQUEST_AUCTION, enabled: true },
         ],
       }),
     });
@@ -130,8 +130,9 @@ describe("notifications client", () => {
     );
   });
 
-  // Запросы доступа меняет только администратор: остальным сервис отвечает
-  // `PERMISSION_DENIED`, и это отказ по праву, а не недоступность.
+  // Запросы доступа меняет только тот, кто решает заявки этой очереди:
+  // остальным сервис отвечает `PERMISSION_DENIED`, и это отказ по праву, а не
+  // недоступность.
   it("sends access requests on the wire and reads a refusal as forbidden", async () => {
     const setGlobalCategoryPreference = vi
       .fn()
@@ -140,7 +141,7 @@ describe("notifications client", () => {
 
     const result = await notifications.setGlobalCategory(
       "identity-id",
-      "access",
+      "access-community",
       false,
     );
 
@@ -148,7 +149,7 @@ describe("notifications client", () => {
     expect(setGlobalCategoryPreference).toHaveBeenCalledWith(
       {
         identityId: "identity-id",
-        category: WireCategory.ACCESS_REQUEST,
+        category: WireCategory.ACCESS_REQUEST_COMMUNITY,
         enabled: false,
       },
       expect.anything(),

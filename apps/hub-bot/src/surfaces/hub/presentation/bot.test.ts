@@ -6746,29 +6746,60 @@ describe("notification frames", () => {
     });
   });
 
-  // Категорию присылает только снимок администратора: бот рисует строку, когда
-  // она пришла, и её группу называет текст.
-  it("renders access requests between global and meetup categories when the snapshot has them", async () => {
+  // Категории присылает только снимок модератора: бот рисует строку, когда
+  // она пришла, и её группу называет текст. У каждой очереди своя строка
+  // (PER-635).
+  it("renders access requests of both queues between global and meetup categories", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "global-notification-settings",
       categories: [
         { category: "changes", enabled: true },
-        { category: "access", enabled: true },
+        { category: "access-auction", enabled: true },
         { category: "published", enabled: true },
+        { category: "access-community", enabled: false },
       ],
     });
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
     await bot.handleUpdate(callbackUpdate("v1:notify:global"));
     const payload = screen(calls[1]);
-    expect(payload.text).toContain("Только администратору: запросы доступа");
+    expect(payload.text).toContain(
+      "у каждой очереди своя настройка, и выключение одной не гасит другую",
+    );
     expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
-      text: "🔔 Вкл · Запросы доступа",
-      callback_data: "v1:notify:gset:access:0",
+      text: "🔔 Вкл · Запросы доступа в аукцион",
+      callback_data: "v1:notify:gset:access-auction:0",
     });
     expect(payload.reply_markup?.inline_keyboard[2]?.[0]).toEqual({
+      text: "🔕 Выкл · Запросы доступа в сообщество",
+      callback_data: "v1:notify:gset:access-community:1",
+    });
+    expect(payload.reply_markup?.inline_keyboard[3]?.[0]).toEqual({
       text: "🔔 Вкл · Изменения данных и статуса",
       callback_data: "v1:notify:gset:changes:0",
+    });
+  });
+
+  // Модератору одной очереди сервис отдаёт только её категорию, и текст
+  // подсказки говорит о ней одной.
+  it("names the single queue a moderator takes care of", async () => {
+    const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+      kind: "global-notification-settings",
+      categories: [
+        { category: "published", enabled: true },
+        { category: "access-auction", enabled: true },
+      ],
+    });
+    const { bot, calls } = createHarness(resolvedIdentity(), { execute });
+    await bot.init();
+    await bot.handleUpdate(callbackUpdate("v1:notify:global"));
+    const payload = screen(calls[1]);
+    expect(payload.text).toContain(
+      "Только тому, кто решает заявки этой очереди.",
+    );
+    expect(payload.reply_markup?.inline_keyboard[1]?.[0]).toEqual({
+      text: "🔔 Вкл · Запросы доступа в аукцион",
+      callback_data: "v1:notify:gset:access-auction:0",
     });
   });
 
@@ -6785,15 +6816,15 @@ describe("notification frames", () => {
     const data = (payload.reply_markup?.inline_keyboard ?? [])
       .flat()
       .map((button) => button.callback_data);
-    expect(data.some((value) => value.includes(":access:"))).toBe(false);
+    expect(data.some((value) => value.includes(":access-"))).toBe(false);
   });
 
-  it("toggles access requests and refuses a former admin with the reason", async () => {
+  it("toggles the queue category and refuses a former moderator with the reason", async () => {
     const execute = vi
       .fn<Dispatcher["execute"]>()
       .mockResolvedValueOnce({
         kind: "global-notification-settings",
-        categories: [{ category: "access", enabled: false }],
+        categories: [{ category: "access-community", enabled: false }],
       })
       .mockResolvedValueOnce({
         kind: "dependency-rejected",
@@ -6801,11 +6832,11 @@ describe("notification frames", () => {
       });
     const { bot, calls } = createHarness(resolvedIdentity(), { execute });
     await bot.init();
-    await bot.handleUpdate(callbackUpdate("v1:notify:gset:access:0"));
+    await bot.handleUpdate(callbackUpdate("v1:notify:gset:access-community:0"));
     expect(execute).toHaveBeenCalledWith(
       expect.objectContaining({
         intent: "set-global-category",
-        category: "access",
+        category: "access-community",
         enabled: false,
       }),
     );
@@ -6814,17 +6845,19 @@ describe("notification frames", () => {
       screen(calls.findLast((call) => call.method !== "answerCallbackQuery"))
         .reply_markup?.inline_keyboard[0]?.[0],
     ).toEqual({
-      text: "🔕 Выкл · Запросы доступа",
-      callback_data: "v1:notify:gset:access:1",
+      text: "🔕 Выкл · Запросы доступа в сообщество",
+      callback_data: "v1:notify:gset:access-community:1",
     });
-    await bot.handleUpdate(callbackUpdate("v1:notify:gset:access:1"));
+    await bot.handleUpdate(callbackUpdate("v1:notify:gset:access-community:1"));
     expect(
       screen(
         calls
           .slice(toggled)
           .findLast((call) => call.method !== "answerCallbackQuery"),
       ).text,
-    ).toContain("Запросы доступа настраивает только администратор.");
+    ).toContain(
+      "Запросы доступа настраивает только тот, кто решает заявки этой очереди.",
+    );
   });
 
   describe("outbid frequency", () => {
@@ -7443,21 +7476,21 @@ describe("notification frames", () => {
   });
 
   describe("turning access requests off from a request", () => {
-    const off = "v1:notify:off:access";
+    const off = "v1:notify:off:access-community";
     const request = {
       text: "Новая заявка на доступ в сообщество",
       reply_markup: {
         inline_keyboard: [
           [{ text: "Открыть очередь", callback_data: "v1:t:cm:p" }],
-          [{ text: "Не присылать запросы доступа", callback_data: off }],
+          [{ text: "Не присылать запросы в сообщество", callback_data: off }],
         ],
       },
     };
 
-    it("disables the global category and confirms under the request", async () => {
+    it("disables the category of its own queue and confirms under the request", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "global-notification-settings",
-        categories: [{ category: "access", enabled: false }],
+        categories: [{ category: "access-community", enabled: false }],
       });
       const { bot, calls } = createHarness(resolvedIdentity(), { execute });
       await bot.init();
@@ -7465,18 +7498,54 @@ describe("notification frames", () => {
       expect(execute).toHaveBeenCalledWith(
         expect.objectContaining({
           intent: "set-global-category",
-          category: "access",
+          category: "access-community",
           enabled: false,
         }),
       );
       const payload = screen(calls[1]);
       expect(payload.text).toContain(request.text);
-      expect(payload.text).toContain("Больше не присылаю: запросы доступа");
+      expect(payload.text).toContain(
+        "Больше не присылаю: запросы доступа в сообщество",
+      );
+    });
+
+    // Заявка в аукцион гасит свою очередь: общая кнопка выключила бы и
+    // сообщество, о котором человек не просил (PER-635).
+    it("turns only the auction queue off from an auction request", async () => {
+      const auctionOff = "v1:notify:off:access-auction";
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "global-notification-settings",
+        categories: [{ category: "access-auction", enabled: false }],
+      });
+      const { bot } = createHarness(resolvedIdentity(), { execute });
+      await bot.init();
+      await bot.handleUpdate(
+        callbackMessageUpdate(auctionOff, {
+          text: "Новая заявка на участие в аукционе",
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "Не присылать запросы в аукцион",
+                  callback_data: auctionOff,
+                },
+              ],
+            ],
+          },
+        }),
+      );
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-global-category",
+          category: "access-auction",
+          enabled: false,
+        }),
+      );
     });
 
     // Кнопка пережила роль: сервис отвечает `PERMISSION_DENIED`, и ответ
     // называет причину отдельным сообщением, не стирая уведомление.
-    it("answers a stale button of a former admin with the reason", async () => {
+    it("answers a stale button of a former moderator with the reason", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "dependency-rejected",
         reason: "forbidden",
@@ -7488,7 +7557,9 @@ describe("notification frames", () => {
       expect(calls.map((call) => call.method)).not.toContain("editMessageText");
       expect(
         screen(calls.find((call) => call.method === "sendMessage")).text,
-      ).toContain("Запросы доступа настраивает только администратор.");
+      ).toContain(
+        "Запросы доступа настраивает только тот, кто решает заявки этой очереди.",
+      );
     });
   });
 
