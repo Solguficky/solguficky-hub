@@ -339,9 +339,9 @@ public static class EventFactory
     /// </summary>
     public static global::Auction.V1.LotEvent Bid(string lotId, string? previousLeader = null,
         string? leader = null, long version = 3, bool proxy = false, bool overtaken = false, bool answers = false,
-        string? deadline = null, string? auction = null)
+        string? deadline = null, string? auction = null, bool live = false)
     {
-        var message = BidWithoutDeadline(lotId, previousLeader, leader, version, proxy, overtaken, answers);
+        var message = BidWithoutDeadline(lotId, previousLeader, leader, version, proxy, overtaken, answers, live);
         if (auction is not null) message.State.AuctionId = auction;
         if (deadline is not null) message.State.Trading.Deadline = deadline;
         return message;
@@ -400,7 +400,7 @@ public static class EventFactory
     }
 
     private static global::Auction.V1.LotEvent BidWithoutDeadline(string lotId, string? previousLeader,
-        string? leader, long version, bool proxy, bool overtaken, bool answers) => new()
+        string? leader, long version, bool proxy, bool overtaken, bool answers, bool live = false) => new()
     {
         EventId = NewId(), LotId = lotId, Version = version,
         OccurredAt = Committed.AddMinutes(version).ToString("O"),
@@ -412,7 +412,7 @@ public static class EventFactory
             {
                 LeaderId = leader ?? NewId(), LeadingBidId = NewId(),
                 CurrentPrice = new global::Auction.V1.Money { MinorUnits = 12300, Currency = "RUB" },
-                Phase = global::Auction.V1.LotPhase.Online,
+                Phase = live ? global::Auction.V1.LotPhase.Live : global::Auction.V1.LotPhase.Online,
             },
         },
         BidPlaced = Placed(previousLeader, proxy, overtaken, answers),
