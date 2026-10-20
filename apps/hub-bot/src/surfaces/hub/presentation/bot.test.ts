@@ -35,11 +35,11 @@ import type {
   ApplicationCard,
   ApplicationModerator,
   ApplicationQueueRead,
-  AuctionModerationAdministrator,
   CommunityAdministrator,
   CommunityMemberResult,
   IdentityResolver,
   RefusedApplication,
+  RightRecordAdministrator,
   SourceChannel,
   SourceChannelAdministrator,
 } from "../identity/port.js";
@@ -1689,12 +1689,14 @@ describe("presentation adapter", () => {
               telegramUsername: "admin",
               circle: "member",
               auctionModeration: false,
+              auctionRunning: false,
             },
             {
               identityId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
               telegramUsername: "member",
               circle: "member",
               auctionModeration: false,
+              auctionRunning: false,
             },
           ],
           allowedUsernames: ["invited"],
@@ -1741,12 +1743,14 @@ describe("presentation adapter", () => {
               telegramUsername: "member",
               circle: "member",
               auctionModeration: false,
+              auctionRunning: false,
             },
             {
               identityId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61",
               telegramUsername: "guest",
               circle: "guest",
               auctionModeration: false,
+              auctionRunning: false,
             },
           ],
           allowedUsernames: [],
@@ -1799,6 +1803,7 @@ describe("presentation adapter", () => {
         telegramUsername: "leaving",
         circle: "member",
         auctionModeration: false,
+        auctionRunning: false,
       },
     };
 
@@ -2621,6 +2626,7 @@ describe("presentation adapter", () => {
         telegramUsername: `user${from + index}`,
         circle,
         auctionModeration: circle === "member",
+        auctionRunning: false,
       }));
     const identity = {
       ...resolvedIdentity("admin"),
@@ -9372,6 +9378,33 @@ describe("auction queue and moderation", () => {
     expect(member.commands).toEqual([]);
   });
 
+  // Ведение аукциона (ADR-070, PER-654) живёт в корне аукциона сходки, а не в
+  // «Управлении»: одна запись run_auctions не даёт ни «Управления», ни
+  // `/manage`, ни «Создать сходку», а подделанное создание отказывает до
+  // Meetups (решение владельца 20.10.2026).
+  it("opens neither management nor /manage nor a new meetup to a holder of the right to run auctions alone", async () => {
+    const runner: readonly AccessRight[] = [...MEMBER_RIGHTS, "run-auctions"];
+    const execute = vi.fn<Dispatcher["execute"]>();
+    const { bot, calls, commands } = createHarness(
+      resolvedIdentity("member", false, runner),
+      { execute },
+    );
+    await bot.init();
+
+    await bot.handleUpdate(messageUpdate("/menu"));
+    expect(JSON.stringify(calls.at(-1))).not.toContain("v1:manage:menu");
+    await bot.handleUpdate(messageUpdate("/start"));
+    expect(commands).toEqual([]);
+
+    await bot.handleUpdate(
+      callbackUpdate("v1:manage:new:AZLzpLXGfY6fChssPU5fYA"),
+    );
+    expect(JSON.stringify(calls.at(-1))).toContain(
+      "Управление сходками доступно администратору.",
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("offers the administrator both queues side by side", async () => {
     const { bot, calls } = createHarness(resolvedIdentity("admin"));
     await bot.init();
@@ -9433,7 +9466,7 @@ describe("auction queue and moderation", () => {
   // сбоем.
   it("records a refused grant to a non-member as a regular answer", async () => {
     const identity = moderation(false);
-    identity.grantAuctionModeration.mockResolvedValue({ kind: "not-member" });
+    identity.grantRightRecord.mockResolvedValue({ kind: "not-member" });
     const { bot, calls, records } = createHarness(identity);
     await bot.init();
 
@@ -9492,23 +9525,27 @@ describe("auction queue and moderation", () => {
     },
   );
 
-  function moderation(auctionModeration: boolean) {
-    const read = (moderates: boolean): CommunityMemberResult => ({
+  function moderation(auctionModeration: boolean, auctionRunning = false) {
+    const read = (
+      moderates: boolean,
+      runs = auctionRunning,
+    ): CommunityMemberResult => ({
       kind: "ok",
       value: {
         identityId: memberId,
         telegramUsername: "member",
         circle: "member",
         auctionModeration: moderates,
+        auctionRunning: runs,
       },
     });
     return {
       ...resolvedIdentity("admin"),
-      grantAuctionModeration: vi
-        .fn<AuctionModerationAdministrator["grantAuctionModeration"]>()
+      grantRightRecord: vi
+        .fn<RightRecordAdministrator["grantRightRecord"]>()
         .mockResolvedValue({ kind: "ok", value: true }),
-      revokeAuctionModeration: vi
-        .fn<AuctionModerationAdministrator["revokeAuctionModeration"]>()
+      revokeRightRecord: vi
+        .fn<RightRecordAdministrator["revokeRightRecord"]>()
         .mockResolvedValue({ kind: "ok", value: true }),
       communityMember: vi
         .fn<CommunityAdministrator["communityMember"]>()
@@ -9532,9 +9569,10 @@ describe("auction queue and moderation", () => {
       callbackUpdate(`v1:cm:mg:${uuidToToken(memberId)}:m0`),
     );
 
-    expect(identity.grantAuctionModeration).toHaveBeenCalledWith(
+    expect(identity.grantRightRecord).toHaveBeenCalledWith(
       expect.objectContaining({ identityId: resolvedId }),
       memberId,
+      "admit-bidders",
       expect.anything(),
     );
     expect(calls.at(-2)?.payload).toMatchObject({ text: "Модерация выдана." });
@@ -9554,9 +9592,10 @@ describe("auction queue and moderation", () => {
       callbackUpdate(`v1:cm:mv:${uuidToToken(memberId)}:o0`),
     );
 
-    expect(identity.revokeAuctionModeration).toHaveBeenCalledWith(
+    expect(identity.revokeRightRecord).toHaveBeenCalledWith(
       expect.anything(),
       memberId,
+      "admit-bidders",
       expect.anything(),
     );
     expect(calls.at(-2)?.payload).toMatchObject({
@@ -9564,6 +9603,64 @@ describe("auction queue and moderation", () => {
     });
     expect(labelsOf(calls.at(-1)?.payload)).toContain("Выдать модерацию");
     expect(labelsOf(calls.at(-1)?.payload)).toContain("‹ Состав");
+  });
+
+  // Ведение аукциона (ADR-070, PER-654) выдаёт с той же карточки тот же
+  // держатель права управлять составом, записью run_auctions.
+  it("grants running the auction from the member card and shows the card re-read", async () => {
+    const identity = moderation(false);
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    await bot.handleUpdate(
+      callbackUpdate(`v1:cm:v:${uuidToToken(memberId)}:m0`),
+    );
+    expect(labelsOf(calls.at(-1)?.payload)).toContain(
+      "Выдать ведение аукциона",
+    );
+
+    identity.communityMember.mockResolvedValue(identity.read(false, true));
+    await bot.handleUpdate(
+      callbackUpdate(`v1:cm:ag:${uuidToToken(memberId)}:m0`),
+    );
+
+    expect(identity.grantRightRecord).toHaveBeenCalledWith(
+      expect.objectContaining({ identityId: resolvedId }),
+      memberId,
+      "run-auctions",
+      expect.anything(),
+    );
+    expect(calls.at(-2)?.payload).toMatchObject({
+      text: "Ведение аукциона выдано.",
+    });
+    expect(calls.at(-1)?.payload).toMatchObject({
+      text: expect.stringContaining("Ведение аукциона: есть"),
+    });
+    expect(labelsOf(calls.at(-1)?.payload)).toContain("Снять ведение аукциона");
+  });
+
+  it("revokes running the auction from the member card", async () => {
+    const identity = moderation(false, true);
+    const { bot, calls } = createHarness(identity);
+    await bot.init();
+
+    identity.communityMember.mockResolvedValue(identity.read(false, false));
+    await bot.handleUpdate(
+      callbackUpdate(`v1:cm:av:${uuidToToken(memberId)}:m0`),
+    );
+
+    expect(identity.revokeRightRecord).toHaveBeenCalledWith(
+      expect.anything(),
+      memberId,
+      "run-auctions",
+      expect.anything(),
+    );
+    expect(calls.at(-2)?.payload).toMatchObject({
+      text: "Ведение аукциона снято.",
+    });
+    expect(labelsOf(calls.at(-1)?.payload)).toContain(
+      "Выдать ведение аукциона",
+    );
   });
 
   // Кнопка появляется и пропадает вместе с правом: «Управление» читает права
@@ -9601,7 +9698,7 @@ describe("auction queue and moderation", () => {
       ...moderation(false),
       ...resolvedIdentity("member", false, moderatorRights),
     };
-    identity.grantAuctionModeration.mockResolvedValue({ kind: "forbidden" });
+    identity.grantRightRecord.mockResolvedValue({ kind: "forbidden" });
     identity.communityMember.mockResolvedValue({ kind: "forbidden" });
     const { bot, calls } = createHarness(identity);
     await bot.init();
@@ -9610,7 +9707,7 @@ describe("auction queue and moderation", () => {
       callbackUpdate(`v1:cm:mg:${uuidToToken(memberId)}:m0`),
     );
 
-    expect(identity.grantAuctionModeration).toHaveBeenCalledOnce();
+    expect(identity.grantRightRecord).toHaveBeenCalledOnce();
     expect(calls.at(-2)?.payload).toMatchObject({
       text: "Выдавать модерацию аукциона может тот, кто управляет составом.",
     });

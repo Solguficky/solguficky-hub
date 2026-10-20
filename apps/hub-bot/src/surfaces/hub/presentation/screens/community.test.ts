@@ -20,12 +20,14 @@ function person(
   index: number,
   circle: CommunityMember["circle"],
   auctionModeration = false,
+  auctionRunning = false,
 ): CommunityMember {
   return {
     identityId: id(index),
     telegramUsername: `user${index}`,
     circle,
     auctionModeration,
+    auctionRunning,
   };
 }
 
@@ -170,6 +172,7 @@ describe("community list", () => {
             telegramUserId: 5001n,
             circle: "member",
             auctionModeration: false,
+            auctionRunning: false,
           },
         ],
         allowedUsernames: [],
@@ -185,20 +188,24 @@ describe("community list", () => {
 describe("community member card", () => {
   const place = { filter: "members", page: 2 } as const;
 
-  it("offers moderation to a member and returns to the same page", () => {
+  it("offers both records to a member and returns to the same page", () => {
     const screen = communityMemberScreen(person(1, "member"), place);
     const token = uuidToToken(id(1));
 
     expect(screen.id).toBe("community-member");
     expect(screen.text).toBe(
-      "<b>Карточка человека</b>\n\n@user1\n\nКруг: участник\nМодерация аукциона: нет",
+      "<b>Карточка человека</b>\n\n@user1\n\nКруг: участник\nМодерация аукциона: нет\nВедение аукциона: нет",
     );
     expect(rows(screen)).toEqual([
       ["Выдать модерацию"],
+      ["Выдать ведение аукциона"],
       ["Закрыть доступ"],
       nav,
     ]);
     expect(dataOf(screen, "Выдать модерацию")).toBe(`v1:cm:mg:${token}:m2`);
+    expect(dataOf(screen, "Выдать ведение аукциона")).toBe(
+      `v1:cm:ag:${token}:m2`,
+    );
     expect(dataOf(screen, "Закрыть доступ")).toBe(`v1:cm:bq:${token}:m2`);
     expect(dataOf(screen, "‹ Состав")).toBe("v1:cm:l:m2");
   });
@@ -212,7 +219,19 @@ describe("community member card", () => {
     );
   });
 
-  it("offers no moderation to a guest", () => {
+  it("revokes running the auction from its holder", () => {
+    const screen = communityMemberScreen(
+      person(1, "member", false, true),
+      place,
+    );
+
+    expect(screen.text).toContain("Ведение аукциона: есть");
+    expect(dataOf(screen, "Снять ведение аукциона")).toBe(
+      `v1:cm:av:${uuidToToken(id(1))}:m2`,
+    );
+  });
+
+  it("offers no records to a guest", () => {
     const screen = communityMemberScreen(person(3, "guest"), {
       filter: "guests",
       page: 0,

@@ -191,6 +191,20 @@ describe("callback parser", () => {
     });
   });
 
+  // Данные кнопки «Включить аукцион» прежние, и она из старых сообщений
+  // по-прежнему включает аукцион (PER-654).
+  it("parses enabling the auction of a meetup", () => {
+    const token = "AZLzpLXGfY6fChssPU5fYA";
+
+    expect(parseCallback(`v1:manage:auction:${token}`)).toEqual({
+      kind: "enable-auction",
+      token,
+    });
+    expect(parseCallback("v1:manage:auction:short")).toEqual({
+      kind: "malformed",
+    });
+  });
+
   it("parses meetup editing and confirmed state actions within the byte budget", () => {
     const token = "AZLzpLXGfY6fChssPU5fYA";
     const callbacks = [
@@ -419,7 +433,8 @@ describe("callback parser", () => {
       [
         `v1:cm:mg:${token}:m9999`,
         {
-          kind: "grant-moderation",
+          kind: "grant-record",
+          right: "admit-bidders",
           token,
           place: { filter: "members", page: 9999 },
         },
@@ -427,9 +442,28 @@ describe("callback parser", () => {
       [
         `v1:cm:mv:${token}:o1`,
         {
-          kind: "revoke-moderation",
+          kind: "revoke-record",
+          right: "admit-bidders",
           token,
           place: { filter: "moderators", page: 1 },
+        },
+      ],
+      [
+        `v1:cm:ag:${token}:m2`,
+        {
+          kind: "grant-record",
+          right: "run-auctions",
+          token,
+          place: { filter: "members", page: 2 },
+        },
+      ],
+      [
+        `v1:cm:av:${token}:o0`,
+        {
+          kind: "revoke-record",
+          right: "run-auctions",
+          token,
+          place: { filter: "moderators", page: 0 },
         },
       ],
       [
@@ -469,12 +503,13 @@ describe("callback parser", () => {
       [`v1:cm:ad:${token}:${next}`, { kind: "outdated" }],
       [
         `v1:cm:mg:${token}:3`,
-        { kind: "grant-moderation", token, place: members },
+        { kind: "grant-record", right: "admit-bidders", token, place: members },
       ],
       [
         `v1:cm:mv:${token}`,
         {
-          kind: "revoke-moderation",
+          kind: "revoke-record",
+          right: "admit-bidders",
           token,
           place: { filter: "moderators", page: 0 },
         },

@@ -28,12 +28,12 @@ import {
   createAdministratorManager,
   createApplicationAdministrator,
   createApplicationModerator,
-  createAuctionModerationAdministrator,
   createCommunityAdministrator,
   createIdentityClient,
   createIdentityResolver,
   createOrganizerResolver,
   createPlaceBidsReader,
+  createRightRecordAdministrator,
   createTelegramRecipientResolver,
   requestIdHeader,
   useCaseHeader,
@@ -636,19 +636,27 @@ describe("community administrator", () => {
             telegramUserId: 42n,
             circle: "member",
             auctionModeration: true,
+            auctionRunning: false,
           },
           {
             identityId: "guest",
             telegramUserId: 43n,
             circle: "guest",
             auctionModeration: false,
+            auctionRunning: false,
           },
-          { identityId: "newcomer", circle: "none", auctionModeration: false },
+          {
+            identityId: "newcomer",
+            circle: "none",
+            auctionModeration: false,
+            auctionRunning: false,
+          },
           {
             identityId: "older",
             telegramUserId: 44n,
             circle: "member",
             auctionModeration: false,
+            auctionRunning: false,
           },
         ],
         allowedUsernames: [],
@@ -688,6 +696,7 @@ describe("community administrator", () => {
         telegramUserId: 42n,
         circle: "member",
         auctionModeration: false,
+        auctionRunning: false,
       },
     });
     expect(getCommunityMember).toHaveBeenCalledWith(
@@ -727,55 +736,61 @@ describe("community administrator", () => {
   });
 });
 
-describe("auction moderation administrator", () => {
+describe("right record administrator", () => {
   const actor = {
     identityId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
   };
   const memberId = "0192f0a0-0000-7000-8000-00000000b001";
 
-  function moderation(
+  function records(
     overrides: Partial<
-      Parameters<typeof createAuctionModerationAdministrator>[0]
+      Parameters<typeof createRightRecordAdministrator>[0]
     > = {},
   ) {
-    return createAuctionModerationAdministrator({
+    return createRightRecordAdministrator({
       grantRight: vi.fn(),
       revokeRight: vi.fn(),
       ...overrides,
     });
   }
 
-  it("sends the actor and the member on grant and revoke", async () => {
-    const grantRight = vi.fn().mockResolvedValue({ changed: true });
-    const revokeRight = vi.fn().mockResolvedValue({ changed: false });
-    const administrator = moderation({ grantRight, revokeRight });
+  it.each([
+    ["admit-bidders", AccessRight.ADMIT_BIDDERS],
+    ["run-auctions", AccessRight.RUN_AUCTIONS],
+  ] as const)(
+    "sends the actor, the member and the %s record on grant and revoke",
+    async (right, wire) => {
+      const grantRight = vi.fn().mockResolvedValue({ changed: true });
+      const revokeRight = vi.fn().mockResolvedValue({ changed: false });
+      const administrator = records({ grantRight, revokeRight });
 
-    await expect(
-      administrator.grantAuctionModeration(actor, memberId),
-    ).resolves.toEqual({ kind: "ok", value: true });
-    await expect(
-      administrator.revokeAuctionModeration(actor, memberId),
-    ).resolves.toEqual({ kind: "ok", value: false });
-    const request = {
-      actor: { identityId: actor.identityId },
-      identityId: memberId,
-      right: AccessRight.ADMIT_BIDDERS,
-    };
-    expect(grantRight).toHaveBeenCalledWith(request, expect.anything());
-    expect(revokeRight).toHaveBeenCalledWith(request, expect.anything());
-  });
+      await expect(
+        administrator.grantRightRecord(actor, memberId, right),
+      ).resolves.toEqual({ kind: "ok", value: true });
+      await expect(
+        administrator.revokeRightRecord(actor, memberId, right),
+      ).resolves.toEqual({ kind: "ok", value: false });
+      const request = {
+        actor: { identityId: actor.identityId },
+        identityId: memberId,
+        right: wire,
+      };
+      expect(grantRight).toHaveBeenCalledWith(request, expect.anything());
+      expect(revokeRight).toHaveBeenCalledWith(request, expect.anything());
+    },
+  );
 
   it.each([
     [Code.FailedPrecondition, "not-member"],
     [Code.PermissionDenied, "forbidden"],
     [Code.Unavailable, "unavailable"],
   ])("maps grant failure %s to %s", async (code, kind) => {
-    const administrator = moderation({
+    const administrator = records({
       grantRight: () => Promise.reject(new ConnectError("refused", code)),
     });
 
     await expect(
-      administrator.grantAuctionModeration(actor, memberId),
+      administrator.grantRightRecord(actor, memberId, "run-auctions"),
     ).resolves.toMatchObject({ kind });
   });
 });

@@ -45,6 +45,7 @@ import type {
 import type { IdentityResolver } from "../identity/port.js";
 import { createAuctionParents } from "./auction-parents.js";
 import { uuidToToken } from "./meetup-deep-link.js";
+import { type CallbackAction, parseCallback } from "./parse-callback.js";
 
 // Пульт аукциона администратора в боте хаба (PER-320): вход из ленты, сроки
 // недели и финал, открытие недели через подтверждение, отметка лотов для
@@ -62,6 +63,57 @@ const today = () => ({ year: 2026, month: 10, day: 6 });
 const now = new Date("2026-10-06T09:00:00Z");
 
 const consoleData = `v1:ac:v:${auctionToken}`;
+
+// Права части набора `admin` (ADR-070): помощник ведущего с одной записью
+// run_auctions и держатель права вести сходки без неё.
+const runAuctionsOnly: readonly AccessRight[] = [
+  "access-hub",
+  "place-bids",
+  "run-auctions",
+];
+const manageMeetupsOnly: readonly AccessRight[] = [
+  "access-hub",
+  "place-bids",
+  "manage-meetups",
+];
+
+type AuctionPress = Extract<
+  CallbackAction,
+  { kind: `console-${string}` | `lot-${string}` }
+>["kind"];
+
+// По кнопке на каждый вид пульта и формы лота (PER-654).
+const forgedAuctionPresses = {
+  "lot-new": `v1:lot:new:${auctionToken}`,
+  "lot-form": `v1:lot:form:${uuidToToken(vaseId)}`,
+  "lot-view": `v1:lot:view:${uuidToToken(vaseId)}`,
+  "lot-ask": `v1:lot:ask:${uuidToToken(vaseId)}:title`,
+  "lot-step-mode": `v1:lot:sm:${uuidToToken(vaseId)}:100:single`,
+  "lot-skip": `v1:lot:skip:${uuidToToken(vaseId)}`,
+  "console-view": consoleData,
+  "console-week": `v1:ac:w:${auctionToken}`,
+  "console-raffle": `v1:ac:r:${auctionToken}`,
+  "console-raffle-remove": `v1:ac:rx:${auctionToken}`,
+  "console-final": `v1:ac:f:${auctionToken}:1`,
+  "console-open": `v1:ac:o:${auctionToken}`,
+  "console-confirm": `v1:ac:y:${auctionToken}:${uuidToToken(mugId)}`,
+  "console-discard": `v1:ac:x:${auctionToken}`,
+  "console-discard-confirm": `v1:ac:z:${auctionToken}:${uuidToToken(mugId)}`,
+  "console-mark": `v1:ac:s:${auctionToken}:${uuidToToken(vaseId)}:0`,
+  "console-windows": `v1:ac:h:${auctionToken}`,
+  "console-day-summary": `v1:ac:ds:${auctionToken}`,
+  "console-window": `v1:ac:hw:${auctionToken}:0:abcde`,
+  "console-window-ask": `v1:ac:ha:${auctionToken}`,
+  "console-window-lot": `v1:ac:hs:${auctionToken}:0:abcde:${uuidToToken(vaseId)}`,
+  "console-window-remove": `v1:ac:hx:${auctionToken}:0:abcde`,
+  "console-lineup": `v1:ac:l:${auctionToken}`,
+  "console-lineup-confirm": `v1:ac:ly:${auctionToken}:abcde:0`,
+  "console-start-final": `v1:ac:g:${auctionToken}`,
+  "console-next-lot": `v1:ac:n:${auctionToken}`,
+  "console-ask": `v1:ac:a:${auctionToken}:1`,
+  "console-close": `v1:ac:c:${auctionToken}:1`,
+  "console-close-confirm": `v1:ac:k:${auctionToken}:1:${uuidToToken(mugId)}:x`,
+} satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });
 
@@ -85,7 +137,8 @@ function trading(lotId: string, title: string, price: number): LotView {
 }
 
 // Права, как их выводит Identity (RFC-016): набор `admin` несёт право вести
-// сходки с пультом и каталогом лотов, участник — только права хаба и ставок.
+// аукцион с пультом и каталогом лотов (ADR-070), участник — только права хаба
+// и ставок.
 // `rights` задаёт тест, которому нужен держатель части прав набора.
 function identity(
   holder: "admin" | "member",
@@ -96,6 +149,7 @@ function identity(
         "manage-members",
         "admit-bidders",
         "manage-meetups",
+        "run-auctions",
       ]
     : ["access-hub", "place-bids"],
 ) {
@@ -750,9 +804,9 @@ describe("entry into the auction console", () => {
     expect(labels(last(calls))[0]).toEqual(["🛠 Добавить лот"]);
   });
 
-  // Пульт и каталог лотов — одно право вести сходки (RFC-016): держатель
-  // управления составом без него не видит ни того, ни другого, и Auction его
-  // не спрашивают.
+  // Пульт и каталог лотов — одно право вести аукцион (ADR-070, RFC-016):
+  // держатель управления составом без него не видит ни того, ни другого, и
+  // Auction его не спрашивают.
   it("hides the console and the lot entries from a holder of other management rights", async () => {
     const auction = fakeAuction({ lots: [vase] });
     const moderator = [
@@ -773,6 +827,64 @@ describe("entry into the auction console", () => {
     expect(last(calls).text).toContain("Это действие тебе недоступно.");
     expect(auction.commands).toEqual([]);
   });
+
+  // Помощник ведущего (ADR-070, PER-654): одна запись run_auctions без права
+  // вести сходки открывает пульт и каталог лотов.
+  it("shows the console and the lot entries to a holder of the right to run auctions alone", async () => {
+    const auction = fakeAuction({ lots: [vase] });
+    const { bot, calls } = harness("member", auction, [], runAuctionsOnly);
+    await bot.init();
+
+    await bot.handleUpdate(press(rootData));
+    expect(dataOf(last(calls), "🛠 Пульт")).toBe(consoleData);
+    await bot.handleUpdate(press(feedData));
+    expect(labels(last(calls))[0]).toEqual(["🛠 Добавить лот"]);
+
+    await bot.handleUpdate(press(consoleData));
+    expect(last(calls).text).not.toContain("Это действие тебе недоступно.");
+    expect(auction.sent("getAuctionConsole")).not.toEqual([]);
+  });
+
+  // Право вести сходки аукциона больше не несёт (ADR-070): ни входа в пульт,
+  // ни в каталог лотов.
+  it("hides the console and the lot entries from a holder of the right to manage meetups alone", async () => {
+    const auction = fakeAuction({ lots: [vase] });
+    const { bot, calls } = harness("member", auction, [], manageMeetupsOnly);
+    await bot.init();
+
+    await bot.handleUpdate(press(rootData));
+    expect(JSON.stringify(last(calls))).not.toContain("🛠 Пульт");
+    await bot.handleUpdate(press(feedData));
+    expect(JSON.stringify(last(calls))).not.toContain("🛠 Добавить лот");
+    expect(auction.commands).toEqual([]);
+  });
+
+  // Каждая кнопка пульта, пульта ведущего и формы лота: таблица держит все
+  // виды разбора, и новый вид без строки роняет typecheck, а не ревью.
+  // Подделанное нажатие без права вести аукцион получает отказ до Auction.
+  it.each(Object.entries(forgedAuctionPresses))(
+    "refuses a forged %s press of a holder of the right to manage meetups before Auction",
+    async (kind, data) => {
+      expect(parseCallback(data).kind).toBe(kind);
+      const auction = fakeAuction({ lots: [vase] });
+      const { bot, calls, records } = harness(
+        "member",
+        auction,
+        [],
+        manageMeetupsOnly,
+      );
+      await bot.init();
+
+      await bot.handleUpdate(press(data));
+
+      expect(last(calls).text).toContain("Это действие тебе недоступно.");
+      expect(auction.commands).toEqual([]);
+      expect(records.at(-1)?.fields).toMatchObject({
+        result: "error",
+        error_category: "authorization",
+      });
+    },
+  );
 
   it("does not read the console for a member's feed", async () => {
     const auction = fakeAuction({ lots: [vase] });

@@ -84,8 +84,8 @@ const lot: LotView = {
 };
 
 // Пускает право хаба, а в Auction уходят права (RFC-016). По умолчанию права
-// участника, у набора `admin` — ещё право вести сходки; гостю тест передаёт
-// права явно.
+// участника, у набора `admin` — ещё права вести сходки и аукцион (ADR-070);
+// гостю тест передаёт права явно.
 type Holder = "admin" | "member" | "guest";
 
 function identity(
@@ -94,7 +94,7 @@ function identity(
   rights: readonly AccessRight[] = blocked
     ? []
     : holder === "admin"
-      ? ["access-hub", "place-bids", "manage-meetups"]
+      ? ["access-hub", "place-bids", "manage-meetups", "run-auctions"]
       : ["access-hub", "place-bids"],
 ) {
   return {
@@ -523,6 +523,47 @@ describe("meetup extensions menu", () => {
     expect(data(menu, "🛠 Включить аукцион")).toBe(
       `v1:manage:auction:${meetupToken}`,
     );
+  });
+
+  // Включение — право вести аукцион (ADR-070, PER-654), а не вести сходки:
+  // помощник с одной записью run_auctions его видит, держатель одного права
+  // вести сходки — нет, и его подделанная кнопка не доходит до Auction.
+  it("offers enabling to a holder of the right to run auctions alone", async () => {
+    const auction = fakeAuction();
+    const { bot, calls } = harness("member", auction, {
+      rights: ["access-hub", "place-bids", "run-auctions"],
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+
+    expect(labels(lastScreen(calls))).toEqual([
+      ["🛠 Включить аукцион"],
+      ["‹ Сходка"],
+    ]);
+  });
+
+  it("refuses enabling to a holder of the right to manage meetups alone before Auction", async () => {
+    const auction = fakeAuction();
+    const { bot, calls, records } = harness("member", auction, {
+      rights: ["access-hub", "place-bids", "manage-meetups"],
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    expect(JSON.stringify(lastScreen(calls))).not.toContain(
+      "🛠 Включить аукцион",
+    );
+
+    await bot.handleUpdate(press(`v1:manage:auction:${meetupToken}`));
+
+    const frame = lastScreen(calls);
+    expect(frame.text).toContain("Это действие тебе недоступно.");
+    expect(data(frame, "‹ Расширения")).toBe(extensionsData);
+    expect(auction.opIds).toEqual([]);
+    expect(records.at(-1)?.fields).toMatchObject({
+      result: "error",
+      error_category: "authorization",
+      use_case: "enable_auction",
+    });
   });
 
   it("tells a member that the meetup has no extensions", async () => {

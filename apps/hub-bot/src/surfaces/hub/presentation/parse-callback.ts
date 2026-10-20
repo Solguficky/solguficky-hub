@@ -14,7 +14,7 @@ import type {
   WindowRef,
 } from "../application/types.js";
 import type { CommunityDay } from "../community-time.js";
-import type { CommunityFilter } from "../identity/port.js";
+import type { CommunityFilter, RecordRight } from "../identity/port.js";
 import type {
   MeetupCategory,
   NotificationCategory,
@@ -251,9 +251,20 @@ type PlainAction =
   | { kind: "ask-block-member"; token: string; place: CommunityPlace }
   | { kind: "block-member"; token: string; place: CommunityPlace }
   | { kind: "remove-allowed-username"; username: string; page: number }
-  // Модерация аукциона (ADR-064, пункт 7) — с карточки человека.
-  | { kind: "grant-moderation"; token: string; place: CommunityPlace }
-  | { kind: "revoke-moderation"; token: string; place: CommunityPlace }
+  // Записи прав с карточки человека: модерация аукциона (ADR-064, пункт 7) и
+  // ведение аукциона (ADR-070, п. 1).
+  | {
+      kind: "grant-record";
+      right: RecordRight;
+      token: string;
+      place: CommunityPlace;
+    }
+  | {
+      kind: "revoke-record";
+      right: RecordRight;
+      token: string;
+      place: CommunityPlace;
+    }
   // Администраторы (PER-521): список, вопрос о нике, «Да» назначения с ником и
   // его «Нет», подтверждение снятия и его «Да» с токеном человека.
   | { kind: "administrators" }
@@ -308,9 +319,10 @@ type PlainAction =
   // Черновик формы создания: без поля — сам экран, с полем — вопрос о нём.
   | { kind: "manage-draft"; token: string; field?: FormField }
   | { kind: "manage-status"; token: string }
-  // «Включить аукцион» на карточке сходки (PER-307). Кнопки входа в аукцион
-  // здесь нет: она домена `auc`, и её пишет и разбирает аукционное дерево.
-  | { kind: "manage-meetups"; token: string }
+  // «Включить аукцион» в «Расширениях» сходки (PER-307, PER-654). Кнопки
+  // входа в аукцион здесь нет: она домена `auc`, и её пишет и разбирает
+  // аукционное дерево.
+  | { kind: "enable-auction"; token: string }
   // Хвост `e` — вход из «Событий» (PER-669): возврат FAQ несёт его в корень.
   | { kind: "auction-faq"; auction: string; viaEvents?: true }
   // Форма лота администратора (PER-319). Кнопки несут лот, а новый лот —
@@ -1220,7 +1232,7 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parts.length === 4 && parts[2] === "status")
     return { kind: "manage-status", token: token.data };
   if (parts.length === 4 && parts[2] === "auction")
-    return { kind: "manage-meetups", token: token.data };
+    return { kind: "enable-auction", token: token.data };
   if (parts.length === 4 && parts[2] === "republish")
     return { kind: "manage-publish", token: token.data, origin: "status" };
   // `d` — «Опубликовать» на черновике: «Нет» подтверждения вернёт на него.
@@ -1725,7 +1737,8 @@ function parseAdministrators(parts: readonly string[]): CallbackAction {
 }
 
 // Состав (PER-547): `l` — список с местом, `v` — карточка человека, `mg` и
-// `mv` — выдать и снять модерацию, `bq` и `by` — вопрос о закрытии доступа и
+// `mv` — выдать и снять модерацию, `ag` и `av` — выдать и снять ведение
+// аукциона (PER-654), `bq` и `by` — вопрос о закрытии доступа и
 // его «Да»; у карточки и её действий — токен человека и место в списке. `u` —
 // ники, `rm` — убрать ник. Отказанные: `r` — список, `rq` и `ry` — вопрос о
 // пересмотре и его «Да»; токен у них — заявки, а не человека. Карточка заявки:
@@ -1756,6 +1769,8 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
     case "v":
     case "mg":
     case "mv":
+    case "ag":
+    case "av":
     case "bq":
     case "by": {
       const token = TokenSchema.safeParse(first);
@@ -1769,10 +1784,18 @@ function parseCommunity(parts: readonly string[]): CallbackAction {
             ? { filter: "moderators" as const, page: 0 }
             : parseCommunityPlace(second);
       if (place === undefined) return malformed;
+      if (verb === "mg" || verb === "mv" || verb === "ag" || verb === "av") {
+        return {
+          kind:
+            verb === "mg" || verb === "ag" ? "grant-record" : "revoke-record",
+          right:
+            verb === "mg" || verb === "mv" ? "admit-bidders" : "run-auctions",
+          token: token.data,
+          place,
+        };
+      }
       const kinds = {
         v: "community-member",
-        mg: "grant-moderation",
-        mv: "revoke-moderation",
         bq: "ask-block-member",
         by: "block-member",
       } as const;

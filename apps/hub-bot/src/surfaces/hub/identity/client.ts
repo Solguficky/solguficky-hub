@@ -37,7 +37,6 @@ import type {
   ApplicationCard,
   ApplicationDecision,
   ApplicationModerator,
-  AuctionModerationAdministrator,
   CommunityAdministrator,
   CommunityFilter,
   CommunityMember,
@@ -47,10 +46,12 @@ import type {
   OrganizerUsernameResult,
   ApplicationOutcome as Outcome,
   ReconsiderResult,
+  RecordRight,
   RefusedApplication,
   RequestAccessInput,
   RequestAccessResult,
   ResolveIdentityInput,
+  RightRecordAdministrator,
   SourceChannelAdministrator,
   TelegramRecipientResolver,
   TelegramRecipientResult,
@@ -100,7 +101,7 @@ type SourceChannelAdminRpc = Pick<
   Client<typeof IdentityService>,
   "listSourceChannels" | "createSourceChannel"
 >;
-type AuctionModerationRpc = Pick<
+type RightRecordRpc = Pick<
   Client<typeof IdentityService>,
   "grantRight" | "revokeRight"
 >;
@@ -121,7 +122,7 @@ export type IdentityClient = IdentityResolver &
   ApplicationAdministrator &
   SourceChannelAdministrator &
   ApplicationModerator &
-  AuctionModerationAdministrator &
+  RightRecordAdministrator &
   AdministratorManager & {
     close(): void;
   };
@@ -152,7 +153,7 @@ export function createIdentityClient(
   });
   const sourceChannels = createSourceChannelAdministrator(client, timeoutMs);
   const moderator = createApplicationModerator(client, timeoutMs);
-  const moderation = createAuctionModerationAdministrator(client, timeoutMs);
+  const records = createRightRecordAdministrator(client, timeoutMs);
   const administrators = createAdministratorManager(client, timeoutMs);
   const recipients = createTelegramRecipientResolver(client, timeoutMs);
   const organizers = createOrganizerResolver(client, timeoutMs);
@@ -168,7 +169,7 @@ export function createIdentityClient(
     ...applications,
     ...sourceChannels,
     ...moderator,
-    ...moderation,
+    ...records,
     ...administrators,
     close() {
       sessionManager.abort();
@@ -306,6 +307,7 @@ function communityMemberOf(member: WireCommunityMember): CommunityMember {
           ? "guest"
           : "none",
     auctionModeration: member.grantedRights.includes(WireRight.ADMIT_BIDDERS),
+    auctionRunning: member.grantedRights.includes(WireRight.RUN_AUCTIONS),
   };
 }
 
@@ -363,14 +365,19 @@ export function createApplicationAdministrator(
   };
 }
 
-// Право модерации аукциона (ADR-064, пункт 7): выдача и отзыв записи
-// `ADMIT_BIDDERS` общими GrantRight и RevokeRight (PER-651).
-// FAILED_PRECONDITION у выдачи — штатный ответ: человек не участник или
-// заблокирован.
-export function createAuctionModerationAdministrator(
-  rpc: AuctionModerationRpc,
+// Записи прав, которые выдаёт держатель права управлять составом: модерация
+// аукциона (ADR-064, пункт 7) и ведение аукциона (ADR-070, п. 1) — общими
+// GrantRight и RevokeRight (PER-651). FAILED_PRECONDITION у выдачи — штатный
+// ответ: человек не участник или заблокирован.
+const recordWire: Readonly<Record<RecordRight, WireRight>> = {
+  "admit-bidders": WireRight.ADMIT_BIDDERS,
+  "run-auctions": WireRight.RUN_AUCTIONS,
+};
+
+export function createRightRecordAdministrator(
+  rpc: RightRecordRpc,
   timeoutMs = identityRpcTimeoutMs,
-): AuctionModerationAdministrator {
+): RightRecordAdministrator {
   const options = (meta?: RpcMetadata) => ({
     timeoutMs: callTimeoutMs(meta, timeoutMs),
     ...callHeaders(meta),
@@ -379,14 +386,10 @@ export function createAuctionModerationAdministrator(
     identityId: actor.identityId,
   });
   return {
-    async grantAuctionModeration(actor, identityId, meta) {
+    async grantRightRecord(actor, identityId, right, meta) {
       try {
         const response = await rpc.grantRight(
-          {
-            actor: actorMessage(actor),
-            identityId,
-            right: WireRight.ADMIT_BIDDERS,
-          },
+          { actor: actorMessage(actor), identityId, right: recordWire[right] },
           options(meta),
         );
         return { kind: "ok", value: response.changed };
@@ -400,14 +403,10 @@ export function createAuctionModerationAdministrator(
         return classifyAdminFailure(cause);
       }
     },
-    async revokeAuctionModeration(actor, identityId, meta) {
+    async revokeRightRecord(actor, identityId, right, meta) {
       try {
         const response = await rpc.revokeRight(
-          {
-            actor: actorMessage(actor),
-            identityId,
-            right: WireRight.ADMIT_BIDDERS,
-          },
+          { actor: actorMessage(actor), identityId, right: recordWire[right] },
           options(meta),
         );
         return { kind: "ok", value: response.changed };

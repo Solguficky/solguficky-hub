@@ -51,7 +51,7 @@ export function toCommunityPlace(place: CommunityPlace): Parent {
 }
 
 function memberData(
-  verb: "v" | "mg" | "mv" | "bq" | "by",
+  verb: "v" | "mg" | "mv" | "ag" | "av" | "bq" | "by",
   member: CommunityMember,
   place: CommunityPlace,
 ): string {
@@ -232,8 +232,9 @@ function listScreen(
 }
 
 /**
- * Карточка человека (PER-547): круг и модерация аукциона. Модерацию выдают
- * только участнику (ADR-065, п. 4): у гостя её кнопки нет. Кнопки видит
+ * Карточка человека (PER-547): круг, модерация и ведение аукциона. Обе записи
+ * выдают только участнику (ADR-065, п. 4 и п. 9; ADR-070, п. 1): у гостя их
+ * кнопок нет. Кнопки видит
  * держатель права управлять составом — без него экран не открывается.
  * Карточку перечитывает каждое действие с неё, «Обновить» ей не нужно.
  */
@@ -247,6 +248,12 @@ export function communityMemberScreen(
       member.auctionModeration ? "Снять модерацию" : "Выдать модерацию",
       memberData(member.auctionModeration ? "mv" : "mg", member, place),
     );
+    nextRow(keyboard).text(
+      member.auctionRunning
+        ? "Снять ведение аукциона"
+        : "Выдать ведение аукциона",
+      memberData(member.auctionRunning ? "av" : "ag", member, place),
+    );
   }
   nextRow(keyboard).text("Закрыть доступ", memberData("bq", member, place));
   return {
@@ -258,6 +265,9 @@ export function communityMemberScreen(
         `Круг: ${circleWords[member.circle]}`,
         member.circle === "member"
           ? `Модерация аукциона: ${member.auctionModeration ? "есть" : "нет"}`
+          : undefined,
+        member.circle === "member"
+          ? `Ведение аукциона: ${member.auctionRunning ? "есть" : "нет"}`
           : undefined,
       ]
         .filter((line) => line !== undefined)
