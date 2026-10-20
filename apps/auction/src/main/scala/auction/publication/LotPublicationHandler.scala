@@ -46,7 +46,7 @@ final class LotPublicationHandler(rows: LotRows, gap: LotJournalGap)
         case Left(defect) => throw new LotViewDefectException(defect)
         case Right(applied) =>
           applied.lastOption.foreach(last => rows.write(connection, before.fold(0L)(_.version), last.row))
-          applied.flatMap(LotFacts.fact).foreach(enqueue(connection, _))
+          LotFacts.facts(before, applied).foreach(enqueue(connection, _))
       }
     }
   }

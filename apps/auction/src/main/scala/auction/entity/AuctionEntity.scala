@@ -12,6 +12,7 @@ import auction.lot.MarkForFinalRejected
 import auction.lot.OpId
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ResumeLotRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.UnmarkForFinalRejected
@@ -255,6 +256,23 @@ object AuctionEntity {
       replyTo: ActorRef[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
   ) extends Command
 
+  /**
+   * Снятие участника с лота реестра (ADR-072; PER-658): та же форма, что `Select`. Ответ — номер лота, с которого
+   * чтение показывает снятие целиком. В перерыве лот до ответа держит знание о составе
+   * (`LotRoster.removingParticipant`).
+   */
+  final case class RemoveParticipantFromLot(
+      command: RemoveLotParticipant,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[ParticipantRemovalRejected, Long]]
+  ) extends Command
+
+  /** Предпросмотр снятия: решение аукциона то же, лот отвечает итогом без записи, и знание не меняется. */
+  final case class PreviewParticipantRemoval(
+      command: PreviewLotParticipantRemoval,
+      replyTo: ActorRef[Either[ParticipantRemovalRejected, LotEntity.RemovalPreview]]
+  ) extends Command
+
   /** Ask ведущего лоту реестра (П-08): та же форма, что `Select` — решает аукцион, событие пишет лот. */
   final case class AskLot(
       command: AdvanceLotAsk,
@@ -444,6 +462,20 @@ object AuctionEntity {
       lot: LotId,
       replyTo: ActorRef[Either[FinalChoiceRejected[R], Unit]],
       answer: Try[Either[R, Unit]]
+  ) extends Command
+
+  /** Ответ лота на снятие участника вместе с тем, кому его отдать; неудача — ответа нет. */
+  private[entity] final case class ParticipantRemoved(
+      lot: LotId,
+      replyTo: ActorRef[Either[ParticipantRemovalRejected, Long]],
+      answer: Try[Either[RemoveParticipantRejected, Long]]
+  ) extends Command
+
+  /** Ответ лота на предпросмотр снятия вместе с тем, кому его отдать; неудача — ответа нет. */
+  private[entity] final case class RemovalPreviewed(
+      lot: LotId,
+      replyTo: ActorRef[Either[ParticipantRemovalRejected, LotEntity.RemovalPreview]],
+      answer: Try[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]]
   ) extends Command
 
   /** Ответ лота на ask вместе с тем, кому его отдать; неудача — ответа нет. */
@@ -1152,6 +1184,37 @@ object AuctionEntity {
                 case Success(answer) => Effect.reply(chosen.replyTo)(answer.left.map(FinalChoiceRejected.ByLot(_)))
                 case Failure(failure) => Effect.none.thenRun(_ => logUnanswered(chosen.lot, failure))
               }
+            case RemoveParticipantFromLot(removal, initiator, replyTo) =>
+              Auction.decide(state.auction, removal) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(command) =>
+                  Effect.none.thenRun { after =>
+                    roster = LotRoster.removingParticipant(after.auction, roster, removal.lot)
+                    context.pipeToSelf(lots.removeParticipant(removal.lot, command, initiator))(
+                      ParticipantRemoved(removal.lot, replyTo, _)
+                    )
+                  }
+              }
+            case ParticipantRemoved(lot, replyTo, Success(answer)) =>
+              Effect.none.thenRun { _ =>
+                follow(LotRoster.participantRemovalAnswered(roster, lot))
+                replyTo ! answer.left.map(ParticipantRemovalRejected.ByLot(_))
+              }
+            case ParticipantRemoved(lot, _, Failure(failure)) => Effect.none.thenRun(_ => unanswered(lot, failure))
+            case PreviewParticipantRemoval(preview, replyTo) =>
+              Auction.decide(state.auction, preview) match {
+                case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
+                case Right(participant) =>
+                  Effect.none.thenRun { _ =>
+                    context.pipeToSelf(lots.previewRemoval(preview.lot, participant))(
+                      RemovalPreviewed(preview.lot, replyTo, _)
+                    )
+                  }
+              }
+            // Ни знание, ни журнал предпросмотр не меняет: ответ лота уходит вызывающему как есть.
+            case RemovalPreviewed(_, replyTo, Success(answer)) =>
+              Effect.reply(replyTo)(answer.left.map(ParticipantRemovalRejected.ByLot(_)))
+            case RemovalPreviewed(lot, _, Failure(failure)) => Effect.none.thenRun(_ => logUnanswered(lot, failure))
             case AskLot(ask, initiator, replyTo) =>
               Auction.decide(state.auction, ask) match {
                 case Left(rejected) => Effect.reply(replyTo)(Left(rejected))

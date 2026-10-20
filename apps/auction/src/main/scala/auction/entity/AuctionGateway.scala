@@ -86,6 +86,19 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]]
 
+  /** Снятие участника с лота реестра. Ответ — номер лота после ответа лота, как у `selectForFinal`. */
+  def removeParticipant(
+      auctionId: AuctionId,
+      command: RemoveLotParticipant,
+      initiator: Initiator
+  ): Future[Either[ParticipantRemovalRejected, Long]]
+
+  /** Предпросмотр того же снятия: итог лота без записи. */
+  def previewParticipantRemoval(
+      auctionId: AuctionId,
+      command: PreviewLotParticipantRemoval
+  ): Future[Either[ParticipantRemovalRejected, LotEntity.RemovalPreview]]
+
   /** Запуск окна сниженного шага. Ответ — после записи `StepWindowLaunched`, лотов он не ждёт. */
   def launchStepWindow(
       auctionId: AuctionId,
@@ -218,6 +231,19 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]] =
         entity(auctionId).ask(AuctionEntity.Deselect(command, initiator, _))
+
+      def removeParticipant(
+          auctionId: AuctionId,
+          command: RemoveLotParticipant,
+          initiator: Initiator
+      ): Future[Either[ParticipantRemovalRejected, Long]] =
+        entity(auctionId).ask(AuctionEntity.RemoveParticipantFromLot(command, initiator, _))
+
+      def previewParticipantRemoval(
+          auctionId: AuctionId,
+          command: PreviewLotParticipantRemoval
+      ): Future[Either[ParticipantRemovalRejected, LotEntity.RemovalPreview]] =
+        entity(auctionId).ask(AuctionEntity.PreviewParticipantRemoval(command, _))
 
       def launchStepWindow(
           auctionId: AuctionId,

@@ -351,6 +351,11 @@ object Lot {
    * снятого — [[rerun]] — ложится в событие, а `positionId` — новая ставка, позиция лидера (п. 1): ставки, которой
    * лидер держался бы без снятого, в журнале может не быть.
    *
+   * `version` — номер последнего события лота, его даёт entity. Расхождение с `expectedVersion` команды — последняя
+   * проверка, `LotChanged` (PER-658): лот, ушедший от предпросмотра, но снятие всё равно не принимающий, отвечает своим
+   * отказом, а повтор принятого снятия — исходным конвертом, хотя номер с тех пор вырос. Предпросмотр — то же решение с
+   * `expectedVersion = version`.
+   *
    * Снятие в окне анти-снайпа продлевает торги, только если сменило лидера или цену (п. 3): `DeadlineExtended` идёт
    * следом с прежним `extensionsUsed` — предел у этого продления свой, одно на снятого, и `K` он не тратит. В удержании
    * дедлайна нет, и продления тоже.
@@ -358,6 +363,7 @@ object Lot {
   def decide(
       lot: Lot,
       command: RemoveParticipant,
+      version: Long,
       positionId: BidId,
       now: Instant
   ): Either[RemoveParticipantRejected, Decision] =
@@ -382,6 +388,9 @@ object Lot {
           removal(held.config, historyOf(held.course), command.participant, positionId, held.currentPrice)
             .map(Decision.Accepted(_))
       }
+    }.flatMap {
+      case Decision.Accepted(_, _) if version != command.expectedVersion => Left(RemoveParticipantRejected.LotChanged)
+      case decided => Right(decided)
     }
 
   /**

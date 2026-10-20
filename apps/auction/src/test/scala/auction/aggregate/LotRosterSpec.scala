@@ -311,6 +311,25 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
         LotRoster(Map(first -> LotStanding.Closing))
     }
 
+    // ADR-072, «Открыто»: снятие с удержанного лота в перерыве и заморозка состава — гонка, которую упорядочивает знание.
+    "keeps a held lot out of the lineup while a removal of a participant is on its way, and asks it on the answer" in {
+      val break = auctionIn(AuctionState.Break(config(), op(3)))
+      val asked = LotRoster.survey(break)._1
+      val held = LotRoster.observed(break, asked, first, LotFixtures.held(100, participant(1)).state)._1
+      val known = LotRoster.observed(break, held, second, LotFixtures.held(100, participant(1)).state)._1
+      val removing = LotRoster.removingParticipant(break, known, first)
+
+      LotRoster.lineup(break, removing) shouldBe None
+      LotRoster.participantRemovalAnswered(removing, first) shouldBe
+        (LotRoster(removing.lots.updated(first, LotStanding.Asked)), List(LotInstruction.Ask(first)))
+      LotRoster.unanswered(removing, first).lots(first) shouldBe LotStanding.Unanswered
+      // Вне перерыва гонки нет, а лот, который закрывает ведущий, остаётся за закрытием.
+      LotRoster.removingParticipant(prebidding, known, first) shouldBe known
+      val closing = LotRoster.closingByAuctioneer(break, known, first)
+      LotRoster.removingParticipant(break, closing, first) shouldBe closing
+      LotRoster.participantRemovalAnswered(closing, first) shouldBe (closing, Nil)
+    }
+
     "finishes a break once the auctioneer sold its last held lot, and after a restart once every lot answered" in {
       val break = auctionIn(AuctionState.Break(config(), op(3)))
       val asked = LotRoster.survey(break)._1

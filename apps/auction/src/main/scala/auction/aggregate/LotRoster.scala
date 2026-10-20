@@ -24,7 +24,8 @@ import java.util.UUID
  * по дедлайну. `Declined` — лот отклонил `OpenLot`. `NotOpened` — лот так и не открыт, а открывать поздно: общий
  * дедлайн прошёл. `Unanswered` — ответ не пришёл. `Held` — лот удержан для финала (П-09). `Closed` — лот продан или
  * закрыт без продажи. В отменённом аукционе (ADR-047, дополнение 2026-10-12): `Withdrawing` — `WithdrawLot` ушёл,
- * ответа нет; `Withdrawn` — лот снят; `Closed` — лот ответил, что уже завершён, и остался как был.
+ * ответа нет; `Withdrawn` — лот снят; `Closed` — лот ответил, что уже завершён, и остался как был. `Removing` — в
+ * перерыве удержанному лоту ушло снятие участника, ответа нет (PER-658): цена лота может измениться.
  */
 enum LotStanding {
   case Asked
@@ -38,6 +39,7 @@ enum LotStanding {
   case Closed
   case Withdrawing
   case Withdrawn
+  case Removing
 
   /**
    * Лот больше не держит конец онлайн-торгов (RFC-011, `awaiting`): закрыт, удержан или так и не открывался. Лот без
@@ -46,7 +48,7 @@ enum LotStanding {
   def settled: Boolean =
     this match {
       case Closed | Held | Declined(_) | NotOpened | Withdrawn => true
-      case Asked | Opening | Active | Closing | Unanswered | Withdrawing => false
+      case Asked | Opening | Active | Closing | Unanswered | Withdrawing | Removing => false
     }
 }
 
@@ -401,6 +403,28 @@ object LotRoster {
     }
 
   /**
+   * Снятие участника ушло лоту (ADR-072, «Открыто»; PER-658). В перерыве удержанный лот до ответа — `Removing`: так же,
+   * как закрытие ведущим, он держит знание о составе, и заморозка, пришедшая до ответа, отвечает «состав пока не
+   * известен», а не берёт в состав цену, которую снятие вот-вот изменит. Лот, о котором аукцион знает другое, — уже
+   * закрываемый ведущим, — шаг не трогает. В остальных фазах гонки с заморозкой нет, и знание не меняется.
+   */
+  def removingParticipant(auction: Auction, roster: LotRoster, lot: LotId): LotRoster =
+    (auction.state, roster.lots.get(lot)) match {
+      case (AuctionState.Break(_, _), Some(LotStanding.Held)) => roster.mark(lot, LotStanding.Removing)
+      case _ => roster
+    }
+
+  /**
+   * Лот ответил на снятие участника. Удержанным он остаётся при любом ответе, но за время в пути его мог продать
+   * ведущий, поэтому истину даёт вопрос о состоянии, а не догадка; до его ответа состав по-прежнему не известен.
+   */
+  def participantRemovalAnswered(roster: LotRoster, lot: LotId): (LotRoster, List[LotInstruction]) =
+    roster.lots.get(lot) match {
+      case Some(LotStanding.Removing) => ask(roster, List(lot))
+      case _ => (roster, Nil)
+    }
+
+  /**
    * Лот ответил на закрытие ведущим. Принятое — лот закрыт, и перерыв, в котором не осталось удержанных, кончается.
    * Отказ значит, что аукцион знает о лоте не то, что лот, и истину даёт вопрос о состоянии — по ответу на него финал
    * запишет конец лота, если лот уже кончился.
@@ -560,7 +584,10 @@ object LotRoster {
    */
   def unanswered(roster: LotRoster, lot: LotId): LotRoster =
     roster.lots.get(lot) match {
-      case Some(LotStanding.Asked | LotStanding.Opening | LotStanding.Closing | LotStanding.Withdrawing) =>
+      case Some(
+            LotStanding.Asked | LotStanding.Opening | LotStanding.Closing | LotStanding.Withdrawing |
+            LotStanding.Removing
+          ) =>
         roster.mark(lot, LotStanding.Unanswered)
       case _ => roster
     }

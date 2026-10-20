@@ -93,7 +93,8 @@ object PredictionSteps {
 
   private def begun(roster: LotRoster): Boolean =
     roster.lots.values.exists {
-      case LotStanding.Active | LotStanding.Closing | LotStanding.Closed | LotStanding.Held => true
+      case LotStanding.Active | LotStanding.Closing | LotStanding.Closed | LotStanding.Held | LotStanding.Removing =>
+        true
       case _ => false
     }
 }

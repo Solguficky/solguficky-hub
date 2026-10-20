@@ -79,6 +79,19 @@ function rpcs() {
             },
           },
         },
+        // Снятие участника бот покажет вместе с пультом (PER-659), а до
+        // него пропускает так же, как незнакомую запись.
+        {
+          sequence: 7n,
+          occurredAt: "2026-10-03T16:06:00Z",
+          kind: {
+            case: "removal",
+            value: {
+              price: { minorUnits: 150_000n, currency: "RUB" },
+              leaderId: "p-1",
+            },
+          },
+        },
       ],
       nextPageToken: "",
     })),
