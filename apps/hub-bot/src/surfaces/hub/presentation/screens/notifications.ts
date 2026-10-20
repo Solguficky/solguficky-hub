@@ -35,6 +35,7 @@ export const categoryLabels: Record<NotificationCategory, string> = {
   organizer: "Сообщения организатора",
   announcement: "Объявления сообщества",
   access: "Запросы доступа",
+  release: "Новое в боте",
 };
 
 // Новые сходки и объявления сообществу не привязаны ни к какой сходке, и
@@ -63,13 +64,17 @@ export function globalNotificationsScreen(
   // запросы доступа, потом категории сходок. Запросы доступа бот не
   // показывает и не прячет сам: их нет в снимке у того, кто не администратор.
   const access = categories.filter((entry) => entry.category === "access");
+  const release = categories.filter((entry) => entry.category === "release");
   const ordered = [
     ...categories.filter((entry) => withoutSubscription(entry.category)),
     ...access,
     ...categories.filter(
       (entry) =>
-        !withoutSubscription(entry.category) && entry.category !== "access",
+        !withoutSubscription(entry.category) &&
+        entry.category !== "access" &&
+        entry.category !== "release",
     ),
+    ...release,
   ];
   const keyboard = new InlineKeyboard();
   for (const entry of ordered) {

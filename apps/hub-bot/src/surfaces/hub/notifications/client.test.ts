@@ -353,6 +353,77 @@ describe("auction notification settings", () => {
     });
   });
 
+  it("maps the release-notes category and the summary reads", async () => {
+    const reportReleaseNotes = vi.fn().mockResolvedValue({
+      acceptedAt: "2026-10-14T12:00:00Z",
+    });
+    const listReleaseSummaries = vi.fn().mockResolvedValue({
+      summaries: [
+        {
+          summaryId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401",
+          summarizedAt: "2026-10-14T12:00:00Z",
+          recordIds: ["known"],
+        },
+      ],
+      nextPageToken: "",
+    });
+    const getReleaseSummary = vi.fn().mockResolvedValue({
+      summary: {
+        summaryId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401",
+        summarizedAt: "2026-10-14T12:00:00Z",
+        recordIds: ["known"],
+      },
+      olderSummaryId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402",
+    });
+    const notifications = adapter({
+      reportReleaseNotes,
+      listReleaseSummaries,
+      getReleaseSummary,
+      getGlobalNotificationPreferences: vi.fn().mockResolvedValue({
+        categories: [
+          { category: WireCategory.MEETUP_PUBLISHED, enabled: true },
+          { category: WireCategory.RELEASE_NOTES, enabled: false },
+        ],
+      }),
+    });
+
+    await notifications.reportReleaseNotes(["known"]);
+    expect(reportReleaseNotes).toHaveBeenCalledWith(
+      { recordIds: ["known"] },
+      expect.any(Object),
+    );
+    await expect(
+      notifications.listReleaseSummaries(undefined),
+    ).resolves.toEqual({
+      kind: "ok",
+      page: {
+        summaries: [
+          {
+            id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401",
+            summarizedAt: "2026-10-14T12:00:00Z",
+            recordIds: ["known"],
+          },
+        ],
+      },
+    });
+    await expect(
+      notifications.getReleaseSummary("0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401"),
+    ).resolves.toMatchObject({
+      kind: "ok",
+      view: { olderId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402" },
+    });
+    await expect(
+      notifications.getGlobalPreferences("identity-id"),
+    ).resolves.toMatchObject({
+      preferences: {
+        categories: [
+          { category: "published", enabled: true },
+          { category: "release", enabled: false },
+        ],
+      },
+    });
+  });
+
   it("reports an unreachable Notifications as unavailable", async () => {
     const notifications = adapter({
       getAuctionNotificationPreferences: vi

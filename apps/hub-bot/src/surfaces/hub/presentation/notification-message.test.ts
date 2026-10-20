@@ -860,4 +860,29 @@ describe("notification sender", () => {
       classifySendFailure(new HttpError("network", new Error("reset"))).kind,
     ).toBe("unavailable");
   });
+
+  it("renders a release summary from the image lines and the mute button", () => {
+    const summaryId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+    const message = renderNotification({
+      kind: "release-note",
+      day: "14 октября",
+      lines: ["Под сводкой аукциона теперь кнопка на каждый лот."],
+      hidden: 2,
+      summaryId,
+    });
+    expect(message.text).toBe(
+      "<b>Новое в боте · 14 октября</b>\n\n• Под сводкой аукциона теперь кнопка на каждый лот.\n…и ещё записей: 2 — в «Что нового».",
+    );
+    expect(message.format).toBe("HTML");
+    const rows = message.keyboard?.inline_keyboard ?? [];
+    const open = rows[0]?.[0];
+    expect(open?.text).toBe("Что нового");
+    expect(rows[1]?.[0]).toMatchObject({
+      text: "Не присылать новое в боте",
+      callback_data: "v1:notify:off:release",
+    });
+    const data =
+      open !== undefined && "callback_data" in open ? open.callback_data : "";
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+  });
 });

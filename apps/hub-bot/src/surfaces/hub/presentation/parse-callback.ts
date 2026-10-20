@@ -55,6 +55,7 @@ const GlobalCategorySchema = z.enum([
   "organizer",
   "announcement",
   "access",
+  "release",
 ]);
 // Кнопка несёт целевое состояние, а не переворот: у двух человек, нажавших на
 // одну отрисовку, результат обязан совпасть.
@@ -231,6 +232,7 @@ type PlainAction =
   // Корни разделов, которые открывают команды; кнопкой — повтор после сбоя.
   | { kind: "settings" }
   | { kind: "help" }
+  | { kind: "release-notes"; token?: string; part?: number }
   | { kind: "next" }
   // «События» (PER-669): идущие события расширений сходок.
   | { kind: "events" }
@@ -965,6 +967,7 @@ export function parseCallback(raw: unknown): CallbackAction {
   if (parsed.data === "v1:nav:ext") return { kind: "settings-extensions" };
   if (parsed.data === "v1:nav:exta") return { kind: "settings-auction" };
   if (parsed.data === "v1:nav:help") return { kind: "help" };
+  if (parts[1] === "wn") return parseReleaseNotes(parts);
   if (parsed.data === "v1:nav:next") return { kind: "next" };
   if (parsed.data === "v1:nav:events") return { kind: "events" };
   if (parts.length === 4 && parts[1] === "manage" && parts[2] === "g") {
@@ -1924,6 +1927,20 @@ function parseBroadcast(parts: readonly string[]): CallbackAction {
     };
   }
   return { kind: "malformed" };
+}
+
+const ReleasePartSchema = z.string().regex(/^[1-9]\d{0,2}$/);
+
+function parseReleaseNotes(parts: readonly string[]): CallbackAction {
+  if (parts.length === 2) return { kind: "release-notes" };
+  if (parts.length !== 3 && parts.length !== 4) return { kind: "malformed" };
+  const token = TokenSchema.safeParse(parts[2]);
+  if (!token.success) return { kind: "malformed" };
+  if (parts.length === 3) return { kind: "release-notes", token: token.data };
+  const part = ReleasePartSchema.safeParse(parts[3]);
+  return part.success
+    ? { kind: "release-notes", token: token.data, part: Number(part.data) }
+    : { kind: "malformed" };
 }
 
 function parseNotify(parts: readonly string[]): CallbackAction {

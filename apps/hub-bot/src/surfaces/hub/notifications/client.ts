@@ -4,6 +4,7 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
+import type { ReleaseSummary as WireReleaseSummary } from "../../../../gen/notifications/v1/notifications_pb.js";
 import {
   NotificationsService,
   type AuctionNotificationPreferences as WireAuctionPreferences,
@@ -55,6 +56,9 @@ type NotificationsRpc = Pick<
   | "broadcastToCommunity"
   | "previewMeetupBroadcast"
   | "previewCommunityBroadcast"
+  | "reportReleaseNotes"
+  | "listReleaseSummaries"
+  | "getReleaseSummary"
 >;
 
 // Избранные лоты (PER-495) — порт аукционного дерева на том же соединении:
@@ -252,6 +256,72 @@ export function createNotificationsAdapter(
           options(meta),
         ),
       ),
+    reportReleaseNotes: async (recordIds, meta) => {
+      try {
+        await rpc.reportReleaseNotes(
+          { recordIds: [...recordIds] },
+          options(meta),
+        );
+        return { kind: "ok" };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    listReleaseSummaries: async (pageToken, meta) => {
+      try {
+        const response = await rpc.listReleaseSummaries(
+          { pageToken: pageToken ?? "", pageSize: 0 },
+          options(meta),
+        );
+        const next = response.nextPageToken;
+        return {
+          kind: "ok",
+          page: {
+            summaries: response.summaries.map(toReleaseSummary),
+            ...(next === "" ? {} : { nextPageToken: next }),
+          },
+        };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    getReleaseSummary: async (summaryId, meta) => {
+      try {
+        const response = await rpc.getReleaseSummary(
+          { summaryId },
+          options(meta),
+        );
+        const summary = response.summary;
+        if (summary === undefined) return { kind: "not-found" };
+        const olderId = response.olderSummaryId;
+        const newerId = response.newerSummaryId;
+        return {
+          kind: "ok",
+          view: {
+            summary: toReleaseSummary(summary),
+            ...(olderId === undefined || olderId === "" ? {} : { olderId }),
+            ...(newerId === undefined || newerId === "" ? {} : { newerId }),
+          },
+        };
+      } catch (cause) {
+        if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+          return { kind: "not-found" };
+        }
+        return toFailure(cause);
+      }
+    },
+  };
+}
+
+function toReleaseSummary(summary: WireReleaseSummary): {
+  id: string;
+  summarizedAt: string;
+  recordIds: readonly string[];
+} {
+  return {
+    id: summary.summaryId,
+    summarizedAt: summary.summarizedAt,
+    recordIds: summary.recordIds,
   };
 }
 
@@ -314,9 +384,10 @@ function isMeetupCategory(
   category: NotificationCategory,
 ): category is MeetupCategory {
   return (
-    category !== "published" &&
-    category !== "announcement" &&
-    category !== "access"
+    category === "changes" ||
+    category === "material" ||
+    category === "reminder" ||
+    category === "organizer"
   );
 }
 
@@ -336,6 +407,8 @@ function toWire(category: NotificationCategory): WireCategory {
       return WireCategory.COMMUNITY_ANNOUNCEMENT;
     case "access":
       return WireCategory.ACCESS_REQUEST;
+    case "release":
+      return WireCategory.RELEASE_NOTES;
     default: {
       const _exhaustive: never = category;
       throw new Error(`Unsupported notification category ${_exhaustive}`);
@@ -361,6 +434,8 @@ function fromWire(value: WireCategory): NotificationCategory | undefined {
       return "announcement";
     case WireCategory.ACCESS_REQUEST:
       return "access";
+    case WireCategory.RELEASE_NOTES:
+      return "release";
     default:
       return undefined;
   }

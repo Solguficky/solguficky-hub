@@ -105,6 +105,14 @@ export const screenCatalog = {
     nav: "tree",
     title: "Помощь",
     parent: "menu",
+    backName: "Помощь",
+  },
+  "whats-new": {
+    class: "screen",
+    nav: "tree",
+    title: "Что нового",
+    parent: "help",
+    backName: "Что нового",
   },
   // «События» (PER-669): идущие события расширений сходок — сегодня аукцион
   // от онлайн-торгов до конца финала. Кнопка в меню — пока событие идёт,

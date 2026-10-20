@@ -13,7 +13,11 @@ export type MeetupCategory = "changes" | "material" | "reminder" | "organizer";
 // сходку нельзя, а объявление и заявка не привязаны ни к одной. Запросы
 // доступа видит только модератор очереди, но решает это сервис: категории нет
 // в снимке остальных, и бот рисует снимок, а не права.
-export type GlobalOnlyCategory = "published" | "announcement" | "access";
+export type GlobalOnlyCategory =
+  | "published"
+  | "announcement"
+  | "access"
+  | "release";
 
 export type NotificationCategory = MeetupCategory | GlobalOnlyCategory;
 
@@ -79,6 +83,34 @@ export type Broadcast = {
   body: string;
 };
 
+export type ReleaseSummary = {
+  id: string;
+  summarizedAt: string;
+  recordIds: readonly string[];
+};
+
+export type ReleaseSummaryNeighbours = {
+  summary: ReleaseSummary;
+  olderId?: string;
+  newerId?: string;
+};
+
+export type ReleaseSummariesPage = {
+  summaries: readonly ReleaseSummary[];
+  nextPageToken?: string;
+};
+
+export type ReleaseReportResult = { kind: "ok" } | NotificationFailure;
+
+export type ReleaseSummariesResult =
+  | { kind: "ok"; page: ReleaseSummariesPage }
+  | NotificationFailure;
+
+export type ReleaseSummaryResult =
+  | { kind: "ok"; view: ReleaseSummaryNeighbours }
+  | { kind: "not-found" }
+  | NotificationFailure;
+
 // Каждая команда несёт целевое состояние, а не переворот текущего, и возвращает
 // снимок области, к которой относится. Операции снятия переопределения в
 // контракте нет: «наследовать глобальное» на проводе не выражается
@@ -137,4 +169,16 @@ export type Notifications = {
     request: { identityId: string },
     meta?: RpcMetadata,
   ): Promise<BroadcastAudienceCount>;
+  reportReleaseNotes(
+    recordIds: readonly string[],
+    meta?: RpcMetadata,
+  ): Promise<ReleaseReportResult>;
+  listReleaseSummaries(
+    pageToken: string | undefined,
+    meta?: RpcMetadata,
+  ): Promise<ReleaseSummariesResult>;
+  getReleaseSummary(
+    summaryId: string,
+    meta?: RpcMetadata,
+  ): Promise<ReleaseSummaryResult>;
 };

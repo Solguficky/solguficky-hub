@@ -125,7 +125,13 @@ export type RenderableContent =
   // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
   // — этот (RFC-015, С-12). Ссылку на бот аукциона он вручает сам; факт её не
   // несёт (PER-536), и она приходит не из ветки, а из настройки бота.
-  | { kind: "circle-demoted" };
+  | { kind: "circle-demoted" }
+  | {
+      kind: "release-summary";
+      summaryId: string;
+      summarizedAt: string;
+      recordIds: readonly string[];
+    };
 
 // Очереди, в которые ставят заявку: сообщество и аукцион.
 export type ApplicationQueue = "community" | "auction";
@@ -275,6 +281,18 @@ function toContent(message: Notification): NotificationContent | undefined {
       return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
+    case "releaseSummary": {
+      const { summaryId, summarizedAt, recordIds } = type.value;
+      if (summaryId === "" || summarizedAt === "" || recordIds.length === 0) {
+        return undefined;
+      }
+      return {
+        kind: "release-summary",
+        summaryId,
+        summarizedAt,
+        recordIds,
+      };
+    }
     default:
       return { kind: "unrendered", type: type.case ?? "unknown" };
   }

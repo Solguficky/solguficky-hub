@@ -357,6 +357,11 @@ import {
 } from "./screens/notifications.js";
 import { reconsiderConfirmScreen, refusedScreen } from "./screens/refused.js";
 import {
+  releaseEmptyScreen,
+  releasePostData,
+  releasePostScreen,
+} from "./screens/release-notes.js";
+import {
   datePresetsScreen,
   scheduleTypePrompt,
 } from "./screens/schedule-presets.js";
@@ -524,7 +529,8 @@ type ProductUseCase =
   | "view_auction"
   | "enable_auction"
   | "manage_lot"
-  | "manage_auction";
+  | "manage_auction"
+  | "view_release_notes";
 // Сбой Auction на ответе формы лота: вопрос остаётся открытым, и тот же ответ
 // можно прислать ещё раз.
 const lotSaveRetryText =
@@ -3111,6 +3117,10 @@ async function handleCallback(
     }
     if (action.kind === "help") {
       outcome = await openHelp(ctx, runtime, person, useCase);
+      return;
+    }
+    if (action.kind === "release-notes") {
+      outcome = await openReleaseNotes(ctx, runtime, person, action, useCase);
       return;
     }
     // «Расширения» в «Настройках» (PER-605): только список расширений (№74),
@@ -5764,6 +5774,56 @@ async function openHelp(
     result: "ok",
     use_case: useCase,
   };
+}
+
+async function openReleaseNotes(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  person: Person,
+  action: { token?: string; part?: number },
+  useCase: ProductUseCase,
+): Promise<BoundaryOutcome> {
+  const summaryId =
+    action.token === undefined ? undefined : tokenToUuid(action.token);
+  const result = await runtime.dispatcher.execute({
+    identity: person,
+    intent: "view-release-notes",
+    ...(summaryId === undefined ? {} : { summaryId }),
+    ...(action.part === undefined ? {} : { part: action.part }),
+    ...rpcCall(ctx, useCase),
+  });
+  const retry = releasePostData(
+    summaryId === undefined ? undefined : { summaryId, part: action.part ?? 1 },
+  );
+  if (result.kind === "release-post") {
+    const screen = releasePostScreen(
+      result,
+      communityToday(ctx),
+      runtime.communityTimeZone ?? "UTC",
+    );
+    if (screen === undefined) {
+      await showRefusal(ctx, unavailableText, exitRetry(retry));
+      return {
+        level: "error",
+        message: "release notes rejected",
+        result: "error",
+        use_case: useCase,
+        error_category: "invariant",
+        error: "release summary date",
+      };
+    }
+    await showScreen(ctx, screen);
+  } else if (result.kind === "release-empty") {
+    await showScreen(ctx, releaseEmptyScreen());
+  } else {
+    await showRefusal(ctx, unavailableText, exitRetry(retry));
+  }
+  return screenBoundary(result, {
+    ok: ["release-post", "release-empty"],
+    okMessage: "release notes sent",
+    rejectedMessage: "release notes rejected",
+    useCase,
+  });
 }
 
 /**
@@ -9436,6 +9496,7 @@ function callbackUseCase(
     | "settings-auction"
     | "meetup-extensions"
     | "help"
+    | "release-notes"
     | "next"
     | "events"
     | "manage-group"
@@ -9667,6 +9728,9 @@ function callbackUseCase(
     case "home":
     case "apply":
     case "help":
+      return "find_meetup";
+    case "release-notes":
+      return "view_release_notes";
     case "hub":
     case "archive":
     case "outdated":

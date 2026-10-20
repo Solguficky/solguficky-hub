@@ -1,3 +1,4 @@
+import type { ReleaseNotes } from "../../../core/release-notes.js";
 import { rpcMeta } from "../../../core/rpc-metadata.js";
 import type {
   AuctionConsoles,
@@ -13,6 +14,7 @@ import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
+import { createReleaseNotes } from "./release-notes.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
 
@@ -34,6 +36,7 @@ export function createDispatcher(
     // Часы бота; тест их подменяет.
     now?: () => Date;
   },
+  releaseNotes?: ReleaseNotes,
 ): Dispatcher {
   const lotForm = lots === undefined ? undefined : createLotForm(lots);
   const auctionConsole =
@@ -58,6 +61,10 @@ export function createDispatcher(
     meetups === undefined ? undefined : createMeetupMaterials(meetups);
   const broadcasts =
     notifications === undefined ? undefined : createBroadcasts(notifications);
+  const releaseNotesView =
+    notifications === undefined || releaseNotes === undefined
+      ? undefined
+      : createReleaseNotes(notifications, releaseNotes);
   // Карточка сходки: сама сходка из Meetups, подписка из Notifications и
   // аукцион из Auction — для строки аукциона (PER-594); меню «Расширения» —
   // сходка и аукцион. Отказ соседа сходки экран не роняет.
@@ -259,6 +266,10 @@ export function createDispatcher(
           return broadcasts === undefined
             ? { kind: "rejected", reason: "notifications-not-configured" }
             : broadcasts(request);
+        case "view-release-notes":
+          return releaseNotesView === undefined
+            ? { kind: "rejected", reason: "notifications-not-configured" }
+            : releaseNotesView(request);
         default: {
           const _exhaustive: never = request;
           return { kind: "rejected", reason: String(_exhaustive) };
