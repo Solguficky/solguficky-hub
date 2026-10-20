@@ -11,7 +11,7 @@ namespace Notifications.Auction;
 public enum AuctionOutcome
 {
     Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected, LotReplicated,
-    FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced,
+    FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced, PredictionResultsAnnounced,
 }
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
@@ -297,6 +297,39 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.RaffleAnnounced,
             new Dictionary<string, int> { [AuctionFacts.RaffleResultType] = created });
+    }
+
+    /// <summary>
+    /// Итоги прогнозов (PER-567): по факту на каждого, кто сделал прогноз, —
+    /// адресаты берутся из самого факта, и не ответивший ни на одну номинацию
+    /// в нём не назван. Ручная отметка подсчитанных итогов не несёт и адресатов
+    /// не даёт. Настройки и категории его не фильтруют: сообщение одно на
+    /// аукцион. Повтор отсекает ключ события, а после его чистки —
+    /// уникальность (тип, повод, получатель).
+    /// </summary>
+    public async Task<AuctionApplication> Apply(PredictionSettlement settlement, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, settlement.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        var notAfter = now + options.Value.StaleAfter;
+        var created = 0;
+        foreach (var participant in settlement.Manual ? Array.Empty<PredictionParticipant>() : settlement.Participants)
+        {
+            var notification = AuctionFacts.PredictionResults(Guid.CreateVersion7(now), participant, settlement, now,
+                notAfter);
+            created += await NotificationStore.AddAddressed(work, notification, AuctionFacts.PredictionResultsType,
+                AuctionFacts.PredictionResultsCauseKind, settlement.EventId.ToString(), now, notAfter, cancellationToken,
+                await NotificationStore.DeliverySurface(work, participant.ParticipantId, cancellationToken));
+        }
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.PredictionResultsAnnounced,
+            new Dictionary<string, int> { [AuctionFacts.PredictionResultsType] = created });
     }
 
     /// <summary>Люди, чьи окна сводки наступили, для прохода.</summary>

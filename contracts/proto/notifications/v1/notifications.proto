@@ -331,8 +331,9 @@ message PredictionResults {
   // with no sales is absent.
   repeated PredictionNominationOutcome nominations = 2;
 
-  // The recipient's own result, one entry per nomination they answered. At
-  // least one entry: a fact is created only for a participant who predicted.
+  // The recipient's own result, one entry per nomination in nominations that
+  // they answered, in the order of ADR-067. An answer to a nomination that was
+  // not played is absent: it has no result.
   repeated PredictionOwnResult yours = 3;
 }
 
