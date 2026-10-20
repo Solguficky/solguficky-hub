@@ -340,8 +340,10 @@ message AuctionCancelled {
   string meetup_id = 2;
 
   // The lots of the auction the recipient bought, in no particular order.
-  // Empty for everyone else. A sale that reached Notifications after the
-  // cancellation is absent here; its lot_purchased is sent all the same.
+  // Empty for everyone else, and for a buyer whose sale reached Notifications
+  // before the price was kept. A sale that reached Notifications after the
+  // cancellation gives its buyer this fact with that sale alone, unless they
+  // already have it.
   repeated CancelledAuctionPurchase purchases = 3;
 }
 

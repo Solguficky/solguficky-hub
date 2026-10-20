@@ -150,6 +150,19 @@ public class AuctionEndTests
         audience[follower].ShouldBeEmpty();
     }
 
+    /// <summary>Покупатель лота, реплика которого записана без цены, — адресат без строки покупки.</summary>
+    [Fact]
+    public void When_SoldReplicaHasNoPrice_Expect_BuyerWithoutPurchases()
+    {
+        var buyer = Guid.CreateVersion7();
+        var legacy = new EndedLot(Guid.CreateVersion7(), LotStatus.Sold, buyer, null);
+
+        var audience = AuctionFacts.CancellationAudience([], [legacy]);
+
+        audience.ShouldHaveSingleItem().Recipient.ShouldBe(buyer);
+        audience[0].Purchases.ShouldBeEmpty();
+    }
+
     [Fact]
     public void When_CancellationBuilt_Expect_CauseIsCancellationAndPurchasesWithPrice()
     {

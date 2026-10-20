@@ -29,17 +29,20 @@ public static class AuctionFacts
     /// <summary>
     /// Адресаты отмены аукциона (ADR-047, дополнение 2026-10-12, «Факт
     /// отмены»): каждый, у кого была строка избранного на лоте аукциона, и
-    /// покупатель проданного — по одному разу, со своими покупками. Порядок —
-    /// по идентификатору, чтобы разворот не зависел от порядка строк базы.
+    /// покупатель проданного — по одному разу, со своими покупками. Покупатель
+    /// лота, реплика которого записана без цены (до PER-604), адресат тоже, но
+    /// строки покупки у него нет: цену назвать нечем. Порядок — по
+    /// идентификатору, чтобы разворот не зависел от порядка строк базы.
     /// </summary>
     public static IReadOnlyList<(Guid Recipient, IReadOnlyList<EndedLot> Purchases)> CancellationAudience(
         IReadOnlyList<Guid> followers, IReadOnlyList<EndedLot> lots)
     {
-        var purchases = lots
-            .Where(lot => lot is { Status: LotStatus.Sold, Leader: not null, SalePrice: not null })
+        var sold = lots.Where(lot => lot is { Status: LotStatus.Sold, Leader: not null }).ToArray();
+        var purchases = sold
+            .Where(lot => lot.SalePrice is not null)
             .GroupBy(lot => lot.Leader!.Value)
             .ToDictionary(group => group.Key, group => (IReadOnlyList<EndedLot>)group.OrderBy(lot => lot.LotId).ToArray());
-        return followers.Union(purchases.Keys)
+        return followers.Union(sold.Select(lot => lot.Leader!.Value))
             .Order()
             .Select(recipient => (recipient,
                 purchases.TryGetValue(recipient, out var own) ? own : (IReadOnlyList<EndedLot>)[]))

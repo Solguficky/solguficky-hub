@@ -168,7 +168,8 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         // Продажа кончившегося аукциона остаётся продажей и покупку извещает, но
         // реплику его лота уже не воскрешает.
         await AuctionEndStore.LockShared(work, sale.AuctionId, cancellationToken);
-        if (sale.Snapshot is { } snapshot && await AuctionEndStore.Read(work, sale.AuctionId, cancellationToken) is null)
+        var ended = await AuctionEndStore.Read(work, sale.AuctionId, cancellationToken);
+        if (sale.Snapshot is { } snapshot && ended is null)
         {
             await LotReplicaStore.Apply(work, snapshot, now, cancellationToken);
         }
@@ -182,6 +183,19 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
                 cancellationToken,
                 await NotificationStore.DeliverySurface(work, sale.Winner, cancellationToken)),
         };
+
+        // Покупатель продажи, пришедшей после отмены, узнаёт об отмене со своей
+        // покупкой, как лидер поздней ставки; уже извещённый гаснет на ключе.
+        if (ended is { End: AuctionEnd.Cancelled } cancelled)
+        {
+            var purchase = new EndedLot(sale.LotId, LotStatus.Sold, sale.Winner, sale.Price);
+            var cancellation = AuctionFacts.Cancellation(Guid.CreateVersion7(now), sale.Winner, sale.AuctionId,
+                cancelled.MeetupId, cancelled.EventId, [purchase], now, notAfter);
+            created[AuctionFacts.AuctionCancelledType] = await NotificationStore.AddAddressed(work, cancellation,
+                AuctionFacts.AuctionCancelledType, AuctionFacts.AuctionCauseKind, cancelled.EventId.ToString(), now,
+                notAfter, cancellationToken,
+                await NotificationStore.DeliverySurface(work, sale.Winner, cancellationToken));
+        }
 
         // Торги кончились, и окна со строками лота закрываются сейчас, а не по
         // своему моменту: перебитый узнаёт итоговую цену, а не сводку после
@@ -243,6 +257,15 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, final.EventId, now, cancellationToken) == 0)
         {
             return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        // Анонс, вернувшийся в поток ждать удержаний, мог догнать конец аукциона:
+        // кончившемуся аукциону финал не анонсируется, и круг его уже забыт.
+        await AuctionEndStore.LockShared(work, final.AuctionId, cancellationToken);
+        if (await AuctionEndStore.Read(work, final.AuctionId, cancellationToken) is not null)
+        {
+            await work.Commit(cancellationToken);
+            return new AuctionApplication(AuctionOutcome.AuctionEnded, new Dictionary<string, int>());
         }
 
         var held = await FinalStore.Held(work, final.Lineup, cancellationToken);
@@ -310,7 +333,9 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         // после удаления реплики получает «лот неизвестен».
         await AuctionEndStore.LockExclusive(work, closed.AuctionId, cancellationToken);
         var lots = await AuctionEndStore.TakeLots(work, closed, cancellationToken);
-        var lotIds = lots.Select(lot => lot.LotId).ToArray();
+        // Реестр — тоже: отметку по ставке с кривым снимком лот получает и без
+        // реплики, и её держатель причастен так же.
+        var lotIds = lots.Select(lot => lot.LotId).Union(closed.Registry).ToArray();
         var followers = closed.End == AuctionEnd.Cancelled
             ? await FavoriteStore.Followers(work, lotIds, cancellationToken)
             : [];

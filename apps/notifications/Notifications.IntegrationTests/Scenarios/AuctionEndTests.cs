@@ -157,6 +157,77 @@ public class AuctionEndTests
     }
 
     /// <summary>
+    /// Продажа, пришедшая после отмены, даёт покупателю и покупку, и извещение
+    /// об отмене со своей покупкой; реплику она не воскрешает.
+    /// </summary>
+    [Fact]
+    public async Task When_SaleArrivesAfterCancel_Expect_BuyerNotifiedWithPurchase()
+    {
+        using var db = Database();
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        var store = Store(source);
+        var auction = EventFactory.AuctionOfMeetup();
+        var (lot, buyer) = (EventFactory.NewId(), EventFactory.NewId());
+        var cancellation = EventFactory.AuctionCancelled(auction, EventFactory.NewId(), lot);
+        await store.Apply(Closed(cancellation), Now, Cancellation);
+
+        var sold = InAuction(EventFactory.Sold(lot, buyer), auction);
+        await store.Apply(DecodeSale(sold), Now, Cancellation);
+
+        var fact = (await StoredFacts(db))
+            .Single(fact => fact.TypeCase == Notification.TypeOneofCase.AuctionCancelled);
+        fact.RecipientId.ShouldBe(buyer);
+        fact.Cause.AuctionEventId.ShouldBe(cancellation.EventId);
+        fact.AuctionCancelled.Purchases.ShouldHaveSingleItem().Price.ShouldBe(sold.State.Sold.Price);
+        (await StoredFacts(db)).ShouldContain(fact => fact.TypeCase == Notification.TypeOneofCase.LotPurchased);
+        (await Count(db, "lot_replica")).ShouldBe(0);
+    }
+
+    /// <summary>
+    /// Ставка с кривым снимком ставит отметку без реплики. Отмена находит её
+    /// по реестру: держатель извещён, отметка удалена.
+    /// </summary>
+    [Fact]
+    public async Task When_FavoriteHasNoReplica_Expect_RegistryCleansAndNotifies()
+    {
+        using var db = Database();
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        var store = Store(source);
+        var auction = EventFactory.AuctionOfMeetup();
+        var (lot, leader) = (EventFactory.NewId(), EventFactory.NewId());
+        await store.Apply(Decode(EventFactory.Bid(lot, leader: leader, deadline: "not-an-instant", auction: auction)), Now,
+            Cancellation);
+        (await Count(db, "lot_replica")).ShouldBe(0);
+
+        await store.Apply(Closed(EventFactory.AuctionCancelled(auction, EventFactory.NewId(), lot)), Now, Cancellation);
+
+        (await Count(db, "lot_favorite")).ShouldBe(0);
+        (await StoredFacts(db)).ShouldContain(fact =>
+            fact.TypeCase == Notification.TypeOneofCase.AuctionCancelled && fact.RecipientId == leader);
+    }
+
+    /// <summary>Анонс состава, догнавший отмену, ничего не пишет: круг кончившегося аукциона забыт.</summary>
+    [Fact]
+    public async Task When_LineupArrivesAfterCancel_Expect_NoAnnouncement()
+    {
+        using var db = Database();
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        var store = Store(source);
+        var (auction, meetup) = (EventFactory.AuctionOfMeetup(), EventFactory.NewId());
+        var lot = EventFactory.NewId();
+        await store.Apply(Decode(EventFactory.Bid(lot, leader: EventFactory.NewId(), auction: auction)), Now, Cancellation);
+        await store.Apply(Closed(EventFactory.AuctionCancelled(auction, meetup, lot)), Now, Cancellation);
+
+        var lineup = AuctionMapping.Decode("events.auction.final_lineup_frozen",
+                EventFactory.Bytes(EventFactory.LineupFrozen(auction, meetup, lot)))
+            .ShouldBeOfType<AuctionDecoded.Final>().Value;
+        var applied = await store.Apply(lineup, Now, Cancellation);
+
+        applied.Outcome.ShouldBe(AuctionOutcome.AuctionEnded);
+        (await StoredFacts(db)).ShouldNotContain(fact => fact.TypeCase == Notification.TypeOneofCase.AuctionFinalLineup);
+    }
+
+    /// <summary>
     /// Удалённый до торгов аукцион чистит избранное лотов своего реестра, но
     /// строки «закончен» не пишет: лот нового рождения под тем же
     /// <c>auction_id</c> получает реплику и отметку как обычно.
