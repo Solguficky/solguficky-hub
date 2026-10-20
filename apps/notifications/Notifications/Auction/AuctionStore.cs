@@ -23,7 +23,8 @@ public sealed record AuctionApplication(AuctionOutcome Outcome, IReadOnlyDiction
 /// <summary>Ключ события, реплика лота и адресный факт — одна транзакция, без чтения чужой реплики.</summary>
 /// <remarks>
 /// «Перебили» и ответ своей автоставки фильтрует настройка получателя
-/// (PER-514, PER-596), и читается она той же транзакцией, что и ключ события:
+/// (PER-514, PER-596). В живом финале перебитие ещё гасит выключенное
+/// «перебили в финале» (PER-645). Настройка читается той же транзакцией, что и ключ события:
 /// повтор, пришедший после смены настройки, уже отсечён ключом и решения не
 /// меняет. Покупку настройка не трогает.
 /// </remarks>
@@ -62,9 +63,22 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         // Решения по обоим адресатам — до записи: окна берутся раньше, чем
         // ставка тронет строки лота, потому что порядок блокировок — окна по
         // возрастанию идентификатора, затем строки (OutbidStore).
+        async Task<OutbidDecision> OutbidOf(Guid recipientId)
+        {
+            var decision = OutbidFrequencies.Decide(
+                await OutbidStore.ReadPreference(work, recipientId, cancellationToken));
+            if (!bid.Live)
+            {
+                return decision;
+            }
+
+            var enabled = await FinalOutbidStore.ReadEnabled(work, recipientId, cancellationToken) ?? false;
+            return OutbidFrequencies.ForLiveFinal(decision, true, enabled);
+        }
+
         var outbid = bid.OutbidRecipient is { } outbidRecipient
             ? new Addressed(outbidRecipient, LotActivityKind.Outbid,
-                OutbidFrequencies.Decide(await OutbidStore.ReadPreference(work, outbidRecipient, cancellationToken)))
+                await OutbidOf(outbidRecipient))
             : null;
         var proxy = bid.ProxyRaisedRecipient is { } proxyRecipient
             ? new Addressed(proxyRecipient, LotActivityKind.ProxyRaised,

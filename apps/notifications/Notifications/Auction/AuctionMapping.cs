@@ -44,7 +44,7 @@ public sealed record AuctionLotFact(Guid EventId, LotSnapshot Snapshot, LotHold?
 /// </summary>
 public sealed record AuctionBid(Guid EventId, Guid LotId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
     Guid? PreviousLeader, Guid Leader, Money Price, LotSnapshot? Snapshot, bool OvertakenByProxy = false,
-    bool AnswersOtherBidder = false)
+    bool AnswersOtherBidder = false, bool Live = false)
 {
     public Guid? OutbidRecipient =>
         PreviousLeader is { } previous && previous != Leader && !OvertakenByProxy ? previous : null;
@@ -368,7 +368,7 @@ public static class AuctionMapping
         }
         return new AuctionDecoded.Bid(new AuctionBid(eventId, lotId, Guid.Parse(state.AuctionId), message.Version,
             occurredAt, previous, leader, price.Clone(),
-            snapshot, placed.OvertakenByProxy, placed.AnswersOtherBidder));
+            snapshot, placed.OvertakenByProxy, placed.AnswersOtherBidder, trading.Phase == LotPhase.Live));
     }
 
     private static AuctionDecoded DecodeSale(LotEvent message, Guid eventId, Guid lotId, DateTimeOffset occurredAt,

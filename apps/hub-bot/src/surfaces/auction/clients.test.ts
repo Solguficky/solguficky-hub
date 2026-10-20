@@ -344,11 +344,13 @@ describe("auction notification settings port", () => {
         identityId: "id-1",
         outbidFrequency: answer,
         finalAnnouncements: true,
+        finalOutbids: false,
       })),
       setAuctionNotificationPreferences: vi.fn(async () => ({
         identityId: "id-1",
         outbidFrequency: answer,
         finalAnnouncements: false,
+        finalOutbids: false,
       })),
     };
     const { identity, auction } = rpcs();
@@ -374,10 +376,15 @@ describe("auction notification settings port", () => {
     expect(await ports.outbid?.get(viewer)).toEqual({
       frequency: "15",
       finalAnnouncements: true,
+      finalOutbids: false,
     });
     expect(
       await ports.outbid?.set(viewer, { kind: "final", enabled: false }),
-    ).toEqual({ frequency: "15", finalAnnouncements: false });
+    ).toEqual({
+      frequency: "15",
+      finalAnnouncements: false,
+      finalOutbids: false,
+    });
     await ports.outbid?.set(viewer, { kind: "frequency", frequency: "15" });
     expect(
       notifications.getAuctionNotificationPreferences,

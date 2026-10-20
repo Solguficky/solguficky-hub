@@ -6723,7 +6723,7 @@ describe("notification frames", () => {
         kind: "global-notification-settings",
         categories: [{ category: "published", enabled: true }],
       });
-      const entry = { text: "🔨 Аукцион", callback_data: "v1:notify:outbid" };
+      const entry = { text: "🔨 Аукцион", callback_data: "v1:nav:ext:auc" };
       for (const auction of [true, false]) {
         const { bot, calls } = harness(execute, auction);
         await bot.init();
@@ -6752,14 +6752,19 @@ describe("notification frames", () => {
       await bot.init();
       await bot.handleUpdate(callbackUpdate("v1:nav:ext"));
       expect(screen(calls.at(-1)).reply_markup?.inline_keyboard).toEqual([
-        [{ text: "🔨 Аукцион", callback_data: "v1:notify:outbid" }],
+        [{ text: "🔨 Аукцион", callback_data: "v1:nav:ext:auc" }],
+        [{ text: "‹ Настройки", callback_data: "v1:nav:settings" }],
+      ]);
+      await bot.handleUpdate(callbackUpdate("v1:nav:ext:auc"));
+      expect(screen(calls.at(-1)).reply_markup?.inline_keyboard).toEqual([
+        [{ text: "Уведомления", callback_data: "v1:notify:outbid" }],
         [
           {
             text: "Имя в аукционе",
             callback_data: encodeAuctionCallback({ kind: "name", auctionId }),
           },
         ],
-        [{ text: "‹ Настройки", callback_data: "v1:nav:settings" }],
+        [{ text: "‹ Расширения", callback_data: "v1:nav:ext" }],
       ]);
     });
 
@@ -6769,7 +6774,11 @@ describe("notification frames", () => {
     it("shows the five modes, marks the current one and the final switch", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
-        settings: { frequency: "off", finalAnnouncements: true },
+        settings: {
+          frequency: "off",
+          finalAnnouncements: true,
+          finalOutbids: false,
+        },
       });
       const { bot, calls } = harness(execute);
       await bot.init();
@@ -6778,41 +6787,33 @@ describe("notification frames", () => {
         expect.objectContaining({ intent: "view-auction-notifications" }),
       );
       const payload = screen(calls[1]);
-      expect(payload.text).toContain("<b>Аукцион</b>");
+      expect(payload.text).toContain("<b>Уведомления</b>");
       expect(payload.text).toContain("одной сводкой");
       expect(payload.text).toContain("Анонс финала");
+      expect(payload.text).toContain("Перебили в финале");
       expect(payload.text).toContain("О покупке лота пишу всегда");
       expect(payload.text).not.toContain("Сейчас:");
       expect(payload.reply_markup?.inline_keyboard).toEqual([
-        [
-          {
-            text: "О каждом перебитии",
-            callback_data: "v1:notify:outbid:every",
-          },
-        ],
-        [
-          {
-            text: "Не чаще раза в 5 минут",
-            callback_data: "v1:notify:outbid:5",
-          },
-        ],
-        [
-          {
-            text: "Не чаще раза в 15 минут",
-            callback_data: "v1:notify:outbid:15",
-          },
-        ],
-        [{ text: "Не чаще раза в час", callback_data: "v1:notify:outbid:60" }],
-        [{ text: "• Не присылать", callback_data: "v1:notify:outbid:off" }],
+        [{ text: "Не присылать", callback_data: "v1:notify:outbid:every" }],
         [{ text: "🔔 Вкл · Анонс финала", callback_data: "v1:notify:final:0" }],
-        [{ text: "‹ Расширения", callback_data: "v1:nav:ext" }],
+        [
+          {
+            text: "🔕 Выкл · Перебили в финале",
+            callback_data: "v1:notify:final-outbid:1",
+          },
+        ],
+        [{ text: "‹ Аукцион", callback_data: "v1:nav:ext:auc" }],
       ]);
     });
 
     it("switches the final off and confirms what Notifications stored", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
-        settings: { frequency: "every", finalAnnouncements: false },
+        settings: {
+          frequency: "every",
+          finalAnnouncements: false,
+          finalOutbids: false,
+        },
       });
       const { bot, calls } = harness(execute);
       await bot.init();
@@ -6845,7 +6846,11 @@ describe("notification frames", () => {
     it("confirms a choice with what Notifications stored", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
-        settings: { frequency: "15", finalAnnouncements: true },
+        settings: {
+          frequency: "15",
+          finalAnnouncements: true,
+          finalOutbids: false,
+        },
       });
       const { bot, calls } = harness(execute);
       await bot.init();
@@ -6866,7 +6871,7 @@ describe("notification frames", () => {
         (screen(calls[1]).reply_markup?.inline_keyboard ?? [])
           .flat()
           .map((button) => button.text),
-      ).toContain("• Не чаще раза в 15 минут");
+      ).toContain("Не чаще раза в 15 минут");
     });
 
     it("refuses with a retry of the same choice when Notifications is down", async () => {
@@ -6924,7 +6929,11 @@ describe("notification frames", () => {
     it("opens the frequency from a notification as a new message at its new place", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
-        settings: { frequency: "every", finalAnnouncements: true },
+        settings: {
+          frequency: "every",
+          finalAnnouncements: true,
+          finalOutbids: false,
+        },
       });
       const { bot, calls } = harness(execute);
       await bot.init();
@@ -6933,11 +6942,9 @@ describe("notification frames", () => {
       expect(methods).toContain("sendMessage");
       expect(methods).not.toContain("editMessageText");
       const sent = screen(calls.find((call) => call.method === "sendMessage"));
-      expect(JSON.stringify(sent.reply_markup)).toContain(
-        "• О каждом перебитии",
-      );
+      expect(JSON.stringify(sent.reply_markup)).toContain("О каждом перебитии");
       expect(sent.reply_markup?.inline_keyboard.at(-1)).toEqual([
-        { text: "‹ Расширения", callback_data: "v1:nav:ext" },
+        { text: "‹ Аукцион", callback_data: "v1:nav:ext:auc" },
       ]);
     });
 

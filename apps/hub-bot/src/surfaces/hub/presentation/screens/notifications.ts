@@ -3,8 +3,9 @@ import {
   type AuctionNotificationSettings,
   auctionNotificationsExplanation,
   finalAnnouncementsButtonLabel,
-  OUTBID_FREQUENCIES,
-  outbidButtonLabel,
+  finalOutbidsButtonLabel,
+  nextOutbidFrequency,
+  outbidLabels,
 } from "../../../../core/notifications/outbid.js";
 import type { NotificationCategoryView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
@@ -13,7 +14,7 @@ import type {
   NotificationCategory,
 } from "../../notifications/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { toSettingsExtensions } from "./extensions.js";
+import { toSettingsAuction } from "./extensions.js";
 import {
   notificationToggleLabel,
   screenText,
@@ -146,39 +147,40 @@ export function finalAnnouncementsData(enabled: boolean): string {
   return `v1:notify:final:${enabled ? "1" : "0"}`;
 }
 
+/** Данные переключателя «перебили в финале»: целевое состояние, а не шаг. */
+export function finalOutbidsData(enabled: boolean): string {
+  return `v1:notify:final-outbid:${enabled ? "1" : "0"}`;
+}
+
 /**
- * Настройки уведомлений аукциона (PER-552, PER-539) — самодостаточные, как у
- * бота аукциона: пять режимов частоты «перебили» по одному в ряд, текущий
- * отмечен на своей кнопке маркером «• » (PER-598; дизайн-код, «Уведомления»),
- * и под ними переключатель анонса финала. Выбор отменяется с того же экрана,
- * поэтому подтверждения «Да» нет: что сработало, говорит ответ на нажатие.
- * Это настройки расширения «Аукцион» в «Настройках» → «Расширения»: в
- * «Уведомлениях» остаются только категории ядра (PER-605). Данные кнопок
- * частоты прежние, поэтому «Реже» и «Перебитые ставки» из старых сообщений и
- * «Частота уведомлений» из новых открывают этот экран на новом месте.
+ * Настройки уведомлений аукциона (PER-552, PER-539, PER-645). Частота —
+ * одна кнопка с текущим режимом, нажатие ведёт к следующему. Под ней
+ * анонс финала и «перебили в финале». Старые кнопки режимов по-прежнему
+ * ставят названный режим. Возврат — в настройки расширения «Аукцион».
  */
 export function auctionNotificationsScreen(
   current: AuctionNotificationSettings,
 ): ShownScreen {
-  const keyboard = new InlineKeyboard();
-  for (const frequency of OUTBID_FREQUENCIES) {
-    keyboard
-      .text(
-        outbidButtonLabel(frequency, current.frequency),
-        `v1:notify:outbid:${frequency}`,
-      )
-      .row();
-  }
-  keyboard
+  const keyboard = new InlineKeyboard()
+    .text(
+      outbidLabels[current.frequency].button,
+      `v1:notify:outbid:${nextOutbidFrequency(current.frequency)}`,
+    )
+    .row()
     .text(
       finalAnnouncementsButtonLabel(current.finalAnnouncements),
       finalAnnouncementsData(!current.finalAnnouncements),
     )
+    .row()
+    .text(
+      finalOutbidsButtonLabel(current.finalOutbids),
+      finalOutbidsData(!current.finalOutbids),
+    )
     .row();
   return {
     id: "notify-outbid",
-    text: screenText("Аукцион", ...auctionNotificationsExplanation),
-    keyboard: withNav(keyboard, toSettingsExtensions),
+    text: screenText("Уведомления", ...auctionNotificationsExplanation),
+    keyboard: withNav(keyboard, toSettingsAuction),
     format: "HTML",
   };
 }

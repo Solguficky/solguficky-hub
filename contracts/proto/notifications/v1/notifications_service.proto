@@ -166,7 +166,7 @@ message GetAuctionNotificationPreferencesRequest {
   string identity_id = 1;
 }
 
-// Changes one or both settings. An absent field leaves its setting as it is.
+// Changes one or more named settings. An absent field leaves its setting as it is.
 message SetAuctionNotificationPreferencesRequest {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
@@ -176,10 +176,15 @@ message SetAuctionNotificationPreferencesRequest {
 
   // Target state, never a toggle of the current value.
   optional bool final_announcements = 3;
+
+  // Target state, never a toggle of the current value. Absent leaves the
+  // setting unchanged. The product default, when the person never set it, is
+  // false.
+  optional bool final_outbids = 4;
 }
 
 // Server-produced state, total: a setting the person never touched carries the
-// product default — EVERY and true — not UNSPECIFIED or an absent value.
+// product default — EVERY, true, and false — not UNSPECIFIED or an absent value.
 message AuctionNotificationPreferences {
   // Canonical lowercase UUIDv7 string with hyphens.
   string identity_id = 1;
@@ -189,6 +194,10 @@ message AuctionNotificationPreferences {
   // Whether the announcements of an auction final — auction_final_lineup and
   // auction_final_started — reach the person.
   bool final_announcements = 3;
+
+  // Whether outbid notices of a live final reach the person. False is the
+  // product default.
+  bool final_outbids = 4;
 }
 
 // A fixed list rather than a number of minutes: only these intervals exist.

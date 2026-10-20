@@ -69,9 +69,18 @@ export function applyCallback(sourceCode?: string): string {
 
 export function notifyCallback(choose?: AuctionNotificationChange): string {
   if (choose === undefined) return entryCallback("notify");
-  return choose.kind === "frequency"
-    ? `${entryCallback("notify")}:${choose.frequency}`
-    : `${entryCallback("notify")}:final:${choose.enabled ? "1" : "0"}`;
+  switch (choose.kind) {
+    case "frequency":
+      return `${entryCallback("notify")}:${choose.frequency}`;
+    case "final":
+      return `${entryCallback("notify")}:final:${choose.enabled ? "1" : "0"}`;
+    case "final-outbids":
+      return `${entryCallback("notify")}:final-outbid:${choose.enabled ? "1" : "0"}`;
+    default: {
+      const exhaustive: never = choose;
+      return exhaustive;
+    }
+  }
 }
 
 const NOTIFY_CHOICES: readonly AuctionNotificationChange[] = [
@@ -80,6 +89,8 @@ const NOTIFY_CHOICES: readonly AuctionNotificationChange[] = [
   ),
   { kind: "final", enabled: true },
   { kind: "final", enabled: false },
+  { kind: "final-outbids", enabled: true },
+  { kind: "final-outbids", enabled: false },
 ];
 
 export function listCallback(action: ListAction, page: number): string {

@@ -156,6 +156,7 @@ public sealed class PreferenceOperations(
         Guid identityId,
         OutbidFrequency? frequency,
         bool? finalAnnouncements,
+        bool? finalOutbids,
         CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
@@ -169,6 +170,10 @@ public sealed class PreferenceOperations(
         {
             await FinalStore.SetAnnouncements(work, identityId, enabled, now, cancellationToken);
         }
+        if (finalOutbids is { } outbids)
+        {
+            await FinalOutbidStore.SetEnabled(work, identityId, outbids, now, cancellationToken);
+        }
         var stored = await ReadAuction(work, identityId, cancellationToken);
 
         await work.Commit(cancellationToken);
@@ -179,7 +184,8 @@ public sealed class PreferenceOperations(
     private static async Task<AuctionPreferences> ReadAuction(UnitOfWork work, Guid identityId,
         CancellationToken cancellationToken) =>
         new(await OutbidStore.ReadPreference(work, identityId, cancellationToken) ?? OutbidFrequencies.Default,
-            await FinalStore.ReadAnnouncements(work, identityId, cancellationToken) ?? true);
+            await FinalStore.ReadAnnouncements(work, identityId, cancellationToken) ?? true,
+            await FinalOutbidStore.ReadEnabled(work, identityId, cancellationToken) ?? false);
 
     /// <summary>Видел ли человек пояснение автоставки (PER-517).</summary>
     public async Task<bool> ReadProxyExplainer(Guid identityId, CancellationToken cancellationToken)

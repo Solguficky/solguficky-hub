@@ -74,7 +74,7 @@ import {
   raffleScreen,
 } from "./auction-raffle.js";
 import { stageWords } from "./auction-stage.js";
-import { toSettingsExtensions } from "./extensions.js";
+import { toSettingsAuction } from "./extensions.js";
 import {
   type AuctionEntry,
   addLotLabel,
@@ -260,7 +260,7 @@ function auctionScreenOf(view: AuctionView): AuctionShown {
           screen: nameSettingsScreen(
             block,
             view.body.keyboard,
-            toSettingsExtensions,
+            toSettingsAuction,
           ),
         };
       case "name-question":

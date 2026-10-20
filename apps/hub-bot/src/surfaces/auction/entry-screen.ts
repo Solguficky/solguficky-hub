@@ -76,8 +76,9 @@ import {
   type AuctionNotificationSettings,
   auctionNotificationsExplanation,
   finalAnnouncementsButtonLabel,
-  OUTBID_FREQUENCIES,
-  outbidButtonLabel,
+  finalOutbidsButtonLabel,
+  nextOutbidFrequency,
+  outbidLabels,
 } from "../../core/notifications/outbid.js";
 import {
   confirmNoLabel,
@@ -414,24 +415,21 @@ export function renderEntryScreen(
         ],
       };
     }
-    // Настройки уведомлений аукциона (PER-515, PER-539): пять режимов
-    // частоты «перебили» по одному в ряд, текущий отмечен на своей кнопке
-    // маркером «• » (PER-598; дизайн-код, «Уведомления»), и под ними
-    // переключатель анонса финала. Выбор отменяется с того же экрана, поэтому
-    // подтверждения «Да» у него нет: что сработало, говорит ответ на нажатие.
-    // Экран — подраздел «Настроек»: последний ряд — «‹ Настройки» (PER-595).
     case "notify":
       return {
         id: "notify",
         format: "html",
         text: screenText(notifyTitle, ...auctionNotificationsExplanation),
         keyboard: [
-          ...OUTBID_FREQUENCIES.map((frequency) => [
+          [
             {
-              text: outbidButtonLabel(frequency, screen.current.frequency),
-              callback_data: notifyCallback({ kind: "frequency", frequency }),
+              text: outbidLabels[screen.current.frequency].button,
+              callback_data: notifyCallback({
+                kind: "frequency",
+                frequency: nextOutbidFrequency(screen.current.frequency),
+              }),
             },
-          ]),
+          ],
           [
             {
               text: finalAnnouncementsButtonLabel(
@@ -440,6 +438,15 @@ export function renderEntryScreen(
               callback_data: notifyCallback({
                 kind: "final",
                 enabled: !screen.current.finalAnnouncements,
+              }),
+            },
+          ],
+          [
+            {
+              text: finalOutbidsButtonLabel(screen.current.finalOutbids),
+              callback_data: notifyCallback({
+                kind: "final-outbids",
+                enabled: !screen.current.finalOutbids,
               }),
             },
           ],

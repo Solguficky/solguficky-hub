@@ -274,6 +274,7 @@ import {
 import {
   auctionEnabledScreen,
   extensionsScreen,
+  settingsAuctionScreen,
   settingsExtensionsScreen,
 } from "./screens/extensions.js";
 import {
@@ -349,6 +350,7 @@ import {
   auctionNotificationsScreen,
   categoryLabels,
   finalAnnouncementsData,
+  finalOutbidsData,
   globalNotificationsScreen,
   meetupNotificationsScreen,
   toggleToast,
@@ -3078,25 +3080,33 @@ async function handleCallback(
       outcome = await openHelp(ctx, runtime, person, useCase);
       return;
     }
-    // «Расширения» в «Настройках» (PER-605): Notifications экран не зовёт —
-    // частоту читает экран аукциона за ним. Идущий аукцион для пункта «Имя в
-    // аукционе» (PER-595) читается у Auction; отказ убирает пункт, а не
-    // роняет экран: частота от него не зависит.
     if (action.kind === "settings-extensions") {
+      await showScreen(
+        ctx,
+        settingsExtensionsScreen(runtime.auction !== undefined),
+      );
+      outcome = {
+        level: "info",
+        message: "settings extensions sent",
+        result: "ok",
+        use_case: useCase,
+      };
+      return;
+    }
+    if (action.kind === "settings-auction") {
       const current =
         runtime.auction === undefined
           ? undefined
           : await runtime.auction.currentAuction(person, rpcCall(ctx, useCase));
       await showScreen(
         ctx,
-        settingsExtensionsScreen(
-          runtime.auction !== undefined,
+        settingsAuctionScreen(
           current?.kind === "ok" ? current.auctionId : undefined,
         ),
       );
       outcome = {
         level: "info",
-        message: "settings extensions sent",
+        message: "auction extension settings sent",
         result: "ok",
         use_case: useCase,
       };
@@ -3876,14 +3886,17 @@ async function handleCallback(
     if (
       action.kind === "notify-outbid" ||
       action.kind === "notify-set-outbid" ||
-      action.kind === "notify-set-final"
+      action.kind === "notify-set-final" ||
+      action.kind === "notify-set-final-outbids"
     ) {
       const change: AuctionNotificationChange | undefined =
         action.kind === "notify-set-outbid"
           ? { kind: "frequency", frequency: action.frequency }
           : action.kind === "notify-set-final"
             ? { kind: "final", enabled: action.enabled }
-            : undefined;
+            : action.kind === "notify-set-final-outbids"
+              ? { kind: "final-outbids", enabled: action.enabled }
+              : undefined;
       const result = await runtime.dispatcher.execute(
         change === undefined
           ? {
@@ -3917,7 +3930,9 @@ async function handleCallback(
             ? "v1:notify:outbid"
             : change.kind === "frequency"
               ? `v1:notify:outbid:${change.frequency}`
-              : finalAnnouncementsData(change.enabled),
+              : change.kind === "final"
+                ? finalAnnouncementsData(change.enabled)
+                : finalOutbidsData(change.enabled),
         );
       }
       outcome = screenBoundary(result, {
@@ -9352,6 +9367,7 @@ function callbackUseCase(
     | "apply"
     | "settings"
     | "settings-extensions"
+    | "settings-auction"
     | "meetup-extensions"
     | "help"
     | "next"
@@ -9434,6 +9450,7 @@ function callbackUseCase(
     | "notify-outbid"
     | "notify-set-outbid"
     | "notify-set-final"
+    | "notify-set-final-outbids"
     | "notify-disable-global"
     | "notify-disable-meetup"
     | "notify-settings"
@@ -9535,11 +9552,13 @@ function callbackUseCase(
       return "manage_community";
     case "settings":
     case "settings-extensions":
+    case "settings-auction":
     case "notify-global":
     case "notify-set-global":
     case "notify-outbid":
     case "notify-set-outbid":
     case "notify-set-final":
+    case "notify-set-final-outbids":
     case "notify-disable-global":
     case "notify-disable-meetup":
     case "notify-settings":

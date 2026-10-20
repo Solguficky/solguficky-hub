@@ -244,6 +244,7 @@ describe("auction notification settings", () => {
     const setAuctionNotificationPreferences = vi.fn().mockResolvedValue({
       outbidFrequency: WireOutbidFrequency.AT_MOST_EVERY_60_MINUTES,
       finalAnnouncements: true,
+      finalOutbids: false,
     });
     const notifications = adapter({ setAuctionNotificationPreferences });
 
@@ -261,7 +262,11 @@ describe("auction notification settings", () => {
     );
     expect(result).toEqual({
       kind: "ok",
-      settings: { frequency: "60", finalAnnouncements: true },
+      settings: {
+        frequency: "60",
+        finalAnnouncements: true,
+        finalOutbids: false,
+      },
     });
   });
 
@@ -270,6 +275,7 @@ describe("auction notification settings", () => {
     const setAuctionNotificationPreferences = vi.fn().mockResolvedValue({
       outbidFrequency: WireOutbidFrequency.EVERY,
       finalAnnouncements: false,
+      finalOutbids: false,
     });
     const notifications = adapter({ setAuctionNotificationPreferences });
 
@@ -284,7 +290,11 @@ describe("auction notification settings", () => {
     );
     expect(result).toEqual({
       kind: "ok",
-      settings: { frequency: "every", finalAnnouncements: false },
+      settings: {
+        frequency: "every",
+        finalAnnouncements: false,
+        finalOutbids: false,
+      },
     });
   });
 
@@ -295,6 +305,7 @@ describe("auction notification settings", () => {
       getAuctionNotificationPreferences: vi.fn().mockResolvedValue({
         outbidFrequency: WireOutbidFrequency.UNSPECIFIED,
         finalAnnouncements: true,
+        finalOutbids: false,
       }),
     });
 

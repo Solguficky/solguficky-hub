@@ -897,19 +897,31 @@ const shown: readonly {
   {
     screen: {
       kind: "notify",
-      current: { frequency: "every", finalAnnouncements: true },
+      current: {
+        frequency: "every",
+        finalAnnouncements: true,
+        finalOutbids: false,
+      },
     },
   },
   {
     screen: {
       kind: "notify",
-      current: { frequency: "15", finalAnnouncements: false },
+      current: {
+        frequency: "15",
+        finalAnnouncements: false,
+        finalOutbids: true,
+      },
     },
   },
   {
     screen: {
       kind: "notify",
-      current: { frequency: "off", finalAnnouncements: true },
+      current: {
+        frequency: "off",
+        finalAnnouncements: true,
+        finalOutbids: false,
+      },
     },
   },
   { screen: { kind: "faq" } },

@@ -28,12 +28,20 @@ import type { ShownScreen } from "./show.js";
 // входом принадлежит расширению. Расширение пока одно — аукцион, и список
 // держит код бота, без каталога.
 
-/** «Расширения» в «Настройках»: настройки каждого расширения. */
+/** «Расширения» в «Настройках»: список расширений. */
 export const settingsExtensionsData = "v1:nav:ext";
 
 export const toSettingsExtensions: Parent = {
   name: "Расширения",
   data: settingsExtensionsData,
+};
+
+/** Настройки одного расширения — аукциона. */
+export const settingsAuctionData = "v1:nav:ext:auc";
+
+export const toSettingsAuction: Parent = {
+  name: "Аукцион",
+  data: settingsAuctionData,
 };
 
 // Вход в раздел аукциона несёт его знак во всех ботах (PER-644).
@@ -112,33 +120,45 @@ export function auctionEnabledScreen(view: {
 }
 
 /**
- * «Расширения» в «Настройках»: у каждого расширения — свои настройки. У
- * аукциона это частота сообщений «перебили» и, пока идёт аукцион, имя в нём
- * (PER-595); без Auction у бота расширений нет.
+ * «Расширения» в «Настройках»: список расширений, без их настроек.
+ * Без Auction у бота расширений нет.
  */
-export function settingsExtensionsScreen(
-  auction: boolean,
-  nameAuctionId?: string,
-): ShownScreen {
+export function settingsExtensionsScreen(auction: boolean): ShownScreen {
   const keyboard = new InlineKeyboard();
-  if (auction) keyboard.text(auctionLabel, "v1:notify:outbid").row();
-  if (auction && nameAuctionId !== undefined) {
-    keyboard
-      .text(
-        nameSettingsTitle,
-        encodeAuctionCallback({ kind: "name", auctionId: nameAuctionId }),
-      )
-      .row();
-  }
+  if (auction) keyboard.text(auctionLabel, settingsAuctionData).row();
   return {
     id: "settings-extensions",
     text: screenText(
       "Расширения",
-      auction
-        ? `Настройки расширений сходок. Аукцион — как часто писать, что твою ставку перебили.${nameAuctionId === undefined ? "" : " Имя в аукционе — под каким именем ты ставишь в идущем аукционе."}`
-        : "Расширений пока нет.",
+      auction ? "Настройки расширений сходок." : "Расширений пока нет.",
     ),
     keyboard: withNav(keyboard, toSettings),
+    format: "HTML",
+  };
+}
+
+/**
+ * Настройки расширения «Аукцион»: уведомления и, пока идёт аукцион, имя.
+ */
+export function settingsAuctionScreen(nameAuctionId?: string): ShownScreen {
+  const keyboard = new InlineKeyboard().text("Уведомления", "v1:notify:outbid");
+  if (nameAuctionId !== undefined) {
+    keyboard
+      .row()
+      .text(
+        nameSettingsTitle,
+        encodeAuctionCallback({ kind: "name", auctionId: nameAuctionId }),
+      );
+  }
+  return {
+    id: "settings-auction",
+    text: screenText(
+      "Аукцион",
+      nameAuctionId === undefined
+        ? "Уведомления аукциона."
+        : "Уведомления аукциона и имя, под которым ты ставишь в идущем аукционе.",
+    ),
+    keyboard: withNav(keyboard.row(), toSettingsExtensions),
     format: "HTML",
   };
 }

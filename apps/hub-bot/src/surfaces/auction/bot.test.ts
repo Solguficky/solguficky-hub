@@ -2315,11 +2315,14 @@ describe("auction notification settings", () => {
           const current = store.settings ?? {
             frequency: "every",
             finalAnnouncements: true,
+            finalOutbids: false,
           };
           store.settings =
             change.kind === "frequency"
               ? { ...current, frequency: change.frequency }
-              : { ...current, finalAnnouncements: change.enabled };
+              : change.kind === "final"
+                ? { ...current, finalAnnouncements: change.enabled }
+                : { ...current, finalOutbids: change.enabled };
           return store.settings;
         },
         ...port,
@@ -2330,12 +2333,13 @@ describe("auction notification settings", () => {
   const stored = (
     frequency: OutbidFrequency,
     finalAnnouncements = true,
+    finalOutbids = false,
   ): { settings: AuctionNotificationSettings | undefined } => ({
-    settings: { frequency, finalAnnouncements },
+    settings: { frequency, finalAnnouncements, finalOutbids },
   });
 
   // Настройки открывает команда `/notifications` новым сообщением; это
-  // подраздел «Настроек» (PER-595): пять режимов, выключатель финала и
+  // подраздел «Настроек» (PER-595): кнопка частоты, два выключателя и
   // последним рядом «‹ Настройки».
   it("opens the settings by the command with the way back to the settings", async () => {
     const { bot, calls } = makeBot(withOutbid(stored("every")));
@@ -2345,7 +2349,7 @@ describe("auction notification settings", () => {
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("<b>Уведомления</b>"),
     });
-    expect(rows).toHaveLength(7);
+    expect(rows).toHaveLength(4);
     expect(rows.at(-1)).toEqual([
       { text: "‹ Настройки", callback_data: entryCallback("settings") },
     ]);
@@ -2372,15 +2376,20 @@ describe("auction notification settings", () => {
       ),
       reply_markup: {
         inline_keyboard: [
-          [{ text: "О каждом перебитии", callback_data: mode("every") }],
-          [{ text: "Не чаще раза в 5 минут", callback_data: mode("5") }],
-          [{ text: "• Не чаще раза в 15 минут", callback_data: mode("15") }],
-          [{ text: "Не чаще раза в час", callback_data: mode("60") }],
-          [{ text: "Не присылать", callback_data: mode("off") }],
+          [{ text: "Не чаще раза в 15 минут", callback_data: mode("60") }],
           [
             {
               text: "🔔 Вкл · Анонс финала",
               callback_data: notifyCallback({ kind: "final", enabled: false }),
+            },
+          ],
+          [
+            {
+              text: "🔕 Выкл · Перебили в финале",
+              callback_data: notifyCallback({
+                kind: "final-outbids",
+                enabled: true,
+              }),
             },
           ],
           [{ text: "‹ Настройки", callback_data: entryCallback("settings") }],
@@ -2403,8 +2412,8 @@ describe("auction notification settings", () => {
     expect(calls[0]?.payload).toMatchObject({ text: "Теперь: не присылаю." });
     // Экран обновлён на месте: отметка переехала на выбранный режим.
     const shown = JSON.stringify(calls[1]?.payload);
-    expect(shown).toContain('"• Не присылать"');
-    expect(shown).toContain('"О каждом перебитии"');
+    expect(shown).toContain('"Не присылать"');
+    expect(shown).toContain(mode("every"));
   });
 
   // Выключатель финала (PER-539) — целевое состояние: частоту он не трогает.
@@ -2420,7 +2429,7 @@ describe("auction notification settings", () => {
     });
     const shown = JSON.stringify(calls[1]?.payload);
     expect(shown).toContain('"🔕 Выкл · Анонс финала"');
-    expect(shown).toContain('"• Не чаще раза в 15 минут"');
+    expect(shown).toContain('"Не чаще раза в 15 минут"');
   });
 
   it("treats a final switch outside the dictionary as unknown data", async () => {
@@ -2440,7 +2449,7 @@ describe("auction notification settings", () => {
     const restarted = makeBot(withOutbid(store));
     await restarted.bot.handleUpdate(lotPress({ data: notifyCallback() }));
     expect(JSON.stringify(restarted.calls.at(-1)?.payload)).toContain(
-      "• Не чаще раза в час",
+      "Не чаще раза в час",
     );
   });
 

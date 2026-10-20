@@ -28,6 +28,7 @@ public class AuctionNotificationPreferencesTests
         preferences.IdentityId.ShouldBe(identityId);
         preferences.OutbidFrequency.ShouldBe(OutbidFrequency.Every);
         preferences.FinalAnnouncements.ShouldBeTrue();
+        preferences.FinalOutbids.ShouldBeFalse();
     }
 
     [Fact]
@@ -75,6 +76,25 @@ public class AuctionNotificationPreferencesTests
 
         answered.OutbidFrequency.ShouldBe(OutbidFrequency.AtMostEvery5Minutes);
         answered.FinalAnnouncements.ShouldBeFalse();
+        answered.FinalOutbids.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task When_OnlyFinalOutbidsSet_Expect_OtherSettingsKept()
+    {
+        await using var service = await PreferencesUnderTest.Start();
+        var client = service.ClientPresenting(SiloUnderTest.AuctionBotToken);
+        var identityId = Guid.CreateVersion7().ToString("D");
+
+        var answered = await client.SetAuctionNotificationPreferencesAsync(new SetAuctionNotificationPreferencesRequest
+        {
+            IdentityId = identityId,
+            FinalOutbids = true,
+        });
+
+        answered.OutbidFrequency.ShouldBe(OutbidFrequency.Every);
+        answered.FinalAnnouncements.ShouldBeTrue();
+        answered.FinalOutbids.ShouldBeTrue();
     }
 
     [Fact]

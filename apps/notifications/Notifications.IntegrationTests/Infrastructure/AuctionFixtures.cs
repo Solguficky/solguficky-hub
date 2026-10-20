@@ -65,6 +65,14 @@ public static class AuctionFixtures
     }
 
     /// <summary>Выключатель анонса финала участника, как его записала бы команда.</summary>
+    public static async Task SetFinalOutbids(IsolatedDatabase db, string identityId, bool enabled)
+    {
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        await using var work = await UnitOfWork.Begin(source, Cancellation);
+        await FinalOutbidStore.SetEnabled(work, Guid.Parse(identityId), enabled, EventFactory.Committed, Cancellation);
+        await work.Commit(Cancellation);
+    }
+
     public static async Task SetFinalAnnouncements(IsolatedDatabase db, string identityId, bool enabled)
     {
         await using var source = NpgsqlDataSource.Create(db.ConnectionString);

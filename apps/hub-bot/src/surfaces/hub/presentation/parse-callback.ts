@@ -450,6 +450,7 @@ type PlainAction =
   // «Настройках».
   | { kind: "meetup-extensions"; token: string }
   | { kind: "settings-extensions" }
+  | { kind: "settings-auction" }
   // Рассылка: вход из карточки сходки или из управления, затем подтверждение.
   // Ключ рассылки рождается в кнопке подтверждения, как ключ создания сходки,
   // а текст едет не в кнопке, а в сообщении предпросмотра, на которое кадр
@@ -467,6 +468,7 @@ type PlainAction =
   | { kind: "notify-outbid" }
   | { kind: "notify-set-outbid"; frequency: OutbidFrequency }
   | { kind: "notify-set-final"; enabled: boolean }
+  | { kind: "notify-set-final-outbids"; enabled: boolean }
   | {
       kind: "notify-set-global";
       category: NotificationCategory;
@@ -960,6 +962,7 @@ export function parseCallback(raw: unknown): CallbackAction {
   }
   if (parsed.data === "v1:nav:settings") return { kind: "settings" };
   if (parsed.data === "v1:nav:ext") return { kind: "settings-extensions" };
+  if (parsed.data === "v1:nav:ext:auc") return { kind: "settings-auction" };
   if (parsed.data === "v1:nav:help") return { kind: "help" };
   if (parsed.data === "v1:nav:next") return { kind: "next" };
   if (parsed.data === "v1:nav:events") return { kind: "events" };
@@ -1936,6 +1939,12 @@ function parseNotify(parts: readonly string[]): CallbackAction {
     const state = TargetStateSchema.safeParse(parts[3]);
     return state.success
       ? { kind: "notify-set-final", enabled: state.data === "1" }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "final-outbid") {
+    const state = TargetStateSchema.safeParse(parts[3]);
+    return state.success
+      ? { kind: "notify-set-final-outbids", enabled: state.data === "1" }
       : { kind: "malformed" };
   }
   if (parts.length === 5 && parts[2] === "gset") {

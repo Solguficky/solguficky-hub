@@ -57,6 +57,29 @@ public class OutbidFrequenciesTests
     }
 
     [Fact]
+    public void When_LiveFinalOutbidsAreOff_Expect_OutbidSuppressedWhateverTheFrequency()
+    {
+        OutbidFrequencies.ForLiveFinal(new OutbidDecision.Send(), true, false)
+            .ShouldBeOfType<OutbidDecision.Suppress>();
+        OutbidFrequencies.ForLiveFinal(new OutbidDecision.Collect(TimeSpan.FromMinutes(5)), true, false)
+            .ShouldBeOfType<OutbidDecision.Suppress>();
+    }
+
+    [Fact]
+    public void When_LiveFinalOutbidsAreOn_Expect_FrequencyDecisionKept()
+    {
+        OutbidFrequencies.ForLiveFinal(new OutbidDecision.Collect(TimeSpan.FromMinutes(15)), true, true)
+            .ShouldBeOfType<OutbidDecision.Collect>().Window.ShouldBe(TimeSpan.FromMinutes(15));
+    }
+
+    [Fact]
+    public void When_NotLive_Expect_FrequencyDecisionKeptEvenIfFinalOutbidsAreOff()
+    {
+        OutbidFrequencies.ForLiveFinal(new OutbidDecision.Send(), false, false)
+            .ShouldBeOfType<OutbidDecision.Send>();
+    }
+
+    [Fact]
     public void When_UnknownStoredValue_Expect_Refused()
     {
         Should.Throw<ArgumentOutOfRangeException>(() => OutbidFrequencies.FromStorage("hourly"));
