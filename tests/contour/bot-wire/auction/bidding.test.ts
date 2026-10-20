@@ -241,9 +241,7 @@ describe("auction through both bots", () => {
     // Заявка гостя лежит в очереди аукциона, отдельной от очереди сообщества
     // (дополнение ADR-064 к пункту 12). Подпись несёт число заявок.
     await admin.presses(
-      admin
-        .pressable()
-        .find((label) => label.startsWith("Заявки в аукцион")) ??
+      admin.pressable().find((label) => label.startsWith("Заявки в аукцион")) ??
         "Заявки в аукцион",
     );
     // Очередь отдаётся от старой заявки к новой, а карточка показывает одну:

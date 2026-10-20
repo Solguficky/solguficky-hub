@@ -591,6 +591,6 @@ describe("auction cancelled", () => {
       message: { text: expect.stringContaining("Твоя покупка за") },
     });
     expect(source.holdsPlaceBids).not.toHaveBeenCalled();
-    expect(source.lotTitle).not.toHaveBeenCalled();
+    expect(source.lotInfo).not.toHaveBeenCalled();
   });
 });
