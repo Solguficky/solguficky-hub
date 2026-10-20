@@ -23,6 +23,7 @@
     "lotWithdrawn": {
       "reason": "AuctionCancelled"
     },
-    "stepWindowAdded": null
+    "stepWindowAdded": null,
+    "participantRemoved": null
   }
 }

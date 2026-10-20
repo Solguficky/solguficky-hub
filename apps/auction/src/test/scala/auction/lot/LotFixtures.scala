@@ -24,6 +24,9 @@ object LotFixtures {
   /** Идентификатор производной ставки прокси: отдельная серия, чтобы по нему было видно, чья это ставка. */
   def proxyBid(n: Int): BidId = BidId(new UUID(5L, n.toLong))
 
+  /** Позиция лидера после снятия участника (ADR-072): своя серия — такой ставки в журнале может не быть. */
+  def position(n: Int): BidId = BidId(new UUID(6L, n.toLong))
+
   def op(n: Int): OpId = OpId(new UUID(3L, n.toLong))
 
   def auctionId(n: Int): AuctionId = AuctionId(new UUID(4L, n.toLong))
@@ -107,7 +110,8 @@ object LotFixtures {
       closesAt: Option[Instant] = Some(deadline),
       extensionsUsed: Int = 0,
       markedForFinal: Boolean = false,
-      stepWindows: List[StepWindow] = Nil
+      stepWindows: List[StepWindow] = Nil,
+      course: Option[Course] = None
   ): Lot =
     lotIn(
       LotState.Trading(
@@ -122,13 +126,18 @@ object LotFixtures {
           extensionsUsed = extensionsUsed,
           proxyLimits = limits,
           markedForFinal = markedForFinal,
+          course = course,
           stepWindows = stepWindows
         )
       )
     )
 
   def held(price: Long, leader: ParticipantId, limits: Map[ParticipantId, ProxyLimit] = Map.empty): Lot =
-    lotIn(LotState.Held(HeldState(config(), money(price), Some(leader), Some(bid(0)), limits, extensionsUsed = 0)))
+    lotIn(
+      LotState.Held(
+        HeldState(config(), money(price), Some(leader), Some(bid(0)), limits, extensionsUsed = 0, course = None)
+      )
+    )
 
   def sold(price: Long, winner: ParticipantId): Lot =
     lotIn(LotState.Sold(Sale(winner, money(price), bid(0), Instant.EPOCH)))
@@ -147,6 +156,8 @@ object LotFixtures {
     SetProxyLimit(participant(who), Money(max, currency), op(opN))
 
   def withdrawProxyLimit(who: Int, opN: Int): WithdrawProxyLimit = WithdrawProxyLimit(participant(who), op(opN))
+
+  def removeParticipant(who: Int, opN: Int): RemoveParticipant = RemoveParticipant(participant(who), op(opN))
 
   def limit(max: Long, setSeq: Long): ProxyLimit = ProxyLimit(money(max), setSeq)
 
@@ -176,19 +187,27 @@ object LotFixtures {
       case other => throw new AssertionError(s"лот не удержан: $other")
     }
 
-  final case class Journal(lot: Lot, entries: Vector[Envelope]) {
+  /**
+   * `moments` — момент команды каждой строки, `occurred_at` её конверта: на рабочем пути его пишет entity, и по нему
+   * история торгов знает, когда был вход (ADR-072). Команды без своего времени пишутся в `calm`.
+   */
+  final case class Journal(lot: Lot, entries: Vector[Envelope], moments: Vector[Instant] = Vector.empty) {
+
+    /** Строки журнала вместе с их моментами — то, что сворачивает [[Lot.replay]]. */
+    def rows: Vector[Written] = entries.zip(moments).map(Written(_, _))
 
     /**
-     * Принятое решение ложится в журнал следующими номерами — событие команды, затем производные; отказ и повтор журнал
-     * не меняют.
+     * Принятое решение ложится в журнал следующими номерами — событие команды, затем производные, все с моментом `at`
+     * команды; отказ и повтор журнал не меняют.
      */
-    def record[R](opId: OpId, result: Either[R, Decision]): (Either[R, Decision], Journal) =
+    def record[R](opId: OpId, result: Either[R, Decision], at: Instant = calm): (Either[R, Decision], Journal) =
       result match {
         case Right(Decision.Accepted(event, derived)) =>
           val written = (event :: derived).zipWithIndex.map { (each, index) =>
             Envelope(entries.size.toLong + 1 + index, opId, each)
           }
-          (result, Journal(written.foldLeft(lot)(Lot.apply), entries ++ written))
+          val applied = written.foldLeft(lot)((current, envelope) => Lot.apply(current, envelope, at))
+          (result, Journal(applied, entries ++ written, moments ++ written.map(_ => at)))
         case _ => (result, this)
       }
 
@@ -206,23 +225,30 @@ object LotFixtures {
      * умолчанию команда приходит вне окна анти-снайпа.
      */
     def submit(command: PlaceBid, bidId: BidId, now: Instant = calm): (Either[PlaceBidRejected, Decision], Journal) =
-      record(command.opId, Lot.decide(lot, command, bidId, proxyBid(entries.size + 1), now))
+      record(command.opId, Lot.decide(lot, command, bidId, proxyBid(entries.size + 1), now), now)
 
     /** Лимит; производная ставка, если она есть, получает `proxyBid` с номером первой строки транзакции. */
     def limit(command: SetProxyLimit, now: Instant = calm): (Either[SetProxyLimitRejected, Decision], Journal) =
-      record(command.opId, Lot.decide(lot, command, entries.size.toLong + 1, proxyBid(entries.size + 1), now))
+      record(command.opId, Lot.decide(lot, command, entries.size.toLong + 1, proxyBid(entries.size + 1), now), now)
 
     def withdraw(command: WithdrawProxyLimit): (Either[WithdrawProxyLimitRejected, Decision], Journal) =
       record(command.opId, Lot.decide(lot, command))
 
     def close(command: CloseLot, now: Instant): (Either[CloseLotRejected, Decision], Journal) =
-      record(command.opId, Lot.decide(lot, command, now))
+      record(command.opId, Lot.decide(lot, command, now), now)
 
     def mark(command: MarkForFinal, now: Instant = calm): (Either[MarkForFinalRejected, Decision], Journal) =
-      record(command.opId, Lot.decide(lot, command, now))
+      record(command.opId, Lot.decide(lot, command, now), now)
 
     def unmark(command: UnmarkForFinal, now: Instant = calm): (Either[UnmarkForFinalRejected, Decision], Journal) =
-      record(command.opId, Lot.decide(lot, command, now))
+      record(command.opId, Lot.decide(lot, command, now), now)
+
+    /** Снятие участника; позиция лидера получает `bid` с номером первой строки транзакции. */
+    def remove(
+        command: RemoveParticipant,
+        now: Instant = calm
+    ): (Either[RemoveParticipantRejected, Decision], Journal) =
+      record(command.opId, Lot.decide(lot, command, position(entries.size + 1), now), now)
 
     /** Возврат в финал; производная ставка по сетке, если она есть, получает `proxyBid` с номером первой строки. */
     def resume(command: ResumeLot): (Either[ResumeLotRejected, Decision], Journal) =

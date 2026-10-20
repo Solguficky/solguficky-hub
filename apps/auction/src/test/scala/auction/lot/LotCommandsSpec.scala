@@ -149,7 +149,7 @@ object LotCommands extends Commands {
         }
         val journal = outcome.journal
         val trading = tradingOf(journal.lot)
-        val shuffled = new Random(journal.entries.size.toLong).shuffle(journal.entries)
+        val shuffled = new Random(journal.entries.size.toLong).shuffle(journal.rows)
         (answer :| s"answer ${outcome.result} for $this in $state") &&
         (journal.entries.size == after.accepted.size) :| "one journal entry per accepted op_id" &&
         (trading.leader == after.leader.map(participant)) :| "leader follows the model" &&

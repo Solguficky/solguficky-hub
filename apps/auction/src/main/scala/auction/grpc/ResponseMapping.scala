@@ -169,6 +169,8 @@ object ResponseMapping {
             wire.SetProxyLimitRefusal.Reason.ProxyDisabledForLot(wire.ProxyDisabledForLot())
           case SetProxyLimitRejected.CurrencyMismatch =>
             wire.SetProxyLimitRefusal.Reason.CurrencyMismatch(wire.CurrencyMismatch())
+          case SetProxyLimitRejected.ParticipantRemovedFromLot =>
+            wire.SetProxyLimitRefusal.Reason.ParticipantRemovedFromLot(wire.ParticipantRemovedFromLot())
           case SetProxyLimitRejected.LotNotFound | SetProxyLimitRejected.OpIdTaken =>
             throw new IllegalStateException(s"$rejected is a status, not a refusal value")
         }
@@ -263,6 +265,8 @@ object ResponseMapping {
         wire.PlaceBidRefusal.Reason.BidNotAtNextPrice(wire.BidNotAtNextPrice(Some(money(expected))))
       case PlaceBidRejected.BidBelowMinimum(minRequired) =>
         wire.PlaceBidRefusal.Reason.BidBelowMinimum(wire.BidBelowMinimum(Some(money(minRequired))))
+      case PlaceBidRejected.ParticipantRemovedFromLot =>
+        wire.PlaceBidRefusal.Reason.ParticipantRemovedFromLot(wire.ParticipantRemovedFromLot())
       case PlaceBidRejected.LotNotFound | PlaceBidRejected.OpIdTaken =>
         throw new IllegalStateException(s"$rejected is a status, not a refusal value")
     }

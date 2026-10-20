@@ -83,6 +83,8 @@ export function finalBidLine(
         // Выбор имени — свой экран: сюда отказ не доходит.
         case "display-name-not-chosen":
           return "Выбери имя в аукционе";
+        case "removed-from-lot":
+          return "Ставки на этом лоте для тебя закрыты";
         default: {
           const _exhaustive: never = refusal;
           return _exhaustive;

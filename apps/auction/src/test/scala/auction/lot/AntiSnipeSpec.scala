@@ -124,7 +124,7 @@ final class AntiSnipeSpec extends AnyWordSpec with Matchers with ScalaCheckDrive
     "keep the deadline and the count after replaying the journal from the start" in {
       val (_, journal) = Journal.of(trading(price = 100)).submit(placeBid(1, 110, 1), bid(1), oneMinuteBefore)
 
-      tradingOf(Lot.replay(trading(price = 100), journal.entries.reverse)) shouldBe tradingOf(journal.lot)
+      tradingOf(Lot.replay(trading(price = 100), journal.rows.reverse)) shouldBe tradingOf(journal.lot)
     }
 
     "extend exactly when the bid lands inside the window and the limit is not spent" in {

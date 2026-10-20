@@ -29,6 +29,7 @@
     "lotHeldForFinal": null,
     "askAdvanced": null,
     "lotWithdrawn": null,
-    "stepWindowAdded": null
+    "stepWindowAdded": null,
+    "participantRemoved": null
   }
 }
