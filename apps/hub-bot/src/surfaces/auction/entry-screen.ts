@@ -75,9 +75,7 @@ import { money, truncate } from "../../core/format.js";
 import {
   type AuctionNotificationSettings,
   auctionNotificationsExplanation,
-  finalAnnouncementsButtonLabel,
-  OUTBID_FREQUENCIES,
-  outbidButtonLabel,
+  auctionNotificationsRows,
 } from "../../core/notifications/outbid.js";
 import {
   confirmNoLabel,
@@ -414,35 +412,22 @@ export function renderEntryScreen(
         ],
       };
     }
-    // Настройки уведомлений аукциона (PER-515, PER-539): пять режимов
-    // частоты «перебили» по одному в ряд, текущий отмечен на своей кнопке
-    // маркером «• » (PER-598; дизайн-код, «Уведомления»), и под ними
-    // переключатель анонса финала. Выбор отменяется с того же экрана, поэтому
-    // подтверждения «Да» у него нет: что сработало, говорит ответ на нажатие.
-    // Экран — подраздел «Настроек»: последний ряд — «‹ Настройки» (PER-595).
+    // Настройки уведомлений аукциона (PER-515, PER-539, PER-645): каждая
+    // настройка — одна кнопка с текущим значением, нажатие ведёт к
+    // следующему (№72): частота «перебили» по кругу пяти режимов,
+    // «Перебили в финале» и анонс финала — вкл и выкл. Выбор отменяется с
+    // того же экрана, поэтому подтверждения «Да» у него нет: что сработало,
+    // говорит ответ на нажатие. Экран — подраздел «Настроек»: последний ряд —
+    // «‹ Настройки» (PER-595).
     case "notify":
       return {
         id: "notify",
         format: "html",
         text: screenText(notifyTitle, ...auctionNotificationsExplanation),
         keyboard: [
-          ...OUTBID_FREQUENCIES.map((frequency) => [
-            {
-              text: outbidButtonLabel(frequency, screen.current.frequency),
-              callback_data: notifyCallback({ kind: "frequency", frequency }),
-            },
+          ...auctionNotificationsRows(screen.current).map((row) => [
+            { text: row.text, callback_data: notifyCallback(row.change) },
           ]),
-          [
-            {
-              text: finalAnnouncementsButtonLabel(
-                screen.current.finalAnnouncements,
-              ),
-              callback_data: notifyCallback({
-                kind: "final",
-                enabled: !screen.current.finalAnnouncements,
-              }),
-            },
-          ],
           [toSettings],
         ],
       };

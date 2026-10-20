@@ -2292,9 +2292,9 @@ describe("bid leaf delivery", () => {
   });
 });
 
-// Настройки уведомлений аукциона (PER-515, PER-539): пункт меню, выбор с
-// подтверждением, выключатель анонса финала, отказ Notifications и «Реже» под
-// уведомлением.
+// Настройки уведомлений аукциона (PER-515, PER-539, PER-645): пункт меню,
+// кнопки-переключатели с подтверждением, выключатели «перебили» в финале и
+// анонса финала, отказ Notifications и «Реже» под уведомлением.
 describe("auction notification settings", () => {
   const mode = (frequency: OutbidFrequency) =>
     notifyCallback({ kind: "frequency", frequency });
@@ -2315,11 +2315,14 @@ describe("auction notification settings", () => {
           const current = store.settings ?? {
             frequency: "every",
             finalAnnouncements: true,
+            liveFinalOutbids: false,
           };
           store.settings =
             change.kind === "frequency"
               ? { ...current, frequency: change.frequency }
-              : { ...current, finalAnnouncements: change.enabled };
+              : change.kind === "final"
+                ? { ...current, finalAnnouncements: change.enabled }
+                : { ...current, liveFinalOutbids: change.enabled };
           return store.settings;
         },
         ...port,
@@ -2330,13 +2333,14 @@ describe("auction notification settings", () => {
   const stored = (
     frequency: OutbidFrequency,
     finalAnnouncements = true,
+    liveFinalOutbids = false,
   ): { settings: AuctionNotificationSettings | undefined } => ({
-    settings: { frequency, finalAnnouncements },
+    settings: { frequency, finalAnnouncements, liveFinalOutbids },
   });
 
   // Настройки открывает команда `/notifications` новым сообщением; это
-  // подраздел «Настроек» (PER-595): пять режимов, выключатель финала и
-  // последним рядом «‹ Настройки».
+  // подраздел «Настроек» (PER-595): три кнопки-переключателя и последним
+  // рядом «‹ Настройки».
   it("opens the settings by the command with the way back to the settings", async () => {
     const { bot, calls } = makeBot(withOutbid(stored("every")));
     await bot.handleUpdate(commandUpdate("/notifications"));
@@ -2345,7 +2349,7 @@ describe("auction notification settings", () => {
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("<b>Уведомления</b>"),
     });
-    expect(rows).toHaveLength(7);
+    expect(rows).toHaveLength(4);
     expect(rows.at(-1)).toEqual([
       { text: "‹ Настройки", callback_data: entryCallback("settings") },
     ]);
@@ -2359,24 +2363,26 @@ describe("auction notification settings", () => {
     });
   });
 
-  // Запись 33 прогона 12.10: выбранный режим отмечен на своей кнопке, а
-  // пояснение говорит о сводке, об анонсе финала и о том, что покупку
-  // настройки не трогают.
-  it("marks the current frequency, shows the final switch and explains both", async () => {
+  // №72 прогона 14.10: каждая настройка — одна кнопка с текущим значением,
+  // которая несёт следующее; пояснение говорит о переключении, о сводке, о
+  // финале и о том, что покупку настройки не трогают.
+  it("shows one switch per setting carrying its next value and explains them", async () => {
     const { bot, calls } = makeBot(withOutbid(stored("15")));
     await bot.handleUpdate(lotPress({ data: notifyCallback() }));
     expect(calls.at(-1)?.method).toBe("editMessageText");
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringMatching(
-        /одной сводкой[\s\S]*Анонс финала[\s\S]*О покупке лота пишу всегда/,
+        /переключает[\s\S]*одной сводкой[\s\S]*Перебили в финале[\s\S]*Анонс финала[\s\S]*О покупке лота пишу всегда/,
       ),
       reply_markup: {
         inline_keyboard: [
-          [{ text: "О каждом перебитии", callback_data: mode("every") }],
-          [{ text: "Не чаще раза в 5 минут", callback_data: mode("5") }],
-          [{ text: "• Не чаще раза в 15 минут", callback_data: mode("15") }],
-          [{ text: "Не чаще раза в час", callback_data: mode("60") }],
-          [{ text: "Не присылать", callback_data: mode("off") }],
+          [{ text: "Перебили: раз в 15 минут", callback_data: mode("60") }],
+          [
+            {
+              text: "🔕 Выкл · Перебили в финале",
+              callback_data: notifyCallback({ kind: "live", enabled: true }),
+            },
+          ],
           [
             {
               text: "🔔 Вкл · Анонс финала",
@@ -2389,22 +2395,73 @@ describe("auction notification settings", () => {
     });
   });
 
-  // Подтверждение — ответ на нажатие, и уходит он раньше правки экрана:
-  // показ ответил бы на нажатие сам, без текста.
-  it("stores the chosen frequency and confirms it with a toast", async () => {
+  // Критерий PER-645: кнопка частоты проходит все пять режимов по кругу и
+  // показывает текущий. Подтверждение — ответ на нажатие, и уходит он раньше
+  // правки экрана: показ ответил бы на нажатие сам, без текста.
+  it("cycles the frequency through all five modes and shows the current one", async () => {
+    const ports = withOutbid(stored("every"));
+    const { bot, calls } = makeBot(ports);
+    const seen: string[] = [];
+    for (let press = 0; press < 5; press += 1) {
+      await bot.handleUpdate(lotPress({ data: notifyCallback() }));
+      const data =
+        keyboardOf(calls.at(-1)?.payload)[0]?.[0]?.callback_data ?? "";
+      calls.length = 0;
+      await bot.handleUpdate(lotPress({ data }));
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "editMessageText",
+      ]);
+      seen.push(keyboardOf(calls[1]?.payload)[0]?.[0]?.text ?? "");
+    }
+    expect(seen).toEqual([
+      "Перебили: раз в 5 минут",
+      "Перебили: раз в 15 минут",
+      "Перебили: раз в час",
+      "Перебили: не присылать",
+      "Перебили: о каждом",
+    ]);
+    expect(ports.chosen).toEqual(
+      (["5", "15", "60", "off", "every"] as const).map((frequency) => ({
+        kind: "frequency",
+        frequency,
+      })),
+    );
+    expect(calls[0]?.payload).toMatchObject({
+      text: "Теперь: о каждом событии сразу.",
+    });
+  });
+
+  // Кнопка несёт целевое значение, а не шаг: повтор нажатия на том же
+  // сообщении и старая кнопка режима ставят названный режим.
+  it("stores the named frequency from an old mode button", async () => {
     const ports = withOutbid(stored("every"));
     const { bot, calls } = makeBot(ports);
     await bot.handleUpdate(lotPress({ data: mode("off") }));
-    expect(ports.chosen).toEqual([{ kind: "frequency", frequency: "off" }]);
-    expect(calls.map((call) => call.method)).toEqual([
-      "answerCallbackQuery",
-      "editMessageText",
+    await bot.handleUpdate(lotPress({ data: mode("off") }));
+    expect(ports.chosen).toEqual([
+      { kind: "frequency", frequency: "off" },
+      { kind: "frequency", frequency: "off" },
     ]);
     expect(calls[0]?.payload).toMatchObject({ text: "Теперь: не присылаю." });
-    // Экран обновлён на месте: отметка переехала на выбранный режим.
+  });
+
+  // «Перебили в финале» (PER-645) — целевое состояние: частоту и анонс
+  // финала он не трогает.
+  it("switches the live final outbids on without touching the others", async () => {
+    const ports = withOutbid(stored("15"));
+    const { bot, calls } = makeBot(ports);
+    await bot.handleUpdate(
+      lotPress({ data: notifyCallback({ kind: "live", enabled: true }) }),
+    );
+    expect(ports.chosen).toEqual([{ kind: "live", enabled: true }]);
+    expect(calls[0]?.payload).toMatchObject({
+      text: "Включено: перебили в финале.",
+    });
     const shown = JSON.stringify(calls[1]?.payload);
-    expect(shown).toContain('"• Не присылать"');
-    expect(shown).toContain('"О каждом перебитии"');
+    expect(shown).toContain('"🔔 Вкл · Перебили в финале"');
+    expect(shown).toContain('"Перебили: раз в 15 минут"');
+    expect(shown).toContain('"🔔 Вкл · Анонс финала"');
   });
 
   // Выключатель финала (PER-539) — целевое состояние: частоту он не трогает.
@@ -2420,13 +2477,14 @@ describe("auction notification settings", () => {
     });
     const shown = JSON.stringify(calls[1]?.payload);
     expect(shown).toContain('"🔕 Выкл · Анонс финала"');
-    expect(shown).toContain('"• Не чаще раза в 15 минут"');
+    expect(shown).toContain('"Перебили: раз в 15 минут"');
   });
 
-  it("treats a final switch outside the dictionary as unknown data", async () => {
+  it("treats a switch outside the dictionary as unknown data", async () => {
     const ports = withOutbid(stored("every"));
     const { bot } = makeBot(ports);
     await bot.handleUpdate(lotPress({ data: "v1:entry:notify:final:2" }));
+    await bot.handleUpdate(lotPress({ data: "v1:entry:notify:live:2" }));
     expect(ports.chosen).toEqual([]);
   });
 
@@ -2440,7 +2498,7 @@ describe("auction notification settings", () => {
     const restarted = makeBot(withOutbid(store));
     await restarted.bot.handleUpdate(lotPress({ data: notifyCallback() }));
     expect(JSON.stringify(restarted.calls.at(-1)?.payload)).toContain(
-      "• Не чаще раза в час",
+      "Перебили: раз в час",
     );
   });
 

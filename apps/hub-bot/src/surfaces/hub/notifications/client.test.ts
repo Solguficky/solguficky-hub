@@ -288,6 +288,34 @@ describe("auction notification settings", () => {
     });
   });
 
+  // «Перебили в финале» (PER-645) уходит один, и ответ несёт все три.
+  it("sends the live final switch alone", async () => {
+    const setAuctionNotificationPreferences = vi.fn().mockResolvedValue({
+      outbidFrequency: WireOutbidFrequency.OFF,
+      finalAnnouncements: true,
+      liveFinalOutbids: true,
+    });
+    const notifications = adapter({ setAuctionNotificationPreferences });
+
+    const result = await notifications.setAuctionNotifications("identity-id", {
+      kind: "live",
+      enabled: true,
+    });
+
+    expect(setAuctionNotificationPreferences).toHaveBeenCalledWith(
+      { identityId: "identity-id", liveFinalOutbids: true },
+      expect.anything(),
+    );
+    expect(result).toEqual({
+      kind: "ok",
+      settings: {
+        frequency: "off",
+        finalAnnouncements: true,
+        liveFinalOutbids: true,
+      },
+    });
+  });
+
   // Умолчание `EVERY` отдаёт сервер, и бот его не додумывает: незнакомое
   // значение — ответ вне контракта, а не недоступность.
   it("reports a mode outside the dictionary as unknown", async () => {

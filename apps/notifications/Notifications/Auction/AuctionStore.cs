@@ -23,7 +23,8 @@ public sealed record AuctionApplication(AuctionOutcome Outcome, IReadOnlyDiction
 /// <summary>Ключ события, реплика лота и адресный факт — одна транзакция, без чтения чужой реплики.</summary>
 /// <remarks>
 /// «Перебили» и ответ своей автоставки фильтрует настройка получателя
-/// (PER-514, PER-596), и читается она той же транзакцией, что и ключ события:
+/// (PER-514, PER-596), в живом финале — выключатель перебитий в финале
+/// (PER-645), и читается она той же транзакцией, что и ключ события:
 /// повтор, пришедший после смены настройки, уже отсечён ключом и решения не
 /// меняет. Покупку настройка не трогает.
 /// </remarks>
@@ -64,11 +65,11 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         // возрастанию идентификатора, затем строки (OutbidStore).
         var outbid = bid.OutbidRecipient is { } outbidRecipient
             ? new Addressed(outbidRecipient, LotActivityKind.Outbid,
-                OutbidFrequencies.Decide(await OutbidStore.ReadPreference(work, outbidRecipient, cancellationToken)))
+                await Decide(work, outbidRecipient, bid.LiveFinal, cancellationToken))
             : null;
         var proxy = bid.ProxyRaisedRecipient is { } proxyRecipient
             ? new Addressed(proxyRecipient, LotActivityKind.ProxyRaised,
-                OutbidFrequencies.Decide(await OutbidStore.ReadPreference(work, proxyRecipient, cancellationToken)))
+                await Decide(work, proxyRecipient, bid.LiveFinal, cancellationToken))
             : null;
         var collected = new[] { outbid, proxy }
             .OfType<Addressed>()
@@ -125,6 +126,14 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
         await work.Commit(cancellationToken);
         return new AuctionApplication(outcome, created);
     }
+
+    // В живом финале частота не действует: решает выключатель перебитий в
+    // финале (PER-645), и в окно сводки ставка финала не попадает.
+    private static async Task<OutbidDecision> Decide(UnitOfWork work, Guid recipient, bool liveFinal,
+        CancellationToken cancellationToken) =>
+        liveFinal
+            ? OutbidFrequencies.DecideLiveFinal(await OutbidStore.ReadLiveFinal(work, recipient, cancellationToken))
+            : OutbidFrequencies.Decide(await OutbidStore.ReadPreference(work, recipient, cancellationToken));
 
     public async Task<AuctionApplication> Apply(AuctionSale sale, DateTimeOffset now, CancellationToken cancellationToken)
     {

@@ -22,6 +22,15 @@ public class AuctionMappingTests
         bid.LotId.ShouldBe(Guid.Parse(message.LotId));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void When_BidPhaseIsOnlineOrLive_Expect_LiveFlagFollowsThePhase(bool live)
+    {
+        var message = EventFactory.Bid(EventFactory.NewId(), EventFactory.NewId(), live: live);
+        Decode(message).LiveFinal.ShouldBe(live);
+    }
+
     [Fact]
     public void When_FirstBid_Expect_NoRecipient() =>
         Decode(EventFactory.Bid(EventFactory.NewId())).OutbidRecipient.ShouldBeNull();

@@ -1,10 +1,9 @@
 import { InlineKeyboard } from "grammy";
 import {
+  type AuctionNotificationChange,
   type AuctionNotificationSettings,
   auctionNotificationsExplanation,
-  finalAnnouncementsButtonLabel,
-  OUTBID_FREQUENCIES,
-  outbidButtonLabel,
+  auctionNotificationsRows,
 } from "../../../../core/notifications/outbid.js";
 import type { NotificationCategoryView } from "../../application/types.js";
 import type { MeetupSnapshot } from "../../meetups/port.js";
@@ -13,7 +12,7 @@ import type {
   NotificationCategory,
 } from "../../notifications/port.js";
 import { uuidToToken } from "../meetup-deep-link.js";
-import { toSettingsExtensions } from "./extensions.js";
+import { toSettingsAuction } from "./extensions.js";
 import {
   notificationToggleLabel,
   screenText,
@@ -141,44 +140,45 @@ export function meetupNotificationsScreen(settings: {
   };
 }
 
-/** Данные переключателя анонса финала: целевое состояние, а не шаг. */
-export function finalAnnouncementsData(enabled: boolean): string {
-  return `v1:notify:final:${enabled ? "1" : "0"}`;
+/**
+ * Данные кнопки настройки уведомлений аукциона: целевое значение, а не шаг.
+ * Данные частоты прежние, поэтому старые кнопки режима, «Реже» и «Частота
+ * уведомлений» из старых сообщений ставят свой режим и открывают экран.
+ */
+export function auctionNotificationsChangeData(
+  change: AuctionNotificationChange,
+): string {
+  switch (change.kind) {
+    case "frequency":
+      return `v1:notify:outbid:${change.frequency}`;
+    case "final":
+      return `v1:notify:final:${change.enabled ? "1" : "0"}`;
+    case "live":
+      return `v1:notify:live:${change.enabled ? "1" : "0"}`;
+  }
 }
 
 /**
- * Настройки уведомлений аукциона (PER-552, PER-539) — самодостаточные, как у
- * бота аукциона: пять режимов частоты «перебили» по одному в ряд, текущий
- * отмечен на своей кнопке маркером «• » (PER-598; дизайн-код, «Уведомления»),
- * и под ними переключатель анонса финала. Выбор отменяется с того же экрана,
- * поэтому подтверждения «Да» нет: что сработало, говорит ответ на нажатие.
- * Это настройки расширения «Аукцион» в «Настройках» → «Расширения»: в
- * «Уведомлениях» остаются только категории ядра (PER-605). Данные кнопок
- * частоты прежние, поэтому «Реже» и «Перебитые ставки» из старых сообщений и
- * «Частота уведомлений» из новых открывают этот экран на новом месте.
+ * Настройки уведомлений аукциона (PER-552, PER-539, PER-645) —
+ * самодостаточные, как у бота аукциона: каждая настройка — одна кнопка с
+ * текущим значением, нажатие ведёт к следующему (решение владельца по прогону
+ * 14 октября 2026 года, №72; дизайн-код, «Уведомления»). Выбор отменяется с
+ * того же экрана, поэтому подтверждения «Да» нет: что сработало, говорит
+ * ответ на нажатие. Это «Уведомления» расширения «Аукцион» в «Настройках» →
+ * «Расширения» (№74): в «Уведомлениях» настроек остаются только категории
+ * ядра (PER-605).
  */
 export function auctionNotificationsScreen(
   current: AuctionNotificationSettings,
 ): ShownScreen {
   const keyboard = new InlineKeyboard();
-  for (const frequency of OUTBID_FREQUENCIES) {
-    keyboard
-      .text(
-        outbidButtonLabel(frequency, current.frequency),
-        `v1:notify:outbid:${frequency}`,
-      )
-      .row();
+  for (const row of auctionNotificationsRows(current)) {
+    keyboard.text(row.text, auctionNotificationsChangeData(row.change)).row();
   }
-  keyboard
-    .text(
-      finalAnnouncementsButtonLabel(current.finalAnnouncements),
-      finalAnnouncementsData(!current.finalAnnouncements),
-    )
-    .row();
   return {
     id: "notify-outbid",
-    text: screenText("Аукцион", ...auctionNotificationsExplanation),
-    keyboard: withNav(keyboard, toSettingsExtensions),
+    text: screenText("Уведомления", ...auctionNotificationsExplanation),
+    keyboard: withNav(keyboard, toSettingsAuction),
     format: "HTML",
   };
 }

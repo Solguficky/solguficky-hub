@@ -288,7 +288,11 @@ describe("global notification settings", () => {
 
 describe("auction notification settings", () => {
   it("shows the settings Notifications holds for the person", async () => {
-    const stored = { frequency: "off", finalAnnouncements: false } as const;
+    const stored = {
+      frequency: "off",
+      finalAnnouncements: false,
+      liveFinalOutbids: true,
+    } as const;
     const getAuctionNotifications = vi
       .fn()
       .mockResolvedValue({ kind: "ok", settings: stored });
@@ -309,7 +313,11 @@ describe("auction notification settings", () => {
 
   // Экран рисует ответ сервиса, а не нажатую кнопку.
   it("answers a choice with what Notifications stored", async () => {
-    const stored = { frequency: "15", finalAnnouncements: true } as const;
+    const stored = {
+      frequency: "15",
+      finalAnnouncements: true,
+      liveFinalOutbids: false,
+    } as const;
     const setAuctionNotifications = vi
       .fn()
       .mockResolvedValue({ kind: "ok", settings: stored });

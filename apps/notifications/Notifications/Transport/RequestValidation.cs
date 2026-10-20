@@ -107,20 +107,21 @@ public static class RequestValidation
             : throw Invalid("outbid_frequency", "must be a known outbid frequency other than unspecified");
 
     /// <summary>
-    /// Названные настройки аукциона (PER-539): отсутствующее поле не меняется,
+    /// Названные настройки аукциона (PER-539, PER-645): отсутствующее поле не меняется,
     /// а запрос без единого поля ничего не меняет и отвергается, как команда
     /// без цели.
     /// </summary>
-    public static (OutbidFrequency? Frequency, bool? FinalAnnouncements) AuctionPreferences(
+    public static (OutbidFrequency? Frequency, bool? FinalAnnouncements, bool? LiveFinalOutbids) AuctionPreferences(
         SetAuctionNotificationPreferencesRequest request)
     {
-        if (!request.HasOutbidFrequency && !request.HasFinalAnnouncements)
+        if (!request.HasOutbidFrequency && !request.HasFinalAnnouncements && !request.HasLiveFinalOutbids)
         {
-            throw Invalid("outbid_frequency", "or final_announcements must be set");
+            throw Invalid("outbid_frequency", "final_announcements or live_final_outbids must be set");
         }
 
         return (request.HasOutbidFrequency ? OutbidFrequency(request.OutbidFrequency) : null,
-            request.HasFinalAnnouncements ? request.FinalAnnouncements : null);
+            request.HasFinalAnnouncements ? request.FinalAnnouncements : null,
+            request.HasLiveFinalOutbids ? request.LiveFinalOutbids : null);
     }
 
     /// <summary>

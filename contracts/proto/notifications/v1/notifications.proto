@@ -75,7 +75,9 @@ message Notification {
     // only to the previous leader named by the auction fact: a subscription is
     // not required. Sent one by one only when the recipient's outbid frequency
     // is "every outbid"; a frequency with an interval folds outbids into
-    // lot_activity_digest instead, and "off" withholds them.
+    // lot_activity_digest instead, and "off" withholds them. On a lot in the
+    // live final the frequency does not apply: sent one by one only when the
+    // recipient turned live_final_outbids on, withheld otherwise.
     LotOutbid lot_outbid = 14;
 
     // The recipient bought a lot: it was sold to them.
@@ -96,7 +98,8 @@ message Notification {
     // price of a lot; the recipient leads. Sent only to that bidder: a
     // subscription is not required. The outbid frequency governs it as it
     // governs lot_outbid: one by one under "every outbid", a line of
-    // lot_activity_digest under an interval, nothing under "off".
+    // lot_activity_digest under an interval, nothing under "off". On a lot in
+    // the live final live_final_outbids governs it as it governs lot_outbid.
     LotProxyRaised lot_proxy_raised = 19;
 
     // The recipient's circle changed between guest and member. This fact is

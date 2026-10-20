@@ -6716,14 +6716,14 @@ describe("notification frames", () => {
       );
 
     // Частота — настройки расширения «Аукцион» (PER-605): в «Уведомлениях»
-    // её нет ни у какого бота, а «Расширения» настроек ведут к ней у бота с
-    // аукционом.
+    // её нет ни у какого бота, а «Расширения» настроек у бота с аукционом —
+    // только список расширений (№74).
     it("leads to the frequency from the settings extensions, not from the notifications", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "global-notification-settings",
         categories: [{ category: "published", enabled: true }],
       });
-      const entry = { text: "🔨 Аукцион", callback_data: "v1:notify:outbid" };
+      const entry = { text: "🔨 Аукцион", callback_data: "v1:nav:exta" };
       for (const auction of [true, false]) {
         const { bot, calls } = harness(execute, auction);
         await bot.init();
@@ -6744,32 +6744,48 @@ describe("notification frames", () => {
       }
     });
 
-    // Имя в идущем аукционе (PER-595) — пункт «Расширений» рядом с частотой.
-    it("offers the name in the running auction under the settings extensions", async () => {
+    // №74: «Аукцион» «Расширений» настроек — его «Уведомления» и, пока идёт
+    // аукцион, «Имя в аукционе» (PER-595); вне аукциона пункта имени нет.
+    it("offers the notifications and the name in the running auction under the auction", async () => {
       const execute = vi.fn<Dispatcher["execute"]>();
       const auctionId = "01926f3c-8b7a-5cde-8f00-000000000001";
       const { bot, calls } = harness(execute, true, auctionId);
       await bot.init();
-      await bot.handleUpdate(callbackUpdate("v1:nav:ext"));
+      await bot.handleUpdate(callbackUpdate("v1:nav:exta"));
+      expect(screen(calls.at(-1)).text).toContain("<b>Аукцион</b>");
       expect(screen(calls.at(-1)).reply_markup?.inline_keyboard).toEqual([
-        [{ text: "🔨 Аукцион", callback_data: "v1:notify:outbid" }],
+        [{ text: "Уведомления", callback_data: "v1:notify:outbid" }],
         [
           {
             text: "Имя в аукционе",
             callback_data: encodeAuctionCallback({ kind: "name", auctionId }),
           },
         ],
-        [{ text: "‹ Настройки", callback_data: "v1:nav:settings" }],
+        [{ text: "‹ Расширения", callback_data: "v1:nav:ext" }],
       ]);
+
+      const idle = harness(execute, true);
+      await idle.bot.init();
+      await idle.bot.handleUpdate(callbackUpdate("v1:nav:exta"));
+      expect(screen(idle.calls.at(-1)).reply_markup?.inline_keyboard).toEqual([
+        [{ text: "Уведомления", callback_data: "v1:notify:outbid" }],
+        [{ text: "‹ Расширения", callback_data: "v1:nav:ext" }],
+      ]);
+      expect(execute).not.toHaveBeenCalled();
     });
 
-    // Запись 33 прогона 12.10: выбранный режим отмечен на своей кнопке, а
-    // пояснение говорит о сводке, об анонсе финала и о том, что покупку
-    // настройки не трогают. Под режимами — выключатель финала (PER-539).
-    it("shows the five modes, marks the current one and the final switch", async () => {
+    // №72 прогона 14.10: каждая настройка — одна кнопка с текущим значением,
+    // которая несёт следующее целевым значением; пояснение говорит о
+    // переключении, о сводке, о финале и о том, что покупку настройки не
+    // трогают. Возврат — «‹ Аукцион» (№74).
+    it("shows one switch per setting carrying its next value", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
-        settings: { frequency: "off", finalAnnouncements: true },
+        settings: {
+          frequency: "off",
+          finalAnnouncements: true,
+          liveFinalOutbids: false,
+        },
       });
       const { bot, calls } = harness(execute);
       await bot.init();
@@ -6778,41 +6794,68 @@ describe("notification frames", () => {
         expect.objectContaining({ intent: "view-auction-notifications" }),
       );
       const payload = screen(calls[1]);
-      expect(payload.text).toContain("<b>Аукцион</b>");
+      expect(payload.text).toContain("<b>Уведомления</b>");
+      expect(payload.text).toContain("переключает");
       expect(payload.text).toContain("одной сводкой");
+      expect(payload.text).toContain("Перебили в финале");
       expect(payload.text).toContain("Анонс финала");
       expect(payload.text).toContain("О покупке лота пишу всегда");
-      expect(payload.text).not.toContain("Сейчас:");
       expect(payload.reply_markup?.inline_keyboard).toEqual([
         [
           {
-            text: "О каждом перебитии",
+            text: "Перебили: не присылать",
             callback_data: "v1:notify:outbid:every",
           },
         ],
         [
           {
-            text: "Не чаще раза в 5 минут",
-            callback_data: "v1:notify:outbid:5",
+            text: "🔕 Выкл · Перебили в финале",
+            callback_data: "v1:notify:live:1",
           },
         ],
-        [
-          {
-            text: "Не чаще раза в 15 минут",
-            callback_data: "v1:notify:outbid:15",
-          },
-        ],
-        [{ text: "Не чаще раза в час", callback_data: "v1:notify:outbid:60" }],
-        [{ text: "• Не присылать", callback_data: "v1:notify:outbid:off" }],
         [{ text: "🔔 Вкл · Анонс финала", callback_data: "v1:notify:final:0" }],
-        [{ text: "‹ Расширения", callback_data: "v1:nav:ext" }],
+        [{ text: "‹ Аукцион", callback_data: "v1:nav:exta" }],
       ]);
+    });
+
+    // «Перебили в финале» (PER-645) — целевое состояние, как анонс финала.
+    it("switches the live final outbids on and confirms what Notifications stored", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "auction-notifications",
+        settings: {
+          frequency: "every",
+          finalAnnouncements: true,
+          liveFinalOutbids: true,
+        },
+      });
+      const { bot, calls } = harness(execute);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:notify:live:1"));
+      expect(execute).toHaveBeenCalledWith(
+        expect.objectContaining({
+          intent: "set-auction-notifications",
+          change: { kind: "live", enabled: true },
+        }),
+      );
+      expect(calls[0]?.payload).toMatchObject({
+        text: "Включено: перебили в финале.",
+      });
+      expect(
+        (screen(calls[1]).reply_markup?.inline_keyboard ?? []).flat(),
+      ).toContainEqual({
+        text: "🔔 Вкл · Перебили в финале",
+        callback_data: "v1:notify:live:0",
+      });
     });
 
     it("switches the final off and confirms what Notifications stored", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
-        settings: { frequency: "every", finalAnnouncements: false },
+        settings: {
+          frequency: "every",
+          finalAnnouncements: false,
+          liveFinalOutbids: false,
+        },
       });
       const { bot, calls } = harness(execute);
       await bot.init();
@@ -6834,18 +6877,23 @@ describe("notification frames", () => {
       });
     });
 
-    it("treats a final switch outside 0 and 1 as malformed", async () => {
+    it("treats a switch outside 0 and 1 as malformed", async () => {
       const execute = vi.fn<Dispatcher["execute"]>();
       const { bot } = harness(execute);
       await bot.init();
       await bot.handleUpdate(callbackUpdate("v1:notify:final:yes"));
+      await bot.handleUpdate(callbackUpdate("v1:notify:live:2"));
       expect(execute).not.toHaveBeenCalled();
     });
 
     it("confirms a choice with what Notifications stored", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
-        settings: { frequency: "15", finalAnnouncements: true },
+        settings: {
+          frequency: "15",
+          finalAnnouncements: true,
+          liveFinalOutbids: false,
+        },
       });
       const { bot, calls } = harness(execute);
       await bot.init();
@@ -6860,13 +6908,15 @@ describe("notification frames", () => {
       expect(calls[0]?.payload).toMatchObject({
         text: "Теперь: сводкой не чаще раза в 15 минут.",
       });
-      // Экран обновлён на месте, и отметка стоит на том, что сохранил сервис.
+      // Экран обновлён на месте: кнопка показывает то, что сохранил сервис,
+      // и несёт следующий режим.
       expect(calls[1]?.method).toBe("editMessageText");
       expect(
-        (screen(calls[1]).reply_markup?.inline_keyboard ?? [])
-          .flat()
-          .map((button) => button.text),
-      ).toContain("• Не чаще раза в 15 минут");
+        (screen(calls[1]).reply_markup?.inline_keyboard ?? []).flat(),
+      ).toContainEqual({
+        text: "Перебили: раз в 15 минут",
+        callback_data: "v1:notify:outbid:60",
+      });
     });
 
     it("refuses with a retry of the same choice when Notifications is down", async () => {
@@ -6920,11 +6970,15 @@ describe("notification frames", () => {
     // «Частота уведомлений» под перебитием — след: экран приходит новым
     // сообщением, а уведомление остаётся как было. Данные кнопки прежние,
     // поэтому и «Реже» из старого сообщения открывает частоту на новом месте —
-    // под «Расширениями» настроек (PER-605, PER-598).
+    // под «Аукционом» «Расширений» настроек (PER-605, PER-598, №74).
     it("opens the frequency from a notification as a new message at its new place", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
-        settings: { frequency: "every", finalAnnouncements: true },
+        settings: {
+          frequency: "every",
+          finalAnnouncements: true,
+          liveFinalOutbids: false,
+        },
       });
       const { bot, calls } = harness(execute);
       await bot.init();
@@ -6933,11 +6987,9 @@ describe("notification frames", () => {
       expect(methods).toContain("sendMessage");
       expect(methods).not.toContain("editMessageText");
       const sent = screen(calls.find((call) => call.method === "sendMessage"));
-      expect(JSON.stringify(sent.reply_markup)).toContain(
-        "• О каждом перебитии",
-      );
+      expect(JSON.stringify(sent.reply_markup)).toContain("Перебили: о каждом");
       expect(sent.reply_markup?.inline_keyboard.at(-1)).toEqual([
-        { text: "‹ Расширения", callback_data: "v1:nav:ext" },
+        { text: "‹ Аукцион", callback_data: "v1:nav:exta" },
       ]);
     });
 
