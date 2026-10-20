@@ -9,6 +9,7 @@ import {
   canonical,
   checkPlaceBids,
   DIGEST_LOT_LIMIT,
+  type LotInfo,
   type LotNoticeButton,
   type LotNoticeRenderOptions,
   type LotNoticeView,
@@ -112,17 +113,17 @@ function shownLineup(
 export function createFinalNoticeRender({
   reads,
   onTitleMissing,
-}: Omit<LotNoticeRenderOptions, "frequencyButton">): (
+}: Omit<LotNoticeRenderOptions, "frequencyButton" | "timeZone">): (
   notice: FinalNotice,
   context: RenderContext,
 ) => Promise<RenderResult<LotNoticeView>> {
   return async (notice, context) => {
-    const titles = new Map<string, string>();
+    const lots = new Map<string, LotInfo>();
     const refused = new Set<string>();
     if (reads === undefined) {
       return {
         kind: "ready",
-        message: renderFinalNotice(notice, { titles, refused }),
+        message: renderFinalNotice(notice, { lots, refused }),
       };
     }
     const stop = await checkPlaceBids(reads, context);
@@ -131,13 +132,13 @@ export function createFinalNoticeRender({
       const { recipientId, requestId } = context;
       const lotIds = shownLineup(notice).map((lot) => lot.lotId);
       const settled = await Promise.allSettled(
-        lotIds.map((lotId) => reads.lotTitle(recipientId, lotId, requestId)),
+        lotIds.map((lotId) => reads.lotInfo(recipientId, lotId, requestId)),
       );
       settled.forEach((result, index) => {
         const lotId = lotIds[index];
         if (lotId === undefined) return;
         if (result.status === "fulfilled") {
-          titles.set(lotId, result.value);
+          lots.set(lotId, result.value);
           return;
         }
         if (isPermanentFailure(result.reason)) refused.add(lotId);
@@ -146,13 +147,13 @@ export function createFinalNoticeRender({
     }
     return {
       kind: "ready",
-      message: renderFinalNotice(notice, { titles, refused }),
+      message: renderFinalNotice(notice, { lots, refused }),
     };
   };
 }
 
 export type FinalNoticeRenderInput = {
-  titles: ReadonlyMap<string, string>;
+  lots: ReadonlyMap<string, LotInfo>;
   refused?: ReadonlySet<string>;
 };
 
@@ -163,7 +164,7 @@ export type FinalNoticeRenderInput = {
 // нет (решение владельца 19 октября 2026 года, PER-478).
 export function renderFinalNotice(
   notice: FinalNotice,
-  { titles, refused = new Set() }: FinalNoticeRenderInput,
+  { lots, refused = new Set() }: FinalNoticeRenderInput,
 ): LotNoticeView {
   if (notice.kind === "final-started") {
     return { text: "Начался финал аукциона.", rows: [] };
@@ -181,7 +182,8 @@ export function renderFinalNotice(
     lead,
     "",
     ...shown.map((lot) => {
-      const title = quoted(titles.get(lot.lotId), LINE_TITLE_LIMIT) ?? "Лот";
+      const title =
+        quoted(lots.get(lot.lotId)?.title, LINE_TITLE_LIMIT) ?? "Лот";
       const line = `• ${title} — ${money(lot.price)}`;
       return own.has(lot.lotId) ? `${line}, лот за тобой` : line;
     }),
@@ -191,7 +193,7 @@ export function renderFinalNotice(
     .slice(0, OWN_LOT_BUTTON_LIMIT)
     .filter((lotId) => !refused.has(lotId))
     .map((lotId) => {
-      const title = titles.get(lotId);
+      const title = lots.get(lotId)?.title;
       return [
         {
           kind: "lot",

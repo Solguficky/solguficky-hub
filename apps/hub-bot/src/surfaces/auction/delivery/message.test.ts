@@ -40,7 +40,7 @@ const purchased: AuctionNotificationContent = {
 const nbsp = " ";
 
 // Название лота глазами получателя: рендер берёт его из карты по лоту.
-const titled = (title: string, id = lotId) => new Map([[id, title]]);
+const titled = (title: string, id = lotId) => new Map([[id, { title }]]);
 
 describe("renderNotification", () => {
   it("names the lot and the current price of an outbid", () => {
@@ -149,7 +149,7 @@ describe("frequency button", () => {
   it("puts the frequency under an outbid rendered for delivery", async () => {
     const reads: NotificationReads = {
       holdsPlaceBids: async () => true,
-      lotTitle: async () => "Кружка",
+      lotInfo: async () => ({ title: "Кружка" }),
     };
     const render = createRenderMessage(reads, () => {}, true);
     const rendered = await render(outbid, { recipientId });
@@ -182,9 +182,9 @@ describe("activity digest", () => {
 
   it("opens every lot from one message", async () => {
     const source = reads({
-      lotTitle: vi.fn(async (_who: string, id: string) =>
-        id === lotId ? "Кружка" : "Плакат",
-      ),
+      lotInfo: vi.fn(async (_who: string, id: string) => ({
+        title: id === lotId ? "Кружка" : "Плакат",
+      })),
     });
     const render = createRenderMessage(source, () => {}, true);
     const rendered = await render(digest, { recipientId });
@@ -214,8 +214,8 @@ describe("activity digest", () => {
     const notFound = Object.assign(new Error("lot not found"), { code: 5 });
     const render = createRenderMessage(
       reads({
-        lotTitle: vi.fn(async (_who: string, id: string) =>
-          id === lotId ? Promise.reject(notFound) : "Плакат",
+        lotInfo: vi.fn(async (_who: string, id: string) =>
+          id === lotId ? Promise.reject(notFound) : { title: "Плакат" },
         ),
       }),
       missing,
@@ -289,7 +289,7 @@ describe("parseTraceCallback", () => {
 function reads(overrides: Partial<NotificationReads> = {}): NotificationReads {
   return {
     holdsPlaceBids: vi.fn(async () => true),
-    lotTitle: vi.fn(async () => "Кружка"),
+    lotInfo: vi.fn(async () => ({ title: "Кружка" })),
     ...overrides,
   };
 }
@@ -329,7 +329,7 @@ describe("raffle result", () => {
       kind: "ready",
     });
     expect(source.holdsPlaceBids).not.toHaveBeenCalled();
-    expect(source.lotTitle).not.toHaveBeenCalled();
+    expect(source.lotInfo).not.toHaveBeenCalled();
   });
 });
 
@@ -350,7 +350,7 @@ describe("access granted", () => {
       render({ kind: "access-granted" }, { recipientId }),
     ).resolves.toMatchObject({ kind: "ready" });
     expect(source.holdsPlaceBids).toHaveBeenCalledWith(recipientId, undefined);
-    expect(source.lotTitle).not.toHaveBeenCalled();
+    expect(source.lotInfo).not.toHaveBeenCalled();
   });
 
   it("finds a recipient who lost the right to bid ineligible", async () => {
@@ -377,7 +377,7 @@ describe("createRenderMessage", () => {
       message: { text: "Тебя приняли в сообщество." },
     });
     expect(source.holdsPlaceBids).not.toHaveBeenCalled();
-    expect(source.lotTitle).not.toHaveBeenCalled();
+    expect(source.lotInfo).not.toHaveBeenCalled();
   });
 
   it("reads the title as the recipient with the right to bid", async () => {
@@ -390,7 +390,7 @@ describe("createRenderMessage", () => {
       message: { text: expect.stringContaining("«Кружка»") },
     });
     expect(source.holdsPlaceBids).toHaveBeenCalledWith(recipientId, "req-1");
-    expect(source.lotTitle).toHaveBeenCalledWith(recipientId, lotId, "req-1");
+    expect(source.lotInfo).toHaveBeenCalledWith(recipientId, lotId, "req-1");
   });
 
   // Без роли кнопка упёрлась бы в тот же отказ Auction: уведомление не уходит.
@@ -400,7 +400,7 @@ describe("createRenderMessage", () => {
     await expect(render(outbid, { recipientId })).resolves.toEqual({
       kind: "ineligible",
     });
-    expect(source.lotTitle).not.toHaveBeenCalled();
+    expect(source.lotInfo).not.toHaveBeenCalled();
   });
 
   // Отказ, который повтор не изменит, — дефект: снимается без повторов.
@@ -420,7 +420,7 @@ describe("createRenderMessage", () => {
     const missing = vi.fn();
     const notFound = Object.assign(new Error("lot not found"), { code: 5 });
     const render = createRenderMessage(
-      reads({ lotTitle: vi.fn(async () => Promise.reject(notFound)) }),
+      reads({ lotInfo: vi.fn(async () => Promise.reject(notFound)) }),
       missing,
     );
     await expect(render(outbid, { recipientId })).resolves.toEqual({
@@ -448,7 +448,7 @@ describe("createRenderMessage", () => {
     const missing = vi.fn();
     const down = new Error("unavailable");
     const render = createRenderMessage(
-      reads({ lotTitle: vi.fn(async () => Promise.reject(down)) }),
+      reads({ lotInfo: vi.fn(async () => Promise.reject(down)) }),
       missing,
     );
     await expect(

@@ -13,6 +13,7 @@ public enum AuctionOutcome
     Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected, LotReplicated,
     FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced, PredictionResultsAnnounced,
     AuctionCancelled, AuctionEnded,
+    FinalLotNext,
 }
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
@@ -305,9 +306,95 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
             }
         }
 
+        // Финал начался: первый лот состава идёт следующим, и его лидер узнаёт
+        // об этом (ADR-063, дополнение 2026-10-20).
+        var nextCreated = 0;
+        if (!lineupFrozen && final.Lineup.Count > 0)
+        {
+            nextCreated = await AnnounceNext(work, final.AuctionId, final.Lineup[0], final.EventId, now,
+                cancellationToken);
+        }
+
         await work.Commit(cancellationToken);
         var outcome = lineupFrozen && !complete ? AuctionOutcome.LineupIncomplete : AuctionOutcome.FinalAnnounced;
-        return new AuctionApplication(outcome, new Dictionary<string, int> { [type] = created });
+        var counts = new Dictionary<string, int> { [type] = created };
+        if (nextCreated > 0)
+        {
+            counts[AuctionFacts.FinalLotNextType] = nextCreated;
+        }
+        return new AuctionApplication(outcome, counts);
+    }
+
+    /// <summary>
+    /// Лот финала взяли в работу: следующий лот состава известен, и его лидер
+    /// узнаёт, что его лот идёт следом (ADR-063, дополнение 2026-10-20).
+    /// </summary>
+    public async Task<AuctionApplication> Apply(AuctionFinalLotActivated activated, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, activated.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        await FinalStore.TrackLot(work, activated.AuctionId, activated.ActiveLotId, activated.Lineup,
+            activated.OccurredAt, cancellationToken);
+
+        var created = await AnnounceNext(work, activated.AuctionId, NextLot(activated), activated.EventId, now,
+            cancellationToken);
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(AuctionOutcome.FinalLotNext,
+            new Dictionary<string, int> { [AuctionFacts.FinalLotNextType] = created });
+    }
+
+    /// <summary>Лот состава, который идёт следом за взятым в работу.</summary>
+    private static Guid? NextLot(AuctionFinalLotActivated activated)
+    {
+        for (var place = 0; place < activated.Lineup.Count; place++)
+        {
+            if (activated.Lineup[place] != activated.ActiveLotId)
+            {
+                continue;
+            }
+            return place + 1 < activated.Lineup.Count ? activated.Lineup[place + 1] : null;
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Сообщает лидеру следующего лота, что его лот идёт следом, и сколько он
+    /// примерно протянет. Выключатель анонса финала гасит и его (PER-539).
+    /// </summary>
+    private async Task<int> AnnounceNext(UnitOfWork work, Guid auctionId, Guid? nextLotId, Guid eventId,
+        DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        if (nextLotId is not { } lotId)
+        {
+            return 0;
+        }
+
+        var held = await FinalStore.Held(work, [lotId], cancellationToken);
+        // Лот, удержанный без ставки, лидера не имеет: сообщать некому.
+        if (!held.TryGetValue(lotId, out var lot) || lot.Leader is not { } leader)
+        {
+            return 0;
+        }
+
+        var silenced = await FinalStore.Silenced(work, [leader], cancellationToken);
+        if (silenced.Contains(leader))
+        {
+            return 0;
+        }
+
+        var activations = await FinalStore.Activations(work, auctionId, cancellationToken);
+        var notAfter = now + options.Value.StaleAfter;
+        var notification = AuctionFacts.FinalLotNext(Guid.CreateVersion7(now), leader, lotId,
+            FinalEstimate.Minutes(activations), eventId, now, notAfter);
+        return await NotificationStore.AddAddressed(work, notification, AuctionFacts.FinalLotNextType,
+            AuctionFacts.AuctionCauseKind, eventId.ToString(), now, notAfter, cancellationToken,
+            await NotificationStore.DeliverySurface(work, leader, cancellationToken));
     }
 
     /// <summary>

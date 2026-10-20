@@ -1,4 +1,5 @@
 import type { Money as WireMoney } from "../../../gen/auction/v1/auction_pb.js";
+import type { LotSnapshot } from "../../../gen/auction/v1/auction_service_pb.js";
 import {
   LotActivityKind,
   type Notification,
@@ -38,7 +39,13 @@ export type LotNotice =
   // Сводка окна частоты (PER-596): минимум одна строка, по строке на лот и вид.
   | { kind: "lot-activity-digest"; lines: readonly LotActivityLine[] }
   // Дедлайн избранного лота подходит (PER-496); данные — только идентификатор.
-  | { kind: "lot-reminder"; lotId: string };
+  | { kind: "lot-reminder"; lotId: string }
+  // Второй момент того же напоминания: дедлайн уже близко (ADR-063,
+  // дополнение 2026-10-20).
+  | { kind: "lot-deadline-close"; lotId: string }
+  // Следующий лот живого финала — тот, что человек вёл (ADR-063, дополнение
+  // 2026-10-20).
+  | { kind: "lot-final-next"; lotId: string; estimatedMinutes: number };
 
 const lotNoticeKinds: ReadonlySet<string> = new Set<LotNotice["kind"]>([
   "lot-outbid",
@@ -46,6 +53,8 @@ const lotNoticeKinds: ReadonlySet<string> = new Set<LotNotice["kind"]>([
   "lot-purchased",
   "lot-activity-digest",
   "lot-reminder",
+  "lot-deadline-close",
+  "lot-final-next",
 ]);
 
 /** Весть о лоте среди веток канала: её рисует общий рендер. */
@@ -63,7 +72,9 @@ type LotBranch = Extract<
       | "lotProxyRaised"
       | "lotPurchased"
       | "lotActivityDigest"
-      | "lotReminder";
+      | "lotReminder"
+      | "lotDeadlineClose"
+      | "auctionFinalLotNext";
   }
 >;
 
@@ -123,6 +134,19 @@ export function lotNoticeOf(type: LotBranch): LotNotice | undefined {
       const lotId = canonical(type.value.lotId);
       return lotId === undefined ? undefined : { kind: "lot-reminder", lotId };
     }
+    case "lotDeadlineClose": {
+      const lotId = canonical(type.value.lotId);
+      return lotId === undefined
+        ? undefined
+        : { kind: "lot-deadline-close", lotId };
+    }
+    case "auctionFinalLotNext": {
+      const lotId = canonical(type.value.lotId);
+      // Оценка длительности лота: число минут, сколько он примерно протянет.
+      const estimatedMinutes = type.value.estimatedMinutes;
+      if (lotId === undefined || estimatedMinutes < 0) return undefined;
+      return { kind: "lot-final-next", lotId, estimatedMinutes };
+    }
     default: {
       const _exhaustive: never = type;
       return _exhaustive;
@@ -159,18 +183,48 @@ export function toMoney(money: WireMoney | undefined): NoticeMoney | undefined {
   return { minorUnits, currency: money.currency };
 }
 
+// Что канал узнаёт о лоте у Auction: название — для текста, дедлайн и число
+// использованных продлений анти-снайпом — чтобы сказать, до какого времени
+// идёт торг и продлевал ли дедлайн.
+export type LotInfo = {
+  // Карточки у лота может не быть: тогда текст обходится без названия.
+  title: string;
+  // Момент закрытия торгов по времени сервера; у лота без торгов его нет.
+  deadline?: string;
+  // Сколько раз анти-снайп продлил дедлайн. Ноль — реальное значение.
+  extensionsUsed?: number;
+};
+
+// Перевод снимка Auction в то, о чём читает текст. Правило одно у двух
+// ботов, и копия разошлась бы по поверхностям.
+export function lotInfoOf(snapshot: LotSnapshot): LotInfo {
+  // Карточки у лота может не быть: тогда текст обходится без названия.
+  const title = snapshot.card?.title ?? "";
+  // Дедлайн и число продлений есть только у лота в торгах: у лота без торгов
+  // и у лота, который ведёт человек, их нет.
+  const trading =
+    snapshot.status?.case === "trading" ? snapshot.status.value : undefined;
+  return {
+    title,
+    ...(trading?.deadline === undefined ? {} : { deadline: trading.deadline }),
+    ...(trading === undefined
+      ? {}
+      : { extensionsUsed: trading.extensionsUsed }),
+  };
+}
+
 // Чтения, которые нужны тексту. Название лота отдаёт Auction только зрителю с
 // правом `place-bids`, а право получателя канал не придумывает — спрашивает у
 // Identity (integration.md, `CheckAccessRight`).
 export type LotNoticeReads = {
   // true — право есть, false — нет; недоступность Identity — исключение.
   holdsPlaceBids(identityId: string, requestId?: string): Promise<boolean>;
-  // Название лота глазами получателя; любой отказ — исключение со своим кодом.
-  lotTitle(
+  // Лот глазами получателя; любой отказ — исключение со своим кодом.
+  lotInfo(
     identityId: string,
     lotId: string,
     requestId?: string,
-  ): Promise<string>;
+  ): Promise<LotInfo>;
 };
 
 // Кнопка уведомления: лот открывает карточку, частота — экран частоты; оба
@@ -206,6 +260,8 @@ export type LotNoticeRenderOptions = {
   onTitleMissing: (cause: unknown, requestId?: string) => void;
   // У бота есть Notifications: кнопка частоты стоит под тем, чем она управляет.
   frequencyButton: boolean;
+  // Пояс сообщества: время дедлайна человек читает по своему часовому поясу.
+  timeZone: string;
 };
 
 // Право `place-bids` получателя перед вестью о торгах: без него кнопка упёрлась
@@ -236,17 +292,23 @@ export function createLotNoticeRender({
   reads,
   onTitleMissing,
   frequencyButton,
+  timeZone,
 }: LotNoticeRenderOptions): (
   notice: LotNotice,
   context: RenderContext,
 ) => Promise<RenderResult<LotNoticeView>> {
   return async (notice, context) => {
-    const titles = new Map<string, string>();
+    const lots = new Map<string, LotInfo>();
     const refused = new Set<string>();
     if (reads === undefined) {
       return {
         kind: "ready",
-        message: renderLotNotice(notice, { titles, refused, frequencyButton }),
+        message: renderLotNotice(notice, {
+          lots,
+          refused,
+          frequencyButton,
+          timeZone,
+        }),
       };
     }
     const { recipientId, requestId } = context;
@@ -255,13 +317,13 @@ export function createLotNoticeRender({
     if (notice.kind === "lot-activity-digest") {
       const lotIds = shownLots(notice.lines);
       const settled = await Promise.allSettled(
-        lotIds.map((lotId) => reads.lotTitle(recipientId, lotId, requestId)),
+        lotIds.map((lotId) => reads.lotInfo(recipientId, lotId, requestId)),
       );
       settled.forEach((result, index) => {
         const lotId = lotIds[index];
         if (lotId === undefined) return;
         if (result.status === "fulfilled") {
-          titles.set(lotId, result.value);
+          lots.set(lotId, result.value);
           return;
         }
         if (isPermanentFailure(result.reason)) refused.add(lotId);
@@ -269,9 +331,9 @@ export function createLotNoticeRender({
       });
     } else {
       try {
-        titles.set(
+        lots.set(
           notice.lotId,
-          await reads.lotTitle(recipientId, notice.lotId, requestId),
+          await reads.lotInfo(recipientId, notice.lotId, requestId),
         );
       } catch (cause) {
         if (isPermanentFailure(cause)) return { kind: "rejected", cause };
@@ -280,7 +342,12 @@ export function createLotNoticeRender({
     }
     return {
       kind: "ready",
-      message: renderLotNotice(notice, { titles, refused, frequencyButton }),
+      message: renderLotNotice(notice, {
+        lots,
+        refused,
+        frequencyButton,
+        timeZone,
+      }),
     };
   };
 }
@@ -311,40 +378,46 @@ function shownLots(lines: readonly LotActivityLine[]): string[] {
 }
 
 export type LotNoticeRenderInput = {
-  // Пустое название — у лота нет карточки: текст обходится без него.
-  titles: ReadonlyMap<string, string>;
+  // Лоты, о которых канал знает: название и, у лота в торгах, дедлайн.
+  lots: ReadonlyMap<string, LotInfo>;
   // Лоты, которые Auction окончательно отказался отдать: кнопка к ним упёрлась
   // бы в тот же отказ.
   refused?: ReadonlySet<string>;
   frequencyButton: boolean;
+  timeZone: string;
 };
 
 export function renderLotNotice(
   notice: LotNotice,
-  { titles, refused = new Set(), frequencyButton }: LotNoticeRenderInput,
+  {
+    lots,
+    refused = new Set(),
+    frequencyButton,
+    timeZone,
+  }: LotNoticeRenderInput,
 ): LotNoticeView {
   const frequency: LotNoticeButton = {
     kind: "frequency",
     text: frequencyLabel,
   };
   if (notice.kind === "lot-activity-digest") {
-    const lots = shownLots(notice.lines);
-    const shown = new Set(lots);
+    const shown = shownLots(notice.lines);
+    const shownSet = new Set(shown);
     const hidden = new Set(notice.lines.map((line) => line.lotId)).size;
     const text = [
       "Сводка по твоим ставкам:",
       "",
       ...notice.lines
-        .filter((line) => shown.has(line.lotId))
-        .map((line) => digestLine(line, titles.get(line.lotId))),
-      ...(hidden > lots.length
-        ? [`…и ещё лотов: ${hidden - lots.length}.`]
+        .filter((line) => shownSet.has(line.lotId))
+        .map((line) => digestLine(line, lots.get(line.lotId)?.title)),
+      ...(hidden > shown.length
+        ? [`…и ещё лотов: ${hidden - shown.length}.`]
         : []),
     ].join("\n");
-    const rows: LotNoticeButton[][] = lots
+    const rows: LotNoticeButton[][] = shown
       .filter((lotId) => !refused.has(lotId))
       .map((lotId) => {
-        const title = titles.get(lotId);
+        const title = lots.get(lotId)?.title;
         return [
           {
             kind: "lot",
@@ -359,21 +432,24 @@ export function renderLotNotice(
     if (frequencyButton) rows.push([frequency]);
     return { text, rows };
   }
-  const lot = quoted(titles.get(notice.lotId), TITLE_LIMIT);
+  const info = lots.get(notice.lotId);
+  const lot = quoted(info?.title, TITLE_LIMIT);
   const lotButton: LotNoticeButton = {
     kind: "lot",
     lotId: notice.lotId,
     text: toLotLabel,
   };
   return {
-    text: singleText(notice, lot),
+    text: singleText(notice, lot, info, timeZone),
     rows: [
       // Частота управляет перебитием, ответом автоставки и сводкой; покупки и
       // напоминания о дедлайне она не касается — напоминание выключается
       // снятием отметки (ADR-063, п.5).
       frequencyButton &&
       notice.kind !== "lot-purchased" &&
-      notice.kind !== "lot-reminder"
+      notice.kind !== "lot-reminder" &&
+      notice.kind !== "lot-deadline-close" &&
+      notice.kind !== "lot-final-next"
         ? [lotButton, frequency]
         : [lotButton],
     ],
@@ -383,26 +459,100 @@ export function renderLotNotice(
 function singleText(
   notice: Exclude<LotNotice, { kind: "lot-activity-digest" }>,
   lot: string | undefined,
+  info: LotInfo | undefined,
+  timeZone: string,
 ): string {
   switch (notice.kind) {
     case "lot-outbid":
-      return `Твою ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(notice.currentPrice)}.`;
+      return `Твою ставку на ${lot ?? "лот"} перебили. Текущая цена — ${money(notice.currentPrice)}.${deadlineText(info, timeZone)}`;
     case "lot-proxy-raised":
-      return `Твоя автоставка на ${lot ?? "лот"} подняла цену до ${money(notice.currentPrice)}: лидируешь ты.`;
+      return `Твоя автоставка на ${lot ?? "лот"} подняла цену до ${money(notice.currentPrice)}: лидируешь ты.${deadlineText(info, timeZone)}`;
     case "lot-purchased":
       // Оплаты и получения в продукте нет: их ведёт организатор аукциона, и
       // сообщение говорит только это (решение владельца 13 октября 2026 года).
       return `Лот ${lot === undefined ? "" : `${lot} `}твой за ${money(notice.price)}. Как оплатить и забрать — напишет организатор аукциона.`;
     case "lot-reminder":
-      // Точного дедлайна в факте нет, а напоминание приходит не позже часа до
-      // него — в том числе когда лот открыли с дедлайном ближе часа. Названный
-      // «час» в этом случае был бы неправдой, поэтому текст говорит «скоро».
-      return `Скоро дедлайн у избранного лота${lot === undefined ? "" : ` ${lot}`}. Успей сделать ставку.`;
+      // Напоминание приходит не позже часа до дедлайна — в том числе когда лот
+      // открыли с дедлайном ближе часа, — поэтому «час» в тексте был бы
+      // неправдой. Время дедлайна канал читает у Auction: после продления
+      // анти-снайпом названо то, до которого торг идёт сейчас.
+      return `Скоро дедлайн у избранного лота${lot === undefined ? "" : ` ${lot}`}${deadlineTime(info, timeZone)}. Успей сделать ставку.`;
+    case "lot-deadline-close":
+      // Второй момент того же напоминания: дедлайн уже близко, и время названо
+      // прямо — «скоро» здесь было бы пустым словом.
+      return `Дедлайн избранного лота${lot === undefined ? "" : ` ${lot}`}${deadlineTime(info, timeZone)}. Успей сделать ставку.`;
+    case "lot-final-next":
+      return `Твой лот следующий: ${lot ?? "лот"}.${minutesText(notice.estimatedMinutes)}`;
     default: {
       const _exhaustive: never = notice;
       return _exhaustive;
     }
   }
+}
+
+// Дедлайн лота в тексте: время по часам сообщества и, когда Auction сообщил о
+// продлении анти-снайпом, слово о нём. Продление двигает дедлайн, поэтому
+// время, названное без слова «продлён», осталось бы верным.
+function deadlineText(info: LotInfo | undefined, timeZone: string): string {
+  const when = deadlineMoment(info, timeZone);
+  if (when === undefined) return "";
+  return (info?.extensionsUsed ?? 0) > 0
+    ? ` Дедлайн продлён до ${when}.`
+    : ` Торг до ${when}.`;
+}
+
+// Время дедлайна по часам сообщества: « — до 22:45». Лот без торгов и лот,
+// которого ведёт человек, дедлайна не имеют — тогда времени нет.
+function deadlineTime(info: LotInfo | undefined, timeZone: string): string {
+  const when = deadlineMoment(info, timeZone);
+  return when === undefined ? "" : ` — до ${when}`;
+}
+
+// Время дедлайна по часам сообщества: «22:45».
+function deadlineMoment(
+  info: LotInfo | undefined,
+  timeZone: string,
+): string | undefined {
+  if (info?.deadline === undefined) return undefined;
+  return localTime(info.deadline, timeZone);
+}
+
+// Оценка длительности лота финала: «Примерно через 7 минут.» Число округлено
+// в сервисе, а здесь оно только читается.
+function minutesText(estimatedMinutes: number): string {
+  return estimatedMinutes <= 0
+    ? ""
+    : ` Примерно через ${estimatedMinutes} ${plural(estimatedMinutes, "минуту", "минуты", "минут")}.`;
+}
+
+// Момент RFC 3339 в местное время пояса: «22:45». Непонятный момент —
+// отсутствие времени, а не «00:00».
+export function localTime(
+  instant: string,
+  timeZone: string,
+): string | undefined {
+  const date = new Date(instant);
+  if (Number.isNaN(date.getTime())) return undefined;
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    hour: "numeric",
+    minute: "numeric",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const hour = parts.find((part) => part.type === "hour")?.value;
+  const minute = parts.find((part) => part.type === "minute")?.value;
+  if (hour === undefined || minute === undefined) return undefined;
+  return `${hour}:${minute}`;
+}
+
+// Число со словом: «1 минуту», «7 минут».
+function plural(count: number, one: string, few: string, many: string): string {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
 }
 
 // «Лот за тобой» верно и для лидера торгов, и для купившего: лот, проданный в

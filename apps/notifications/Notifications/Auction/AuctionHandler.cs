@@ -44,6 +44,9 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionDecoded.Final { Value: var final } => (new EventRef(final.EventId, null, final.AuctionId,
                     final.Version, final.OccurredAt),
                 () => store.Apply(final, clock.GetUtcNow(), stoppingToken)),
+            AuctionDecoded.FinalLotActivated { Value: var activated } => (new EventRef(activated.EventId, null,
+                    activated.AuctionId, activated.Version, activated.OccurredAt),
+                () => store.Apply(activated, clock.GetUtcNow(), stoppingToken)),
             AuctionDecoded.Closed { Value: var closed } => (new EventRef(closed.EventId, null, closed.AuctionId,
                     closed.Version, closed.OccurredAt),
                 () => store.Apply(closed, clock.GetUtcNow(), stoppingToken)),
@@ -126,6 +129,7 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionOutcome.PredictionResultsAnnounced => "prediction_results_announced",
             AuctionOutcome.AuctionCancelled => "auction_cancelled",
             AuctionOutcome.AuctionEnded => "auction_ended",
+            AuctionOutcome.FinalLotNext => "final_lot_next",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),
         }, application.FactsCreated);
     }
