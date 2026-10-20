@@ -155,8 +155,7 @@ message PlaceBidRefusal {
   }
 }
 
-// The participant was removed from the lot and may no longer bid or set a proxy limit
-// on it. Who removed them and why is deliberately not carried.
+// Who removed the participant from the lot and why is deliberately not carried.
 message ParticipantRemovedFromLot {}
 
 // The participant named by a floor bid does not hold place_bids.

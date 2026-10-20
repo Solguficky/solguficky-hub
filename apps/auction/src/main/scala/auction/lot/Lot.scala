@@ -974,6 +974,6 @@ object Lot {
    * ставка, записанная первой, и время события в сравнении не участвует. Порядок, в котором строки пришли к
    * вызывающему, на итог не влияет.
    */
-  def replay(from: Lot, journal: Seq[(Envelope, Instant)]): Lot =
-    journal.sortBy(_._1.sequence).foldLeft(from)((lot, row) => apply(lot, row._1, row._2))
+  def replay(from: Lot, journal: Seq[Written]): Lot =
+    journal.sortBy(_.envelope.sequence).foldLeft(from)((lot, row) => apply(lot, row.envelope, row.at))
 }

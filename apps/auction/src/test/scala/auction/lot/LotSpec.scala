@@ -185,7 +185,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     "bring no lot to life from a journal that starts with an opening" in {
       val opened = Envelope(1, op(1), LotEvent.LotOpened(money(100), config(), Some(deadline)))
 
-      val replayed = Lot.replay(Lot.initial, List(opened -> calm))
+      val replayed = Lot.replay(Lot.initial, List(Written(opened, calm)))
 
       (replayed.state, replayed.auction) shouldBe (LotState.Initial, None)
     }

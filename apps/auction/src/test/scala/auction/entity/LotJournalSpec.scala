@@ -39,10 +39,10 @@ final class LotJournalSpec
     Lot.replay(
       Lot.initial,
       List(
-        Envelope(1, op(1), lotDrafted) -> decidedAt,
-        Envelope(2, op(2), lotScheduled) -> decidedAt,
-        Envelope(3, op(3), opened) -> decidedAt,
-        Envelope(4, op(4), placed.copy(previousLeader = None)) -> decidedAt
+        Written(Envelope(1, op(1), lotDrafted), decidedAt),
+        Written(Envelope(2, op(2), lotScheduled), decidedAt),
+        Written(Envelope(3, op(3), opened), decidedAt),
+        Written(Envelope(4, op(4), placed.copy(previousLeader = None)), decidedAt)
       )
     )
 
@@ -61,7 +61,10 @@ final class LotJournalSpec
   private val heldLot: Lot =
     Lot.replay(
       limitedLot,
-      List(Envelope(6, op(6), LotEvent.LotMarkedForFinal) -> decidedAt, Envelope(7, op(7), heldForFinal) -> decidedAt)
+      List(
+        Written(Envelope(6, op(6), LotEvent.LotMarkedForFinal), decidedAt),
+        Written(Envelope(7, op(7), heldForFinal), decidedAt)
+      )
     )
 
   /** Эталон пишется так, как его пишет сервис, и сервис читает эталон в то же значение. */
@@ -318,6 +321,23 @@ final class LotJournalSpec
 
       LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot]) shouldBe
         tradingLot.copy(state = LotState.Trading(tradingOf(tradingLot).copy(course = None)))
+    }
+
+    "refuse a snapshot whose trading history removes someone who never bid or set a limit" in {
+      val stored = LotJournal.storeLot(tradingLot, sequence = 4)
+      val trading = stored.state.trading.get
+      val course = trading.course.get.copy(removed = List(participant(7).value))
+      val corrupted = stored.copy(state = stored.state.copy(trading = Some(trading.copy(course = Some(course)))))
+
+      a[JournalCorrupted] should be thrownBy LotJournal.restoreLot(corrupted)
+    }
+
+    "read a held lot snapshot written before the trading history as the same held lot with an unknown history" in {
+      val row =
+        write(kit.system, LotJournal.storeLot(heldLot, sequence = 7)).copy(bytes = golden("legacy/lot-snapshot-held"))
+
+      LotJournal.restoreLot(read(kit.system, row).asInstanceOf[StoredLot]) shouldBe
+        heldLot.copy(state = LotState.Held(heldOf(heldLot).copy(course = None)))
     }
 
     "tell the owner's repeat from another participant's in a snapshot written before the rule (ADR-047, 2026-10-05)" in {

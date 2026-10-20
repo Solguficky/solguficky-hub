@@ -697,6 +697,9 @@ object LotJournal {
     restoreWindows(Some(stored.stepWindows.getOrElse(Nil) ++ added.map(_.window)), config)
     if (added.map(_.sequence) != added.map(_.sequence).sorted)
       corrupted("trading history step windows out of journal order")
+    // Снимают только участника лота (ADR-072, п. 1): снятый без входа — не та история, которую копит `apply`.
+    val entered = (online ++ held).collect { case Entry(who, Move.Bid(_) | Move.LimitSet(_), _, _) => who.value }.toSet
+    if (!stored.removed.forall(entered.contains)) corrupted("trading history removes someone who never entered it")
     Course(
       startingPrice = startingPrice,
       stepWindows = stepWindows,

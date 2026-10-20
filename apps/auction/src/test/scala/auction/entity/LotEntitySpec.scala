@@ -305,6 +305,11 @@ final class LotEntitySpec extends AnyWordSpec with Matchers with BeforeAndAfterA
         val restarted = entity.restart().state
         restarted shouldBe removed.state
         bidOf(who = 3, amount = 400, opN = 8).reply shouldBe Left(PlaceBidRejected.ParticipantRemovedFromLot)
+        limitOf(who = 3, max = 500, opN = 9).reply shouldBe Left(SetProxyLimitRejected.ParticipantRemovedFromLot)
+        val repeated = entity.runCommand[Either[RemoveParticipantRejected, Envelope]](
+          LotEntity.Remove(removeParticipant(who = 3, opN = 7), organizer, _)
+        )
+        (repeated.events, repeated.reply) shouldBe (Nil, removed.reply)
       }
     }
 

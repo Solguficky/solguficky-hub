@@ -194,7 +194,7 @@ object LotFixtures {
   final case class Journal(lot: Lot, entries: Vector[Envelope], moments: Vector[Instant] = Vector.empty) {
 
     /** Строки журнала вместе с их моментами — то, что сворачивает [[Lot.replay]]. */
-    def rows: Vector[(Envelope, Instant)] = entries.zip(moments)
+    def rows: Vector[Written] = entries.zip(moments).map(Written(_, _))
 
     /**
      * Принятое решение ложится в журнал следующими номерами — событие команды, затем производные, все с моментом `at`

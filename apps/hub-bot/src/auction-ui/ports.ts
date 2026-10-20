@@ -458,9 +458,8 @@ export type BidRefusal =
   | { kind: "removed-from-lot" };
 
 // `removed-from-lot` у ставки и у лимита — администратор снял участника с лота
-// (ADR-072): ставить
-// и выставлять лимит на этом лоте он больше не может, а кто и почему снял,
-// ответ не несёт.
+// (ADR-072): ставить и выставлять лимит на этом лоте он больше не может, а кто
+// и почему снял, ответ не несёт.
 export type ProxyLimitRefusal =
   | { kind: "lot-not-open" }
   | { kind: "proxy-below-current-price"; minLimit: Money }

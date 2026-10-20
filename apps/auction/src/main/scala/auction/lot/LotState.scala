@@ -406,6 +406,12 @@ enum LotEvent {
  */
 final case class Envelope(sequence: Long, opId: OpId, event: LotEvent)
 
+/**
+ * Строка журнала лота, как её сворачивает [[Lot.replay]]: конверт и момент записи — `occurred_at` строки. Момент нужен
+ * истории торгов: по нему переигрывание снятия знает, когда был вход (ADR-072, п. 2).
+ */
+final case class Written(envelope: Envelope, at: Instant)
+
 /*
  * `LotNotFound` — ответ лоту в `Initial` на любую команду, кроме `DraftLot`: «тот же ответ, что и команде к
  * неизвестному `lot_id`» (RFC-011, «Команды и события»). Под шардингом это одно и то же.
