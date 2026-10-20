@@ -604,7 +604,7 @@ public class AccessRequestFactTests
                    (@KeptOn, NULL, 'access_request', true, now());
             """, new { Person = person, KeptOn = keptOn });
 
-        await Execute(db, Migrations.List().Single(migration => migration.Version == 36).Sql, new { });
+        await Execute(db, Migrations.List().Single(migration => migration.Version == 37).Sql, new { });
 
         await using var connection = new NpgsqlConnection(db.ConnectionString);
         var stored = (await connection.QueryAsync<PreferenceRow>(
