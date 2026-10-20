@@ -26,3 +26,11 @@ breaking:
   # следующее изменение схем.
   ignore:
     - identity/v1/identity_service.proto
+    # Переход без переходного периода по решению владельца (PER-635):
+    # NOTIFICATION_CATEGORY_ACCESS_REQUEST удалён, потому что выключение одной
+    # категории гасило заявки обеих очередей, не называя этого в подписи.
+    # Вместо него — NOTIFICATION_CATEGORY_ACCESS_REQUEST_COMMUNITY и
+    # NOTIFICATION_CATEGORY_ACCESS_REQUEST_AUCTION; номер 7 и имя
+    # зарезервированы, а сохранённое выключение переносит миграция Notifications
+    # на обе новые категории. Исключение снимает следующее изменение схем.
+    - notifications/v1/notifications_service.proto

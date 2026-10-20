@@ -34,9 +34,17 @@ export const categoryLabels: Record<NotificationCategory, string> = {
   reminder: "Напоминание перед началом",
   organizer: "Сообщения организатора",
   announcement: "Объявления сообщества",
-  access: "Запросы доступа",
+  "access-community": "Запросы доступа в сообщество",
+  "access-auction": "Запросы доступа в аукцион",
   release: "Новое в боте",
 };
+
+// Заявки разведены по очереди: у каждой своя подпись и свой выключатель, и
+// кнопка под оповещением выключает только свою очередь (PER-635).
+export const accessRequestCategories: readonly NotificationCategory[] = [
+  "access-community",
+  "access-auction",
+];
 
 // Новые сходки и объявления сообществу не привязаны ни к какой сходке, и
 // подписаться на них нельзя: они приходят всем, кто их не выключил.
@@ -62,8 +70,11 @@ export function globalNotificationsScreen(
   // Подзаголовков у клавиатуры нет, поэтому группы называет текст, а кнопки
   // идут в том же порядке: сначала то, что приходит без подписки, потом
   // запросы доступа, потом категории сходок. Запросы доступа бот не
-  // показывает и не прячет сам: их нет в снимке у того, кто не администратор.
-  const access = categories.filter((entry) => entry.category === "access");
+  // показывает и не прячет сам: их нет в снимке у того, кто не решает заявки
+  // этой очереди.
+  const access = categories.filter((entry) =>
+    accessRequestCategories.includes(entry.category),
+  );
   const release = categories.filter((entry) => entry.category === "release");
   const ordered = [
     ...categories.filter((entry) => withoutSubscription(entry.category)),
@@ -71,7 +82,7 @@ export function globalNotificationsScreen(
     ...categories.filter(
       (entry) =>
         !withoutSubscription(entry.category) &&
-        entry.category !== "access" &&
+        !accessRequestCategories.includes(entry.category) &&
         entry.category !== "release",
     ),
     ...release,
@@ -92,7 +103,9 @@ export function globalNotificationsScreen(
       "Приходят всем, без подписки: новые сходки и объявления сообщества.",
       access.length === 0
         ? undefined
-        : "Только администратору: запросы доступа — новые заявки в сообщество и в аукцион.",
+        : access.length === 1
+          ? "Только тому, кто решает заявки этой очереди."
+          : "Только тому, кто решает заявки: у каждой очереди своя настройка, и выключение одной не гасит другую.",
       "По сходкам, на которые ты подписан: изменения, новые материалы, напоминание и сообщения организатора. Здесь — значение для всех таких сходок, включая будущие. У отдельной сходки его можно поменять в её уведомлениях, и тогда общая настройка её уже не меняет.",
       "Нажми на категорию, чтобы включить или выключить её.",
     ),

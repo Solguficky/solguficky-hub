@@ -405,8 +405,10 @@ function toWire(category: NotificationCategory): WireCategory {
       return WireCategory.ORGANIZER_MESSAGE;
     case "announcement":
       return WireCategory.COMMUNITY_ANNOUNCEMENT;
-    case "access":
-      return WireCategory.ACCESS_REQUEST;
+    case "access-community":
+      return WireCategory.ACCESS_REQUEST_COMMUNITY;
+    case "access-auction":
+      return WireCategory.ACCESS_REQUEST_AUCTION;
     case "release":
       return WireCategory.RELEASE_NOTES;
     default: {
@@ -432,8 +434,10 @@ function fromWire(value: WireCategory): NotificationCategory | undefined {
       return "organizer";
     case WireCategory.COMMUNITY_ANNOUNCEMENT:
       return "announcement";
-    case WireCategory.ACCESS_REQUEST:
-      return "access";
+    case WireCategory.ACCESS_REQUEST_COMMUNITY:
+      return "access-community";
+    case WireCategory.ACCESS_REQUEST_AUCTION:
+      return "access-auction";
     case WireCategory.RELEASE_NOTES:
       return "release";
     default:

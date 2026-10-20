@@ -427,11 +427,23 @@ enum NotificationCategory {
   // Global scope only: it is bound to no meetup.
   NOTIFICATION_CATEGORY_COMMUNITY_ANNOUNCEMENT = 6;
 
-  // Global scope only, and visible to administrators only: new applications
-  // for access. Nobody else sees it or may set it.
-  NOTIFICATION_CATEGORY_ACCESS_REQUEST = 7;
+  // No longer sent: one category covered the applications of both queues, so
+  // turning it off silenced a queue its label did not name. Two categories
+  // below replace it, and the stored "off" is carried over to both.
+  reserved 7;
+  reserved "NOTIFICATION_CATEGORY_ACCESS_REQUEST";
 
   // The daily summary of what is new in the bot. Global scope only: a summary
   // belongs to a surface, not to a meetup, and is not per-meetup overridable.
   NOTIFICATION_CATEGORY_RELEASE_NOTES = 8;
+
+  // New applications for access to the community. Global scope only, and
+  // carried by the queue of the fact: visible to the holder of
+  // `manage_members`, and to nobody else. One queue's category never answers
+  // for the other.
+  NOTIFICATION_CATEGORY_ACCESS_REQUEST_COMMUNITY = 9;
+
+  // New applications for access to the auction. Global scope only, and
+  // visible to the holder of `admit_bidders`, and to nobody else.
+  NOTIFICATION_CATEGORY_ACCESS_REQUEST_AUCTION = 10;
 }

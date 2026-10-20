@@ -10,13 +10,15 @@ import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 export type MeetupCategory = "changes" | "material" | "reminder" | "organizer";
 
 // Глобальные категории поверх тех же четырёх: подписаться на ещё не созданную
-// сходку нельзя, а объявление и заявка не привязаны ни к одной. Запросы
-// доступа видит только модератор очереди, но решает это сервис: категории нет
-// в снимке остальных, и бот рисует снимок, а не права.
+// сходку нельзя, а объявление и заявка не привязаны ни к одной. Заявки
+// разведены по очереди: выключение одной не гасит другую (PER-635). Кто из
+// модераторов видит какую — решает сервис: категории нет в снимке остальных, и
+// бот рисует снимок, а не права.
 export type GlobalOnlyCategory =
   | "published"
   | "announcement"
-  | "access"
+  | "access-community"
+  | "access-auction"
   | "release";
 
 export type NotificationCategory = MeetupCategory | GlobalOnlyCategory;

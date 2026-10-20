@@ -1,4 +1,6 @@
+using Notifications.Domain;
 using Notifications.Replica;
+using Notifications.V1;
 
 namespace Notifications.Facts;
 
@@ -21,8 +23,20 @@ public static class AccessQueues
     /// </summary>
     public static string ModeratorRight(AccessQueue queue) => queue switch
     {
-        AccessQueue.Community => "manage_members",
-        AccessQueue.Auction => "admit_bidders",
+        AccessQueue.Community => NotificationCategories.CommunityQueueModerator,
+        AccessQueue.Auction => NotificationCategories.AuctionQueueModerator,
+        _ => throw new ArgumentOutOfRangeException(nameof(queue), queue, "queue is not known"),
+    };
+
+    /// <summary>
+    /// Категория настроек, которой человек отказывается от оповещений об
+    /// очередях: у каждой очереди своя, потому что одно выключение на обе
+    /// гасило и ту, о которой человек не думал (PER-635).
+    /// </summary>
+    public static NotificationCategory RequestCategory(AccessQueue queue) => queue switch
+    {
+        AccessQueue.Community => NotificationCategory.AccessRequestCommunity,
+        AccessQueue.Auction => NotificationCategory.AccessRequestAuction,
         _ => throw new ArgumentOutOfRangeException(nameof(queue), queue, "queue is not known"),
     };
 

@@ -111,12 +111,6 @@ public static class NotificationFacts
     public const NotificationCategory CommunityAnnouncementCategory = NotificationCategory.CommunityAnnouncement;
 
     /// <summary>
-    /// Категория запросов доступа. Настраивается только глобально и видна
-    /// держателю права модерации хотя бы одной очереди (ADR-062, ADR-064).
-    /// </summary>
-    public const NotificationCategory AccessRequestCategory = NotificationCategory.AccessRequest;
-
-    /// <summary>
     /// Право хаба: поводы сходок адресуются его держателям (ADR-064, пункт 6).
     /// Гость с одним правом ставок сходок не видит, и новая сходка ему не
     /// положена.
