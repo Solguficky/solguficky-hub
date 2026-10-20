@@ -39,6 +39,8 @@ object MethodAccess {
     "CancelAuction" -> Set(Caller.HubBot),
     "SelectForFinal" -> Set(Caller.HubBot),
     "DeselectForFinal" -> Set(Caller.HubBot),
+    "PreviewParticipantRemoval" -> Set(Caller.HubBot),
+    "RemoveParticipant" -> Set(Caller.HubBot),
     "LaunchStepWindow" -> Set(Caller.HubBot),
     "FreezeFinalLineup" -> Set(Caller.HubBot),
     "StartFinal" -> Set(Caller.HubBot),

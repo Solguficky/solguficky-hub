@@ -150,6 +150,15 @@ message Notification {
     // gives its leader the same fact unless they already have it. No category
     // governs it: one message per auction.
     AuctionCancelled auction_cancelled = 29;
+
+    // The deadline of a followed lot is close. It is a second moment of the
+    // same reminder, so it is a type of its own: the two moments must not
+    // collide on the cause key.
+    LotDeadlineClose lot_deadline_close = 30;
+
+    // The next lot of the live final belongs to the recipient: the lot is
+    // named inside the message and never in a second message.
+    AuctionFinalLotNext auction_final_lot_next = 31;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -308,6 +317,26 @@ message MeetupReminder {
 message LotReminder {
   // Canonical lowercase UUIDv7 with hyphens.
   string lot_id = 1;
+}
+
+// The deadline of a followed lot is close. Nothing else is carried: the
+// price, the exact deadline and the title are read by the channel from
+// Auction by lot_id, as for the other lot types.
+message LotDeadlineClose {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+}
+
+// The next lot of the live final belongs to the recipient. Nothing else is
+// carried: the title and the price of the lot are read by the channel from
+// Auction by lot_id, as for the other lot types.
+message AuctionFinalLotNext {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // How many minutes the lot is expected to take, rounded down. It is an
+  // estimate and not a promise.
+  int32 estimated_minutes = 2;
 }
 
 // The result of the draw as the recipient sees it. The recipient won when

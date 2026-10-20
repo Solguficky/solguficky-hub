@@ -34,4 +34,26 @@ public class LotReminderFactTests
         fact.NotAfter.ShouldBe(NotificationFacts.Instant(deadline));
         fact.HasRequestId.ShouldBeFalse();
     }
+
+    [Fact]
+    public void LotDeadlineClose_CarriesTaskCauseAndLotIdWithoutRequestId()
+    {
+        // Второй момент напоминания (ADR-063, дополнение 2026-10-20) — тип
+        // свой: два момента не должны совпасть на одном ключе повода.
+        var notificationId = Guid.CreateVersion7();
+        var recipientId = Guid.CreateVersion7();
+        var taskId = Guid.CreateVersion7();
+        var lotId = Guid.CreateVersion7();
+        var deadline = Now.AddMinutes(15);
+
+        var fact = NotificationFacts.LotDeadlineClose(notificationId, recipientId, taskId, lotId, Now, deadline);
+
+        fact.NotificationId.ShouldBe(notificationId.ToString());
+        fact.RecipientId.ShouldBe(recipientId.ToString());
+        fact.TypeCase.ShouldBe(Notification.TypeOneofCase.LotDeadlineClose);
+        fact.Cause.ReminderTaskId.ShouldBe(taskId.ToString());
+        fact.LotDeadlineClose.LotId.ShouldBe(lotId.ToString());
+        fact.NotAfter.ShouldBe(NotificationFacts.Instant(deadline));
+        fact.HasRequestId.ShouldBeFalse();
+    }
 }

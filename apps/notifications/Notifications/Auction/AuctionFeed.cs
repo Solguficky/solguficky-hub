@@ -35,6 +35,7 @@ public static class AuctionFeed
             ["events.auction.prebidding_ended"] = AuctionEvent.OccasionOneofCase.PrebiddingEnded,
             ["events.auction.final_lineup_frozen"] = AuctionEvent.OccasionOneofCase.FinalLineupFrozen,
             ["events.auction.final_started"] = AuctionEvent.OccasionOneofCase.FinalStarted,
+            ["events.auction.final_lot_activated"] = AuctionEvent.OccasionOneofCase.FinalLotActivated,
             ["events.auction.auction_finished"] = AuctionEvent.OccasionOneofCase.AuctionFinished,
             ["events.auction.auction_cancelled"] = AuctionEvent.OccasionOneofCase.AuctionCancelled,
             ["events.auction.auction_discarded"] = AuctionEvent.OccasionOneofCase.AuctionDiscarded,

@@ -16,7 +16,7 @@ public sealed class LotNotificationGrain(
     TimeProvider clock,
     ILogger<LotNotificationGrain> logger) : Grain, ILotNotificationGrain, IRemindable
 {
-    /// <summary>Имя reminder'а. Одно на грин: заданий на лот тоже одно.</summary>
+    /// <summary>Имя reminder'а. Одно на грин: заданий у лота два, а грин один.</summary>
     private const string ReminderName = "lot-reminder";
 
     /// <summary>
@@ -25,6 +25,12 @@ public sealed class LotNotificationGrain(
     /// после успешного срабатывания; до тех пор повтор работает retry.
     /// </summary>
     private static readonly TimeSpan ReminderRetryPeriod = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// Моменты напоминания о дедлайне лота: за час и ближе к дедлайну
+    /// (ADR-063, дополнение 2026-10-20).
+    /// </summary>
+    private static readonly LotReminderKind[] Kinds = [LotReminderKind.Hour, LotReminderKind.Close];
 
     private LotReminderOptions Options => options.Value;
 
@@ -54,32 +60,42 @@ public sealed class LotNotificationGrain(
         // сравнивается с прочитанным из базы, и пишется в неё.
         var moment = deadline is { } given ? ReminderPlan.ToStoredPrecision(given) : (DateTimeOffset?)null;
 
-        var live = await tasks.Live(lotId, token);
+        // Решение по каждому моменту своё: часовое срабатывание не рождает
+        // нового часового, а второй момент живёт своей жизнью и после него.
+        foreach (var kind in Kinds)
+        {
+            await Apply(lotId, kind, moment, token);
+        }
+
+        await Settle(lotId, token);
+    }
+
+    private async Task Apply(Guid lotId, LotReminderKind kind, DateTimeOffset? moment, CancellationToken token)
+    {
+        var live = await tasks.Live(lotId, kind, token);
         // «Срабатывало ли» спрашивается только там, где ответ может изменить
         // решение: при совпавшем дедлайне задание остаётся, а без дедлайна
         // снимается — в обоих случаях ответ не читается.
         var fired = moment is not null
             && live?.Deadline != moment
-            && await tasks.FiredEver(lotId, token);
-        var decision = LotReminderPlan.Decide(live?.Deadline, fired, moment, Options.Lead);
+            && await tasks.FiredEver(lotId, kind, token);
+        var decision = LotReminderPlan.Decide(live?.Deadline, fired, moment, Lead(kind));
 
         switch (decision.Action)
         {
             case LotReminderAction.Create:
-                await tasks.Create(lotId, decision.Deadline!.Value, decision.DueAt!.Value, Now(), token);
-                await Wake(decision.DueAt!.Value);
+                await tasks.Create(lotId, kind, decision.Deadline!.Value, decision.DueAt!.Value, Now(), token);
                 break;
 
             case LotReminderAction.Supersede:
-                await tasks.Supersede(live!.TaskId, lotId, decision.Deadline!.Value, decision.DueAt!.Value, Now(), "deadline moved", token);
-                await Wake(decision.DueAt!.Value);
+                await tasks.Supersede(live!.TaskId, lotId, kind, decision.Deadline!.Value, decision.DueAt!.Value, Now(),
+                    "deadline moved", token);
                 break;
 
             case LotReminderAction.Cancel:
                 // Две причины снятия, и они различаются в строке: дедлайна у
                 // лота больше нет — или напоминание по нему уже уходило.
-                await tasks.Cancel(lotId, moment is null ? "lot has no deadline" : "reminder already fired", token);
-                await Sleep();
+                await tasks.Cancel(lotId, kind, moment is null ? "lot has no deadline" : "reminder already fired", token);
                 break;
 
             case LotReminderAction.Keep:
@@ -88,14 +104,8 @@ public sealed class LotNotificationGrain(
                 return;
         }
 
-        logger.LogInformation("Lot reminder task {action} {lot_id} {due_at}", decision.Action, lotId, decision.DueAt);
-
-        // Момент мог быть уже позади — перенос ближе часа даёт ровно это.
-        // Ждать reminder'а нельзя: наступившее исполняют немедленно.
-        if (decision.DueAt is { } due && due <= Now())
-        {
-            await FireDue();
-        }
+        logger.LogInformation("Lot reminder task {action} {kind} {lot_id} {due_at}", decision.Action, kind, lotId,
+            decision.DueAt);
     }
 
     public async Task<bool> FireDue()
@@ -108,13 +118,14 @@ public sealed class LotNotificationGrain(
 
         var token = CancellationToken.None;
 
-        var live = await tasks.Live(lotId, token);
+        var live = await DueTask(lotId, token);
 
         if (live is null)
         {
-            // Живого задания нет — будить больше некого. Reminder мог пережить
+            // Наступившего задания нет: живое задание может ждать свой момент —
+            // его будить рано, а будить больше некого. Reminder мог пережить
             // снятие задания, если силос умер между двумя записями.
-            await Sleep();
+            await Settle(lotId, token);
             return false;
         }
 
@@ -138,7 +149,10 @@ public sealed class LotNotificationGrain(
         // реплике, поэтому их ловит ветка выше.
         if (deadline <= Now())
         {
-            await tasks.Cancel(lotId, "deadline passed", token);
+            foreach (var kind in Kinds)
+            {
+                await tasks.Cancel(lotId, kind, "deadline passed", token);
+            }
             await Sleep();
             return false;
         }
@@ -157,17 +171,19 @@ public sealed class LotNotificationGrain(
 
         if (result.Outcome == LotFireOutcome.Sent)
         {
-            facts.Record(NotificationFacts.LotReminderType, result.Facts);
+            facts.Record(FactType(live.Kind), result.Facts);
             logger.LogInformation(
-                "Lot reminder fired {lot_id} {task_id} {facts_created} {facts_suppressed}",
+                "Lot reminder fired {kind} {lot_id} {task_id} {facts_created} {facts_suppressed}",
+                live.Kind,
                 lotId,
                 live.TaskId,
                 result.Facts.Created,
                 result.Facts.Suppressed);
         }
 
-        // Reminder снимается в обоих исходах: задание перестало быть живым.
-        await Sleep();
+        // Reminder живёт, пока жив хоть один момент: после срабатывания часового
+        // второй ещё ждёт своего.
+        await Settle(lotId, token);
 
         return result.Outcome == LotFireOutcome.Sent;
     }
@@ -180,6 +196,67 @@ public sealed class LotNotificationGrain(
     /// <summary>Ключ грина как идентификатор лота; <c>null</c> — ключ лотом не является.</summary>
     private Guid? Key() =>
         Guid.TryParse(this.GetPrimaryKeyString(), out var lotId) ? lotId : null;
+
+    /// <summary>
+    /// Приводит reminder'а к ближайшему живому моменту и исполняет наступивший:
+    /// ждать reminder'а нельзя, наступившее исполняют немедленно.
+    /// </summary>
+    private async Task Settle(Guid lotId, CancellationToken token)
+    {
+        var due = await NextDue(lotId, token);
+        if (due is not { } moment)
+        {
+            await Sleep();
+            return;
+        }
+
+        if (moment <= Now())
+        {
+            await FireDue();
+            return;
+        }
+
+        await Wake(moment);
+    }
+
+    /// <summary>Живые задания лота: по видам, без повторов.</summary>
+    private async Task<IReadOnlyList<LiveLotReminderTask>> LiveTasks(Guid lotId, CancellationToken token)
+    {
+        var live = new List<LiveLotReminderTask>(Kinds.Length);
+        foreach (var kind in Kinds)
+        {
+            var task = await tasks.Live(lotId, kind, token);
+            if (task is not null)
+            {
+                live.Add(task);
+            }
+        }
+        return live;
+    }
+
+    /// <summary>Ближайший момент живых заданий лота.</summary>
+    private async Task<DateTimeOffset?> NextDue(Guid lotId, CancellationToken token)
+    {
+        var live = await LiveTasks(lotId, token);
+        return live.Count == 0 ? null : live.Min(task => task.DueAt);
+    }
+
+    /// <summary>Живое задание, чей момент наступил: их два, и срабатывает то, что ждало дольше.</summary>
+    private async Task<LiveLotReminderTask?> DueTask(Guid lotId, CancellationToken token)
+    {
+        var live = await LiveTasks(lotId, token);
+        var due = live.Where(task => task.DueAt <= Now()).ToArray();
+        return due.Length == 0 ? null : due.MinBy(task => task.DueAt);
+    }
+
+    private TimeSpan Lead(LotReminderKind kind) => kind switch
+    {
+        LotReminderKind.Hour => Options.Lead,
+        LotReminderKind.Close => Options.CloseLead,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    private static string FactType(LotReminderKind kind) => NotificationFacts.TypeOf(kind);
 
     /// <summary>
     /// Просит рантайм разбудить грин к моменту срабатывания. Reminder — только

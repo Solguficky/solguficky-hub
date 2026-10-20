@@ -123,12 +123,32 @@ object LotEntity {
       replyTo: ActorRef[Either[ResumeLotRejected, Envelope]]
   ) extends Command
 
-  /** Снятие участника с лота (ADR-072); шлёт аукцион по команде администратора сходки, инициатор — `Operator`. */
+  /**
+   * Снятие участника с лота (ADR-072); шлёт аукцион по команде администратора сходки, инициатор — `Operator`. Ответ
+   * несёт версию лота, как у ставки: с неё чтение показывает новых лидера и цену вместе с продлением (PER-658).
+   */
   final case class Remove(
       command: RemoveParticipant,
       initiator: Initiator,
-      replyTo: ActorRef[Either[RemoveParticipantRejected, Envelope]]
+      replyTo: ActorRef[Either[RemoveParticipantRejected, Recorded]]
   ) extends Command
+
+  /**
+   * Предпросмотр снятия (ADR-072, «Последствия»; PER-658): то же `Lot.decide`, что у [[Remove]], на текущем номере
+   * лота, без записи. Ответ — итог снятия и номер, на котором он решён: снятие с этим `expectedVersion` запишет тот же
+   * итог, а лот, ушедший от номера, ответит `LotChanged`.
+   */
+  final case class PreviewRemoval(
+      participant: ParticipantId,
+      replyTo: ActorRef[Either[RemoveParticipantRejected, RemovalPreview]]
+  ) extends Command
+
+  /** Итог снятия без записи: событие, продлённый дедлайн, если снятие продлевает торги, и номер лота. */
+  final case class RemovalPreview(
+      removed: LotEvent.ParticipantRemoved,
+      extendedDeadline: Option[Instant],
+      version: Long
+  )
 
   /** Ask ведущего (П-08); шлёт аукцион по команде ведущего, инициатор — `Operator`. */
   final case class Ask(
@@ -217,7 +237,14 @@ object LotEntity {
       case Resume(resume, initiator, replyTo) =>
         record(state, Lot.decide(lot, resume, BidId(newId()), now), resume.opId, initiator, replyTo, now, newId)
       case Remove(removal, initiator, replyTo) =>
-        record(state, Lot.decide(lot, removal, BidId(newId()), now), removal.opId, initiator, replyTo, now, newId)
+        val decision = Lot.decide(lot, removal, state.sequence, BidId(newId()), now)
+        recordWith(state, decision, removal.opId, initiator, replyTo, now, newId)(Recorded(_, _))
+      case PreviewRemoval(participant, replyTo) =>
+        // `op_id` предпросмотра свежий и в окно `seen` не попадает: решение не пишется, и повтора у него нет.
+        val removal = RemoveParticipant(participant, OpId(newId()), state.sequence)
+        Effect.reply(replyTo)(
+          Lot.decide(lot, removal, state.sequence, BidId(newId()), now).map(previewOf(_, state.sequence))
+        )
       case Ask(ask, initiator, replyTo) =>
         record(state, Lot.decide(lot, ask, BidId(newId()), now), ask.opId, initiator, replyTo, now, newId)
       case Withdraw(withdrawal, initiator, replyTo) =>
@@ -278,6 +305,17 @@ object LotEntity {
         Effect
           .persist((event :: derived).map(LotJournal.store(newId(), transaction, _)))
           .thenReply(replyTo)(written => Right(reply(firstOf(written.lot, opId), written.sequence)))
+    }
+
+  private def previewOf(decision: Decision, version: Long): RemovalPreview =
+    decision match {
+      case Decision.Accepted(removed: LotEvent.ParticipantRemoved, derived) =>
+        RemovalPreview(
+          removed,
+          derived.collectFirst { case LotEvent.DeadlineExtended(deadline, _) => deadline },
+          version
+        )
+      case other => throw new IllegalStateException(s"removal preview decided $other")
     }
 
   /** Первый конверт записанной транзакции: `apply` кладёт его в окно `seen`, поэтому после записи он там есть. */

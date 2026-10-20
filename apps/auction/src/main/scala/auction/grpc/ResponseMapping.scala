@@ -19,6 +19,7 @@ import auction.aggregate.LaunchStepWindowRejected
 import auction.aggregate.StepWindowConfig
 import auction.aggregate.LotSchedulingRefusal
 import auction.aggregate.OpeningRefusal
+import auction.aggregate.ParticipantRemovalRefusal
 import auction.aggregate.RemovalRefusal
 import auction.aggregate.SchedulingRefusal
 import auction.aggregate.VisibilityRefusal
@@ -35,6 +36,7 @@ import auction.lot.MarkForFinalRejected
 import auction.lot.Money
 import auction.lot.ParticipantId
 import auction.lot.PlaceBidRejected
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.SetProxyLimitRejected
 import auction.lot.UnmarkForFinalRejected
@@ -751,6 +753,88 @@ object ResponseMapping {
             FinalChoiceRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
           ) =>
         throw new IllegalStateException(s"final selection answered $denial")
+    }
+  }
+
+  /**
+   * Предпросмотр снятия участника (PER-658): итог — цена, лидер, продлённый дедлайн и номер лота, на котором он решён.
+   * Отказы — те же, что у снятия; `LotChanged` предпросмотр не получает по построению.
+   */
+  def previewParticipantRemoval(
+      outcome: Either[ParticipantRemovalRefusal, LotEntity.RemovalPreview]
+  ): Either[Status, wire.PreviewParticipantRemovalResponse] =
+    outcome match {
+      case Right(preview) =>
+        Right(
+          wire
+            .PreviewParticipantRemovalResponse()
+            .withPreview(
+              wire.ParticipantRemovalPreview(
+                price = Some(LotValues.money(preview.removed.price)),
+                leaderId = preview.removed.leader.map(_.value.toString),
+                extendedDeadline = preview.extendedDeadline.map(_.toString),
+                version = preview.version
+              )
+            )
+        )
+      case Left(refusal) =>
+        removalReason(refusal).map(reason =>
+          wire.PreviewParticipantRemovalResponse().withRefused(wire.ParticipantRemovalRefusal(reason))
+        )
+    }
+
+  /** Снятие участника (PER-658): принятое — номер лота, с которого чтение показывает снятие целиком. */
+  def removeParticipant(
+      outcome: Either[ParticipantRemovalRefusal, Long]
+  ): Either[Status, wire.RemoveParticipantResponse] =
+    outcome match {
+      case Right(version) =>
+        Right(wire.RemoveParticipantResponse().withAccepted(wire.ParticipantRemovalAccepted(lotVersion = version)))
+      case Left(refusal) =>
+        removalReason(refusal).map(reason =>
+          wire.RemoveParticipantResponse().withRefused(wire.ParticipantRemovalRefusal(reason))
+        )
+    }
+
+  /**
+   * Отказы снятия и предпросмотра — значения ответа, кроме сбоев: недоступный Meetups, аукцион без журнала и чужой
+   * `op_id` — статусы, как у выбора финалиста. Лот реестра без журнала — дефект.
+   */
+  private def removalReason(
+      refusal: ParticipantRemovalRefusal
+  ): Either[Status, wire.ParticipantRemovalRefusal.Reason] = {
+    import wire.ParticipantRemovalRefusal.Reason
+    refusal match {
+      case ParticipantRemovalRefusal.NotInPrebidding => Right(Reason.NotInPrebidding(wire.NotInPrebidding()))
+      case ParticipantRemovalRefusal.LotNotInAuction => Right(Reason.LotNotInAuction(wire.LotNotInAuction()))
+      case ParticipantRemovalRefusal.LineupFrozen => Right(Reason.LineupFrozen(wire.LineupFrozen()))
+      case ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.LotNotOpen) =>
+        Right(Reason.LotNotOpen(wire.LotNotOpen()))
+      case ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.NotInOnlinePhase) =>
+        Right(Reason.NotInOnlinePhase(wire.NotInOnlinePhase()))
+      case ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.DeadlinePassed) =>
+        Right(Reason.DeadlinePassed(wire.DeadlinePassed()))
+      case ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.NotALotParticipant) =>
+        Right(Reason.NotALotParticipant(wire.NotALotParticipant()))
+      case ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.ParticipantAlreadyRemoved) =>
+        Right(Reason.ParticipantAlreadyRemoved(wire.ParticipantAlreadyRemoved()))
+      case ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.LotChanged) =>
+        Right(Reason.LotChanged(wire.LotChanged()))
+      case ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.OpIdTaken) => Left(opIdTaken)
+      case ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.LotNotFound) =>
+        throw new IllegalStateException("a lot of the registry has no journal")
+      case ParticipantRemovalRefusal.Denied(Denial.NotAdministrator) =>
+        Right(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case ParticipantRemovalRefusal.Denied(Denial.MeetupNotFound) =>
+        Right(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case ParticipantRemovalRefusal.Denied(Denial.MeetupCancelled) =>
+        Right(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case ParticipantRemovalRefusal.Denied(Denial.Unavailable) => Left(unavailable)
+      case ParticipantRemovalRefusal.Denied(Denial.AuctionNotFound) => Left(auctionNotFound)
+      case ParticipantRemovalRefusal.Denied(
+            denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction)
+          ) =>
+        throw new IllegalStateException(s"participant removal answered $denial")
     }
   }
 

@@ -216,8 +216,8 @@ export const hubSurface: SurfaceDefinition = ({
               identityId,
               requestId === undefined ? undefined : rpcMeta({ requestId }),
             ),
-          lotTitle: (identityId, lotId, requestId) =>
-            auction.lotTitle(
+          lotInfo: (identityId, lotId, requestId) =>
+            auction.lotInfo(
               identityId,
               lotId,
               requestId === undefined ? undefined : rpcMeta({ requestId }),
@@ -227,6 +227,7 @@ export const hubSurface: SurfaceDefinition = ({
     reads: noticeReads,
     onTitleMissing: logMissingTitle(logger),
     frequencyButton: auction !== undefined,
+    timeZone: communityTimeZone,
   });
   // Анонс финала (PER-478) — тот же общий рендер и те же чтения, что у бота
   // аукциона; у отправителя он едет видом вести о лоте.

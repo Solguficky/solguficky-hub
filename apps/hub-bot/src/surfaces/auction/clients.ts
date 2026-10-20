@@ -59,6 +59,7 @@ import {
   createFavoritesPort,
   type FavoritesRpc,
 } from "../../core/notifications/favorites.js";
+import { lotInfoOf } from "../../core/notifications/lot-notice.js";
 import {
   type AuctionNotificationsRpc,
   createAuctionNotificationsPort,
@@ -550,7 +551,7 @@ export function createDeliveryPorts(
         );
         return response.granted;
       },
-      async lotTitle(identityId, lotId, requestId) {
+      async lotInfo(identityId, lotId, requestId) {
         // Право `place-bids` у получателя Identity подтвердил шагом раньше, и
         // смотрящий несёт только его: Auction без него лот не отдаёт, а
         // выдумывать получателю права канал не вправе.
@@ -561,8 +562,7 @@ export function createDeliveryPorts(
           },
           options(requestId),
         );
-        // Карточки у лота может не быть: тогда текст обходится без названия.
-        return snapshot.card?.title ?? "";
+        return lotInfoOf(snapshot);
       },
     },
   };

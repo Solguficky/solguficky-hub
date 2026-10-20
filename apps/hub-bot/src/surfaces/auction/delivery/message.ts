@@ -17,6 +17,7 @@ import {
 import {
   checkPlaceBids,
   createLotNoticeRender,
+  type LotInfo,
   type LotNoticeReads,
   type LotNoticeView,
   renderLotNotice,
@@ -105,11 +106,13 @@ export function createRenderMessage(
   reads: NotificationReads,
   onTitleMissing: (cause: unknown, requestId?: string) => void,
   frequencyButton = false,
+  timeZone = "UTC",
 ): RenderMessage<AuctionNotificationContent, NotificationMessage> {
   const renderLot = createLotNoticeRender({
     reads,
     onTitleMissing,
     frequencyButton,
+    timeZone,
   });
   const renderFinal = createFinalNoticeRender({ reads, onTitleMissing });
   return async (content, context) => {
@@ -142,8 +145,9 @@ export function createRenderMessage(
 
 export function renderNotification(
   content: AuctionNotificationContent,
-  titles: ReadonlyMap<string, string> = new Map(),
+  lots: ReadonlyMap<string, LotInfo> = new Map(),
   frequencyButton = false,
+  timeZone = "UTC",
 ): NotificationMessage {
   if (content.kind === "access-granted") {
     return {
@@ -159,9 +163,11 @@ export function renderNotification(
   }
   if (content.kind === "raffle-result") return raffleMessage(content);
   if (isFinalNotice(content)) {
-    return traceMessage(renderFinalNotice(content, { titles }));
+    return traceMessage(renderFinalNotice(content, { lots }));
   }
-  return traceMessage(renderLotNotice(content, { titles, frequencyButton }));
+  return traceMessage(
+    renderLotNotice(content, { lots, frequencyButton, timeZone }),
+  );
 }
 
 // Кнопки общего рендера — следы этой поверхности: лот — кнопка лота дерева,

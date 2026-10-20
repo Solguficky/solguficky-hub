@@ -4,6 +4,7 @@ import auction.catalog.LotId
 import auction.entity.AuctionAnswer
 import auction.entity.AuctionGateway
 import auction.entity.Initiator
+import auction.entity.LotEntity
 import auction.entity.LotGateway
 import auction.entity.OpeningRejected
 import auction.lot.AdvanceAskRejected
@@ -15,6 +16,7 @@ import auction.lot.MarkForFinalRejected
 import auction.lot.Money
 import auction.lot.OpId
 import auction.lot.ParticipantId
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ScheduleLotRejected
 import auction.lot.StepPolicyInput
 import auction.lot.UnmarkForFinalRejected
@@ -133,6 +135,18 @@ enum FinalChoiceRefusal[+R] {
   case LotNotInAuction extends FinalChoiceRefusal[Nothing]
   case SelectionNotApplicable extends FinalChoiceRefusal[Nothing]
   case ByLot(rejected: R)
+}
+
+/**
+ * Отказ снятия участника с лота и его предпросмотра (ADR-072; PER-658): проверка до агрегата, решение аукциона о фазе,
+ * реестре и составе финала или решение самого лота.
+ */
+enum ParticipantRemovalRefusal {
+  case Denied(denial: Denial)
+  case NotInPrebidding
+  case LotNotInAuction
+  case LineupFrozen
+  case ByLot(rejected: RemoveParticipantRejected)
 }
 
 /**
@@ -453,6 +467,52 @@ final class AuctionCommands(
   ): Future[Either[FinalChoiceRefusal[UnmarkForFinalRejected], Unit]] =
     chosen(auctionId, opId, person, UnmarkForFinalRejected.OpIdTaken) {
       auctions.deselectForFinal(auctionId, DeselectForFinal(lot, opId), Initiator.Operator(person))
+    }
+
+  /**
+   * Снятие участника с лота (ADR-072; PER-658) — путь выбора финалиста: повтор из окна аукциона — чужая команда, затем
+   * право у Meetups с воротами отменённой сходки, затем entity. Ответ — номер лота, с которого чтение показывает снятие
+   * целиком.
+   */
+  def removeParticipant(
+      auctionId: AuctionId,
+      command: RemoveLotParticipant,
+      person: ParticipantId
+  ): Future[Either[ParticipantRemovalRefusal, Long]] =
+    auctions.inspect(auctionId, command.opId).flatMap {
+      case Inspection.Repeated(_) =>
+        Future.successful(Left(ParticipantRemovalRefusal.ByLot(RemoveParticipantRejected.OpIdTaken)))
+      case Inspection.Absent => Future.successful(Left(ParticipantRemovalRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, ParticipantRemovalRefusal.Denied(_)) {
+          auctions.removeParticipant(auctionId, command, Initiator.Operator(person)).map(_.left.map(removalRefusal))
+        }
+    }
+
+  /**
+   * Предпросмотр снятия: то же право и те же ворота, что у снятия, и тот же ответ аукциона и лота, но без записи.
+   * `op_id` у него нет, поэтому аукцион берётся у entity, а не из окна.
+   */
+  def previewParticipantRemoval(
+      auctionId: AuctionId,
+      command: PreviewLotParticipantRemoval,
+      person: ParticipantId
+  ): Future[Either[ParticipantRemovalRefusal, LotEntity.RemovalPreview]] =
+    current(auctionId).map(_.flatMap(_.meetup)).flatMap {
+      case None => Future.successful(Left(ParticipantRemovalRefusal.Denied(Denial.AuctionNotFound)))
+      case Some(meetup) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, ParticipantRemovalRefusal.Denied(_)) {
+          auctions.previewParticipantRemoval(auctionId, command).map(_.left.map(removalRefusal))
+        }
+    }
+
+  private def removalRefusal(rejected: ParticipantRemovalRejected): ParticipantRemovalRefusal =
+    rejected match {
+      case ParticipantRemovalRejected.AuctionNotFound => ParticipantRemovalRefusal.Denied(Denial.AuctionNotFound)
+      case ParticipantRemovalRejected.NotInPrebidding => ParticipantRemovalRefusal.NotInPrebidding
+      case ParticipantRemovalRejected.LotNotInAuction => ParticipantRemovalRefusal.LotNotInAuction
+      case ParticipantRemovalRejected.LineupFrozen => ParticipantRemovalRefusal.LineupFrozen
+      case ParticipantRemovalRejected.ByLot(rejected) => ParticipantRemovalRefusal.ByLot(rejected)
     }
 
   /** Запуск окна сниженного шага; ответ — записанное окно, с началом, которое подставил сервер, если его не задали. */

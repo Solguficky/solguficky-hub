@@ -79,6 +79,8 @@ final class GrpcBoundarySpec
     def withdrawProxyLimit(in: wire.WithdrawProxyLimitRequest) = unused
     def selectForFinal(in: wire.SelectForFinalRequest) = unused
     def deselectForFinal(in: wire.DeselectForFinalRequest) = unused
+    def previewParticipantRemoval(in: wire.PreviewParticipantRemovalRequest) = unused
+    def removeParticipant(in: wire.RemoveParticipantRequest) = unused
     def launchStepWindow(in: wire.LaunchStepWindowRequest) = unused
     def freezeFinalLineup(in: wire.FreezeFinalLineupRequest) = unused
     def startFinal(in: wire.StartFinalRequest) = unused

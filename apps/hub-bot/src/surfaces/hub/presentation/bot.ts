@@ -75,7 +75,7 @@ import {
   hubAccessText,
   hubWelcome,
 } from "../application/hub-access.js";
-import { isSold } from "../application/lot-form.js";
+import { isSold, lotCurrency } from "../application/lot-form.js";
 import {
   type CommunityToday,
   formatLocalMoment,
@@ -160,6 +160,12 @@ import {
   type LiveConsoleRead,
   type LiveConsoles,
 } from "./live-console.js";
+import {
+  createLiveFloors,
+  type LiveFloorEntry,
+  type LiveFloors,
+} from "./live-floor.js";
+import type { LiveScreenRead } from "./live-screens.js";
 import { parseLotPhoto } from "./lot-photo-input.js";
 import { createLotPhotos, type LotPhotos } from "./lot-photos.js";
 import {
@@ -190,6 +196,9 @@ import {
   consoleWindowAskData,
   consoleWindowsData,
   defaultConsoleSort,
+  floorData,
+  floorPickData,
+  floorSearchData,
   lotAskData,
   lotFormData,
   lotNewData,
@@ -279,6 +288,14 @@ import {
   settingsAuctionScreen,
   settingsExtensionsScreen,
 } from "./screens/extensions.js";
+import {
+  type FloorScreenView,
+  floorConfirmScreen,
+  floorLeaderToast,
+  floorScreen,
+  floorSearchQuestionText,
+  floorTitle,
+} from "./screens/floor-bids.js";
 import {
   type AuctionEntry,
   auctionEntryOf,
@@ -705,6 +722,14 @@ type PendingFinalAsk = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос «Другой человек…» «Ставок зала» (PER-565). Шаг — аукцион — лежит в
+// кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingFloorSearch = {
+  kind: "floor-search";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 type PendingInput = HubPendingInput | PendingAuction;
 type HubPendingInput =
   | PendingQuestion
@@ -720,7 +745,8 @@ type HubPendingInput =
   | PendingConsoleWeek
   | PendingConsoleRaffle
   | PendingConsoleWindow
-  | PendingFinalAsk;
+  | PendingFinalAsk
+  | PendingFloorSearch;
 
 type UpdateContext = ShellContext & {
   // Ожидание этого update: ответ на нажатие, индикатор и бюджет сервисов.
@@ -749,6 +775,9 @@ type UpdateContext = ShellContext & {
   // пульт финала: без неё нажатие под пультом его из реестра снимает.
   liveConsoles?: LiveConsoles;
   liveConsoleShown?: boolean;
+  // То же у «Ставок зала» помощника (PER-565).
+  liveFloors?: LiveFloors;
+  liveFloorShown?: boolean;
 };
 
 type BoundaryOutcome =
@@ -814,12 +843,23 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
           edit: (entry, screen) =>
             editLiveConsole(bot.api, runtime, entry, screen),
         });
+  const liveFloors =
+    runtime.live === undefined
+      ? undefined
+      : createLiveFloors({
+          watches: runtime.live.watches,
+          limiter: runtime.live.limiter,
+          read: (entry) => readLiveFloor(runtime, entry),
+          edit: (entry, screen) =>
+            editLiveConsole(bot.api, runtime, entry, screen),
+        });
   bot.use(async (ctx, next) => {
     ctx.today = runtime.today ?? utcToday;
     ctx.communityTimeZone = runtime.communityTimeZone ?? "UTC";
     ctx.auctionParents = auctionParents;
     if (liveCards !== undefined) ctx.liveCards = liveCards;
     if (liveConsoles !== undefined) ctx.liveConsoles = liveConsoles;
+    if (liveFloors !== undefined) ctx.liveFloors = liveFloors;
     await next();
     // Нажатие под карточкой финала показало другой экран — меню, сходку,
     // вопрос: правка по потоку вернула бы карточку поверх него (PER-336).
@@ -835,6 +875,14 @@ export function createBot(options: BotRuntime): Bot<UpdateContext> {
       !ctx.liveConsoleShown
     ) {
       liveConsoles.shown(pressed.chat.id, pressed.message_id, undefined);
+    }
+    // И у «Ставок зала» (PER-565).
+    if (
+      liveFloors !== undefined &&
+      pressed !== undefined &&
+      !ctx.liveFloorShown
+    ) {
+      liveFloors.shown(pressed.chat.id, pressed.message_id, undefined);
     }
     // Команды кнопки меню клиента — по правам, на каждом действии, где
     // личность разрешена, а не только на `/start` (PER-592): держателю права
@@ -1504,6 +1552,60 @@ async function handleMessage(
       if (result.kind !== "final-ask") await answered(result);
       return;
     }
+    // «Другой человек…» (PER-565): ответ — имя или его часть; найденные —
+    // экран с людьми, «Никого не нашлось» — экран с исходом.
+    if (
+      replyId !== undefined &&
+      pending?.kind === "floor-search" &&
+      ctx.message?.text !== undefined
+    ) {
+      useCase = "manage_auction";
+      if (ctx.from?.id !== pending.telegramUserId) {
+        outcome = {
+          level: "info",
+          message: "foreign floor search answer ignored",
+          result: "ok",
+          use_case: useCase,
+        };
+        return;
+      }
+      const identity = await resolvePerson(ctx, runtime, useCase);
+      if (identity.kind === "failed") {
+        outcome = identity.outcome;
+        return;
+      }
+      const denied = await denyHubAccessIfNeeded(
+        ctx,
+        runtime,
+        identity,
+        useCase,
+        false,
+      );
+      if (denied !== undefined) {
+        outcome = denied;
+        return;
+      }
+      if (!canRunAuctions(identity.person)) {
+        await answered();
+        outcome = await refuseConsole(ctx, identity.person);
+        return;
+      }
+      const result = await runtime.dispatcher.execute({
+        identity: identity.person,
+        intent: "view-floor-bids",
+        auctionId: pending.auctionId,
+        page: 0,
+        search: ctx.message.text,
+        ...rpcCall(ctx, useCase),
+      });
+      outcome = await renderFloorResult(ctx, runtime, result, {
+        person: identity.person,
+        questions,
+        replyId,
+      });
+      await answered(result);
+      return;
+    }
     if (
       replyId !== undefined &&
       pending?.kind === "lot" &&
@@ -1833,7 +1935,8 @@ async function handleMessage(
         pending.kind === "console-week" ||
         pending.kind === "console-raffle" ||
         pending.kind === "console-window" ||
-        pending.kind === "final-ask") &&
+        pending.kind === "final-ask" ||
+        pending.kind === "floor-search") &&
       ctx.message?.text === undefined
     ) {
       useCase =
@@ -1847,7 +1950,8 @@ async function handleMessage(
             : pending.kind === "console-week" ||
                 pending.kind === "console-raffle" ||
                 pending.kind === "console-window" ||
-                pending.kind === "final-ask"
+                pending.kind === "final-ask" ||
+                pending.kind === "floor-search"
               ? "manage_auction"
               : pending.kind === "meetup" && pending.mode === "create"
                 ? "create_meetup"
@@ -2264,6 +2368,20 @@ async function handleCallback(
     ) {
       outcome = canRunAuctions(person)
         ? await handleConsoleCallback(ctx, runtime, questions, person, action)
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // «Ставки зала» (PER-565): вход видит только держатель права вести
+    // аукцион, подделанная кнопка получает отказ до Auction (ADR-070 п. 6).
+    if (
+      action.kind === "console-floor" ||
+      action.kind === "console-floor-search" ||
+      action.kind === "console-floor-pick" ||
+      action.kind === "console-floor-confirm" ||
+      action.kind === "console-floor-leader"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleFloorCallback(ctx, runtime, questions, person, action)
         : await refuseConsole(ctx, person);
       return;
     }
@@ -7590,6 +7708,196 @@ async function refuseConsole(
   };
 }
 
+// «Ставки зала» помощника (PER-565, ADR-070). Сюда доходит только держатель
+// права вести аукцион; право на чтение и ставку решает Auction. Своего
+// состояния нет: лот, человек и цена едут в кнопке, а ключ ставки рождается
+// на нажатие «Да».
+async function handleFloorCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-floor"
+        | "console-floor-search"
+        | "console-floor-pick"
+        | "console-floor-confirm"
+        | "console-floor-leader";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const call = { identity: person, ...rpcCall(ctx, useCase) };
+  // «Повторить» после сбоя на «Да» ведёт к подтверждению, а не к ставке:
+  // ставка, ответ на которую потерялся, могла пройти (ADR-070 п. 5).
+  const retry =
+    action.kind === "console-floor-confirm"
+      ? floorPickData(action.lot, action.person, action.minorUnits)
+      : ctx.callbackQuery?.data;
+  const render = (result: ExecuteResult) =>
+    renderFloorResult(ctx, runtime, result, { person, questions, retry });
+  switch (action.kind) {
+    case "console-floor":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-floor-bids",
+          auctionId: tokenToUuid(action.auction),
+          page: action.page,
+        }),
+      );
+    case "console-floor-search":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-floor-search",
+          auctionId: tokenToUuid(action.auction),
+        }),
+      );
+    // Лидер — на своём месте с пометкой (решение владельца 20.10.2026):
+    // нажатие отвечает подсказкой, экран остаётся, Auction не зовётся.
+    case "console-floor-leader":
+      await ctx.waiting?.answer(floorLeaderToast);
+      ctx.liveFloorShown = true;
+      return {
+        level: "info",
+        message: "floor leader press answered",
+        result: "ok",
+        use_case: useCase,
+        identity_id: person.identityId,
+      };
+    case "console-floor-pick":
+    case "console-floor-confirm": {
+      const target = {
+        lotId: tokenToUuid(action.lot),
+        participantId: tokenToUuid(action.person),
+        amount: { minorUnits: action.minorUnits, currency: lotCurrency },
+      };
+      return render(
+        await runtime.dispatcher.execute(
+          action.kind === "console-floor-pick"
+            ? { ...call, intent: "prepare-floor-bid", target }
+            : {
+                ...call,
+                intent: "place-floor-bid",
+                target,
+                opId: createUuidV7(),
+              },
+        ),
+      );
+    }
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+
+// Исход «Ставок зала»: экран людей, подтверждение, вопрос об имени либо кадр
+// отказа пульта — отказы у экрана те же, что у пульта.
+async function renderFloorResult(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  result: ExecuteResult,
+  context: {
+    person: Person;
+    questions: Map<string, PendingInput>;
+    retry?: string | undefined;
+    replyId?: number;
+  },
+): Promise<BoundaryOutcome> {
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: "manage_auction",
+    identity_id: context.person.identityId,
+  });
+  switch (result.kind) {
+    case "floor-bids": {
+      const view: FloorScreenView = {
+        floor: result.floor,
+        page: result.page,
+        ...(result.note === undefined ? {} : { note: result.note }),
+        ...(result.search === undefined ? {} : { search: result.search }),
+        ...(result.stale === true ? { stale: true } : {}),
+      };
+      const sent = await showScreen(ctx, floorScreen(view));
+      // Экран правится дальше по потоку аукциона, как пульт ведущего.
+      const chatId = ctx.chat?.id;
+      const pressed = ctx.callbackQuery?.message;
+      const messageId =
+        sent?.message_id ??
+        (ctx.fresh === true ? undefined : pressed?.message_id);
+      if (
+        ctx.liveFloors !== undefined &&
+        chatId !== undefined &&
+        messageId !== undefined
+      ) {
+        const kept = ctx.liveFloors.shown(chatId, messageId, {
+          person: context.person,
+          view,
+        });
+        if (messageId === pressed?.message_id) ctx.liveFloorShown = kept;
+      }
+      return handled(
+        result.note === undefined
+          ? "floor bids sent"
+          : `floor bids sent: ${result.note.kind}`,
+      );
+    }
+    case "floor-confirm":
+      await showScreen(ctx, floorConfirmScreen(result));
+      return handled("floor bid confirmation sent");
+    case "floor-search-ask":
+      await askQuestion(
+        ctx,
+        context.questions,
+        {
+          kind: "floor-search",
+          auctionId: result.auctionId,
+          telegramUserId: ctx.from?.id ?? 0,
+        },
+        escapeHtml(floorSearchQuestionText),
+        context.replyId,
+      );
+      return handled("floor search requested");
+    default:
+      return renderConsoleResult(ctx, runtime, result, context);
+  }
+}
+
+// Чтение «Ставок зала» вне update (PER-565): тот же юзкейс, что у «Обновить»,
+// правами помощника, открывшего экран, с той же страницей людей.
+async function readLiveFloor(
+  runtime: BotRuntime,
+  entry: LiveFloorEntry,
+): Promise<LiveScreenRead<FloorScreenView>> {
+  const result = await runtime.dispatcher.execute({
+    identity: entry.person,
+    auctionId: entry.auctionId,
+    intent: "view-floor-bids",
+    page: entry.view.page,
+    requestId: createUuidV7(),
+    useCase: "manage_auction",
+  });
+  switch (result.kind) {
+    case "floor-bids":
+      return {
+        kind: "view",
+        view: { floor: result.floor, page: result.page },
+      };
+    case "auction-console-refused":
+      return { kind: "refused" };
+    default:
+      reportLiveConsoleFailure(runtime.logger, result.kind);
+      return { kind: "failed" };
+  }
+}
+
 // FAQ аукциона — экран оболочки хаба. Кнопка несёт аукцион, чтобы возврат не
 // зависел от памяти процесса и повторно проходил общий шлюз аукционного дерева.
 async function handleAuctionFaqCallback(
@@ -8021,7 +8329,7 @@ async function readLiveConsole(
 async function editLiveConsole(
   api: Bot<UpdateContext>["api"],
   runtime: BotRuntime,
-  entry: LiveConsoleEntry,
+  entry: { chatId: number; messageId: number },
   screen: ShownScreen,
 ): Promise<LiveEditOutcome> {
   try {
@@ -8958,6 +9266,8 @@ function stepOf(pending: PendingBody): QuestionStep {
         auction: uuidToToken(pending.auctionId),
         position: pending.position,
       };
+    case "floor-search":
+      return { kind: "floor-search", auction: uuidToToken(pending.auctionId) };
     default: {
       const _exhaustive: never = pending;
       return _exhaustive;
@@ -9126,6 +9436,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "floor-search":
+      return {
+        kind: "floor-search",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -9197,6 +9514,8 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-window":
       // Вопрос о новом окне задан со «Счастливых часов».
       return { kind: "console-windows", auction: step.auction };
+    case "floor-search":
+      return { kind: "console-floor", auction: step.auction, page: 0 };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -9359,6 +9678,8 @@ function reopenData(step: QuestionStep): string {
       return consoleWindowAskData(step.auction);
     case "final-ask":
       return consoleAskData(step.auction, step.position);
+    case "floor-search":
+      return floorSearchData(step.auction);
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -9410,6 +9731,8 @@ function answerParent(step: QuestionStep): Parent {
         name: "Счастливые часы",
         data: consoleWindowsData(step.auction),
       };
+    case "floor-search":
+      return { name: floorTitle, data: floorData(step.auction) };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -9657,6 +9980,11 @@ function callbackUseCase(
     | "console-ask"
     | "console-close"
     | "console-close-confirm"
+    | "console-floor"
+    | "console-floor-search"
+    | "console-floor-pick"
+    | "console-floor-confirm"
+    | "console-floor-leader"
     | "console-windows"
     | "console-day-summary"
     | "console-window"
@@ -9817,6 +10145,11 @@ function callbackUseCase(
     case "console-ask":
     case "console-close":
     case "console-close-confirm":
+    case "console-floor":
+    case "console-floor-search":
+    case "console-floor-pick":
+    case "console-floor-confirm":
+    case "console-floor-leader":
     case "console-windows":
     case "console-day-summary":
     case "console-window":

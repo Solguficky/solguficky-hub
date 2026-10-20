@@ -311,6 +311,39 @@ final class LotRosterSpec extends AnyWordSpec with Matchers {
         LotRoster(Map(first -> LotStanding.Closing))
     }
 
+    // ADR-072, «Открыто»: снятие удержанного лота и заморозка состава — гонка, которую упорядочивает знание (PER-658).
+    "keeps the lineup unknown while any removal of a participant is on its way, and asks a held lot on each answer" in {
+      val break = auctionIn(AuctionState.Break(config(), op(3)))
+      val asked = LotRoster.survey(break)._1
+      val held = LotRoster.observed(break, asked, first, LotFixtures.held(100, participant(1)).state)._1
+      val known = LotRoster.observed(break, held, second, LotFixtures.held(100, participant(1)).state)._1
+      val twice = LotRoster.removingParticipant(LotRoster.removingParticipant(known, first), first)
+
+      LotRoster.lineup(break, twice) shouldBe None
+      val (once, instructions) = LotRoster.participantRemovalAnswered(twice, first)
+      instructions shouldBe List(LotInstruction.Ask(first))
+      val answered = LotRoster.observed(break, once, first, LotFixtures.held(100, participant(1)).state)._1
+      LotRoster.lineup(break, answered) shouldBe None
+      val (done, _) = LotRoster.participantRemovalAnswered(answered, first)
+      val settled = LotRoster.observed(break, done, first, LotFixtures.held(100, participant(1)).state)._1
+      LotRoster.lineup(break, settled) shouldBe Some(Set(first, second))
+    }
+
+    "holds the lineup for a removal sent before the break and leaves a lot it knows otherwise to its own command" in {
+      val break = auctionIn(AuctionState.Break(config(), op(3)))
+      val asked = LotRoster.survey(break)._1
+      val held = LotRoster.observed(break, asked, first, LotFixtures.held(100, participant(1)).state)._1
+      val known = LotRoster.observed(break, held, second, LotFixtures.held(100, participant(1)).state)._1
+      // Снятие ушло ещё в ожидании конца торгов, а аукцион с тех пор вошёл в перерыв.
+      val sentBefore = LotRoster.removingParticipant(known, first)
+      LotRoster.lineup(break, sentBefore) shouldBe None
+
+      val closing = LotRoster.closingByAuctioneer(break, known, first)
+      val (after, instructions) =
+        LotRoster.participantRemovalAnswered(LotRoster.removingParticipant(closing, first), first)
+      (after, instructions) shouldBe (closing, Nil)
+    }
+
     "finishes a break once the auctioneer sold its last held lot, and after a restart once every lot answered" in {
       val break = auctionIn(AuctionState.Break(config(), op(3)))
       val asked = LotRoster.survey(break)._1

@@ -6,6 +6,8 @@ import auction.aggregate.ClosingPolicy
 import auction.aggregate.LaunchStepWindow
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
+import auction.aggregate.PreviewLotParticipantRemoval
+import auction.aggregate.RemoveLotParticipant
 import auction.aggregate.StepWindowConfig
 import auction.lot.AuctionId
 import auction.projection.AuctionListing
@@ -46,6 +48,8 @@ import auction.v1.auction_service.RegisterForRaffleRequest
 import auction.v1.auction_service.ChooseDisplayNameRequest
 import auction.v1.auction_service.CreateLotCardRequest
 import auction.v1.auction_service.DeselectForFinalRequest
+import auction.v1.auction_service.PreviewParticipantRemovalRequest
+import auction.v1.auction_service.RemoveParticipantRequest
 import auction.v1.auction_service.DiscardAuctionRequest
 import auction.v1.auction_service.DraftAuctionRequest
 import auction.v1.auction_service.EditLotCardRequest
@@ -122,6 +126,11 @@ final case class RegistryCommand(auctionId: AuctionId, lotId: LotId, opId: OpId,
 
 /** Запуск окна сниженного шага аукциону сходки. Окно здесь ещё не проверено: его случаи — решение домена. */
 final case class StepWindowLaunchCommand(auctionId: AuctionId, command: LaunchStepWindow, acting: Acting)
+
+/** Снятие участника с лота аукциона сходки и его предпросмотр. */
+final case class RemovalCommand(auctionId: AuctionId, command: RemoveLotParticipant, acting: Acting)
+
+final case class RemovalPreviewCommand(auctionId: AuctionId, command: PreviewLotParticipantRemoval, acting: Acting)
 
 /** Ask ведущего лоту реестра: то же, что команда реестра, и объявленная сумма. */
 final case class AskCommand(registry: RegistryCommand, newAsk: Money)
@@ -378,6 +387,33 @@ object RequestMapping {
 
   def deselectForFinal(request: DeselectForFinalRequest): Either[FormError, RegistryCommand] =
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  /**
+   * Снятие участника: форма команды реестра, участник и номер лота из предпросмотра. Номер обязателен — `0` не номер
+   * лота, у рождённого лота он начинается с 1, — и без него снятие записало бы итог, которого администратор не видел.
+   */
+  def removeParticipant(request: RemoveParticipantRequest): Either[FormError, RemovalCommand] =
+    for {
+      registered <- registry(request.viewer, request.auctionId, request.lotId, request.opId)
+      participant <- uuidV7("participant_id", request.participantId)
+      version <- Either.cond(request.expectedVersion > 0, request.expectedVersion, FormError("expected_version"))
+    } yield RemovalCommand(
+      registered.auctionId,
+      RemoveLotParticipant(registered.lotId, ParticipantId(participant), version, registered.opId),
+      registered.acting
+    )
+
+  def previewParticipantRemoval(request: PreviewParticipantRemovalRequest): Either[FormError, RemovalPreviewCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- canonicalUuidV5(request.auctionId).toRight(FormError("auction_id"))
+      lot <- uuidV7("lot_id", request.lotId)
+      participant <- uuidV7("participant_id", request.participantId)
+    } yield RemovalPreviewCommand(
+      AuctionId(auction),
+      PreviewLotParticipantRemoval(LotId(lot), ParticipantId(participant)),
+      acting
+    )
 
   /**
    * Запуск окна сниженного шага: форма — моменты, сумма и идентификаторы. Пустой список лотов, окно вне онлайн-этапа и

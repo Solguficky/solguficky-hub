@@ -273,7 +273,7 @@ final class RemovalSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       removing(sold, mal)._1 shouldBe Left(RemoveParticipantRejected.LotNotOpen)
       removing(t82(), who = 9)._1 shouldBe Left(RemoveParticipantRejected.NotALotParticipant)
       removing(Journal.of(drafted), mal)._1 shouldBe Left(RemoveParticipantRejected.LotNotOpen)
-      Lot.decide(Lot.initial, removeParticipant(mal, 1), position(1), calm) shouldBe
+      Lot.decide(Lot.initial, removeParticipant(mal, 1), 0, position(1), calm) shouldBe
         Left(RemoveParticipantRejected.LotNotFound)
     }
 
@@ -297,9 +297,39 @@ final class RemovalSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       val (_, removed) = history.remove(command)
 
       removed.remove(command)._1 shouldBe Right(Decision.Repeated(removed.entries.last))
-      removed.remove(RemoveParticipant(participant(bob), command.opId))._1 shouldBe
+      removed.remove(RemoveParticipant(participant(bob), command.opId, command.expectedVersion))._1 shouldBe
         Left(RemoveParticipantRejected.OpIdTaken)
       removing(removed, mal)._1 shouldBe Left(RemoveParticipantRejected.ParticipantAlreadyRemoved)
+    }
+
+    "refuse a removal confirmed on an earlier version of the lot with LotChanged and record nothing" in {
+      val history = t82()
+      val confirmed = removeParticipant(mal, history.entries.size + 2, version = history.entries.size.toLong)
+      val (_, moved) = bidBy(who = 9, amount = 400)(history)
+      moved.entries.size should be > history.entries.size
+
+      val (result, after) = moved.remove(confirmed)
+
+      result shouldBe Left(RemoveParticipantRejected.LotChanged)
+      after.entries shouldBe moved.entries
+    }
+
+    "answer a lot that no longer takes removals with its own refusal rather than LotChanged" in {
+      val history = t82()
+      val (_, sold) = history.close(closeLot(opN = 50), deadline)
+
+      sold.remove(removeParticipant(mal, 51, version = history.entries.size.toLong))._1 shouldBe
+        Left(RemoveParticipantRejected.LotNotOpen)
+    }
+
+    "decide the removal on the current version as its preview did" in {
+      val history = t82()
+      val version = history.entries.size.toLong
+      val preview =
+        removedEvent(Lot.decide(history.lot, removeParticipant(mal, 90, version), version, position(90), calm))
+      val removed = removedEvent(removing(history, mal)._1)
+
+      (removed.leader, removed.price) shouldBe (preview.leader, preview.price)
     }
 
     "replay without everyone removed earlier on a second removal" in {

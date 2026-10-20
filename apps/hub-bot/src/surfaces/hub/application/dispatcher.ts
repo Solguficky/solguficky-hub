@@ -9,6 +9,7 @@ import type { Meetups } from "../meetups/port.js";
 import type { Notifications } from "../notifications/port.js";
 import { createAuctionConsole } from "./auction-console.js";
 import { createBroadcasts } from "./broadcasts.js";
+import { createFloorBids } from "./floor-bids.js";
 import { createLotForm } from "./lot-form.js";
 import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
@@ -47,6 +48,10 @@ export function createDispatcher(
           consoles.timeZone,
           consoles.now,
         );
+  // «Ставки зала» помощника (PER-565) — тот же порт, что у пульта: оба
+  // пускает право вести аукцион.
+  const floorBids =
+    consoles === undefined ? undefined : createFloorBids(consoles.auctions);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -261,6 +266,13 @@ export function createDispatcher(
           return auctionConsole === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : auctionConsole(request);
+        case "view-floor-bids":
+        case "ask-floor-search":
+        case "prepare-floor-bid":
+        case "place-floor-bid":
+          return floorBids === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : floorBids(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined

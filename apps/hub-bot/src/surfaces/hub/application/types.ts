@@ -304,7 +304,8 @@ export type ExecuteRequest =
   | BroadcastRequest
   | PreviewBroadcastRequest
   | LotFormRequest
-  | AuctionConsoleRequest;
+  | AuctionConsoleRequest
+  | FloorBidsRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -716,6 +717,83 @@ export type CloseQuote =
   | { kind: "sale"; minorUnits: number }
   | { kind: "no-sale" };
 
+// «Ставки зала» помощника ведущего (PER-565, ADR-070 пп. 4–6). Кнопка человека
+// и «Да» несут лот, человека и цену: устаревший экран не ставит ни на другую
+// цену, ни на другой лот. Ключ ставки рождается на нажатие «Да» — повторное
+// «Да» Auction отклонит, потому что цена ушла или человек уже лидер.
+type FloorCall = LotFormCall;
+export type FloorBidTarget = {
+  lotId: string;
+  participantId: string;
+  amount: LotAmount;
+};
+export type FloorBidsRequest =
+  | (FloorCall & {
+      intent: "view-floor-bids";
+      auctionId: string;
+      page: number;
+      // Ответ на «Другой человек…»: люди, в чьём имени есть эта строка.
+      search?: string;
+    })
+  | (FloorCall & { intent: "ask-floor-search"; auctionId: string })
+  | (FloorCall & { intent: "prepare-floor-bid"; target: FloorBidTarget })
+  | (FloorCall & {
+      intent: "place-floor-bid";
+      target: FloorBidTarget;
+      opId: string;
+    });
+
+// Человек зала — тот, кто выбрал имя в этом аукционе (ADR-070 п. 3).
+export type FloorPerson = { participantId: string; name: string };
+
+// Лот, который торгуется в финале сейчас. Следующей цены нет — чтение
+// отстаёт от открытия лота, и ставить пока не на что.
+export type FloorLot = {
+  lotId: string;
+  title?: string;
+  version: number;
+  currentPrice: LotAmount;
+  nextPrice?: LotAmount;
+  leaderId?: string;
+  leaderName?: string;
+};
+
+export type FloorView = {
+  auctionId: string;
+  status: ConsoleAuctionStatus;
+  // Нет — лот не открыт: до старта финала, между лотами и после.
+  lot?: FloorLot;
+  // По алфавиту имени: место человека на экране не меняется от ставок
+  // (решение владельца 20.10.2026, дополнение ADR-070).
+  people: readonly FloorPerson[];
+  // Версии лотов аукциона: по ним живой экран узнаёт изменение в потоке.
+  versions: Readonly<Record<string, number>>;
+};
+
+// Строка исхода ставки зала над экраном (ADR-070 п. 5). `price` — цена,
+// которую назвала кнопка.
+export type FloorNote =
+  | { kind: "accepted"; name: string; price: LotAmount }
+  | {
+      kind: "proxy-answered";
+      name: string;
+      price: LotAmount;
+      answer: LotAmount;
+    }
+  // Принято, но цену уже подняли после ставки — кто, экран не знает.
+  | { kind: "outbid"; name: string; price: LotAmount; now: LotAmount }
+  | { kind: "price-taken"; price: LotAmount; leader?: string }
+  | { kind: "lot-changed" }
+  | { kind: "price-changed" }
+  | { kind: "bidder-is-leader"; name: string }
+  | { kind: "lot-not-open" }
+  | { kind: "name-not-chosen"; name?: string }
+  | { kind: "cannot-bid"; name?: string }
+  | { kind: "removed-from-lot"; name?: string }
+  // Ответа на ставку не было: она могла пройти, и лидера показывает экран.
+  | { kind: "unanswered"; name?: string; price: LotAmount }
+  | { kind: "not-found"; search: string };
+
 // Кому уходит рассылка, решает повод, а не автор: подписчикам одной сходки или
 // кругу сообщества, который разворачивает Notifications. Списка получателей
 // поверхность не видит и не передаёт.
@@ -941,6 +1019,28 @@ export type ExecuteResult =
       auctionId: string;
       day: CommunityDay;
       lots: readonly DaySummaryLot[];
+    }
+  // «Ставки зала» (PER-565): экран помощника с исходом ставки первой строкой
+  // либо люди, найденные по имени (`search`).
+  | {
+      kind: "floor-bids";
+      floor: FloorView;
+      page: number;
+      note?: FloorNote;
+      search?: string;
+      // Чтение после ставки отказало: экран — прочитанный до неё, и цена
+      // могла устареть.
+      stale?: true;
+    }
+  // Вопрос «Другой человек…»: имя или его часть.
+  | { kind: "floor-search-ask"; auctionId: string }
+  // Подтверждение ставки зала (ADR-070 п. 4): лот, человек и цена уедут в «Да».
+  | {
+      kind: "floor-confirm";
+      auctionId: string;
+      lot: FloorLot;
+      person: FloorPerson;
+      amount: LotAmount;
     }
   // «Счастливые часы» (PER-504): список окон либо исход команды над ними.
   | {

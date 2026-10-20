@@ -4,6 +4,7 @@ using Notifications.Auction;
 using Notifications.Domain;
 using Notifications.Facts;
 using Notifications.ReleaseNotes;
+using Notifications.Reminders;
 using Notifications.Replica;
 using Notifications.V1;
 using Npgsql;
@@ -662,6 +663,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     internal static async Task<FactCount?> AddLotReminder(
         UnitOfWork work,
         Guid taskId,
+        LotReminderKind kind,
         Guid lotId,
         DateTimeOffset deadline,
         DateTimeOffset now,
@@ -683,20 +685,32 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         return await Insert(
             work,
-            new FactCause(NotificationFacts.LotReminderType, NotificationFacts.ReminderTaskCause, taskId.ToString(), null, null),
+            new FactCause(LotReminderType(kind), NotificationFacts.ReminderTaskCause, taskId.ToString(), null, null),
             audience,
-            (id, recipient) => NotificationFacts.LotReminder(id, recipient, taskId, lotId, now, deadline),
+            (id, recipient) => LotReminderFact(kind, id, recipient, taskId, lotId, now, deadline),
             now,
             deadline,
             cancellationToken);
     }
+
+    /// <summary>Тип факта напоминания по виду момента: два момента — два типа.</summary>
+    private static string LotReminderType(LotReminderKind kind) => NotificationFacts.TypeOf(kind);
+
+    private static Notification LotReminderFact(LotReminderKind kind, Guid id, Guid recipient, Guid taskId, Guid lotId,
+        DateTimeOffset now, DateTimeOffset notAfter) => kind switch
+    {
+        LotReminderKind.Hour => NotificationFacts.LotReminder(id, recipient, taskId, lotId, now, notAfter),
+        LotReminderKind.Close => NotificationFacts.LotDeadlineClose(id, recipient, taskId, lotId, now, notAfter),
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
 
     /// <summary>
     /// Догоняет сработавшее напоминание о лоте для одного человека, который
     /// отметил лот позже срабатывания (PER-647), и пишет факт в транзакции
     /// <paramref name="work" /> — той же, что ставит отметку.
     /// </summary>
-    /// <param name="taskId">Сработавшее задание лота — повод факта.</param>
+    /// <param name="taskId">Задание лота, чей момент поводом стал, — ключ факта.</param>
+    /// <param name="kind">Вид момента: часовое напоминание или ближнее к дедлайну.</param>
     /// <remarks>
     /// Повод тот же, что у разворота срабатывания, поэтому второго напоминания
     /// человеку не будет: ни снятие с возвратом, ни повтор команды, ни встреча
@@ -707,6 +721,7 @@ public sealed class NotificationStore(NpgsqlDataSource source)
     internal static async Task<FactCount> AddLateLotReminder(
         UnitOfWork work,
         Guid taskId,
+        LotReminderKind kind,
         Guid lotId,
         Guid identityId,
         DateTimeOffset now,
@@ -726,9 +741,9 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
         return await Insert(
             work,
-            new FactCause(NotificationFacts.LotReminderType, NotificationFacts.ReminderTaskCause, taskId.ToString(), null, null),
+            new FactCause(LotReminderType(kind), NotificationFacts.ReminderTaskCause, taskId.ToString(), null, null),
             audience,
-            (id, recipient) => NotificationFacts.LotReminder(id, recipient, taskId, lotId, now, deadline),
+            (id, recipient) => LotReminderFact(kind, id, recipient, taskId, lotId, now, deadline),
             now,
             deadline,
             cancellationToken);

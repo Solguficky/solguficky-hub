@@ -157,7 +157,9 @@ object LotFixtures {
 
   def withdrawProxyLimit(who: Int, opN: Int): WithdrawProxyLimit = WithdrawProxyLimit(participant(who), op(opN))
 
-  def removeParticipant(who: Int, opN: Int): RemoveParticipant = RemoveParticipant(participant(who), op(opN))
+  /** Снятие на номере `version` лота; по умолчанию — на номере перед строкой `opN`, как у команды из `removing`. */
+  def removeParticipant(who: Int, opN: Int, version: Long = -1): RemoveParticipant =
+    RemoveParticipant(participant(who), op(opN), if (version < 0) opN.toLong - 1 else version)
 
   def limit(max: Long, setSeq: Long): ProxyLimit = ProxyLimit(money(max), setSeq)
 
@@ -243,12 +245,14 @@ object LotFixtures {
     def unmark(command: UnmarkForFinal, now: Instant = calm): (Either[UnmarkForFinalRejected, Decision], Journal) =
       record(command.opId, Lot.decide(lot, command, now), now)
 
-    /** Снятие участника; позиция лидера получает `bid` с номером первой строки транзакции. */
+    /**
+     * Снятие участника на текущем номере журнала; позиция лидера получает `bid` с номером первой строки транзакции.
+     */
     def remove(
         command: RemoveParticipant,
         now: Instant = calm
     ): (Either[RemoveParticipantRejected, Decision], Journal) =
-      record(command.opId, Lot.decide(lot, command, position(entries.size + 1), now), now)
+      record(command.opId, Lot.decide(lot, command, entries.size.toLong, position(entries.size + 1), now), now)
 
     /** Возврат в финал; производная ставка по сетке, если она есть, получает `proxyBid` с номером первой строки. */
     def resume(command: ResumeLot): (Either[ResumeLotRejected, Decision], Journal) =

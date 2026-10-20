@@ -29,7 +29,10 @@ import auction.aggregate.Inspection
 import auction.aggregate.MeetupAuthority
 import auction.aggregate.LotEnding
 import auction.aggregate.MeetupId
+import auction.aggregate.ParticipantRemovalRejected
+import auction.aggregate.PreviewLotParticipantRemoval
 import auction.aggregate.RemoveLot
+import auction.aggregate.RemoveLotParticipant
 import auction.aggregate.RemoveLotRejected
 import auction.aggregate.ScheduleAuction
 import auction.aggregate.ScheduleAuctionLot
@@ -84,6 +87,7 @@ import auction.lot.ParticipantId
 import auction.lot.Phase
 import auction.lot.PlaceBid
 import auction.lot.PlaceBidRejected
+import auction.lot.RemoveParticipantRejected
 import auction.lot.CurrencyCode
 import auction.lot.Money
 import auction.lot.Sale
@@ -111,6 +115,7 @@ import auction.projection.DayLotStatisticsView
 import auction.projection.FinalBids
 import auction.projection.LotImageView
 import auction.projection.BidRecord
+import auction.projection.HistoryRecord
 import auction.projection.LotSnapshotView
 import auction.projection.LotStatisticsView
 import auction.projection.LotViews
@@ -299,7 +304,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def registryPage(auctionId: UUID, after: Option[UUID], limit: Int): Future[List[LotSnapshotView]] =
       fail("the registry was touched")
     def image(lotId: UUID): Future[Option[LotImageView]] = fail("the image was read")
-    def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[BidRecord]]] =
+    def history(lotId: UUID, after: Option[Long], limit: Int): Future[Option[List[HistoryRecord]]] =
       fail("the history was touched")
     def statistics(auctionId: UUID): Future[List[LotStatisticsView]] = fail("the statistics were read")
     def dayStatistics(auctionId: UUID, from: Instant, until: Instant): Future[List[DayLotStatisticsView]] =
@@ -341,6 +346,15 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         command: DeselectForFinal,
         initiator: Initiator
     ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]] = fail("the auction was reached")
+    def removeParticipant(
+        auctionId: AuctionId,
+        command: RemoveLotParticipant,
+        initiator: Initiator
+    ): Future[Either[ParticipantRemovalRejected, Long]] = fail("the auction was reached")
+    def previewParticipantRemoval(
+        auctionId: AuctionId,
+        command: PreviewLotParticipantRemoval
+    ): Future[Either[ParticipantRemovalRejected, LotEntity.RemovalPreview]] = fail("the auction was reached")
     def launchStepWindow(
         auctionId: AuctionId,
         command: LaunchStepWindow,
@@ -1540,6 +1554,49 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .isDeadlinePassed shouldBe true
     }
 
+    // PER-658: снятие необратимо, и номер лота из предпросмотра — часть формы, а не умолчание.
+    "refuses a removal without the version of its preview as a malformed request, before the auction" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val participantId = "01890a5d-ac96-774b-bcce-b302099a8057"
+      val auction = service(Unreachable)
+      statusOf(
+        auction.removeParticipant(
+          wire.RemoveParticipantRequest(Some(viewer), meetupAuction.toString, lot, participantId, 0, op)
+        )
+      ) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(
+        auction.previewParticipantRemoval(
+          wire.PreviewParticipantRemovalRequest(Some(viewer), meetupAuction.toString, lot, "not-a-uuid")
+        )
+      ) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers a removal confirmed on another version of the lot with the LotChanged refusal" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val moved = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId)), registryOpen = false))
+        override def removeParticipant(auctionId: AuctionId, command: RemoveLotParticipant, initiator: Initiator) =
+          Future.successful(Left(ParticipantRemovalRejected.ByLot(RemoveParticipantRejected.LotChanged)))
+      }
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
+      service(Unreachable, auctions = AuctionCommands(moved, Unreachable, granted))
+        .removeParticipant(
+          wire.RemoveParticipantRequest(
+            Some(viewer),
+            meetupAuction.toString,
+            lot,
+            "01890a5d-ac96-774b-bcce-b302099a8057",
+            12,
+            op
+          )
+        )
+        .futureValue
+        .getRefused
+        .reason
+        .isLotChanged shouldBe true
+    }
+
     "launches a step window with the start the server chose and names the lot of a refusal" in {
       val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
       val from = java.time.Instant.parse("2026-10-05T12:00:00Z")
@@ -1666,11 +1723,12 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     "pages the history of a lot by journal position and continues after the last entry it answered" in {
       val at = Instant.parse("2026-10-04T12:00:00Z")
       // Позиции с пропусками, как у журнала с приватными событиями, и одно время на всех.
-      val bids = List(3L, 4L, 7L, 9L, 12L).map(seq => bidRecord(seq, 100 + seq, "Manual", Some("Bot"), at))
+      val bids =
+        List(3L, 4L, 7L, 9L, 12L).map(seq => HistoryRecord.Bid(bidRecord(seq, 100 + seq, "Manual", Some("Bot"), at)))
       val journal = new Views {
         override def find(lotId: UUID) = Future.successful(None)
         override def history(lotId: UUID, after: Option[Long], limit: Int) =
-          Future.successful(Some(bids.filter(bid => after.forall(bid.sequence > _)).take(limit)))
+          Future.successful(Some(bids.filter(entry => after.forall(entry.position > _)).take(limit)))
       }
       val auction = service(Unreachable, views = journal)
       val first = auction.listLotHistory(wire.ListLotHistoryRequest(Some(viewer), lot, "", 2)).futureValue
@@ -1690,7 +1748,10 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         override def find(lotId: UUID) = Future.successful(None)
         override def history(lotId: UUID, after: Option[Long], limit: Int) =
           Future.successful(
-            Some(List(bidRecord(2, 150, "Manual", Some("Floor"), at), bidRecord(5, 260, "Proxy", None, at)))
+            Some(
+              List(bidRecord(2, 150, "Manual", Some("Floor"), at), bidRecord(5, 260, "Proxy", None, at))
+                .map(HistoryRecord.Bid(_))
+            )
           )
       }
       val entries = service(Unreachable, views = journal)

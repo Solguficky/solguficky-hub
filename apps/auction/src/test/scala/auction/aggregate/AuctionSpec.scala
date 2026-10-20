@@ -14,6 +14,8 @@ import auction.lot.LotFixtures.op
 import auction.lot.LotFixtures.rub
 import auction.lot.MarkForFinal
 import auction.lot.Money
+import auction.lot.RemoveParticipant
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ScheduleLot
 import auction.lot.StepPolicyInput
 import auction.lot.UnmarkForFinal
@@ -463,6 +465,34 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       applied(onBreak, Auction.decide(onBreak, FreezeFinalLineup(List(lot), op(8)), Some(Set(lot))).toOption.get, 8, 8)
 
     def inFinal: Auction = applied(frozen, Auction.decide(frozen, StartFinal(op(9))).toOption.get, 9, 9)
+
+    val person = LotFixtures.participant(3)
+
+    // ADR-072, п. 4 и «Открыто» (PER-658): фазу лота, дедлайн и участника судит лот, а аукцион — реестр и состав финала.
+    "sends the lot a removal from the online trading until the lineup freezes, and refuses a lot of the frozen lineup" in {
+      def remove(auction: Auction, of: LotId) = Auction.decide(auction, RemoveLotParticipant(of, person, 4, op(20)))
+      val removal = RemoveParticipant(person, op(20), 4)
+
+      List(trading, settling, onBreak).foreach(auction => remove(auction, lot) shouldBe Right(removal))
+      remove(frozen, lot) shouldBe Left(ParticipantRemovalRejected.LineupFrozen)
+      remove(frozen, other) shouldBe Right(removal)
+      remove(inFinal, lot) shouldBe Left(ParticipantRemovalRejected.LineupFrozen)
+      val active = inFinal.copy(state = AuctionState.Final(config(), op(5), List(lot), List(lot), Nil))
+      remove(active, lot) shouldBe Right(removal)
+      Auction.decide(onBreak, PreviewLotParticipantRemoval(lot, person)) shouldBe Right(person)
+      Auction.decide(frozen, PreviewLotParticipantRemoval(lot, person)) shouldBe
+        Left(ParticipantRemovalRejected.LineupFrozen)
+    }
+
+    "refuses a removal before prebidding, outside the registry, and once the auction is over" in {
+      def remove(auction: Auction) = Auction.decide(auction, RemoveLotParticipant(lot, person, 4, op(20)))
+      val cancelled = applied(trading, Auction.decide(trading, CancelAuction(op(6))).toOption.get, 6, 6)
+
+      remove(holding(scheduled)) shouldBe Left(ParticipantRemovalRejected.NotInPrebidding)
+      remove(started) shouldBe Left(ParticipantRemovalRejected.LotNotInAuction)
+      remove(Auction.initial) shouldBe Left(ParticipantRemovalRejected.AuctionNotFound)
+      remove(cancelled) shouldBe Left(ParticipantRemovalRejected.ByLot(RemoveParticipantRejected.LotNotOpen))
+    }
 
     "waits for the common deadline of the config and then settles" in {
       Auction.decide(trading, EndPrebidding(op(6), closesAt.minusMillis(1))) shouldBe

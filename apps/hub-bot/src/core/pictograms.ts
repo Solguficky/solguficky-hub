@@ -90,6 +90,7 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
     "Написать подписчикам",
     "Включить аукцион",
     "Пульт",
+    "Ставки зала",
     "Добавить лот",
     "Управление",
   ],

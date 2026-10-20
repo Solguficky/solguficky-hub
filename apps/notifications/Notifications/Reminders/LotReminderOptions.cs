@@ -12,4 +12,11 @@ public sealed class LotReminderOptions
     /// задания не пересчитывает.
     /// </summary>
     public TimeSpan Lead { get; set; } = TimeSpan.FromHours(1);
+
+    /// <summary>
+    /// За сколько до дедлайна лота напоминать второй раз: ближе к дедлайну,
+    /// когда часовое осталось без ответа (ADR-063, дополнение 2026-10-20).
+    /// Настройкой остаётся по той же причине, что и у часового.
+    /// </summary>
+    public TimeSpan CloseLead { get; set; } = TimeSpan.FromMinutes(15);
 }

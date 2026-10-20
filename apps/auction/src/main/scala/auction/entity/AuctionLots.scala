@@ -18,6 +18,9 @@ import auction.lot.MarkForFinal
 import auction.lot.MarkForFinalRejected
 import auction.lot.OpenLot
 import auction.lot.OpenLotRejected
+import auction.lot.ParticipantId
+import auction.lot.RemoveParticipant
+import auction.lot.RemoveParticipantRejected
 import auction.lot.ResumeLot
 import auction.lot.ResumeLotRejected
 import auction.lot.Sale
@@ -78,6 +81,22 @@ trait AuctionLots {
 
   /** Ask ведущего лоту реестра (П-08); инициатор — ведущий, как у `mark`. */
   def advanceAsk(lot: LotId, command: AdvanceAsk, initiator: Initiator): Future[Either[AdvanceAskRejected, Unit]]
+
+  /**
+   * Снятие участника с лота по команде администратора (ADR-072; PER-658); инициатор — он, как у `mark`. Ответ — номер
+   * лота, с которого чтение показывает снятие целиком.
+   */
+  def removeParticipant(
+      lot: LotId,
+      command: RemoveParticipant,
+      initiator: Initiator
+  ): Future[Either[RemoveParticipantRejected, Long]]
+
+  /** Предпросмотр снятия: итог, который лот записал бы сейчас, без записи. */
+  def previewRemoval(
+      lot: LotId,
+      participant: ParticipantId
+  ): Future[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]]
 
   /** Снятие лота отменённым аукционом (ADR-047, дополнение 2026-10-12); подтверждение — только его `LotWithdrawn`. */
   def withdraw(lot: LotId, command: WithdrawLot): Future[Either[WithdrawLotRejected, Unit]]
@@ -154,6 +173,24 @@ object AuctionLots {
         entity(lot)
           .ask[Either[AdvanceAskRejected, Envelope]](LotEntity.Ask(command, initiator, _))
           .map(_.map(_ => ()))(using ExecutionContext.parasitic)
+
+      // Как у `mark`: повтор того же `op_id` отвечает исходным конвертом и текущим номером лота.
+      def removeParticipant(
+          lot: LotId,
+          command: RemoveParticipant,
+          initiator: Initiator
+      ): Future[Either[RemoveParticipantRejected, Long]] =
+        entity(lot)
+          .ask[Either[RemoveParticipantRejected, LotEntity.Recorded]](LotEntity.Remove(command, initiator, _))
+          .map(_.map(_.lotVersion))(using ExecutionContext.parasitic)
+
+      def previewRemoval(
+          lot: LotId,
+          participant: ParticipantId
+      ): Future[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]] =
+        entity(lot).ask[Either[RemoveParticipantRejected, LotEntity.RemovalPreview]](
+          LotEntity.PreviewRemoval(participant, _)
+        )
 
       // Снимает лот аукцион, а не человек, как открывает: после рестарта он доснимает лоты сам. Кто отменил аукцион,
       // называет его строка `AuctionCancelled`; чужой `op_id` лот отклоняет `OpIdTaken`.

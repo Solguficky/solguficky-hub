@@ -21,6 +21,10 @@ export function historyPageOf(page: ListLotHistoryResponse): LotHistoryPage {
       switch (entry.kind.case) {
         case "bid":
           return [bidOf(entry.sequence, entry.occurredAt, entry.kind.value)];
+        // Снятие участника и пометку снятых ставок хронология бота покажет
+        // вместе с пультом (PER-659); до него запись пропускается, как
+        // запись неизвестного вида.
+        case "removal":
         case undefined:
           return [];
         default: {

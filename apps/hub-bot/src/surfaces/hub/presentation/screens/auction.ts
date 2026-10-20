@@ -43,6 +43,7 @@ import { uuidToToken } from "../meetup-deep-link.js";
 import {
   auctionFaqData,
   consoleViewData,
+  floorData,
   lotFormData,
   lotNewData,
 } from "../parse-callback.js";
@@ -151,6 +152,8 @@ export type AuctionView = {
 const editLotLabel = adminLabel("Изменить лот");
 // Пульт аукциона (PER-320) — ряд оболочки хаба в корне аукциона.
 const consoleLabel = adminLabel("Пульт");
+// «Ставки зала» помощника (PER-565) — рядом с пультом, пока идёт финал.
+export const floorLabel = adminLabel("Ставки зала");
 const favoritesLabel = "Избранное";
 
 /**
@@ -423,6 +426,11 @@ function rootScreen(
   // делит ряд с кнопками участника.
   if (view.canManage === true) {
     nextRow(keyboard).text(consoleLabel, consoleViewData(token));
+    // Ставки зала заносят в живом финале (ADR-070 п. 4): вход — парой с
+    // пультом ведущего, пока состав объявлен или финал идёт.
+    if (auction.stage === "lineup-frozen" || auction.stage === "in-final") {
+      keyboard.text(floorLabel, floorData(token));
+    }
   }
   const moment = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);

@@ -169,6 +169,35 @@ final class LotViewSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       resumed.resumedSequence shouldBe Some(6L)
     }
 
+    // ADR-072 (PER-658): итог снятия пишет событие, проекция его не пересчитывает, а только помечает и записывает.
+    "records the removal of a participant with the price and the leader it left, for the marks and the chronology" in {
+      val trading = journal(List(500, 500))
+      val removed = LotEvent.ParticipantRemoved(participant(1), money(10500), Some(participant(0)), Some(bid(9)))
+      val facts = folded(None, numbered(trading :+ stored(trading.size + 1, removed)))
+
+      facts.removals shouldBe List(
+        RemovalRecord(
+          lotId,
+          trading.size + 1L,
+          participant(1).value,
+          10500L,
+          "RUB",
+          Some(participant(0).value),
+          decidedAt
+        )
+      )
+      facts.heldPrice shouldBe None
+    }
+
+    "takes the hold price again from a removal of a participant from a held lot" in {
+      val removed = LotEvent.ParticipantRemoved(participant(1), money(10000), None, None)
+      val events = numbered(
+        journal(List(500)) ++ Vector(stored(5, LotEvent.LotHeldForFinal(deadline)), stored(6, removed))
+      )
+
+      folded(None, events).heldPrice shouldBe Some(StoredMoney(10000L, "RUB"))
+    }
+
     "collects the same statistics facts however the deliveries are split and redelivered" in {
       forAll(raises, Gen.choose(1, 4)) { (steps, size) =>
         val events = numbered(journalWithLimit(steps))

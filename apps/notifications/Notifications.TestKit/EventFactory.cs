@@ -531,6 +531,18 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>Лот финала взят в работу: активный лот и порядок состава.</summary>
+    public static global::Auction.V1.AuctionEvent FinalLotActivated(string auction, string meetup, string activeLot,
+        params string[] lineup)
+    {
+        var message = AuctionFact(auction, meetup, 22);
+        message.State.InFinal = new global::Auction.V1.AuctionState.Types.Final();
+        message.State.InFinal.Order.AddRange(lineup);
+        message.State.InFinal.ActiveLotId = activeLot;
+        message.FinalLotActivated = new global::Auction.V1.FinalLotActivated();
+        return message;
+    }
+
     /// <summary>Аукцион кончился после финала.</summary>
     public static global::Auction.V1.AuctionEvent AuctionFinished(string auction, string meetup)
     {

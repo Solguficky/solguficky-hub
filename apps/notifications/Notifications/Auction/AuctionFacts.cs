@@ -18,6 +18,12 @@ public static class AuctionFacts
     public const string FinalStartedType = "auction_final_started";
     public const string AuctionCauseKind = "auction_event";
 
+    /// <summary>
+    /// Следующий лот финала — одному лидеру этого лота (ADR-063, дополнение
+    /// 2026-10-20).
+    /// </summary>
+    public const string FinalLotNextType = "auction_final_lot_next";
+
     public const string RaffleResultType = "raffle_result";
     public const string RaffleCauseKind = "auction_raffle_event";
 
@@ -183,6 +189,25 @@ public static class AuctionFacts
         {
             AuctionId = final.AuctionId.ToString(),
             MeetupId = final.MeetupId.ToString(),
+        },
+    };
+
+    /// <summary>
+    /// Следующий лот финала одному лидеру этого лота: лот идёт следом, а
+    /// оценка его длительности — по уже прошедшим лотам финала.
+    /// </summary>
+    public static Notification FinalLotNext(Guid notificationId, Guid recipientId, Guid lotId, int estimatedMinutes,
+        Guid eventId, DateTimeOffset now, DateTimeOffset notAfter) => new()
+    {
+        NotificationId = notificationId.ToString(),
+        RecipientId = recipientId.ToString(),
+        CreatedAt = now.ToUniversalTime().ToString("O"),
+        NotAfter = notAfter.ToUniversalTime().ToString("O"),
+        Cause = new Cause { AuctionEventId = eventId.ToString() },
+        AuctionFinalLotNext = new AuctionFinalLotNext
+        {
+            LotId = lotId.ToString(),
+            EstimatedMinutes = estimatedMinutes,
         },
     };
 
