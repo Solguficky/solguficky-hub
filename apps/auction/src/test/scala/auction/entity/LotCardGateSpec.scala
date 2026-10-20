@@ -12,12 +12,12 @@ final class LotCardGateSpec extends AnyWordSpec with Matchers {
 
   "lot card gate" should {
 
-    "close the card of a sold lot and of a lot closed without a sale" in {
+    "closes the card of a sold lot and of a lot closed without a sale" in {
       LotCardGate.standing(sold(100, participant(1)).state) shouldBe CardStanding.Closed
       LotCardGate.standing(LotState.Unsold(UnsoldReason.NoBids)) shouldBe CardStanding.Closed
     }
 
-    "leave the card open before it is closed and after a withdrawal" in {
+    "leaves the card open before it is closed and after a withdrawal" in {
       LotCardGate.standing(LotState.Initial) shouldBe CardStanding.Open
       LotCardGate.standing(drafted.state) shouldBe CardStanding.Open
       LotCardGate.standing(scheduled().state) shouldBe CardStanding.Open
