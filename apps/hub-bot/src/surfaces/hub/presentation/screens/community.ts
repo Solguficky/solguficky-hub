@@ -51,7 +51,7 @@ export function toCommunityPlace(place: CommunityPlace): Parent {
 }
 
 function memberData(
-  verb: "v" | "mg" | "mv" | "ag" | "av" | "bq" | "by",
+  verb: "v" | "mg" | "mv" | "ag" | "av" | "dq" | "dy" | "bq" | "by",
   member: CommunityMember,
   place: CommunityPlace,
 ): string {
@@ -237,10 +237,14 @@ function listScreen(
  * кнопок нет. Кнопки видит
  * держатель права управлять составом — без него экран не открывается.
  * Карточку перечитывает каждое действие с неё, «Обновить» ей не нужно.
+ * Понижение до гостя (PER-642) — тоже только у участника: у гостя и у
+ * человека без круга понижать нечего. `notice` — итог последнего действия:
+ * карточка после понижения показывает его строкой, как список ников.
  */
 export function communityMemberScreen(
   member: CommunityMember,
   place: CommunityPlace,
+  notice?: string,
 ): ShownScreen {
   const keyboard = new InlineKeyboard();
   if (member.circle === "member") {
@@ -254,6 +258,7 @@ export function communityMemberScreen(
         : "Выдать ведение аукциона",
       memberData(member.auctionRunning ? "av" : "ag", member, place),
     );
+    nextRow(keyboard).text("Понизить в гостя", memberData("dq", member, place));
   }
   nextRow(keyboard).text("Закрыть доступ", memberData("bq", member, place));
   return {
@@ -261,6 +266,7 @@ export function communityMemberScreen(
     text: screenText(
       "Карточка человека",
       memberHtml(member),
+      notice === undefined ? undefined : escapeHtml(notice),
       [
         `Круг: ${circleWords[member.circle]}`,
         member.circle === "member"
@@ -346,6 +352,34 @@ function usernamesScreen(
             .join("\n"),
     ),
     keyboard: withNav(keyboard, toCommunity),
+    format: "HTML",
+  };
+}
+
+/**
+ * Подтверждение понижения до гостя (PER-642). Понижение необратимо с этой
+ * карточки — вернуть круг `member` можно только пересмотром отказанной
+ * заявки, — и о смене круга человеку уходит весть: подтверждение нужно по
+ * обоим признакам дизайн-кода. Текст говорит, что остаётся с человеком, а не
+ * только что отнимается: доступ к аукциону понижение не отнимает (ADR-064,
+ * п. 9). «Нет» возвращает на карточку.
+ */
+export function demoteMemberConfirmScreen(
+  member: CommunityMember,
+  place: CommunityPlace,
+): ShownScreen {
+  return {
+    id: "community-demote-confirm",
+    text: screenText(
+      "Понизить до гостя?",
+      `${memberHtml(member)} станет гостем: служебные права снимаются, торги аукциона остаются. Вернуть участника из карточки нельзя — отказанную заявку пересматривают в «Отказанных».`,
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, понизить в гостя",
+      yesData: memberData("dy", member, place),
+      noData: memberData("v", member, place),
+      irreversible: true,
+    }),
     format: "HTML",
   };
 }

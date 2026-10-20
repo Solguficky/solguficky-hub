@@ -1954,6 +1954,131 @@ describe("presentation adapter", () => {
     });
   });
 
+  // Понижение до гостя (PER-642): кнопка только у участника, подтверждение
+  // обязательно, а карточка после него показывает то, что сохранил Identity.
+  describe("demoting to guest", () => {
+    const memberId = "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61";
+    const memberToken = uuidToToken(memberId);
+    const memberCard: CommunityMemberResult = {
+      kind: "ok",
+      value: {
+        identityId: memberId,
+        telegramUsername: "lowered",
+        circle: "member",
+        auctionModeration: false,
+        auctionRunning: false,
+      },
+    };
+    const guestCard: CommunityMemberResult = {
+      kind: "ok",
+      value: {
+        identityId: memberId,
+        telegramUsername: "lowered",
+        circle: "guest",
+        auctionModeration: false,
+        auctionRunning: false,
+      },
+    };
+
+    function demoting(read: CommunityMemberResult) {
+      return {
+        ...resolvedIdentity("admin"),
+        communityMember: vi
+          .fn<CommunityAdministrator["communityMember"]>()
+          .mockResolvedValue(read),
+        demote: vi
+          .fn<CommunityAdministrator["demote"]>()
+          .mockResolvedValue({ kind: "ok", value: true }),
+      };
+    }
+
+    it("asks before demoting and does not call Identity to demote", async () => {
+      const identity = demoting(memberCard);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:dq:${memberToken}:m1`));
+
+      expect(identity.demote).not.toHaveBeenCalled();
+      expect(identity.communityMember).toHaveBeenCalledWith(
+        expect.objectContaining({ identityId: resolvedId }),
+        memberId,
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      expect(calls.at(-1)).toMatchObject({
+        method: "editMessageText",
+        payload: {
+          text: expect.stringContaining(
+            "<b>Понизить до гостя?</b>\n\n@lowered",
+          ),
+          reply_markup: {
+            inline_keyboard: [
+              [
+                {
+                  text: "✔️ Да, понизить в гостя",
+                  callback_data: `v1:cm:dy:${memberToken}:m1`,
+                },
+                {
+                  text: "✖️ Нет",
+                  callback_data: `v1:cm:v:${memberToken}:m1`,
+                },
+              ],
+            ],
+          },
+        },
+      });
+    });
+
+    it("demotes on the confirmation and rereads the card with the outcome", async () => {
+      const identity = demoting(guestCard);
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:dy:${memberToken}:m0`));
+
+      expect(identity.demote).toHaveBeenCalledWith(
+        expect.objectContaining({ identityId: resolvedId }),
+        memberId,
+        expect.objectContaining({ useCase: "manage_community" }),
+      );
+      expect(calls.map((call) => call.method)).toEqual([
+        "answerCallbackQuery",
+        "editMessageText",
+      ]);
+      expect(calls[0]?.payload).toMatchObject({ text: "Понижен до гостя." });
+      expect(calls[1]?.payload).toMatchObject({
+        text: "<b>Карточка человека</b>\n\n@lowered\n\nПонижен до гостя.\n\nКруг: гость",
+      });
+      // У гостя кнопки понижения нет: понижать некуда.
+      expect(labelsOf(calls[1]?.payload)).toEqual([
+        "Закрыть доступ",
+        "‹ Состав",
+      ]);
+    });
+
+    it("keeps the card when the demotion is not saved", async () => {
+      const identity = demoting(memberCard);
+      identity.demote.mockResolvedValue({
+        kind: "unavailable",
+        cause: new Error("deadline exceeded"),
+      });
+      const { bot, calls } = createHarness(identity);
+      await bot.init();
+
+      await bot.handleUpdate(callbackUpdate(`v1:cm:dy:${memberToken}:m0`));
+
+      expect(calls[0]?.payload).toMatchObject({
+        text: "Не получилось сохранить. Попробуй ещё раз.",
+      });
+      expect(calls[1]?.payload).toMatchObject({
+        text: expect.stringContaining("<b>Карточка человека</b>"),
+      });
+      expect(calls[1]?.payload).not.toMatchObject({
+        text: expect.stringContaining("Понижен до гостя."),
+      });
+    });
+  });
+
   describe("application card", () => {
     const first: ApplicationCard = {
       applicationId: "0192f3a4-b5c6-7d8e-9f0a-00000000a001",

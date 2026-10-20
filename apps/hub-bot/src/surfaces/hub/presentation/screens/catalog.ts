@@ -548,6 +548,13 @@ export const screenCatalog = {
     nav: "confirm",
     irreversible: true,
   },
+  // Понижение до гостя (PER-642): «✔️» цвета, потому что из карточки человека
+  // участника не вернуть, а о смене круга уходит весть.
+  "community-demote-confirm": {
+    class: "screen",
+    nav: "confirm",
+    irreversible: true,
+  },
   "reconsider-confirm": { class: "screen", nav: "confirm" },
   // Назначение уведомляет человека, снятие подтверждает задача (PER-521);
   // оба обратимы, поэтому «Да» цвета не несёт.
