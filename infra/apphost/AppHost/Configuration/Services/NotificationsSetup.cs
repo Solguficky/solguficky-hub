@@ -86,10 +86,19 @@ internal static class NotificationsSetup
         var clusterId = context.Builder.AddParameter("notifications-cluster-id");
         var serviceId = context.Builder.AddParameter("notifications-service-id");
 
+        // Умолчание категории «Новое в боте» — свойство среды (ADR-069, п. 5):
+        // в чарте оно «выключено», и values stage включают его своим значением.
+        // Значение по умолчанию у параметра есть, в отличие от ClusterId: забытый
+        // ключ в values прода должен оставить сводки выключенными, а не уронить
+        // выкладку.
+        var releaseNotesDefault = context.Builder.AddParameter(
+            "notifications-release-notes-enabled-by-default", "false", publishValueAsDefault: true);
+
         return notifications
             .WithEnvironment("NOTIFICATIONS_SILO_ADVERTISED_HOST", ReferenceExpression.Create($"{grpc.Property(EndpointProperty.Host)}"))
             .WithEnvironment("NOTIFICATIONS_CLUSTER_ID", clusterId)
             .WithEnvironment("NOTIFICATIONS_SERVICE_ID", serviceId)
+            .WithEnvironment("NOTIFICATIONS_RELEASE_NOTES_ENABLED_BY_DEFAULT", releaseNotesDefault)
             .ExportsTelemetryToCollector()
             .AsClusterWorkload(Cluster);
     }

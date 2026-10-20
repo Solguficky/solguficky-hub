@@ -160,6 +160,25 @@ public class ClusterPublishTests
         environment.Keys.ShouldNotContain(key => key.StartsWith("OTEL_EXPORTER_OTLP", StringComparison.Ordinal));
     }
 
+    /// <summary>
+    /// Умолчание категории «Новое в боте» в чарте — «выключено» (ADR-069, п. 5):
+    /// values прода без ключа оставляют сводки выключенными, а не будят людей,
+    /// и stage включает их своим значением. Снимок графа значения не показывает,
+    /// поэтому его держит этот тест.
+    /// </summary>
+    [Fact]
+    public async Task Publish_ReleaseNotesDefault_IsOffUnlessValuesSayOtherwise()
+    {
+        var builder = await PublishModelAsync();
+
+        var environment = await PublishEnvironmentAsync(builder, R.Notifications);
+
+        var parameter = (ParameterResource)environment["NOTIFICATIONS_RELEASE_NOTES_ENABLED_BY_DEFAULT"];
+        parameter.Name.ShouldBe("notifications-release-notes-enabled-by-default");
+        parameter.Secret.ShouldBeFalse();
+        (await parameter.GetValueAsync(TestContext.Current.CancellationToken)).ShouldBe("false");
+    }
+
     private static async Task<Dictionary<string, object>> PublishEnvironmentAsync(
         IDistributedApplicationTestingBuilder builder,
         string name)

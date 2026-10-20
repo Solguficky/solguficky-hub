@@ -124,6 +124,67 @@ public static class RequestValidation
             request.HasLiveFinalOutbids ? request.LiveFinalOutbids : null);
     }
 
+    /// <summary>Идентификатор сводки выпуска.</summary>
+    public static Guid SummaryId(string value) => UuidV7("summary_id", value);
+
+    /// <summary>Предел длины идентификатора записи «Что нового» — имени файла записи.</summary>
+    public const int MaxRecordIdLength = 128;
+
+    /// <summary>
+    /// Предел числа записей в наборе. Набор растёт на запись за видимое
+    /// изменение и не сокращается, но сводка с идентификаторами несёт его
+    /// в факте, и предел держит факт ниже предела шины.
+    /// </summary>
+    public const int MaxRecordCount = 2048;
+
+    /// <summary>
+    /// Полный набор записей образа (ADR-069, п. 2). Пустой набор — значение.
+    /// Пустой идентификатор, повтор в наборе, NUL и длина больше предела
+    /// отвергаются: набор — имена файлов одного каталога, и такой набор значит
+    /// сломанного вызывающего, а не данные, которые стоит помнить.
+    /// </summary>
+    public static IReadOnlyList<string> RecordIds(IReadOnlyList<string> values)
+    {
+        if (values.Count > MaxRecordCount)
+        {
+            throw Invalid("record_ids", $"must not hold more than {MaxRecordCount} ids");
+        }
+
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var value in values)
+        {
+            if (value.Length == 0 || value.Length > MaxRecordIdLength || value.Contains('\0'))
+            {
+                throw Invalid("record_ids", $"must hold non-empty ids of at most {MaxRecordIdLength} characters without NUL");
+            }
+
+            if (!seen.Add(value))
+            {
+                throw Invalid("record_ids", "must not repeat an id");
+            }
+        }
+
+        return values;
+    }
+
+    /// <summary>Размер страницы сводок по умолчанию и его предел.</summary>
+    public const int DefaultSummaryPageSize = 20;
+
+    /// <inheritdoc cref="DefaultSummaryPageSize" />
+    public const int MaxSummaryPageSize = 100;
+
+    /// <summary>0 — размер по умолчанию, больше предела сужается до предела.</summary>
+    public static int SummaryPageSize(uint value) =>
+        value == 0 ? DefaultSummaryPageSize : (int)Math.Min(value, MaxSummaryPageSize);
+
+    /// <summary>
+    /// Продолжение листания: пусто — с самой новой сводки. Токен непрозрачен
+    /// для вызывающего, а сервис кладёт в него последнюю отданную сводку, поэтому
+    /// чужая строка отвергается так же, как кривой идентификатор.
+    /// </summary>
+    public static Guid? SummaryPageToken(string value) =>
+        value.Length == 0 ? null : UuidV7("page_token", value);
+
     /// <summary>
     /// Канонический UUIDv7: строчные буквы, дефисы, версия и вариант по RFC 9562.
     /// Форма повторяет границу Meetups — оба сервиса обязаны отвечать одинаково

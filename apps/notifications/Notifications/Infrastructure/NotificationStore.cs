@@ -3,6 +3,7 @@ using Google.Protobuf;
 using Notifications.Auction;
 using Notifications.Domain;
 using Notifications.Facts;
+using Notifications.ReleaseNotes;
 using Notifications.Replica;
 using Notifications.V1;
 using Npgsql;
@@ -906,6 +907,55 @@ public sealed class NotificationStore(NpgsqlDataSource source)
 
     private static AudienceRow[] EnabledOf(IReadOnlyList<AudienceRow> audience) =>
         audience.Where(static person => person.Enabled).ToArray();
+
+    /// <summary>
+    /// Разворачивает сводку выпуска (PER-628) на держателей права поверхности с
+    /// включённой категорией «Новое в боте» и пишет факты в транзакции
+    /// <paramref name="work" /> — той же, что создала сводку.
+    /// </summary>
+    /// <param name="defaultEnabled">Умолчание категории в этой среде (ADR-069, п. 5).</param>
+    /// <remarks>
+    /// Бот доставки выбирает поверхность сводки, а не круг адресата: сводка
+    /// хаба называет записи образа бота хаба, и бот аукциона их текста не знает.
+    /// </remarks>
+    internal static async Task<FactCount> AddReleaseSummary(
+        UnitOfWork work,
+        ReleaseSurface surface,
+        StoredSummary summary,
+        bool defaultEnabled,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        var audience = await work.Query<AudienceRow>(
+            AudienceSql,
+            new
+            {
+                Default = defaultEnabled,
+                Category = NotificationCategories.Storage(ReleaseFacts.Category),
+                Rights = new[] { surface.Right },
+                Performer = (Guid?)null,
+            },
+            cancellationToken);
+        var routed = audience
+            .Select(person => new AudienceRow
+            {
+                IdentityId = person.IdentityId,
+                Enabled = person.Enabled,
+                DeliverySurface = surface.DeliverySurface,
+            })
+            .ToArray();
+
+        return await Insert(
+            work,
+            new FactCause(ReleaseFacts.SummaryType, ReleaseFacts.SummaryCauseKind, summary.SummaryId.ToString("D"),
+                MeetupId: null, RequestId: null),
+            routed,
+            (id, recipient) => ReleaseFacts.Fact(id, recipient, summary, now, notAfter),
+            now,
+            notAfter,
+            cancellationToken);
+    }
 
     // Держатели права хаба с глобальной настройкой категории. Категория обязана быть
     // глобальной: переопределения по сходке запрос не читает.

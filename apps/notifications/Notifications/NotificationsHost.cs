@@ -4,12 +4,14 @@ using Microsoft.Extensions.Options;
 using NATS.Client.Core;
 using NATS.Client.JetStream;
 using Notifications.Broadcasts;
+using Notifications.Domain;
 using Notifications.Auction;
 using Notifications.Messaging;
 using Notifications.Facts;
 using Notifications.Favorites;
 using Notifications.Infrastructure;
 using Notifications.Preferences;
+using Notifications.ReleaseNotes;
 using Notifications.Reminders;
 using Notifications.Replica;
 using Notifications.Transport;
@@ -307,6 +309,20 @@ public static class NotificationsHost
 
             builder.Services.AddHostedService<NotificationDispatcher>();
         }
+
+        // Умолчания категорий в этой среде (ADR-069, п. 5): разбираются при
+        // сборке хоста, как пояс сообщества, — кривое значение роняет старт, а не
+        // молча выключает сводки.
+        builder.Services.AddSingleton(CategoryDefaults.Parse(builder.Configuration[CategoryDefaults.ReleaseNotesVariable]));
+
+        // Выпуск «Что нового» (PER-628): приём набора поверхности и суточная
+        // сводка. Сводка ложится в outbox и шины не требует, как окна перебитий.
+        builder.Services.AddOptions<ReleaseNotesOptions>()
+            .Bind(builder.Configuration.GetSection(ReleaseNotesOptions.SectionName))
+            .Validate(ReleaseNotesOptions.IsValid, ReleaseNotesOptions.ValidationMessage)
+            .ValidateOnStart();
+        builder.Services.AddSingleton<ReleaseNotesStore>();
+        builder.Services.AddHostedService<ReleaseSummarySweeper>();
 
         // Подписки и настройки категорий. Ни один из трёх типов не знает про
         // Orleans: команды синхронны, а источник истины остаётся в PostgreSQL

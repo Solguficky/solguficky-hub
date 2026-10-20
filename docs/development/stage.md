@@ -30,6 +30,8 @@ Stage — хаб с аукционом и три бота в namespace `test` k3
 
 Бот поддержки ([ADR-068](../decisions/ADR-068-support-bot-with-operator-topics.md)) кладёт темы в тестовую супергруппу операторов, и он в ней администратор с правом управлять темами. Её id и ник бота поддержки — не секреты, а values среды: `config.support_bot.support_bot_group_id` и `config.hub_bot.support_bot_username` с `config.auction_bot.support_bot_username` — генератор чарта заводит ключ имени под каждым ботом, который его читает. Без id группы бот поддержки не стартует. Пустой ник выкладка не ловит, а «Задать вопрос ↗» бота аукциона тогда ведёт на `https://t.me/?start=auction`: ник в values — часть заведения бота, а не необязательная настройка.
 
+Сводка «Что нового» на stage включена тем, кто переключатель не трогал ([ADR-069](../decisions/ADR-069-release-notes-as-environment-data.md), п. 5): values stage ставят `config.notifications.notifications_release_notes_enabled_by_default: "true"`. В чарте значение `false`: среда без ключа шлёт сводку только тем, кто включил категорию сам, а остальным сводки видны лишь в «Что нового». Иное значение, кроме `true` и `false`, роняет старт Notifications.
+
 ## Автовыкладка
 
 Мерж в `develop`, который меняет образ сервиса или чарт, доезжает до stage следующей ночью без ручных шагов (дополнения ADR-055 от 2026-10-07 и 2026-10-18):
