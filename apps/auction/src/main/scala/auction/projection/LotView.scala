@@ -96,7 +96,7 @@ object LotView {
     else if (sequence != version + 1) Left(LotViewDefect.Gap(lotId, version, sequence))
     else {
       val before = current.fold(Lot.initial)(row => LotJournal.restoreLot(row.stored))
-      val after = Lot.apply(before, LotJournal.envelope(sequence, stored))
+      val after = Lot.apply(before, LotJournal.envelope(sequence, stored), stored.occurredAt)
       (after.state, after.auction) match {
         case (LotState.Initial, _) | (_, None) => Left(LotViewDefect.Unborn(lotId, sequence))
         case (_, Some(auction)) =>

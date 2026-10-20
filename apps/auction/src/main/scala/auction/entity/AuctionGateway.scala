@@ -52,6 +52,13 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[DiscardAuctionRejected, AuctionAnswer]]
 
+  /** Публикация или снятие аукциона до торгов (ADR-047, дополнение 2026-10-20). */
+  def changeVisibility(
+      auctionId: AuctionId,
+      command: ChangeVisibility,
+      initiator: Initiator
+  ): Future[Either[VisibilityRejected, AuctionAnswer]]
+
   /** Отмена после старта торгов. Ответ приходит после записи события и снятия лотов не ждёт. */
   def cancel(
       auctionId: AuctionId,
@@ -176,6 +183,13 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[DiscardAuctionRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Discard(command, initiator, _))
+
+      def changeVisibility(
+          auctionId: AuctionId,
+          command: ChangeVisibility,
+          initiator: Initiator
+      ): Future[Either[VisibilityRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Show(command, initiator, _))
 
       def cancel(
           auctionId: AuctionId,

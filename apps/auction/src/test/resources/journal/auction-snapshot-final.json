@@ -12,7 +12,8 @@
       "event": {
         "kind": "AuctionDrafted",
         "auctionDrafted": {
-          "meetupId": "0190f2a0-0000-7000-8000-00000000000a"
+          "meetupId": "0190f2a0-0000-7000-8000-00000000000a",
+          "hidden": true
         },
         "lotAdded": null,
         "lotRemoved": null,
@@ -235,5 +236,6 @@
   ],
   "cancelledBy": null,
   "completed": null,
-  "launched": null
+  "launched": null,
+  "hidden": null
 }

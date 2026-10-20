@@ -198,7 +198,9 @@ final class AuctionOpeningIntegrationSpec
           views.byMeetup(auction.meetup).futureValue.map(_.auction.state) should matchPattern {
             case Some(AuctionState.Prebidding(_, started)) if started == op =>
           }
-          views.page(AuctionListing.Active, None, 10).futureValue.map(_.auctionId) should contain(auction.auction.value)
+          views.page(AuctionListing.Active, None, 10, revealHidden = false).futureValue.map(_.auctionId) should contain(
+            auction.auction.value
+          )
         }
       }
     }

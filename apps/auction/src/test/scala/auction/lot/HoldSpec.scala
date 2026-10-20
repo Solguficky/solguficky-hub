@@ -188,7 +188,8 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
           leader = before.leader,
           leadingBidId = before.leadingBidId,
           proxyLimits = before.proxyLimits,
-          extensionsUsed = before.extensionsUsed
+          extensionsUsed = before.extensionsUsed,
+          course = before.course
         )
       )
     }
@@ -262,7 +263,8 @@ final class HoldSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenProp
         deadline = None,
         extensionsUsed = held.extensionsUsed,
         proxyLimits = held.proxyLimits,
-        markedForFinal = false
+        markedForFinal = false,
+        course = held.course
       )
     }
 

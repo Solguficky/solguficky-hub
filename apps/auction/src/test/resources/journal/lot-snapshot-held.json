@@ -54,7 +54,39 @@
           "setSeq": 5
         }
       ],
-      "extensionsUsed": 0
+      "extensionsUsed": 0,
+      "course": {
+        "startingPrice": {
+          "minorUnits": 10000,
+          "currency": "RUB"
+        },
+        "stepWindows": null,
+        "online": [
+          {
+            "participant": "00000000-0000-0001-0000-000000000002",
+            "kind": "Bid",
+            "amount": {
+              "minorUnits": 10500,
+              "currency": "RUB"
+            },
+            "at": "2026-10-01T09:00:00Z",
+            "sequence": 4
+          },
+          {
+            "participant": "00000000-0000-0001-0000-000000000002",
+            "kind": "LimitSet",
+            "amount": {
+              "minorUnits": 20000,
+              "currency": "RUB"
+            },
+            "at": "2026-10-01T09:00:00Z",
+            "sequence": 5
+          }
+        ],
+        "held": [],
+        "removed": [],
+        "addedWindows": null
+      }
     },
     "sold": null,
     "scheduled": null,
@@ -80,7 +112,8 @@
         "lotHeldForFinal": null,
         "askAdvanced": null,
         "lotWithdrawn": null,
-        "stepWindowAdded": null
+        "stepWindowAdded": null,
+        "participantRemoved": null
       }
     },
     {
@@ -139,7 +172,8 @@
         "lotHeldForFinal": null,
         "askAdvanced": null,
         "lotWithdrawn": null,
-        "stepWindowAdded": null
+        "stepWindowAdded": null,
+        "participantRemoved": null
       }
     },
     {
@@ -200,7 +234,8 @@
         "lotHeldForFinal": null,
         "askAdvanced": null,
         "lotWithdrawn": null,
-        "stepWindowAdded": null
+        "stepWindowAdded": null,
+        "participantRemoved": null
       }
     },
     {
@@ -231,7 +266,8 @@
         "lotHeldForFinal": null,
         "askAdvanced": null,
         "lotWithdrawn": null,
-        "stepWindowAdded": null
+        "stepWindowAdded": null,
+        "participantRemoved": null
       }
     },
     {
@@ -257,7 +293,8 @@
         "lotHeldForFinal": null,
         "askAdvanced": null,
         "lotWithdrawn": null,
-        "stepWindowAdded": null
+        "stepWindowAdded": null,
+        "participantRemoved": null
       }
     },
     {
@@ -277,7 +314,8 @@
         "lotHeldForFinal": null,
         "askAdvanced": null,
         "lotWithdrawn": null,
-        "stepWindowAdded": null
+        "stepWindowAdded": null,
+        "participantRemoved": null
       }
     },
     {
@@ -299,7 +337,8 @@
         },
         "askAdvanced": null,
         "lotWithdrawn": null,
-        "stepWindowAdded": null
+        "stepWindowAdded": null,
+        "participantRemoved": null
       }
     }
   ]

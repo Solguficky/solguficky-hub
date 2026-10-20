@@ -1720,6 +1720,21 @@ const COMMAND_CASES: readonly AuctionContractCase[] = [
       refusal: { kind: "bid-below-minimum", minRequired: rub(1300) },
     }),
   },
+  // Снятый с лота (ADR-072) — тоже именованный отказ: один вызов, без повтора.
+  {
+    intent: "bid: refused to a participant removed from the lot",
+    callbackData: commitCallback("bid", 125000),
+    auction: {
+      ...AUCTION,
+      bids: [{ kind: "refused", refusal: { kind: "removed-from-lot" } }],
+    },
+    auctionCalls: [LOT_CALL, bidCall(125000)],
+    body: resultBody({
+      command: "bid",
+      kind: "refused",
+      refusal: { kind: "removed-from-lot" },
+    }),
+  },
   {
     intent: "bid: refused to the leader",
     callbackData: commitCallback("bid", 130000),

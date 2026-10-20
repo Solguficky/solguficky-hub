@@ -104,7 +104,8 @@ object Lot {
     }
 
   /**
-   * Приём ставки (П-01), ответ прокси на неё (П-02) и продление дедлайна (П-04).
+   * Приём ставки (П-01), ответ прокси на неё (П-02) и продление дедлайна (П-04). Снятый с лота участник получает
+   * `ParticipantRemovedFromLot` до остальных проверок, в торгах и в удержании (ADR-072, И-22).
    *
    * `seen` проверяется до разбора состояния: повтор ставки, принятой до удержания, получает исходный ответ, а не
    * `LotOnHold` (RFC-011, П-09). `bidId` и `proxyBidId` приходят снаружи, как и любой идентификатор: решение не рождает
@@ -127,6 +128,10 @@ object Lot {
       lot.state match {
         case LotState.Initial => Left(PlaceBidRejected.LotNotFound)
         case LotState.Draft | LotState.Scheduled(_) => Left(PlaceBidRejected.LotNotOpen)
+        case LotState.Trading(trading) if removedFrom(trading.course, command.participant) =>
+          Left(PlaceBidRejected.ParticipantRemovedFromLot)
+        case LotState.Held(held) if removedFrom(held.course, command.participant) =>
+          Left(PlaceBidRejected.ParticipantRemovedFromLot)
         case LotState.Trading(trading) =>
           placeBid(trading, command, bidId, now).map { placed =>
             val derived = resolve(bidden(trading, placed), proxyBidId, now)
@@ -142,7 +147,7 @@ object Lot {
    * Прокси-лимит (ADR-047). В торгах за `ProxyLimitSet` идёт пересчёт П-02 на состоянии после него, и производная
    * ставка, если она есть, пишется той же транзакцией — одним событием с итоговой ценой, а за ней продление П-04 на
    * время `now`. Лимит без производной ставки ставкой не является и дедлайн не продлевает. В удержании лимит
-   * записывается без пересчёта и ждёт финала (RFC-011, П-09); дедлайна там нет.
+   * записывается без пересчёта и ждёт финала (RFC-011, П-09); дедлайна там нет. Снятому с лота — как у ставки.
    *
    * `sequence` — номер, который получит `ProxyLimitSet` в журнале. Его назначает тот, кто пишет журнал, и передаёт сюда
    * так же, как идентификаторы: пересчёт идёт на том же состоянии, что даст [[apply]] с этим номером из конверта, и
@@ -163,6 +168,10 @@ object Lot {
         case LotState.Initial => Left(SetProxyLimitRejected.LotNotFound)
         case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
           Left(SetProxyLimitRejected.LotNotOpen)
+        case LotState.Trading(trading) if removedFrom(trading.course, command.participant) =>
+          Left(SetProxyLimitRejected.ParticipantRemovedFromLot)
+        case LotState.Held(held) if removedFrom(held.course, command.participant) =>
+          Left(SetProxyLimitRejected.ParticipantRemovedFromLot)
         case LotState.Trading(trading) =>
           proxyLimitSet(trading.config, floor(trading), command).map { set =>
             val after = trading.copy(proxyLimits = limited(trading.proxyLimits, set, sequence))
@@ -335,6 +344,141 @@ object Lot {
           }
       }
     }
+
+  /**
+   * Снятие участника с лота (ADR-072). Повтор — только своей команды: снятие того же участника. Порядок проверок:
+   * состояние, фаза, дедлайн тем же судьёй, что у отметки финала, затем сам участник. Итог переигрывания торгов без
+   * снятого — [[rerun]] — ложится в событие, а `positionId` — новая ставка, позиция лидера (п. 1): ставки, которой
+   * лидер держался бы без снятого, в журнале может не быть.
+   *
+   * Снятие в окне анти-снайпа продлевает торги, только если сменило лидера или цену (п. 3): `DeadlineExtended` идёт
+   * следом с прежним `extensionsUsed` — предел у этого продления свой, одно на снятого, и `K` он не тратит. В удержании
+   * дедлайна нет, и продления тоже.
+   */
+  def decide(
+      lot: Lot,
+      command: RemoveParticipant,
+      positionId: BidId,
+      now: Instant
+  ): Either[RemoveParticipantRejected, Decision] =
+    repeatOf(lot, command.opId, RemoveParticipantRejected.OpIdTaken) {
+      case LotEvent.ParticipantRemoved(participant, _, _, _) => participant == command.participant
+      case _ => false
+    }.getOrElse {
+      lot.state match {
+        case LotState.Initial => Left(RemoveParticipantRejected.LotNotFound)
+        case LotState.Draft | LotState.Scheduled(_) | LotState.Sold(_) | LotState.Unsold(_) | LotState.Withdrawn(_) =>
+          Left(RemoveParticipantRejected.LotNotOpen)
+        case LotState.Trading(trading) =>
+          if (trading.phase != Phase.Online) Left(RemoveParticipantRejected.NotInOnlinePhase)
+          else if (deadlinePassed(trading, now)) Left(RemoveParticipantRejected.DeadlinePassed)
+          else
+            removal(trading.config, historyOf(trading.course), command.participant, positionId, trading.currentPrice)
+              .map { removed =>
+                val changed = removed.leader != trading.leader || removed.price != trading.currentPrice
+                Decision.Accepted(removed, if (changed) extendedByRemoval(trading, now).toList else Nil)
+              }
+        case LotState.Held(held) =>
+          removal(held.config, historyOf(held.course), command.participant, positionId, held.currentPrice)
+            .map(Decision.Accepted(_))
+      }
+    }
+
+  /**
+   * Снятие по истории: снятого второй раз не снимают (И-22), а участник лота — тот, у кого есть принятая ручная ставка
+   * или выставленный лимит, в том числе снятый потом им самим (ADR-072, п. 1).
+   *
+   * Лидера даёт переигрывание, а цена — меньшая из переигранной и `ceiling`, цены до снятия (И-23). Без снятого лимит
+   * соперника может прийти раньше, при цене ниже, и поднять лидера выше прежней цены; снятие защищает оставшихся, и
+   * платить за чужую накрутку больше лидер не должен (решение владельца на PER-657).
+   */
+  private def removal(
+      config: LotConfig,
+      course: Course,
+      participant: ParticipantId,
+      positionId: BidId,
+      ceiling: Money
+  ): Either[RemoveParticipantRejected, LotEvent.ParticipantRemoved] =
+    if (course.removed.contains(participant)) Left(RemoveParticipantRejected.ParticipantAlreadyRemoved)
+    else if (!(course.online ++ course.held).exists(entry => entry.participant == participant && committed(entry)))
+      Left(RemoveParticipantRejected.NotALotParticipant)
+    else {
+      val result = rerun(config, course, course.removed + participant, positionId)
+      val price = if (result.currentPrice <= ceiling) result.currentPrice else ceiling
+      Right(LotEvent.ParticipantRemoved(participant, price, result.leader, result.leadingBidId))
+    }
+
+  /** Вход, который делает человека участником лота: ставка или выставленный лимит, а не снятие лимита. */
+  private def committed(entry: Entry): Boolean =
+    entry.move match {
+      case Move.Bid(_) | Move.LimitSet(_) => true
+      case Move.LimitWithdrawn => false
+    }
+
+  /**
+   * Переигрывание торгов без `without` (ADR-072, п. 2) от стартовой цены по входам оставшихся в порядке журнала.
+   * Правила те же, что в торгах, и функции те же: ручная ставка ложится [[bidden]] без проверок П-01 — она уже принята,
+   * и отказ при повторе был бы новым решением за участника, — а её участник, который при повторе уже лидер, поднимает
+   * цену до своей суммы, но не опускает её. Лимиты выставляются и снимаются в свои моменты, и на каждый вход
+   * онлайн-недели отвечает [[resolve]] с шагом П-03 на момент входа, то есть и с окнами сниженного шага — теми, что лот
+   * знал к этому входу ([[Course.windowsAt]]): окно, запущенное по ходу торгов, действует с его строки. Лимиты
+   * удержания только записываются: в торгах пересчёт на них не шёл. Анти-снайп и дедлайн не переигрываются — их здесь
+   * нет.
+   *
+   * Позиция лидера — `positionId` у любой ставки повтора: какая ставка её дала, событию не важно, а сумма позиции —
+   * итоговая цена.
+   */
+  private def rerun(config: LotConfig, course: Course, without: Set[ParticipantId], positionId: BidId): TradingState = {
+    val start = TradingState(
+      config = config,
+      currentPrice = course.startingPrice,
+      ask = None,
+      leader = None,
+      leadingBidId = None,
+      phase = Phase.Online,
+      deadline = None,
+      extensionsUsed = 0,
+      proxyLimits = Map.empty,
+      markedForFinal = false,
+      course = None,
+      stepWindows = course.stepWindows
+    )
+    val kept = (entry: Entry) => !without.contains(entry.participant)
+    val answered = (trading: TradingState, at: Instant) =>
+      resolve(trading, positionId, at).fold(trading)(bidden(trading, _))
+    val known = (trading: TradingState, entry: Entry) => trading.copy(stepWindows = course.windowsAt(entry.sequence))
+    val limit = (trading: TradingState, entry: Entry, max: Money) =>
+      trading.copy(proxyLimits = trading.proxyLimits.updated(entry.participant, ProxyLimit(max, entry.sequence)))
+    val online = course.online.filter(kept).foldLeft(start) { (before, entry) =>
+      val trading = known(before, entry)
+      entry.move match {
+        case Move.Bid(amount) =>
+          val price = if (trading.leader.contains(entry.participant)) greater(trading.currentPrice, amount) else amount
+          val placed: LotEvent.BidPlaced =
+            LotEvent.BidPlaced(positionId, entry.participant, price, trading.leader, BidOrigin.Proxy)
+          answered(bidden(trading, placed), entry.at)
+        case Move.LimitSet(max) => answered(limit(trading, entry, max), entry.at)
+        case Move.LimitWithdrawn => trading.copy(proxyLimits = trading.proxyLimits.removed(entry.participant))
+      }
+    }
+    course.held.filter(kept).foldLeft(online) { (trading, entry) =>
+      entry.move match {
+        case Move.LimitSet(max) => limit(trading, entry, max)
+        case Move.LimitWithdrawn => trading.copy(proxyLimits = trading.proxyLimits.removed(entry.participant))
+        case Move.Bid(_) => trading
+      }
+    }
+  }
+
+  /**
+   * История торгов, без которой снятие не решается. Её нет только у состояния из строки прежней формы, а entity
+   * поднимает лот replay'ем журнала (`LotEntity`), поэтому здесь её отсутствие — дефект, а не отказ.
+   */
+  private def historyOf(course: Option[Course]): Course =
+    course.getOrElse(throw new IllegalStateException("lot decided a removal without its trading history"))
+
+  private def removedFrom(course: Option[Course], participant: ParticipantId): Boolean =
+    course.exists(_.removed.contains(participant))
 
   /**
    * Снятие с торгов по отмене аукциона (ADR-047, дополнение 2026-10-12): что завершилось, остаётся, что идёт,
@@ -596,10 +740,25 @@ object Lot {
   private[lot] def extended(trading: TradingState, now: Instant): Option[LotEvent.DeadlineExtended] = {
     val antiSnipe = trading.config.antiSnipe
     trading.deadline
-      .filter(deadline => now.isAfter(deadline.minus(antiSnipe.window)))
+      .filter(inAntiSnipeWindow(trading, _, now))
       .filter(_ => trading.extensionsUsed < antiSnipe.maxExtensions)
       .map(deadline => LotEvent.DeadlineExtended(deadline.plus(antiSnipe.extension), trading.extensionsUsed + 1))
   }
+
+  /**
+   * Продление за снятием участника (ADR-072, п. 3): то же окно и та же длина продления, что у анти-снайпа, но счётчик
+   * прежний и `K` не проверяется — предел у него свой, одно продление на снятого (И-12).
+   */
+  private def extendedByRemoval(trading: TradingState, now: Instant): Option[LotEvent.DeadlineExtended] =
+    trading.deadline
+      .filter(inAntiSnipeWindow(trading, _, now))
+      .map(deadline =>
+        LotEvent.DeadlineExtended(deadline.plus(trading.config.antiSnipe.extension), trading.extensionsUsed)
+      )
+
+  /** Команда в момент `now` попала в окно анти-снайпа: ровно `deadline − window` в окно не входит. */
+  private def inAntiSnipeWindow(trading: TradingState, deadline: Instant, now: Instant): Boolean =
+    now.isAfter(deadline.minus(trading.config.antiSnipe.window))
 
   private def proxyBid(
       bidId: BidId,
@@ -633,8 +792,17 @@ object Lot {
       deadline = None,
       extensionsUsed = held.extensionsUsed,
       proxyLimits = held.proxyLimits,
-      markedForFinal = false
+      markedForFinal = false,
+      course = held.course
     )
+
+  /**
+   * История после входа в торгах: входы онлайн-недели копятся, входы живого финала — нет (см. [[Course]]). Неизвестная
+   * история остаётся неизвестной.
+   */
+  private def online(trading: TradingState, entry: Entry): Option[Course] =
+    if (trading.phase == Phase.Online) trading.course.map(course => course.copy(online = course.online :+ entry))
+    else trading.course
 
   /** Лимиты после `ProxyLimitSet`: новый заменяет прежний лимит участника (И-03). */
   private def limited(
@@ -653,13 +821,19 @@ object Lot {
    * `LotOpened` без `LotDrafted`, лота не рождает. `ProxyLimitSet` получает `setSeq` из `sequence` своего конверта.
    * `DeadlineExtended` ставит дедлайн и счётчик из события, а не прибавляет к ним.
    *
+   * `at` — момент команды, `occurred_at` строки (ADR-047): время конверта ядро читает только здесь, записывая вход в
+   * историю торгов (ADR-072, п. 2) — ручную ставку, выставленный и снятый лимит, — а номер входа берётся из `sequence`,
+   * как `setSeq`. `ParticipantRemoved` только присваивает итог из события, убирает лимит снятого и помечает его снятым:
+   * переигрывает [[decide]].
+   *
    * Удержание `LotHeldForFinal` переносит цену, лидера, лимиты и счётчик продлений из торгов как есть, а возврат
    * `LotResumed` строит торги живого финала из удержания: фаза `Live`, без дедлайна и ask, отметка снята (П-09).
    * `AskAdvanced` ставит ask и больше ничего не трогает: цену и лидера меняет только ставка (П-08). `StepWindowAdded`
    * дописывает окно к окнам торгов в порядке начала (И-21). Окон сниженного шага удержание не несёт (RFC-011,
    * «Состояние лота»), и в финале их нет; правило шага не применяет их в `Live` и тогда, когда они в состоянии лежат.
    */
-  def apply(lot: Lot, envelope: Envelope): Lot = {
+  def apply(lot: Lot, envelope: Envelope, at: Instant): Lot = {
+    val entry = (participant: ParticipantId, move: Move) => Entry(participant, move, at, envelope.sequence)
     val state = (lot.state, envelope.event) match {
       case (LotState.Initial, LotEvent.LotDrafted(_)) => LotState.Draft
       case (LotState.Draft | LotState.Scheduled(_), LotEvent.LotScheduled(schedule)) => LotState.Scheduled(schedule)
@@ -676,6 +850,7 @@ object Lot {
             extensionsUsed = 0,
             proxyLimits = Map.empty,
             markedForFinal = false,
+            course = Some(Course.opened(opened.startingPrice, opened.stepWindows)),
             stepWindows = opened.stepWindows
           )
         )
@@ -691,24 +866,81 @@ object Lot {
             leader = trading.leader,
             leadingBidId = trading.leadingBidId,
             proxyLimits = trading.proxyLimits,
-            extensionsUsed = trading.extensionsUsed
+            extensionsUsed = trading.extensionsUsed,
+            course = trading.course
           )
         )
       case (LotState.Held(held), LotEvent.LotResumed) => LotState.Trading(resumed(held))
       case (LotState.Trading(trading), LotEvent.AskAdvanced(ask)) => LotState.Trading(trading.copy(ask = Some(ask)))
+      // Окно ложится и в историю с номером строки: переигрывание даст его только входам после неё (ADR-072, п. 2).
       case (LotState.Trading(trading), LotEvent.StepWindowAdded(window)) =>
-        LotState.Trading(trading.copy(stepWindows = (trading.stepWindows :+ window).sortBy(_.from)))
-      case (LotState.Trading(trading), placed: LotEvent.BidPlaced) => LotState.Trading(bidden(trading, placed))
+        LotState.Trading(
+          trading.copy(
+            stepWindows = (trading.stepWindows :+ window).sortBy(_.from),
+            course = trading.course.map(course =>
+              course.copy(addedWindows = course.addedWindows :+ AddedWindow(window, envelope.sequence))
+            )
+          )
+        )
+      case (LotState.Trading(trading), placed: LotEvent.BidPlaced) =>
+        val course = placed.origin match {
+          case BidOrigin.Manual(_) => online(trading, entry(placed.participant, Move.Bid(placed.amount)))
+          case BidOrigin.Proxy => trading.course
+        }
+        LotState.Trading(bidden(trading, placed).copy(course = course))
       case (LotState.Trading(trading), LotEvent.DeadlineExtended(deadline, extensionsUsed)) =>
         LotState.Trading(trading.copy(deadline = Some(deadline), extensionsUsed = extensionsUsed))
       case (LotState.Trading(trading), set: LotEvent.ProxyLimitSet) =>
-        LotState.Trading(trading.copy(proxyLimits = limited(trading.proxyLimits, set, envelope.sequence)))
+        LotState.Trading(
+          trading.copy(
+            proxyLimits = limited(trading.proxyLimits, set, envelope.sequence),
+            course = online(trading, entry(set.participant, Move.LimitSet(set.max)))
+          )
+        )
       case (LotState.Held(held), set: LotEvent.ProxyLimitSet) =>
-        LotState.Held(held.copy(proxyLimits = limited(held.proxyLimits, set, envelope.sequence)))
+        LotState.Held(
+          held.copy(
+            proxyLimits = limited(held.proxyLimits, set, envelope.sequence),
+            course = held.course.map(course =>
+              course.copy(held = course.held :+ entry(set.participant, Move.LimitSet(set.max)))
+            )
+          )
+        )
       case (LotState.Trading(trading), LotEvent.ProxyLimitWithdrawn(participant)) =>
-        LotState.Trading(trading.copy(proxyLimits = trading.proxyLimits.removed(participant)))
+        LotState.Trading(
+          trading.copy(
+            proxyLimits = trading.proxyLimits.removed(participant),
+            course = online(trading, entry(participant, Move.LimitWithdrawn))
+          )
+        )
       case (LotState.Held(held), LotEvent.ProxyLimitWithdrawn(participant)) =>
-        LotState.Held(held.copy(proxyLimits = held.proxyLimits.removed(participant)))
+        LotState.Held(
+          held.copy(
+            proxyLimits = held.proxyLimits.removed(participant),
+            course =
+              held.course.map(course => course.copy(held = course.held :+ entry(participant, Move.LimitWithdrawn)))
+          )
+        )
+      case (LotState.Trading(trading), removed: LotEvent.ParticipantRemoved) =>
+        LotState.Trading(
+          trading.copy(
+            currentPrice = removed.price,
+            leader = removed.leader,
+            leadingBidId = removed.leadingBidId,
+            proxyLimits = trading.proxyLimits.removed(removed.participant),
+            course = trading.course.map(course => course.copy(removed = course.removed + removed.participant))
+          )
+        )
+      case (LotState.Held(held), removed: LotEvent.ParticipantRemoved) =>
+        LotState.Held(
+          held.copy(
+            currentPrice = removed.price,
+            leader = removed.leader,
+            leadingBidId = removed.leadingBidId,
+            proxyLimits = held.proxyLimits.removed(removed.participant),
+            course = held.course.map(course => course.copy(removed = course.removed + removed.participant))
+          )
+        )
       case (LotState.Trading(_) | LotState.Held(_), sold: LotEvent.LotSold) =>
         LotState.Sold(Sale(sold.winner, sold.price, sold.bidId, sold.at))
       case (LotState.Trading(_) | LotState.Held(_), LotEvent.LotUnsold(reason)) => LotState.Unsold(reason)
@@ -738,9 +970,10 @@ object Lot {
     }
 
   /**
-   * Свёртка журнала в порядке `sequence` (П-07): при равных суммах лидирует ставка, записанная первой, и время события
-   * в сравнении не участвует. Порядок, в котором строки пришли к вызывающему, на итог не влияет.
+   * Свёртка журнала в порядке `sequence` (П-07); строка журнала — конверт и его момент: при равных суммах лидирует
+   * ставка, записанная первой, и время события в сравнении не участвует. Порядок, в котором строки пришли к
+   * вызывающему, на итог не влияет.
    */
-  def replay(from: Lot, journal: Seq[Envelope]): Lot =
-    journal.sortBy(_.sequence).foldLeft(from)((lot, envelope) => apply(lot, envelope))
+  def replay(from: Lot, journal: Seq[Written]): Lot =
+    journal.sortBy(_.envelope.sequence).foldLeft(from)((lot, row) => apply(lot, row.envelope, row.at))
 }

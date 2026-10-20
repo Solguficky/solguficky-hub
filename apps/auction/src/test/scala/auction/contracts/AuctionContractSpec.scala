@@ -106,8 +106,11 @@ final class AuctionContractSpec extends AnyWordSpec with Matchers {
       val reservedBySnapshot = AuctionSnapshot.javaDescriptor.toProto.getReservedRangeList.asScala
         .flatMap(range => range.getStart until range.getEnd)
       val busOnly = Set(AuctionState.javaDescriptor.findFieldByName("discarded").getNumber)
+      // Признак скрытия есть только у чтения: факта публикации и снятия на шине ещё нет, и поле состояния устаревало
+      // бы до следующего факта. Его приносит PER-646 вместе с фактами (ADR-047, дополнение 2026-10-20).
+      val readOnly = Set(AuctionSnapshot.javaDescriptor.findFieldByName("hidden").getNumber)
 
-      snapshot.foreach { case (number, field) => state.get(number) shouldBe Some(field) }
+      (snapshot -- readOnly).foreach { case (number, field) => state.get(number) shouldBe Some(field) }
       (state.keySet -- snapshot.keySet) should contain theSameElementsAs (reservedBySnapshot ++ busOnly)
       AuctionSnapshot.javaDescriptor.toProto.getReservedNameList.asScala should contain theSameElementsAs
         reservedBySnapshot.map(number => AuctionState.javaDescriptor.findFieldByNumber(number).getName)

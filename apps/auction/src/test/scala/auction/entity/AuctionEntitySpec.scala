@@ -172,7 +172,7 @@ final class AuctionEntitySpec
       Lot.decide(lots(lot), command, LotFixtures.bid(90), LotFixtures.proxyBid(90), at) match {
         case Right(Decision.Accepted(event, derived)) =>
           val after = (event :: derived).foldLeft(lots(lot)) { (current, each) =>
-            Lot.apply(current, Envelope(current.seen.size.toLong + 1, command.opId, each))
+            Lot.apply(current, Envelope(current.seen.size.toLong + 1, command.opId, each), at)
           }
           lots = lots.updated(lot, after)
         case other => throw new AssertionError(s"the lot did not take the bid: $other")
@@ -268,7 +268,7 @@ final class AuctionEntitySpec
         case Decision.Accepted(event, _) =>
           val current = lots(lot)
           val sequence = current.seen.size.toLong + 1
-          lots = lots.updated(lot, Lot.apply(current, Envelope(sequence, opId, event)))
+          lots = lots.updated(lot, Lot.apply(current, Envelope(sequence, opId, event), LotFixtures.calm))
           event
         case Decision.Repeated(original) => original.event
       }

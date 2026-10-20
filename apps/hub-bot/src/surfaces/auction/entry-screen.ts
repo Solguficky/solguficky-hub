@@ -1355,6 +1355,9 @@ export function resultOutcome(result: CommandResult): Outcome {
     // Выбор имени — свой экран, а не отказ: сюда отказ не доходит.
     case "display-name-not-chosen":
       return { title: "Выбери имя в аукционе" };
+    // Снял администратор (ADR-072): кто и почему, ответ не несёт.
+    case "removed-from-lot":
+      return { title: "Ставки на этом лоте для тебя закрыты" };
     default: {
       const _exhaustive: never = refusal;
       return _exhaustive;

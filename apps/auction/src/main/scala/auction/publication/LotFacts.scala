@@ -84,6 +84,8 @@ object LotFacts {
       case LotEvent.ProxyLimitSet(_, _) | LotEvent.ProxyLimitWithdrawn(_) | LotEvent.LotMarkedForFinal |
           LotEvent.LotUnmarkedForFinal =>
         None
+      // Повода снятия в шине ещё нет: его вводит граница снятия (PER-658), а до неё команда снаружи не приходит.
+      case LotEvent.ParticipantRemoved(_, _, _, _) => None
     }
 
   /** Публичное состояние лота: без прокси-лимитов и без того, что снимок ответа считает для одного смотрящего. */

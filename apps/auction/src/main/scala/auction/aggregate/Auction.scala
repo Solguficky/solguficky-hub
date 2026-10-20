@@ -105,6 +105,12 @@ final case class StartPrebidding(opId: OpId)
 final case class DiscardAuction(opId: OpId)
 
 /**
+ * Видимость аукциона участникам (ADR-047, дополнение 2026-10-20): `published` — опубликовать, иначе снять. Обе команды
+ * — только до открытия торгов: открытие публикует аукцион само.
+ */
+final case class ChangeVisibility(published: Boolean, opId: OpId)
+
+/**
  * Отмена аукциона после старта торгов (ADR-047, дополнение 2026-10-12): что завершилось, остаётся, что идёт,
  * обрывается. Лоты и розыгрыш снимает не сама команда, а протокол после неё ([[LotRoster]]).
  */
@@ -219,10 +225,14 @@ object LotTerms {
  * заканчивается без финалистов, решают ответы лотов, которых журнал не хранит, а свёртке нужно знать это из самого
  * события. Состав финала — порядок выхода в `FinalLineupFrozen`, возвращённый в торги лот — в `FinalLotActivated`,
  * завершённый — в `FinalLotCompleted`. `AuctionFinished` — конец аукциона с финалом; у аукциона без финала его не
- * бывает, тот кончается `PrebiddingEnded(finished = true)`.
+ * бывает, тот кончается `PrebiddingEnded(finished = true)`. Рождение несёт `hidden`: новый аукцион скрыт от участников,
+ * а строка, записанная до признака видимости, читается видимой (ADR-047, дополнение 2026-10-20). `AuctionPublished` и
+ * `AuctionHidden` payload не несут.
  */
 enum AuctionEvent {
-  case AuctionDrafted(meetup: MeetupId)
+  case AuctionDrafted(meetup: MeetupId, hidden: Boolean = true)
+  case AuctionPublished
+  case AuctionHidden
   case LotAdded(lot: LotId)
   case LotRemoved(lot: LotId)
   case AuctionScheduled(config: AuctionConfig)
@@ -268,6 +278,12 @@ enum ScheduleAuctionRejected {
 
 /** Отказы `DiscardAuction`: аукциона нет или торги уже открыты — ставки могли быть, и удалять поздно. */
 enum DiscardAuctionRejected {
+  case AuctionNotFound
+  case AuctionAlreadyStarted
+}
+
+/** Отказы публикации и снятия: аукциона нет или торги уже открыты — открытие опубликовало аукцион само. */
+enum VisibilityRejected {
   case AuctionNotFound
   case AuctionAlreadyStarted
 }
@@ -456,14 +472,16 @@ enum Inspection {
  * `meetup` пуста ровно в `Initial` и после рождения не меняется. Реестр `lots` меняется только в `Draft` и `Scheduled`
  * (И-20). `seen` — то же окно, что у лота: `seen(op_id) ⟺ в журнале есть событие с этим op_id`, и пишет его только
  * [[Auction.apply]]. `launched` — окна сниженного шага, запущенные по ходу торгов, в порядке записи (ADR-047,
- * дополнение 2026-10-12): объявленные лежат в конфигурации, и пересечения запуск проверяет по обоим спискам.
+ * дополнение 2026-10-12): объявленные лежат в конфигурации, и пересечения запуск проверяет по обоим спискам. `hidden` —
+ * аукцион скрыт от участников (ADR-047, дополнение 2026-10-20); бывает только в `Draft` и `Scheduled`.
  */
 final case class Auction(
     state: AuctionState,
     meetup: Option[MeetupId],
     lots: Set[LotId],
     seen: Map[OpId, AuctionEnvelope],
-    launched: List[LaunchedWindow] = Nil
+    launched: List[LaunchedWindow] = Nil,
+    hidden: Boolean = false
 )
 
 object Auction {
@@ -526,7 +544,8 @@ object Auction {
       case Some(original) => AuctionDecision.Repeated(original)
       case None =>
         auction.state match {
-          case AuctionState.Initial => AuctionDecision.Accepted(AuctionEvent.AuctionDrafted(command.meetup))
+          case AuctionState.Initial =>
+            AuctionDecision.Accepted(AuctionEvent.AuctionDrafted(command.meetup, hidden = true))
           case AuctionState.Draft | AuctionState.Scheduled(_) | AuctionState.Prebidding(_, _) |
               AuctionState.Settling(_, _) | AuctionState.Break(_, _) | AuctionState.LineupFrozen(_, _, _) |
               AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) | AuctionState.Cancelled(_, _, _) =>
@@ -644,6 +663,27 @@ object Auction {
               AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
               AuctionState.Cancelled(_, _, _) =>
             Left(DiscardAuctionRejected.AuctionAlreadyStarted)
+        }
+    }
+
+  /**
+   * Публикация и снятие (ADR-047, дополнение 2026-10-20): только в `Draft` и `Scheduled`, после открытия торгов —
+   * `AuctionAlreadyStarted`. Видимость, которая уже такая, пишет событие ещё раз, как `LotAdded`: ответ без события
+   * повтором не защищён, и запоздавший повтор публикации после снятия опубликовал бы аукцион снова.
+   */
+  def decide(auction: Auction, command: ChangeVisibility): Either[VisibilityRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(VisibilityRejected.AuctionNotFound)
+          case AuctionState.Draft | AuctionState.Scheduled(_) =>
+            if (command.published) Right(AuctionDecision.Accepted(AuctionEvent.AuctionPublished))
+            else Right(AuctionDecision.Accepted(AuctionEvent.AuctionHidden))
+          case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            Left(VisibilityRejected.AuctionAlreadyStarted)
         }
     }
 
@@ -1028,16 +1068,21 @@ object Auction {
    */
   def apply(auction: Auction, envelope: AuctionEnvelope): Auction = {
     val next = (auction.state, envelope.event) match {
-      case (AuctionState.Initial, AuctionEvent.AuctionDrafted(meetup)) =>
-        auction.copy(state = AuctionState.Draft, meetup = Some(meetup))
+      case (AuctionState.Initial, AuctionEvent.AuctionDrafted(meetup, hidden)) =>
+        auction.copy(state = AuctionState.Draft, meetup = Some(meetup), hidden = hidden)
+      case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.AuctionPublished) =>
+        auction.copy(hidden = false)
+      case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.AuctionHidden) =>
+        auction.copy(hidden = true)
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotAdded(lot)) =>
         auction.copy(lots = auction.lots + lot)
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotRemoved(lot)) =>
         auction.copy(lots = auction.lots - lot)
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.AuctionScheduled(config)) =>
         auction.copy(state = AuctionState.Scheduled(config))
+      // Открытие торгов публикует скрытый аукцион само (ADR-047, дополнение 2026-10-20): торги скрытыми не идут.
       case (AuctionState.Scheduled(config), AuctionEvent.PrebiddingStarted) =>
-        auction.copy(state = AuctionState.Prebidding(config, envelope.opId))
+        auction.copy(state = AuctionState.Prebidding(config, envelope.opId), hidden = false)
       // Сходка, реестр и конфигурация уходят, окно `seen` остаётся: повтор любой прежней команды узнаёт свой ответ.
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.AuctionDiscarded) =>
         Auction.initial.copy(seen = auction.seen)

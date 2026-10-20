@@ -137,7 +137,7 @@ final class StepWindowSpec extends AnyWordSpec with Matchers with ScalaCheckDriv
       val (_, opened) = Journal
         .of(scheduled())
         .open(OpenLot(Some(deadline), op(1), List(happyHours)))
-      val restored = Lot.replay(scheduled(), opened.entries)
+      val restored = Lot.replay(scheduled(), opened.rows)
       val (_, led) = Journal.of(restored).submit(placeBid(who = 2, amount = 100, opN = 2), bid(2), now = at("13:00"))
 
       tradingOf(restored).stepWindows shouldBe List(happyHours)
@@ -224,7 +224,7 @@ final class StepWindowSpec extends AnyWordSpec with Matchers with ScalaCheckDriv
       val (_, opened) = Journal.of(scheduled()).open(OpenLot(Some(deadline), op(1), List(happyHours)))
       val (_, launched) = opened.addWindow(AddStepWindow(later, op(2)))
 
-      tradingOf(Lot.replay(scheduled(), launched.entries)).stepWindows shouldBe List(happyHours, later)
+      tradingOf(Lot.replay(scheduled(), launched.rows)).stepWindows shouldBe List(happyHours, later)
     }
 
     "answer a launched window delivered again with the original event and write nothing" in {

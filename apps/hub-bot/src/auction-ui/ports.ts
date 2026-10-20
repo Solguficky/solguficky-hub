@@ -454,14 +454,19 @@ export type BidRefusal =
   | { kind: "bid-not-at-next-price"; expected: Money }
   | { kind: "bidder-is-leader"; currentPrice: Money }
   | { kind: "currency-mismatch" }
-  | { kind: "display-name-not-chosen" };
+  | { kind: "display-name-not-chosen" }
+  | { kind: "removed-from-lot" };
 
+// `removed-from-lot` у ставки и у лимита — администратор снял участника с лота
+// (ADR-072): ставить и выставлять лимит на этом лоте он больше не может, а кто
+// и почему снял, ответ не несёт.
 export type ProxyLimitRefusal =
   | { kind: "lot-not-open" }
   | { kind: "proxy-below-current-price"; minLimit: Money }
   | { kind: "proxy-disabled" }
   | { kind: "currency-mismatch" }
-  | { kind: "display-name-not-chosen" };
+  | { kind: "display-name-not-chosen" }
+  | { kind: "removed-from-lot" };
 
 // Исход команды с `op_id`. `unanswered` — ответа не было вовсе: дедлайн вызова
 // истёк или связь оборвалась. Только его пакет повторяет, и тем же `op_id`:
