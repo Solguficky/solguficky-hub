@@ -149,8 +149,15 @@ message PlaceBidRefusal {
     NotMeetupAdministrator not_meetup_administrator = 8;
     MeetupNotFound meetup_not_found = 9;
     ParticipantCannotBid participant_cannot_bid = 10;
+
+    // The participant was removed from this lot; for a floor bid, the participant it names.
+    ParticipantRemovedFromLot participant_removed_from_lot = 11;
   }
 }
+
+// The participant was removed from the lot and may no longer bid or set a proxy limit
+// on it. Who removed them and why is deliberately not carried.
+message ParticipantRemovedFromLot {}
 
 // The participant named by a floor bid does not hold place_bids.
 message ParticipantCannotBid {}
@@ -192,6 +199,7 @@ message SetProxyLimitRefusal {
     ProxyDisabledForLot proxy_disabled_for_lot = 3;
     CurrencyMismatch currency_mismatch = 4;
     DisplayNameNotChosen display_name_not_chosen = 5;
+    ParticipantRemovedFromLot participant_removed_from_lot = 6;
   }
 }
 

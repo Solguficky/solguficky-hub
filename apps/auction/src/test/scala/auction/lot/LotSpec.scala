@@ -72,7 +72,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         LotEvent.LotScheduled(schedule(startingPrice = 100)),
         LotEvent.LotScheduled(schedule(startingPrice = 200, policy = tiered((0, 50), (10000, 100))))
       )
-      val replayed = Lot.replay(Lot.initial, Random.shuffle(afterSecond.entries))
+      val replayed = Lot.replay(Lot.initial, Random.shuffle(afterSecond.rows))
       replayed shouldBe afterSecond.lot
       replayed.state shouldBe LotState.Scheduled(schedule(startingPrice = 200, policy = tiered((0, 50), (10000, 100))))
     }
@@ -147,7 +147,8 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
         deadline = Some(deadline),
         extensionsUsed = 0,
         proxyLimits = Map.empty,
-        markedForFinal = false
+        markedForFinal = false,
+        course = Some(Course.opened(money(500), Nil))
       )
     }
 
@@ -184,7 +185,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
     "bring no lot to life from a journal that starts with an opening" in {
       val opened = Envelope(1, op(1), LotEvent.LotOpened(money(100), config(), Some(deadline)))
 
-      val replayed = Lot.replay(Lot.initial, List(opened))
+      val replayed = Lot.replay(Lot.initial, List(opened -> calm))
 
       (replayed.state, replayed.auction) shouldBe (LotState.Initial, None)
     }
@@ -388,7 +389,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       val start = trading(price = 100)
       val (_, journal) = Journal.of(start).submit(command, bid(1))
 
-      val recovered = Lot.replay(start, journal.entries)
+      val recovered = Lot.replay(start, journal.rows)
 
       recovered shouldBe journal.lot
       Lot.decide(recovered, command, bid(2), proxyBid(2), calm) shouldBe Right(Decision.Repeated(journal.entries.head))
@@ -408,7 +409,7 @@ final class LotSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPrope
       val command = placeBid(who = 1, amount = 110, opN = 1)
       val (_, journal) = Journal.of(start).submit(command, bid(1))
 
-      val recovered = Lot.replay(start, journal.entries)
+      val recovered = Lot.replay(start, journal.rows)
 
       Lot.decide(recovered, command, bid(2), proxyBid(2), calm) shouldBe Right(Decision.Repeated(journal.entries.head))
       Lot.decide(recovered, placeBid(who = 2, amount = 120, opN = 1), bid(2), proxyBid(2), calm) shouldBe

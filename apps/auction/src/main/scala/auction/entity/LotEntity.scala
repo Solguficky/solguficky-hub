@@ -7,8 +7,10 @@ import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.cluster.sharding.typed.scaladsl.EntityTypeKey
 import org.apache.pekko.persistence.Persistence
 import org.apache.pekko.persistence.typed.PersistenceId
+import org.apache.pekko.persistence.typed.SnapshotSelectionCriteria
 import org.apache.pekko.persistence.typed.scaladsl.Effect
 import org.apache.pekko.persistence.typed.scaladsl.EventSourcedBehavior
+import org.apache.pekko.persistence.typed.scaladsl.Recovery
 import org.apache.pekko.persistence.typed.scaladsl.RetentionCriteria
 
 import java.time.Clock
@@ -29,7 +31,13 @@ object LotEntity {
 
   val TypeKey: EntityTypeKey[Command] = EntityTypeKey[Command]("lot")
 
-  /** Snapshot через каждые сто событий; журнал при этом не усекается — он источник истины и окно дедупликации. */
+  /**
+   * Snapshot через каждые сто событий; журнал при этом не усекается — он источник истины и окно дедупликации.
+   *
+   * Восстанавливается лот replay'ем журнала целиком, без snapshot (PER-657): snapshot прежней формы не несёт истории
+   * торгов, по которой снятие участника переигрывает торги (ADR-072), а пустая история дала бы молча неверный итог.
+   * Новые snapshots пишутся по-прежнему, уже с историей, — вернуть их чтение можно, когда прежних не останется.
+   */
   val DefaultSnapshotEvery: Int = 100
 
   /**
@@ -113,6 +121,13 @@ object LotEntity {
       replyTo: ActorRef[Either[ResumeLotRejected, Envelope]]
   ) extends Command
 
+  /** Снятие участника с лота (ADR-072); шлёт аукцион по команде администратора сходки, инициатор — `Operator`. */
+  final case class Remove(
+      command: RemoveParticipant,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[RemoveParticipantRejected, Envelope]]
+  ) extends Command
+
   /** Ask ведущего (П-08); шлёт аукцион по команде ведущего, инициатор — `Operator`. */
   final case class Ask(
       command: AdvanceAsk,
@@ -163,9 +178,10 @@ object LotEntity {
         commandHandler = (state, command) => handle(state, command, clock, newId),
         eventHandler = (state, stored) => {
           val sequence = state.sequence + 1
-          State(Lot.apply(state.lot, LotJournal.envelope(sequence, stored)), sequence)
+          State(Lot.apply(state.lot, LotJournal.envelope(sequence, stored), stored.occurredAt), sequence)
         }
       ).snapshotAdapter(LotJournal.snapshotAdapter)
+        .withRecovery(Recovery.withSnapshotSelectionCriteria(SnapshotSelectionCriteria.none))
         .withRetention(RetentionCriteria.snapshotEvery(snapshotEvery, keepNSnapshots = 2))
         .withTagger(_ => tag)
     }
@@ -198,6 +214,8 @@ object LotEntity {
         record(state, Lot.decide(lot, unmark, now), unmark.opId, initiator, replyTo, now, newId)
       case Resume(resume, initiator, replyTo) =>
         record(state, Lot.decide(lot, resume, BidId(newId()), now), resume.opId, initiator, replyTo, now, newId)
+      case Remove(removal, initiator, replyTo) =>
+        record(state, Lot.decide(lot, removal, BidId(newId()), now), removal.opId, initiator, replyTo, now, newId)
       case Ask(ask, initiator, replyTo) =>
         record(state, Lot.decide(lot, ask, BidId(newId()), now), ask.opId, initiator, replyTo, now, newId)
       case Withdraw(withdrawal, initiator, replyTo) =>

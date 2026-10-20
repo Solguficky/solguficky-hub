@@ -69,6 +69,7 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       refused(PlaceBidRejected.LotOnHold(money(300))).isLotOnHold shouldBe true
       refused(PlaceBidRejected.CurrencyMismatch).isCurrencyMismatch shouldBe true
       refused(PlaceBidRejected.BidderIsLeader(money(110))).isBidderIsLeader shouldBe true
+      refused(PlaceBidRejected.ParticipantRemovedFromLot).isParticipantRemovedFromLot shouldBe true
     }
 
     "carries the current price in on-hold and leader refusals and the lowest limit in a low-limit refusal" in {
@@ -101,6 +102,7 @@ final class ResponseMappingSpec extends AnyWordSpec with Matchers with EitherVal
       limitRefused(SetProxyLimitRejected.ProxyBelowCurrentPrice(money(150))).isProxyBelowCurrentPrice shouldBe true
       limitRefused(SetProxyLimitRejected.ProxyDisabledForLot).isProxyDisabledForLot shouldBe true
       limitRefused(SetProxyLimitRejected.CurrencyMismatch).isCurrencyMismatch shouldBe true
+      limitRefused(SetProxyLimitRejected.ParticipantRemovedFromLot).isParticipantRemovedFromLot shouldBe true
       ResponseMapping
         .withdrawProxyLimit(Left(WithdrawProxyLimitRejected.NoActiveProxyLimit))
         .value

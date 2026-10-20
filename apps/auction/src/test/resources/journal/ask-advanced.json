@@ -26,6 +26,7 @@
       }
     },
     "lotWithdrawn": null,
-    "stepWindowAdded": null
+    "stepWindowAdded": null,
+    "participantRemoved": null
   }
 }

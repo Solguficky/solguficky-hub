@@ -28,6 +28,7 @@
         "minorUnits": 100,
         "currency": "RUB"
       }
-    }
+    },
+    "participantRemoved": null
   }
 }

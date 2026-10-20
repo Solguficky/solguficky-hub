@@ -64,7 +64,8 @@ final class LotViewSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       forAll(raises) { steps =>
         val events = journal(steps)
         val (row, _) = deliver(numbered(events))
-        val replayed = Lot.replay(Lot.initial, numbered(events).map((n, e) => LotJournal.envelope(n, e)))
+        val replayed =
+          Lot.replay(Lot.initial, numbered(events).map((n, e) => LotJournal.envelope(n, e) -> e.occurredAt))
         row.map(view => LotJournal.restoreLot(view.stored)) shouldBe Some(replayed)
         row.map(_.version) shouldBe Some(events.size.toLong)
       }

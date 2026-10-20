@@ -115,6 +115,26 @@ describe("participant command answers", () => {
     });
   });
 
+  // Снятый с лота участник (ADR-072) получает один отказ на ставку и на лимит.
+  it("reads a removal from the lot on a bid and on a limit", () => {
+    expect(
+      refusedBid({
+        case: "participantRemovedFromLot",
+        value: {},
+      } as PlaceBidRefusal["reason"]),
+    ).toEqual({ kind: "refused", refusal: { kind: "removed-from-lot" } });
+    expect(
+      limitOutcomeOf(
+        create(SetProxyLimitResponseSchema, {
+          outcome: {
+            case: "refused",
+            value: { reason: { case: "participantRemovedFromLot", value: {} } },
+          },
+        }),
+      ),
+    ).toEqual({ kind: "refused", refusal: { kind: "removed-from-lot" } });
+  });
+
   it("reads a chosen name and its refusal", () => {
     expect(
       displayNameOutcomeOf(

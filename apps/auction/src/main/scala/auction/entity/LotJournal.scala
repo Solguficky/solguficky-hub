@@ -97,6 +97,17 @@ final case class StoredAskAdvanced(ask: StoredMoney)
 final case class StoredLotWithdrawn(reason: String)
 
 /**
+ * Секция `ParticipantRemoved` (ADR-072): снятый и итог переигрывания — цена, лидер и его позиция. Лидер и позиция пусты
+ * вместе; снявший — инициатор конверта.
+ */
+final case class StoredParticipantRemoved(
+    participant: UUID,
+    price: StoredMoney,
+    leader: Option[UUID],
+    leadingBidId: Option[UUID]
+)
+
+/**
  * `LotDrafted` записан одним `kind` без секции: payload у него пуст (ADR-047), а аукцион лежит в конверте строки. Так
  * же без секции `LotMarkedForFinal` и `LotResumed`. Секции добавлялись в конец: строка, записанная до них, читает
  * недостающую как пустую. `stepWindowAdded` — окно, запущенное по ходу торгов (ADR-047, дополнение 2026-10-12).
@@ -114,7 +125,8 @@ final case class StoredEvent(
     lotHeldForFinal: Option[StoredLotHeldForFinal],
     askAdvanced: Option[StoredAskAdvanced] = None,
     lotWithdrawn: Option[StoredLotWithdrawn] = None,
-    stepWindowAdded: Option[StoredStepWindow] = None
+    stepWindowAdded: Option[StoredStepWindow] = None,
+    participantRemoved: Option[StoredParticipantRemoved] = None
 )
 
 object StoredEvent {
@@ -146,10 +158,33 @@ final case class StoredLotEvent(
 final case class StoredProxyLimit(participant: UUID, max: StoredMoney, setSeq: Long)
 
 /**
+ * Вход истории торгов: `kind` — `Bid`, `LimitSet` или `LimitWithdrawn`, `amount` — сумма ставки или лимита, у снятия
+ * лимита её нет. `at` и `sequence` — момент и номер строки журнала, из которой вход записан.
+ */
+final case class StoredEntry(participant: UUID, kind: String, amount: Option[StoredMoney], at: Instant, sequence: Long)
+
+/** Окно `StepWindowAdded` в истории торгов и номер строки журнала, с которой лот его знает. */
+final case class StoredAddedWindow(window: StoredStepWindow, sequence: Long)
+
+/**
+ * История торгов лота (ADR-072, п. 2). `stepWindows` — окна `LotOpened` и `addedWindows` — запущенные по ходу торгов
+ * пишутся только непустыми, как в `StoredLotOpened`; `removed` — снятые участники.
+ */
+final case class StoredCourse(
+    startingPrice: StoredMoney,
+    stepWindows: Option[List[StoredStepWindow]],
+    online: List[StoredEntry],
+    held: List[StoredEntry],
+    removed: List[UUID],
+    addedWindows: Option[List[StoredAddedWindow]] = None
+)
+
+/**
  * `proxyLimits` необязателен по форме: snapshot, записанный до прокси-лимитов, его не несёт и читается как торги без
  * лимитов. Новый snapshot пишет его всегда, в порядке `setSeq`. `extensionsUsed` так же: snapshot, записанный до
  * анти-снайпа, читается как торги без продлений — других тогда и не было. `markedForFinal` так же: до отметки финала
- * отмеченных лотов не было. `stepWindows` так же и пишется только непустым, как в `StoredLotOpened`.
+ * отмеченных лотов не было. `stepWindows` так же и пишется только непустым, как в `StoredLotOpened`. `course` — история
+ * торгов (PER-657): новый snapshot пишет её всегда, а прежний её не несёт и читается торгами с неизвестной историей.
  */
 final case class StoredTrading(
     config: StoredConfig,
@@ -162,11 +197,13 @@ final case class StoredTrading(
     proxyLimits: Option[List[StoredProxyLimit]],
     extensionsUsed: Option[Int],
     markedForFinal: Option[Boolean],
-    stepWindows: Option[List[StoredStepWindow]] = None
+    stepWindows: Option[List[StoredStepWindow]] = None,
+    course: Option[StoredCourse] = None
 )
 
 /**
  * `extensionsUsed` необязателен по форме: удержанный лот до PER-310 не встречался, и snapshot без него читается нулём.
+ * `course` — как в `StoredTrading`.
  */
 final case class StoredHeld(
     config: StoredConfig,
@@ -174,7 +211,8 @@ final case class StoredHeld(
     leader: Option[UUID],
     leadingBidId: Option[UUID],
     proxyLimits: Option[List[StoredProxyLimit]],
-    extensionsUsed: Option[Int]
+    extensionsUsed: Option[Int],
+    course: Option[StoredCourse] = None
 )
 
 /** Продажа: секция события `LotSold` и состояния `Sold` — одни и те же поля (ADR-047). */
@@ -365,6 +403,19 @@ object LotJournal {
         StoredEvent.of("LotWithdrawn").copy(lotWithdrawn = Some(StoredLotWithdrawn(reason.toString)))
       case LotEvent.StepWindowAdded(window) =>
         StoredEvent.of("StepWindowAdded").copy(stepWindowAdded = Some(storeWindow(window)))
+      case LotEvent.ParticipantRemoved(participant, price, leader, leadingBidId) =>
+        StoredEvent
+          .of("ParticipantRemoved")
+          .copy(participantRemoved =
+            Some(
+              StoredParticipantRemoved(
+                participant.value,
+                storeMoney(price),
+                leader.map(_.value),
+                leadingBidId.map(_.value)
+              )
+            )
+          )
     }
 
   /**
@@ -384,7 +435,8 @@ object LotJournal {
       stored.lotHeldForFinal,
       stored.askAdvanced,
       stored.lotWithdrawn,
-      stored.stepWindowAdded
+      stored.stepWindowAdded,
+      stored.participantRemoved
     ).count(_.isDefined)
     def mismatch: Nothing = corrupted(s"lot event of kind ${stored.kind} with sections that do not match it")
     (stored.kind, sections) match {
@@ -453,6 +505,17 @@ object LotJournal {
           if (!window.from.isBefore(window.until)) corrupted("step window that ends before it starts")
           LotEvent.StepWindowAdded(window)
         }
+      case ("ParticipantRemoved", 1) =>
+        stored.participantRemoved.fold(mismatch) { removed =>
+          if (removed.leader.isDefined != removed.leadingBidId.isDefined)
+            corrupted("participant removal with a leader but no position, or a position but no leader")
+          LotEvent.ParticipantRemoved(
+            participant = ParticipantId(removed.participant),
+            price = restoreMoney(removed.price),
+            leader = removed.leader.map(ParticipantId(_)),
+            leadingBidId = removed.leadingBidId.map(BidId(_))
+          )
+        }
       case _ => mismatch
     }
   }
@@ -507,7 +570,8 @@ object LotJournal {
               proxyLimits = storeLimits(trading.proxyLimits),
               extensionsUsed = Some(trading.extensionsUsed),
               markedForFinal = Some(trading.markedForFinal),
-              stepWindows = storeWindows(trading.stepWindows)
+              stepWindows = storeWindows(trading.stepWindows),
+              course = trading.course.map(storeCourse)
             )
           ),
           held = None,
@@ -526,7 +590,8 @@ object LotJournal {
               leader = held.leader.map(_.value),
               leadingBidId = held.leadingBidId.map(_.value),
               proxyLimits = storeLimits(held.proxyLimits),
-              extensionsUsed = Some(held.extensionsUsed)
+              extensionsUsed = Some(held.extensionsUsed),
+              course = held.course.map(storeCourse)
             )
           ),
           sold = None,
@@ -567,6 +632,7 @@ object LotJournal {
             extensionsUsed = trading.extensionsUsed.getOrElse(0),
             proxyLimits = restoreLimits(trading.proxyLimits, config),
             markedForFinal = trading.markedForFinal.getOrElse(false),
+            course = trading.course.map(restoreCourse(_, config)),
             stepWindows = restoreWindows(trading.stepWindows, config)
           )
         )
@@ -579,7 +645,8 @@ object LotJournal {
             leader = held.leader.map(ParticipantId(_)),
             leadingBidId = held.leadingBidId.map(BidId(_)),
             proxyLimits = restoreLimits(held.proxyLimits, config),
-            extensionsUsed = held.extensionsUsed.getOrElse(0)
+            extensionsUsed = held.extensionsUsed.getOrElse(0),
+            course = held.course.map(restoreCourse(_, config))
           )
         )
       case ("Sold", None, None, Some(sale), None, None, None) =>
@@ -590,6 +657,67 @@ object LotJournal {
         LotState.Withdrawn(restoreEnum("withdrawn reason", reason)(WithdrawnReason.valueOf))
       case _ => corrupted(s"lot state of kind ${stored.kind} with sections that do not match it")
     }
+
+  private def storeCourse(course: Course): StoredCourse =
+    StoredCourse(
+      startingPrice = storeMoney(course.startingPrice),
+      stepWindows = storeWindows(course.stepWindows),
+      online = course.online.toList.map(storeEntry),
+      held = course.held.toList.map(storeEntry),
+      removed = course.removed.toList.map(_.value).sorted,
+      addedWindows = Option.when(course.addedWindows.nonEmpty)(
+        course.addedWindows.toList.map(added => StoredAddedWindow(storeWindow(added.window), added.sequence))
+      )
+    )
+
+  private def storeEntry(entry: Entry): StoredEntry = {
+    val (kind, amount) = entry.move match {
+      case Move.Bid(amount) => ("Bid", Some(storeMoney(amount)))
+      case Move.LimitSet(max) => ("LimitSet", Some(storeMoney(max)))
+      case Move.LimitWithdrawn => ("LimitWithdrawn", None)
+    }
+    StoredEntry(entry.participant.value, kind, amount, entry.at, entry.sequence)
+  }
+
+  /**
+   * История проходит те же проверки, что лимиты и окна: суммы в валюте лота (И-04), входы в порядке журнала. Иное —
+   * испорченный snapshot: `apply` такой истории не копит.
+   */
+  private def restoreCourse(stored: StoredCourse, config: LotConfig): Course = {
+    val startingPrice = restoreMoney(stored.startingPrice)
+    if (startingPrice.currency != config.currency) corrupted("trading history starting price in another currency")
+    val online = stored.online.map(restoreEntry(_, config)).toVector
+    val held = stored.held.map(restoreEntry(_, config)).toVector
+    val sequences = (online ++ held).map(_.sequence)
+    if (sequences != sequences.sorted || sequences.distinct.size != sequences.size)
+      corrupted("trading history entries out of journal order")
+    val stepWindows = restoreWindows(stored.stepWindows, config)
+    val added = stored.addedWindows.getOrElse(Nil)
+    // Все окна истории вместе проходят проверки окон торгов: валюта, границы и пересечения.
+    restoreWindows(Some(stored.stepWindows.getOrElse(Nil) ++ added.map(_.window)), config)
+    if (added.map(_.sequence) != added.map(_.sequence).sorted)
+      corrupted("trading history step windows out of journal order")
+    Course(
+      startingPrice = startingPrice,
+      stepWindows = stepWindows,
+      online = online,
+      held = held,
+      removed = stored.removed.map(ParticipantId(_)).toSet,
+      addedWindows = added.map(each => AddedWindow(restoreWindow(each.window), each.sequence)).toVector
+    )
+  }
+
+  private def restoreEntry(stored: StoredEntry, config: LotConfig): Entry = {
+    val amount = stored.amount.map(restoreMoney)
+    if (amount.exists(_.currency != config.currency)) corrupted(s"trading history entry in another currency")
+    val move = (stored.kind, amount) match {
+      case ("Bid", Some(sum)) => Move.Bid(sum)
+      case ("LimitSet", Some(max)) => Move.LimitSet(max)
+      case ("LimitWithdrawn", None) => Move.LimitWithdrawn
+      case _ => corrupted(s"trading history entry of kind ${stored.kind} with amount $amount")
+    }
+    Entry(ParticipantId(stored.participant), move, stored.at, stored.sequence)
+  }
 
   private def storeWindows(windows: List[StepWindow]): Option[List[StoredStepWindow]] =
     Option.when(windows.nonEmpty)(windows.map(storeWindow))
