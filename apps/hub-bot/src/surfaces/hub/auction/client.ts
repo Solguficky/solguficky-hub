@@ -5,7 +5,10 @@ import {
   createGrpcTransport,
   Http2SessionManager,
 } from "@connectrpc/connect-node";
-import type { StepPolicySchema } from "../../../../gen/auction/v1/auction_pb.js";
+import {
+  BidSource,
+  type StepPolicySchema,
+} from "../../../../gen/auction/v1/auction_pb.js";
 import type { AuctionSnapshot } from "../../../../gen/auction/v1/auction_service_pb.js";
 import {
   AuctionListing,
@@ -68,6 +71,7 @@ import {
   type EnableAuctionResult,
   type FinalistRefusal,
   type FinalistResult,
+  type FloorBidResult,
   type FreezeFinalLineupResult,
   type LotAdministration,
   type LotCardResult,
@@ -99,6 +103,7 @@ type AuctionRpc = Pick<
   | "listAuctionLots"
   | "listLotHistory"
   | "getDisplayNames"
+  | "listAuctionNames"
   | "placeBid"
   | "setProxyLimit"
   | "chooseDisplayName"
@@ -687,6 +692,65 @@ export function createAuctionAdapter(
       } catch (cause) {
         onNamesRefused?.(cause, meta);
         return { kind: "ok", bids: latest, names: {} };
+      }
+    },
+    async listAuctionNames(person, auctionId, meta) {
+      try {
+        const response = await rpc.listAuctionNames(
+          { viewer: wireViewer(viewerOf(person)), auctionId },
+          options(meta),
+        );
+        return {
+          kind: "ok",
+          names: response.names.map((each) => ({
+            participantId: each.participantId,
+            name: each.name?.text ?? "",
+          })),
+        };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    // Ставка зала (PER-565): смотрящий — помощник, ставящий — человек зала.
+    // Повтора нет ни на каком исходе: ставка, ответ на которую потерялся,
+    // могла пройти, и решает её человек по экрану.
+    async placeFloorBid(person, bid, meta) {
+      try {
+        const response = await rpc.placeBid(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            lotId: bid.lotId,
+            amount: wireMoney(bid.amount),
+            opId: bid.opId,
+            source: BidSource.FLOOR,
+            participantId: bid.participantId,
+          },
+          options(meta),
+        );
+        return floorBidResult(response.outcome);
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async floorLot(person, read, meta) {
+      try {
+        const lot = await readLotAtLeast(
+          async () =>
+            lotViewOf(
+              await rpc.getLot(
+                { viewer: wireViewer(viewerOf(person)), lotId: read.lotId },
+                options(meta),
+              ),
+            ),
+          read.atLeastVersion,
+          pause,
+        );
+        return { kind: "ok", lot };
+      } catch (cause) {
+        if (cause instanceof ConnectError && cause.code === Code.NotFound) {
+          return { kind: "not-found" };
+        }
+        return toFailure(cause);
       }
     },
     screenPorts(meta): AuctionScreenPorts {
@@ -1655,6 +1719,62 @@ function closeLotResult(
     }
     case undefined:
       return defect("close lot response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Исходы ставки зала (PER-565, ADR-070 п. 5). Ниже минимума и чужая валюта в
+// живом финале не случаются: сумма — следующая цена лота в его валюте, и такой
+// отказ — дефект соседа.
+function floorBidResult(
+  outcome: Awaited<ReturnType<AuctionRpc["placeBid"]>>["outcome"],
+): FloorBidResult {
+  switch (outcome.case) {
+    case "accepted":
+      return {
+        kind: "accepted",
+        lotVersion: Number(outcome.value.lotVersion),
+      };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "bidNotAtNextPrice": {
+          const expected = reason.value.expected;
+          return expected === undefined
+            ? defect("next price refusal without the price")
+            : { kind: "bid-not-at-next-price", expected: moneyOf(expected) };
+        }
+        case "bidderIsLeader":
+          return { kind: "bidder-is-leader" };
+        case "lotNotOpen":
+        case "lotOnHold":
+          return { kind: "lot-not-open" };
+        case "displayNameNotChosen":
+          return { kind: "display-name-not-chosen" };
+        case "participantCannotBid":
+          return { kind: "participant-cannot-bid" };
+        case "participantRemovedFromLot":
+          return { kind: "removed-from-lot" };
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "bidBelowMinimum":
+        case "currencyMismatch":
+          return defect(`floor bid refused as ${reason.case}`);
+        case undefined:
+          return defect("floor bid refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("floor bid response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

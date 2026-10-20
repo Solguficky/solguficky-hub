@@ -4,8 +4,8 @@ import type { EditLimiter } from "../../../core/bot/edit-limiter.js";
 import {
   createLiveScreens,
   type LiveScreenEntry,
-  type LiveScreens,
   type LiveScreenShown,
+  type LiveScreens,
 } from "./live-screens.js";
 import {
   type ConsoleScreenView,

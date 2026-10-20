@@ -323,6 +323,7 @@ function checkRules(
       named ||
       index === rows.length - 1 ||
       entry.nav === "root" ||
+      entry.pairedContent === true ||
       row.some((button) => button.text === removeMaterialLabel);
     // Кнопка управления не делит ряд с кнопкой участника (решение владельца
     // 19 октября 2026 года, PER-669). Исключение — действие над строкой

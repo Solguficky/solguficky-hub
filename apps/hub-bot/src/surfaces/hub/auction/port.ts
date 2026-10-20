@@ -382,6 +382,37 @@ export type FinalBidsResult =
     }
   | AuctionFailure;
 
+// Имена аукциона для «Ставок зала» (PER-565, ADR-070 п. 3): все, кто выбрал
+// имя в этом аукционе и держит `place_bids`. Пустой список — ответ, а не отказ.
+export type AuctionNamesResult =
+  | {
+      kind: "ok";
+      names: readonly { participantId: string; name: string }[];
+    }
+  | AuctionFailure;
+
+// Ставка зала (PER-565, ADR-070 п. 5): помощник ставит за человека зала
+// объявленную цену. Отказ — значение ответа, и бот его не повторяет; ответа не
+// было — сбой транспорта, и ставка могла пройти.
+export type FloorBidResult =
+  | { kind: "accepted"; lotVersion: number }
+  | { kind: "bid-not-at-next-price"; expected: Money }
+  | { kind: "bidder-is-leader" }
+  | { kind: "lot-not-open" }
+  | { kind: "display-name-not-chosen" }
+  | { kind: "participant-cannot-bid" }
+  | { kind: "removed-from-lot" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | AuctionFailure;
+
+export type FloorBid = {
+  lotId: string;
+  participantId: string;
+  amount: Money;
+  opId: string;
+};
+
 // Розыгрыш аукциона для строки пульта (PER-618): `raffle` нет — у аукциона
 // розыгрыша нет.
 export type ConsoleRaffleResult =
@@ -498,6 +529,25 @@ export type AuctionConsoles = {
     },
     meta?: RpcMetadata,
   ): Promise<FinalBidsResult>;
+  // «Ставки зала» помощника (PER-565, ADR-070): имена аукциона и ставка
+  // `source = FLOOR` за человека зала.
+  listAuctionNames(
+    person: Person,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<AuctionNamesResult>;
+  placeFloorBid(
+    person: Person,
+    bid: FloorBid,
+    meta?: RpcMetadata,
+  ): Promise<FloorBidResult>;
+  // Лот по снимку: «Ставки зала» сверяют лот и цену кнопки с ним, а после
+  // принятой ставки дочитывают его до версии из ответа (PER-470).
+  floorLot(
+    person: Person,
+    read: { lotId: string; atLeastVersion?: number },
+    meta?: RpcMetadata,
+  ): Promise<LotReadResult>;
 };
 
 // Порты пакета метаданных вызова не несут, поэтому собираются на каждый

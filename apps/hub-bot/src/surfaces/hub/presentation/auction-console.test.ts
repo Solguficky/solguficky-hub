@@ -38,6 +38,7 @@ import type {
   ConsoleReadResult,
   DayLotStatistics,
   FinalistResult,
+  FloorBid,
   LotAdministration,
   LotClosure,
   MeetupAuctions,
@@ -113,6 +114,11 @@ const forgedAuctionPresses = {
   "console-ask": `v1:ac:a:${auctionToken}:1`,
   "console-close": `v1:ac:c:${auctionToken}:1`,
   "console-close-confirm": `v1:ac:k:${auctionToken}:1:${uuidToToken(mugId)}:x`,
+  "console-floor": `v1:ac:b:${auctionToken}`,
+  "console-floor-search": `v1:ac:bs:${auctionToken}`,
+  "console-floor-leader": `v1:ac:bl:${auctionToken}`,
+  "console-floor-pick": `v1:ac:bp:${uuidToToken(vaseId)}:${uuidToToken(identityId)}:1hc`,
+  "console-floor-confirm": `v1:ac:by:${uuidToToken(vaseId)}:${uuidToToken(identityId)}:1hc`,
 } satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });
@@ -197,6 +203,13 @@ function fakeAuction(
     // Сводка дня (PER-492): агрегаты окна, которые отдаёт Auction; окно,
     // которое назвал бот, тест читает по `windows`.
     day?: readonly DayLotStatistics[];
+    // «Ставки зала» (PER-565): имена аукциона, отказ их чтения и автоставка,
+    // которая отвечает на ставку зала той же транзакцией шагом выше.
+    people?: readonly { participantId: string; name: string }[];
+    peopleFail?: true;
+    proxyAnswer?: string;
+    // Ставка зала остаётся без ответа: транспорт оборвался.
+    floorTimeout?: true;
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -492,6 +505,61 @@ function fakeAuction(
         ? { kind: "ok" as const }
         : { kind: "ok" as const, raffle: options.consoleRaffle };
     },
+    async listAuctionNames() {
+      commands.push({ method: "listAuctionNames", args: auctionId });
+      return options.peopleFail === true
+        ? { kind: "unavailable" as const, cause: new Error("down") }
+        : { kind: "ok" as const, names: options.people ?? [] };
+    },
+    async floorLot(_person: unknown, read: { lotId: string }) {
+      const found = lotOf(read.lotId);
+      return found === undefined
+        ? { kind: "not-found" as const }
+        : { kind: "ok" as const, lot: found.lot };
+    },
+    // Ставка живого финала — ровно по следующей цене (ADR-049), как в
+    // сервисе: лот под шардингом решает ставки по одной.
+    async placeFloorBid(_person: unknown, bid: FloorBid) {
+      commands.push({ method: "placeFloorBid", args: bid });
+      if (options.floorTimeout === true) {
+        return { kind: "timeout" as const, cause: new Error("deadline") };
+      }
+      const found = lotOf(bid.lotId);
+      const status = found?.lot.status;
+      if (
+        found === undefined ||
+        status?.kind !== "trading" ||
+        status.phase !== "live"
+      ) {
+        return { kind: "lot-not-open" as const };
+      }
+      const next = found.lot.nextPrice;
+      if (next === undefined || next.minorUnits !== bid.amount.minorUnits) {
+        return {
+          kind: "bid-not-at-next-price" as const,
+          expected: next ?? bid.amount,
+        };
+      }
+      if (status.leaderId === bid.participantId) {
+        return { kind: "bidder-is-leader" as const };
+      }
+      const step = 10_000;
+      const answer = options.proxyAnswer;
+      const price =
+        answer === undefined ? next.minorUnits : next.minorUnits + step;
+      const version = found.lot.version + (answer === undefined ? 1 : 2);
+      replaceLot(bid.lotId, {
+        ...found.lot,
+        version,
+        nextPrice: rub(price + step),
+        status: {
+          ...status,
+          currentPrice: rub(price),
+          leaderId: answer ?? bid.participantId,
+        },
+      });
+      return { kind: "accepted" as const, lotVersion: version };
+    },
     currentAuction: async () => ({ kind: "ok" as const }),
     screenPorts() {
       return {
@@ -510,7 +578,13 @@ function fakeAuction(
           chooseDisplayName: notUsed,
           getAuction: async () => ({
             auctionId,
-            stage: "scheduled" as const,
+            // Стадия финала ставит в корень вход «Ставок зала» (PER-565).
+            stage:
+              state.status === "final"
+                ? ("in-final" as const)
+                : state.status === "lineup-frozen"
+                  ? ("lineup-frozen" as const)
+                  : ("scheduled" as const),
             final: false,
           }),
           // Розыгрыш открывается с онлайн-неделей, если у недели есть момент
@@ -2834,6 +2908,63 @@ describe("day summary without lots", () => {
 // потоку аукциона без нажатия, а состояние потока — только повод перечитать
 // пульт тем же чтением, что «Обновить». Поток подменён: тест сам кладёт в него
 // состояния, обрыв и конец.
+// Поток аукциона в тестах живых экранов (PER-566, PER-565): подписчики,
+// состояние, обрыв и конец.
+type Subscriber = {
+  listener: (state: AuctionWatchState) => void;
+  ended?: () => void;
+  interrupted?: () => void;
+};
+
+function stream() {
+  const subscribers = new Set<Subscriber>();
+  const watches: AuctionWatches = {
+    subscribe(_auctionId, _viewer, listener, ended, interrupted) {
+      const subscriber: Subscriber = {
+        listener,
+        ...(ended === undefined ? {} : { ended }),
+        ...(interrupted === undefined ? {} : { interrupted }),
+      };
+      subscribers.add(subscriber);
+      return () => subscribers.delete(subscriber);
+    },
+    open: () => (subscribers.size > 0 ? 1 : 0),
+    close: () => subscribers.clear(),
+  };
+  const each = (run: (subscriber: Subscriber) => void) => {
+    for (const subscriber of [...subscribers]) run(subscriber);
+  };
+  return {
+    watches,
+    subscribers,
+    emit(activeLot: LotView, finished = false) {
+      each((subscriber) =>
+        subscriber.listener({
+          auctionId,
+          finished,
+          activeLot,
+          lineup: [activeLot],
+        }),
+      );
+    },
+    interrupt: () => each((subscriber) => subscriber.interrupted?.()),
+    end: () => each((subscriber) => subscriber.ended?.()),
+  };
+}
+
+const immediate: EditLimiter = {
+  submit: (_chat, _key, task) => {
+    void task();
+  },
+  drop: () => {},
+  waiting: () => 0,
+  close: () => {},
+};
+
+const flush = async () => {
+  for (let i = 0; i < 50; i += 1) await Promise.resolve();
+};
+
 describe("live console of the auctioneer", () => {
   const leaderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ee";
   const live = (lotId: string, version: number, price: number): LotView => ({
@@ -2879,61 +3010,6 @@ describe("live console of the auctioneer", () => {
       each.lot.lotId === vaseId ? entry(lot) : each,
     );
     return lot;
-  };
-
-  type Subscriber = {
-    listener: (state: AuctionWatchState) => void;
-    ended?: () => void;
-    interrupted?: () => void;
-  };
-
-  function stream() {
-    const subscribers = new Set<Subscriber>();
-    const watches: AuctionWatches = {
-      subscribe(_auctionId, _viewer, listener, ended, interrupted) {
-        const subscriber: Subscriber = {
-          listener,
-          ...(ended === undefined ? {} : { ended }),
-          ...(interrupted === undefined ? {} : { interrupted }),
-        };
-        subscribers.add(subscriber);
-        return () => subscribers.delete(subscriber);
-      },
-      open: () => (subscribers.size > 0 ? 1 : 0),
-      close: () => subscribers.clear(),
-    };
-    const each = (run: (subscriber: Subscriber) => void) => {
-      for (const subscriber of [...subscribers]) run(subscriber);
-    };
-    return {
-      watches,
-      subscribers,
-      emit(activeLot: LotView, finished = false) {
-        each((subscriber) =>
-          subscriber.listener({
-            auctionId,
-            finished,
-            activeLot,
-            lineup: [activeLot],
-          }),
-        );
-      },
-      interrupt: () => each((subscriber) => subscriber.interrupted?.()),
-      end: () => each((subscriber) => subscriber.ended?.()),
-    };
-  }
-
-  const immediate: EditLimiter = {
-    submit: (_chat, _key, task) => {
-      void task();
-    },
-    drop: () => {},
-    waiting: () => 0,
-    close: () => {},
-  };
-
-  const flush = async () => {
-    for (let i = 0; i < 50; i += 1) await Promise.resolve();
   };
 
   // Правки сообщения пульта: нажатие правит сообщение 9 тоже, поэтому тест
@@ -3197,5 +3273,391 @@ describe("live console of the auctioneer", () => {
     expect(plain(edits(calls).at(-1)?.payload as Sent)).toContain(
       "Цена: 7 000 ₽",
     );
+  });
+});
+
+// «Ставки зала» помощника ведущего (PER-565, ADR-070 пп. 4–6): люди зала по
+// алфавиту с объявленной ценой, подтверждение, ставка `source = FLOOR` и её
+// исходы, правка по потоку и права.
+describe("floor bids of the assistant", () => {
+  const leaderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ee";
+  const anyaId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401";
+  const vovaId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402";
+  // Ответ Auction — не по алфавиту: порядок экрана держит бот.
+  const people = [
+    { participantId: vovaId, name: "Вова" },
+    { participantId: leaderId, name: "Бэтмен" },
+    { participantId: anyaId, name: "Аня" },
+  ];
+  const floorData = `v1:ac:b:${auctionToken}`;
+  // Сумму `Intl` пишет с неразрывными пробелами: кнопка ищется по словам.
+  const pick = (screen: Sent, text: string) => {
+    const found = screen.reply_markup?.inline_keyboard
+      .flat()
+      .find((button) => spaced(button.text) === text)?.callback_data;
+    if (found === undefined) throw new Error(`no button "${text}"`);
+    return found;
+  };
+  const live = (lotId: string, version: number, price: number): LotView => ({
+    ...trading(lotId, lotId === vaseId ? "Ваза" : "Кружка", price),
+    version,
+    nextPrice: rub(price + 10_000),
+    status: {
+      kind: "trading",
+      currentPrice: rub(price),
+      leaderId,
+      phase: "live",
+    },
+  });
+  const entry = (lot: LotView): ConsoleLot => ({
+    lot,
+    bidCount: 2,
+    uniqueParticipantCount: 1,
+    markedForFinal: true,
+    overdue: false,
+  });
+  // Финал идёт, Ваза торгуется первой, лидер — Бэтмен на 1 200 ₽.
+  const running = (
+    options: Omit<Parameters<typeof fakeAuction>[0], "status" | "lots"> = {},
+  ) => {
+    const auction = fakeAuction({
+      status: "final",
+      week: { ...week, final: true },
+      lots: [entry(live(vaseId, 3, 120_000)), entry(live(mugId, 3, 50_000))],
+      lineup: [vaseId, mugId],
+      names: { [leaderId]: "Бэтмен" },
+      people,
+      ...options,
+    });
+    auction.state.lineup = { order: [vaseId, mugId], activeLotId: vaseId };
+    return auction;
+  };
+  // Ставка из бота: цена Вазы растёт вместе с версией, лидер — Бэтмен.
+  const botBid = (auction: ReturnType<typeof running>, price: number) => {
+    const current = auction.state.lots.find(
+      (each) => each.lot.lotId === vaseId,
+    );
+    const lot = live(vaseId, (current?.lot.version ?? 3) + 1, price);
+    auction.state.lots = auction.state.lots.map((each) =>
+      each.lot.lotId === vaseId ? entry(lot) : each,
+    );
+    return lot;
+  };
+
+  const open = async (
+    auction: ReturnType<typeof running>,
+    holder: "admin" | "member" = "admin",
+    rights?: readonly AccessRight[],
+  ) => {
+    const { bot, calls } = harness(holder, auction, [], rights);
+    await bot.init();
+    await bot.handleUpdate(press(floorData));
+    return { bot, calls };
+  };
+
+  it("puts the floor bids next to the console while the final runs", async () => {
+    const auction = running();
+    const { bot, calls } = harness("admin", auction, [], runAuctionsOnly);
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+    expect(labels(last(calls))).toContainEqual(["🛠 Пульт", "🛠 Ставки зала"]);
+    expect(dataOf(last(calls), "🛠 Ставки зала")).toBe(floorData);
+  });
+
+  it("keeps the floor bids out of the root before the final", async () => {
+    const auction = running();
+    auction.state.status = "prebidding";
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(rootData));
+    expect(labels(last(calls)).flat()).not.toContain("🛠 Ставки зала");
+    expect(labels(last(calls))).toContainEqual(["🛠 Пульт"]);
+  });
+
+  it("shows the lot and the room in alphabetical order with the leader in place", async () => {
+    const { calls } = await open(running());
+    const screen = last(calls);
+    expect(plain(screen)).toContain("Сейчас: Ваза.");
+    expect(plain(screen)).toContain("Цена: 1 200 ₽, следующая: 1 300 ₽.");
+    expect(plain(screen)).toContain("Лидер: Бэтмен.");
+    expect(labels(screen).map((row) => row.map(spaced))).toEqual([
+      ["Аня — 1 300 ₽", "Бэтмен — лидер"],
+      ["Вова — 1 300 ₽"],
+      ["Другой человек…"],
+      ["🔄 Обновить"],
+      ["‹ Аукцион"],
+    ]);
+  });
+
+  it("places a floor bid from the person through the confirmation to the new leader", async () => {
+    const auction = running();
+    const { bot, calls } = await open(auction);
+    await bot.handleUpdate(press(pick(last(calls), "Аня — 1 300 ₽")));
+
+    const confirm = last(calls);
+    expect(plain(confirm)).toContain("Ставка зала: Аня — 1 300 ₽?");
+    expect(plain(confirm)).toContain("Лот: Ваза.");
+    expect(auction.sent("placeFloorBid")).toEqual([]);
+    const yes = confirm.reply_markup?.inline_keyboard[0]?.[0];
+    expect(spaced(yes?.text ?? "")).toBe("✔️ Да, Аня — 1 300 ₽");
+    expect(yes?.style).toBe("danger");
+
+    await bot.handleUpdate(press(yes?.callback_data ?? ""));
+
+    expect(auction.sent("placeFloorBid")).toHaveLength(1);
+    expect(auction.sent("placeFloorBid")[0]?.args).toMatchObject({
+      lotId: vaseId,
+      participantId: anyaId,
+      amount: rub(130_000),
+    });
+    const after = last(calls);
+    expect(plain(after)).toContain("Принято: Аня — 1 300 ₽.");
+    expect(plain(after)).toContain("Цена: 1 300 ₽, следующая: 1 400 ₽.");
+    expect(plain(after)).toContain("Лидер: Аня.");
+    // Место Ани не изменилось: она лидер на том же месте.
+    expect(labels(after)[0]?.map(spaced)).toEqual([
+      "Аня — лидер",
+      "Бэтмен — 1 400 ₽",
+    ]);
+  });
+
+  it("does not bid from a confirmation after the price moved", async () => {
+    const auction = running();
+    const { bot, calls } = await open(auction);
+    await bot.handleUpdate(press(pick(last(calls), "Аня — 1 300 ₽")));
+    const yes = last(calls).reply_markup?.inline_keyboard[0]?.[0];
+    botBid(auction, 130_000);
+
+    await bot.handleUpdate(press(yes?.callback_data ?? ""));
+
+    expect(auction.sent("placeFloorBid")).toEqual([]);
+    expect(plain(last(calls))).toContain(
+      "Цена изменилась — ставка не поставлена.",
+    );
+    expect(plain(last(calls))).toContain("Цена: 1 300 ₽, следующая: 1 400 ₽.");
+  });
+
+  it("does not bid from a confirmation after the lot changed", async () => {
+    const auction = running();
+    const { bot, calls } = await open(auction);
+    await bot.handleUpdate(press(pick(last(calls), "Аня — 1 300 ₽")));
+    const yes = last(calls).reply_markup?.inline_keyboard[0]?.[0];
+    // Ваза продана, Кружка открыта с той же следующей ценой.
+    auction.state.lots = [
+      entry({
+        ...live(vaseId, 5, 120_000),
+        status: { kind: "sold", winnerId: leaderId, price: rub(120_000) },
+      }),
+      entry(live(mugId, 4, 120_000)),
+    ];
+    auction.state.lineup = { order: [vaseId, mugId], activeLotId: mugId };
+
+    await bot.handleUpdate(press(yes?.callback_data ?? ""));
+
+    expect(auction.sent("placeFloorBid")).toEqual([]);
+    expect(plain(last(calls))).toContain(
+      "Лот сменился — ставка не поставлена.",
+    );
+    expect(plain(last(calls))).toContain("Сейчас: Кружка.");
+  });
+
+  it("names the leader when the price was taken first", async () => {
+    const auction = running();
+    // Ставка из бота доходит до лота между сверкой и ставкой зала.
+    const place = auction.port.placeFloorBid;
+    auction.port.placeFloorBid = (person, bid, meta) => {
+      botBid(auction, 130_000);
+      return place(person, bid, meta);
+    };
+    const { bot, calls } = await open(auction);
+    await bot.handleUpdate(press(pick(last(calls), "Аня — 1 300 ₽")));
+    const yes = last(calls).reply_markup?.inline_keyboard[0]?.[0];
+
+    await bot.handleUpdate(press(yes?.callback_data ?? ""));
+
+    expect(auction.sent("placeFloorBid")).toHaveLength(1);
+    expect(plain(last(calls))).toContain("1 300 ₽ уже взята — лидер Бэтмен.");
+    expect(plain(last(calls))).toContain("Цена: 1 300 ₽, следующая: 1 400 ₽.");
+    const lot = auction.state.lots.find((each) => each.lot.lotId === vaseId);
+    expect(lot?.lot.status).toMatchObject({
+      currentPrice: rub(130_000),
+      leaderId,
+    });
+  });
+
+  it("says the proxy answered the floor bid in the same command", async () => {
+    const auction = running({ proxyAnswer: leaderId });
+    const { bot, calls } = await open(auction);
+    await bot.handleUpdate(press(pick(last(calls), "Аня — 1 300 ₽")));
+    const yes = last(calls).reply_markup?.inline_keyboard[0]?.[0];
+
+    await bot.handleUpdate(press(yes?.callback_data ?? ""));
+
+    expect(plain(last(calls))).toContain(
+      "Принято: Аня — 1 300 ₽, автоставка ответила 1 400 ₽.",
+    );
+    expect(plain(last(calls))).toContain("Лидер: Бэтмен.");
+  });
+
+  it("does not repeat a floor bid that got no answer", async () => {
+    const auction = running({ floorTimeout: true });
+    const { bot, calls } = await open(auction);
+    await bot.handleUpdate(press(pick(last(calls), "Аня — 1 300 ₽")));
+    const yes = last(calls).reply_markup?.inline_keyboard[0]?.[0];
+
+    await bot.handleUpdate(press(yes?.callback_data ?? ""));
+
+    expect(auction.sent("placeFloorBid")).toHaveLength(1);
+    expect(plain(last(calls))).toContain(
+      "Аукцион не ответил — ставка Аня — 1 300 ₽ могла пройти.",
+    );
+  });
+
+  it("answers a press on the leader without Auction", async () => {
+    const auction = running();
+    const { bot, calls } = await open(auction);
+    const before = auction.commands.length;
+
+    await bot.handleUpdate(press(pick(last(calls), "Бэтмен — лидер")));
+
+    expect(toasts(calls)).toContain("Этот человек уже лидер.");
+    expect(auction.commands).toHaveLength(before);
+  });
+
+  it("shows no people while no lot is open", async () => {
+    const auction = running();
+    auction.state.lineup = { order: [vaseId, mugId] };
+    const { calls } = await open(auction);
+    expect(plain(last(calls))).toContain("Сейчас лот не открыт.");
+    expect(labels(last(calls))).toEqual([["🔄 Обновить"], ["‹ Аукцион"]]);
+  });
+
+  it("tells an empty room from a failed read of the names", async () => {
+    const empty = await open(running({ people: [] }));
+    expect(plain(last(empty.calls))).toContain(
+      "В этом аукционе ещё никто не выбрал имя.",
+    );
+
+    const failed = await open(running({ peopleFail: true }));
+    expect(labels(last(failed.calls)).flat()).toContain("Повторить");
+    expect(dataOf(last(failed.calls), "Повторить")).toBe(floorData);
+  });
+
+  it("finds another person by a part of the name", async () => {
+    const auction = running();
+    const { bot, calls } = await open(auction);
+    await bot.handleUpdate(press(dataOf(last(calls), "Другой человек…")));
+    expect(question(calls).payload.text).toContain("Кого ищем?");
+
+    await bot.handleUpdate(answer(calls, { text: "во" }));
+
+    const found = last(calls);
+    expect(plain(found)).toContain("Нашлось по «во»: 1.");
+    expect(labels(found).map((row) => row.map(spaced))).toEqual([
+      ["Вова — 1 300 ₽"],
+      ["‹ Ставки зала"],
+    ]);
+
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Ставки зала")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Другой человек…")));
+    await bot.handleUpdate(answer(calls, { text: "зз" }));
+    expect(plain(last(calls))).toContain("Никого не нашлось по «зз».");
+  });
+
+  it("pages a large room by sixteen people", async () => {
+    const many = Array.from({ length: 18 }, (_, at) => ({
+      participantId: `0198f2a4-7c1e-7d3a-9b21-4f8e12ab35${String(at).padStart(2, "0")}`,
+      name: `Гость ${String(at + 1).padStart(2, "0")}`,
+    }));
+    const { calls } = await open(running({ people: many }));
+    const screen = last(calls);
+    expect(plain(screen)).toContain("Ставки зала · 1 из 2");
+    expect(labels(screen)).toHaveLength(8 + 4);
+  });
+
+  it("keeps the floor bids from a person without the right to run auctions", async () => {
+    const auction = running();
+    const { bot, calls } = await open(auction, "member");
+    expect(auction.commands).toEqual([]);
+    expect(plain(last(calls))).not.toContain("Сейчас:");
+
+    const forged = `v1:ac:by:${uuidToToken(vaseId)}:${uuidToToken(anyaId)}:${(130_000).toString(36)}`;
+    await bot.handleUpdate(press(forged));
+    expect(auction.sent("placeFloorBid")).toEqual([]);
+
+    const rootCalls: RecordedCall[] = [];
+    const member = harness("admin", auction, rootCalls, manageMeetupsOnly);
+    await member.bot.init();
+    await member.bot.handleUpdate(press(rootData));
+    expect(labels(last(rootCalls)).flat()).not.toContain("🛠 Ставки зала");
+  });
+
+  describe("live", () => {
+    const edits = (calls: readonly RecordedCall[]) =>
+      calls.filter(
+        (call) =>
+          call.method === "editMessageText" &&
+          (call.payload as { message_id?: number }).message_id === 9,
+      );
+
+    const setup = async () => {
+      const watch = stream();
+      const auction = running();
+      const { bot, calls } = harness(
+        "admin",
+        auction,
+        [],
+        undefined,
+        undefined,
+        {
+          live: {
+            watches: watch.watches,
+            limiter: immediate,
+            names: { getDisplayNames: async () => ({}) },
+          },
+        },
+      );
+      await bot.init();
+      await bot.handleUpdate(press(floorData));
+      return { bot, calls, auction, watch };
+    };
+
+    it("shows the new price after a bid from the bot without a press", async () => {
+      const { calls, auction, watch } = await setup();
+      expect(watch.subscribers.size).toBe(1);
+      const before = edits(calls).length;
+
+      watch.emit(botBid(auction, 130_000));
+      await flush();
+
+      expect(edits(calls)).toHaveLength(before + 1);
+      const edited = edits(calls).at(-1)?.payload as Sent;
+      expect(plain(edited)).toContain("Цена: 1 300 ₽, следующая: 1 400 ₽.");
+      expect(labels(edited)[0]?.map(spaced)).toEqual([
+        "Аня — 1 400 ₽",
+        "Бэтмен — лидер",
+      ]);
+    });
+
+    it("marks the price stale while the stream reconnects", async () => {
+      const { calls, watch } = await setup();
+      const before = edits(calls).length;
+
+      watch.interrupt();
+      await flush();
+
+      expect(edits(calls)).toHaveLength(before + 1);
+      expect(plain(edits(calls).at(-1)?.payload as Sent)).toContain(
+        "Связь с аукционом прервалась — цена могла устареть.",
+      );
+    });
+
+    it("stops following the stream once another screen takes the message", async () => {
+      const { bot, watch } = await setup();
+      await bot.handleUpdate(press(consoleData));
+      expect(watch.subscribers.size).toBe(1);
+      await bot.handleUpdate(press(rootData));
+      expect(watch.subscribers.size).toBe(0);
+    });
   });
 });

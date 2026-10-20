@@ -137,6 +137,15 @@ function fake(answers: {
     },
     recentBids: async () => answers.bids ?? { kind: "ok", bids: [], names: {} },
     displayNames: async () => answers.names ?? { kind: "ok", names: {} },
+    listAuctionNames: async () => {
+      throw new Error("auction names not used by the console");
+    },
+    placeFloorBid: async () => {
+      throw new Error("floor bids not used by the console");
+    },
+    floorLot: async () => {
+      throw new Error("lot read not used by the console");
+    },
     consoleRaffle: async () => {
       reads.raffle += 1;
       return answers.raffle ?? { kind: "ok" };
