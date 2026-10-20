@@ -293,7 +293,9 @@ final class ScreenStreamIntegrationSpec
       Http()
         .newServerAt("127.0.0.1", 0)
         .withSettings(AuctionNode.grpcServerSettings(kit.system))
-        .bind(AuctionNode.grpc(kit.system, sharding, callers, 10.seconds, Granted, changes))
+        .bind(
+          AuctionNode.grpc(kit.system, sharding, callers, 10.seconds, Granted, _ => Future.successful(true), changes)
+        )
         .futureValue
       val lots = LotGateway.sharded(sharding, 10.seconds)
       val commands = AuctionCommands(AuctionGateway.sharded(sharding, 10.seconds), lots, Granted)
