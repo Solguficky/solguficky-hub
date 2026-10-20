@@ -9,6 +9,7 @@ import type {
   AdvanceAskResult,
   AuctionConsoles,
   AuctionWeekConfig,
+  CancelAuctionResult,
   CloseLotResult,
   ConsoleRaffleResult,
   ConsoleReadResult,
@@ -80,6 +81,7 @@ function fake(answers: {
   start?: StartPrebiddingResult;
   mark?: FinalistResult;
   discard?: DiscardAuctionResult;
+  cancel?: CancelAuctionResult;
   freeze?: FreezeFinalLineupResult;
   startFinal?: StartFinalResult;
   nextLot?: StartNextLotResult;
@@ -118,6 +120,7 @@ function fake(answers: {
     },
     startPrebidding: async () => answers.start ?? { kind: "ok" },
     discardAuction: async () => answers.discard ?? { kind: "ok" },
+    cancelAuction: async () => answers.cancel ?? { kind: "ok" },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },
     freezeFinalLineup: async (_person, freeze) => {
@@ -378,7 +381,9 @@ describe("auction console", () => {
     });
   });
 
-  it("refuses the console of a cancelled meetup and the start of a hidden one", async () => {
+  // Отказы сходки (PER-606) — исход пульта по перечитанному снимку: причина
+  // словами и возврат в пульт, а не отказ пульту целиком.
+  it("names a cancelled meetup and a hidden one as the outcome of the console", async () => {
     for (const kind of ["meetup-cancelled", "meetup-hidden"] as const) {
       const { run } = fake({
         start: { kind },
@@ -388,7 +393,11 @@ describe("auction console", () => {
 
       await expect(
         run({ ...call, intent: "start-auction-week", opId }),
-      ).resolves.toEqual({ kind: "auction-console-refused", reason: kind });
+      ).resolves.toEqual({
+        kind: "auction-console",
+        console: view("scheduled"),
+        note: kind,
+      });
     }
   });
 
@@ -682,6 +691,123 @@ describe("auction console raffle", () => {
     await expect(
       run({ ...call, intent: "view-auction-console" }),
     ).resolves.toEqual({ kind: "auction-console", console });
+  });
+});
+
+describe("auction cancel", () => {
+  const call = { identity: admin, auctionId };
+  const lot = (id: string, status: ConsoleLot["lot"]["status"]) => ({
+    lot: { lotId: id, auctionId, version: 1, proxyEnabled: false, status },
+    bidCount: 0,
+    uniqueParticipantCount: 0,
+    markedForFinal: false,
+    overdue: false,
+  });
+  const rub = (minorUnits: number) => ({ minorUnits, currency: "RUB" });
+
+  it("confirms the cancel with the number of sold lots once trading is open", async () => {
+    const ids = [
+      "0190f2a0-0000-7000-8000-000000000031",
+      "0190f2a0-0000-7000-8000-000000000032",
+      "0190f2a0-0000-7000-8000-000000000033",
+    ];
+    const { run } = fake({
+      read: {
+        kind: "ok",
+        console: view("break", {
+          lots: [
+            lot("0190f2a0-0000-7000-8000-000000000031", {
+              kind: "sold",
+              winnerId: "0190f2a0-0000-7000-8000-000000000041",
+              price: rub(100_000),
+            }),
+            lot("0190f2a0-0000-7000-8000-000000000032", {
+              kind: "held",
+              currentPrice: rub(50_000),
+            }),
+            lot("0190f2a0-0000-7000-8000-000000000033", { kind: "unsold" }),
+          ],
+        }),
+      },
+      statistics: {
+        kind: "ok",
+        lots: ids.map((lotId) => ({
+          lotId,
+          bidCount: 0,
+          uniqueParticipantCount: 0,
+        })),
+      },
+    });
+
+    await expect(
+      run({ ...call, intent: "prepare-auction-cancel", opId }),
+    ).resolves.toEqual({
+      kind: "auction-cancel-confirm",
+      auctionId,
+      opId,
+      sold: 1,
+    });
+  });
+
+  // До торгов действует удаление, после конца отменять нечего: подтверждения
+  // нет, пульт называет причину.
+  it("names a week not opened yet and an auction already over instead of a confirmation", async () => {
+    for (const [status, note] of [
+      ["scheduled", "cancel-too-early"],
+      ["finished", "cancel-too-late"],
+      ["cancelled", "cancel-too-late"],
+    ] as const) {
+      const { run } = fake({
+        read: { kind: "ok", console: view(status) },
+        statistics: noLotStatistics,
+      });
+
+      await expect(
+        run({ ...call, intent: "prepare-auction-cancel", opId }),
+      ).resolves.toMatchObject({ kind: "auction-console", note });
+    }
+  });
+
+  it("shows the cancelled auction over a read that has not seen the cancel yet", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: view("prebidding") },
+      statistics: noLotStatistics,
+    });
+
+    await expect(
+      run({ ...call, intent: "cancel-auction", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console",
+      console: view("cancelled"),
+      note: "auction-cancelled",
+    });
+  });
+
+  it("names the refusals of Auction on the console", async () => {
+    for (const [cancel, note] of [
+      [{ kind: "not-started" }, "cancel-too-early"],
+      [{ kind: "already-finished" }, "cancel-too-late"],
+    ] as const) {
+      const { run } = fake({
+        cancel,
+        read: { kind: "ok", console: view("scheduled") },
+        statistics: noLotStatistics,
+      });
+
+      await expect(
+        run({ ...call, intent: "cancel-auction", opId }),
+      ).resolves.toMatchObject({ kind: "auction-console", note });
+    }
+    await expect(
+      fake({ cancel: { kind: "not-administrator" } }).run({
+        ...call,
+        intent: "cancel-auction",
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "not-administrator",
+    });
   });
 });
 

@@ -68,6 +68,7 @@ import {
   type AuctionFailure,
   type AuctionScreenPorts,
   type AuctionScreens,
+  type CancelAuctionResult,
   type CloseLotResult,
   type ConsoleReadResult,
   type DaySummaryReadResult,
@@ -124,6 +125,7 @@ type AuctionRpc = Pick<
   | "scheduleAuction"
   | "startPrebidding"
   | "discardAuction"
+  | "cancelAuction"
   | "selectForFinal"
   | "deselectForFinal"
   | "freezeFinalLineup"
@@ -291,6 +293,30 @@ export function createAuctionAdapter(
           auctionId: response.auction.id,
           ...summaryOrNothing(response.auction),
         };
+      } catch (cause) {
+        return toFailure(cause);
+      }
+    },
+    async soldLots(person, auctionId, meta) {
+      try {
+        let sold = 0;
+        let pageToken = "";
+        const seen = new Set<string>();
+        for (let pages = 0; ; pages++) {
+          // Повтор токена или бесконечный реестр — дефект соседа, а не повод
+          // крутиться: исход тогда «не знаю», как у отказа.
+          if (pages >= MAX_SOLD_PAGES || seen.has(pageToken)) {
+            return defect("auction lot pages do not end");
+          }
+          seen.add(pageToken);
+          const page = await rpc.listAuctionLots(
+            { viewer: wireViewer(viewerOf(person)), auctionId, pageToken },
+            options(meta),
+          );
+          sold += page.lots.filter((lot) => lot.status.case === "sold").length;
+          if (page.nextPageToken === "") return { kind: "ok", sold };
+          pageToken = page.nextPageToken;
+        }
       } catch (cause) {
         return toFailure(cause);
       }
@@ -527,6 +553,17 @@ export function createAuctionAdapter(
           options(meta),
         );
         return discardAuctionResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async cancelAuction(person, cancel, meta) {
+      try {
+        const response = await rpc.cancelAuction(
+          { viewer: wireViewer(viewerOf(person)), ...cancel },
+          options(meta),
+        );
+        return cancelAuctionResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1042,6 +1079,10 @@ function enableResult(
 // Пустой `oneof` и отказ, которого у команды без изображения быть не может, —
 // дефект соседа, а не решение: экран отвечает как на сбой, а причина уходит в
 // запись границы.
+// Предохранитель обхода реестра для подсчёта продаж: столько страниц у
+// аукциона сообщества не бывает.
+const MAX_SOLD_PAGES = 200;
+
 function defect(what: string): AuctionFailure {
   return { kind: "invalid", cause: new Error(what) };
 }
@@ -1425,6 +1466,38 @@ function startPrebiddingResult(
       }
     case undefined:
       return defect("start prebidding response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function cancelAuctionResult(
+  outcome: Awaited<ReturnType<AuctionRpc["cancelAuction"]>>["outcome"],
+): CancelAuctionResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "auctionNotStarted":
+          return { kind: "not-started" };
+        case "auctionAlreadyFinished":
+          return { kind: "already-finished" };
+        case undefined:
+          return defect("cancel auction refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("cancel auction response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

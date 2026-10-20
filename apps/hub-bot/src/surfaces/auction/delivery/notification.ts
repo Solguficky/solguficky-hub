@@ -14,6 +14,10 @@ import {
   toDeliveryNotification,
 } from "../../../core/delivery/index.js";
 import {
+  type AuctionCancelledNotice,
+  auctionCancelledNoticeOf,
+} from "../../../core/notifications/auction-cancelled-notice.js";
+import {
   type FinalNotice,
   finalNoticeOf,
 } from "../../../core/notifications/final-notice.js";
@@ -37,6 +41,8 @@ export type AuctionNotificationContent =
   | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота хаба.
   | RaffleNotice
+  // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота хаба.
+  | AuctionCancelledNotice
   // Допуск к аукциону получает сам заявитель (PER-442). Круг здесь всегда
   // public: допуск в хаб доставляет бот хаба.
   | { kind: "access-granted" }
@@ -85,6 +91,8 @@ function toContent(
       return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
+    case "auctionCancelled":
+      return auctionCancelledNoticeOf(type.value);
     // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
     // заявку в аукцион, а допуск в хаб для аукциона чужой.
     case "accessGranted": {

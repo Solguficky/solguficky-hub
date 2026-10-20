@@ -102,6 +102,8 @@ const forgedAuctionPresses = {
   "console-confirm": `v1:ac:y:${auctionToken}:${uuidToToken(mugId)}`,
   "console-discard": `v1:ac:x:${auctionToken}`,
   "console-discard-confirm": `v1:ac:z:${auctionToken}:${uuidToToken(mugId)}`,
+  "console-cancel": `v1:ac:u:${auctionToken}`,
+  "console-cancel-confirm": `v1:ac:uy:${auctionToken}:${uuidToToken(mugId)}`,
   "console-mark": `v1:ac:s:${auctionToken}:${uuidToToken(vaseId)}:0`,
   "console-windows": `v1:ac:h:${auctionToken}`,
   "console-day-summary": `v1:ac:ds:${auctionToken}`,
@@ -221,6 +223,7 @@ function fakeAuction(
     lots: ConsoleLot[];
     startedBy?: string;
     discarded?: true;
+    cancelledBy?: string;
     lineup?: { order: readonly string[]; activeLotId?: string };
     // Ключ принятого объявления состава: его повтор Auction принимает.
     frozenBy?: string;
@@ -277,6 +280,7 @@ function fakeAuction(
     LotAdministration &
     AuctionConsoles = {
     getMeetupAuction: notUsed,
+    soldLots: notUsed,
     enableAuction: notUsed,
     createLotCard: notUsed,
     editLotCard: notUsed,
@@ -383,6 +387,19 @@ function fakeAuction(
         return { kind: "already-started" };
       }
       state.discarded = true;
+      return { kind: "ok" };
+    },
+    // Отмена — как в сервисе: до торгов `not-started`, после конца
+    // `already-finished`, повтор на отменённом принят.
+    async cancelAuction(_person, cancel) {
+      commands.push({ method: "cancelAuction", args: cancel });
+      if (state.status === "cancelled") return { kind: "ok" };
+      if (state.status === "draft" || state.status === "scheduled") {
+        return { kind: "not-started" };
+      }
+      if (state.status === "finished") return { kind: "already-finished" };
+      state.status = "cancelled";
+      state.cancelledBy = cancel.opId;
       return { kind: "ok" };
     },
     selectForFinal: mark(true),
@@ -1139,7 +1156,7 @@ describe("auction console", () => {
     );
     expect(labels(screen)).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["Сводка дня"],
+      ["Сводка дня", "Отменить аукцион"],
       ["В финал · Ваза"],
       ["Снять из финала · Кружка"],
       ["‹ Аукцион"],
@@ -1824,7 +1841,11 @@ describe("opening the week while another auction is trading", () => {
     expect(last(calls).text).toBe(
       "<b>Торги уже идут у аукциона с онлайн-неделей с 5 октября, пн, 18:00 до 12 октября, пн, 18:00: открыть неделю можно, когда они закончатся</b>",
     );
-    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+    expect(labels(last(calls))).toEqual([["Идущий аукцион"], ["‹ Пульт"]]);
+    // Переход к идущему аукциону — в его корень (PER-606).
+    expect(dataOf(last(calls), "Идущий аукцион")).toBe(
+      encodeAuctionCallback({ kind: "root", auctionId: busy.auctionId }),
+    );
     expect(auction.sent("startPrebidding")).toEqual([]);
   });
 
@@ -1905,7 +1926,7 @@ describe("opening the week while another auction is trading", () => {
     expect(last(calls).text).toBe(
       "<b>Торги уже идут у аукциона с онлайн-неделей с 5 октября, пн, 18:00 до 12 октября, пн, 18:00: открыть неделю можно, когда они закончатся</b>",
     );
-    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+    expect(labels(last(calls))).toEqual([["Идущий аукцион"], ["‹ Пульт"]]);
   });
 });
 
@@ -2124,7 +2145,7 @@ describe("final selection", () => {
 
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["Сводка дня"],
+      ["Сводка дня", "Отменить аукцион"],
       ["Снять из финала · Кружка"],
       ["‹ Аукцион"],
     ]);
@@ -2178,7 +2199,7 @@ describe("final selection", () => {
     );
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["Сводка дня"],
+      ["Сводка дня", "Отменить аукцион"],
       ["‹ Аукцион"],
     ]);
   });
@@ -2254,6 +2275,102 @@ describe("discarding the auction", () => {
   });
 });
 
+// Отмена после старта торгов (PER-606; ADR-047, дополнение 2026-10-12): та же
+// форма, что у удаления, но подтверждение называет проданные лоты.
+describe("cancelling the auction", () => {
+  const soldMug: ConsoleLot = {
+    ...mug,
+    lot: {
+      ...mug.lot,
+      status: {
+        kind: "sold",
+        winnerId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ee",
+        price: rub(50_000),
+      },
+    },
+    markedForFinal: false,
+    overdue: false,
+  };
+
+  it("offers the cancel once trading is open and cancels only after the confirmation", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true },
+      lots: [vase, soldMug],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(JSON.stringify(last(calls))).not.toContain("Удалить аукцион");
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Отменить аукцион")));
+    const confirm = last(calls);
+    expect(plain(confirm)).toContain("Отменить аукцион?");
+    expect(plain(confirm)).toContain(
+      "У сходки идут торги: аукцион будет отменён, проданные лоты (1) останутся проданными.",
+    );
+    expect(plain(confirm)).toContain(
+      "Отменить нельзя: нового аукциона у этой сходки не будет.",
+    );
+    expect(labels(confirm)).toEqual([["✔️ Да, отменить аукцион", "✖️ Нет"]]);
+    expect(dataOf(confirm, "✖️ Нет")).toBe(consoleData);
+    expect(auction.sent("cancelAuction")).toEqual([]);
+
+    const yes = dataOf(confirm, "✔️ Да, отменить аукцион");
+    await bot.handleUpdate(press(yes));
+    expect(auction.state.status).toBe("cancelled");
+    expect(last(calls).text).toBe(
+      "<b>Аукцион отменён</b>\n\nПроданные лоты остались проданными, остальные сняты с торгов.",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
+
+    // Пульт отменённого — статус без команд отмены и удаления.
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    expect(plain(last(calls))).toContain(
+      "Аукцион отменён: проданные лоты остались проданными.",
+    );
+    expect(JSON.stringify(last(calls))).not.toContain("Отменить аукцион");
+
+    // Повторное «Да» несёт тот же ключ: Auction примет его как повтор.
+    await bot.handleUpdate(press(yes));
+    const [first, second] = auction.sent("cancelAuction");
+    expect(second?.args).toEqual(first?.args);
+  });
+
+  it("offers no cancel before trading and names it for an old button", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(JSON.stringify(last(calls))).not.toContain("Отменить аукцион");
+
+    await bot.handleUpdate(press(`v1:ac:u:${auctionToken}`));
+    expect(last(calls).text).toBe(
+      "<b>Онлайн-неделя ещё не открыта</b>\n\nОтменять нечего: аукцион можно удалить.",
+    );
+    expect(auction.sent("cancelAuction")).toEqual([]);
+  });
+
+  it("refuses an old cancel button of someone who is not an administrator before Auction is asked", async () => {
+    const auction = fakeAuction({ status: "prebidding", lots: [vase] });
+    const { bot, calls } = harness("member", auction);
+    await bot.init();
+
+    for (const data of [
+      `v1:ac:u:${auctionToken}`,
+      `v1:ac:uy:${auctionToken}:${uuidToToken(vaseId)}`,
+    ]) {
+      await bot.handleUpdate(press(data));
+      expect(last(calls).text).toContain("Это действие тебе недоступно.");
+    }
+    expect(auction.commands).toEqual([]);
+  });
+});
+
 describe("final of the auctioneer", () => {
   const leaderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ee";
   const finalist = (
@@ -2306,6 +2423,7 @@ describe("final of the auctioneer", () => {
     );
     expect(labels(last(calls))).toEqual([
       ["Начать финал"],
+      ["Отменить аукцион"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);
@@ -2324,6 +2442,7 @@ describe("final of the auctioneer", () => {
     expect(labels(panel)).toEqual([
       ["Поднять цену"],
       ["Продать"],
+      ["Отменить аукцион"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);
@@ -2380,6 +2499,7 @@ describe("final of the auctioneer", () => {
     expect(plain(last(calls))).toContain("1. Ваза — продан за 1 200 ₽");
     expect(labels(last(calls))).toEqual([
       ["Открыть следующий лот"],
+      ["Отменить аукцион"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);
@@ -3266,6 +3386,7 @@ describe("live console of the auctioneer", () => {
     expect(labels(edited)).toEqual([
       ["Поднять цену"],
       ["Продать"],
+      ["Отменить аукцион"],
       ["🔄 Обновить"],
       ["‹ Аукцион"],
     ]);

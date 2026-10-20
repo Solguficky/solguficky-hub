@@ -477,6 +477,14 @@ export const screenCatalog = {
     title: "Удалить аукцион?",
     irreversible: true,
   },
+  // Отмена аукциона после старта торгов (ADR-047, дополнение 2026-10-12):
+  // нового аукциона у сходки не будет, поэтому — красное «Да».
+  "cancel-confirm": {
+    class: "screen",
+    nav: "confirm",
+    title: "Отменить аукцион?",
+    irreversible: true,
+  },
   // Хронология ставок лота (PER-309): тело — аукционное дерево, оболочка — хаб.
   bids: {
     class: "screen",

@@ -24,6 +24,10 @@ import {
   toDeliveryNotification,
 } from "../../../core/delivery/index.js";
 import {
+  type AuctionCancelledNotice,
+  auctionCancelledNoticeOf,
+} from "../../../core/notifications/auction-cancelled-notice.js";
+import {
   type FinalNotice,
   finalNoticeOf,
 } from "../../../core/notifications/final-notice.js";
@@ -122,6 +126,9 @@ export type RenderableContent =
   | FinalNotice
   // Итог розыгрыша среди участников (PER-620) — тот же, что у бота аукциона.
   | RaffleNotice
+  // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота
+  // аукциона.
+  | AuctionCancelledNotice
   // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
   // — этот (RFC-015, С-12). Ссылку на бот аукциона он вручает сам; факт её не
   // несёт (PER-536), и она приходит не из ветки, а из настройки бота.
@@ -283,6 +290,8 @@ function toContent(message: Notification): NotificationContent | undefined {
       return finalNoticeOf(type);
     case "raffleResult":
       return raffleNoticeOf(type.value);
+    case "auctionCancelled":
+      return auctionCancelledNoticeOf(type.value);
     case "releaseSummary": {
       const { summaryId, summarizedAt, recordIds } = type.value;
       if (summaryId === "" || summarizedAt === "" || recordIds.length === 0) {

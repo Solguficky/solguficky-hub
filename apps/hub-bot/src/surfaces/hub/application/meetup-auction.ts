@@ -1,12 +1,25 @@
+import type { AuctionStageView } from "../../../auction-ui/index.js";
 import { rpcMeta } from "../../../core/rpc-metadata.js";
 import type { MeetupAuctions } from "../auction/port.js";
 import { admittedToHub } from "./hub-access.js";
 import type {
+  AuctionCancelConsequence,
   ExecuteRequest,
   ExecuteResult,
   MeetupAuctionView,
   Person,
 } from "./types.js";
+
+// Торги идут от открытия онлайн-недели до конца финала: такой аукцион отмена
+// сходки отменяет (ADR-047, дополнение 2026-10-12). До торгов он удаляется, и
+// продаж там нет, — подтверждение тогда прежнее.
+const tradingStages: ReadonlySet<AuctionStageView> = new Set([
+  "prebidding",
+  "settling",
+  "on-break",
+  "lineup-frozen",
+  "in-final",
+]);
 
 // Результат со сходкой, к которому дописывается аукцион: карточка и результаты
 // формы, которые бот показывает карточкой.
@@ -93,5 +106,28 @@ export function createMeetupAuction(auctions: MeetupAuctions) {
     }
   }
 
-  return { withAuction, enable };
+  // Последствие отмены сходки для её аукциона (ADR-064, дополнение
+  // 2026-10-12): идущие торги отмена сходки обрывает, проданное остаётся. Сама
+  // отмена идёт в Meetups и Auction не ждёт, поэтому сбой чтения не закрывает
+  // её, а даёт условное последствие.
+  async function cancelConsequence(
+    auction: MeetupAuctionView | undefined,
+    request: { identity: Person; requestId?: string; deadlineAt?: number },
+  ): Promise<AuctionCancelConsequence | undefined> {
+    if (auction === undefined || auction.kind === "none") return undefined;
+    if (auction.kind === "unavailable" || auction.auction === undefined) {
+      return { kind: "unknown" };
+    }
+    if (!tradingStages.has(auction.auction.stage)) return undefined;
+    const sold = await auctions.soldLots(
+      request.identity,
+      auction.auctionId,
+      rpcMeta(request),
+    );
+    return sold.kind === "ok"
+      ? { kind: "trading", sold: sold.sold }
+      : { kind: "unknown" };
+  }
+
+  return { withAuction, enable, cancelConsequence };
 }

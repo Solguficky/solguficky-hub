@@ -10,6 +10,10 @@ import {
   type RenderMessage,
 } from "../../../core/delivery/index.js";
 import {
+  type AuctionCancelledNotice,
+  renderAuctionCancelledNotice,
+} from "../../../core/notifications/auction-cancelled-notice.js";
+import {
   createFinalNoticeRender,
   isFinalNotice,
   renderFinalNotice,
@@ -64,6 +68,12 @@ export function traceRaffleCallback(auctionId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({ kind: "raffle", auctionId })}`;
 }
 
+// «К аукциону» под извещением об отмене (PER-606) — корень аукциона дерева
+// тем же путём, что кнопка аукциона в списке.
+export function traceRootCallback(auctionId: string): string {
+  return `${tracePrefix}${encodeAuctionCallback({ kind: "root", auctionId })}`;
+}
+
 // Вход в аукцион из следа сообщения о допуске — FAQ, тем же путём, что
 // команда `/faq`: впереди у допущенного правила, и подпись это и обещает
 // (PER-592). «Аукционы» под FAQ ставят отметку и открывают список.
@@ -85,7 +95,9 @@ export function parseTraceCallback(data: string): string | undefined {
   if (parseEntryCallback(inner) !== undefined) return inner;
   const parsed = parseAuctionCallback(inner);
   return parsed.ok &&
-    (parsed.intent.kind === "lot" || parsed.intent.kind === "raffle")
+    (parsed.intent.kind === "lot" ||
+      parsed.intent.kind === "raffle" ||
+      parsed.intent.kind === "root")
     ? inner
     : undefined;
 }
@@ -126,6 +138,12 @@ export function createRenderMessage(
     if (content.kind === "raffle-result") {
       return { kind: "ready", message: renderNotification(content) };
     }
+    // Отмена аукциона (PER-606) права не спрашивает: торги уже оборвались, а
+    // покупателю нужно знать, что купленное осталось за ним
+    // (auction-cancelled-notice.ts).
+    if (content.kind === "auction-cancelled") {
+      return { kind: "ready", message: renderNotification(content) };
+    }
     if (content.kind === "access-granted") {
       return (
         (await checkPlaceBids(reads, context)) ?? {
@@ -162,6 +180,7 @@ export function renderNotification(
     return { text: "Тебя приняли в сообщество." };
   }
   if (content.kind === "raffle-result") return raffleMessage(content);
+  if (content.kind === "auction-cancelled") return cancelledMessage(content);
   if (isFinalNotice(content)) {
     return traceMessage(renderFinalNotice(content, { lots }));
   }
@@ -185,6 +204,21 @@ function traceMessage(view: LotNoticeView): NotificationMessage {
             : traceNotifyCallback(),
       })),
     ),
+  };
+}
+
+function cancelledMessage(notice: AuctionCancelledNotice): NotificationMessage {
+  const view = renderAuctionCancelledNotice(notice);
+  return {
+    text: view.text,
+    rows: [
+      [
+        {
+          text: view.button.text,
+          callback_data: traceRootCallback(view.button.auctionId),
+        },
+      ],
+    ],
   };
 }
 

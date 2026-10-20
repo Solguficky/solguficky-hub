@@ -43,12 +43,22 @@ export type EnableAuctionResult =
   | { kind: "meetup-cancelled" }
   | AuctionFailure;
 
+// Сколько лотов аукциона продано: их называет подтверждение отмены сходки с
+// идущими торгами (ADR-064, дополнение 2026-10-12). Счётчика в контракте нет —
+// продажа живёт на снимке лота, и край считает её по реестру аукциона.
+export type SoldLotsResult = { kind: "ok"; sold: number } | AuctionFailure;
+
 export type MeetupAuctions = {
   getMeetupAuction(
     person: Person,
     meetupId: string,
     meta?: RpcMetadata,
   ): Promise<MeetupAuctionResult>;
+  soldLots(
+    person: Person,
+    auctionId: string,
+    meta?: RpcMetadata,
+  ): Promise<SoldLotsResult>;
   // `opId` рождает край на каждое нажатие: ключ аукциона выводит сервер из
   // сходки, поэтому второй аукцион не родится ни от какого повтора.
   enableAuction(
@@ -257,6 +267,17 @@ export type DiscardAuctionResult =
   | { kind: "not-administrator" }
   | { kind: "meetup-not-found" }
   | { kind: "already-started" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// Отмена после старта торгов (ADR-047, дополнение 2026-10-12): до торгов
+// Auction отвечает `not-started` — там действует удаление.
+export type CancelAuctionResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "not-started" }
+  | { kind: "already-finished" }
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
@@ -470,6 +491,13 @@ export type AuctionConsoles = {
     discard: { auctionId: string; opId: string },
     meta?: RpcMetadata,
   ): Promise<DiscardAuctionResult>;
+  // Отмена после старта торгов: проданные лоты остаются проданными, остальные
+  // снимаются, нового аукциона у сходки не будет. Повтор Auction принимает.
+  cancelAuction(
+    person: Person,
+    cancel: { auctionId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<CancelAuctionResult>;
   selectForFinal(
     person: Person,
     mark: FinalistMark,

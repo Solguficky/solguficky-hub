@@ -367,6 +367,8 @@ type PlainAction =
   // «Удалить аукцион»: подтверждение, затем «Да» с ключом удаления.
   | { kind: "console-discard"; auction: string }
   | { kind: "console-discard-confirm"; auction: string; op: string }
+  | { kind: "console-cancel"; auction: string }
+  | { kind: "console-cancel-confirm"; auction: string; op: string }
   | {
       kind: "console-mark";
       auction: string;
@@ -739,6 +741,16 @@ export function consoleDiscardData(auction: string): string {
 /** «Да» подтверждения удаления: аукцион и ключ команды. */
 export function consoleDiscardConfirmData(auction: string, op: string): string {
   return `v1:ac:z:${auction}:${op}`;
+}
+
+/** «Отменить аукцион»: подтверждение, а не команда. */
+export function consoleCancelData(auction: string): string {
+  return `v1:ac:u:${auction}`;
+}
+
+/** «Да» подтверждения отмены: аукцион и ключ команды. */
+export function consoleCancelConfirmData(auction: string, op: string): string {
+  return `v1:ac:uy:${auction}:${op}`;
 }
 
 /** Отметка лота для финала (`s`) или её снятие (`d`). */
@@ -1580,6 +1592,20 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 5 && op.success
         ? {
             kind: "console-discard-confirm",
+            auction: auction.data,
+            op: op.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "u":
+      return parts.length === 4
+        ? { kind: "console-cancel", auction: auction.data }
+        : { kind: "malformed" };
+    case "uy": {
+      const op = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && op.success
+        ? {
+            kind: "console-cancel-confirm",
             auction: auction.data,
             op: op.data,
           }

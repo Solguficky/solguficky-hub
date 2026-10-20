@@ -6,7 +6,8 @@ import { MAX_LIST_PAGE } from "./faq.js";
 // они не входят. Переход из строки списка — кнопка ленты пакета.
 
 // Выборка `ListAuctions`: активные — от `scheduled` до `in_final`, прошедшие —
-// `finished`. Черновик не входит ни в одну (ADR-047).
+// `finished` и `cancelled`, и стадия строки отличает одно от другого. Черновик
+// не входит ни в одну (ADR-047).
 export type AuctionListing = "active" | "finished";
 
 export type AuctionStage =
@@ -16,7 +17,8 @@ export type AuctionStage =
   | "on-break"
   | "lineup-frozen"
   | "in-final"
-  | "finished";
+  | "finished"
+  | "cancelled";
 
 // Строка списка. Имени у аукциона в контракте нет, а сходку список не
 // называет намеренно: путь «аукцион → сходка» закрыт (ADR-047, «Видимость
@@ -79,15 +81,21 @@ export async function readAuctions(input: {
   throw new Error(`auction list exceeds ${MAX_SERVER_PAGES} server pages`);
 }
 
-// Активные — от ближайшего начала, прошедшие — от свежего. Аукцион без
-// онлайн-фазы даты не имеет и стоит последним; равные — по идентификатору,
-// чтобы порядок не прыгал между нажатиями.
+// Активные — идущий первым (ADR-047, дополнение 2026-10-12: порядок решает
+// поверхность), за ним запланированные от ближайшего начала; прошедшие — от
+// свежего. Аукцион без онлайн-фазы даты не имеет и стоит последним; равные — по
+// идентификатору, чтобы порядок не прыгал между нажатиями.
 export function sortAuctions(
   listing: AuctionListing,
   auctions: readonly AuctionSummary[],
 ): AuctionSummary[] {
   const direction = listing === "active" ? 1 : -1;
   return [...auctions].sort((left, right) => {
+    const pending =
+      listing === "active"
+        ? pendingRank(left.stage) - pendingRank(right.stage)
+        : 0;
+    if (pending !== 0) return pending;
     const a = left.opensAt === undefined ? undefined : Date.parse(left.opensAt);
     const b =
       right.opensAt === undefined ? undefined : Date.parse(right.opensAt);
@@ -98,6 +106,12 @@ export function sortAuctions(
     }
     return left.auctionId < right.auctionId ? -1 : 1;
   });
+}
+
+// Запланированный ещё не идёт: торги открыты не больше чем у одного аукциона
+// (RFC-017), и он среди активных стоит первым.
+function pendingRank(stage: AuctionStage): number {
+  return stage === "scheduled" ? 1 : 0;
 }
 
 export type AuctionListPage = {

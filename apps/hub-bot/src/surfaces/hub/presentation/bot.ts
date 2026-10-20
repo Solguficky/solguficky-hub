@@ -244,9 +244,9 @@ import {
 import {
   auctionDiscardedText,
   type ConsoleScreenView,
+  cancelConfirmScreen,
   closeConfirmScreen,
   closedScreen,
-  consoleMeetupText,
   consoleMissingText,
   consoleScreen,
   discardConfirmScreen,
@@ -2375,6 +2375,8 @@ async function handleCallback(
       action.kind === "console-confirm" ||
       action.kind === "console-discard" ||
       action.kind === "console-discard-confirm" ||
+      action.kind === "console-cancel" ||
+      action.kind === "console-cancel-confirm" ||
       action.kind === "console-mark" ||
       action.kind === "console-lineup" ||
       action.kind === "console-lineup-confirm" ||
@@ -3446,6 +3448,9 @@ async function handleCallback(
         identity: person,
         intent: "view-meetup",
         meetupId,
+        ...(action.kind === "manage-cancel"
+          ? { withCancelConsequence: true as const }
+          : {}),
         ...rpcCall(ctx, useCase),
       });
       if (current.kind !== "meetup-card") {
@@ -3638,6 +3643,9 @@ async function handleCallback(
             action: stateActionByCallback[action.kind],
             meetup,
             back: `v1:manage:status:${token}`,
+            ...(current.cancelConsequence === undefined
+              ? {}
+              : { consequence: current.cancelConsequence }),
           }),
         );
       }
@@ -7019,6 +7027,8 @@ async function handleConsoleCallback(
         | "console-confirm"
         | "console-discard"
         | "console-discard-confirm"
+        | "console-cancel"
+        | "console-cancel-confirm"
         | "console-mark"
         | "console-lineup"
         | "console-lineup-confirm"
@@ -7146,6 +7156,24 @@ async function handleConsoleCallback(
         await runtime.dispatcher.execute({
           ...call,
           intent: "discard-auction",
+          opId: tokenToUuid(action.op),
+        }),
+      );
+    case "console-cancel":
+      // Подтверждение либо пульт с причиной решает юзкейс; ключ отмены
+      // рождается здесь и уедет в «Да».
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-auction-cancel",
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-cancel-confirm":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "cancel-auction",
           opId: tokenToUuid(action.op),
         }),
       );
@@ -7410,6 +7438,9 @@ async function renderConsoleResult(
     case "auction-discard-confirm":
       await showScreen(ctx, discardConfirmScreen(result));
       return handled("auction discard confirmation sent");
+    case "auction-cancel-confirm":
+      await showScreen(ctx, cancelConfirmScreen(result));
+      return handled("auction cancel confirmation sent");
     case "auction-discarded": {
       // Возврат — к сходке, у которой был аукцион: там снова «Включить
       // аукцион». После рестарта бот сходку может не знать.
@@ -7561,9 +7592,7 @@ async function renderConsoleResult(
         ctx,
         result.reason === "not-administrator"
           ? forbiddenText
-          : result.reason === "auction-not-found"
-            ? consoleMissingText
-            : consoleMeetupText[result.reason],
+          : consoleMissingText,
         exitToMeetups(),
       );
       return {
@@ -10083,6 +10112,8 @@ function callbackUseCase(
     | "console-confirm"
     | "console-discard"
     | "console-discard-confirm"
+    | "console-cancel"
+    | "console-cancel-confirm"
     | "console-mark"
     | "console-lineup"
     | "console-lineup-confirm"
@@ -10250,6 +10281,8 @@ function callbackUseCase(
     case "console-confirm":
     case "console-discard":
     case "console-discard-confirm":
+    case "console-cancel":
+    case "console-cancel-confirm":
     case "console-mark":
     case "console-lineup":
     case "console-lineup-confirm":

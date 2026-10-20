@@ -6,11 +6,15 @@ import {
   AuctionState_PrebiddingSchema,
   AuctionState_ScheduledSchema,
 } from "../../../../gen/auction/v1/auction_events_pb.js";
-import { BidSource } from "../../../../gen/auction/v1/auction_pb.js";
+import {
+  BidSource,
+  LotSaleSchema,
+} from "../../../../gen/auction/v1/auction_pb.js";
 import {
   AddLotResponseSchema,
   AdvanceAskResponseSchema,
   AuctionSnapshotSchema,
+  CancelAuctionResponseSchema,
   CloseLotResponseSchema,
   CreateLotCardResponseSchema,
   DiscardAuctionResponseSchema,
@@ -22,6 +26,7 @@ import {
   GetAuctionLotStatisticsResponseSchema,
   GetMeetupAuctionResponseSchema,
   GetRaffleResponseSchema,
+  ListAuctionLotsResponseSchema,
   ListAuctionNamesResponseSchema,
   ListAuctionsResponseSchema,
   ListLotHistoryResponseSchema,
@@ -78,6 +83,8 @@ function adapter(rpc: {
   scheduleAuction?: Call;
   startPrebidding?: Call;
   discardAuction?: Call;
+  cancelAuction?: Call;
+  listAuctionLots?: Call;
   selectForFinal?: Call;
   deselectForFinal?: Call;
   freezeFinalLineup?: Call;
@@ -101,7 +108,7 @@ function adapter(rpc: {
     addLot: (rpc.addLot ?? notUsed) as never,
     scheduleLot: (rpc.scheduleLot ?? notUsed) as never,
     getLot: (rpc.getLot ?? notUsed) as never,
-    listAuctionLots: notUsed,
+    listAuctionLots: (rpc.listAuctionLots ?? notUsed) as never,
     listLotHistory: (rpc.listLotHistory ?? notUsed) as never,
     getDisplayNames: (rpc.getDisplayNames ?? notUsed) as never,
     listAuctionNames: (rpc.listAuctionNames ?? notUsed) as never,
@@ -121,6 +128,7 @@ function adapter(rpc: {
     scheduleAuction: (rpc.scheduleAuction ?? notUsed) as never,
     startPrebidding: (rpc.startPrebidding ?? notUsed) as never,
     discardAuction: (rpc.discardAuction ?? notUsed) as never,
+    cancelAuction: (rpc.cancelAuction ?? notUsed) as never,
     selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
     deselectForFinal: (rpc.deselectForFinal ?? notUsed) as never,
     freezeFinalLineup: (rpc.freezeFinalLineup ?? notUsed) as never,
@@ -1116,6 +1124,89 @@ describe("auction console adapter", () => {
     await expect(
       refused.consoleRaffle(admin, auctionId),
     ).resolves.not.toHaveProperty("raffle");
+  });
+
+  // Отмена после старта торгов (PER-606): каждый именованный отказ — свой
+  // ответ, принятая — `ok`, и в Auction едут смотрящий и ключ отмены.
+  it("reads the cancel of an auction and its named refusals", async () => {
+    const sent: unknown[] = [];
+    const accepted = adapter({
+      cancelAuction: async (request) => {
+        sent.push(request);
+        return create(CancelAuctionResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    await expect(
+      accepted.cancelAuction(admin, { auctionId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([{ viewer: wireAdmin, auctionId, opId }]);
+
+    for (const [reason, kind] of [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+      ["auctionNotStarted", "not-started"],
+      ["auctionAlreadyFinished", "already-finished"],
+    ] as const) {
+      const refused = adapter({
+        cancelAuction: async () =>
+          create(CancelAuctionResponseSchema, {
+            outcome: {
+              case: "refused",
+              value: { reason: { case: reason, value: {} } },
+            },
+          }),
+      });
+
+      await expect(
+        refused.cancelAuction(admin, { auctionId, opId }),
+      ).resolves.toEqual({ kind });
+    }
+  });
+
+  // Число проданных лотов для подтверждения отмены сходки: реестр по
+  // страницам, проданный — по статусу снимка; бесконечный реестр — дефект.
+  it("counts the sold lots of an auction over the pages of its registry", async () => {
+    const sold = (lotId: string) =>
+      create(LotSnapshotSchema, {
+        id: lotId,
+        status: {
+          case: "sold",
+          value: create(LotSaleSchema, {
+            winnerId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce",
+            price: { minorUnits: 100_000n, currency: "RUB" },
+          }),
+        },
+      });
+    const pages = adapter({
+      listAuctionLots: async (request) =>
+        (request as { pageToken: string }).pageToken === ""
+          ? create(ListAuctionLotsResponseSchema, {
+              lots: [
+                sold("0198f2a4-7c1e-7d3a-9b21-4f8e12ab3401"),
+                create(LotSnapshotSchema, {
+                  id: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3402",
+                }),
+              ],
+              nextPageToken: "next",
+            })
+          : create(ListAuctionLotsResponseSchema, {
+              lots: [sold("0198f2a4-7c1e-7d3a-9b21-4f8e12ab3403")],
+            }),
+    });
+    const looping = adapter({
+      listAuctionLots: async () =>
+        create(ListAuctionLotsResponseSchema, { nextPageToken: "again" }),
+    });
+
+    await expect(pages.soldLots(admin, auctionId)).resolves.toEqual({
+      kind: "ok",
+      sold: 2,
+    });
+    await expect(looping.soldLots(admin, auctionId)).resolves.toMatchObject({
+      kind: "invalid",
+    });
   });
 
   it("reads a start refused for a cancelled or a hidden meetup as its own answer", async () => {

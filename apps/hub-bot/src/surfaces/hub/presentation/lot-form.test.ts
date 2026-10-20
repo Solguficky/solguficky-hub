@@ -96,6 +96,7 @@ function fakeAuction(
   };
   const port: MeetupAuctions & AuctionScreens & LotAdministration = {
     getMeetupAuction: notUsed,
+    soldLots: notUsed,
     enableAuction: notUsed,
     async createLotCard(_person, card) {
       commands.push({ method: "createLotCard", args: card });

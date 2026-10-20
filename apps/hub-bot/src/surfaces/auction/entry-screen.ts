@@ -742,6 +742,7 @@ const stageLabels: Record<AuctionStage, string> = {
   "lineup-frozen": "готовим финал",
   "in-final": "идёт финал",
   finished: "завершён",
+  cancelled: "отменён",
 };
 
 function lotCount(count: number): string {
@@ -944,6 +945,7 @@ const rootStages: Record<AuctionStageView, string> = {
   "lineup-frozen": "Готовим финал.",
   "in-final": "Идёт финал.",
   finished: "Аукцион завершён.",
+  cancelled: "Аукцион отменён: проданные лоты остались проданными.",
 };
 
 function rootText(block: RootBlock, options: RenderOptions): string {

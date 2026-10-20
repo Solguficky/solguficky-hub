@@ -174,6 +174,30 @@ describe("renderNotification", () => {
     ]);
   });
 
+  // Извещение об отмене аукциона (PER-606): покупателю — строка о покупке,
+  // кнопка следа — корень аукциона новым сообщением.
+  it("tells about a cancelled auction with a traced button to its root", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const message = renderNotification({
+      kind: "auction-cancelled",
+      auctionId,
+      purchases: [{ minorUnits: 150_000, currency: "RUB" }],
+    });
+
+    expect(message.text).toContain(
+      "Аукцион отменили: торги по лотам остановлены, ставки больше не действуют.",
+    );
+    expect(message.text).toContain("Твоя покупка за");
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "К аукциону",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "root", auctionId }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
   // Записи 30 и 32 прогона 12.10: участник сообщества видит название лота, как
   // гость в боте аукциона, а под перебитием — «Частота уведомлений» вместо
   // «Реже» (PER-598).
