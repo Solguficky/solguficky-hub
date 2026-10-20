@@ -59,6 +59,7 @@ import auction.v1.auction_service.SettlePredictionResultsManuallyRequest
 import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.GetMeetupAuctionRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
+import auction.v1.auction_service.ListAuctionNamesRequest
 import auction.v1.auction_service.ListAuctionsRequest
 import auction.v1.auction_service.ListLotHistoryRequest
 import auction.v1.auction_service.RemoveLotRequest
@@ -188,6 +189,9 @@ final case class ChooseCommand(auctionId: AuctionId, choice: NameChoice, acting:
 
 /** Имена названных участников аукциона. */
 final case class NamesQuery(auctionId: AuctionId, participants: Set[ParticipantId], acting: Acting)
+
+/** Все выбранные имена аукциона для помощника ведущего. */
+final case class AuctionNamesQuery(auctionId: AuctionId, acting: Acting)
 
 /**
  * Отображение сгенерированных сообщений в доменные типы — trusted boundary.
@@ -321,6 +325,12 @@ object RequestMapping {
         (acc, id) => acc.flatMap(set => uuidV7("participant_ids", id).map(uuid => set + ParticipantId(uuid)))
       }
     } yield NamesQuery(AuctionId(auctionId), participants, acting)
+
+  def listAuctionNames(request: ListAuctionNamesRequest): Either[FormError, AuctionNamesQuery] =
+    for {
+      acting <- acting(request.viewer)
+      auctionId <- lotAuction(request.auctionId)
+    } yield AuctionNamesQuery(AuctionId(auctionId), acting)
 
   /**
    * Пустой ник — выставленный выбор «ника нет», и отвечает на него отказ выбора, а не форма (integration.md, «Имя

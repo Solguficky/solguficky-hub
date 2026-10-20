@@ -77,6 +77,7 @@ final class ScreenRoutesSpec
     def freeze(auction: AuctionId, participant: ParticipantId): Future[Boolean] = ???
     def find(auction: AuctionId, participants: Set[ParticipantId]): Future[Map[ParticipantId, StoredName]] =
       Future.successful(Map.empty)
+    def all(auction: AuctionId): Future[Map[ParticipantId, StoredName]] = Future.successful(Map.empty)
   }
 
   /** Meetups, который считает вопросы: отказ по пределу обязан наступать до него. */

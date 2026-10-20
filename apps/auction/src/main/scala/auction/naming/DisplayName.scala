@@ -87,6 +87,12 @@ final case class DisplayName(text: String, kind: DisplayKind, frozen: Boolean = 
 /** Выбор участника, как его хранит аукцион: само имя и признак заморозки. */
 final case class StoredName(name: ChosenName, frozen: Boolean)
 
+/**
+ * Участник аукциона с выбранным именем — как его показывает помощнику ведущего (PER-653, ADR-070, п. 3): идентификатор
+ * человека и готовое имя. Заглушки тут нет: участника без выбора в списке нет вовсе.
+ */
+final case class NamedParticipant(participant: ParticipantId, name: DisplayName)
+
 /** Ожидаемые отказы выбора имени. Транспортного кода они не несут: отображение — работа границы. */
 enum NamingRefusal {
 

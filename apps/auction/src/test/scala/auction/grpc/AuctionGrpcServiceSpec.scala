@@ -101,6 +101,7 @@ import auction.projection.AuctionViews
 import auction.projection.AuctionWatchView
 import auction.projection.AuctionWatchViews
 import auction.projection.DayLotStatisticsView
+import auction.projection.FinalBids
 import auction.projection.LotImageView
 import auction.projection.BidRecord
 import auction.projection.LotSnapshotView
@@ -235,6 +236,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
           .toMap
       )
 
+    def all(auction: AuctionId): Future[Map[ParticipantId, StoredName]] =
+      Future.successful(chosen.map((participant, name) => participant -> StoredName(name, frozen(participant))))
+
     private def sameAlias(held: ChosenName, wanted: ChosenName): Boolean =
       (held, wanted) match {
         case (ChosenName.Pseudonym(a), ChosenName.Pseudonym(b)) => a.key == b.key
@@ -251,6 +255,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def choose(auction: AuctionId, participant: ParticipantId, name: ChosenName) = touched
     def freeze(auction: AuctionId, participant: ParticipantId) = touched
     def find(auction: AuctionId, participants: Set[ParticipantId]) = touched
+    def all(auction: AuctionId) = touched
   }
 
   private val accepted: LotEntity.Recorded =
@@ -390,7 +395,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       caller: Option[Caller] = None,
       predictions: PredictionGateway = AuctionGrpcService.NoPredictions,
       placeBidsRight: ParticipantId => Future[Boolean] = _ => Future.successful(true),
-      notes: OperationNotes = OperationNotes.discarded
+      notes: OperationNotes = OperationNotes.discarded,
+      finalBids: FinalBids = FinalBids.empty
   ) =
     AuctionGrpcService(
       lots,
@@ -409,7 +415,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       caller = caller,
       predictions = predictions,
       placeBidsRight = placeBidsRight,
-      notes = notes
+      notes = notes,
+      finalBids = finalBids
     )
 
   /**
@@ -1685,6 +1692,58 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .names(identity) shouldBe wire.DisplayName("@vasya", wire.DisplayNameKind.DISPLAY_NAME_KIND_TELEGRAM_USERNAME)
       answer.names(silent).kind shouldBe wire.DisplayNameKind.DISPLAY_NAME_KIND_PLACEHOLDER
       answer.names(silent).text shouldBe "Участник 8999"
+    }
+
+    "refuses the auction names to a viewer who may not run auctions before the store" in {
+      val auction = service(Unreachable, names = UntouchableNames)
+      val names = wire.ListAuctionNamesRequest(Some(viewer), lot)
+      statusOf(auction.listAuctionNames(names)) shouldBe Status.Code.PERMISSION_DENIED
+    }
+
+    "rejects a malformed auction id in the auction names request" in {
+      val auction = service(Unreachable, names = UntouchableNames)
+      val assistant = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS))
+      val names = wire.ListAuctionNamesRequest(Some(assistant), "auction")
+      statusOf(auction.listAuctionNames(names)) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers the assistant the names of bidders only, final bidders first and the latest first" in {
+      def participant(tail: String) = ParticipantId(UUID.fromString(s"01890a5d-ac96-774b-bcce-b302099a$tail"))
+      def alias(raw: String) = ChosenName.Pseudonym(Alias(raw).getOrElse(fail("not an alias")))
+      val (bid, barred, silent) = (participant("8001"), participant("8002"), participant("8003"))
+      val chosen = Map(bid -> alias("Боря"), barred -> alias("Аня"), silent -> alias("Вера"))
+      val assistant = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS))
+      val holds: ParticipantId => Future[Boolean] = {
+        case id if id == bid => Future.successful(true)
+        case id if id == barred => Future.successful(false)
+        case _ => Future.failed(IllegalStateException("identity is down"))
+      }
+      val moments = Map(
+        bid -> Instant.parse("2026-10-18T20:00:00Z"),
+        silent -> Instant.parse("2026-10-18T19:00:00Z")
+      )
+      val answer = service(
+        Unreachable,
+        names = Names(chosen),
+        placeBidsRight = holds,
+        finalBids = new FinalBids {
+          def lastBids(auction: AuctionId) = Future.successful(moments)
+        }
+      ).listAuctionNames(wire.ListAuctionNamesRequest(Some(assistant), lot)).futureValue
+
+      // Заблокированного Identity в списке нет, а не ответившего — есть; ставившие в финале идут сверху.
+      answer.names.map(name => name.participantId -> name.name.map(_.text)) shouldBe Seq(
+        bid.value.toString -> Some("Боря*"),
+        silent.value.toString -> Some("Вера*")
+      )
+    }
+
+    "answers an empty list for an auction without chosen names" in {
+      val assistant = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS))
+      service(Unreachable, names = Names(Map.empty))
+        .listAuctionNames(wire.ListAuctionNamesRequest(Some(assistant), lot))
+        .futureValue
+        .names shouldBe empty
     }
 
     "answers the administrator the statistics of every lot of the registry" in {

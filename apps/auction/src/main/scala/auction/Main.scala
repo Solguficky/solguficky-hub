@@ -8,7 +8,7 @@ import auction.entity.AuctionRaffle
 import auction.entity.UuidV7
 import auction.grpc.CallerTable
 import auction.grpc.MethodAccess
-import auction.identity.GrpcRaffleAccess
+import auction.identity.GrpcIdentityAccess
 import auction.identity.IdentitySettings
 import auction.lot.AuctionId
 import auction.lot.ParticipantId
@@ -138,8 +138,9 @@ object Main {
     val clock = Clock.systemUTC()
     val sharding = AuctionNode.join(system)
     AuctionNode.registerLots(sharding, clock, UuidV7.generator(clock))
-    // Один клиент Identity на оба вопроса о `place_bids`: кандидаты розыгрыша и человек ставки зала.
-    val placeBidsAccess = GrpcRaffleAccess(identity)
+    // Один клиент Identity на все вопросы о `place_bids`: кандидаты розыгрыша, человек ставки зала и список имён
+    // аукциона для помощника ведущего.
+    val placeBidsAccess = GrpcIdentityAccess(identity)
     val displayNames = DisplayNameCommands(SlickDisplayNameStore(system))
     val raffleTickets = SlickRaffleTickets(system, displayNames)
     val resultNames: ResultNames = new ResultNames {
@@ -188,7 +189,7 @@ object Main {
     AuctionNode.eraseRaffleNames(system, raffleTickets, clock, erasureEvery)
     if (identity.url.isEmpty)
       logger.warn(
-        "auction place_bids check is off: AUCTION_IDENTITY_GRPC_URL is not set, raffle pools are fixed without exclusions and floor bids are not screened"
+        "auction place_bids check is off: AUCTION_IDENTITY_GRPC_URL is not set, raffle pools are fixed without exclusions, floor bids and auction names are not screened"
       )
     if (meetups.url.isEmpty)
       logger.warn(

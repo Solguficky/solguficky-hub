@@ -48,11 +48,11 @@ object IdentitySettings {
 }
 
 /**
- * Право `place_bids` кандидата розыгрыша у Identity — `CheckAccessRight` (ADR-066, п. 4): заблокированный права не
+ * Право `place_bids` человека у Identity — `CheckAccessRight` (ADR-066, п. 4; ADR-070, п. 3): заблокированный права не
  * держит. Без кэша: устаревшее разрешение равносильно пропущенной проверке (ADR-026). Любой отказ вызова — неудачное
  * `Future`, то есть «нет ответа»; повторы ведёт опрос кандидатов, а не клиент.
  */
-final class GrpcRaffleAccess(client: IdentityServiceClient, token: String)(using ExecutionContext)
+final class GrpcIdentityAccess(client: IdentityServiceClient, token: String)(using ExecutionContext)
     extends RaffleAccess {
 
   def holdsRight(participant: ParticipantId): Future[Boolean] =
@@ -63,7 +63,7 @@ final class GrpcRaffleAccess(client: IdentityServiceClient, token: String)(using
       .map(_.granted)
 }
 
-object GrpcRaffleAccess {
+object GrpcIdentityAccess {
 
   def apply(settings: IdentitySettings)(using system: ActorSystem[?]): RaffleAccess =
     (settings.url, settings.serviceToken) match {
@@ -74,7 +74,7 @@ object GrpcRaffleAccess {
             .withTls(url.getScheme == "https")
             .withDeadline(settings.deadline)
         )
-        new GrpcRaffleAccess(client, token)(using system.executionContext)
+        new GrpcIdentityAccess(client, token)(using system.executionContext)
       case _ => RaffleAccess.absent
     }
 }

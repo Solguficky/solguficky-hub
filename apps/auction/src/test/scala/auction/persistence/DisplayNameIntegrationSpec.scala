@@ -77,6 +77,24 @@ final class DisplayNameIntegrationSpec extends AnyWordSpec with Matchers with Sc
       shown shouldBe Map(someone -> DisplayName("Кот*", DisplayKind.Pseudonym))
     }
 
+    "returns every chosen name of the auction and none of another" in {
+      val database = freshDatabase()
+      val (auction, other) = (auctionId(), auctionId())
+      val (first, second, stranger) = (participant(), participant(), participant())
+      withNode(database) { commands =>
+        commands.choose(auction, first, username("vasya")).futureValue
+        commands.choose(auction, second, NameChoice.Pseudonym("Кот")).futureValue
+        commands.choose(other, stranger, NameChoice.Pseudonym("Пёс")).futureValue
+        commands.participated(auction, first).futureValue
+
+        commands.chosen(auction).futureValue shouldBe Map(
+          first -> DisplayName("@vasya", DisplayKind.Username, frozen = true),
+          second -> DisplayName("Кот*", DisplayKind.Pseudonym)
+        )
+        commands.chosen(auctionId()).futureValue shouldBe empty
+      }
+    }
+
     "gives a pseudonym to exactly one of the participants who take it at the same time" in {
       val database = freshDatabase()
       val auction = auctionId()
