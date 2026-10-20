@@ -22,14 +22,20 @@ public static class LotReplicaStore
 {
     // Момент конечного положения раз записанный не переписывается: старший
     // конечный снимок (продажа после удержания уже в финале) срок не сдвигает.
+    // Реплика, записанная до PER-604, получает аукцион со следующим снимком.
     private const string ApplySql = """
-        INSERT INTO lot_replica (lot_id, version, status, deadline, leader_id, terminal_at, occurred_at, applied_at)
-        VALUES (@LotId, @Version, @Status, @Deadline, @Leader, @TerminalAt, @OccurredAt, @Now)
+        INSERT INTO lot_replica (lot_id, version, status, deadline, leader_id, terminal_at, occurred_at, applied_at,
+                                 auction_id, sale_minor_units, sale_currency)
+        VALUES (@LotId, @Version, @Status, @Deadline, @Leader, @TerminalAt, @OccurredAt, @Now,
+                @AuctionId, @SaleMinorUnits, @SaleCurrency)
         ON CONFLICT (lot_id) DO UPDATE SET
             version = EXCLUDED.version,
             status = EXCLUDED.status,
             deadline = EXCLUDED.deadline,
             leader_id = EXCLUDED.leader_id,
+            auction_id = EXCLUDED.auction_id,
+            sale_minor_units = EXCLUDED.sale_minor_units,
+            sale_currency = EXCLUDED.sale_currency,
             terminal_at = CASE WHEN EXCLUDED.terminal_at IS NULL THEN NULL
                                ELSE COALESCE(lot_replica.terminal_at, EXCLUDED.terminal_at) END,
             occurred_at = EXCLUDED.occurred_at,
@@ -57,6 +63,9 @@ public static class LotReplicaStore
             TerminalAt = snapshot.Terminal ? snapshot.OccurredAt.UtcDateTime : (DateTime?)null,
             OccurredAt = snapshot.OccurredAt.UtcDateTime,
             Now = now.UtcDateTime,
+            snapshot.AuctionId,
+            SaleMinorUnits = snapshot.SalePrice?.MinorUnits,
+            SaleCurrency = snapshot.SalePrice?.Currency,
         }, cancellationToken) > 0;
 
     public static async Task<LotReplica?> Read(UnitOfWork work, Guid lotId, CancellationToken cancellationToken)
@@ -91,7 +100,7 @@ public static class LotReplicaStore
         _ => throw new ArgumentOutOfRangeException(nameof(status)),
     };
 
-    private static LotStatus FromStorage(string value) => value switch
+    public static LotStatus FromStorage(string value) => value switch
     {
         "draft" => LotStatus.Draft,
         "scheduled" => LotStatus.Scheduled,

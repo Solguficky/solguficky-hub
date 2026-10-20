@@ -312,6 +312,14 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
         Left(RemovalRefusal.Denied(Denial.LotsFrozen))
     }
 
+    "answers a lot of the discarded birth as a lot of another auction" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      auctions.addAnswer = Left(AddLotRejected.LotOfDiscardedAuction)
+      AuctionCommands(auctions, Lots(Left(DraftLotRejected.LotAlreadyExists), Some(auctionOfMeetup)), granted)
+        .addLot(auctionOfMeetup, lot, op(2), person)
+        .futureValue shouldBe Left(Denial.LotOfAnotherAuction)
+    }
+
     "answers scheduling and opening of an auction without a journal with AuctionNotFound before meetups" in {
       val meetups = Meetups(Authority.Granted(Standings.published))
       val commands = AuctionCommands(Auctions(Inspection.Absent), noLots, meetups)

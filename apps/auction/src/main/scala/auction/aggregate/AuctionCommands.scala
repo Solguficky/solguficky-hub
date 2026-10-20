@@ -210,7 +210,9 @@ enum ClosingRefusal {
  * аукционе лот попадает в реестр. Двух записей в одной транзакции нет, поэтому порядок такой, чтобы обрыв между ними не
  * оставлял в реестре лота без журнала: оборванное добавление дописывает повтор с тем же `op_id`. Лот, который уже
  * родился, отвечает `LotAlreadyExists`; родился он в этом же аукционе — это не отказ (повторное добавление после
- * `RemoveLot`), в другом — `LotOfAnotherAuction`, и реестр не меняется.
+ * `RemoveLot`), в другом — `LotOfAnotherAuction`, и реестр не меняется. Лот прежнего рождения аукциона, удалённого до
+ * торгов, рождён в этом же `auction_id`, но его отвергает уже агрегат — тем же `LotOfAnotherAuction` (ADR-047,
+ * дополнение 2026-10-20).
  *
  * `ScheduleLot` идёт через аукцион (ADR-047): заморозку, реестр и незаданные условия решает entity аукциона, и она же
  * шлёт команду лоту, поэтому старт торгов между проверкой и командой здесь невозможен. Событие пишет только лот, и
@@ -277,6 +279,8 @@ final class AuctionCommands(
                 auctions.addLot(auctionId, AddLot(lot, opId), Initiator.Operator(person)).map {
                   case Left(AddLotRejected.AuctionNotFound) => Left(Denial.AuctionNotFound)
                   case Left(AddLotRejected.LotsFrozen) => Left(Denial.LotsFrozen)
+                  // Лот прежнего рождения — для вызывающего тот же лот другого аукциона: вернуть его нельзя.
+                  case Left(AddLotRejected.LotOfDiscardedAuction) => Left(Denial.LotOfAnotherAuction)
                   case Right(_) => Right(())
                 }
             }

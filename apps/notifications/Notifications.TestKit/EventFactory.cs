@@ -495,6 +495,42 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Онлайн-торги кончились без удержанных лотов, и с ними аукцион
+    /// (PER-604): снимок <c>finished</c> и реестр лотов.
+    /// </summary>
+    public static global::Auction.V1.AuctionEvent PrebiddingFinished(string auction, string meetup,
+        params string[] registry)
+    {
+        var message = AuctionFact(auction, meetup, 12);
+        message.State.LotIds.AddRange(registry);
+        message.State.Finished = new global::Auction.V1.AuctionState.Types.Finished();
+        message.PrebiddingEnded = new global::Auction.V1.PrebiddingEnded();
+        return message;
+    }
+
+    /// <summary>Аукцион отменён после старта торгов (PER-601): снимок <c>cancelled</c> и реестр.</summary>
+    public static global::Auction.V1.AuctionEvent AuctionCancelled(string auction, string meetup,
+        params string[] registry)
+    {
+        var message = AuctionFact(auction, meetup, 15);
+        message.State.LotIds.AddRange(registry);
+        message.State.Cancelled = new global::Auction.V1.AuctionState.Types.Cancelled();
+        message.AuctionCancelled = new global::Auction.V1.AuctionCancelled();
+        return message;
+    }
+
+    /// <summary>Аукцион удалён до торгов: снимок <c>discarded</c> с реестром, который у него был.</summary>
+    public static global::Auction.V1.AuctionEvent AuctionDiscarded(string auction, string meetup,
+        params string[] registry)
+    {
+        var message = AuctionFact(auction, meetup, 5);
+        message.State.LotIds.AddRange(registry);
+        message.State.Discarded = new global::Auction.V1.AuctionState.Types.Discarded();
+        message.AuctionDiscarded = new global::Auction.V1.AuctionDiscarded();
+        return message;
+    }
+
     /// <summary>Аукцион кончился после финала.</summary>
     public static global::Auction.V1.AuctionEvent AuctionFinished(string auction, string meetup)
     {

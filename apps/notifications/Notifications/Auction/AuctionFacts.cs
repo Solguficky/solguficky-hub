@@ -24,6 +24,56 @@ public static class AuctionFacts
     public const string PredictionResultsType = "prediction_results";
     public const string PredictionResultsCauseKind = "auction_prediction_results_event";
 
+    public const string AuctionCancelledType = "auction_cancelled";
+
+    /// <summary>
+    /// Адресаты отмены аукциона (ADR-047, дополнение 2026-10-12, «Факт
+    /// отмены»): каждый, у кого была строка избранного на лоте аукциона, и
+    /// покупатель проданного — по одному разу, со своими покупками. Покупатель
+    /// лота, реплика которого записана без цены (до PER-604), адресат тоже, но
+    /// строки покупки у него нет: цену назвать нечем. Порядок — по
+    /// идентификатору, чтобы разворот не зависел от порядка строк базы.
+    /// </summary>
+    public static IReadOnlyList<(Guid Recipient, IReadOnlyList<EndedLot> Purchases)> CancellationAudience(
+        IReadOnlyList<Guid> followers, IReadOnlyList<EndedLot> lots)
+    {
+        var sold = lots.Where(lot => lot is { Status: LotStatus.Sold, Leader: not null }).ToArray();
+        var purchases = sold
+            .Where(lot => lot.SalePrice is not null)
+            .GroupBy(lot => lot.Leader!.Value)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<EndedLot>)group.OrderBy(lot => lot.LotId).ToArray());
+        return followers.Union(sold.Select(lot => lot.Leader!.Value))
+            .Order()
+            .Select(recipient => (recipient,
+                purchases.TryGetValue(recipient, out var own) ? own : (IReadOnlyList<EndedLot>)[]))
+            .ToArray();
+    }
+
+    /// <summary>
+    /// Отмена аукциона одному причастному. Повод — факт отмены и у позднего
+    /// лидера ставки: ключ (тип, повод, получатель) делает сообщение одним на
+    /// человека и аукцион.
+    /// </summary>
+    public static Notification Cancellation(Guid notificationId, Guid recipientId, Guid auctionId, Guid meetupId,
+        Guid cancellationEventId, IReadOnlyList<EndedLot> purchases, DateTimeOffset now, DateTimeOffset notAfter)
+    {
+        var body = new AuctionCancelled { AuctionId = auctionId.ToString(), MeetupId = meetupId.ToString() };
+        body.Purchases.AddRange(purchases.Select(lot => new CancelledAuctionPurchase
+        {
+            LotId = lot.LotId.ToString(),
+            Price = (lot.SalePrice ?? throw new ArgumentException("a purchase has no price", nameof(purchases))).Clone(),
+        }));
+        return new Notification
+        {
+            NotificationId = notificationId.ToString(),
+            RecipientId = recipientId.ToString(),
+            CreatedAt = now.ToUniversalTime().ToString("O"),
+            NotAfter = notAfter.ToUniversalTime().ToString("O"),
+            Cause = new Cause { AuctionEventId = cancellationEventId.ToString() },
+            AuctionCancelled = body,
+        };
+    }
+
     /// <summary>
     /// Итоги прогнозов одному сделавшему прогноз: итог каждой разыгранной
     /// номинации с именами угадавших и свой результат по ним. Ответ на

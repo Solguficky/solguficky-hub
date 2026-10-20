@@ -23,10 +23,11 @@ public static class AuctionFeed
     public static readonly EventFeed Feed = new(Source, "AUCTION_EVENTS", "notifications-auction-events");
 
     /// <summary>
-    /// Subjects фактов аукциона, которые нужны анонсу финала (PER-477), и
-    /// ветка, которую каждый обязан нести. Конец аукциона нужен, чтобы забыть
-    /// его круг; каталог без удержанных лотов кончает аукцион своим
-    /// <c>prebidding_ended</c>.
+    /// Subjects фактов аукциона, которые нужны анонсу финала (PER-477) и
+    /// избранному (PER-604), и ветка, которую каждый обязан нести. Конец
+    /// аукциона забывает его круг и чистит избранное его лотов; каталог без
+    /// удержанных лотов кончает аукцион своим <c>prebidding_ended</c>. Отмена
+    /// ещё и извещает причастных, а удаление до торгов только чистит.
     /// </summary>
     public static readonly IReadOnlyDictionary<string, AuctionEvent.OccasionOneofCase> AuctionSubjects =
         new Dictionary<string, AuctionEvent.OccasionOneofCase>(StringComparer.Ordinal)
@@ -35,6 +36,8 @@ public static class AuctionFeed
             ["events.auction.final_lineup_frozen"] = AuctionEvent.OccasionOneofCase.FinalLineupFrozen,
             ["events.auction.final_started"] = AuctionEvent.OccasionOneofCase.FinalStarted,
             ["events.auction.auction_finished"] = AuctionEvent.OccasionOneofCase.AuctionFinished,
+            ["events.auction.auction_cancelled"] = AuctionEvent.OccasionOneofCase.AuctionCancelled,
+            ["events.auction.auction_discarded"] = AuctionEvent.OccasionOneofCase.AuctionDiscarded,
         };
 
     /// <summary>
