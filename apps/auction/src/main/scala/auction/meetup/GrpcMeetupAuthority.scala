@@ -113,14 +113,17 @@ object GrpcMeetupAuthority {
    * Состояние сходки из тела ответа (ADR-047, дополнение 2026-10-12). `UNSPECIFIED` в любом из двух полей — Meetups его
    * не прислал, а неизвестное значение — схема новее Auction: в обоих случаях состояния нет, и решать по нему нечего.
    */
-  def standing(answer: WireAuthority): Option[MeetupStanding] = {
-    val lifecycle = answer.lifecycle match {
+  def standing(answer: WireAuthority): Option[MeetupStanding] = standing(answer.lifecycle, answer.visibility)
+
+  /** Те же две оси из ответа `GetMeetupStanding` — экрана зала (ADR-040, дополнение 2026-10-19). */
+  def standing(wireLifecycle: WireLifecycle, wireVisibility: WireVisibility): Option[MeetupStanding] = {
+    val lifecycle = wireLifecycle match {
       case WireLifecycle.MEETUP_LIFECYCLE_PLANNED => Some(MeetupLifecycle.Planned)
       case WireLifecycle.MEETUP_LIFECYCLE_HELD => Some(MeetupLifecycle.Held)
       case WireLifecycle.MEETUP_LIFECYCLE_CANCELLED => Some(MeetupLifecycle.Cancelled)
       case WireLifecycle.MEETUP_LIFECYCLE_UNSPECIFIED | WireLifecycle.Unrecognized(_) => None
     }
-    val visibility = answer.visibility match {
+    val visibility = wireVisibility match {
       case WireVisibility.MEETUP_VISIBILITY_HIDDEN => Some(MeetupVisibility.Hidden)
       case WireVisibility.MEETUP_VISIBILITY_VISIBLE => Some(MeetupVisibility.Visible)
       case WireVisibility.MEETUP_VISIBILITY_UNSPECIFIED | WireVisibility.Unrecognized(_) => None

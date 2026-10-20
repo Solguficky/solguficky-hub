@@ -98,6 +98,7 @@ let ``Service exposes exactly the sixteen slice operations`` () =
             "GetMeetup"
             "ListMeetupStates"
             "CheckMeetupAuthority"
+            "GetMeetupStanding"
         ]
         |> set
 
@@ -115,6 +116,7 @@ let ``Every human operation carries the viewer as field one`` () =
             [
                 "ListMeetupStatesRequest"
                 "CheckMeetupAuthorityRequest"
+                "GetMeetupStandingRequest"
             ]
 
     let requests =
@@ -180,6 +182,19 @@ let ``The authority check asks about a person and a meetup and answers with the 
                     "identity_id"
                     "accepted_relations"
                 ]
+            && response = set [ "lifecycle"; "visibility" ]
+        @>
+
+/// Служебное чтение состояния без человека: только идентификатор сходки в запросе
+/// и те же две оси, что у проверки права, в ответе (ADR-040, дополнение 2026-10-19).
+[<Fact>]
+let ``The standing read takes only the meetup id and answers with the meetup state`` () =
+    let request = fieldNames GetMeetupStandingRequest.Descriptor
+    let response = fieldNames MeetupStanding.Descriptor
+
+    test
+        <@
+            request = set [ "id" ]
             && response = set [ "lifecycle"; "visibility" ]
         @>
 

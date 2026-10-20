@@ -19,7 +19,8 @@ import scala.concurrent.duration.*
  * доказывает, что Auction спрашивает именно это отношение. С правом приходит состояние сходки — запланирована и видна,
  * как у сходки, у которой открывают торги (ADR-047, дополнение 2026-10-12): без него команды администратора отвечали бы
  * `UNAVAILABLE`. Токен Auction он не сверяет: провод Auction → Meetups держат L0 адаптера и контур, а здесь нужен
- * только ответ о праве. Остальные методы отвечают `UNIMPLEMENTED`: сервис их не зовёт.
+ * только ответ о праве. На `GetMeetupStanding` экрана зала сходка та же — запланирована и видна. Остальные методы
+ * отвечают `UNIMPLEMENTED`: сервис их не зовёт.
  */
 final class MeetupsStub private (binding: Http.ServerBinding) {
 
@@ -47,6 +48,11 @@ object MeetupsStub {
           wire.MeetupAuthority(MeetupLifecycle.MEETUP_LIFECYCLE_PLANNED, MeetupVisibility.MEETUP_VISIBILITY_VISIBLE)
         )
       else Future.failed(new GrpcServiceException(Status.PERMISSION_DENIED))
+
+    def getMeetupStanding(in: wire.GetMeetupStandingRequest): Future[wire.MeetupStanding] =
+      Future.successful(
+        wire.MeetupStanding(MeetupLifecycle.MEETUP_LIFECYCLE_PLANNED, MeetupVisibility.MEETUP_VISIBILITY_VISIBLE)
+      )
 
     def createMeetupDraft(in: wire.CreateMeetupDraftRequest) = unused
     def changeMeetupAttributes(in: wire.ChangeMeetupAttributesRequest) = unused

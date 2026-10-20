@@ -13,6 +13,7 @@ import auction.identity.IdentitySettings
 import auction.lot.AuctionId
 import auction.lot.ParticipantId
 import auction.meetup.GrpcMeetupAuthority
+import auction.meetup.GrpcMeetupStandings
 import auction.meetup.MeetupFactsSettings
 import auction.meetup.MeetupsSettings
 import auction.persistence.DatabaseSettings
@@ -39,6 +40,7 @@ import org.apache.pekko.actor.CoordinatedShutdown
 import org.apache.pekko.actor.typed.ActorSystem
 import org.apache.pekko.actor.typed.scaladsl.Behaviors
 import org.apache.pekko.http.scaladsl.Http
+import org.apache.pekko.http.scaladsl.server.Directives.concat
 import org.slf4j.LoggerFactory
 
 import java.time.Clock
@@ -223,10 +225,16 @@ object Main {
         }
     )
     val readiness = AuctionNode.readiness(system, readinessTimeout)
+    // Один источник изменений на gRPC-поток ботов и поток экрана зала: слушатель базы и его соединение одни.
+    val changes = AuctionNode.listenChanges(system)
 
     Http()
       .newServerAt(httpConfig.host, httpConfig.port)
-      .bind(BoundaryLogging.boundary(HealthRoutes.route(readiness)))
+      .bind(
+        BoundaryLogging.boundary(
+          concat(HealthRoutes.route(readiness), AuctionNode.screen(system, changes, GrpcMeetupStandings(meetups)))
+        )
+      )
       .onComplete(bound("http", system))
 
     Http()
@@ -240,7 +248,7 @@ object Main {
           askTimeout,
           GrpcMeetupAuthority(meetups),
           placeBidsAccess.holdsRight,
-          AuctionNode.listenChanges(system),
+          changes,
           clock,
           overdueGrace
         )

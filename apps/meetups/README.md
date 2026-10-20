@@ -50,6 +50,7 @@ Meetups/
   Slices/ListArchivedMeetups.fs       архив через тот же путь чтения
   Slices/GetMeetup.fs                 карточка через тот же путь чтения
   Slices/ListMeetupStates.fs          служебная страница состояний без смотрящего
+  Slices/GetMeetupStanding.fs         служебное состояние одной сходки без смотрящего
   Slices/DispatchMeetupEvents.fs      один тик публикации из журнала
   Slices/PublishDueMeetups.fs         один тик отложенной публикации
   Observability/Failures.fs           счётчик отказов, общий на все границы
@@ -151,7 +152,7 @@ Dapper не знает `DateOnly` и `TimeOnly` как параметры, хо�
 
 ## Транспорт и готовность
 
-По [ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md) каждый доменный вызов несёт `authorization: Bearer <token>`. Матрица `MethodAccess` повторяет колонку Caller [каталога](../../docs/architecture/integration.md#meetups-grpc): бот хаба вызывает четырнадцать пользовательских RPC, Notifications и Auction — только `CheckMeetupAuthority`; `ListMeetupStates` пока закрыт для всех. Нет токена, неизвестный токен или вызывающий не объявлен у метода — `UNAUTHENTICATED` до диспетчера. `PERMISSION_DENIED` остаётся отказом человеку по праву. Логгер стоит снаружи интерцептора допуска и пишет `caller` и `caller_refusal`, никогда значение секрета. Health и reflection токена не требуют, обхода на loopback нет.
+По [ADR-056](../../docs/decisions/ADR-056-service-calls-per-caller-token-and-closed-network.md) каждый доменный вызов несёт `authorization: Bearer <token>`. Матрица `MethodAccess` повторяет колонку Caller [каталога](../../docs/architecture/integration.md#meetups-grpc): бот хаба вызывает четырнадцать пользовательских RPC, Notifications и Auction — `CheckMeetupAuthority`, Auction ещё `GetMeetupStanding` для экрана зала; `ListMeetupStates` пока закрыт для всех. Нет токена, неизвестный токен или вызывающий не объявлен у метода — `UNAUTHENTICATED` до диспетчера. `PERMISSION_DENIED` остаётся отказом человеку по праву. Логгер стоит снаружи интерцептора допуска и пишет `caller` и `caller_refusal`, никогда значение секрета. Health и reflection токена не требуют, обхода на loopback нет.
 
 Четыре обязательных значения: `MEETUPS_CALLER_TOKEN_HUB_BOT`, `MEETUPS_CALLER_TOKEN_NOTIFICATIONS`, `MEETUPS_CALLER_TOKEN_AUCTION`, `MEETUPS_SERVICE_TOKEN`. Пустота или отсутствие значения, совпадение токенов вызывающих и совпадение собственного с одним из них останавливают запуск до миграций. AppHost генерирует и раздаёт значения сам; при `just meetups-run` их задаёт окружение. Identity-клиент предъявляет собственный токен на `CheckAccessRight`, сохраняя срок, отмену и заголовки цепочки.
 

@@ -29,6 +29,7 @@ module MethodAccess =
             "GetMeetup", bot
             "ListMeetupStates", Set.empty
             "CheckMeetupAuthority", set [ Caller.Notifications; Caller.Auction ]
+            "GetMeetupStanding", set [ Caller.Auction ]
         ]
         |> Map.ofList
 
