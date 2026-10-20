@@ -36,6 +36,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // maxState bounds what goes out: a gate line with its sources fits easily, a
@@ -56,11 +58,13 @@ type question struct {
 var questions = map[string]question{
 	"ask":     resolvedQuestion,
 	"decided": resolvedQuestion,
+	// plan asks what the agent decides at the plan checkpoint, by the
+	// conditions of agent-execution-loop.md, so the two answers compare.
 	"plan": {
-		Instructions: "Задевает ли план из `state` межсервисный контракт, принятый ADR, схему базы данных или второй компонент репозитория?",
+		Instructions: "Должен ли срез из `state` пройти чекпоинт плана до кода: допускает ли задача два решения с разными последствиями, выбор между которыми не сделан ни в задаче, ни в ADR, или правка затрагивает docs/standards/, AGENTS.md или текст скилла?",
 		Criteria: map[string]string{
-			"true":  "План меняет контракт, ADR, схему данных или код второго компонента.",
-			"false": "План остаётся внутри одного компонента и не трогает контракт, ADR и схему.",
+			"true":  "Развилка не зафиксирована задачей или ADR, либо меняется норматив: docs/standards/, AGENTS.md или текст скилла.",
+			"false": "Решение задано задачей или ADR, и норматив не меняется.",
 		},
 	},
 }
@@ -105,18 +109,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(s
 		say(stderr, "gate-observer: -point must be ask, plan or decided\n")
 		return 2
 	}
-	raw, err := io.ReadAll(io.LimitReader(stdin, maxState+1))
+	state, err := readState(stdin)
 	if err != nil {
-		say(stderr, "gate-observer: read stdin: %v\n", err)
-		return 2
-	}
-	if len(raw) > maxState {
-		say(stderr, "gate-observer: stdin over %d bytes — pass the decision and its sources, not a diff or a log\n", maxState)
-		return 2
-	}
-	state := strings.TrimSpace(string(raw))
-	if state == "" {
-		say(stderr, "gate-observer: stdin is empty — pass the decision and its sources\n")
+		say(stderr, "gate-observer: %v\n", err)
 		return 2
 	}
 
@@ -171,6 +166,42 @@ func (a answer) column(name string) string {
 }
 
 var errNoKey = errors.New("нет ключа")
+
+func readState(stdin io.Reader) (string, error) {
+	raw, err := io.ReadAll(io.LimitReader(stdin, maxState+1))
+	if err != nil {
+		return "", fmt.Errorf("read stdin: %w", err)
+	}
+	if len(raw) > maxState {
+		return "", fmt.Errorf("stdin over %d bytes — pass the decision and its sources, not a diff or a log", maxState)
+	}
+	state := strings.TrimSpace(string(raw))
+	switch {
+	case state == "":
+		return "", errors.New("stdin is empty — pass the decision and its sources")
+	case !utf8.ValidString(state) || mangled(state):
+		// Windows PowerShell 5.1 pipes to native programs in its
+		// $OutputEncoding, us-ascii by default, and every Cyrillic letter
+		// arrives as '?'. Sending that would ask the models about nothing.
+		return "", errors.New("stdin is not UTF-8 text or its letters arrived as '?' — pipe from Git Bash or set $OutputEncoding to UTF-8 in PowerShell")
+	}
+	return state, nil
+}
+
+// mangled reports text whose letters were replaced by '?' on the way in: more
+// question marks than letters, and more than a stray few.
+func mangled(s string) bool {
+	var marks, letters int
+	for _, r := range s {
+		switch {
+		case r == '?':
+			marks++
+		case unicode.IsLetter(r):
+			letters++
+		}
+	}
+	return marks >= 3 && marks > letters
+}
 
 // say writes a line nobody can act on failing: stdout and stderr of a CLI.
 func say(w io.Writer, format string, a ...any) {

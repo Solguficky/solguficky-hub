@@ -748,9 +748,13 @@ gate-observe point *args="":
     cd tools/gate-observer && go build -o bin/ .
     tools/gate-observer/bin/gate-observer -point {{point}} {{args}}
 
-# Формат, vet, тесты на заглушке HTTP без сети и линт закреплённой версией
+# Формат, vet, тесты на заглушке HTTP без сети и линт закреплённой версией.
+# Нужны Go и golangci-lint (`just identity-lint-tools`); входит в `verify` и в
+# джобу CI gate-observer, в `test-all` — нет. Пустой набор тестов `go test`
+# проходит зелёным, поэтому их наличие проверяется отдельно.
 gate-observer-check:
     cd tools/gate-observer && test -z "$(gofmt -l .)" || { gofmt -l .; echo 'gofmt: файлы выше не отформатированы' >&2; exit 1; }
+    cd tools/gate-observer && go test -list . . | grep -q '^Test' || { echo 'gate-observer: тестов не найдено' >&2; exit 1; }
     cd tools/gate-observer && go vet ./... && go test ./...
     @golangci-lint version --short 2>/dev/null | grep -qx '{{GOLANGCI_LINT_VERSION}}' || { echo 'нужен golangci-lint {{GOLANGCI_LINT_VERSION}}: just identity-lint-tools' >&2; exit 1; }
     cd tools/gate-observer && golangci-lint run --allow-parallel-runners --config ../../apps/identity/.golangci.yml ./...
