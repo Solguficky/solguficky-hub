@@ -286,11 +286,17 @@ export const hubSurface: SurfaceDefinition = ({
                     communityTimeZone,
                     today(),
                   );
+                  if (day === undefined) {
+                    return {
+                      kind: "rejected",
+                      cause: new Error("release summary date"),
+                    };
+                  }
                   return toReleaseTrace(
                     releaseNotes,
                     content.recordIds,
                     content.summaryId,
-                    day ?? "сводка",
+                    day,
                   );
                 }
                 if (content.kind === "access-requested") {

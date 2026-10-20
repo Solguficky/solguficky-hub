@@ -73,10 +73,17 @@ export function createReleaseNotes(
     direction: "older" | "newer",
     request: ReleaseNotesRequest,
     seen: Set<string>,
-  ): Promise<{ summaryId: string; part: number } | undefined> => {
+  ): Promise<
+    | { kind: "arrow"; target?: { summaryId: string; part: number } }
+    | { kind: "failed"; failure: NotificationFailure }
+  > => {
     const found = await firstKnown(startId, direction, request, seen);
-    if (found.kind !== "known") return undefined;
-    return { summaryId: found.view.summary.id, part: 1 };
+    if (found.kind === "failed") return found;
+    if (found.kind !== "known") return { kind: "arrow" };
+    return {
+      kind: "arrow",
+      target: { summaryId: found.view.summary.id, part: 1 },
+    };
   };
 
   const present = async (
@@ -105,12 +112,20 @@ export function createReleaseNotes(
     const seen = new Set([view.summary.id]);
     const older =
       part > 1
-        ? { summaryId: view.summary.id, part: part - 1 }
+        ? {
+            kind: "arrow" as const,
+            target: { summaryId: view.summary.id, part: part - 1 },
+          }
         : await target(view.olderId, "older", request, seen);
+    if (older.kind === "failed") return rejection(older.failure);
     const newer =
       part < partCount
-        ? { summaryId: view.summary.id, part: part + 1 }
+        ? {
+            kind: "arrow" as const,
+            target: { summaryId: view.summary.id, part: part + 1 },
+          }
         : await target(view.newerId, "newer", request, new Set(seen));
+    if (newer.kind === "failed") return rejection(newer.failure);
     return {
       kind: "release-post",
       summaryId: view.summary.id,
@@ -118,8 +133,8 @@ export function createReleaseNotes(
       lines: lines.slice((part - 1) * pageSize, part * pageSize),
       part,
       partCount,
-      ...(older === undefined ? {} : { older }),
-      ...(newer === undefined ? {} : { newer }),
+      ...(older.target === undefined ? {} : { older: older.target }),
+      ...(newer.target === undefined ? {} : { newer: newer.target }),
     };
   };
 
@@ -159,7 +174,7 @@ export function createReleaseNotes(
     if (request.summaryId === undefined) return latest(request);
     const loaded = await read(request.summaryId, request);
     if (loaded.kind === "failed") return rejection(loaded.failure);
-    if (loaded.kind === "missing") return { kind: "release-empty" };
+    if (loaded.kind === "missing") return latest(request);
     return present(loaded.view, request.part, request);
   };
 }

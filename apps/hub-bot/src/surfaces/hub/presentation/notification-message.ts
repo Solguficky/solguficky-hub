@@ -103,10 +103,6 @@ export function disableMeetupCategoryCallback(
   return `v1:notify:moff:${uuidToToken(meetupId)}:${category}`;
 }
 
-// Что уходит отправителю. Вести хаба он рисует сам, а весть о лоте и анонс
-// финала приходят уже собранными общими рендерами двух ботов (`lot-notice.ts`,
-// PER-598; `final-notice.ts`, PER-478): им нужны право получателя и название
-// лота у соседей, а соседей отправитель не зовёт.
 export type ReleaseNote = {
   kind: "release-note";
   day: string;
@@ -115,6 +111,10 @@ export type ReleaseNote = {
   summaryId: string;
 };
 
+// Что уходит отправителю. Вести хаба он рисует сам, а весть о лоте и анонс
+// финала приходят уже собранными общими рендерами двух ботов (`lot-notice.ts`,
+// PER-598; `final-notice.ts`, PER-478): им нужны право получателя и название
+// лота у соседей, а соседей отправитель не зовёт.
 export type OutgoingNotification =
   | Exclude<
       RenderableContent,

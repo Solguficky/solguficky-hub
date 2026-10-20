@@ -216,6 +216,41 @@ describe("release notes post", () => {
     ).resolves.toMatchObject({ part: 1, partCount: 1 });
   });
 
+  it("fails the post when the older summary cannot be read", async () => {
+    const view = createReleaseNotes(
+      notifications({
+        getReleaseSummary: vi.fn(async (summaryId: string) => {
+          if (summaryId === olderId) {
+            return { kind: "unavailable" as const, cause: new Error("down") };
+          }
+          return {
+            kind: "ok" as const,
+            view: {
+              summary: {
+                id: latestId,
+                summarizedAt: "2026-10-14T00:00:00Z",
+                recordIds: ["known"],
+              },
+              olderId,
+            },
+          };
+        }),
+      }),
+      notes,
+    );
+
+    await expect(
+      view({
+        identity: person,
+        intent: "view-release-notes",
+        summaryId: latestId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "dependency-rejected",
+      reason: "unavailable",
+    });
+  });
+
   it("reports a notifications failure instead of an empty post", async () => {
     const view = createReleaseNotes(
       notifications({

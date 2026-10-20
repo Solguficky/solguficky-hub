@@ -745,8 +745,6 @@ export type PreviewBroadcastRequest = {
   deadlineAt?: number;
 };
 
-// Подписка и категории — две независимые плоскости, и намерения их не смешивают:
-// «слежу за этой сходкой» не выводится из набора категорий и не выводит его.
 export type ReleaseNotesRequest = {
   identity: Person;
   intent: "view-release-notes";
@@ -757,6 +755,8 @@ export type ReleaseNotesRequest = {
   deadlineAt?: number;
 };
 
+// Подписка и категории — две независимые плоскости, и намерения их не смешивают:
+// «слежу за этой сходкой» не выводится из набора категорий и не выводит его.
 export type NotificationRequest =
   | {
       identity: Person;

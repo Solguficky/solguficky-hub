@@ -77,23 +77,28 @@ describe("release notes report", () => {
     started.close();
   });
 
-  it("does not wait for the report before the caller continues", async () => {
+  it("returns before a failing report settles and does not retry after close", async () => {
+    const calls: number[] = [];
     let finish: (result: { kind: "failed"; cause: unknown }) => void = () => {};
     const clock = schedule();
     const started = startReleaseNotesReport({
       recordIds: ["known"],
-      report: () =>
-        new Promise((resolve) => {
+      report: () => {
+        calls.push(1);
+        return new Promise((resolve) => {
           finish = resolve;
-        }),
+        });
+      },
       logger: logger(),
       schedule: clock,
     });
+    await vi.waitFor(() => expect(calls).toEqual([1]));
     started.close();
     finish({ kind: "failed", cause: new Error("unavailable") });
     await Promise.resolve();
     await Promise.resolve();
+    expect(clock.pending).toBe(false);
     clock.run();
-    expect(clock).toBeDefined();
+    expect(calls).toEqual([1]);
   });
 });
