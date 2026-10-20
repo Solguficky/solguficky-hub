@@ -25,8 +25,17 @@ trait AuctionViews {
   /** Аукцион по идентификатору; удалённый до торгов не отдаётся, как в `byMeetup`. */
   def byId(auctionId: UUID): Future[Option[AuctionSnapshotView]]
 
-  /** Аукционы выборки по возрастанию `auction_id`, строго после `after`, не больше `limit`. */
-  def page(listing: AuctionListing, after: Option[UUID], limit: Int): Future[List[AuctionSnapshotView]]
+  /**
+   * Аукционы выборки по возрастанию `auction_id`, строго после `after`, не больше `limit`. Скрытый от участников
+   * аукцион входит в выборку только с `revealHidden` (ADR-047, дополнение 2026-10-20): страница отсекает его в запросе,
+   * а не после, иначе она пришла бы короче `limit` при продолжении.
+   */
+  def page(
+      listing: AuctionListing,
+      after: Option[UUID],
+      limit: Int,
+      revealHidden: Boolean
+  ): Future[List[AuctionSnapshotView]]
 }
 
 object AuctionViews {

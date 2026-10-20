@@ -6,6 +6,7 @@ import auction.aggregate.AuctionState
 import auction.aggregate.MeetupGate
 import auction.aggregate.Correlation
 import auction.aggregate.Denial
+import auction.access.Viewer
 import auction.catalog.LotCatalogCommands
 import auction.catalog.LotId
 import auction.entity.Initiator
@@ -49,6 +50,7 @@ import java.time.Clock
 import java.time.Duration
 import java.time.Instant
 import java.util.Locale
+import java.util.UUID
 import java.util.concurrent.TimeoutException
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -292,7 +294,10 @@ final class AuctionGrpcService(
       case Right(query) =>
         views.find(query.lotId).flatMap {
           case Some(view) =>
-            Future.successful(SnapshotMapping.snapshot(view, query.acting.participant, clock.instant()))
+            concealed(view.auctionId, query.acting.viewer).flatMap {
+              case false => Future.successful(SnapshotMapping.snapshot(view, query.acting.participant, clock.instant()))
+              case true => refuse(Status.NOT_FOUND.withDescription("lot not found"))
+            }
           case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
         }
     }
@@ -310,15 +315,21 @@ final class AuctionGrpcService(
       case Right(query) =>
         // На одну строку больше страницы: так известно, есть ли продолжение, без второго запроса.
         val read = if (AuctionGrpcService.isMeetupAuction(query.auctionId)) views.registryPage else views.page
-        read(query.auctionId, query.after, query.limit + 1).map { found =>
-          val at = clock.instant()
-          val page = found.take(query.limit)
-          val next = if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.lotId)) else None
-          wire.ListAuctionLotsResponse(
-            page.map(SnapshotMapping.snapshot(_, query.acting.participant, at)),
-            next.getOrElse("")
-          )
-        }
+        concealed(query.auctionId, query.acting.viewer)
+          .flatMap {
+            case true => Future.successful(Vector.empty)
+            case false => read(query.auctionId, query.after, query.limit + 1)
+          }
+          .map { found =>
+            val at = clock.instant()
+            val page = found.take(query.limit)
+            val next =
+              if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.lotId)) else None
+            wire.ListAuctionLotsResponse(
+              page.map(SnapshotMapping.snapshot(_, query.acting.participant, at)),
+              next.getOrElse("")
+            )
+          }
     }
 
   /**
@@ -332,14 +343,19 @@ final class AuctionGrpcService(
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(query) =>
         // На одну строку больше страницы: так известно, есть ли продолжение, без второго запроса.
-        views.history(query.lotId, query.after, query.limit + 1).flatMap {
-          case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
-          case Some(found) =>
-            val page = found.take(query.limit)
-            val next =
-              if (found.sizeIs > query.limit) page.lastOption.map(bid => SequenceToken.encode(bid.sequence)) else None
-            Future.successful(wire.ListLotHistoryResponse(page.map(HistoryMapping.entry), next.getOrElse("")))
-        }
+        lotConcealed(query.lotId, query.acting.viewer)
+          .flatMap {
+            case true => Future.successful(None)
+            case false => views.history(query.lotId, query.after, query.limit + 1)
+          }
+          .flatMap {
+            case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
+            case Some(found) =>
+              val page = found.take(query.limit)
+              val next =
+                if (found.sizeIs > query.limit) page.lastOption.map(bid => SequenceToken.encode(bid.sequence)) else None
+              Future.successful(wire.ListLotHistoryResponse(page.map(HistoryMapping.entry), next.getOrElse("")))
+          }
     }
 
   /** Выбор имени в аукционе (ADR-059). Отказ выбора — значение ответа, как отказ торгов. */
@@ -455,10 +471,15 @@ final class AuctionGrpcService(
       case Right(query) if !query.acting.viewer.isParticipant =>
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(query) =>
-        views.image(query.lotId).flatMap {
-          case Some(image) => Future.successful(ResponseMapping.lotImage(image))
-          case None => refuse(Status.NOT_FOUND.withDescription("lot image not found"))
-        }
+        lotConcealed(query.lotId, query.acting.viewer)
+          .flatMap {
+            case true => Future.successful(None)
+            case false => views.image(query.lotId)
+          }
+          .flatMap {
+            case Some(image) => Future.successful(ResponseMapping.lotImage(image))
+            case None => refuse(Status.NOT_FOUND.withDescription("lot image not found"))
+          }
     }
 
   /**
@@ -540,6 +561,63 @@ final class AuctionGrpcService(
           .recoverWith(awaited)
           .flatMap(outcome => ResponseMapping.startPrebidding(outcome).fold(refuse, Future.successful))
     }
+
+  /** Публикация аукциона участникам (ADR-047, дополнение 2026-10-20): право у Meetups, состояние решает аукцион. */
+  def publishAuction(in: wire.PublishAuctionRequest): Future[wire.PublishAuctionResponse] =
+    RequestMapping.publishAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        changeVisibility(command).map(
+          _.fold(wire.PublishAuctionResponse().withAccepted(wire.AuctionVisibilityAccepted()))(
+            wire.PublishAuctionResponse().withRefused(_)
+          )
+        )
+    }
+
+  /** Снятие аукциона с публикации до торгов (ADR-047, дополнение 2026-10-20). */
+  def hideAuction(in: wire.HideAuctionRequest): Future[wire.HideAuctionResponse] =
+    RequestMapping.hideAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        changeVisibility(command).map(
+          _.fold(wire.HideAuctionResponse().withAccepted(wire.AuctionVisibilityAccepted()))(
+            wire.HideAuctionResponse().withRefused(_)
+          )
+        )
+    }
+
+  private def changeVisibility(command: VisibilityCommand): Future[Option[wire.AuctionVisibilityRefusal]] =
+    auctions
+      .changeVisibility(command.auctionId, command.published, command.opId, command.acting.participant)
+      .recoverWith(awaited)
+      .flatMap(outcome => ResponseMapping.auctionVisibility(outcome).fold(refuse, Future.successful))
+
+  /**
+   * Видимость аукциона смотрящему (ADR-047, дополнение 2026-10-20): скрытый видит только держатель `run_auctions`, и
+   * всем остальным чтения отвечают так, будто аукциона нет.
+   */
+  private def shown(viewer: Viewer)(view: AuctionSnapshotView): Boolean = viewer.runsAuctions || !view.auction.hidden
+
+  /**
+   * Аукцион скрыт от смотрящего. Тестовый аукцион из настройки бота (UUIDv7) журнала аукциона не имеет, и скрывать
+   * нечего. Аукцион сходки без строки read model скрыт: новый рождается скрытым, а проекция лотов может обогнать
+   * проекцию аукциона; без строки же отдаётся и удалённый, чьи лоты участнику не нужны.
+   */
+  /**
+   * Лот скрытого аукциона: `lot_id` у участника остаётся и после снятия аукциона с публикации, поэтому чтения по нему
+   * спрашивают аукцион лота. Лота нет в read model — скрывать нечего, ответ даст само чтение.
+   */
+  private def lotConcealed(lotId: UUID, viewer: Viewer): Future[Boolean] =
+    if (viewer.runsAuctions) Future.successful(false)
+    else
+      views.find(lotId).flatMap {
+        case Some(view) => concealed(view.auctionId, viewer)
+        case None => Future.successful(false)
+      }
+
+  private def concealed(auctionId: UUID, viewer: Viewer): Future[Boolean] =
+    if (viewer.runsAuctions || !AuctionGrpcService.isMeetupAuction(auctionId)) Future.successful(false)
+    else auctionViews.byId(auctionId).map(_.forall(view => !shown(viewer)(view)))
 
   /** Удаление аукциона до торгов (ADR-047, дополнение 2026-10-09): право у Meetups, состояние решает аукцион. */
   def discardAuction(in: wire.DiscardAuctionRequest): Future[wire.DiscardAuctionResponse] =
@@ -690,7 +768,11 @@ final class AuctionGrpcService(
       case Right(query) =>
         auctionViews
           .byMeetup(query.meetup)
-          .map(found => wire.GetMeetupAuctionResponse(found.map(ResponseMapping.auctionSnapshot)))
+          .map(found =>
+            wire.GetMeetupAuctionResponse(
+              found.filter(shown(query.acting.viewer)).map(ResponseMapping.auctionSnapshot)
+            )
+          )
     }
 
   /**
@@ -704,9 +786,9 @@ final class AuctionGrpcService(
         auctionViews
           .byId(query.auctionId.value)
           .map { found =>
-            val shown =
+            val drafts =
               found.filter(view => view.auction.state != AuctionState.Draft || caller.contains(Caller.HubBot))
-            wire.GetAuctionResponse(shown.map(ResponseMapping.auctionSnapshot))
+            wire.GetAuctionResponse(drafts.filter(shown(query.acting.viewer)).map(ResponseMapping.auctionSnapshot))
           }
     }
 
@@ -714,7 +796,8 @@ final class AuctionGrpcService(
     RequestMapping.listAuctions(in) match {
       case Left(error) => invalid(error)
       case Right(query) =>
-        auctionViews.page(query.listing, query.after, query.limit + 1).map { found =>
+        val revealHidden = query.acting.viewer.runsAuctions
+        auctionViews.page(query.listing, query.after, query.limit + 1, revealHidden).map { found =>
           val page = found.take(query.limit)
           val next =
             if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.auctionId)) else None
@@ -767,11 +850,15 @@ final class AuctionGrpcService(
       case Right(query) if !query.acting.viewer.isParticipant =>
         refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(query) =>
-        raffles
-          .get(query.auctionId)
-          .recoverWith(awaited)
-          .flatMap(raffle => view(query.auctionId, query.acting.participant, raffle))
-          .map(found => wire.GetRaffleResponse(found))
+        concealed(query.auctionId.value, query.acting.viewer).flatMap {
+          case true => Future.successful(wire.GetRaffleResponse())
+          case false =>
+            raffles
+              .get(query.auctionId)
+              .recoverWith(awaited)
+              .flatMap(raffle => view(query.auctionId, query.acting.participant, raffle))
+              .map(found => wire.GetRaffleResponse(found))
+        }
     }
 
   /**
@@ -1004,8 +1091,10 @@ final class AuctionGrpcService(
           .subscribe(auctionId)
           .mapAsync(1)(_ => watchViews.read(auctionId))
           .map {
-            case Some(view) => WatchMapping.watch(view, clock.instant())
-            case None => throw new GrpcServiceException(Status.NOT_FOUND.withDescription("auction not found"))
+            // Скрытый аукцион — то же, что отсутствующий (ADR-047, дополнение 2026-10-20): его `auction_id` выводится
+            // из `meetup_id`, и без проверки поток отдал бы конфигурацию и реестр.
+            case Some(view) if shown(query.acting.viewer)(view.auction) => WatchMapping.watch(view, clock.instant())
+            case Some(_) | None => throw new GrpcServiceException(Status.NOT_FOUND.withDescription("auction not found"))
           }
           .via(AuctionGrpcService.changed)
           .takeWhile(message => !AuctionGrpcService.terminal(message), inclusive = true)

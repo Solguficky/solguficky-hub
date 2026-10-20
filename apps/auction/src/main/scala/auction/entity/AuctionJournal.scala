@@ -13,7 +13,11 @@ import java.util.UUID
  * строки, имена полей — ключи JSON, взаимоисключающие варианты — поле `kind` и одна заполненная секция.
  */
 
-final case class StoredAuctionDrafted(meetupId: UUID)
+/**
+ * `hidden` добавлен в конец (ADR-047, дополнение 2026-10-20): строка без него записана до признака видимости, и аукцион
+ * из неё видим участникам.
+ */
+final case class StoredAuctionDrafted(meetupId: UUID, hidden: Option[Boolean] = None)
 
 final case class StoredLotRef(lotId: UUID)
 
@@ -62,7 +66,8 @@ final case class StoredAuctionConfig(
  * `PrebiddingStarted` записан одним `kind` без секции: payload у него пуст (ADR-047). Секция `auctionScheduled`
  * добавлена в конец: строка, записанная до неё, читает её как пустую. Так же в конец добавлены секции перерыва и финала
  * (PER-334), секция завершения лота финала (PER-607) и секция запущенного окна (ADR-047, дополнение 2026-10-12);
- * `PrebiddingDeadlineReached`, `FinalStarted`, `AuctionCancelled` и `AuctionFinished` пишутся одним `kind`.
+ * `PrebiddingDeadlineReached`, `FinalStarted`, `AuctionCancelled`, `AuctionFinished`, `AuctionPublished` и
+ * `AuctionHidden` пишутся одним `kind`.
  */
 final case class StoredAuctionEventBody(
     kind: String,
@@ -106,7 +111,9 @@ final case class StoredAuctionSeen(sequence: Long, opId: UUID, event: StoredAuct
  * отмены, только у `Cancelled`; добавлен в конец (PER-601). `completed` — завершённые лоты финала, только у `Final` и
  * только непустым; добавлен в конец (PER-607): snapshot финала без него читается без завершённых лотов. `launched` —
  * окна, запущенные по ходу торгов, в порядке записи и только непустым; добавлен в конец (ADR-047, дополнение
- * 2026-10-12): snapshot без него читается без запущенных окон.
+ * 2026-10-12): snapshot без него читается без запущенных окон. `hidden` — аукцион скрыт от участников, только у `Draft`
+ * и `Scheduled` и только `true`; добавлен в конец (ADR-047, дополнение 2026-10-20): snapshot без него — видимый
+ * аукцион.
  */
 final case class StoredAuction(
     sequence: Long,
@@ -120,7 +127,8 @@ final case class StoredAuction(
     activated: Option[List[UUID]] = None,
     cancelledBy: Option[UUID] = None,
     completed: Option[List[UUID]] = None,
-    launched: Option[List[StoredLaunchedWindow]] = None
+    launched: Option[List[StoredLaunchedWindow]] = None,
+    hidden: Option[Boolean] = None
 ) extends JournalSerializable
 
 object AuctionJournal {
@@ -182,7 +190,8 @@ object AuctionJournal {
       completed = completed,
       launched = Option.when(auction.launched.nonEmpty)(
         auction.launched.map(launch => StoredLaunchedWindow(launch.opId.value, storeWindow(launch.window)))
-      )
+      ),
+      hidden = Option.when(auction.hidden)(true)
     )
   }
 
@@ -225,6 +234,9 @@ object AuctionJournal {
       }
     if (stored.completed.isDefined && stored.state != "Final")
       corrupted(s"auction snapshot of state ${stored.state} with completed lots of a final")
+    val hidden = stored.hidden.getOrElse(false)
+    if (hidden && stored.state != "Draft" && stored.state != "Scheduled")
+      corrupted(s"auction snapshot of state ${stored.state} hidden from participants")
     val meetup = stored.meetupId.map(MeetupId(_))
     if ((state == AuctionState.Initial) != meetup.isEmpty)
       corrupted(s"auction snapshot of state ${stored.state} with meetup ${stored.meetupId}")
@@ -238,7 +250,8 @@ object AuctionJournal {
       }.toMap,
       launched = stored.launched.getOrElse(Nil).map { launch =>
         LaunchedWindow(OpId(launch.opId), restoreWindow(launch.window))
-      }
+      },
+      hidden = hidden
     )
   }
 
@@ -254,8 +267,12 @@ object AuctionJournal {
 
   def storeEvent(event: AuctionEvent): StoredAuctionEventBody =
     event match {
-      case AuctionEvent.AuctionDrafted(meetup) =>
-        StoredAuctionEventBody.of("AuctionDrafted").copy(auctionDrafted = Some(StoredAuctionDrafted(meetup.value)))
+      case AuctionEvent.AuctionDrafted(meetup, hidden) =>
+        StoredAuctionEventBody
+          .of("AuctionDrafted")
+          .copy(auctionDrafted = Some(StoredAuctionDrafted(meetup.value, Some(hidden))))
+      case AuctionEvent.AuctionPublished => StoredAuctionEventBody.of("AuctionPublished")
+      case AuctionEvent.AuctionHidden => StoredAuctionEventBody.of("AuctionHidden")
       case AuctionEvent.LotAdded(lot) =>
         StoredAuctionEventBody.of("LotAdded").copy(lotAdded = Some(StoredLotRef(lot.value)))
       case AuctionEvent.LotRemoved(lot) =>
@@ -286,7 +303,11 @@ object AuctionJournal {
   def restoreEvent(stored: StoredAuctionEventBody): AuctionEvent =
     stored match {
       case StoredAuctionEventBody("AuctionDrafted", Some(drafted), None, None, None, None, None, None, None, None) =>
-        AuctionEvent.AuctionDrafted(MeetupId(drafted.meetupId))
+        AuctionEvent.AuctionDrafted(MeetupId(drafted.meetupId), drafted.hidden.getOrElse(false))
+      case StoredAuctionEventBody("AuctionPublished", None, None, None, None, None, None, None, None, None) =>
+        AuctionEvent.AuctionPublished
+      case StoredAuctionEventBody("AuctionHidden", None, None, None, None, None, None, None, None, None) =>
+        AuctionEvent.AuctionHidden
       case StoredAuctionEventBody("LotAdded", None, Some(added), None, None, None, None, None, None, None) =>
         AuctionEvent.LotAdded(LotId(added.lotId))
       case StoredAuctionEventBody("LotRemoved", None, None, Some(removed), None, None, None, None, None, None) =>

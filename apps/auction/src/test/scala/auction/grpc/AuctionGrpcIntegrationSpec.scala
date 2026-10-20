@@ -301,6 +301,11 @@ final class AuctionGrpcIntegrationSpec
 
   private def administrator: wire.Viewer = viewer(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS)
 
+  private def organizer: wire.Viewer =
+    viewer(AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS, AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS)
+
+  private def bidder: wire.Viewer = viewer(AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)
+
   private def enable(node: Node, meetup: String, op: String = newId()): wire.DraftAuctionResponse =
     asHubBot(node.client.draftAuction()).invoke(wire.DraftAuctionRequest(Some(administrator), meetup, op)).futureValue
 
@@ -310,9 +315,10 @@ final class AuctionGrpcIntegrationSpec
       .futureValue
       .auction
 
+  /** Лента реестра у того, кто аукцион ведёт: новый аукцион скрыт от участников (ADR-047, дополнение 2026-10-20). */
   private def feed(node: Node, auction: String): Seq[String] =
     asHubBot(node.client.listAuctionLots())
-      .invoke(wire.ListAuctionLotsRequest(Some(viewer(AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)), auction))
+      .invoke(wire.ListAuctionLotsRequest(Some(organizer), auction))
       .futureValue
       .lots
       .map(_.id)
@@ -403,6 +409,51 @@ final class AuctionGrpcIntegrationSpec
             .auction
         eventually(read(hubToken).map(_.status.isDraft) shouldBe Some(true))
         read("auction") shouldBe None
+    }
+
+    "hides a new auction from a participant in every read and the list until it is published" in withNode { node =>
+      val shown = enable(node, newId()).getAccepted.auctionId
+      val hidden = enable(node, newId()).getAccepted.auctionId
+      for (auction <- List(shown, hidden))
+        asHubBot(node.client.scheduleAuction())
+          .invoke(auctionSchedule(auction))
+          .futureValue
+          .outcome
+          .isAccepted shouldBe true
+      asHubBot(node.client.publishAuction())
+        .invoke(wire.PublishAuctionRequest(Some(administrator), shown, newId()))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      def read(who: wire.Viewer, auction: String) =
+        asHubBot(node.client.getAuction()).invoke(wire.GetAuctionRequest(Some(who), auction)).futureValue.auction
+      def listed(who: wire.Viewer) =
+        asHubBot(node.client.listAuctions())
+          .invoke(wire.ListAuctionsRequest(Some(who), wire.AuctionListing.AUCTION_LISTING_ACTIVE, "", 1))
+          .futureValue
+      eventually {
+        read(organizer, hidden).map(_.hidden) shouldBe Some(true)
+        read(bidder, shown).map(_.hidden) shouldBe Some(false)
+      }
+      read(bidder, hidden) shouldBe None
+      // Страница в одну строку: скрытый отсекает запрос, а не страница после него, и продолжения у участника нет.
+      val page = listed(bidder)
+      page.auctions.map(_.id) shouldBe Seq(shown)
+      page.nextPageToken shouldBe ""
+      val all = listed(organizer)
+      val rest = asHubBot(node.client.listAuctions())
+        .invoke(
+          wire.ListAuctionsRequest(Some(organizer), wire.AuctionListing.AUCTION_LISTING_ACTIVE, all.nextPageToken, 1)
+        )
+        .futureValue
+      (all.auctions ++ rest.auctions).map(_.id) should contain theSameElementsAs Seq(shown, hidden)
+      asHubBot(node.client.hideAuction())
+        .invoke(wire.HideAuctionRequest(Some(administrator), shown, newId()))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      eventually(read(bidder, shown) shouldBe None)
+      listed(bidder).auctions shouldBe empty
     }
 
     "refuses a viewer whom meetups does not confirm as administrator and creates no auction" in withNode { node =>
@@ -678,7 +729,7 @@ final class AuctionGrpcIntegrationSpec
         asHubBot(node.client.scheduleLot()).invoke(conditions).futureValue.outcome.isAccepted shouldBe true
         lotJournal(node, lot) shouldBe 2
 
-        val reader = viewer(AccessRightMessage.ACCESS_RIGHT_PLACE_BIDS)
+        val reader = organizer
         eventually {
           val listed = asHubBot(node.client.listAuctionLots())
             .invoke(wire.ListAuctionLotsRequest(Some(reader), auction))

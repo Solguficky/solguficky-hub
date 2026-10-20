@@ -36,6 +36,9 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
   }
 
   private val drafted = AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup))
+
+  /** Рождение, записанное до признака видимости: строка без него читается видимым аукционом. */
+  private val draftedVisible = AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup, hidden = false))
   private val added = AuctionEnvelope(2, op(2), AuctionEvent.LotAdded(lot))
   private val scheduled = AuctionEnvelope(3, op(3), AuctionEvent.AuctionScheduled(config()))
   private val started = AuctionEnvelope(4, op(4), AuctionEvent.PrebiddingStarted)
@@ -63,6 +66,23 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       keepsGolden("auction-scheduled", stored(scheduled.event, 3))
       keepsGolden("prebidding-started", stored(started.event, 4))
       keepsGolden("auction-discarded", stored(AuctionEvent.AuctionDiscarded, 5))
+      keepsGolden("auction-published", stored(AuctionEvent.AuctionPublished, 5))
+      keepsGolden("auction-hidden", stored(AuctionEvent.AuctionHidden, 5))
+    }
+
+    "keeps a hidden auction hidden through its snapshot and a published one visible" in {
+      val hidden = Auction.replay(Auction.initial, List(drafted, added))
+      hidden.hidden shouldBe true
+      AuctionJournal.storeAuction(hidden, sequence = 2).hidden shouldBe Some(true)
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(hidden, sequence = 2)) shouldBe hidden
+      val published = Auction.apply(hidden, AuctionEnvelope(3, op(3), AuctionEvent.AuctionPublished))
+      AuctionJournal.storeAuction(published, sequence = 3).hidden shouldBe None
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(published, sequence = 3)) shouldBe published
+    }
+
+    "refuses a snapshot hidden from participants once prebidding started" in {
+      val open = AuctionJournal.storeAuction(prebidding, sequence = 4)
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreAuction(open.copy(hidden = Some(true)))
     }
 
     "keeps the stored form of a schedule with step windows and reads it back as one" in {
@@ -139,7 +159,11 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
 
     "reads a snapshot of the final written before lots of the final completed as a final without completed lots" in {
       val snapshot = legacy("auction-snapshot-final", AuctionJournal.storeAuction(inFinal, sequence = 9))
-      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]) shouldBe inFinal
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]) shouldBe
+        Auction.replay(
+          Auction.initial,
+          List(draftedVisible, added, scheduled, started, deadline, ended, frozen, finalStarted, activated)
+        )
     }
 
     "refuses completed lots of a final in a snapshot of another state and a completed lot never returned to trading" in {
@@ -189,14 +213,17 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
 
     "reads a snapshot in prebidding written before the break existed into the same auction" in {
       val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
-      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]) shouldBe prebidding
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]) shouldBe
+        Auction.replay(Auction.initial, List(draftedVisible, added, scheduled, started))
     }
 
-    "reads rows and a snapshot written before scheduling existed into the same events and auction" in {
-      legacy("auction-drafted", stored(drafted.event, 1)) shouldBe stored(drafted.event, 1)
+    "reads rows and a snapshot written before scheduling existed into the same events and a visible auction" in {
+      val born = legacy("auction-drafted", stored(drafted.event, 1)).asInstanceOf[StoredAuctionEvent]
+      AuctionJournal.envelope(1, born) shouldBe draftedVisible
       legacy("lot-added", stored(added.event, 2)) shouldBe stored(added.event, 2)
       legacy("lot-removed", stored(AuctionEvent.LotRemoved(lot), 3)) shouldBe stored(AuctionEvent.LotRemoved(lot), 3)
-      val auction = Auction.replay(Auction.initial, List(drafted, added))
+      val auction = Auction.replay(Auction.initial, List(draftedVisible, added))
+      auction.hidden shouldBe false
       val snapshot = legacy("auction-snapshot", AuctionJournal.storeAuction(auction, sequence = 2))
       AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]) shouldBe auction
     }
@@ -238,6 +265,9 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
         ledByPerson,
         started.event,
         AuctionEvent.AuctionDiscarded,
+        draftedVisible.event,
+        AuctionEvent.AuctionPublished,
+        AuctionEvent.AuctionHidden,
         deadline.event,
         ended.event,
         AuctionEvent.PrebiddingEnded(finished = true),

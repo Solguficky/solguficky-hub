@@ -213,6 +213,13 @@ object AuctionEntity {
       replyTo: ActorRef[Either[DiscardAuctionRejected, AuctionAnswer]]
   ) extends Command
 
+  /** Публикация или снятие до торгов (ADR-047, дополнение 2026-10-20); `Show` — имя сообщения, как `Plan` у лота. */
+  final case class Show(
+      command: ChangeVisibility,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[VisibilityRejected, AuctionAnswer]]
+  ) extends Command
+
   /**
    * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, инициатор — планировщик. Что делать,
    * решает агрегат: удаление идёт путём `Discard`, отмена — путём `Cancel`, под тем же `op_id`, поэтому прогнозы, лоты,
@@ -1175,6 +1182,8 @@ object AuctionEntity {
                   }
               }
             case Discard(discard, initiator, replyTo) => discarding(state, discard, initiator, replyTo ! _)
+            case Show(show, initiator, replyTo) =>
+              answered(state.auction, Auction.decide(state.auction, show), show.opId, initiator, replyTo, clock, newId)
             case Get(replyTo) => Effect.reply(replyTo)(state.auction)
           }
 

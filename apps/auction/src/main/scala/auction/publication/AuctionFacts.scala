@@ -52,7 +52,7 @@ object AuctionFacts {
    */
   def occasion(event: AuctionEvent): Option[(String, bus.AuctionEvent.Occasion)] =
     event match {
-      case AuctionEvent.AuctionDrafted(_) =>
+      case AuctionEvent.AuctionDrafted(_, _) =>
         Some("auction_drafted" -> bus.AuctionEvent.Occasion.AuctionDrafted(bus.AuctionDrafted()))
       case AuctionEvent.AuctionScheduled(_) =>
         Some("auction_scheduled" -> bus.AuctionEvent.Occasion.AuctionScheduled(bus.AuctionScheduled()))
@@ -89,6 +89,8 @@ object AuctionFacts {
       // Запущенное окно публикуют его лоты фактом `step_window_added`: окна — данные лота, а не аукциона (ADR-047,
       // дополнение 2026-10-12).
       case AuctionEvent.StepWindowLaunched(_) => None
+      // Факты публикации и снятия заводит PER-646 вместе с их потребителем (ADR-047, дополнение 2026-10-20).
+      case AuctionEvent.AuctionPublished | AuctionEvent.AuctionHidden => None
     }
 
   /** Публичное состояние аукциона: сходка, конфигурация, реестр по возрастанию `lot_id` и статус. */
