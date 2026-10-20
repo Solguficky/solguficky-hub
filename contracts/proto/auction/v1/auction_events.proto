@@ -305,10 +305,6 @@ message AuctionState {
   // Set by auction_drafted and never changed after. Always set.
   string meetup_id = 4;
 
-  // The auction is hidden from participants: see AuctionSnapshot.hidden. A new
-  // auction is born hidden; never set once prebidding has started.
-  bool hidden = 5;
-
   // Where the auction is. Exactly one is set.
   //
   // Nothing before the lineup is frozen names a finalist: the selection stays a

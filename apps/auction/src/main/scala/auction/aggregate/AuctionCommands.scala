@@ -88,10 +88,14 @@ enum DiscardRefusal {
   case AuctionAlreadyStarted
 }
 
-/** Отказ публикации и снятия: проверка до агрегата или решение агрегата. */
+/**
+ * Отказ публикации и снятия: проверка до агрегата или решение агрегата. `OpIdTaken` — под этим `op_id` записана другая
+ * команда аукциона: у пары взаимно обратных команд тихое «принято» на чужой повтор оставило бы видимость не той.
+ */
 enum VisibilityRefusal {
   case Denied(denial: Denial)
   case AuctionAlreadyStarted
+  case OpIdTaken
 }
 
 /** Отказ `CancelAuction`: проверка до агрегата или решение агрегата. */
@@ -363,7 +367,13 @@ final class AuctionCommands(
       person: ParticipantId
   ): Future[Either[VisibilityRefusal, Unit]] =
     auctions.inspect(auctionId, opId).flatMap {
-      case Inspection.Repeated(_) => Future.successful(Right(()))
+      case Inspection.Repeated(original) =>
+        val same = original.event match {
+          case AuctionEvent.AuctionPublished => published
+          case AuctionEvent.AuctionHidden => !published
+          case _ => false
+        }
+        Future.successful(Either.cond(same, (), VisibilityRefusal.OpIdTaken))
       case Inspection.Absent => Future.successful(Left(VisibilityRefusal.Denied(Denial.AuctionNotFound)))
       case Inspection.Present(meetup, _) =>
         authorized(meetup, person, MeetupGate.NotCancelled, VisibilityRefusal.Denied(_)) {

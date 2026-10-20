@@ -127,8 +127,7 @@ object AuctionFacts {
       id = row.auctionId.toString,
       config = config.map(AuctionValues.config),
       lotIds = auction.lots.toList.map(_.value).sorted.map(_.toString),
-      meetupId = row.meetupId.toString,
-      hidden = auction.hidden
+      meetupId = row.meetupId.toString
     )
   }
 }

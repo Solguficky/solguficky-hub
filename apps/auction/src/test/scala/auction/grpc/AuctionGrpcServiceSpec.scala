@@ -390,11 +390,19 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
   private val meetupAuctionId = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value.toString
 
   /**
-   * Read model аукционов, которой тест не задал. Лоты и розыгрыш спрашивают у неё видимость своего аукциона (ADR-047,
-   * дополнение 2026-10-20), и пустая — «аукциона нет, скрывать нечего»; остальное роняет тест.
+   * Read model аукционов, которой тест не задал. Лоты, розыгрыш и поток спрашивают у неё видимость своего аукциона
+   * (ADR-047, дополнение 2026-10-20), и любой аукцион здесь опубликован; остальное роняет тест.
    */
   private object UntouchableAuctionViews extends AuctionViews {
-    def byId(auctionId: UUID): Future[Option[AuctionSnapshotView]] = Future.successful(None)
+    def byId(auctionId: UUID): Future[Option[AuctionSnapshotView]] =
+      Future.successful(
+        Some(
+          AuctionSnapshotView(
+            auctionId,
+            Auction(AuctionState.Draft, Some(MeetupId(UUID.fromString(meetupId))), Set.empty, Map.empty)
+          )
+        )
+      )
     def byMeetup(meetup: MeetupId): Future[Option[AuctionSnapshotView]] = fail("the auction read model was touched")
     def page(
         listing: AuctionListing,
@@ -713,6 +721,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       override def find(lotId: UUID) = Future.successful(Some(LotSnapshotView(lotId, id, 1, drafted, None)))
       override def registryPage(auctionId: UUID, after: Option[UUID], limit: Int) =
         Future.successful(List(LotSnapshotView(lotId, auctionId, 1, drafted, None)))
+      override def history(lotId: UUID, after: Option[Long], limit: Int) = Future.successful(Some(Nil))
+      override def image(lotId: UUID) =
+        Future.successful(Some(LotImageView(IArray.from(Array[Byte](1, 2, 3)), "image/png", "v1")))
     }
 
     val raffles = Raffles(Raffle(RaffleState.Open(raffleTerms, Vector.empty), Map.empty))
@@ -794,6 +805,36 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .raffle should not be empty
     }
 
+    "keeps the image, the history and the stream of a hidden auction from a participant, not from the organizer" in {
+      val hidden = service(Unreachable, views = lots, auctionViews = OneAuction(hidden = true))
+      statusOf(hidden.getLotImage(wire.GetLotImageRequest(Some(participantViewer), lot))) shouldBe Status.Code.NOT_FOUND
+      statusOf(hidden.listLotHistory(wire.ListLotHistoryRequest(Some(participantViewer), lot))) shouldBe
+        Status.Code.NOT_FOUND
+      hidden.getLotImage(wire.GetLotImageRequest(Some(organizer), lot)).futureValue.mediaType shouldBe "image/png"
+      hidden.listLotHistory(wire.ListLotHistoryRequest(Some(organizer), lot)).futureValue.entries shouldBe empty
+      val view = AuctionWatchView(AuctionSnapshotView(id, auctionOf(hidden = true)), Nil)
+      val streaming = service(Unreachable, watchViews = _ => Future.successful(Some(view)))
+      val request = wire.WatchAuctionRequest(Some(participantViewer), id.toString)
+      statusOfNext(watching(streaming.watchAuction(request))) shouldBe Status.Code.NOT_FOUND
+      watching(streaming.watchAuction(request.withViewer(organizer)))
+        .pull()
+        .futureValue
+        .map(_.getAuction.hidden) shouldBe
+        Some(true)
+    }
+
+    "keeps a lot of a meetup auction the read model does not hold yet from a participant: it is born hidden" in {
+      val none = new AuctionViews {
+        def byId(auctionId: UUID) = Future.successful(None)
+        def byMeetup(meetup: MeetupId) = fail("a meetup auction was read")
+        def page(listing: AuctionListing, after: Option[UUID], limit: Int, revealHidden: Boolean) =
+          fail("a list was read")
+      }
+      val grpc = service(Unreachable, views = lots, auctionViews = none)
+      statusOf(grpc.getLot(wire.GetLotRequest(Some(participantViewer), lot))) shouldBe Status.Code.NOT_FOUND
+      grpc.getLot(wire.GetLotRequest(Some(organizer), lot)).futureValue.id shouldBe lot
+    }
+
     "keeps the lots of a test auction without a journal visible: there is no auction to hide" in {
       val test = UUID.fromString("01926f3c-8b7a-7cde-8f00-000000000099")
       val testLots = new Views {
@@ -850,6 +891,27 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .reason
         .isMeetupCancelled shouldBe true
       seen.size shouldBe 3
+    }
+
+    "answers a repeated op_id of the same command as accepted and one of another command with ALREADY_EXISTS" in {
+      def repeated(event: AuctionEvent) = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Repeated(AuctionEnvelope(3, OpId(UUID.fromString(op)), event)))
+      }
+      def withHistory(event: AuctionEvent) =
+        service(Unreachable, auctions = AuctionCommands(repeated(event), Unreachable, NoMeetups))
+      withHistory(AuctionEvent.AuctionPublished)
+        .publishAuction(wire.PublishAuctionRequest(Some(viewer), id.toString, op))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      statusOf(
+        withHistory(AuctionEvent.AuctionPublished).hideAuction(wire.HideAuctionRequest(Some(viewer), id.toString, op))
+      ) shouldBe Status.Code.ALREADY_EXISTS
+      statusOf(
+        withHistory(AuctionEvent.AuctionDiscarded)
+          .publishAuction(wire.PublishAuctionRequest(Some(viewer), id.toString, op))
+      ) shouldBe Status.Code.ALREADY_EXISTS
     }
   }
 
@@ -1287,6 +1349,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     "answers an image read with the stored bytes and NOT_FOUND when the read model holds none" in {
       val bytes = Array[Byte](0xff.toByte, 0xd8.toByte, 0xff.toByte, 7)
       val stored = new Views {
+        override def find(lotId: UUID) = Future.successful(None)
         override def image(lotId: UUID) =
           Future.successful(
             Option.when(lotId == UUID.fromString(lot))(LotImageView(IArray.from(bytes), "image/jpeg", "v1"))
@@ -1591,6 +1654,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
     "answers NOT_FOUND to the history of a lot the read model does not hold" in {
       val empty = new Views {
+        override def find(lotId: UUID) = Future.successful(None)
         override def history(lotId: UUID, after: Option[Long], limit: Int) = Future.successful(None)
       }
       statusOf(
@@ -1604,6 +1668,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       // Позиции с пропусками, как у журнала с приватными событиями, и одно время на всех.
       val bids = List(3L, 4L, 7L, 9L, 12L).map(seq => bidRecord(seq, 100 + seq, "Manual", Some("Bot"), at))
       val journal = new Views {
+        override def find(lotId: UUID) = Future.successful(None)
         override def history(lotId: UUID, after: Option[Long], limit: Int) =
           Future.successful(Some(bids.filter(bid => after.forall(bid.sequence > _)).take(limit)))
       }
@@ -1622,6 +1687,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     "answers a manual bid with its channel and a proxy bid without one" in {
       val at = Instant.parse("2026-10-04T12:00:00Z")
       val journal = new Views {
+        override def find(lotId: UUID) = Future.successful(None)
         override def history(lotId: UUID, after: Option[Long], limit: Int) =
           Future.successful(
             Some(List(bidRecord(2, 150, "Manual", Some("Floor"), at), bidRecord(5, 260, "Proxy", None, at)))

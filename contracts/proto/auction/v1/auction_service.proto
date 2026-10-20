@@ -389,8 +389,6 @@ message ImageTooLarge {
 
 message UnsupportedImage {}
 
-// A lot of a hidden auction is NOT_FOUND unless the viewer holds run_auctions,
-// as a lot that does not exist.
 message GetLotRequest {
   Viewer viewer = 1;
 
@@ -412,8 +410,6 @@ message ListAuctionLotsRequest {
 }
 
 message ListAuctionLotsResponse {
-  // Empty for a hidden auction unless the viewer holds run_auctions, as for an
-  // auction that does not exist.
   repeated LotSnapshot lots = 1;
 
   // Opaque continuation token. Empty means that the enumeration is complete.
@@ -1074,10 +1070,7 @@ message DiscardAuctionRefusal {
   }
 }
 
-// Shows the auction to participants. A new auction is hidden: until then only
-// holders of run_auctions read it. Allowed before prebidding starts; starting
-// prebidding publishes a hidden auction by itself. Publishing a published
-// auction is accepted.
+// Shows the auction to participants: see AuctionSnapshot.hidden.
 message PublishAuctionRequest {
   // The administrator of the meetup of the auction, checked with the meetup.
   Viewer viewer = 1;
@@ -1097,9 +1090,7 @@ message PublishAuctionResponse {
   }
 }
 
-// Hides the auction from participants again: every read answers a viewer
-// without run_auctions as if the auction did not exist. Allowed before
-// prebidding starts. Hiding a hidden auction is accepted.
+// Hides the auction from participants again: see AuctionSnapshot.hidden.
 message HideAuctionRequest {
   // The administrator of the meetup of the auction, checked with the meetup.
   Viewer viewer = 1;
@@ -1128,7 +1119,6 @@ message AuctionVisibilityRefusal {
     NotMeetupAdministrator not_meetup_administrator = 1;
     MeetupNotFound meetup_not_found = 2;
     MeetupCancelled meetup_cancelled = 3;
-    // Prebidding has started: the auction is published for good.
     AuctionAlreadyStarted auction_already_started = 4;
   }
 }
@@ -1779,8 +1769,8 @@ message GetMeetupAuctionRequest {
 
 message GetMeetupAuctionResponse {
   // Unset when the meetup has no auction: absent, not an error. A draft is
-  // returned here, unlike in ListAuctions. A hidden auction is unset unless the
-  // viewer holds run_auctions: see AuctionSnapshot.hidden.
+  // returned here, unlike in ListAuctions. A hidden auction is unset for a
+  // viewer it is hidden from: see AuctionSnapshot.hidden.
   AuctionSnapshot auction = 1;
 }
 
@@ -1795,7 +1785,7 @@ message GetAuctionResponse {
   // Unset when there is no such auction for this caller: absent, not an error.
   // Whether a draft is returned depends on the caller, see
   // docs/architecture/integration.md, section "Auction gRPC". A hidden auction
-  // is unset unless the viewer holds run_auctions: see AuctionSnapshot.hidden.
+  // is unset for a viewer it is hidden from: see AuctionSnapshot.hidden.
   AuctionSnapshot auction = 1;
 }
 
@@ -1824,7 +1814,6 @@ enum AuctionListing {
 }
 
 message ListAuctionsResponse {
-  // A hidden auction is listed only to a viewer holding run_auctions.
   repeated AuctionSnapshot auctions = 1;
 
   // Opaque continuation token. Empty means that the enumeration is complete.
@@ -1849,9 +1838,10 @@ message AuctionSnapshot {
   // order carries no meaning.
   repeated string lot_ids = 3;
 
-  // The auction is hidden from participants: only a viewer holding run_auctions
-  // gets it, and every other read answers as if it did not exist. Never set
-  // once prebidding has started.
+  // Set when the auction is hidden from participants. Such a snapshot reaches
+  // only a viewer the auction is not hidden from; for anyone else the auction is
+  // absent, see docs/architecture/integration.md, section "Auction gRPC". Never
+  // set once prebidding has started.
   bool hidden = 5;
 
   // Where the auction is. Exactly one is set.
@@ -1939,8 +1929,7 @@ message GetRaffleRequest {
 }
 
 message GetRaffleResponse {
-  // Unset when the auction has no raffle: absent, not an error. Unset for a
-  // hidden auction unless the viewer holds run_auctions.
+  // Unset when the auction has no raffle: absent, not an error.
   Raffle raffle = 1;
 }
 

@@ -537,6 +537,7 @@ object ResponseMapping {
         refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
       case Left(VisibilityRefusal.Denied(Denial.MeetupCancelled)) =>
         refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(VisibilityRefusal.OpIdTaken) => Left(opIdTaken)
       case Left(VisibilityRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
       case Left(VisibilityRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
       case Left(
