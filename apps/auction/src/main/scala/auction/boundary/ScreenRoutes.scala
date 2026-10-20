@@ -4,6 +4,7 @@ import auction.screen.Admission
 import auction.screen.ScreenFeed
 import auction.screen.ScreenViews
 import org.apache.pekko.http.scaladsl.model.ContentType
+import org.apache.pekko.http.scaladsl.model.ContentTypes
 import org.apache.pekko.http.scaladsl.model.HttpEntity
 import org.apache.pekko.http.scaladsl.model.HttpResponse
 import org.apache.pekko.http.scaladsl.model.MediaType
@@ -16,6 +17,7 @@ import org.apache.pekko.http.scaladsl.server.Directives.*
 import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.util.ByteString
 
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
@@ -23,7 +25,9 @@ import scala.concurrent.duration.FiniteDuration
 
 /**
  * Маршруты экрана зала (ADR-040, дополнение 2026-10-19) — единственная поверхность Auction без токена вызывающего:
- * браузер не вызывающий в смысле ADR-056. Адрес несёт идентификатор аукциона, и пропуском он не служит.
+ * браузер не вызывающий в смысле ADR-056. Адрес несёт идентификатор аукциона, и пропуском он не служит. Страница
+ * `/screen/{auction_id}` (PER-485) читает поток того же адреса; её файлы — под `/screen/assets/`, внутри префикса,
+ * который пропускает публичный вход (ADR-071).
  *
  * Поток — SSE с одним событием `state`, в `data` — JSON целого состояния. `id` нет: после переподключения приходит
  * свежий снимок, хвост не переигрывается. Heartbeat — комментарий SSE: по нему страница отличает тишину торгов от
@@ -36,17 +40,63 @@ object ScreenRoutes {
   /** Год — «без срока» для кэша: адрес меняется вместе с версией изображения. */
   private val Immutable = RawHeader("Cache-Control", "public, max-age=31536000, immutable")
 
-  def route(feed: ScreenFeed, views: ScreenViews, heartbeat: FiniteDuration): Route =
-    pathPrefix("screen" / JavaUUID) { auctionId =>
+  /**
+   * Страница и её файлы лежат ресурсами сервиса: сборки JS нет, в образ они едут runtime classpath. Отдаются только
+   * названные файлы, а не каталог: путь из запроса до загрузчика ресурсов не доходит.
+   */
+  private val Assets: Set[String] = Set("screen.js", "connection.js", "screen.css")
+
+  /**
+   * Страница берёт ресурсы только у себя; данные из потока — ввод людей, и политика закрывает чужие скрипты, даже если
+   * отрисовка однажды пропустит разметку.
+   */
+  private val Policy = RawHeader(
+    "Content-Security-Policy",
+    "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; " +
+      "base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+  )
+
+  /** Страница и её файлы меняются с выкладкой и адреса с версией не несут, поэтому кэш их перепроверяет. */
+  private val pageHeaders = respondWithHeaders(`Cache-Control`(CacheDirectives.`no-cache`), Policy)
+
+  def route(feed: ScreenFeed, views: ScreenViews, heartbeat: FiniteDuration): Route = {
+    val html = page(heartbeat)
+    pathPrefix("screen") {
       get {
         concat(
-          path("events")(events(feed, auctionId, heartbeat)),
-          path("lots" / JavaUUID / "images" / Segment) { (lotId, version) =>
-            image(feed, views, auctionId, lotId, version)
+          path("assets" / Segment) { name =>
+            if (Assets.contains(name))
+              pageHeaders(getFromResource(s"screen/$name"))
+            else complete(StatusCodes.NotFound)
+          },
+          pathPrefix(JavaUUID) { auctionId =>
+            concat(
+              // Страница одна на все аукционы и о сходке не спрашивает: «не найдено» скажет поток, а одинаковый
+              // ответ на любой идентификатор ничего не выдаёт.
+              pathEndOrSingleSlash {
+                pageHeaders(complete(HttpEntity(ContentTypes.`text/html(UTF-8)`, html)))
+              },
+              path("events")(events(feed, auctionId, heartbeat)),
+              path("lots" / JavaUUID / "images" / Segment) { (lotId, version) =>
+                image(feed, views, auctionId, lotId, version)
+              }
+            )
           }
         )
       }
     }
+  }
+
+  /**
+   * Период heartbeat страница получает из разметки: предел тишины — три периода (`connection.js`), и сервис с другим
+   * периодом не оставляет страницу с чужим порогом.
+   */
+  private[boundary] def page(heartbeat: FiniteDuration): String = {
+    val source = Option(getClass.getClassLoader.getResourceAsStream("screen/index.html"))
+      .getOrElse(throw IllegalStateException("screen/index.html is not on the classpath"))
+    try String(source.readAllBytes(), StandardCharsets.UTF_8).replace("{{heartbeat-ms}}", heartbeat.toMillis.toString)
+    finally source.close()
+  }
 
   /**
    * Место занимается до Meetups: отказанное подключение не порождает вызова, а подключения, ждущие ответа Meetups,

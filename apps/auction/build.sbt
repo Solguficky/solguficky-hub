@@ -24,6 +24,9 @@ val postgresqlVersion = "42.7.13"
 val flywayVersion = "13.8.0"
 val testcontainersScalaVersion = "0.44.1"
 val jnatsVersion = "2.26.3"
+// Та же версия, что у @playwright/test сайта сообщества: браузер одной сборки
+// Chromium лежит в общем кэше ms-playwright и скачивается один раз.
+val playwrightVersion = "1.63.0"
 
 // Интеграционный уровень (L1) поднимает PostgreSQL в Docker и в `just verify`
 // не входит (testing-strategy.md). Отбор идёт по имени сьюта, а не по тегу
@@ -33,6 +36,12 @@ val jnatsVersion = "2.26.3"
 // лениво, и с ним тег бы справился; отбор по имени не зависит от того, как
 // следующий L1-сьют её поднимает.
 lazy val integrationTests = sys.env.get("AUCTION_INTEGRATION_TESTS").contains("1")
+
+// Браузерный уровень — страница экрана зала в Chromium против настоящего узла
+// (PER-485). Ему нужны и Docker, и скачанный браузер, поэтому он отбирается
+// своей переменной и не входит ни в L0, ни в L1: `AUCTION_BROWSER_TESTS=1`
+// оставляет только сьюты `*BrowserSpec`.
+lazy val browserTests = sys.env.get("AUCTION_BROWSER_TESTS").contains("1")
 
 // Корень buf-модуля потребитель не переносит: пути в import считаются от
 // contracts/proto. Вход сужается каталогом домена — тем же фильтром, что
@@ -110,7 +119,8 @@ lazy val auction = (project in file("."))
       "org.scalatest" %% "scalatest" % scalaTestVersion % Test,
       "org.scalatestplus" %% "scalacheck-1-18" % scalaCheckBridgeVersion % Test,
       "com.dimafeng" %% "testcontainers-scala-postgresql" % testcontainersScalaVersion % Test,
-      "com.dimafeng" %% "testcontainers-scala-scalatest" % testcontainersScalaVersion % Test
+      "com.dimafeng" %% "testcontainers-scala-scalatest" % testcontainersScalaVersion % Test,
+      "com.microsoft.playwright" % "playwright" % playwrightVersion % Test
     ),
     Compile / PB.protoSources := Seq(contractsRoot.value),
     // sbt-protoc кладёт protoSources ещё и в каталоги ресурсов, и без этой
@@ -167,8 +177,12 @@ lazy val auction = (project in file("."))
     // один и тот же код зелёный отдельным вызовом и красный в полном гейте.
     Test / parallelExecution := false,
     // L1-сьют называется `*IntegrationSpec`; `AUCTION_INTEGRATION_TESTS=1`
-    // оставляет только их, без переменной — только остальные.
-    Test / testOptions += Tests.Filter(suite => suite.endsWith("IntegrationSpec") == integrationTests),
+    // оставляет только их, без переменной — только остальные. Браузерные
+    // сьюты `*BrowserSpec` идут только под своей переменной.
+    Test / testOptions += Tests.Filter(suite =>
+      if (browserTests) suite.endsWith("BrowserSpec")
+      else !suite.endsWith("BrowserSpec") && suite.endsWith("IntegrationSpec") == integrationTests
+    ),
     // Пропуск не равен прохождению (testing-strategy.md), а готового флага у
     // ScalaTest нет: `ignore`, отменённый `assume` и `pending` sbt считает
     // прохождением. Итог прогона переводится в провал здесь, а не в рецепте:
@@ -181,11 +195,17 @@ lazy val auction = (project in file("."))
       val suites = output.events.values
       val skipped =
         suites.map(s => s.ignoredCount + s.canceledCount + s.pendingCount + s.skippedCount).sum
-      if (skipped == 0) output
+      // Отбор по суффиксу молча пуст, если сьют уровня переименовали: шаг CI
+      // такого уровня был бы зелёным, не запустив ни одного теста.
+      val emptyLevel = (integrationTests || browserTests) && suites.isEmpty
+      if (skipped == 0 && !emptyLevel) output
       else {
-        streams.value.log.error(
-          s"пропущено тестов: $skipped — пропуск не равен прохождению, прогон считается упавшим"
-        )
+        if (skipped > 0)
+          streams.value.log.error(
+            s"пропущено тестов: $skipped — пропуск не равен прохождению, прогон считается упавшим"
+          )
+        if (emptyLevel)
+          streams.value.log.error("уровень выбран переменной, но ни один сьют под него не попал")
         output.copy(overall = TestResult.Failed)
       }
     },
