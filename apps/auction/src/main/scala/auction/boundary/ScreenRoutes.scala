@@ -17,6 +17,8 @@ import org.apache.pekko.http.scaladsl.server.Route
 import org.apache.pekko.util.ByteString
 
 import java.util.UUID
+import scala.concurrent.ExecutionContext
+import scala.concurrent.Future
 import scala.concurrent.duration.FiniteDuration
 
 /**
@@ -47,13 +49,13 @@ object ScreenRoutes {
     }
 
   /**
-   * Предел проверяется до Meetups: отказанное подключение не порождает вызова. Отказ — `503`, и страница повторяет
-   * попытку с растущей паузой и случайной добавкой.
+   * Место занимается до Meetups: отказанное подключение не порождает вызова, а подключения, ждущие ответа Meetups,
+   * считаются в пределе. Отказ — `503`, и страница повторяет попытку с растущей паузой и случайной добавкой.
    */
   private def events(feed: ScreenFeed, auctionId: UUID, heartbeat: FiniteDuration): Route =
-    if (feed.limit.full) complete(StatusCodes.ServiceUnavailable)
+    if (!feed.limit.reserve()) complete(StatusCodes.ServiceUnavailable)
     else
-      admitted(feed, auctionId) {
+      admitted(feed.admit(auctionId).andThen(_ => feed.limit.release())(using ExecutionContext.parasitic)) {
         // Прокси не должен копить поток: заголовок снимает буферизацию у nginx-подобных, Cache-Control — у остальных.
         respondWithHeaders(`Cache-Control`(CacheDirectives.`no-cache`), RawHeader("X-Accel-Buffering", "no")) {
           complete(
@@ -71,7 +73,7 @@ object ScreenRoutes {
       }
 
   private def image(feed: ScreenFeed, views: ScreenViews, auctionId: UUID, lotId: UUID, version: String): Route =
-    admitted(feed, auctionId) {
+    admitted(feed.admit(auctionId)) {
       onSuccess(views.image(auctionId, lotId, version)) {
         case None => complete(StatusCodes.NotFound)
         case Some(found) =>
@@ -86,8 +88,8 @@ object ScreenRoutes {
     }
 
   /** «Не найдено» одинаково для скрытой, отменённой до торгов и отсутствующей сходки и для удалённого аукциона. */
-  private def admitted(feed: ScreenFeed, auctionId: UUID)(inner: Route): Route =
-    onSuccess(feed.admit(auctionId)) {
+  private def admitted(admission: Future[Admission])(inner: Route): Route =
+    onSuccess(admission) {
       case Admission.Open => inner
       case Admission.NotFound => complete(StatusCodes.NotFound)
       case Admission.Unavailable => complete(StatusCodes.ServiceUnavailable)

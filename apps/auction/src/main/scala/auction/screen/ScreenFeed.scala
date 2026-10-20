@@ -14,19 +14,28 @@ import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
 /**
- * Предел одновременных потоков экрана (ADR-040, дополнение 2026-10-19): ссылка открытая, и торги важнее табло. Поток
- * считается открытым с материализации и до её конца, поэтому подключение, оборвавшееся до отправки ответа, места не
- * занимает. Проверка «есть ли место» и счёт не атомарны вместе: одновременные подключения могут превысить предел на
- * своё число, и это дешевле, чем место, потерянное навсегда.
+ * Предел одновременных потоков экрана (ADR-040, дополнение 2026-10-19): ссылка открытая, и торги важнее табло. Место
+ * занимает и подключение в воротах — от `reserve` до `release`, пока идёт вопрос Meetups, — и поток с материализации до
+ * её конца: волна переподключений после рестарта иначе прошла бы ворота вся, пока ни один поток не открыт. Ворота
+ * отдают место до того, как поток займёт своё, поэтому подключение, оборвавшееся до отправки ответа, места не держит;
+ * превысить предел можно только в этом коротком промежутке без вызовов.
  */
 final class StreamLimit(val max: Int) {
-  private val open = AtomicInteger(0)
+  private val taken = AtomicInteger(0)
 
-  def full: Boolean = open.get() >= max
-  def current: Int = open.get()
+  def current: Int = taken.get()
 
-  private[screen] def opened(): Unit = open.incrementAndGet(): Unit
-  private[screen] def closed(): Unit = open.decrementAndGet(): Unit
+  /** Занять место на время ворот; `false` — предел достигнут, и место не занято. */
+  def reserve(): Boolean =
+    taken.incrementAndGet() <= max || {
+      taken.decrementAndGet()
+      false
+    }
+
+  def release(): Unit = taken.decrementAndGet(): Unit
+
+  private[screen] def opened(): Unit = taken.incrementAndGet(): Unit
+  private[screen] def closed(): Unit = release()
 }
 
 /**

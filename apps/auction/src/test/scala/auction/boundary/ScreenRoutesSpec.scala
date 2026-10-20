@@ -42,6 +42,7 @@ import org.scalatest.wordspec.AnyWordSpec
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.Future
+import scala.concurrent.Promise
 import scala.concurrent.duration.*
 
 final class ScreenRoutesSpec
@@ -106,14 +107,14 @@ final class ScreenRoutesSpec
    * Поток бесконечен, а route-testkit ждёт тело ответа целиком, поэтому поток читается с настоящего сервера на
    * свободном порту: заголовки — из ответа, кадры — по одному, следующий тест тянет сам.
    */
-  private def streaming[A](route: Route)(use: (() => HttpResponse) => A): A = {
+  private def connecting[A](route: Route)(use: (() => Future[HttpResponse]) => A): A = {
     val binding = Http().newServerAt("127.0.0.1", 0).bind(route).futureValue
-    try
-      use(() =>
-        Http().singleRequest(HttpRequest(uri = s"http://127.0.0.1:${binding.localAddress.getPort}$events")).futureValue
-      )
+    try use(() => Http().singleRequest(HttpRequest(uri = s"http://127.0.0.1:${binding.localAddress.getPort}$events")))
     finally binding.unbind().futureValue
   }
+
+  private def streaming[A](route: Route)(use: (() => HttpResponse) => A): A =
+    connecting(route)(request => use(() => request().futureValue))
 
   private def frames(response: HttpResponse) = response.entity.dataBytes.runWith(Sink.queue[ByteString]())
 
@@ -163,6 +164,29 @@ final class ScreenRoutesSpec
         refused.discardEntityBytes()
         standings.asked.get() shouldBe 1
 
+        stream.cancel()
+        eventually(limit.current shouldBe 0)
+      }
+    }
+
+    "count a connection waiting for Meetups against the limit" in {
+      val limit = StreamLimit(1)
+      val answer = Promise[StandingAnswer]()
+      val waiting = new MeetupStandings {
+        def standing(meetup: UUID): Future[StandingAnswer] = answer.future
+      }
+      connecting(routeOf(standings = waiting, limit = limit)) { request =>
+        val first = request()
+        eventually(limit.current shouldBe 1)
+
+        val refused = request().futureValue
+        refused.status shouldBe StatusCodes.ServiceUnavailable
+        refused.discardEntityBytes()
+
+        answer.success(visible)
+        val stream = frames(first.futureValue)
+        stream.pull().futureValue should not be empty
+        limit.current shouldBe 1
         stream.cancel()
         eventually(limit.current shouldBe 0)
       }

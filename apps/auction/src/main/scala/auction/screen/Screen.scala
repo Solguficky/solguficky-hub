@@ -104,9 +104,10 @@ final case class ScreenReading(
     sold: List[SoldLot]
 ) {
 
-  /** Кого экран назовёт: лидер и авторы ставок активного лота, покупатель закрытого. */
+  /** Кого экран назовёт: лидер и авторы ставок активного лота, покупатель закрытого и предыдущего. */
   def participants: Set[ParticipantId] = {
-    val inLot = Screen.shownLot(this).toList.flatMap(view => Screen.people(view.lot.state))
+    val inLot =
+      (Screen.shownLot(this) ++ Screen.previousLot(this)).toList.flatMap(view => Screen.people(view.lot.state))
     (inLot ++ recentBids.map(_.participant)).toSet
   }
 }
@@ -164,6 +165,14 @@ object Screen {
       case _ => None
     }
 
+  /** Последний завершённый лот финала: его исход экран держит, пока следующий не вышел в торги. */
+  private[screen] def previousLot(reading: ScreenReading): Option[LotSnapshotView] =
+    reading.auction.state match {
+      case AuctionState.Final(_, _, _, _, completed) =>
+        completed.lastOption.flatMap(lot => reading.lineup.find(_.lotId == lot.value))
+      case _ => None
+    }
+
   private[screen] def people(state: LotState): List[ParticipantId] =
     state match {
       case LotState.Trading(trading) => trading.leader.toList
@@ -198,6 +207,14 @@ object Screen {
                     )
                   )
                 )
+              // Лот уже активирован аукционом, а `LotResumed` в read model ещё нет: проекции лота и аукциона
+              // коммитят независимо. Это ещё не исход, а следующий лот.
+              case LotState.Held(_) =>
+                previousLot(reading).filterNot(_.lotId == view.lotId) match {
+                  case Some(previous) =>
+                    ScreenState.Between(ClosedLot(lot(previous), outcome(previous.lot.state, name)), Some(lot(view)))
+                  case None => ScreenState.Lineup(reading.lineup.map(lot))
+                }
               case closedState =>
                 val done = (activated ++ completed).map(_.value).toSet + view.lotId
                 val next = reading.lineup.find(candidate => !done.contains(candidate.lotId)).map(lot)
@@ -211,7 +228,10 @@ object Screen {
   private def lot(view: LotSnapshotView): ScreenLot =
     ScreenLot(view.lotId, view.card.map(_.title.value), view.card.flatMap(_.image))
 
-  /** Лот, который не торгуется и не продан: удержанный на экране финала не бывает, поэтому остальное — «не продан». */
+  /**
+   * Лот, который не торгуется и не продан: удержанный сюда не доходит — он «следующий», — поэтому остальное — «не
+   * продан».
+   */
   private def outcome(state: LotState, name: ParticipantId => String): Outcome =
     state match {
       case LotState.Sold(sale) => Outcome.Sold(sale.price, name(sale.winner))

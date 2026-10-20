@@ -157,6 +157,22 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
       )
     }
 
+    "show an activated lot whose resumption is not yet read as the next one rather than an outcome" in {
+      val previous = view(second, sold(900, participant(3)))
+      val activated = view(first, held(200, participant(2)))
+      val next =
+        AuctionState.Final(AuctionFixtures.config(), opened, List(second, first), List(second, first), List(second))
+      val firstOut = AuctionState.Final(AuctionFixtures.config(), opened, List(first), List(first), Nil)
+
+      Screen.of(reading(next, List(previous, activated)), name) shouldBe ScreenState.Between(
+        ClosedLot(ScreenLot(second.value, Some("Лот"), Some(ImageVersion("v1"))), Outcome.Sold(money(900), "@p3")),
+        Some(ScreenLot(first.value, Some("Лот"), Some(ImageVersion("v1"))))
+      )
+      reading(next, List(previous, activated)).participants should contain(participant(3))
+      Screen.of(reading(firstOut, List(activated)), name) shouldBe
+        ScreenState.Lineup(List(ScreenLot(first.value, Some("Лот"), Some(ImageVersion("v1")))))
+    }
+
     "total the whole auction, online and in the final from the sold lots" in {
       val finished = AuctionState.Finished(AuctionFixtures.config(), opened)
       val sales = List(
