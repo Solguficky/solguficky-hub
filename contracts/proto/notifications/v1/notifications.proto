@@ -142,6 +142,14 @@ message Notification {
     // participant who predicted; nobody else receives it. No category governs
     // it: one message per auction.
     PredictionResults prediction_results = 28;
+
+    // An auction was cancelled after its trading started. One fact per person
+    // with a favorite row on a lot of the auction, followed or unfollowed, and
+    // per buyer of its sold lots: a person who bid on three lots gets one. A
+    // bid_placed of the cancelled auction that arrives after the cancellation
+    // gives its leader the same fact unless they already have it. No category
+    // governs it: one message per auction.
+    AuctionCancelled auction_cancelled = 29;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -182,7 +190,9 @@ message Cause {
     string outbid_digest_id = 6;
 
     // event_id of the consumed Auction auction event. Stable across
-    // republication, therefore a transport repeat is recognized.
+    // republication, therefore a transport repeat is recognized. An
+    // auction_cancelled fact carries the event_id of auction_cancelled, also
+    // when a late bid_placed of that auction caused it.
     string auction_event_id = 7;
 
     // event_id of the consumed Auction raffle event. Stable across
@@ -316,6 +326,31 @@ message RaffleResult {
 
   // How many tickets took part in the draw. At least 1.
   uint32 ticket_count = 4;
+}
+
+// An auction cancelled after its trading started, as the recipient sees it.
+// Lots sold before the cancellation stay sold, and the recipient's own are
+// listed; the rest were withdrawn. The auction and lot titles are not part of
+// the trading domain; the channel reads them by id.
+message AuctionCancelled {
+  // Canonical lowercase UUID with hyphens, version 5 or 7.
+  string auction_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the meetup of the auction.
+  string meetup_id = 2;
+
+  // The lots of the auction the recipient bought, in no particular order.
+  // Empty for everyone else. A sale that reached Notifications after the
+  // cancellation is absent here; its lot_purchased is sent all the same.
+  repeated CancelledAuctionPurchase purchases = 3;
+}
+
+message CancelledAuctionPurchase {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // The price the lot was sold at.
+  auction.v1.Money price = 2;
 }
 
 // The prediction results of an auction as the recipient sees them: the outcome
