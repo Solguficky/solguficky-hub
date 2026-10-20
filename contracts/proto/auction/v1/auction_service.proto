@@ -1225,8 +1225,8 @@ message LaunchStepWindowResponse {
   }
 }
 
-// The window is recorded by the auction. The lots receive it after the answer, not
-// before it. A repeated op_id answers with the same instants.
+// The window as the auction recorded it. A repeated op_id answers with the same
+// instants.
 message StepWindowLaunchAccepted {
   // RFC 3339 instant in UTC: the first instant of the window - the one in the
   // request, or the instant the server decided the command when it was unset.
@@ -1253,17 +1253,14 @@ message LaunchStepWindowRefusal {
   }
 }
 
-// from is set and earlier than the instant the server decided the command.
+// The refusals of a launch carry no window index, unlike their namesakes in
+// ConfigInvalid: a launch names one window.
 message StepWindowInPast {}
 
-// from is before opens_at, until is not after from, or until is after closes_at.
 message LaunchedStepWindowOutsideOnlinePhase {}
 
-// The step is not positive or is in another currency than the lots: lot_defaults,
-// or the platform defaults when they are unset.
 message LaunchedStepWindowStepInvalid {}
 
-// lot_ids is empty.
 message LaunchedStepWindowLotsEmpty {}
 
 message StepWindowLotNotInAuction {
@@ -1272,24 +1269,20 @@ message StepWindowLotNotInAuction {
   string lot_id = 1;
 }
 
-// The auction has not confirmed that the lot is trading: it has not opened yet,
-// the auction is still asking it after a restart, or it is closed.
 message StepWindowLotNotOpen {
   // Canonical lowercase UUIDv7 with hyphens: the first such lot of lot_ids, in
   // request order.
   string lot_id = 1;
 }
 
-// The window intersects a window the auction already has - announced in the
-// configuration or launched earlier - on a common lot.
 message LaunchedStepWindowsOverlap {
   // Canonical lowercase UUIDv7 with hyphens: a lot the two windows share.
   string lot_id = 1;
 
-  // RFC 3339 instant in UTC: the first instant of the existing window.
+  // RFC 3339 instant in UTC: the first instant of the window the launch meets.
   string from = 2;
 
-  // RFC 3339 instant in UTC: the first instant after the existing window.
+  // RFC 3339 instant in UTC: the first instant after the window the launch meets.
   string until = 3;
 }
 
