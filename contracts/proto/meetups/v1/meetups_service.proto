@@ -51,6 +51,10 @@ enum MeetupRelation {
   // Holder of identity.v1.ACCESS_RIGHT_MANAGE_MEETUPS; the relation holds for
   // every meetup.
   MEETUP_RELATION_COMMUNITY_ADMINISTRATOR = 1;
+
+  // Holder of identity.v1.ACCESS_RIGHT_RUN_AUCTIONS; the relation holds for
+  // every meetup.
+  MEETUP_RELATION_AUCTION_RUNNER = 2;
 }
 
 // The status is the whole answer to "does the relation hold"; the body carries

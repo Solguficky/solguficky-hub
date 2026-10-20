@@ -74,7 +74,9 @@ final class AuctionGrpcService(
     changes: AuctionChanges = AuctionGrpcService.NoChanges,
     caller: Option[Caller] = None,
     predictions: PredictionGateway = AuctionGrpcService.NoPredictions,
-    results: ResultsGateway = AuctionGrpcService.NoResults
+    results: ResultsGateway = AuctionGrpcService.NoResults,
+    placeBidsRight: ParticipantId => Future[Boolean] = AuctionGrpcService.NoIdentity,
+    notes: OperationNotes = OperationNotes.discarded
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -82,7 +84,11 @@ final class AuctionGrpcService(
    * Сервис для одного входящего вызова: команды аукциона спрашивают Meetups с его сквозными значениями, а событие сбоя
    * заморозки несёт их, чтобы его можно было связать с записью операции.
    */
-  def within(correlation: Correlation, caller: Option[Caller] = None): AuctionGrpcService =
+  def within(
+      correlation: Correlation,
+      caller: Option[Caller] = None,
+      notes: OperationNotes = OperationNotes.discarded
+  ): AuctionGrpcService =
     AuctionGrpcService(
       lots,
       catalog,
@@ -100,27 +106,36 @@ final class AuctionGrpcService(
       changes,
       caller,
       predictions,
-      results
+      results,
+      placeBidsRight,
+      notes
     )
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
     RequestMapping.placeBid(in) match {
       case Left(error) => invalid(error)
-      case Right(command) if command.bid.source == BidSource.Floor => placeFloorBid(command)
-      case Right(command) if !command.acting.viewer.isParticipant =>
-        refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
       case Right(command) =>
-        val participant = command.acting.participant
-        asNamed(command.lotId, participant, ResponseMapping.displayNameNotChosen)(
-          lots.placeBid(command.lotId, command.bid, Initiator.Participant(participant))
-        )(ResponseMapping.placeBid)
+        // Источник называет запись операции (ADR-049, дополнение 2026-10-18): отказы зала и бота считаются раздельно.
+        notes.add(OperationNotes.Source, OperationNotes.source(command.bid.source))
+        command.bid.source match {
+          case BidSource.Floor => placeFloorBid(command)
+          case BidSource.Bot if !command.acting.viewer.isParticipant =>
+            refuse(Status.PERMISSION_DENIED.withDescription("viewer has no auction right"))
+          case BidSource.Bot =>
+            val participant = command.acting.participant
+            asNamed(command.lotId, participant, ResponseMapping.displayNameNotChosen)(
+              lots.placeBid(command.lotId, command.bid, Initiator.Participant(participant))
+            )(ResponseMapping.placeBid)
+        }
     }
 
   /**
    * Ставка зала (integration.md, «Финал и его поток»): помощник ведущего записывает, что человек в зале принял
-   * объявленную цену. Право — у помощника: он держатель права администрировать сходку аукциона лота, и проверяет это
-   * Meetups. Право `place_bids` человека в зале не спрашивается — решение владельца в PER-293. Имя нужно человеку в
-   * зале, а не помощнику: лидером и победителем станет он. В журнал ставка ложится с инициатором-оператором.
+   * объявленную цену. Право помощника — вести аукцион (`run_auctions`), и проверяет его Meetups отношением ведущего
+   * аукциона (ADR-070, п. 1). Право человека зала — `place_bids` у Identity (п. 3): без него ставка получает
+   * `ParticipantCannotBid` и до лота не доходит. Не ответивший Identity ставку не останавливает: человек считается
+   * держателем права, как неответивший кандидат розыгрыша. Имя нужно человеку в зале, а не помощнику: лидером и
+   * победителем станет он. В журнал ставка ложится с инициатором-оператором.
    */
   private def placeFloorBid(command: BidCommand): Future[wire.PlaceBidResponse] =
     lots.auctionOf(command.lotId).recoverWith(awaited).flatMap {
@@ -129,10 +144,38 @@ final class AuctionGrpcService(
         auctions.hosts(auction, command.acting.participant).flatMap {
           case Left(denial) => ResponseMapping.floorDenied(denial).fold(refuse, Future.successful)
           case Right(()) =>
-            asNamed(command.lotId, command.bid.participant, ResponseMapping.displayNameNotChosen)(
-              lots.placeBid(command.lotId, command.bid, Initiator.Operator(command.acting.participant))
-            )(ResponseMapping.placeBid)
+            holdsPlaceBids(command.lotId, command.bid.participant).flatMap {
+              case false => Future.successful(ResponseMapping.participantCannotBid)
+              case true =>
+                asNamed(command.lotId, command.bid.participant, ResponseMapping.displayNameNotChosen)(
+                  lots.placeBid(command.lotId, command.bid, Initiator.Operator(command.acting.participant))
+                )(ResponseMapping.placeBid)
+            }
         }
+    }
+
+  /**
+   * Право человека зала у Identity; отказ вызова — «нет ответа», и человек считается держателем права (ADR-070, п. 3).
+   * Пропущенная проверка пишется событием: на время сбоя в зал мог попасть заблокированный, и это должно быть видно.
+   * Человека событие не называет — хватает лота и `request_id`, — а сообщения исключения в нём нет, как в записи
+   * операции.
+   */
+  private def holdsPlaceBids(lotId: java.util.UUID, participant: ParticipantId): Future[Boolean] =
+    Future.delegate(placeBidsRight(participant)).recover { case NonFatal(cause) =>
+      AuctionGrpcService.logger.warn(
+        "floor bid right unconfirmed",
+        StructuredArguments.entries(
+          (Map[String, Any](
+            "operation" -> AuctionGrpcService.FloorRightOperation,
+            "result" -> "error",
+            "error_category" -> "dependency_unavailable",
+            "error" -> cause.getClass.getName,
+            "lot_id" -> lotId.toString
+          ) ++ correlation.requestId.filter(_.nonEmpty).map("request_id" -> _) ++
+            correlation.useCase.filter(_.nonEmpty).map("use_case" -> _)).asJava
+        )
+      )
+      true
     }
 
   /**
@@ -925,6 +968,10 @@ object AuctionGrpcService {
   /** Потока в узле нет: тесты границы, которым он не нужен. Аукциона для потока не существует. */
   val NoWatch: AuctionWatchViews = _ => Future.successful(None)
 
+  /** Узел без Identity: право человека зала не подтвердить, и ставка зала идёт, как при молчащем Identity. */
+  val NoIdentity: ParticipantId => Future[Boolean] =
+    _ => Future.failed(new IllegalStateException("identity is not wired in this node"))
+
   /** Узел без прогнозов: тесты границы, которым игра не нужна. */
   val NoPredictions: PredictionGateway = new PredictionGateway {
     private def none[T]: Future[T] = Future.failed(new IllegalStateException("predictions are not wired in this node"))
@@ -970,6 +1017,9 @@ object AuctionGrpcService {
 
   /** Имя события об исчерпанных попытках заморозки в логе. */
   val FreezeOperation: String = "auction.display_name.freeze"
+
+  /** Событие ставки зала, принятой без ответа Identity о праве человека. */
+  val FloorRightOperation: String = "auction.floor_bid.right_unconfirmed"
 
   private val logger = LoggerFactory.getLogger(classOf[AuctionGrpcService])
 

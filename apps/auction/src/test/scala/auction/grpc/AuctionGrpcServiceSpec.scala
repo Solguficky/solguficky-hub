@@ -388,7 +388,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       watchViews: AuctionWatchViews = _ => fail("the watch read model was touched"),
       changes: AuctionChanges = AuctionGrpcService.NoChanges,
       caller: Option[Caller] = None,
-      predictions: PredictionGateway = AuctionGrpcService.NoPredictions
+      predictions: PredictionGateway = AuctionGrpcService.NoPredictions,
+      placeBidsRight: ParticipantId => Future[Boolean] = _ => Future.successful(true),
+      notes: OperationNotes = OperationNotes.discarded
   ) =
     AuctionGrpcService(
       lots,
@@ -405,7 +407,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       watchViews = watchViews,
       changes = changes,
       caller = caller,
-      predictions = predictions
+      predictions = predictions,
+      placeBidsRight = placeBidsRight,
+      notes = notes
     )
 
   /**
@@ -1042,7 +1046,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
 
     "answers an oversized image from an administrator with the limit before touching the store" in {
-      val admin = viewer.addRights(AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS)
+      val admin = viewer.addRights(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS)
       val oversized = wire.LotImageUpload(ByteString.copyFrom(Array.fill[Byte](LotImage.MaxBytes + 1)(0)))
       val edit = wire.EditLotCardRequest(Some(admin), lot, "Лот", "").withReplaceImage(oversized)
       service(Unreachable).editLotCard(edit).futureValue.getRefused.reason.imageTooLarge shouldBe
@@ -1923,11 +1927,21 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
           Future.successful(Right(accepted))
         }
       }
-      // У помощника нет права ставить: ставит человек в зале, а помощнику нужно право сходки.
-      val assistant = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS))
+      // У помощника нет права ставить: ставит человек в зале, а помощнику нужно право вести аукцион.
+      val assistant = viewer.withRights(Seq(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS))
       val request = floorBid.withViewer(assistant)
+      val asked = new java.util.concurrent.atomic.AtomicReference[List[ParticipantId]](Nil)
+      val identity: ParticipantId => Future[Boolean] = participant => {
+        asked.updateAndGet(_ :+ participant)
+        Future.successful(true)
+      }
 
-      service(lots, auctions = AuctionCommands(registered(), Unreachable, granted), names = Names(roomNamed))
+      service(
+        lots,
+        auctions = AuctionCommands(registered(), Unreachable, granted),
+        names = Names(roomNamed),
+        placeBidsRight = identity
+      )
         .placeBid(request)
         .futureValue
         .outcome
@@ -1936,6 +1950,56 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         PlaceBid(RoomId, Money(150, CurrencyCode("RUB")), OpId(UUID.fromString(op)), BidSource.Floor) ->
           Initiator.Operator(ViewerId)
       )
+      asked.get shouldBe List(RoomId)
+    }
+
+    "refuses a floor bid for a person in the room without place_bids before the name and the lot" in {
+      service(
+        new Born,
+        auctions = AuctionCommands(registered(), Unreachable, granted),
+        names = Names(roomNamed),
+        placeBidsRight = _ => Future.successful(false)
+      )
+        .placeBid(floorBid)
+        .futureValue shouldBe ResponseMapping.participantCannotBid
+    }
+
+    "takes a floor bid while Identity does not answer about the person in the room" in {
+      val lots = new Born {
+        override def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator) =
+          Future.successful(Right(accepted))
+      }
+
+      service(
+        lots,
+        auctions = AuctionCommands(registered(), Unreachable, granted),
+        names = Names(roomNamed),
+        placeBidsRight = _ => Future.failed(new IllegalStateException("identity is silent"))
+      )
+        .placeBid(floorBid)
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+    }
+
+    "names the source of a bid in the record of the operation" in {
+      val lots = new Born {
+        override def placeBid(lotId: UUID, command: PlaceBid, initiator: Initiator) =
+          Future.successful(Right(accepted))
+      }
+      val floor = OperationNotes()
+      val bot = OperationNotes()
+
+      service(
+        lots,
+        auctions = AuctionCommands(registered(), Unreachable, granted),
+        names = Names(roomNamed),
+        notes = floor
+      ).placeBid(floorBid).futureValue
+      service(lots, notes = bot).placeBid(validBid).futureValue
+
+      floor.all shouldBe Map("source" -> "FLOOR")
+      bot.all shouldBe Map("source" -> "BOT")
     }
 
     "refuses a floor bid of a stranger to the meetup without reaching the lot" in {

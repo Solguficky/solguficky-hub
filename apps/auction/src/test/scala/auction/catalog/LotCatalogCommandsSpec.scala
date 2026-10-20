@@ -23,13 +23,14 @@ final class LotCatalogCommandsSpec
 
   private val admin = Viewer(AccessRight.values.toSet)
 
-  // Все, у кого нет права вести сходки, в том числе держатель остальных служебных прав: каталог открывает только
-  // оно (RFC-016, О-1).
+  // Все, у кого нет права вести аукцион, в том числе держатель права вести сходки и остальных служебных прав:
+  // каталог открывает только оно (ADR-070, п. 1).
   private val notAdmins = Gen.oneOf(
     Viewer(Set.empty),
     Viewer(Set(AccessRight.PlaceBids)),
     Viewer(Set(AccessRight.AccessHub, AccessRight.PlaceBids)),
-    Viewer(AccessRight.values.toSet - AccessRight.ManageMeetups)
+    Viewer(Set(AccessRight.ManageMeetups)),
+    Viewer(AccessRight.values.toSet - AccessRight.RunAuctions)
   )
 
   private val blankTitles = Gen.listOf(Gen.oneOf(' ', '\t', '\n', '\r', '\u00A0', '\u2007', '\u202F')).map(_.mkString)

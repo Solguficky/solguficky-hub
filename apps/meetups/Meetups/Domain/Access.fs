@@ -8,9 +8,12 @@ type AccessDenied = CannotManageMeetups
 /// Отношение человека к сходке, которое вызывающий сервис принимает как право
 /// действовать от её имени (ADR-051). Словарь принадлежит Meetups и растёт вместе с
 /// доменом: автор и организатор войдут значениями вместе с продуктовым решением,
-/// которое даст им право. Сегодня значение одно — администратор сообщества, и
-/// держится оно на праве `manage_meetups`, а не на записи сходки.
-type MeetupRelation = CommunityAdministrator
+/// которое даст им право. Сегодня отношений два, и оба держатся на праве, а не на
+/// записи сходки: администратор сообщества — на `manage_meetups`, ведущий аукциона
+/// — на `run_auctions` (ADR-070, п. 1).
+type MeetupRelation =
+    | CommunityAdministrator
+    | AuctionRunner
 
 /// Политика доступа среза. Живёт в ядре, а не в срезах, потому что решение
 /// принимается из значений и без I/O, а правило одно на все команды: четыре копии
@@ -35,13 +38,15 @@ module Access =
 
     /// Права, которые дают принимаемые отношения. Правило то же, что у
     /// `actOnBehalf`: администратор сообщества — это держатель `manage_meetups`, и
-    /// ничего больше. Отношение, которому понадобится запись сходки, сюда не впишется
-    /// и изменит порядок проверки вместе с собой (ADR-051, п. 4).
+    /// ничего больше; ведущий аукциона — держатель `run_auctions` (ADR-070).
+    /// Отношение, которому понадобится запись сходки, сюда не впишется и изменит
+    /// порядок проверки вместе с собой (ADR-051, п. 4).
     let rightsFor (relations: Set<MeetupRelation>) : Set<AccessRight> =
         relations
         |> Set.map (fun relation ->
             match relation with
             | CommunityAdministrator -> ManageMeetups
+            | AuctionRunner -> RunAuctions
         )
 
     /// Published meetups are community-visible. A hidden meetup is visible only

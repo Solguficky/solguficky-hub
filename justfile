@@ -517,7 +517,7 @@ meetups-build:
 # Порог держит исчезновение тестов из набора; частичный пропуск ловит
 # --fail-skips, а не он: --minimum-expected-tests считает пропущенный тест
 # выполненным.
-MEETUPS_UNIT_TEST_THRESHOLD := "570"
+MEETUPS_UNIT_TEST_THRESHOLD := "572"
 MEETUPS_INTEGRATION_TEST_THRESHOLD := "140"
 
 # Unit-тесты (L0): Docker и PostgreSQL не нужны. Уровень выбирается проектом,

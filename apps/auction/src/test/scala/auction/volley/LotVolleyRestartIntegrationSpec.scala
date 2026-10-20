@@ -75,7 +75,7 @@ final class LotVolleyRestartIntegrationSpec
   private val ownToken = "volley-own"
 
   private val administrator = Volley.uuidV7(Random(1), 1_700_000_000_000L).toString
-  private val adminViewer = wire.Viewer(administrator, rights = Seq(AccessRightMessage.ACCESS_RIGHT_MANAGE_MEETUPS))
+  private val adminViewer = wire.Viewer(administrator, rights = Seq(AccessRightMessage.ACCESS_RIGHT_RUN_AUCTIONS))
 
   private val currency = "RUB"
   private val start = 100_000L
