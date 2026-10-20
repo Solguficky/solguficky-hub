@@ -116,6 +116,27 @@ public class ReleaseNotesTests
         (await Count(db, "release_summary")).ShouldBe(1);
     }
 
+    /// <summary>
+    /// Строка поверхности, которую схема допускает раньше кода, проход не
+    /// роняет: час хаба закрывается, а чужая поверхность ждёт своего кода.
+    /// </summary>
+    [Fact]
+    public async Task When_SurfaceUnknownToCode_Expect_HubSummaryStillCloses()
+    {
+        using var db = Database();
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        var store = Store(source);
+        await store.Report(Hub, [], Reported, Cancellation);
+        await store.Report(Hub, ["new"], Reported.AddMinutes(1), Cancellation);
+        await Execute(db, """
+            INSERT INTO release_surface (surface, first_reported_at, reported_at, record_ids, next_summary_at)
+            VALUES ('auction', @Reported, @Reported, '{}', @Reported);
+            """, new { Reported = Reported.UtcDateTime });
+
+        (await store.Due(Noon(0), Cancellation)).ShouldBe([Hub]);
+        (await store.Close(Hub, Noon(0), Cancellation)).ShouldNotBeNull().Summary.RecordIds.ShouldBe(["new"]);
+    }
+
     /// <summary>Записи одного отчёта объявляются в порядке образа.</summary>
     [Fact]
     public async Task When_SeveralNewRecords_Expect_SummaryInImageOrder()
@@ -265,7 +286,8 @@ public class ReleaseNotesTests
         var summary = page.Summaries.ShouldHaveSingleItem();
         summary.RecordIds.ShouldBe(["new"]);
         page.NextPageToken.ShouldBeEmpty();
-        summary.SummaryId.ShouldBe(fact.ReleaseSummary.SummaryId);
+        // Факт и чтение называют одну сводку одинаково, вплоть до момента.
+        summary.ShouldBe(fact.ReleaseSummary);
 
         var one = await client.GetReleaseSummaryAsync(new GetReleaseSummaryRequest { SummaryId = summary.SummaryId },
             cancellationToken: Cancellation);

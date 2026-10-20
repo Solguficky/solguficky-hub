@@ -53,8 +53,12 @@ public sealed class ReleaseNotesStore(
         ON CONFLICT (surface, record_id) DO NOTHING;
         """;
 
+    // Только поверхности, которые знает этот код: строка поверхности, которую
+    // схема допускает раньше кода — или после отката кода, — не держит остальные.
     private const string DueSql = """
-        SELECT surface FROM release_surface WHERE next_summary_at <= @Now ORDER BY surface;
+        SELECT surface FROM release_surface
+        WHERE next_summary_at <= @Now AND surface = ANY(@Surfaces)
+        ORDER BY surface;
         """;
 
     // SKIP LOCKED: поверхность, которую держит приём или второй экземпляр,
@@ -159,7 +163,9 @@ public sealed class ReleaseNotesStore(
     public async Task<IReadOnlyList<ReleaseSurface>> Due(DateTimeOffset now, CancellationToken cancellationToken)
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
-        var due = await work.Query<string>(DueSql, new { Now = now.UtcDateTime }, cancellationToken);
+        var due = await work.Query<string>(DueSql,
+            new { Now = now.UtcDateTime, Surfaces = ReleaseSurface.All.Select(surface => surface.Name).ToArray() },
+            cancellationToken);
         await work.Commit(cancellationToken);
         return due.Select(ReleaseSurface.FromStorage).ToArray();
     }
@@ -187,12 +193,15 @@ public sealed class ReleaseNotesStore(
         ClosedSummary? closed = null;
         if (pending.Count > 0)
         {
-            var summary = new StoredSummary(Guid.CreateVersion7(now), now, pending);
+            // Момент сводки — с точностью столбца: факт и чтение по summary_id
+            // отдают одно и то же summarized_at.
+            var summarizedAt = now.AddTicks(-(now.Ticks % (TimeSpan.TicksPerMillisecond / 1000)));
+            var summary = new StoredSummary(Guid.CreateVersion7(now), summarizedAt, pending);
             var parameters = new
             {
                 summary.SummaryId,
                 Surface = surface.Name,
-                Now = now.UtcDateTime,
+                Now = summarizedAt.UtcDateTime,
                 RecordIds = pending.ToArray(),
             };
             await work.Execute(InsertSummarySql, parameters, cancellationToken);

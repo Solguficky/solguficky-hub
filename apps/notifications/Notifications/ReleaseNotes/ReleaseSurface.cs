@@ -19,6 +19,9 @@ public sealed record ReleaseSurface(string Name, string Right, string DeliverySu
     /// <summary>Поверхность хаба: сводку получают держатели права хаба, доставляет бот хаба.</summary>
     public static readonly ReleaseSurface Hub = new(NotificationSubjects.Hub, NotificationFacts.HubRight, NotificationSubjects.Hub);
 
+    /// <summary>Поверхности, которые знает этот код.</summary>
+    public static IReadOnlyList<ReleaseSurface> All { get; } = [Hub];
+
     /// <summary>Поверхность вызывающего; <c>null</c> — у вызывающего её нет.</summary>
     public static ReleaseSurface? Of(Caller caller) => caller == Caller.HubBot ? Hub : null;
 

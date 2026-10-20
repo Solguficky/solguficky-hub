@@ -180,10 +180,6 @@ public class RequestValidationTests
         RequestValidation.Body("  ").ShouldBe("  ");
     }
 
-    /// <summary>
-    /// Код объявленного отказа. Неожиданное исключение наружу не глотается:
-    /// тест, поймавший всё подряд, зеленел бы и на сломанной границе.
-    /// </summary>
     [Fact]
     public void RecordIds_EmptySet_IsAccepted()
     {
@@ -246,6 +242,10 @@ public class RequestValidationTests
         Code(() => RequestValidation.SummaryPageToken("page-2")).ShouldBe(StatusCode.InvalidArgument);
     }
 
+    /// <summary>
+    /// Код объявленного отказа. Неожиданное исключение наружу не глотается:
+    /// тест, поймавший всё подряд, зеленел бы и на сломанной границе.
+    /// </summary>
     private static StatusCode Code(Action call)
     {
         try

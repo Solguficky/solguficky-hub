@@ -56,25 +56,4 @@ public class ReleaseScheduleTests
 
         ReleaseSchedule.Next(Moscow, Noon, resumed).ShouldBe(TodayNoon.AddDays(4));
     }
-
-    [Fact]
-    public void Options_SummaryTimeOutsideDay_IsInvalid()
-    {
-        ReleaseNotesOptions.IsValid(new ReleaseNotesOptions { SummaryTime = TimeSpan.FromHours(24) }).ShouldBeFalse();
-    }
-
-    [Fact]
-    public void Options_ZeroSweepPeriod_IsInvalid()
-    {
-        ReleaseNotesOptions.IsValid(new ReleaseNotesOptions { SweepPeriod = TimeSpan.Zero }).ShouldBeFalse();
-    }
-
-    [Fact]
-    public void Options_Defaults_AreValidNoon()
-    {
-        var defaults = new ReleaseNotesOptions();
-
-        ReleaseNotesOptions.IsValid(defaults).ShouldBeTrue();
-        defaults.SummaryTime.ShouldBe(Noon);
-    }
 }
