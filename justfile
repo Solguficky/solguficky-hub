@@ -183,8 +183,8 @@ check-verify-selection:
 check-agent-ready:
     sh tools/agent-env/ready-test.sh
 
-# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
-verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check
+# Механический гейт перед сдачей: agent tooling, MCP, команды, публикуемые страницы, номера ADR/RFC, применимость ADR, ссылки в docs, селектор verify-changed, проверка готовности среды, контракты и их кодогенерация, Identity, пакет ботов — бот хаба и бот аукциона, API сайта, пульт провода двух ботов (его typecheck, lint и L0 — сам пульт не гейт), наполнение аукциона (его typecheck, lint и L0 — само наполнение не гейт), путь AppHost в aspire.config.json, AppHost и фикстуры проверки его чарта, Meetups, Notifications, формат F#, Auction, формат Scala, nats-tester, наблюдатель ручного гейта и unit-тесты (L0). Docker и PostgreSQL гейту не нужны: интеграционные и сквозной наборы гоняют CI и `test-all`
+verify: check-agent-tools check-mcp check-commands check-published-pages check-document-numbers check-adr-applicability check-doc-links check-verify-selection check-agent-ready contracts-build contracts-check contracts-codegen-buf identity-build identity-test identity-test-log-check identity-lint hub-bot-typecheck hub-bot-lint hub-bot-test hub-bot-build community-site-api-typecheck community-site-api-lint community-site-api-test bot-console-typecheck bot-console-lint bot-console-test auction-seed-typecheck auction-seed-lint auction-seed-test apphost-config-check apphost-build apphost-test apphost-chart-test meetups-contracts-check meetups-build meetups-test meetups-format-check notifications-contracts-check notifications-build notifications-test auction-verify nats-tester-check gate-observer-check
 
 # Тот же гейт, сужённый до компонентов, которые задевает правка: дешёвые
 # проверки репозитория идут всегда, рецепты компонента — если изменённый путь
@@ -731,6 +731,29 @@ nats-tester-proto:
 # Классы импортируются, состав генерации совпадает со схемами, реестр не врёт
 nats-tester-check:
     cd tools/nats-tester && python -m nats_tester.gate
+
+# --- gate-observer (Go) ----------------------------------------------------
+#
+# Наблюдатель ручного гейта: спрашивает decision-модели Jev и Clef, разрешено
+# ли решение агента уже задачей, ADR и политикой, и печатает P(да) каждой рядом
+# с версией модели. Решение агента от ответа не зависит — правило и точки
+# вызова в docs/development/agent-execution-loop.md, раздел «Ручной гейт».
+# Линтер берёт .golangci.yml Identity: правила Go в репозитории одни.
+
+# Живой вызов: решение на stdin, точка — ask, plan или decided. Ходит в сеть с
+# ключами TYPESAFE_API_KEY, CF_API_TOKEN и CF_ACCOUNT_ID; без ключа модель
+# пишет «недоступен», и рецепт всё равно выходит с 0. В verify не входит.
+# `-dry-run` печатает то, что уйдёт наружу, без отправки.
+gate-observe point *args="":
+    cd tools/gate-observer && go build -o bin/ .
+    tools/gate-observer/bin/gate-observer -point {{point}} {{args}}
+
+# Формат, vet, тесты на заглушке HTTP без сети и линт закреплённой версией
+gate-observer-check:
+    cd tools/gate-observer && test -z "$(gofmt -l .)" || { gofmt -l .; echo 'gofmt: файлы выше не отформатированы' >&2; exit 1; }
+    cd tools/gate-observer && go vet ./... && go test ./...
+    @golangci-lint version --short 2>/dev/null | grep -qx '{{GOLANGCI_LINT_VERSION}}' || { echo 'нужен golangci-lint {{GOLANGCI_LINT_VERSION}}: just identity-lint-tools' >&2; exit 1; }
+    cd tools/gate-observer && golangci-lint run --allow-parallel-runners --config ../../apps/identity/.golangci.yml ./...
 
 # --- Инструменты -----------------------------------------------------------
 

@@ -31,6 +31,7 @@ jobs:
       auction: ${{ steps.filter.outputs.auction }}
       contour: ${{ steps.filter.outputs.contour }}
       nats-tester: ${{ steps.filter.outputs.nats-tester }}
+      gate-observer: ${{ steps.filter.outputs.gate-observer }}
     steps:
       - uses: actions/checkout@v7
       - uses: dorny/paths-filter@v4
@@ -148,6 +149,13 @@ jobs:
             nats-tester:
               - 'contracts/proto/**'
               - 'tools/nats-tester/**'
+              - 'justfile'
+              - '.github/workflows/ci.yml'
+            # Линтер берёт конфиг Identity, поэтому правка конфига проверяет
+            # и наблюдателя.
+            gate-observer:
+              - 'tools/gate-observer/**'
+              - 'apps/identity/.golangci.yml'
               - 'justfile'
               - '.github/workflows/ci.yml'
 
@@ -667,6 +675,33 @@ jobs:
       # Пусто — классы соответствуют схемам; иначе стат показывает, что
       # разошлось, и в логе видно, какая схема это сделала.
       - run: git diff --exit-code --stat -- tools/nats-tester/nats_tester/generated
+
+  # Наблюдатель ручного гейта: формат, vet, тесты на заглушке HTTP и линт —
+  # тот же рецепт, что в `just verify`. В сеть к провайдерам он не ходит.
+  gate-observer:
+    needs: changes
+    if: >-
+      ${{ !cancelled()
+      && (needs.changes.outputs.gate-observer == 'true'
+      || github.event_name == 'workflow_dispatch') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Токен не нужен: права сужены до чтения, а линтер ставится из исходников
+      # и запускается из дерева — checkout не оставляет токен в конфигурации Git.
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: tools/gate-observer/go.mod
+          cache-dependency-path: tools/gate-observer/go.mod
+      - id: tools
+        run: echo "golangci=$(grep '^GOLANGCI_LINT_VERSION' justfile | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+      - run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v${{ steps.tools.outputs.golangci }}
+      - uses: extractions/setup-just@v4
+      - run: just gate-observer-check
 
   repo-hygiene:
     runs-on: ubuntu-latest
