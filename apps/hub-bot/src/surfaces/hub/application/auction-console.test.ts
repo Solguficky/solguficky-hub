@@ -1034,6 +1034,25 @@ describe("final of the auctioneer", () => {
     expect(asks).toEqual([]);
   });
 
+  it("leaves the amount to Auction when the read has no next price", async () => {
+    const bare = entry(lotId, {
+      kind: "trading",
+      currentPrice: rub(1_000),
+      phase: "live",
+    });
+    const { run, asks } = running(final([bare, held], lotId));
+
+    await run({
+      ...call,
+      intent: "advance-final-ask",
+      position: 0,
+      value: "1 050",
+      opId,
+    });
+
+    expect(asks).toEqual([rub(1_050)]);
+  });
+
   it("asks again with the threshold Auction named when the read lags behind", async () => {
     const { run, asks } = running(final([live(), held], lotId), {
       ask: { kind: "ask-below-current-price", mustExceed: rub(1_300) },

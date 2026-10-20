@@ -8,6 +8,7 @@ import {
   windowLimit,
   windowPrint,
 } from "../../application/auction-console.js";
+import { maxLotRubles } from "../../application/lot-form.js";
 import { formatLocalMoment } from "../../application/meetup-form.js";
 import type {
   AuctionConsoleView,
@@ -1101,11 +1102,14 @@ export function finalAskText(ask: {
       "Новая следующая цена в целых рублях, выше текущей. Например: 5000",
     ].join("\n");
   }
-  const sample = (Math.floor(ask.nextPrice.minorUnits / 10_000) + 1) * 100;
+  const rubles = ask.nextPrice.minorUnits / 100;
+  const sample = (Math.floor(rubles / 100) + 1) * 100;
   return [
     lot,
     `Сейчас следующая цена: ${money(ask.nextPrice)}`,
-    `Новая следующая цена в целых рублях, выше ${money(ask.nextPrice)}. Например: ${sample}`,
+    // Сотня выше предела суммы ответа образцом не годится: его не примет
+    // разбор, поэтому образца нет.
+    `Новая следующая цена в целых рублях, выше ${money(ask.nextPrice)}.${sample > maxLotRubles ? "" : ` Например: ${sample}`}`,
   ].join("\n");
 }
 
