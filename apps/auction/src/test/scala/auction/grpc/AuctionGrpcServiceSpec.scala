@@ -13,6 +13,8 @@ import auction.aggregate.Authority
 import auction.aggregate.Standings
 import auction.aggregate.Correlation
 import auction.aggregate.DeselectForFinal
+import auction.aggregate.LaunchStepWindow
+import auction.aggregate.LaunchStepWindowRejected
 import auction.aggregate.CancelAuction
 import auction.aggregate.CloseAuctionLot
 import auction.aggregate.CloseAuctionLotRejected
@@ -31,6 +33,7 @@ import auction.aggregate.ScheduleAuction
 import auction.aggregate.ScheduleAuctionLot
 import auction.aggregate.ScheduleAuctionLotRejected
 import auction.aggregate.SelectForFinal
+import auction.aggregate.StepWindowConfig
 import auction.aggregate.StartFinal
 import auction.aggregate.StartFinalRejected
 import auction.aggregate.StartNextLot
@@ -334,6 +337,11 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         command: DeselectForFinal,
         initiator: Initiator
     ): Future[Either[FinalChoiceRejected[UnmarkForFinalRejected], Unit]] = fail("the auction was reached")
+    def launchStepWindow(
+        auctionId: AuctionId,
+        command: LaunchStepWindow,
+        initiator: Initiator
+    ): Future[Either[LaunchStepWindowRejected, AuctionAnswer]] = fail("the auction was reached")
     def freezeFinalLineup(
         auctionId: AuctionId,
         command: FreezeFinalLineup,
@@ -1279,6 +1287,45 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .getRefused
         .reason
         .isDeadlinePassed shouldBe true
+    }
+
+    "launches a step window with the start the server chose and names the lot of a refusal" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val from = java.time.Instant.parse("2026-10-05T12:00:00Z")
+      val until = java.time.Instant.parse("2026-10-05T14:00:00Z")
+      @volatile var answer: Either[LaunchStepWindowRejected, AuctionAnswer] = Left(
+        LaunchStepWindowRejected.StepWindowInPast
+      )
+      @volatile var received: Option[LaunchStepWindow] = None
+      val launching = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(MeetupId(UUID.fromString(meetupId)), registryOpen = false))
+        override def launchStepWindow(auctionId: AuctionId, command: LaunchStepWindow, initiator: Initiator) = {
+          received = Some(command)
+          Future.successful(answer)
+        }
+      }
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
+      val auction = service(Unreachable, auctions = AuctionCommands(launching, Unreachable, granted))
+      val request = wire.LaunchStepWindowRequest(
+        viewer = Some(viewer),
+        auctionId = meetupAuction.toString,
+        until = until.toString,
+        step = Some(MoneyMessage(100, "RUB")),
+        lotIds = Seq(lot),
+        opId = op
+      )
+      val window = StepWindowConfig(from, until, LotFixtures.money(100), Set(LotId(UUID.fromString(lot))))
+      answer = Right(
+        AuctionAnswer.Written(AuctionEnvelope(5, OpId(UUID.fromString(op)), AuctionEvent.StepWindowLaunched(window)))
+      )
+
+      auction.launchStepWindow(request).futureValue.getAccepted shouldBe
+        wire.StepWindowLaunchAccepted("2026-10-05T12:00:00Z", "2026-10-05T14:00:00Z")
+      received.map(_.from) shouldBe Some(None)
+      answer = Left(LaunchStepWindowRejected.LotNotOpen(LotId(UUID.fromString(lot))))
+      auction.launchStepWindow(request).futureValue.getRefused.getLotNotOpen.lotId shouldBe lot
+      statusOf(auction.launchStepWindow(request.withFrom("yesterday"))) shouldBe Status.Code.INVALID_ARGUMENT
     }
 
     "carries the bid count of the read model in the snapshot of a lot" in {

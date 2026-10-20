@@ -20,7 +20,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -37,7 +38,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -83,7 +85,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -98,7 +101,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -113,7 +117,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -130,7 +135,8 @@
         },
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -145,7 +151,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     }
   ],
@@ -185,5 +192,6 @@
   "order": null,
   "activated": null,
   "cancelledBy": "00000000-0000-0003-0000-000000000007",
-  "completed": null
+  "completed": null,
+  "launched": null
 }

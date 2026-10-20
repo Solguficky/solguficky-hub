@@ -588,6 +588,20 @@ final class AuctionGrpcService(
     }
 
   /**
+   * Запуск окна сниженного шага (ADR-047, дополнение 2026-10-12): право у Meetups, фазу, время, реестр и пересечения
+   * решает аукцион. Ответ — после записи `StepWindowLaunched`: лотам окно уходит после него.
+   */
+  def launchStepWindow(in: wire.LaunchStepWindowRequest): Future[wire.LaunchStepWindowResponse] =
+    RequestMapping.launchStepWindow(in) match {
+      case Left(error) => invalid(error)
+      case Right(launch) =>
+        auctions
+          .launchStepWindow(launch.auctionId, launch.command, launch.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.launchStepWindow(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
    * Пульт администратора сходки (PER-320). Аукцион — из entity, а не из read model: из его сроков и финала пульт
    * собирает следующую команду планирования, а она заменяет конфигурацию целиком, и отставшая проекция затёрла бы
    * только что принятое. Лоты — из read model, как у остальных чтений. Право спрашивается у Meetups: пульт называет

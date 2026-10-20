@@ -72,6 +72,7 @@ message LotEvent {
     LotWithdrawn lot_withdrawn = 12;
     LotHeldForFinal lot_held_for_final = 13;
     LotResumed lot_resumed = 14;
+    StepWindowAdded step_window_added = 17;
   }
 }
 
@@ -222,6 +223,12 @@ message LotHeldForFinal {}
 // A held lot returned to trading in the live final. The state has the phase set to
 // live, and neither a deadline nor an ask.
 message LotResumed {}
+
+// A window of reduced step launched during the online phase was added to the lot.
+// The windows are state.step_windows, the new one among them; which of them is new
+// is not carried. A window announced in the configuration comes with lot_opened
+// instead and never with this occasion.
+message StepWindowAdded {}
 
 // A recorded public fact about one auction: why it changed and what is
 // true about it now. The envelope is the one of LotEvent, field for field, so that

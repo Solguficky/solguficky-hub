@@ -212,6 +212,30 @@ final class LotJournalSpec
       LotJournal.envelope(5, stored).event shouldBe ask
     }
 
+    "keep the stored form of a launched window equal to its golden file and read it back into the same event" in {
+      val added = LotEvent.StepWindowAdded(
+        StepWindow(Instant.parse("2026-10-05T12:00:00Z"), Instant.parse("2026-10-05T14:00:00Z"), money(100))
+      )
+      val stored = storedEvent(added, opN = 6)
+
+      keepsGolden("step-window-added", stored)
+      LotJournal.envelope(6, stored).event shouldBe added
+    }
+
+    "refuse a launched window that ends before it starts instead of trading on it" in {
+      val body = storedEvent(LotEvent.StepWindowAdded(StepWindow(deadline, deadline, money(100))))
+
+      a[JournalCorrupted] should be thrownBy LotJournal.envelope(1, body)
+    }
+
+    "keep a launched window in the snapshot of a trading lot by ascending start" in {
+      val earlier = StepWindow(Instant.parse("2026-10-03T12:00:00Z"), Instant.parse("2026-10-03T14:00:00Z"), money(50))
+      val launched = Lot.apply(tradingLot, Envelope(5, op(5), LotEvent.StepWindowAdded(earlier)))
+
+      LotJournal.restoreLot(LotJournal.storeLot(launched, sequence = 5)) shouldBe launched
+      tradingOf(launched).stepWindows shouldBe List(earlier)
+    }
+
     "read an event written before the ask section into the same event" in {
       val row = write(kit.system, storedEvent(opened)).copy(bytes = golden("legacy/lot-opened"))
 

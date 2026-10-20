@@ -25,6 +25,7 @@
         "currency": "RUB"
       }
     },
-    "lotWithdrawn": null
+    "lotWithdrawn": null,
+    "stepWindowAdded": null
   }
 }

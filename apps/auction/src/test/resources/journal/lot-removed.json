@@ -18,6 +18,7 @@
     "prebiddingEnded": null,
     "finalLineupFrozen": null,
     "finalLotActivated": null,
-    "finalLotCompleted": null
+    "finalLotCompleted": null,
+    "stepWindowLaunched": null
   }
 }

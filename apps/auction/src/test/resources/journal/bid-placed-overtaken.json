@@ -31,6 +31,7 @@
     "deadlineExtended": null,
     "lotHeldForFinal": null,
     "askAdvanced": null,
-    "lotWithdrawn": null
+    "lotWithdrawn": null,
+    "stepWindowAdded": null
   }
 }

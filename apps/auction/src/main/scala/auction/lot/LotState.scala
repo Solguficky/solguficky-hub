@@ -96,9 +96,13 @@ enum Phase {
 /**
  * Окно сниженного шага лота — полуинтервал `[from, until)` и сумма шага в нём (RFC-011, П-03; ADR-047, дополнение
  * 2026-10-08). Лот получает только окна, в которые организатор его выбрал, поэтому списка лотов здесь нет; валюта суммы
- * — валюта лота, окна в чужой валюте лот при открытии отбрасывает (И-04).
+ * — валюта лота, окна в чужой валюте лот при открытии и при запуске отбрасывает (И-04).
  */
-final case class StepWindow(from: Instant, until: Instant, step: Money)
+final case class StepWindow(from: Instant, until: Instant, step: Money) {
+
+  /** Полуинтервалы пересекаются: каждое начинается раньше, чем кончается другое. */
+  def overlaps(other: StepWindow): Boolean = from.isBefore(other.until) && other.from.isBefore(until)
+}
 
 /**
  * Действующий прокси-лимит участника (RFC-011, «Состояние лота»).
@@ -117,9 +121,9 @@ final case class ProxyLimit(max: Money, setSeq: Long)
  * раз анти-снайп уже продлил дедлайн (П-04); он лежит рядом с дедлайном, чтобы лимит продлений восстанавливался из
  * журнала вместе с ним (ПП-2). `markedForFinal` — лот отмечен для финала (П-09): торги идут как обычно, а закрытие по
  * дедлайну удержит его вместо продажи. Это состояние, а не настройка: `false` из `LotOpened` и `LotResumed`, `true` из
- * `LotMarkedForFinal` (И-10). `stepWindows` — окна сниженного шага из `LotOpened`, заморожены, как `config` (И-21), и
- * действуют только в фазе `Online`. В живой финал они не доходят: удержание их не переносит, и `LotResumed` строит
- * торги без окон.
+ * `LotMarkedForFinal` (И-10). `stepWindows` — окна сниженного шага из `LotOpened` и `StepWindowAdded` по возрастанию
+ * начала: они только дописываются и после записи не меняются (И-21, ADR-047, дополнение 2026-10-12), и действуют только
+ * в фазе `Online`. В живой финал они не доходят: удержание их не переносит, и `LotResumed` строит торги без окон.
  */
 final case class TradingState(
     config: LotConfig,
@@ -258,6 +262,12 @@ final case class WithdrawLot(reason: WithdrawnReason, opId: OpId)
 final case class ResumeLot(opId: OpId)
 
 /**
+ * Окно сниженного шага, запущенное по ходу торгов (ADR-047, дополнение 2026-10-12). Шлёт аукцион после
+ * `StepWindowLaunched` каждому лоту окна и после рестарта — тем же `op_id`, пока лот не ответит.
+ */
+final case class AddStepWindow(window: StepWindow, opId: OpId)
+
+/**
  * Следующая цена, которую ведущий объявил залу (RFC-011, П-08). Ведущего команда не несёт: он — инициатор конверта, а
  * ask — приглашение, а не ставка, поэтому ни цену, ни лидера команда не меняет.
  */
@@ -280,7 +290,8 @@ final case class AdvanceAsk(newAsk: Money, opId: OpId)
  * без payload (дополнение 2026-10-06): он только снимает признак.
  *
  * `AskAdvanced` несёт только объявленную сумму: кто её объявил, лежит в конверте инициатором, как в контракте шины.
- * `LotWithdrawn` — только причину: снявший лежит там же (ADR-047, `actor`).
+ * `LotWithdrawn` — только причину: снявший лежит там же (ADR-047, `actor`). `StepWindowAdded` — запущенное окно без
+ * множества лотов, той же формы, что окно в `LotOpened` (дополнение 2026-10-12).
  *
  * `overtakenByProxy` у ручной ставки — её той же командой перебила производная ставка другого участника, и лидерство,
  * взятое ею, команду не пережило. Свёртка его не читает: это знание о транзакции для потребителей факта, которое
@@ -314,6 +325,7 @@ enum LotEvent {
   case LotUnmarkedForFinal
   case AskAdvanced(ask: Money)
   case LotWithdrawn(reason: WithdrawnReason)
+  case StepWindowAdded(window: StepWindow)
 }
 
 /**
@@ -454,6 +466,17 @@ enum WithdrawLotRejected {
   case LotNotFound
   case OpIdTaken
   case LotAlreadyClosed
+}
+
+/**
+ * Отказы `AddStepWindow` (ADR-047, дополнение 2026-10-12). `LotNotOpen` — лот не в торгах онлайн-этапа: закрыт, снят,
+ * удержан или уже в живом финале; аукцион такого лота не ждёт. `OpIdTaken` — `op_id` уже записан под другим событием
+ * лота.
+ */
+enum AddStepWindowRejected {
+  case LotNotFound
+  case OpIdTaken
+  case LotNotOpen
 }
 
 /** Отказы `WithdrawProxyLimit`: у участника нет действующего лимита на этот лот. */

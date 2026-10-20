@@ -235,6 +235,15 @@ object LotFixtures {
     def withdrawLot(command: WithdrawLot): (Either[WithdrawLotRejected, Decision], Journal) =
       record(command.opId, Lot.decide(lot, command))
 
+    /** Запущенное окно; `None` — лот принял его без записи, и журнал не меняется. */
+    def addWindow(command: AddStepWindow): (Either[AddStepWindowRejected, Option[Decision]], Journal) =
+      Lot.decide(lot, command) match {
+        case Right(Some(decision)) =>
+          val (_, next) = record(command.opId, Right(decision))
+          (Right(Some(decision)), next)
+        case other => (other, this)
+      }
+
     def submitAll(commands: Seq[PlaceBid]): (Vector[Either[PlaceBidRejected, Decision]], Journal) =
       commands.zipWithIndex.foldLeft((Vector.empty[Either[PlaceBidRejected, Decision]], this)) {
         case ((results, journal), (command, index)) =>

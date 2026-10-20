@@ -3,6 +3,7 @@ package auction.grpc
 import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
 import auction.aggregate.ClosingPolicy
+import auction.aggregate.LaunchStepWindow
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
 import auction.aggregate.StepWindowConfig
@@ -58,6 +59,7 @@ import auction.v1.auction_service.GetPredictionResultsRequest
 import auction.v1.auction_service.SettlePredictionResultsManuallyRequest
 import auction.v1.auction_service.LotImageUpload
 import auction.v1.auction_service.GetMeetupAuctionRequest
+import auction.v1.auction_service.LaunchStepWindowRequest
 import auction.v1.auction_service.ListAuctionLotsRequest
 import auction.v1.auction_service.ListAuctionNamesRequest
 import auction.v1.auction_service.ListAuctionsRequest
@@ -115,6 +117,9 @@ final case class DraftCommand(meetup: MeetupId, opId: OpId, acting: Acting)
 
 /** Правка реестра — `AddLot` и `RemoveLot` несут одно и то же. */
 final case class RegistryCommand(auctionId: AuctionId, lotId: LotId, opId: OpId, acting: Acting)
+
+/** Запуск окна сниженного шага аукциону сходки. Окно здесь ещё не проверено: его случаи — решение домена. */
+final case class StepWindowLaunchCommand(auctionId: AuctionId, command: LaunchStepWindow, acting: Acting)
 
 /** Ask ведущего лоту реестра: то же, что команда реестра, и объявленная сумма. */
 final case class AskCommand(registry: RegistryCommand, newAsk: Money)
@@ -368,6 +373,25 @@ object RequestMapping {
 
   def deselectForFinal(request: DeselectForFinalRequest): Either[FormError, RegistryCommand] =
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  /**
+   * Запуск окна сниженного шага: форма — моменты, сумма и идентификаторы. Пустой список лотов, окно вне онлайн-этапа и
+   * сумма не в той валюте — отказы домена (`StepWindowLotsEmpty` и соседи), а не форма запроса.
+   */
+  def launchStepWindow(request: LaunchStepWindowRequest): Either[FormError, StepWindowLaunchCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      from <- request.from.fold[Either[FormError, Option[Instant]]](Right(None))(instant("from", _).map(Some(_)))
+      until <- instant("until", request.until)
+      step <- money("step", request.step)
+      lots <- request.lotIds
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, raw) =>
+          acc.flatMap(lots => uuidV7("lot_ids", raw).map(LotId(_) :: lots))
+        }
+        .map(_.reverse)
+      opId <- uuidV7("op_id", request.opId)
+    } yield StepWindowLaunchCommand(auction, LaunchStepWindow(from, until, step, lots, OpId(opId)), acting)
 
   def advanceAsk(request: AdvanceAskRequest): Either[FormError, AskCommand] =
     for {

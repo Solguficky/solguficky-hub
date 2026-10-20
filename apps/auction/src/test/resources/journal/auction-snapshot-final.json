@@ -20,7 +20,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -37,7 +38,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -83,7 +85,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -98,7 +101,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -113,7 +117,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -130,7 +135,8 @@
         },
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -149,7 +155,8 @@
           ]
         },
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -164,7 +171,8 @@
         "prebiddingEnded": null,
         "finalLineupFrozen": null,
         "finalLotActivated": null,
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     },
     {
@@ -181,7 +189,8 @@
         "finalLotActivated": {
           "lotId": "0190f2a0-0000-7000-8000-00000000000b"
         },
-        "finalLotCompleted": null
+        "finalLotCompleted": null,
+        "stepWindowLaunched": null
       }
     }
   ],
@@ -225,5 +234,6 @@
     "0190f2a0-0000-7000-8000-00000000000b"
   ],
   "cancelledBy": null,
-  "completed": null
+  "completed": null,
+  "launched": null
 }

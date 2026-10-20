@@ -67,6 +67,7 @@ EVENT_TYPES: dict[str, Type[Message]] = {
     'events.auction.lot_resumed': auction_events_pb2.LotEvent,
     'events.auction.lot_drafted': auction_events_pb2.LotEvent,
     'events.auction.lot_scheduled': auction_events_pb2.LotEvent,
+    'events.auction.step_window_added': auction_events_pb2.LotEvent,
     'events.auction.auction_drafted': auction_events_pb2.AuctionEvent,
     'events.auction.auction_scheduled': auction_events_pb2.AuctionEvent,
     'events.auction.lot_added': auction_events_pb2.AuctionEvent,
