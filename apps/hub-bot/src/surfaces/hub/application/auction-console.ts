@@ -530,19 +530,24 @@ const auctionNotFound: ExecuteResult = {
   kind: "auction-console-refused",
   reason: "auction-not-found",
 };
+// Отменённая сходка закрывает команды пульта насовсем (ADR-047, дополнение
+// 2026-10-12): возврат в пульт вёл бы по кругу к тем же командам, поэтому это
+// кадр отказа с выходом к сходкам, а не исход пульта.
 const meetupCancelled: ExecuteResult = {
   kind: "auction-console-refused",
   reason: "meetup-cancelled",
-};
-const meetupHidden: ExecuteResult = {
-  kind: "auction-console-refused",
-  reason: "meetup-hidden",
 };
 
 // Лоты добавляются, пока онлайн-неделя не открыта; после старта Auction
 // отвечает `lots_frozen`. По тому же правилу лента показывает «Добавить лот».
 export function acceptsLots(status: ConsoleAuctionStatus): boolean {
   return status === "draft" || status === "scheduled";
+}
+
+// Проданные лоты аукциона по пульту: их называет подтверждение отмены, и
+// отмена их не трогает (ADR-047, дополнение 2026-10-12).
+function soldLots(console: AuctionConsoleView): number {
+  return console.lots.filter((each) => each.lot.status.kind === "sold").length;
 }
 
 // Сроки, финал и окна меняются, пока онлайн-неделя не открыта.
@@ -835,7 +840,8 @@ export function createAuctionConsole(
       auction.auctionId !== auctionId &&
       auction.stage !== "draft" &&
       auction.stage !== "scheduled" &&
-      auction.stage !== "finished";
+      auction.stage !== "finished" &&
+      auction.stage !== "cancelled";
   }
 
   function holderOf(auction: AuctionSummaryView): TradingHolder {
@@ -1093,7 +1099,7 @@ export function createAuctionConsole(
       case "meetup-cancelled":
         return meetupCancelled;
       case "meetup-hidden":
-        return meetupHidden;
+        return after(request, "meetup-hidden");
       default:
         return failed(started);
     }
@@ -1143,6 +1149,64 @@ export function createAuctionConsole(
         return auctionNotFound;
       default:
         return failed(discarded);
+    }
+  }
+
+  // «Отменить аукцион» (ADR-047, дополнение 2026-10-12): после старта торгов
+  // и до конца аукциона. Подтверждение называет, сколько лотов уже продано, —
+  // они останутся проданными. Ключ отмены рождён краем и уедет в «Да».
+  async function prepareCancel(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "prepare-auction-cancel" }
+    >,
+  ): Promise<ExecuteResult> {
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
+    const { console } = current;
+    if (editable(console)) {
+      return { kind: "auction-console", console, note: "cancel-too-early" };
+    }
+    if (console.status === "cancelled") {
+      return { kind: "auction-console", console, note: "already-cancelled" };
+    }
+    if (console.status === "finished") {
+      return { kind: "auction-console", console, note: "cancel-too-late" };
+    }
+    return {
+      kind: "auction-cancel-confirm",
+      auctionId: request.auctionId,
+      opId: request.opId,
+      sold: soldLots(console),
+    };
+  }
+
+  // Отмена. Повтор той же кнопки и отмену уже отменённого Auction принимает.
+  async function cancel(
+    request: Extract<AuctionConsoleRequest, { intent: "cancel-auction" }>,
+  ): Promise<ExecuteResult> {
+    const cancelled = await consoles.cancelAuction(
+      request.identity,
+      { auctionId: request.auctionId, opId: request.opId },
+      rpcMeta(request),
+    );
+    switch (cancelled.kind) {
+      case "ok":
+        return after(request, "auction-cancelled", (console) => ({
+          ...console,
+          status: "cancelled",
+        }));
+      case "not-started":
+        return after(request, "cancel-too-early");
+      case "already-finished":
+        return after(request, "cancel-too-late");
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(cancelled);
     }
   }
 
@@ -2602,6 +2666,10 @@ export function createAuctionConsole(
         return prepareDiscard(request);
       case "discard-auction":
         return discard(request);
+      case "prepare-auction-cancel":
+        return prepareCancel(request);
+      case "cancel-auction":
+        return cancel(request);
       case "view-step-windows": {
         const current = await read(request);
         return current.kind === "refused"

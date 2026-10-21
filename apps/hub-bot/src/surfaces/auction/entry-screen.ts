@@ -694,7 +694,11 @@ function finaleCountdown(
   timeZone: string,
   now?: Date,
 ): string | undefined {
-  if (auction.closesAt === undefined || auction.stage === "finished") {
+  if (
+    auction.closesAt === undefined ||
+    auction.stage === "finished" ||
+    auction.stage === "cancelled"
+  ) {
     return undefined;
   }
   const days =
@@ -742,6 +746,7 @@ const stageLabels: Record<AuctionStage, string> = {
   "lineup-frozen": "готовим финал",
   "in-final": "идёт финал",
   finished: "завершён",
+  cancelled: "отменён",
 };
 
 function lotCount(count: number): string {
@@ -944,6 +949,7 @@ const rootStages: Record<AuctionStageView, string> = {
   "lineup-frozen": "Готовим финал.",
   "in-final": "Идёт финал.",
   finished: "Аукцион завершён.",
+  cancelled: "Аукцион отменён: проданные лоты остались проданными.",
 };
 
 function rootText(block: RootBlock, options: RenderOptions): string {
@@ -964,7 +970,10 @@ function rootText(block: RootBlock, options: RenderOptions): string {
     [
       rootStages[auction.stage],
       ...(online === undefined ? [] : [online]),
-      ...(auction.final ? ["После них — финал в зале."] : []),
+      // Отменённый аукцион финала уже не проведёт (PER-606).
+      ...(auction.final && auction.stage !== "cancelled"
+        ? ["После них — финал в зале."]
+        : []),
     ].join("\n"),
   );
 }

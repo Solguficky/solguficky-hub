@@ -255,6 +255,37 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Извещение об отмене аукциона (PER-606) гостю доставляет бот аукциона.
+  it("decodes a cancelled auction with the purchases of the recipient", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        fact({
+          case: "auctionCancelled",
+          value: {
+            auctionId,
+            meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+            purchases: [
+              {
+                lotId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f61",
+                price: { minorUnits: 150_000n, currency: "RUB" },
+              },
+            ],
+          },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "auction-cancelled",
+          auctionId,
+          purchases: [{ minorUnits: 150_000, currency: "RUB" }],
+        },
+      },
+    });
+  });
+
   it("rejects a raffle result with an empty pool", () => {
     expect(
       decodeNotification(

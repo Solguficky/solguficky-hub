@@ -189,6 +189,7 @@ function fakeAuction(
       : undefined,
   );
   const port: MeetupAuctions & AuctionScreens = {
+    soldLots: async () => ({ kind: "ok", sold: 0 }),
     async getMeetupAuction(_person, id) {
       lookups.push(id);
       if (options.lookup !== undefined) return options.lookup();

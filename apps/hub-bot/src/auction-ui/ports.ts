@@ -222,7 +222,8 @@ export type AuctionStageView =
   | "on-break"
   | "lineup-frozen"
   | "in-final"
-  | "finished";
+  | "finished"
+  | "cancelled";
 
 // Срез `auction.v1.AuctionSnapshot` для корня аукциона. Моменты — RFC 3339 в
 // UTC; нет — у черновика конфигурации нет или фаза их не задала.

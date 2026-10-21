@@ -3629,6 +3629,62 @@ describe("presentation adapter", () => {
     });
   });
 
+  // Отмена сходки с идущими торгами называет последствие для аукциона до
+  // подтверждения (PER-606; ADR-064, дополнение 2026-10-12): с числом
+  // проданных, а без ответа Auction — условно. Без торгов подтверждение
+  // прежнее, и другие шаги управления последствия не просят.
+  it("names the consequence for the auction before a meetup cancel is confirmed", async () => {
+    const meetup = publishedMeetup();
+    for (const [consequence, line] of [
+      [
+        { kind: "trading", sold: 3 },
+        "У сходки идут торги: аукцион будет отменён, проданные лоты (3) останутся проданными.",
+      ],
+      [
+        { kind: "unknown" },
+        "Если у сходки идут торги, аукцион будет отменён; проданные лоты останутся проданными.",
+      ],
+      [undefined, undefined],
+    ] as const) {
+      const execute = vi.fn<Dispatcher["execute"]>(async () => ({
+        kind: "meetup-card",
+        meetup,
+        ...(consequence === undefined
+          ? {}
+          : { cancelConsequence: consequence }),
+      }));
+      const { bot, calls } = createHarness(resolvedIdentity("admin"), {
+        execute,
+      });
+      await bot.init();
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:manage:cancel:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      expect(execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          intent: "view-meetup",
+          withCancelConsequence: true,
+        }),
+      );
+      const payload = calls.at(-1)?.payload as { text?: string } | undefined;
+      const text = String(payload?.text);
+      expect(text).toContain("Отменить сходку?");
+      if (line === undefined) {
+        expect(text).not.toContain("аукцион будет отменён");
+      } else {
+        expect(text).toContain(line);
+      }
+
+      await bot.handleUpdate(
+        callbackUpdate("v1:manage:hold:AZLzpLXGfY6fChssPU5fYA"),
+      );
+      expect(execute.mock.lastCall?.[0]).not.toHaveProperty(
+        "withCancelConsequence",
+      );
+    }
+  });
+
   it("answers an old management button from an already cancelled meetup", async () => {
     const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
       kind: "meetup-card",

@@ -112,12 +112,22 @@ export function createDispatcher(
       // Meetups и остаётся верной. Состояние подписки при этом не
       // показывается, и кнопки подписки в кадре не будет — вместо
       // выдуманного «выключены» человек видит отсутствие выбора.
+      const cancelConsequence =
+        request.intent === "view-meetup" &&
+        request.withCancelConsequence === true &&
+        meetupAuction !== undefined
+          ? await meetupAuction.cancelConsequence(withAuction.auction, request)
+          : undefined;
+      const shown =
+        cancelConsequence === undefined
+          ? withAuction
+          : { ...withAuction, cancelConsequence };
       return preferences?.kind === "ok"
         ? {
-            ...withAuction,
+            ...shown,
             subscribed: preferences.preferences.subscribed,
           }
-        : withAuction;
+        : shown;
     }
     if (result.kind === "not-found") return { kind: "meetup-not-found" };
     return result.kind === "invalid"
@@ -252,6 +262,8 @@ export function createDispatcher(
         case "mark-auction-finalist":
         case "prepare-auction-discard":
         case "discard-auction":
+        case "prepare-auction-cancel":
+        case "cancel-auction":
         case "order-final-lineup":
         case "freeze-final-lineup":
         case "start-auction-final":

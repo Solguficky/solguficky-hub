@@ -7,6 +7,7 @@ import {
   type SendResult,
 } from "../../../core/delivery/index.js";
 import { registerChatCommands } from "../../../core/menu-commands.js";
+import { renderAuctionCancelledNotice } from "../../../core/notifications/auction-cancelled-notice.js";
 import type { FinalNotice } from "../../../core/notifications/final-notice.js";
 import type {
   LotNotice,
@@ -192,6 +193,20 @@ export function renderNotification(
         view.button.text,
         traceCallback(
           `v1:${encodeAuctionCallback({ kind: "raffle", auctionId: view.button.auctionId }).slice(3)}`,
+        ),
+      ),
+    };
+  }
+  if (content.kind === "auction-cancelled") {
+    // Отмена аукциона (PER-606): кнопка следа — корень аукциона придёт новым
+    // сообщением, весть останется в истории.
+    const view = renderAuctionCancelledNotice(content);
+    return {
+      text: view.text,
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback({ kind: "root", auctionId: view.button.auctionId }).slice(3)}`,
         ),
       ),
     };

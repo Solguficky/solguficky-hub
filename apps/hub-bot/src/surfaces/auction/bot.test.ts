@@ -796,6 +796,61 @@ describe("auction bot", () => {
     });
   });
 
+  // Отменённый аукцион (PER-606; ADR-047, дополнение 2026-10-12) — прошедший,
+  // и статус отличает его от завершённого: в строке списка и в корне.
+  it("marks a cancelled auction in the past list and in its root", async () => {
+    // Дедлайн впереди: у отменённого отсчёта до финала нет — финала не будет.
+    const cancelled = {
+      ...activeAuction,
+      stage: "cancelled" as const,
+      closesAt: "2099-10-12T16:00:00Z",
+    };
+    const { bot, calls } = makeBot(
+      portsWith({ auctions: { active: [], finished: [cancelled] } }),
+    );
+    await bot.handleUpdate(lotPress({ data: entryCallback("past") }));
+    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("финал");
+    expect(calls.at(-1)?.payload).toMatchObject({
+      reply_markup: {
+        inline_keyboard: [
+          [
+            {
+              text: "10 октября, сб · отменён · 3 лота",
+              callback_data: encodeAuctionCallback({ kind: "root", auctionId }),
+            },
+          ],
+          [{ text: "‹ Аукционы", callback_data: entryCallback("auctions") }],
+        ],
+      },
+    });
+  });
+
+  // Идущий аукцион — первым (ADR-047, дополнение 2026-10-12: порядок решает
+  // поверхность), даже если запланированный начинается раньше по дате.
+  it("lists the auction under way first among the active ones", async () => {
+    const scheduledId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab3477";
+    const scheduled: AuctionSummary = {
+      auctionId: scheduledId,
+      stage: "scheduled",
+      opensAt: "2026-10-01T16:00:00Z",
+      lotCount: 2,
+    };
+    const { bot, calls } = makeBot(
+      portsWith({
+        auctions: { active: [scheduled, activeAuction], finished: [] },
+      }),
+    );
+    await bot.handleUpdate(lotPress({ data: entryCallback("auctions") }));
+    const payload = calls.at(-1)?.payload as
+      | { reply_markup: { inline_keyboard: { callback_data: string }[][] } }
+      | undefined;
+    const rows = payload?.reply_markup.inline_keyboard ?? [];
+    expect(rows.slice(0, 2).map(([button]) => button?.callback_data)).toEqual([
+      encodeAuctionCallback({ kind: "root", auctionId }),
+      encodeAuctionCallback({ kind: "root", auctionId: scheduledId }),
+    ]);
+  });
+
   it("says in text that there are no past auctions", async () => {
     const { bot, calls } = makeBot(publicPorts);
     await bot.handleUpdate(lotPress({ data: entryCallback("past") }));

@@ -365,6 +365,35 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Извещение об отмене аукциона (PER-606) участнику доставляет бот хаба.
+  it("decodes a cancelled auction with the purchases of the recipient", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        toBinary(
+          NotificationSchema,
+          create(NotificationSchema, {
+            notificationId: "0198f2a4-7c1e-7d3a-9b21-000000000001",
+            recipientId: "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34cd",
+            createdAt: "2026-09-26T10:00:00Z",
+            type: {
+              case: "auctionCancelled",
+              value: {
+                auctionId,
+                meetupId: "0192f3a4-b5c6-7d8e-9f0a-1b2c3d4e5f60",
+              },
+            },
+          }),
+        ),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: { kind: "auction-cancelled", auctionId, purchases: [] },
+      },
+    });
+  });
+
   describe("a manual broadcast", () => {
     const senderId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34ce";
     // Сходка берётся из готового факта о публикации: карточка у сообщения

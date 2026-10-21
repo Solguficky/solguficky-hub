@@ -15,6 +15,7 @@ import {
   traceLotCallback,
   traceNotifyCallback,
   traceRaffleCallback,
+  traceRootCallback,
 } from "./message.js";
 import type { AuctionNotificationContent } from "./notification.js";
 
@@ -276,6 +277,14 @@ describe("parseTraceCallback", () => {
     expect(inner).toBeDefined();
     const parsed = parseAuctionCallback(inner ?? "");
     expect(parsed.ok && parsed.intent).toEqual({ kind: "raffle", auctionId });
+  });
+
+  // «К аукциону» под извещением об отмене (PER-606) — тоже след.
+  it("carries a root button inside a trace", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    const inner = parseTraceCallback(traceRootCallback(auctionId));
+    const parsed = parseAuctionCallback(inner ?? "");
+    expect(parsed.ok && parsed.intent).toEqual({ kind: "root", auctionId });
   });
 
   it("refuses a trace that carries neither a lot nor an entry button", () => {
@@ -545,5 +554,43 @@ describe("notification sender", () => {
         message: renderNotification(outbid),
       }),
     ).resolves.toMatchObject({ kind: "bot-blocked" });
+  });
+});
+
+// Извещение об отмене аукциона (PER-606): без права и без чтений, покупателю —
+// строка о покупке, кнопка следа — в корень аукциона.
+describe("auction cancelled", () => {
+  const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+  const cancelled = (
+    purchases: { minorUnits: number; currency: string }[] = [],
+  ): AuctionNotificationContent => ({
+    kind: "auction-cancelled",
+    auctionId,
+    purchases,
+  });
+
+  it("tells about the cancel and leads to the auction", () => {
+    const message = renderNotification(cancelled());
+    expect(message.text).toBe(
+      "Аукцион отменили: торги по лотам остановлены, ставки больше не действуют.",
+    );
+    expect(message.rows).toEqual([
+      [{ text: "К аукциону", callback_data: traceRootCallback(auctionId) }],
+    ]);
+  });
+
+  it("adds the purchase line for a buyer and asks Identity nothing", async () => {
+    const source = reads();
+    const render = createRenderMessage(source, () => {});
+    const rendered = await render(
+      cancelled([{ minorUnits: 150_000, currency: "RUB" }]),
+      { recipientId },
+    );
+    expect(rendered).toMatchObject({
+      kind: "ready",
+      message: { text: expect.stringContaining("Твоя покупка за") },
+    });
+    expect(source.holdsPlaceBids).not.toHaveBeenCalled();
+    expect(source.lotInfo).not.toHaveBeenCalled();
   });
 });

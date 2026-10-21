@@ -37,6 +37,8 @@ import { type CommunityDay, communityLocalTime } from "../../community-time.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   consoleAskData,
+  consoleCancelConfirmData,
+  consoleCancelData,
   consoleCloseConfirmData,
   consoleCloseData,
   consoleConfirmData,
@@ -69,6 +71,7 @@ import {
   defaultConsoleSort,
 } from "../parse-callback.js";
 import { money, truncate } from "./auction.js";
+import { auctionCancelConsequence } from "./auction-stage.js";
 import {
   buttonText,
   confirmKeyboard,
@@ -154,6 +157,14 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-ended": "Конец недели уже прошёл. Задай новые сроки.",
   "no-lots-to-open": "Нет лотов с ценой и шагом. Открывать нечего.",
   "discard-too-late": "Онлайн-неделя уже открыта. Удалить аукцион нельзя.",
+  "cancel-too-early":
+    "Онлайн-неделя ещё не открыта. Отменять нечего: аукцион можно удалить.",
+  "cancel-too-late": "Аукцион уже закончился. Отменять нечего.",
+  "already-cancelled": "Аукцион уже отменён.",
+  "auction-cancelled":
+    "Аукцион отменён. Проданные лоты остались проданными, остальные сняты с торгов.",
+  "meetup-hidden":
+    "Сходка скрыта. Онлайн-неделя откроется, когда сходку снова опубликуют.",
   "final-started": "Финал начат. Открой первый лот.",
   "lineup-not-frozen": "Состав финала ещё не объявлен. Начать финал нельзя.",
   "not-in-final": "Финал не идёт. Открывать лоты нельзя.",
@@ -371,6 +382,8 @@ function statusLines(view: ConsoleScreenView): string[] {
       return ["Идёт финал."];
     case "finished":
       return ["Аукцион завершён.", ...raffleLines(view)];
+    case "cancelled":
+      return ["Аукцион отменён: проданные лоты остались проданными."];
     default: {
       const _exhaustive: never = status;
       return _exhaustive;
@@ -465,6 +478,9 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
   } else {
     keyboard.text("Открыть следующий лот", consoleNextLotData(auction));
   }
+  // Финал — тоже торги: отмена доступна и ведущему (ADR-047, дополнение
+  // 2026-10-12), отдельным рядом над «Обновить» — рядов у финала мало.
+  withCancel(nextRow(keyboard), console);
   nextRow(keyboard).text(refreshLabel, consoleViewData(auction));
   const trading = tradingLines(console);
   return {
@@ -657,6 +673,14 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     if (view.note === "final-started" && noLotOpened(console)) {
       keyboard.text("Открыть первый лот", consoleNextLotData(auction));
     }
+    // Слот торгов занят (PER-606): исход ведёт и к идущему аукциону — в его
+    // корень, а не в пульт: пульт чужого аукциона спросит своё право.
+    if (view.note === "another-auction-active" && view.holder !== undefined) {
+      keyboard.text(
+        "Идущий аукцион",
+        toAuctionRoot(view.holder.auctionId).data,
+      );
+    }
     return {
       id: "outcome",
       text: noteText(view, view.note),
@@ -702,6 +726,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
   // пульт за двенадцать. Без окон — сразу под сортировкой.
   if (!windowsShown) {
     nextRow(keyboard).text("Сводка дня", consoleDaySummaryData(auction));
+    withCancel(keyboard, console);
   }
   if (scheduled) {
     nextRow(keyboard).text(
@@ -737,6 +762,7 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     nextRow(keyboard)
       .text("Счастливые часы", consoleWindowsData(auction))
       .text("Сводка дня", consoleDaySummaryData(auction));
+    withCancel(keyboard, console);
   }
   if (editable) {
     nextRow(keyboard).text(
@@ -993,6 +1019,55 @@ export function discardConfirmScreen(confirm: {
     keyboard: confirmKeyboard({
       yes: "Да, удалить",
       yesData: consoleDiscardConfirmData(auction, uuidToToken(confirm.opId)),
+      noData: consoleViewData(auction),
+      irreversible: true,
+    }),
+    format: "HTML",
+  };
+}
+
+// «Отменить аукцион» (PER-606) — в ряду «Сводки дня» пульта: в онлайн-торгах
+// с восемью лотами для финала отдельный ряд вывел бы пульт за двенадцать, как
+// «Сводку дня» рядом со «Счастливыми часами». Без знака: «🗑» — у «Убрать» и
+// «Удалить», а отмена, как «Отменить сходку», знака не несёт.
+function withCancel(keyboard: InlineKeyboard, console: AuctionConsoleView) {
+  if (!cancellable(console)) return;
+  keyboard.text(cancelLabel, consoleCancelData(uuidToToken(console.auctionId)));
+}
+
+const cancelLabel = "Отменить аукцион";
+
+// Отменить аукцион можно с открытия онлайн-недели до его конца (ADR-047,
+// дополнение 2026-10-12); до неё действует удаление.
+function cancellable(console: AuctionConsoleView): boolean {
+  return (
+    console.status !== "draft" &&
+    console.status !== "scheduled" &&
+    console.status !== "finished" &&
+    console.status !== "cancelled"
+  );
+}
+
+/**
+ * Подтверждение отмены аукциона после старта торгов. Ключ команды рождён
+ * здесь и едет в «Да»: повторное нажатие Auction примет как повтор.
+ */
+export function cancelConfirmScreen(confirm: {
+  auctionId: string;
+  opId: string;
+  sold: number;
+}): ShownScreen {
+  const auction = uuidToToken(confirm.auctionId);
+  return {
+    id: "cancel-confirm",
+    text: screenText(
+      "Отменить аукцион?",
+      escapeHtml(auctionCancelConsequence(confirm.sold)),
+      escapeHtml("Отменить нельзя: нового аукциона у этой сходки не будет."),
+    ),
+    keyboard: confirmKeyboard({
+      yes: "Да, отменить аукцион",
+      yesData: consoleCancelConfirmData(auction, uuidToToken(confirm.opId)),
       noData: consoleViewData(auction),
       irreversible: true,
     }),
@@ -1684,12 +1759,6 @@ function indexOf(lots: readonly ConsoleLot[], entry: ConsoleLot): number {
 /** Текст кадра отказа пульту; отказ по праву несёт общий текст хаба. */
 export const consoleMissingText = "Аукцион не найден. Открой сходку заново.";
 
-/**
- * Отказы сходки (ADR-047, дополнение 2026-10-12): отменённая закрывает команды
- * пульта, скрытая — открытие онлайн-недели. Кадры с переходом — PER-606.
- */
-export const consoleMeetupText = {
-  "meetup-cancelled": "Сходку отменили. Управлять её аукционом больше нельзя.",
-  "meetup-hidden":
-    "Сходка скрыта. Онлайн-неделя откроется, когда сходку снова опубликуют.",
-} as const;
+/** Отменённая сходка закрыла команды пульта (ADR-047, дополнение 2026-10-12). */
+export const consoleMeetupCancelledText =
+  "Сходку отменили. Управлять её аукционом больше нельзя.";

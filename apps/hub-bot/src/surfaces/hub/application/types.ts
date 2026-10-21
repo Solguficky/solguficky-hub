@@ -44,6 +44,13 @@ export type MeetupAuctionView =
   | { kind: "none" }
   | { kind: "open"; auctionId: string; auction?: AuctionSummaryView }
   | { kind: "unavailable" };
+// Что отмена сходки сделает с её аукционом: торги идут — аукцион отменится, и
+// `sold` проданных лотов останутся проданными; `unknown` — Auction не ответил,
+// и подтверждение называет последствие условно (PER-606). Нет поля — торгов
+// нет или аукциона нет, и подтверждение прежнее.
+export type AuctionCancelConsequence =
+  | { kind: "trading"; sold: number }
+  | { kind: "unknown" };
 // `source` — ссылка канала прихода `s_<код>` (ADR-060, пункт 17). Код —
 // недоверенный хвост без префикса: Identity сам решает, известен ли канал, и
 // до него код доносит операция входа `RequestAccess`.
@@ -190,6 +197,9 @@ export type ExecuteRequest =
       identity: Person;
       intent: "view-meetup";
       meetupId: string;
+      // Подтверждение отмены сходки называет последствие для её аукциона
+      // (ADR-064, дополнение 2026-10-12): только оно платит за чтение лотов.
+      withCancelConsequence?: true;
       requestId?: string;
       useCase?: string;
       deadlineAt?: number;
@@ -368,7 +378,8 @@ export type ConsoleAuctionStatus =
   | "break"
   | "lineup-frozen"
   | "final"
-  | "finished";
+  | "finished"
+  | "cancelled";
 
 // Сроки онлайн-недели из конфигурации аукциона: мгновения RFC 3339 в UTC.
 // Мгновения нет, когда его нет в конфигурации: формат без онлайн-фазы или
@@ -520,6 +531,15 @@ export type ConsoleNote =
   | "no-lots-to-open"
   // Удалить аукцион можно только до открытия недели.
   | "discard-too-late"
+  // Отменить аукцион можно только после открытия недели и до его конца
+  // (ADR-047, дополнение 2026-10-12); принятая отмена — свой исход.
+  | "cancel-too-early"
+  | "cancel-too-late"
+  | "already-cancelled"
+  | "auction-cancelled"
+  // Скрытая сходка закрывает открытие онлайн-недели (ADR-047, дополнение
+  // 2026-10-12): исход — пульт по перечитанному снимку с возвратом в него.
+  | "meetup-hidden"
   // Финал ведущего (PER-337): принятые команды и отказы Auction.
   | "final-started"
   | "lineup-not-frozen"
@@ -697,6 +717,9 @@ export type AuctionConsoleRequest =
   // Подтверждение удаления, пока неделя не открыта; ключ уедет в «Да».
   | (AuctionConsoleCall & { intent: "prepare-auction-discard"; opId: string })
   | (AuctionConsoleCall & { intent: "discard-auction"; opId: string })
+  // Подтверждение отмены после старта торгов; ключ уедет в «Да».
+  | (AuctionConsoleCall & { intent: "prepare-auction-cancel"; opId: string })
+  | (AuctionConsoleCall & { intent: "cancel-auction"; opId: string })
   | (AuctionConsoleCall & {
       intent: "mark-auction-finalist";
       lotId: string;
@@ -1026,6 +1049,7 @@ export type ExecuteResult =
       categories?: readonly CategoryState<MeetupCategory>[];
       author?: MeetupAuthor;
       auction?: MeetupAuctionView;
+      cancelConsequence?: AuctionCancelConsequence;
     }
   // Аукцион включён. `alreadyExisted` — аукцион у сходки уже был, и второго
   // не родилось.
@@ -1210,6 +1234,14 @@ export type ExecuteResult =
     }
   // Аукцион удалён: у сходки снова «Включить аукцион».
   | { kind: "auction-discarded"; auctionId: string }
+  // Подтверждение отмены аукциона после старта торгов: `sold` — сколько лотов
+  // уже продано, они останутся проданными. `opId` уедет в «Да».
+  | {
+      kind: "auction-cancel-confirm";
+      auctionId: string;
+      opId: string;
+      sold: number;
+    }
   // Вопрос о следующей цене лота финала: первый либо тот же заново, с
   // причиной. `mustExceed` — порог, который назвал отказ Auction.
   | {
@@ -1266,16 +1298,11 @@ export type ExecuteResult =
       held: readonly ConsoleLot[];
       pick: LineupPick;
     }
-  // Отказ пульту целиком: не администратор сходки, аукциона нет, сходку
-  // отменили или скрыли (ADR-047, дополнение 2026-10-12). Кадры отказов
-  // сходки с переходом — PER-606.
+  // Отказ пульту целиком: не администратор сходки, аукциона нет или сходку
+  // отменили. Скрытая сходка — исход пульта (`ConsoleNote`), а не отказ ему.
   | {
       kind: "auction-console-refused";
-      reason:
-        | "not-administrator"
-        | "auction-not-found"
-        | "meetup-cancelled"
-        | "meetup-hidden";
+      reason: "not-administrator" | "auction-not-found" | "meetup-cancelled";
     }
   | {
       kind: "meetup-notification-settings";
