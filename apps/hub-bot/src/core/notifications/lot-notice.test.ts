@@ -1,10 +1,12 @@
 import { create } from "@bufbuild/protobuf";
 import { describe, expect, it, vi } from "vitest";
+import { MoneySchema } from "../../../gen/auction/v1/auction_pb.js";
 import {
   AuctionFinalLotNextSchema,
   LotActivityDigestSchema,
   LotActivityKind,
   LotDeadlineCloseSchema,
+  LotLeadRestoredSchema,
   LotReminderSchema,
 } from "../../../gen/notifications/v1/notifications_pb.js";
 import {
@@ -113,6 +115,35 @@ describe("lotNoticeOf", () => {
     });
     expect(lotNoticeOf({ case: "auctionFinalLotNext", value })).toBeUndefined();
   });
+
+  // Ведение лота вернулось: снятие участника оставило лот новому лидеру
+  // (ADR-072, п. 5). Сообщение несёт лот и текущую цену.
+  it("carries the restored lead with its price", () => {
+    const value = create(LotLeadRestoredSchema, {
+      lotId: lotOf(6),
+      currentPrice: create(MoneySchema, {
+        minorUnits: 95_000n,
+        currency: "RUB",
+      }),
+    });
+    expect(lotNoticeOf({ case: "lotLeadRestored", value })).toEqual({
+      kind: "lot-lead-restored",
+      lotId: lotOf(6),
+      currentPrice: rub(950),
+    });
+  });
+
+  // Лот без идентификатора открыть нечем — это дефект издателя.
+  it("finds a restored lead without a lot id malformed", () => {
+    const value = create(LotLeadRestoredSchema, {
+      lotId: "",
+      currentPrice: create(MoneySchema, {
+        minorUnits: 95_000n,
+        currency: "RUB",
+      }),
+    });
+    expect(lotNoticeOf({ case: "lotLeadRestored", value })).toBeUndefined();
+  });
 });
 
 describe("renderLotNotice", () => {
@@ -213,6 +244,25 @@ describe("renderLotNotice", () => {
       },
     );
     expect(view.text).toContain("Торг до 22:45.");
+  });
+
+  // Ведение лота вернулось: сообщение называет цену и кнопку лота, а кнопки
+  // частоты под ним нет — получатель ставку не делал, частота перебитий его не
+  // касается (ADR-072, п. 5).
+  it("names the lot whose lead came back and offers only its button", () => {
+    const lotId = lotOf(6);
+    const view = renderLotNotice(
+      { kind: "lot-lead-restored", lotId, currentPrice: rub(950) },
+      {
+        lots: new Map([[lotId, lot("Кружка", { deadline })]]),
+        frequencyButton: true,
+        timeZone,
+      },
+    );
+    expect(view.text).toBe(
+      `Ты снова ведёшь «Кружка». Текущая цена — 950${nbsp}₽. Торг до 22:45.`,
+    );
+    expect(view.rows).toEqual([[{ kind: "lot", lotId, text: "К лоту" }]]);
   });
 
   // Напоминание о дедлайне выключается снятием отметки (ADR-063, п.5), а не

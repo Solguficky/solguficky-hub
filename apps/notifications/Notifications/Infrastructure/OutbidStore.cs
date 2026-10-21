@@ -220,8 +220,11 @@ public static class OutbidStore
     /// <summary>
     /// Ставка лота во все его строки: ведёт ли человек лот по лидеру этой
     /// ставки, её повод и цена. Возврат лидерства строку не убирает.
+    ///
+    /// Лидер может быть пустым: снятие участника оставляет лот без ведущего,
+    /// и строка окна тогда не говорит «лот за тобой» (ADR-072, PER-672).
     /// </summary>
-    public static Task FollowLot(UnitOfWork work, Guid lotId, Guid leader, Guid eventId, long version, Money price,
+    public static Task FollowLot(UnitOfWork work, Guid lotId, Guid? leader, Guid eventId, long version, Money price,
         CancellationToken cancellationToken) =>
         work.Execute(FollowLotSql, new
         {
@@ -316,7 +319,9 @@ public static class OutbidStore
         _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, "unknown stored lot activity kind"),
     };
 
-    // Имена полей совпадают с колонками, как в PreferenceStore.
-    private sealed record LineRow(Guid lot_id, string kind, DateTime added_at, Guid last_leader_id,
+    // Имена полей совпадают с колонками, как в PreferenceStore. Лидер пустой:
+    // снятие участника оставляет лот без ведущего, и строка тогда не говорит
+    // «лот за тобой» (ADR-072, PER-672).
+    private sealed record LineRow(Guid lot_id, string kind, DateTime added_at, Guid? last_leader_id,
         long price_minor_units, string price_currency);
 }
