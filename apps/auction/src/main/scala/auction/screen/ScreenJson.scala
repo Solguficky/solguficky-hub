@@ -24,14 +24,15 @@ object ScreenJson {
     val root = nodes.objectNode()
     root.put("schema", Schema)
     state match {
-      case ScreenState.Upcoming(withFinal) =>
+      case ScreenState.Upcoming(withFinal, finalAt) =>
         root.put("phase", "upcoming")
         root.put("final", withFinal)
-        // Ориентировочного времени финала у аукциона пока нет (отдельный лист): экран пишет «скоро».
-        root.putNull("final_at")
-      case ScreenState.Lineup(lots) =>
+        // Ориентировочное время финала: администратор выставляет его как анонс трансляции (ADR-040, дополнение
+        // 2026-10-19). Без него экран пишет «скоро».
+        optional(root, "final_at", finalAt.map(at => nodes.textNode(at.toString)))
+      case ScreenState.Lineup(lots, finalAt) =>
         root.put("phase", "lineup")
-        root.putNull("final_at")
+        optional(root, "final_at", finalAt.map(at => nodes.textNode(at.toString)))
         val lineup = root.putArray("lineup")
         lots.foreach(lot => lineup.add(this.lot(auctionId, lot)))
       case ScreenState.Live(live) =>

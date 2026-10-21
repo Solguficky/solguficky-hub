@@ -76,6 +76,7 @@ import auction.v1.auction_service.ScheduleAuctionRequest
 import auction.v1.auction_service.SelectForFinalRequest
 import auction.v1.auction_service.ScheduleLotRequest
 import auction.v1.auction_service.SetProxyLimitRequest
+import auction.v1.auction_service.SetFinalTimeRequest
 import auction.v1.auction_service.WatchAuctionRequest
 import auction.v1.auction_service.StartFinalRequest
 import auction.v1.auction_service.StartNextLotRequest
@@ -163,6 +164,11 @@ final case class VisibilityCommand(auctionId: AuctionId, published: Boolean, opI
 
 /** Отмена аукциона после старта торгов. */
 final case class CancelCommand(auctionId: AuctionId, opId: OpId, acting: Acting)
+
+/**
+ * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): `at` пусто — время снимается.
+ */
+final case class FinalTimeCommand(auctionId: AuctionId, at: Option[Instant], opId: OpId, acting: Acting)
 
 /**
  * Заморозка состава финала: `order` — лоты в порядке выхода, как их прислал пульт. Дубли и пустой список — не форма
@@ -546,6 +552,18 @@ object RequestMapping {
       auction <- meetupAuction(request.auctionId)
       opId <- uuidV7("op_id", request.opId)
     } yield CancelCommand(auction, OpId(opId), acting)
+
+  /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19). Момент приходит строкой RFC 3339, а пустое поле —
+   * снятие времени: отдельной команды нет.
+   */
+  def setFinalTime(request: SetFinalTimeRequest): Either[FormError, FinalTimeCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      opId <- uuidV7("op_id", request.opId)
+      at <- request.finalAt.fold[Either[FormError, Option[Instant]]](Right(None))(instant("final_at", _).map(Some(_)))
+    } yield FinalTimeCommand(auction, at, OpId(opId), acting)
 
   def freezeFinalLineup(request: FreezeFinalLineupRequest): Either[FormError, LineupCommand] =
     for {

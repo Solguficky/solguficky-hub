@@ -594,6 +594,20 @@ final class AuctionGrpcService(
       .flatMap(outcome => ResponseMapping.auctionVisibility(outcome).fold(refuse, Future.successful))
 
   /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): право у Meetups, состояние решает аукцион. Время
+   * выставляется, меняется и снимается одной командой.
+   */
+  def setFinalTime(in: wire.SetFinalTimeRequest): Future[wire.SetFinalTimeResponse] =
+    RequestMapping.setFinalTime(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .setFinalTime(command.auctionId, command.at, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.setFinalTime(outcome).fold(refuse, Future.successful))
+    }
+
+  /**
    * Видимость аукциона смотрящему (ADR-047, дополнение 2026-10-20): скрытый видит только держатель `run_auctions`, и
    * всем остальным чтения отвечают так, будто аукциона нет.
    */

@@ -91,6 +91,9 @@ object AuctionFacts {
       case AuctionEvent.StepWindowLaunched(_) => None
       // Факты публикации и снятия заводит PER-646 вместе с их потребителем (ADR-047, дополнение 2026-10-20).
       case AuctionEvent.AuctionPublished | AuctionEvent.AuctionHidden => None
+      // Ориентировочное время финала — подпись для экрана зала и бота хаба, а не повод для шины (ADR-040, дополнение
+      // 2026-10-19).
+      case AuctionEvent.FinalTimeSet(_) | AuctionEvent.FinalTimeCleared => None
     }
 
   /** Публичное состояние аукциона: сходка, конфигурация, реестр по возрастанию `lot_id` и статус. */

@@ -23,6 +23,8 @@ import auction.aggregate.DiscardAuction
 import auction.aggregate.VisibilityRejected
 import auction.aggregate.DraftAuction
 import auction.aggregate.FinalChoiceRejected
+import auction.aggregate.FinalTimeRejected
+import auction.aggregate.SetFinalTime
 import auction.aggregate.FreezeFinalLineup
 import auction.aggregate.FreezeFinalLineupRejected
 import auction.aggregate.Inspection
@@ -328,6 +330,8 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     def discard(auctionId: AuctionId, command: DiscardAuction, initiator: Initiator) =
       fail("the auction was reached")
     def changeVisibility(auctionId: AuctionId, command: ChangeVisibility, initiator: Initiator) =
+      fail("the auction was reached")
+    def setFinalTime(auctionId: AuctionId, command: SetFinalTime, initiator: Initiator) =
       fail("the auction was reached")
     def cancel(auctionId: AuctionId, command: CancelAuction, initiator: Initiator) =
       fail("the auction was reached")
@@ -955,6 +959,55 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         withHistory(AuctionEvent.AuctionDiscarded)
           .publishAuction(wire.PublishAuctionRequest(Some(viewer), id.toString, op))
       ) shouldBe Status.Code.ALREADY_EXISTS
+    }
+
+    // ADR-040, дополнение 2026-10-19: ориентировочное время финала — команда администратора сходки.
+    "sets the estimated time of the final by the administrator and answers the refusals as values" in {
+      val seen = scala.collection.mutable.ListBuffer.empty[SetFinalTime]
+      val at = Instant.parse("2026-10-09T18:00:00Z")
+      def gateway(answer: Either[FinalTimeRejected, AuctionAnswer]) = new Auctions {
+        override def inspect(auctionId: AuctionId, opId: OpId) =
+          Future.successful(Inspection.Present(meetup, registryOpen = true))
+        override def setFinalTime(auctionId: AuctionId, command: SetFinalTime, initiator: Initiator) = {
+          seen += command
+          Future.successful(answer)
+        }
+      }
+      def withAuthority(answer: Either[FinalTimeRejected, AuctionAnswer], authority: MeetupAuthority) =
+        service(Unreachable, auctions = AuctionCommands(gateway(answer), Unreachable, authority))
+      val accepted = withAuthority(Right(AuctionAnswer.Unchanged), granted)
+      accepted
+        .setFinalTime(wire.SetFinalTimeRequest(Some(viewer), id.toString, op, Some(at.toString)))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      seen.map(_.at).toList shouldBe List(Some(at))
+      // Снятие времени — та же команда без момента.
+      accepted
+        .setFinalTime(wire.SetFinalTimeRequest(Some(viewer), id.toString, op, None))
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      seen.map(_.at).toList shouldBe List(Some(at), None)
+      withAuthority(Left(FinalTimeRejected.FinalAlreadyStarted), granted)
+        .setFinalTime(wire.SetFinalTimeRequest(Some(viewer), id.toString, op, Some(at.toString)))
+        .futureValue
+        .getRefused
+        .reason
+        .isFinalAlreadyStarted shouldBe true
+      withAuthority(Left(FinalTimeRejected.AuctionAlreadyFinished), granted)
+        .setFinalTime(wire.SetFinalTimeRequest(Some(viewer), id.toString, op, Some(at.toString)))
+        .futureValue
+        .getRefused
+        .reason
+        .isAuctionAlreadyFinished shouldBe true
+      val denied: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      withAuthority(Right(AuctionAnswer.Unchanged), denied)
+        .setFinalTime(wire.SetFinalTimeRequest(Some(viewer), id.toString, op, Some(at.toString)))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
     }
   }
 

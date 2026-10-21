@@ -20,6 +20,7 @@
     "finalLineupFrozen": null,
     "finalLotActivated": null,
     "finalLotCompleted": null,
-    "stepWindowLaunched": null
+    "stepWindowLaunched": null,
+    "finalTime": null
   }
 }

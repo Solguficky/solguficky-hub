@@ -9,6 +9,7 @@ import auction.aggregate.ConfigInvalid
 import auction.aggregate.Denial
 import auction.aggregate.DiscardRefusal
 import auction.aggregate.FinalStartRefusal
+import auction.aggregate.FinalTimeRefusal
 import auction.aggregate.LineupRefusal
 import auction.aggregate.LotEnding
 import auction.aggregate.NextLotRefusal
@@ -559,6 +560,37 @@ object ResponseMapping {
     }
   }
 
+  /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19) отвечает формой остальных команд администратора:
+   * принятие — значением, отказ — именованным значением ответа, а не статусом.
+   */
+  def setFinalTime(outcome: Either[FinalTimeRefusal, Unit]): Either[Status, wire.SetFinalTimeResponse] = {
+    import wire.FinalTimeRefusal.Reason
+    def refused(reason: Reason) = Right(wire.SetFinalTimeResponse().withRefused(wire.FinalTimeRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.SetFinalTimeResponse().withAccepted(wire.FinalTimeAccepted()))
+      case Left(FinalTimeRefusal.FinalAlreadyStarted) =>
+        refused(Reason.FinalAlreadyStarted(wire.FinalAlreadyStarted()))
+      case Left(FinalTimeRefusal.AuctionAlreadyFinished) =>
+        refused(Reason.AuctionAlreadyFinished(wire.AuctionAlreadyFinished()))
+      case Left(FinalTimeRefusal.AuctionAlreadyCancelled) =>
+        refused(Reason.AuctionAlreadyCancelled(wire.AuctionAlreadyCancelled()))
+      case Left(FinalTimeRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(FinalTimeRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(FinalTimeRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(FinalTimeRefusal.OpIdTaken) => Left(opIdTaken)
+      case Left(FinalTimeRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(FinalTimeRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            FinalTimeRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotsFrozen | Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"auction final time answered $denial")
+    }
+  }
+
   def cancelAuction(outcome: Either[CancellationRefusal, Unit]): Either[Status, wire.CancelAuctionResponse] =
     outcome match {
       case Right(()) => Right(wire.CancelAuctionResponse().withAccepted(wire.AuctionCancelAccepted()))
@@ -988,7 +1020,8 @@ object ResponseMapping {
   /**
    * Снимок аукциона в форме `AuctionSnapshot`: те же поля, что `AuctionState` шины, кроме `meetup_id`. Конфигурации у
    * черновика нет, с `Scheduled` она есть всегда; реестр — по возрастанию `lot_id`, порядок смысла не несёт. Какие лоты
-   * подтвердили открытие, снимок не несёт: это знание entity, а не журнала.
+   * подтвердили открытие, снимок не несёт: это знание entity, а не журнала. Ориентировочное время финала — только у
+   * чтения: факта у него на шине нет (ADR-040, дополнение 2026-10-19).
    */
   def auctionSnapshot(view: AuctionSnapshotView): wire.AuctionSnapshot = {
     val (status, config) = view.auction.state match {
@@ -1017,6 +1050,7 @@ object ResponseMapping {
       config = config.map(AuctionValues.config),
       lotIds = view.auction.lots.toList.map(_.value).sorted.map(_.toString),
       hidden = view.auction.hidden,
+      finalAt = view.auction.finalAt.map(LotValues.instant),
       status = status
     )
   }

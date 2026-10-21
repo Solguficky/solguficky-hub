@@ -23,6 +23,7 @@ import auction.projection.LotSnapshotView
 import org.scalatest.matchers.should.Matchers
 import org.scalatest.wordspec.AnyWordSpec
 
+import java.time.Instant
 import java.util.UUID
 
 final class ScreenSpec extends AnyWordSpec with Matchers {
@@ -33,8 +34,8 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
   private val second = LotId(UUID.fromString("01890a5d-ac97-7c2b-9f3a-0d1b2c3d4e02"))
   private val opened = op(9)
 
-  private def auctionIn(state: AuctionState): Auction =
-    Auction(state, Some(MeetupId(meetupId)), Set(first, second), Map.empty)
+  private def auctionIn(state: AuctionState, finalAt: Option[Instant] = None): Auction =
+    Auction(state, Some(MeetupId(meetupId)), Set(first, second), Map.empty, finalAt = finalAt)
 
   private def view(lot: LotId, state: Lot, title: String = "Лот"): LotSnapshotView =
     LotSnapshotView(
@@ -49,9 +50,10 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
       state: AuctionState,
       lineup: List[LotSnapshotView] = Nil,
       bids: List[RecentBid] = Nil,
-      sold: List[SoldLot] = Nil
+      sold: List[SoldLot] = Nil,
+      finalAt: Option[Instant] = None
   ): ScreenReading =
-    ScreenReading(auctionId, meetupId, auctionIn(state), lineup, bids, sold)
+    ScreenReading(auctionId, meetupId, auctionIn(state, finalAt), lineup, bids, sold)
 
   private def name(participant: ParticipantId): String = s"@p${participant.value.getLeastSignificantBits}"
 
@@ -92,8 +94,18 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
       val withoutFinal =
         AuctionState.Prebidding(AuctionFixtures.config(AuctionFixtures.configInput(finalBlocks = 0)), opened)
 
-      Screen.of(reading(withFinal), name) shouldBe ScreenState.Upcoming(withFinal = true)
-      Screen.of(reading(withoutFinal), name) shouldBe ScreenState.Upcoming(withFinal = false)
+      Screen.of(reading(withFinal), name) shouldBe ScreenState.Upcoming(withFinal = true, finalAt = None)
+      Screen.of(reading(withoutFinal), name) shouldBe ScreenState.Upcoming(withFinal = false, finalAt = None)
+    }
+
+    "carry the estimated time of the final to the screen before the lineup freezes" in {
+      val at = Instant.parse("2026-10-09T18:00:00Z")
+      val state = AuctionState.Prebidding(AuctionFixtures.config(), opened)
+
+      Screen.of(reading(state, finalAt = Some(at)), name) shouldBe
+        ScreenState.Upcoming(withFinal = true, finalAt = Some(at))
+      ScreenJson.render(auctionId, ScreenState.Upcoming(withFinal = true, finalAt = Some(at))) shouldBe
+        """{"schema":1,"phase":"upcoming","final":true,"final_at":"2026-10-09T18:00:00Z"}"""
     }
 
     "show the lineup in its order once frozen and until the first lot goes out" in {
@@ -105,7 +117,8 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
         List(
           ScreenLot(second.value, Some("Лот"), Some(ImageVersion("v1"))),
           ScreenLot(first.value, Some("Лот"), Some(ImageVersion("v1")))
-        )
+        ),
+        finalAt = None
       )
       Screen.of(reading(frozen, lineup), name) shouldBe expected
       Screen.of(reading(started, lineup), name) shouldBe expected
@@ -170,7 +183,7 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
       )
       reading(next, List(previous, activated)).participants should contain(participant(3))
       Screen.of(reading(firstOut, List(activated)), name) shouldBe
-        ScreenState.Lineup(List(ScreenLot(first.value, Some("Лот"), Some(ImageVersion("v1")))))
+        ScreenState.Lineup(List(ScreenLot(first.value, Some("Лот"), Some(ImageVersion("v1")))), finalAt = None)
     }
 
     "total the whole auction, online and in the final from the sold lots" in {
@@ -217,7 +230,7 @@ final class ScreenSpec extends AnyWordSpec with Matchers {
     }
 
     "say the final time is unknown before the lineup freezes" in {
-      ScreenJson.render(auctionId, ScreenState.Upcoming(withFinal = true)) shouldBe
+      ScreenJson.render(auctionId, ScreenState.Upcoming(withFinal = true, finalAt = None)) shouldBe
         """{"schema":1,"phase":"upcoming","final":true,"final_at":null}"""
     }
   }

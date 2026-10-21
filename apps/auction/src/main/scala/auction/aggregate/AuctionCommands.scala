@@ -24,6 +24,8 @@ import auction.lot.UnmarkForFinalRejected
 import scala.concurrent.ExecutionContext
 import scala.concurrent.Future
 
+import java.time.Instant
+
 /**
  * Ответ Meetups на `CheckMeetupAuthority` (ADR-051) в домене Auction. `Unavailable` — право сейчас не подтвердить: это
  * статус ответа, а не отказ, и события он не порождает. Сбой самой проверки — неудачное `Future`. `Granted` несёт
@@ -97,6 +99,19 @@ enum DiscardRefusal {
 enum VisibilityRefusal {
   case Denied(denial: Denial)
   case AuctionAlreadyStarted
+  case OpIdTaken
+}
+
+/**
+ * Отказ выставления ориентировочного времени финала: проверка до агрегата или решение агрегата. `OpIdTaken` — под этим
+ * `op_id` записана другая команда аукциона: у пары взаимно обратных команд тихое «принято» на чужой повтор оставило бы
+ * видимость не той.
+ */
+enum FinalTimeRefusal {
+  case Denied(denial: Denial)
+  case FinalAlreadyStarted
+  case AuctionAlreadyFinished
+  case AuctionAlreadyCancelled
   case OpIdTaken
 }
 
@@ -400,6 +415,48 @@ final class AuctionCommands(
             case Left(VisibilityRejected.AuctionNotFound) => Left(VisibilityRefusal.Denied(Denial.AuctionNotFound))
             case Left(VisibilityRejected.AuctionAlreadyStarted) => Left(VisibilityRefusal.AuctionAlreadyStarted)
             case Right(_) => Right(())
+          }
+        }
+    }
+
+  /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): выставить, изменить или снять. Порядок тот же, что у
+   * остальных команд: повтор, аукцион без журнала, право у Meetups, затем агрегат. Ворота — сходка не отменена.
+   */
+  def setFinalTime(
+      auctionId: AuctionId,
+      at: Option[Instant],
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[FinalTimeRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(original) =>
+        // Выставить и снять — разные события: снятие под `op_id` выставления — чужая команда, как публикация под
+        // `op_id` снятия (ADR-047, дополнение 2026-10-20). Тихое «принято» оставило бы время на месте.
+        val same = original.event match {
+          case AuctionEvent.FinalTimeSet(_) => at.isDefined
+          case AuctionEvent.FinalTimeCleared => at.isEmpty
+          case _ => false
+        }
+        Future.successful(Either.cond(same, (), FinalTimeRefusal.OpIdTaken))
+      case Inspection.Absent => Future.successful(Left(FinalTimeRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, FinalTimeRefusal.Denied(_)) {
+          auctions.setFinalTime(auctionId, SetFinalTime(at, opId), Initiator.Operator(person)).map {
+            case Left(FinalTimeRejected.AuctionNotFound) => Left(FinalTimeRefusal.Denied(Denial.AuctionNotFound))
+            case Left(FinalTimeRejected.FinalAlreadyStarted) => Left(FinalTimeRefusal.FinalAlreadyStarted)
+            case Left(FinalTimeRejected.AuctionAlreadyFinished) => Left(FinalTimeRefusal.AuctionAlreadyFinished)
+            case Left(FinalTimeRejected.AuctionAlreadyCancelled) => Left(FinalTimeRefusal.AuctionAlreadyCancelled)
+            // Ответ entity — записанный конверт: чужое событие под тем же `op_id` значит, что время не выставлено
+            // (ADR-047, «Открыто»: повтор отвечает исходным ответом только своей команде).
+            case Right(AuctionAnswer.Written(original)) =>
+              val ours = original.event match {
+                case AuctionEvent.FinalTimeSet(_) => at.isDefined
+                case AuctionEvent.FinalTimeCleared => at.isEmpty
+                case _ => false
+              }
+              Either.cond(ours, (), FinalTimeRefusal.OpIdTaken)
+            case Right(AuctionAnswer.Unchanged) => Right(())
           }
         }
     }
@@ -767,7 +824,7 @@ final class AuctionCommands(
           AuctionEvent.PrebiddingDeadlineReached | AuctionEvent.PrebiddingEnded(_) | AuctionEvent.FinalLineupFrozen(_) |
           AuctionEvent.FinalStarted | AuctionEvent.FinalLotActivated(_) | AuctionEvent.FinalLotCompleted(_) |
           AuctionEvent.AuctionFinished | AuctionEvent.StepWindowLaunched(_) | AuctionEvent.AuctionPublished |
-          AuctionEvent.AuctionHidden =>
+          AuctionEvent.AuctionHidden | AuctionEvent.FinalTimeSet(_) | AuctionEvent.FinalTimeCleared =>
         false
     }
 }
