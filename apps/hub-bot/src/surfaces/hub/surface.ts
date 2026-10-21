@@ -272,6 +272,7 @@ export const hubSurface: SurfaceDefinition = ({
     createNotificationApi(token, environment),
     hub.auctionBotUsername,
     today,
+    communityTimeZone,
   );
   return {
     ok: true,

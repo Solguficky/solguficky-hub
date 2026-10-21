@@ -2372,13 +2372,16 @@ describe("auction notification settings", () => {
             frequency: "every",
             finalAnnouncements: true,
             liveFinalOutbids: false,
+            auctionAnnouncements: true,
           };
           store.settings =
             change.kind === "frequency"
               ? { ...current, frequency: change.frequency }
               : change.kind === "final"
                 ? { ...current, finalAnnouncements: change.enabled }
-                : { ...current, liveFinalOutbids: change.enabled };
+                : change.kind === "live"
+                  ? { ...current, liveFinalOutbids: change.enabled }
+                  : { ...current, auctionAnnouncements: change.enabled };
           return store.settings;
         },
         ...port,
@@ -2391,11 +2394,16 @@ describe("auction notification settings", () => {
     finalAnnouncements = true,
     liveFinalOutbids = false,
   ): { settings: AuctionNotificationSettings | undefined } => ({
-    settings: { frequency, finalAnnouncements, liveFinalOutbids },
+    settings: {
+      frequency,
+      finalAnnouncements,
+      liveFinalOutbids,
+      auctionAnnouncements: true,
+    },
   });
 
   // Настройки открывает команда `/notifications` новым сообщением; это
-  // подраздел «Настроек» (PER-595): три кнопки-переключателя и последним
+  // подраздел «Настроек» (PER-595): четыре кнопки-переключателя и последним
   // рядом «‹ Настройки».
   it("opens the settings by the command with the way back to the settings", async () => {
     const { bot, calls } = makeBot(withOutbid(stored("every")));
@@ -2405,7 +2413,7 @@ describe("auction notification settings", () => {
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringContaining("<b>Уведомления</b>"),
     });
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     expect(rows.at(-1)).toEqual([
       { text: "‹ Настройки", callback_data: entryCallback("settings") },
     ]);
@@ -2428,7 +2436,7 @@ describe("auction notification settings", () => {
     expect(calls.at(-1)?.method).toBe("editMessageText");
     expect(calls.at(-1)?.payload).toMatchObject({
       text: expect.stringMatching(
-        /переключает[\s\S]*одной сводкой[\s\S]*Перебили в финале[\s\S]*Анонс финала[\s\S]*О покупке лота пишу всегда/,
+        /переключает[\s\S]*одной сводкой[\s\S]*Перебили в финале[\s\S]*Анонс финала[\s\S]*О покупке лота пишу всегда[\s\S]*Новый аукцион и торги/,
       ),
       reply_markup: {
         inline_keyboard: [
@@ -2443,6 +2451,15 @@ describe("auction notification settings", () => {
             {
               text: "🔔 Вкл · Анонс финала",
               callback_data: notifyCallback({ kind: "final", enabled: false }),
+            },
+          ],
+          [
+            {
+              text: "🔔 Вкл · Новый аукцион и торги",
+              callback_data: notifyCallback({
+                kind: "announcements",
+                enabled: false,
+              }),
             },
           ],
           [{ text: "‹ Настройки", callback_data: entryCallback("settings") }],

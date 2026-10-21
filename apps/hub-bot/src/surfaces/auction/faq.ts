@@ -76,6 +76,8 @@ export function notifyCallback(choose?: AuctionNotificationChange): string {
       return `${entryCallback("notify")}:final:${choose.enabled ? "1" : "0"}`;
     case "live":
       return `${entryCallback("notify")}:live:${choose.enabled ? "1" : "0"}`;
+    case "announcements":
+      return `${entryCallback("notify")}:news:${choose.enabled ? "1" : "0"}`;
   }
 }
 
@@ -87,6 +89,8 @@ const NOTIFY_CHOICES: readonly AuctionNotificationChange[] = [
   { kind: "final", enabled: false },
   { kind: "live", enabled: true },
   { kind: "live", enabled: false },
+  { kind: "announcements", enabled: true },
+  { kind: "announcements", enabled: false },
 ];
 
 export function listCallback(action: ListAction, page: number): string {

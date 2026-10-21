@@ -139,10 +139,11 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
         ServerCallContext context)
     {
         var identityId = RequestValidation.IdentityId(request.IdentityId);
-        var (frequency, finalAnnouncements, liveFinalOutbids) = RequestValidation.AuctionPreferences(request);
+        var (frequency, finalAnnouncements, liveFinalOutbids, auctionAnnouncements) =
+            RequestValidation.AuctionPreferences(request);
 
         var stored = await operations.SetAuction(identityId, frequency, finalAnnouncements, liveFinalOutbids,
-            context.CancellationToken);
+            auctionAnnouncements, context.CancellationToken);
 
         return Map(identityId, stored);
     }
@@ -444,5 +445,6 @@ public sealed class NotificationsGrpcService(PreferenceOperations operations, Fa
             OutbidFrequency = preferences.OutbidFrequency,
             FinalAnnouncements = preferences.FinalAnnouncements,
             LiveFinalOutbids = preferences.LiveFinalOutbids,
+            AuctionAnnouncements = preferences.AuctionAnnouncements,
         };
 }

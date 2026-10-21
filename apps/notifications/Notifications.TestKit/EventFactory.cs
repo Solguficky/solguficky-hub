@@ -586,6 +586,54 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Аукцион опубликован (PER-646): снимок видимого аукциона. Неделя есть у
+    /// запланированного: она приезжает снимком конфигурации, а у черновика поля
+    /// нет вовсе.
+    /// </summary>
+    public static global::Auction.V1.AuctionEvent AuctionPublished(string auction, string meetup,
+        global::Auction.V1.OnlinePhase? phase = null)
+    {
+        var message = AuctionFact(auction, meetup, 6);
+        message.State.Hidden = false;
+        if (phase is null)
+        {
+            message.State.Draft = new global::Auction.V1.AuctionState.Types.Draft();
+        }
+        else
+        {
+            message.State.Config = new global::Auction.V1.AuctionConfig { OnlinePhase = phase };
+            message.State.Scheduled = new global::Auction.V1.AuctionState.Types.Scheduled();
+        }
+        message.AuctionPublished = new global::Auction.V1.AuctionPublished();
+        return message;
+    }
+
+    /// <summary>Аукцион снят с публикации до торгов (PER-646): снимок скрытого черновика.</summary>
+    public static global::Auction.V1.AuctionEvent AuctionHidden(string auction, string meetup)
+    {
+        var message = AuctionFact(auction, meetup, 7);
+        message.State.Hidden = true;
+        message.State.Draft = new global::Auction.V1.AuctionState.Types.Draft();
+        message.AuctionHidden = new global::Auction.V1.AuctionHidden();
+        return message;
+    }
+
+    /// <summary>
+    /// Онлайн-неделя открыта (PER-646): снимок <c>prebidding</c> с неделей.
+    /// Признак скрытия снят — ADR-047 снимает его при открытии торгов.
+    /// </summary>
+    public static global::Auction.V1.AuctionEvent PrebiddingStarted(string auction, string meetup,
+        global::Auction.V1.OnlinePhase phase)
+    {
+        var message = AuctionFact(auction, meetup, 8);
+        message.State.Hidden = false;
+        message.State.Config = new global::Auction.V1.AuctionConfig { OnlinePhase = phase };
+        message.State.Prebidding = new global::Auction.V1.AuctionState.Types.Prebidding();
+        message.PrebiddingStarted = new global::Auction.V1.PrebiddingStarted();
+        return message;
+    }
+
     /// <summary>Лот финала взят в работу: активный лот и порядок состава.</summary>
     public static global::Auction.V1.AuctionEvent FinalLotActivated(string auction, string meetup, string activeLot,
         params string[] lineup)

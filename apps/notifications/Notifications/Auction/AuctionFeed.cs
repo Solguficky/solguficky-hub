@@ -46,6 +46,9 @@ public static class AuctionFeed
             ["events.auction.auction_finished"] = AuctionEvent.OccasionOneofCase.AuctionFinished,
             ["events.auction.auction_cancelled"] = AuctionEvent.OccasionOneofCase.AuctionCancelled,
             ["events.auction.auction_discarded"] = AuctionEvent.OccasionOneofCase.AuctionDiscarded,
+            ["events.auction.auction_published"] = AuctionEvent.OccasionOneofCase.AuctionPublished,
+            ["events.auction.auction_hidden"] = AuctionEvent.OccasionOneofCase.AuctionHidden,
+            ["events.auction.prebidding_started"] = AuctionEvent.OccasionOneofCase.PrebiddingStarted,
         };
 
     /// <summary>

@@ -112,6 +112,11 @@ public static class NotificationFacts
     public const string WithdrawnOnApplicationClosed = "application_closed";
 
     /// <summary>
+    /// Аукцион сняли с публикации, пока весть о нём ждала релея (PER-646).
+    /// </summary>
+    public const string WithdrawnOnAuctionHidden = "auction_hidden";
+
+    /// <summary>
     /// Категория, которой человек отказывается от «новой сходки». Настраивается
     /// только глобально: подписаться на ещё не созданную сходку нельзя.
     /// </summary>
@@ -142,6 +147,14 @@ public static class NotificationFacts
     /// положена.
     /// </summary>
     public const string HubRight = "access_hub";
+
+    /// <summary>
+    /// Право ставок: весть о новом аукционе и об открытии торгов адресуется
+    /// его держателям (PER-646). Круг `member` несёт его набором, допущенный
+    /// гость — записью, поэтому «гость без права аукциона» отсекается тем же
+    /// предикатом (ADR-065).
+    /// </summary>
+    public const string PlaceBidsRight = "place_bids";
 
     /// <summary>Значение категории для человека без строки настроек.</summary>
     public static bool MeetupPublishedByDefault => NotificationCategories.DefaultEnabled(MeetupPublishedCategory);

@@ -89,8 +89,12 @@ object AuctionFacts {
       // Запущенное окно публикуют его лоты фактом `step_window_added`: окна — данные лота, а не аукциона (ADR-047,
       // дополнение 2026-10-12).
       case AuctionEvent.StepWindowLaunched(_) => None
-      // Факты публикации и снятия заводит PER-646 вместе с их потребителем (ADR-047, дополнение 2026-10-20).
-      case AuctionEvent.AuctionPublished | AuctionEvent.AuctionHidden => None
+      // Видимость — факт аукциона: по нему Notifications сообщает о новом аукционе и снимает неотправленную весть
+      // (ADR-047, дополнение 2026-10-20; PER-646).
+      case AuctionEvent.AuctionPublished =>
+        Some("auction_published" -> bus.AuctionEvent.Occasion.AuctionPublished(bus.AuctionPublished()))
+      case AuctionEvent.AuctionHidden =>
+        Some("auction_hidden" -> bus.AuctionEvent.Occasion.AuctionHidden(bus.AuctionHidden()))
       // Ориентировочное время финала — подпись для экрана зала и бота хаба, а не повод для шины (ADR-040, дополнение
       // 2026-10-19).
       case AuctionEvent.FinalTimeSet(_) | AuctionEvent.FinalTimeCleared => None
@@ -130,7 +134,10 @@ object AuctionFacts {
       id = row.auctionId.toString,
       config = config.map(AuctionValues.config),
       lotIds = auction.lots.toList.map(_.value).sorted.map(_.toString),
-      meetupId = row.meetupId.toString
+      meetupId = row.meetupId.toString,
+      // Признак скрытия шина несёт полем, а не поводом: без него снимок показывал бы видимость до следующего факта
+      // аукциона (ADR-047, дополнение 2026-10-20).
+      hidden = auction.hidden
     )
   }
 }

@@ -7015,6 +7015,7 @@ describe("notification frames", () => {
           frequency: "off",
           finalAnnouncements: true,
           liveFinalOutbids: false,
+          auctionAnnouncements: true,
         },
       });
       const { bot, calls } = harness(execute);
@@ -7030,6 +7031,7 @@ describe("notification frames", () => {
       expect(payload.text).toContain("Перебили в финале");
       expect(payload.text).toContain("Анонс финала");
       expect(payload.text).toContain("О покупке лота пишу всегда");
+      expect(payload.text).toContain("Новый аукцион и торги");
       expect(payload.reply_markup?.inline_keyboard).toEqual([
         [
           {
@@ -7044,6 +7046,12 @@ describe("notification frames", () => {
           },
         ],
         [{ text: "🔔 Вкл · Анонс финала", callback_data: "v1:notify:final:0" }],
+        [
+          {
+            text: "🔔 Вкл · Новый аукцион и торги",
+            callback_data: "v1:notify:news:0",
+          },
+        ],
         [{ text: "‹ Аукцион", callback_data: "v1:nav:exta" }],
       ]);
     });
@@ -7056,6 +7064,7 @@ describe("notification frames", () => {
           frequency: "every",
           finalAnnouncements: true,
           liveFinalOutbids: true,
+          auctionAnnouncements: true,
         },
       });
       const { bot, calls } = harness(execute);
@@ -7085,6 +7094,7 @@ describe("notification frames", () => {
           frequency: "every",
           finalAnnouncements: false,
           liveFinalOutbids: false,
+          auctionAnnouncements: true,
         },
       });
       const { bot, calls } = harness(execute);
@@ -7123,6 +7133,7 @@ describe("notification frames", () => {
           frequency: "15",
           finalAnnouncements: true,
           liveFinalOutbids: false,
+          auctionAnnouncements: true,
         },
       });
       const { bot, calls } = harness(execute);
@@ -7208,6 +7219,7 @@ describe("notification frames", () => {
           frequency: "every",
           finalAnnouncements: true,
           liveFinalOutbids: false,
+          auctionAnnouncements: true,
         },
       });
       const { bot, calls } = harness(execute);

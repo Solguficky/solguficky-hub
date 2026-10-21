@@ -240,6 +240,43 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         RETURNING type;
         """;
 
+    // Разворот вести о новом аукционе (PER-646): держатели права ставок, кроме
+    // заблокированных, со своим кругом доставки. Категории у повода нет — его
+    // гасит настройка уведомлений аукциона, и она читается здесь же.
+    private const string AuctionAnnouncementAudienceSql = """
+        SELECT person.identity_id AS IdentityId,
+               COALESCE(preference.enabled, true) AS Enabled,
+               CASE WHEN person.circle = 'guest' THEN 'auction' ELSE 'hub' END AS DeliverySurface
+        FROM identity_replica AS person
+        LEFT JOIN auction_announcement_preference AS preference
+            ON preference.identity_id = person.identity_id
+        WHERE NOT person.blocked
+            AND person.rights && @Rights
+        ORDER BY person.identity_id;
+        """;
+
+    // Название сходки для вести: у аукциона своего названия нет, а карточка
+    // реплики — единственное место, где оно есть без звонка в Meetups.
+    private const string MeetupTitleSql = """
+        SELECT title FROM meetup_replica WHERE meetup_id = @MeetupId;
+        """;
+
+    // Аукцион сняли с публикации, пока весть о нём ждала релея (PER-646): человек
+    // пошёл бы к аукциону, которого не видит. Аукцион у сходки один, поэтому
+    // признак — пара «сходка и повод». Без SKIP LOCKED по той же причине, что
+    // снятие при отмене.
+    private const string WithdrawOnAuctionHiddenSql = """
+        UPDATE notification
+        SET withdrawn_at = @Now, withdrawal_reason = @Reason
+        WHERE meetup_id = @MeetupId
+            AND cause_kind = @CauseKind
+            AND type = ANY(@Types)
+            AND dispatched_at IS NULL
+            AND withdrawn_at IS NULL
+            AND rejected_at IS NULL
+        RETURNING type;
+        """;
+
     // SKIP LOCKED: второй экземпляр сервиса берёт другие строки, а не ждёт
     // блокировки, и счётчик попыток одной строки два прохода не делят. Порядок
     // между фактами контракт не обещает — каждый факт самостоятелен.
@@ -936,6 +973,70 @@ public sealed class NotificationStore(NpgsqlDataSource source)
             now,
             notAfter,
             cancellationToken);
+    }
+
+    /// <summary>
+    /// Разворачивает весть о новом аукционе или об открытии торгов на держателей
+    /// права <c>place_bids</c> (PER-646) и пишет факты в транзакции
+    /// <paramref name="work" /> — той же, что приняла ключ события. Настройка
+    /// уведомлений аукциона читается оттуда же: выключивший её не получает ни
+    /// вести, ни строки.
+    /// </summary>
+    /// <remarks>
+    /// Исполнитель повода адресатом не исключается: факт аукциона не называет,
+    /// кто опубликовал аукцион, а держатель права ставок, опубликовавший его,
+    /// видит весть как все.
+    /// </remarks>
+    internal static async Task<FactCount> AddAuctionAnnouncement(
+        UnitOfWork work,
+        AuctionAnnouncement announcement,
+        DateTimeOffset now,
+        DateTimeOffset notAfter,
+        CancellationToken cancellationToken)
+    {
+        var type = announcement.Occasion == AnnouncementOccasion.TradingOpened
+            ? AuctionFacts.TradingOpenedType
+            : AuctionFacts.PublishedType;
+        var titles = await work.Query<string>(MeetupTitleSql, new { announcement.MeetupId }, cancellationToken);
+        var title = titles.Count == 0 ? "" : titles[0];
+        var audience = await work.Query<AudienceRow>(
+            AuctionAnnouncementAudienceSql,
+            new { Rights = new[] { NotificationFacts.PlaceBidsRight } },
+            cancellationToken);
+
+        return await Insert(
+            work,
+            new FactCause(type, AuctionFacts.AuctionCauseKind, announcement.EventId.ToString(), announcement.MeetupId,
+                null),
+            audience,
+            (id, recipient) => AuctionFacts.Announcement(id, recipient, announcement, type, title, now, notAfter),
+            now,
+            notAfter,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Снимает неотправленную весть о новом аукционе, который сняли с публикации
+    /// (PER-646). Отправленное не отзывается: отзыва доставленного в продукте нет.
+    /// </summary>
+    internal static async Task<int> WithdrawOnAuctionHidden(
+        UnitOfWork work,
+        Guid meetupId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var types = await work.Query<string>(
+            WithdrawOnAuctionHiddenSql,
+            new
+            {
+                MeetupId = meetupId,
+                CauseKind = AuctionFacts.AuctionCauseKind,
+                Types = new[] { AuctionFacts.PublishedType },
+                Now = now.UtcDateTime,
+                Reason = NotificationFacts.WithdrawnOnAuctionHidden,
+            },
+            cancellationToken);
+        return types.Count;
     }
 
     // Категории, которые требуют подписки: разворот идёт по подписчикам этой

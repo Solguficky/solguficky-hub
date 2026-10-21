@@ -10,6 +10,10 @@ import {
   type RenderMessage,
 } from "../../../core/delivery/index.js";
 import {
+  type AuctionAnnouncementNotice,
+  renderAuctionAnnouncement,
+} from "../../../core/notifications/auction-announcement-notice.js";
+import {
   type AuctionCancelledNotice,
   renderAuctionCancelledNotice,
 } from "../../../core/notifications/auction-cancelled-notice.js";
@@ -74,6 +78,12 @@ export function traceRootCallback(auctionId: string): string {
   return `${tracePrefix}${encodeAuctionCallback({ kind: "root", auctionId })}`;
 }
 
+// «Лоты» под вестью об открытии торгов (PER-646) — лента лотов аукциона тем
+// же путём, что кнопка «Лоты» корня аукциона.
+export function traceFeedCallback(auctionId: string): string {
+  return `${tracePrefix}${encodeAuctionCallback({ kind: "feed", auctionId, page: 0 })}`;
+}
+
 // Вход в аукцион из следа сообщения о допуске — FAQ, тем же путём, что
 // команда `/faq`: впереди у допущенного правила, и подпись это и обещает
 // (PER-592). «Аукционы» под FAQ ставят отметку и открывают список.
@@ -97,6 +107,7 @@ export function parseTraceCallback(data: string): string | undefined {
   return parsed.ok &&
     (parsed.intent.kind === "lot" ||
       parsed.intent.kind === "raffle" ||
+      parsed.intent.kind === "feed" ||
       parsed.intent.kind === "root")
     ? inner
     : undefined;
@@ -144,6 +155,15 @@ export function createRenderMessage(
     if (content.kind === "auction-cancelled") {
       return { kind: "ready", message: renderNotification(content) };
     }
+    // Вести о новом аукционе и об открытии торгов (PER-646) права не
+    // спрашивают: адресата выбрал издатель по праву ставок
+    // (auction-announcement-notice.ts).
+    if (content.kind === "new-auction" || content.kind === "trading-opened") {
+      return {
+        kind: "ready",
+        message: renderNotification(content, new Map(), false, timeZone),
+      };
+    }
     if (content.kind === "access-granted") {
       return (
         (await checkPlaceBids(reads, context)) ?? {
@@ -181,6 +201,9 @@ export function renderNotification(
   }
   if (content.kind === "raffle-result") return raffleMessage(content);
   if (content.kind === "auction-cancelled") return cancelledMessage(content);
+  if (content.kind === "new-auction" || content.kind === "trading-opened") {
+    return announcementMessage(content, timeZone);
+  }
   if (isFinalNotice(content)) {
     return traceMessage(renderFinalNotice(content, { lots }));
   }
@@ -216,6 +239,29 @@ function cancelledMessage(notice: AuctionCancelledNotice): NotificationMessage {
         {
           text: view.button.text,
           callback_data: traceRootCallback(view.button.auctionId),
+        },
+      ],
+    ],
+  };
+}
+
+// «Аукцион» ведёт в корень аукциона, «Лоты» — в ленту лотов: обе кнопки — следы
+// этой поверхности, экран приходит новым сообщением.
+function announcementMessage(
+  notice: AuctionAnnouncementNotice,
+  timeZone: string,
+): NotificationMessage {
+  const view = renderAuctionAnnouncement(notice, timeZone);
+  return {
+    text: view.text,
+    rows: [
+      [
+        {
+          text: view.button.text,
+          callback_data:
+            notice.kind === "new-auction"
+              ? traceRootCallback(view.button.auctionId)
+              : traceFeedCallback(view.button.auctionId),
         },
       ],
     ],
