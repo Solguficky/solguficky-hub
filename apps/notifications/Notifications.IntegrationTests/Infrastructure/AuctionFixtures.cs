@@ -32,7 +32,18 @@ public static class AuctionFixtures
     public static AuctionSale DecodeSale(global::Auction.V1.LotEvent message) =>
         AuctionMapping.Decode(AuctionFeed.LotSoldSubject, EventFactory.Bytes(message)).ShouldBeOfType<AuctionDecoded.Sale>().Value;
 
-    public static Task<long> Count(IsolatedDatabase db, string table) =>
+    public static AuctionRemoval DecodeRemoval(global::Auction.V1.LotEvent message) =>
+        AuctionMapping.Decode(AuctionFeed.ParticipantRemovedSubject, EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Removal>().Value;
+
+    /// <summary>Лидер из реплики лота: по нему адресуются напоминание и «перебили».</summary>
+    public static async Task<Guid?> ReplicaLeader(IsolatedDatabase db, string lotId)
+    {
+        await using var connection = new NpgsqlConnection(db.ConnectionString);
+        return await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
+            "SELECT leader_id FROM lot_replica WHERE lot_id = @LotId;",
+            new { LotId = Guid.Parse(lotId) }, cancellationToken: Cancellation));
+    }    public static Task<long> Count(IsolatedDatabase db, string table) =>
         Scalar<long>(db, $"SELECT count(*) FROM {table};");
 
     public static async Task<Notification> StoredFact(IsolatedDatabase db) =>

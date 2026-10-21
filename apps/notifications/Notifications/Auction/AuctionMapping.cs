@@ -58,6 +58,22 @@ public sealed record AuctionBid(Guid EventId, Guid LotId, Guid AuctionId, long V
 public sealed record AuctionSale(Guid EventId, Guid LotId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
     Guid Winner, Money Price, LotSnapshot? Snapshot);
 
+/// <summary>
+/// Проверенное снятие участника с лота (ADR-072, PER-672): снимок — лот после
+/// снятия, цена — та, с которой лот идёт дальше. Кого сняли, факт не несёт,
+/// поэтому и записи о снятом здесь нет: прежний лидер нужен только для того,
+/// чтобы отличить смену лидерства от снятия того, кто лот не вёл.
+/// </summary>
+public sealed record AuctionRemoval(Guid EventId, LotSnapshot Snapshot, Guid? PreviousLeader, Money Price)
+{
+    /// <summary>
+    /// Новый лидер, которому сообщают, что ведение вернулось: снятие без смены
+    /// лидера и снятие единственного участника получателя не дают.
+    /// </summary>
+    public Guid? RestoredRecipient =>
+        PreviousLeader is { } previous && previous != Snapshot.Leader ? Snapshot.Leader : null;
+}
+
 /// <summary>Повод финала аукциона: заморозка состава или старт.</summary>
 public enum FinalOccasion { LineupFrozen, Started }
 
@@ -125,6 +141,7 @@ public abstract record AuctionDecoded
 {
     public sealed record Bid(AuctionBid Value) : AuctionDecoded;
     public sealed record Sale(AuctionSale Value) : AuctionDecoded;
+    public sealed record Removal(AuctionRemoval Value) : AuctionDecoded;
     public sealed record Lot(AuctionLotFact Value) : AuctionDecoded;
     public sealed record Final(AuctionFinal Value) : AuctionDecoded;
     public sealed record FinalLotActivated(AuctionFinalLotActivated Value) : AuctionDecoded;
@@ -200,6 +217,7 @@ public static class AuctionMapping
         {
             LotEvent.OccasionOneofCase.BidPlaced => DecodeBid(message, eventId, lotId, occurredAt, snapshot),
             LotEvent.OccasionOneofCase.LotSold => DecodeSale(message, eventId, lotId, occurredAt, snapshot),
+            LotEvent.OccasionOneofCase.ParticipantRemoved => DecodeRemoval(message, eventId, snapshot),
             _ when snapshot is null => new AuctionDecoded.Poison("state status, deadline or leader is invalid"),
             _ when state.StatusCase == LotState.StatusOneofCase.Held => DecodeHold(state, eventId, snapshot),
             _ => new AuctionDecoded.Lot(new AuctionLotFact(eventId, snapshot)),
@@ -610,6 +628,41 @@ public static class AuctionMapping
         }
         return new AuctionDecoded.Sale(new AuctionSale(eventId, lotId, Guid.Parse(state.AuctionId), message.Version,
             occurredAt, winner, price.Clone(), snapshot));
+    }
+
+    // Снятие участника (ADR-072, PER-672). Снимок обязателен: он называет нового
+    // лидера и пишет реплику, без него повода нет. Цена у каждого положения
+    // своя — у торгующегося это цена торгов, у удержанного цена удержания, — а
+    // прочие положения снятие не принимает, и такой факт дефект издателя.
+    private static AuctionDecoded DecodeRemoval(LotEvent message, Guid eventId, LotSnapshot? snapshot)
+    {
+        if (snapshot is null || message.State is not { } state)
+        {
+            return new AuctionDecoded.Poison("state status, deadline or leader is invalid");
+        }
+
+        Money? price = snapshot.Status switch
+        {
+            LotStatus.Trading when state.Trading is { } trading => trading.CurrentPrice,
+            LotStatus.Held when state.Held is { } held => held.CurrentPrice,
+            _ => null,
+        };
+        if (price is not { } current || !Price(current) ||
+            state.Config is { } config && config.Currency != current.Currency)
+        {
+            return new AuctionDecoded.Poison("participant_removed lot is not trading or held, or its price is invalid");
+        }
+
+        Guid? previous = null;
+        if (message.ParticipantRemoved.HasPreviousLeaderId)
+        {
+            if (!Id(message.ParticipantRemoved.PreviousLeaderId, out var previousId))
+            {
+                return new AuctionDecoded.Poison("previous_leader_id is not a canonical UUIDv7");
+            }
+            previous = previousId;
+        }
+        return new AuctionDecoded.Removal(new AuctionRemoval(eventId, snapshot, previous, current.Clone()));
     }
 
     // RFC 3339 точность не ограничивает, а Auction пишет Instant.toString:

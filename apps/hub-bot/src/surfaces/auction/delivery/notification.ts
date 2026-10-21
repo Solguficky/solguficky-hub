@@ -80,6 +80,7 @@ function toContent(
   switch (type.case) {
     case "lotOutbid":
     case "lotProxyRaised":
+    case "lotLeadRestored":
     case "lotPurchased":
     case "lotActivityDigest":
     case "lotReminder":

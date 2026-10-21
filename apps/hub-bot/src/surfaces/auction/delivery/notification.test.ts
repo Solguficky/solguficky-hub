@@ -202,6 +202,28 @@ describe("decodeNotification", () => {
     });
   });
 
+  // Ведение лота вернулось: снятие участника оставило лот новому лидеру
+  // (ADR-072, п. 5). Ветка приходит в auction subject и разбирается этим ботом.
+  it("decodes a restored lead with the lot and the current price", () => {
+    expect(
+      decodeNotification(
+        fact({
+          case: "lotLeadRestored",
+          value: { lotId, currentPrice: price },
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "lot-lead-restored",
+          lotId,
+          currentPrice: { minorUnits: 150_000, currency: "RUB" },
+        },
+      },
+    });
+  });
+
   it("decodes a purchase fact with the sale price", () => {
     expect(
       decodeNotification(

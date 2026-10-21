@@ -13,7 +13,7 @@ public enum AuctionOutcome
     Outbid, FirstBid, LeaderUnchanged, Overtaken, Purchased, Duplicate, Suppressed, Collected, LotReplicated,
     FinalAnnounced, LineupPending, LineupIncomplete, AuctionForgotten, RaffleAnnounced, PredictionResultsAnnounced,
     AuctionCancelled, AuctionEnded,
-    FinalLotNext,
+    FinalLotNext, LeadRestored,
 }
 
 /// <summary>Исход повода и созданные факты по типу: ставка даёт до двух — перебитому и лидеру автоставки.</summary>
@@ -242,6 +242,57 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
         await work.Commit(cancellationToken);
         return new AuctionApplication(AuctionOutcome.LotReplicated, new Dictionary<string, int>());
+    }
+
+    /// <summary>
+    /// Снятие участника с лота (ADR-072, PER-672): реплика лота после снятия и
+    /// отметка новому лидеру — той же транзакцией, что ключ события, а поверх
+    /// них сообщение «ведение вернулось». Его получает только новый лидер, и
+    /// только когда лидерство сменилось: снятие того, кто лот не вёл, и снятие
+    /// единственного участника повода не дают, а снятому не пишется ничего.
+    /// Настройка перебитий сообщение не гасит: ставки получатель не делал.
+    /// </summary>
+    public async Task<AuctionApplication> Apply(AuctionRemoval removal, DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var work = await UnitOfWork.Begin(source, cancellationToken);
+        if (await ConsumedEventStore.Consume(work, AuctionFeed.Source, removal.EventId, now, cancellationToken) == 0)
+        {
+            return new AuctionApplication(AuctionOutcome.Duplicate, new Dictionary<string, int>());
+        }
+
+        // Снятие лота кончившегося аукциона ни реплики, ни сообщения не пишет.
+        await AuctionEndStore.LockShared(work, removal.Snapshot.AuctionId, cancellationToken);
+        if (await AuctionEndStore.Read(work, removal.Snapshot.AuctionId, cancellationToken) is not null)
+        {
+            await work.Commit(cancellationToken);
+            return new AuctionApplication(AuctionOutcome.AuctionEnded, new Dictionary<string, int>());
+        }
+
+        await LotReplicaStore.Apply(work, removal.Snapshot, now, cancellationToken);
+
+        var created = new Dictionary<string, int>();
+        if (removal.Snapshot.Leader is { } leader)
+        {
+            // Отметка — как у лидера ставки: лот, который человек ведёт, он видит
+            // в избранном. Снятую отметку вставка не возвращает, как и у ставки.
+            await FavoriteStore.AutoFollow(work, leader, removal.Snapshot.LotId, now, cancellationToken);
+        }
+
+        var restored = removal.RestoredRecipient;
+        if (restored is not null)
+        {
+            var notAfter = now + options.Value.StaleAfter;
+            var notification = AuctionFacts.LeadRestored(Guid.CreateVersion7(now), removal, now, notAfter);
+            created[AuctionFacts.LeadRestoredType] = await NotificationStore.AddAddressed(work, notification,
+                AuctionFacts.LeadRestoredType, AuctionFacts.CauseKind, removal.EventId.ToString(), now, notAfter,
+                cancellationToken,
+                await NotificationStore.DeliverySurface(work, restored.Value, cancellationToken));
+        }
+
+        await work.Commit(cancellationToken);
+        return new AuctionApplication(
+            restored is null ? AuctionOutcome.LotReplicated : AuctionOutcome.LeadRestored, created);
     }
 
     /// <summary>

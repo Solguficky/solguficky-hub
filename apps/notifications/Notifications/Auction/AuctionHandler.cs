@@ -38,6 +38,9 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
                 (Func<Task<AuctionApplication>>)(() => store.Apply(bid, clock.GetUtcNow(), stoppingToken))),
             AuctionDecoded.Sale { Value: var sale } => (new EventRef(sale.EventId, sale.LotId, null, sale.Version, sale.OccurredAt),
                 () => store.Apply(sale, clock.GetUtcNow(), stoppingToken)),
+            AuctionDecoded.Removal { Value: var removal } => (new EventRef(removal.EventId, removal.Snapshot.LotId,
+                    null, removal.Snapshot.Version, removal.Snapshot.OccurredAt),
+                () => store.Apply(removal, clock.GetUtcNow(), stoppingToken)),
             AuctionDecoded.Lot { Value: var fact } => (new EventRef(fact.EventId, fact.Snapshot.LotId, null,
                     fact.Snapshot.Version, fact.Snapshot.OccurredAt),
                 () => store.Apply(fact, clock.GetUtcNow(), stoppingToken)),
@@ -130,6 +133,7 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
             AuctionOutcome.AuctionCancelled => "auction_cancelled",
             AuctionOutcome.AuctionEnded => "auction_ended",
             AuctionOutcome.FinalLotNext => "final_lot_next",
+            AuctionOutcome.LeadRestored => "lead_restored",
             _ => throw new ArgumentOutOfRangeException(nameof(application)),
         }, application.FactsCreated);
     }

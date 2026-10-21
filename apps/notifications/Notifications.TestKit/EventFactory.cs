@@ -468,6 +468,48 @@ public static class EventFactory
         return message;
     }
 
+    /// <summary>
+    /// Снятие участника с лота (ADR-072): снимок — лот после снятия.
+    /// <paramref name="previousLeader" /> — лидер до снятия, <c>null</c> — его не
+    /// было; <paramref name="leader" /> — лидер после, <c>null</c> — лот никто не
+    /// ведёт; <paramref name="held" /> — снятие в удержании, а не в торгах.
+    /// </summary>
+    public static global::Auction.V1.LotEvent ParticipantRemoved(string lotId, string? previousLeader = null,
+        string? leader = null, long version = 8, bool held = false, long price = 10000, string? deadline = null,
+        string? auction = null)
+    {
+        var message = Closed(lotId, version);
+        if (auction is not null) message.State.AuctionId = auction;
+        message.State.Config = Config();
+        var money = new global::Auction.V1.Money { MinorUnits = price, Currency = "RUB" };
+        if (held)
+        {
+            message.State.Held = new global::Auction.V1.LotHeld { CurrentPrice = money };
+            if (leader is not null)
+            {
+                message.State.Held.LeaderId = leader;
+                message.State.Held.LeadingBidId = NewId();
+            }
+        }
+        else
+        {
+            message.State.Trading = new global::Auction.V1.LotTrading
+            {
+                CurrentPrice = money,
+                Phase = global::Auction.V1.LotPhase.Online,
+            };
+            if (deadline is not null) message.State.Trading.Deadline = deadline;
+            if (leader is not null)
+            {
+                message.State.Trading.LeaderId = leader;
+                message.State.Trading.LeadingBidId = NewId();
+            }
+        }
+        message.ParticipantRemoved = new global::Auction.V1.ParticipantRemoved();
+        if (previousLeader is not null) message.ParticipantRemoved.PreviousLeaderId = previousLeader;
+        return message;
+    }
+
     /// <summary>Аукцион сходки: UUIDv5, как его выводит Auction.</summary>
     public static string AuctionOfMeetup()
     {
