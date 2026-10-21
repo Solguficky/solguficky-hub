@@ -82,7 +82,7 @@ public sealed record AuctionFinal(Guid EventId, Guid AuctionId, Guid MeetupId, l
 /// называется своим аукционом.
 /// </summary>
 public sealed record RaffleDraw(Guid EventId, Guid AuctionId, long Version, DateTimeOffset OccurredAt,
-    IReadOnlyList<Guid> Tickets, int WinningTicket);
+    IReadOnlyList<Guid> Tickets, int WinningTicket, string? Prize = null);
 
 /// <summary>
 /// Итог номинации: лоты, делившие первое место, или число — ровно одно из
@@ -390,8 +390,14 @@ public static class AuctionMapping
             tickets.Add(holderId);
         }
         return new AuctionDecoded.Raffle(new RaffleDraw(eventId, Guid.Parse(message.RaffleId), message.Version,
-            occurredAt, tickets, (int)state.WinningTicket));
+            occurredAt, tickets, (int)state.WinningTicket, Prize(state)));
     }
+
+    // Приз розыгрыша необязателен (PER-649): отсутствие — розыгрыш без приза, а не
+    // дефект факта. Пустую строку чужого писателя читаем как отсутствие: иначе
+    // победитель получил бы «Приз:» без приза.
+    private static string? Prize(RaffleState state) =>
+        state.HasRafflePrize && !string.IsNullOrWhiteSpace(state.RafflePrize) ? state.RafflePrize : null;
 
     // Факт итогов один на аукцион, и яд теряет его для всех сразу, поэтому
     // ядом остаётся только то, что исказило бы сообщение, — номинация без

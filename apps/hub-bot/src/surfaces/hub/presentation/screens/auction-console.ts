@@ -5,6 +5,7 @@ import {
   acceptsLots,
   activeLot,
   heldLots,
+  rafflePrizeLimit,
   windowLimit,
   windowPrint,
 } from "../../application/auction-console.js";
@@ -20,6 +21,7 @@ import type {
   LineupPick,
   LotAmount,
   RaffleAskError,
+  RafflePrizeAskError,
   StepWindow,
   TradingHolder,
   WeekAskError,
@@ -45,6 +47,8 @@ import {
   consoleNextLotData,
   consoleOpenData,
   consoleRaffleData,
+  consoleRafflePrizeData,
+  consoleRafflePrizeRemoveData,
   consoleRaffleRemoveData,
   consoleStartFinalData,
   consoleViewData,
@@ -124,6 +128,10 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "week-needed": "Сначала задай сроки недели.",
   "raffle-saved": "Момент розыгрыша сохранён.",
   "raffle-removed": "Розыгрыш убран. Неделя пройдёт без него.",
+  "prize-saved": "Приз розыгрыша сохранён.",
+  "prize-removed": "Приз розыгрыша убран. Победитель получит весть без приза.",
+  "prize-without-raffle":
+    "Приз задаётся у розыгрыша: сначала нажми «Розыгрыш» и назови момент.",
   marked: "Лот отмечен для финала.",
   unmarked: "Отметка финала снята.",
   "already-marked": "Лот уже отмечен для финала.",
@@ -173,6 +181,11 @@ function noteText(view: ConsoleScreenView, note: ConsoleNote): string {
         : screenText(
             `Регистрация в розыгрыше закроется ${moment(week.raffleClosesAt, view)}`,
           );
+    // Приз называет себя сам (PER-649): строка «Приз: …» идёт и в сводке.
+    case "prize-saved":
+      return week?.rafflePrize === undefined
+        ? outcomeText(consoleNoteText[note])
+        : screenText(`Приз розыгрыша сохранён: ${week.rafflePrize}`);
     case "another-auction-active":
       return view.holder === undefined
         ? outcomeText(consoleNoteText[note])
@@ -282,10 +295,18 @@ function raffleLine(week: AuctionWeek, view: ConsoleScreenView): string {
   }
 }
 
+// Приз розыгрыша (PER-649) — строкой под розыгрышем: его видят участники на
+// экране розыгрыша, а победитель — в вести. Без приза строки нет.
+function rafflePrizeLines(week: AuctionWeek): string[] {
+  return week.rafflePrize === undefined ? [] : [`Приз: ${week.rafflePrize}`];
+}
+
 // Розыгрыш после онлайн-торгов: итог виден, пока пульт открыт (PER-618).
 function raffleLines(view: ConsoleScreenView): string[] {
   const week = view.console.week;
-  return week?.raffleClosesAt === undefined ? [] : [raffleLine(week, view)];
+  return week?.raffleClosesAt === undefined
+    ? []
+    : [raffleLine(week, view), ...rafflePrizeLines(week)];
 }
 
 function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
@@ -308,6 +329,7 @@ function statusLines(view: ConsoleScreenView): string[] {
             finalLine(week),
             ...windowsLines(week),
             raffleLine(week, view),
+            ...rafflePrizeLines(week),
           ];
     case "prebidding":
       return [
@@ -316,7 +338,12 @@ function statusLines(view: ConsoleScreenView): string[] {
           : `Идут онлайн-торги до ${moment(week.closesAt, view)}.`,
         ...(week === undefined
           ? []
-          : [finalLine(week), ...windowsLines(week), raffleLine(week, view)]),
+          : [
+              finalLine(week),
+              ...windowsLines(week),
+              raffleLine(week, view),
+              ...rafflePrizeLines(week),
+            ]),
       ];
     case "settling":
       return [
@@ -678,10 +705,22 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
       .text("Сводка дня", consoleDaySummaryData(auction));
     nextRow(keyboard).text("Розыгрыш", consoleRaffleData(auction));
     if (week.raffleClosesAt !== undefined) {
+      // Приз живёт у розыгрыша (PER-649): без момента кнопки нет — Auction
+      // приз без розыгрыша не принимает.
+      nextRow(keyboard).text(
+        week.rafflePrize === undefined ? "Приз" : "Изменить приз",
+        consoleRafflePrizeData(auction),
+      );
       nextRow(keyboard).text(
         removeLabel("Убрать розыгрыш"),
         consoleRaffleRemoveData(auction),
       );
+      if (week.rafflePrize !== undefined) {
+        nextRow(keyboard).text(
+          removeLabel("Убрать приз"),
+          consoleRafflePrizeRemoveData(auction),
+        );
+      }
     }
     nextRow(keyboard).text("Открыть онлайн-неделю", consoleOpenData(auction));
   } else if (
@@ -1177,6 +1216,26 @@ export function raffleQuestionText(
       ? []
       : [`Сейчас: ${local(week.raffleClosesAt)}`]),
     rafflePrompt,
+  ].join("\n");
+}
+
+/** Причина отказа ответу о призе розыгрыша (PER-649). */
+export const rafflePrizeAskErrorText: Record<RafflePrizeAskError, string> = {
+  "prize-blank":
+    "Пустой приз призом не считается: напиши, что получит победитель.",
+  "prize-too-long": `Приз длиннее ${rafflePrizeLimit} знаков: строку увидят участники, и её нужно сократить.`,
+};
+
+export const rafflePrizePrompt = `Приз одной строкой — то, что получит победитель. Например: сертификат в книжный магазин на 5000 ₽. Не длиннее ${rafflePrizeLimit} знаков`;
+
+/**
+ * Вопрос о призе розыгрыша: текущий приз в том же виде, в каком его вводят,
+ * затем образец.
+ */
+export function rafflePrizeQuestionText(prize: string | undefined): string {
+  return [
+    ...(prize === undefined ? [] : [`Сейчас: ${prize}`]),
+    rafflePrizePrompt,
   ].join("\n");
 }
 

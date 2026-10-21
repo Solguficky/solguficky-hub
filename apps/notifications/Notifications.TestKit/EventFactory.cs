@@ -570,6 +570,18 @@ public static class EventFactory
     }
 
     /// <summary>
+    /// Тот же итог с призом в снимке (PER-649): приз объявлен вместе с моментом
+    /// закрытия регистрации и едет в факт жеребьёвки.
+    /// </summary>
+    public static global::Auction.V1.RaffleEvent RaffleDrawnWithPrize(string auction, uint winningTicket,
+        string prize, params string[] tickets)
+    {
+        var message = RaffleDrawn(auction, winningTicket, tickets);
+        message.State.RafflePrize = prize;
+        return message;
+    }
+
+    /// <summary>
     /// Итоги прогнозов (PER-567): две номинации — лот и число — и по участнику
     /// на каждого из <paramref name="participants"/>. Первый угадал лот, все
     /// промахнулись с числом на свой номер; угадавший назван «Первый».

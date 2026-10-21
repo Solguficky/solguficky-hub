@@ -212,6 +212,11 @@ message OnlinePhase {
   // participants closes. Unset is a real value: an auction without a raffle; it
   // is then absent, not empty.
   optional string raffle_closes_at = 4;
+
+  // The prize of the raffle among the participants, one line as the organizer
+  // wrote it. Unset is a real value: a raffle without a prize; the field is
+  // then absent, not empty.
+  optional string raffle_prize = 5;
 }
 
 // Who closes the lots. Exactly one is set, and an empty oneof is not a value.

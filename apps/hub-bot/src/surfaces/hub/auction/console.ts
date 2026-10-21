@@ -47,6 +47,10 @@ function weekOf(auction: AuctionSnapshot): AuctionWeek | undefined {
     ...(phase?.raffleClosesAt === undefined
       ? {}
       : { raffleClosesAt: phase.raffleClosesAt }),
+    // Приз розыгрыша (PER-649): нет поля или пробельная строка — приза нет.
+    ...(phase?.rafflePrize === undefined || phase.rafflePrize.trim() === ""
+      ? {}
+      : { rafflePrize: phase.rafflePrize }),
     final: config.finalBlocks > 0,
     windows: config.stepWindows.map(windowOf),
   };

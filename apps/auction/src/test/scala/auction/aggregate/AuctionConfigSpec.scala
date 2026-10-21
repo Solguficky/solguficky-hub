@@ -109,6 +109,50 @@ final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckD
       AuctionConfig.parse(configInput(open, closingPolicy = ClosingPolicy.ByAuctioneer)).isRight shouldBe true
     }
 
+    "accepts a raffle prize with the raffle and names it, up to the limit of the message" in {
+      val raffle = opensAt.plusSeconds(3600)
+      val prize = "сертификат в книжный на 5000 ₽"
+      val config = AuctionConfig.parse(
+        configInput(Some(week.copy(raffleClosesAt = Some(raffle), rafflePrize = Some(prize))))
+      )
+      config.map(_.rafflePrize) shouldBe Right(Some(prize))
+      val atLimit = "я" * AuctionConfig.MaxRafflePrize
+      val accepted =
+        AuctionConfig.parse(configInput(Some(week.copy(raffleClosesAt = Some(raffle), rafflePrize = Some(atLimit)))))
+      accepted.map(_.rafflePrize) shouldBe Right(Some(atLimit))
+    }
+
+    "refuses a raffle prize without a raffle" in {
+      AuctionConfig.parse(configInput(Some(week.copy(rafflePrize = Some("кружка"))))) shouldBe
+        Left(ConfigInvalid.RafflePrizeWithoutRaffle)
+    }
+
+    "refuses a blank raffle prize" in {
+      val raffle = opensAt.plusSeconds(3600)
+      for (blank <- List("", " ", "  \t "))
+        AuctionConfig.parse(
+          configInput(Some(week.copy(raffleClosesAt = Some(raffle), rafflePrize = Some(blank))))
+        ) shouldBe Left(ConfigInvalid.RafflePrizeBlank)
+    }
+
+    "refuses a raffle prize longer than the limit of the message" in {
+      val raffle = opensAt.plusSeconds(3600)
+      val tooLong = "я" * (AuctionConfig.MaxRafflePrize + 1)
+      AuctionConfig.parse(
+        configInput(Some(week.copy(raffleClosesAt = Some(raffle), rafflePrize = Some(tooLong))))
+      ) shouldBe Left(ConfigInvalid.RafflePrizeTooLong)
+    }
+
+    // Предел приза — предел платформы, а не значения: смена константы не делает записанный журнал нечитаемым.
+    "reads a journal row whose raffle prize is longer than the limit" in {
+      val raffle = opensAt.plusSeconds(3600)
+      val stored = "я" * (AuctionConfig.MaxRafflePrize + 1)
+      val phase = OnlinePhase(opensAt, Some(closesAt), closesLots = true, Some(raffle), Some(stored))
+      AuctionConfig
+        .of(Some(phase), 1, ClosingPolicy.Mixed(onlineByDeadline = true), None, Nil)
+        .map(_.rafflePrize) shouldBe Right(Some(stored))
+    }
+
     "refuses a number of final blocks outside zero and one" in {
       for (blocks <- List(-1, 2))
         AuctionConfig.parse(configInput(finalBlocks = blocks)) shouldBe Left(ConfigInvalid.FinalBlocksOutOfRange)

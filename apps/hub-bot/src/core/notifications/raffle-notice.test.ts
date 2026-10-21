@@ -23,6 +23,33 @@ describe("raffleNoticeOf", () => {
     });
   });
 
+  // Приз розыгрыша (PER-649) едет фактом и обрезается по краям; пустая строка —
+  // розыгрыш без приза.
+  it("carries the raffle prize and drops a blank one", () => {
+    expect(
+      raffleNoticeOf(
+        create(RaffleResultSchema, {
+          auctionId,
+          ticket: 3,
+          winningTicket: 7,
+          ticketCount: 12,
+          rafflePrize: "  сертификат на 5000 ₽ ",
+        }),
+      ),
+    ).toMatchObject({ prize: "сертификат на 5000 ₽" });
+    expect(
+      raffleNoticeOf(
+        create(RaffleResultSchema, {
+          auctionId,
+          ticket: 3,
+          winningTicket: 7,
+          ticketCount: 12,
+          rafflePrize: "  ",
+        }),
+      ),
+    ).not.toHaveProperty("prize");
+  });
+
   // Номер вне 1…N, пустой пул и не каноническая форма аукциона — дефект
   // издателя: кнопку из такого факта не собрать, текст был бы неправдой.
   it.each([
@@ -44,18 +71,38 @@ describe("raffleNoticeOf", () => {
 });
 
 describe("renderRaffleNotice", () => {
-  const notice = (ticket: number, ticketCount = 12): RaffleNotice => ({
+  const notice = (
+    ticket: number,
+    ticketCount = 12,
+    prize?: string,
+  ): RaffleNotice => ({
     kind: "raffle-result",
     auctionId,
     ticket,
     winningTicket: ticket === 3 ? 7 : ticket,
     ticketCount,
+    ...(prize === undefined ? {} : { prize }),
   });
 
   it("tells the winner their ticket won", () => {
     expect(renderRaffleNotice(notice(7)).text).toBe(
       "Твой билет №7 из 12 выиграл розыгрыш среди участников.",
     );
+  });
+
+  // Приз называет себя в вести победителя (PER-649): его задаёт пульт, а
+  // участники видят ту же строку на экране розыгрыша.
+  it("names the prize and the next step to the winner", () => {
+    expect(renderRaffleNotice(notice(7, 12, "сертификат на 5000 ₽")).text).toBe(
+      "Твой билет №7 из 12 выиграл розыгрыш среди участников: приз — сертификат на 5000 ₽, а организатор напишет тебе, как его получить.",
+    );
+  });
+
+  // Приза нет — весть остаётся прежней: ни приза, ни обещания выдачи.
+  it("tells the winner without a prize when the raffle has no prize", () => {
+    const text = renderRaffleNotice(notice(7)).text;
+    expect(text).not.toContain("приз");
+    expect(text).not.toContain("как его получить");
   });
 
   // Единственный билет выигрывает так же: жеребьёвка его не пропускает.

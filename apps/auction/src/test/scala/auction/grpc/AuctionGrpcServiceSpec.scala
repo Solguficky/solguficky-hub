@@ -983,7 +983,12 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         Randomness.fromHex("d7941e7b5bcaf8742bfc7136d38c5ab8274286629ffe43081dbda1f05d798300").get
       val drawn = Raffle(
         RaffleState
-          .Drawn(raffleTerms, Vector(ParticipantId(UUID.fromString(lot)), ViewerId), randomness, Instant.EPOCH),
+          .Drawn(
+            raffleTerms.copy(prize = Some("кружка")),
+            Vector(ParticipantId(UUID.fromString(lot)), ViewerId),
+            randomness,
+            Instant.EPOCH
+          ),
         Map.empty
       )
       val read = service(Unreachable, raffles = Raffles(drawn), raffleNames = _ => Future.successful(Map(1 -> "Кот*")))
@@ -991,6 +996,7 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .futureValue
         .getRaffle
       read.status shouldBe wire.RaffleStatus.RAFFLE_STATUS_DRAWN
+      read.rafflePrize shouldBe Some("кружка")
       read.tickets shouldBe Seq(wire.RaffleTicket(1, Some("Кот*")), wire.RaffleTicket(2, None))
       read.myTicket shouldBe Some(2)
       read.drawnAt shouldBe Some(Instant.EPOCH.toString)

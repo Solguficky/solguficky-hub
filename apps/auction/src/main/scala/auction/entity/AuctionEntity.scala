@@ -581,7 +581,7 @@ object AuctionEntity {
           auction.state match {
             case AuctionState.Prebidding(config, _) if !raffleOpened =>
               config.raffleClosesAt.foreach { closesAt =>
-                context.pipeToSelf(raffle.open(auctionId, closesAt))(RaffleAnswered(_))
+                context.pipeToSelf(raffle.open(auctionId, closesAt, config.rafflePrize))(RaffleAnswered(_))
               }
             case _ => ()
           }

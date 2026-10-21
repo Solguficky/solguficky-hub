@@ -16,7 +16,8 @@ object AuctionValues {
           opensAt = LotValues.instant(phase.opensAt),
           closesAt = phase.closesAt.map(LotValues.instant),
           closesLots = phase.closesLots,
-          raffleClosesAt = phase.raffleClosesAt.map(LotValues.instant)
+          raffleClosesAt = phase.raffleClosesAt.map(LotValues.instant),
+          rafflePrize = phase.rafflePrize
         )
       },
       finalBlocks = config.finalBlocks,

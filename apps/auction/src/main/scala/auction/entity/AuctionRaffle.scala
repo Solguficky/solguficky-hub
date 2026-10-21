@@ -19,7 +19,7 @@ import scala.concurrent.duration.FiniteDuration
  * раз на тике переспроса: открытие и отмена идемпотентны.
  */
 trait AuctionRaffle {
-  def open(auctionId: String, closesAt: Instant): Future[Done]
+  def open(auctionId: String, closesAt: Instant, prize: Option[String]): Future[Done]
 
   def cancel(auctionId: String, opId: OpId): Future[Done]
 }
@@ -28,7 +28,7 @@ object AuctionRaffle {
 
   /** Аукцион без розыгрыша в узле: тесты аукциона, которым розыгрыш не нужен. */
   val none: AuctionRaffle = new AuctionRaffle {
-    def open(auctionId: String, closesAt: Instant): Future[Done] = Future.successful(Done)
+    def open(auctionId: String, closesAt: Instant, prize: Option[String]): Future[Done] = Future.successful(Done)
 
     def cancel(auctionId: String, opId: OpId): Future[Done] = Future.successful(Done)
   }
@@ -37,10 +37,10 @@ object AuctionRaffle {
     new AuctionRaffle {
       private given Timeout = Timeout(askTimeout)
 
-      def open(auctionId: String, closesAt: Instant): Future[Done] =
+      def open(auctionId: String, closesAt: Instant, prize: Option[String]): Future[Done] =
         sharding
           .entityRefFor(RaffleEntity.TypeKey, auctionId)
-          .ask[Done](RaffleEntity.Open(OpenRaffle(closesAt), _))
+          .ask[Done](RaffleEntity.Open(OpenRaffle(closesAt, prize), _))
 
       def cancel(auctionId: String, opId: OpId): Future[Done] =
         sharding

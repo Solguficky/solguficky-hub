@@ -27,6 +27,7 @@ import type {
   LineupPick,
   LotAmount,
   RaffleAskError,
+  RafflePrizeAskError,
   StepWindow,
   TradingHolder,
   WeekAskError,
@@ -153,6 +154,28 @@ export function parseRaffle(
   }
   if (at <= now.getTime()) return { kind: "rejected", error: "raffle-ended" };
   return { kind: "ok", raffleClosesAt };
+}
+
+export type RafflePrizeResult =
+  | { kind: "ok"; prize: string }
+  | { kind: "rejected"; error: RafflePrizeAskError };
+
+/** Предел приза в знаках — тот же, что у `AuctionConfig.MaxRafflePrize`. */
+export const rafflePrizeLimit = 200;
+
+/**
+ * Приз розыгрыша (PER-649) — одна строка: переводы строк и повторные пробелы
+ * срезаются до одного, ведущие и замыкающие пробелы тоже. Пустой приз призом не
+ * считается — он говорит, что приза не будет. Предел держит и Auction: он
+ * принимает конфигурацию.
+ */
+export function parsePrize(raw: string): RafflePrizeResult {
+  const prize = raw.replace(/\s+/g, " ").trim();
+  if (prize === "") return { kind: "rejected", error: "prize-blank" };
+  if (prize.length > rafflePrizeLimit) {
+    return { kind: "rejected", error: "prize-too-long" };
+  }
+  return { kind: "ok", prize };
 }
 
 export type WindowResult =
@@ -751,10 +774,11 @@ export function createAuctionConsole(
     const week = parseWeek(request.value, timeZone, now());
     if (week.kind === "rejected") return { ...asked, error: week.error };
     const final = console.week?.final ?? defaultFinal;
-    // Окна и момент розыгрыша едут с новыми сроками: без них Auction стёр бы
-    // их молча.
+    // Окна, момент розыгрыша и его приз едут с новыми сроками: без них Auction
+    // стёр бы их молча.
     const windows = console.week?.windows ?? [];
     const raffleClosesAt = console.week?.raffleClosesAt;
+    const rafflePrize = console.week?.rafflePrize;
     const scheduled = await consoles.scheduleAuction(
       request.identity,
       {
@@ -765,6 +789,7 @@ export function createAuctionConsole(
         final,
         windows,
         raffleClosesAt,
+        rafflePrize,
       },
       rpcMeta(request),
     );
@@ -781,6 +806,7 @@ export function createAuctionConsole(
               final,
               windows,
               ...(raffleClosesAt === undefined ? {} : { raffleClosesAt }),
+              ...(rafflePrize === undefined ? {} : { rafflePrize }),
             },
           },
           note: "week-saved",
@@ -803,6 +829,9 @@ export function createAuctionConsole(
       case "windows-overlap":
       case "window-step-invalid":
       case "window-lots-empty":
+      case "raffle-prize-without-raffle":
+      case "raffle-prize-blank":
+      case "raffle-prize-too-long":
         return storedRefused(scheduled);
       case "already-started":
         return after(request, "week-frozen");
@@ -850,6 +879,7 @@ export function createAuctionConsole(
         final: request.final,
         windows: week.windows,
         raffleClosesAt: week.raffleClosesAt,
+        rafflePrize: week.rafflePrize,
       },
       rpcMeta(request),
     );
@@ -858,8 +888,8 @@ export function createAuctionConsole(
         return toggled({ ...console, week: { ...week, final: request.final } });
       case "already-started":
         return after(request, "week-frozen");
-      // Сроки, окна и момент розыгрыша прочитаны у самого Auction, и он их
-      // уже принимал.
+      // Сроки, окна, момент розыгрыша и его приз прочитаны у самого Auction, и
+      // он их уже принимал.
       case "closes-not-after-opens":
       case "window-outside-week":
       case "windows-overlap":
@@ -867,6 +897,9 @@ export function createAuctionConsole(
       case "window-lots-empty":
       case "raffle-not-after-opens":
       case "raffle-not-before-closes":
+      case "raffle-prize-without-raffle":
+      case "raffle-prize-blank":
+      case "raffle-prize-too-long":
         return storedRefused(scheduled);
       case "not-administrator":
       case "meetup-not-found":
@@ -1646,6 +1679,7 @@ export function createAuctionConsole(
         final: week.final,
         windows,
         raffleClosesAt: week.raffleClosesAt,
+        rafflePrize: week.rafflePrize,
       },
       rpcMeta(request),
     );
@@ -1673,6 +1707,9 @@ export function createAuctionConsole(
       case "window-lots-empty":
       case "raffle-not-after-opens":
       case "raffle-not-before-closes":
+      case "raffle-prize-without-raffle":
+      case "raffle-prize-blank":
+      case "raffle-prize-too-long":
         return storedRefused(scheduled);
       case "meetup-cancelled":
         return meetupCancelled;
@@ -1701,6 +1738,7 @@ export function createAuctionConsole(
     request: AuctionConsoleRequest & { opId: string },
     week: ScheduledWeek,
     raffleClosesAt: string | undefined,
+    rafflePrize: string | undefined,
   ): Promise<ScheduleAuctionResult> {
     return consoles.scheduleAuction(
       request.identity,
@@ -1712,26 +1750,37 @@ export function createAuctionConsole(
         final: week.final,
         windows: week.windows,
         raffleClosesAt,
+        rafflePrize,
       },
       rpcMeta(request),
     );
   }
 
-  // Исход команды над моментом розыгрыша: пульт с заметкой и неделей, на
-  // которую наложена принятая команда, — чтение отстаёт от команд.
+  // Исход команды над моментом розыгрыша и его призом: пульт с заметкой и
+  // неделей, на которую наложена принятая команда, — чтение отстаёт от команд.
   function raffleScheduled(
     console: AuctionConsoleView,
     week: ScheduledWeek,
-    raffleClosesAt: string | undefined,
+    raffle: { closesAt: string | undefined; prize: string | undefined },
+    note: ConsoleNote,
   ): ExecuteResult {
-    const { raffleClosesAt: _previous, ...rest } = week;
+    const { raffleClosesAt: _closesAt, rafflePrize: _prize, ...rest } = week;
     return {
       kind: "auction-console",
       console: {
         ...console,
-        week: raffleClosesAt === undefined ? rest : { ...rest, raffleClosesAt },
+        week: {
+          ...rest,
+          ...(raffle.closesAt === undefined
+            ? {}
+            : { raffleClosesAt: raffle.closesAt }),
+          // Приз без розыгрыша не бывает: снятый момент снимает и приз.
+          ...(raffle.closesAt === undefined || raffle.prize === undefined
+            ? {}
+            : { rafflePrize: raffle.prize }),
+        },
       },
-      note: raffleClosesAt === undefined ? "raffle-removed" : "raffle-saved",
+      note,
     };
   }
 
@@ -1752,10 +1801,16 @@ export function createAuctionConsole(
       request,
       week,
       parsed.raffleClosesAt,
+      week.rafflePrize,
     );
     switch (scheduled.kind) {
       case "ok":
-        return raffleScheduled(console, week, parsed.raffleClosesAt);
+        return raffleScheduled(
+          console,
+          week,
+          { closesAt: parsed.raffleClosesAt, prize: week.rafflePrize },
+          "raffle-saved",
+        );
       // Сроки бот проверил по прочитанным, но их мог сдвинуть второй
       // администратор: отказ Auction — тот же ответ, что проверка бота.
       case "raffle-not-after-opens":
@@ -1766,8 +1821,9 @@ export function createAuctionConsole(
     }
   }
 
-  // «Убрать розыгрыш»: неделя без момента проходит без розыгрыша. Момента уже
-  // нет — команды нет, а ответ тот же: кнопка могла устареть.
+  // «Убрать розыгрыш»: неделя без момента проходит без розыгрыша, и приз
+  // снимается вместе с ним. Момента уже нет — команды нет, а ответ тот же:
+  // кнопка могла устареть.
   async function removeRaffle(
     request: Extract<
       AuctionConsoleRequest,
@@ -1778,11 +1834,124 @@ export function createAuctionConsole(
     if (found.kind === "refused") return found.result;
     const { console, week } = found;
     if (week.raffleClosesAt === undefined) {
-      return raffleScheduled(console, week, undefined);
+      return raffleScheduled(
+        console,
+        week,
+        { closesAt: undefined, prize: undefined },
+        "raffle-removed",
+      );
     }
-    const scheduled = await scheduleRaffle(request, week, undefined);
+    const scheduled = await scheduleRaffle(request, week, undefined, undefined);
     return scheduled.kind === "ok"
-      ? raffleScheduled(console, week, undefined)
+      ? raffleScheduled(
+          console,
+          week,
+          { closesAt: undefined, prize: undefined },
+          "raffle-removed",
+        )
+      : windowsRefused(request, scheduled);
+  }
+
+  // Приз розыгрыша (PER-649) живёт рядом с моментом: без розыгрыша приза нет,
+  // поэтому вопрос задаётся, только когда момент уже задан.
+  const prizeAsked = (week: ScheduledWeek, auctionId: string) => ({
+    kind: "auction-raffle-prize-ask" as const,
+    auctionId,
+    ...(week.rafflePrize === undefined ? {} : { prize: week.rafflePrize }),
+  });
+
+  async function askRafflePrize(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "ask-auction-raffle-prize" }
+    >,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    const { console, week } = found;
+    if (week.raffleClosesAt === undefined) {
+      return { kind: "auction-console", console, note: "prize-without-raffle" };
+    }
+    return prizeAsked(week, request.auctionId);
+  }
+
+  async function setRafflePrize(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "set-auction-raffle-prize" }
+    >,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    const { console, week } = found;
+    // Приз без розыгрыша Auction не принимает: кнопка могла устареть.
+    if (week.raffleClosesAt === undefined) {
+      return { kind: "auction-console", console, note: "prize-without-raffle" };
+    }
+    const asked = prizeAsked(week, request.auctionId);
+    const parsed = parsePrize(request.value);
+    if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
+    const scheduled = await scheduleRaffle(
+      request,
+      week,
+      week.raffleClosesAt,
+      parsed.prize,
+    );
+    switch (scheduled.kind) {
+      case "ok":
+        return raffleScheduled(
+          console,
+          week,
+          { closesAt: week.raffleClosesAt, prize: parsed.prize },
+          "prize-saved",
+        );
+      // Конфигурацию принял Auction: его отказ — тот же ответ человеку.
+      case "raffle-prize-blank":
+        return { ...asked, error: "prize-blank" };
+      case "raffle-prize-too-long":
+        return { ...asked, error: "prize-too-long" };
+      case "raffle-prize-without-raffle":
+        return after(request, "prize-without-raffle");
+      default:
+        return windowsRefused(request, scheduled);
+    }
+  }
+
+  // «Убрать приз»: розыгрыш остаётся, приза нет — победитель получит весть без
+  // строки приза. Приза уже нет — команды нет, а ответ тот же.
+  async function removeRafflePrize(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "remove-auction-raffle-prize" }
+    >,
+  ): Promise<ExecuteResult> {
+    const found = await editableWeek(request);
+    if (found.kind === "refused") return found.result;
+    const { console, week } = found;
+    if (week.raffleClosesAt === undefined) {
+      return { kind: "auction-console", console, note: "prize-without-raffle" };
+    }
+    if (week.rafflePrize === undefined) {
+      return raffleScheduled(
+        console,
+        week,
+        { closesAt: week.raffleClosesAt, prize: undefined },
+        "prize-removed",
+      );
+    }
+    const scheduled = await scheduleRaffle(
+      request,
+      week,
+      week.raffleClosesAt,
+      undefined,
+    );
+    return scheduled.kind === "ok"
+      ? raffleScheduled(
+          console,
+          week,
+          { closesAt: week.raffleClosesAt, prize: undefined },
+          "prize-removed",
+        )
       : windowsRefused(request, scheduled);
   }
 
@@ -2006,6 +2175,12 @@ export function createAuctionConsole(
         return setRaffle(request);
       case "remove-auction-raffle":
         return removeRaffle(request);
+      case "ask-auction-raffle-prize":
+        return askRafflePrize(request);
+      case "set-auction-raffle-prize":
+        return setRafflePrize(request);
+      case "remove-auction-raffle-prize":
+        return removeRafflePrize(request);
       case "set-auction-final":
         return setFinal(request);
       case "start-auction-week":

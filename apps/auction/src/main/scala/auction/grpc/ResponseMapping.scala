@@ -465,6 +465,12 @@ object ResponseMapping {
         wire.ConfigInvalid.Reason.RaffleClosesAtNotAfterOpensAt(wire.RaffleClosesAtNotAfterOpensAt())
       case ConfigInvalid.RaffleClosesAtNotBeforeClosesAt =>
         wire.ConfigInvalid.Reason.RaffleClosesAtNotBeforeClosesAt(wire.RaffleClosesAtNotBeforeClosesAt())
+      case ConfigInvalid.RafflePrizeWithoutRaffle =>
+        wire.ConfigInvalid.Reason.RafflePrizeWithoutRaffle(wire.RafflePrizeWithoutRaffle())
+      case ConfigInvalid.RafflePrizeBlank =>
+        wire.ConfigInvalid.Reason.RafflePrizeBlank(wire.RafflePrizeBlank())
+      case ConfigInvalid.RafflePrizeTooLong =>
+        wire.ConfigInvalid.Reason.RafflePrizeTooLong(wire.RafflePrizeTooLong())
     }
     wire.ConfigInvalid(named)
   }

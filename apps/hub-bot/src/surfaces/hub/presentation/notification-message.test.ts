@@ -144,17 +144,22 @@ describe("renderNotification", () => {
   // выигравшего билета и свой; кнопка следа ведёт на экран итога.
   it("tells the winner and the others the raffle result with a traced button", () => {
     const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
-    const result = (ticket: number) =>
+    const result = (ticket: number, prize?: string) =>
       renderNotification({
         kind: "raffle-result",
         auctionId,
         ticket,
         winningTicket: 7,
         ticketCount: 12,
+        ...(prize === undefined ? {} : { prize }),
       });
 
     expect(result(7).text).toBe(
       "Твой билет №7 из 12 выиграл розыгрыш среди участников.",
+    );
+    // Приз розыгрыша (PER-649): победитель видит его и следующий шаг.
+    expect(result(7, "сертификат на 5000 ₽").text).toBe(
+      "Твой билет №7 из 12 выиграл розыгрыш среди участников: приз — сертификат на 5000 ₽, а организатор напишет тебе, как его получить.",
     );
     expect(result(3).text).toBe(
       "Розыгрыш среди участников проведён: выиграл билет №7 из 12, твой — №3.",

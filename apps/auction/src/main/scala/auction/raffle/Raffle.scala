@@ -11,8 +11,11 @@ import java.time.Instant
  * `RaffleBoundarySpec`: участие даёт только право `place_bids`, которое проверяет граница, а не история ставок.
  */
 
-/** Условия, объявленные при открытии регистрации: момент закрытия, seed и раунд маяка. После открытия не меняются. */
-final case class RaffleTerms(closesAt: Instant, seed: Seed, round: Long) {
+/**
+ * Условия, объявленные при открытии регистрации: момент закрытия, seed, раунд маяка и приз (ADR-066, дополнение
+ * 2026-10-21; приза может не быть). После открытия не меняются.
+ */
+final case class RaffleTerms(closesAt: Instant, seed: Seed, round: Long, prize: Option[String] = None) {
   def commitment: String = seed.commitment
 }
 
@@ -39,7 +42,7 @@ enum RaffleState {
 
 /** События журнала розыгрыша. */
 enum RaffleEvent {
-  case RaffleOpened(closesAt: Instant, seed: Seed, round: Long)
+  case RaffleOpened(closesAt: Instant, seed: Seed, round: Long, prize: Option[String] = None)
   case RaffleNotHeld(closesAt: Instant)
   case Registered(participant: ParticipantId)
   case RegistrationCancelled(participant: ParticipantId)
@@ -51,7 +54,7 @@ enum RaffleEvent {
 final case class RaffleEnvelope(sequence: Long, opId: OpId, event: RaffleEvent)
 
 /** Открытие регистрации по команде аукциона, открывшего онлайн-торги. */
-final case class OpenRaffle(closesAt: Instant)
+final case class OpenRaffle(closesAt: Instant, prize: Option[String] = None)
 
 final case class Register(participant: ParticipantId, opId: OpId)
 
@@ -113,7 +116,7 @@ object Raffle {
       case RaffleState.Initial =>
         if (now.isBefore(command.closesAt))
           RaffleDecision.Accepted(
-            RaffleEvent.RaffleOpened(command.closesAt, seed, Quicknet.roundFor(command.closesAt))
+            RaffleEvent.RaffleOpened(command.closesAt, seed, Quicknet.roundFor(command.closesAt), command.prize)
           )
         else RaffleDecision.Accepted(RaffleEvent.RaffleNotHeld(command.closesAt))
       case _ => RaffleDecision.Unchanged
@@ -212,8 +215,8 @@ object Raffle {
 
   def apply(raffle: Raffle, envelope: RaffleEnvelope): Raffle = {
     val state = (raffle.state, envelope.event) match {
-      case (RaffleState.Initial, RaffleEvent.RaffleOpened(closesAt, seed, round)) =>
-        RaffleState.Open(RaffleTerms(closesAt, seed, round), Vector.empty)
+      case (RaffleState.Initial, RaffleEvent.RaffleOpened(closesAt, seed, round, prize)) =>
+        RaffleState.Open(RaffleTerms(closesAt, seed, round, prize), Vector.empty)
       case (RaffleState.Initial, RaffleEvent.RaffleNotHeld(closesAt)) => RaffleState.NotHeld(closesAt)
       case (RaffleState.Open(terms, entries), RaffleEvent.Registered(participant)) =>
         RaffleState.Open(terms, entries.filterNot(_ == participant) :+ participant)

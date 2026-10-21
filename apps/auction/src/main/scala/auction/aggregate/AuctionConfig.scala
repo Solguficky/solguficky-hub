@@ -13,13 +13,15 @@ import java.time.Instant
 /**
  * Онлайн-этап аукциона двумя моментами (RFC-011, «Формат как конфигурация»). `closesAt` — конец этапа и единственный
  * источник дедлайна лота; пуст, когда этап заканчивается командой, а не по времени. `raffleClosesAt` — момент закрытия
- * регистрации в розыгрыше среди участников (ADR-066, п. 5); пуст — аукцион без розыгрыша.
+ * регистрации в розыгрыше среди участников (ADR-066, п. 5); пуст — аукцион без розыгрыша. `rafflePrize` — приз
+ * розыгрыша одной строкой (ADR-066, дополнение 2026-10-21); пуст — розыгрыш без приза.
  */
 final case class OnlinePhase(
     opensAt: Instant,
     closesAt: Option[Instant],
     closesLots: Boolean,
-    raffleClosesAt: Option[Instant] = None
+    raffleClosesAt: Option[Instant] = None,
+    rafflePrize: Option[String] = None
 )
 
 /** Кто закрывает лоты. У `Mixed` параметр — только онлайн-сторона: финал закрывает ведущий. */
@@ -59,6 +61,9 @@ final case class AuctionConfigInput(
  *
  * Момент закрытия регистрации в розыгрыше (ADR-066, п. 5) строго позже начала онлайн-этапа и, если у этапа есть конец,
  * строго раньше него. День недели сервис не проверяет: это выбор организаторов.
+ *
+ * Приз розыгрыша (ADR-066, дополнение 2026-10-21) — одна непустая строка не длиннее [[AuctionConfig.MaxRafflePrize]] и
+ * только у розыгрыша: приз без момента закрытия регистрации противоречив.
  */
 enum ConfigInvalid {
   case ClosesAtMissing
@@ -72,6 +77,9 @@ enum ConfigInvalid {
   case StepWindowLotsEmpty(window: Int)
   case RaffleClosesAtNotAfterOpensAt
   case RaffleClosesAtNotBeforeClosesAt
+  case RafflePrizeWithoutRaffle
+  case RafflePrizeBlank
+  case RafflePrizeTooLong
 }
 
 /**
@@ -100,6 +108,9 @@ final case class AuctionConfig private (
   /** Момент закрытия регистрации в розыгрыше; пусто — аукцион проводится без розыгрыша. */
   def raffleClosesAt: Option[Instant] = onlinePhase.flatMap(_.raffleClosesAt)
 
+  /** Приз розыгрыша одной строкой; пусто — розыгрыш без приза. */
+  def rafflePrize: Option[String] = onlinePhase.flatMap(_.rafflePrize)
+
   /**
    * Окна, которые лот получает во входе `OpenLot`: те, в чьих лотах он есть, без самого множества и по возрастанию
    * начала. Пусто, если организатор лот ни в одно окно не выбрал. Валюту лота аукцион не знает — окно в чужой валюте
@@ -116,6 +127,13 @@ object AuctionConfig {
 
   /** Аукцион знает один финал: больше одного блока машина состояний не выражает (RFC-011). */
   val MaxFinalBlocks: Int = 1
+
+  /**
+   * Предел строки приза розыгрыша: он едет в сообщение бота, а не хранится описанием. Проверяет его [[parse]], а не
+   * [[of]]: предел платформы — такой же, как валюта окон, и смена константы не должна сделать записанный журнал
+   * нечитаемым.
+   */
+  val MaxRafflePrize: Int = 200
 
   def of(
       onlinePhase: Option[OnlinePhase],
@@ -137,6 +155,10 @@ object AuctionConfig {
       Left(ConfigInvalid.RaffleClosesAtNotAfterOpensAt)
     else if (onlinePhase.exists(phase => phase.raffleClosesAt.exists(t => phase.closesAt.exists(!t.isBefore(_)))))
       Left(ConfigInvalid.RaffleClosesAtNotBeforeClosesAt)
+    else if (onlinePhase.exists(phase => phase.rafflePrize.isDefined && phase.raffleClosesAt.isEmpty))
+      Left(ConfigInvalid.RafflePrizeWithoutRaffle)
+    else if (onlinePhase.exists(phase => phase.rafflePrize.exists(_.isBlank)))
+      Left(ConfigInvalid.RafflePrizeBlank)
     else if (finalBlocks < 0 || finalBlocks > MaxFinalBlocks) Left(ConfigInvalid.FinalBlocksOutOfRange)
     else
       windowsInvalid(onlinePhase, lotDefaults.map(_.currency), stepWindows)
@@ -178,7 +200,8 @@ object AuctionConfig {
 
   /**
    * Проверка на входе `ScheduleAuction`: шаг — теми же конструкторами, что у `ScheduleLot` (И-15). Без `lotDefaults`
-   * окна сверяются по валюте с умолчаниями платформы, которые лоты тогда получат, — после проверок самого значения.
+   * окна сверяются по валюте с умолчаниями платформы, которые лоты тогда получат, — после проверок самого значения, и
+   * там же предел строки приза: обе границы — платформы, а не значения, и журнал с записанным сверх них читается.
    */
   def parse(input: AuctionConfigInput): Either[ConfigInvalid, AuctionConfig] =
     input.lotDefaults
@@ -186,11 +209,14 @@ object AuctionConfig {
       .flatMap(of(input.onlinePhase, input.finalBlocks, input.closingPolicy, _, input.stepWindows))
       .flatMap { config =>
         val currency = LotTerms.platform.currency
-        config.stepWindows.zipWithIndex
-          .collectFirst {
-            case (window, index) if config.lotDefaults.isEmpty && window.step.currency != currency =>
-              ConfigInvalid.StepWindowStepInvalid(index)
-          }
-          .toLeft(config)
+        val prizeTooLong = config.onlinePhase.flatMap(_.rafflePrize).exists(_.length > MaxRafflePrize)
+        if (prizeTooLong) Left(ConfigInvalid.RafflePrizeTooLong)
+        else
+          config.stepWindows.zipWithIndex
+            .collectFirst {
+              case (window, index) if config.lotDefaults.isEmpty && window.step.currency != currency =>
+                ConfigInvalid.StepWindowStepInvalid(index)
+            }
+            .toLeft(config)
       }
 }

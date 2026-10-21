@@ -614,7 +614,10 @@ object RequestMapping {
               case None => Right(None)
               case Some(raw) => instant("config.online_phase.raffle_closes_at", raw).map(Some(_))
             }
-          } yield Some(OnlinePhase(opensAt, closesAt, phase.closesLots, raffleClosesAt))
+            // Приз — одна строка: пробелы по краям не значение. Пустую строку не глотаем — её отвергает ядро
+            // (`RafflePrizeBlank`), иначе опечатка в объявлении приза прошла бы молча отсутствием приза.
+            rafflePrize = phase.rafflePrize.map(_.trim)
+          } yield Some(OnlinePhase(opensAt, closesAt, phase.closesLots, raffleClosesAt, rafflePrize))
       }
       closing <- config.closingPolicy.map(_.policy) match {
         case Some(ClosingPolicyMessage.Policy.ByAuctioneer(_)) => Right(ClosingPolicy.ByAuctioneer)

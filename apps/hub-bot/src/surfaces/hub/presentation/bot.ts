@@ -100,6 +100,7 @@ import type {
   Person,
   PublishMomentRetry,
   RaffleAskError,
+  RafflePrizeAskError,
   TradingHolder,
   WeekAskError,
   WindowAskError,
@@ -191,6 +192,7 @@ import {
   type CommunityPlace,
   consoleAskData,
   consoleRaffleData,
+  consoleRafflePrizeData,
   consoleViewData,
   consoleWeekData,
   consoleWindowAskData,
@@ -254,6 +256,8 @@ import {
   lineupConfirmScreen,
   lineupOrderScreen,
   raffleAskErrorText,
+  rafflePrizeAskErrorText,
+  rafflePrizeQuestionText,
   raffleQuestionText,
   weekAskError,
   weekConfirmScreen,
@@ -706,6 +710,14 @@ type PendingConsoleRaffle = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о призе розыгрыша на пульте (PER-649). Шаг — аукцион — лежит в кнопке
+// вопроса, и ответ после рестарта принимается так же.
+type PendingConsolePrize = {
+  kind: "console-raffle-prize";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о новом окне «Счастливых часов» (PER-504). Шаг — аукцион — лежит в
 // кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingConsoleWindow = {
@@ -745,6 +757,7 @@ type HubPendingInput =
   | PendingLot
   | PendingConsoleWeek
   | PendingConsoleRaffle
+  | PendingConsolePrize
   | PendingConsoleWindow
   | PendingFinalAsk
   | PendingFloorSearch;
@@ -1425,6 +1438,7 @@ async function handleMessage(
       replyId !== undefined &&
       (pending?.kind === "console-week" ||
         pending?.kind === "console-raffle" ||
+        pending?.kind === "console-raffle-prize" ||
         pending?.kind === "console-window") &&
       ctx.message?.text !== undefined
     ) {
@@ -1437,7 +1451,9 @@ async function handleMessage(
               ? "foreign auction week answer ignored"
               : pending.kind === "console-raffle"
                 ? "foreign auction raffle answer ignored"
-                : "foreign step window answer ignored",
+                : pending.kind === "console-raffle-prize"
+                  ? "foreign raffle prize answer ignored"
+                  : "foreign step window answer ignored",
           result: "ok",
           use_case: useCase,
         };
@@ -1477,7 +1493,9 @@ async function handleMessage(
             ? "schedule-auction-week"
             : pending.kind === "console-raffle"
               ? "set-auction-raffle"
-              : "add-step-window",
+              : pending.kind === "console-raffle-prize"
+                ? "set-auction-raffle-prize"
+                : "add-step-window",
         auctionId: pending.auctionId,
         value: ctx.message.text,
         opId: createUuidV7(),
@@ -1491,6 +1509,7 @@ async function handleMessage(
       if (
         result.kind !== "auction-week-ask" &&
         result.kind !== "auction-raffle-ask" &&
+        result.kind !== "auction-raffle-prize-ask" &&
         result.kind !== "step-window-ask"
       ) {
         await answered(result);
@@ -1935,6 +1954,7 @@ async function handleMessage(
         pending.kind === "lot" ||
         pending.kind === "console-week" ||
         pending.kind === "console-raffle" ||
+        pending.kind === "console-raffle-prize" ||
         pending.kind === "console-window" ||
         pending.kind === "final-ask" ||
         pending.kind === "floor-search") &&
@@ -1950,6 +1970,7 @@ async function handleMessage(
             ? "manage_lot"
             : pending.kind === "console-week" ||
                 pending.kind === "console-raffle" ||
+                pending.kind === "console-raffle-prize" ||
                 pending.kind === "console-window" ||
                 pending.kind === "final-ask" ||
                 pending.kind === "floor-search"
@@ -2347,6 +2368,8 @@ async function handleCallback(
       action.kind === "console-week" ||
       action.kind === "console-raffle" ||
       action.kind === "console-raffle-remove" ||
+      action.kind === "console-raffle-prize" ||
+      action.kind === "console-raffle-prize-remove" ||
       action.kind === "console-final" ||
       action.kind === "console-open" ||
       action.kind === "console-confirm" ||
@@ -6989,6 +7012,8 @@ async function handleConsoleCallback(
         | "console-week"
         | "console-raffle"
         | "console-raffle-remove"
+        | "console-raffle-prize"
+        | "console-raffle-prize-remove"
         | "console-final"
         | "console-open"
         | "console-confirm"
@@ -7059,6 +7084,23 @@ async function handleConsoleCallback(
         await runtime.dispatcher.execute({
           ...call,
           intent: "remove-auction-raffle",
+          opId: createUuidV7(),
+        }),
+      );
+    // Приз розыгрыша (PER-649): живёт рядом с моментом, поэтому и вопрос, и
+    // снятие решает юзкейс по прочитанной конфигурации.
+    case "console-raffle-prize":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-auction-raffle-prize",
+        }),
+      );
+    case "console-raffle-prize-remove":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "remove-auction-raffle-prize",
           opId: createUuidV7(),
         }),
       );
@@ -7410,6 +7452,18 @@ async function renderConsoleResult(
           ? "auction raffle requested"
           : "auction raffle asked again",
       );
+    case "auction-raffle-prize-ask":
+      await askConsolePrize(ctx, context.questions, {
+        auctionId: result.auctionId,
+        prize: result.prize,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "raffle prize requested"
+          : "raffle prize asked again",
+      );
     case "auction-day-summary":
       await showScreen(
         ctx,
@@ -7620,6 +7674,41 @@ function askConsoleRaffle(
     questions,
     pending,
     raffleQuestionText(ask.timeZone, ask.week),
+    ask.replaces,
+  );
+}
+
+// Вопрос о призе розыгрыша (PER-649): приз одной строкой, текущий — в подсказке.
+function askConsolePrize(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    prize?: string | undefined;
+    error?: RafflePrizeAskError | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-raffle-prize",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      rafflePrizeAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    rafflePrizeQuestionText(ask.prize),
     ask.replaces,
   );
 }
@@ -9258,6 +9347,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-raffle",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-raffle-prize":
+      return {
+        kind: "console-raffle-prize",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "console-window":
       return {
         kind: "console-window",
@@ -9424,6 +9518,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-raffle-prize":
+      return {
+        kind: "console-raffle-prize",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     case "console-window":
       return {
         kind: "console-window",
@@ -9506,8 +9607,10 @@ function cancelTarget(step: QuestionStep): ScreenAction {
       return { kind: "lot-form", lot: step.lot };
     case "console-week":
     case "console-raffle":
+    case "console-raffle-prize":
     case "final-ask":
-      // Вопросы о сроках, о розыгрыше и о цене заданы с пульта аукциона.
+      // Вопросы о сроках, о розыгрыше, о призе и о цене заданы с пульта
+      // аукциона.
       return {
         kind: "console-view",
         auction: step.auction,
@@ -9677,6 +9780,8 @@ function reopenData(step: QuestionStep): string {
       return consoleWeekData(step.auction);
     case "console-raffle":
       return consoleRaffleData(step.auction);
+    case "console-raffle-prize":
+      return consoleRafflePrizeData(step.auction);
     case "console-window":
       return consoleWindowAskData(step.auction);
     case "final-ask":
@@ -9727,6 +9832,7 @@ function answerParent(step: QuestionStep): Parent {
       return toLot(tokenToUuid(step.lot));
     case "console-week":
     case "console-raffle":
+    case "console-raffle-prize":
     case "final-ask":
       return { name: "Пульт", data: consoleViewData(step.auction) };
     case "console-window":
@@ -9970,6 +10076,8 @@ function callbackUseCase(
     | "console-week"
     | "console-raffle"
     | "console-raffle-remove"
+    | "console-raffle-prize"
+    | "console-raffle-prize-remove"
     | "console-final"
     | "console-open"
     | "console-confirm"
@@ -10135,6 +10243,8 @@ function callbackUseCase(
     case "console-week":
     case "console-raffle":
     case "console-raffle-remove":
+    case "console-raffle-prize":
+    case "console-raffle-prize-remove":
     case "console-final":
     case "console-open":
     case "console-confirm":
