@@ -4,6 +4,7 @@ import auction.access.AccessRight
 import auction.aggregate.AuctionConfigInput
 import auction.aggregate.ClosingPolicy
 import auction.aggregate.LaunchStepWindow
+import auction.aggregate.LotSetId
 import auction.aggregate.MeetupId
 import auction.aggregate.OnlinePhase
 import auction.aggregate.PreviewLotParticipantRemoval
@@ -70,6 +71,8 @@ import auction.v1.auction_service.ListAuctionNamesRequest
 import auction.v1.auction_service.ListAuctionsRequest
 import auction.v1.auction_service.ListLotHistoryRequest
 import auction.v1.auction_service.RemoveLotRequest
+import auction.v1.auction_service.SaveLotSetRequest
+import auction.v1.auction_service.DeleteLotSetRequest
 import auction.v1.auction_service.PlaceBidRequest
 import auction.v1.auction_service.PublishAuctionRequest
 import auction.v1.auction_service.ScheduleAuctionRequest
@@ -123,6 +126,21 @@ final case class DraftCommand(meetup: MeetupId, opId: OpId, acting: Acting)
 
 /** Правка реестра — `AddLot` и `RemoveLot` несут одно и то же. */
 final case class RegistryCommand(auctionId: AuctionId, lotId: LotId, opId: OpId, acting: Acting)
+
+/**
+ * Определение сета лотов аукциону сходки (ADR-073). Название здесь не проверяется: пустое название — отказ домена, а не
+ * форма запроса.
+ */
+final case class LotSetSaveCommand(
+    auctionId: AuctionId,
+    set: LotSetId,
+    name: String,
+    lots: List[LotId],
+    opId: OpId,
+    acting: Acting
+)
+
+final case class LotSetDeleteCommand(auctionId: AuctionId, set: LotSetId, opId: OpId, acting: Acting)
 
 /** Запуск окна сниженного шага аукциону сходки. Окно здесь ещё не проверено: его случаи — решение домена. */
 final case class StepWindowLaunchCommand(auctionId: AuctionId, command: LaunchStepWindow, acting: Acting)
@@ -380,6 +398,27 @@ object RequestMapping {
 
   def removeLot(request: RemoveLotRequest): Either[FormError, RegistryCommand] =
     registry(request.viewer, request.auctionId, request.lotId, request.opId)
+
+  def saveLotSet(request: SaveLotSetRequest): Either[FormError, LotSetSaveCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      set <- uuidV7("lot_set_id", request.lotSetId)
+      lots <- request.lotIds
+        .foldLeft[Either[FormError, List[LotId]]](Right(Nil)) { (acc, raw) =>
+          acc.flatMap(lots => uuidV7("lot_ids", raw).map(LotId(_) :: lots))
+        }
+        .map(_.reverse)
+      opId <- uuidV7("op_id", request.opId)
+    } yield LotSetSaveCommand(auction, LotSetId(set), request.name, lots, OpId(opId), acting)
+
+  def deleteLotSet(request: DeleteLotSetRequest): Either[FormError, LotSetDeleteCommand] =
+    for {
+      acting <- acting(request.viewer)
+      auction <- meetupAuction(request.auctionId)
+      set <- uuidV7("lot_set_id", request.lotSetId)
+      opId <- uuidV7("op_id", request.opId)
+    } yield LotSetDeleteCommand(auction, LotSetId(set), OpId(opId), acting)
 
   /** Отметка и снятие отметки несут то же, что команды реестра: аукцион сходки, лот и `op_id`. */
   def selectForFinal(request: SelectForFinalRequest): Either[FormError, RegistryCommand] =

@@ -291,6 +291,7 @@ message AuctionEvent {
     AuctionFinished auction_finished = 16;
     AuctionDiscarded auction_discarded = 18;
     AuctionCancelled auction_cancelled = 19;
+    LotSetCollected lot_set_collected = 20;
   }
 }
 
@@ -411,6 +412,24 @@ message LotAdded {
 message LotRemoved {
   // Canonical lowercase UUIDv7 with hyphens.
   string lot_id = 1;
+}
+
+// Every lot of a collectible set was sold to one participant. The sets are not
+// carried in state.
+message LotSetCollected {
+  // Canonical lowercase UUIDv7 with hyphens: the id the organizer gave the set.
+  string lot_set_id = 1;
+
+  // The name of the set as the organizer typed it.
+  string name = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens each: the lots of the set in the
+  // order of the organizer.
+  repeated string lot_ids = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the platform identity of the
+  // collector, the winner of every lot of the set. Names are not carried.
+  string collector_id = 4;
 }
 
 // The online phase started; the registry and the configuration are frozen from

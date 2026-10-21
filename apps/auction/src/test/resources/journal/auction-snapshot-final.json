@@ -22,7 +22,10 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     },
     {
@@ -40,7 +43,10 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     },
     {
@@ -88,7 +94,10 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     },
     {
@@ -104,7 +113,10 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     },
     {
@@ -120,7 +132,10 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     },
     {
@@ -138,7 +153,10 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     },
     {
@@ -158,7 +176,10 @@
         },
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     },
     {
@@ -174,7 +195,10 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     },
     {
@@ -192,7 +216,10 @@
           "lotId": "0190f2a0-0000-7000-8000-00000000000b"
         },
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     }
   ],
@@ -239,5 +266,6 @@
   "cancelledBy": null,
   "completed": null,
   "launched": null,
-  "hidden": null
+  "hidden": null,
+  "sets": null
 }

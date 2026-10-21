@@ -148,6 +148,12 @@ enum OpeningRejected {
  * recovery, пока итоги не подтвердят подсчёт. Неполный снимок исходов лотов — `NotComplete` — подсчёт не начинает, и
  * это штатное ожидание, а не сбой: следующий тик спросит снова. Отменённый аукцион `Settle` не зовёт — итогов у него
  * нет. Удаление до торгов чистит строки итогов на всякий случай: у аукциона до торгов их быть не может.
+ *
+ * Итог сета лотов (ADR-073, п. 4) entity пишет сама — событием `LotSetSettled` под выведенным `op_id`
+ * ([[LotSets.settlementOf]]). Победителей лотов журнал аукциона не хранит, поэтому исходы приходят портом
+ * [[AuctionSetOutcomes]] из read model торгов: на тике переспроса и после recovery, пока у полного сета нет итога.
+ * Отставшая проекция — «ещё не кончился», и итог появляется на следующем тике. Итог пишется один раз: повтор упирается
+ * в окно `seen` и в итог, уже лежащий в сете.
  */
 object AuctionEntity {
 
@@ -175,6 +181,19 @@ object AuctionEntity {
       command: RemoveLot,
       initiator: Initiator,
       replyTo: ActorRef[Either[RemoveLotRejected, AuctionAnswer]]
+  ) extends Command
+
+  /** Определение сета лотов до старта торгов (ADR-073). */
+  final case class SaveSet(
+      command: SaveLotSet,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[SaveLotSetRejected, AuctionAnswer]]
+  ) extends Command
+
+  final case class DeleteSet(
+      command: DeleteLotSet,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[DeleteLotSetRejected, AuctionAnswer]]
   ) extends Command
 
   /** Планирование; `Schedule` — имя сообщения, как `LotEntity.Plan` у лота. */
@@ -422,6 +441,12 @@ object AuctionEntity {
    */
   private[entity] final case class ResultsAnswered(answer: Try[Either[SettleRefused, Done]]) extends Command
 
+  /** Исходы лотов сетов без итога; неудача — ответа нет, и следующий тик спросит снова. */
+  private[entity] final case class SetOutcomesRead(answer: Try[Map[LotId, LotOutcome]]) extends Command
+
+  /** Исходы, уточнённые у лотов кончившегося аукциона, — итог пишется по ним без второго уточнения. */
+  private[entity] final case class SetOutcomesKnown(answer: Try[Map[LotId, LotOutcome]]) extends Command
+
   /** Ответ итогов на удаление вместе с аукционом; неудача — ответа нет, и запись об этом одна. */
   private[entity] final case class ResultsDiscarded(answer: Try[Done]) extends Command
 
@@ -499,6 +524,8 @@ object AuctionEntity {
    *   прогнозы аукциона: раунды по фактам аукциона, отмена и удаление вместе с ним
    * @param results
    *   итоги прогнозов: подсчёт по переходу в `Finished`, удаление вместе с аукционом
+   * @param setOutcomes
+   *   исходы лотов сетов из read model торгов: итог сета после торгов
    */
   def apply(
       auctionId: String,
@@ -511,7 +538,8 @@ object AuctionEntity {
       raffle: AuctionRaffle = AuctionRaffle.none,
       slot: AuctionSlot = AuctionSlot.none,
       predictions: AuctionPredictions = AuctionPredictions.none,
-      results: AuctionResults = AuctionResults.none
+      results: AuctionResults = AuctionResults.none,
+      setOutcomes: AuctionSetOutcomes = AuctionSetOutcomes.none
   ): Behavior[Command] =
     Behaviors.withTimers[Command] { timers =>
       Behaviors.setup { context =>
@@ -635,6 +663,49 @@ object AuctionEntity {
               context
                 .pipeToSelf(Try(results.settle(auctionId)).fold(Future.failed, answer => answer))(ResultsAnswered(_))
             case _ => ()
+          }
+
+        // Чтение исходов сетов в пути: тик, пришедший раньше ответа, второго чтения не шлёт. Рестарт начинает с `false`.
+        var setsReading = false
+
+        /**
+         * Итог сетов (ADR-073, п. 4): после старта торгов, пока у полного сета нет итога, entity читает исходы его
+         * лотов и пишет итог, когда каждый лот пришёл к конечному исходу.
+         */
+        def followSets(auction: Auction): Unit = {
+          val awaiting = LotSets.awaiting(auction)
+          if (!setsReading && auction.state.started.isDefined && awaiting.nonEmpty) {
+            setsReading = true
+            val lots = awaiting.values.flatMap(_.lots).toSet
+            context.pipeToSelf(Try(setOutcomes.outcomes(lots)).fold(Future.failed, answer => answer))(
+              SetOutcomesRead(_)
+            )
+          }
+        }
+
+        /**
+         * Лоты кончившегося аукциона, которых нет среди исходов read model: та не отличает лот, который отстал, от
+         * лота, который не открывался вовсе, а лот отличает. Не открывавшийся — `NotOpened`; остальные ждут следующего
+         * тика.
+         */
+        def unopened(missing: Set[LotId]): Future[Map[LotId, LotOutcome]] = {
+          given scala.concurrent.ExecutionContext = context.executionContext
+          Future
+            .traverse(missing.toList)(lot => Try(lots.stateOf(lot)).fold(Future.failed, state => state).map(lot -> _))
+            .map(_.collect { case (lot, LotState.Initial | LotState.Draft | LotState.Scheduled(_)) =>
+              lot -> LotOutcome.NotOpened
+            }.toMap)
+        }
+
+        /** Пишет следующий итог по снимку исходов и решает дальше тем же снимком — сообщением себе. */
+        def settleNext(state: State, outcomes: Map[LotId, LotOutcome]): Effect[StoredAuctionEvent, State] =
+          LotSets.next(state.auction, outcomes) match {
+            case None => Effect.none
+            case Some((opId, event)) =>
+              record(state.auction, AuctionDecision.Accepted(event), opId, Initiator.Scheduler, clock, newId) {
+                (_, _) =>
+                  context.self ! SetOutcomesKnown(Success(outcomes))
+              }
           }
 
         def warnResults(message: String, failure: Throwable): Unit =
@@ -955,6 +1026,7 @@ object AuctionEntity {
                     confirmSlot(after.auction)
                     releaseSlot(after.auction)
                     followResults(after.auction)
+                    followSets(after.auction)
                 }
               }
             // Общий дедлайн ждёт закрытия раунда каталога, пока торги не начались, и спрашивается снова через тик.
@@ -1130,6 +1202,29 @@ object AuctionEntity {
               Effect.none
             case ResultsAnswered(Failure(failure)) =>
               Effect.none.thenRun(_ => warnResults("results did not answer the auction", failure))
+            // Каждый ответ пишет не больше одного итога: следующий сет, решённый тем же снимком, — сообщением себе, как
+            // шаги финала. Сет без итога в этом снимке ждёт следующего тика. В кончившемся аукционе лоты без исхода
+            // уточняются у самих лотов: не открывавшийся лот иначе держал бы сет без итога вечно (ADR-073, п. 4).
+            case SetOutcomesRead(Success(outcomes)) =>
+              val missing = LotSets.unknown(state.auction, outcomes)
+              state.auction.state match {
+                case AuctionState.Finished(_, _) if missing.nonEmpty =>
+                  Effect.none.thenRun { _ =>
+                    context.pipeToSelf(unopened(missing))(answer => SetOutcomesKnown(answer.map(outcomes ++ _)))
+                  }
+                case _ =>
+                  setsReading = false
+                  settleNext(state, outcomes)
+              }
+            case SetOutcomesKnown(Success(outcomes)) =>
+              setsReading = false
+              settleNext(state, outcomes)
+            case SetOutcomesKnown(Failure(failure)) =>
+              setsReading = false
+              Effect.none.thenRun(_ => warnResults("lots of the sets did not answer the auction", failure))
+            case SetOutcomesRead(Failure(failure)) =>
+              setsReading = false
+              Effect.none.thenRun(_ => warnResults("lot outcomes of the sets were not read", failure))
             case ResultsDiscarded(Success(_)) => Effect.none
             case ResultsDiscarded(Failure(failure)) =>
               Effect.none.thenRun(_ => warnResults("results did not discard", failure))
@@ -1240,6 +1335,11 @@ object AuctionEntity {
             case Remove(remove, initiator, replyTo) =>
               val decision = Auction.decide(state.auction, remove)
               answered(state.auction, decision, remove.opId, initiator, replyTo, clock, newId)
+            case SaveSet(save, initiator, replyTo) =>
+              answered(state.auction, Auction.decide(state.auction, save), save.opId, initiator, replyTo, clock, newId)
+            case DeleteSet(delete, initiator, replyTo) =>
+              val decision = Auction.decide(state.auction, delete)
+              answered(state.auction, decision, delete.opId, initiator, replyTo, clock, newId)
             case Schedule(schedule, initiator, replyTo) =>
               Auction.decide(state.auction, schedule) match {
                 case Left(rejected) => Effect.reply(replyTo)(Left(rejected))
@@ -1274,6 +1374,7 @@ object AuctionEntity {
             confirmSlot(state.auction)
             releaseSlot(state.auction)
             followResults(state.auction)
+            followSets(state.auction)
             armPrebidding(state.auction)
           }
       }

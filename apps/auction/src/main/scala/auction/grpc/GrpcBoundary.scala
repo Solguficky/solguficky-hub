@@ -223,6 +223,8 @@ object GrpcBoundary {
     def draftAuction(in: wire.DraftAuctionRequest): Future[wire.DraftAuctionResponse] = refuse
     def addLot(in: wire.AddLotRequest): Future[wire.AddLotResponse] = refuse
     def removeLot(in: wire.RemoveLotRequest): Future[wire.RemoveLotResponse] = refuse
+    def saveLotSet(in: wire.SaveLotSetRequest): Future[wire.SaveLotSetResponse] = refuse
+    def deleteLotSet(in: wire.DeleteLotSetRequest): Future[wire.DeleteLotSetResponse] = refuse
     def scheduleLot(in: wire.ScheduleLotRequest): Future[wire.ScheduleLotResponse] = refuse
     def scheduleAuction(in: wire.ScheduleAuctionRequest): Future[wire.ScheduleAuctionResponse] = refuse
     def startPrebidding(in: wire.StartPrebiddingRequest): Future[wire.StartPrebiddingResponse] = refuse

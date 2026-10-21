@@ -106,6 +106,8 @@ final class GrpcBoundarySpec
     def draftAuction(in: wire.DraftAuctionRequest) = unused
     def addLot(in: wire.AddLotRequest) = unused
     def removeLot(in: wire.RemoveLotRequest) = unused
+    def saveLotSet(in: wire.SaveLotSetRequest) = unused
+    def deleteLotSet(in: wire.DeleteLotSetRequest) = unused
     def scheduleLot(in: wire.ScheduleLotRequest) = unused
     def scheduleAuction(in: wire.ScheduleAuctionRequest) = unused
     def startPrebidding(in: wire.StartPrebiddingRequest) = unused

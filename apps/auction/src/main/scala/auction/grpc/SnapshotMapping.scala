@@ -7,6 +7,8 @@ import auction.lot.ParticipantId
 import auction.lot.ProxyLimit
 import auction.lot.StepWindow
 import auction.lot.TradingState
+import auction.naming.DisplayName
+import auction.projection.LotSetView
 import auction.projection.LotSnapshotView
 import auction.v1.auction as model
 import auction.v1.auction_service as wire
@@ -26,26 +28,45 @@ import java.time.Instant
  */
 object SnapshotMapping {
 
-  def snapshot(view: LotSnapshotView, viewer: ParticipantId, at: Instant): wire.LotSnapshot =
-    of(view, at, own(_, viewer))
+  /**
+   * `names` — имена собравших сеты лотов ответа (ADR-073, п. 7): собравший без имени в них приходит без
+   * `collector_name`.
+   */
+  def snapshot(
+      view: LotSnapshotView,
+      viewer: ParticipantId,
+      at: Instant,
+      names: Map[ParticipantId, DisplayName] = Map.empty
+  ): wire.LotSnapshot =
+    of(view, at, own(_, viewer), names)
 
   /**
    * Снимок без смотрящего — для потока `WatchAuction`: поток одинаков у всех, и `viewer_proxy_limit` в нём не задаётся.
    */
-  def unviewed(view: LotSnapshotView, at: Instant): wire.LotSnapshot =
-    of(view, at, _ => None)
+  def unviewed(
+      view: LotSnapshotView,
+      at: Instant,
+      names: Map[ParticipantId, DisplayName] = Map.empty
+  ): wire.LotSnapshot =
+    of(view, at, _ => None, names)
+
+  /** Собравшие сеты лотов: их имена отвечающий читает одним запросом до снимка. */
+  def collectors(views: Iterable[LotSnapshotView]): Set[ParticipantId] =
+    views.iterator.flatMap(_.lotSet).flatMap(_.collector).map(ParticipantId(_)).toSet
 
   private def of(
       view: LotSnapshotView,
       at: Instant,
-      limit: Map[ParticipantId, ProxyLimit] => Option[model.Money]
+      limit: Map[ParticipantId, ProxyLimit] => Option[model.Money],
+      names: Map[ParticipantId, DisplayName]
   ): wire.LotSnapshot = {
     val base = wire.LotSnapshot(
       id = view.lotId.toString,
       auctionId = view.auctionId.toString,
       version = view.version,
       card = view.card.map(ResponseMapping.lotCard),
-      bidCount = view.bidCount
+      bidCount = view.bidCount,
+      lotSet = view.lotSet.map(lotSet(_, names))
     )
     view.lot.state match {
       case LotState.Initial =>
@@ -91,6 +112,15 @@ object SnapshotMapping {
       from = LotValues.instant(value.from),
       until = LotValues.instant(value.until),
       step = Some(LotValues.money(value.step))
+    )
+
+  private def lotSet(view: LotSetView, names: Map[ParticipantId, DisplayName]): wire.LotSetMembership =
+    wire.LotSetMembership(
+      lotSetId = view.lotSetId.toString,
+      name = view.name,
+      lotIds = view.lots.map(_.toString),
+      collectorId = view.collector.map(_.toString),
+      collectorName = view.collector.flatMap(id => names.get(ParticipantId(id))).map(ResponseMapping.displayName)
     )
 
   private def own(limits: Map[ParticipantId, ProxyLimit], viewer: ParticipantId): Option[model.Money] =

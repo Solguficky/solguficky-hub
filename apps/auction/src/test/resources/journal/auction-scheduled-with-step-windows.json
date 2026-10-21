@@ -73,6 +73,9 @@
     "finalLineupFrozen": null,
     "finalLotActivated": null,
     "finalLotCompleted": null,
-    "stepWindowLaunched": null
+    "stepWindowLaunched": null,
+    "lotSetDefined": null,
+    "lotSetDeleted": null,
+    "lotSetSettled": null
   }
 }

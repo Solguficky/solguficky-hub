@@ -77,6 +77,18 @@ enum RemovalRefusal {
   case LotNotInAuction
 }
 
+/**
+ * Отказ определения и удаления сета (ADR-073): проверка до агрегата или решение агрегата. Замороженные сеты —
+ * `Denied(LotsFrozen)`, как у реестра.
+ */
+enum LotSetRefusal {
+  case Denied(denial: Denial)
+  case NameEmpty
+  case LotNotInAuction(lot: LotId)
+  case LotInAnotherSet(lot: LotId, set: LotSetId)
+  case LotSetNotFound
+}
+
 /** Отказ `ScheduleAuction`: проверка до агрегата или решение агрегата. */
 enum SchedulingRefusal {
   case Denied(denial: Denial)
@@ -316,6 +328,59 @@ final class AuctionCommands(
             case Left(RemoveLotRejected.AuctionNotFound) => Left(RemovalRefusal.Denied(Denial.AuctionNotFound))
             case Left(RemoveLotRejected.LotsFrozen) => Left(RemovalRefusal.Denied(Denial.LotsFrozen))
             case Left(RemoveLotRejected.LotNotInAuction) => Left(RemovalRefusal.LotNotInAuction)
+            case Right(_) => Right(())
+          }
+        }
+    }
+
+  /**
+   * Определение сета (ADR-073): тот же порядок, что у реестра, — повтор, аукцион, право у Meetups, затем название и
+   * решение агрегата. Название проверяется после права, как у карточки каталога.
+   */
+  def saveLotSet(
+      auctionId: AuctionId,
+      set: LotSetId,
+      name: String,
+      lots: List[LotId],
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[LotSetRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Right(()))
+      case Inspection.Absent => Future.successful(Left(LotSetRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, LotSetRefusal.Denied(_)) {
+          LotSetName(name) match {
+            case Left(_) => Future.successful(Left(LotSetRefusal.NameEmpty))
+            case Right(named) =>
+              auctions.saveLotSet(auctionId, SaveLotSet(set, named, lots, opId), Initiator.Operator(person)).map {
+                case Left(SaveLotSetRejected.AuctionNotFound) => Left(LotSetRefusal.Denied(Denial.AuctionNotFound))
+                case Left(SaveLotSetRejected.LotsFrozen) => Left(LotSetRefusal.Denied(Denial.LotsFrozen))
+                case Left(SaveLotSetRejected.NameEmpty) => Left(LotSetRefusal.NameEmpty)
+                case Left(SaveLotSetRejected.LotNotInAuction(lot)) => Left(LotSetRefusal.LotNotInAuction(lot))
+                case Left(SaveLotSetRejected.LotInAnotherSet(lot, owner)) =>
+                  Left(LotSetRefusal.LotInAnotherSet(lot, owner))
+                case Right(_) => Right(())
+              }
+          }
+        }
+    }
+
+  def deleteLotSet(
+      auctionId: AuctionId,
+      set: LotSetId,
+      opId: OpId,
+      person: ParticipantId
+  ): Future[Either[LotSetRefusal, Unit]] =
+    auctions.inspect(auctionId, opId).flatMap {
+      case Inspection.Repeated(_) => Future.successful(Right(()))
+      case Inspection.Absent => Future.successful(Left(LotSetRefusal.Denied(Denial.AuctionNotFound)))
+      case Inspection.Present(meetup, _) =>
+        authorized(meetup, person, MeetupGate.NotCancelled, LotSetRefusal.Denied(_)) {
+          auctions.deleteLotSet(auctionId, DeleteLotSet(set, opId), Initiator.Operator(person)).map {
+            case Left(DeleteLotSetRejected.AuctionNotFound) => Left(LotSetRefusal.Denied(Denial.AuctionNotFound))
+            case Left(DeleteLotSetRejected.LotsFrozen) => Left(LotSetRefusal.Denied(Denial.LotsFrozen))
+            case Left(DeleteLotSetRejected.LotSetNotFound) => Left(LotSetRefusal.LotSetNotFound)
             case Right(_) => Right(())
           }
         }
@@ -767,7 +832,8 @@ final class AuctionCommands(
           AuctionEvent.PrebiddingDeadlineReached | AuctionEvent.PrebiddingEnded(_) | AuctionEvent.FinalLineupFrozen(_) |
           AuctionEvent.FinalStarted | AuctionEvent.FinalLotActivated(_) | AuctionEvent.FinalLotCompleted(_) |
           AuctionEvent.AuctionFinished | AuctionEvent.StepWindowLaunched(_) | AuctionEvent.AuctionPublished |
-          AuctionEvent.AuctionHidden =>
+          AuctionEvent.AuctionHidden | AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) |
+          AuctionEvent.LotSetSettled(_, _) =>
         false
     }
 }

@@ -42,6 +42,8 @@ service AuctionService {
   rpc DraftAuction(DraftAuctionRequest) returns (DraftAuctionResponse);
   rpc AddLot(AddLotRequest) returns (AddLotResponse);
   rpc RemoveLot(RemoveLotRequest) returns (RemoveLotResponse);
+  rpc SaveLotSet(SaveLotSetRequest) returns (SaveLotSetResponse);
+  rpc DeleteLotSet(DeleteLotSetRequest) returns (DeleteLotSetResponse);
   rpc ScheduleLot(ScheduleLotRequest) returns (ScheduleLotResponse);
   rpc ScheduleAuction(ScheduleAuctionRequest) returns (ScheduleAuctionResponse);
   rpc StartPrebidding(StartPrebiddingRequest) returns (StartPrebiddingResponse);
@@ -489,6 +491,31 @@ message LotSnapshot {
   // will put in force. Unset when there is none, in the live final, and when the
   // lot is not trading.
   LotStepWindow next_window = 18;
+
+  // The collectible set the lot belongs to. Unset when the lot is in no set, and
+  // when its set has fewer than two lots: such a set is not shown to participants.
+  LotSetMembership lot_set = 19;
+}
+
+// A collectible set of lots of one auction and its outcome.
+message LotSetMembership {
+  // Canonical lowercase UUIDv7 with hyphens: the id the organizer gave the set.
+  string lot_set_id = 1;
+
+  // The name of the set as the organizer typed it.
+  string name = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens each: every lot of the set in the
+  // order of the organizer, the lot of this snapshot among them.
+  repeated string lot_ids = 3;
+
+  // Canonical lowercase UUIDv7 with hyphens: the participant every lot of the
+  // set was sold to. Absent until the last lot of the set ends, and absent for
+  // good when a lot of the set was not sold or was sold to someone else.
+  optional string collector_id = 4;
+
+  // How the collector is shown in the auction. Set together with collector_id.
+  DisplayName collector_name = 5;
 }
 
 // A window of reduced bid step of one lot: the half-open interval [from, until).
@@ -825,6 +852,109 @@ message RemoveLotRefusal {
     MeetupCancelled meetup_cancelled = 5;
   }
 }
+
+message SaveLotSetRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens. The same id
+  // replaces the set as a whole: name and lots.
+  string lot_set_id = 3;
+
+  // The name of the set as the organizer typed it.
+  string name = 4;
+
+  // Canonical lowercase UUIDv7 with hyphens each: the lots in the order of the
+  // set. A repeated id counts once.
+  repeated string lot_ids = 5;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 6;
+}
+
+message SaveLotSetResponse {
+  // Exactly one is set.
+  oneof outcome {
+    LotSetSaved accepted = 1;
+    SaveLotSetRefusal refused = 2;
+  }
+}
+
+message LotSetSaved {}
+
+message SaveLotSetRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    LotsFrozen lots_frozen = 4;
+    LotSetNameEmpty name_empty = 5;
+    LotSetLotNotInAuction lot_not_in_auction = 6;
+    LotInAnotherSet lot_in_another_set = 7;
+  }
+}
+
+message DeleteLotSetRequest {
+  // The administrator of the meetup of the auction, checked with the meetup.
+  Viewer viewer = 1;
+
+  // Canonical lowercase UUIDv5 with hyphens: see DraftAuctionAccepted.
+  string auction_id = 2;
+
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_set_id = 3;
+
+  // Caller-generated canonical lowercase UUIDv7 with hyphens.
+  string op_id = 4;
+}
+
+message DeleteLotSetResponse {
+  // Exactly one is set.
+  oneof outcome {
+    LotSetDeleted accepted = 1;
+    DeleteLotSetRefusal refused = 2;
+  }
+}
+
+message LotSetDeleted {}
+
+message DeleteLotSetRefusal {
+  // Exactly one is set.
+  oneof reason {
+    NotMeetupAdministrator not_meetup_administrator = 1;
+    MeetupNotFound meetup_not_found = 2;
+    MeetupCancelled meetup_cancelled = 3;
+    LotsFrozen lots_frozen = 4;
+    LotSetNotFound lot_set_not_found = 5;
+  }
+}
+
+// The name of the set is empty or only spaces.
+message LotSetNameEmpty {}
+
+// A lot of the request is not in the registry of the auction.
+message LotSetLotNotInAuction {
+  // Canonical lowercase UUIDv7 with hyphens: the first such lot in the order of
+  // the request.
+  string lot_id = 1;
+}
+
+// A lot of the request is already in another set of the auction.
+message LotInAnotherSet {
+  // Canonical lowercase UUIDv7 with hyphens: the first such lot in the order of
+  // the request.
+  string lot_id = 1;
+
+  // Canonical lowercase UUIDv7 with hyphens: the set that holds it.
+  string lot_set_id = 2;
+}
+
+// The auction has no set with this id.
+message LotSetNotFound {}
 
 // The meetup did not confirm the viewer as its administrator.
 message NotMeetupAdministrator {}

@@ -111,6 +111,47 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       AuctionJournal.restoreAuction(AuctionJournal.storeAuction(after, sequence = 5)) shouldBe after
     }
 
+    "keeps the stored form of the lot set events and of a snapshot with sets equal to their golden files" in {
+      val set = LotSetId(uuid(20))
+      val second = LotId(uuid(12))
+      val name = LotSetName("Красный сет").toOption.get
+      val defined = AuctionEnvelope(3, op(3), AuctionEvent.LotSetDefined(set, name, List(second, lot)))
+      keepsGolden("lot-set-defined", stored(defined.event, 3))
+      keepsGolden("lot-set-deleted", stored(AuctionEvent.LotSetDeleted(set), 3))
+      val collected = AuctionEvent.LotSetSettled(set, LotSetSettlement.Collected(participant(2)))
+      keepsGolden("lot-set-settled", stored(collected, 5))
+      keepsGolden(
+        "lot-set-settled-uncollected",
+        stored(AuctionEvent.LotSetSettled(set, LotSetSettlement.NotCollected), 5)
+      )
+
+      val registry =
+        Auction.replay(Auction.initial, List(drafted, added, AuctionEnvelope(3, op(13), AuctionEvent.LotAdded(second))))
+      val withSet = Auction.replay(
+        registry,
+        List(
+          AuctionEnvelope(4, op(3), AuctionEvent.LotSetDefined(set, name, List(second, lot))),
+          AuctionEnvelope(5, op(14), AuctionEvent.AuctionScheduled(config())),
+          AuctionEnvelope(6, op(4), AuctionEvent.PrebiddingStarted),
+          AuctionEnvelope(7, op(5), collected)
+        )
+      )
+      withSet.sets(set).settlement shouldBe Some(LotSetSettlement.Collected(participant(2)))
+      keepsGolden("auction-snapshot-sets", AuctionJournal.storeAuction(withSet, sequence = 7))
+      AuctionJournal.restoreAuction(AuctionJournal.storeAuction(withSet, sequence = 7)) shouldBe withSet
+    }
+
+    "refuses a snapshot with a collector of a set that has no outcome" in {
+      val set = LotSetId(uuid(20))
+      val unsettled = Auction.apply(
+        Auction.replay(Auction.initial, List(drafted, added)),
+        AuctionEnvelope(3, op(3), AuctionEvent.LotSetDefined(set, LotSetName("Сет").toOption.get, List(lot)))
+      )
+      val stored = AuctionJournal.storeAuction(unsettled, sequence = 3)
+      val forged = stored.copy(sets = stored.sets.map(_.map(_.copy(collector = Some(uuid(30))))))
+      a[JournalCorrupted] should be thrownBy AuctionJournal.restoreAuction(forged)
+    }
+
     "refuses a launched window with no lot instead of recording it" in {
       val body = stored(
         AuctionEvent.StepWindowLaunched(StepWindowConfig(decidedAt, decidedAt.plusSeconds(60), money(100), Set.empty)),

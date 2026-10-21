@@ -8,6 +8,8 @@ import auction.aggregate.AuctionEnvelope
 import auction.aggregate.AuctionEvent
 import auction.aggregate.AuctionCommands
 import auction.aggregate.AuctionFixtures
+import auction.aggregate.DeleteLotSet
+import auction.aggregate.SaveLotSet
 import auction.aggregate.AuctionState
 import auction.aggregate.Authority
 import auction.aggregate.Standings
@@ -321,6 +323,10 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       fail("the auction was reached")
     def addLot(auctionId: AuctionId, command: AddLot, initiator: Initiator) = fail("the auction was reached")
     def removeLot(auctionId: AuctionId, command: RemoveLot, initiator: Initiator) = fail("the auction was reached")
+    def saveLotSet(auctionId: AuctionId, command: SaveLotSet, initiator: Initiator) =
+      fail("the auction was reached")
+    def deleteLotSet(auctionId: AuctionId, command: DeleteLotSet, initiator: Initiator) =
+      fail("the auction was reached")
     def schedule(auctionId: AuctionId, command: ScheduleAuction, initiator: Initiator) =
       fail("the auction was reached")
     def startPrebidding(auctionId: AuctionId, command: StartPrebidding, initiator: Initiator) =
