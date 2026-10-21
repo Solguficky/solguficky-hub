@@ -146,9 +146,8 @@ public sealed class InvoiceNotificationGrain(
 
     /// <summary>Причина снятия заданий: она встаёт в строку и читается глазами.</summary>
     private static string Reason(InvoiceReplica? replica, bool settled, bool overdue) =>
-        overdue ? "payment deadline passed"
-        : settled && replica is null ? "invoice is unknown"
-        : "invoice paid";
+        settled ? (replica is null ? "invoice is unknown" : "invoice paid")
+        : "payment deadline passed";
 
     private DateTimeOffset Now() => clock.GetUtcNow();
 
