@@ -59,6 +59,20 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       Future.successful(removeAnswer)
     }
 
+    var saveSetAnswer: Either[SaveLotSetRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def saveLotSet(auctionId: AuctionId, command: SaveLotSet, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(saveSetAnswer)
+    }
+
+    var deleteSetAnswer: Either[DeleteLotSetRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
+
+    def deleteLotSet(auctionId: AuctionId, command: DeleteLotSet, initiator: Initiator) = {
+      commands :+= command
+      Future.successful(deleteSetAnswer)
+    }
+
     var scheduleAnswer: Either[ScheduleAuctionRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
     var startAnswer: Either[OpeningRejected, AuctionAnswer] = Right(AuctionAnswer.Unchanged)
 
@@ -335,6 +349,33 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       commands.addLot(auctionOfMeetup, lot, op(2), person).futureValue shouldBe Left(Denial.LotsFrozen)
       commands.removeLot(auctionOfMeetup, lot, op(3), person).futureValue shouldBe
         Left(RemovalRefusal.Denied(Denial.LotsFrozen))
+    }
+
+    "checks the right before the name of a lot set and touches no auction without it" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      val set = LotSetId(new UUID(6L, 1L))
+      AuctionCommands(auctions, noLots, Meetups(Authority.NotAdministrator))
+        .saveLotSet(auctionOfMeetup, set, " ", List(lot), op(2), person)
+        .futureValue shouldBe Left(LotSetRefusal.Denied(Denial.NotAdministrator))
+      AuctionCommands(auctions, noLots, granted)
+        .saveLotSet(auctionOfMeetup, set, " ", List(lot), op(2), person)
+        .futureValue shouldBe Left(LotSetRefusal.NameEmpty)
+      auctions.commands shouldBe empty
+    }
+
+    "passes the refusals of a lot set from the auction through" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = true))
+      val set = LotSetId(new UUID(6L, 1L))
+      val commands = AuctionCommands(auctions, noLots, granted)
+      auctions.saveSetAnswer = Left(SaveLotSetRejected.LotInAnotherSet(lot, LotSetId(new UUID(6L, 2L))))
+      commands.saveLotSet(auctionOfMeetup, set, "Сет", List(lot), op(2), person).futureValue shouldBe
+        Left(LotSetRefusal.LotInAnotherSet(lot, LotSetId(new UUID(6L, 2L))))
+      auctions.saveSetAnswer = Left(SaveLotSetRejected.LotsFrozen)
+      commands.saveLotSet(auctionOfMeetup, set, "Сет", List(lot), op(3), person).futureValue shouldBe
+        Left(LotSetRefusal.Denied(Denial.LotsFrozen))
+      auctions.deleteSetAnswer = Left(DeleteLotSetRejected.LotSetNotFound)
+      commands.deleteLotSet(auctionOfMeetup, set, op(4), person).futureValue shouldBe
+        Left(LotSetRefusal.LotSetNotFound)
     }
 
     "answers a lot of the discarded birth as a lot of another auction" in {

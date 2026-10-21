@@ -10,6 +10,7 @@ import auction.entity.AuctionLots
 import auction.entity.AuctionPredictions
 import auction.entity.AuctionRaffle
 import auction.entity.AuctionResults
+import auction.entity.AuctionSetOutcomes
 import auction.entity.AuctionSlot
 import auction.entity.LotCardGate
 import auction.entity.LotEntity
@@ -153,7 +154,8 @@ object AuctionNode {
       raffle: AuctionRaffle = AuctionRaffle.none,
       slot: AuctionSlot = AuctionSlot.none,
       predictions: AuctionPredictions = AuctionPredictions.none,
-      results: AuctionResults = AuctionResults.none
+      results: AuctionResults = AuctionResults.none,
+      setOutcomes: AuctionSetOutcomes = AuctionSetOutcomes.none
   ): ActorRef[ShardingEnvelope[AuctionEntity.Command]] = {
     val lots = AuctionLots.sharded(sharding, askTimeout)
     sharding.init(
@@ -167,7 +169,8 @@ object AuctionNode {
           raffle = raffle,
           slot = slot,
           predictions = predictions,
-          results = results
+          results = results,
+          setOutcomes = setOutcomes
         )
       }
         .withSettings(remembered(system))

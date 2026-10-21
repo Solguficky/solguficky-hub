@@ -23,7 +23,10 @@
         "finalLotActivated": null,
         "finalLotCompleted": null,
         "stepWindowLaunched": null,
-        "finalTime": null
+        "finalTime": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     },
     {
@@ -42,7 +45,10 @@
         "finalLotActivated": null,
         "finalLotCompleted": null,
         "stepWindowLaunched": null,
-        "finalTime": null
+        "finalTime": null,
+        "lotSetDefined": null,
+        "lotSetDeleted": null,
+        "lotSetSettled": null
       }
     }
   ],
@@ -54,5 +60,6 @@
   "completed": null,
   "launched": null,
   "hidden": true,
-  "finalAt": null
+  "finalAt": null,
+  "sets": null
 }

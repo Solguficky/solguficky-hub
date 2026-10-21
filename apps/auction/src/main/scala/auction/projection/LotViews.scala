@@ -10,8 +10,15 @@ import java.util.UUID
 import scala.concurrent.Future
 
 /**
+ * Сет лота (ADR-073) в read model: название, лоты в порядке организатора и собравший — после итога и только у
+ * собранного сета.
+ */
+final case class LotSetView(lotSetId: UUID, name: String, lots: List[UUID], collector: Option[UUID])
+
+/**
  * Лот из read model вместе с карточкой каталога: карточку торги не знают (ADR-057), и она присоединяется при чтении.
  * `bidCount` — число строк `lot_bid` лота, ручных и прокси вместе (PER-320), без ставок снятых участников (PER-658).
+ * `lotSet` — сет лота, только полный: сет меньше чем из двух лотов участнику не показывается (ADR-073, п. 3).
  */
 final case class LotSnapshotView(
     lotId: UUID,
@@ -19,7 +26,8 @@ final case class LotSnapshotView(
     version: Long,
     lot: Lot,
     card: Option[LotCard],
-    bidCount: Long = 0
+    bidCount: Long = 0,
+    lotSet: Option[LotSetView] = None
 )
 
 /**

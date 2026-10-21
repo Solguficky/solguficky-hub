@@ -32,6 +32,19 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[RemoveLotRejected, AuctionAnswer]]
 
+  /** Определение сета лотов до старта торгов (ADR-073). */
+  def saveLotSet(
+      auctionId: AuctionId,
+      command: SaveLotSet,
+      initiator: Initiator
+  ): Future[Either[SaveLotSetRejected, AuctionAnswer]]
+
+  def deleteLotSet(
+      auctionId: AuctionId,
+      command: DeleteLotSet,
+      initiator: Initiator
+  ): Future[Either[DeleteLotSetRejected, AuctionAnswer]]
+
   def schedule(
       auctionId: AuctionId,
       command: ScheduleAuction,
@@ -182,6 +195,20 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[RemoveLotRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Remove(command, initiator, _))
+
+      def saveLotSet(
+          auctionId: AuctionId,
+          command: SaveLotSet,
+          initiator: Initiator
+      ): Future[Either[SaveLotSetRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.SaveSet(command, initiator, _))
+
+      def deleteLotSet(
+          auctionId: AuctionId,
+          command: DeleteLotSet,
+          initiator: Initiator
+      ): Future[Either[DeleteLotSetRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.DeleteSet(command, initiator, _))
 
       def schedule(
           auctionId: AuctionId,

@@ -22,6 +22,7 @@ import auction.persistence.SlickDisplayNameStore
 import auction.persistence.SlickPredictionStore
 import auction.persistence.SlickRaffleTickets
 import auction.persistence.SlickResultsOutcomes
+import auction.persistence.SlickSetOutcomes
 import auction.persistence.SlickResultsStore
 import auction.naming.DisplayNameCommands
 import auction.raffle.RaffleSettings
@@ -184,7 +185,8 @@ object Main {
       AuctionRaffle.sharded(sharding, askTimeout),
       AuctionNode.registerSlot(sharding, clock, UuidV7.generator(clock), slot),
       predictions,
-      results
+      results,
+      SlickSetOutcomes(system)
     )
     AuctionNode.eraseRaffleNames(system, raffleTickets, clock, erasureEvery)
     if (identity.url.isEmpty)

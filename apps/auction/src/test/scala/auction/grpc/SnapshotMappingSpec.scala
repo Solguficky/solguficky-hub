@@ -6,6 +6,9 @@ import auction.catalog.LotId
 import auction.catalog.LotTitle
 import auction.lot.*
 import auction.lot.LotFixtures.*
+import auction.naming.DisplayKind
+import auction.naming.DisplayName
+import auction.projection.LotSetView
 import auction.projection.LotSnapshotView
 import auction.v1.auction as model
 import auction.v1.auction_service as wire
@@ -37,6 +40,33 @@ final class SnapshotMappingSpec extends AnyWordSpec with Matchers {
     wire.LotStepWindow(s"2026-10-07T$from:00Z", s"2026-10-07T$until:00Z", Some(rub(step)))
 
   "snapshot mapping" should {
+
+    "carry the set of the lot with its lots in order and the collector by id and by name" in {
+      val second = new UUID(7L, 2L)
+      val collected = LotSetView(new UUID(6L, 1L), "Красный сет", List(second, lotId), Some(participant(2).value))
+      val name = DisplayName("@collector", DisplayKind.Username, frozen = true)
+      val snapshot = SnapshotMapping.snapshot(
+        view(drafted).copy(lotSet = Some(collected)),
+        participant(1),
+        at("12:00"),
+        Map(participant(2) -> name)
+      )
+      snapshot.lotSet shouldBe Some(
+        wire.LotSetMembership(
+          lotSetId = collected.lotSetId.toString,
+          name = "Красный сет",
+          lotIds = List(second.toString, lotId.toString),
+          collectorId = Some(participant(2).value.toString),
+          collectorName =
+            Some(wire.DisplayName("@collector", wire.DisplayNameKind.DISPLAY_NAME_KIND_TELEGRAM_USERNAME, true))
+        )
+      )
+      // Поток `WatchAuction` несёт тот же сет с именем собравшего.
+      SnapshotMapping
+        .unviewed(view(drafted).copy(lotSet = Some(collected)), at("12:00"), Map(participant(2) -> name))
+        .lotSet shouldBe snapshot.lotSet
+      SnapshotMapping.snapshot(view(drafted), participant(1), at("12:00")).lotSet shouldBe None
+    }
 
     "answer the next price, the regular step and the windows at the instant of the answer" in {
       val inside = SnapshotMapping.snapshot(view(windowed), participant(1), at("13:59:59"))

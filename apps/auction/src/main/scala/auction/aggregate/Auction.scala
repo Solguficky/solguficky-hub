@@ -255,7 +255,8 @@ object LotTerms {
  * завершённый — в `FinalLotCompleted`. `AuctionFinished` — конец аукциона с финалом; у аукциона без финала его не
  * бывает, тот кончается `PrebiddingEnded(finished = true)`. Рождение несёт `hidden`: новый аукцион скрыт от участников,
  * а строка, записанная до признака видимости, читается видимой (ADR-047, дополнение 2026-10-20). `AuctionPublished` и
- * `AuctionHidden` payload не несут.
+ * `AuctionHidden` payload не несут. Сет лотов (ADR-073) пишется рядом с реестром: `LotSetDefined` несёт определение
+ * целиком, `LotSetDeleted` — только идентификатор, `LotSetSettled` — итог сета, один раз.
  */
 enum AuctionEvent {
   case AuctionDrafted(meetup: MeetupId, hidden: Boolean = true)
@@ -277,6 +278,9 @@ enum AuctionEvent {
   case StepWindowLaunched(window: StepWindowConfig)
   case FinalTimeSet(at: Instant)
   case FinalTimeCleared
+  case LotSetDefined(set: LotSetId, name: LotSetName, lots: List[LotId])
+  case LotSetDeleted(set: LotSetId)
+  case LotSetSettled(set: LotSetId, settlement: LotSetSettlement)
 }
 
 /** Строка журнала аукциона в той части конверта, которую читает ядро; `sequence` назначает тот, кто пишет журнал. */
@@ -531,7 +535,8 @@ enum Inspection {
  * дополнение 2026-10-12): объявленные лежат в конфигурации, и пересечения запуск проверяет по обоим спискам. `hidden` —
  * аукцион скрыт от участников (ADR-047, дополнение 2026-10-20); бывает только в `Draft` и `Scheduled`. `finalAt` —
  * ориентировочное время финала (ADR-040, дополнение 2026-10-19): подпись, а не условие торгов; без неё аукцион
- * показывает «скоро».
+ * показывает «скоро». `sets` — коллекционные сеты (ADR-073): меняются там же, где реестр, лоты сета — всегда лоты
+ * реестра, и лот не больше чем в одном сете; после старта торгов меняется только итог сета.
  */
 final case class Auction(
     state: AuctionState,
@@ -540,7 +545,8 @@ final case class Auction(
     seen: Map[OpId, AuctionEnvelope],
     launched: List[LaunchedWindow] = Nil,
     hidden: Boolean = false,
-    finalAt: Option[Instant] = None
+    finalAt: Option[Instant] = None,
+    sets: Map[LotSetId, LotSet] = Map.empty
 )
 
 object Auction {
@@ -662,6 +668,77 @@ object Auction {
               AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
               AuctionState.Cancelled(_, _, _) =>
             Left(RemoveLotRejected.LotsFrozen)
+        }
+    }
+
+  /**
+   * Определение сета (ADR-073, пп. 1–2): в тех же состояниях, что реестр, после старта торгов — `LotsFrozen`. Лоты сета
+   * — лоты реестра, и лот не больше чем в одном сете: отказ называет первый лот, на котором споткнулся. Сет из меньше
+   * чем двух лотов принимается — он неполный. Тот же сет пишет событие и без изменений, как `LotAdded`: ответ без
+   * события повтором не защищён.
+   */
+  def decide(auction: Auction, command: SaveLotSet): Either[SaveLotSetRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(SaveLotSetRejected.AuctionNotFound)
+          case AuctionState.Draft | AuctionState.Scheduled(_) =>
+            val lots = command.lots.distinct
+            val owner = auction.sets.iterator.flatMap((id, set) => set.lots.map(_ -> id)).toMap
+            lots.iterator
+              .flatMap { lot =>
+                if (!auction.lots.contains(lot)) Some(SaveLotSetRejected.LotNotInAuction(lot))
+                else owner.get(lot).filter(_ != command.set).map(SaveLotSetRejected.LotInAnotherSet(lot, _))
+              }
+              .nextOption() match {
+              case Some(rejected) => Left(rejected)
+              case None => Right(AuctionDecision.Accepted(AuctionEvent.LotSetDefined(command.set, command.name, lots)))
+            }
+          case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            Left(SaveLotSetRejected.LotsFrozen)
+        }
+    }
+
+  /** Удаление сета — в тех же состояниях, что его определение. Сета нет — `LotSetNotFound`. */
+  def decide(auction: Auction, command: DeleteLotSet): Either[DeleteLotSetRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(DeleteLotSetRejected.AuctionNotFound)
+          case AuctionState.Draft | AuctionState.Scheduled(_) =>
+            if (auction.sets.contains(command.set))
+              Right(AuctionDecision.Accepted(AuctionEvent.LotSetDeleted(command.set)))
+            else Left(DeleteLotSetRejected.LotSetNotFound)
+          case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |
+              AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
+              AuctionState.Cancelled(_, _, _) =>
+            Left(DeleteLotSetRejected.LotsFrozen)
+        }
+    }
+
+  /**
+   * Итог сета (ADR-073, п. 4): только после старта торгов, только у полного сета без итога и только когда каждый его
+   * лот пришёл к конечному исходу — онлайн, в перерыве или в финале, в том числе снятый отменой аукциона. Итог пишется
+   * один раз и дальше не меняется.
+   */
+  def decide(auction: Auction, command: SettleLotSet): Either[SettleLotSetRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.sets.get(command.set) match {
+          case _ if auction.state.started.isEmpty => Left(SettleLotSetRejected.NotStarted)
+          case Some(set) if set.complete =>
+            if (set.settlement.isDefined) Left(SettleLotSetRejected.AlreadySettled)
+            else
+              LotSets
+                .verdict(set, command.outcomes)
+                .toRight(SettleLotSetRejected.NotTerminal)
+                .map(settlement => AuctionDecision.Accepted(AuctionEvent.LotSetSettled(command.set, settlement)))
+          case Some(_) | None => Left(SettleLotSetRejected.LotSetNotFound)
         }
     }
 
@@ -1192,8 +1269,18 @@ object Auction {
         auction.copy(hidden = true)
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotAdded(lot)) =>
         auction.copy(lots = auction.lots + lot)
+      // Лот, убранный из реестра, уходит и из своего сета (ADR-073, п. 3): `LotAdded` того же лота в сет его не вернёт.
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotRemoved(lot)) =>
-        auction.copy(lots = auction.lots - lot)
+        auction.copy(
+          lots = auction.lots - lot,
+          sets = auction.sets.view.mapValues(set => set.copy(lots = set.lots.filterNot(_ == lot))).toMap
+        )
+      case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotSetDefined(set, name, lots)) =>
+        auction.copy(sets = auction.sets.updated(set, LotSet(name, lots)))
+      case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.LotSetDeleted(set)) =>
+        auction.copy(sets = auction.sets - set)
+      case (current, AuctionEvent.LotSetSettled(set, settlement)) if current.started.isDefined =>
+        auction.copy(sets = auction.sets.updatedWith(set)(_.map(_.copy(settlement = Some(settlement)))))
       case (AuctionState.Draft | AuctionState.Scheduled(_), AuctionEvent.AuctionScheduled(config)) =>
         auction.copy(state = AuctionState.Scheduled(config))
       // Открытие торгов публикует скрытый аукцион само (ADR-047, дополнение 2026-10-20): торги скрытыми не идут.

@@ -27,6 +27,7 @@ import auction.projection.FinalBids
 import auction.prediction.PredictionGateway
 import auction.prediction.PredictionRound
 import auction.prediction.SubmitForecast
+import auction.projection.LotSnapshotView
 import auction.projection.LotViews
 import auction.raffle.CancelRegistration
 import auction.raffle.Raffle
@@ -295,7 +296,10 @@ final class AuctionGrpcService(
         views.find(query.lotId).flatMap {
           case Some(view) =>
             concealed(view.auctionId, query.acting.viewer).flatMap {
-              case false => Future.successful(SnapshotMapping.snapshot(view, query.acting.participant, clock.instant()))
+              case false =>
+                collectorNames(view.auctionId, List(view)).map { collectors =>
+                  SnapshotMapping.snapshot(view, query.acting.participant, clock.instant(), collectors)
+                }
               case true => refuse(Status.NOT_FOUND.withDescription("lot not found"))
             }
           case None => refuse(Status.NOT_FOUND.withDescription("lot not found"))
@@ -320,15 +324,17 @@ final class AuctionGrpcService(
             case true => Future.successful(Vector.empty)
             case false => read(query.auctionId, query.after, query.limit + 1)
           }
-          .map { found =>
-            val at = clock.instant()
+          .flatMap { found =>
             val page = found.take(query.limit)
-            val next =
-              if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.lotId)) else None
-            wire.ListAuctionLotsResponse(
-              page.map(SnapshotMapping.snapshot(_, query.acting.participant, at)),
-              next.getOrElse("")
-            )
+            collectorNames(query.auctionId, page).map { collectors =>
+              val at = clock.instant()
+              val next =
+                if (found.sizeIs > query.limit) page.lastOption.map(view => PageToken.encode(view.lotId)) else None
+              wire.ListAuctionLotsResponse(
+                page.map(SnapshotMapping.snapshot(_, query.acting.participant, at, collectors)),
+                next.getOrElse("")
+              )
+            }
           }
     }
 
@@ -358,6 +364,13 @@ final class AuctionGrpcService(
               Future.successful(wire.ListLotHistoryResponse(page.map(HistoryMapping.entry), next.getOrElse("")))
           }
     }
+
+  /** Имена собравших сеты лотов (ADR-073, п. 7): лоты без собранного сета запроса к именам не делают. */
+  private def collectorNames(
+      auctionId: UUID,
+      views: Iterable[LotSnapshotView]
+  ): Future[Map[ParticipantId, DisplayName]] =
+    names.names(AuctionId(auctionId), SnapshotMapping.collectors(views))
 
   /** Выбор имени в аукционе (ADR-059). Отказ выбора — значение ответа, как отказ торгов. */
   def chooseDisplayName(in: wire.ChooseDisplayNameRequest): Future[wire.ChooseDisplayNameResponse] =
@@ -515,6 +528,34 @@ final class AuctionGrpcService(
           .removeLot(command.auctionId, command.lotId, command.opId, command.acting.participant)
           .recoverWith(awaited)
           .flatMap(outcome => ResponseMapping.removeLot(outcome).fold(refuse, Future.successful))
+    }
+
+  /** Определение сета лотов (ADR-073): право — у Meetups, заморозку, название и лоты решает аукцион. */
+  def saveLotSet(in: wire.SaveLotSetRequest): Future[wire.SaveLotSetResponse] =
+    RequestMapping.saveLotSet(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .saveLotSet(
+            command.auctionId,
+            command.set,
+            command.name,
+            command.lots,
+            command.opId,
+            command.acting.participant
+          )
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.saveLotSet(outcome).fold(refuse, Future.successful))
+    }
+
+  def deleteLotSet(in: wire.DeleteLotSetRequest): Future[wire.DeleteLotSetResponse] =
+    RequestMapping.deleteLotSet(in) match {
+      case Left(error) => invalid(error)
+      case Right(command) =>
+        auctions
+          .deleteLotSet(command.auctionId, command.set, command.opId, command.acting.participant)
+          .recoverWith(awaited)
+          .flatMap(outcome => ResponseMapping.deleteLotSet(outcome).fold(refuse, Future.successful))
     }
 
   /**
@@ -1134,11 +1175,18 @@ final class AuctionGrpcService(
         val auctionId = query.auctionId.value
         changes
           .subscribe(auctionId)
-          .mapAsync(1)(_ => watchViews.read(auctionId))
+          .mapAsync(1)(_ =>
+            watchViews.read(auctionId).flatMap {
+              case Some(view) =>
+                collectorNames(auctionId, view.activeLot ++ view.lineup).map(names => Some(view -> names))
+              case None => Future.successful(None)
+            }
+          )
           .map {
             // Скрытый аукцион — то же, что отсутствующий (ADR-047, дополнение 2026-10-20): его `auction_id` выводится
             // из `meetup_id`, и без проверки поток отдал бы конфигурацию и реестр.
-            case Some(view) if shown(query.acting.viewer)(view.auction) => WatchMapping.watch(view, clock.instant())
+            case Some((view, names)) if shown(query.acting.viewer)(view.auction) =>
+              WatchMapping.watch(view, clock.instant(), names)
             case Some(_) | None => throw new GrpcServiceException(Status.NOT_FOUND.withDescription("auction not found"))
           }
           .via(AuctionGrpcService.changed)

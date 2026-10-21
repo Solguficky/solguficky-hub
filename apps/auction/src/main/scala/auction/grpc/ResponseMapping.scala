@@ -19,6 +19,7 @@ import auction.aggregate.LaunchRefusal
 import auction.aggregate.LaunchStepWindowRejected
 import auction.aggregate.StepWindowConfig
 import auction.aggregate.LotSchedulingRefusal
+import auction.aggregate.LotSetRefusal
 import auction.aggregate.OpeningRefusal
 import auction.aggregate.ParticipantRemovalRefusal
 import auction.aggregate.RemovalRefusal
@@ -137,7 +138,7 @@ object ResponseMapping {
       )
     )
 
-  private def displayName(name: DisplayName): wire.DisplayName = {
+  private[grpc] def displayName(name: DisplayName): wire.DisplayName = {
     val kind = name.kind match {
       case DisplayKind.Username => wire.DisplayNameKind.DISPLAY_NAME_KIND_TELEGRAM_USERNAME
       case DisplayKind.Pseudonym => wire.DisplayNameKind.DISPLAY_NAME_KIND_ALIAS
@@ -374,6 +375,63 @@ object ResponseMapping {
       case Left(RemovalRefusal.Denied(denial @ (Denial.MeetupHidden | Denial.LotOfAnotherAuction))) =>
         throw new IllegalStateException(s"lot removal answered $denial")
     }
+
+  /** Отказы определения сета (ADR-073): право, заморозка, название и лоты — одним `oneof`. */
+  def saveLotSet(outcome: Either[LotSetRefusal, Unit]): Either[Status, wire.SaveLotSetResponse] = {
+    def refused(reason: wire.SaveLotSetRefusal.Reason) =
+      Right(wire.SaveLotSetResponse().withRefused(wire.SaveLotSetRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.SaveLotSetResponse().withAccepted(wire.LotSetSaved()))
+      case Left(LotSetRefusal.NameEmpty) => refused(wire.SaveLotSetRefusal.Reason.NameEmpty(wire.LotSetNameEmpty()))
+      case Left(LotSetRefusal.LotNotInAuction(lot)) =>
+        refused(wire.SaveLotSetRefusal.Reason.LotNotInAuction(wire.LotSetLotNotInAuction(lot.value.toString)))
+      case Left(LotSetRefusal.LotInAnotherSet(lot, set)) =>
+        refused(
+          wire.SaveLotSetRefusal.Reason.LotInAnotherSet(wire.LotInAnotherSet(lot.value.toString, set.value.toString))
+        )
+      case Left(LotSetRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(wire.SaveLotSetRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(LotSetRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(wire.SaveLotSetRefusal.Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(LotSetRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(wire.SaveLotSetRefusal.Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(LotSetRefusal.Denied(Denial.LotsFrozen)) =>
+        refused(wire.SaveLotSetRefusal.Reason.LotsFrozen(wire.LotsFrozen()))
+      case Left(LotSetRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(LotSetRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            refusal @ (LotSetRefusal.LotSetNotFound | LotSetRefusal.Denied(Denial.MeetupHidden) |
+            LotSetRefusal.Denied(Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"lot set saving answered $refusal")
+    }
+  }
+
+  def deleteLotSet(outcome: Either[LotSetRefusal, Unit]): Either[Status, wire.DeleteLotSetResponse] = {
+    def refused(reason: wire.DeleteLotSetRefusal.Reason) =
+      Right(wire.DeleteLotSetResponse().withRefused(wire.DeleteLotSetRefusal(reason)))
+    outcome match {
+      case Right(()) => Right(wire.DeleteLotSetResponse().withAccepted(wire.LotSetDeleted()))
+      case Left(LotSetRefusal.LotSetNotFound) =>
+        refused(wire.DeleteLotSetRefusal.Reason.LotSetNotFound(wire.LotSetNotFound()))
+      case Left(LotSetRefusal.Denied(Denial.NotAdministrator)) =>
+        refused(wire.DeleteLotSetRefusal.Reason.NotMeetupAdministrator(wire.NotMeetupAdministrator()))
+      case Left(LotSetRefusal.Denied(Denial.MeetupNotFound)) =>
+        refused(wire.DeleteLotSetRefusal.Reason.MeetupNotFound(wire.MeetupNotFound()))
+      case Left(LotSetRefusal.Denied(Denial.MeetupCancelled)) =>
+        refused(wire.DeleteLotSetRefusal.Reason.MeetupCancelled(wire.MeetupCancelled()))
+      case Left(LotSetRefusal.Denied(Denial.LotsFrozen)) =>
+        refused(wire.DeleteLotSetRefusal.Reason.LotsFrozen(wire.LotsFrozen()))
+      case Left(LotSetRefusal.Denied(Denial.Unavailable)) => Left(unavailable)
+      case Left(LotSetRefusal.Denied(Denial.AuctionNotFound)) => Left(auctionNotFound)
+      case Left(
+            refusal @ (LotSetRefusal.NameEmpty | LotSetRefusal.LotNotInAuction(_) |
+            LotSetRefusal.LotInAnotherSet(_, _) | LotSetRefusal.Denied(Denial.MeetupHidden) |
+            LotSetRefusal.Denied(Denial.LotOfAnotherAuction))
+          ) =>
+        throw new IllegalStateException(s"lot set deletion answered $refusal")
+    }
+  }
 
   /**
    * Отказы `ScheduleLot` трёх источников — право, аукцион и лот — одним `oneof`. `OpIdTaken` — статус, как у команд
