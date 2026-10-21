@@ -73,6 +73,7 @@ import {
   type CloseLotResult,
   type ConsoleReadResult,
   type DaySummaryReadResult,
+  type DeleteLotSetResult,
   type DiscardAuctionResult,
   type EnableAuctionResult,
   type FinalistRefusal,
@@ -89,6 +90,7 @@ import {
   type MeetupAuctions,
   type RemovalPreviewResult,
   type RemoveParticipantResult,
+  type SaveLotSetResult,
   type ScheduleAuctionResult,
   type ScheduleLotResult,
   type StartFinalResult,
@@ -136,6 +138,8 @@ type AuctionRpc = Pick<
   | "publishAuction"
   | "hideAuction"
   | "setFinalTime"
+  | "saveLotSet"
+  | "deleteLotSet"
   | "selectForFinal"
   | "deselectForFinal"
   | "freezeFinalLineup"
@@ -633,6 +637,32 @@ export function createAuctionAdapter(
           options(meta),
         );
         return finalTimeResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async saveLotSet(person, set, meta) {
+      try {
+        const response = await rpc.saveLotSet(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            ...set,
+            lotIds: [...set.lotIds],
+          },
+          options(meta),
+        );
+        return saveLotSetResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    async deleteLotSet(person, set, meta) {
+      try {
+        const response = await rpc.deleteLotSet(
+          { viewer: wireViewer(viewerOf(person)), ...set },
+          options(meta),
+        );
+        return deleteLotSetResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1725,6 +1755,86 @@ function cancelAuctionResult(
       }
     case undefined:
       return defect("cancel auction response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Сохранение сета (ADR-073, PER-509): принятие без полей, отказ лота называет
+// лот, а лот чужого сета — ещё и сет.
+function saveLotSetResult(
+  outcome: Awaited<ReturnType<AuctionRpc["saveLotSet"]>>["outcome"],
+): SaveLotSetResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused": {
+      const reason = outcome.value.reason;
+      switch (reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "lotsFrozen":
+          return { kind: "lots-frozen" };
+        case "nameEmpty":
+          return { kind: "name-empty" };
+        case "lotNotInAuction":
+          return { kind: "lot-not-in-auction", lotId: reason.value.lotId };
+        case "lotInAnotherSet":
+          return {
+            kind: "lot-in-another-set",
+            lotId: reason.value.lotId,
+            lotSetId: reason.value.lotSetId,
+          };
+        case undefined:
+          return defect("save lot set refusal without a reason");
+        default: {
+          const _exhaustive: never = reason;
+          return _exhaustive;
+        }
+      }
+    }
+    case undefined:
+      return defect("save lot set response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function deleteLotSetResult(
+  outcome: Awaited<ReturnType<AuctionRpc["deleteLotSet"]>>["outcome"],
+): DeleteLotSetResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "lotsFrozen":
+          return { kind: "lots-frozen" };
+        case "lotSetNotFound":
+          return { kind: "lot-set-not-found" };
+        case undefined:
+          return defect("delete lot set refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("delete lot set response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

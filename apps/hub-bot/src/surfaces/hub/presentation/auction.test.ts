@@ -775,7 +775,7 @@ describe("auction root and the way back", () => {
     expect(labels(lastScreen(calls))).toEqual([
       ["🔨 Лоты"],
       ["Правила и FAQ"],
-      ["🛠 Пульт"],
+      ["🛠 Пульт", "🛠 Сеты"],
       ["‹ Сходки"],
     ]);
     await bot.handleUpdate(press(feedData));

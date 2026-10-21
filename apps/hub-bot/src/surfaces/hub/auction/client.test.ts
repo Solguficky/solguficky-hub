@@ -17,6 +17,7 @@ import {
   CancelAuctionResponseSchema,
   CloseLotResponseSchema,
   CreateLotCardResponseSchema,
+  DeleteLotSetResponseSchema,
   DiscardAuctionResponseSchema,
   DraftAuctionResponseSchema,
   EditLotCardResponseSchema,
@@ -36,6 +37,7 @@ import {
   PublishAuctionResponseSchema,
   RaffleSchema,
   RaffleStatus,
+  SaveLotSetResponseSchema,
   ScheduleAuctionResponseSchema,
   ScheduleLotResponseSchema,
   SelectForFinalResponseSchema,
@@ -91,6 +93,8 @@ function adapter(rpc: {
   publishAuction?: Call;
   hideAuction?: Call;
   setFinalTime?: Call;
+  saveLotSet?: Call;
+  deleteLotSet?: Call;
   selectForFinal?: Call;
   deselectForFinal?: Call;
   freezeFinalLineup?: Call;
@@ -142,6 +146,8 @@ function adapter(rpc: {
     publishAuction: (rpc.publishAuction ?? notUsed) as never,
     hideAuction: (rpc.hideAuction ?? notUsed) as never,
     setFinalTime: (rpc.setFinalTime ?? notUsed) as never,
+    saveLotSet: (rpc.saveLotSet ?? notUsed) as never,
+    deleteLotSet: (rpc.deleteLotSet ?? notUsed) as never,
     selectForFinal: (rpc.selectForFinal ?? notUsed) as never,
     deselectForFinal: (rpc.deselectForFinal ?? notUsed) as never,
     freezeFinalLineup: (rpc.freezeFinalLineup ?? notUsed) as never,
@@ -540,6 +546,7 @@ describe("auction adapter of the lot form", () => {
 // Пульт аукциона (PER-320): что уходит в Auction и как читается ответ.
 describe("auction console adapter", () => {
   const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
+  const lotSetId = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34bb";
   const week = {
     auctionId,
     opId,
@@ -871,6 +878,8 @@ describe("auction console adapter", () => {
                   overdue: true,
                 },
               ],
+              // Неполный сет из одного лота (PER-509): пульт его видит.
+              lotSets: [{ lotSetId, name: "Кружки", lotIds: [lotId] }],
             },
           },
         }),
@@ -904,6 +913,7 @@ describe("auction console adapter", () => {
             overdue: true,
           },
         ],
+        lotSets: [{ lotSetId, name: "Кружки", lotIds: [lotId] }],
       },
     });
   });
@@ -1405,6 +1415,104 @@ describe("auction console adapter", () => {
     await expect(
       odd.setFinalTime(admin, { auctionId, opId }),
     ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  // Сеты лотов (PER-509): состав уходит целиком, отказ лота несёт лот, а лот
+  // чужого сета — ещё и сет.
+  it("sends a lot set whole and reads every lot set refusal as an answer", async () => {
+    const sent: unknown[] = [];
+    const set = { auctionId, lotSetId, name: "Кружки", lotIds: [lotId], opId };
+    const accepted = adapter({
+      saveLotSet: async (request: unknown) => {
+        sent.push(request);
+        return create(SaveLotSetResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+      deleteLotSet: async (request: unknown) => {
+        sent.push(request);
+        return create(DeleteLotSetResponseSchema, {
+          outcome: { case: "accepted", value: {} },
+        });
+      },
+    });
+    await expect(accepted.saveLotSet(admin, set)).resolves.toEqual({
+      kind: "ok",
+    });
+    await expect(
+      accepted.deleteLotSet(admin, { auctionId, lotSetId, opId }),
+    ).resolves.toEqual({ kind: "ok" });
+    expect(sent).toMatchObject([
+      {
+        viewer: { identityId: admin.identityId },
+        auctionId,
+        lotSetId,
+        name: "Кружки",
+        lotIds: [lotId],
+        opId,
+      },
+      { viewer: { identityId: admin.identityId }, auctionId, lotSetId, opId },
+    ]);
+
+    const saveRefusal = (reason: unknown) =>
+      adapter({
+        saveLotSet: async () =>
+          create(SaveLotSetResponseSchema, {
+            outcome: { case: "refused", value: { reason } as never },
+          }),
+      }).saveLotSet(admin, set);
+    const saves = [
+      [
+        { case: "notMeetupAdministrator", value: {} },
+        { kind: "not-administrator" },
+      ],
+      [{ case: "meetupNotFound", value: {} }, { kind: "meetup-not-found" }],
+      [{ case: "meetupCancelled", value: {} }, { kind: "meetup-cancelled" }],
+      [{ case: "lotsFrozen", value: {} }, { kind: "lots-frozen" }],
+      [{ case: "nameEmpty", value: {} }, { kind: "name-empty" }],
+      [
+        { case: "lotNotInAuction", value: { lotId } },
+        { kind: "lot-not-in-auction", lotId },
+      ],
+      [
+        { case: "lotInAnotherSet", value: { lotId, lotSetId } },
+        { kind: "lot-in-another-set", lotId, lotSetId },
+      ],
+    ] as const;
+    for (const [reason, result] of saves) {
+      await expect(saveRefusal(reason)).resolves.toEqual(result);
+    }
+
+    const deleteRefusal = (reason: unknown) =>
+      adapter({
+        deleteLotSet: async () =>
+          create(DeleteLotSetResponseSchema, {
+            outcome: { case: "refused", value: { reason } as never },
+          }),
+      }).deleteLotSet(admin, { auctionId, lotSetId, opId });
+    const deletes = [
+      ["notMeetupAdministrator", "not-administrator"],
+      ["meetupNotFound", "meetup-not-found"],
+      ["meetupCancelled", "meetup-cancelled"],
+      ["lotsFrozen", "lots-frozen"],
+      ["lotSetNotFound", "lot-set-not-found"],
+    ] as const;
+    for (const [reason, kind] of deletes) {
+      await expect(deleteRefusal({ case: reason, value: {} })).resolves.toEqual(
+        { kind },
+      );
+    }
+
+    const odd = adapter({
+      saveLotSet: async () => create(SaveLotSetResponseSchema, {}),
+      deleteLotSet: () => Promise.reject(new ConnectError("no", Code.NotFound)),
+    });
+    await expect(odd.saveLotSet(admin, set)).resolves.toMatchObject({
+      kind: "invalid",
+    });
+    await expect(
+      odd.deleteLotSet(admin, { auctionId, lotSetId, opId }),
+    ).resolves.toEqual({ kind: "auction-not-found" });
   });
 });
 

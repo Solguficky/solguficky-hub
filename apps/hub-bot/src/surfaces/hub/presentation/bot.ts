@@ -196,6 +196,8 @@ import {
   consoleFinalTimeData,
   consoleRaffleData,
   consoleRafflePrizeData,
+  consoleSetAskData,
+  consoleSetsData,
   consoleViewData,
   consoleWeekData,
   consoleWindowAskData,
@@ -349,6 +351,14 @@ import {
   toLot,
   toLots,
 } from "./screens/lot-form.js";
+import {
+  lotSetAskErrorText,
+  lotSetDeleteConfirmScreen,
+  lotSetLotToast,
+  lotSetPrompt,
+  lotSetScreen,
+  lotSetsScreen,
+} from "./screens/lot-sets.js";
 import {
   archiveScreen,
   cardScreen,
@@ -758,6 +768,14 @@ type PendingConsoleLaunch = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о названии нового сета лотов (PER-509). Шаг — аукцион — лежит в
+// кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsoleSet = {
+  kind: "console-set";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о следующей цене лота финала (PER-337). Шаг — аукцион и номер лота в
 // составе — лежит в кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingFinalAsk = {
@@ -793,6 +811,7 @@ type HubPendingInput =
   | PendingConsoleFinalTime
   | PendingConsoleWindow
   | PendingConsoleLaunch
+  | PendingConsoleSet
   | PendingFinalAsk
   | PendingFloorSearch;
 
@@ -823,6 +842,10 @@ const consoleQuestionIntents = {
   "console-launch": {
     intent: "add-step-window-launch",
     foreign: "foreign step window launch answer ignored",
+  },
+  "console-set": {
+    intent: "add-lot-set",
+    foreign: "foreign lot set answer ignored",
   },
 } as const;
 
@@ -1553,14 +1576,21 @@ async function handleMessage(
       // помещается, а сроки Auction заменяет целиком, и повтор даёт тот же итог.
       // Повтор ответа об окне добавил бы второе такое же окно, но оно
       // пересекается с первым по всем лотам, и Auction его отклонит.
-      const result = await runtime.dispatcher.execute({
+      const answer = {
         identity: identity.person,
-        intent: question.intent,
         auctionId: pending.auctionId,
         value: ctx.message.text,
         opId: createUuidV7(),
         ...rpcCall(ctx, useCase),
-      });
+      };
+      const result = await runtime.dispatcher.execute(
+        pending.kind === "console-set"
+          ? // Идентификатор сета выбирает вызывающий (ADR-073): он рождается
+            // на ответ, как ключ команды. Повтор ответа заведёт второй пустой
+            // сет с тем же названием — его видно и можно удалить.
+            { ...answer, intent: "add-lot-set", lotSetId: createUuidV7() }
+          : { ...answer, intent: consoleQuestionIntents[pending.kind].intent },
+      );
       outcome = await renderConsoleResult(ctx, runtime, result, {
         person: identity.person,
         questions,
@@ -1572,7 +1602,8 @@ async function handleMessage(
         result.kind !== "auction-raffle-prize-ask" &&
         result.kind !== "auction-final-time-ask" &&
         result.kind !== "step-window-ask" &&
-        result.kind !== "step-window-launch-ask"
+        result.kind !== "step-window-launch-ask" &&
+        result.kind !== "lot-set-ask"
       ) {
         await answered(result);
       }
@@ -2020,6 +2051,7 @@ async function handleMessage(
         pending.kind === "console-final-time" ||
         pending.kind === "console-window" ||
         pending.kind === "console-launch" ||
+        pending.kind === "console-set" ||
         pending.kind === "final-ask" ||
         pending.kind === "floor-search") &&
       ctx.message?.text === undefined
@@ -2038,6 +2070,7 @@ async function handleMessage(
                 pending.kind === "console-final-time" ||
                 pending.kind === "console-window" ||
                 pending.kind === "console-launch" ||
+                pending.kind === "console-set" ||
                 pending.kind === "final-ask" ||
                 pending.kind === "floor-search"
               ? "manage_auction"
@@ -2463,7 +2496,13 @@ async function handleCallback(
       action.kind === "console-window-launch" ||
       action.kind === "console-window-launch-lot" ||
       action.kind === "console-window-launch-go" ||
-      action.kind === "console-window-launch-page"
+      action.kind === "console-window-launch-page" ||
+      action.kind === "console-sets" ||
+      action.kind === "console-set-ask" ||
+      action.kind === "console-set" ||
+      action.kind === "console-set-lot" ||
+      action.kind === "console-set-delete" ||
+      action.kind === "console-set-delete-confirm"
     ) {
       outcome = canRunAuctions(person)
         ? await handleConsoleCallback(ctx, runtime, questions, person, action)
@@ -7167,7 +7206,13 @@ async function handleConsoleCallback(
         | "console-window-launch"
         | "console-window-launch-lot"
         | "console-window-launch-go"
-        | "console-window-launch-page";
+        | "console-window-launch-page"
+        | "console-sets"
+        | "console-set-ask"
+        | "console-set"
+        | "console-set-lot"
+        | "console-set-delete"
+        | "console-set-delete-confirm";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -7449,6 +7494,54 @@ async function handleConsoleCallback(
           ...call,
           intent: "remove-step-window",
           window: action.window,
+          opId: createUuidV7(),
+        }),
+      );
+    // Сеты лотов (PER-509). Ключ команды рождается на нажатие: кнопка лота
+    // несёт целевое состояние, и повтор даёт тот же итог; «Да» удаления
+    // называет сет номером и отпечатком, и ключ в 64 байта не помещается.
+    case "console-sets":
+      return render(
+        await runtime.dispatcher.execute({ ...call, intent: "view-lot-sets" }),
+      );
+    case "console-set-ask":
+      return render(
+        await runtime.dispatcher.execute({ ...call, intent: "ask-lot-set" }),
+      );
+    case "console-set":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-lot-set",
+          set: action.set,
+          page: action.page,
+        }),
+      );
+    case "console-set-lot":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "set-lot-set-lot",
+          set: action.set,
+          lotId: tokenToUuid(action.lot),
+          selected: action.selected,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-set-delete":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "prepare-lot-set-delete",
+          set: action.set,
+        }),
+      );
+    case "console-set-delete-confirm":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "delete-lot-set",
+          set: action.set,
           opId: createUuidV7(),
         }),
       );
@@ -7774,6 +7867,50 @@ async function renderConsoleResult(
         }),
       );
       return handled("step window sent");
+    case "lot-sets":
+      await showScreen(
+        ctx,
+        lotSetsScreen({ console: result.console, note: result.note }),
+      );
+      return handled(
+        result.note === undefined
+          ? "lot sets sent"
+          : `lot sets sent: ${result.note.kind}`,
+      );
+    case "lot-set":
+      // Переключатель лота подтверждает себя всплывающим текстом, как окно.
+      if (result.toggled !== undefined) {
+        await ctx.waiting?.answer(lotSetLotToast(result.toggled.selected));
+      }
+      await showScreen(
+        ctx,
+        lotSetScreen({
+          console: result.console,
+          index: result.index,
+          at: result.at,
+        }),
+      );
+      return handled("lot set sent");
+    case "lot-set-delete-confirm":
+      await showScreen(
+        ctx,
+        lotSetDeleteConfirmScreen({
+          console: result.console,
+          index: result.index,
+        }),
+      );
+      return handled("lot set delete confirmation sent");
+    case "lot-set-ask":
+      await askConsoleSet(ctx, context.questions, {
+        auctionId: result.auctionId,
+        error: result.error,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "lot set name requested"
+          : "lot set name asked again",
+      );
     case "step-window-ask":
       await askConsoleWindow(ctx, context.questions, {
         auctionId: result.auctionId,
@@ -8049,6 +8186,34 @@ function askConsoleWindow(
     windowQuestionText(ask.timeZone, ask.week),
     ask.replaces,
   );
+}
+
+// Вопрос о названии нового сета лотов (PER-509): название одной строкой.
+function askConsoleSet(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    error?: "name-empty" | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-set",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      lotSetAskErrorText[ask.error],
+      ask.replaces,
+    );
+  }
+  return askQuestion(ctx, questions, pending, lotSetPrompt, ask.replaces);
 }
 
 // Вопрос о запуске окна по ходу торгов (PER-615): отказ приходит текстом
@@ -9809,6 +9974,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-launch",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-set":
+      return {
+        kind: "console-set",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "final-ask":
       return {
         kind: "final-ask",
@@ -9998,6 +10168,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-set":
+      return {
+        kind: "console-set",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     case "final-ask":
       return {
         kind: "final-ask",
@@ -10092,6 +10269,9 @@ function cancelTarget(step: QuestionStep): ScreenAction {
     case "console-launch":
       // Вопрос о запуске окна задан со «Счастливых часов».
       return { kind: "console-windows", auction: step.auction };
+    case "console-set":
+      // Вопрос о названии сета задан с «Сетов».
+      return { kind: "console-sets", auction: step.auction };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -10258,6 +10438,8 @@ function reopenData(step: QuestionStep): string {
       return consoleWindowAskData(step.auction);
     case "console-launch":
       return consoleWindowLaunchData(step.auction);
+    case "console-set":
+      return consoleSetAskData(step.auction);
     case "final-ask":
       return consoleAskData(step.auction, step.position);
     case "floor-search":
@@ -10322,6 +10504,8 @@ function answerParent(step: QuestionStep): Parent {
         name: "Счастливые часы",
         data: consoleWindowsData(step.auction),
       };
+    case "console-set":
+      return { name: "Сеты", data: consoleSetsData(step.auction) };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -10594,6 +10778,12 @@ function callbackUseCase(
     | "console-window-launch-lot"
     | "console-window-launch-go"
     | "console-window-launch-page"
+    | "console-sets"
+    | "console-set-ask"
+    | "console-set"
+    | "console-set-lot"
+    | "console-set-delete"
+    | "console-set-delete-confirm"
     | "manage-publish"
     | "manage-confirm-publish"
     | "manage-unpublish"
@@ -10775,6 +10965,12 @@ function callbackUseCase(
     case "console-window-launch-page":
     case "console-final-time":
     case "console-final-time-remove":
+    case "console-sets":
+    case "console-set-ask":
+    case "console-set":
+    case "console-set-lot":
+    case "console-set-delete":
+    case "console-set-delete-confirm":
       return "manage_auction";
     case "home":
     case "apply":

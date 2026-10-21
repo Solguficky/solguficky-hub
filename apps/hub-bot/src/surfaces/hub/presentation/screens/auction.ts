@@ -42,6 +42,7 @@ import type { ImageKey } from "../lot-photos.js";
 import { uuidToToken } from "../meetup-deep-link.js";
 import {
   auctionFaqData,
+  consoleSetsData,
   consoleViewData,
   floorData,
   lotFormData,
@@ -163,6 +164,9 @@ const editLotLabel = adminLabel("Изменить лот");
 const consoleLabel = adminLabel("Пульт");
 // «Ставки зала» помощника (PER-565) — рядом с пультом, пока идёт финал.
 export const floorLabel = adminLabel("Ставки зала");
+// Сеты лотов (PER-509) — рядом с пультом; в финале пара пульта занята
+// «Ставками зала», и сеты встают своим рядом.
+export const lotSetsLabel = adminLabel("Сеты");
 const favoritesLabel = "Избранное";
 
 /**
@@ -382,7 +386,7 @@ const mineOptions = {
 
 /**
  * Корень аукциона (PER-605; ADR-064, дополнение 2026-10-12): стадия и сроки,
- * «Лоты», «Пульт» по праву и «Розыгрыш», пока он есть, «Избранное» тела у
+ * «Лоты», «Пульт» и «Сеты» по праву и «Розыгрыш», пока он есть, «Избранное» тела у
  * процесса с Notifications и «Правила и FAQ». Возврат — в меню «Расширения»
  * сходки.
  */
@@ -439,7 +443,9 @@ function rootScreen(
     // пультом ведущего, пока состав объявлен или финал идёт.
     if (auction.stage === "lineup-frozen" || auction.stage === "in-final") {
       keyboard.text(floorLabel, floorData(token));
+      nextRow(keyboard);
     }
+    keyboard.text(lotSetsLabel, consoleSetsData(token));
   }
   const moment = (instant: string) =>
     readableMoment(communityLocalTime(instant, view.timeZone), view.today);

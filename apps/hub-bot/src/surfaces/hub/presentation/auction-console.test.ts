@@ -31,6 +31,7 @@ import type {
   AuctionConsoleView,
   ConsoleAuctionStatus,
   ConsoleLot,
+  LotSet,
 } from "../application/types.js";
 import type {
   AuctionConsoles,
@@ -47,6 +48,7 @@ import type {
   LotClosure,
   MeetupAuctions,
   RemovalTarget,
+  SaveLotSetResult,
 } from "../auction/port.js";
 import type { IdentityResolver } from "../identity/port.js";
 import { createAuctionParents } from "./auction-parents.js";
@@ -123,6 +125,12 @@ const forgedAuctionPresses = {
   "console-window-launch-go": `v1:ac:hm:${auctionToken}:n000000000000000AAAAAAAAAAA`,
   "console-window-launch-lot": `v1:ac:ht:${auctionToken}:n000000000000000AAAAAAAAAAA:0`,
   "console-window-launch-page": `v1:ac:hp:${auctionToken}:n000000000000000AAAAAAAAAAA`,
+  "console-sets": `v1:ac:t:${auctionToken}`,
+  "console-set-ask": `v1:ac:ta:${auctionToken}`,
+  "console-set": `v1:ac:tw:${auctionToken}:0:abcde`,
+  "console-set-lot": `v1:ac:ts:${auctionToken}:0:abcde:${uuidToToken(mugId)}`,
+  "console-set-delete": `v1:ac:tx:${auctionToken}:0:abcde`,
+  "console-set-delete-confirm": `v1:ac:ty:${auctionToken}:0:abcde`,
   "console-lineup": `v1:ac:l:${auctionToken}`,
   "console-lineup-confirm": `v1:ac:ly:${auctionToken}:abcde:0`,
   "console-start-final": `v1:ac:g:${auctionToken}`,
@@ -245,6 +253,8 @@ function fakeAuction(
     // переигрывает лот упрощённо: ведёт последний неснятый, цена — на шаг
     // ниже, но не выше прежней.
     participants?: readonly { participantId: string; name: string }[];
+    // Сеты лотов (PER-509): сеты аукциона до теста.
+    lotSets?: readonly LotSet[];
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -267,6 +277,8 @@ function fakeAuction(
     closures: Map<string, LotClosure>;
     // Снятые с лотов участники (PER-659).
     removed: Set<string>;
+    // Сеты лотов (PER-509) в порядке идентификатора, как их отдаёт Auction.
+    lotSets: LotSet[];
   } = {
     status: options.status ?? "draft",
     hidden: options.hidden ?? false,
@@ -281,6 +293,34 @@ function fakeAuction(
       : { lineup: { order: options.lineup } }),
     closures: new Map(),
     removed: new Set(),
+    lotSets: [...(options.lotSets ?? [])],
+  };
+  // Сеты как в Auction (ADR-073): меняются до открытия недели, лот — в одном
+  // сете и только из реестра, тот же идентификатор заменяет сет целиком.
+  const frozen = () => state.status !== "draft" && state.status !== "scheduled";
+  const saveSet = (set: {
+    lotSetId: string;
+    name: string;
+    lotIds: readonly string[];
+  }): SaveLotSetResult => {
+    if (frozen()) return { kind: "lots-frozen" };
+    if (set.name.trim() === "") return { kind: "name-empty" };
+    for (const lotId of set.lotIds) {
+      if (lotOf(lotId) === undefined) {
+        return { kind: "lot-not-in-auction", lotId };
+      }
+      const holder = state.lotSets.find(
+        (each) => each.lotSetId !== set.lotSetId && each.lotIds.includes(lotId),
+      );
+      if (holder !== undefined) {
+        return { kind: "lot-in-another-set", lotId, lotSetId: holder.lotSetId };
+      }
+    }
+    state.lotSets = [
+      ...state.lotSets.filter((each) => each.lotSetId !== set.lotSetId),
+      { lotSetId: set.lotSetId, name: set.name, lotIds: [...set.lotIds] },
+    ].sort((a, b) => (a.lotSetId < b.lotSetId ? -1 : 1));
+    return { kind: "ok" };
   };
   const lotOf = (lotId: string) =>
     state.lots.find((each) => each.lot.lotId === lotId);
@@ -398,6 +438,7 @@ function fakeAuction(
           ...(state.lineup === undefined ? {} : { lineup: state.lineup }),
           launchedWindows: state.launchedWindows ?? [],
           lots: state.lots,
+          lotSets: state.lotSets,
         },
       };
     },
@@ -531,6 +572,21 @@ function fakeAuction(
     async hideAuction(_person, hide) {
       commands.push({ method: "hideAuction", args: hide });
       return visibility(true);
+    },
+    async saveLotSet(_person, set) {
+      commands.push({ method: "saveLotSet", args: set });
+      return saveSet(set);
+    },
+    async deleteLotSet(_person, set) {
+      commands.push({ method: "deleteLotSet", args: set });
+      if (frozen()) return { kind: "lots-frozen" };
+      if (!state.lotSets.some((each) => each.lotSetId === set.lotSetId)) {
+        return { kind: "lot-set-not-found" };
+      }
+      state.lotSets = state.lotSets.filter(
+        (each) => each.lotSetId !== set.lotSetId,
+      );
+      return { kind: "ok" };
     },
     async discardAuction(_person, discard) {
       commands.push({ method: "discardAuction", args: discard });
@@ -1085,14 +1141,16 @@ describe("entry into the auction console", () => {
     expect(labels(root).slice(0, 3)).toEqual([
       ["🔨 Лоты"],
       ["Правила и FAQ"],
-      ["🛠 Пульт"],
+      ["🛠 Пульт", "🛠 Сеты"],
     ]);
     expect(dataOf(root, "🛠 Пульт")).toBe(consoleData);
+    expect(dataOf(root, "🛠 Сеты")).toBe(`v1:ac:t:${auctionToken}`);
 
     const member = harness("member", auction);
     await member.bot.init();
     await member.bot.handleUpdate(press(rootData));
     expect(JSON.stringify(shown(member.calls))).not.toContain("🛠 Пульт");
+    expect(JSON.stringify(shown(member.calls))).not.toContain("🛠 Сеты");
   });
 
   // «Добавить лот» — пока онлайн-неделя не открыта (PER-468): после старта
@@ -1122,7 +1180,7 @@ describe("entry into the auction console", () => {
     expect(labels(last(admin.calls)).slice(1, 4)).toEqual([
       ["Розыгрыш"],
       ["Правила и FAQ"],
-      ["🛠 Пульт"],
+      ["🛠 Пульт", "🛠 Сеты"],
     ]);
 
     const member = harness("member", auction);
@@ -3738,6 +3796,241 @@ describe("happy hours", () => {
   });
 });
 
+// Сеты лотов (ADR-073, PER-509): вход «🛠 Сеты» корня аукциона, сет
+// рождается пустым по названию, лоты выбираются переключателями, после
+// открытия недели сеты только видны.
+describe("lot sets", () => {
+  const lampId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3e";
+  const lamp: ConsoleLot = {
+    lot: { ...trading(lampId, "Лампа", 0), status: { kind: "draft" } },
+    bidCount: 0,
+    uniqueParticipantCount: 0,
+    markedForFinal: false,
+    overdue: false,
+  };
+  const setsData = `v1:ac:t:${auctionToken}`;
+  const mugsId = "0199a000-0000-7000-8000-000000000001";
+  const othersId = "0199a000-0000-7000-8000-000000000002";
+
+  function steps(auction: ReturnType<typeof fakeAuction>) {
+    const calls: RecordedCall[] = [];
+    // Каждый шаг — новый бот: состояния у сетов нет, всё едет в кнопке.
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+    return { calls, next };
+  }
+
+  it("names a new set, fills it with three lots and survives a restart at every step", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced, unpriced, lamp],
+    });
+    const { calls, next } = steps(auction);
+
+    await next(() => press(rootData));
+    await next((history) => press(dataOf(last(history), "🛠 Сеты")));
+    expect(plain(last(calls))).toContain("Сетов пока нет.");
+    expect(labels(last(calls))).toEqual([["Новый сет"], ["‹ Аукцион"]]);
+
+    await next((history) => press(dataOf(last(history), "Новый сет")));
+    const asked = question(calls).payload;
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:as:${auctionToken}:42`);
+    expect(asked.text).toContain("Название сета одной строкой");
+
+    // Пустое название бот не отдаёт Auction: тот же вопрос заново.
+    await next((history) => answer(history, { text: "   " }));
+    expect(last(calls).text).toBe(
+      "<b>Название пустое</b>\n\nНапиши название сета.",
+    );
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Сеты"]]);
+    expect(auction.sent("saveLotSet")).toEqual([]);
+    await next((history) => press(dataOf(last(history), "Ввести заново")));
+    await next((history) => answer(history, { text: " Кружки " }));
+
+    expect(auction.sent("saveLotSet")).toEqual([
+      {
+        method: "saveLotSet",
+        args: {
+          auctionId,
+          lotSetId: expect.any(String),
+          name: "Кружки",
+          lotIds: [],
+          opId: expect.any(String),
+        },
+      },
+    ]);
+    expect(plain(last(calls))).toContain(
+      "В сете 0 лотов. Неполный: участники увидят сет, когда в нём будет хотя бы два лота.",
+    );
+    expect(labels(last(calls))).toEqual([
+      ["Выкл · Ваза"],
+      ["Выкл · Кружка"],
+      ["Выкл · Лампа"],
+      ["🗑 Удалить сет"],
+      ["‹ Сеты"],
+    ]);
+
+    await next((history) => press(dataOf(last(history), "Выкл · Ваза")));
+    expect(toasts(calls).at(-1)).toBe("Лот добавлен в сет.");
+    await next((history) => press(dataOf(last(history), "Выкл · Кружка")));
+    await next((history) => press(dataOf(last(history), "Выкл · Лампа")));
+    // Каждая команда несёт весь состав: второе нажатие видит лот первого.
+    expect(
+      auction
+        .sent("saveLotSet")
+        .map((each) => (each.args as { lotIds: string[] }).lotIds),
+    ).toEqual([[], [vaseId], [vaseId, mugId], [vaseId, mugId, lampId]]);
+    expect(auction.state.lotSets).toEqual([
+      {
+        lotSetId: expect.any(String),
+        name: "Кружки",
+        lotIds: [vaseId, mugId, lampId],
+      },
+    ]);
+    expect(plain(last(calls))).toContain("В сете 3 лота.");
+
+    // Повтор нажатия с прежнего экрана — целевое состояние: команды нет.
+    const sent = auction.sent("saveLotSet").length;
+    const full = last(calls);
+    await next(() => press(dataOf(full, "Вкл · Лампа")));
+    expect(toasts(calls).at(-1)).toBe("Лот убран из сета.");
+    await next(() => press(dataOf(full, "Вкл · Лампа")));
+    expect(auction.sent("saveLotSet")).toHaveLength(sent + 1);
+    await next((history) => press(dataOf(last(history), "Выкл · Лампа")));
+    expect(auction.sent("saveLotSet")).toHaveLength(sent + 2);
+    expect(auction.state.lotSets[0]?.lotIds).toEqual([vaseId, mugId, lampId]);
+
+    await next((history) => press(dataOf(last(history), "‹ Сеты")));
+    expect(plain(last(calls))).toContain("1. Кружки — 3 лота");
+    expect(labels(last(calls))).toEqual([
+      ["Кружки · 3 лота"],
+      ["Новый сет"],
+      ["‹ Аукцион"],
+    ]);
+  });
+
+  it("refuses a change after the online week opened with a plain text and sends nothing", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced, unpriced],
+      lotSets: [{ lotSetId: mugsId, name: "Кружки", lotIds: [vaseId] }],
+    });
+    const { calls, next } = steps(auction);
+    await next(() => press(setsData));
+    expect(plain(last(calls))).toContain("1. Кружки — 1 лот, неполный");
+    expect(plain(last(calls))).toContain(
+      "Неполный сет участники не видят: в сете нужно хотя бы два лота.",
+    );
+    await next((history) => press(dataOf(last(history), "Кружки · 1 лот")));
+    const editable = last(calls);
+
+    // Неделю открыли, пока экран сета висел в чате.
+    auction.state.status = "prebidding";
+    await next(() => press(dataOf(editable, "Выкл · Кружка")));
+    expect(last(calls).text).toBe(
+      "<b>Торги уже начались</b>\n\nСеты этого аукциона больше не меняются.",
+    );
+    expect(labels(last(calls))).toEqual([["‹ Сеты"]]);
+    await next(() => press(dataOf(editable, "🗑 Удалить сет")));
+    expect(last(calls).text).toBe(
+      "<b>Торги уже начались</b>\n\nСеты этого аукциона больше не меняются.",
+    );
+    expect(auction.sent("saveLotSet")).toEqual([]);
+    expect(auction.sent("deleteLotSet")).toEqual([]);
+
+    // После открытия сеты видны только для просмотра.
+    await next(() => press(setsData));
+    expect(plain(last(calls))).toContain("сеты больше не меняются");
+    expect(labels(last(calls))).toEqual([["Кружки · 1 лот"], ["‹ Аукцион"]]);
+    await next((history) => press(dataOf(last(history), "Кружки · 1 лот")));
+    expect(plain(last(calls))).toContain("• Ваза");
+    expect(labels(last(calls))).toEqual([["‹ Сеты"]]);
+  });
+
+  it("answers Auction's frozen refusal with the same text", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced],
+      lotSets: [{ lotSetId: mugsId, name: "Кружки", lotIds: [] }],
+    });
+    const { calls, next } = steps(auction);
+    await next(() => press(setsData));
+    await next((history) => press(dataOf(last(history), "Кружки · 0 лотов")));
+    // Чтение пульта отстаёт от открытия недели: отказ приходит от Auction.
+    const save = auction.port.saveLotSet;
+    auction.port.saveLotSet = async () => ({ kind: "lots-frozen" });
+    await next((history) => press(dataOf(last(history), "Выкл · Ваза")));
+    auction.port.saveLotSet = save;
+    expect(last(calls).text).toBe(
+      "<b>Торги уже начались</b>\n\nСеты этого аукциона больше не меняются.",
+    );
+  });
+
+  it("names the set that holds a lot and does not ask Auction to move it", async () => {
+    const auction = fakeAuction({
+      status: "draft",
+      lots: [priced, unpriced],
+      lotSets: [
+        { lotSetId: mugsId, name: "Кружки", lotIds: [] },
+        { lotSetId: othersId, name: "Вазы", lotIds: [vaseId] },
+      ],
+    });
+    const { calls, next } = steps(auction);
+    await next(() => press(setsData));
+    await next((history) => press(dataOf(last(history), "Кружки · 0 лотов")));
+    expect(labels(last(calls))).toContainEqual(["Выкл · Ваза · в сете «Вазы»"]);
+    await next((history) =>
+      press(dataOf(last(history), "Выкл · Ваза · в сете «Вазы»")),
+    );
+    expect(last(calls).text).toBe(
+      "<b>Лот уже в сете «Вазы»</b>\n\nСначала убери его оттуда.",
+    );
+    expect(auction.sent("saveLotSet")).toEqual([]);
+  });
+
+  it("deletes a set after the confirmation and refuses a button of a set gone since", async () => {
+    const auction = fakeAuction({
+      status: "draft",
+      lots: [priced],
+      lotSets: [
+        { lotSetId: mugsId, name: "Кружки", lotIds: [vaseId] },
+        { lotSetId: othersId, name: "Вазы", lotIds: [] },
+      ],
+    });
+    const { calls, next } = steps(auction);
+    await next(() => press(setsData));
+    await next((history) => press(dataOf(last(history), "Кружки · 1 лот")));
+    await next((history) => press(dataOf(last(history), "🗑 Удалить сет")));
+    expect(plain(last(calls))).toContain("Удалить сет?");
+    expect(labels(last(calls))).toEqual([["✔️ Да, удалить", "✖️ Нет"]]);
+    const confirm = last(calls);
+    await next(() => press(dataOf(confirm, "✔️ Да, удалить")));
+    expect(auction.sent("deleteLotSet")).toEqual([
+      {
+        method: "deleteLotSet",
+        args: { auctionId, lotSetId: mugsId, opId: expect.any(String) },
+      },
+    ]);
+    expect(last(calls).text).toBe(
+      "<b>Сет удалён</b>\n\n<b>Кружки</b>\n\nЛоты остались в аукционе.",
+    );
+    expect(auction.state.lotSets.map((each) => each.name)).toEqual(["Вазы"]);
+
+    // Номер «Кружек» теперь у «Ваз», но отпечаток не тот: команды нет.
+    await next(() => press(dataOf(confirm, "✔️ Да, удалить")));
+    expect(last(calls).text).toBe(
+      "<b>Сеты изменились</b>\n\nОткрой сет заново.",
+    );
+    expect(auction.sent("deleteLotSet")).toHaveLength(1);
+  });
+});
+
 describe("day summary screen", () => {
   const auctionBot = "solguficky_auction_bot";
   const summaryData = `v1:ac:ds:${auctionToken}`;
@@ -4382,6 +4675,8 @@ describe("floor bids of the assistant", () => {
     await bot.init();
     await bot.handleUpdate(press(rootData));
     expect(labels(last(calls))).toContainEqual(["🛠 Пульт", "🛠 Ставки зала"]);
+    // В финале пару пульта занимают «Ставки зала», и сеты встают своим рядом.
+    expect(labels(last(calls))).toContainEqual(["🛠 Сеты"]);
     expect(dataOf(last(calls), "🛠 Ставки зала")).toBe(floorData);
   });
 
@@ -4392,7 +4687,7 @@ describe("floor bids of the assistant", () => {
     await bot.init();
     await bot.handleUpdate(press(rootData));
     expect(labels(last(calls)).flat()).not.toContain("🛠 Ставки зала");
-    expect(labels(last(calls))).toContainEqual(["🛠 Пульт"]);
+    expect(labels(last(calls))).toContainEqual(["🛠 Пульт", "🛠 Сеты"]);
   });
 
   it("shows the lot and the room in alphabetical order with the leader in place", async () => {

@@ -22,6 +22,12 @@ import {
   consoleOpenData,
   consoleRaffleData,
   consoleRaffleRemoveData,
+  consoleSetAskData,
+  consoleSetData,
+  consoleSetDeleteConfirmData,
+  consoleSetDeleteData,
+  consoleSetLotData,
+  consoleSetsData,
   consoleStartFinalData,
   consoleViewData,
   consoleVisibilityData,
@@ -1254,6 +1260,58 @@ describe("auction console callbacks", () => {
   const lot = "AZKbflwdej-OSy1snwobPA";
   const op = "AZnypHwefTqbIU-OEqs0qg";
   const defaultSort = { metric: "bids", direction: "descending" };
+
+  it("parses every button of the lot sets within the byte budget", () => {
+    // Худший случай: двузначный номер сета и четырёхзначная страница.
+    const set = { index: 99, print: "z0a9q" };
+    const cases = [
+      [consoleSetsData(auction), { kind: "console-sets", auction }],
+      [consoleSetAskData(auction), { kind: "console-set-ask", auction }],
+      [
+        consoleSetData(auction, set),
+        { kind: "console-set", auction, set, page: 0 },
+      ],
+      [
+        consoleSetData(auction, set, 9999),
+        { kind: "console-set", auction, set, page: 9999 },
+      ],
+      [
+        consoleSetLotData({ auction, set, lot, selected: true }),
+        { kind: "console-set-lot", auction, set, lot, selected: true },
+      ],
+      [
+        consoleSetLotData({ auction, set, lot, selected: false }),
+        { kind: "console-set-lot", auction, set, lot, selected: false },
+      ],
+      [
+        consoleSetDeleteData(auction, set),
+        { kind: "console-set-delete", auction, set },
+      ],
+      [
+        consoleSetDeleteConfirmData(auction, set),
+        { kind: "console-set-delete-confirm", auction, set },
+      ],
+    ] as const;
+
+    for (const [data, action] of cases) {
+      expect(new TextEncoder().encode(data).length).toBeLessThanOrEqual(64);
+      expect(parseCallback(data)).toEqual(action);
+    }
+    expect(
+      parseCallback(questionData({ kind: "console-set", auction }, 42)),
+    ).toEqual({
+      kind: "question",
+      step: { kind: "console-set", auction },
+      askedBy: 42,
+    });
+    // Лишняя часть и чужой номер — не кнопка сета.
+    expect(parseCallback(`${consoleSetsData(auction)}:1`)).toEqual({
+      kind: "malformed",
+    });
+    expect(parseCallback(`v1:ac:tw:${auction}:01:z0a9q`)).toEqual({
+      kind: "malformed",
+    });
+  });
 
   it("parses every button of the happy hours within the byte budget", () => {
     // Худший случай: двузначный номер окна и четырёхзначная страница.

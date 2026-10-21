@@ -312,6 +312,32 @@ export type AuctionVisibilityResult =
   | { kind: "auction-not-found" }
   | AuctionFailure;
 
+// Команды сета лотов (ADR-073, PER-509): создание и правка одной командой —
+// Auction заменяет название и состав целиком, — и удаление. `lots-frozen` —
+// онлайн-торги открыты, сеты заморожены вместе с реестром. Отказ лота называет
+// первый такой лот запроса, а `lot-in-another-set` — ещё сет, где он лежит.
+export type SaveLotSetResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "lots-frozen" }
+  | { kind: "name-empty" }
+  | { kind: "lot-not-in-auction"; lotId: string }
+  | { kind: "lot-in-another-set"; lotId: string; lotSetId: string }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+export type DeleteLotSetResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "lots-frozen" }
+  | { kind: "lot-set-not-found" }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
 export type FinalistRefusal =
   | "not-in-prebidding"
   | "lot-not-in-auction"
@@ -638,6 +664,25 @@ export type AuctionConsoles = {
     command: { auctionId: string; opId: string; finalAt?: string },
     meta?: RpcMetadata,
   ): Promise<FinalTimeResult>;
+  // Сет лотов (ADR-073, PER-509): тот же `lotSetId` заменяет название и
+  // состав целиком, поэтому команда несёт весь состав. Повтор того же `opId`
+  // Auction принимает.
+  saveLotSet(
+    person: Person,
+    set: {
+      auctionId: string;
+      lotSetId: string;
+      name: string;
+      lotIds: readonly string[];
+      opId: string;
+    },
+    meta?: RpcMetadata,
+  ): Promise<SaveLotSetResult>;
+  deleteLotSet(
+    person: Person,
+    set: { auctionId: string; lotSetId: string; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<DeleteLotSetResult>;
   selectForFinal(
     person: Person,
     mark: FinalistMark,
