@@ -231,16 +231,26 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
       .as[(UUID, HistoryRecord)]
       .map(_.groupMap(_._1)(_._2).view.mapValues(_.toList).toMap)
 
-  // Агрегаты и хронология читаются одним снимком базы: иначе ставка между двумя запросами попала бы в одно и не попала
-  // в другое.
-  private def consistently[A](action: DBIO[A]): Future[A] =
-    database.run(action.transactionally.withTransactionIsolation(TransactionIsolation.RepeatableRead))
+  /**
+   * Агрегаты лотов вместе с борьбой за каждый (PER-511): `contest` получает хронологию лота и отдаёт строку с
+   * метриками. Агрегаты и хронология читаются одним снимком базы: иначе ставка между двумя запросами попала бы в одно и
+   * не попала в другое.
+   */
+  private def withContest[A](auctionId: UUID, lots: DBIO[List[A]])(
+      contest: (A, List[HistoryRecord]) => A
+  )(lotId: A => UUID): Future[List[A]] =
+    database.run(
+      (for {
+        rows <- lots
+        chronicle <- chronicles(auctionId)
+      } yield rows.map(row => contest(row, chronicle.getOrElse(lotId(row), Nil)))).transactionally
+        .withTransactionIsolation(TransactionIsolation.RepeatableRead)
+    )
 
   def statistics(auctionId: UUID): Future[List[LotStatisticsView]] =
-    consistently(for {
-      lots <- statisticsAction(auctionId)
-      chronicle <- chronicles(auctionId)
-    } yield lots.map(lot => lot.copy(contest = LotContest.of(chronicle.getOrElse(lot.lotId, Nil)))))
+    withContest(auctionId, statisticsAction(auctionId))((lot, history) => lot.copy(contest = LotContest.of(history)))(
+      _.lotId
+    )
 
   private def statisticsAction(auctionId: UUID): DBIO[List[LotStatisticsView]] =
     sql"""SELECT v.lot_id::text, v.state::text, s.minor_units, s.currency, #$BidCountSql,
@@ -305,10 +315,9 @@ final class SlickLotViews(database: Database, json: LotViewJson)(using Execution
             LEFT JOIN lot_starting_price s ON s.lot_id = v.lot_id
             WHERE r.auction_id = ${auctionId.toString}::uuid
             ORDER BY r.lot_id""".as[DayLotStatisticsView].map(_.toList)
-    consistently(for {
-      day <- lots
-      chronicle <- chronicles(auctionId)
-    } yield day.map(lot => lot.copy(contest = LotContest.of(chronicle.getOrElse(lot.lotId, Nil), Some((from, until))))))
+    withContest(auctionId, lots)((lot, history) => lot.copy(contest = LotContest.of(history, Some((from, until)))))(
+      _.lotId
+    )
   }
 
   // Та же защита, что у SlickLotCatalogStore: строка с пустым по типу названием — запись в обход сервиса.

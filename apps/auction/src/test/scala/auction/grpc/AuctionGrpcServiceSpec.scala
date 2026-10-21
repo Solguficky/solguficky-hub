@@ -2302,6 +2302,50 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         .isNotMeetupAdministrator shouldBe true
     }
 
+    // PER-511: метрики борьбы за окно получает только администратор сходки, как и всю сводку дня.
+    "answers the administrator the leader changes and the longest duel of the day" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val busy = new UUID(7L, 1L)
+      val read = new Views {
+        override def dayStatistics(auctionId: UUID, from: Instant, until: Instant) =
+          Future.successful(List(DayLotStatisticsView(busy, 6, None, None, LotContest(5, 4))))
+      }
+      val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
+      val lots = service(Unreachable, views = read, auctions = AuctionCommands(consoleOf(busy), Unreachable, granted))
+        .getAuctionDaySummary(
+          wire.GetAuctionDaySummaryRequest(
+            Some(viewer),
+            meetupAuction.toString,
+            "2026-10-18T00:00:00Z",
+            "2026-10-19T00:00:00Z"
+          )
+        )
+        .futureValue
+        .getSummary
+        .lots
+
+      lots.map(lot => (lot.lotId, lot.bidCount, lot.leaderChangeCount, lot.longestDuel)) shouldBe
+        Seq((busy.toString, 6L, 5L, 4L))
+    }
+
+    "refuses the day summary to a viewer whom the meetup does not confirm and reads no lot" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      service(Unreachable, auctions = AuctionCommands(consoleOf(new UUID(7L, 1L)), Unreachable, stranger))
+        .getAuctionDaySummary(
+          wire.GetAuctionDaySummaryRequest(
+            Some(viewer),
+            meetupAuction.toString,
+            "2026-10-18T00:00:00Z",
+            "2026-10-19T00:00:00Z"
+          )
+        )
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+    }
+
     "answers UNAVAILABLE on the statistics when meetups cannot confirm the administrator" in {
       val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
       val silent: MeetupAuthority = (_, _, _) => Future.successful(Authority.Unavailable)

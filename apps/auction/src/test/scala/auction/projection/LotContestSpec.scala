@@ -85,6 +85,13 @@ final class LotContestSpec extends AnyWordSpec with Matchers {
       contest shouldBe LotContest(4, 2)
     }
 
+    "keeps the duel of the two who remain when a removal hands the lead back to its last leader" in {
+      // Ставка снятого выпадает задним числом: для оставшихся снятие ничего не сменило.
+      val contest =
+        LotContest.of(chronicle(bid(ann), bid(cid), bid(ann), bid(cid), removedBid(bob), removal(Some(cid)), bid(ann)))
+      contest shouldBe LotContest(4, 4)
+    }
+
     "starts afresh after a removal that leaves the lot without a leader" in {
       LotContest.of(chronicle(removedBid(ann), removal(None), bid(bob))) shouldBe LotContest(0, 0)
     }

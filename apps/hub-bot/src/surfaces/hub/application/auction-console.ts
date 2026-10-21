@@ -728,8 +728,6 @@ export function createAuctionConsole(
   async function daySummary(
     request: AuctionConsoleRequest,
   ): Promise<ExecuteResult> {
-    const current = await read(request);
-    if (current.kind === "refused") return current.result;
     const at = now();
     const day = communityDay(at, timeZone);
     // Пояса, у которого этой полуночи нет, — часы перевели вперёд: окно тогда
@@ -749,6 +747,12 @@ export function createAuctionConsole(
       rpcMeta(request),
     );
     if (summary.kind !== "ok") return readFailure(summary);
+    // Пульт — после суток (PER-511): ставки до окна — его число ставок минус
+    // ставки окна, и ставка между чтениями попадает только в «до», лишь
+    // завышая его. Обратный порядок занижал бы прошлое и пускал в «тёмную
+    // лошадку» лот, которому она не положена.
+    const current = await read(request);
+    if (current.kind === "refused") return current.result;
     const byLot = new Map(summary.lots.map((lot) => [lot.lotId, lot]));
     const lots: DaySummaryLot[] = [];
     for (const entry of current.console.lots) {
@@ -767,8 +771,6 @@ export function createAuctionConsole(
           : { growth: statistics.growth }),
         leaderChanges: statistics.leaderChangeCount,
         longestDuel: statistics.longestDuel,
-        // Пульт и сутки читаются порознь: ставка между чтениями не должна
-        // давать лоту отрицательное прошлое.
         bidsBefore: Math.max(0, entry.bidCount - statistics.bidCount),
         ...(entry.priceGrowth === undefined
           ? {}

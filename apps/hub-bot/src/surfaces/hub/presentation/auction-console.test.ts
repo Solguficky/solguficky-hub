@@ -3609,7 +3609,9 @@ describe("day summary screen", () => {
     expect(screen).toContain(
       `https://t.me/${auctionBot}?start=l_${uuidToToken(mugId)}`,
     );
-    // Оба лота — в сводке: дороже всех Ваза, оспореннее всех Кружка.
+    // Оба лота — в сводке: дороже всех Ваза, оспореннее всех Кружка — по
+    // сменам лидера, а не по числу ставок (PER-511).
+    expect(screen).toContain("5 смен лидера");
     expect(screen).toContain("Ваза");
     expect(screen).toContain("Кружка");
     expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
@@ -3663,7 +3665,6 @@ describe("day summary screen", () => {
     expect(lineUnder("Эпичная дуэль:")).toContain(
       "5 перебиваний подряд вдвоём",
     );
-    expect(lineUnder("Спорнее всех:")).toContain("5 смен лидера");
   });
 
   it("leaves the dark horse and the duel out below their thresholds", async () => {

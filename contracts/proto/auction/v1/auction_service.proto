@@ -2042,15 +2042,12 @@ message LotStatistics {
   // whether manual or proxy. Unset when no bid exists, not an empty string.
   optional string last_bid_at = 5;
 
-  // Accepted bids that took the lead from another person, over the life of the lot.
-  // The first bid takes the lead from nobody and does not count. Removing a
-  // participant does not count either, and their bids no longer do. 0 is a real value.
+  // Leader changes over the life of the lot. 0 is a real value.
   int64 leader_change_count = 6;
 
-  // Leader changes in the longest unbroken run where the lead passed back and forth
-  // between the same two people, over the life of the lot: A to B to A is 2. A third
-  // person taking the lead or a removal changing the leader ends the run. Who the two
-  // are is not returned. 0 means no leader change yet.
+  // Leader changes in the longest run where the lead passed back and forth
+  // between the same two people, over the life of the lot: A to B to A is 2.
+  // Who the two are is not returned. 0 means no leader change yet.
   int64 longest_duel = 7;
 }
 
@@ -2107,12 +2104,11 @@ message DayLotStatistics {
   // difference is a real value.
   Money growth = 4;
 
-  // LotStatistics.leader_change_count inside the window only. The leader when the
-  // window opened comes from the bids before it. 0 is a real value.
+  // LotStatistics.leader_change_count inside the window only. 0 is a real value.
   int64 leader_change_count = 5;
 
-  // LotStatistics.longest_duel inside the window only: a run that began before the
-  // window counts from its first change inside it. 0 means no leader change in the window.
+  // LotStatistics.longest_duel inside the window only. 0 means no leader change
+  // in the window.
   int64 longest_duel = 6;
 }
 
