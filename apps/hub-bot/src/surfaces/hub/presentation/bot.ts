@@ -796,6 +796,47 @@ type HubPendingInput =
   | PendingFinalAsk
   | PendingFloorSearch;
 
+// Вопрос пульта: вид ожидания — намерение и строка журнала о чужом ответе.
+// Обе классификации по одному виду, и таблица держит их рядом: новая ветка
+// не должна расходиться с прежней (PER-663).
+const consoleQuestionIntents = {
+  "console-week": {
+    intent: "schedule-auction-week",
+    foreign: "foreign auction week answer ignored",
+  },
+  "console-raffle": {
+    intent: "set-auction-raffle",
+    foreign: "foreign auction raffle answer ignored",
+  },
+  "console-raffle-prize": {
+    intent: "set-auction-raffle-prize",
+    foreign: "foreign raffle prize answer ignored",
+  },
+  "console-final-time": {
+    intent: "set-auction-final-time",
+    foreign: "foreign final time answer ignored",
+  },
+  "console-window": {
+    intent: "add-step-window",
+    foreign: "foreign step window answer ignored",
+  },
+  "console-launch": {
+    intent: "add-step-window-launch",
+    foreign: "foreign step window launch answer ignored",
+  },
+} as const;
+
+type ConsoleQuestionPending = Extract<
+  PendingInput,
+  { kind: keyof typeof consoleQuestionIntents }
+>;
+
+function isConsoleQuestion(
+  pending: PendingInput,
+): pending is ConsoleQuestionPending {
+  return pending.kind in consoleQuestionIntents;
+}
+
 type UpdateContext = ShellContext & {
   // Ожидание этого update: ответ на нажатие, индикатор и бюджет сервисов.
   waiting?: Waiting;
@@ -1470,30 +1511,16 @@ async function handleMessage(
     }
     if (
       replyId !== undefined &&
-      (pending?.kind === "console-week" ||
-        pending?.kind === "console-raffle" ||
-        pending?.kind === "console-raffle-prize" ||
-        pending?.kind === "console-final-time" ||
-        pending?.kind === "console-window" ||
-        pending?.kind === "console-launch") &&
+      pending !== undefined &&
+      isConsoleQuestion(pending) &&
       ctx.message?.text !== undefined
     ) {
       useCase = "manage_auction";
+      const question = consoleQuestionIntents[pending.kind];
       if (ctx.from?.id !== pending.telegramUserId) {
         outcome = {
           level: "info",
-          message:
-            pending.kind === "console-week"
-              ? "foreign auction week answer ignored"
-              : pending.kind === "console-raffle"
-                ? "foreign auction raffle answer ignored"
-                : pending.kind === "console-raffle-prize"
-                  ? "foreign raffle prize answer ignored"
-                  : pending.kind === "console-final-time"
-                    ? "foreign final time answer ignored"
-                    : pending.kind === "console-window"
-                      ? "foreign step window answer ignored"
-                      : "foreign step window launch answer ignored",
+          message: question.foreign,
           result: "ok",
           use_case: useCase,
         };
@@ -1528,18 +1555,7 @@ async function handleMessage(
       // пересекается с первым по всем лотам, и Auction его отклонит.
       const result = await runtime.dispatcher.execute({
         identity: identity.person,
-        intent:
-          pending.kind === "console-week"
-            ? "schedule-auction-week"
-            : pending.kind === "console-raffle"
-              ? "set-auction-raffle"
-              : pending.kind === "console-raffle-prize"
-                ? "set-auction-raffle-prize"
-                : pending.kind === "console-final-time"
-                  ? "set-auction-final-time"
-                  : pending.kind === "console-window"
-                    ? "add-step-window"
-                    : "add-step-window-launch",
+        intent: question.intent,
         auctionId: pending.auctionId,
         value: ctx.message.text,
         opId: createUuidV7(),

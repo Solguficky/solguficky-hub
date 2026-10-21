@@ -160,7 +160,10 @@ function fake(answers: {
         ...(command.finalAt === undefined ? {} : { finalAt: command.finalAt }),
         opId: command.opId,
       });
-      return answers.finalTime ?? { kind: "ok" };
+      if (answers.finalTime === undefined) {
+        throw new Error("final time response not configured by test");
+      }
+      return answers.finalTime;
     },
     freezeFinalLineup: async (_person, freeze) => {
       freezes.push(freeze.lotIds);
@@ -295,7 +298,9 @@ describe("parseWeek", () => {
 // ввода хаба.
 describe("parseFinalTime", () => {
   it("reads the moment in community time", () => {
-    expect(parseFinalTime(" 31.10.2026 19:00 ", zone, now)).toEqual({
+    expect(
+      parseFinalTime({ raw: " 31.10.2026 19:00 ", timeZone: zone, now }),
+    ).toEqual({
       kind: "ok",
       finalAt: "2026-10-31T16:00:00Z",
     });
@@ -307,21 +312,29 @@ describe("parseFinalTime", () => {
     ["an hour past the day", "31.10.2026 24:00"],
     ["words", "завтра вечером"],
   ])("refuses %s as a format error", (_name, raw) => {
-    expect(parseFinalTime(raw, zone, now)).toEqual({
+    expect(parseFinalTime({ raw, timeZone: zone, now })).toEqual({
       kind: "rejected",
       error: "final-time-format",
     });
   });
 
   it("refuses a time the clocks skipped", () => {
-    expect(parseFinalTime("29.03.2026 02:30", "Europe/Berlin", now)).toEqual({
+    expect(
+      parseFinalTime({
+        raw: "29.03.2026 02:30",
+        timeZone: "Europe/Berlin",
+        now,
+      }),
+    ).toEqual({
       kind: "rejected",
       error: "final-time-moment",
     });
   });
 
   it("refuses a moment that has already come", () => {
-    expect(parseFinalTime("01.10.2026 18:00", zone, now)).toEqual({
+    expect(
+      parseFinalTime({ raw: "01.10.2026 18:00", timeZone: zone, now }),
+    ).toEqual({
       kind: "rejected",
       error: "final-time-past",
     });
@@ -338,6 +351,7 @@ describe("the final time of the auction", () => {
         console: view("scheduled", { week: { ...week, final: true } }),
       },
       statistics: noLotStatistics,
+      finalTime: { kind: "ok" },
     });
 
     const result = await run({
@@ -392,6 +406,7 @@ describe("the final time of the auction", () => {
         }),
       },
       statistics: noLotStatistics,
+      finalTime: { kind: "ok" },
     });
 
     const result = await run({

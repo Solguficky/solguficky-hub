@@ -7,6 +7,7 @@ import type {
   AuctionConsoles,
   AuctionFailure,
   ConsoleReadResult,
+  FinalTimeResult,
   LaunchStepWindowResult,
   LotClosure,
   LotStatisticsReadResult,
@@ -166,7 +167,7 @@ export type RafflePrizeResult =
   | { kind: "ok"; prize: string }
   | { kind: "rejected"; error: RafflePrizeAskError };
 
-export type FinalTimeResult =
+export type FinalTimeParseResult =
   | { kind: "ok"; finalAt: string }
   | { kind: "rejected"; error: FinalTimeAskError };
 
@@ -179,21 +180,21 @@ const finalTimePattern = new RegExp(`^${momentPattern}$`);
  * ответе: подменять их соседними бот не вправе. Прошедший момент — не анонс:
  * время выставляют заранее, а не задним числом.
  */
-export function parseFinalTime(
-  raw: string,
-  timeZone: string,
-  now: Date,
-): FinalTimeResult {
-  const match = finalTimePattern.exec(raw.trim());
+export function parseFinalTime(input: {
+  raw: string;
+  timeZone: string;
+  now: Date;
+}): FinalTimeParseResult {
+  const match = finalTimePattern.exec(input.raw.trim());
   if (match === null) return { kind: "rejected", error: "final-time-format" };
   const local = calendarMoment(match.slice(1).map(Number));
   if (local === undefined)
     return { kind: "rejected", error: "final-time-format" };
-  const finalAt = communityInstant(local, timeZone);
+  const finalAt = communityInstant(local, input.timeZone);
   if (finalAt === undefined) {
     return { kind: "rejected", error: "final-time-moment" };
   }
-  if (Date.parse(finalAt) <= now.getTime()) {
+  if (Date.parse(finalAt) <= input.now.getTime()) {
     return { kind: "rejected", error: "final-time-past" };
   }
   return { kind: "ok", finalAt };
@@ -2236,7 +2237,11 @@ export function createAuctionConsole(
       return { kind: "auction-console", console, note: tooLate };
     }
     const asked = finalTimeAsked(request.auctionId, console.finalAt);
-    const parsed = parseFinalTime(request.value, timeZone, now());
+    const parsed = parseFinalTime({
+      raw: request.value,
+      timeZone,
+      now: now(),
+    });
     if (parsed.kind === "rejected") return { ...asked, error: parsed.error };
     const changed = await consoles.setFinalTime(
       request.identity,
@@ -2247,30 +2252,12 @@ export function createAuctionConsole(
       },
       rpcMeta(request),
     );
-    switch (changed.kind) {
-      case "ok":
-        // Чтение пульта отстаёт от команды, поэтому принятый момент
-        // накладывается на прочитанное, как это делает розыгрыш.
-        return after(request, "final-time-saved", (each) => ({
-          ...each,
-          finalAt: parsed.finalAt,
-        }));
-      case "final-already-started":
-        return after(request, "final-already-started");
-      case "auction-already-finished":
-        return after(request, "auction-already-finished");
-      case "auction-already-cancelled":
-        return after(request, "auction-already-cancelled");
-      case "meetup-cancelled":
-        return meetupCancelled;
-      case "not-administrator":
-      case "meetup-not-found":
-        return notAdministrator;
-      case "auction-not-found":
-        return auctionNotFound;
-      default:
-        return failed(changed);
-    }
+    // Чтение пульта отстаёт от команды, поэтому принятый момент накладывается
+    // на прочитанное, как это делает розыгрыш.
+    return finalTimeOutcome(request, changed, "final-time-saved", (each) => ({
+      ...each,
+      finalAt: parsed.finalAt,
+    }));
   }
 
   async function removeFinalTime(
@@ -2295,9 +2282,27 @@ export function createAuctionConsole(
       { auctionId: request.auctionId, opId: request.opId },
       rpcMeta(request),
     );
+    return finalTimeOutcome(
+      request,
+      changed,
+      "final-time-removed",
+      withoutFinalTime,
+    );
+  }
+
+  // Ответ команды времени финала (PER-663): принятие — пульт с исходом, именованный
+  // отказ Auction — тот же пульт со своей строкой, а отказ по правам — кадр
+  // отказа, как у остальных команд пульта.
+  async function finalTimeOutcome(
+    request: AuctionConsoleRequest,
+    changed: FinalTimeResult,
+    note: ConsoleNote,
+    accepted: (console: AuctionConsoleView) => AuctionConsoleView = (each) =>
+      each,
+  ): Promise<ExecuteResult> {
     switch (changed.kind) {
       case "ok":
-        return after(request, "final-time-removed", withoutFinalTime);
+        return after(request, note, accepted);
       case "final-already-started":
         return after(request, "final-already-started");
       case "auction-already-finished":
