@@ -64,7 +64,7 @@ final class InvoicingHandlerSpec extends AnyWordSpec with Matchers {
 
   "the invoicing handler" should {
 
-    "issue an invoice for a sale with the price of the sale and the term of the auction from the sale" in {
+    "issues an invoice for a sale with the price of the sale and the term of the auction from the sale" in {
       val ports = Ports()
       processed(ports, envelope(meetupAuction, sold)) shouldBe Done
       ports.asked.asScala.toList shouldBe List(meetupAuction)
@@ -79,21 +79,21 @@ final class InvoicingHandlerSpec extends AnyWordSpec with Matchers {
       )
     }
 
-    "issue the same invoice again for a redelivered sale" in {
+    "issues the same invoice again for a redelivered sale" in {
       val ports = Ports()
       processed(ports, envelope(meetupAuction, sold))
       processed(ports, envelope(meetupAuction, sold))
       ports.issued.asScala.map(_._1).toSet shouldBe Set(InvoiceId.of(bid(9)))
     }
 
-    "give the invoice of a test auction the term of the platform without asking the auction" in {
+    "gives the invoice of a test auction the term of the platform without asking the auction" in {
       val ports = Ports()
       processed(ports, envelope(testAuction, sold))
       ports.asked.asScala shouldBe empty
       ports.issued.asScala.map(_._2.paymentDueAt).toList shouldBe List(soldAt.plus(AuctionConfig.PlatformPaymentTerm))
     }
 
-    "send nothing for an event that is not a sale" in {
+    "sends nothing for an event that is not a sale" in {
       val ports = Ports()
       processed(ports, envelope(meetupAuction, LotEvent.LotUnsold(UnsoldReason.NoBids)))
       processed(ports, envelope(meetupAuction, placed))
@@ -101,7 +101,7 @@ final class InvoicingHandlerSpec extends AnyWordSpec with Matchers {
       ports.issued.asScala shouldBe empty
     }
 
-    "fail the event when the auction does not answer, so that it is processed again" in {
+    "fails the event when the auction does not answer, so that it is processed again" in {
       val ports = Ports(Future.failed(new RuntimeException("auction did not answer")))
       a[RuntimeException] should be thrownBy processed(ports, envelope(meetupAuction, sold))
       ports.issued.asScala shouldBe empty

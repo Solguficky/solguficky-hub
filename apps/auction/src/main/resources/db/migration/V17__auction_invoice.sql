@@ -4,7 +4,9 @@
 -- отдаёт чтения `ListMyInvoices` и `ListAuctionInvoices` и согласована в
 -- конечном счёте.
 --
--- Сумма — цена продажи в минорных единицах с валютой. Способ получения пуст,
+-- Сумма — цена продажи в минорных единицах с валютой; положительной её не
+-- требует ни тип, ни торги — лот со стартовой ценой 0 продаётся за 0, — и CHECK
+-- на знак остановил бы проекцию на такой продаже. Способ получения пуст,
 -- пока победитель его не выбрал. `version` — номер последнего события журнала
 -- счёта в строке: повтор события строку не откатывает. CHECK повторяет
 -- инварианты типа намеренно: тип защищает только код сервиса.
@@ -19,7 +21,6 @@ CREATE TABLE auction_invoice (
     status         text        NOT NULL,
     fulfillment    text,
     version        bigint      NOT NULL,
-    CHECK (amount_minor > 0),
     CHECK (status IN ('AwaitingPayment', 'Paid', 'HandedOver')),
     CHECK (fulfillment IS NULL OR fulfillment IN ('Pickup', 'Delivery', 'Digital')),
     CHECK (version > 0)

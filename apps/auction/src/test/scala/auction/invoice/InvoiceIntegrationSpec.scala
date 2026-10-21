@@ -154,7 +154,7 @@ final class InvoiceIntegrationSpec
 
   "an invoice" should {
 
-    "be issued once for a sale with the price of the sale and the term counted from the sale" in {
+    "is issued once for a sale with the price of the sale and the term counted from the sale" in {
       val database = migrated()
       withNode(database) { node =>
         val (_, sold) = soldLot(node)
@@ -169,7 +169,7 @@ final class InvoiceIntegrationSpec
       }
     }
 
-    "not be issued a second time when the sale is delivered again" in {
+    "is not issued a second time when the sale is delivered again" in {
       val database = migrated()
       val invoice = withNode(database) { node =>
         val (_, sold) = soldLot(node)
@@ -204,7 +204,7 @@ final class InvoiceIntegrationSpec
       }
     }
 
-    "refuse the handover before the payment by name and publish each transition once" in {
+    "refuses the handover before the payment by name and publish each transition once" in {
       val database = migrated()
       withNode(database) { node =>
         val (_, sold) = soldLot(node)

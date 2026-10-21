@@ -97,8 +97,7 @@ final class InvoicingHandler(
   override def process(envelope: EventEnvelope[StoredLotEvent]): Future[Done] =
     InvoicingHandler.sale(envelope) match {
       case None => Future.successful(Done)
-      case Some((invoice, auction, sale)) =>
-        termOf(auction).flatMap(term => issue(invoice, sale(term)))
+      case Some(sale) => termOf(sale.auction).flatMap(term => issue(sale.invoice, sale.terms(term)))
     }
 
   /**
@@ -112,11 +111,14 @@ final class InvoicingHandler(
 
 object InvoicingHandler {
 
+  /** Продажа в конверте: счёт, который она выставляет, аукцион лота и условия счёта по сроку оплаты. */
+  final case class Sale(invoice: InvoiceId, auction: AuctionId, terms: Duration => InvoiceTerms)
+
   /**
-   * Продажа в конверте: id счёта, аукцион лота и условия счёта без срока оплаты. Строка лота без аукциона в продаже —
-   * испорченный журнал: продаётся только открытый лот, а открывает его аукцион.
+   * Продажа в конверте, если событие — продажа. Строка лота без аукциона в продаже — испорченный журнал: продаётся
+   * только открытый лот, а открывает его аукцион.
    */
-  def sale(envelope: EventEnvelope[StoredLotEvent]): Option[(InvoiceId, AuctionId, Duration => InvoiceTerms)] = {
+  def sale(envelope: EventEnvelope[StoredLotEvent]): Option[Sale] = {
     val stored = envelope.event
     LotJournal.envelope(envelope.sequenceNr, stored).event match {
       case LotEvent.LotSold(winner, price, bidId, at) =>
@@ -124,7 +126,7 @@ object InvoicingHandler {
         val auction = stored.auctionId
           .map(AuctionId(_))
           .getOrElse(throw new IllegalStateException(s"${envelope.persistenceId} sold without an auction"))
-        Some((InvoiceId.of(bidId), auction, InvoiceTerms.ofSale(auction, lot, winner, price, at, _)))
+        Some(Sale(InvoiceId.of(bidId), auction, InvoiceTerms.ofSale(auction, lot, winner, price, at, _)))
       case _ => None
     }
   }

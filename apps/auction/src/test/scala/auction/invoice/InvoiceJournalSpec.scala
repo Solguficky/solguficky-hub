@@ -43,14 +43,14 @@ final class InvoiceJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
 
   "invoice journal" should {
 
-    "keep the stored form of every invoice event equal to its golden file and read the golden file back" in {
+    "keeps the stored form of every invoice event equal to its golden file and read the golden file back" in {
       keepsGolden("invoice-issued", InvoiceEvent.InvoiceIssued(terms))
       keepsGolden("invoice-paid", InvoiceEvent.InvoicePaid(op(2)))
       keepsGolden("invoice-handed-over", InvoiceEvent.InvoiceHandedOver(op(3)))
       keepsGolden("fulfillment-chosen", InvoiceEvent.FulfillmentChosen(FulfillmentMethod.Delivery, op(4)))
     }
 
-    "read every fulfillment method back by its stored name" in {
+    "reads every fulfillment method back by its stored name" in {
       FulfillmentMethod.values.foreach { method =>
         InvoiceJournal.restoreMethod(InvoiceJournal.methodName(method)) shouldBe method
       }
@@ -59,7 +59,7 @@ final class InvoiceJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       }
     }
 
-    "refuse a row whose section does not match its kind" in {
+    "refuses a row whose section does not match its kind" in {
       val broken =
         InvoiceJournal.store(uuid(1), decidedAt)(InvoiceEvent.InvoicePaid(op(2))).event.copy(kind = "InvoiceHandedOver")
       an[JournalCorrupted] should be thrownBy InvoiceJournal.restoreEvent(broken)
