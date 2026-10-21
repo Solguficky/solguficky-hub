@@ -292,6 +292,39 @@ describe("auction through both bots", () => {
     expect(plain(guest.sees())).toContain("Твоя автоставка: до 5 000 ₽");
     expect(plain(guest.sees())).toContain("Лидер: ты (Филин*)");
 
+    // Администратор снимает гостя с лота со «Ставок» (PER-659, ADR-072):
+    // подтверждение называет лот после снятия, а Auction переигрывает торги
+    // без гостя — лидером снова становится участник. «Нет» ничего не меняет.
+    await admin.opensLink(meetupId);
+    await admin.presses("🧩 Расширения");
+    await admin.presses("🔨 Аукцион");
+    await admin.presses("🔨 Лоты");
+    await admin.presses(lotRow(admin, lotTitle) ?? lotTitle);
+    await admin.presses("Ставки");
+    await admin.presses("Снять участника");
+    await admin.presses("Филин*");
+    expect(plain(admin.sees())).toContain("Снять Филин* с лота?");
+    expect(plain(admin.sees())).toContain("Лидер: Сова*.");
+    await admin.presses("✖️ Нет");
+    expect(admin.pressable()).toContain("Филин*");
+    await admin.presses("Филин*");
+    await admin.presses("✔️ Да, снять");
+    expect(plain(admin.sees())).toContain("Участник снят: Филин*");
+    expect(plain(admin.sees())).toContain("Лидер: Сова*.");
+    // Снятого на лоте больше нет среди тех, кого можно снять.
+    await admin.presses("‹ Лот");
+    await admin.presses("Ставки");
+    await admin.presses("Снять участника");
+    expect(admin.pressable()).not.toContain("Филин*");
+    expect(admin.pressable()).toContain("Сова*");
+    // Гость видит лот и хронологию в своём боте: лидер — участник, а
+    // снятие — своя строка хронологии.
+    await guest.presses("🔄 Обновить");
+    expect(plain(guest.sees())).toContain("Лидер: Сова*");
+    await guest.presses("Ставки");
+    expect(plain(guest.sees())).toContain("участник снят");
+    await guest.presses("‹ Лот");
+
     // Гость без права аукциона видит приветствие без заявки; «Подать заявку»
     // ставит её, и бот отвечает ожиданием — ни меню, ни лота ему не открыто.
     const pendingId = freshTelegramUserId();

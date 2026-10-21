@@ -34,6 +34,7 @@ import {
   feedSummary,
   finalFeedLabel,
   followLabel,
+  historyLine,
   leaderLine,
   lotNextLabel,
   lotPrevLabel,
@@ -42,6 +43,7 @@ import {
   nameSettingsTitle,
   ownLotLine,
   proxyHintLead,
+  struckHistoryLine,
   unfollowLabel,
 } from "../../auction-standing.js";
 import {
@@ -51,11 +53,9 @@ import {
   type AuctionDenial,
   type AuctionScreenBody,
   type AuctionStageView,
-  type BidOriginView,
   type CommandResult,
   encodeAuctionCallback,
   type FeedItem,
-  type HistoryItem,
   type LotStatusView,
   MAX_COMMAND_AMOUNT,
   type Money,
@@ -1389,7 +1389,23 @@ function renderHistory(
       block.entries.length === 0
         ? "Ставок пока нет."
         : block.entries
-            .map((entry) => bullet(escapeHtml(historyLine(entry, options))))
+            .map((entry) =>
+              bullet(
+                struckHistoryLine(
+                  entry,
+                  escapeHtml(
+                    historyLine(
+                      entry,
+                      readableMoment(
+                        entry.occurredAt,
+                        options.timeZone,
+                        options.now,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            )
             .join("\n"),
     ),
   };
@@ -1422,31 +1438,6 @@ function favoriteState(status: LotStatusView, options: RenderOptions): string {
   return status.kind === "trading" && status.deadline !== undefined
     ? `${priceLabel(status)}, торги до ${readableMoment(status.deadline, options.timeZone, options.now)}`
     : priceLabel(status);
-}
-
-// Строка ставки: когда, кто, сколько и как. Имени нет — Auction его не отдал,
-// и строка остаётся без него: идентификатор человеку не показывается. Лимита
-// прокси в строке нет — его нет и в теле.
-function historyLine(entry: HistoryItem, options: RenderOptions): string {
-  return [
-    readableMoment(entry.occurredAt, options.timeZone, options.now),
-    ...(entry.participantName === undefined ? [] : [entry.participantName]),
-    money(entry.amount),
-    originLabel(entry.origin),
-  ].join(" · ");
-}
-
-function originLabel(origin: BidOriginView): string {
-  switch (origin.kind) {
-    case "proxy":
-      return "авто";
-    case "manual":
-      return origin.source === "floor" ? "в зале" : "вручную";
-    default: {
-      const _exhaustive: never = origin;
-      return _exhaustive;
-    }
-  }
 }
 
 // Карточка лота (дизайн-код, «Карточка»): название, группа статуса, группа

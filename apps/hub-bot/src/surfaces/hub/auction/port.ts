@@ -12,6 +12,7 @@ import type { RpcMetadata } from "../../../core/rpc-metadata.js";
 import type {
   AuctionConsoleSnapshot,
   Person,
+  RemovalRefusal,
   StepWindow,
 } from "../application/types.js";
 
@@ -484,6 +485,55 @@ export type FloorBid = {
   opId: string;
 };
 
+// Снятие участника с лота администратором (ADR-072, PER-659). Участник — тот,
+// у кого на лоте есть ставка: порядок — первой ставки в журнале, снятые
+// остаются с пометкой. Имени нет — Auction его не назвал.
+export type LotParticipant = {
+  participantId: string;
+  name?: string;
+  removed: boolean;
+};
+
+export type LotParticipantsResult =
+  | { kind: "ok"; participants: readonly LotParticipant[] }
+  | AuctionFailure;
+
+export type RemovalTarget = {
+  auctionId: string;
+  lotId: string;
+  participantId: string;
+};
+
+// Лот после снятия, без записи: цена уже ограничена ценой до снятия
+// (ADR-072, дополнение 2026-10-20), `version` — номер лота, на котором
+// предпросмотр решён.
+export type RemovalPreview = {
+  price: Money;
+  leaderId?: string;
+  extendedDeadline?: string;
+  version: number;
+};
+
+type RemovalAuthority =
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" };
+
+export type RemovalPreviewResult =
+  | { kind: "ok"; preview: RemovalPreview }
+  | { kind: "refused"; reason: RemovalRefusal }
+  | RemovalAuthority
+  | AuctionFailure;
+
+// `lot-changed` — лот ушёл от номера предпросмотра: снятия не было, и пульт
+// показывает предпросмотр заново (ADR-072, дополнение 2026-10-21).
+export type RemoveParticipantResult =
+  | { kind: "ok"; lotVersion: number }
+  | { kind: "lot-changed" }
+  | { kind: "refused"; reason: RemovalRefusal }
+  | RemovalAuthority
+  | AuctionFailure;
+
 // Розыгрыш аукциона для строки пульта (PER-618): `raffle` нет — у аукциона
 // розыгрыша нет.
 export type ConsoleRaffleResult =
@@ -646,6 +696,23 @@ export type AuctionConsoles = {
     read: { lotId: string; atLeastVersion?: number },
     meta?: RpcMetadata,
   ): Promise<LotReadResult>;
+  // Снятие участника с лота (ADR-072, PER-659): участники по хронологии лота
+  // с именами, предпросмотр без записи и снятие на номере предпросмотра.
+  lotParticipants(
+    person: Person,
+    read: { auctionId: string; lotId: string },
+    meta?: RpcMetadata,
+  ): Promise<LotParticipantsResult>;
+  previewParticipantRemoval(
+    person: Person,
+    target: RemovalTarget,
+    meta?: RpcMetadata,
+  ): Promise<RemovalPreviewResult>;
+  removeParticipant(
+    person: Person,
+    removal: RemovalTarget & { expectedVersion: number; opId: string },
+    meta?: RpcMetadata,
+  ): Promise<RemoveParticipantResult>;
 };
 
 // Порты пакета метаданных вызова не несут, поэтому собираются на каждый

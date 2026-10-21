@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AccessRight } from "../../../gen/identity/v1/access_pb.js";
 import { inspectCall, reportViolations } from "../../../testkit/screen-lint.js";
 import {
+  type BidOriginView,
   type EntryPort,
   encodeAuctionCallback,
   type FavoritesPort,
@@ -1487,7 +1488,7 @@ describe("auction bot", () => {
       sequence: number,
       participantId: string,
       rubles: number,
-      origin: LotHistoryEntryView["origin"],
+      origin: BidOriginView,
     ): LotHistoryEntryView => ({
       kind: "bid",
       sequence,

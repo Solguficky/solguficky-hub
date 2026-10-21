@@ -58,7 +58,13 @@ export async function openHistory(input: {
     auction: input.auction,
     viewer: input.viewer,
     auctionId: lot.auctionId,
-    participantIds: shown.map((entry) => entry.participantId),
+    participantIds: shown.flatMap((entry) =>
+      entry.kind === "bid"
+        ? [entry.participantId]
+        : entry.leaderId === undefined
+          ? []
+          : [entry.leaderId],
+    ),
   });
   const historyButton = (target: number) =>
     encodeAuctionCallback({
@@ -92,9 +98,10 @@ export async function openHistory(input: {
         lotId: lot.lotId,
         auctionId: lot.auctionId,
         ...(lot.card === undefined ? {} : { title: lot.card.title }),
+        status: lot.status,
         page: historyPage,
         pageCount,
-        entries: shown.map((entry) => item(entry, names[entry.participantId])),
+        entries: shown.map((entry) => item(entry, names)),
       },
     ],
     keyboard: [
@@ -115,14 +122,35 @@ export async function openHistory(input: {
 
 function item(
   entry: LotHistoryEntryView,
-  participantName: string | undefined,
+  names: Readonly<Record<string, string>>,
 ): HistoryItem {
-  return {
-    kind: "bid",
-    sequence: entry.sequence,
-    occurredAt: entry.occurredAt,
-    amount: entry.amount,
-    origin: entry.origin,
-    ...(participantName === undefined ? {} : { participantName }),
-  };
+  switch (entry.kind) {
+    case "bid": {
+      const participantName = names[entry.participantId];
+      return {
+        kind: "bid",
+        sequence: entry.sequence,
+        occurredAt: entry.occurredAt,
+        amount: entry.amount,
+        origin: entry.origin,
+        ...(participantName === undefined ? {} : { participantName }),
+        ...(entry.removed === true ? { removed: true as const } : {}),
+      };
+    }
+    case "removal": {
+      const leaderName =
+        entry.leaderId === undefined ? undefined : names[entry.leaderId];
+      return {
+        kind: "removal",
+        sequence: entry.sequence,
+        occurredAt: entry.occurredAt,
+        price: entry.price,
+        ...(leaderName === undefined ? {} : { leaderName }),
+      };
+    }
+    default: {
+      const _exhaustive: never = entry;
+      return _exhaustive;
+    }
+  }
 }
