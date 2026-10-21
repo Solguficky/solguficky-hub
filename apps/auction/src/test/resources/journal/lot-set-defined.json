@@ -27,6 +27,7 @@
       ]
     },
     "lotSetDeleted": null,
-    "lotSetSettled": null
+    "lotSetSettled": null,
+    "finalTime": null
   }
 }

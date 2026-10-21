@@ -102,6 +102,7 @@ function fakePorts(overrides: Partial<Record<string, { kind: string }>> = {}) {
       editLotCard: (_person, card) => lot("editLotCard", card),
       addLot: (_person, entry) => lot("addLot", entry),
       scheduleLot: (_person, terms) => lot("scheduleLot", terms),
+      publishAuction: (_person, publish) => lot("publishAuction", publish),
     },
     newId: () => {
       id += 1;
@@ -113,7 +114,7 @@ function fakePorts(overrides: Partial<Record<string, { kind: string }>> = {}) {
 }
 
 describe("наполнение аукциона", () => {
-  it("публикует сходку, включает аукцион и заводит лоты по порядку", async () => {
+  it("публикует сходку, включает аукцион, заводит лоты по порядку и публикует аукцион", async () => {
     const { ports, calls } = fakePorts();
     const result = await seedAuction(catalog, 42n, ports);
 
@@ -131,6 +132,7 @@ describe("наполнение аукциона", () => {
       "createLotCard",
       "addLot",
       "scheduleLot",
+      "publishAuction",
     ]);
     expect(calls[0]?.args).toEqual({ telegramUserId: 42n });
     expect(calls[2]?.args).toEqual({
@@ -140,6 +142,7 @@ describe("наполнение аукциона", () => {
     });
     // Публикация несёт версию, которую вернул предыдущий шаг, а не черновика.
     expect(calls[4]?.args).toEqual({ version: draft.version + 3 });
+    expect(calls.at(-1)?.args).toEqual({ auctionId: "a-1", opId: "id-9" });
     expect(result).toEqual({
       meetupId: "m-1",
       auctionId: "a-1",
@@ -180,6 +183,15 @@ describe("наполнение аукциона", () => {
     );
     await expect(failure).rejects.toBeInstanceOf(SeedError);
     expect(calls.at(-1)?.method).toBe("addLot");
+  });
+
+  it("отказ публикации аукциона останавливает прогон с причиной", async () => {
+    const { ports } = fakePorts({
+      publishAuction: { kind: "meetup-cancelled" },
+    });
+    await expect(seedAuction(catalog, 42n, ports)).rejects.toThrow(
+      "наполнение остановилось на шаге «публикация аукциона»: meetup-cancelled",
+    );
   });
 
   it("не администратор останавливает до лотов", async () => {

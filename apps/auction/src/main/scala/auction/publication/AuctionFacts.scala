@@ -96,6 +96,9 @@ object AuctionFacts {
       case AuctionEvent.StepWindowLaunched(_) => None
       // Факты публикации и снятия заводит PER-646 вместе с их потребителем (ADR-047, дополнение 2026-10-20).
       case AuctionEvent.AuctionPublished | AuctionEvent.AuctionHidden => None
+      // Ориентировочное время финала — подпись для экрана зала и бота хаба, а не повод для шины (ADR-040, дополнение
+      // 2026-10-19).
+      case AuctionEvent.FinalTimeSet(_) | AuctionEvent.FinalTimeCleared => None
       // Определение сета — рабочий выбор организатора до торгов, как отметка финалиста: фактом он не публикуется.
       case AuctionEvent.LotSetDefined(_, _, _) | AuctionEvent.LotSetDeleted(_) => None
       // Несобранный сет никому не сообщается (ADR-073, пп. 5–6): факта у него нет.

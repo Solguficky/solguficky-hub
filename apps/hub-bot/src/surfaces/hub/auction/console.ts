@@ -26,6 +26,7 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
   return {
     auctionId: auction.id,
     status: statusOf(auction.status),
+    hidden: auction.hidden,
     ...(week === undefined ? {} : { week }),
     ...(lineup === undefined ? {} : { lineup }),
     // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает, а

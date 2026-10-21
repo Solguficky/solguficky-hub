@@ -86,6 +86,16 @@ enum AuctionState {
       case Final(_, _, _, activated, completed) => activated.lastOption.filterNot(completed.contains)
       case _ => None
     }
+
+  /**
+   * Впереди ли ещё финал: ориентировочное время выставляется и меняется до его старта, а торги оно не открывает и не
+   * закрывает (ADR-040, дополнение 2026-10-19). `Initial` — аукциона нет, и время выставлять не чему.
+   */
+  def finalTimeAhead: Boolean =
+    this match {
+      case Draft | Scheduled(_) | Prebidding(_, _) | Settling(_, _) | Break(_, _) | LineupFrozen(_, _, _) => true
+      case Initial | Final(_, _, _, _, _) | Finished(_, _) | Cancelled(_, _, _) => false
+    }
 }
 
 /** Команды аукциона. Каждая несёт `op_id`; инициатор едет в конверте, а не в команде. */
@@ -118,6 +128,12 @@ final case class ChangeVisibility(published: Boolean, opId: OpId)
  * обрывается. Лоты и розыгрыш снимает не сама команда, а протокол после неё ([[LotRoster]]).
  */
 final case class CancelAuction(opId: OpId)
+
+/**
+ * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): подпись, а не условие торгов. Администратор выставляет
+ * и меняет его до старта финала, а торги оно не открывает и не закрывает. `at` пусто — время снимается.
+ */
+final case class SetFinalTime(at: Option[Instant], opId: OpId)
 
 /**
  * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, без входа сверх `op_id` и без отказов.
@@ -260,6 +276,8 @@ enum AuctionEvent {
   case FinalLotCompleted(lot: LotId)
   case AuctionFinished
   case StepWindowLaunched(window: StepWindowConfig)
+  case FinalTimeSet(at: Instant)
+  case FinalTimeCleared
   case LotSetDefined(set: LotSetId, name: LotSetName, lots: List[LotId])
   case LotSetDeleted(set: LotSetId)
   case LotSetSettled(set: LotSetId, settlement: LotSetSettlement)
@@ -312,6 +330,17 @@ enum CancelAuctionRejected {
   case AuctionNotFound
   case AuctionNotStarted
   case AuctionAlreadyFinished
+}
+
+/**
+ * Отказы `SetFinalTime`: аукциона нет, финал уже идёт, аукцион закончился или отменён — в этих состояниях время
+ * выставлять поздно (ADR-040, дополнение 2026-10-19).
+ */
+enum FinalTimeRejected {
+  case AuctionNotFound
+  case FinalAlreadyStarted
+  case AuctionAlreadyFinished
+  case AuctionAlreadyCancelled
 }
 
 /** Отказы `StartPrebidding`: аукциона нет либо он не в `Scheduled` — не запланирован или уже открыт. */
@@ -504,9 +533,10 @@ enum Inspection {
  * (И-20). `seen` — то же окно, что у лота: `seen(op_id) ⟺ в журнале есть событие с этим op_id`, и пишет его только
  * [[Auction.apply]]. `launched` — окна сниженного шага, запущенные по ходу торгов, в порядке записи (ADR-047,
  * дополнение 2026-10-12): объявленные лежат в конфигурации, и пересечения запуск проверяет по обоим спискам. `hidden` —
- * аукцион скрыт от участников (ADR-047, дополнение 2026-10-20); бывает только в `Draft` и `Scheduled`. `sets` —
- * коллекционные сеты (ADR-073): меняются там же, где реестр, лоты сета — всегда лоты реестра, и лот не больше чем в
- * одном сете; после старта торгов меняется только итог сета.
+ * аукцион скрыт от участников (ADR-047, дополнение 2026-10-20); бывает только в `Draft` и `Scheduled`. `finalAt` —
+ * ориентировочное время финала (ADR-040, дополнение 2026-10-19): подпись, а не условие торгов; без неё аукцион
+ * показывает «скоро». `sets` — коллекционные сеты (ADR-073): меняются там же, где реестр, лоты сета — всегда лоты
+ * реестра, и лот не больше чем в одном сете; после старта торгов меняется только итог сета.
  */
 final case class Auction(
     state: AuctionState,
@@ -515,6 +545,7 @@ final case class Auction(
     seen: Map[OpId, AuctionEnvelope],
     launched: List[LaunchedWindow] = Nil,
     hidden: Boolean = false,
+    finalAt: Option[Instant] = None,
     sets: Map[LotSetId, LotSet] = Map.empty
 )
 
@@ -789,6 +820,29 @@ object Auction {
               AuctionState.LineupFrozen(_, _, _) | AuctionState.Final(_, _, _, _, _) | AuctionState.Finished(_, _) |
               AuctionState.Cancelled(_, _, _) =>
             Left(VisibilityRejected.AuctionAlreadyStarted)
+        }
+    }
+
+  /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): подпись, а не условие торгов, поэтому время
+   * выставляется и меняется до старта финала, а торги оно не открывает и не закрывает. Снятие времени — та же команда
+   * без момента. Повтор `op_id` отвечает исходным событием, как у остальных команд.
+   */
+  def decide(auction: Auction, command: SetFinalTime): Either[FinalTimeRejected, AuctionDecision] =
+    auction.seen.get(command.opId) match {
+      case Some(original) => Right(AuctionDecision.Repeated(original))
+      case None =>
+        auction.state match {
+          case AuctionState.Initial => Left(FinalTimeRejected.AuctionNotFound)
+          case AuctionState.Final(_, _, _, _, _) => Left(FinalTimeRejected.FinalAlreadyStarted)
+          case AuctionState.Finished(_, _) => Left(FinalTimeRejected.AuctionAlreadyFinished)
+          case AuctionState.Cancelled(_, _, _) => Left(FinalTimeRejected.AuctionAlreadyCancelled)
+          case _ =>
+            val event = command.at match {
+              case Some(at) => AuctionEvent.FinalTimeSet(at)
+              case None => AuctionEvent.FinalTimeCleared
+            }
+            Right(AuctionDecision.Accepted(event))
         }
     }
 
@@ -1255,6 +1309,10 @@ object Auction {
         auction.copy(state = AuctionState.Finished(config, startedBy))
       case (AuctionState.Prebidding(_, _), AuctionEvent.StepWindowLaunched(window)) =>
         auction.copy(launched = auction.launched :+ LaunchedWindow(envelope.opId, window))
+      // Ориентировочное время финала — подпись, а не условие торгов: состояние от него не меняется (ADR-040,
+      // дополнение 2026-10-19).
+      case (state, AuctionEvent.FinalTimeSet(at)) if state.finalTimeAhead => auction.copy(finalAt = Some(at))
+      case (state, AuctionEvent.FinalTimeCleared) if state.finalTimeAhead => auction.copy(finalAt = None)
       case (current, AuctionEvent.AuctionCancelled) =>
         current match {
           case AuctionState.Prebidding(_, _) | AuctionState.Settling(_, _) | AuctionState.Break(_, _) |

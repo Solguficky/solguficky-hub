@@ -59,6 +59,27 @@ describe("auction snapshot for the root", () => {
     ).toEqual({ auctionId: AUCTION_ID, stage: "draft", final: false });
   });
 
+  // Видимость (PER-673): признак есть только у скрытого и только `true`.
+  it("carries the hidden mark of an auction hidden from participants", () => {
+    expect(
+      auctionSummaryViewOf(
+        create(AuctionSnapshotSchema, {
+          id: AUCTION_ID,
+          hidden: true,
+          status: {
+            case: "draft",
+            value: create(AuctionState_DraftSchema, {}),
+          },
+        }),
+      ),
+    ).toEqual({
+      auctionId: AUCTION_ID,
+      stage: "draft",
+      final: false,
+      hidden: true,
+    });
+  });
+
   // Отменённый аукцион — своя конечная стадия, а не завершённый (PER-606).
   it("translates a cancelled auction to its own stage", () => {
     expect(

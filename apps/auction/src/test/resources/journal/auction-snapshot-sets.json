@@ -26,7 +26,8 @@
         "stepWindowLaunched": null,
         "lotSetDefined": null,
         "lotSetDeleted": null,
-        "lotSetSettled": null
+        "lotSetSettled": null,
+        "finalTime": null
       }
     },
     {
@@ -47,7 +48,8 @@
         "stepWindowLaunched": null,
         "lotSetDefined": null,
         "lotSetDeleted": null,
-        "lotSetSettled": null
+        "lotSetSettled": null,
+        "finalTime": null
       }
     },
     {
@@ -68,7 +70,8 @@
         "stepWindowLaunched": null,
         "lotSetDefined": null,
         "lotSetDeleted": null,
-        "lotSetSettled": null
+        "lotSetSettled": null,
+        "finalTime": null
       }
     },
     {
@@ -94,7 +97,8 @@
           ]
         },
         "lotSetDeleted": null,
-        "lotSetSettled": null
+        "lotSetSettled": null,
+        "finalTime": null
       }
     },
     {
@@ -145,7 +149,8 @@
         "stepWindowLaunched": null,
         "lotSetDefined": null,
         "lotSetDeleted": null,
-        "lotSetSettled": null
+        "lotSetSettled": null,
+        "finalTime": null
       }
     },
     {
@@ -164,7 +169,8 @@
         "stepWindowLaunched": null,
         "lotSetDefined": null,
         "lotSetDeleted": null,
-        "lotSetSettled": null
+        "lotSetSettled": null,
+        "finalTime": null
       }
     },
     {
@@ -186,7 +192,8 @@
         "lotSetSettled": {
           "lotSetId": "0190f2a0-0000-7000-8000-000000000014",
           "collector": "00000000-0000-0001-0000-000000000002"
-        }
+        },
+        "finalTime": null
       }
     }
   ],
@@ -241,5 +248,6 @@
       "settled": true,
       "collector": "00000000-0000-0001-0000-000000000002"
     }
-  ]
+  ],
+  "finalAt": null
 }

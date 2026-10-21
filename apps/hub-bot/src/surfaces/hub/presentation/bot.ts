@@ -2400,6 +2400,7 @@ async function handleCallback(
       action.kind === "console-raffle-prize" ||
       action.kind === "console-raffle-prize-remove" ||
       action.kind === "console-final" ||
+      action.kind === "console-visibility" ||
       action.kind === "console-open" ||
       action.kind === "console-confirm" ||
       action.kind === "console-discard" ||
@@ -7098,6 +7099,7 @@ async function handleConsoleCallback(
         | "console-raffle-prize"
         | "console-raffle-prize-remove"
         | "console-final"
+        | "console-visibility"
         | "console-open"
         | "console-confirm"
         | "console-discard"
@@ -7199,6 +7201,15 @@ async function handleConsoleCallback(
           ...call,
           intent: "set-auction-final",
           final: action.final,
+          opId: createUuidV7(),
+        }),
+      );
+    case "console-visibility":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "set-auction-visibility",
+          published: action.published,
           opId: createUuidV7(),
         }),
       );
@@ -10420,6 +10431,7 @@ function callbackUseCase(
     | "console-raffle-prize"
     | "console-raffle-prize-remove"
     | "console-final"
+    | "console-visibility"
     | "console-open"
     | "console-confirm"
     | "console-discard"
@@ -10596,6 +10608,7 @@ function callbackUseCase(
     case "console-raffle-prize":
     case "console-raffle-prize-remove":
     case "console-final":
+    case "console-visibility":
     case "console-open":
     case "console-confirm":
     case "console-discard":

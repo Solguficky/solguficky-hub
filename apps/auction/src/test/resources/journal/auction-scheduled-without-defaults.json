@@ -35,6 +35,7 @@
     "finalLotActivated": null,
     "finalLotCompleted": null,
     "stepWindowLaunched": null,
+    "finalTime": null,
     "lotSetDefined": null,
     "lotSetDeleted": null,
     "lotSetSettled": null

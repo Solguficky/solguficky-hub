@@ -241,6 +241,16 @@ object AuctionEntity {
   ) extends Command
 
   /**
+   * Ориентировочное время финала (ADR-040, дополнение 2026-10-19): выставить, изменить или снять. `Announce` — имя
+   * сообщения: время объявляют, а не назначают. Событие пишет аукцион, ответ — после записи.
+   */
+  final case class Announce(
+      command: SetFinalTime,
+      initiator: Initiator,
+      replyTo: ActorRef[Either[FinalTimeRejected, AuctionAnswer]]
+  ) extends Command
+
+  /**
    * Отмена сходки из шины (ADR-047, дополнение 2026-10-12): команда без человека, инициатор — планировщик. Что делать,
    * решает агрегат: удаление идёт путём `Discard`, отмена — путём `Cancel`, под тем же `op_id`, поэтому прогнозы, лоты,
    * розыгрыш и слот следуют за ними так же. Ответ — после записи или без неё; отказов нет.
@@ -1352,6 +1362,16 @@ object AuctionEntity {
             case Discard(discard, initiator, replyTo) => discarding(state, discard, initiator, replyTo ! _)
             case Show(show, initiator, replyTo) =>
               answered(state.auction, Auction.decide(state.auction, show), show.opId, initiator, replyTo, clock, newId)
+            case Announce(announce, initiator, replyTo) =>
+              answered(
+                state.auction,
+                Auction.decide(state.auction, announce),
+                announce.opId,
+                initiator,
+                replyTo,
+                clock,
+                newId
+              )
             case Get(replyTo) => Effect.reply(replyTo)(state.auction)
           }
 

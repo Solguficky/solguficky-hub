@@ -72,6 +72,13 @@ trait AuctionGateway {
       initiator: Initiator
   ): Future[Either[VisibilityRejected, AuctionAnswer]]
 
+  /** Ориентировочное время финала (ADR-040, дополнение 2026-10-19): выставить, изменить или снять. */
+  def setFinalTime(
+      auctionId: AuctionId,
+      command: SetFinalTime,
+      initiator: Initiator
+  ): Future[Either[FinalTimeRejected, AuctionAnswer]]
+
   /** Отмена после старта торгов. Ответ приходит после записи события и снятия лотов не ждёт. */
   def cancel(
       auctionId: AuctionId,
@@ -230,6 +237,13 @@ object AuctionGateway {
           initiator: Initiator
       ): Future[Either[VisibilityRejected, AuctionAnswer]] =
         entity(auctionId).ask(AuctionEntity.Show(command, initiator, _))
+
+      def setFinalTime(
+          auctionId: AuctionId,
+          command: SetFinalTime,
+          initiator: Initiator
+      ): Future[Either[FinalTimeRejected, AuctionAnswer]] =
+        entity(auctionId).ask(AuctionEntity.Announce(command, initiator, _))
 
       def cancel(
           auctionId: AuctionId,

@@ -25,6 +25,7 @@ import org.scalatest.wordspec.AnyWordSpec
 import org.scalatestplus.scalacheck.ScalaCheckDrivenPropertyChecks
 
 import java.time.Duration
+import java.time.Instant
 import java.util.UUID
 
 final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenPropertyChecks {
@@ -34,6 +35,9 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
 
   private val meetup = MeetupId(UUID.fromString("0190a0e0-0000-7000-8000-000000000001"))
   private val lot = LotId(new UUID(5L, 1L))
+
+  /** Ориентировочное время финала: подпись администратора, а не условие торгов (ADR-040, дополнение 2026-10-19). */
+  private val finalAt: Instant = Instant.parse("2026-10-09T18:00:00Z")
 
   private def born: Auction =
     Auction.apply(Auction.initial, AuctionEnvelope(1, op(1), AuctionEvent.AuctionDrafted(meetup)))
@@ -794,6 +798,50 @@ final class AuctionSpec extends AnyWordSpec with Matchers with ScalaCheckDrivenP
       Auction.decide(first, CancelAuction(op(30))) shouldBe Right(
         AuctionDecision.Accepted(AuctionEvent.AuctionCancelled)
       )
+    }
+  }
+
+  // ADR-040, дополнение 2026-10-19: ориентировочное время финала — подпись, а не условие торгов.
+  "estimated time of the final" should {
+
+    "sets, changes and clears the estimated time of the final before the final starts" in {
+      val set = Auction.decide(scheduled, SetFinalTime(Some(finalAt), op(10)))
+      set shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeSet(finalAt)))
+      val withTime = applied(scheduled, set.toOption.get, 10, 10)
+      withTime.finalAt shouldBe Some(finalAt)
+
+      val changed = Auction.decide(withTime, SetFinalTime(Some(finalAt.plusSeconds(3600)), op(11)))
+      changed shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeSet(finalAt.plusSeconds(3600))))
+      applied(withTime, changed.toOption.get, 11, 11).finalAt shouldBe Some(finalAt.plusSeconds(3600))
+
+      val cleared = Auction.decide(withTime, SetFinalTime(None, op(12)))
+      cleared shouldBe Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeCleared))
+      applied(withTime, cleared.toOption.get, 12, 12).finalAt shouldBe None
+    }
+
+    "sets the estimated time while the online trading is going on" in {
+      Auction.decide(started, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Right(AuctionDecision.Accepted(AuctionEvent.FinalTimeSet(finalAt)))
+    }
+
+    "refuses the estimated time once the final has started and once the auction is over" in {
+      val inFinal = started.copy(state = AuctionState.Final(config(), op(3), List(lot), Nil, Nil))
+      Auction.decide(inFinal, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.FinalAlreadyStarted)
+      val finished = started.copy(state = AuctionState.Finished(config(), op(3)))
+      Auction.decide(finished, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.AuctionAlreadyFinished)
+      val cancelled = started.copy(state = AuctionState.Cancelled(config(), op(3), op(4)))
+      Auction.decide(cancelled, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.AuctionAlreadyCancelled)
+      Auction.decide(Auction.initial, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Left(FinalTimeRejected.AuctionNotFound)
+    }
+
+    "answers a repeated command with the original envelope" in {
+      val set = applied(scheduled, Auction.decide(scheduled, SetFinalTime(Some(finalAt), op(10))).toOption.get, 10, 10)
+      Auction.decide(set, SetFinalTime(Some(finalAt), op(10))) shouldBe
+        Right(AuctionDecision.Repeated(AuctionEnvelope(10, op(10), AuctionEvent.FinalTimeSet(finalAt))))
     }
   }
 }

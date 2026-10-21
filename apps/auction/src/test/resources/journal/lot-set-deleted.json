@@ -22,6 +22,7 @@
     "lotSetDeleted": {
       "lotSetId": "0190f2a0-0000-7000-8000-000000000014"
     },
-    "lotSetSettled": null
+    "lotSetSettled": null,
+    "finalTime": null
   }
 }
