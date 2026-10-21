@@ -1352,9 +1352,8 @@ describe("week of the auction", () => {
     expect(plain(last(calls))).toContain("Сроки недели не заданы.");
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["Сроки недели"],
+      ["Сроки недели", "Снять с публикации"],
       ["Сводка дня"],
-      ["Снять с публикации"],
       ["🗑 Удалить аукцион"],
       ["‹ Аукцион"],
     ]);
@@ -1415,12 +1414,11 @@ describe("week of the auction", () => {
     );
     expect(labels(screen)).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["Сроки недели"],
+      ["Сроки недели", "Снять с публикации"],
       ["Вкл · Финал в зале"],
       ["Счастливые часы", "Сводка дня"],
       ["Розыгрыш"],
       ["Открыть онлайн-неделю"],
-      ["Снять с публикации"],
       ["🗑 Удалить аукцион"],
       ["‹ Аукцион"],
     ]);
@@ -2301,6 +2299,35 @@ describe("auction visibility", () => {
     ];
     expect(published?.args).toMatchObject({ auctionId });
     expect(hidden?.args).toMatchObject({ auctionId });
+  });
+
+  it("keeps the fullest console before the week within twelve rows", async () => {
+    const lots = Array.from({ length: 9 }, (_, index) => ({
+      ...priced,
+      lot: {
+        ...priced.lot,
+        lotId: `01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b${index.toString(16).padStart(2, "0")}`,
+      },
+    }));
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: {
+        ...week,
+        final: true,
+        raffleClosesAt: "2026-10-22T15:00:00Z",
+        rafflePrize: "Кружка",
+      },
+      lots,
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+
+    expect(labels(last(calls))[1]).toEqual([
+      "Сроки недели",
+      "Снять с публикации",
+    ]);
+    expect(labels(last(calls)).length).toBeLessThanOrEqual(12);
   });
 
   it("offers neither button once the week is open and names it for an old button", async () => {

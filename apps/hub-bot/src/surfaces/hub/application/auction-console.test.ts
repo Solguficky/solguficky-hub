@@ -931,13 +931,12 @@ describe("auction discard", () => {
 describe("auction visibility", () => {
   const call = { identity: admin, auctionId };
 
-  it("publishes and hides by the target of the button", async () => {
+  it("publishes a hidden auction by the target of the button", async () => {
     const hidden = {
       kind: "ok",
       console: view("draft", { hidden: true }),
     } as const;
     const publish = fake({ read: hidden, statistics: noLotStatistics });
-    const hide = fake({ statistics: noLotStatistics });
 
     await expect(
       publish.run({
@@ -951,6 +950,11 @@ describe("auction visibility", () => {
       note: "published",
     });
     expect(publish.visibility).toEqual([{ published: true, opId }]);
+  });
+
+  it("hides a visible auction by the target of the button", async () => {
+    const hide = fake({ statistics: noLotStatistics });
+
     await expect(
       hide.run({
         ...call,
@@ -996,9 +1000,8 @@ describe("auction visibility", () => {
     });
   });
 
-  it("refuses a person Auction does not take for the administrator, and a missing auction", async () => {
+  it("refuses a person Auction does not take for the administrator", async () => {
     const forbidden = fake({ visibility: { kind: "not-administrator" } });
-    const missing = fake({ visibility: { kind: "auction-not-found" } });
 
     await expect(
       forbidden.run({
@@ -1011,6 +1014,11 @@ describe("auction visibility", () => {
       kind: "auction-console-refused",
       reason: "not-administrator",
     });
+  });
+
+  it("refuses a missing auction", async () => {
+    const missing = fake({ visibility: { kind: "auction-not-found" } });
+
     await expect(
       missing.run({
         ...call,

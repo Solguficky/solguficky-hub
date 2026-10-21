@@ -729,7 +729,15 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     .row();
   const editable = console.status === "draft" || console.status === "scheduled";
   if (editable) {
-    keyboard.text("Сроки недели", consoleWeekData(auction));
+    // Видимость до торгов (PER-673) — парой со сроками и с целевым
+    // состоянием: свой ряд вывел бы запланированный аукцион с розыгрышем,
+    // призом и листанием за двенадцать рядов.
+    keyboard
+      .text("Сроки недели", consoleWeekData(auction))
+      .text(
+        console.hidden ? "Опубликовать" : "Снять с публикации",
+        consoleVisibilityData(auction, console.hidden),
+      );
   }
   const week = console.week;
   const scheduled =
@@ -781,11 +789,6 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     withCancel(keyboard, console);
   }
   if (editable) {
-    // Видимость до торгов (PER-673): кнопка несёт целевое состояние.
-    nextRow(keyboard).text(
-      console.hidden ? "Опубликовать" : "Снять с публикации",
-      consoleVisibilityData(auction, console.hidden),
-    );
     nextRow(keyboard).text(
       removeLabel("Удалить аукцион"),
       consoleDiscardData(auction),
