@@ -19,6 +19,8 @@ import type {
   FinalistResult,
   FinalLotCommand,
   FreezeFinalLineupResult,
+  LaunchStepWindowCommand,
+  LaunchStepWindowResult,
   LotStatisticsReadResult,
   ScheduleAuctionResult,
   StartFinalResult,
@@ -28,6 +30,7 @@ import type {
 import {
   createAuctionConsole,
   lineupPrint,
+  parseLaunch,
   parseRaffle,
   parseWeek,
   parseWindow,
@@ -67,7 +70,7 @@ function view(
   status: AuctionConsoleView["status"],
   extra: Partial<AuctionConsoleView> = {},
 ): AuctionConsoleView {
-  return { auctionId, status, lots: [], ...extra };
+  return { auctionId, status, lots: [], launchedWindows: [], ...extra };
 }
 
 function fake(answers: {
@@ -89,6 +92,7 @@ function fake(answers: {
   names?: DisplayNamesResult;
   raffle?: ConsoleRaffleResult;
   active?: ActiveAuctionsResult;
+  launch?: LaunchStepWindowResult;
 }) {
   const scheduled: AuctionWeekConfig[] = [];
   const reads = { raffle: 0, active: 0 };
@@ -96,6 +100,7 @@ function fake(answers: {
   const closes: FinalLotCommand[] = [];
   const freezes: (readonly string[])[] = [];
   const windows: { auctionId: string; from: string; until: string }[] = [];
+  const launched: LaunchStepWindowCommand[] = [];
   const port: AuctionConsoles = {
     getAuctionConsole: async () =>
       answers.read ?? { kind: "ok", console: view("draft") },
@@ -154,6 +159,16 @@ function fake(answers: {
       reads.active += 1;
       return answers.active ?? { kind: "ok", auctions: [] };
     },
+    launchStepWindow: async (_person, launch) => {
+      launched.push(launch);
+      return (
+        answers.launch ?? {
+          kind: "ok",
+          from: launch.from ?? "2026-10-20T15:00:00Z",
+          until: launch.until,
+        }
+      );
+    },
   };
   return {
     run: createAuctionConsole(port, zone, () => answers.at ?? now),
@@ -163,6 +178,7 @@ function fake(answers: {
     closes,
     freezes,
     windows,
+    launched,
   };
 }
 
@@ -1726,6 +1742,249 @@ describe("happy hours", () => {
       }),
     ).resolves.toMatchObject({ kind: "auction-console", note: "week-frozen" });
     expect(scheduled).toEqual([]);
+  });
+});
+
+// Запуск окна сниженного шага по ходу торгов (PER-615): вопрос о начале,
+// конце и шаге, выбор лотов и сама команда. Отказы Auction приходят текстом
+// формы — тем же, что у планирования окна.
+describe("step window launch", () => {
+  const call = { identity: admin, auctionId };
+  const second = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3d";
+  const entry = (id: string): ConsoleLot => ({
+    lot: {
+      lotId: id,
+      auctionId,
+      version: 1,
+      proxyEnabled: false,
+      status: { kind: "draft" },
+      card: { title: "Ваза", description: "" },
+    },
+    bidCount: 0,
+    uniqueParticipantCount: 0,
+    markedForFinal: false,
+    overdue: false,
+  });
+  const lots = [entry(lotId), entry(second)];
+  const statistics: LotStatisticsReadResult = {
+    kind: "ok",
+    lots: lots.map((each) => ({
+      lotId: each.lot.lotId,
+      bidCount: 0,
+      uniqueParticipantCount: 0,
+    })),
+  };
+  const trading = view("prebidding", {
+    week: { ...week, final: true, windows: [] },
+    lots,
+  });
+
+  it("reads «сейчас» as the start of the window", () => {
+    expect(parseLaunch("сейчас — 21.10.2026 21:00, 50", zone, now)).toEqual({
+      kind: "ok",
+      until: "2026-10-21T18:00:00Z",
+      step: { minorUnits: 5_000, currency: "RUB" },
+    });
+  });
+
+  it("reads the start and the end of the window in community time", () => {
+    expect(
+      parseLaunch("21.10.2026 18:00 — 21.10.2026 21:00, 50", zone, now),
+    ).toEqual({
+      kind: "ok",
+      from: "2026-10-21T15:00:00Z",
+      until: "2026-10-21T18:00:00Z",
+      step: { minorUnits: 5_000, currency: "RUB" },
+    });
+  });
+
+  it.each([
+    ["21.10.2026 18:00", "window-format"],
+    ["сейчас — 21.10.2026 21:00, полтинник", "amount-format"],
+    ["01.10.2026 18:00 — 21.10.2026 21:00, 50", "window-in-past"],
+    ["21.10.2026 21:00 — 21.10.2026 18:00, 50", "window-order"],
+  ])("refuses the answer %s", (raw, error) => {
+    expect(parseLaunch(raw, zone, now)).toEqual({ kind: "rejected", error });
+  });
+
+  it("refuses a window outside the online week", () => {
+    const short = { ...week, final: true, closesAt: "2026-10-21T12:00:00Z" };
+    expect(
+      parseLaunch("21.10.2026 18:00 — 21.10.2026 21:00, 50", zone, now, short),
+    ).toEqual({ kind: "rejected", error: "window-outside-week" });
+    expect(
+      parseLaunch("сейчас — 21.10.2026 21:00, 50", zone, now, short),
+    ).toEqual({ kind: "rejected", error: "window-outside-week" });
+  });
+
+  it("asks the start, the end and the step while the online trades run", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+    });
+
+    await expect(
+      run({ ...call, intent: "ask-step-window-launch" }),
+    ).resolves.toMatchObject({ kind: "step-window-launch-ask" });
+  });
+
+  it("offers no launch after the common deadline", async () => {
+    const { run, launched } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+      at: new Date("2026-10-27T09:00:00Z"),
+    });
+
+    await expect(
+      run({ ...call, intent: "ask-step-window-launch" }),
+    ).resolves.toMatchObject({
+      kind: "step-windows",
+      note: { kind: "launch-closed" },
+    });
+    expect(launched).toEqual([]);
+  });
+
+  it("offers every lot of the registry to the launched window", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "add-step-window-launch",
+        value: "сейчас — 21.10.2026 21:00, 50",
+      }),
+    ).resolves.toMatchObject({
+      kind: "step-window-launch",
+      draft: { lots: [0, 1] },
+    });
+  });
+
+  it("launches the window with the chosen lots", async () => {
+    const { run, launched } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "launch-step-window",
+        draft: {
+          from: "2026-10-21T15:00:00Z",
+          until: "2026-10-21T18:00:00Z",
+          step: { minorUnits: 5_000, currency: "RUB" },
+          lots: [1],
+        },
+        opId,
+      }),
+    ).resolves.toMatchObject({ kind: "step-windows" });
+    expect(launched).toEqual([
+      {
+        auctionId,
+        opId,
+        from: "2026-10-21T15:00:00Z",
+        until: "2026-10-21T18:00:00Z",
+        step: { minorUnits: 5_000, currency: "RUB" },
+        lotIds: [second],
+      },
+    ]);
+  });
+
+  it("asks the window again when the launch is refused", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+      launch: { kind: "window-in-past" },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "launch-step-window",
+        draft: {
+          from: "2026-10-21T15:00:00Z",
+          until: "2026-10-21T18:00:00Z",
+          step: { minorUnits: 5_000, currency: "RUB" },
+          lots: [0],
+        },
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "step-window-launch-ask",
+      error: "window-in-past",
+    });
+  });
+
+  it("covers the first sixty four lots of a bigger registry", async () => {
+    const many = Array.from({ length: 70 }, (_, index) =>
+      entry(
+        `01929b7e-5c1d-7a3f-8e4b-2d6c9f0a${index.toString(16).padStart(4, "0")}`,
+      ),
+    );
+    const { run } = fake({
+      read: {
+        kind: "ok",
+        console: view("prebidding", {
+          week: { ...week, final: true, windows: [] },
+          lots: many,
+        }),
+      },
+      statistics: {
+        kind: "ok",
+        lots: many.map((each) => ({
+          lotId: each.lot.lotId,
+          bidCount: 0,
+          uniqueParticipantCount: 0,
+        })),
+      },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "add-step-window-launch",
+      value: "сейчас — 21.10.2026 21:00, 50",
+    });
+
+    // Набор лотов едет в кнопке маской на 64 лота: запуск накрывает первые
+    // 64 лота реестра, а остальные в окно не входят.
+    expect(
+      result.kind === "step-window-launch" ? result.draft.lots : [],
+    ).toEqual(Array.from({ length: 64 }, (_, at) => at));
+  });
+
+  it("names the lot and the window the launch crosses", async () => {
+    const { run } = fake({
+      read: { kind: "ok", console: trading },
+      statistics,
+      launch: {
+        kind: "windows-overlap",
+        lotId,
+        from: "2026-10-21T16:00:00Z",
+        until: "2026-10-21T19:00:00Z",
+      },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "launch-step-window",
+        draft: {
+          from: "2026-10-21T15:00:00Z",
+          until: "2026-10-21T18:00:00Z",
+          step: { minorUnits: 5_000, currency: "RUB" },
+          lots: [0],
+        },
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "step-window-launch-ask",
+      error: "launch-overlap",
+      lot: "Ваза",
+      other: { from: "2026-10-21T16:00:00Z", until: "2026-10-21T19:00:00Z" },
+    });
   });
 });
 

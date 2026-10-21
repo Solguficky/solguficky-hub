@@ -447,6 +447,10 @@ export type AuctionConsoleSnapshot = {
   status: ConsoleAuctionStatus;
   week?: AuctionWeek;
   lineup?: FinalLineup;
+  // Запущенные по ходу торгов окна сниженного шага (PER-615) в порядке
+  // запуска: их нет в конфигурации, а конфигурация после открытия недели
+  // заморожена. Пульт показывает их рядом с объявленными.
+  launchedWindows: readonly StepWindow[];
   lots: readonly ConsoleLotSnapshot[];
 };
 
@@ -560,6 +564,9 @@ export type RafflePrizeAskError = "prize-blank" | "prize-too-long";
 
 // Почему вопрос об окне «Счастливых часов» задан заново (PER-504). Сроки окна
 // разбираются тем же правилом, что сроки недели; остальное решает Auction.
+// Отказы запуска окна по ходу торгов (PER-615) делят с планированием всё, кроме
+// случаев, которых у планирования нет: начало в прошлом, торги не идут, лот не
+// открыт и пересечение с уже запущенным окном.
 export type WindowAskError =
   | "window-format"
   | "window-moment"
@@ -569,7 +576,18 @@ export type WindowAskError =
   | "amount-range"
   | "window-outside-week"
   | "window-overlap"
-  | "window-step";
+  | "window-step"
+  // Начало запуска раньше момента команды: окно не действует задним числом
+  // (ADR-047, дополнение 2026-10-12).
+  | "window-in-past"
+  // Онлайн-торги не идут: запуск закрывается вместе с онлайн-этапом.
+  | "window-not-in-prebidding"
+  // Лот запуска не в реестре аукциона или его открытие не подтверждено.
+  | "window-lot-not-in-auction"
+  | "window-lot-not-open"
+  // Пересечение с объявленным или уже запущенным окном: номер окна у запуска
+  // нет, окно одно, поэтому текст называет лот и границы другого окна.
+  | "launch-overlap";
 
 // Окно в кнопке пульта: номер в конфигурации и отпечаток его сроков и шага.
 // Номер сдвигается, когда другое окно удалили; отпечаток ловит это, и кнопка
@@ -590,7 +608,32 @@ export type WindowNote =
   // Окон уже столько, сколько держит пульт.
   | { kind: "limit" }
   // Лот окна уже стоит в другом окне, которое пересекается с этим по времени.
-  | { kind: "overlap"; window: number; other: number };
+  | { kind: "overlap"; window: number; other: number }
+  // Окно запущено по ходу торгов (PER-615): Auction отвечает записанными
+  // границами окна, а чтение пульта может отставать и окна ещё не показывать.
+  | { kind: "launched"; from: string; until: string; step: LotAmount }
+  // Запуск окна закрыт: онлайн-торги не идут либо неделя кончилась.
+  | { kind: "launch-closed" }
+  // У запускаемого окна не осталось лотов: окну нужны лоты.
+  | { kind: "launch-empty" };
+
+// Черновик запуска окна по ходу торгов (PER-615): сроки, шаг и выбранные лоты.
+// `from` нет — окно начинается с момента, в который сервис решил команду.
+// Лоты — номерами в отсортированном реестре: реестр во время онлайн-торгов
+// заморожен, а лот в кнопку пульта не помещается.
+export type LaunchDraft = {
+  from?: string;
+  until: string;
+  step: LotAmount;
+  lots: readonly number[];
+};
+
+/**
+ * Сколько лотов реестра запускаемое окно может назвать (PER-615): набор едет в
+ * кнопке пульта битовой маской, а кнопка в 64 байта не помещается. Реестр
+ * больше — пульт запускает окно на первых лотах и говорит об этом.
+ */
+export const launchLotLimit = 64;
 
 // Порядок состава финала в кнопке (PER-619): номера лотов в наборе
 // удержанных, который пульт держит по возрастанию идентификатора, и отпечаток
@@ -690,6 +733,29 @@ export type AuctionConsoleRequest =
   | (AuctionConsoleCall & {
       intent: "remove-step-window";
       window: WindowRef;
+      opId: string;
+    })
+  // Запуск окна сниженного шага по ходу торгов (PER-615): вопрос о начале,
+  // конце и шаге, ответ строкой, выбор лотов и сама команда. Черновик едет в
+  // кнопке, состояния у пульта нет.
+  | (AuctionConsoleCall & { intent: "ask-step-window-launch" })
+  | (AuctionConsoleCall & {
+      intent: "add-step-window-launch";
+      value: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "set-step-window-launch-lot";
+      draft: LaunchDraft;
+      lot: number;
+    })
+  | (AuctionConsoleCall & {
+      intent: "view-step-window-launch";
+      draft: LaunchDraft;
+      page: number;
+    })
+  | (AuctionConsoleCall & {
+      intent: "launch-step-window";
+      draft: LaunchDraft;
       opId: string;
     })
   // Состав финала (PER-619): выбор порядка по одному лоту и объявление.
@@ -1079,6 +1145,9 @@ export type ExecuteResult =
       kind: "step-windows";
       console: AuctionConsoleView;
       note?: WindowNote;
+      // Запуск окна доступен (PER-615): идут онлайн-торги и общий дедлайн не
+      // прошёл. Решает край по часам бота — статус аукциона может отставать.
+      launch?: boolean;
     }
   // Окно и лоты реестра с отметкой «в окне»: страница списка либо лот, чью
   // страницу показать. `toggled` — принят переключатель лота: исход —
@@ -1098,6 +1167,26 @@ export type ExecuteResult =
       week?: AuctionWeek;
       error?: WindowAskError;
       window?: number;
+    }
+  // Запуск окна по ходу торгов (PER-615): вопрос о начале, конце и шаге и
+  // экран запуска с лотами. `error` — причина, по которой вопрос задан заново;
+  // `lot` — лот, который отказ назвал, `other` — границы окна, с которым
+  // запущенное пересеклось.
+  | {
+      kind: "step-window-launch-ask";
+      auctionId: string;
+      week?: AuctionWeek;
+      error?: WindowAskError;
+      lot?: string;
+      other?: { from: string; until: string };
+    }
+  // Экран запуска окна: черновик и лоты реестра переключателями.
+  | {
+      kind: "step-window-launch";
+      console: AuctionConsoleView;
+      draft: LaunchDraft;
+      at: { page: number } | { lot: number };
+      toggled?: { selected: boolean };
     }
   // Подтверждение открытия недели: сколько лотов откроется и сколько
   // останется без торгов — без цены и шага. `opId` уедет в «Да».
