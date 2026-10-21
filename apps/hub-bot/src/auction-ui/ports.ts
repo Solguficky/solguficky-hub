@@ -189,20 +189,36 @@ export type BidOriginView =
   | { kind: "manual"; source: "bot" | "floor" }
   | { kind: "proxy" };
 
-// Запись хронологии лота — публичный факт его журнала. Сегодня это только
-// ставка: серия автоставок уже свёрнута Auction в одну запись с итоговой
-// ценой. Запись вида, которого пакет не знает, адаптер пропускает.
-export type LotHistoryEntryView = {
-  kind: "bid";
-  // Позиция факта в журнале лота: монотонна, но не непрерывна.
-  sequence: number;
-  // Момент RFC 3339 в UTC.
-  occurredAt: string;
-  bidId: string;
-  participantId: string;
-  amount: Money;
-  origin: BidOriginView;
-};
+// Запись хронологии лота — публичный факт его журнала: ставка или снятие
+// участника администратором (ADR-072). Серия автоставок уже свёрнута Auction
+// в одну запись с итоговой ценой. Запись вида, которого пакет не знает,
+// адаптер пропускает.
+export type LotHistoryEntryView =
+  | {
+      kind: "bid";
+      // Позиция факта в журнале лота: монотонна, но не непрерывна.
+      sequence: number;
+      // Момент RFC 3339 в UTC.
+      occurredAt: string;
+      bidId: string;
+      participantId: string;
+      amount: Money;
+      origin: BidOriginView;
+      // Автора ставки потом сняли с лота: запись остаётся с пометкой. Нет —
+      // ставка не снята.
+      removed?: true;
+    }
+  | {
+      // Кого сняли, говорят пометки ставок; кто снял и почему, Auction
+      // наружу не отдаёт.
+      kind: "removal";
+      sequence: number;
+      occurredAt: string;
+      // Цена, с которой лот пошёл дальше.
+      price: Money;
+      // Лидер после снятия. Нет — вести лот некому.
+      leaderId?: string;
+    };
 
 // Одна страница `ListLotHistory` по возрастанию `sequence`. Пустой
 // `nextPageToken` — хронология кончилась.

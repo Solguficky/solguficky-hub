@@ -213,6 +213,7 @@ import {
   parseCallback,
   type QuestionStep,
   questionData,
+  removalPickData,
   traceCallback,
   type WhenMode,
 } from "./parse-callback.js";
@@ -384,6 +385,11 @@ import {
   meetupNotificationsScreen,
   toggleToast,
 } from "./screens/notifications.js";
+import {
+  removalConfirmScreen,
+  removalOutcomeScreen,
+  removalPeopleScreen,
+} from "./screens/participant-removal.js";
 import { reconsiderConfirmScreen, refusedScreen } from "./screens/refused.js";
 import {
   releaseEmptyScreen,
@@ -2433,6 +2439,19 @@ async function handleCallback(
     ) {
       outcome = canRunAuctions(person)
         ? await handleFloorCallback(ctx, runtime, questions, person, action)
+        : await refuseConsole(ctx, person);
+      return;
+    }
+    // Снятие участника с лота (PER-659): ряд на «Ставках» видит только
+    // держатель права вести аукцион, подделанная кнопка получает отказ до
+    // Auction.
+    if (
+      action.kind === "console-removal" ||
+      action.kind === "console-removal-pick" ||
+      action.kind === "console-removal-confirm"
+    ) {
+      outcome = canRunAuctions(person)
+        ? await handleRemovalCallback(ctx, runtime, questions, person, action)
         : await refuseConsole(ctx, person);
       return;
     }
@@ -7971,6 +7990,90 @@ async function refuseConsole(
   };
 }
 
+// Снятие участника с лота (PER-659, ADR-072). Сюда доходит только держатель
+// права вести аукцион; право на снятие решает Auction у Meetups. Лот,
+// человек и номер лота едут в кнопке, ключ снятия рождается на нажатие «Да».
+async function handleRemovalCallback(
+  ctx: UpdateContext,
+  runtime: BotRuntime,
+  questions: Map<string, PendingInput>,
+  person: Person,
+  action: Extract<
+    CallbackAction,
+    {
+      kind:
+        | "console-removal"
+        | "console-removal-pick"
+        | "console-removal-confirm";
+    }
+  >,
+): Promise<BoundaryOutcome> {
+  const useCase: ProductUseCase = "manage_auction";
+  const call = { identity: person, ...rpcCall(ctx, useCase) };
+  // «Повторить» после сбоя на «Да» ведёт к предпросмотру, а не к снятию:
+  // снятие, ответ на которое потерялся, могло пройти.
+  const retry =
+    action.kind === "console-removal-confirm"
+      ? removalPickData(action.lot, action.person)
+      : ctx.callbackQuery?.data;
+  const lotId = tokenToUuid(action.lot);
+  const result = await runtime.dispatcher.execute(
+    action.kind === "console-removal"
+      ? { ...call, intent: "view-lot-removal", lotId, page: action.page }
+      : action.kind === "console-removal-pick"
+        ? {
+            ...call,
+            intent: "prepare-participant-removal",
+            target: { lotId, participantId: tokenToUuid(action.person) },
+          }
+        : {
+            ...call,
+            intent: "remove-participant",
+            target: { lotId, participantId: tokenToUuid(action.person) },
+            version: action.version,
+            opId: createUuidV7(),
+          },
+  );
+  const handled = (message: string): BoundaryOutcome => ({
+    level: "info",
+    message,
+    result: "ok",
+    use_case: useCase,
+    identity_id: person.identityId,
+  });
+  const clock = {
+    timeZone: runtime.communityTimeZone ?? "UTC",
+    today: communityToday(ctx),
+  };
+  switch (result.kind) {
+    case "removal-people":
+      await showScreen(ctx, removalPeopleScreen(result));
+      return handled("lot removal people sent");
+    case "removal-confirm":
+      await showScreen(ctx, removalConfirmScreen({ ...result, ...clock }));
+      return handled(
+        result.changed === true
+          ? "participant removal confirmation restarted"
+          : "participant removal confirmation sent",
+      );
+    case "removal-outcome":
+      await showScreen(ctx, removalOutcomeScreen({ ...result, ...clock }));
+      return handled(
+        result.note.kind === "refused"
+          ? `participant removal refused: ${result.note.reason}`
+          : result.note.kind === "removed"
+            ? "participant removed"
+            : "lot removal without participants",
+      );
+    default:
+      return renderConsoleResult(ctx, runtime, result, {
+        person,
+        questions,
+        retry,
+      });
+  }
+}
+
 // «Ставки зала» помощника (PER-565, ADR-070). Сюда доходит только держатель
 // права вести аукцион; право на чтение и ставку решает Auction. Своего
 // состояния нет: лот, человек и цена едут в кнопке, а ключ ставки рождается
@@ -10293,6 +10396,9 @@ function callbackUseCase(
     | "console-floor-pick"
     | "console-floor-confirm"
     | "console-floor-leader"
+    | "console-removal"
+    | "console-removal-pick"
+    | "console-removal-confirm"
     | "console-windows"
     | "console-day-summary"
     | "console-window"
@@ -10466,6 +10572,9 @@ function callbackUseCase(
     case "console-floor-pick":
     case "console-floor-confirm":
     case "console-floor-leader":
+    case "console-removal":
+    case "console-removal-pick":
+    case "console-removal-confirm":
     case "console-windows":
     case "console-day-summary":
     case "console-window":

@@ -40,13 +40,13 @@ import {
   type PredictionNomination,
   type PredictionRound,
   predictionNominationsFor,
-  predictionSpec,
 } from "../prediction-spec.js";
 import type {
   AnswerRefusal,
   AuctionScreenBody,
   CommandResult,
   FinalBidOutcome,
+  HistoryItem,
   ProxyExample,
 } from "../screen.js";
 
@@ -363,23 +363,37 @@ const SCHEDULED_LOT: LotView = {
   status: { kind: "scheduled", startingPrice: rub(500) },
 };
 
-// Десять ставок лота в торгах двумя серверными страницами: две страницы
-// экрана по восемь строк. Время у пар ставок одно — порядок задаёт журнал, а
-// прокси-ставка лидера стоит после ручной соперника той же команды.
+// Десять записей хронологии лота в торгах двумя серверными страницами: две
+// страницы экрана по восемь строк. Время у пар записей одно — порядок задаёт
+// журнал, а прокси-ставка лидера стоит после ручной соперника той же команды.
+// Последняя запись — снятие соперника администратором (ADR-072): его ставки
+// остаются с пометкой, а лот идёт дальше с лидером.
 const HISTORY_ENTRIES: readonly LotHistoryEntryView[] = Array.from(
   { length: 10 },
   (_, index): LotHistoryEntryView => {
+    const sequence = 4 + index * 2;
+    const occurredAt = `2026-10-04T12:0${Math.floor(index / 2)}:00Z`;
+    if (index === 9) {
+      return {
+        kind: "removal",
+        sequence,
+        occurredAt,
+        price: rub(950),
+        leaderId: LEADER_ID,
+      };
+    }
     const byLeader = index % 2 === 1;
     return {
       kind: "bid",
-      sequence: 4 + index * 2,
-      occurredAt: `2026-10-04T12:0${Math.floor(index / 2)}:00Z`,
+      sequence,
+      occurredAt,
       bidId: `01929b7e-5c1d-7a3f-8e4b-0000000001${String(index).padStart(2, "0")}`,
       participantId: byLeader ? LEADER_ID : RIVAL_ID,
       amount: rub(750 + index * 50),
       origin: byLeader
         ? { kind: "proxy" }
         : { kind: "manual", source: index === 4 ? "floor" : "bot" },
+      ...(byLeader ? {} : { removed: true as const }),
     };
   },
 );
@@ -1173,17 +1187,37 @@ const settledKeyboard = (lotId: string, page: number) => [
 const historyItems = (
   entries: readonly LotHistoryEntryView[],
   names?: Readonly<Record<string, string>>,
-) =>
-  entries.map((entry) => {
-    const participantName = names?.[entry.participantId];
-    return {
-      kind: "bid" as const,
-      sequence: entry.sequence,
-      occurredAt: entry.occurredAt,
-      amount: entry.amount,
-      origin: entry.origin,
-      ...(participantName === undefined ? {} : { participantName }),
-    };
+): HistoryItem[] =>
+  entries.map((entry): HistoryItem => {
+    switch (entry.kind) {
+      case "bid": {
+        const participantName = names?.[entry.participantId];
+        return {
+          kind: "bid",
+          sequence: entry.sequence,
+          occurredAt: entry.occurredAt,
+          amount: entry.amount,
+          origin: entry.origin,
+          ...(participantName === undefined ? {} : { participantName }),
+          ...(entry.removed === true ? { removed: true as const } : {}),
+        };
+      }
+      case "removal": {
+        const leaderName =
+          entry.leaderId === undefined ? undefined : names?.[entry.leaderId];
+        return {
+          kind: "removal",
+          sequence: entry.sequence,
+          occurredAt: entry.occurredAt,
+          price: entry.price,
+          ...(leaderName === undefined ? {} : { leaderName }),
+        };
+      }
+      default: {
+        const _exhaustive: never = entry;
+        return _exhaustive;
+      }
+    }
   });
 
 const historyBody = (input: {
@@ -1198,6 +1232,7 @@ const historyBody = (input: {
       lotId: CONTRACT_LOT.lotId,
       auctionId: CONTRACT_AUCTION_ID,
       title: "Кружка с совой",
+      status: CONTRACT_LOT.status,
       page: input.historyPage,
       pageCount: 2,
       entries: historyItems(input.entries, input.names),
@@ -4728,6 +4763,7 @@ export const AUCTION_CONTRACT_CASES: readonly AuctionContractCase[] = [
           lotId: UNSOLD_LOT.lotId,
           auctionId: CONTRACT_AUCTION_ID,
           title: "Значок",
+          status: UNSOLD_LOT.status,
           page: 0,
           pageCount: 1,
           entries: [],

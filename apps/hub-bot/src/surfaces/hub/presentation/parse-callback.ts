@@ -456,6 +456,19 @@ type PlainAction =
       minorUnits: number;
     }
   | { kind: "console-floor-leader"; auction: string }
+  // Снятие участника с лота (PER-659): кого снять, подтверждение и «Да».
+  // Кнопки называют лот, а не аукцион, как у «Ставок зала»: лот, человек и
+  // номер лота рядом с аукционом в 64 байта не помещаются. «Да» несёт номер
+  // лота, на котором решён предпросмотр, а ключ команды рождается на
+  // нажатие.
+  | { kind: "console-removal"; lot: string; page: number }
+  | { kind: "console-removal-pick"; lot: string; person: string }
+  | {
+      kind: "console-removal-confirm";
+      lot: string;
+      person: string;
+      version: number;
+    }
   // «Опубликовать»: подтверждение публикации. Источник решает, куда вернёт «Нет».
   | { kind: "manage-publish"; token: string; origin: PublishOrigin }
   | { kind: "manage-confirm-publish"; token: string; version: number }
@@ -966,6 +979,33 @@ export function floorSearchData(auction: string): string {
 export function floorLeaderData(auction: string): string {
   return `v1:ac:bl:${auction}`;
 }
+
+/** Снятие участника (PER-659): кого снять с лота. */
+export function removalData(lot: string, page = 0): string {
+  return page === 0 ? `v1:ac:u:${lot}` : `v1:ac:u:${lot}:${page}`;
+}
+
+/** Человек — к предпросмотру и подтверждению. */
+export function removalPickData(lot: string, person: string): string {
+  return `v1:ac:up:${lot}:${person}`;
+}
+
+/**
+ * «Да» снятия: номер лота предпросмотра по основанию 36. Восемь знаков — до
+ * двух триллионов событий лота, и строка занимает до 64 байт.
+ */
+export function removalConfirmData(
+  lot: string,
+  person: string,
+  version: number,
+): string {
+  return `v1:ac:uy:${lot}:${person}:${version.toString(36)}`;
+}
+
+const LotVersionSchema = z
+  .string()
+  .regex(/^[1-9a-z][0-9a-z]{0,7}$/)
+  .transform((raw) => Number.parseInt(raw, 36));
 
 /**
  * Кнопка человека зала и «Да» подтверждения: лот, человек и цена в минорных
@@ -1562,6 +1602,35 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-day-summary", auction: auction.data }
         : { kind: "malformed" };
+    // Третья часть здесь — лот, а не аукцион: токен у них одной формы.
+    case "u": {
+      const page = PageSchema.safeParse(parts[4] ?? "0");
+      return (parts.length === 4 || parts.length === 5) && page.success
+        ? { kind: "console-removal", lot: auction.data, page: page.data }
+        : { kind: "malformed" };
+    }
+    case "up": {
+      const person = TokenSchema.safeParse(parts[4]);
+      return parts.length === 5 && person.success
+        ? {
+            kind: "console-removal-pick",
+            lot: auction.data,
+            person: person.data,
+          }
+        : { kind: "malformed" };
+    }
+    case "uy": {
+      const person = TokenSchema.safeParse(parts[4]);
+      const version = LotVersionSchema.safeParse(parts[5]);
+      return parts.length === 6 && person.success && version.success
+        ? {
+            kind: "console-removal-confirm",
+            lot: auction.data,
+            person: person.data,
+            version: version.data,
+          }
+        : { kind: "malformed" };
+    }
     case "h":
       return parts.length === 4
         ? { kind: "console-windows", auction: auction.data }

@@ -15,6 +15,7 @@ import { createMeetupAuction } from "./meetup-auction.js";
 import { type CommunityToday, createMeetupForm } from "./meetup-form.js";
 import { createMeetupMaterials } from "./meetup-materials.js";
 import { createNotificationSettings } from "./notification-settings.js";
+import { createParticipantRemoval } from "./participant-removal.js";
 import { createReleaseNotes } from "./release-notes.js";
 import { start } from "./start.js";
 import type { ExecuteRequest, ExecuteResult, Person } from "./types.js";
@@ -52,6 +53,12 @@ export function createDispatcher(
   // пускает право вести аукцион.
   const floorBids =
     consoles === undefined ? undefined : createFloorBids(consoles.auctions);
+  // Снятие участника с лота (PER-659) — тот же порт: команды администратора
+  // пускает право вести аукцион.
+  const participantRemoval =
+    consoles === undefined
+      ? undefined
+      : createParticipantRemoval(consoles.auctions);
   const meetupAuction =
     auctions === undefined ? undefined : createMeetupAuction(auctions);
   const form =
@@ -293,6 +300,12 @@ export function createDispatcher(
           return floorBids === undefined
             ? { kind: "rejected", reason: "auction-not-configured" }
             : floorBids(request);
+        case "view-lot-removal":
+        case "prepare-participant-removal":
+        case "remove-participant":
+          return participantRemoval === undefined
+            ? { kind: "rejected", reason: "auction-not-configured" }
+            : participantRemoval(request);
         case "send-broadcast":
         case "preview-broadcast":
           return broadcasts === undefined

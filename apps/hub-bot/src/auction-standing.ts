@@ -1,5 +1,7 @@
 import type {
+  BidOriginView,
   FeedItem,
+  HistoryItem,
   LotStanding,
   OwnDisplayName,
 } from "./auction-ui/index.js";
@@ -243,4 +245,61 @@ function escapeHtml(text: string): string {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
+}
+
+/**
+ * Строка хронологии ставок (PER-309), общая у двух оболочек: момент, имя,
+ * сумма и способ ставки через «·». Снятие участника (ADR-072, PER-659) —
+ * своя строка: цена, с которой лот пошёл дальше, и новый лидер. Имени нет —
+ * Auction его не отдал, и строка остаётся без него: идентификатор человеку не
+ * показывается. Момент форматирует оболочка, экранирование и зачёркивание
+ * снятой ставки — тоже она: `struckHistoryLine`.
+ */
+export function historyLine(entry: HistoryItem, moment: string): string {
+  switch (entry.kind) {
+    case "bid":
+      return [
+        moment,
+        ...(entry.participantName === undefined ? [] : [entry.participantName]),
+        money(entry.amount),
+        originLabel(entry.origin),
+      ].join(" · ");
+    case "removal":
+      return [
+        moment,
+        "участник снят",
+        `цена ${money(entry.price)}`,
+        ...(entry.leaderName === undefined
+          ? []
+          : [`ведёт ${entry.leaderName}`]),
+      ].join(" · ");
+    default: {
+      const _exhaustive: never = entry;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Ставку снятого участника хронология показывает зачёркнутой (PER-659):
+ * спор читает её, но лот её уже не считает. `line` — строка, уже
+ * экранированная для HTML.
+ */
+export function struckHistoryLine(entry: HistoryItem, line: string): string {
+  return entry.kind === "bid" && entry.removed === true
+    ? `<s>${line}</s>`
+    : line;
+}
+
+function originLabel(origin: BidOriginView): string {
+  switch (origin.kind) {
+    case "proxy":
+      return "авто";
+    case "manual":
+      return origin.source === "floor" ? "в зале" : "вручную";
+    default: {
+      const _exhaustive: never = origin;
+      return _exhaustive;
+    }
+  }
 }
