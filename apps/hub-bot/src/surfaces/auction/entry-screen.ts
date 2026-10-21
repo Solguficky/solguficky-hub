@@ -1814,7 +1814,9 @@ function renderButton(
       const item = items.get(button.lotId);
       if (item === undefined) return text(untitled);
       const title = shorten(item.title ?? untitled);
-      return text(`${title} · ${priceLabel(item.status)}`);
+      // Лидер видит себя и на кнопке избранного, как в ленте (прогон 14.10,
+      // №83).
+      return text(`${title}${lotButtonTail(item, priceLabel(item.status))}`);
     }
     // Лот сета на его экране: подпись как у кнопки ленты, без отметки сета.
     case "set.open-lot": {

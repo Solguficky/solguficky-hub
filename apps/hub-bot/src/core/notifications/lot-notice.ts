@@ -478,7 +478,7 @@ export function renderLotNotice(
     text: toLotLabel,
   };
   return {
-    text: singleText(notice, lot, info, timeZone),
+    text: singleText(notice, lot, info, timeZone, recipientId),
     rows: [
       // Частота управляет перебитием, ответом автоставки и сводкой; покупки и
       // напоминания о дедлайне она не касается — напоминание выключается
@@ -501,14 +501,20 @@ function singleText(
   lot: string | undefined,
   info: LotInfo | undefined,
   timeZone: string,
+  recipientId?: string,
 ): string {
   switch (notice.kind) {
     case "lot-outbid":
       // Название — после «перебили», а не внутри фразы: так ему не нужен
       // падеж (№71 прогона 14 октября 2026 года). Лот успел уйти другому —
       // весть называет цену продажи: торга уже нет (№102).
+      // Лот мог уйти и самому получателю — он вернул ведение, а весть
+      // доставлена поздно: тогда «продан» читался бы как проигрыш, и весть
+      // говорит, что лот за ним (как строка сводки).
       if (info?.sold !== undefined) {
-        return `Твою ставку перебили${lot === undefined ? "" : `: ${lot}`}, лот продан за ${money(info.sold.price)}.`;
+        return info.sold.winnerId === recipientId
+          ? `Твою ставку перебивали, но лот твой${lot === undefined ? "" : `: ${lot}`} за ${money(info.sold.price)}.`
+          : `Твою ставку перебили${lot === undefined ? "" : `: ${lot}`}, лот продан за ${money(info.sold.price)}.`;
       }
       return `Твою ставку перебили${lot === undefined ? "" : `: ${lot}`}, цена ${money(notice.currentPrice)}.${deadlineText(info, timeZone)}`;
     case "lot-proxy-raised":

@@ -253,6 +253,7 @@ describe("auction contract self-check", () => {
       "favorites: from the menu",
       "favorites: from the root",
       "favorites: from the root of a finished auction",
+      "favorites: finished auction, lots of another",
       "favorites: empty",
       "lot: neighbors across a feed page",
       "lot: last in the feed",

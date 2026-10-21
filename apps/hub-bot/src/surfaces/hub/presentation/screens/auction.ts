@@ -1024,7 +1024,9 @@ function lotButton(item: FeedItem, title: string, mark?: string): string {
   const tail = `${lotButtonTail(item, priceLabel(item.status))}${
     mark === undefined ? "" : ` · ${mark}`
   }`;
-  return `${truncate(title, Math.max(1, BUTTON_LIMIT - tail.length))}${tail}`;
+  return buttonText(
+    `${truncate(title, Math.max(1, BUTTON_LIMIT - tail.length))}${tail}`,
+  );
 }
 
 const BUTTON_LIMIT = 64;

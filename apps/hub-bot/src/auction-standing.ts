@@ -83,10 +83,12 @@ export function ownProxyLine(lot: {
 }
 
 /**
- * Строка анти-снайпа на экране принятой ставки (PER-631, №107): «Ставка в
- * последние 2 минуты продлила торги до 11:03 (продление 3 из 3).» или, когда
- * продления кончились, «Продлений больше не будет: торги закроются в 11:03.»
- * Время — по часам сообщества; непрочитанный момент строку убирает.
+ * Строка анти-снайпа на экране принятой ставки (PER-631, №107): «Торги
+ * продлены до 11:03 (продление 3 из 3).» или, когда продления кончились,
+ * «Продлений больше не будет: торги закроются в 11:03.» Строка не говорит, что
+ * продлила именно эта ставка: между командой и перечитыванием лота торги могла
+ * продлить и чужая ставка, а версия чтения — порог, а не точная версия
+ * команды. Время — по часам сообщества; непрочитанный момент строку убирает.
  */
 export function extensionLine(
   extension: BidExtension,
@@ -96,31 +98,7 @@ export function extensionLine(
   if (at === undefined) return undefined;
   return extension.kind === "exhausted"
     ? `Продлений больше не будет: торги закроются в ${at}.`
-    : `Ставка в ${lastWindow(extension.windowSeconds)} продлила торги до ${at} (продление ${extension.used} из ${extension.max}).`;
-}
-
-// Окно анти-снайпа словами: «последние 2 минуты», «последнюю минуту»; окно
-// не в целых минутах — секундами.
-function lastWindow(seconds: number): string {
-  const [count, forms] =
-    seconds % 60 === 0
-      ? [seconds / 60, ["минуту", "минуты", "минут"] as const]
-      : [seconds, ["секунду", "секунды", "секунд"] as const];
-  return count === 1
-    ? `последнюю ${forms[0]}`
-    : `последние ${count} ${countForm(count, forms)}`;
-}
-
-function countForm(
-  count: number,
-  [one, few, many]: readonly [string, string, string],
-): string {
-  const mod100 = count % 100;
-  const mod10 = count % 10;
-  if (mod100 >= 11 && mod100 <= 14) return many;
-  if (mod10 === 1) return one;
-  if (mod10 >= 2 && mod10 <= 4) return few;
-  return many;
+    : `Торги продлены до ${at} (продление ${extension.used} из ${extension.max}).`;
 }
 
 /** Строка карточки проданного лота у покупателя: «✅ Твой лот». */

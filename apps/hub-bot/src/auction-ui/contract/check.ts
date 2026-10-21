@@ -2523,6 +2523,56 @@ const FAVORITE_CASES: readonly AuctionContractCase[] = [
       ],
     },
   },
+  // Список общий на все аукционы: лоты другого аукциона в нём — и
+  // закончившийся аукцион возврата не называет их итогами (прогон 14.10,
+  // №106, ревью).
+  {
+    intent: "favorites: finished auction, lots of another",
+    callbackData: favoritesCallback(0, EMPTY_AUCTION_ID),
+    auction: {
+      ...AUCTION,
+      summary: {
+        ...CONTRACT_SUMMARY,
+        auctionId: EMPTY_AUCTION_ID,
+        stage: "finished",
+      },
+      followed: [UNSOLD_LOT.lotId, SOLD_LOT.lotId],
+    },
+    auctionCalls: [
+      {
+        port: "auction",
+        method: "getAuction",
+        request: { viewer: CONTRACT_VIEWER, auctionId: EMPTY_AUCTION_ID },
+      },
+      listFollowedCall,
+      findLotCall(UNSOLD_LOT.lotId),
+      findLotCall(SOLD_LOT.lotId),
+    ],
+    body: {
+      blocks: [
+        {
+          kind: "favorites",
+          page: 0,
+          pageCount: 1,
+          lots: FAVORITE_ITEMS,
+          total: 2,
+        },
+      ],
+      keyboard: [
+        openFavoriteRow(UNSOLD_LOT),
+        openFavoriteRow(SOLD_LOT),
+        [
+          {
+            action: "favorites.back",
+            callbackData: callback({
+              kind: "root",
+              auctionId: EMPTY_AUCTION_ID,
+            }),
+          },
+        ],
+      ],
+    },
+  },
   {
     intent: "favorites: empty",
     callbackData: favoritesCallback(3),

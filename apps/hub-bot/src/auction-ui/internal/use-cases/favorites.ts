@@ -133,7 +133,13 @@ export async function openFavorites(input: {
         lots: lots.map((lot) => feedItemOf(lot, viewer)),
         ...withMine(mineOf(all, viewer)),
         total: all.length,
-        ...((await ended) ? { ended: true as const } : {}),
+        // Список общий на все аукционы: «закончен» говорится, только когда
+        // все его лоты — из этого аукциона, иначе итогами назвались бы лоты
+        // идущего аукциона.
+        ...((await ended) &&
+        all.every((lot) => lot.auctionId === input.auctionId)
+          ? { ended: true as const }
+          : {}),
       },
     ],
     keyboard: [

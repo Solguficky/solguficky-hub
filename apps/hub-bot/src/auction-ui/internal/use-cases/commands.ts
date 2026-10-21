@@ -238,12 +238,17 @@ export async function commitCommand(
     lotId: intent.lotId,
     opId: intent.opId,
   };
+  // Отметки читаются параллельно команде, а не до неё: медленный
+  // Notifications не задерживает ставку у дедлайна. Ставка кладёт лот в
+  // избранное асинхронно, по факту из шины, поэтому чтение, начатое вместе с
+  // командой, видит отметки до неё.
+  const followed = notFollowedYet(context, intent.lotId);
   const settled = {
     context,
     lot,
     intent,
     amount,
-    autoFollowNote: await notFollowedYet(context, intent.lotId),
+    autoFollowNote: followed,
   };
   return intent.command === "bid"
     ? settle(
@@ -365,7 +370,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
       page: number;
     };
     amount: Money;
-    autoFollowNote: boolean;
+    autoFollowNote: Promise<boolean>;
   },
   outcome: CommandOutcome<Refusal>,
   refused: (refusal: Refusal) => CommandResult,
@@ -376,7 +381,7 @@ async function settle<Refusal extends BidRefusal | ProxyLimitRefusal>(
       if (intent.command === "proxy") markExplainerSeen(context);
       const extension = await extensionAfter(context, lot, outcome.lotVersion);
       return acceptedBody(lot, intent, amount, outcome.lotVersion, {
-        favorites: settled.autoFollowNote,
+        favorites: await settled.autoFollowNote,
         ...(extension === undefined ? {} : { extension }),
       });
     }

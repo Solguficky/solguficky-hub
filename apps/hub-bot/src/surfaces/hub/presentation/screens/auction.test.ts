@@ -202,9 +202,7 @@ describe("lot card in the hub shell", () => {
         max: 3,
         windowSeconds: 120,
       }),
-    ).toContain(
-      "Ставка в последние 2 минуты продлила торги до 11:03 (продление 3 из 3).",
-    );
+    ).toContain("Торги продлены до 11:03 (продление 3 из 3).");
     expect(
       accepted({
         kind: "extended",
@@ -213,7 +211,7 @@ describe("lot card in the hub shell", () => {
         max: 3,
         windowSeconds: 60,
       }),
-    ).toContain("Ставка в последнюю минуту продлила торги до 11:03");
+    ).toContain("Торги продлены до 11:03");
     expect(
       accepted({ kind: "exhausted", deadline: "2026-10-10T08:03:00Z" }),
     ).toContain("Продлений больше не будет: торги закроются в 11:03.");

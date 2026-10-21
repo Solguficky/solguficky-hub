@@ -312,6 +312,29 @@ describe("renderLotNotice", () => {
     );
   });
 
+  // Лот купил сам получатель — вернул ведение, а весть доставлена поздно:
+  // «продан» читался бы как проигрыш.
+  it("tells the recipient who bought the outbid lot that it is theirs", () => {
+    const lotId = lotOf(1);
+    const view = renderLotNotice(
+      { kind: "lot-outbid", lotId, currentPrice: rub(2000) },
+      {
+        lots: new Map([
+          [
+            lotId,
+            lot("Футболка", { sold: { price: rub(2100), winnerId: lotOf(7) } }),
+          ],
+        ]),
+        recipientId: lotOf(7),
+        frequencyButton: false,
+        timeZone,
+      },
+    );
+    expect(view.text).toBe(
+      `Твою ставку перебивали, но лот твой: <b>Футболка</b> за 2${nbsp}100${nbsp}₽.`,
+    );
+  });
+
   // Лот с перебитием и ответом автоставки — две строки, но одна кнопка.
   it("gives a lot with two lines one button", () => {
     const lotId = lotOf(1);
