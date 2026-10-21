@@ -799,11 +799,17 @@ describe("auction bot", () => {
   // Отменённый аукцион (PER-606; ADR-047, дополнение 2026-10-12) — прошедший,
   // и статус отличает его от завершённого: в строке списка и в корне.
   it("marks a cancelled auction in the past list and in its root", async () => {
-    const cancelled = { ...activeAuction, stage: "cancelled" as const };
+    // Дедлайн впереди: у отменённого отсчёта до финала нет — финала не будет.
+    const cancelled = {
+      ...activeAuction,
+      stage: "cancelled" as const,
+      closesAt: "2099-10-12T16:00:00Z",
+    };
     const { bot, calls } = makeBot(
       portsWith({ auctions: { active: [], finished: [cancelled] } }),
     );
     await bot.handleUpdate(lotPress({ data: entryCallback("past") }));
+    expect(JSON.stringify(calls.at(-1)?.payload)).not.toContain("финал");
     expect(calls.at(-1)?.payload).toMatchObject({
       reply_markup: {
         inline_keyboard: [

@@ -447,7 +447,10 @@ function rootScreen(
       [
         `Статус: ${stageWords[auction.stage]}`,
         ...(online === undefined ? [] : [online]),
-        ...(auction.final ? ["Финал: в зале"] : []),
+        // Отменённый аукцион финала уже не проведёт (PER-606).
+        ...(auction.final && auction.stage !== "cancelled"
+          ? ["Финал: в зале"]
+          : []),
       ]
         .map(escapeHtml)
         .join("\n"),

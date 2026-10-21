@@ -531,11 +531,10 @@ export type ConsoleNote =
   // (ADR-047, дополнение 2026-10-12); принятая отмена — свой исход.
   | "cancel-too-early"
   | "cancel-too-late"
+  | "already-cancelled"
   | "auction-cancelled"
-  // Отказы сходки (ADR-047, дополнение 2026-10-12): отменённая закрывает
-  // команды пульта, скрытая — открытие онлайн-недели. Исход — пульт по
-  // перечитанному снимку с возвратом в него.
-  | "meetup-cancelled"
+  // Скрытая сходка закрывает открытие онлайн-недели (ADR-047, дополнение
+  // 2026-10-12): исход — пульт по перечитанному снимку с возвратом в него.
   | "meetup-hidden"
   // Финал ведущего (PER-337): принятые команды и отказы Auction.
   | "final-started"
@@ -1210,11 +1209,11 @@ export type ExecuteResult =
       held: readonly ConsoleLot[];
       pick: LineupPick;
     }
-  // Отказ пульту целиком: не администратор сходки или аукциона нет. Отказы
-  // сходки — исходы пульта (`ConsoleNote`), а не отказ ему.
+  // Отказ пульту целиком: не администратор сходки, аукциона нет или сходку
+  // отменили. Скрытая сходка — исход пульта (`ConsoleNote`), а не отказ ему.
   | {
       kind: "auction-console-refused";
-      reason: "not-administrator" | "auction-not-found";
+      reason: "not-administrator" | "auction-not-found" | "meetup-cancelled";
     }
   | {
       kind: "meetup-notification-settings";

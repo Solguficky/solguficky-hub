@@ -247,6 +247,7 @@ import {
   cancelConfirmScreen,
   closeConfirmScreen,
   closedScreen,
+  consoleMeetupCancelledText,
   consoleMissingText,
   consoleScreen,
   discardConfirmScreen,
@@ -7592,7 +7593,9 @@ async function renderConsoleResult(
         ctx,
         result.reason === "not-administrator"
           ? forbiddenText
-          : consoleMissingText,
+          : result.reason === "meetup-cancelled"
+            ? consoleMeetupCancelledText
+            : consoleMissingText,
         exitToMeetups(),
       );
       return {

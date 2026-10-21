@@ -78,7 +78,7 @@ function purchaseLine(purchases: readonly NoticeMoney[]): string[] {
   const sameCurrency = purchases.every(
     (each) => each.currency === first.currency,
   );
-  const count = `${purchases.length} ${lots(purchases.length)}`;
+  const count = `${purchases.length} ${lotWord(purchases.length)}`;
   if (!sameCurrency) return [`Твои покупки — ${count} — остаются за тобой.`];
   const total = purchases.reduce((sum, each) => sum + each.minorUnits, 0);
   return [
@@ -86,7 +86,7 @@ function purchaseLine(purchases: readonly NoticeMoney[]): string[] {
   ];
 }
 
-function lots(count: number): string {
+function lotWord(count: number): string {
   const tens = count % 100;
   const ones = count % 10;
   if (tens >= 11 && tens <= 14) return "лотов";

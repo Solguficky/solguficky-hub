@@ -694,7 +694,11 @@ function finaleCountdown(
   timeZone: string,
   now?: Date,
 ): string | undefined {
-  if (auction.closesAt === undefined || auction.stage === "finished") {
+  if (
+    auction.closesAt === undefined ||
+    auction.stage === "finished" ||
+    auction.stage === "cancelled"
+  ) {
     return undefined;
   }
   const days =
@@ -966,7 +970,10 @@ function rootText(block: RootBlock, options: RenderOptions): string {
     [
       rootStages[auction.stage],
       ...(online === undefined ? [] : [online]),
-      ...(auction.final ? ["После них — финал в зале."] : []),
+      // Отменённый аукцион финала уже не проведёт (PER-606).
+      ...(auction.final && auction.stage !== "cancelled"
+        ? ["После них — финал в зале."]
+        : []),
     ].join("\n"),
   );
 }

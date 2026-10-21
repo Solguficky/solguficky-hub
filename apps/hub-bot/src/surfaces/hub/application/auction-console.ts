@@ -402,6 +402,13 @@ const auctionNotFound: ExecuteResult = {
   kind: "auction-console-refused",
   reason: "auction-not-found",
 };
+// Отменённая сходка закрывает команды пульта насовсем (ADR-047, дополнение
+// 2026-10-12): возврат в пульт вёл бы по кругу к тем же командам, поэтому это
+// кадр отказа с выходом к сходкам, а не исход пульта.
+const meetupCancelled: ExecuteResult = {
+  kind: "auction-console-refused",
+  reason: "meetup-cancelled",
+};
 
 // Лоты добавляются, пока онлайн-неделя не открыта; после старта Auction
 // отвечает `lots_frozen`. По тому же правилу лента показывает «Добавить лот».
@@ -840,7 +847,7 @@ export function createAuctionConsole(
       case "auction-not-found":
         return auctionNotFound;
       case "meetup-cancelled":
-        return after(request, "meetup-cancelled");
+        return meetupCancelled;
       default:
         return failed(scheduled);
     }
@@ -906,7 +913,7 @@ export function createAuctionConsole(
       case "auction-not-found":
         return auctionNotFound;
       case "meetup-cancelled":
-        return after(request, "meetup-cancelled");
+        return meetupCancelled;
       default:
         return failed(scheduled);
     }
@@ -962,7 +969,7 @@ export function createAuctionConsole(
       case "auction-not-found":
         return auctionNotFound;
       case "meetup-cancelled":
-        return after(request, "meetup-cancelled");
+        return meetupCancelled;
       case "meetup-hidden":
         return after(request, "meetup-hidden");
       default:
@@ -1032,7 +1039,10 @@ export function createAuctionConsole(
     if (editable(console)) {
       return { kind: "auction-console", console, note: "cancel-too-early" };
     }
-    if (console.status === "finished" || console.status === "cancelled") {
+    if (console.status === "cancelled") {
+      return { kind: "auction-console", console, note: "already-cancelled" };
+    }
+    if (console.status === "finished") {
       return { kind: "auction-console", console, note: "cancel-too-late" };
     }
     return {
@@ -1119,7 +1129,7 @@ export function createAuctionConsole(
       case "auction-not-found":
         return auctionNotFound;
       case "meetup-cancelled":
-        return after(request, "meetup-cancelled");
+        return meetupCancelled;
       default:
         return failed(marked);
     }
@@ -1272,7 +1282,7 @@ export function createAuctionConsole(
       case "auction-not-found":
         return auctionNotFound;
       case "meetup-cancelled":
-        return after(request, "meetup-cancelled");
+        return meetupCancelled;
       default:
         return failed(started);
     }
@@ -1410,7 +1420,7 @@ export function createAuctionConsole(
       case "auction-not-found":
         return auctionNotFound;
       case "meetup-cancelled":
-        return after(request, "meetup-cancelled");
+        return meetupCancelled;
       default:
         return failed(frozen);
     }
@@ -1448,7 +1458,7 @@ export function createAuctionConsole(
       case "auction-not-found":
         return auctionNotFound;
       case "meetup-cancelled":
-        return after(request, "meetup-cancelled");
+        return meetupCancelled;
       default:
         return failed(started);
     }
@@ -1566,7 +1576,7 @@ export function createAuctionConsole(
       case "auction-not-found":
         return auctionNotFound;
       case "meetup-cancelled":
-        return after(request, "meetup-cancelled");
+        return meetupCancelled;
       default:
         return failed(advanced);
     }
@@ -1682,7 +1692,7 @@ export function createAuctionConsole(
       case "auction-not-found":
         return auctionNotFound;
       case "meetup-cancelled":
-        return after(request, "meetup-cancelled");
+        return meetupCancelled;
       default:
         return failed(closed);
     }
@@ -1780,7 +1790,7 @@ export function createAuctionConsole(
       case "raffle-prize-too-long":
         return storedRefused(scheduled);
       case "meetup-cancelled":
-        return after(request, "meetup-cancelled");
+        return meetupCancelled;
       default:
         return failed(scheduled);
     }

@@ -153,9 +153,9 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   "cancel-too-early":
     "Онлайн-неделя ещё не открыта. Отменять нечего: аукцион можно удалить.",
   "cancel-too-late": "Аукцион уже закончился. Отменять нечего.",
+  "already-cancelled": "Аукцион уже отменён.",
   "auction-cancelled":
     "Аукцион отменён. Проданные лоты остались проданными, остальные сняты с торгов.",
-  "meetup-cancelled": "Сходку отменили. Управлять её аукционом больше нельзя.",
   "meetup-hidden":
     "Сходка скрыта. Онлайн-неделя откроется, когда сходку снова опубликуют.",
   "final-started": "Финал начат. Открой первый лот.",
@@ -471,7 +471,7 @@ function finalScreen(view: ConsoleScreenView): ShownScreen {
   }
   // Финал — тоже торги: отмена доступна и ведущему (ADR-047, дополнение
   // 2026-10-12), отдельным рядом над «Обновить» — рядов у финала мало.
-  nextRow(keyboard).text(cancelLabel, consoleCancelData(auction));
+  withCancel(nextRow(keyboard), console);
   nextRow(keyboard).text(refreshLabel, consoleViewData(auction));
   const trading = tradingLines(console);
   return {
@@ -1614,3 +1614,7 @@ export function windowQuestionText(
 
 /** Текст кадра отказа пульту; отказ по праву несёт общий текст хаба. */
 export const consoleMissingText = "Аукцион не найден. Открой сходку заново.";
+
+/** Отменённая сходка закрыла команды пульта (ADR-047, дополнение 2026-10-12). */
+export const consoleMeetupCancelledText =
+  "Сходку отменили. Управлять её аукционом больше нельзя.";

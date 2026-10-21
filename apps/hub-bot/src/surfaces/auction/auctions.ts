@@ -93,7 +93,7 @@ export function sortAuctions(
   return [...auctions].sort((left, right) => {
     const pending =
       listing === "active"
-        ? pendingRank(left.stage) - pendingRank(right.stage)
+        ? scheduledRank(left.stage) - scheduledRank(right.stage)
         : 0;
     if (pending !== 0) return pending;
     const a = left.opensAt === undefined ? undefined : Date.parse(left.opensAt);
@@ -110,7 +110,7 @@ export function sortAuctions(
 
 // Запланированный ещё не идёт: торги открыты не больше чем у одного аукциона
 // (RFC-017), и он среди активных стоит первым.
-function pendingRank(stage: AuctionStage): number {
+function scheduledRank(stage: AuctionStage): number {
   return stage === "scheduled" ? 1 : 0;
 }
 

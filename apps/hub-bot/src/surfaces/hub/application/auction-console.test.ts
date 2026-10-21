@@ -381,24 +381,30 @@ describe("auction console", () => {
     });
   });
 
-  // Отказы сходки (PER-606) — исход пульта по перечитанному снимку: причина
-  // словами и возврат в пульт, а не отказ пульту целиком.
-  it("names a cancelled meetup and a hidden one as the outcome of the console", async () => {
-    for (const kind of ["meetup-cancelled", "meetup-hidden"] as const) {
-      const { run } = fake({
-        start: { kind },
-        read: { kind: "ok", console: view("scheduled") },
-        statistics: noLotStatistics,
-      });
+  // Скрытая сходка (PER-606) — исход пульта по перечитанному снимку с
+  // возвратом в пульт; отменённая закрывает пульт насовсем — кадр отказа, иначе
+  // «‹ Пульт» вёл бы по кругу к тем же командам.
+  it("names a hidden meetup as the outcome of the console and refuses a cancelled one", async () => {
+    const hidden = fake({
+      start: { kind: "meetup-hidden" },
+      read: { kind: "ok", console: view("scheduled") },
+      statistics: noLotStatistics,
+    });
+    const cancelled = fake({ start: { kind: "meetup-cancelled" } });
 
-      await expect(
-        run({ ...call, intent: "start-auction-week", opId }),
-      ).resolves.toEqual({
-        kind: "auction-console",
-        console: view("scheduled"),
-        note: kind,
-      });
-    }
+    await expect(
+      hidden.run({ ...call, intent: "start-auction-week", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console",
+      console: view("scheduled"),
+      note: "meetup-hidden",
+    });
+    await expect(
+      cancelled.run({ ...call, intent: "start-auction-week", opId }),
+    ).resolves.toEqual({
+      kind: "auction-console-refused",
+      reason: "meetup-cancelled",
+    });
   });
 
   it("shows an accepted start over a read that has not seen it yet", async () => {
@@ -755,7 +761,7 @@ describe("auction cancel", () => {
     for (const [status, note] of [
       ["scheduled", "cancel-too-early"],
       ["finished", "cancel-too-late"],
-      ["cancelled", "cancel-too-late"],
+      ["cancelled", "already-cancelled"],
     ] as const) {
       const { run } = fake({
         read: { kind: "ok", console: view(status) },
