@@ -18,6 +18,8 @@ object DaySummaryMapping {
       lotId = view.lotId.toString,
       bidCount = view.bidCount,
       maxPrice = view.maxPrice.map(LotValues.money),
-      growth = view.growth.map(LotValues.money)
+      growth = view.growth.map(LotValues.money),
+      leaderChangeCount = view.contest.leaderChanges,
+      longestDuel = view.contest.longestDuel
     )
 }

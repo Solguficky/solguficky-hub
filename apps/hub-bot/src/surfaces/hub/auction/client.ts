@@ -77,6 +77,7 @@ import {
   type EnableAuctionResult,
   type FinalistRefusal,
   type FinalistResult,
+  type FinalTimeResult,
   type FloorBidResult,
   type FreezeFinalLineupResult,
   type LaunchStepWindowResult,
@@ -134,6 +135,7 @@ type AuctionRpc = Pick<
   | "cancelAuction"
   | "publishAuction"
   | "hideAuction"
+  | "setFinalTime"
   | "selectForFinal"
   | "deselectForFinal"
   | "freezeFinalLineup"
@@ -618,6 +620,19 @@ export function createAuctionAdapter(
           options(meta),
         );
         return visibilityResult(response.outcome, "hide");
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Ориентировочное время финала (PER-663). Момент без — снятие анонса, и
+    // Auction отвечает тем же приёмом.
+    async setFinalTime(person, command, meta) {
+      try {
+        const response = await rpc.setFinalTime(
+          { viewer: wireViewer(viewerOf(person)), ...command },
+          options(meta),
+        );
+        return finalTimeResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1449,9 +1464,19 @@ function daySummaryResult(
         kind: "ok",
         lots: outcome.value.lots.map((lot) => {
           const bidCount = safeCount(lot.bidCount, "day summary bid count");
+          const leaderChangeCount = safeCount(
+            lot.leaderChangeCount,
+            "day summary leader change count",
+          );
+          const longestDuel = safeCount(
+            lot.longestDuel,
+            "day summary longest duel",
+          );
           return {
             lotId: lot.lotId,
             bidCount,
+            leaderChangeCount,
+            longestDuel,
             ...(lot.maxPrice === undefined
               ? {}
               : { maxPrice: moneyOf(lot.maxPrice) }),
@@ -1735,6 +1760,45 @@ function visibilityResult(
       }
     case undefined:
       return defect(`${command} auction response without an outcome`);
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Ответы выставления времени финала (PER-663): именованный отказ Auction —
+// значение ответа, а не сбой вызова. Время в ответе нет: его показывает
+// перечитанный снимок `final_at`.
+function finalTimeResult(
+  outcome: Awaited<ReturnType<AuctionRpc["setFinalTime"]>>["outcome"],
+): FinalTimeResult {
+  switch (outcome.case) {
+    case "accepted":
+      return { kind: "ok" };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "finalAlreadyStarted":
+          return { kind: "final-already-started" };
+        case "auctionAlreadyFinished":
+          return { kind: "auction-already-finished" };
+        case "auctionAlreadyCancelled":
+          return { kind: "auction-already-cancelled" };
+        case undefined:
+          return defect("set final time refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("set final time response without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;

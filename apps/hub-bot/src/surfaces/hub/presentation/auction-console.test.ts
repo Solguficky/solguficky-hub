@@ -40,6 +40,7 @@ import type {
   ConsoleReadResult,
   DayLotStatistics,
   FinalistResult,
+  FinalTimeResult,
   FloorBid,
   LaunchStepWindowResult,
   LotAdministration,
@@ -102,6 +103,8 @@ const forgedAuctionPresses = {
   "console-raffle-prize": `v1:ac:rp:${auctionToken}`,
   "console-raffle-prize-remove": `v1:ac:rz:${auctionToken}`,
   "console-final": `v1:ac:f:${auctionToken}:1`,
+  "console-final-time": `v1:ac:ft:${auctionToken}`,
+  "console-final-time-remove": `v1:ac:fx:${auctionToken}`,
   "console-visibility": `v1:ac:p:${auctionToken}:1`,
   "console-open": `v1:ac:o:${auctionToken}`,
   "console-confirm": `v1:ac:y:${auctionToken}:${uuidToToken(mugId)}`,
@@ -234,6 +237,10 @@ function fakeAuction(
     // принятия публикации или снятия.
     hidden?: boolean;
     visibility?: AuctionVisibilityResult;
+    // Ориентировочное время финала (PER-663): выставленный анонс и отказ
+    // Auction вместо принятия.
+    finalAt?: string;
+    finalTime?: FinalTimeResult;
     // Снятие участника (PER-659): участники лотов по первой ставке. Снятие
     // переигрывает лот упрощённо: ведёт последний неснятый, цена — на шаг
     // ниже, но не выше прежней.
@@ -248,6 +255,8 @@ function fakeAuction(
     // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает.
     launchedWindows?: AuctionConsoleView["launchedWindows"];
     hidden: boolean;
+    // Ориентировочное время финала (PER-663): анонс трансляции.
+    finalAt?: string;
     startedBy?: string;
     discarded?: true;
     cancelledBy?: string;
@@ -261,6 +270,7 @@ function fakeAuction(
   } = {
     status: options.status ?? "draft",
     hidden: options.hidden ?? false,
+    ...(options.finalAt === undefined ? {} : { finalAt: options.finalAt }),
     ...(options.week === undefined ? {} : { week: options.week }),
     ...(options.launchedWindows === undefined
       ? {}
@@ -383,6 +393,7 @@ function fakeAuction(
           auctionId,
           status: state.status,
           hidden: state.hidden,
+          ...(state.finalAt === undefined ? {} : { finalAt: state.finalAt }),
           ...(state.week === undefined ? {} : { week: state.week }),
           ...(state.lineup === undefined ? {} : { lineup: state.lineup }),
           launchedWindows: state.launchedWindows ?? [],
@@ -397,6 +408,9 @@ function fakeAuction(
           lotId: each.lot.lotId,
           bidCount: each.bidCount,
           uniqueParticipantCount: each.uniqueParticipantCount,
+          ...(each.priceGrowth === undefined
+            ? {}
+            : { priceGrowth: each.priceGrowth }),
         })),
       };
     },
@@ -495,6 +509,24 @@ function fakeAuction(
     async publishAuction(_person, publish) {
       commands.push({ method: "publishAuction", args: publish });
       return visibility(false);
+    },
+    // Время финала (PER-663): выставляется, меняется и снимается, пока финал
+    // впереди; после его старта Auction отказывает.
+    async setFinalTime(_person, command) {
+      commands.push({ method: "setFinalTime", args: command });
+      if (options.finalTime !== undefined) return options.finalTime;
+      if (state.status === "final") return { kind: "final-already-started" };
+      if (state.status === "finished")
+        return { kind: "auction-already-finished" };
+      if (state.status === "cancelled") {
+        return { kind: "auction-already-cancelled" };
+      }
+      if (command.finalAt === undefined) {
+        delete state.finalAt;
+      } else {
+        state.finalAt = command.finalAt;
+      }
+      return { kind: "ok" };
     },
     async hideAuction(_person, hide) {
       commands.push({ method: "hideAuction", args: hide });
@@ -1357,7 +1389,7 @@ describe("auction console", () => {
     expect(spaced(screen.text ?? "")).toBe(
       [
         "<b>Пульт</b>",
-        "Идут онлайн-торги до 27 октября, вт, 00:00.\nФинал: есть.\nРозыгрыш: нет.",
+        "Идут онлайн-торги до 27 октября, вт, 00:00.\nФинал: есть.\nВремя финала: не выставлено.\nРозыгрыш: нет.",
         "Сортировка: по ставкам ↓.",
         [
           "• Ваза — 1 200 ₽ · 3 ставки · 2 уч.",
@@ -1368,6 +1400,7 @@ describe("auction console", () => {
     );
     expect(labels(screen)).toEqual([
       ["Ставки", "Люди", "Рост"],
+      ["Время финала"],
       ["Счастливые часы", "Сводка дня", "Отменить аукцион"],
       ["В финал · Ваза"],
       ["Снять из финала · Кружка"],
@@ -1563,6 +1596,7 @@ describe("week of the auction", () => {
     expect(labels(screen)).toEqual([
       ["Ставки", "Люди", "Рост"],
       ["Сроки недели", "Снять с публикации"],
+      ["Время финала"],
       ["Вкл · Финал в зале"],
       ["Счастливые часы", "Сводка дня"],
       ["Розыгрыш"],
@@ -2024,6 +2058,147 @@ describe("prize of the raffle", () => {
   });
 });
 
+// Ориентировочное время финала (PER-663): анонс трансляции в пульте. Момент
+// задаётся вопросом, снимается кнопкой, а после старта финала кнопок нет.
+describe("the final time of the auction", () => {
+  it("asks the moment, keeps it over a restart and shows it on the console", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      lots: [priced],
+    });
+    const calls: RecordedCall[] = [];
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(consoleData));
+    expect(plain(last(calls))).toContain("Время финала: не выставлено.");
+    expect(dataOf(last(calls), "Время финала")).toBe(
+      `v1:ac:ft:${auctionToken}`,
+    );
+    expect(labels(last(calls)).flat()).not.toContain("🗑 Убрать время финала");
+
+    await next((history) => press(dataOf(last(history), "Время финала")));
+    const asked = question(calls).payload;
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:ft:${auctionToken}:42`);
+    expect(asked.text).toContain("Например: 31.10.2026 19:00");
+
+    // Момент в прошлом бот отклоняет сам, без команды.
+    await next((history) => answer(history, { text: "01.10.2026 18:00" }));
+    expect(last(calls).text).toBe("<b>Этот момент уже прошёл</b>");
+    expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+    expect(auction.sent("setFinalTime")).toEqual([]);
+
+    await next((history) => press(dataOf(last(history), "Ввести заново")));
+    await next((history) => answer(history, { text: "31.10.2026 19:00" }));
+    expect(auction.sent("setFinalTime")).toEqual([
+      {
+        method: "setFinalTime",
+        args: {
+          auctionId,
+          opId: expect.any(String),
+          finalAt: "2026-10-31T16:00:00Z",
+        },
+      },
+    ]);
+    expect(last(calls).text).toBe(
+      "<b>Время финала сохранено: 31 октября, сб, 19:00</b>",
+    );
+
+    await next((history) => press(dataOf(last(history), "‹ Пульт")));
+    expect(plain(last(calls))).toContain(
+      "Время финала: 31 октября, сб, 19:00.",
+    );
+    expect(labels(last(calls)).flat()).toContain("🗑 Убрать время финала");
+
+    // Вопрос называет текущее время в том виде, в каком его вводят.
+    await next((history) => press(dataOf(last(history), "Время финала")));
+    expect(question(calls).payload.text).toContain("Сейчас: 31.10.2026 19:00");
+  });
+
+  it("takes the announcement back without a confirmation", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+      finalAt: "2026-10-31T16:00:00Z",
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(plain(last(calls))).toContain(
+      "Время финала: 31 октября, сб, 19:00.",
+    );
+
+    await bot.handleUpdate(press(dataOf(last(calls), "🗑 Убрать время финала")));
+    expect(auction.sent("setFinalTime")).toEqual([
+      {
+        method: "setFinalTime",
+        args: { auctionId, opId: expect.any(String) },
+      },
+    ]);
+    expect(last(calls).text).toBe(
+      "<b>Время финала убрано</b>\n\nАнонса больше нет.",
+    );
+  });
+
+  it("offers to take the announcement back after the final is switched off", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: false },
+      finalAt: "2026-10-31T16:00:00Z",
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(plain(last(calls))).toContain("Финал: нет.");
+    expect(plain(last(calls))).toContain(
+      "Время финала: 31 октября, сб, 19:00.",
+    );
+    // Выключенный финал оставляет время у аукциона, и убрать его больше
+    // нечем: ряд несёт только снятие.
+    expect(labels(last(calls)).flat()).toContain("🗑 Убрать время финала");
+    expect(labels(last(calls)).flat()).not.toContain("Время финала");
+  });
+
+  it("offers no button once the lineup is frozen", async () => {
+    const auction = fakeAuction({
+      status: "lineup-frozen",
+      week: { ...week, final: true },
+      finalAt: "2026-10-31T16:00:00Z",
+      lineup: [vase.lot.lotId],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(labels(last(calls)).flat()).not.toContain("Время финала");
+    expect(plain(last(calls))).toContain(
+      "Время финала: 31 октября, сб, 19:00.",
+    );
+  });
+
+  it("names the refusal of an old button once the final has started", async () => {
+    const auction = fakeAuction({
+      status: "final",
+      week: { ...week, final: true },
+      finalAt: "2026-10-31T16:00:00Z",
+      lineup: [vase.lot.lotId],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    expect(labels(last(calls)).flat()).not.toContain("Время финала");
+
+    await bot.handleUpdate(press(`v1:ac:ft:${auctionToken}`));
+    expect(last(calls).text).toBe(
+      "<b>Финал уже начался</b>\n\nВремя финала больше не меняется.",
+    );
+    expect(auction.sent("setFinalTime")).toEqual([]);
+  });
+});
+
 // PER-618: торги другого аукциона пульт называет до подтверждения, а отказ
 // после «Да» — тоже называет аукцион.
 describe("opening the week while another auction is trading", () => {
@@ -2222,7 +2397,7 @@ describe("the raffle line of the console", () => {
     await bot.handleUpdate(press(consoleData));
 
     expect(plain(last(calls))).toContain(
-      "Аукцион завершён.\nРозыгрыш: выиграл билет №1 — Сова*, билетов: 1.",
+      "Аукцион завершён.\nВремя финала: не выставлено.\nРозыгрыш: выиграл билет №1 — Сова*, билетов: 1.",
     );
   });
 });
@@ -2411,6 +2586,7 @@ describe("final selection", () => {
     );
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
+      ["Время финала"],
       ["Сводка дня", "Отменить аукцион"],
       ["‹ Аукцион"],
     ]);
@@ -2449,7 +2625,7 @@ describe("auction visibility", () => {
     expect(hidden?.args).toMatchObject({ auctionId });
   });
 
-  it("keeps the fullest console before the week within twelve rows", async () => {
+  it("keeps the fullest console before the week within thirteen rows", async () => {
     const lots = Array.from({ length: 9 }, (_, index) => ({
       ...priced,
       lot: {
@@ -2475,7 +2651,7 @@ describe("auction visibility", () => {
       "Сроки недели",
       "Снять с публикации",
     ]);
-    expect(labels(last(calls)).length).toBeLessThanOrEqual(12);
+    expect(labels(last(calls)).length).toBeLessThanOrEqual(13);
   });
 
   it("offers neither button once the week is open and names it for an old button", async () => {
@@ -2740,7 +2916,7 @@ describe("final of the auctioneer", () => {
 
     await next(() => press(consoleData));
     expect(plain(last(calls))).toContain(
-      "Состав финала объявлен.\n\n1. Ваза — 1 200 ₽\n2. Кружка — 500 ₽",
+      "Состав финала объявлен.\nВремя финала: не выставлено.\n\n1. Ваза — 1 200 ₽\n2. Кружка — 500 ₽",
     );
     expect(labels(last(calls))).toEqual([
       ["Начать финал"],
@@ -3049,7 +3225,7 @@ describe("final lineup", () => {
 
     await next(() => press(consoleData));
     expect(plain(last(calls))).toContain(
-      "Онлайн-торги закончились: перерыв перед финалом.\nВ финал отмечены: 3 лота.",
+      "Онлайн-торги закончились: перерыв перед финалом.\nВремя финала: не выставлено.\nВ финал отмечены: 3 лота.",
     );
     expect(labels(last(calls))).toContainEqual(["Объявить состав финала"]);
 
@@ -3110,7 +3286,7 @@ describe("final lineup", () => {
 
     await next((history) => press(dataOf(last(history), "‹ Пульт")));
     expect(plain(last(calls))).toContain(
-      "Состав финала объявлен.\n\n1. Кружка — 500 ₽\n2. Лампа — 800 ₽\n3. Ваза — 1 200 ₽",
+      "Состав финала объявлен.\nВремя финала: не выставлено.\n\n1. Кружка — 500 ₽\n2. Лампа — 800 ₽\n3. Ваза — 1 200 ₽",
     );
     await next((history) => press(dataOf(last(history), "Начать финал")));
     await next((history) => press(dataOf(last(history), "‹ Пульт")));
@@ -3576,12 +3752,16 @@ describe("day summary screen", () => {
           bidCount: 4,
           maxPrice: rub(180_000),
           growth: rub(60_000),
+          leaderChangeCount: 2,
+          longestDuel: 2,
         },
         {
           lotId: mugId,
           bidCount: 7,
           maxPrice: rub(50_000),
           growth: rub(10_000),
+          leaderChangeCount: 5,
+          longestDuel: 3,
         },
       ],
     });
@@ -3602,7 +3782,9 @@ describe("day summary screen", () => {
     expect(screen).toContain(
       `https://t.me/${auctionBot}?start=l_${uuidToToken(mugId)}`,
     );
-    // Оба лота — в сводке: дороже всех Ваза, оспореннее всех Кружка.
+    // Оба лота — в сводке: дороже всех Ваза, оспореннее всех Кружка — по
+    // сменам лидера, а не по числу ставок (PER-511).
+    expect(screen).toContain("5 смен лидера");
     expect(screen).toContain("Ваза");
     expect(screen).toContain("Кружка");
     expect(labels(last(calls))).toEqual([["‹ Пульт"]]);
@@ -3615,13 +3797,81 @@ describe("day summary screen", () => {
     ]);
   });
 
+  // PER-511: «тёмная лошадка» — среди лотов, у которых до суток было не больше
+  // трёх ставок, «эпичная дуэль» — от четырёх перебиваний подряд вдвоём.
+  it("names the dark horse among the lots with few bids before the day and the epic duel", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      lots: [
+        { ...vase, bidCount: 4, priceGrowth: rub(90_000) },
+        { ...mug, bidCount: 20, priceGrowth: rub(200_000) },
+      ],
+      day: [
+        {
+          lotId: vaseId,
+          bidCount: 3,
+          maxPrice: rub(210_000),
+          leaderChangeCount: 2,
+          longestDuel: 2,
+        },
+        {
+          lotId: mugId,
+          bidCount: 3,
+          maxPrice: rub(250_000),
+          leaderChangeCount: 5,
+          longestDuel: 5,
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction, [], undefined, auctionBot);
+    await bot.init();
+
+    await bot.handleUpdate(press(summaryData));
+
+    const lines = plain(last(calls)).split("\n");
+    const lineUnder = (heading: string): string =>
+      lines[lines.indexOf(heading) + 1] ?? "";
+    // Кружка выросла больше, но до этого дня у неё было 17 ставок.
+    expect(lineUnder("Тёмная лошадка:")).toContain("Ваза");
+    expect(lineUnder("Тёмная лошадка:")).toContain("1 ставка до этого дня");
+    expect(lineUnder("Эпичная дуэль:")).toContain("Кружка");
+    expect(lineUnder("Эпичная дуэль:")).toContain(
+      "5 перебиваний подряд вдвоём",
+    );
+  });
+
+  it("leaves the dark horse and the duel out below their thresholds", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      lots: [{ ...vase, bidCount: 7, priceGrowth: rub(90_000) }],
+      day: [
+        {
+          lotId: vaseId,
+          bidCount: 3,
+          maxPrice: rub(210_000),
+          leaderChangeCount: 3,
+          longestDuel: 3,
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction, [], undefined, auctionBot);
+    await bot.init();
+
+    await bot.handleUpdate(press(summaryData));
+
+    const screen = plain(last(calls));
+    expect(screen).toContain("Спорнее всех:");
+    expect(screen).not.toContain("Тёмная лошадка:");
+    expect(screen).not.toContain("Эпичная дуэль:");
+  });
+
   it("says a day without bids had none instead of an empty screen", async () => {
     const auction = fakeAuction({
       status: "prebidding",
       lots: [vase, mug],
       day: [
-        { lotId: vaseId, bidCount: 0 },
-        { lotId: mugId, bidCount: 0 },
+        { lotId: vaseId, bidCount: 0, leaderChangeCount: 0, longestDuel: 0 },
+        { lotId: mugId, bidCount: 0, leaderChangeCount: 0, longestDuel: 0 },
       ],
     });
     const { bot, calls } = harness("admin", auction, [], undefined, auctionBot);
@@ -3639,7 +3889,15 @@ describe("day summary screen", () => {
     const auction = fakeAuction({
       status: "prebidding",
       lots: [vase],
-      day: [{ lotId: vaseId, bidCount: 1, maxPrice: rub(120_000) }],
+      day: [
+        {
+          lotId: vaseId,
+          bidCount: 1,
+          maxPrice: rub(120_000),
+          leaderChangeCount: 0,
+          longestDuel: 0,
+        },
+      ],
     });
     const { bot, calls } = harness("admin", auction);
     await bot.init();

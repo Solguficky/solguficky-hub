@@ -27,6 +27,11 @@ export function consoleOf(console: AuctionConsole): AuctionConsoleSnapshot {
     auctionId: auction.id,
     status: statusOf(auction.status),
     hidden: auction.hidden,
+    // Ориентировочное время финала (PER-663): анонс трансляции, а не условие
+    // торгов. Нет — анонса нет, и пульт говорит об этом строкой.
+    ...(auction.finalAt === undefined || auction.finalAt === ""
+      ? {}
+      : { finalAt: auction.finalAt }),
     ...(week === undefined ? {} : { week }),
     ...(lineup === undefined ? {} : { lineup }),
     // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает, а

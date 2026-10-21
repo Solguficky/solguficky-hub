@@ -201,11 +201,14 @@ export type LotStatisticsReadResult =
 // Сводка дня торгов (PER-492): агрегаты лота за окно, которое называет бот.
 // Лот без ставок в окне приходит с нулём и без цены, а не пропускается, —
 // «ставок не было» бот читает по всему реестру, а не по отсутствию строк.
+// Смены лидера и самая длинная дуэль — тоже окна (PER-511).
 export type DayLotStatistics = {
   lotId: string;
   bidCount: number;
   maxPrice?: Money;
   growth?: Money;
+  leaderChangeCount: number;
+  longestDuel: number;
 };
 
 /** Окно сводки дня: аукцион и границы суток, которые называет бот (PER-492). */
@@ -280,6 +283,22 @@ export type CancelAuctionResult =
   | { kind: "not-started" }
   | { kind: "already-finished" }
   | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// Ориентировочное время финала (PER-663): выставить, изменить и снять одной
+// командой. Момент без — снятие. Ответ не несёт времени, его показывает
+// перечитанный снимок `final_at`.
+export type FinalTimeResult =
+  | { kind: "ok" }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "auction-not-found" }
+  // Финал уже начался: время больше не меняется (ADR-040, дополнение
+  // 2026-10-19).
+  | { kind: "final-already-started" }
+  | { kind: "auction-already-finished" }
+  | { kind: "auction-already-cancelled" }
   | AuctionFailure;
 
 // Публикация и снятие с публикации (ADR-047, дополнение 2026-10-20, PER-673):
@@ -610,6 +629,15 @@ export type AuctionConsoles = {
     hide: { auctionId: string; opId: string },
     meta?: RpcMetadata,
   ): Promise<AuctionVisibilityResult>;
+  // Ориентировочное время финала (PER-663): подпись анонса трансляции, а не
+  // условие торгов. Выставить, изменить и снять — одна команда; момент без —
+  // снять. Повтор того же `opId` Auction принимает, а выставление и снятие под
+  // одним `opId` — разные события, и второе он отвергает.
+  setFinalTime(
+    person: Person,
+    command: { auctionId: string; opId: string; finalAt?: string },
+    meta?: RpcMetadata,
+  ): Promise<FinalTimeResult>;
   selectForFinal(
     person: Person,
     mark: FinalistMark,

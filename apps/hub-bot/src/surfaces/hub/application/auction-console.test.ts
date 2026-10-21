@@ -20,6 +20,7 @@ import type {
   FinalBidsResult,
   FinalistResult,
   FinalLotCommand,
+  FinalTimeResult,
   FreezeFinalLineupResult,
   LaunchStepWindowCommand,
   LaunchStepWindowResult,
@@ -33,6 +34,7 @@ import type { ParticipantUsernameResult } from "../identity/port.js";
 import {
   createAuctionConsole,
   lineupPrint,
+  parseFinalTime,
   parseLaunch,
   parseRaffle,
   parseWeek,
@@ -95,6 +97,7 @@ function fake(answers: {
   discard?: DiscardAuctionResult;
   cancel?: CancelAuctionResult;
   visibility?: AuctionVisibilityResult;
+  finalTime?: FinalTimeResult;
   freeze?: FreezeFinalLineupResult;
   startFinal?: StartFinalResult;
   nextLot?: StartNextLotResult;
@@ -118,6 +121,7 @@ function fake(answers: {
   const windows: { auctionId: string; from: string; until: string }[] = [];
   const launched: LaunchStepWindowCommand[] = [];
   const visibility: { published: boolean; opId: string }[] = [];
+  const finalTimes: { finalAt?: string; opId: string }[] = [];
   const port: AuctionConsoles = {
     getAuctionConsole: async () =>
       answers.read ?? { kind: "ok", console: view("draft") },
@@ -151,6 +155,16 @@ function fake(answers: {
     },
     selectForFinal: async () => answers.mark ?? { kind: "ok" },
     deselectForFinal: async () => answers.mark ?? { kind: "ok" },
+    setFinalTime: async (_person, command) => {
+      finalTimes.push({
+        ...(command.finalAt === undefined ? {} : { finalAt: command.finalAt }),
+        opId: command.opId,
+      });
+      if (answers.finalTime === undefined) {
+        throw new Error("final time response not configured by test");
+      }
+      return answers.finalTime;
+    },
     freezeFinalLineup: async (_person, freeze) => {
       freezes.push(freeze.lotIds);
       return answers.freeze ?? { kind: "ok" };
@@ -221,6 +235,7 @@ function fake(answers: {
     windows,
     launched,
     visibility,
+    finalTimes,
   };
 }
 
@@ -276,6 +291,157 @@ describe("parseWeek", () => {
     expect(
       parseWeek("01.10.2026 18:00 — 06.10.2026 12:01", zone, now),
     ).toMatchObject({ kind: "ok" });
+  });
+});
+
+// Ориентировочное время финала (PER-663): момент в поясе сообщества, формат
+// ввода хаба.
+describe("parseFinalTime", () => {
+  it("reads the moment in community time", () => {
+    expect(
+      parseFinalTime({ raw: " 31.10.2026 19:00 ", timeZone: zone, now }),
+    ).toEqual({
+      kind: "ok",
+      finalAt: "2026-10-31T16:00:00Z",
+    });
+  });
+
+  it.each([
+    ["no year", "31.10 19:00"],
+    ["a day the calendar lacks", "31.02.2026 19:00"],
+    ["an hour past the day", "31.10.2026 24:00"],
+    ["words", "завтра вечером"],
+  ])("refuses %s as a format error", (_name, raw) => {
+    expect(parseFinalTime({ raw, timeZone: zone, now })).toEqual({
+      kind: "rejected",
+      error: "final-time-format",
+    });
+  });
+
+  it("refuses a time the clocks skipped", () => {
+    expect(
+      parseFinalTime({
+        raw: "29.03.2026 02:30",
+        timeZone: "Europe/Berlin",
+        now,
+      }),
+    ).toEqual({
+      kind: "rejected",
+      error: "final-time-moment",
+    });
+  });
+
+  it("refuses a moment that has already come", () => {
+    expect(
+      parseFinalTime({ raw: "01.10.2026 18:00", timeZone: zone, now }),
+    ).toEqual({
+      kind: "rejected",
+      error: "final-time-past",
+    });
+  });
+});
+
+describe("the final time of the auction", () => {
+  const call = { identity: admin, auctionId };
+
+  it("sets the moment and shows it over a lagging read", async () => {
+    const { run, finalTimes } = fake({
+      read: {
+        kind: "ok",
+        console: view("scheduled", { week: { ...week, final: true } }),
+      },
+      statistics: noLotStatistics,
+      finalTime: { kind: "ok" },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "set-auction-final-time",
+      value: "31.10.2026 19:00",
+      opId,
+    });
+
+    expect(finalTimes).toEqual([{ opId, finalAt: "2026-10-31T16:00:00Z" }]);
+    expect(result).toEqual({
+      kind: "auction-console",
+      console: view("scheduled", {
+        week: { ...week, final: true },
+        finalAt: "2026-10-31T16:00:00Z",
+      }),
+      note: "final-time-saved",
+    });
+  });
+
+  it("asks the moment again with the reason and without a command", async () => {
+    const { run, finalTimes } = fake({
+      read: {
+        kind: "ok",
+        console: view("scheduled", { week: { ...week, final: true } }),
+      },
+      statistics: noLotStatistics,
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "set-auction-final-time",
+        value: "завтра вечером",
+        opId,
+      }),
+    ).resolves.toEqual({
+      kind: "auction-final-time-ask",
+      auctionId,
+      error: "final-time-format",
+    });
+    expect(finalTimes).toEqual([]);
+  });
+
+  it("takes the announcement back with the same command", async () => {
+    const { run, finalTimes } = fake({
+      read: {
+        kind: "ok",
+        console: view("scheduled", {
+          week: { ...week, final: true },
+          finalAt: "2026-10-31T16:00:00Z",
+        }),
+      },
+      statistics: noLotStatistics,
+      finalTime: { kind: "ok" },
+    });
+
+    const result = await run({
+      ...call,
+      intent: "remove-auction-final-time",
+      opId,
+    });
+
+    expect(finalTimes).toEqual([{ opId }]);
+    expect(result).toEqual({
+      kind: "auction-console",
+      console: view("scheduled", { week: { ...week, final: true } }),
+      note: "final-time-removed",
+    });
+  });
+
+  it("names the refusal of a final that has already started", async () => {
+    const { run, finalTimes } = fake({
+      read: { kind: "ok", console: view("final") },
+      statistics: noLotStatistics,
+      finalTime: { kind: "final-already-started" },
+    });
+
+    await expect(
+      run({
+        ...call,
+        intent: "set-auction-final-time",
+        value: "31.10.2026 19:00",
+        opId,
+      }),
+    ).resolves.toMatchObject({
+      kind: "auction-console",
+      note: "final-already-started",
+    });
+    expect(finalTimes).toEqual([]);
   });
 });
 
@@ -2678,11 +2844,13 @@ describe("day summary", () => {
     lots: [
       {
         lotId,
-        bidCount: 4,
+        bidCount: 2,
         maxPrice: { minorUnits: 150_000, currency: "RUB" },
         growth: { minorUnits: 30_000, currency: "RUB" },
+        leaderChangeCount: 2,
+        longestDuel: 2,
       },
-      { lotId: second, bidCount: 0 },
+      { lotId: second, bidCount: 0, leaderChangeCount: 0, longestDuel: 0 },
     ],
   };
 
@@ -2703,11 +2871,22 @@ describe("day summary", () => {
           {
             lotId,
             title: "Кружка",
-            bidCount: 4,
+            bidCount: 2,
             maxPrice: { minorUnits: 150_000, currency: "RUB" },
             growth: { minorUnits: 30_000, currency: "RUB" },
+            leaderChanges: 2,
+            longestDuel: 2,
+            // Три ставки за всё время, из них две — за сутки.
+            bidsBefore: 1,
           },
-          { lotId: second, title: "Плакат", bidCount: 0 },
+          {
+            lotId: second,
+            title: "Плакат",
+            bidCount: 0,
+            leaderChanges: 0,
+            longestDuel: 0,
+            bidsBefore: 3,
+          },
         ],
       },
     );
@@ -2724,7 +2903,10 @@ describe("day summary", () => {
     const { run } = fake({
       read: { kind: "ok", console: view("prebidding", { lots }) },
       statistics,
-      day: { kind: "ok", lots: [{ lotId, bidCount: 2 }] },
+      day: {
+        kind: "ok",
+        lots: [{ lotId, bidCount: 2, leaderChangeCount: 0, longestDuel: 0 }],
+      },
     });
 
     const result = await run({ ...call, intent: "view-day-summary" });

@@ -430,12 +430,19 @@ export type ConsoleLot = ConsoleLotSnapshot & {
 
 // Лот в сводке дня (PER-492): агрегаты окна суток, которые отдал Auction, и
 // название из карточки пульта. Заголовка нет, когда у лота нет карточки.
+// `leaderChanges` и `longestDuel` — тоже окна (PER-511); `bidsBefore` — ставки
+// лота до окна, всего минус окно, и `priceGrowth` — рост от стартовой цены за
+// всё время: по ним сводка ищет «тёмную лошадку».
 export type DaySummaryLot = {
   lotId: string;
   title?: string;
   bidCount: number;
   maxPrice?: LotAmount;
   growth?: LotAmount;
+  leaderChanges: number;
+  longestDuel: number;
+  bidsBefore: number;
+  priceGrowth?: LotAmount;
 };
 
 export type ConsoleSortMetric = "bids" | "participants" | "growth";
@@ -461,6 +468,9 @@ export type AuctionConsoleSnapshot = {
   // отдаёт признак только держателю `run_auctions` и снимает его открытием
   // онлайн-торгов.
   hidden: boolean;
+  // Ориентировочное время финала (PER-663): анонс трансляции, а не условие
+  // торгов. Момент RFC 3339 в UTC; нет — анонс не выставлен.
+  finalAt?: string;
   week?: AuctionWeek;
   lineup?: FinalLineup;
   // Запущенные по ходу торгов окна сниженного шага (PER-615) в порядке
@@ -550,6 +560,13 @@ export type ConsoleNote =
   | "published"
   | "unpublished"
   | "visibility-too-late"
+  // Ориентировочное время финала (PER-663): выставлено, снято либо уже поздно
+  // — финал начался, аукцион завершён или отменён.
+  | "final-time-saved"
+  | "final-time-removed"
+  | "final-already-started"
+  | "auction-already-finished"
+  | "auction-already-cancelled"
   // Финал ведущего (PER-337): принятые команды и отказы Auction.
   | "final-started"
   | "lineup-not-frozen"
@@ -591,6 +608,14 @@ export type RaffleAskError =
 // не длиннее 200 знаков: пустой приз говорит, что приза не будет, а предел
 // держит и бот, и Auction.
 export type RafflePrizeAskError = "prize-blank" | "prize-too-long";
+
+// Почему вопрос об ориентировочном времени финала задан заново (PER-663).
+// Момент лежит в будущем и в поясе сообщества: анонс трансляции не должен
+// называть время, которого нет.
+export type FinalTimeAskError =
+  | "final-time-format"
+  | "final-time-moment"
+  | "final-time-past";
 
 // Почему вопрос об окне «Счастливых часов» задан заново (PER-504). Сроки окна
 // разбираются тем же правилом, что сроки недели; остальное решает Auction.
@@ -730,6 +755,15 @@ export type AuctionConsoleRequest =
       published: boolean;
       opId: string;
     })
+  // Ориентировочное время финала (PER-663): вопрос о моменте, ответ строкой,
+  // как его написал человек, и снятие момента.
+  | (AuctionConsoleCall & { intent: "ask-auction-final-time" })
+  | (AuctionConsoleCall & {
+      intent: "set-auction-final-time";
+      value: string;
+      opId: string;
+    })
+  | (AuctionConsoleCall & { intent: "remove-auction-final-time"; opId: string })
   // Подтверждение удаления, пока неделя не открыта; ключ уедет в «Да».
   | (AuctionConsoleCall & { intent: "prepare-auction-discard"; opId: string })
   | (AuctionConsoleCall & { intent: "discard-auction"; opId: string })
@@ -1217,6 +1251,14 @@ export type ExecuteResult =
       auctionId: string;
       prize?: string;
       error?: RafflePrizeAskError;
+    }
+  // Вопрос об ориентировочном времени финала (PER-663): первый либо тот же
+  // заново, с причиной. `finalAt` — выставленный анонс, его вопрос повторяет.
+  | {
+      kind: "auction-final-time-ask";
+      auctionId: string;
+      finalAt?: string;
+      error?: FinalTimeAskError;
     }
   // Сводка дня торгов (PER-492): лоты реестра с агрегатами окна и подпись
   // самого дня. Отбор строк и порядок делает экран, как у пульта.

@@ -21,6 +21,7 @@ import type {
   ConsoleSort,
   ConsoleSortMetric,
   FinalAskError,
+  FinalTimeAskError,
   LaunchDraft,
   LineupPick,
   LotAmount,
@@ -46,6 +47,8 @@ import {
   consoleDiscardConfirmData,
   consoleDiscardData,
   consoleFinalData,
+  consoleFinalTimeData,
+  consoleFinalTimeRemoveData,
   consoleLineupConfirmData,
   consoleLineupData,
   consoleLineupPickData,
@@ -171,6 +174,13 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
   unpublished: "Аукцион снят с публикации. Участники его не видят.",
   "visibility-too-late":
     "Онлайн-неделя уже открыта. Аукцион виден участникам, снять его нельзя.",
+  // Ориентировочное время финала (PER-663): выставлено, снято или уже поздно.
+  "final-time-saved": "Время финала сохранено.",
+  "final-time-removed": "Время финала убрано. Анонса больше нет.",
+  "final-already-started":
+    "Финал уже начался. Время финала больше не меняется.",
+  "auction-already-finished": "Аукцион уже завершён. Время финала не меняется.",
+  "auction-already-cancelled": "Аукцион отменён. Время финала не меняется.",
   "final-started": "Финал начат. Открой первый лот.",
   "lineup-not-frozen": "Состав финала ещё не объявлен. Начать финал нельзя.",
   "not-in-final": "Финал не идёт. Открывать лоты нельзя.",
@@ -211,6 +221,14 @@ function noteText(view: ConsoleScreenView, note: ConsoleNote): string {
       return week?.rafflePrize === undefined
         ? outcomeText(consoleNoteText[note])
         : screenText(`Приз розыгрыша сохранён: ${week.rafflePrize}`);
+    // Время финала (PER-663) называется тем же, чем строкой пульта: момент
+    // анонса, а не обещание, что финал начнётся ровно тогда.
+    case "final-time-saved":
+      return view.console.finalAt === undefined
+        ? outcomeText(consoleNoteText[note])
+        : screenText(
+            `Время финала сохранено: ${moment(view.console.finalAt, view)}`,
+          );
     case "another-auction-active":
       return view.holder === undefined
         ? outcomeText(consoleNoteText[note])
@@ -352,18 +370,63 @@ function visibilityLine(console: AuctionConsoleView): string {
     : "Виден участникам.";
 }
 
+// Ориентировочное время финала (PER-663): анонс трансляции, а не условие
+// торгов. Пульт называет его, пока финал впереди, — иначе анонс уже не
+// меняется, и называть его незачем.
+function finalTimeLines(
+  console: AuctionConsoleView,
+  view: ConsoleScreenView,
+): string[] {
+  if (console.status === "cancelled") return [];
+  if (console.finalAt !== undefined) {
+    return [`Время финала: ${moment(console.finalAt, view)}.`];
+  }
+  if (console.week?.final !== true) return [];
+  return ["Время финала: не выставлено."];
+}
+
+// Время финала меняется, пока финал впереди. Кнопка «Время финала» стоит
+// только у аукциона с финалом: анонсировать нечего. А снятие — пока анонс на
+// месте: выключенный финал оставляет время у аукциона, и убрать его больше
+// нечем (PER-663).
+function finalTimeAhead(console: AuctionConsoleView): boolean {
+  return (
+    console.status !== "lineup-frozen" &&
+    console.status !== "final" &&
+    console.status !== "finished" &&
+    console.status !== "cancelled"
+  );
+}
+
+function finalTimeEditable(console: AuctionConsoleView): boolean {
+  return console.week?.final === true && finalTimeAhead(console);
+}
+
+function finalTimeRemovable(console: AuctionConsoleView): boolean {
+  return console.finalAt !== undefined && finalTimeAhead(console);
+}
+
 function statusLines(view: ConsoleScreenView): string[] {
   const { status, week } = view.console;
   switch (status) {
     case "draft":
-      return [visibilityLine(view.console), "Сроки недели не заданы."];
+      return [
+        visibilityLine(view.console),
+        "Сроки недели не заданы.",
+        ...finalTimeLines(view.console, view),
+      ];
     case "scheduled":
       return week === undefined
-        ? [visibilityLine(view.console), "Сроки недели не заданы."]
+        ? [
+            visibilityLine(view.console),
+            "Сроки недели не заданы.",
+            ...finalTimeLines(view.console, view),
+          ]
         : [
             visibilityLine(view.console),
             weekLine(week, view),
             finalLine(week),
+            ...finalTimeLines(view.console, view),
             ...windowsLines(view.console),
             raffleLine(week, view),
             ...rafflePrizeLines(week),
@@ -377,6 +440,7 @@ function statusLines(view: ConsoleScreenView): string[] {
           ? []
           : [
               finalLine(week),
+              ...finalTimeLines(view.console, view),
               ...windowsLines(view.console),
               raffleLine(week, view),
               ...rafflePrizeLines(week),
@@ -385,19 +449,25 @@ function statusLines(view: ConsoleScreenView): string[] {
     case "settling":
       return [
         "Общий дедлайн прошёл: аукцион ждёт закрытия лотов.",
+        ...finalTimeLines(view.console, view),
         ...raffleLines(view),
       ];
     case "break":
       return [
         "Онлайн-торги закончились: перерыв перед финалом.",
+        ...finalTimeLines(view.console, view),
         ...raffleLines(view),
       ];
     case "lineup-frozen":
-      return ["Состав финала объявлен."];
+      return ["Состав финала объявлен.", ...finalTimeLines(view.console, view)];
     case "final":
-      return ["Идёт финал."];
+      return ["Идёт финал.", ...finalTimeLines(view.console, view)];
     case "finished":
-      return ["Аукцион завершён.", ...raffleLines(view)];
+      return [
+        "Аукцион завершён.",
+        ...finalTimeLines(view.console, view),
+        ...raffleLines(view),
+      ];
     case "cancelled":
       return ["Аукцион отменён: проданные лоты остались проданными."];
     default: {
@@ -562,7 +632,7 @@ function windowsLabel(count: number): string {
   return counted(count, ["окно", "окна", "окон"]);
 }
 
-function counted(
+export function counted(
   count: number,
   [one, few, many]: readonly [string, string, string],
 ): string {
@@ -744,6 +814,23 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     console.status === "scheduled" &&
     week?.opensAt !== undefined &&
     week.closesAt !== undefined;
+  // Ориентировочное время финала (PER-663): рядом с настройкой недели, а в
+  // онлайн-торгах и перерыве, где переключателя финала нет, — сразу после
+  // строк настройки. Снятие стоит в том же ряду: два «🗑» в один ряд не
+  // встают, а пульт упирается в потолок рядов.
+  const finalTimeSet = finalTimeEditable(console);
+  if (finalTimeSet || finalTimeRemovable(console)) {
+    nextRow(keyboard);
+    if (finalTimeSet) {
+      keyboard.text("Время финала", consoleFinalTimeData(auction));
+    }
+    if (finalTimeRemovable(console)) {
+      keyboard.text(
+        removeLabel("Убрать время финала"),
+        consoleFinalTimeRemoveData(auction),
+      );
+    }
+  }
   const windowsShown = scheduled || console.status === "prebidding";
   // «Сводка дня» (PER-492) идёт рядом со «Счастливыми часами», где этот ряд
   // есть: в онлайн-торгах с окнами и восемью лотами отдельный ряд вывел бы
@@ -1358,6 +1445,36 @@ export function rafflePrizeQuestionText(prize: string | undefined): string {
   return [
     ...(prize === undefined ? [] : [`Сейчас: ${prize}`]),
     rafflePrizePrompt,
+  ].join("\n");
+}
+
+/** Причина отказа ответу о времени финала (PER-663). */
+export const finalTimeAskErrorText: Record<FinalTimeAskError, string> = {
+  "final-time-format":
+    "Не получилось разобрать момент. Нужны дата и время: ДД.ММ.ГГГГ ЧЧ:ММ.",
+  "final-time-moment":
+    "Такого времени нет по времени сообщества: в этот час переводили часы.",
+  "final-time-past": "Этот момент уже прошёл.",
+};
+
+export const finalTimePrompt =
+  "Когда ждать финал в зале? Дата и время по времени сообщества — анонс, а не обещание.\nНапример: 31.10.2026 19:00";
+
+/**
+ * Вопрос об ориентировочном времени финала (PER-663): текущее время в том
+ * же виде, в каком его вводят, затем образец.
+ */
+export function finalTimeQuestionText(
+  timeZone: string,
+  finalAt: string | undefined,
+): string {
+  return [
+    ...(finalAt === undefined
+      ? []
+      : [
+          `Сейчас: ${formatLocalMoment(communityLocalTime(finalAt, timeZone))}`,
+        ]),
+    finalTimePrompt,
   ].join("\n");
 }
 
