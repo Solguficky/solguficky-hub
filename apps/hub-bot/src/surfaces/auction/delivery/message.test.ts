@@ -259,6 +259,81 @@ describe("activity digest", () => {
   });
 });
 
+// Начало окна «Счастливых часов» (PER-616): одно сообщение с шагом и концом
+// окна и рядом на каждый лот окна.
+describe("step window", () => {
+  const otherLot = "0198f2a4-7c1e-7d3a-9b21-4f8e12ab34d1";
+  const start: AuctionNotificationContent = {
+    kind: "step-window-started",
+    auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+    lots: [
+      {
+        lotId,
+        until: "2026-10-21T21:00:00Z",
+        step: { minorUnits: 50_000, currency: "RUB" },
+      },
+      {
+        lotId: otherLot,
+        until: "2026-10-21T22:00:00Z",
+        step: { minorUnits: 90_000, currency: "RUB" },
+      },
+    ],
+  };
+
+  it("names the step and the end of the window and opens every lot", async () => {
+    const source = reads({
+      lotInfo: vi.fn(async (_who: string, id: string) => ({
+        title: id === lotId ? "Кружка" : "Плакат",
+      })),
+    });
+    const render = createRenderMessage(source, () => {}, true);
+    const rendered = await render(start, { recipientId });
+    if (rendered.kind !== "ready") throw new Error("the window must render");
+    expect(rendered.message.text).toBe(
+      [
+        "Счастливые часы начались:",
+        "",
+        `• «Кружка» — шаг 500${nbsp}₽ до 21:00`,
+        `• «Плакат» — шаг 900${nbsp}₽ до 22:00`,
+      ].join("\n"),
+    );
+    expect(notificationMarkup(rendered.message)).toEqual({
+      inline_keyboard: [
+        [{ text: "Кружка", callback_data: traceLotCallback(lotId) }],
+        [{ text: "Плакат", callback_data: traceLotCallback(otherLot) }],
+      ],
+    });
+  });
+
+  // Частоты под вестью нет: повод выключается снятием отметки (ADR-047).
+  it("has no frequency button under the notice", async () => {
+    const render = createRenderMessage(reads(), () => {}, true);
+    const rendered = await render(start, { recipientId });
+    if (rendered.kind !== "ready") throw new Error("the window must render");
+    expect(
+      rendered.message.rows?.flat().map((button) => button.text),
+    ).not.toContain("Частота уведомлений");
+    expect(rendered.message.rows).toHaveLength(2);
+  });
+
+  it("passes the screen linter", async () => {
+    const sent: unknown[] = [];
+    const sender = createNotificationSender({
+      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
+        sent.push({ chat_id: chat, text, ...extra });
+        return {};
+      }),
+    } as never);
+    await sender.send({
+      telegramUserId: 42n,
+      message: renderNotification(start, titled("Кружка")),
+    });
+    expect(
+      sent.flatMap((call) => inspectCall("auction", "sendMessage", call)),
+    ).toEqual([]);
+  });
+});
+
 describe("parseTraceCallback", () => {
   it("passes an ordinary button through as not a trace", () => {
     expect(parseTraceCallback("v1:entry:menu")).toBeUndefined();

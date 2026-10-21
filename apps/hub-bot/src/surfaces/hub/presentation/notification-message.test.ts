@@ -1,11 +1,13 @@
 import { GrammyError, HttpError } from "grammy";
 import { describe, expect, it, vi } from "vitest";
+import { inspectCall } from "../../../../testkit/screen-lint.js";
 import { encodeAuctionCallback } from "../../../auction-ui/index.js";
 import { renderFinalNotice } from "../../../core/notifications/final-notice.js";
 import {
   createLotNoticeRender,
   type LotNotice,
 } from "../../../core/notifications/lot-notice.js";
+import { renderStepWindowNotice } from "../../../core/notifications/step-window-notice.js";
 import type {
   MeetupAspect,
   MeetupLifecycle,
@@ -138,6 +140,62 @@ describe("renderNotification", () => {
       text: "Начался финал аукциона.",
       keyboard: undefined,
     });
+  });
+
+  // Начало окна «Счастливых часов» (PER-616): ряд на каждый лот окна, след на
+  // карточку лота аукционного дерева.
+  function windowView() {
+    return renderStepWindowNotice(
+      {
+        kind: "step-window-started",
+        auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+        lots: [
+          {
+            lotId,
+            until: "2026-10-21T21:00:00Z",
+            step: { minorUnits: 50_000, currency: "RUB" },
+          },
+        ],
+      },
+      { lots: new Map([[lotId, { title: "Кружка" }]]), timeZone: "UTC" },
+    );
+  }
+
+  it("traces the card of every lot of the window", () => {
+    const message = renderNotification({
+      kind: "lot-notice",
+      view: windowView(),
+    });
+    expect(message.text.split("\n")[0]).toBe("Счастливые часы начались:");
+    expect(message.keyboard?.inline_keyboard).toEqual([
+      [
+        {
+          text: "Кружка",
+          callback_data: `v1:t:${encodeAuctionCallback({ kind: "lot", lotId, page: 0 }).slice("v1:".length)}`,
+        },
+      ],
+    ]);
+  });
+
+  // Линтер дизайн-кода: весть идёт мимо адаптера экранов, и без метки
+  // каталога линтер её не увидел бы.
+  it("passes the screen linter", async () => {
+    const sent: unknown[] = [];
+    const sender = createNotificationSender({
+      sendMessage: vi.fn(async (chat: number, text: string, extra) => {
+        sent.push({ chat_id: chat, text, ...extra });
+        return {};
+      }),
+      setMyCommands: vi.fn(),
+      deleteMyCommands: vi.fn(),
+    } as never);
+    await sender.send({
+      telegramUserId: 42n,
+      message: { kind: "lot-notice", view: windowView() },
+    });
+    expect(
+      sent.flatMap((call) => inspectCall("hub", "sendMessage", call)),
+    ).toEqual([]);
   });
 
   // Итог розыгрыша (PER-620): победителю своя фраза, остальным — номер

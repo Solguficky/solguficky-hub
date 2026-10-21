@@ -95,6 +95,39 @@ function finalLineup(id: number, recipient = 42) {
   };
 }
 
+// Начало окна «Счастливых часов» (PER-616): факт доходит сообщением с шагом и
+// концом окна и рядом на каждый лот окна.
+function stepWindow(id: number, recipient = 42) {
+  return {
+    data: toBinary(
+      NotificationSchema,
+      create(NotificationSchema, {
+        notificationId: `0198f2a4-7c1e-7d3a-9b21-${String(id).padStart(12, "0")}`,
+        recipientId: `0198f2a4-7c1e-7d3a-9b21-${String(recipient).padStart(12, "0")}`,
+        createdAt: "2026-10-21T19:00:00Z",
+        type: {
+          case: "stepWindowStarted",
+          value: {
+            auctionId: "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b",
+            startsAt: "2026-10-21T19:00:00Z",
+            lots: [
+              {
+                lotId,
+                until: "2026-10-21T21:00:00Z",
+                step: { minorUnits: 50_000n, currency: "RUB" },
+              },
+            ],
+          },
+        },
+      }),
+    ),
+    info: { deliveryCount: 1 },
+    ack: vi.fn(),
+    nak: vi.fn(),
+    term: vi.fn(),
+  };
+}
+
 function memoryJournal(): DeliveryJournal {
   const records = new Map<string, DeliveryRecord>();
   return {
@@ -216,6 +249,26 @@ describe("auction delivery channel", () => {
     expect(first.nak).not.toHaveBeenCalled();
     expect(second.ack).toHaveBeenCalledOnce();
     expect(sendMessage.mock.calls.map(([chatId]) => chatId)).toEqual([41, 42]);
+  });
+
+  // Критерий приёмки PER-616: сообщение о начале окна доходит с шагом, концом
+  // окна и названием лота, а кнопка под ним открывает карточку лота новым
+  // сообщением.
+  it("delivers the start of a window with a traced button to the lot", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({});
+    const message = stepWindow(8);
+    await channel(memoryJournal(), sendMessage)(message);
+    expect(message.ack).toHaveBeenCalledOnce();
+    const [chatId, text, options] = sendMessage.mock.calls[0] ?? [];
+    expect(chatId).toBe(42);
+    expect(text).toContain("Счастливые часы начались:");
+    expect(text).toContain("«Кружка»");
+    expect(text).toContain("шаг 500");
+    expect(text).toContain("до 21:00");
+    const button = options.reply_markup.inline_keyboard[0][0];
+    expect(button.text).toBe("Кружка");
+    expect(isTraceCallback(button.callback_data)).toBe(true);
+    expect(parseTraceCallback(button.callback_data)).toContain(":lot:");
   });
 
   // Критерии приёмки PER-478: анонс со своим лотом доходит одним сообщением с

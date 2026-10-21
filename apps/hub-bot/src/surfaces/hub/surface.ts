@@ -19,6 +19,10 @@ import {
   type LotNoticeReads,
   logMissingTitle,
 } from "../../core/notifications/lot-notice.js";
+import {
+  createStepWindowNoticeRender,
+  isStepWindowNotice,
+} from "../../core/notifications/step-window-notice.js";
 import type { SurfaceDefinition } from "../../core/process.js";
 import { rpcMeta } from "../../core/rpc-metadata.js";
 import { createUuidV7 } from "../../core/uuid-v7.js";
@@ -255,6 +259,14 @@ export const hubSurface: SurfaceDefinition = ({
     reads: noticeReads,
     onTitleMissing: logMissingTitle(logger),
   });
+  // Начало окна «Счастливых часов» (PER-616) — тот же общий рендер и те же
+  // чтения, что у бота аукциона: право получателя у Identity, названия лотов
+  // окна у Auction.
+  const renderStepWindow = createStepWindowNoticeRender({
+    reads: noticeReads,
+    onTitleMissing: logMissingTitle(logger),
+    timeZone: communityTimeZone,
+  });
   // Оповещение о заявке несёт её тело (PER-634): карточку бот читает при
   // доставке из очереди правами получателя, тем же вызовом, что экран заявки.
   const renderAccessRequest = createAccessRequestRender({
@@ -323,12 +335,18 @@ export const hubSurface: SurfaceDefinition = ({
                 if (content.kind === "access-requested") {
                   return renderAccessRequest(content, context);
                 }
-                if (!isLotNotice(content) && !isFinalNotice(content)) {
+                if (
+                  !isLotNotice(content) &&
+                  !isFinalNotice(content) &&
+                  !isStepWindowNotice(content)
+                ) {
                   return { kind: "ready", message: content };
                 }
                 const rendered = isFinalNotice(content)
                   ? await renderFinal(content, context)
-                  : await renderLot(content, context);
+                  : isStepWindowNotice(content)
+                    ? await renderStepWindow(content, context)
+                    : await renderLot(content, context);
                 return rendered.kind === "ready"
                   ? {
                       kind: "ready",

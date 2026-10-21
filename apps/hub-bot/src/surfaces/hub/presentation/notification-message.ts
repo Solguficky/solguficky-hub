@@ -14,6 +14,7 @@ import type {
   LotNoticeView,
 } from "../../../core/notifications/lot-notice.js";
 import { renderRaffleNotice } from "../../../core/notifications/raffle-notice.js";
+import type { StepWindowNotice } from "../../../core/notifications/step-window-notice.js";
 import {
   admitLabel,
   declineLabel,
@@ -45,6 +46,7 @@ import {
   toManage,
 } from "./screens/kit.js";
 import { releasePostData } from "./screens/release-notes.js";
+import { screenMark } from "./screens/show.js";
 
 // Кнопка отключения несёт целевое состояние, как переключатель P-09: повторное
 // нажатие даёт то же «выключено», а не включает категорию обратно.
@@ -120,7 +122,7 @@ export type ReleaseNote = {
 export type OutgoingNotification =
   | Exclude<
       RenderableContent,
-      LotNotice | FinalNotice | { kind: "release-summary" }
+      LotNotice | FinalNotice | StepWindowNotice | { kind: "release-summary" }
     >
   | AccessRequestView
   | { kind: "lot-notice"; view: LotNoticeView }
@@ -594,8 +596,11 @@ export function createNotificationSender(
       );
       try {
         // Личный чат с человеком имеет id самого человека. Telegram держит id в
-        // 52 битах, поэтому переход из bigint в number точен.
+        // 52 битах, поэтому переход из bigint в number точен. Метка каталога —
+        // чтобы линтер test kit видел и эту отправку: весть идёт мимо
+        // адаптера экранов.
         await api.sendMessage(Number(telegramUserId), message.text, {
+          ...screenMark("notification"),
           ...(message.keyboard === undefined
             ? {}
             : { reply_markup: message.keyboard }),
