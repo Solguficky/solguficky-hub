@@ -33,7 +33,8 @@ object RaffleFacts {
             state = Some(
               bus.RaffleState(
                 tickets = tickets.map(_.value.toString),
-                winningTicket = Draw.winner(terms.seed, tickets.size, randomness)
+                winningTicket = Draw.winner(terms.seed, tickets.size, randomness),
+                rafflePrize = terms.prize
               )
             ),
             occasion = occasion
@@ -52,7 +53,7 @@ object RaffleFacts {
     event match {
       case RaffleEvent.RaffleDrawn(_, _) =>
         Some("raffle_drawn" -> bus.RaffleEvent.Occasion.RaffleDrawn(bus.RaffleDrawn()))
-      case RaffleEvent.RaffleOpened(_, _, _) | RaffleEvent.RaffleNotHeld(_) | RaffleEvent.Registered(_) |
+      case RaffleEvent.RaffleOpened(_, _, _, _) | RaffleEvent.RaffleNotHeld(_) | RaffleEvent.Registered(_) |
           RaffleEvent.RegistrationCancelled(_) | RaffleEvent.PoolFixed(_) | RaffleEvent.RaffleCancelled(_) =>
         None
     }

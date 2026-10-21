@@ -298,17 +298,28 @@ function reads(overrides: Partial<NotificationReads> = {}): NotificationReads {
 // экран итога.
 describe("raffle result", () => {
   const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
-  const result = (ticket: number): AuctionNotificationContent => ({
+  const result = (
+    ticket: number,
+    prize?: string,
+  ): AuctionNotificationContent => ({
     kind: "raffle-result",
     auctionId,
     ticket,
     winningTicket: 7,
     ticketCount: 12,
+    ...(prize === undefined ? {} : { prize }),
   });
 
   it("tells the winner their ticket won", () => {
     expect(renderNotification(result(7)).text).toBe(
       "Твой билет №7 из 12 выиграл розыгрыш среди участников.",
+    );
+  });
+
+  // Приз из факта называет себя в вести победителя (PER-649).
+  it("names the prize to the winner", () => {
+    expect(renderNotification(result(7, "сертификат на 5000 ₽")).text).toBe(
+      "Твой билет №7 из 12 выиграл розыгрыш среди участников: приз — сертификат на 5000 ₽, а организатор напишет тебе, как его получить.",
     );
   });
 

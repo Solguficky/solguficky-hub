@@ -383,6 +383,9 @@ export type AuctionWeek = {
   // Момент закрытия регистрации в розыгрыше (PER-593, ADR-066 п. 5); нет —
   // неделя без розыгрыша.
   raffleClosesAt?: string;
+  // Приз розыгрыша одной строкой (PER-649); нет — приз не объявлен. Лежит рядом
+  // с моментом: задаётся до открытия недели и после него не меняется.
+  rafflePrize?: string;
 };
 
 // Окно сниженного шага (ADR-047, дополнение 2026-10-08): полуоткрытый
@@ -497,6 +500,11 @@ export type ConsoleNote =
   // Момент розыгрыша (PER-593): задан либо убран.
   | "raffle-saved"
   | "raffle-removed"
+  // Приз розыгрыша (PER-649): задан либо убран; без момента розыгрыша приза
+  // нет — приз без розыгрыша Auction не принимает.
+  | "prize-saved"
+  | "prize-removed"
+  | "prize-without-raffle"
   | "marked"
   | "unmarked"
   | "already-marked"
@@ -548,6 +556,11 @@ export type RaffleAskError =
   | "raffle-ended"
   | "raffle-not-after-opens"
   | "raffle-not-before-closes";
+
+// Почему вопрос о призе розыгрыша задан заново (PER-649). Приз — одна строка
+// не длиннее 200 знаков: пустой приз говорит, что приза не будет, а предел
+// держит и бот, и Auction.
+export type RafflePrizeAskError = "prize-blank" | "prize-too-long";
 
 // Почему вопрос об окне «Счастливых часов» задан заново (PER-504). Сроки окна
 // разбираются тем же правилом, что сроки недели; остальное решает Auction.
@@ -662,6 +675,18 @@ export type AuctionConsoleRequest =
       opId: string;
     })
   | (AuctionConsoleCall & { intent: "remove-auction-raffle"; opId: string })
+  // Приз розыгрыша (PER-649): вопрос об одной строке, ответ, как его написал
+  // человек, и снятие приза.
+  | (AuctionConsoleCall & { intent: "ask-auction-raffle-prize" })
+  | (AuctionConsoleCall & {
+      intent: "set-auction-raffle-prize";
+      value: string;
+      opId: string;
+    })
+  | (AuctionConsoleCall & {
+      intent: "remove-auction-raffle-prize";
+      opId: string;
+    })
   // Кнопка несёт целевое состояние финала, а не переворот.
   | (AuctionConsoleCall & {
       intent: "set-auction-final";
@@ -1077,6 +1102,13 @@ export type ExecuteResult =
       auctionId: string;
       week: AuctionWeek;
       error?: RaffleAskError;
+    }
+  // Вопрос о призе розыгрыша (PER-649): первый либо тот же заново, с причиной.
+  | {
+      kind: "auction-raffle-prize-ask";
+      auctionId: string;
+      prize?: string;
+      error?: RafflePrizeAskError;
     }
   // Сводка дня торгов (PER-492): лоты реестра с агрегатами окна и подпись
   // самого дня. Отбор строк и порядок делает экран, как у пульта.

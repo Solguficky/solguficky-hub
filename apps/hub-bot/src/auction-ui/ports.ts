@@ -419,6 +419,8 @@ export type RaffleView = {
   tickets: readonly RaffleTicketView[];
   myTicket?: number;
   reveal?: RaffleRevealView;
+  // Приз розыгрыша одной строкой (PER-649); нет — розыгрыш без приза.
+  prize?: string;
 };
 
 export type RaffleRegistrationRefusal =

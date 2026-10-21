@@ -457,14 +457,15 @@ final class AuctionEntitySpec
 
   /** Розыгрыш-подмена: открытие и отмена зовут свои функции. */
   private def raffleOf(
-      open: (String, Instant) => Future[org.apache.pekko.Done],
+      open: (String, Instant, Option[String]) => Future[org.apache.pekko.Done],
       cancel: (String, auction.lot.OpId) => Future[org.apache.pekko.Done] = (_, _) =>
         Future.successful(org.apache.pekko.Done)
   ): AuctionRaffle = {
     val opening = open
     val cancelling = cancel
     new AuctionRaffle {
-      def open(auctionId: String, closesAt: Instant): Future[org.apache.pekko.Done] = opening(auctionId, closesAt)
+      def open(auctionId: String, closesAt: Instant, prize: Option[String]): Future[org.apache.pekko.Done] =
+        opening(auctionId, closesAt, prize)
       def cancel(auctionId: String, opId: auction.lot.OpId): Future[org.apache.pekko.Done] = cancelling(auctionId, opId)
     }
   }
@@ -703,7 +704,7 @@ final class AuctionEntitySpec
       val closesAt = AuctionFixtures.opensAt.plusSeconds(3600)
       val opened = new java.util.concurrent.ConcurrentLinkedQueue[(String, java.time.Instant)]()
       val failures = new java.util.concurrent.atomic.AtomicInteger(1)
-      val raffle = raffleOf { (auctionId, at) =>
+      val raffle = raffleOf { (auctionId, at, _) =>
         opened.add(auctionId -> at)
         if (failures.getAndDecrement() > 0) Future.failed(new RuntimeException("raffle did not answer"))
         else Future.successful(org.apache.pekko.Done)
@@ -725,12 +726,34 @@ final class AuctionEntitySpec
       opened.toArray.toSet shouldBe Set("auction-1" -> closesAt)
     }
 
+    "hands the raffle prize from the schedule to the opening" in {
+      val closesAt = AuctionFixtures.opensAt.plusSeconds(3600)
+      val prize = "сертификат в книжный на 5000 ₽"
+      val prizes = new java.util.concurrent.ConcurrentLinkedQueue[Option[String]]()
+      entity = entityOf(
+        lots,
+        recheckEvery = 50.millis,
+        raffle = raffleOf { (_, _, opened) =>
+          prizes.add(opened)
+          Future.successful(org.apache.pekko.Done)
+        }
+      )
+      draft(1)
+      add(2)
+      schedule(
+        3,
+        configInput(Some(AuctionFixtures.week.copy(raffleClosesAt = Some(closesAt), rafflePrize = Some(prize))))
+      ).reply.isRight shouldBe true
+      start(4).reply.isRight shouldBe true
+      eventually(prizes.toArray.toSet shouldBe Set(Some(prize)))
+    }
+
     "does not open a raffle for an auction scheduled without one" in {
       val opened = new java.util.concurrent.atomic.AtomicInteger(0)
       entity = entityOf(
         lots,
         recheckEvery = 50.millis,
-        raffle = raffleOf { (_, _) =>
+        raffle = raffleOf { (_, _, _) =>
           opened.incrementAndGet()
           Future.successful(org.apache.pekko.Done)
         }
@@ -970,7 +993,7 @@ final class AuctionEntitySpec
       val cancelled = new java.util.concurrent.ConcurrentLinkedQueue[(String, auction.lot.OpId)]()
       val failures = new java.util.concurrent.atomic.AtomicInteger(1)
       val raffle = raffleOf(
-        (_, _) => Future.successful(org.apache.pekko.Done),
+        (_, _, _) => Future.successful(org.apache.pekko.Done),
         (auctionId, opId) => {
           cancelled.add(auctionId -> opId)
           if (failures.getAndDecrement() > 0) Future.failed(new RuntimeException("raffle did not answer"))

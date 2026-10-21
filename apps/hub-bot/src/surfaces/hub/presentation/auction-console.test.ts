@@ -96,6 +96,8 @@ const forgedAuctionPresses = {
   "console-week": `v1:ac:w:${auctionToken}`,
   "console-raffle": `v1:ac:r:${auctionToken}`,
   "console-raffle-remove": `v1:ac:rx:${auctionToken}`,
+  "console-raffle-prize": `v1:ac:rp:${auctionToken}`,
+  "console-raffle-prize-remove": `v1:ac:rz:${auctionToken}`,
   "console-final": `v1:ac:f:${auctionToken}:1`,
   "console-open": `v1:ac:o:${auctionToken}`,
   "console-confirm": `v1:ac:y:${auctionToken}:${uuidToToken(mugId)}`,
@@ -351,6 +353,16 @@ function fakeAuction(
           return { kind: "raffle-not-before-closes" };
         }
       }
+      // Приз розыгрыша (PER-649): без розыгрыша, пустой и длиннее предела он
+      // не принимается — как в сервисе.
+      const prize = config.rafflePrize;
+      if (prize !== undefined) {
+        if (raffle === undefined) {
+          return { kind: "raffle-prize-without-raffle" };
+        }
+        if (prize.trim() === "") return { kind: "raffle-prize-blank" };
+        if (prize.length > 200) return { kind: "raffle-prize-too-long" };
+      }
       state.status = "scheduled";
       state.week = {
         opensAt: config.opensAt,
@@ -358,6 +370,7 @@ function fakeAuction(
         final: config.final,
         windows: config.windows,
         ...(raffle === undefined ? {} : { raffleClosesAt: raffle }),
+        ...(prize === undefined ? {} : { rafflePrize: prize }),
       };
       return { kind: "ok" };
     },
@@ -1626,6 +1639,200 @@ describe("raffle of the week", () => {
   });
 });
 
+// Приз розыгрыша (PER-649) — поле пульта: администратор задаёт его у
+// розыгрыша, видит в сводке, а участники — на экране розыгрыша и в вести.
+describe("prize of the raffle", () => {
+  const moment = "2026-10-22T15:00:00Z";
+  const prize = "сертификат в книжный на 5000 ₽";
+
+  const withMoment = () =>
+    fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true, raffleClosesAt: moment },
+    });
+
+  const withPrize = () =>
+    fakeAuction({
+      status: "scheduled",
+      week: {
+        ...week,
+        final: true,
+        raffleClosesAt: moment,
+        rafflePrize: prize,
+      },
+    });
+
+  // Пульт с моментом розыгрыша и открытым вопросом о призе.
+  async function askPrize(auction = withMoment()) {
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Приз")));
+    return { auction, bot, calls };
+  }
+
+  it("offers the prize at the raffle and asks for one line", async () => {
+    const auction = withMoment();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+
+    expect(plain(last(calls))).toContain(
+      "Розыгрыш: регистрация до 22 октября, чт, 18:00.",
+    );
+    expect(plain(last(calls))).not.toContain("Приз:");
+    expect(labels(last(calls))).toContainEqual(["Приз"]);
+    expect(labels(last(calls)).flat()).not.toContain("🗑 Убрать приз");
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Приз")));
+    const asked = question(calls).payload;
+    expect(dataOf(asked, "Отмена")).toBe(`v1:q:ap:${auctionToken}:42`);
+    expect(asked.text).toContain("Приз одной строкой");
+    expect(asked.text).not.toContain("Сейчас:");
+  });
+
+  it("refuses a blank prize and does not save it", async () => {
+    const { auction, bot, calls } = await askPrize();
+    await bot.handleUpdate(answer(calls, { text: "   " }));
+
+    expect(last(calls).text).toBe(
+      "<b>Пустой приз призом не считается: напиши, что получит победитель</b>",
+    );
+    expect(auction.sent("scheduleAuction")).toEqual([]);
+  });
+
+  it("refuses a prize longer than the limit of the message", async () => {
+    const { auction, bot, calls } = await askPrize();
+    await bot.handleUpdate(answer(calls, { text: "я".repeat(201) }));
+
+    expect(last(calls).text).toContain("Приз длиннее 200 знаков");
+    expect(auction.sent("scheduleAuction")).toEqual([]);
+  });
+
+  // Пробелы по краям срезаются: приз едет одной строкой и в том же виде
+  // возвращается в сводку.
+  it("saves the prize as one line and shows it in the summary", async () => {
+    const { auction, bot, calls } = await askPrize();
+    await bot.handleUpdate(answer(calls, { text: `  ${prize}  ` }));
+    expect(auction.sent("scheduleAuction")).toEqual([
+      {
+        method: "scheduleAuction",
+        args: {
+          auctionId,
+          opId: expect.any(String),
+          ...week,
+          final: true,
+          raffleClosesAt: moment,
+          rafflePrize: prize,
+        },
+      },
+    ]);
+    expect(last(calls).text).toBe(`<b>Приз розыгрыша сохранён: ${prize}</b>`);
+
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    expect(plain(last(calls))).toContain(`Приз: ${prize}`);
+    expect(labels(last(calls))).toContainEqual(["Изменить приз"]);
+    expect(labels(last(calls))).toContainEqual(["🗑 Убрать розыгрыш"]);
+    expect(labels(last(calls))).toContainEqual(["🗑 Убрать приз"]);
+  });
+
+  it("shows the saved prize in the question", async () => {
+    const auction = withPrize();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Изменить приз")));
+
+    expect(question(calls).payload.text).toContain(`Сейчас: ${prize}`);
+  });
+
+  it("removes the prize and keeps the raffle", async () => {
+    const auction = withPrize();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "🗑 Убрать приз")));
+
+    expect(auction.sent("scheduleAuction")).toEqual([
+      {
+        method: "scheduleAuction",
+        args: {
+          auctionId,
+          opId: expect.any(String),
+          ...week,
+          final: true,
+          raffleClosesAt: moment,
+          rafflePrize: undefined,
+        },
+      },
+    ]);
+    expect(last(calls).text).toBe(
+      "<b>Приз розыгрыша убран</b>\n\nПобедитель получит весть без приза.",
+    );
+    await bot.handleUpdate(press(dataOf(last(calls), "‹ Пульт")));
+    expect(plain(last(calls))).not.toContain("Приз:");
+    expect(labels(last(calls))).toContainEqual(["Приз"]);
+    expect(labels(last(calls)).flat()).not.toContain("🗑 Убрать приз");
+  });
+
+  it("keeps the prize over new dates and the final", async () => {
+    const auction = withPrize();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+
+    await bot.handleUpdate(press(dataOf(last(calls), "Вкл · Финал в зале")));
+    await bot.handleUpdate(press(`v1:ac:w:${auctionToken}`));
+    await bot.handleUpdate(
+      answer(calls, { text: "20.10.2026 18:00 — 28.10.2026 00:00" }),
+    );
+    // Команды не стирают приз молча: он едет с новыми сроками и финалом.
+    expect(
+      auction.sent("scheduleAuction").map((command) => command.args),
+    ).toEqual([
+      expect.objectContaining({ final: false, rafflePrize: prize }),
+      expect.objectContaining({
+        closesAt: "2026-10-27T21:00:00Z",
+        rafflePrize: prize,
+      }),
+    ]);
+  });
+
+  it("drops the prize together with the raffle", async () => {
+    const auction = withPrize();
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "🗑 Убрать розыгрыш")));
+
+    // Розыгрыша нет — нет и приза: победителя у такой недели не будет.
+    expect(auction.sent("scheduleAuction").at(-1)?.args).toEqual({
+      auctionId,
+      opId: expect.any(String),
+      ...week,
+      final: true,
+      raffleClosesAt: undefined,
+      rafflePrize: undefined,
+    });
+    expect(auction.state.week?.rafflePrize).toBeUndefined();
+  });
+
+  it("answers a stale prize button on a week without a raffle", async () => {
+    const auction = fakeAuction({
+      status: "scheduled",
+      week: { ...week, final: true },
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+    await bot.handleUpdate(press(`v1:ac:rp:${auctionToken}`));
+
+    expect(last(calls).text).toBe(
+      "<b>Приз задаётся у розыгрыша: сначала нажми «Розыгрыш» и назови момент</b>",
+    );
+    expect(auction.sent("scheduleAuction")).toEqual([]);
+  });
+});
+
 // PER-618: торги другого аукциона пульт называет до подтверждения, а отказ
 // после «Да» — тоже называет аукцион.
 describe("opening the week while another auction is trading", () => {
@@ -2159,27 +2366,29 @@ describe("final of the auctioneer", () => {
       ["‹ Аукцион"],
     ]);
 
-    // Ask не выше текущей цены Auction отвергает, и бот называет порог.
+    // Порог вопроса — следующая цена (PER-640): сумма не выше неё до Auction
+    // не доходит, и исход называет тот же порог.
     await next((history) => press(dataOf(last(history), "Поднять цену")));
     const asked = question(calls).payload;
     expect(dataOf(asked, "Отмена")).toBe(`v1:q:fa:${auctionToken}:0:42`);
     expect(spaced(asked.text ?? "")).toContain(
-      "Лот: Ваза\nСейчас следующая цена: 1 300 ₽",
+      "Лот: Ваза\nСейчас следующая цена: 1 300 ₽\nНовая следующая цена в целых рублях, выше 1 300 ₽. Например: 1400",
     );
-    await next((history) => answer(history, { text: "1000" }));
+    await next((history) => answer(history, { text: "1250" }));
     expect(spaced(last(calls).text ?? "")).toBe(
-      "<b>Новая цена должна быть выше 1 200 ₽</b>",
+      "<b>Новая цена должна быть выше 1 300 ₽</b>",
     );
     expect(labels(last(calls))).toEqual([["Ввести заново"], ["‹ Пульт"]]);
+    expect(auction.sent("advanceAsk")).toEqual([]);
+    await next((history) => press(dataOf(last(history), "Ввести заново")));
+    await next((history) => answer(history, { text: "1300" }));
+    expect(spaced(last(calls).text ?? "")).toBe(
+      "<b>Новая цена должна быть выше 1 300 ₽</b>",
+    );
+    expect(auction.sent("advanceAsk")).toEqual([]);
     await next((history) => press(dataOf(last(history), "Ввести заново")));
     await next((history) => answer(history, { text: "1 500" }));
     expect(auction.sent("advanceAsk").map((each) => each.args)).toEqual([
-      {
-        auctionId,
-        lotId: vaseId,
-        opId: expect.any(String),
-        newAsk: rub(100_000),
-      },
       {
         auctionId,
         lotId: vaseId,

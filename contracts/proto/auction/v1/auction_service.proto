@@ -980,8 +980,23 @@ message ConfigInvalid {
 
     // online_phase.raffle_closes_at is not before closes_at.
     RaffleClosesAtNotBeforeClosesAt raffle_closes_at_not_before_closes_at = 11;
+
+    // online_phase.raffle_prize is set while raffle_closes_at is not.
+    RafflePrizeWithoutRaffle raffle_prize_without_raffle = 12;
+
+    // online_phase.raffle_prize is empty or blank.
+    RafflePrizeBlank raffle_prize_blank = 13;
+
+    // online_phase.raffle_prize is longer than 200 characters.
+    RafflePrizeTooLong raffle_prize_too_long = 14;
   }
 }
+
+message RafflePrizeWithoutRaffle {}
+
+message RafflePrizeBlank {}
+
+message RafflePrizeTooLong {}
 
 message RaffleClosesAtNotAfterOpensAt {}
 
@@ -2113,6 +2128,10 @@ message Raffle {
   // RFC 3339 instant in UTC: when the draw was made. Unset with every status
   // but DRAWN: NO_TICKETS reveals the seed without a draw.
   optional string drawn_at = 10;
+
+  // The prize of the raffle as the organizer wrote it. Unset when the raffle has
+  // no prize and when the raffle is not held: there are no terms to read it from.
+  optional string raffle_prize = 11;
 }
 
 enum RaffleStatus {

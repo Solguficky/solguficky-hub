@@ -484,6 +484,11 @@ export function createAuctionAdapter(
                 ...(week.raffleClosesAt === undefined
                   ? {}
                   : { raffleClosesAt: week.raffleClosesAt }),
+                // Приз едет рядом с моментом розыгрыша и по той же причине
+                // (PER-649): конфигурацию Auction заменяет целиком.
+                ...(week.rafflePrize === undefined
+                  ? {}
+                  : { rafflePrize: week.rafflePrize }),
               },
               finalBlocks: week.final ? 1 : 0,
               closingPolicy: {
@@ -1363,6 +1368,14 @@ function configRefusal(reason: ConfigInvalid["reason"]): ScheduleAuctionResult {
       return { kind: "raffle-not-after-opens" };
     case "raffleClosesAtNotBeforeClosesAt":
       return { kind: "raffle-not-before-closes" };
+    // Приз розыгрыша (PER-649): правило то же, что проверяет бот, — пустой приз,
+    // приз длиннее предела и приз без розыгрыша Auction не принимает.
+    case "rafflePrizeWithoutRaffle":
+      return { kind: "raffle-prize-without-raffle" };
+    case "rafflePrizeBlank":
+      return { kind: "raffle-prize-blank" };
+    case "rafflePrizeTooLong":
+      return { kind: "raffle-prize-too-long" };
     default:
       return defect(
         `schedule auction refused the configuration: ${reason.case ?? "no reason"}`,

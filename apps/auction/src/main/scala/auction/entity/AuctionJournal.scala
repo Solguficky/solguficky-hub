@@ -27,12 +27,16 @@ final case class StoredPrebiddingEnded(finished: Boolean)
 /** Payload `FinalLineupFrozen`: удержанные лоты в порядке выхода. */
 final case class StoredLineup(order: List[UUID])
 
-/** `raffleClosesAt` добавлен в конец (PER-499): строка без него — аукцион без розыгрыша. */
+/**
+ * `raffleClosesAt` добавлен в конец (PER-499): строка без него — аукцион без розыгрыша. `rafflePrize` добавлен в конец
+ * (PER-649): строка без него — розыгрыш без приза.
+ */
 final case class StoredOnlinePhase(
     opensAt: Instant,
     closesAt: Option[Instant],
     closesLots: Boolean,
-    raffleClosesAt: Option[Instant] = None
+    raffleClosesAt: Option[Instant] = None,
+    rafflePrize: Option[String] = None
 )
 
 final case class StoredMixedClosing(onlineByDeadline: Boolean)
@@ -367,7 +371,7 @@ object AuctionJournal {
   private def storeConfig(config: AuctionConfig): StoredAuctionConfig =
     StoredAuctionConfig(
       onlinePhase = config.onlinePhase.map(phase =>
-        StoredOnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots, phase.raffleClosesAt)
+        StoredOnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots, phase.raffleClosesAt, phase.rafflePrize)
       ),
       finalBlocks = config.finalBlocks,
       closingPolicy = config.closingPolicy match {
@@ -402,7 +406,7 @@ object AuctionJournal {
     AuctionConfig
       .of(
         stored.onlinePhase.map(phase =>
-          OnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots, phase.raffleClosesAt)
+          OnlinePhase(phase.opensAt, phase.closesAt, phase.closesLots, phase.raffleClosesAt, phase.rafflePrize)
         ),
         stored.finalBlocks,
         policy,

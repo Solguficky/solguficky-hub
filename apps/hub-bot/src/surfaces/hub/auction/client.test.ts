@@ -525,6 +525,7 @@ describe("auction console adapter", () => {
     closesAt: "2026-10-26T21:00:00Z",
     windows: [],
     raffleClosesAt: undefined,
+    rafflePrize: undefined,
   };
 
   it.each([

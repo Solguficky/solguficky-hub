@@ -56,7 +56,8 @@
             "opensAt": "2026-10-01T18:00:00Z",
             "closesAt": "2026-10-08T21:00:00Z",
             "closesLots": true,
-            "raffleClosesAt": null
+            "raffleClosesAt": null,
+            "rafflePrize": null
           },
           "finalBlocks": 1,
           "closingPolicy": {
@@ -162,7 +163,8 @@
       "opensAt": "2026-10-01T18:00:00Z",
       "closesAt": "2026-10-08T21:00:00Z",
       "closesLots": true,
-      "raffleClosesAt": null
+      "raffleClosesAt": null,
+      "rafflePrize": null
     },
     "finalBlocks": 1,
     "closingPolicy": {

@@ -16,7 +16,8 @@ import java.util.UUID
  * поэтому имена живут только строкой `raffle_ticket`.
  */
 
-final case class StoredRaffleOpened(closesAt: Instant, seed: String, round: Long)
+/** `prize` добавлен в конец (PER-649): строка без него — розыгрыш без приза. */
+final case class StoredRaffleOpened(closesAt: Instant, seed: String, round: Long, prize: Option[String] = None)
 
 final case class StoredRaffleNotHeld(closesAt: Instant)
 
@@ -49,7 +50,8 @@ final case class StoredRaffleEvent(eventId: UUID, opId: UUID, occurredAt: Instan
 
 final case class StoredRaffleSeen(sequence: Long, opId: UUID, event: StoredRaffleEventBody)
 
-final case class StoredRaffleTerms(closesAt: Instant, seed: String, round: Long)
+/** `prize` добавлен в конец (PER-649): снимок прежней формы читается розыгрышем без приза. */
+final case class StoredRaffleTerms(closesAt: Instant, seed: String, round: Long, prize: Option[String] = None)
 
 /**
  * Snapshot розыгрыша. `closesAt` заполнен только у непроведённого, `terms` — с открытия, `participants` — регистрации
@@ -77,10 +79,10 @@ object RaffleJournal {
 
   def storeEvent(event: RaffleEvent): StoredRaffleEventBody =
     event match {
-      case RaffleEvent.RaffleOpened(closesAt, seed, round) =>
+      case RaffleEvent.RaffleOpened(closesAt, seed, round, prize) =>
         StoredRaffleEventBody
           .of("RaffleOpened")
-          .copy(raffleOpened = Some(StoredRaffleOpened(closesAt, seed.hex, round)))
+          .copy(raffleOpened = Some(StoredRaffleOpened(closesAt, seed.hex, round, prize)))
       case RaffleEvent.RaffleNotHeld(closesAt) =>
         StoredRaffleEventBody.of("RaffleNotHeld").copy(raffleNotHeld = Some(StoredRaffleNotHeld(closesAt)))
       case RaffleEvent.Registered(participant) =>
@@ -101,7 +103,7 @@ object RaffleJournal {
   def restoreEvent(stored: StoredRaffleEventBody): RaffleEvent =
     stored match {
       case StoredRaffleEventBody("RaffleOpened", Some(opened), None, None, None, None, None, None) =>
-        RaffleEvent.RaffleOpened(opened.closesAt, seed(opened.seed), opened.round)
+        RaffleEvent.RaffleOpened(opened.closesAt, seed(opened.seed), opened.round, opened.prize)
       case StoredRaffleEventBody("RaffleNotHeld", None, Some(notHeld), None, None, None, None, None) =>
         RaffleEvent.RaffleNotHeld(notHeld.closesAt)
       case StoredRaffleEventBody("Registered", None, None, Some(registered), None, None, None, None) =>
@@ -118,7 +120,7 @@ object RaffleJournal {
     }
 
   def storeRaffle(raffle: Raffle, sequence: Long): StoredRaffle = {
-    def terms(value: RaffleTerms) = Some(StoredRaffleTerms(value.closesAt, value.seed.hex, value.round))
+    def terms(value: RaffleTerms) = Some(StoredRaffleTerms(value.closesAt, value.seed.hex, value.round, value.prize))
     def ids(participants: Vector[ParticipantId]) = participants.toList.map(_.value)
     val seen = raffle.seen.values.toList
       .sortBy(_.sequence)
@@ -140,7 +142,7 @@ object RaffleJournal {
   /** Snapshot восстанавливается с инвариантами: у каждого состояния ровно те секции, которые оно несёт. */
   def restoreRaffle(stored: StoredRaffle): Raffle = {
     def participants = stored.participants.map(ParticipantId(_)).toVector
-    def terms(value: StoredRaffleTerms) = RaffleTerms(value.closesAt, seed(value.seed), value.round)
+    def terms(value: StoredRaffleTerms) = RaffleTerms(value.closesAt, seed(value.seed), value.round, value.prize)
     val state = (stored.state, stored.closesAt, stored.terms, stored.drawn, stored.cancelledAt) match {
       case ("Initial", None, None, None, None) if stored.participants.isEmpty => RaffleState.Initial
       case ("NotHeld", Some(closesAt), None, None, None) if stored.participants.isEmpty =>

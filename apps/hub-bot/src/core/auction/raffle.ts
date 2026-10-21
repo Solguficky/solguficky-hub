@@ -49,6 +49,11 @@ export function raffleOf(raffle: Raffle): RaffleView {
         : { displayName: ticket.displayName }),
     })),
     ...(raffle.myTicket === undefined ? {} : { myTicket: raffle.myTicket }),
+    // Пробельная строка призом не считается: строка «Приз:» без текста не
+    // должна появляться даже на строке, записанной в обход пульта (PER-649).
+    ...(raffle.rafflePrize === undefined || raffle.rafflePrize.trim() === ""
+      ? {}
+      : { prize: raffle.rafflePrize }),
     ...(reveal === undefined
       ? {}
       : {

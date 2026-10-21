@@ -365,6 +365,9 @@ type PlainAction =
   // Розыгрыш (PER-593): вопрос о моменте и снятие момента.
   | { kind: "console-raffle"; auction: string }
   | { kind: "console-raffle-remove"; auction: string }
+  // Приз розыгрыша (PER-649): вопрос о призе и его снятие.
+  | { kind: "console-raffle-prize"; auction: string }
+  | { kind: "console-raffle-prize-remove"; auction: string }
   | { kind: "console-final"; auction: string; final: boolean }
   | { kind: "console-open"; auction: string }
   // «Да» подтверждения: ключ открытия рождён, когда подтверждение показано,
@@ -623,6 +626,9 @@ export type QuestionStep =
   // Момент розыгрыша (PER-593): аукцион, а сроки и текущий момент ответ
   // читает у Auction заново.
   | { kind: "console-raffle"; auction: string }
+  // Приз розыгрыша (PER-649): аукцион, а момент и текущий приз ответ читает у
+  // Auction заново.
+  | { kind: "console-raffle-prize"; auction: string }
   // Новое окно «Счастливых часов» (PER-504): аукцион, а сроки недели и окна
   // ответ читает у Auction заново.
   | { kind: "console-window"; auction: string }
@@ -727,6 +733,16 @@ export function consoleRaffleData(auction: string): string {
 /** «Убрать розыгрыш»: неделя без момента проходит без розыгрыша. */
 export function consoleRaffleRemoveData(auction: string): string {
   return `v1:ac:rx:${auction}`;
+}
+
+/** «Приз»: вопрос о призе розыгрыша (PER-649). */
+export function consoleRafflePrizeData(auction: string): string {
+  return `v1:ac:rp:${auction}`;
+}
+
+/** «Убрать приз»: розыгрыш остаётся, победитель получит весть без приза. */
+export function consoleRafflePrizeRemoveData(auction: string): string {
+  return `v1:ac:rz:${auction}`;
 }
 
 /** Переключатель финала с целевым состоянием. */
@@ -1017,6 +1033,8 @@ function stepData(step: QuestionStep): string {
       return `v1:q:aw:${step.auction}`;
     case "console-raffle":
       return `v1:q:ar:${step.auction}`;
+    case "console-raffle-prize":
+      return `v1:q:ap:${step.auction}`;
     case "console-window":
       return `v1:q:ah:${step.auction}`;
     case "console-launch":
@@ -1628,6 +1646,15 @@ function parseConsole(parts: readonly string[]): CallbackAction {
       return parts.length === 4
         ? { kind: "console-raffle-remove", auction: auction.data }
         : { kind: "malformed" };
+    // Приз розыгрыша (PER-649): вопрос о призе `rp` и его снятие `rz`.
+    case "rp":
+      return parts.length === 4
+        ? { kind: "console-raffle-prize", auction: auction.data }
+        : { kind: "malformed" };
+    case "rz":
+      return parts.length === 4
+        ? { kind: "console-raffle-prize-remove", auction: auction.data }
+        : { kind: "malformed" };
     case "f": {
       const final = TargetStateSchema.safeParse(parts[4]);
       return parts.length === 5 && final.success
@@ -1794,6 +1821,8 @@ function parseQuestionStep(parts: readonly string[]): QuestionStep | undefined {
         return { kind: "console-week", auction: token.data };
       case "ar":
         return { kind: "console-raffle", auction: token.data };
+      case "ap":
+        return { kind: "console-raffle-prize", auction: token.data };
       case "ah":
         return { kind: "console-window", auction: token.data };
       case "fs":
