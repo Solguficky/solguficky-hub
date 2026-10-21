@@ -29,6 +29,10 @@ import {
   type RaffleNotice,
   raffleNoticeOf,
 } from "../../../core/notifications/raffle-notice.js";
+import {
+  type StepWindowNotice,
+  stepWindowNoticeOf,
+} from "../../../core/notifications/step-window-notice.js";
 
 // Ветки, которые доставляет бот аукциона (integration.md, «потребитель
 // выбирается по ветке `oneof type`»). Факт несёт только лот и сумму: название
@@ -43,6 +47,9 @@ export type AuctionNotificationContent =
   | RaffleNotice
   // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота хаба.
   | AuctionCancelledNotice
+  // Начало окна «Счастливых часов» на отмеченных лотах (PER-616) — то же,
+  // что у бота хаба.
+  | StepWindowNotice
   // Допуск к аукциону получает сам заявитель (PER-442). Круг здесь всегда
   // public: допуск в хаб доставляет бот хаба.
   | { kind: "access-granted" }
@@ -94,6 +101,10 @@ function toContent(
       return raffleNoticeOf(type.value);
     case "auctionCancelled":
       return auctionCancelledNoticeOf(type.value);
+    // Начало окна «Счастливых часов» (PER-616): ветка своя, разбор общий —
+    // право получателя и названия лотов читает общий рендер вести.
+    case "stepWindowStarted":
+      return stepWindowNoticeOf(type.value);
     // Допуск доставляет бот той поверхности, куда подана заявка: здесь —
     // заявку в аукцион, а допуск в хаб для аукциона чужой.
     case "accessGranted": {

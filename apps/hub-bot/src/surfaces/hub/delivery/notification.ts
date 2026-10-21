@@ -39,6 +39,10 @@ import {
   type RaffleNotice,
   raffleNoticeOf,
 } from "../../../core/notifications/raffle-notice.js";
+import {
+  type StepWindowNotice,
+  stepWindowNoticeOf,
+} from "../../../core/notifications/step-window-notice.js";
 import type { ApplicationCursor } from "../identity/port.js";
 
 export type LocalDate = { year: number; month: number; day: number };
@@ -129,6 +133,9 @@ export type RenderableContent =
   // Извещение об отмене аукциона (PER-604, PER-606) — то же, что у бота
   // аукциона.
   | AuctionCancelledNotice
+  // Начало окна «Счастливых часов» на отмеченных лотах (PER-616) — то же,
+  // что у бота аукциона.
+  | StepWindowNotice
   // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
   // — этот (RFC-015, С-12). Ссылку на бот аукциона он вручает сам; факт её не
   // несёт (PER-536), и она приходит не из ветки, а из настройки бота.
@@ -293,6 +300,10 @@ function toContent(message: Notification): NotificationContent | undefined {
       return raffleNoticeOf(type.value);
     case "auctionCancelled":
       return auctionCancelledNoticeOf(type.value);
+    // Начало окна «Счастливых часов» (PER-616): ветка своя, разбор общий —
+    // право получателя и названия лотов читает общий рендер вести.
+    case "stepWindowStarted":
+      return stepWindowNoticeOf(type.value);
     case "releaseSummary": {
       const { summaryId, summarizedAt, recordIds } = type.value;
       if (summaryId === "" || summarizedAt === "" || recordIds.length === 0) {

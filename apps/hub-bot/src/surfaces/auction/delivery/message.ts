@@ -30,6 +30,11 @@ import {
   type RaffleNotice,
   renderRaffleNotice,
 } from "../../../core/notifications/raffle-notice.js";
+import {
+  createStepWindowNoticeRender,
+  isStepWindowNotice,
+  renderStepWindowNotice,
+} from "../../../core/notifications/step-window-notice.js";
 import { entryCallback, notifyCallback, parseEntryCallback } from "../faq.js";
 import { screenMark } from "../screen-catalog.js";
 import type { AuctionNotificationContent } from "./notification.js";
@@ -127,6 +132,14 @@ export function createRenderMessage(
     timeZone,
   });
   const renderFinal = createFinalNoticeRender({ reads, onTitleMissing });
+  // Начало окна «Счастливых часов» (PER-616) — тот же общий рендер и те же
+  // чтения, что у бота хаба: право получателя у Identity, названия лотов окна
+  // у Auction.
+  const renderStepWindow = createStepWindowNoticeRender({
+    reads,
+    onTitleMissing,
+    timeZone,
+  });
   return async (content, context) => {
     // Весть о смене круга (PER-537) — не о торгах: право ставить бот для неё не
     // спрашивает, и кнопки, которая упёрлась бы в тот же отказ, у неё нет.
@@ -154,7 +167,9 @@ export function createRenderMessage(
     }
     const rendered = isFinalNotice(content)
       ? await renderFinal(content, context)
-      : await renderLot(content, context);
+      : isStepWindowNotice(content)
+        ? await renderStepWindow(content, context)
+        : await renderLot(content, context);
     return rendered.kind === "ready"
       ? { kind: "ready", message: traceMessage(rendered.message) }
       : rendered;
@@ -181,6 +196,11 @@ export function renderNotification(
   }
   if (content.kind === "raffle-result") return raffleMessage(content);
   if (content.kind === "auction-cancelled") return cancelledMessage(content);
+  // Начало окна «Счастливых часов» (PER-616) — ряд на каждый лот окна, след
+  // лота этой поверхности.
+  if (isStepWindowNotice(content)) {
+    return traceMessage(renderStepWindowNotice(content, { lots, timeZone }));
+  }
   if (isFinalNotice(content)) {
     return traceMessage(renderFinalNotice(content, { lots }));
   }

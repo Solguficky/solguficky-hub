@@ -8,6 +8,7 @@ import {
 import {
   LotActivityKind,
   NotificationSchema,
+  StepWindowStartedSchema,
 } from "../../../../gen/notifications/v1/notifications_pb.js";
 import { decodeNotification } from "./notification.js";
 
@@ -303,6 +304,45 @@ describe("decodeNotification", () => {
           kind: "auction-cancelled",
           auctionId,
           purchases: [{ minorUnits: 150_000, currency: "RUB" }],
+        },
+      },
+    });
+  });
+
+  // Начало окна «Счастливых часов» (PER-616) гостю доставляет бот аукциона,
+  // как вести о лотах: без разбора ветка ушла бы в отказ `unrendered_type`.
+  it("decodes the start of a window with the lots of the recipient", () => {
+    const auctionId = "5f0c1a2b-3c4d-5e6f-8a9b-0c1d2e3f4a5b";
+    expect(
+      decodeNotification(
+        fact({
+          case: "stepWindowStarted",
+          value: create(StepWindowStartedSchema, {
+            auctionId,
+            startsAt: "2026-10-21T19:00:00Z",
+            lots: [
+              {
+                lotId,
+                until: "2026-10-21T21:00:00Z",
+                step: { minorUnits: 50_000n, currency: "RUB" },
+              },
+            ],
+          }),
+        }),
+      ),
+    ).toMatchObject({
+      kind: "ok",
+      notification: {
+        content: {
+          kind: "step-window-started",
+          auctionId,
+          lots: [
+            {
+              lotId,
+              until: "2026-10-21T21:00:00Z",
+              step: { minorUnits: 50_000, currency: "RUB" },
+            },
+          ],
         },
       },
     });
