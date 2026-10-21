@@ -130,9 +130,9 @@ const forgedAuctionPresses = {
   "console-floor-leader": `v1:ac:bl:${auctionToken}`,
   "console-floor-pick": `v1:ac:bp:${uuidToToken(vaseId)}:${uuidToToken(identityId)}:1hc`,
   "console-floor-confirm": `v1:ac:by:${uuidToToken(vaseId)}:${uuidToToken(identityId)}:1hc`,
-  "console-removal": `v1:ac:u:${uuidToToken(vaseId)}`,
-  "console-removal-pick": `v1:ac:up:${uuidToToken(vaseId)}:${uuidToToken(identityId)}`,
-  "console-removal-confirm": `v1:ac:uy:${uuidToToken(vaseId)}:${uuidToToken(identityId)}:3`,
+  "console-removal": `v1:ac:e:${uuidToToken(vaseId)}`,
+  "console-removal-pick": `v1:ac:ep:${uuidToToken(vaseId)}:${uuidToToken(identityId)}`,
+  "console-removal-confirm": `v1:ac:ey:${uuidToToken(vaseId)}:${uuidToToken(identityId)}:3`,
 } satisfies Record<AuctionPress, string>;
 const feedData = encodeAuctionCallback({ kind: "feed", auctionId, page: 0 });
 const rootData = encodeAuctionCallback({ kind: "root", auctionId });
@@ -4480,7 +4480,7 @@ describe("participant removal from the bids of a lot", () => {
     page: 0,
     historyPage: 0,
   });
-  const removalData = `v1:ac:u:${uuidToToken(vaseId)}`;
+  const removalData = `v1:ac:e:${uuidToToken(vaseId)}`;
   // Каждое нажатие — новым ботом над тем же Auction и той же историей чата.
   const pressFresh = async (
     auction: ReturnType<typeof online>,
@@ -4552,7 +4552,7 @@ describe("participant removal from the bids of a lot", () => {
     const confirm = await pressFresh(
       auction,
       calls,
-      `v1:ac:up:${uuidToToken(vaseId)}:${uuidToToken(jayId)}`,
+      `v1:ac:ep:${uuidToToken(vaseId)}:${uuidToToken(jayId)}`,
     );
     const back = await pressFresh(auction, calls, dataOf(confirm, "✖️ Нет"));
     expect(labels(back)).toEqual([["@owl", "@jay"], ["‹ Ставки"]]);
@@ -4566,7 +4566,7 @@ describe("participant removal from the bids of a lot", () => {
     const confirm = await pressFresh(
       auction,
       calls,
-      `v1:ac:up:${uuidToToken(vaseId)}:${uuidToToken(jayId)}`,
+      `v1:ac:ep:${uuidToToken(vaseId)}:${uuidToToken(jayId)}`,
     );
     const yes = dataOf(confirm, "✔️ Да, снять");
     await pressFresh(auction, calls, yes);
@@ -4583,7 +4583,7 @@ describe("participant removal from the bids of a lot", () => {
     const confirm = await pressFresh(
       auction,
       calls,
-      `v1:ac:up:${uuidToToken(vaseId)}:${uuidToToken(jayId)}`,
+      `v1:ac:ep:${uuidToToken(vaseId)}:${uuidToToken(jayId)}`,
     );
     // Ставка, пока подтверждение было открыто: цена и номер лота выросли.
     auction.state.lots = auction.state.lots.map((each) => ({
@@ -4609,7 +4609,7 @@ describe("participant removal from the bids of a lot", () => {
     );
     expect(spaced(plain(again))).toContain("Цена: 1 500 ₽.");
     expect(dataOf(again, "✔️ Да, снять")).toBe(
-      `v1:ac:uy:${uuidToToken(vaseId)}:${uuidToToken(jayId)}:4`,
+      `v1:ac:ey:${uuidToToken(vaseId)}:${uuidToToken(jayId)}:4`,
     );
     expect(auction.state.removed.size).toBe(0);
   });
@@ -4631,7 +4631,7 @@ describe("participant removal from the bids of a lot", () => {
   it("fits the yes of the removal into 64 bytes at the largest lot version", () => {
     expect(
       Buffer.byteLength(
-        `v1:ac:uy:${uuidToToken(vaseId)}:${uuidToToken(jayId)}:${(36 ** 8 - 1).toString(36)}`,
+        `v1:ac:ey:${uuidToToken(vaseId)}:${uuidToToken(jayId)}:${(36 ** 8 - 1).toString(36)}`,
       ),
     ).toBeLessThanOrEqual(64);
   });

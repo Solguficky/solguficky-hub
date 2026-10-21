@@ -982,12 +982,12 @@ export function floorLeaderData(auction: string): string {
 
 /** Снятие участника (PER-659): кого снять с лота. */
 export function removalData(lot: string, page = 0): string {
-  return page === 0 ? `v1:ac:u:${lot}` : `v1:ac:u:${lot}:${page}`;
+  return page === 0 ? `v1:ac:e:${lot}` : `v1:ac:e:${lot}:${page}`;
 }
 
 /** Человек — к предпросмотру и подтверждению. */
 export function removalPickData(lot: string, person: string): string {
-  return `v1:ac:up:${lot}:${person}`;
+  return `v1:ac:ep:${lot}:${person}`;
 }
 
 /**
@@ -999,7 +999,7 @@ export function removalConfirmData(
   person: string,
   version: number,
 ): string {
-  return `v1:ac:uy:${lot}:${person}:${version.toString(36)}`;
+  return `v1:ac:ey:${lot}:${person}:${version.toString(36)}`;
 }
 
 const LotVersionSchema = z
@@ -1603,13 +1603,13 @@ function parseConsole(parts: readonly string[]): CallbackAction {
         ? { kind: "console-day-summary", auction: auction.data }
         : { kind: "malformed" };
     // Третья часть здесь — лот, а не аукцион: токен у них одной формы.
-    case "u": {
+    case "e": {
       const page = PageSchema.safeParse(parts[4] ?? "0");
       return (parts.length === 4 || parts.length === 5) && page.success
         ? { kind: "console-removal", lot: auction.data, page: page.data }
         : { kind: "malformed" };
     }
-    case "up": {
+    case "ep": {
       const person = TokenSchema.safeParse(parts[4]);
       return parts.length === 5 && person.success
         ? {
@@ -1619,7 +1619,7 @@ function parseConsole(parts: readonly string[]): CallbackAction {
           }
         : { kind: "malformed" };
     }
-    case "uy": {
+    case "ey": {
       const person = TokenSchema.safeParse(parts[4]);
       const version = LotVersionSchema.safeParse(parts[5]);
       return parts.length === 6 && person.success && version.success
