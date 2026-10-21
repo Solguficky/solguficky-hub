@@ -134,6 +134,13 @@ public sealed class StepWindowTaskStore(NpgsqlDataSource source, StepWindowTelem
     {
         await using var work = await UnitOfWork.Begin(source, cancellationToken);
 
+        // Блокировка аукциона берётся до строки задания и до чтения реплик, в
+        // том же порядке, что у факта лота: конец аукциона держит
+        // исключительную, и только под ней чтение «аукцион кончился» и его
+        // реплик что-то значит. Взять её позже — значит увидеть реплики ещё не
+        // удалёнными и разослать начало окна отменяемого аукциона.
+        await AuctionEndStore.LockShared(work, task.AuctionId, cancellationToken);
+
         var claimed = await work.Execute(FireSql, new { task.TaskId, Now = now.UtcDateTime }, cancellationToken);
 
         if (claimed == 0)

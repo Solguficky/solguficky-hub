@@ -46,7 +46,7 @@ public sealed class StepWindowNotificationGrain(
         if (replica is not { AuctionId: { } owner } || owner != auctionId)
         {
             // Лот другого аукциона или реплика без аукциона (записанная до
-            // PER-604): окна такого лота этому гринy не принадлежат.
+            // PER-604): окна такого лота этому грину не принадлежат.
             return;
         }
 
@@ -79,6 +79,15 @@ public sealed class StepWindowNotificationGrain(
             var result = await tasks.Fire(task, now, token);
 
             if (result.Outcome != StepWindowFireOutcome.Sent)
+            {
+                continue;
+            }
+
+            // «Исполнено» и «сообщение ушло» — разные вещи: пустая аудитория,
+            // кончившийся аукцион и кончившееся окно дают ноль фактов. Ноль и
+            // назван ниже как ноль, чтобы систематический промах сверки не
+            // выглядел успехом.
+            if (result.Facts.Created == 0)
             {
                 continue;
             }

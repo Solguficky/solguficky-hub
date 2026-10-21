@@ -3,6 +3,7 @@ using Dapper;
 using Notifications.Auction;
 using Notifications.Facts;
 using Notifications.Favorites;
+using Notifications.Grains;
 using Notifications.IntegrationTests.Infrastructure;
 using Notifications.TestKit;
 using Notifications.V1;
@@ -183,6 +184,62 @@ public class StepWindowStartTests
     }
 
     /// <summary>
+    /// Рестарт не даёт второго сообщения: задание лежит строкой в базе, и новая
+    /// активация грина видит его сработавшим, а не повторяет рассылку.
+    /// </summary>
+    [Fact]
+    public async Task When_SiloRestartedAfterFiring_Expect_NoSecondMessage()
+    {
+        using var db = new IsolatedDatabase();
+        Migrations.Apply(db.ConnectionString);
+
+        var auction = EventFactory.AuctionOfMeetup();
+        var lot = EventFactory.NewId();
+        var from = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var until = DateTimeOffset.UtcNow.AddMinutes(30);
+
+        await using var nats = await NatsUnderTest.Start();
+        var follower = await Person(db, MemberHolding);
+
+        var first = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, Quick);
+        try
+        {
+            await nats.Publish(OpenedSubject, EventFactory.Trading(lot, "lot_opened", 2, auction: auction,
+                windows: [(Iso(from), Iso(until), 50L)]));
+
+            await using (var source = NpgsqlDataSource.Create(db.ConnectionString))
+            {
+                await new FavoriteOperations(source, TimeProvider.System, new FactTelemetry())
+                    .Follow(follower, Guid.Parse(lot), TestContext.Current.CancellationToken);
+            }
+
+            (await Eventually(() => FactsOf(nats), facts => facts.Count == 1))
+                .ShouldHaveSingleItem();
+        }
+        finally
+        {
+            await first.DisposeAsync();
+        }
+
+        // Второй хост на той же базе и шине: память первого не пережила
+        // остановки, и решает только строка задания.
+        await using var second = await SiloUnderTest.StartOnBus(db.ConnectionString, nats.Url, Quick);
+        var sent = await second.Grains.GetGrain<IStepWindowNotificationGrain>(Guid.Parse(auction)).FireDue();
+
+        sent.ShouldBeFalse();
+        (await FactsOf(nats)).Count.ShouldBe(1);
+    }
+
+    private static async Task<IReadOnlyList<Notification>> FactsOf(NatsUnderTest nats) =>
+        (await nats.PublishedFacts())
+            .Select(fact => fact.Fact)
+            .Where(fact => fact.TypeCase == Notification.TypeOneofCase.StepWindowStarted)
+            .ToArray();
+
+    private static string Iso(DateTimeOffset moment) =>
+        moment.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
+
+    /// <summary>
     /// База, шина и силос одного аукциона. Люди, отметки и реплика — через
     /// настоящее событие шины, как у напоминания о лоте.
     /// </summary>
@@ -283,9 +340,6 @@ public class StepWindowStartTests
         }
 
         private AuctionTelemetry Auction => silo.Service<AuctionTelemetry>();
-
-        private static string Iso(DateTimeOffset moment) =>
-            moment.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
 
         public async ValueTask DisposeAsync()
         {
