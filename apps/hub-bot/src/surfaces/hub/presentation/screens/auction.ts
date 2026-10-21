@@ -75,7 +75,7 @@ import {
   raffleQuestionScreen,
   raffleScreen,
 } from "./auction-raffle.js";
-import { stageWords } from "./auction-stage.js";
+import { stageLine } from "./auction-stage.js";
 import { toSettingsAuction } from "./extensions.js";
 import {
   type AuctionEntry,
@@ -454,7 +454,7 @@ function rootScreen(
     text: screenText(
       "Аукцион",
       [
-        `Статус: ${stageWords[auction.stage]}`,
+        `Статус: ${stageLine(auction)}`,
         ...(online === undefined ? [] : [online]),
         // Отменённый аукцион финала уже не проведёт (PER-606).
         ...(auction.final && auction.stage !== "cancelled"

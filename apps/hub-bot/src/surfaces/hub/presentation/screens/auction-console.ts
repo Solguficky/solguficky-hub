@@ -58,6 +58,7 @@ import {
   consoleRaffleRemoveData,
   consoleStartFinalData,
   consoleViewData,
+  consoleVisibilityData,
   consoleWeekData,
   consoleWindowAskData,
   consoleWindowData,
@@ -166,6 +167,10 @@ export const consoleNoteText: Record<ConsoleNote, string> = {
     "Аукцион отменён. Проданные лоты остались проданными, остальные сняты с торгов.",
   "meetup-hidden":
     "Сходка скрыта. Онлайн-неделя откроется, когда сходку снова опубликуют.",
+  published: "Аукцион опубликован. Участники видят его и лоты.",
+  unpublished: "Аукцион снят с публикации. Участники его не видят.",
+  "visibility-too-late":
+    "Онлайн-неделя уже открыта. Аукцион виден участникам, снять его нельзя.",
   "final-started": "Финал начат. Открой первый лот.",
   "lineup-not-frozen": "Состав финала ещё не объявлен. Начать финал нельзя.",
   "not-in-final": "Финал не идёт. Открывать лоты нельзя.",
@@ -338,15 +343,25 @@ function weekLine(week: AuctionWeek, view: ConsoleScreenView): string {
   return `Онлайн-неделя: с ${moment(week.opensAt, view)} до ${moment(week.closesAt, view)}.`;
 }
 
+// Видимость до торгов (PER-673): пульт называет её и у видимого аукциона,
+// как карточка сходки у управляющего, — после открытия недели аукцион виден
+// всегда, и строки нет.
+function visibilityLine(console: AuctionConsoleView): string {
+  return console.hidden
+    ? "Скрыт от участников: они его не видят, пока не опубликуешь."
+    : "Виден участникам.";
+}
+
 function statusLines(view: ConsoleScreenView): string[] {
   const { status, week } = view.console;
   switch (status) {
     case "draft":
-      return ["Сроки недели не заданы."];
+      return [visibilityLine(view.console), "Сроки недели не заданы."];
     case "scheduled":
       return week === undefined
-        ? ["Сроки недели не заданы."]
+        ? [visibilityLine(view.console), "Сроки недели не заданы."]
         : [
+            visibilityLine(view.console),
             weekLine(week, view),
             finalLine(week),
             ...windowsLines(view.console),
@@ -714,7 +729,15 @@ export function consoleScreen(view: ConsoleScreenView): ShownScreen {
     .row();
   const editable = console.status === "draft" || console.status === "scheduled";
   if (editable) {
-    keyboard.text("Сроки недели", consoleWeekData(auction));
+    // Видимость до торгов (PER-673) — парой со сроками и с целевым
+    // состоянием: свой ряд вывел бы запланированный аукцион с розыгрышем,
+    // призом и листанием за двенадцать рядов.
+    keyboard
+      .text("Сроки недели", consoleWeekData(auction))
+      .text(
+        console.hidden ? "Опубликовать" : "Снять с публикации",
+        consoleVisibilityData(auction, console.hidden),
+      );
   }
   const week = console.week;
   const scheduled =

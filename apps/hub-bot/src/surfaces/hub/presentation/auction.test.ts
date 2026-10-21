@@ -163,6 +163,9 @@ function fakeAuction(
     // Отображаемые имена участников: карточка проданного лота называет
     // победителя.
     names?: Readonly<Record<string, string>>;
+    // Аукцион скрыт от участников (PER-673): Auction отдал признак держателю
+    // `run_auctions`.
+    hidden?: true;
   } = {},
 ) {
   const shownLot = options.lot ?? lot;
@@ -192,6 +195,7 @@ function fakeAuction(
     opensAt: "2026-10-26T09:00:00Z",
     closesAt: "2026-10-29T18:00:00Z",
     final: true,
+    ...(options.hidden === undefined ? {} : { hidden: options.hidden }),
   });
   // Корень аукциона (PER-605): Auction отдаёт аукцион, который у сходки есть.
   const getAuction = vi.fn(async (request: { auctionId: string }) =>
@@ -710,6 +714,20 @@ describe("enabling the auction", () => {
 });
 
 describe("auction root and the way back", () => {
+  it("names an auction hidden from participants in its status", async () => {
+    const auction = fakeAuction({ existing: true, hidden: true });
+    const { bot, calls } = harness("admin", auction, {
+      presentation: "plain",
+    });
+    await bot.init();
+    await bot.handleUpdate(press(extensionsData));
+    await bot.handleUpdate(press(rootData));
+
+    expect(lastScreen(calls).text).toContain(
+      "Статус: скоро старт, скрыт от участников",
+    );
+  });
+
   it("walks extensions, auction, lots and a lot, and returns the same way", async () => {
     const auction = fakeAuction({ existing: true });
     const { bot, calls } = harness("member", auction, {
@@ -730,6 +748,7 @@ describe("auction root and the way back", () => {
       ["‹ Расширения"],
     ]);
     expect(data(root, "‹ Расширения")).toBe(extensionsData);
+    expect(root.text).not.toContain("скрыт от участников");
 
     await bot.handleUpdate(press(data(root, "🔨 Лоты") ?? ""));
     const feed = lastScreen(calls);

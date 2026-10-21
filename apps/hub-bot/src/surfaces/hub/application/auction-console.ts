@@ -1110,6 +1110,42 @@ export function createAuctionConsole(
     }
   }
 
+  // «Опубликовать» и «Снять с публикации» (PER-673): только пока неделя не
+  // открыта. Кнопка несёт целевое состояние, и команда идёт без сверки с
+  // прочитанным: повтор Auction пишет ещё раз (ADR-047, дополнение
+  // 2026-10-20), поэтому подпись, устаревшая от отставания чтения, повторит
+  // то же целевое состояние, а не перевернёт его.
+  async function setVisibility(
+    request: Extract<
+      AuctionConsoleRequest,
+      { intent: "set-auction-visibility" }
+    >,
+  ): Promise<ExecuteResult> {
+    const command = { auctionId: request.auctionId, opId: request.opId };
+    const changed = request.published
+      ? await consoles.publishAuction(
+          request.identity,
+          command,
+          rpcMeta(request),
+        )
+      : await consoles.hideAuction(request.identity, command, rpcMeta(request));
+    switch (changed.kind) {
+      case "ok":
+        return after(request, request.published ? "published" : "unpublished");
+      case "already-started":
+        return after(request, "visibility-too-late");
+      case "meetup-cancelled":
+        return meetupCancelled;
+      case "not-administrator":
+      case "meetup-not-found":
+        return notAdministrator;
+      case "auction-not-found":
+        return auctionNotFound;
+      default:
+        return failed(changed);
+    }
+  }
+
   // «Удалить аукцион»: подтверждение — только пока неделя не открыта, ставок
   // ещё не было. Ключ удаления рождён краем и уедет в «Да».
   async function prepareDiscard(
@@ -2702,6 +2738,8 @@ export function createAuctionConsole(
         return removeRafflePrize(request);
       case "set-auction-final":
         return setFinal(request);
+      case "set-auction-visibility":
+        return setVisibility(request);
       case "start-auction-week":
         return startWeek(request);
       case "mark-auction-finalist":

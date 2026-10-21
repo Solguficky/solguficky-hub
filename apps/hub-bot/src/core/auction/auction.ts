@@ -25,6 +25,7 @@ export function auctionSummaryViewOf(
     ...(closesAt === undefined ? {} : { closesAt }),
     final: (snapshot.config?.finalBlocks ?? 0) > 0,
     ...withLineup(snapshot.status),
+    ...(snapshot.hidden ? { hidden: true as const } : {}),
   };
 }
 
