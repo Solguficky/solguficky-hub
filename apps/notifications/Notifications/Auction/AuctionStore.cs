@@ -271,6 +271,21 @@ public sealed class AuctionStore(NpgsqlDataSource source, IOptions<FactOptions> 
 
         await LotReplicaStore.Apply(work, removal.Snapshot, now, cancellationToken);
 
+        // Снятие меняет лидера и цену лота, а строки открытого окна перебитий
+        // несут их на момент последней ставки: без этой правки сводка сказала бы
+        // «лот за тобой» тому, кто лот уже не ведёт, и назвала бы старую цену.
+        await OutbidStore.FollowLot(work, removal.Snapshot.LotId, removal.Snapshot.Leader, removal.EventId,
+            removal.Snapshot.Version, removal.Price, cancellationToken);
+
+        // Удержание лота помнит лидера и цену на момент удержания: снятие
+        // участника меняет и их, а состав финала и весть «твой лот следующий»
+        // читают их оттуда — снятому они достаться не должны.
+        if (removal.Snapshot.Status == LotStatus.Held)
+        {
+            await FinalStore.UpdateHold(work, removal.Snapshot.LotId, removal.Snapshot.Leader, removal.Price,
+                cancellationToken);
+        }
+
         var created = new Dictionary<string, int>();
         if (removal.Snapshot.Leader is { } leader)
         {

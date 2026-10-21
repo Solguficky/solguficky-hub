@@ -165,4 +165,55 @@ public class AuctionParticipantRemovalTests
         (await Count(db, "notification")).ShouldBe(0);
         (await ReplicaLeader(db, lot)).ShouldBeNull();
     }
+
+    // Удержание лота помнит лидера и цену на момент удержания: состав финала и
+    // весть «твой лот следующий» читают их оттуда, и без правки после снятия
+    // они достались бы снятому.
+    [Fact]
+    public async Task When_RemovalFromHeldLotChangesLead_Expect_HoldCarriesNewLeaderAndPrice()
+    {
+        using var db = Database();
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        var store = Store(source);
+        var lot = EventFactory.NewId();
+        var held = EventFactory.NewId();
+        var leader = EventFactory.NewId();
+
+        await store.Apply(DecodeLot("events.auction.lot_held_for_final",
+            EventFactory.HeldForFinal(lot, leader: held, price: 70000)), EventFactory.Committed, Cancellation);
+        (await Hold(db, lot)).ShouldBe((Guid.Parse(held), 70000L));
+
+        var outcome = await store.Apply(
+            DecodeRemoval(EventFactory.ParticipantRemoved(lot, held, leader, held: true, price: 50000, version: 9)),
+            EventFactory.Committed, Cancellation);
+
+        outcome.FactsCreated.ShouldBe(1);
+        (await Hold(db, lot)).ShouldBe((Guid.Parse(leader), 50000L));
+    }
+
+    // Снятие меняет лидера и цену лота, а строка открытого окна перебитий
+    // несёт их на момент последней ставки: без правки сводка сказала бы «лот
+    // за тобой» тому, кто лот уже не ведёт, и назвала бы старую цену.
+    [Fact]
+    public async Task When_RemovalChangesLeadWhileDigestOpen_Expect_LineCarriesNewLeaderAndPrice()
+    {
+        using var db = Database();
+        await using var source = NpgsqlDataSource.Create(db.ConnectionString);
+        var store = Store(source);
+        var lot = EventFactory.NewId();
+        var person = EventFactory.NewId();
+        var rival = EventFactory.NewId();
+        await SetOutbid(db, person, OutbidFrequency.AtMostEvery5Minutes);
+
+        await store.Apply(Decode(PricedBid(lot, person, rival, version: 3, minorUnits: 10000)),
+            EventFactory.Committed, Cancellation);
+        // Снят соперник: ведение вернулось к тому, кого перебили.
+        await store.Apply(DecodeRemoval(EventFactory.ParticipantRemoved(lot, rival, person, price: 9000, version: 4)),
+            EventFactory.Committed, Cancellation);
+        (await CloseDueWindows(store, EventFactory.Committed.AddMinutes(5))).ShouldBe(1);
+
+        var line = (await StoredDigests(db)).ShouldHaveSingleItem().LotActivityDigest.Lines.ShouldHaveSingleItem();
+        line.CurrentPrice.MinorUnits.ShouldBe(9000);
+        line.RecipientLeads.ShouldBeTrue();
+    }
 }

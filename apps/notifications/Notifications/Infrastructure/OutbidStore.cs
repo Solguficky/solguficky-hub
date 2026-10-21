@@ -220,8 +220,11 @@ public static class OutbidStore
     /// <summary>
     /// Ставка лота во все его строки: ведёт ли человек лот по лидеру этой
     /// ставки, её повод и цена. Возврат лидерства строку не убирает.
+    ///
+    /// Лидер может быть пустым: снятие участника оставляет лот без ведущего,
+    /// и строка окна тогда не говорит «лот за тобой» (ADR-072, PER-672).
     /// </summary>
-    public static Task FollowLot(UnitOfWork work, Guid lotId, Guid leader, Guid eventId, long version, Money price,
+    public static Task FollowLot(UnitOfWork work, Guid lotId, Guid? leader, Guid eventId, long version, Money price,
         CancellationToken cancellationToken) =>
         work.Execute(FollowLotSql, new
         {
