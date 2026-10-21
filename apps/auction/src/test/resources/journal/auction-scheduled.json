@@ -43,7 +43,8 @@
         },
         "proxyEnabled": true
       },
-      "stepWindows": null
+      "stepWindows": null,
+      "paymentTerm": "PT168H"
     },
     "prebiddingEnded": null,
     "finalLineupFrozen": null,

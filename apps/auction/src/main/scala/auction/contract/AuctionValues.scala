@@ -24,7 +24,8 @@ object AuctionValues {
       finalBlocks = config.finalBlocks,
       closingPolicy = Some(closingPolicy(config.closingPolicy)),
       lotDefaults = config.lotDefaults.map(LotValues.defaults),
-      stepWindows = config.stepWindows.map(stepWindow)
+      stepWindows = config.stepWindows.map(stepWindow),
+      paymentTermSeconds = Some(config.paymentTerm.toSeconds)
     )
 
   /**

@@ -691,7 +691,9 @@ object RequestMapping {
           acc.flatMap(windows => stepWindow(window).map(_ :: windows))
         }
         .map(_.reverse)
-    } yield AuctionConfigInput(phase, config.finalBlocks, closing, defaults, windows)
+      // Срок оплаты — любое число секунд: границы судит ядро (`PaymentTermOutOfRange`), а не форма.
+      paymentTerm = config.paymentTermSeconds.map(java.time.Duration.ofSeconds)
+    } yield AuctionConfigInput(phase, config.finalBlocks, closing, defaults, windows, paymentTerm)
 
   private def stepWindow(window: AuctionStepWindowMessage): Either[FormError, StepWindowConfig] =
     for {

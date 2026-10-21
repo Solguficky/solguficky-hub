@@ -577,7 +577,7 @@ object Auction {
   def meetupCancellationOf(eventId: UUID): OpId = OpId(nameBased(MeetupCancellationNamespace, eventId.toString))
 
   /** UUIDv5 (RFC 9562): SHA-1 от пространства имён и имени в UTF-8, с битами версии и варианта. */
-  private[aggregate] def nameBased(namespace: UUID, name: String): UUID = {
+  private[auction] def nameBased(namespace: UUID, name: String): UUID = {
     val digest = MessageDigest.getInstance("SHA-1")
     digest.update(bytes(namespace))
     digest.update(name.getBytes(StandardCharsets.UTF_8))

@@ -8,6 +8,7 @@ import auction.lot.Money
 import auction.lot.StepPolicyInvalid
 import auction.lot.StepWindow
 
+import java.time.Duration
 import java.time.Instant
 
 /**
@@ -39,14 +40,16 @@ final case class StepWindowConfig(from: Instant, until: Instant, step: Money, lo
 
 /**
  * Конфигурация во входе `ScheduleAuction` до проверки: [[AuctionConfig.parse]] превращает её в [[AuctionConfig]].
- * `lotDefaults` необязательны (ADR-047, дополнение 2026-10-06): без них лоты получают умолчания платформы.
+ * `lotDefaults` необязательны (ADR-047, дополнение 2026-10-06): без них лоты получают умолчания платформы. Срок оплаты
+ * счёта тоже необязателен (ADR-047, дополнение 2026-10-21): без него `parse` подставляет срок платформы.
  */
 final case class AuctionConfigInput(
     onlinePhase: Option[OnlinePhase],
     finalBlocks: Int,
     closingPolicy: ClosingPolicy,
     lotDefaults: Option[LotConfigInput],
-    stepWindows: List[StepWindowConfig] = Nil
+    stepWindows: List[StepWindowConfig] = Nil,
+    paymentTerm: Option[Duration] = None
 )
 
 /**
@@ -64,6 +67,9 @@ final case class AuctionConfigInput(
  *
  * Приз розыгрыша (ADR-066, дополнение 2026-10-21) — одна непустая строка не длиннее [[AuctionConfig.MaxRafflePrize]] и
  * только у розыгрыша: приз без момента закрытия регистрации противоречив.
+ *
+ * Срок оплаты счёта (ADR-047, дополнение 2026-10-21) — от [[AuctionConfig.MinPaymentTerm]] до
+ * [[AuctionConfig.MaxPaymentTerm]] включительно.
  */
 enum ConfigInvalid {
   case ClosesAtMissing
@@ -80,6 +86,7 @@ enum ConfigInvalid {
   case RafflePrizeWithoutRaffle
   case RafflePrizeBlank
   case RafflePrizeTooLong
+  case PaymentTermOutOfRange
 }
 
 /**
@@ -93,13 +100,19 @@ enum ConfigInvalid {
  *
  * `stepWindows` — окна сниженного шага, пусто по умолчанию. Их проверка, как и остальная, выводится из самого значения:
  * лоты окна с реестром не сверяются, и окно действует на лот, если при старте торгов лот есть и в реестре, и в окне.
+ *
+ * `paymentTerm` — срок оплаты счёта от момента продажи (ADR-047, дополнение 2026-10-21). Он задан всегда: без него во
+ * входе `parse` подставляет [[AuctionConfig.PlatformPaymentTerm]] и записывает его в журнал, поэтому смена срока
+ * платформы не сдвигает уже запланированные аукционы. Счёт берёт срок из конфигурации в момент выставления, а
+ * конфигурация заморожена с `PrebiddingStarted`.
  */
 final case class AuctionConfig private (
     onlinePhase: Option[OnlinePhase],
     finalBlocks: Int,
     closingPolicy: ClosingPolicy,
     lotDefaults: Option[LotConfig],
-    stepWindows: List[StepWindowConfig]
+    stepWindows: List[StepWindowConfig],
+    paymentTerm: Duration
 ) {
 
   /** Дедлайн, который лот получает во входе `OpenLot`: `closesAt`, если конец онлайн-этапа закрывает лоты. */
@@ -135,12 +148,27 @@ object AuctionConfig {
    */
   val MaxRafflePrize: Int = 200
 
+  /**
+   * Срок оплаты счёта, когда организатор его не задал: семь дней от продажи (ADR-047, дополнение 2026-10-21). Его
+   * подставляет [[parse]] и пишет в журнал; строка журнала, записанная до срока, читается с ним же.
+   */
+  val PlatformPaymentTerm: Duration = Duration.ofDays(7)
+
+  /**
+   * Границы срока оплаты — платформы, а не значения, поэтому их проверяет [[parse]], а не [[of]], как предел приза:
+   * смена границ не делает записанный журнал нечитаемым.
+   */
+  val MinPaymentTerm: Duration = Duration.ofDays(1)
+
+  val MaxPaymentTerm: Duration = Duration.ofDays(30)
+
   def of(
       onlinePhase: Option[OnlinePhase],
       finalBlocks: Int,
       closingPolicy: ClosingPolicy,
       lotDefaults: Option[LotConfig],
-      stepWindows: List[StepWindowConfig]
+      stepWindows: List[StepWindowConfig],
+      paymentTerm: Duration
   ): Either[ConfigInvalid, AuctionConfig] = {
     val closesAt = onlinePhase.flatMap(_.closesAt)
     val needsDeadline = onlinePhase.exists(_.closesLots) || (closingPolicy match {
@@ -162,7 +190,7 @@ object AuctionConfig {
     else if (finalBlocks < 0 || finalBlocks > MaxFinalBlocks) Left(ConfigInvalid.FinalBlocksOutOfRange)
     else
       windowsInvalid(onlinePhase, lotDefaults.map(_.currency), stepWindows)
-        .toLeft(AuctionConfig(onlinePhase, finalBlocks, closingPolicy, lotDefaults, stepWindows))
+        .toLeft(AuctionConfig(onlinePhase, finalBlocks, closingPolicy, lotDefaults, stepWindows, paymentTerm))
   }
 
   /**
@@ -201,16 +229,20 @@ object AuctionConfig {
   /**
    * Проверка на входе `ScheduleAuction`: шаг — теми же конструкторами, что у `ScheduleLot` (И-15). Без `lotDefaults`
    * окна сверяются по валюте с умолчаниями платформы, которые лоты тогда получат, — после проверок самого значения, и
-   * там же предел строки приза: обе границы — платформы, а не значения, и журнал с записанным сверх них читается.
+   * там же предел строки приза и границы срока оплаты: они — платформы, а не значения, и журнал с записанным сверх них
+   * читается. Срок оплаты, которого во входе нет, — [[PlatformPaymentTerm]].
    */
-  def parse(input: AuctionConfigInput): Either[ConfigInvalid, AuctionConfig] =
+  def parse(input: AuctionConfigInput): Either[ConfigInvalid, AuctionConfig] = {
+    val paymentTerm = input.paymentTerm.getOrElse(PlatformPaymentTerm)
     input.lotDefaults
       .fold(Right(None))(LotConfig.parse(_).left.map(ConfigInvalid.LotDefaults(_)).map(Some(_)))
-      .flatMap(of(input.onlinePhase, input.finalBlocks, input.closingPolicy, _, input.stepWindows))
+      .flatMap(of(input.onlinePhase, input.finalBlocks, input.closingPolicy, _, input.stepWindows, paymentTerm))
       .flatMap { config =>
         val currency = LotTerms.platform.currency
         val prizeTooLong = config.onlinePhase.flatMap(_.rafflePrize).exists(_.length > MaxRafflePrize)
         if (prizeTooLong) Left(ConfigInvalid.RafflePrizeTooLong)
+        else if (paymentTerm.compareTo(MinPaymentTerm) < 0 || paymentTerm.compareTo(MaxPaymentTerm) > 0)
+          Left(ConfigInvalid.PaymentTermOutOfRange)
         else
           config.stepWindows.zipWithIndex
             .collectFirst {
@@ -219,4 +251,5 @@ object AuctionConfig {
             }
             .toLeft(config)
       }
+  }
 }

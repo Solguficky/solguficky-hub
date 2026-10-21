@@ -6,6 +6,7 @@ import auction.lot.OpId
 import auction.lot.ParticipantId
 import org.apache.pekko.persistence.typed.SnapshotAdapter
 
+import java.time.Duration
 import java.time.Instant
 import java.util.UUID
 
@@ -81,13 +82,16 @@ final case class StoredLotSet(
  * Payload `AuctionScheduled` и конфигурация в snapshot. `lotDefaults` — та же форма, что конфигурация лота; пусто,
  * когда администратор их не задал (дополнение ADR-047 от 2026-10-06). Строка, записанная до этого, несёт их всегда и
  * читается так же. `stepWindows` пишется только непустым (дополнение 2026-10-08): строка без него — аукцион без окон.
+ * `paymentTerm` добавлен в конец (дополнение 2026-10-21) и пишется всегда: строка без него — аукцион, запланированный
+ * до срока оплаты, и он получает срок платформы.
  */
 final case class StoredAuctionConfig(
     onlinePhase: Option[StoredOnlinePhase],
     finalBlocks: Int,
     closingPolicy: StoredClosingPolicy,
     lotDefaults: Option[StoredConfig],
-    stepWindows: Option[List[StoredAuctionStepWindow]] = None
+    stepWindows: Option[List[StoredAuctionStepWindow]] = None,
+    paymentTerm: Option[Duration] = None
 )
 
 /**
@@ -797,7 +801,8 @@ object AuctionJournal {
           StoredClosingPolicy("Mixed", Some(StoredMixedClosing(onlineByDeadline)))
       },
       lotDefaults = config.lotDefaults.map(LotJournal.storeConfig),
-      stepWindows = Option.when(config.stepWindows.nonEmpty)(config.stepWindows.map(storeWindow))
+      stepWindows = Option.when(config.stepWindows.nonEmpty)(config.stepWindows.map(storeWindow)),
+      paymentTerm = Some(config.paymentTerm)
     )
 
   private def storeWindow(window: StepWindowConfig): StoredAuctionStepWindow =
@@ -827,7 +832,8 @@ object AuctionJournal {
         stored.finalBlocks,
         policy,
         stored.lotDefaults.map(LotJournal.restoreConfig),
-        stored.stepWindows.getOrElse(Nil).map(restoreWindow)
+        stored.stepWindows.getOrElse(Nil).map(restoreWindow),
+        stored.paymentTerm.getOrElse(AuctionConfig.PlatformPaymentTerm)
       )
       .fold(invalid => corrupted(s"auction config violates $invalid"), config => config)
   }

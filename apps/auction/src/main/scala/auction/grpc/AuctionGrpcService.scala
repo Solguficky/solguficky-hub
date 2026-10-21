@@ -6,6 +6,10 @@ import auction.aggregate.AuctionState
 import auction.aggregate.MeetupGate
 import auction.aggregate.Correlation
 import auction.aggregate.Denial
+import auction.invoice.Invoice
+import auction.invoice.InvoiceAction
+import auction.invoice.InvoiceGateway
+import auction.invoice.InvoiceViews
 import auction.access.Viewer
 import auction.catalog.LotCatalogCommands
 import auction.catalog.LotId
@@ -85,7 +89,9 @@ final class AuctionGrpcService(
     results: ResultsGateway = AuctionGrpcService.NoResults,
     placeBidsRight: ParticipantId => Future[Boolean] = AuctionGrpcService.NoIdentity,
     notes: OperationNotes = OperationNotes.discarded,
-    finalBids: FinalBids = FinalBids.empty
+    finalBids: FinalBids = FinalBids.empty,
+    invoices: InvoiceGateway = InvoiceGateway.none,
+    invoiceViews: InvoiceViews = InvoiceViews.none
 )(using ExecutionContext)
     extends wire.AuctionService {
 
@@ -118,7 +124,9 @@ final class AuctionGrpcService(
       results,
       placeBidsRight,
       notes,
-      finalBids
+      finalBids,
+      invoices,
+      invoiceViews
     )
 
   def placeBid(in: wire.PlaceBidRequest): Future[wire.PlaceBidResponse] =
@@ -1193,18 +1201,73 @@ final class AuctionGrpcService(
           .takeWhile(message => !AuctionGrpcService.terminal(message), inclusive = true)
     }
 
-  // Счета: контракт есть (PER-308), выставление, статусы и чтения приносит лист счёта (PER-338).
-  def markInvoicePaid(in: wire.MarkInvoicePaidRequest): Future[wire.MarkInvoicePaidResponse] = unimplemented
+  /**
+   * Отметка оплаты счёта организатором (PER-338, integration.md, «Счета»): счёт — у entity, а не из read model, иначе
+   * только что выставленный не нашёлся бы; повтор принятого `op_id` — исходный ответ до права; затем право
+   * администратора сходки аукциона у Meetups без ворот: проданный лот остаётся проданным и у отменённой сходки.
+   */
+  def markInvoicePaid(in: wire.MarkInvoicePaidRequest): Future[wire.MarkInvoicePaidResponse] =
+    InvoiceMapping.markPaid(in) match {
+      case Left(error) => invalid(error)
+      case Right(mark) =>
+        marked(mark, InvoiceAction.MarkPaid, InvoiceMapping.paymentAccepted, InvoiceMapping.paidDenied)(
+          invoices.markPaid(mark.invoice, mark.opId).map(answer => InvoiceMapping.paid(answer.map(_ => ())))
+        )
+    }
 
+  /** Отметка выдачи — тем же путём, что оплата; выдача неоплаченного счёта — отказ `InvoiceNotPaid`. */
   def markInvoiceHandedOver(in: wire.MarkInvoiceHandedOverRequest): Future[wire.MarkInvoiceHandedOverResponse] =
-    unimplemented
+    InvoiceMapping.markHandedOver(in) match {
+      case Left(error) => invalid(error)
+      case Right(mark) =>
+        marked(mark, InvoiceAction.MarkHandedOver, InvoiceMapping.handoverAccepted, InvoiceMapping.handedOverDenied)(
+          invoices.markHandedOver(mark.invoice, mark.opId).map(answer => InvoiceMapping.handedOver(answer.map(_ => ())))
+        )
+    }
 
-  def chooseFulfillment(in: wire.ChooseFulfillmentRequest): Future[wire.ChooseFulfillmentResponse] = unimplemented
+  /**
+   * Выбор способа получения победителем: право — сам адресат счёта, чужой счёт неотличим от несуществующего, и это
+   * решает entity счёта.
+   */
+  def chooseFulfillment(in: wire.ChooseFulfillmentRequest): Future[wire.ChooseFulfillmentResponse] =
+    InvoiceMapping.chooseFulfillment(in) match {
+      case Left(error) => invalid(error)
+      case Right(choice) =>
+        invoices
+          .chooseFulfillment(choice.invoice, choice.acting.participant, choice.method, choice.opId)
+          .recoverWith(awaited)
+          .flatMap(answer => InvoiceMapping.fulfillment(answer.map(_ => ())).fold(refuse, Future.successful))
+    }
 
-  def listMyInvoices(in: wire.ListMyInvoicesRequest): Future[wire.ListMyInvoicesResponse] = unimplemented
+  /** Счета смотрящего в аукционе из read model; пустой список — смотрящий ничего не выиграл. */
+  def listMyInvoices(in: wire.ListMyInvoicesRequest): Future[wire.ListMyInvoicesResponse] =
+    InvoiceMapping.mine(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) => invoiceViews.mine(query.auctionId, query.acting.participant).map(InvoiceMapping.mine)
+    }
 
+  /** Сводка организатора — все счета аукциона из read model; право и отказы — те же, что у пульта. */
   def listAuctionInvoices(in: wire.ListAuctionInvoicesRequest): Future[wire.ListAuctionInvoicesResponse] =
-    unimplemented
+    InvoiceMapping.ofAuction(in) match {
+      case Left(error) => invalid(error)
+      case Right(query) =>
+        administered(query, InvoiceMapping.auctionInvoicesDenied) { _ =>
+          invoiceViews.ofAuction(query.auctionId).map(InvoiceMapping.ofAuction)
+        }
+    }
+
+  /** Общий путь отметок организатора: счёт у entity, повтор своего `op_id` до права, затем право и команда. */
+  private def marked[R](mark: InvoiceMark, action: InvoiceAction, accepted: R, denied: Denial => Either[Status, R])(
+      run: => Future[Either[Status, R]]
+  ): Future[R] =
+    invoices.get(mark.invoice).recoverWith(awaited).flatMap {
+      case Invoice.Initial => refuse(InvoiceMapping.invoiceNotFound)
+      case issued: Invoice.Issued if issued.seen.get(mark.opId).contains(action) => Future.successful(accepted)
+      case issued: Invoice.Issued =>
+        administered(ConsoleQuery(issued.terms.auction, mark.acting), denied) { _ =>
+          run.recoverWith(awaited).flatMap(_.fold(refuse, Future.successful))
+        }
+    }
 
   /**
    * Ответа entity не дождались. Команда могла быть принята, поэтому это `DEADLINE_EXCEEDED`, а не `UNAVAILABLE`: повтор
@@ -1218,8 +1281,6 @@ final class AuctionGrpcService(
 
   private def invalidStatus(error: FormError): Status =
     Status.INVALID_ARGUMENT.withDescription(s"invalid ${error.field}")
-
-  private def unimplemented[T]: Future[T] = refuse(Status.UNIMPLEMENTED)
 
   private def refuse[T](status: Status): Future[T] = Future.failed(new GrpcServiceException(status))
 }

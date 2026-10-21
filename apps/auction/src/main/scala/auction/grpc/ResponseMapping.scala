@@ -530,6 +530,8 @@ object ResponseMapping {
         wire.ConfigInvalid.Reason.RafflePrizeBlank(wire.RafflePrizeBlank())
       case ConfigInvalid.RafflePrizeTooLong =>
         wire.ConfigInvalid.Reason.RafflePrizeTooLong(wire.RafflePrizeTooLong())
+      case ConfigInvalid.PaymentTermOutOfRange =>
+        wire.ConfigInvalid.Reason.PaymentTermOutOfRange(wire.PaymentTermOutOfRange())
     }
     wire.ConfigInvalid(named)
   }

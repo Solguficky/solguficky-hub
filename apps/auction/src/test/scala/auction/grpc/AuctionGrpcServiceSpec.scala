@@ -1,6 +1,18 @@
 package auction.grpc
 
 import auction.aggregate.AddLot
+import auction.contract.LotValues
+import auction.invoice.FulfillmentMethod
+import auction.v1.auction.FulfillmentMethod as FulfillmentMethodMessage
+import auction.invoice.Invoice
+import auction.invoice.InvoiceAction
+import auction.invoice.InvoiceGateway
+import auction.invoice.InvoiceId
+import auction.invoice.InvoiceRefusal
+import auction.invoice.InvoiceStatus
+import auction.invoice.InvoiceTerms
+import auction.invoice.InvoiceView
+import auction.invoice.InvoiceViews
 import auction.aggregate.AdvanceLotAsk
 import auction.aggregate.AdvanceLotAskRejected
 import auction.aggregate.Auction
@@ -137,6 +149,7 @@ import ch.qos.logback.core.read.ListAppender
 import com.google.protobuf.ByteString
 import identity.v1.access.AccessRight as AccessRightMessage
 import io.grpc.Status
+import org.apache.pekko.Done
 import org.apache.pekko.actor.testkit.typed.scaladsl.ActorTestKit
 import org.apache.pekko.grpc.GrpcServiceException
 import org.apache.pekko.stream.Materializer
@@ -402,6 +415,41 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
 
   private val NoMeetups: MeetupAuthority = (_, _, _) => fail("meetups was asked")
 
+  private val invoiceId = InvoiceId.of(LotFixtures.bid(9))
+
+  private val invoiceOp = OpId(UUID.fromString("01890a5d-ac99-7aaa-8bbb-eeeeeeeeeeee"))
+
+  private def invoiceTerms = InvoiceTerms(
+    Auction.idOf(MeetupId(UUID.fromString(meetupId))),
+    LotId(new UUID(7L, 1L)),
+    ParticipantId(UUID.fromString(viewer.identityId)),
+    LotFixtures.money(125000),
+    java.time.Instant.parse("2026-10-15T21:00:00Z")
+  )
+
+  private def issuedInvoice: Invoice = Invoice.Issued(invoiceTerms, InvoiceStatus.AwaitingPayment, None, Map.empty)
+
+  private def paidInvoice(seen: Map[OpId, InvoiceAction]): Invoice =
+    Invoice.Issued(invoiceTerms, InvoiceStatus.Paid, None, seen)
+
+  private def paymentMark =
+    wire.MarkInvoicePaidRequest(Some(viewer), invoiceId.value.toString, invoiceOp.value.toString)
+
+  /** Счёт, каким его знает entity, и ответ на команду; команды, дошедшие до entity, записываются. */
+  private final case class Invoices(state: Invoice, answer: Either[InvoiceRefusal, Done] = Right(Done))
+      extends InvoiceGateway {
+    val commands = new java.util.concurrent.ConcurrentLinkedQueue[(String, OpId)]()
+    def issue(invoice: InvoiceId, terms: InvoiceTerms) = fail("an invoice was issued")
+    def get(invoice: InvoiceId) = Future.successful(state)
+    def markPaid(invoice: InvoiceId, opId: OpId) = { commands.add("paid" -> opId); Future.successful(answer) }
+    def markHandedOver(invoice: InvoiceId, opId: OpId) = {
+      commands.add("handed over" -> opId); Future.successful(answer)
+    }
+    def chooseFulfillment(invoice: InvoiceId, viewer: ParticipantId, method: FulfillmentMethod, opId: OpId) = {
+      commands.add("chosen" -> opId); Future.successful(answer)
+    }
+  }
+
   private val granted: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
 
   /** Человек в зале, за которого помощник заносит ставку, и его имя в аукционе. */
@@ -457,7 +505,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       predictions: PredictionGateway = AuctionGrpcService.NoPredictions,
       placeBidsRight: ParticipantId => Future[Boolean] = _ => Future.successful(true),
       notes: OperationNotes = OperationNotes.discarded,
-      finalBids: FinalBids = FinalBids.empty
+      finalBids: FinalBids = FinalBids.empty,
+      invoices: InvoiceGateway = InvoiceGateway.none,
+      invoiceViews: InvoiceViews = InvoiceViews.none
   ) =
     AuctionGrpcService(
       lots,
@@ -477,7 +527,9 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       predictions = predictions,
       placeBidsRight = placeBidsRight,
       notes = notes,
-      finalBids = finalBids
+      finalBids = finalBids,
+      invoices = invoices,
+      invoiceViews = invoiceViews
     )
 
   /**
@@ -2429,13 +2481,113 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
         Status.Code.INVALID_ARGUMENT
     }
 
-    "answers UNIMPLEMENTED on invoices until the invoice slice" in {
+    "refuses a malformed invoice request before reaching the invoice, meetups or the read model" in {
       val auction = service(Unreachable)
-      statusOf(auction.markInvoicePaid(wire.MarkInvoicePaidRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.markInvoiceHandedOver(wire.MarkInvoiceHandedOverRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.chooseFulfillment(wire.ChooseFulfillmentRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.listMyInvoices(wire.ListMyInvoicesRequest())) shouldBe Status.Code.UNIMPLEMENTED
-      statusOf(auction.listAuctionInvoices(wire.ListAuctionInvoicesRequest())) shouldBe Status.Code.UNIMPLEMENTED
+      statusOf(auction.markInvoicePaid(wire.MarkInvoicePaidRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.markInvoiceHandedOver(wire.MarkInvoiceHandedOverRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.chooseFulfillment(wire.ChooseFulfillmentRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.listMyInvoices(wire.ListMyInvoicesRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+      statusOf(auction.listAuctionInvoices(wire.ListAuctionInvoicesRequest())) shouldBe Status.Code.INVALID_ARGUMENT
+      // Выбор нельзя вернуть к «не выбран»: UNSPECIFIED — форма, а не значение.
+      statusOf(
+        auction.chooseFulfillment(
+          wire.ChooseFulfillmentRequest(Some(viewer), invoiceId.value.toString, opId = invoiceOp.value.toString)
+        )
+      ) shouldBe Status.Code.INVALID_ARGUMENT
+    }
+
+    "answers NOT_FOUND on a mark of an invoice that does not exist, before asking meetups" in {
+      statusOf(
+        service(Unreachable, invoices = Invoices(Invoice.initial)).markInvoicePaid(paymentMark)
+      ) shouldBe Status.Code.NOT_FOUND
+    }
+
+    "answers a repeated payment mark with the original answer before asking meetups" in {
+      val invoices = Invoices(paidInvoice(seen = Map(invoiceOp -> InvoiceAction.MarkPaid)))
+      service(Unreachable, invoices = invoices)
+        .markInvoicePaid(paymentMark)
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      invoices.commands.isEmpty shouldBe true
+    }
+
+    "refuses a payment mark of a viewer whom the meetup does not confirm and records nothing" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      val invoices = Invoices(issuedInvoice)
+      service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger), invoices = invoices)
+        .markInvoicePaid(paymentMark)
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
+      invoices.commands.isEmpty shouldBe true
+    }
+
+    "marks the payment of the administrator of the meetup of the auction of the invoice" in {
+      val invoices = Invoices(issuedInvoice)
+      service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, granted), invoices = invoices)
+        .markInvoicePaid(paymentMark)
+        .futureValue
+        .outcome
+        .isAccepted shouldBe true
+      invoices.commands.toArray.toList shouldBe List("paid" -> invoiceOp)
+    }
+
+    "refuses to hand over an unpaid invoice by name" in {
+      val invoices = Invoices(issuedInvoice, answer = Left(InvoiceRefusal.InvoiceNotPaid))
+      service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, granted), invoices = invoices)
+        .markInvoiceHandedOver(
+          wire.MarkInvoiceHandedOverRequest(Some(viewer), invoiceId.value.toString, invoiceOp.value.toString)
+        )
+        .futureValue
+        .getRefused
+        .reason
+        .isInvoiceNotPaid shouldBe true
+    }
+
+    "answers the choice of the winner with acceptance, a frozen method as a value and a foreign invoice as NOT_FOUND" in {
+      def choose(answer: Either[InvoiceRefusal, Done]) =
+        service(Unreachable, invoices = Invoices(issuedInvoice, answer = answer)).chooseFulfillment(
+          wire.ChooseFulfillmentRequest(
+            Some(viewer),
+            invoiceId.value.toString,
+            FulfillmentMethodMessage.FULFILLMENT_METHOD_DELIVERY,
+            invoiceOp.value.toString
+          )
+        )
+      choose(Right(Done)).futureValue.outcome.isAccepted shouldBe true
+      choose(Left(InvoiceRefusal.FulfillmentFrozen)).futureValue.getRefused.reason.isFulfillmentFrozen shouldBe true
+      statusOf(choose(Left(InvoiceRefusal.InvoiceNotFound))) shouldBe Status.Code.NOT_FOUND
+      statusOf(choose(Left(InvoiceRefusal.OpIdTaken))) shouldBe Status.Code.ALREADY_EXISTS
+    }
+
+    "reads the invoices of the viewer with amounts equal to the price of the sale" in {
+      val views = new InvoiceViews {
+        def mine(auction: AuctionId, winner: ParticipantId) =
+          Future.successful(
+            List(InvoiceView(invoiceId, invoiceTerms, InvoiceStatus.Paid, Some(FulfillmentMethod.Pickup)))
+          )
+        def ofAuction(auction: AuctionId) = fail("the summary was read")
+      }
+      val read = service(Unreachable, invoiceViews = views)
+        .listMyInvoices(wire.ListMyInvoicesRequest(Some(viewer), meetupAuctionId))
+        .futureValue
+        .invoices
+      read.map(_.id) shouldBe List(invoiceId.value.toString)
+      read.flatMap(_.amount) shouldBe List(LotValues.money(invoiceTerms.amount))
+      read.map(_.status.isPaid) shouldBe List(true)
+      read.map(_.fulfillment) shouldBe List(FulfillmentMethodMessage.FULFILLMENT_METHOD_PICKUP)
+    }
+
+    "refuses the summary of invoices to a viewer whom the meetup does not confirm and reads no invoice" in {
+      val stranger: MeetupAuthority = (_, _, _) => Future.successful(Authority.NotAdministrator)
+      service(Unreachable, auctions = AuctionCommands(consoleOf(), Unreachable, stranger))
+        .listAuctionInvoices(wire.ListAuctionInvoicesRequest(Some(viewer), meetupAuctionId))
+        .futureValue
+        .getRefused
+        .reason
+        .isNotMeetupAdministrator shouldBe true
     }
 
     "refuses a malformed closing of the auctioneer before reaching meetups or the auction" in {

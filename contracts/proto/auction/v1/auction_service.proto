@@ -1122,8 +1122,13 @@ message ConfigInvalid {
 
     // online_phase.raffle_prize is longer than 200 characters.
     RafflePrizeTooLong raffle_prize_too_long = 14;
+
+    // payment_term_seconds is shorter than one day or longer than thirty days.
+    PaymentTermOutOfRange payment_term_out_of_range = 15;
   }
 }
+
+message PaymentTermOutOfRange {}
 
 message RafflePrizeWithoutRaffle {}
 
