@@ -191,4 +191,4 @@
 - ADR: [ADR-074](../decisions/ADR-074-bot-usage-analytics-pseudonymous-interactions.md) — выбор носителя, псевдонима, срока и ключа.
 - standard: дополнение [logging.md](../standards/observability/logging.md) — тем же изменением, что код записи в боте.
 - дополнение ADR-053: маршрут Collector, отдельный источник и OTLP-экспорт ботов — тем же изменением, что маршрут.
-- задачи Linear: поток записи и счётчики в боте, перечни `action` поверхностей, ключ и ротация на хосте, маршрут Collector, OTLP ботов аукциона и поддержки в чарте.
+- задачи Linear: зонт [PER-689](https://linear.app/anticnvm/issue/per-689): запись и счётчики в ботах — [PER-690](https://linear.app/anticnvm/issue/per-690); OTLP ботов аукциона и поддержки в чарте — [PER-691](https://linear.app/anticnvm/issue/per-691); маршрут Collector — [PER-692](https://linear.app/anticnvm/issue/per-692); ключ эпохи и ротация на хосте — [PER-693](https://linear.app/anticnvm/issue/per-693).
