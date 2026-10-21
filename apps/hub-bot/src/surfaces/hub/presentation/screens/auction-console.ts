@@ -9,6 +9,7 @@ import {
   windowLimit,
   windowPrint,
 } from "../../application/auction-console.js";
+import { maxLotRubles } from "../../application/lot-form.js";
 import { formatLocalMoment } from "../../application/meetup-form.js";
 import type {
   AuctionConsoleView,
@@ -1124,19 +1125,30 @@ export function finalAskErrorText(
 }
 
 /**
- * Вопрос о следующей цене лота финала: лот, текущая следующая цена и образец.
- * Ставка зала после ответа принимается ровно на эту цену (ADR-049).
+ * Вопрос о следующей цене лота финала: лот, текущая следующая цена, порог и
+ * образец. Порог — следующая цена, а не текущая (PER-640): ниже неё бот ответ
+ * не принимает. Образец — ближайшая сотня рублей выше порога. Ставка зала
+ * после ответа принимается ровно на эту цену (ADR-049).
  */
 export function finalAskText(ask: {
   title?: string | undefined;
   nextPrice?: LotAmount | undefined;
 }): string {
+  const lot = `Лот: ${truncate(ask.title ?? untitled, titleLimit)}`;
+  if (ask.nextPrice === undefined) {
+    return [
+      lot,
+      "Новая следующая цена в целых рублях, выше текущей. Например: 5000",
+    ].join("\n");
+  }
+  const rubles = ask.nextPrice.minorUnits / 100;
+  const sample = (Math.floor(rubles / 100) + 1) * 100;
   return [
-    `Лот: ${truncate(ask.title ?? untitled, titleLimit)}`,
-    ...(ask.nextPrice === undefined
-      ? []
-      : [`Сейчас следующая цена: ${money(ask.nextPrice)}`]),
-    "Новая следующая цена в целых рублях, выше текущей. Например: 5000",
+    lot,
+    `Сейчас следующая цена: ${money(ask.nextPrice)}`,
+    // Сотня выше предела суммы ответа образцом не годится: его не примет
+    // разбор, поэтому образца нет.
+    `Новая следующая цена в целых рублях, выше ${money(ask.nextPrice)}.${sample > maxLotRubles ? "" : ` Например: ${sample}`}`,
   ].join("\n");
 }
 

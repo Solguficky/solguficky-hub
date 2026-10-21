@@ -1425,8 +1425,14 @@ export function createAuctionConsole(
     };
   }
 
-  // Новая следующая цена лота. Цену ниже текущей решает Auction и отвечает
-  // порогом, который вопрос называет заново; бот её не предугадывает.
+  // Новая следующая цена лота. Auction принимает ask выше текущей цены, и
+  // сумма между текущей и следующей опустила бы следующую цену молча
+  // (PER-640): её бот отвергает сам, порогом — следующей ценой свежего
+  // чтения. Чтение — read model и может отставать от лота: тогда сумма выше
+  // прочитанной следующей цены, но не выше настоящей, уходит в Auction, и
+  // он отвергает только ask не выше текущей цены, называя её порогом.
+  // Чтения без следующей цены у лота в торгах не бывает; если оно всё же
+  // пришло, сумму судит один Auction.
   async function advanceAsk(
     request: Extract<AuctionConsoleRequest, { intent: "advance-final-ask" }>,
   ): Promise<ExecuteResult> {
@@ -1452,6 +1458,14 @@ export function createAuctionConsole(
       minorUnits: amount.rubles * 100,
       currency: status.currentPrice.currency,
     };
+    const { nextPrice } = entry.lot;
+    if (nextPrice !== undefined && newAsk.minorUnits <= nextPrice.minorUnits) {
+      return {
+        ...asked,
+        error: "ask-below-current-price",
+        mustExceed: nextPrice,
+      };
+    }
     const advanced = await consoles.advanceAsk(
       request.identity,
       {
