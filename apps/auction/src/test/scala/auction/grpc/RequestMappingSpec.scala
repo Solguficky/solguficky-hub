@@ -333,6 +333,27 @@ final class RequestMappingSpec extends AnyWordSpec with Matchers with EitherValu
         None
     }
 
+    "trims the raffle prize and leaves a blank one for the core to refuse" in {
+      val raffle = OnlinePhaseMessage(
+        "2026-10-20T00:00:00Z",
+        Some("2026-10-27T00:00:00Z"),
+        closesLots = true,
+        raffleClosesAt = Some("2026-10-24T12:00:00Z"),
+        rafflePrize = Some("  сертификат в книжный  ")
+      )
+      val command =
+        RequestMapping.scheduleAuction(validAuctionSchedule.withConfig(validConfig.withOnlinePhase(raffle))).value
+      command.config.onlinePhase.flatMap(_.rafflePrize) shouldBe Some("сертификат в книжный")
+      // Пустую строку форма не глотает: `RafflePrizeBlank` решает ядро, и опечатка не станет тихим «без приза».
+      val blank = raffle.copy(rafflePrize = Some(" \t "))
+      RequestMapping
+        .scheduleAuction(validAuctionSchedule.withConfig(validConfig.withOnlinePhase(blank)))
+        .value
+        .config
+        .onlinePhase
+        .flatMap(_.rafflePrize) shouldBe Some("")
+    }
+
     "maps the step windows of an auction as sent, leaving their bounds and lots to the core" in {
       val window = AuctionStepWindowMessage(
         "2026-10-22T12:00:00Z",

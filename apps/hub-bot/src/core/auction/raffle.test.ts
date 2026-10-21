@@ -38,6 +38,22 @@ describe("raffle answers", () => {
     });
   });
 
+  it("reads the raffle prize and drops a blank one", () => {
+    const withPrize = (rafflePrize: string) =>
+      raffleOf(
+        create(RaffleSchema, {
+          auctionId: AUCTION_ID,
+          status: RaffleStatus.OPEN,
+          closesAt: "2026-10-29T18:00:00Z",
+          registered: false,
+          rafflePrize,
+        }),
+      );
+    expect(withPrize("кружка")).toMatchObject({ prize: "кружка" });
+    // Пустая строка — тот же розыгрыш без приза (PER-649).
+    expect(withPrize("")).not.toHaveProperty("prize");
+  });
+
   it("reads a drawn raffle with an erased name and the reveal", () => {
     expect(
       raffleOf(

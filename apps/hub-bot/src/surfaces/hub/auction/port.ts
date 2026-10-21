@@ -230,6 +230,11 @@ export type ScheduleAuctionResult =
   | { kind: "window-lots-empty"; window: number }
   | { kind: "raffle-not-after-opens" }
   | { kind: "raffle-not-before-closes" }
+  // Приз розыгрыша (PER-649): без розыгрыша приза нет, приз — непустая строка
+  // не длиннее 200 знаков.
+  | { kind: "raffle-prize-without-raffle" }
+  | { kind: "raffle-prize-blank" }
+  | { kind: "raffle-prize-too-long" }
   | { kind: "already-started" }
   | { kind: "auction-not-found" }
   | AuctionFailure;
@@ -279,8 +284,10 @@ export type FinalistResult =
 // окна «Счастливых часов» и момент закрытия регистрации в розыгрыше едут в
 // каждой команде — без них правка сроков или финала стёрла бы их молча.
 // Ключ `raffleClosesAt` обязателен по той же причине; `undefined` — неделя без
-// розыгрыша (ADR-066, п. 5). `lot_defaults` бот не шлёт — их подставляет
-// Auction; правило закрытия выводится из финала.
+// розыгрыша (ADR-066, п. 5). Так же обязателен `rafflePrize` (PER-649): приз
+// лежит рядом с моментом розыгрыша, и команда без него стёрла бы приз молча.
+// `lot_defaults` бот не шлёт — их подставляет Auction; правило закрытия
+// выводится из финала.
 export type AuctionWeekConfig = {
   auctionId: string;
   opId: string;
@@ -289,6 +296,7 @@ export type AuctionWeekConfig = {
   final: boolean;
   windows: readonly StepWindow[];
   raffleClosesAt: string | undefined;
+  rafflePrize: string | undefined;
 };
 
 export type FinalistMark = { auctionId: string; lotId: string; opId: string };

@@ -46,6 +46,62 @@ public class RaffleResultTests
         fact.RaffleResult.TicketCount.ShouldBe(2u);
     }
 
+    // Приз едет в тело факта (PER-649): весть победителя называет его по нему.
+    [Fact]
+    public void When_ResultBuiltWithPrize_Expect_PrizeInBody()
+    {
+        var holders = new[] { EventFactory.NewId(), EventFactory.NewId() };
+        var draw = AuctionMapping.Decode(Subject,
+                EventFactory.Bytes(EventFactory.RaffleDrawnWithPrize(EventFactory.AuctionOfMeetup(), 1, "сертификат",
+                    holders)))
+            .ShouldBeOfType<AuctionDecoded.Raffle>().Value;
+
+        var fact = AuctionFacts.RaffleResult(Guid.CreateVersion7(), draw.Tickets[0], 1, draw, EventFactory.Committed,
+            EventFactory.Committed.AddHours(24));
+
+        fact.RaffleResult.HasRafflePrize.ShouldBeTrue();
+        fact.RaffleResult.RafflePrize.ShouldBe("сертификат");
+    }
+
+    // Приз необязателен (PER-649): розыгрыш без приза — его нет и в разборе.
+    [Fact]
+    public void When_RaffleDrawnWithPrize_Expect_PrizeInDraw()
+    {
+        var auction = EventFactory.AuctionOfMeetup();
+        var holders = new[] { EventFactory.NewId(), EventFactory.NewId() };
+        var message = EventFactory.RaffleDrawnWithPrize(auction, 1, "сертификат на 5000 ₽", holders);
+
+        var draw = AuctionMapping.Decode(Subject, EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Raffle>().Value;
+
+        draw.Prize.ShouldBe("сертификат на 5000 ₽");
+    }
+
+    [Fact]
+    public void When_RaffleDrawnWithoutPrize_Expect_NoPrize()
+    {
+        var message = EventFactory.RaffleDrawn(EventFactory.AuctionOfMeetup(), 1, EventFactory.NewId());
+
+        var draw = AuctionMapping.Decode(Subject, EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Raffle>().Value;
+
+        draw.Prize.ShouldBeNull();
+    }
+
+    // Пробельную строку чужого писателя разбор читает как отсутствие: иначе
+    // победитель получил бы приз без приза.
+    [Fact]
+    public void When_RaffleDrawnWithBlankPrize_Expect_NoPrize()
+    {
+        var message = EventFactory.RaffleDrawnWithPrize(EventFactory.AuctionOfMeetup(), 1, "  ",
+            EventFactory.NewId());
+
+        var draw = AuctionMapping.Decode(Subject, EventFactory.Bytes(message))
+            .ShouldBeOfType<AuctionDecoded.Raffle>().Value;
+
+        draw.Prize.ShouldBeNull();
+    }
+
     [Fact]
     public void When_OccasionMissing_Expect_Poison()
     {

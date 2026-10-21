@@ -24,6 +24,7 @@ object RaffleMapping {
       registered = view.registered,
       tickets = view.tickets.map(ticket => wire.RaffleTicket(ticket.number, ticket.displayName)),
       myTicket = view.myTicket,
+      rafflePrize = view.prize,
       reveal = view.reveal.map { reveal =>
         wire.RaffleReveal(
           seed = reveal.seed.hex,

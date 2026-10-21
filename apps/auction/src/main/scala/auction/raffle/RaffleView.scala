@@ -27,7 +27,8 @@ final case class RaffleTicketView(number: Int, displayName: Option[String])
  * Розыгрыш, каким его видит смотрящий (ADR-066, п. 11). `commitment` и `round` пусты только у непроведённого. Seed
  * появляется здесь только в `reveal`, а `reveal` — только после фиксации пула без билетов или после жеребьёвки: до
  * этого ни одно чтение seed не отдаёт. `drawnAt` заполнен только у проведённой жеребьёвки, а момент её — тот, что
- * записан ядром в `RaffleState.Drawn`.
+ * записан ядром в `RaffleState.Drawn`. `prize` — приз, объявленный вместе с моментом закрытия регистрации (дополнение
+ * ADR-066 от 2026-10-21); пуст у непроведённого и у розыгрыша без приза.
  */
 final case class RaffleView(
     status: RaffleStatus,
@@ -38,7 +39,8 @@ final case class RaffleView(
     registered: Boolean,
     tickets: Vector[RaffleTicketView],
     myTicket: Option[Int],
-    reveal: Option[RaffleReveal]
+    reveal: Option[RaffleReveal],
+    prize: Option[String] = None
 )
 
 object RaffleView {
@@ -67,7 +69,8 @@ object RaffleView {
         registered = tickets.contains(viewer),
         tickets = numbered(tickets),
         myTicket = Raffle.ticketOf(tickets, viewer),
-        reveal = reveal
+        reveal = reveal,
+        prize = terms.prize
       )
 
     raffle.state match {
@@ -85,7 +88,8 @@ object RaffleView {
             registered = entries.contains(viewer),
             tickets = Vector.empty,
             myTicket = None,
-            reveal = None
+            reveal = None,
+            prize = terms.prize
           )
         )
       case RaffleState.Fixed(terms, tickets) if tickets.isEmpty =>
@@ -111,7 +115,8 @@ object RaffleView {
             registered = participants.contains(viewer),
             tickets = Vector.empty,
             myTicket = None,
-            reveal = None
+            reveal = None,
+            prize = terms.prize
           )
         )
     }

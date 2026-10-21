@@ -610,6 +610,10 @@ message RaffleState {
   // The number of the winning ticket, from 1 to the count of tickets. 0 means
   // there is no draw yet; it is never 0 on raffle_drawn.
   uint32 winning_ticket = 2;
+
+  // The prize of the raffle as the organizer declared it, one line. Unset when
+  // the raffle has no prize; it is then absent, not empty.
+  optional string raffle_prize = 3;
 }
 
 // The draw was made: the winning ticket is in the state and never changes. The

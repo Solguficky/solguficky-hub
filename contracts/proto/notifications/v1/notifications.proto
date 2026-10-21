@@ -355,6 +355,10 @@ message RaffleResult {
 
   // How many tickets took part in the draw. At least 1.
   uint32 ticket_count = 4;
+
+  // The prize of the raffle as the organizer declared it, one line. Unset when
+  // the raffle has no prize: the message then names no prize, not an empty one.
+  optional string raffle_prize = 5;
 }
 
 // An auction cancelled after its trading started, as the recipient sees it.

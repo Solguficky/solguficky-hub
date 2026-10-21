@@ -131,21 +131,27 @@ public static class AuctionFacts
     /// число билетов. Выиграл ли он, канал видит по совпадению номеров.
     /// </summary>
     public static Notification RaffleResult(Guid notificationId, Guid recipientId, int ticket, RaffleDraw draw,
-        DateTimeOffset now, DateTimeOffset notAfter) => new()
+        DateTimeOffset now, DateTimeOffset notAfter)
     {
-        NotificationId = notificationId.ToString(),
-        RecipientId = recipientId.ToString(),
-        CreatedAt = now.ToUniversalTime().ToString("O"),
-        NotAfter = notAfter.ToUniversalTime().ToString("O"),
-        Cause = new Cause { AuctionRaffleEventId = draw.EventId.ToString() },
-        RaffleResult = new RaffleResult
+        var body = new RaffleResult
         {
             AuctionId = draw.AuctionId.ToString(),
             Ticket = (uint)ticket,
             WinningTicket = (uint)draw.WinningTicket,
             TicketCount = (uint)draw.Tickets.Count,
-        },
-    };
+        };
+        // Приз не задан — поля нет: получатель не должен увидеть «Приз:» без приза.
+        if (draw.Prize is { } prize) body.RafflePrize = prize;
+        return new Notification
+        {
+            NotificationId = notificationId.ToString(),
+            RecipientId = recipientId.ToString(),
+            CreatedAt = now.ToUniversalTime().ToString("O"),
+            NotAfter = notAfter.ToUniversalTime().ToString("O"),
+            Cause = new Cause { AuctionRaffleEventId = draw.EventId.ToString() },
+            RaffleResult = body,
+        };
+    }
 
     /// <summary>
     /// Анонс состава одному человеку: весь состав с ценами удержания и те его

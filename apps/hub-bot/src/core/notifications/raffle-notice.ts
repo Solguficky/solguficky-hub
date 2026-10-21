@@ -19,6 +19,8 @@ export type RaffleNotice = {
   ticket: number;
   winningTicket: number;
   ticketCount: number;
+  // Приз розыгрыша одной строкой (PER-649); нет — приз не объявлен.
+  prize?: string;
 };
 
 // Аукцион сходки — UUIDv5, свой аукцион — UUIDv7: версия не проверяется, только
@@ -39,6 +41,10 @@ export function raffleNoticeOf(value: RaffleResult): RaffleNotice | undefined {
     ticket,
     winningTicket,
     ticketCount,
+    // Пустой приз — тот же розыгрыш без приза: строки «Приз:» в вести не будет.
+    ...(value.rafflePrize === undefined || value.rafflePrize.trim() === ""
+      ? {}
+      : { prize: value.rafflePrize.trim() }),
   };
 }
 
@@ -52,13 +58,16 @@ const toRaffleLabel = "К розыгрышу";
 
 // Одна фраза на «ты», без заголовка и разметки (дизайн-код, «Уведомления
 // аукциона»). Имени победителя весть не несёт — его нет в факте: оно на экране
-// итога по кнопке.
+// итога по кнопке. Приз назван в той же фразе, и следующий шаг тоже (PER-649):
+// выдачу ведёт организатор вне бота, и бот обещает только его сообщение.
 export function renderRaffleNotice(notice: RaffleNotice): RaffleNoticeView {
-  const { ticket, winningTicket, ticketCount } = notice;
+  const { ticket, winningTicket, ticketCount, prize } = notice;
   return {
     text:
       ticket === winningTicket
-        ? `Твой билет №${ticket} из ${ticketCount} выиграл розыгрыш среди участников.`
+        ? prize === undefined
+          ? `Твой билет №${ticket} из ${ticketCount} выиграл розыгрыш среди участников.`
+          : `Твой билет №${ticket} из ${ticketCount} выиграл розыгрыш среди участников: приз — ${prize}, а организатор напишет тебе, как его получить.`
         : `Розыгрыш среди участников проведён: выиграл билет №${winningTicket} из ${ticketCount}, твой — №${ticket}.`,
     button: { auctionId: notice.auctionId, text: toRaffleLabel },
   };
