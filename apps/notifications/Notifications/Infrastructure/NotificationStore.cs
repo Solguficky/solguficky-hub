@@ -291,6 +291,22 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         FOR UPDATE SKIP LOCKED;
         """;
 
+    // Счёт оплатили, пока напоминание о нём ждало релея (PER-330). Факт
+    // принадлежит счёту через своё задание — повод факта, и по нему же видно
+    // счёт. Отправленный факт не отзывается: у получателя оно в руках.
+    private const string WithdrawInvoiceRemindersSql = """
+        UPDATE notification AS fact
+        SET withdrawn_at = @Now, withdrawal_reason = @Reason
+        FROM invoice_reminder_task AS task
+        WHERE fact.cause_kind = @CauseKind
+            AND fact.cause_id = task.task_id::text
+            AND task.invoice_id = @InvoiceId
+            AND fact.type = ANY(@Types)
+            AND fact.dispatched_at IS NULL
+            AND fact.withdrawn_at IS NULL
+            AND fact.rejected_at IS NULL;
+        """;
+
     // Условия на исходы здесь не решают гонку — строку держит этот же проход, —
     // а повторяют инвариант схемы notification_single_outcome.
     private const string MarkSql = """
@@ -778,6 +794,94 @@ public sealed class NotificationStore(NpgsqlDataSource source)
         LotReminderKind.Close => NotificationFacts.LotDeadlineClose(id, recipient, taskId, lotId, now, notAfter),
         _ => throw new ArgumentOutOfRangeException(nameof(kind)),
     };
+
+    /// <summary>
+    /// Пишет адресный факт напоминания о неоплаченном счёте в транзакции
+    /// <paramref name="work" /> — той же, что переводит задание в «сработало».
+    /// </summary>
+    /// <param name="taskId">Сработавшее задание — повод факта.</param>
+    /// <param name="kind">Вид момента: после победы или перед сроком оплаты.</param>
+    /// <param name="replica">Снимок счёта: адресат, сумма и срок оплаты.</param>
+    /// <remarks>
+    /// Получатель один — победитель продажи, и он же адресат счёта. Категории у
+    /// повода нет: счёт — дело победителя, а деньги через продукт не проходят.
+    /// Срок годности факта — срок оплаты: напоминание, не ушедшее до него, уже
+    /// шум, и релей снимет его.
+    /// </remarks>
+    internal static async Task<FactCount> AddInvoiceReminder(
+        UnitOfWork work,
+        Guid taskId,
+        InvoiceReminderKind kind,
+        InvoiceReplica replica,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var audience = new[]
+        {
+            new AudienceRow
+            {
+                IdentityId = replica.WinnerId,
+                Enabled = true,
+                DeliverySurface = await DeliverySurface(work, replica.WinnerId, cancellationToken),
+            },
+        };
+
+        return await Insert(
+            work,
+            new FactCause(NotificationFacts.TypeOf(kind), NotificationFacts.ReminderTaskCause, taskId.ToString(), null,
+                null),
+            audience,
+            (id, recipient) => InvoiceReminderFact(kind, id, recipient, taskId, replica, now),
+            now,
+            replica.PaymentDueAt,
+            cancellationToken);
+    }
+
+    /// <summary>
+    /// Снимает неотправленные факты напоминания о счёте: счёт оплачен, а весть
+    /// о неоплаченном счёте ещё стояла в очереди релея.
+    /// </summary>
+    /// <remarks>
+    /// Снятие идёт по заданиям счёта: повод факта — сработавшее задание, и
+    /// по нему же видно, какому счёту факт принадлежит. Уже отправленный факт
+    /// не отзывается: у получателя оно в руках.
+    /// </remarks>
+    internal static async Task<int> WithdrawInvoiceReminders(
+        UnitOfWork work,
+        Guid invoiceId,
+        DateTimeOffset now,
+        CancellationToken cancellationToken) =>
+        await work.Execute(
+            WithdrawInvoiceRemindersSql,
+            new
+            {
+                InvoiceId = invoiceId,
+                Now = now.UtcDateTime,
+                Reason = NotificationFacts.WithdrawnOnInvoicePaid,
+                CauseKind = NotificationFacts.ReminderTaskCause,
+                Types = new[] { NotificationFacts.InvoiceReminderType, NotificationFacts.InvoiceDueReminderType },
+            },
+            cancellationToken);
+
+    /// <summary>Факт напоминания о счёте по виду момента: два момента — два типа.</summary>
+    private static Notification InvoiceReminderFact(InvoiceReminderKind kind, Guid id, Guid recipient, Guid taskId,
+        InvoiceReplica replica, DateTimeOffset now)
+    {
+        var amount = new global::Auction.V1.Money
+        {
+            MinorUnits = replica.AmountMinorUnits,
+            Currency = replica.AmountCurrency,
+        };
+
+        return kind switch
+        {
+            InvoiceReminderKind.AfterWin => NotificationFacts.InvoiceReminder(id, recipient, taskId, replica.InvoiceId,
+                replica.LotId, amount, replica.PaymentDueAt, now),
+            InvoiceReminderKind.BeforeDue => NotificationFacts.InvoiceDueReminder(id, recipient, taskId,
+                replica.InvoiceId, replica.LotId, amount, replica.PaymentDueAt, now),
+            _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+        };
+    }
 
     /// <summary>
     /// Догоняет сработавшее напоминание о лоте для одного человека, который

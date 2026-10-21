@@ -162,6 +162,25 @@ public enum AnnouncementOccasion { Published, Hidden, TradingOpened }
 public sealed record AuctionAnnouncement(Guid EventId, Guid AuctionId, Guid MeetupId, long Version,
     DateTimeOffset OccurredAt, AnnouncementOccasion Occasion, OnlinePhase? OnlinePhase);
 
+/// <summary>
+/// Положение счёта в снимке факта: к оплате или оплачен. Выдано — третье
+/// положение счёта, но этот модуль его не разбирает: выдача идёт после
+/// оплаты, а напоминаний к тому времени не остаётся.
+/// </summary>
+public enum InvoiceStatus { AwaitingPayment, Paid }
+
+/// <summary>
+/// Снимок счёта из факта журнала счёта: адресат, лот, аукцион, сумма и срок
+/// оплаты. Момент выставления знает только факт выставления счёта, и он же
+/// считает первый из двух напоминаний.
+/// </summary>
+public sealed record InvoiceSnapshot(Guid InvoiceId, long Version, DateTimeOffset OccurredAt, InvoiceStatus Status,
+    Guid WinnerId, Guid LotId, Guid AuctionId, long AmountMinorUnits, string AmountCurrency,
+    DateTimeOffset PaymentDueAt, bool Issued);
+
+/// <summary>Факт счёта: конверт и снимок состояния после него.</summary>
+public sealed record AuctionInvoice(Guid EventId, InvoiceSnapshot Snapshot);
+
 public abstract record AuctionDecoded
 {
     public sealed record Bid(AuctionBid Value) : AuctionDecoded;
@@ -174,15 +193,17 @@ public abstract record AuctionDecoded
     public sealed record Announcement(AuctionAnnouncement Value) : AuctionDecoded;
     public sealed record Raffle(RaffleDraw Value) : AuctionDecoded;
     public sealed record Predictions(PredictionSettlement Value) : AuctionDecoded;
+    public sealed record Invoice(AuctionInvoice Value) : AuctionDecoded;
     public sealed record Poison(string Reason) : AuctionDecoded;
     public sealed record Ignored : AuctionDecoded;
 }
 
 /// <summary>
-/// Разбор фактов лота и тех фактов аукциона, что нужны анонсу финала и концу
-/// избранного. Тип
+/// Разбор фактов лота, тех фактов аукциона, что нужны анонсу финала и концу
+/// избранного, и фактов счёта, что нужны напоминаниям о неоплаченном счёте.
+/// Тип
 /// сообщения выбирает subject: факт аукциона не декодируется как LotEvent, а
-/// факты счёта не декодируются вовсе.
+/// факт счёта — как AuctionEvent.
 /// </summary>
 public static class AuctionMapping
 {
@@ -191,7 +212,8 @@ public static class AuctionMapping
         // В доменном стриме есть LotEvent, AuctionEvent, InvoiceEvent,
         // RaffleEvent и PredictionResultsEvent. Этот модуль ведёт реплику лота
         // по каждому его факту, а поводы дают ставка, продажа, факты финала
-        // аукциона, жеребьёвка розыгрыша и итоги прогнозов; счёт он не читает.
+        // аукциона, жеребьёвка розыгрыша и итоги прогнозов; из счёта берётся
+        // снимок, по которому живут задания напоминания о счёте.
         if (subject == AuctionFeed.RaffleDrawnSubject)
         {
             return DecodeRaffle(payload);
@@ -203,6 +225,10 @@ public static class AuctionMapping
         if (AuctionFeed.AuctionSubjects.TryGetValue(subject, out var auctionOccasion))
         {
             return DecodeAuction(subject, auctionOccasion, payload);
+        }
+        if (AuctionFeed.InvoiceSubjects.TryGetValue(subject, out var invoiceOccasion))
+        {
+            return DecodeInvoice(subject, invoiceOccasion, payload);
         }
         if (!AuctionFeed.LotSubjects.TryGetValue(subject, out var occasion))
         {
@@ -259,6 +285,78 @@ public static class AuctionMapping
                 ? new LotHold(snapshot.LotId, Guid.Parse(state.AuctionId), snapshot.Leader, price.Clone(),
                     snapshot.OccurredAt)
                 : null));
+
+    /// <summary>
+    /// Разбор факта счёта: конверт, повод и снимок состояния. Снимок нужен
+    /// заданиям напоминания о неоплаченном счёте (PER-330): адресат, сумма и
+    /// срок оплаты приходят в нём, и канал читает их из сообщения, а не у
+    /// Auction.
+    /// </summary>
+    /// <remarks>
+    /// Повод и положение счёта должны совпадать: выставленный счёт — «к
+    /// оплате», оплаченный — «оплачено». Расхождение означает, что сообщение
+    /// не о том факте, который объявил subject, и оно ядом.
+    /// </remarks>
+    private static AuctionDecoded DecodeInvoice(string subject, InvoiceEvent.OccasionOneofCase occasion,
+        ReadOnlyMemory<byte> payload)
+    {
+        InvoiceEvent message;
+        try
+        {
+            message = InvoiceEvent.Parser.ParseFrom(payload.Span);
+        }
+        catch (InvalidProtocolBufferException)
+        {
+            return new AuctionDecoded.Poison("not an auction.v1.InvoiceEvent");
+        }
+
+        if (!Id(message.EventId, out var eventId) || !InvoiceId(message.InvoiceId, out var invoiceId) ||
+            message.Version < 1)
+        {
+            return new AuctionDecoded.Poison("event_id, invoice_id or version is invalid");
+        }
+        if (!Instant(message.OccurredAt, out var occurredAt))
+        {
+            return new AuctionDecoded.Poison("occurred_at is not an RFC 3339 UTC instant");
+        }
+        if (message.OccasionCase != occasion)
+        {
+            return new AuctionDecoded.Poison($"{subject} subject does not match occasion");
+        }
+        if (message.State is not { } state || state.Id != message.InvoiceId)
+        {
+            return new AuctionDecoded.Poison("state does not identify the invoice");
+        }
+        if (!AuctionId(state.AuctionId) || !Id(state.LotId, out var lotId) || !Id(state.WinnerId, out var winnerId))
+        {
+            return new AuctionDecoded.Poison("state does not name the lot, the auction and the winner");
+        }
+        if (state.Amount is not { } amount || !Price(amount))
+        {
+            return new AuctionDecoded.Poison("state amount is invalid");
+        }
+        if (!Instant(state.PaymentDueAt, out var paymentDueAt))
+        {
+            return new AuctionDecoded.Poison("payment_due_at is not an RFC 3339 UTC instant");
+        }
+
+        var expected = occasion == InvoiceEvent.OccasionOneofCase.InvoiceIssued
+            ? InvoiceState.StatusOneofCase.AwaitingPayment
+            : InvoiceState.StatusOneofCase.Paid;
+        if (state.StatusCase != expected)
+        {
+            return new AuctionDecoded.Poison($"{subject} state is not the status of its occasion");
+        }
+
+        var status = expected == InvoiceState.StatusOneofCase.AwaitingPayment
+            ? InvoiceStatus.AwaitingPayment
+            : InvoiceStatus.Paid;
+
+        return new AuctionDecoded.Invoice(new AuctionInvoice(eventId,
+            new InvoiceSnapshot(invoiceId, message.Version, occurredAt, status, winnerId, lotId,
+                Guid.Parse(state.AuctionId), amount.MinorUnits, amount.Currency, paymentDueAt,
+                occasion == InvoiceEvent.OccasionOneofCase.InvoiceIssued)));
+    }
 
     private static AuctionDecoded DecodeAuction(string subject, AuctionEvent.OccasionOneofCase occasion,
         ReadOnlyMemory<byte> payload)
@@ -775,4 +873,10 @@ public static class AuctionMapping
     private static bool AuctionId(string value) =>
         Guid.TryParseExact(value, "D", out var id) && value == id.ToString() &&
         value[14] is '5' or '7' && value[19] is '8' or '9' or 'a' or 'b';
+
+    // Счёт несёт UUIDv5, выведенный из ставки продажи (PER-308): одна продажа —
+    // один счёт, а продажа другой ставке — другой.
+    private static bool InvoiceId(string value, out Guid id) =>
+        Guid.TryParseExact(value, "D", out id) && value == id.ToString() &&
+        value[14] == '5' && value[19] is '8' or '9' or 'a' or 'b';
 }

@@ -49,6 +49,31 @@ public static class NotificationFacts
     public const string StepWindowStartedType = "step_window_started";
 
     /// <summary>
+    /// Напоминание о неоплаченном счёте: первый момент, примерно через 12 часов
+    /// после победы (PER-330). Категории у повода нет: счёт — дело победителя,
+    /// а деньги через продукт не проходят.
+    /// </summary>
+    public const string InvoiceReminderType = "invoice_reminder";
+
+    /// <summary>
+    /// Второй момент того же напоминания о счёте — перед сроком оплаты
+    /// (PER-330). Тип свой: два момента не должны совпасть на одном ключе
+    /// повода.
+    /// </summary>
+    public const string InvoiceDueReminderType = "invoice_due_reminder";
+
+    /// <summary>
+    /// Тип факта по виду напоминания о счёте: у вида свой тип, иначе два момента
+    /// напоминания совпали бы на одном ключе повода.
+    /// </summary>
+    public static string TypeOf(InvoiceReminderKind kind) => kind switch
+    {
+        InvoiceReminderKind.AfterWin => InvoiceReminderType,
+        InvoiceReminderKind.BeforeDue => InvoiceDueReminderType,
+        _ => throw new ArgumentOutOfRangeException(nameof(kind)),
+    };
+
+    /// <summary>
     /// Тип факта по виду напоминания лота: у вида свой тип, иначе два момента
     /// напоминания совпали бы на одном ключе повода.
     /// </summary>
@@ -115,6 +140,12 @@ public static class NotificationFacts
     /// Аукцион сняли с публикации, пока весть о нём ждала релея (PER-646).
     /// </summary>
     public const string WithdrawnOnAuctionHidden = "auction_hidden";
+
+    /// <summary>
+    /// Счёт оплатили, пока напоминание о неоплаченном счёте ждало релея
+    /// (PER-330).
+    /// </summary>
+    public const string WithdrawnOnInvoicePaid = "invoice_paid";
 
     /// <summary>
     /// Категория, которой человек отказывается от «новой сходки». Настраивается
@@ -316,6 +347,84 @@ public static class NotificationFacts
             now,
             notAfter);
         notification.LotDeadlineClose = new V1.LotDeadlineClose { LotId = lotId.ToString() };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Напоминание о неоплаченном счёте одному получателю: первый момент, после
+    /// победы.
+    /// </summary>
+    /// <param name="taskId">Сработавшее задание — повод факта.</param>
+    /// <param name="invoiceId">Счёт проданного лота.</param>
+    /// <param name="lotId">Проданный лот; название канал читает у Auction.</param>
+    /// <param name="amount">Сумма к оплате: цена продажи.</param>
+    /// <param name="paymentDueAt">
+    /// Срок оплаты: напоминание, не ушедшее до срока, уже шум, и релей снимет
+    /// его по сроку.
+    /// </param>
+    /// <remarks>
+    /// <c>request_id</c> у факта нет: у срабатывания таймера нет цепочки, которую
+    /// начал человек. Название лота в сообщении нет — оно вне домена торгов, его
+    /// бот берёт сам по <c>lot_id</c>.
+    /// </remarks>
+    public static Notification InvoiceReminder(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        Guid invoiceId,
+        Guid lotId,
+        global::Auction.V1.Money amount,
+        DateTimeOffset paymentDueAt,
+        DateTimeOffset now)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            paymentDueAt);
+        notification.InvoiceReminder = new V1.InvoiceReminder
+        {
+            InvoiceId = invoiceId.ToString(),
+            LotId = lotId.ToString(),
+            Amount = amount.Clone(),
+            PaymentDueAt = Instant(paymentDueAt),
+        };
+
+        return notification;
+    }
+
+    /// <summary>
+    /// Второе напоминание о неоплаченном счёте одному получателю: перед сроком
+    /// оплаты. Тело то же, что у первого: счёт, лот, сумма и срок — те же
+    /// значения, различаются моменты.
+    /// </summary>
+    public static Notification InvoiceDueReminder(
+        Guid notificationId,
+        Guid recipientId,
+        Guid taskId,
+        Guid invoiceId,
+        Guid lotId,
+        global::Auction.V1.Money amount,
+        DateTimeOffset paymentDueAt,
+        DateTimeOffset now)
+    {
+        var notification = Envelope(
+            notificationId,
+            recipientId,
+            new Cause { ReminderTaskId = taskId.ToString() },
+            requestId: null,
+            now,
+            paymentDueAt);
+        notification.InvoiceDueReminder = new V1.InvoiceDueReminder
+        {
+            InvoiceId = invoiceId.ToString(),
+            LotId = lotId.ToString(),
+            Amount = amount.Clone(),
+            PaymentDueAt = Instant(paymentDueAt),
+        };
 
         return notification;
     }
