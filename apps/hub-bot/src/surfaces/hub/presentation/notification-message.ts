@@ -7,6 +7,7 @@ import {
   type SendResult,
 } from "../../../core/delivery/index.js";
 import { registerChatCommands } from "../../../core/menu-commands.js";
+import { renderAuctionAnnouncement } from "../../../core/notifications/auction-announcement-notice.js";
 import { renderAuctionCancelledNotice } from "../../../core/notifications/auction-cancelled-notice.js";
 import type { FinalNotice } from "../../../core/notifications/final-notice.js";
 import type {
@@ -137,6 +138,7 @@ export function renderNotification(
   content: OutgoingNotification,
   auctionBotUsername?: string,
   today?: CommunityDay,
+  timeZone = "UTC",
 ): NotificationMessage {
   if (
     content.kind === "access-requested" ||
@@ -209,6 +211,24 @@ export function renderNotification(
         view.button.text,
         traceCallback(
           `v1:${encodeAuctionCallback({ kind: "root", auctionId: view.button.auctionId }).slice(3)}`,
+        ),
+      ),
+    };
+  }
+  if (content.kind === "new-auction" || content.kind === "trading-opened") {
+    // Вести о новом аукционе и об открытии торгов (PER-646): кнопка следа —
+    // корень аукциона или его лента, экран придёт новым сообщением.
+    const view = renderAuctionAnnouncement(content, timeZone);
+    return {
+      text: view.text,
+      keyboard: new InlineKeyboard().text(
+        view.button.text,
+        traceCallback(
+          `v1:${encodeAuctionCallback(
+            content.kind === "new-auction"
+              ? { kind: "root", auctionId: view.button.auctionId }
+              : { kind: "feed", auctionId: view.button.auctionId, page: 0 },
+          ).slice(3)}`,
         ),
       ),
     };
@@ -586,6 +606,7 @@ export function createNotificationSender(
   api: SendMessageApi,
   auctionBotUsername?: string,
   today?: () => CommunityDay,
+  timeZone = "UTC",
 ): NotificationSender<OutgoingNotification> {
   return {
     async send({ telegramUserId, message: content }) {
@@ -593,6 +614,7 @@ export function createNotificationSender(
         content,
         auctionBotUsername,
         today?.(),
+        timeZone,
       );
       try {
         // Личный чат с человеком имеет id самого человека. Telegram держит id в

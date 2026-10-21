@@ -24,6 +24,11 @@ import {
   toDeliveryNotification,
 } from "../../../core/delivery/index.js";
 import {
+  type AuctionAnnouncementNotice,
+  newAuctionNoticeOf,
+  tradingOpenedNoticeOf,
+} from "../../../core/notifications/auction-announcement-notice.js";
+import {
   type AuctionCancelledNotice,
   auctionCancelledNoticeOf,
 } from "../../../core/notifications/auction-cancelled-notice.js";
@@ -136,6 +141,9 @@ export type RenderableContent =
   // Начало окна «Счастливых часов» на отмеченных лотах (PER-616) — то же,
   // что у бота аукциона.
   | StepWindowNotice
+  // Вести о новом аукционе и об открытии торгов (PER-646) — те же, что у бота
+  // аукциона.
+  | AuctionAnnouncementNotice
   // Понижение участника до гостя (PER-537): о смене круга сообщает прежний бот
   // — этот (RFC-015, С-12). Ссылку на бот аукциона он вручает сам; факт её не
   // несёт (PER-536), и она приходит не из ветки, а из настройки бота.
@@ -304,6 +312,10 @@ function toContent(message: Notification): NotificationContent | undefined {
     // право получателя и названия лотов читает общий рендер вести.
     case "stepWindowStarted":
       return stepWindowNoticeOf(type.value);
+    case "auctionPublished":
+      return newAuctionNoticeOf(type.value);
+    case "auctionTradingOpened":
+      return tradingOpenedNoticeOf(type.value);
     case "releaseSummary": {
       const { summaryId, summarizedAt, recordIds } = type.value;
       if (summaryId === "" || summarizedAt === "" || recordIds.length === 0) {

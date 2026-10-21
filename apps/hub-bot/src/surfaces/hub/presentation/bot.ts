@@ -4189,7 +4189,8 @@ async function handleCallback(
       action.kind === "notify-outbid" ||
       action.kind === "notify-set-outbid" ||
       action.kind === "notify-set-final" ||
-      action.kind === "notify-set-live"
+      action.kind === "notify-set-live" ||
+      action.kind === "notify-set-news"
     ) {
       const change: AuctionNotificationChange | undefined =
         action.kind === "notify-set-outbid"
@@ -4198,7 +4199,9 @@ async function handleCallback(
             ? { kind: "final", enabled: action.enabled }
             : action.kind === "notify-set-live"
               ? { kind: "live", enabled: action.enabled }
-              : undefined;
+              : action.kind === "notify-set-news"
+                ? { kind: "announcements", enabled: action.enabled }
+                : undefined;
       const result = await runtime.dispatcher.execute(
         change === undefined
           ? {
@@ -10476,6 +10479,7 @@ function callbackUseCase(
     | "notify-set-outbid"
     | "notify-set-final"
     | "notify-set-live"
+    | "notify-set-news"
     | "notify-disable-global"
     | "notify-disable-meetup"
     | "notify-settings"
@@ -10586,6 +10590,7 @@ function callbackUseCase(
     case "notify-set-outbid":
     case "notify-set-final":
     case "notify-set-live":
+    case "notify-set-news":
     case "notify-disable-global":
     case "notify-disable-meetup":
     case "notify-settings":

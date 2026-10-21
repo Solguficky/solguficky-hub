@@ -10,8 +10,9 @@ import type { FavoritesCallOptions } from "./favorites.js";
 
 // Настройки уведомлений аукциона (PER-539) — самодостаточные и общие у двух
 // ботов: гость меняет их в боте аукциона, участник — в боте хаба (PER-552), а
-// настройки у человека одни. Их три: частота «перебили» (PER-514, PER-515),
-// выключатель «перебили» в живом финале (PER-645) и выключатель анонса финала.
+// настройки у человека одни. Их четыре: частота «перебили» (PER-514, PER-515),
+// выключатель «перебили» в живом финале (PER-645), выключатель анонса финала и
+// выключатель вестей о новом аукционе и открытии торгов (PER-646).
 // Аукционной категории в общих «Уведомлениях» хаба нет — решение владельца 13
 // октября 2026 года.
 //
@@ -29,6 +30,7 @@ export type AuctionNotificationSettings = {
   frequency: OutbidFrequency;
   finalAnnouncements: boolean;
   liveFinalOutbids: boolean;
+  auctionAnnouncements: boolean;
 };
 
 // Одна настройка за нажатие, целевым значением: экран меняет одну настройку,
@@ -36,7 +38,8 @@ export type AuctionNotificationSettings = {
 export type AuctionNotificationChange =
   | { kind: "frequency"; frequency: OutbidFrequency }
   | { kind: "final"; enabled: boolean }
-  | { kind: "live"; enabled: boolean };
+  | { kind: "live"; enabled: boolean }
+  | { kind: "announcements"; enabled: boolean };
 
 // Каждая настройка — одна кнопка, и нажатие ведёт к следующему варианту
 // (решение владельца по прогону 14 октября 2026 года, №72): частота идёт по
@@ -82,6 +85,7 @@ export function outbidFrequencyButtonLabel(current: OutbidFrequency): string {
 
 const finalLabel = "Анонс финала";
 const liveFinalLabel = "Перебили в финале";
+const announcementsLabel = "Новый аукцион и торги";
 
 // Выключатель — переключатель уведомлений словаря: колокольчик перед
 // состоянием, как у категорий хаба — «🔔 Вкл · Анонс финала».
@@ -98,6 +102,10 @@ export function finalAnnouncementsButtonLabel(enabled: boolean): string {
 
 export function liveFinalOutbidsButtonLabel(enabled: boolean): string {
   return switchLabel(enabled, liveFinalLabel);
+}
+
+export function auctionAnnouncementsButtonLabel(enabled: boolean): string {
+  return switchLabel(enabled, announcementsLabel);
 }
 
 // Ряды экрана, одни у двух ботов (№72): по кнопке на настройку, кнопка
@@ -122,6 +130,13 @@ export function auctionNotificationsRows(
       text: finalAnnouncementsButtonLabel(current.finalAnnouncements),
       change: { kind: "final", enabled: !current.finalAnnouncements },
     },
+    {
+      text: auctionAnnouncementsButtonLabel(current.auctionAnnouncements),
+      change: {
+        kind: "announcements",
+        enabled: !current.auctionAnnouncements,
+      },
+    },
   ];
 }
 
@@ -133,6 +148,7 @@ export const auctionNotificationsExplanation = [
   "Перебили — как часто писать, что твою ставку перебили или ответила твоя автоставка. Раз в 5, 15 минут или час — значит одной сводкой за это время: каждый лот с ценой на её конец.",
   "Перебили в финале — то же о лоте на торгах в зале, о каждом сразу; частота здесь не действует.",
   "Анонс финала — состав финала аукциона, где ты торговался, и его старт. О покупке лота пишу всегда: настройки её не трогают.",
+  "Новый аукцион и торги — что аукцион сходки открыли и когда началась онлайн-неделя. Выключатель гасит обе вести.",
 ] as const;
 
 /** Подтверждение выбора всплывающим текстом: что теперь будет приходить. */
@@ -147,6 +163,8 @@ export function auctionNotificationsToast(
       return `${current.finalAnnouncements ? "Включено" : "Выключено"}: ${finalLabel.toLowerCase()}.`;
     case "live":
       return `${current.liveFinalOutbids ? "Включено" : "Выключено"}: ${liveFinalLabel.toLowerCase()}.`;
+    case "announcements":
+      return `${current.auctionAnnouncements ? "Включено" : "Выключено"}: ${announcementsLabel.toLowerCase()}.`;
   }
 }
 
@@ -199,7 +217,8 @@ export function auctionNotificationsToWire(
 ):
   | { outbidFrequency: WireFrequency }
   | { finalAnnouncements: boolean }
-  | { liveFinalOutbids: boolean } {
+  | { liveFinalOutbids: boolean }
+  | { auctionAnnouncements: boolean } {
   switch (change.kind) {
     case "frequency":
       return { outbidFrequency: wireFrequency[change.frequency] };
@@ -207,6 +226,8 @@ export function auctionNotificationsToWire(
       return { finalAnnouncements: change.enabled };
     case "live":
       return { liveFinalOutbids: change.enabled };
+    case "announcements":
+      return { auctionAnnouncements: change.enabled };
   }
 }
 
@@ -223,7 +244,10 @@ export function outbidFrequencyOf(
 export function auctionNotificationsOf(
   wire: Pick<
     AuctionNotificationPreferences,
-    "outbidFrequency" | "finalAnnouncements" | "liveFinalOutbids"
+    | "outbidFrequency"
+    | "finalAnnouncements"
+    | "liveFinalOutbids"
+    | "auctionAnnouncements"
   >,
 ): AuctionNotificationSettings | undefined {
   const frequency = outbidFrequencyOf(wire.outbidFrequency);
@@ -233,5 +257,6 @@ export function auctionNotificationsOf(
         frequency,
         finalAnnouncements: wire.finalAnnouncements,
         liveFinalOutbids: wire.liveFinalOutbids,
+        auctionAnnouncements: wire.auctionAnnouncements,
       };
 }

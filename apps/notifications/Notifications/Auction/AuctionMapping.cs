@@ -147,6 +147,21 @@ public enum AuctionEnd { Finished, Cancelled, Discarded }
 public sealed record AuctionClosed(Guid EventId, Guid AuctionId, Guid MeetupId, long Version, DateTimeOffset OccurredAt,
     AuctionEnd End, IReadOnlyList<Guid> Registry);
 
+/// <summary>
+/// Повод вести о новом аукционе (PER-646): публикация, снятие с публикации и
+/// открытие онлайн-недели. Снятие вести не даёт — оно снимает неотправленную.
+/// </summary>
+public enum AnnouncementOccasion { Published, Hidden, TradingOpened }
+
+/// <summary>
+/// Проверенный факт видимости или открытия торгов (ADR-047, дополнение
+/// 2026-10-20; PER-646). Неделя идёт снимком конфигурации: у черновика её ещё
+/// нет, и весть тогда дат не называет. Аукцион называется своим идентификатором,
+/// сходка — своим: название сходки канал берёт из карточки реплики.
+/// </summary>
+public sealed record AuctionAnnouncement(Guid EventId, Guid AuctionId, Guid MeetupId, long Version,
+    DateTimeOffset OccurredAt, AnnouncementOccasion Occasion, OnlinePhase? OnlinePhase);
+
 public abstract record AuctionDecoded
 {
     public sealed record Bid(AuctionBid Value) : AuctionDecoded;
@@ -156,6 +171,7 @@ public abstract record AuctionDecoded
     public sealed record Final(AuctionFinal Value) : AuctionDecoded;
     public sealed record FinalLotActivated(AuctionFinalLotActivated Value) : AuctionDecoded;
     public sealed record Closed(AuctionClosed Value) : AuctionDecoded;
+    public sealed record Announcement(AuctionAnnouncement Value) : AuctionDecoded;
     public sealed record Raffle(RaffleDraw Value) : AuctionDecoded;
     public sealed record Predictions(PredictionSettlement Value) : AuctionDecoded;
     public sealed record Poison(string Reason) : AuctionDecoded;
@@ -301,6 +317,35 @@ public static class AuctionMapping
         {
             return new AuctionDecoded.Poison("meetup_id is not a canonical UUIDv7");
         }
+
+        // Видимость и открытие торгов (PER-646): повод, признак скрытия и статус
+        // снимка говорят одно и то же. Публикация и снятие бывают только до торгов,
+        // открытие — на своём статусе и только у видимого аукциона: ADR-047 снимает
+        // признак при открытии торгов. Несовпадение — дефект издателя, и весть по
+        // нему ушла бы не та.
+        if (occasion is AuctionEvent.OccasionOneofCase.AuctionPublished
+            or AuctionEvent.OccasionOneofCase.AuctionHidden
+            or AuctionEvent.OccasionOneofCase.PrebiddingStarted)
+        {
+            var beforeTrading = state.StatusCase
+                is AuctionState.StatusOneofCase.Draft or AuctionState.StatusOneofCase.Scheduled;
+            var (announcement, consistent) = occasion switch
+            {
+                AuctionEvent.OccasionOneofCase.AuctionPublished =>
+                    (AnnouncementOccasion.Published, beforeTrading && !state.Hidden),
+                AuctionEvent.OccasionOneofCase.AuctionHidden =>
+                    (AnnouncementOccasion.Hidden, beforeTrading && state.Hidden),
+                _ => (AnnouncementOccasion.TradingOpened,
+                    state.StatusCase == AuctionState.StatusOneofCase.Prebidding && !state.Hidden),
+            };
+            if (!consistent)
+            {
+                return new AuctionDecoded.Poison($"{subject} state does not match its occasion");
+            }
+            return new AuctionDecoded.Announcement(new AuctionAnnouncement(eventId, auctionId, meetupId, message.Version,
+                occurredAt, announcement, state.Config?.OnlinePhase?.Clone()));
+        }
+
         if (end is { } ended)
         {
             var registry = new List<Guid>(state.LotIds.Count);

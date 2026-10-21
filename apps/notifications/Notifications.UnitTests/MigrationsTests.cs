@@ -83,6 +83,7 @@ public class MigrationsTests
             "step_window_task",
             "lot_lead_restored",
             "outbid_digest_leader_nullable",
+            "auction_announcement",
         ]);
 
         var main = names.IndexOf("orleans_main");

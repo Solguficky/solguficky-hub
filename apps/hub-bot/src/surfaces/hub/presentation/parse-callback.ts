@@ -553,6 +553,7 @@ type PlainAction =
   | { kind: "notify-set-outbid"; frequency: OutbidFrequency }
   | { kind: "notify-set-final"; enabled: boolean }
   | { kind: "notify-set-live"; enabled: boolean }
+  | { kind: "notify-set-news"; enabled: boolean }
   | {
       kind: "notify-set-global";
       category: NotificationCategory;
@@ -2349,6 +2350,12 @@ function parseNotify(parts: readonly string[]): CallbackAction {
     const state = TargetStateSchema.safeParse(parts[3]);
     return state.success
       ? { kind: "notify-set-live", enabled: state.data === "1" }
+      : { kind: "malformed" };
+  }
+  if (parts.length === 4 && parts[2] === "news") {
+    const state = TargetStateSchema.safeParse(parts[3]);
+    return state.success
+      ? { kind: "notify-set-news", enabled: state.data === "1" }
       : { kind: "malformed" };
   }
   if (parts.length === 5 && parts[2] === "gset") {
