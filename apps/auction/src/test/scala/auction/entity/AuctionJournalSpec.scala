@@ -53,6 +53,9 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
 
   private val inFinal = Auction.replay(prebidding, List(deadline, ended, frozen, finalStarted, activated))
 
+  private def restored(row: AnyRef): AuctionEvent =
+    AuctionJournal.restoreEvent(row.asInstanceOf[StoredAuctionEvent].event)
+
   /** Строка прежней формы: байты эталона под manifest и сериализатором нынешнего класса. */
   private def legacy(name: String, current: AnyRef): AnyRef =
     read(kit.system, write(kit.system, current).copy(bytes = golden(s"legacy/$name")))
@@ -83,6 +86,14 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
     "refuses a snapshot hidden from participants once prebidding started" in {
       val open = AuctionJournal.storeAuction(prebidding, sequence = 4)
       a[JournalCorrupted] should be thrownBy AuctionJournal.restoreAuction(open.copy(hidden = Some(true)))
+    }
+
+    "reads a schedule written before the payment term with the term of the platform" in {
+      restored(legacy("auction-scheduled-without-payment-term", stored(scheduled.event, 3))) shouldBe scheduled.event
+      scheduled.event match {
+        case AuctionEvent.AuctionScheduled(config) => config.paymentTerm shouldBe AuctionConfig.PlatformPaymentTerm
+        case other => fail(s"unexpected $other")
+      }
     }
 
     "keeps the stored form of a schedule with step windows and reads it back as one" in {
@@ -303,7 +314,8 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
     }
 
     "reads a schedule written before the raffle existed as a schedule without a raffle" in {
-      legacy("auction-scheduled-without-raffle", stored(scheduled.event, 3)) shouldBe stored(scheduled.event, 3)
+      // Прежняя строка не несёт и срока оплаты (дополнение 2026-10-21): сравнивается событие, а не форма хранения.
+      restored(legacy("auction-scheduled-without-raffle", stored(scheduled.event, 3))) shouldBe scheduled.event
       config().raffleClosesAt shouldBe None
     }
 
@@ -315,7 +327,7 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
           )
         )
       )
-      legacy("auction-scheduled-with-raffle", stored(raffled, 3)) shouldBe stored(raffled, 3)
+      restored(legacy("auction-scheduled-with-raffle", stored(raffled, 3))) shouldBe raffled
       raffled.config.rafflePrize shouldBe None
     }
 

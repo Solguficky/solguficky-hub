@@ -149,8 +149,33 @@ final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckD
       val stored = "я" * (AuctionConfig.MaxRafflePrize + 1)
       val phase = OnlinePhase(opensAt, Some(closesAt), closesLots = true, Some(raffle), Some(stored))
       AuctionConfig
-        .of(Some(phase), 1, ClosingPolicy.Mixed(onlineByDeadline = true), None, Nil)
+        .of(Some(phase), 1, ClosingPolicy.Mixed(onlineByDeadline = true), None, Nil, AuctionConfig.PlatformPaymentTerm)
         .map(_.rafflePrize) shouldBe Right(Some(stored))
+    }
+
+    "fills in the payment term of the platform when the organizer set none and keeps the one they set" in {
+      AuctionConfig.parse(configInput()).map(_.paymentTerm) shouldBe Right(java.time.Duration.ofDays(7))
+      AuctionConfig
+        .parse(configInput().copy(paymentTerm = Some(java.time.Duration.ofDays(3))))
+        .map(_.paymentTerm) shouldBe
+        Right(java.time.Duration.ofDays(3))
+    }
+
+    "accepts a payment term from one day to thirty days and refuses one outside" in {
+      def termed(term: java.time.Duration) = AuctionConfig.parse(configInput().copy(paymentTerm = Some(term)))
+      termed(AuctionConfig.MinPaymentTerm).isRight shouldBe true
+      termed(AuctionConfig.MaxPaymentTerm).isRight shouldBe true
+      termed(AuctionConfig.MinPaymentTerm.minusSeconds(1)) shouldBe Left(ConfigInvalid.PaymentTermOutOfRange)
+      termed(AuctionConfig.MaxPaymentTerm.plusSeconds(1)) shouldBe Left(ConfigInvalid.PaymentTermOutOfRange)
+      termed(java.time.Duration.ZERO) shouldBe Left(ConfigInvalid.PaymentTermOutOfRange)
+      termed(java.time.Duration.ofSeconds(-1)) shouldBe Left(ConfigInvalid.PaymentTermOutOfRange)
+    }
+
+    // Границы срока — платформы, а не значения: журнал с записанным сверх них читается.
+    "reads a journal row whose payment term lies outside the bounds" in {
+      AuctionConfig
+        .of(Some(week), 1, ClosingPolicy.Mixed(onlineByDeadline = true), None, Nil, java.time.Duration.ofDays(90))
+        .map(_.paymentTerm) shouldBe Right(java.time.Duration.ofDays(90))
     }
 
     "refuses a number of final blocks outside zero and one" in {
@@ -231,7 +256,14 @@ final class AuctionConfigSpec extends AnyWordSpec with Matchers with ScalaCheckD
     "restores a window without lot defaults regardless of the currency of the platform" in {
       val euro = window(1, 2, Set(lotA)).copy(step = Money(1, CurrencyCode("EUR")))
       AuctionConfig
-        .of(Some(week), 1, ClosingPolicy.Mixed(onlineByDeadline = true), None, List(euro))
+        .of(
+          Some(week),
+          1,
+          ClosingPolicy.Mixed(onlineByDeadline = true),
+          None,
+          List(euro),
+          AuctionConfig.PlatformPaymentTerm
+        )
         .isRight shouldBe true
     }
 

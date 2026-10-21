@@ -188,6 +188,7 @@ object Main {
       results,
       SlickSetOutcomes(system)
     )
+    val invoices = AuctionNode.registerInvoices(sharding, clock, UuidV7.generator(clock), askTimeout)
     AuctionNode.eraseRaffleNames(system, raffleTickets, clock, erasureEvery)
     if (identity.url.isEmpty)
       logger.warn(
@@ -199,6 +200,7 @@ object Main {
       )
     val projectionMetrics = ProjectionMetrics(telemetry.getMeter("auction"), clock)
     AuctionNode.startProjection(system, projectionMetrics, backlogTimeout)
+    AuctionNode.startInvoicing(system, sharding, invoices, projectionMetrics, askTimeout, backlogTimeout)
     AuctionNode.watchDeadlines(
       system,
       DeadlineMetrics(telemetry.getMeter("auction")),
@@ -253,7 +255,8 @@ object Main {
           placeBidsAccess.holdsRight,
           changes,
           clock,
-          overdueGrace
+          overdueGrace,
+          invoices
         )
       )
       .onComplete(bound("grpc", system))
