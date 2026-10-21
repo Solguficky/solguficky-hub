@@ -40,18 +40,29 @@ export type FeedItem = {
   standing?: LotStanding;
 };
 
-// Строка хронологии: ставка, как её показывает экран. Лимита прокси здесь
-// нет — его нет и в порту.
-export type HistoryItem = {
-  kind: "bid";
-  sequence: number;
-  occurredAt: string;
-  amount: Money;
-  origin: BidOriginView;
-  // Имя ставившего — тем же путём, что имя лидера на карточке. Нет — Auction
-  // имя не отдал; идентификатор вместо имени на экран не выходит.
-  participantName?: string;
-};
+// Строка хронологии: ставка или снятие участника, как их показывает экран.
+// Лимита прокси здесь нет — его нет и в порту.
+export type HistoryItem =
+  | {
+      kind: "bid";
+      sequence: number;
+      occurredAt: string;
+      amount: Money;
+      origin: BidOriginView;
+      // Имя ставившего — тем же путём, что имя лидера на карточке. Нет —
+      // Auction имя не отдал; идентификатор вместо имени на экран не выходит.
+      participantName?: string;
+      // Автора сняли с лота (ADR-072): строка зачёркнута. Нет — не снят.
+      removed?: true;
+    }
+  | {
+      kind: "removal";
+      sequence: number;
+      occurredAt: string;
+      price: Money;
+      // Имя лидера после снятия. Нет — лидера нет или имя не отдано.
+      leaderName?: string;
+    };
 
 export type AuctionBlock =
   | {
@@ -221,6 +232,9 @@ export type AuctionBlock =
       auctionId: string;
       // Название лота для заголовка. Нет — у лота нет строки каталога.
       title?: string;
+      // Статус лота, прочитанный вместе с хронологией: по нему оболочка
+      // хаба решает, ставить ли администратору снятие участника (PER-659).
+      status: LotStatusView;
       // Нумерация с нуля; хронология без ставок — одна пустая страница.
       page: number;
       pageCount: number;

@@ -159,6 +159,15 @@ function fake(answers: {
     floorLot: async () => {
       throw new Error("lot read not used by the console");
     },
+    lotParticipants: async () => {
+      throw new Error("participant removal not used by the console");
+    },
+    previewParticipantRemoval: async () => {
+      throw new Error("participant removal not used by the console");
+    },
+    removeParticipant: async () => {
+      throw new Error("participant removal not used by the console");
+    },
     consoleRaffle: async () => {
       reads.raffle += 1;
       return answers.raffle ?? { kind: "ok" };

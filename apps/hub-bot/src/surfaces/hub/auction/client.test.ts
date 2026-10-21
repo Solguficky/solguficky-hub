@@ -99,6 +99,8 @@ function adapter(rpc: {
   listAuctionNames?: Call;
   placeBid?: Call;
   launchStepWindow?: Call;
+  previewParticipantRemoval?: Call;
+  removeParticipant?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -138,6 +140,9 @@ function adapter(rpc: {
     startNextLot: (rpc.startNextLot ?? notUsed) as never,
     advanceAsk: (rpc.advanceAsk ?? notUsed) as never,
     closeLot: (rpc.closeLot ?? notUsed) as never,
+    previewParticipantRemoval: (rpc.previewParticipantRemoval ??
+      notUsed) as never,
+    removeParticipant: (rpc.removeParticipant ?? notUsed) as never,
   });
 }
 
@@ -1788,5 +1793,212 @@ describe("floor bids adapter", () => {
       kind: "ok",
       names: [{ participantId, name: "Аня" }],
     });
+  });
+});
+
+// Снятие участника с лота (PER-659, ADR-072): участники по хронологии,
+// предпросмотр и снятие на его номере; отказы — значения.
+describe("participant removal adapter", () => {
+  const lotId = "01929b7e-5c1d-7a3f-8e4b-2d6c9f0a1b3c";
+  const money = (rubles: number) => ({
+    minorUnits: BigInt(rubles * 100),
+    currency: "RUB",
+  });
+  const bid = (sequence: number, participantId: string, removed = false) => ({
+    sequence: BigInt(sequence),
+    occurredAt: "2026-10-27T18:00:00Z",
+    kind: {
+      case: "bid" as const,
+      value: {
+        bidId: lotId,
+        participantId,
+        amount: money(sequence * 100),
+        origin: { case: "proxy" as const, value: {} },
+        removed,
+      },
+    },
+  });
+
+  it("lists the participants of the lot in the order of their first bid with their names", async () => {
+    const pages: Record<string, unknown> = {
+      "": create(ListLotHistoryResponseSchema, {
+        entries: [bid(1, "b", true), bid(2, "a"), bid(3, "b", true)],
+        nextPageToken: "next",
+      }),
+      next: create(ListLotHistoryResponseSchema, {
+        entries: [
+          {
+            sequence: 4n,
+            occurredAt: "2026-10-27T18:01:00Z",
+            kind: { case: "removal", value: { price: money(200) } },
+          },
+          bid(5, "c"),
+        ],
+        nextPageToken: "",
+      }),
+    };
+    const asked: unknown[] = [];
+    const read = adapter({
+      listLotHistory: async (request) =>
+        pages[(request as { pageToken: string }).pageToken],
+      getDisplayNames: async (request) => {
+        asked.push(request);
+        return { names: { a: { text: "Аня" }, b: { text: "Боря" } } };
+      },
+    });
+    await expect(
+      read.lotParticipants(admin, { auctionId, lotId }),
+    ).resolves.toEqual({
+      kind: "ok",
+      participants: [
+        { participantId: "b", name: "Боря", removed: true },
+        { participantId: "a", name: "Аня", removed: false },
+        { participantId: "c", removed: false },
+      ],
+    });
+    expect(asked).toMatchObject([
+      { auctionId, participantIds: ["b", "a", "c"] },
+    ]);
+  });
+
+  it("refuses a history it could not read to the end", async () => {
+    const endless = adapter({
+      listLotHistory: async () =>
+        create(ListLotHistoryResponseSchema, {
+          entries: [bid(1, "a")],
+          nextPageToken: "more",
+        }),
+    });
+    await expect(
+      endless.lotParticipants(admin, { auctionId, lotId }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  it("previews the removal and sends the version it decided at back with the removal", async () => {
+    const sent: unknown[] = [];
+    const removal = adapter({
+      previewParticipantRemoval: async (request) => {
+        sent.push(request);
+        return {
+          outcome: {
+            case: "preview",
+            value: {
+              price: money(1_200),
+              leaderId: "b",
+              extendedDeadline: "2026-10-27T18:10:00Z",
+              version: 7n,
+            },
+          },
+        };
+      },
+      removeParticipant: async (request) => {
+        sent.push(request);
+        return { outcome: { case: "accepted", value: { lotVersion: 8n } } };
+      },
+    });
+    const target = { auctionId, lotId, participantId: "a" };
+    await expect(
+      removal.previewParticipantRemoval(admin, target),
+    ).resolves.toEqual({
+      kind: "ok",
+      preview: {
+        price: { minorUnits: 120_000, currency: "RUB" },
+        leaderId: "b",
+        extendedDeadline: "2026-10-27T18:10:00Z",
+        version: 7,
+      },
+    });
+    await expect(
+      removal.removeParticipant(admin, {
+        ...target,
+        expectedVersion: 7,
+        opId: "op-1",
+      }),
+    ).resolves.toEqual({ kind: "ok", lotVersion: 8 });
+    expect(sent).toEqual([
+      expect.objectContaining({ viewer: wireAdmin, ...target }),
+      expect.objectContaining({
+        viewer: wireAdmin,
+        ...target,
+        expectedVersion: 7n,
+        opId: "op-1",
+      }),
+    ]);
+  });
+
+  it("reads every removal refusal as a value", async () => {
+    const cases: [string, unknown][] = [
+      ["notMeetupAdministrator", { kind: "not-administrator" }],
+      ["meetupNotFound", { kind: "meetup-not-found" }],
+      ["meetupCancelled", { kind: "meetup-cancelled" }],
+      ["lotNotInAuction", { kind: "refused", reason: "lot-not-in-auction" }],
+      ["notInPrebidding", { kind: "refused", reason: "not-in-prebidding" }],
+      ["lineupFrozen", { kind: "refused", reason: "lineup-frozen" }],
+      ["lotNotOpen", { kind: "refused", reason: "lot-not-open" }],
+      ["notInOnlinePhase", { kind: "refused", reason: "not-in-online-phase" }],
+      ["deadlinePassed", { kind: "refused", reason: "deadline-passed" }],
+      [
+        "notALotParticipant",
+        { kind: "refused", reason: "not-a-lot-participant" },
+      ],
+      [
+        "participantAlreadyRemoved",
+        { kind: "refused", reason: "already-removed" },
+      ],
+      ["lotChanged", { kind: "lot-changed" }],
+    ];
+    for (const [reason, outcome] of cases) {
+      const removal = adapter({
+        removeParticipant: async () => ({
+          outcome: {
+            case: "refused",
+            value: { reason: { case: reason, value: {} } },
+          },
+        }),
+      });
+      await expect(
+        removal.removeParticipant(admin, {
+          auctionId,
+          lotId,
+          participantId: "a",
+          expectedVersion: 7,
+          opId: "op-1",
+        }),
+      ).resolves.toEqual(outcome);
+    }
+  });
+
+  it("takes a preview refused with a changed lot for a defect of Auction", async () => {
+    const removal = adapter({
+      previewParticipantRemoval: async () => ({
+        outcome: {
+          case: "refused",
+          value: { reason: { case: "lotChanged", value: {} } },
+        },
+      }),
+    });
+    await expect(
+      removal.previewParticipantRemoval(admin, {
+        auctionId,
+        lotId,
+        participantId: "a",
+      }),
+    ).resolves.toMatchObject({ kind: "invalid" });
+  });
+
+  it("does not repeat a removal that got no answer", async () => {
+    const removeParticipant = vi.fn(() =>
+      Promise.reject(new ConnectError("deadline", Code.DeadlineExceeded)),
+    );
+    await expect(
+      adapter({ removeParticipant }).removeParticipant(admin, {
+        auctionId,
+        lotId,
+        participantId: "a",
+        expectedVersion: 7,
+        opId: "op-1",
+      }),
+    ).resolves.toMatchObject({ kind: "timeout" });
+    expect(removeParticipant).toHaveBeenCalledTimes(1);
   });
 });

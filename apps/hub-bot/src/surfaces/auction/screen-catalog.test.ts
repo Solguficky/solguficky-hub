@@ -522,6 +522,7 @@ const history = (entries: boolean): AuctionScreenBody => ({
       lotId: "lot-1",
       auctionId: "auc-1",
       title: "Банка солёных грибов",
+      status: { kind: "unsold" },
       page: entries ? 1 : 0,
       pageCount: entries ? 3 : 1,
       entries: entries

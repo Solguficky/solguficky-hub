@@ -315,7 +315,8 @@ export type ExecuteRequest =
   | PreviewBroadcastRequest
   | LotFormRequest
   | AuctionConsoleRequest
-  | FloorBidsRequest;
+  | FloorBidsRequest
+  | ParticipantRemovalRequest;
 
 type LotFormCall = {
   identity: Person;
@@ -857,6 +858,74 @@ export type FloorBidsRequest =
       opId: string;
     });
 
+// Снятие участника с лота администратором (ADR-072, PER-659): участники лота,
+// предпросмотр и снятие. Состояния нет: лот, человек и номер лота
+// предпросмотра едут в кнопке, а ключ команды рождается на нажатие «Да».
+export type RemovalTargetInput = { lotId: string; participantId: string };
+export type ParticipantRemovalRequest =
+  | (FloorCall & { intent: "view-lot-removal"; lotId: string; page: number })
+  | (FloorCall & {
+      intent: "prepare-participant-removal";
+      target: RemovalTargetInput;
+    })
+  | (FloorCall & {
+      intent: "remove-participant";
+      target: RemovalTargetInput;
+      version: number;
+      opId: string;
+    });
+
+// Отказы снятия, которые экран называет словами. Право и сходку пульт
+// называет общими кадрами отказа.
+export type RemovalRefusal =
+  | "lot-not-in-auction"
+  | "not-in-prebidding"
+  | "lineup-frozen"
+  | "lot-not-open"
+  | "not-in-online-phase"
+  | "deadline-passed"
+  | "not-a-lot-participant"
+  | "already-removed";
+
+export type RemovalLot = { lotId: string; auctionId: string; title?: string };
+// Имени нет — Auction его не назвал: экран не называет человека
+// идентификатором.
+export type RemovalPerson = { participantId: string; name?: string };
+
+// Лот после снятия, как его решил предпросмотр. `leaderName` нет при лидере —
+// Auction не назвал имя.
+export type RemovalForecast = {
+  price: LotAmount;
+  leader: "none" | { name?: string };
+  extendedDeadline?: string;
+};
+
+// Исход снятия — свой экран (дизайн-код, «Экран исхода»).
+export type RemovalNote =
+  | {
+      kind: "removed";
+      name?: string;
+      // Лот, прочитанный после снятия; нет — чтение отказало.
+      after?: RemovalForecast;
+    }
+  // С лота в этой фазе не снимают (ADR-072, п. 4): решено по снимку лота
+  // до вызова Auction или отказом Auction.
+  | { kind: "refused"; reason: RemovalRefusal }
+  // Ставок на лоте нет либо все участники уже сняты: снимать некого.
+  | { kind: "no-participants" }
+  | { kind: "everyone-removed" };
+
+// Подтверждение, которое пришлось задать заново, называет это первой
+// строкой: лот ушёл от номера прежнего предпросмотра (ADR-072, дополнение
+// 2026-10-21).
+export type RemovalConfirm = {
+  lot: RemovalLot;
+  person: RemovalPerson;
+  forecast: RemovalForecast;
+  version: number;
+  changed?: true;
+};
+
 // Человек зала — тот, кто выбрал имя в этом аукционе (ADR-070 п. 3).
 export type FloorPerson = { participantId: string; name: string };
 
@@ -1163,6 +1232,22 @@ export type ExecuteResult =
       lot: FloorLot;
       person: FloorPerson;
       amount: LotAmount;
+    }
+  // Снятие участника с лота (PER-659): кого снять, подтверждение с
+  // предпросмотром и исход.
+  | {
+      kind: "removal-people";
+      lot: RemovalLot;
+      people: readonly RemovalPerson[];
+      page: number;
+    }
+  | ({ kind: "removal-confirm" } & RemovalConfirm)
+  | {
+      kind: "removal-outcome";
+      lot: RemovalLot;
+      note: RemovalNote;
+      // Номер лота из ответа на снятие: «‹ Лот» дочитывает карточку до него.
+      lotVersion?: number;
     }
   // «Счастливые часы» (PER-504): список окон либо исход команды над ними.
   | {
