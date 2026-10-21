@@ -938,6 +938,27 @@ final class AuctionCommandsSpec extends AnyWordSpec with Matchers with ScalaFutu
       repeated.commands shouldBe empty
     }
 
+    "refuses the opposite action under the op_id of the time already set or cleared" in {
+      val set = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.FinalTimeSet(deadline))))
+      AuctionCommands(set, noLots, granted)
+        .setFinalTime(auctionOfMeetup, None, op(7), person)
+        .futureValue shouldBe Left(FinalTimeRefusal.OpIdTaken)
+      val cleared = Auctions(Inspection.Repeated(AuctionEnvelope(5, op(7), AuctionEvent.FinalTimeCleared)))
+      AuctionCommands(cleared, noLots, granted)
+        .setFinalTime(auctionOfMeetup, Some(deadline), op(7), person)
+        .futureValue shouldBe Left(FinalTimeRefusal.OpIdTaken)
+      set.commands shouldBe empty
+      cleared.commands shouldBe empty
+    }
+
+    "refuses a foreign command that took the op_id of the time" in {
+      val auctions = Auctions(Inspection.Present(meetup, registryOpen = false))
+      auctions.finalTimeAnswer = Right(AuctionAnswer.Written(AuctionEnvelope(5, op(7), AuctionEvent.PrebiddingStarted)))
+      AuctionCommands(auctions, noLots, granted)
+        .setFinalTime(auctionOfMeetup, Some(deadline), op(7), person)
+        .futureValue shouldBe Left(FinalTimeRefusal.OpIdTaken)
+    }
+
     "refuses an estimated time under the op_id of another auction command, an absent auction and a stranger" in {
       val taken = Auctions(Inspection.Repeated(AuctionEnvelope(4, op(7), AuctionEvent.PrebiddingStarted)))
       AuctionCommands(taken, noLots, granted)
