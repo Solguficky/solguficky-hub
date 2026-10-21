@@ -14,6 +14,12 @@ namespace AppHost.Configuration.Publish;
 /// Узел, чей образ берёт сервис; <c>null</c> — свой. Бот аукциона берёт образ бота
 /// хаба (ADR-064, п. 18): у него нет сборки, а значит и своего ключа образа в values.
 /// </param>
+/// <param name="Switched">
+/// Workload включает среда ключом values <c>enabled.&lt;сервис&gt;</c>, а без ключа
+/// он стоит с нулём реплик (<see cref="SwitchedReplicas"/>). Так публичный вход
+/// (ADR-071) получает та среда, которая его включила, а не каждая, куда
+/// ставится чарт.
+/// </param>
 internal sealed record ClusterWorkload(
     long RunAsUser,
     string CpuRequest,
@@ -21,7 +27,8 @@ internal sealed record ClusterWorkload(
     string CpuLimit,
     string MemoryLimit,
     WorkloadProbe? Probe,
-    string? ImageOf = null);
+    string? ImageOf = null,
+    bool Switched = false);
 
 internal abstract record WorkloadProbe;
 
@@ -122,6 +129,12 @@ internal static class ClusterWorkloadExtensions
                         container.ReadinessProbe = Timed(new() { HttpGet = new() { Port = http.Port, Path = http.ReadinessPath } });
                         break;
                 }
+            }
+
+            // Последним: шаблон пода уже заполнен, и переносится он целиком.
+            if (shape.Switched)
+            {
+                kubernetes.Workload = SwitchedDeployment.From(deployment, ValuesKey(resource.Resource.Name));
             }
         });
 
