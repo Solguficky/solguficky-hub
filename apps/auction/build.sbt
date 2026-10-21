@@ -218,5 +218,8 @@ lazy val auction = (project in file("."))
       IO.write(file, (Runtime / fullClasspath).value.files.mkString(java.io.File.pathSeparator))
       Seq(file)
     }.taskValue,
-    run / fork := true
+    run / fork := true,
+    // Прогон экрана зала (PER-486, `just auction-screen-load`) — `Test/runMain` в своей JVM: он поднимает Chromium и
+    // процесс Auction и завершается `sys.exit`, которому не место в JVM самого sbt.
+    Test / runMain / fork := true
   )

@@ -86,6 +86,17 @@ object Volley {
     }
   }
 
+  /**
+   * Залп живого финала (PER-486): там ставка принимается ровно по следующей цене (ADR-049), поэтому `bidders`
+   * участников ставят по одной ставке лесенкой — `first`, `first + step`, … — и каждая следующая ждёт ответа на
+   * предыдущую. Фиксированный шаг лота — условие плана: у ступенчатого шага следующая цена разойдётся с лесенкой.
+   */
+  def ladder(seed: Long, lot: UUID, first: Long, step: Long, bidders: Int): Vector[Shot] = {
+    val random = Random(seed)
+    val at = 1_700_000_000_000L + (seed & 0xffffffL)
+    Vector.tabulate[Shot](bidders)(i => Shot.Bid(uuidV7(random, at), lot, first + step * i, uuidV7(random, at)))
+  }
+
   /** Залп равными суммами: `bidders` участников ставят одну и ту же `amount` (P-18). */
   def equal(seed: Long, lot: UUID, amount: Long, bidders: Int): Vector[Shot] = {
     val random = Random(seed)
