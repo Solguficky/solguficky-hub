@@ -9,5 +9,6 @@ ALTER TABLE notification ADD CONSTRAINT notification_type_known CHECK (type IN (
     'lot_proxy_raised', 'circle_changed', 'lot_activity_digest',
     'auction_final_lineup', 'auction_final_started', 'lot_reminder', 'raffle_result',
     'prediction_results', 'release_summary', 'auction_cancelled',
-    'lot_deadline_close', 'auction_final_lot_next', 'lot_lead_restored'
+    'lot_deadline_close', 'auction_final_lot_next', 'step_window_started',
+    'lot_lead_restored'
 ));

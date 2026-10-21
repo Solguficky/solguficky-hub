@@ -1,12 +1,20 @@
+using System.Globalization;
+using System.Text.Json;
+using Auction.V1;
 using Dapper;
 using Notifications.Auction;
+using Notifications.Reminders;
 using Npgsql;
 
 namespace Notifications.Infrastructure;
 
-/// <summary>Последний записанный снимок лота.</summary>
+/// <summary>
+/// Последний записанный снимок лота. Окна сниженного шага приходят данными
+/// снимка и лежат строкой реплики: из них задание начала окна разворачивает
+/// сообщение следящим (ADR-047, дополнение 2026-10-12).
+/// </summary>
 public sealed record LotReplica(Guid LotId, long Version, LotStatus Status, DateTimeOffset? Deadline, Guid? Leader,
-    DateTimeOffset? TerminalAt);
+    DateTimeOffset? TerminalAt, Guid? AuctionId, IReadOnlyList<LotStepWindow> Windows);
 
 /// <summary>
 /// Реплика лота из фактов AUCTION_EVENTS (ADR-063). Соединение и транзакцию
@@ -25,9 +33,9 @@ public static class LotReplicaStore
     // Реплика, записанная до PER-604, получает аукцион со следующим снимком.
     private const string ApplySql = """
         INSERT INTO lot_replica (lot_id, version, status, deadline, leader_id, terminal_at, occurred_at, applied_at,
-                                 auction_id, sale_minor_units, sale_currency)
+                                 auction_id, sale_minor_units, sale_currency, step_windows)
         VALUES (@LotId, @Version, @Status, @Deadline, @Leader, @TerminalAt, @OccurredAt, @Now,
-                @AuctionId, @SaleMinorUnits, @SaleCurrency)
+                @AuctionId, @SaleMinorUnits, @SaleCurrency, CAST(@Windows AS jsonb))
         ON CONFLICT (lot_id) DO UPDATE SET
             version = EXCLUDED.version,
             status = EXCLUDED.status,
@@ -36,6 +44,7 @@ public static class LotReplicaStore
             auction_id = EXCLUDED.auction_id,
             sale_minor_units = EXCLUDED.sale_minor_units,
             sale_currency = EXCLUDED.sale_currency,
+            step_windows = EXCLUDED.step_windows,
             terminal_at = CASE WHEN EXCLUDED.terminal_at IS NULL THEN NULL
                                ELSE COALESCE(lot_replica.terminal_at, EXCLUDED.terminal_at) END,
             occurred_at = EXCLUDED.occurred_at,
@@ -45,7 +54,8 @@ public static class LotReplicaStore
 
     private const string ReadSql = """
         SELECT lot_id AS LotId, version AS Version, status AS Status, deadline AS Deadline,
-               leader_id AS Leader, terminal_at AS TerminalAt
+               leader_id AS Leader, terminal_at AS TerminalAt, auction_id AS AuctionId,
+               step_windows AS Windows
         FROM lot_replica
         WHERE lot_id = @LotId;
         """;
@@ -66,6 +76,7 @@ public static class LotReplicaStore
             snapshot.AuctionId,
             SaleMinorUnits = snapshot.SalePrice?.MinorUnits,
             SaleCurrency = snapshot.SalePrice?.Currency,
+            Windows = StorageOf(snapshot.Windows),
         }, cancellationToken) > 0;
 
     public static async Task<LotReplica?> Read(UnitOfWork work, Guid lotId, CancellationToken cancellationToken)
@@ -86,7 +97,46 @@ public static class LotReplicaStore
     }
 
     private static LotReplica Map(Row row) =>
-        new(row.LotId, row.Version, FromStorage(row.Status), Utc(row.Deadline), row.Leader, Utc(row.TerminalAt));
+        new(row.LotId, row.Version, FromStorage(row.Status), Utc(row.Deadline), row.Leader, Utc(row.TerminalAt),
+            row.AuctionId, WindowsOf(row.Windows));
+
+    /// <summary>
+    /// Окна из строки реплики. Читающий их разворачивает сообщение, поэтому
+    /// разбор здесь один: второй разбор того же формата разошёлся бы с этим.
+    /// </summary>
+    public static IReadOnlyList<LotStepWindow> WindowsOf(string? stored)
+    {
+        if (string.IsNullOrWhiteSpace(stored))
+        {
+            return [];
+        }
+
+        var windows = JsonSerializer.Deserialize<StoredWindow[]>(stored, Json);
+        return windows is null
+            ? []
+            : windows.Select(window => new LotStepWindow(
+                Moment(window.From), Moment(window.Until),
+                new Money { MinorUnits = window.MinorUnits, Currency = window.Currency })).ToArray();
+    }
+
+    // Момент окна приводится к точности хранения при записи: сравнение начала
+    // окна с моментом задания идёт по значению, а не по строке, и обрезанное
+    // базой значение не должно отличаться от записанного.
+    private static string StorageOf(IReadOnlyList<LotStepWindow> windows) =>
+        JsonSerializer.Serialize(windows.Select(window => new StoredWindow(
+                ReminderPlan.ToStoredPrecision(window.From).UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+                ReminderPlan.ToStoredPrecision(window.Until).UtcDateTime.ToString("O", CultureInfo.InvariantCulture),
+                window.Step.MinorUnits, window.Step.Currency)).ToArray(), Json);
+
+    private static DateTimeOffset Moment(string value) =>
+        DateTimeOffset.Parse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal).ToUniversalTime();
+
+    private static readonly JsonSerializerOptions Json = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+    };
+
+    private sealed record StoredWindow(string From, string Until, long MinorUnits, string Currency);
 
     public static string Storage(LotStatus status) => status switch
     {
@@ -116,5 +166,5 @@ public static class LotReplicaStore
         value is { } instant ? new DateTimeOffset(DateTime.SpecifyKind(instant, DateTimeKind.Utc)) : null;
 
     private sealed record Row(Guid LotId, long Version, string Status, DateTime? Deadline, Guid? Leader,
-        DateTime? TerminalAt);
+        DateTime? TerminalAt, Guid? AuctionId, string? Windows);
 }

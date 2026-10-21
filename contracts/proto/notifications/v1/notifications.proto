@@ -160,11 +160,20 @@ message Notification {
     // named inside the message and never in a second message.
     AuctionFinalLotNext auction_final_lot_next = 31;
 
+    // A window of reduced bid step started on a lot the recipient follows. One
+    // fact per recipient and window start, however many lots of the window the
+    // recipient follows: every such lot is named inside the fact with the step
+    // and the end of its own window, never in a second fact. A lot that left
+    // trading, a window that already ended, a cancelled auction and a blocked
+    // recipient produce no fact. No category governs it: unfollowing the lot is
+    // how it is turned off.
+    StepWindowStarted step_window_started = 32;
+
     // An administrator removed a participant from a lot, and the lead passed
     // to the recipient. Sent only to the new leader named by the auction fact;
     // the participant who was removed gets nothing. No category and no outbid
     // frequency governs it: the lead came back without a bid of the recipient.
-    LotLeadRestored lot_lead_restored = 32;
+    LotLeadRestored lot_lead_restored = 33;
   }
 
   // Opaque end-to-end id of the chain this notification belongs to, compared as
@@ -331,6 +340,38 @@ message LotReminder {
 message LotDeadlineClose {
   // Canonical lowercase UUIDv7 with hyphens.
   string lot_id = 1;
+}
+
+// A window of reduced bid step started on the followed lots of the recipient.
+// The fact carries what the channel cannot read itself: the step and the end
+// are values of the window the lot recorded, not of the lot's read model. The
+// lot titles are not part of the trading domain; the channel reads them by
+// lot_id, as for the other lot types.
+message StepWindowStarted {
+  // Canonical lowercase UUID with hyphens: the auction the window belongs to.
+  string auction_id = 1;
+
+  // RFC 3339 instant in UTC: the first instant of the window, the same for
+  // every lot below.
+  string starts_at = 2;
+
+  // Never empty. The followed lots whose window starts at starts_at, each with
+  // the step and the end of its own window: two windows that share a start may
+  // differ in both.
+  repeated StepWindowLot lots = 3;
+}
+
+// One lot of a StepWindowStarted fact: the window of reduced step the lot
+// recorded, as the auction fact carried it.
+message StepWindowLot {
+  // Canonical lowercase UUIDv7 with hyphens.
+  string lot_id = 1;
+
+  // RFC 3339 instant in UTC: the first instant after the window.
+  string until = 2;
+
+  // The step in force in the window, in the currency of the lot.
+  auction.v1.Money step = 3;
 }
 
 // The next lot of the live final belongs to the recipient. Nothing else is

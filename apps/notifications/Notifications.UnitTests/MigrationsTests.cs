@@ -80,6 +80,7 @@ public class MigrationsTests
             "auction_ended",
             "lot_reminder_close_and_final_next",
             "access_request_by_queue",
+            "step_window_task",
             "lot_lead_restored",
             "outbid_digest_leader_nullable",
         ]);

@@ -111,6 +111,30 @@ public sealed class AuctionHandler(AuctionStore store, AuctionTelemetry telemetr
                 Record(message, started, source, "reminder_failed", 0, "dependency_unavailable", "lot reminder schedule failed; message returned to the stream", ex);
                 return;
             }
+
+            // Окна сниженного шага заводят задание начала окна (PER-614): оно
+            // живёт на пару «аукцион и момент начала», поэтому его грин — на
+            // аукцион, а не на лот. Снимок без окон задания не заводит, и
+            // звать грин нечего.
+            if (decoded is AuctionDecoded.Lot { Value.Snapshot.Windows.Count: > 0 } windowed)
+            {
+                try
+                {
+                    await grains
+                        .GetGrain<IStepWindowNotificationGrain>(windowed.Value.Snapshot.AuctionId)
+                        .ApplyLot(windowed.Value.Snapshot.LotId);
+                }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    await message.Retry(stoppingToken);
+                    Record(message, started, source, "step_window_failed", 0, "dependency_unavailable", "step window task schedule failed; message returned to the stream", ex);
+                    return;
+                }
+            }
         }
 
         await message.Accept(stoppingToken);
