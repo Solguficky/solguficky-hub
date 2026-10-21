@@ -54,6 +54,12 @@ final case class StoredAuctionStepWindow(from: Instant, until: Instant, step: St
 final case class StoredLaunchedWindow(opId: UUID, window: StoredAuctionStepWindow)
 
 /**
+ * Payload `FinalTimeSet`: ориентировочное время финала (ADR-040, дополнение 2026-10-19). Снятие времени — событие без
+ * payload, как `AuctionPublished`.
+ */
+final case class StoredFinalTime(at: Instant)
+
+/**
  * Payload `AuctionScheduled` и конфигурация в snapshot. `lotDefaults` — та же форма, что конфигурация лота; пусто,
  * когда администратор их не задал (дополнение ADR-047 от 2026-10-06). Строка, записанная до этого, несёт их всегда и
  * читается так же. `stepWindows` пишется только непустым (дополнение 2026-10-08): строка без него — аукцион без окон.
@@ -71,7 +77,8 @@ final case class StoredAuctionConfig(
  * добавлена в конец: строка, записанная до неё, читает её как пустую. Так же в конец добавлены секции перерыва и финала
  * (PER-334), секция завершения лота финала (PER-607) и секция запущенного окна (ADR-047, дополнение 2026-10-12);
  * `PrebiddingDeadlineReached`, `FinalStarted`, `AuctionCancelled`, `AuctionFinished`, `AuctionPublished` и
- * `AuctionHidden` пишутся одним `kind`.
+ * `AuctionHidden` пишутся одним `kind`. Секция `finalTime` добавлена в конец (ADR-040, дополнение 2026-10-19): строка,
+ * записанная до неё, читается без ориентировочного времени финала.
  */
 final case class StoredAuctionEventBody(
     kind: String,
@@ -83,7 +90,8 @@ final case class StoredAuctionEventBody(
     finalLineupFrozen: Option[StoredLineup] = None,
     finalLotActivated: Option[StoredLotRef] = None,
     finalLotCompleted: Option[StoredLotRef] = None,
-    stepWindowLaunched: Option[StoredAuctionStepWindow] = None
+    stepWindowLaunched: Option[StoredAuctionStepWindow] = None,
+    finalTime: Option[StoredFinalTime] = None
 )
 
 object StoredAuctionEventBody {
@@ -117,7 +125,8 @@ final case class StoredAuctionSeen(sequence: Long, opId: UUID, event: StoredAuct
  * окна, запущенные по ходу торгов, в порядке записи и только непустым; добавлен в конец (ADR-047, дополнение
  * 2026-10-12): snapshot без него читается без запущенных окон. `hidden` — аукцион скрыт от участников, только у `Draft`
  * и `Scheduled` и только `true`; добавлен в конец (ADR-047, дополнение 2026-10-20): snapshot без него — видимый
- * аукцион.
+ * аукцион. `finalAt` — ориентировочное время финала (ADR-040, дополнение 2026-10-19); добавлен в конец: snapshot без
+ * него — аукцион без времени финала.
  */
 final case class StoredAuction(
     sequence: Long,
@@ -132,7 +141,8 @@ final case class StoredAuction(
     cancelledBy: Option[UUID] = None,
     completed: Option[List[UUID]] = None,
     launched: Option[List[StoredLaunchedWindow]] = None,
-    hidden: Option[Boolean] = None
+    hidden: Option[Boolean] = None,
+    finalAt: Option[Instant] = None
 ) extends JournalSerializable
 
 object AuctionJournal {
@@ -195,7 +205,8 @@ object AuctionJournal {
       launched = Option.when(auction.launched.nonEmpty)(
         auction.launched.map(launch => StoredLaunchedWindow(launch.opId.value, storeWindow(launch.window)))
       ),
-      hidden = Option.when(auction.hidden)(true)
+      hidden = Option.when(auction.hidden)(true),
+      finalAt = auction.finalAt
     )
   }
 
@@ -255,7 +266,8 @@ object AuctionJournal {
       launched = stored.launched.getOrElse(Nil).map { launch =>
         LaunchedWindow(OpId(launch.opId), restoreWindow(launch.window))
       },
-      hidden = hidden
+      hidden = hidden,
+      finalAt = stored.finalAt
     )
   }
 
@@ -299,6 +311,9 @@ object AuctionJournal {
       case AuctionEvent.AuctionFinished => StoredAuctionEventBody.of("AuctionFinished")
       case AuctionEvent.StepWindowLaunched(window) =>
         StoredAuctionEventBody.of("StepWindowLaunched").copy(stepWindowLaunched = Some(storeWindow(window)))
+      case AuctionEvent.FinalTimeSet(at) =>
+        StoredAuctionEventBody.of("FinalTimeSet").copy(finalTime = Some(StoredFinalTime(at)))
+      case AuctionEvent.FinalTimeCleared => StoredAuctionEventBody.of("FinalTimeCleared")
     }
 
   /**
@@ -306,32 +321,32 @@ object AuctionJournal {
    */
   def restoreEvent(stored: StoredAuctionEventBody): AuctionEvent =
     stored match {
-      case StoredAuctionEventBody("AuctionDrafted", Some(drafted), None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("AuctionDrafted", Some(drafted), None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.AuctionDrafted(MeetupId(drafted.meetupId), drafted.hidden.getOrElse(false))
-      case StoredAuctionEventBody("AuctionPublished", None, None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("AuctionPublished", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.AuctionPublished
-      case StoredAuctionEventBody("AuctionHidden", None, None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("AuctionHidden", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.AuctionHidden
-      case StoredAuctionEventBody("LotAdded", None, Some(added), None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("LotAdded", None, Some(added), None, None, None, None, None, None, None, None) =>
         AuctionEvent.LotAdded(LotId(added.lotId))
-      case StoredAuctionEventBody("LotRemoved", None, None, Some(removed), None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("LotRemoved", None, None, Some(removed), None, None, None, None, None, None, None) =>
         AuctionEvent.LotRemoved(LotId(removed.lotId))
-      case StoredAuctionEventBody("AuctionScheduled", None, None, None, Some(config), None, None, None, None, None) =>
+      case StoredAuctionEventBody("AuctionScheduled", None, None, None, Some(config), None, None, None, None, None, None) =>
         AuctionEvent.AuctionScheduled(restoreConfig(config))
-      case StoredAuctionEventBody("PrebiddingStarted", None, None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("PrebiddingStarted", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.PrebiddingStarted
-      case StoredAuctionEventBody("AuctionDiscarded", None, None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("AuctionDiscarded", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.AuctionDiscarded
-      case StoredAuctionEventBody("AuctionCancelled", None, None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("AuctionCancelled", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.AuctionCancelled
-      case StoredAuctionEventBody("PrebiddingDeadlineReached", None, None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("PrebiddingDeadlineReached", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.PrebiddingDeadlineReached
-      case StoredAuctionEventBody("PrebiddingEnded", None, None, None, None, Some(ended), None, None, None, None) =>
+      case StoredAuctionEventBody("PrebiddingEnded", None, None, None, None, Some(ended), None, None, None, None, None) =>
         AuctionEvent.PrebiddingEnded(ended.finished)
-      case StoredAuctionEventBody("FinalLineupFrozen", None, None, None, None, None, Some(lineup), None, None, None)
+      case StoredAuctionEventBody("FinalLineupFrozen", None, None, None, None, None, Some(lineup), None, None, None, None)
           if lineup.order.nonEmpty && lineup.order.distinct.size == lineup.order.size =>
         AuctionEvent.FinalLineupFrozen(lineup.order.map(LotId(_)))
-      case StoredAuctionEventBody("FinalStarted", None, None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("FinalStarted", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.FinalStarted
       case StoredAuctionEventBody(
             "FinalLotActivated",
@@ -342,6 +357,7 @@ object AuctionJournal {
             None,
             None,
             Some(activated),
+            None,
             None,
             None
           ) =>
@@ -356,15 +372,22 @@ object AuctionJournal {
             None,
             None,
             Some(completed),
+            None,
             None
           ) =>
         AuctionEvent.FinalLotCompleted(LotId(completed.lotId))
-      case StoredAuctionEventBody("AuctionFinished", None, None, None, None, None, None, None, None, None) =>
+      case StoredAuctionEventBody("AuctionFinished", None, None, None, None, None, None, None, None, None, None) =>
         AuctionEvent.AuctionFinished
       // Окно запуска прошло проверку команды против конфигурации; без неё журнал сверяет то, что выводится из окна.
-      case StoredAuctionEventBody("StepWindowLaunched", None, None, None, None, None, None, None, None, Some(window))
+      case StoredAuctionEventBody("StepWindowLaunched", None, None, None, None, None, None, None, None, Some(window), None)
           if window.from.isBefore(window.until) && window.lots.nonEmpty =>
         AuctionEvent.StepWindowLaunched(restoreWindow(window))
+      // Ориентировочное время финала: момент, названный администратором (ADR-040, дополнение 2026-10-19).
+      case StoredAuctionEventBody("FinalTimeSet", None, None, None, None, None, None, None, None, None, Some(time)) =>
+        AuctionEvent.FinalTimeSet(time.at)
+      // Снятие времени: payload у него пуст, как у `AuctionPublished`.
+      case StoredAuctionEventBody("FinalTimeCleared", None, None, None, None, None, None, None, None, None, None) =>
+        AuctionEvent.FinalTimeCleared
       case other => corrupted(s"auction event of kind ${other.kind} with sections that do not match it")
     }
 

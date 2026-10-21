@@ -13,6 +13,7 @@ import auction.lot.Money
 import auction.lot.ParticipantId
 import auction.projection.LotSnapshotView
 
+import java.time.Instant
 import java.util.UUID
 
 /**
@@ -24,11 +25,13 @@ enum ScreenState {
 
   /**
    * До заморозки состава: торги не дошли до финала. `withFinal` — у аукциона есть финал, и экран ведёт отсчёт к нему.
+   * `finalAt` — ориентировочное время финала (ADR-040, дополнение 2026-10-19): его выставляет администратор, а без
+   * него экран пишет «скоро».
    */
-  case Upcoming(withFinal: Boolean)
+  case Upcoming(withFinal: Boolean, finalAt: Option[Instant])
 
-  /** Состав заморожен, первый лот финала ещё не вышел. */
-  case Lineup(lots: List[ScreenLot])
+  /** Состав заморожен, первый лот финала ещё не вышел. `finalAt` — тот же отсчёт, что и до заморозки. */
+  case Lineup(lots: List[ScreenLot], finalAt: Option[Instant])
 
   /** Лот финала в торгах. */
   case Live(lot: LiveLot)
@@ -181,18 +184,19 @@ object Screen {
     }
 
   /** Состояние экрана. `name` — отображаемое имя участника (ADR-059). */
-  def of(reading: ScreenReading, name: ParticipantId => String): ScreenState =
+  def of(reading: ScreenReading, name: ParticipantId => String): ScreenState = {
+    val finalAt = reading.auction.finalAt
     reading.auction.state match {
       case AuctionState.Initial | AuctionState.Draft =>
-        ScreenState.Upcoming(withFinal = true)
-      case AuctionState.Scheduled(config) => ScreenState.Upcoming(config.finalBlocks > 0)
-      case AuctionState.Prebidding(config, _) => ScreenState.Upcoming(config.finalBlocks > 0)
-      case AuctionState.Settling(config, _) => ScreenState.Upcoming(config.finalBlocks > 0)
-      case AuctionState.Break(config, _) => ScreenState.Upcoming(config.finalBlocks > 0)
-      case AuctionState.LineupFrozen(_, _, _) => ScreenState.Lineup(reading.lineup.map(lot))
+        ScreenState.Upcoming(withFinal = true, finalAt = finalAt)
+      case AuctionState.Scheduled(config) => ScreenState.Upcoming(config.finalBlocks > 0, finalAt = finalAt)
+      case AuctionState.Prebidding(config, _) => ScreenState.Upcoming(config.finalBlocks > 0, finalAt = finalAt)
+      case AuctionState.Settling(config, _) => ScreenState.Upcoming(config.finalBlocks > 0, finalAt = finalAt)
+      case AuctionState.Break(config, _) => ScreenState.Upcoming(config.finalBlocks > 0, finalAt = finalAt)
+      case AuctionState.LineupFrozen(_, _, _) => ScreenState.Lineup(reading.lineup.map(lot), finalAt)
       case AuctionState.Final(_, _, _, activated, completed) =>
         shownLot(reading) match {
-          case None => ScreenState.Lineup(reading.lineup.map(lot))
+          case None => ScreenState.Lineup(reading.lineup.map(lot), finalAt)
           case Some(view) =>
             view.lot.state match {
               case LotState.Trading(trading) =>
@@ -213,7 +217,7 @@ object Screen {
                 previousLot(reading).filterNot(_.lotId == view.lotId) match {
                   case Some(previous) =>
                     ScreenState.Between(ClosedLot(lot(previous), outcome(previous.lot.state, name)), Some(lot(view)))
-                  case None => ScreenState.Lineup(reading.lineup.map(lot))
+                  case None => ScreenState.Lineup(reading.lineup.map(lot), finalAt)
                 }
               case closedState =>
                 val done = (activated ++ completed).map(_.value).toSet + view.lotId
@@ -224,6 +228,7 @@ object Screen {
       case AuctionState.Finished(_, _) => ScreenState.Finished(totals(reading.sold))
       case AuctionState.Cancelled(_, _, _) => ScreenState.Cancelled(totals(reading.sold))
     }
+  }
 
   private def lot(view: LotSnapshotView): ScreenLot =
     ScreenLot(view.lotId, view.card.map(_.title.value), view.card.flatMap(_.image))

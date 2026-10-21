@@ -22,7 +22,8 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "finalTime": null
       }
     },
     {
@@ -40,7 +41,8 @@
         "finalLineupFrozen": null,
         "finalLotActivated": null,
         "finalLotCompleted": null,
-        "stepWindowLaunched": null
+        "stepWindowLaunched": null,
+        "finalTime": null
       }
     }
   ],
@@ -51,5 +53,6 @@
   "cancelledBy": null,
   "completed": null,
   "launched": null,
-  "hidden": true
+  "hidden": true,
+  "finalAt": null
 }

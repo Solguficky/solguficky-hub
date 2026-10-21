@@ -124,6 +124,28 @@ final class AuctionJournalSpec extends AnyWordSpec with Matchers with BeforeAndA
       keepsGolden("auction-scheduled-without-defaults", stored(bare, 3))
     }
 
+    "keeps the stored form of the estimated time of the final and reads it back" in {
+      keepsGolden("final-time-set", stored(AuctionEvent.FinalTimeSet(decidedAt), 5))
+      keepsGolden("final-time-cleared", stored(AuctionEvent.FinalTimeCleared, 6))
+    }
+
+    "keeps the estimated time of the final in the snapshot and reads it back" in {
+      val withTime = Auction.apply(prebidding, AuctionEnvelope(5, op(5), AuctionEvent.FinalTimeSet(decidedAt)))
+      val stored = AuctionJournal.storeAuction(withTime, sequence = 5)
+      stored.finalAt shouldBe Some(decidedAt)
+      AuctionJournal.restoreAuction(stored) shouldBe withTime
+      val cleared = Auction.apply(withTime, AuctionEnvelope(6, op(6), AuctionEvent.FinalTimeCleared))
+      val without = AuctionJournal.storeAuction(cleared, sequence = 6)
+      without.finalAt shouldBe None
+      AuctionJournal.restoreAuction(without) shouldBe cleared
+    }
+
+    // Строка, записанная до поля времени: аукцион без ориентировочного времени финала (ADR-040, дополнение 2026-10-19).
+    "reads a snapshot written before the estimated time of the final as an auction without it" in {
+      val snapshot = legacy("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
+      AuctionJournal.restoreAuction(snapshot.asInstanceOf[StoredAuction]).finalAt shouldBe None
+    }
+
     "keeps the stored form of a snapshot in prebidding with its config and the op_id of the start" in {
       keepsGolden("auction-snapshot-prebidding", AuctionJournal.storeAuction(prebidding, sequence = 4))
       AuctionJournal.restoreAuction(AuctionJournal.storeAuction(prebidding, sequence = 4)) shouldBe prebidding
