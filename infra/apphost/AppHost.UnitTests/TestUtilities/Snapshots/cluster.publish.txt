@@ -72,6 +72,17 @@ auction-db-user: ParameterResource
   secret: True
 auction-service-token: ParameterResource
   secret: True
+cloudflared: ContainerResource
+  image: docker.io/cloudflare/cloudflared@sha256:072c067d25ccbe61d46e18f0d0723255f2bb5304f7317caa95b27031520ff92c
+  arg: tunnel
+  arg: --config
+  arg: /etc/cloudflared/config.yml
+  arg: run
+  env: TUNNEL_METRICS=0.0.0.0:2000
+  env: TUNNEL_TOKEN={cloudflared-tunnel-token.value}
+  relationship: Reference cloudflared-tunnel-token
+cloudflared-tunnel-token: ParameterResource
+  secret: True
 hub-bot: ContainerResource
   image: /placeholder:latest
   build: <repo>/apps/hub-bot/Containerfile context=<repo>
@@ -142,7 +153,7 @@ identity-db: ConnectionStringParameterResource
 identity-maintainer-token: ParameterResource
   secret: True
 jetstream-topology: ContainerResource
-  image: docker.io/natsio/nats-box:
+  image: docker.io/natsio/nats-box@sha256:be25666441c3aee65193aba33d60ff2f06ede7ee9eba58864324b33d7eb94fea
   arg: /topology/apply.sh
   arg: /topology
   env: NATS_URL={nats.connectionString}

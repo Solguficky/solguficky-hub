@@ -32,6 +32,18 @@ Stage — хаб с аукционом и три бота в namespace `test` k3
 
 Сводка «Что нового» на stage включена тем, кто переключатель не трогал ([ADR-069](../decisions/ADR-069-release-notes-as-environment-data.md), п. 5): values stage ставят `config.notifications.notifications_release_notes_enabled_by_default: "true"`. В чарте значение `false`: среда без ключа шлёт сводку только тем, кто включил категорию сам, а остальным сводки видны лишь в «Что нового». Иное значение, кроме `true` и `false`, роняет старт Notifications.
 
+## Публичный вход
+
+Экран зала выходит в интернет через Cloudflare Tunnel, workload `cloudflared` чарта ([ADR-071](../decisions/ADR-071-public-entry-through-cloudflare-tunnel.md), [PER-661](https://linear.app/anticnvm/issue/per-661)). Устройство в чарте — [local-development.md](local-development.md#публикация-чарта-прода). Что нужно среде:
+
+- **Порядок.** Секрет `secrets.cloudflared.cloudflared_tunnel_token` входит в чарт всегда, и выкладка без переменной `CLOUDFLARED_TUNNEL_TOKEN` в файле секретов падает, даже когда туннель выключен. Переменная попадает в файл раньше первой выкладки чарта с `cloudflared`; пока туннеля нет, значение пустое.
+- **Туннель управляется локально.** Он заводится командой `cloudflared tunnel create`, а не в дашборде: правила лежат в чарте, а туннель, созданный в дашборде, берёт правила с edge Cloudflare и молча игнорирует смонтированные. Токен — `cloudflared tunnel token <туннель>`, адрес — `cloudflared tunnel route dns <туннель> <хост>` в зоне домена на Cloudflare. Токен у test и prod разный.
+- **Включение.** values среды ставят `enabled.cloudflared: true`. Без ключа workload стоит с нулём реплик.
+- **NetworkPolicy** ops-каркаса разрешают поду с меткой `app.kubernetes.io/component: cloudflared` выход на порт 7844 по TCP и UDP к адресам Cloudflare `region1.v2.argotunnel.com` и `region2.v2.argotunnel.com` и DNS к `kube-dns`. Порт 443 туннелю не нужен: обновлений образ не проверяет. Auction разрешён вход на порт 8080 от того же пода, на 8081 туннелю ходить незачем. Адреса Cloudflare — [Tunnel with firewall](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/configure-tunnels/tunnel-with-firewall/).
+- **Квота.** Под туннеля просит 10m и 32Mi, лимит 200m и 128Mi; лимит памяти ложится в квоту namespace.
+
+Готовность пода туннеля связи с Cloudflare не означает: пробы смотрят только порт метрик, чтобы выкладка не ждала чужую сеть. Связь видна в логе пода (`Registered tunnel connection`). Проверка после включения: страница `/screen/<auction_id>` открывается по публичному адресу, `curl -i https://<хост>/health` отвечает 404 от самого туннеля, а снаружи хоста по-прежнему открыт только SSH.
+
 ## Автовыкладка
 
 Мерж в `develop`, который меняет образ сервиса или чарт, доезжает до stage следующей ночью без ручных шагов (дополнения ADR-055 от 2026-10-07 и 2026-10-18):

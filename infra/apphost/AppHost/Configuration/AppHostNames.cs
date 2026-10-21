@@ -37,6 +37,9 @@ public static class AppHostNames
 
         // Бот поддержки (ADR-068).
         public const string SupportBot = "support-bot";
+
+        // Публичный вход к экрану зала, только в чарте (ADR-071).
+        public const string Cloudflared = "cloudflared";
     }
 
     /// <summary>

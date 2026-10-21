@@ -131,20 +131,111 @@ metadata:
 EOF
 }
 
-# tree CASE - a rendered tree with the seven chart workloads and the topology Job
+# tunnel - the public entry tunnel switched off, its ingress rules and the
+# Auction Service they reach, in the shape the AppHost publish emits (ADR-071)
+tunnel() {
+    cat <<EOF
+---
+apiVersion: "apps/v1"
+kind: "Deployment"
+metadata:
+  name: "cloudflared-deployment"
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: "cloudflared"
+  revisionHistoryLimit: 3
+  strategy:
+    type: "Recreate"
+  template:
+    metadata:
+      annotations:
+        checksum/config: "$checksum"
+        checksum/secrets: "$checksum"
+        checksum/ingress: "$checksum"
+    spec:
+      containers:
+        - image: "docker.io/cloudflare/cloudflared@$digest"
+          livenessProbe:
+            tcpSocket:
+              port: 2000
+          name: "cloudflared"
+          readinessProbe:
+            tcpSocket:
+              port: 2000
+          startupProbe:
+            tcpSocket:
+              port: 2000
+          args:
+            - "tunnel"
+            - "--config"
+            - "/etc/cloudflared/config.yml"
+            - "run"
+          resources:
+            limits:
+              cpu: "200m"
+              memory: "128Mi"
+      volumes:
+        - name: "ingress"
+          configMap:
+            name: "cloudflared-ingress"
+      securityContext:
+        runAsNonRoot: true
+  replicas: !!int "0"
+EOF
+    cat <<'EOF'
+---
+apiVersion: "v1"
+kind: "ConfigMap"
+metadata:
+  name: "cloudflared-ingress"
+  labels:
+    app.kubernetes.io/component: "cloudflared"
+data:
+  config.yml: "ingress:\n  - path: ^/screen/\n    service: http://auction-service:8080\n  - service: http_status:404\n"
+EOF
+}
+
+# auction_service - the Service the tunnel's rules reach
+auction_service() {
+    cat <<EOF
+---
+apiVersion: "v1"
+kind: "Service"
+metadata:
+  name: "auction-service"
+spec:
+  type: "ClusterIP"
+  ports:
+    - name: "http"
+      protocol: "TCP"
+      port: 8080
+      targetPort: 8080
+    - name: "grpc"
+      protocol: "TCP"
+      port: 8081
+      targetPort: 8081
+EOF
+}
+
+# tree CASE - a rendered tree with the eight chart workloads and the topology Job
 tree() {
     work="$scratch/$1"
     for name in identity meetups notifications hub-bot auction auction-bot support-bot; do
         mkdir -p "$work/solguficky-hub/templates/$name"
         deployment "$name" > "$work/solguficky-hub/templates/$name/deployment.yaml"
     done
+    auction_service > "$work/solguficky-hub/templates/auction/service.yaml"
+    mkdir -p "$work/solguficky-hub/templates/cloudflared"
+    tunnel > "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
     mkdir -p "$work/solguficky-hub/templates/jetstream-topology"
     topology > "$work/solguficky-hub/templates/jetstream-topology/jetstream-topology.yaml"
     echo "$work"
 }
 
+# A case renders with the tunnel switched off unless it names --rendered-enabled.
 assert_passes() {
-    if output=$("$python" "$check" --rendered "$2" 2>&1); then
+    if output=$("$python" "$check" "${3:---rendered}" "$2" 2>&1); then
         echo "ok   $1"
     else
         echo "FAIL $1: expected success, got:"
@@ -154,7 +245,7 @@ assert_passes() {
 }
 
 assert_fails() {
-    if output=$("$python" "$check" --rendered "$3" 2>&1); then
+    if output=$("$python" "$check" "${4:---rendered}" "$3" 2>&1); then
         echo "FAIL $1: expected failure, got success"
         failed=1
     elif echo "$output" | grep -qF -- "$2"; then
@@ -167,7 +258,58 @@ assert_fails() {
 }
 
 work=$(tree good)
-assert_passes "seven workloads and the topology Job by the rules pass" "$work"
+assert_passes "eight workloads and the topology Job by the rules pass" "$work"
+
+work=$(tree tunnel-enabled)
+sed -i 's/replicas: !!int "0"/replicas: !!int "1"/' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_passes "the tunnel runs one replica where the environment enables it" "$work" --rendered-enabled
+
+work=$(tree tunnel-on-without-key)
+sed -i 's/replicas: !!int "0"/replicas: !!int "1"/' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "the tunnel running in an environment that did not enable it" 'cloudflared: replicas must be !!int "0", got !!int "1"' "$work"
+
+work=$(tree tunnel-off-with-key)
+assert_fails "the tunnel staying off where the environment enables it" 'cloudflared: replicas must be !!int "1", got !!int "0"' "$work" --rendered-enabled
+
+work=$(tree tunnel-quoted-count)
+sed -i 's/replicas: !!int "0"/replicas: "1"/' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "a quoted replica count the Kubernetes API rejects" 'cloudflared: replicas must be !!int "1", got "1"' "$work" --rendered-enabled
+
+work=$(tree tunnel-unanchored-path)
+sed -i 's|path: ^/screen/|path: /screen/|' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "an unanchored screen path that passes /x/screen/y" "cloudflared: ingress rules must pass only ^/screen/" "$work"
+
+work=$(tree tunnel-no-catch-all)
+sed -i 's|  - service: http_status:404\\n||' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "rules without the 404 catch-all" "cloudflared: ingress rules must pass only ^/screen/" "$work"
+
+work=$(tree tunnel-to-grpc)
+sed -i 's|auction-service:8080|auction-service:8081|' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "rules reaching the gRPC port" "cloudflared: ingress rules must pass only ^/screen/ to auction-service:8080" "$work"
+
+work=$(tree tunnel-origin-missing)
+rm "$work/solguficky-hub/templates/auction/service.yaml"
+assert_fails "rules reaching a Service the chart does not render" "cloudflared: chart renders no auction-service Service" "$work"
+
+work=$(tree tunnel-token-argument)
+sed -i 's|            - "run"|            - "run"\n            - "--token"|' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "the token in the pod spec" "cloudflared: the token must come from TUNNEL_TOKEN" "$work"
+
+work=$(tree tunnel-token-inline)
+sed -i 's|          args:|          env:\n            - name: "TUNNEL_TOKEN"\n              value: "leaked"\n          args:|' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "the token inline in the pod env" "cloudflared: the token must come from TUNNEL_TOKEN" "$work"
+
+work=$(tree tunnel-readiness-on-cloudflare)
+sed -i '/readinessProbe:/{n;s/tcpSocket:/httpGet:/}' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "a tunnel readiness that waits for Cloudflare" "cloudflared: readinessProbe must be tcpSocket, got httpGet" "$work"
+
+work=$(tree tunnel-no-ingress-checksum)
+sed -i '/checksum\/ingress:/d' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "a pod that a rules change would not roll" "cloudflared: pod template has no checksum/ingress annotation" "$work"
+
+work=$(tree tunnel-rules-unmounted)
+sed -i 's/^            name: "cloudflared-ingress"$/            name: "cloudflared-other"/' "$work/solguficky-hub/templates/cloudflared/deployment.yaml"
+assert_fails "a tunnel that does not mount its rules" "cloudflared: pod does not mount the cloudflared-ingress ConfigMap" "$work"
 
 work=$(tree bot-without-probes)
 sed -i '/Probe:/,/port:/d' "$work/solguficky-hub/templates/hub-bot/deployment.yaml"

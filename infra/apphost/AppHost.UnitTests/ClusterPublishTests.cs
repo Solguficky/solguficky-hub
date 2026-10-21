@@ -31,11 +31,11 @@ public class ClusterPublishTests
     }
 
     /// <summary>
-    /// Кроме сервисов в модели один compute-ресурс — Job топологии JetStream,
-    /// которым владеет публикация NATS (PER-311).
+    /// Кроме сервисов в модели — Job топологии JetStream, которым владеет
+    /// публикация NATS (PER-311), и туннель публичного входа (ADR-071).
     /// </summary>
     [Fact]
-    public async Task Publish_Workloads_AreTheHubWithAuctionAndTopologyJob()
+    public async Task Publish_Workloads_AreTheHubWithAuctionTopologyJobAndTunnel()
     {
         var builder = await PublishModelAsync();
 
@@ -43,7 +43,7 @@ public class ClusterPublishTests
         builder.Resources.OfType<IComputeResource>()
             .Select(resource => resource.Name)
             .Order(StringComparer.Ordinal)
-            .ShouldBe([R.Auction, R.AuctionBot, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications, R.SupportBot]);
+            .ShouldBe([R.Auction, R.AuctionBot, R.Cloudflared, R.HubBot, R.Identity, NatsSetup.TopologyJobName, R.Meetups, R.Notifications, R.SupportBot]);
     }
 
     /// <summary>
@@ -208,10 +208,12 @@ public class ClusterPublishTests
     /// <c>hub-auction</c>. Расхождение составов — решение, которое должно быть
     /// видно правкой этого теста, а не тихо приехать в прод вместе с изменением
     /// локального профиля. Stage поднимает хаб с аукционом и три бота
-    /// (дополнения к ADR-055); локальный <c>hub</c> JVM не тянет.
+    /// (дополнения к ADR-055); локальный <c>hub</c> JVM не тянет. Единственное
+    /// расхождение — туннель публичного входа: локально экран открывается по
+    /// адресу, который публикует Aspire (ADR-071).
     /// </summary>
     [Fact]
-    public void PublishProfile_MatchesHubAuctionComposition()
+    public void PublishProfile_IsHubAuctionCompositionWithTunnel()
     {
         var configuration = new ConfigurationBuilder()
             .SetBasePath(AppContext.BaseDirectory)
@@ -225,7 +227,7 @@ public class ClusterPublishTests
             .Build());
 
         cluster.Name.ShouldBe("cluster");
-        cluster.Services.Order().ShouldBe(local.Services.Order());
+        cluster.Services.Order().ShouldBe(local.Services.Append(R.Cloudflared).Order());
         cluster.Infrastructure.Order().ShouldBe(local.Infrastructure.Order());
     }
 }

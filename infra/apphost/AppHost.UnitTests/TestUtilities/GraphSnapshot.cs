@@ -81,7 +81,10 @@ internal static partial class GraphSnapshot
 
         foreach (var image in resource.Annotations.OfType<ContainerImageAnnotation>())
         {
-            text.AppendLine($"  image: {image.Registry}/{image.Image}:{image.Tag}");
+            // Образ по digest тега не несёт: смена digest видна в снимке строкой.
+            text.AppendLine(image.SHA256 is { } digest
+                ? $"  image: {image.Registry}/{image.Image}@sha256:{digest}"
+                : $"  image: {image.Registry}/{image.Image}:{image.Tag}");
         }
 
         foreach (var build in resource.Annotations.OfType<DockerfileBuildAnnotation>())
