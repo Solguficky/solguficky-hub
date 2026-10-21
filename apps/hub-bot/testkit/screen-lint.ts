@@ -1,7 +1,9 @@
+import { raffleButtonLabel } from "../src/auction-raffle.js";
 import {
   followLabel,
   lotNextLabel,
   lotPrevLabel,
+  lotsLabel,
   unfollowLabel,
 } from "../src/auction-standing.js";
 import {
@@ -75,6 +77,11 @@ const lotCardPairs = [
   `${refreshLabel}|${lotNextLabel}`,
 ];
 
+// Корень аукциона у обоих ботов (решение владельца по прогону 14.10, №66;
+// пересматривает «Розыгрыш своим рядом» PER-669): лоты и розыгрыш — одним
+// рядом.
+const auctionRootPairs = [`${lotsLabel}|${raffleButtonLabel}`];
+
 // Пары хаба, названные поимённо. «Отписаться» рядом с «Уведомлениями сходки» —
 // пара, которой в дизайн-коде нет: подписка живёт в карточке по решению
 // PER-402, и отдельным рядом она вывела бы карточку за пять рядов. Материалы
@@ -127,6 +134,7 @@ const hubNamedPairs: ReadonlySet<string> = new Set([
   `${marked(pictogram.title, "Название")}|${marked(pictogram.description, "Описание")}`,
   `${marked(pictogram.photo, "Фото")}|${marked(pictogram.price, "Цена и шаг")}`,
   ...lotCardPairs,
+  ...auctionRootPairs,
 ]);
 
 type Catalog = Readonly<Record<string, ScreenEntry>>;
@@ -151,13 +159,13 @@ const configFor: Record<ScreenSurface, (catalog: Catalog) => LintConfig> = {
     },
     namedPairs: hubNamedPairs,
   }),
-  // Именованные пары у дерева аукциона — только пары карточки лота, группа
-  // родителей одна — списки аукционов, в которые возвращает лента.
+  // Именованные пары у дерева аукциона — пары карточки лота и корня аукциона,
+  // группа родителей одна — списки аукционов, в которые возвращает лента.
   auction: (catalog) => ({
     tag: auctionTag,
     catalog,
     parentGroups: { [auctionListParent]: auctionLists },
-    namedPairs: new Set(lotCardPairs),
+    namedPairs: new Set([...lotCardPairs, ...auctionRootPairs]),
   }),
 };
 

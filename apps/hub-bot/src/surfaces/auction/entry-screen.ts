@@ -23,6 +23,8 @@ import {
   raffleProofLabel,
   raffleProofParagraphs,
   raffleProofTitle,
+  raffleRegisteredParagraphs,
+  raffleRegisteredTitle,
   raffleTitle,
   registerLabel,
 } from "../../auction-raffle.js";
@@ -38,22 +40,28 @@ import {
 } from "../../auction-set.js";
 import {
   autoFollowNote,
+  awaitsFirstBid,
   currentValueLine,
-  favoritesEmpty,
+  extensionLine,
+  favoritesEmptyText,
   favoritesSummary,
   feedSummary,
   finalFeedLabel,
   followLabel,
   historyLine,
   leaderLine,
+  lotButtonTail,
   lotNextLabel,
   lotPrevLabel,
   lotsLabel,
   nameSettingsParagraphs,
   nameSettingsTitle,
   ownLotLine,
+  ownProxyLine,
   proxyHintLead,
+  stepBidLabel,
   struckHistoryLine,
+  tradingPriceLine,
   unfollowLabel,
 } from "../../auction-standing.js";
 import {
@@ -137,7 +145,8 @@ export type AuctionEntryScreen =
   // «Настройки» (PER-595): настройки уведомлений аукциона, у бота с
   // Notifications, и имя в идущем аукционе, если такой есть.
   | { kind: "settings"; notifications: boolean; auctionId?: string }
-  | { kind: "notify"; current: AuctionNotificationSettings }
+  // `detached` — экран открыт кнопкой вести, а не из «Настроек» (№73).
+  | { kind: "notify"; current: AuctionNotificationSettings; detached?: true }
   | { kind: "auctions"; list: AuctionListPage }
   | { kind: "past"; list: AuctionListPage }
   | { kind: "details" }
@@ -428,19 +437,21 @@ export function renderEntryScreen(
     // «Перебили в финале» и анонс финала — вкл и выкл. Выбор отменяется с
     // того же экрана, поэтому подтверждения «Да» у него нет: что сработало,
     // говорит ответ на нажатие. Экран — подраздел «Настроек»: последний ряд —
-    // «‹ Настройки» (PER-595).
-    case "notify":
+    // «‹ Настройки» (PER-595). Открытый кнопкой вести экран возврата в
+    // дерево не несёт: человек пришёл из вести, и она остаётся выше в чате
+    // (№73 прогона 14 октября 2026 года). Выбор на нём держит тот же вид.
+    case "notify": {
+      const detached = screen.detached === true;
+      const rows = auctionNotificationsRows(screen.current).map((row) => [
+        { text: row.text, callback_data: notifyCallback(row.change, detached) },
+      ]);
       return {
-        id: "notify",
+        id: detached ? "notify-notice" : "notify",
         format: "html",
         text: screenText(notifyTitle, ...auctionNotificationsExplanation),
-        keyboard: [
-          ...auctionNotificationsRows(screen.current).map((row) => [
-            { text: row.text, callback_data: notifyCallback(row.change) },
-          ]),
-          [toSettings],
-        ],
+        keyboard: detached ? rows : [...rows, [toSettings]],
       };
+    }
     case "auctions":
     case "past":
       return renderList(screen.kind, screen.list, options);
@@ -645,7 +656,8 @@ function renderList(
         ? [
             [
               {
-                text: listTexts.past.backName,
+                // История выделена знаком, как «Архив» хаба (прогон 14.10, №84).
+                text: marked(pictogram.history, listTexts.past.backName),
                 callback_data: entryCallback("past"),
               },
             ],
@@ -924,6 +936,8 @@ function screenOf(blocks: readonly AuctionBlock[]): ScreenId {
         return "answer-refused";
       case "raffle":
         return "raffle";
+      case "raffle-registered":
+        return "raffle-registered";
       case "raffle-proof":
         return "raffle-proof";
       case "raffle-name-choice":
@@ -1020,7 +1034,10 @@ function renderLeaf(
       case "confirm":
         return { format: "html", text: confirmText(block) };
       case "accepted":
-        return { format: "html", text: acceptedText(block) };
+        return {
+          format: "html",
+          text: acceptedText(block, options.timeZone),
+        };
       case "result":
         return {
           format: "html",
@@ -1062,6 +1079,17 @@ function renderLeaf(
           text: screenText(
             raffleTitle,
             ...raffleParagraphs(block.raffle, {
+              moment: (instant) =>
+                readableMoment(instant, options.timeZone, options.now),
+            }),
+          ),
+        };
+      case "raffle-registered":
+        return {
+          format: "html",
+          text: screenText(
+            raffleRegisteredTitle,
+            ...raffleRegisteredParagraphs(block.raffle, {
               moment: (instant) =>
                 readableMoment(instant, options.timeZone, options.now),
             }),
@@ -1181,21 +1209,30 @@ function confirmText(
 
 // Принятая команда — свой экран (PER-473): сумма в заголовке, карточку с
 // новой ценой открывает «‹ Лот», ленту — «‹ Лоты» (PER-595). У бота с
-// избранным экран говорит, что ставка кладёт лот туда сама (ADR-063).
+// избранным экран говорит, что ставка кладёт лот туда сама (ADR-063), если
+// лота там не было, а продление анти-снайпом называет новый дедлайн
+// (PER-631, №107).
 function acceptedText(
   block: Extract<AuctionBlock, { kind: "accepted" }>,
+  timeZone: string,
 ): string {
   const note = block.favorites === true ? autoFollowNote : undefined;
+  const extension =
+    block.extension === undefined
+      ? undefined
+      : extensionLine(block.extension, timeZone);
   return block.command === "bid"
     ? screenText(
         `Ставка ${money(block.amount)} принята`,
         lotSubject(block.title),
+        extension,
         note,
       )
     : screenText(
         `Автоставка до ${money(block.amount)} включена`,
         lotSubject(block.title),
         "Лимит видишь только ты.",
+        extension,
         note,
       );
 }
@@ -1448,10 +1485,11 @@ function renderFavorites(
     text: screenText(
       paged(favoritesTitle, block),
       ...((block.total ?? block.lots.length) === 0
-        ? [favoritesEmpty]
+        ? [favoritesEmptyText(block.ended)]
         : favoritesSummary(block.total ?? block.lots.length, block.mine ?? [], {
             ...mineOptions,
             price: (item) => favoriteState(item.status, options),
+            ...(block.ended === true ? { ended: true } : {}),
           })),
     ),
   };
@@ -1608,7 +1646,8 @@ function statusGroups(block: LotBlock, options: RenderOptions): string[][] {
             : "Статус: идут торги",
         ],
         [
-          marked(pictogram.price, `Цена: ${money(status.currentPrice)}`),
+          // Без ставок — «Стартовая цена» (PER-631, №82).
+          tradingPriceLine(status),
           marked(
             pictogram.leader,
             leaderLine(status.leaderId, participantName, block.standing),
@@ -1708,13 +1747,11 @@ function clockOf(instant: string, timeZone: string): string {
 }
 
 // Свой лимит смотрящего: чужих Auction не отдаёт, и строка говорит, что этот
-// виден только ему.
+// виден только ему; исчерпанный лимит так и назван (PER-631, №81).
 function proxyLine(block: LotBlock): string[] {
   return block.viewerProxyLimit === undefined
     ? []
-    : [
-        `Твоя автоставка: до ${money(block.viewerProxyLimit)} (видишь только ты)`,
-      ];
+    : [ownProxyLine({ ...block, viewerProxyLimit: block.viewerProxyLimit })];
 }
 
 // Описание — единственная часть карточки произвольной длины, поэтому под лимит
@@ -1763,7 +1800,7 @@ function renderButton(
       )?.final;
       const label =
         (final === undefined ? null : finalFeedLabel(item, final, title)) ??
-        `${title} · ${priceLabel(item.status)}`;
+        `${title}${lotButtonTail(item, priceLabel(item.status))}`;
       // Отметка принадлежности к сету (ADR-073, п. 7): лот сета помечен в
       // подписи ленты, а название сета карточка называет.
       return text(
@@ -1777,7 +1814,9 @@ function renderButton(
       const item = items.get(button.lotId);
       if (item === undefined) return text(untitled);
       const title = shorten(item.title ?? untitled);
-      return text(`${title} · ${priceLabel(item.status)}`);
+      // Лидер видит себя и на кнопке избранного, как в ленте (прогон 14.10,
+      // №83).
+      return text(`${title}${lotButtonTail(item, priceLabel(item.status))}`);
     }
     // Лот сета на его экране: подпись как у кнопки ленты, без отметки сета.
     case "set.open-lot": {
@@ -1824,8 +1863,9 @@ function renderButton(
     case "feed.back":
     case "raffle.back":
       return text(`‹ ${rootTitle}`);
+    // Без ставок первая ставка — не «по шагу» (PER-631, №82).
     case "lot.bid-step":
-      return text(`По шагу (${money(button.amount)})`);
+      return text(stepBidLabel(button.amount, firstBidOffered(blocks)));
     case "lot.bid-final":
       return text(finalBidLabel(button.amount, money));
     case "lot.bid-custom":
@@ -1935,12 +1975,18 @@ function renderButton(
   }
 }
 
-// «✔️ Да, …» называет действие и сумму (дизайн-код, «Клавиатура»).
+function firstBidOffered(blocks: readonly AuctionBlock[]): boolean {
+  const lot = blocks.find((block) => block.kind === "lot");
+  return lot?.kind === "lot" && awaitsFirstBid(lot.status);
+}
+
+// «✔️ Да, …» называет действие (дизайн-код, «Клавиатура»). Сумма — в вопросе
+// «Поставить N?»: с ней «Да» обрезалось в паре с «Нет» (PER-631, №86).
 function confirmLabel(blocks: readonly AuctionBlock[]): string {
   const confirm = blocks.find((block) => block.kind === "confirm");
   if (confirm?.kind !== "confirm") return confirmYesLabel("подтвердить");
   return confirm.command === "bid"
-    ? confirmYesLabel(`поставить ${money(confirm.amount)}`)
+    ? confirmYesLabel("поставить")
     : confirmYesLabel("включить автоставку");
 }
 

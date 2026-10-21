@@ -234,7 +234,13 @@ export function renderNotification(
     };
   }
   if (content.kind === "lot-notice") {
-    return { text: content.view.text, keyboard: lotKeyboard(content.view) };
+    return {
+      text: content.view.text,
+      keyboard: lotKeyboard(content.view),
+      ...(content.view.format === undefined
+        ? {}
+        : { format: content.view.format }),
+    };
   }
   if (content.kind === "community-announcement") {
     return {

@@ -876,6 +876,25 @@ const raffleProofBody = (
   keyboard: [[{ action: "raffle.return", callbackData: "v1:auc:rf:a" }]],
 });
 
+// Регистрация принята (прогон 14.10, №69): кадр исхода с отменой и
+// возвратами в розыгрыш и в корень аукциона.
+const raffleRegisteredBody = (
+  raffle: RaffleView | undefined,
+): AuctionScreenBody => ({
+  blocks: [
+    {
+      kind: "raffle-registered",
+      auctionId: "auc-1",
+      ...(raffle ? { raffle } : {}),
+    },
+  ],
+  keyboard: [
+    [{ action: "raffle.cancel", callbackData: "v1:auc:rc:a" }],
+    [{ action: "raffle.return", callbackData: "v1:auc:rf:a" }],
+    [{ action: "raffle.back", callbackData: "v1:auc:rt:auc-1" }],
+  ],
+});
+
 const raffleNameChoice: AuctionScreenBody = {
   blocks: [
     { kind: "raffle-name-choice", auctionId: "auc-1", username: "owl_fan" },
@@ -993,6 +1012,20 @@ const shown: readonly {
       },
     },
   },
+  // Открытый из вести — без возврата в «Настройки» (№73 прогона 14 октября
+  // 2026 года).
+  {
+    screen: {
+      kind: "notify",
+      current: {
+        frequency: "5",
+        finalAnnouncements: true,
+        liveFinalOutbids: false,
+        auctionAnnouncements: true,
+      },
+      detached: true,
+    },
+  },
   { screen: { kind: "faq" } },
   { screen: { kind: "faq" }, faq: urls },
   // «Настройки» (PER-595): с уведомлениями и именем, только с одним и пустые.
@@ -1107,6 +1140,8 @@ const shown: readonly {
   ...raffles.map((raffle) => ({
     screen: { kind: "auction" as const, body: raffleProofBody(raffle) },
   })),
+  { screen: { kind: "auction", body: raffleRegisteredBody(raffles[0]) } },
+  { screen: { kind: "auction", body: raffleRegisteredBody(undefined) } },
   { screen: { kind: "auction", body: raffleNameChoice } },
   { screen: { kind: "auction", body: raffleQuestion } },
   { screen: { kind: "auction", body: raffleAnswerRefused } },
@@ -1415,13 +1450,14 @@ describe("auction screens beyond the linter", () => {
         .split("\n")
         .filter((line) => line.startsWith("• "));
       // Навигация, листание, действие ленты «Розыгрыш» (ADR-066) и вход в
-      // «Прошедшие» под «Аукционами» (PER-592) — не содержимое списка.
+      // «🗂 Прошедшие» под «Аукционами» (PER-592; знак — прогон 14.10, №84) —
+      // не содержимое списка.
       const content = screen.keyboard
         .flat()
         .filter(
           (button) =>
             "callback_data" in button &&
-            !/^(‹ |←$|→$|Розыгрыш$|Прошедшие$)/.test(button.text),
+            !/^(‹ |←$|→$|Розыгрыш$|🗂 Прошедшие$)/.test(button.text),
         );
       expect(lines.length, screen.text).toBe(content.length);
     }

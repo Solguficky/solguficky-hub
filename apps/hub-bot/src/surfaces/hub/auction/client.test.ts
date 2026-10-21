@@ -905,6 +905,7 @@ describe("auction console adapter", () => {
               status: {
                 kind: "trading",
                 currentPrice: { minorUnits: 120_000, currency: "RUB" },
+                extensionsUsed: 0,
                 phase: "online",
               },
             }),

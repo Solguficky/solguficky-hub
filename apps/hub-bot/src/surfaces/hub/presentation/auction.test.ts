@@ -737,7 +737,7 @@ describe("auction root and the way back", () => {
     await bot.handleUpdate(press(rootData));
 
     expect(lastScreen(calls).text).toContain(
-      "Статус: скоро старт, скрыт от участников",
+      "Статус: <b>скоро старт, скрыт от участников</b>",
     );
   });
 
@@ -752,8 +752,8 @@ describe("auction root and the way back", () => {
 
     const root = lastScreen(calls);
     expect(root.text).toMatch(/^<b>Аукцион<\/b>/);
-    expect(root.text).toContain("Статус: скоро старт");
-    expect(root.text).toContain("Онлайн-торги: с ");
+    expect(root.text).toContain("Статус: <b>скоро старт</b>");
+    expect(root.text).toContain("📅 Когда: онлайн-торги с ");
     expect(root.text).toContain("Финал: в зале");
     expect(labels(root)).toEqual([
       ["🔨 Лоты"],
@@ -1296,7 +1296,7 @@ describe("bid leaf in the hub", () => {
     // Своя сумма с автоставкой — парой (PER-594), «Ставки» — рядом, «Обновить»
     // — в ряду листания (PER-669).
     expect(labels(card).slice(0, 4)).toEqual([
-      [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
+      [expect.stringMatching(/^Первая ставка \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
       ["Ставки"],
       ["🔄 Обновить"],
@@ -1320,7 +1320,7 @@ describe("bid leaf in the hub", () => {
     await bot.handleUpdate(press(lotData));
 
     expect(labels(lastScreen(calls))).toEqual([
-      [expect.stringMatching(/^По шагу \(1\s250\s₽\)$/)],
+      [expect.stringMatching(/^Первая ставка \(1\s250\s₽\)$/)],
       ["Своя сумма", "Автоставка"],
       ["Ставки", "Добавить в избранное"],
       ["🔄 Обновить"],
@@ -1420,7 +1420,7 @@ describe("bid leaf in the hub", () => {
         inline_keyboard: [
           [
             {
-              text: expect.stringMatching(/^✔️ Да, поставить 1\s300\s₽$/),
+              text: "✔️ Да, поставить",
               style: "danger",
               callback_data: expect.stringMatching(/^v1:auc:b:/),
             },
@@ -1530,6 +1530,8 @@ describe("raffle among the participants", () => {
     });
 
     await bot.handleUpdate(press(rootData));
+    // «Лоты» и «Розыгрыш» — одним рядом (прогон 14.10, №66).
+    expect(labels(lastScreen(calls))[0]).toEqual(["🔨 Лоты", "Розыгрыш"]);
     const raffleData = data(lastScreen(calls), "Розыгрыш");
     expect(raffleData).toBeDefined();
     await bot.handleUpdate(press(raffleData ?? ""));
@@ -1542,6 +1544,19 @@ describe("raffle among the participants", () => {
     ]);
 
     await bot.handleUpdate(press(data(before, "Зарегистрироваться") ?? ""));
+    // Принятая регистрация — свой экран исхода (прогон 14.10, №69).
+    const outcome = lastScreen(calls);
+    expect(outcome.text).toContain("<b>Ты в розыгрыше</b>");
+    expect(outcome.text).toContain(
+      "Отменить регистрацию можно до её закрытия.",
+    );
+    expect(labels(outcome)).toEqual([
+      ["Отменить регистрацию"],
+      ["‹ Розыгрыш"],
+      ["‹ Аукцион"],
+    ]);
+
+    await bot.handleUpdate(press(data(outcome, "‹ Розыгрыш") ?? ""));
     const registered = lastScreen(calls);
     expect(registered.text).toContain("Ты зарегистрирован.");
     // Техника — за кнопкой (PER-618).
@@ -1788,7 +1803,7 @@ describe("raffle screens in the hub", () => {
         },
       },
     } as Update);
-    expect(lastScreen(calls).text).toContain("Ты зарегистрирован.");
+    expect(lastScreen(calls).text).toContain("<b>Ты в розыгрыше</b>");
   });
 
   it("refuses a taken alias with a retry and the way back to the raffle", async () => {

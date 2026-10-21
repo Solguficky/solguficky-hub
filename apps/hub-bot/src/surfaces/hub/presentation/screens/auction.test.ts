@@ -96,10 +96,126 @@ describe("lot card in the hub shell", () => {
     );
     expect(plain(screen.text)).toBe(
       "<b>Кружка</b>\n\n" +
-        "Статус: идут торги\n\n💰 Цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
+        "Статус: идут торги\n\n💰 Стартовая цена: 1 200 ₽\n👤 Лидер: пока нет\n\n" +
         "Твоя автоставка: до 2 000 ₽ (видишь только ты)\n\n" +
         "Описание пока не добавлено.",
     );
+  });
+
+  // Лимит ниже порога у не-лидера больше ничего не сделает (PER-631, №81).
+  it("names an exhausted own limit of a participant who does not lead", () => {
+    const { screen } = auctionScreen(
+      view(
+        [
+          lot({
+            card: { title: "Кружка", description: "" },
+            nextPrice: rub(950),
+            status: {
+              kind: "trading",
+              currentPrice: rub(900),
+              leaderId: "p-2",
+              phase: "online",
+            },
+            participantName: "@owl",
+            viewerProxyLimit: rub(900),
+          }),
+        ],
+        "plain",
+      ),
+    );
+    expect(plain(screen.text)).toContain(
+      "💰 Цена: 900 ₽\n👤 Лидер: @owl\n\n" +
+        "Следующая ставка: от 950 ₽\n" +
+        "Автоставка до 900 ₽ исчерпана — подними лимит",
+    );
+  });
+
+  // Без ставок первая ставка — по стартовой цене, а не «по шагу» (PER-631,
+  // №82); с лидером — по шагу.
+  it("offers the first bid instead of the step on a lot without bids", () => {
+    const labelOf = (leaderId?: string) => {
+      const block = lot({
+        nextPrice: rub(1000),
+        status: {
+          kind: "trading",
+          currentPrice: rub(1000),
+          ...(leaderId === undefined ? {} : { leaderId }),
+          phase: "online",
+        },
+      });
+      const { screen } = auctionScreen({
+        ...view([block]),
+        body: {
+          blocks: [block],
+          keyboard: [
+            [
+              {
+                action: "lot.bid-step",
+                callbackData: "v1:auc:cb:x:0",
+                amount: rub(1000),
+              },
+            ],
+            [{ action: "lot.back", callbackData: "v1:auc:feed:x:0" }],
+          ],
+        },
+      });
+      return plain(String(screen.keyboard.inline_keyboard[0]?.[0]?.text ?? ""));
+    };
+    expect(labelOf()).toBe("Первая ставка (1 000 ₽)");
+    expect(labelOf("p-2")).toBe("По шагу (1 000 ₽)");
+  });
+
+  // Принятая ставка называет продление анти-снайпом по часам сообщества
+  // (PER-631, №107): номер продления — или что продлений больше не будет.
+  it("names the anti-sniping extension on an accepted bid", () => {
+    const accepted = (
+      extension: Extract<AuctionBlock, { kind: "accepted" }>["extension"],
+    ) =>
+      plain(
+        auctionScreen({
+          ...view([]),
+          body: {
+            blocks: [
+              {
+                kind: "accepted",
+                command: "bid",
+                lotId: "lot-1",
+                auctionId,
+                title: "Кружка",
+                amount: rub(1300),
+                ...(extension === undefined ? {} : { extension }),
+              },
+            ],
+            keyboard: [
+              [{ action: "accepted.lot", callbackData: "v1:auc:lot:x:0" }],
+              [{ action: "accepted.feed", callbackData: "v1:auc:feed:x:0" }],
+            ],
+          },
+        }).screen.text,
+      );
+    // 08:03 UTC — 11:03 по Москве.
+    expect(
+      accepted({
+        kind: "extended",
+        deadline: "2026-10-10T08:03:00Z",
+        used: 3,
+        max: 3,
+        windowSeconds: 120,
+      }),
+    ).toContain("Торги продлены до 11:03 (продление 3 из 3).");
+    expect(
+      accepted({
+        kind: "extended",
+        deadline: "2026-10-10T08:03:00Z",
+        used: 1,
+        max: 3,
+        windowSeconds: 60,
+      }),
+    ).toContain("Торги продлены до 11:03");
+    expect(
+      accepted({ kind: "exhausted", deadline: "2026-10-10T08:03:00Z" }),
+    ).toContain("Продлений больше не будет: торги закроются в 11:03.");
+    expect(accepted(undefined)).not.toContain("продл");
   });
 
   // Пустое описание — заглушка, та же, что у карточки сходки (PER-594).

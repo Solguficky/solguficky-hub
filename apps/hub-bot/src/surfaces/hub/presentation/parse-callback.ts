@@ -568,12 +568,13 @@ type PlainAction =
   | { kind: "notify-global" }
   // Настройки уведомлений аукциона (PER-552, PER-539, PER-645): экран, режим
   // частоты, выключатели анонса финала и «перебили» в живом финале —
-  // целевыми значениями.
-  | { kind: "notify-outbid" }
-  | { kind: "notify-set-outbid"; frequency: OutbidFrequency }
-  | { kind: "notify-set-final"; enabled: boolean }
-  | { kind: "notify-set-live"; enabled: boolean }
-  | { kind: "notify-set-news"; enabled: boolean }
+  // целевыми значениями. `detached` — экран открыт из вести и возврата в
+  // дерево настроек не несёт (№73 прогона 14 октября 2026 года): хвост `:n`.
+  | { kind: "notify-outbid"; detached?: true }
+  | { kind: "notify-set-outbid"; frequency: OutbidFrequency; detached?: true }
+  | { kind: "notify-set-final"; enabled: boolean; detached?: true }
+  | { kind: "notify-set-live"; enabled: boolean; detached?: true }
+  | { kind: "notify-set-news"; enabled: boolean; detached?: true }
   | {
       kind: "notify-set-global";
       category: NotificationCategory;
@@ -2481,7 +2482,31 @@ function parseReleaseNotes(parts: readonly string[]): CallbackAction {
     : { kind: "malformed" };
 }
 
+// Хвост `:n` у настроек аукциона — экран открыт из вести (№73): разбор тот
+// же, что без хвоста, и признак едет дальше.
+const detachedTail = "n";
+const detachedSettings: ReadonlySet<string | undefined> = new Set([
+  "outbid",
+  "final",
+  "live",
+  "news",
+]);
+
 function parseNotify(parts: readonly string[]): CallbackAction {
+  if (
+    parts.length > 3 &&
+    parts.at(-1) === detachedTail &&
+    detachedSettings.has(parts[2])
+  ) {
+    const inner = parseNotify(parts.slice(0, -1));
+    return inner.kind === "notify-outbid" ||
+      inner.kind === "notify-set-outbid" ||
+      inner.kind === "notify-set-final" ||
+      inner.kind === "notify-set-live" ||
+      inner.kind === "notify-set-news"
+      ? { ...inner, detached: true }
+      : { kind: "malformed" };
+  }
   if (parts.length === 3 && parts[2] === "outbid") {
     return { kind: "notify-outbid" };
   }

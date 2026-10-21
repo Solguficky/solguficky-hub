@@ -28,6 +28,22 @@ export type RaffleTextOptions = {
   moment: (instant: string) => string;
 };
 
+// Экран исхода регистрации (прогон 14.10, №69): заголовок — исход, под ним
+// когда закроется регистрация и что дальше.
+export const raffleRegisteredTitle = "Ты в розыгрыше";
+
+/** Абзацы экрана исхода регистрации, уже экранированные. */
+export function raffleRegisteredParagraphs(
+  raffle: RaffleView | undefined,
+  options: RaffleTextOptions,
+): string[] {
+  const closes =
+    raffle === undefined
+      ? "Номер билета появится, когда регистрация закроется."
+      : `Номер билета появится, когда регистрация закроется — ${escapeHtml(options.moment(raffle.closesAt))}. Итог — через пару минут после этого.`;
+  return [closes, "Отменить регистрацию можно до её закрытия."];
+}
+
 // Экран «Как проверить честность» (PER-618): техника розыгрыша за кнопкой с
 // экрана участника, возврат — «‹ Розыгрыш».
 export const raffleProofTitle = "Как проверить честность";

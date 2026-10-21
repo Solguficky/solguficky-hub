@@ -49,6 +49,8 @@ export async function openRoot(input: {
   return {
     blocks: [{ kind: "root", auctionId: input.auctionId, auction }],
     keyboard: [
+      // «Лоты» и «Розыгрыш» — одним рядом (решение владельца по прогону 14.10,
+      // №66; пересматривает «Розыгрыш своим рядом» PER-669).
       [
         {
           action: "root.lots",
@@ -58,6 +60,17 @@ export async function openRoot(input: {
             page: 0,
           }),
         },
+        ...(raffle
+          ? [
+              {
+                action: "root.raffle" as const,
+                callbackData: encodeAuctionCallback({
+                  kind: "raffle",
+                  auctionId: input.auctionId,
+                }),
+              },
+            ]
+          : []),
       ],
       ...(predictionRound === undefined
         ? []
@@ -73,19 +86,6 @@ export async function openRoot(input: {
               },
             ],
           ]),
-      ...(raffle
-        ? [
-            [
-              {
-                action: "root.raffle" as const,
-                callbackData: encodeAuctionCallback({
-                  kind: "raffle",
-                  auctionId: input.auctionId,
-                }),
-              },
-            ],
-          ]
-        : []),
       // Вход в избранное — только отсюда (PER-644): не из «Настроек» и не из
       // меню бота. Список общий на все аукционы, аукцион в кнопке — возврат.
       ...(input.favorites === undefined

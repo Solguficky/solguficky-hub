@@ -63,6 +63,11 @@ export const pictogram = {
   description: "📝",
   /** Ряд «Фото» экрана «Изменить лот» (прогон 12.10, №18). */
   photo: "🖼",
+  /**
+   * История под основным разделом (прогон 14.10, №62 и №84): «Архив» под
+   * «Сходками» хаба и «Прошедшие» под «Аукционами» бота аукциона.
+   */
+  history: "🗂",
 } as const;
 
 export type Pictogram = (typeof pictogram)[keyof typeof pictogram];
@@ -113,6 +118,7 @@ export const pictogramWords: Readonly<Record<Pictogram, readonly string[]>> = {
   [pictogram.title]: ["Название"],
   [pictogram.description]: ["Описание"],
   [pictogram.photo]: ["Фото"],
+  [pictogram.history]: ["Архив", "Прошедшие"],
 };
 
 /**
@@ -137,6 +143,8 @@ export const sectionLabels: Readonly<Record<string, Pictogram>> = {
   "Уведомления сходки": pictogram.settings,
   Аукцион: pictogram.auction,
   Лоты: pictogram.auction,
+  Архив: pictogram.history,
+  Прошедшие: pictogram.history,
 };
 
 /** Начала строк текста о разделе, которые несут его знак. */

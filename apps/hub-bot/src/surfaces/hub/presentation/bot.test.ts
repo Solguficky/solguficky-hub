@@ -2885,7 +2885,7 @@ describe("presentation adapter", () => {
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "Архив", callback_data: "v1:nav:archive" }],
+            [{ text: "🗂 Архив", callback_data: "v1:nav:archive" }],
             [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
@@ -2958,7 +2958,7 @@ describe("presentation adapter", () => {
                 callback_data: "v1:view:AZjypHwefTqbIU-OEqs0zg",
               },
             ],
-            [{ text: "Архив", callback_data: "v1:nav:archive" }],
+            [{ text: "🗂 Архив", callback_data: "v1:nav:archive" }],
             [{ text: "‹ Меню", callback_data: "v1:nav:start" }],
           ],
         },
@@ -7210,9 +7210,10 @@ describe("notification frames", () => {
 
     // «Частота уведомлений» под перебитием — след: экран приходит новым
     // сообщением, а уведомление остаётся как было. Данные кнопки прежние,
-    // поэтому и «Реже» из старого сообщения открывает частоту на новом месте —
-    // под «Аукционом» «Расширений» настроек (PER-605, PER-598, №74).
-    it("opens the frequency from a notification as a new message at its new place", async () => {
+    // поэтому и «Реже» из старого сообщения открывает тот же экран. Человек
+    // пришёл из вести, а не из «Настроек», и возврата в дерево у экрана нет
+    // (№73 прогона 14 октября 2026 года): выбор режима этот вид держит.
+    it("opens the frequency from a notification as a new message without the way back", async () => {
       const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
         kind: "auction-notifications",
         settings: {
@@ -7230,7 +7231,44 @@ describe("notification frames", () => {
       expect(methods).not.toContain("editMessageText");
       const sent = screen(calls.find((call) => call.method === "sendMessage"));
       expect(JSON.stringify(sent.reply_markup)).toContain("Перебили: о каждом");
-      expect(sent.reply_markup?.inline_keyboard.at(-1)).toEqual([
+      const buttons = (sent.reply_markup?.inline_keyboard ?? []).flat();
+      expect(buttons.some((button) => button.text.startsWith("‹"))).toBe(false);
+      expect(buttons[0]?.callback_data).toBe("v1:notify:outbid:5:n");
+      await bot.handleUpdate(callbackUpdate("v1:notify:outbid:5:n"));
+      expect(execute).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          intent: "set-auction-notifications",
+          change: { kind: "frequency", frequency: "5" },
+        }),
+      );
+      const chosen = screen(
+        calls.findLast((call) => call.method !== "answerCallbackQuery"),
+      );
+      expect(
+        (chosen.reply_markup?.inline_keyboard ?? [])
+          .flat()
+          .some((button) => button.text.startsWith("‹")),
+      ).toBe(false);
+    });
+
+    // Из «Настроек» экран по-прежнему возвращает в «Аукцион» «Расширений».
+    it("keeps the way back when the frequency opens from the settings", async () => {
+      const execute = vi.fn<Dispatcher["execute"]>().mockResolvedValue({
+        kind: "auction-notifications",
+        settings: {
+          frequency: "every",
+          finalAnnouncements: true,
+          liveFinalOutbids: false,
+          auctionAnnouncements: true,
+        },
+      });
+      const { bot, calls } = harness(execute);
+      await bot.init();
+      await bot.handleUpdate(callbackUpdate("v1:notify:outbid"));
+      const shown = screen(
+        calls.findLast((call) => call.method !== "answerCallbackQuery"),
+      );
+      expect(shown.reply_markup?.inline_keyboard.at(-1)).toEqual([
         { text: "‹ Аукцион", callback_data: "v1:nav:exta" },
       ]);
     });

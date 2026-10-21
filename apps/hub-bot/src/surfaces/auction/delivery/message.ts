@@ -49,9 +49,12 @@ type TraceButton = { text: string; callback_data: string };
 // лоте — «К лоту» и рядом «Частота уведомлений», у сводки — ряд на лот и ряд
 // частоты (PER-598). Кнопок нет у вести о смене круга (PER-537): в боте аукциона
 // участник дальше экрана перехода в сообщество не пройдёт, и вести её нечем.
+// `format` — HTML у вести о лоте: название жирным, экранированное рендером
+// (№71 прогона 14 октября 2026 года). Остальные вести — простой текст.
 export type NotificationMessage = {
   text: string;
   rows?: readonly (readonly TraceButton[])[];
+  format?: "HTML";
 };
 
 // Кнопка под следом (дизайн-код, «Доставка»): карточка лота приходит новым
@@ -107,6 +110,10 @@ export function traceNotifyCallback(): string {
 export function parseTraceCallback(data: string): string | undefined {
   if (!data.startsWith(tracePrefix)) return undefined;
   const inner = data.slice(tracePrefix.length);
+  // Частота, открытая из вести, — экран без возврата в дерево настроек (№73
+  // прогона 14 октября 2026 года): человек пришёл не из «Настроек». Кнопка
+  // старых вестей несёт тот же след и открывает тот же экран.
+  if (inner === notifyCallback()) return notifyCallback(undefined, true);
   if (parseEntryCallback(inner) !== undefined) return inner;
   const parsed = parseAuctionCallback(inner);
   return parsed.ok &&
@@ -238,6 +245,7 @@ export function renderNotification(
 function traceMessage(view: LotNoticeView): NotificationMessage {
   return {
     text: view.text,
+    ...(view.format === undefined ? {} : { format: view.format }),
     rows: view.rows.map((row) =>
       row.map((button) => ({
         text: button.text,
@@ -339,6 +347,9 @@ export function createNotificationSender(
         await api.sendMessage(Number(telegramUserId), message.text, {
           ...screenMark("notification"),
           ...(markup === undefined ? {} : { reply_markup: markup }),
+          ...(message.format === undefined
+            ? {}
+            : { parse_mode: message.format }),
           link_preview_options: { is_disabled: true },
         });
         return { kind: "sent" };

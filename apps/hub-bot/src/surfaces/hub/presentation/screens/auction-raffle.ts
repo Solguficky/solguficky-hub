@@ -7,6 +7,8 @@ import {
   raffleProofLabel,
   raffleProofParagraphs,
   raffleProofTitle,
+  raffleRegisteredParagraphs,
+  raffleRegisteredTitle,
   raffleTitle,
   registerLabel,
 } from "../../../../auction-raffle.js";
@@ -75,6 +77,34 @@ export function raffleScreen(
     ),
     // Розыгрыш открыт из корня аукциона, и тело ведёт назад туда же
     // (PER-605, PER-644).
+    keyboard: withNav(rows, toAuctionRoot(block.auctionId)),
+    format: "HTML",
+  };
+}
+
+// Регистрация принята (прогон 14.10, №69): экран исхода с отменой регистрации
+// и возвратами «‹ Розыгрыш» и «‹ Аукцион».
+export function raffleRegisteredScreen(
+  block: Extract<AuctionBlock, { kind: "raffle-registered" }>,
+  keyboard: Keyboard,
+  view: { timeZone: string; today: CommunityDay },
+): ShownScreen {
+  const rows = new InlineKeyboard()
+    .text(cancelRegistrationLabel, dataOf(keyboard, "raffle.cancel"))
+    .row()
+    .text(`‹ ${raffleBackName}`, dataOf(keyboard, "raffle.return"));
+  return {
+    id: "raffle-registered",
+    text: screenText(
+      raffleRegisteredTitle,
+      ...raffleRegisteredParagraphs(block.raffle, {
+        moment: (instant) =>
+          readableMoment(
+            communityLocalTime(instant, view.timeZone),
+            view.today,
+          ),
+      }),
+    ),
     keyboard: withNav(rows, toAuctionRoot(block.auctionId)),
     format: "HTML",
   };

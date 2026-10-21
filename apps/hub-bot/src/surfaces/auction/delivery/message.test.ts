@@ -46,7 +46,7 @@ const titled = (title: string, id = lotId) => new Map([[id, { title }]]);
 describe("renderNotification", () => {
   it("names the lot and the current price of an outbid", () => {
     expect(renderNotification(outbid, titled("Кружка")).text).toBe(
-      `Твою ставку на «Кружка» перебили. Текущая цена — 1${nbsp}500${nbsp}₽.`,
+      `Твою ставку перебили: <b>Кружка</b>, цена 1${nbsp}500${nbsp}₽.`,
     );
   });
 
@@ -55,7 +55,7 @@ describe("renderNotification", () => {
   it("tells the leader the proxy answered and leads, with the lot button", () => {
     const message = renderNotification(raised, titled("Кружка"));
     expect(message.text).toBe(
-      `Твоя автоставка на «Кружка» подняла цену до 1${nbsp}600${nbsp}₽: лидируешь ты.`,
+      `Твоя автоставка на <b>Кружка</b> подняла цену до 1${nbsp}600${nbsp}₽: лидируешь ты.`,
     );
     expect(message.rows).toEqual([
       [{ text: "К лоту", callback_data: traceLotCallback(lotId) }],
@@ -65,7 +65,7 @@ describe("renderNotification", () => {
   // Запись 37 прогона 12.10: покупка называет лот и следующий шаг.
   it("names the lot, the sale price and the next step of a purchase", () => {
     expect(renderNotification(purchased, titled("Кружка")).text).toBe(
-      `Лот «Кружка» твой за 1${nbsp}500,50${nbsp}₽. Как оплатить и забрать — напишет организатор аукциона.`,
+      `Лот <b>Кружка</b> твой за 1${nbsp}500,50${nbsp}₽. Как оплатить и забрать — напишет организатор аукциона.`,
     );
   });
 
@@ -76,12 +76,12 @@ describe("renderNotification", () => {
       titled("Кружка ".repeat(1_000)),
     );
     expect(text.length).toBeLessThan(300);
-    expect(text).toContain("…»");
+    expect(text).toContain("…</b>");
   });
 
   it("does without the title when it is unknown", () => {
     expect(renderNotification(outbid).text).toBe(
-      `Твою ставку на лот перебили. Текущая цена — 1${nbsp}500${nbsp}₽.`,
+      `Твою ставку перебили, цена 1${nbsp}500${nbsp}₽.`,
     );
     expect(renderNotification(purchased, titled("")).text).toBe(
       `Лот твой за 1${nbsp}500,50${nbsp}₽. Как оплатить и забрать — напишет организатор аукциона.`,
@@ -133,9 +133,15 @@ describe("frequency button", () => {
         ],
       });
     }
+    // Из вести экран частоты открывается без возврата в дерево настроек
+    // (№73 прогона 14 октября 2026 года).
     const inner = parseTraceCallback(traceNotifyCallback());
-    expect(inner).toBe(notifyCallback());
-    expect(parseEntryCallback(inner)).toEqual({ action: "notify", page: 0 });
+    expect(inner).toBe(notifyCallback(undefined, true));
+    expect(parseEntryCallback(inner)).toEqual({
+      action: "notify",
+      page: 0,
+      detached: true,
+    });
     expect(Buffer.byteLength(traceNotifyCallback())).toBeLessThanOrEqual(64);
   });
 
@@ -194,8 +200,8 @@ describe("activity digest", () => {
       [
         "Сводка по твоим ставкам:",
         "",
-        `• «Кружка» — перебили, цена 1${nbsp}500${nbsp}₽`,
-        `• «Плакат» — автоставка подняла цену до 900${nbsp}₽, лот за тобой`,
+        `• <b>Кружка</b> — перебили, цена 1${nbsp}500${nbsp}₽`,
+        `• <b>Плакат</b> — автоставка подняла цену до 900${nbsp}₽, лот за тобой`,
       ].join("\n"),
     );
     expect(notificationMarkup(rendered.message)).toEqual({
@@ -224,7 +230,7 @@ describe("activity digest", () => {
     const rendered = await render(digest, { recipientId });
     if (rendered.kind !== "ready") throw new Error("the digest must render");
     expect(rendered.message.text).toContain("• Лот — перебили");
-    expect(rendered.message.text).toContain("• «Плакат» —");
+    expect(rendered.message.text).toContain("• <b>Плакат</b> —");
     // Кнопки к лоту, который Auction не отдаёт, нет: она упёрлась бы в тот же
     // отказ.
     expect(rendered.message.rows?.[0]?.[0]?.text).toBe("Плакат");
@@ -482,7 +488,7 @@ describe("createRenderMessage", () => {
       render(outbid, { recipientId, requestId: "req-1" }),
     ).resolves.toMatchObject({
       kind: "ready",
-      message: { text: expect.stringContaining("«Кружка»") },
+      message: { text: expect.stringContaining("<b>Кружка</b>") },
     });
     expect(source.holdsPlaceBids).toHaveBeenCalledWith(recipientId, "req-1");
     expect(source.lotInfo).toHaveBeenCalledWith(recipientId, lotId, "req-1");
@@ -550,7 +556,7 @@ describe("createRenderMessage", () => {
       render(outbid, { recipientId, requestId: "req-1" }),
     ).resolves.toMatchObject({
       kind: "ready",
-      message: { text: expect.stringContaining("на лот перебили") },
+      message: { text: expect.stringContaining("Твою ставку перебили, цена") },
     });
     expect(missing).toHaveBeenCalledWith(down, "req-1");
   });
@@ -564,9 +570,11 @@ describe("notification sender", () => {
     await expect(
       sender.send({ telegramUserId: 42n, message }),
     ).resolves.toEqual({ kind: "sent" });
+    // Весть о лоте — HTML: название жирным (№71 прогона 14 октября 2026 года).
     expect(sendMessage).toHaveBeenCalledWith(42, message.text, {
       ...screenMark("notification"),
       reply_markup: { inline_keyboard: message.rows },
+      parse_mode: "HTML",
       link_preview_options: { is_disabled: true },
     });
   });

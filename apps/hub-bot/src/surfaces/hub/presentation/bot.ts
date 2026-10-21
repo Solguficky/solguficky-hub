@@ -394,6 +394,7 @@ import {
 import {
   accessRequestCategories,
   auctionNotificationsChangeData,
+  auctionNotificationsData,
   auctionNotificationsScreen,
   categoryLabels,
   globalNotificationsScreen,
@@ -4280,6 +4281,9 @@ async function handleCallback(
               : action.kind === "notify-set-news"
                 ? { kind: "announcements", enabled: action.enabled }
                 : undefined;
+      // Из вести экран открывается без возврата в дерево настроек (№73
+      // прогона 14 октября 2026 года): след прежних вестей ведёт туда же.
+      const detached = action.trace === true || action.detached === true;
       const result = await runtime.dispatcher.execute(
         change === undefined
           ? {
@@ -4300,7 +4304,10 @@ async function handleCallback(
             auctionNotificationsToast(change, result.settings),
           );
         }
-        await showScreen(ctx, auctionNotificationsScreen(result.settings));
+        await showScreen(
+          ctx,
+          auctionNotificationsScreen(result.settings, detached),
+        );
       } else {
         // Отвергнутый выбор не повторяется: экран устарел, и повтор
         // перечитывает его, а не шлёт то же значение.
@@ -4310,8 +4317,8 @@ async function handleCallback(
           ctx,
           result,
           change === undefined || stale
-            ? "v1:notify:outbid"
-            : auctionNotificationsChangeData(change),
+            ? auctionNotificationsData(detached)
+            : auctionNotificationsChangeData(change, detached),
         );
       }
       outcome = screenBoundary(result, {
