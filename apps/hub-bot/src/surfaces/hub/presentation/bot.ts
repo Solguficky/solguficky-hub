@@ -196,6 +196,7 @@ import {
   consoleViewData,
   consoleWeekData,
   consoleWindowAskData,
+  consoleWindowLaunchData,
   consoleWindowsData,
   defaultConsoleSort,
   floorData,
@@ -254,6 +255,8 @@ import {
   finalAskErrorText,
   finalAskText,
   finalToast,
+  launchQuestionText,
+  launchScreen,
   lineupConfirmScreen,
   lineupOrderScreen,
   raffleAskErrorText,
@@ -727,6 +730,14 @@ type PendingConsoleWindow = {
   telegramUserId: number;
   expiresAt: number;
 };
+// Вопрос о запуске окна по ходу торгов (PER-615). Шаг — аукцион — лежит в
+// кнопке вопроса, и ответ после рестарта принимается так же.
+type PendingConsoleLaunch = {
+  kind: "console-launch";
+  auctionId: string;
+  telegramUserId: number;
+  expiresAt: number;
+};
 // Вопрос о следующей цене лота финала (PER-337). Шаг — аукцион и номер лота в
 // составе — лежит в кнопке вопроса, и ответ после рестарта принимается так же.
 type PendingFinalAsk = {
@@ -760,6 +771,7 @@ type HubPendingInput =
   | PendingConsoleRaffle
   | PendingConsolePrize
   | PendingConsoleWindow
+  | PendingConsoleLaunch
   | PendingFinalAsk
   | PendingFloorSearch;
 
@@ -1440,7 +1452,8 @@ async function handleMessage(
       (pending?.kind === "console-week" ||
         pending?.kind === "console-raffle" ||
         pending?.kind === "console-raffle-prize" ||
-        pending?.kind === "console-window") &&
+        pending?.kind === "console-window" ||
+        pending?.kind === "console-launch") &&
       ctx.message?.text !== undefined
     ) {
       useCase = "manage_auction";
@@ -1454,7 +1467,9 @@ async function handleMessage(
                 ? "foreign auction raffle answer ignored"
                 : pending.kind === "console-raffle-prize"
                   ? "foreign raffle prize answer ignored"
-                  : "foreign step window answer ignored",
+                  : pending.kind === "console-window"
+                    ? "foreign step window answer ignored"
+                    : "foreign step window launch answer ignored",
           result: "ok",
           use_case: useCase,
         };
@@ -1496,7 +1511,9 @@ async function handleMessage(
               ? "set-auction-raffle"
               : pending.kind === "console-raffle-prize"
                 ? "set-auction-raffle-prize"
-                : "add-step-window",
+                : pending.kind === "console-window"
+                  ? "add-step-window"
+                  : "add-step-window-launch",
         auctionId: pending.auctionId,
         value: ctx.message.text,
         opId: createUuidV7(),
@@ -1511,7 +1528,8 @@ async function handleMessage(
         result.kind !== "auction-week-ask" &&
         result.kind !== "auction-raffle-ask" &&
         result.kind !== "auction-raffle-prize-ask" &&
-        result.kind !== "step-window-ask"
+        result.kind !== "step-window-ask" &&
+        result.kind !== "step-window-launch-ask"
       ) {
         await answered(result);
       }
@@ -1957,6 +1975,7 @@ async function handleMessage(
         pending.kind === "console-raffle" ||
         pending.kind === "console-raffle-prize" ||
         pending.kind === "console-window" ||
+        pending.kind === "console-launch" ||
         pending.kind === "final-ask" ||
         pending.kind === "floor-search") &&
       ctx.message?.text === undefined
@@ -1973,6 +1992,7 @@ async function handleMessage(
                 pending.kind === "console-raffle" ||
                 pending.kind === "console-raffle-prize" ||
                 pending.kind === "console-window" ||
+                pending.kind === "console-launch" ||
                 pending.kind === "final-ask" ||
                 pending.kind === "floor-search"
               ? "manage_auction"
@@ -2391,7 +2411,11 @@ async function handleCallback(
       action.kind === "console-window" ||
       action.kind === "console-window-ask" ||
       action.kind === "console-window-lot" ||
-      action.kind === "console-window-remove"
+      action.kind === "console-window-remove" ||
+      action.kind === "console-window-launch" ||
+      action.kind === "console-window-launch-lot" ||
+      action.kind === "console-window-launch-go" ||
+      action.kind === "console-window-launch-page"
     ) {
       outcome = canRunAuctions(person)
         ? await handleConsoleCallback(ctx, runtime, questions, person, action)
@@ -7043,7 +7067,11 @@ async function handleConsoleCallback(
         | "console-window"
         | "console-window-ask"
         | "console-window-lot"
-        | "console-window-remove";
+        | "console-window-remove"
+        | "console-window-launch"
+        | "console-window-launch-lot"
+        | "console-window-launch-go"
+        | "console-window-launch-page";
     }
   >,
 ): Promise<BoundaryOutcome> {
@@ -7301,6 +7329,43 @@ async function handleConsoleCallback(
           opId: createUuidV7(),
         }),
       );
+    // Запуск окна сниженного шага по ходу торгов (PER-615). Ключ команды
+    // рождается на нажатии «Запустить окно»: черновик едет в кнопке, и 64
+    // байта на ключ не остаётся.
+    case "console-window-launch":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "ask-step-window-launch",
+        }),
+      );
+    case "console-window-launch-lot":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "set-step-window-launch-lot",
+          draft: action.draft,
+          lot: action.lot,
+        }),
+      );
+    case "console-window-launch-page":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "view-step-window-launch",
+          draft: action.draft,
+          page: action.page,
+        }),
+      );
+    case "console-window-launch-go":
+      return render(
+        await runtime.dispatcher.execute({
+          ...call,
+          intent: "launch-step-window",
+          draft: action.draft,
+          opId: createUuidV7(),
+        }),
+      );
     case "console-close-confirm":
       return render(
         await runtime.dispatcher.execute({
@@ -7516,6 +7581,7 @@ async function renderConsoleResult(
         windowsScreen({
           console: result.console,
           note: result.note,
+          launch: result.launch,
           timeZone,
           today: communityToday(ctx),
         }),
@@ -7524,6 +7590,37 @@ async function renderConsoleResult(
         result.note === undefined
           ? "step windows sent"
           : `step windows sent: ${result.note.kind}`,
+      );
+    case "step-window-launch":
+      // Переключатель лота подтверждает себя всплывающим текстом, как окно.
+      if (result.toggled !== undefined) {
+        await ctx.waiting?.answer(windowLotToast(result.toggled.selected));
+      }
+      await showScreen(
+        ctx,
+        launchScreen({
+          console: result.console,
+          draft: result.draft,
+          at: result.at,
+          timeZone,
+          today: communityToday(ctx),
+        }),
+      );
+      return handled("step window launch sent");
+    case "step-window-launch-ask":
+      await askConsoleLaunch(ctx, context.questions, {
+        auctionId: result.auctionId,
+        timeZone,
+        week: result.week,
+        error: result.error,
+        lot: result.lot,
+        other: result.other,
+        replaces: context.replyId,
+      });
+      return handled(
+        result.error === undefined
+          ? "step window launch requested"
+          : "step window launch asked again",
       );
     case "step-window":
       // Переключатель лота подтверждает себя всплывающим текстом, как финал.
@@ -7777,6 +7874,50 @@ function askConsoleWindow(
     questions,
     pending,
     windowQuestionText(ask.timeZone, ask.week),
+    ask.replaces,
+  );
+}
+
+// Вопрос о запуске окна по ходу торгов (PER-615): отказ приходит текстом
+// формы — тем же, что у планирования окна.
+function askConsoleLaunch(
+  ctx: UpdateContext,
+  questions: Map<string, PendingInput>,
+  ask: {
+    auctionId: string;
+    timeZone: string;
+    week?: AuctionWeek | undefined;
+    error?: WindowAskError | undefined;
+    lot?: string | undefined;
+    other?: { from: string; until: string } | undefined;
+    replaces?: number | undefined;
+  },
+): Promise<void> {
+  const pending: PendingBody = {
+    kind: "console-launch",
+    auctionId: ask.auctionId,
+    telegramUserId: ctx.from?.id ?? 0,
+  };
+  // Непринятый ответ — свой экран с «Ввести заново» (PER-472).
+  if (ask.error !== undefined) {
+    return refuseAnswer(
+      ctx,
+      questions,
+      pending,
+      windowAskErrorText(ask.error, {
+        timeZone: ask.timeZone,
+        week: ask.week,
+        lot: ask.lot,
+        other: ask.other,
+      }),
+      ask.replaces,
+    );
+  }
+  return askQuestion(
+    ctx,
+    questions,
+    pending,
+    launchQuestionText(ask.timeZone, ask.week),
     ask.replaces,
   );
 }
@@ -9389,6 +9530,11 @@ function stepOf(pending: PendingBody): QuestionStep {
         kind: "console-window",
         auction: uuidToToken(pending.auctionId),
       };
+    case "console-launch":
+      return {
+        kind: "console-launch",
+        auction: uuidToToken(pending.auctionId),
+      };
     case "final-ask":
       return {
         kind: "final-ask",
@@ -9564,6 +9710,13 @@ function pendingOf(
         telegramUserId,
         expiresAt,
       };
+    case "console-launch":
+      return {
+        kind: "console-launch",
+        auctionId: tokenToUuid(step.auction),
+        telegramUserId,
+        expiresAt,
+      };
     case "final-ask":
       return {
         kind: "final-ask",
@@ -9654,6 +9807,9 @@ function cancelTarget(step: QuestionStep): ScreenAction {
       return { kind: "console-windows", auction: step.auction };
     case "floor-search":
       return { kind: "console-floor", auction: step.auction, page: 0 };
+    case "console-launch":
+      // Вопрос о запуске окна задан со «Счастливых часов».
+      return { kind: "console-windows", auction: step.auction };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -9816,6 +9972,8 @@ function reopenData(step: QuestionStep): string {
       return consoleRafflePrizeData(step.auction);
     case "console-window":
       return consoleWindowAskData(step.auction);
+    case "console-launch":
+      return consoleWindowLaunchData(step.auction);
     case "final-ask":
       return consoleAskData(step.auction, step.position);
     case "floor-search":
@@ -9874,6 +10032,11 @@ function answerParent(step: QuestionStep): Parent {
       };
     case "floor-search":
       return { name: floorTitle, data: floorData(step.auction) };
+    case "console-launch":
+      return {
+        name: "Счастливые часы",
+        data: consoleWindowsData(step.auction),
+      };
     default: {
       const _exhaustive: never = step;
       return _exhaustive;
@@ -10136,6 +10299,10 @@ function callbackUseCase(
     | "console-window-ask"
     | "console-window-lot"
     | "console-window-remove"
+    | "console-window-launch"
+    | "console-window-launch-lot"
+    | "console-window-launch-go"
+    | "console-window-launch-page"
     | "manage-publish"
     | "manage-confirm-publish"
     | "manage-unpublish"
@@ -10305,6 +10472,10 @@ function callbackUseCase(
     case "console-window-ask":
     case "console-window-lot":
     case "console-window-remove":
+    case "console-window-launch":
+    case "console-window-launch-lot":
+    case "console-window-launch-go":
+    case "console-window-launch-page":
       return "manage_auction";
     case "home":
     case "apply":

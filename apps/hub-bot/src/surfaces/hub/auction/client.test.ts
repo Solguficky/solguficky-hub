@@ -98,6 +98,7 @@ function adapter(rpc: {
   getRaffle?: Call;
   listAuctionNames?: Call;
   placeBid?: Call;
+  launchStepWindow?: Call;
 }) {
   return createAuctionAdapter({
     draftAuction: (rpc.draftAuction ?? notUsed) as never,
@@ -126,6 +127,7 @@ function adapter(rpc: {
     getAuctionLotStatistics: (rpc.getAuctionLotStatistics ?? notUsed) as never,
     getAuctionDaySummary: (rpc.getAuctionDaySummary ?? notUsed) as never,
     scheduleAuction: (rpc.scheduleAuction ?? notUsed) as never,
+    launchStepWindow: (rpc.launchStepWindow ?? notUsed) as never,
     startPrebidding: (rpc.startPrebidding ?? notUsed) as never,
     discardAuction: (rpc.discardAuction ?? notUsed) as never,
     cancelAuction: (rpc.cancelAuction ?? notUsed) as never,
@@ -871,6 +873,7 @@ describe("auction console adapter", () => {
           final: true,
           windows: [],
         },
+        launchedWindows: [],
         lots: [
           {
             lot: expect.objectContaining({

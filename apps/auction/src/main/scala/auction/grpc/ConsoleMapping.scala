@@ -1,5 +1,6 @@
 package auction.grpc
 
+import auction.contract.AuctionValues
 import auction.lot.Lot
 import auction.lot.LotState
 import auction.lot.ParticipantId
@@ -34,7 +35,10 @@ object ConsoleMapping {
           markedForFinal = marked(view.lot),
           overdue = overdue(view.lot, now, grace)
         )
-      }
+      },
+      // Запущенные по ходу торгов окна (PER-615): пульт показывает их рядом с объявленными, и в конфигурации их
+      // нет — конфигурация заменяется планированием и заморожена после открытия недели.
+      launchedStepWindows = auction.auction.launched.map(_.window).map(AuctionValues.stepWindow)
     )
 
   /** Отмечен для финала: в торгах с отметкой либо уже удержан — удерживается только отмеченный лот. */

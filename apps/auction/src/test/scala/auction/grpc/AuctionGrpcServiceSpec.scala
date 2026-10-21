@@ -517,6 +517,35 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
     }
   }
 
+  /**
+   * Аукцион сходки в онлайн-торгах, у которого запущено окно сниженного шага (PER-615): пульт показывает его рядом с
+   * объявленными, а объявленных в конфигурации он не знает.
+   */
+  private def consoleWithLaunchedWindow(registry: UUID*): Auctions = {
+    val meetup = MeetupId(UUID.fromString(meetupId))
+    val added = registry.toList.zipWithIndex.map { (lot, index) =>
+      AuctionEnvelope(index + 2L, LotFixtures.op(index + 2), AuctionEvent.LotAdded(LotId(lot)))
+    }
+    val next = registry.size + 2
+    val window = StepWindowConfig(
+      deadline.plusSeconds(600),
+      deadline.plusSeconds(3600),
+      money(50),
+      Set(LotId(registry.head))
+    )
+    val running = Auction.replay(
+      Auction.initial,
+      AuctionEnvelope(1, LotFixtures.op(1), AuctionEvent.AuctionDrafted(meetup)) :: added ++ List(
+        AuctionEnvelope(next, LotFixtures.op(next), AuctionEvent.AuctionScheduled(AuctionFixtures.config())),
+        AuctionEnvelope(next + 1, LotFixtures.op(next + 1), AuctionEvent.PrebiddingStarted),
+        AuctionEnvelope(next + 2, LotFixtures.op(next + 2), AuctionEvent.StepWindowLaunched(window))
+      )
+    )
+    new Auctions {
+      override def get(auctionId: AuctionId) = Future.successful(running)
+    }
+  }
+
   // Пока SLF4J инициализирует backend, он отдаёт SubstituteLogger, и приведение к logback падает (как в GrpcBoundarySpec).
   private def serviceLogger: LogbackLogger = {
     @tailrec
@@ -1508,6 +1537,37 @@ final class AuctionGrpcServiceSpec extends AnyWordSpec with Matchers with ScalaF
       console.getAuction.status.isPrebidding shouldBe true
       console.lots.map(entry => (entry.getLot.id, entry.getLot.bidCount, entry.markedForFinal, entry.overdue)) shouldBe
         Seq((marked.toString, 3L, true, false), (late.toString, 0L, false, true), (finalist.toString, 4L, true, false))
+    }
+
+    "shows the window launched during the online phase to the administrator" in {
+      val meetupAuction = Auction.idOf(MeetupId(UUID.fromString(meetupId))).value
+      val (first, second) = (new UUID(7L, 1L), new UUID(7L, 2L))
+      val registry = new Views {
+        override def registryPage(auctionId: UUID, after: Option[UUID], limit: Int) =
+          Future.successful(
+            List(
+              LotSnapshotView(
+                first,
+                auctionId,
+                4,
+                trading(price = 300, closesAt = Some(deadline.plusSeconds(3600))),
+                None
+              ),
+              LotSnapshotView(second, auctionId, 2, trading(price = 100, closesAt = Some(deadline)), None)
+            )
+          )
+      }
+      val meetups: MeetupAuthority = (_, _, _) => Future.successful(Authority.Granted(Standings.published))
+      val console = service(
+        Unreachable,
+        views = registry,
+        auctions = AuctionCommands(consoleWithLaunchedWindow(first, second), Unreachable, meetups),
+        clock = Clock.fixed(deadline.plusSeconds(600), java.time.ZoneOffset.UTC)
+      ).getAuctionConsole(wire.GetAuctionConsoleRequest(Some(viewer), meetupAuction.toString)).futureValue.getConsole
+
+      console.launchedStepWindows.map(window => (window.from, window.until, window.step.get.minorUnits)) shouldBe
+        Seq((deadline.plusSeconds(600).toString, deadline.plusSeconds(3600).toString, 50L))
+      console.launchedStepWindows.flatMap(_.lotIds) shouldBe Seq(first.toString)
     }
 
     "refuses the console to a viewer whom the meetup does not confirm and reads no lot" in {

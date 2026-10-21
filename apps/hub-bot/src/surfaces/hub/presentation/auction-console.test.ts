@@ -39,6 +39,7 @@ import type {
   DayLotStatistics,
   FinalistResult,
   FloorBid,
+  LaunchStepWindowResult,
   LotAdministration,
   LotClosure,
   MeetupAuctions,
@@ -111,6 +112,10 @@ const forgedAuctionPresses = {
   "console-window-ask": `v1:ac:ha:${auctionToken}`,
   "console-window-lot": `v1:ac:hs:${auctionToken}:0:abcde:${uuidToToken(vaseId)}`,
   "console-window-remove": `v1:ac:hx:${auctionToken}:0:abcde`,
+  "console-window-launch": `v1:ac:hl:${auctionToken}`,
+  "console-window-launch-go": `v1:ac:hm:${auctionToken}:n000000000000000AAAAAAAAAAA`,
+  "console-window-launch-lot": `v1:ac:ht:${auctionToken}:n000000000000000AAAAAAAAAAA:0`,
+  "console-window-launch-page": `v1:ac:hp:${auctionToken}:n000000000000000AAAAAAAAAAA`,
   "console-lineup": `v1:ac:l:${auctionToken}`,
   "console-lineup-confirm": `v1:ac:ly:${auctionToken}:abcde:0`,
   "console-start-final": `v1:ac:g:${auctionToken}`,
@@ -214,6 +219,10 @@ function fakeAuction(
     proxyAnswer?: string;
     // Ставка зала остаётся без ответа: транспорт оборвался.
     floorTimeout?: true;
+    // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает.
+    launchedWindows?: AuctionConsoleView["launchedWindows"];
+    // Отказ запуска (PER-615): Auction не принял окно — пульт показывает текст.
+    launch?: LaunchStepWindowResult;
   } = {},
 ) {
   let freezeFailures = options.freezeFailures ?? 0;
@@ -221,6 +230,8 @@ function fakeAuction(
     status: ConsoleAuctionStatus;
     week?: AuctionConsoleView["week"];
     lots: ConsoleLot[];
+    // Запущенные по ходу торгов окна (PER-615): конфигурация их не знает.
+    launchedWindows?: AuctionConsoleView["launchedWindows"];
     startedBy?: string;
     discarded?: true;
     cancelledBy?: string;
@@ -232,6 +243,9 @@ function fakeAuction(
   } = {
     status: options.status ?? "draft",
     ...(options.week === undefined ? {} : { week: options.week }),
+    ...(options.launchedWindows === undefined
+      ? {}
+      : { launchedWindows: options.launchedWindows }),
     lots: [...(options.lots ?? [])],
     ...(options.lineup === undefined
       ? {}
@@ -297,6 +311,7 @@ function fakeAuction(
           status: state.status,
           ...(state.week === undefined ? {} : { week: state.week }),
           ...(state.lineup === undefined ? {} : { lineup: state.lineup }),
+          launchedWindows: state.launchedWindows ?? [],
           lots: state.lots,
         },
       };
@@ -362,6 +377,29 @@ function fakeAuction(
         ...(prize === undefined ? {} : { rafflePrize: prize }),
       };
       return { kind: "ok" };
+    },
+    async launchStepWindow(_person, launch) {
+      commands.push({ method: "launchStepWindow", args: launch });
+      if (options.launch !== undefined) {
+        return options.launch;
+      }
+      if (state.status !== "prebidding") {
+        return { kind: "not-in-prebidding" };
+      }
+      state.launchedWindows = [
+        ...(state.launchedWindows ?? []),
+        {
+          from: launch.from ?? "2026-10-20T15:00:00Z",
+          until: launch.until,
+          step: launch.step,
+          lotIds: [...launch.lotIds],
+        },
+      ];
+      return {
+        kind: "ok",
+        from: launch.from ?? "2026-10-20T15:00:00Z",
+        until: launch.until,
+      };
     },
     async startPrebidding(_person, start) {
       commands.push({ method: "startPrebidding", args: start });
@@ -1156,7 +1194,7 @@ describe("auction console", () => {
     );
     expect(labels(screen)).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["Сводка дня", "Отменить аукцион"],
+      ["Счастливые часы", "Сводка дня", "Отменить аукцион"],
       ["В финал · Ваза"],
       ["Снять из финала · Кружка"],
       ["‹ Аукцион"],
@@ -2145,7 +2183,7 @@ describe("final selection", () => {
 
     expect(labels(last(calls))).toEqual([
       ["Ставки", "Люди", "Рост"],
-      ["Сводка дня", "Отменить аукцион"],
+      ["Счастливые часы", "Сводка дня", "Отменить аукцион"],
       ["Снять из финала · Кружка"],
       ["‹ Аукцион"],
     ]);
@@ -3121,11 +3159,123 @@ describe("happy hours", () => {
     expect(plain(last(calls))).toContain("Счастливые часы: 1 окно.");
     await bot.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
     expect(plain(last(calls))).toContain("лотов 1 из 2");
-    expect(labels(last(calls))).toEqual([["Окно 1"], ["‹ Пульт"]]);
+    // В онлайн-торгах ряд запуска окна есть (PER-615).
+    expect(labels(last(calls))).toEqual([
+      ["Окно 1"],
+      ["Запустить окно"],
+      ["‹ Пульт"],
+    ]);
     // Окно открывается только для чтения: переключателей и удаления нет.
     await bot.handleUpdate(press(dataOf(last(calls), "Окно 1")));
     expect(plain(last(calls))).toContain("• Ваза");
     expect(labels(last(calls))).toEqual([["‹ Счастливые часы"]]);
+  });
+
+  it("launches a window from the console and shows it next to the announced ones", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, windows: [] },
+      lots: [vase, mug],
+    });
+    const calls: RecordedCall[] = [];
+    // Новый бот на каждом шаге — рестарт посреди запуска: шаг вопроса едет в
+    // кнопке «Отмена», а черновик — в кнопках экрана запуска.
+    const next = async (update: (history: RecordedCall[]) => Update) => {
+      const { bot } = harness("admin", auction, calls);
+      await bot.init();
+      await bot.handleUpdate(update(calls));
+    };
+
+    await next(() => press(consoleData));
+    await next((history) => press(dataOf(last(history), "Счастливые часы")));
+    await next((history) => press(dataOf(last(history), "Запустить окно")));
+
+    const asked = question(calls);
+    expect(dataOf(asked.payload, "Отмена")).toBe(`v1:q:al:${auctionToken}:42`);
+    expect(asked.payload.text).toContain("Неделя:");
+
+    await next((history) =>
+      answer(history, { text: "сейчас — 21.10.2026 21:00, 50" }),
+    );
+
+    // Экран запуска: сроки и шаг окна, лоты реестра переключателями и ряд
+    // запуска.
+    expect(plain(last(calls))).toContain("шаг 50 ₽");
+    expect(plain(last(calls))).toContain("лотов 2 из 2");
+    expect(labels(last(calls))).toEqual([
+      ["Вкл · Ваза"],
+      ["Вкл · Кружка"],
+      ["Запустить окно"],
+      ["‹ Счастливые часы"],
+    ]);
+
+    await next((history) => press(dataOf(last(history), "Запустить окно")));
+
+    expect(plain(last(calls))).toContain("Окно запущено");
+    expect(auction.sent("launchStepWindow").map((call) => call.args)).toEqual([
+      expect.objectContaining({
+        auctionId: expect.any(String),
+        until: "2026-10-21T18:00:00Z",
+        step: { minorUnits: 5_000, currency: "RUB" },
+        lotIds: [vaseId, mugId],
+      }),
+    ]);
+  });
+
+  it("covers the first sixty four lots of a bigger registry and says so", async () => {
+    const many = Array.from({ length: 70 }, (_, index) => ({
+      ...vase,
+      lot: trading(
+        `01929b7e-5c1d-7a3f-8e4b-2d6c9f0a${index.toString(16).padStart(4, "0")}`,
+        `Лот ${index + 1}`,
+        120_000,
+      ),
+    }));
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, windows: [] },
+      lots: many,
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
+    await bot.handleUpdate(press(dataOf(last(calls), "Запустить окно")));
+    await bot.handleUpdate(
+      answer(calls, { text: "сейчас — 21.10.2026 21:00, 50" }),
+    );
+
+    // Набор лотов едет в кнопке маской на 64 лота: окно накрывает первые
+    // 64 лота реестра, и пульт говорит об этом прямо.
+    expect(plain(last(calls))).toContain("лотов 64 из 64");
+    expect(plain(last(calls))).toContain(
+      "Окно накрывает первые 64 лотов реестра",
+    );
+  });
+
+  it("shows the launched window next to the announced ones", async () => {
+    const auction = fakeAuction({
+      status: "prebidding",
+      week: { ...week, final: true, windows: [] },
+      lots: [vase],
+      launchedWindows: [
+        {
+          from: "2026-10-21T15:00:00Z",
+          until: "2026-10-21T18:00:00Z",
+          step: { minorUnits: 5_000, currency: "RUB" },
+          lotIds: [vaseId],
+        },
+      ],
+    });
+    const { bot, calls } = harness("admin", auction);
+    await bot.init();
+
+    await bot.handleUpdate(press(consoleData));
+    await bot.handleUpdate(press(dataOf(last(calls), "Счастливые часы")));
+
+    expect(plain(last(calls))).toContain("Запущенные окна:");
+    expect(plain(last(calls))).toContain("шаг 50 ₽");
   });
 });
 

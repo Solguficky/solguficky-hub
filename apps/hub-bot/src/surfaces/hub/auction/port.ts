@@ -320,6 +320,37 @@ export type AuctionWeekConfig = {
   rafflePrize: string | undefined;
 };
 
+// Запуск окна сниженного шага по ходу торгов (PER-615; ADR-047, дополнение
+// 2026-10-12). `from` нет — окно начинается с момента, в который сервис решил
+// команду. `window-in-past` — заданное начало раньше момента команды;
+// `windows-overlap` несёт лот и границы окна, с которым пересеклось запущенное:
+// номер окна у запуска нет, окно одно.
+export type LaunchStepWindowResult =
+  | { kind: "ok"; from: string; until: string }
+  | { kind: "not-administrator" }
+  | { kind: "meetup-not-found" }
+  | { kind: "meetup-cancelled" }
+  | { kind: "not-in-prebidding" }
+  | { kind: "window-in-past" }
+  | { kind: "window-outside-phase" }
+  | { kind: "window-step-invalid" }
+  | { kind: "window-lots-empty" }
+  | { kind: "lot-not-in-auction"; lotId: string }
+  | { kind: "lot-not-open"; lotId: string }
+  | { kind: "windows-overlap"; lotId: string; from: string; until: string }
+  | { kind: "auction-not-found" }
+  | AuctionFailure;
+
+// Запускаемое окно: та же форма, что элемент `step_windows` конфигурации.
+export type LaunchStepWindowCommand = {
+  auctionId: string;
+  opId: string;
+  from?: string;
+  until: string;
+  step: Money;
+  lotIds: readonly string[];
+};
+
 export type FinalistMark = { auctionId: string; lotId: string; opId: string };
 
 // Финал ведущего (PER-337; контракт — PER-475). Ведущий — администратор
@@ -477,6 +508,13 @@ export type AuctionConsoles = {
     config: AuctionWeekConfig,
     meta?: RpcMetadata,
   ): Promise<ScheduleAuctionResult>;
+  // Запуск окна сниженного шага по ходу торгов (PER-615): окно дописывается
+  // к списку аукциона, а не заменяет конфигурацию.
+  launchStepWindow(
+    person: Person,
+    launch: LaunchStepWindowCommand,
+    meta?: RpcMetadata,
+  ): Promise<LaunchStepWindowResult>;
   // Повтор того же `opId` Auction принимает; новый ключ на открытом
   // аукционе — `not-scheduled`.
   startPrebidding(

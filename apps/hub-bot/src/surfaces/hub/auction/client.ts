@@ -78,6 +78,7 @@ import {
   type FinalistResult,
   type FloorBidResult,
   type FreezeFinalLineupResult,
+  type LaunchStepWindowResult,
   type LotAdministration,
   type LotCardResult,
   type LotStatisticsReadResult,
@@ -123,6 +124,7 @@ type AuctionRpc = Pick<
   | "getAuctionLotStatistics"
   | "getAuctionDaySummary"
   | "scheduleAuction"
+  | "launchStepWindow"
   | "startPrebidding"
   | "discardAuction"
   | "cancelAuction"
@@ -531,6 +533,28 @@ export function createAuctionAdapter(
           options(meta),
         );
         return scheduleAuctionResult(response.outcome);
+      } catch (cause) {
+        return auctionMissing(cause) ?? toFailure(cause);
+      }
+    },
+    // Запуск окна сниженного шага по ходу торгов (PER-615): окно дописывается
+    // к списку аукциона, а конфигурация не меняется. `from` не задан — окно
+    // начинается с момента, в который сервис решил команду.
+    async launchStepWindow(person, launch, meta) {
+      try {
+        const response = await rpc.launchStepWindow(
+          {
+            viewer: wireViewer(viewerOf(person)),
+            auctionId: launch.auctionId,
+            opId: launch.opId,
+            ...(launch.from === undefined ? {} : { from: launch.from }),
+            until: launch.until,
+            step: wireMoney(launch.step),
+            lotIds: [...launch.lotIds],
+          },
+          options(meta),
+        );
+        return launchStepWindowResult(response.outcome);
       } catch (cause) {
         return auctionMissing(cause) ?? toFailure(cause);
       }
@@ -1427,6 +1451,70 @@ function scheduleAuctionResult(
       }
     case undefined:
       return defect("schedule auction response without an outcome");
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+// Запуск окна сниженного шага (PER-615). Отказы окна запуска — свои, без
+// номера окна: номер у отказов `ConfigInvalid` называет место в
+// `step_windows`, а окно запуска одно (ADR-047, дополнение 2026-10-12).
+function launchStepWindowResult(
+  outcome: Awaited<ReturnType<AuctionRpc["launchStepWindow"]>>["outcome"],
+): LaunchStepWindowResult {
+  switch (outcome.case) {
+    case "accepted":
+      return {
+        kind: "ok",
+        from: outcome.value.from,
+        until: outcome.value.until,
+      };
+    case "refused":
+      switch (outcome.value.reason.case) {
+        case "notMeetupAdministrator":
+          return { kind: "not-administrator" };
+        case "meetupNotFound":
+          return { kind: "meetup-not-found" };
+        case "meetupCancelled":
+          return { kind: "meetup-cancelled" };
+        case "notInPrebidding":
+          return { kind: "not-in-prebidding" };
+        case "stepWindowInPast":
+          return { kind: "window-in-past" };
+        case "stepWindowOutsideOnlinePhase":
+          return { kind: "window-outside-phase" };
+        case "stepWindowStepInvalid":
+          return { kind: "window-step-invalid" };
+        case "stepWindowLotsEmpty":
+          return { kind: "window-lots-empty" };
+        case "lotNotInAuction":
+          return {
+            kind: "lot-not-in-auction",
+            lotId: outcome.value.reason.value.lotId,
+          };
+        case "lotNotOpen":
+          return {
+            kind: "lot-not-open",
+            lotId: outcome.value.reason.value.lotId,
+          };
+        case "stepWindowsOverlap":
+          return {
+            kind: "windows-overlap",
+            lotId: outcome.value.reason.value.lotId,
+            from: outcome.value.reason.value.from,
+            until: outcome.value.reason.value.until,
+          };
+        case undefined:
+          return defect("launch step window refusal without a reason");
+        default: {
+          const _exhaustive: never = outcome.value.reason;
+          return _exhaustive;
+        }
+      }
+    case undefined:
+      return defect("launch step window answer without an outcome");
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
